@@ -1,0 +1,33 @@
+name: Reusable Tests
+
+on:
+  workflow_call:
+
+jobs:
+  test:
+    name: Unit and Integration Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Bazel cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/bazel
+          key: bazel-test-${{ runner.os }}-${{ hashFiles('MODULE.bazel', 'requirements_test_lock.txt') }}
+          restore-keys: bazel-test-${{ runner.os }}-
+
+      - name: Install Qt system libraries
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            libxcb-xinerama0 libxcb-cursor0 libegl1 libgl1 libglib2.0-0
+
+      - name: Run unit tests
+        # LangChain is an optional runtime dependency (pip install "teachers-teammate[llm]").
+        # The test lock file (requirements_test_lock.txt) includes langchain-core so that
+        # correction, evaluation, and LLM OCR tests are exercised in CI.
+        run: bazel test //tests/... --test_output=errors
+        env:
+          QT_QPA_PLATFORM: offscreen

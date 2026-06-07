@@ -1,0 +1,42 @@
+# Python
+*.so
+__pycache__/
+*.egg-info/
+dist/
+build/
+!tools/build/
+!tools/build/**
+.coverage
+.claude/
+coverage_html/
+
+# Virtual environments
+.venv/
+.build_venv/
+.venv-licenses/
+
+# Third-party license docs (tools/release/update_licenses.sh) ARE committed:
+# both third_party_licenses/ and teachers_teammate/assets/third_party_licenses.md.
+# The throwaway venv used to generate them is ignored via .venv-licenses/ above.
+
+# PyInstaller build scratch
+pyinstaller-work/
+
+# IDE
+.vscode/
+.idea/
+
+# Type checking
+.mypy_cache/
+.ruff_cache
+
+# Bazel
+bazel-*
+
+# Generated docs (Bazel outputs)
+docs/test_specs.rst
+
+input/
+output*/
+previews/
+pdfs/

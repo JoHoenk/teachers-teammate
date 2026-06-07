@@ -1,0 +1,118 @@
+@startuml Teacher's Teammate — Exception Hierarchy and Propagation
+
+skinparam defaultFontSize 12
+skinparam classBorderColor #555555
+skinparam classBackgroundColor #F4F4F4
+skinparam classFontSize 11
+skinparam arrowColor #444444
+skinparam noteBackgroundColor #FFFFDD
+skinparam noteBorderColor #AAAAAA
+skinparam packageBorderColor #888888
+skinparam shadowing false
+
+' ── built-in roots ──────────────────────────────────────────────────
+class Exception <<built-in>> #DDDDDD
+class "ValueError\n(built-in)" as ValueError #DDDDDD
+class "RuntimeError\n(built-in)" as RuntimeError #DDDDDD
+class "FileNotFoundError\n(built-in)" as FileNotFoundError #DDDDDD
+
+hide Exception members
+hide ValueError members
+hide RuntimeError members
+hide FileNotFoundError members
+
+' ── application exceptions ──────────────────────────────────────────
+package "teachers_teammate.exceptions" {
+
+  class OCRError {
+    args[0]: human-readable message
+    ..
+    Raised by OCRProcessor impls
+    on text extraction failure
+  }
+
+  class ConfigFileNotFoundError {
+    Raised when the path given to
+    --config does not exist
+  }
+
+  class ConfigFileParseError {
+    Raised when the TOML config
+    cannot be parsed or read
+  }
+
+  class StorageResolutionError {
+    Raised when no candidate
+    storage root is writable
+  }
+
+  class ProviderNotAvailableError {
+    str(exc) includes pip install hint
+    ..
+    Raised when a required provider
+    package is not installed
+  }
+
+  class OllamaConnectionError {
+    Raised on connection refused,
+    timeout, HTTP error,
+    or model-not-found
+  }
+
+  class PipelineInputError {
+    Raised when an input file
+    cannot be loaded or yields
+    no usable content
+  }
+}
+
+' ── inheritance ──────────────────────────────────────────────────────
+Exception          <|-- OCRError
+Exception          <|-- RuntimeError
+Exception          <|-- ValueError
+Exception          <|-- FileNotFoundError
+FileNotFoundError  <|-- ConfigFileNotFoundError
+ValueError         <|-- ConfigFileParseError
+ValueError         <|-- PipelineInputError
+RuntimeError       <|-- StorageResolutionError
+RuntimeError       <|-- ProviderNotAvailableError
+RuntimeError       <|-- OllamaConnectionError
+
+' ── raising sites ─────────────────────────────────────────────────
+note right of OCRError
+  Raised by:
+  OllamaClient, TesseractOCRProcessor,
+  PaddleOCRProcessor, LangChainOCRProcessor
+end note
+
+note right of ProviderNotAvailableError
+  Raised by:
+  providers/*.py (ImportError wrapping),
+  ocr_processor.py (_get_paddle),
+  stage_builder.py (anonymizer)
+end note
+
+note right of OllamaConnectionError
+  Raised by:
+  OllamaClient.check_connection(),
+  OllamaClient.check_model()
+end note
+
+note right of PipelineInputError
+  Raised by:
+  input_provider_factory.py,
+  preprocess_service.py
+end note
+
+note right of ConfigFileParseError
+  Raised by:
+  config._load_config_section()
+  (wraps OSError + TOMLDecodeError)
+end note
+
+note right of StorageResolutionError
+  Raised by:
+  storage_root.resolve_storage_root()
+end note
+
+@enduml

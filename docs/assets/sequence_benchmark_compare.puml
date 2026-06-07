@@ -1,0 +1,110 @@
+@startuml Teacher's Teammate — Benchmark Run & Compare
+
+skinparam defaultFontSize 12
+skinparam sequenceArrowThickness 1
+skinparam sequenceGroupBorderColor #888888
+skinparam sequenceLifeLineBorderColor #555555
+skinparam shadowing false
+skinparam noteBackgroundColor #FFFFDD
+
+participant "User"                       as USER
+participant "BenchmarkWindow"            as WIN
+participant "OcrConfigSelector"          as SEL
+participant "RunsList"                   as LIST
+participant "CompareView"                as CMP
+participant "BenchmarkWorker\n(QThread)" as WORKER
+participant "BenchmarkApp\nService"      as SVC
+participant "benchmark.runner\n(run_ocr)" as RUN
+participant "StageBuilder /\nOCRStageService" as STAGES
+participant "BenchmarkRunStore"          as STORE
+participant "domain.benchmark\n(compare_pair)" as DOM
+participant "FileSystem / OCR"           as EXT
+
+== Run & store one OCR configuration ==
+
+USER -> WIN            : choose document + click "Run && store"
+activate WIN
+WIN -> SEL             : get_ocr_config()
+activate SEL
+SEL --> WIN            : OcrConfig
+deactivate SEL
+WIN -> WORKER          : BenchmarkWorker(source, ocr, language, app_service)
+WIN -> WORKER          : connect(log_line, finished_ok, finished_err)
+WIN -> WORKER          : start()   [spawns QThread]
+deactivate WIN
+
+group Background thread (BenchmarkWorker)
+  activate WORKER
+  WORKER -> SVC        : run_and_store(source, ocr, language, …)
+  activate SVC
+  SVC -> RUN           : run_ocr(config, source, component_factory)
+  activate RUN
+  RUN -> STAGES        : preprocess + OCRStageService.run_pages()
+  activate STAGES
+  STAGES -> EXT        : OCR engine / LLM
+  STAGES --> RUN       : page texts
+  deactivate STAGES
+  RUN --> SVC          : OcrRunResult(raw_text, preview_img, elapsed, error)
+  deactivate RUN
+  SVC -> SVC           : compute_file_hash + compute_ocr_config_hash
+  SVC -> STORE         : save(NewRunRequest(...))
+  activate STORE
+  STORE -> EXT         : write <ts>-<cfg>.json + images/  (+ keep-last-N evict)
+  STORE --> SVC        : StoredRun
+  deactivate STORE
+  SVC --> WORKER       : StoredRun
+  deactivate SVC
+  WORKER -> WORKER     : emit finished_ok(StoredRun)
+  deactivate WORKER
+end
+
+WIN -> SVC             : list_runs(source)
+activate WIN
+activate SVC
+SVC -> STORE           : list_for(document_hash)
+activate STORE
+STORE --> SVC          : [StoredRun, …]  (newest first)
+deactivate STORE
+SVC --> WIN            : runs
+deactivate SVC
+WIN -> LIST            : set_runs(runs)
+deactivate WIN
+
+== Compare two stored runs ==
+
+USER -> LIST           : set run A / run B
+activate LIST
+LIST -> WIN            : selection_changed(run_id_a, run_id_b)
+deactivate LIST
+activate WIN
+WIN -> SVC             : compare(run_a, run_b)
+activate SVC
+SVC -> DOM             : compare_pair(text_a, text_b)
+activate DOM
+DOM --> SVC            : PairComparison(similarity, stats_a, stats_b)
+deactivate DOM
+SVC --> WIN            : PairComparison
+deactivate SVC
+WIN -> CMP             : show_comparison(run_a, run_b, comparison)
+deactivate WIN
+
+== Delete runs ==
+
+USER -> LIST           : Delete / Clear all
+activate LIST
+LIST -> WIN            : delete_requested(run_id) / clear_all_requested
+deactivate LIST
+activate WIN
+WIN -> SVC             : delete_run(source, run_id) / delete_all_runs(source)
+activate SVC
+SVC -> STORE           : delete(...) / delete_all_for(...)
+activate STORE
+STORE -> EXT           : remove JSON + preview image(s)
+STORE --> SVC          :
+deactivate STORE
+SVC --> WIN            :
+deactivate SVC
+WIN -> LIST            : set_runs(refreshed)
+deactivate WIN
+
+@enduml

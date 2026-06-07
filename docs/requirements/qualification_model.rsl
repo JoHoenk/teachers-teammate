@@ -1,0 +1,5 @@
+package OCRQualification
+
+type UseCase {
+    description optional String
+}

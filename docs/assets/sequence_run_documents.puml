@@ -1,0 +1,208 @@
+@startuml Teacher's Teammate — Run Selected Documents
+
+skinparam defaultFontSize 12
+skinparam sequenceArrowThickness 1
+skinparam sequenceGroupBorderColor #888888
+skinparam sequenceLifeLineBorderColor #555555
+skinparam shadowing false
+skinparam noteBackgroundColor #FFFFDD
+
+participant "User"                   as USER
+participant "MainWindow"             as WIN
+participant "ConfigPanel"            as CPANEL
+participant "ResultsTable"           as TABLE
+participant "OCRWorker\n(QThread)"   as WORKER
+participant "AppService"             as SVC
+participant "OCRPipeline"            as PIPE
+participant "run_files()\n(coordinator.py)" as COORD
+participant "FileProcessor"          as FP
+participant "CacheReconciliation\nService" as CACHE
+participant "StateRepository"        as REPO
+participant "Domain\nFreshness"      as FRESH
+participant "PreprocessService"      as PREP
+participant "PreviewImageStore"      as STORE
+participant "OCR / Correction /\nEvaluation Adapters"  as STAGES
+participant "OutputStageService"     as OUT
+participant "FileSystem / LLM"       as EXT
+
+USER -> WIN            : click Run
+activate WIN
+
+WIN -> CPANEL          : to_config()
+activate CPANEL
+CPANEL --> WIN         : Config
+deactivate CPANEL
+WIN -> TABLE           : selected_source_ids()
+activate TABLE
+TABLE --> WIN          : list[source_id]
+deactivate TABLE
+
+WIN -> WIN             : _start_worker(config, selected_ids)
+WIN -> WORKER          : OCRWorker(config, selected_paths, app_service)
+WIN -> WORKER          : connect signals\n(log_line, file_started, file_done, finished_with_code)
+WIN -> WORKER          : start()   [spawns QThread]
+deactivate WIN
+
+group Background thread (OCRWorker)
+  activate WORKER
+  WORKER -> SVC        : run_selected(config, selected_paths,\non_file_started, on_file_done, …)
+  activate SVC
+  SVC -> PIPE          : OCRPipeline(config, …).run()
+  activate PIPE
+  PIPE -> COORD        : run_files(files, …)
+  activate COORD
+
+  loop for each selected file
+    COORD -> FP         : process(file)
+    activate FP
+    FP -> FP            : emit on_file_started
+
+    FP -> CACHE         : prepare(file)
+    activate CACHE
+    CACHE -> EXT        : compute_file_hash(file)
+    CACHE -> REPO       : load_or_create(file, source_hash)
+    activate REPO
+    REPO -> EXT         : read JSON state (or create empty)
+    REPO --> CACHE      :
+    deactivate REPO
+    CACHE -> FRESH      : first_stale_stage_for_hashes(…)
+    activate FRESH
+    FRESH --> CACHE     : stale_stage | None
+    deactivate FRESH
+    opt stale stage detected
+      CACHE -> REPO     : reset_from_stage(file, state, stage)
+      activate REPO
+      REPO --> CACHE    :
+      deactivate REPO
+    end
+    CACHE --> FP        : CacheContext
+    deactivate CACHE
+
+    alt cache hit (ocr_done == True)
+      FP -> FP          : use cached raw_text + preview_img
+      FP -> FP          : emit on_ocr_done
+    else cache miss
+      FP -> PREP        : preprocess_input(file)
+      activate PREP
+      PREP -> EXT       : load input (PDF/image/TXT)
+      PREP -> EXT       : HandwritingPreprocessor.preprocess(image)
+      PREP --> FP       : (ocr_inputs, steps, source_image, raw_text_hint)
+      deactivate PREP
+
+      FP -> CACHE       : persist_preview_artifact(file, ctx, source_path)
+      activate CACHE
+      CACHE -> STORE    : persist_preview_image(stem, source_path)
+      activate STORE
+      STORE -> EXT      : shutil.copy2 if source ≠ target
+      STORE --> CACHE   :
+      deactivate STORE
+      CACHE -> REPO     : record_preview_artifact(…)
+      activate REPO
+      REPO --> CACHE    :
+      deactivate REPO
+      CACHE --> FP      :
+      deactivate CACHE
+
+      alt text input (TXT file)
+        FP -> FP        : raw_text = raw_text_hint (OCR skipped)
+      else image/PDF input
+        FP -> STAGES    : OCRStageService.run_pages(ocr_inputs, language)
+        activate STAGES
+        STAGES -> EXT   : call OCR engine / LLM
+        STAGES --> FP   : page_texts
+        deactivate STAGES
+        FP -> CACHE     : record_ocr(file, ctx, raw_text, …)
+        activate CACHE
+        CACHE -> REPO   : record_ocr_result(…) → save JSON
+        activate REPO
+        REPO --> CACHE  :
+        deactivate REPO
+        CACHE --> FP    :
+        deactivate CACHE
+      end
+      FP -> FP          : emit on_ocr_done
+    end
+
+    opt anonymization enabled and not cached
+      FP -> STAGES      : anonymizer.anonymize(raw_text, language)
+      activate STAGES
+      STAGES -> EXT     : spaCy NER / regex
+      STAGES --> FP     : anonymized_text
+      deactivate STAGES
+      FP -> CACHE       : record_anonymization(…)
+      activate CACHE
+      CACHE -> REPO     : record_anonymization_result(…) → save JSON
+      activate REPO
+      REPO --> CACHE    :
+      deactivate REPO
+      CACHE --> FP      :
+      deactivate CACHE
+    end
+
+    opt correction enabled and not cached
+      FP -> STAGES      : correction.correct(raw_text, language)
+      activate STAGES
+      STAGES -> EXT     : LLM call
+      STAGES --> FP     : (correction_text, warning | None)
+      deactivate STAGES
+      note right FP     : non-None warning appended\nto ProcessingResult.warnings
+      FP -> CACHE       : record_correction(…)
+      activate CACHE
+      CACHE -> REPO     : record_correction_result(…) → save JSON
+      activate REPO
+      REPO --> CACHE    :
+      deactivate REPO
+      CACHE --> FP      :
+      deactivate CACHE
+    end
+
+    opt evaluation enabled and not cached
+      FP -> STAGES      : evaluation.evaluate(correction_text, language)
+      activate STAGES
+      STAGES -> EXT     : LLM call
+      STAGES --> FP     : (evaluation_text, warning | None)
+      deactivate STAGES
+      note right FP     : non-None warning appended\nto ProcessingResult.warnings
+      FP -> CACHE       : record_evaluation(…)
+      activate CACHE
+      CACHE -> REPO     : record_evaluation_result(…) → save JSON
+      activate REPO
+      REPO --> CACHE    :
+      deactivate REPO
+      CACHE --> FP      :
+      deactivate CACHE
+    end
+
+    opt DOCX output enabled
+      FP -> OUT         : write_docx(raw_text, corrected_text, out_path, …)
+      activate OUT
+      OUT -> EXT        : write .docx file
+      OUT --> FP        :
+      deactivate OUT
+    end
+
+    FP -> FP            : emit on_file_done\n(source_id, ok, preview_img, raw_text, …)
+    FP --> COORD        :
+    deactivate FP
+  end
+
+  COORD --> PIPE        :
+  deactivate COORD
+  PIPE --> SVC          : exit code (0 = all ok, 1 = any failure)
+  deactivate PIPE
+  SVC --> WORKER        : return code
+  deactivate SVC
+  WORKER -> WORKER      : emit finished_with_code(code)
+  deactivate WORKER
+end
+
+group GUI thread (signal handlers)
+  activate WIN
+  WORKER -> WIN         : file_started → ResultsTable.mark_processing(source_id)
+  WORKER -> WIN         : ocr_done → PreviewPanel.update_ocr_preview(source_id)\n               if row selected
+  WORKER -> WIN         : file_done → ResultsTable.add_result(…)\n             + PreviewPanel.update if row selected
+  WORKER -> WIN         : finished_with_code → re-enable Run button\n                       cleanup preview temp dirs
+  deactivate WIN
+end
+
+@enduml

@@ -1,0 +1,93 @@
+module(
+    name = "ocr",
+    version = "0.0.0",
+    compatibility_level = 1,
+)
+
+bazel_dep(
+    name = "rules_python",
+    version = "1.8.5",
+)
+
+bazel_dep(
+    name = "buildifier_prebuilt",
+    version = "8.2.1.1",
+    dev_dependency = True,
+)
+bazel_dep(
+    name = "aspect_rules_lint",
+    version = "2.6.0",
+    dev_dependency = True,
+)
+
+# Pin ruff/ty explicitly so the linter version is visible and reproducible
+# instead of being whatever aspect_rules_lint's @multitool happens to bundle.
+# Versions/hashes live in //third_party/lint:tools.bzl (ruff 0.15.13, ty 0.0.37).
+# Bazel is the single lint entry point — see CLAUDE.md.
+lint_tools = use_extension("//third_party/lint:tools.bzl", "lint_tools", dev_dependency = True)
+use_repo(
+    lint_tools,
+    "ruff_linux_aarch64",
+    "ruff_linux_x86_64",
+    "ruff_macos_aarch64",
+    "ruff_macos_x86_64",
+    "ruff_windows_x86_64",
+    "ty_linux_aarch64",
+    "ty_linux_x86_64",
+    "ty_macos_aarch64",
+    "ty_macos_x86_64",
+    "ty_windows_x86_64",
+)
+
+bazel_dep(name = "rules_jvm_external", version = "6.10")
+bazel_dep(name = "rules_java", version = "8.14.0")
+
+python = use_extension("@rules_python//python/extensions:python.bzl", "python")
+python.toolchain(
+    configure_coverage_tool = True,
+    is_default = True,
+    python_version = "3.12",
+)
+
+# Dev-only pip hub: tools required for linting (pylint and deps).
+pip_dev = use_extension(
+    "@rules_python//python/extensions:pip.bzl",
+    "pip",
+    dev_dependency = True,
+)
+pip_dev.parse(
+    hub_name = "ocr_dev_dependencies",
+    python_version = "3.12",
+    requirements_lock = "//:requirements_dev_lock.txt",
+)
+use_repo(pip_dev, "ocr_dev_dependencies")
+
+# Test pip hub: runtime subset + pytest, used by //tests:unit_tests.
+pip_test = use_extension(
+    "@rules_python//python/extensions:pip.bzl",
+    "pip",
+    dev_dependency = True,
+)
+pip_test.parse(
+    hub_name = "ocr_test_dependencies",
+    python_version = "3.12",
+    requirements_lock = "//:requirements_test_lock.txt",
+)
+use_repo(pip_test, "ocr_test_dependencies")
+
+maven = use_extension("@rules_jvm_external//:extensions.bzl", "maven")
+maven.install(
+    name = "blueprint_maven_dependencies",
+    artifacts = [
+        "net.sourceforge.plantuml:plantuml:1.2025.9",
+    ],
+    repositories = ["https://repo1.maven.org/maven2"],
+)
+use_repo(maven, "blueprint_maven_dependencies")
+
+bazel_dep(name = "trlc", version = "0.0.0")
+git_override(
+    module_name = "trlc",
+    commit = "08ff8c7d6c362153392003c671a9799a446b0db5",
+    remote = "https://github.com/bmw-software-engineering/trlc.git",
+)

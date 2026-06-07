@@ -1,0 +1,181 @@
+name: Reusable Build Artifacts
+
+on:
+  workflow_call:
+    inputs:
+      artifact_prefix:
+        description: "Prefix for uploaded artifact names"
+        required: false
+        type: string
+        default: "teachers-teammate"
+      retention_days:
+        description: "Retention days for uploaded artifacts"
+        required: false
+        type: number
+        default: 14
+      version:
+        description: "Optional version used for installer file names (e.g. v1.2.3 or 1.2.3)"
+        required: false
+        type: string
+        default: ""
+      publish_release_assets:
+        description: "Publish installers to a GitHub Release"
+        required: false
+        type: boolean
+        default: false
+      release_tag:
+        description: "Release tag to publish against when publish_release_assets is true"
+        required: false
+        type: string
+        default: ""
+      skip_artifact_upload:
+        description: "Skip uploading build outputs to the artifact store"
+        required: false
+        type: boolean
+        default: false
+
+jobs:
+  build-package:
+    name: Build & Package (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: write
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            artifact: linux
+          - os: windows-latest
+            artifact: windows
+          - os: macos-latest
+            artifact: macos
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Resolve package version
+        id: version
+        shell: bash
+        run: |
+          RAW="${{ inputs.version }}"
+          CLEAN="${RAW#v}"
+          # Strip pre-release suffix for Windows installer (VIProductVersion requires X.Y.Z.W)
+          WIN="${CLEAN%%-*}"
+          echo "value=${CLEAN}" >> "$GITHUB_OUTPUT"
+          echo "win=${WIN}" >> "$GITHUB_OUTPUT"
+
+      # Stamp the release version into the source tree so the bundled
+      # __version__ (shown in the About dialog) matches the release tag.
+      # Without this the standalone build ships the hardcoded dev version.
+      - name: Stamp release version into source
+        if: inputs.version != ''
+        shell: bash
+        run: python tools/release/stamp_versions.py --version "${{ inputs.version }}"
+
+      - name: Install Qt system libraries (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            libxcb-xinerama0 libxcb-cursor0 libegl1 libgl1 libglib2.0-0
+
+      - name: Install Python dependencies
+        run: |
+          pip install --upgrade pip
+          # Base runtime deps only — optional providers (langchain/spacy/paddle)
+          # are downloaded at runtime by the in-app addon manager, so they are
+          # intentionally not bundled into the standalone binary.
+          pip install -e .
+          pip install "pyinstaller>=6.0"
+
+      - name: Build standalone binaries
+        run: python tools/build/build_standalone.py
+        env:
+          QT_API: pyside6
+
+      - name: Create .deb package (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          if [[ -n "${{ steps.version.outputs.value }}" ]]; then
+            bash tools/packaging/make_deb.sh "${{ steps.version.outputs.value }}"
+          else
+            bash tools/packaging/make_deb.sh
+          fi
+
+      - name: Rename Linux binary (add version + platform suffix)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          VER="${{ steps.version.outputs.value }}"
+          if [[ -n "$VER" ]]; then
+            mv dist/teachers-teammate "dist/teachers-teammate-${VER}-linux"
+          else
+            mv dist/teachers-teammate dist/teachers-teammate-linux
+          fi
+
+      - name: Install NSIS and create installer (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          choco install nsis --no-progress -y
+          # Chocolatey does not update the current process PATH — prepend NSIS manually
+          $env:PATH = "C:\Program Files (x86)\NSIS;$env:PATH"
+          $ver    = "${{ steps.version.outputs.value }}"
+          $winVer = "${{ steps.version.outputs.win }}.0"
+          makensis /DAPP_VERSION="$ver" "/DAPP_VERSION_WIN=$winVer" tools/packaging/windows.nsi
+
+      - name: Create .dmg installer (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          if [[ -n "${{ steps.version.outputs.value }}" ]]; then
+            bash tools/packaging/make_dmg.sh "${{ steps.version.outputs.value }}"
+          else
+            bash tools/packaging/make_dmg.sh
+          fi
+
+      # Platform-specific uploads prevent the macOS onedir intermediate
+      # (dist/teachers-teammate/) from being swept up alongside the .dmg.
+      - name: Upload build artifact (Linux)
+        if: ${{ runner.os == 'Linux' && !inputs.skip_artifact_upload }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.artifact_prefix }}-${{ matrix.artifact }}
+          retention-days: ${{ inputs.retention_days }}
+          path: |
+            dist/teachers-teammate-*linux
+            dist/teachers-teammate_*.deb
+
+      - name: Upload build artifact (Windows)
+        if: ${{ runner.os == 'Windows' && !inputs.skip_artifact_upload }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.artifact_prefix }}-${{ matrix.artifact }}
+          retention-days: ${{ inputs.retention_days }}
+          path: dist/teachers-teammate-*-w64-setup.exe
+
+      - name: Upload build artifact (macOS)
+        if: ${{ runner.os == 'macOS' && !inputs.skip_artifact_upload }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.artifact_prefix }}-${{ matrix.artifact }}
+          retention-days: ${{ inputs.retention_days }}
+          path: dist/teachers-teammate-*-macos.dmg
+
+      - name: Publish GitHub Release assets
+        if: inputs.publish_release_assets
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.release_tag }}
+          files: |
+            dist/teachers-teammate-*linux
+            dist/teachers-teammate_*.deb
+            dist/teachers-teammate-*-w64-setup.exe
+            dist/teachers-teammate-*-macos.dmg

@@ -1,0 +1,29 @@
+@startuml Teacher's Teammate -- Pipeline Steps
+left to right direction
+skinparam defaultFontSize 13
+skinparam shadowing false
+skinparam arrowColor #3949AB
+skinparam roundcorner 10
+
+skinparam rectangle {
+  BackgroundColor #EDF2FF
+  BorderColor #3949AB
+  FontColor #1A237E
+  FontStyle bold
+}
+
+rectangle "Input Selection" as IN
+rectangle "Prepare Images" as PRE
+rectangle "Text Recognition" as OCR
+rectangle "Remove Personal Info\n(optional)" as AN
+rectangle "Proofreading\n(optional)" as CO
+rectangle "Content Review\n(optional)" as EV
+rectangle "Output" as OUT
+
+IN --> PRE
+PRE --> OCR
+OCR --> AN
+AN --> CO
+CO --> EV
+EV --> OUT
+@enduml

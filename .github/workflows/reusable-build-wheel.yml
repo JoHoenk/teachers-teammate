@@ -1,0 +1,72 @@
+name: Reusable Build Wheel
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: "Release version (e.g. v1.2.3 or 1.2.3)"
+        required: true
+        type: string
+      artifact_name:
+        description: "Uploaded artifact name"
+        required: false
+        type: string
+        default: "wheel"
+      retention_days:
+        description: "Retention days for uploaded artifacts"
+        required: false
+        type: number
+        default: 14
+      skip_artifact_upload:
+        description: "Skip uploading wheel to the artifact store"
+        required: false
+        type: boolean
+        default: false
+      publish_release_assets:
+        description: "Upload wheel directly to a GitHub Release"
+        required: false
+        type: boolean
+        default: false
+      release_tag:
+        description: "Release tag to publish against when publish_release_assets is true"
+        required: false
+        type: string
+        default: ""
+
+jobs:
+  build-wheel:
+    name: Build wheel
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Stamp pyproject and Bazel wheel version
+        run: |
+          python tools/release/stamp_versions.py --version "${{ inputs.version }}"
+
+      - name: Build wheel with Bazel
+        run: |
+          bazel build //teachers_teammate:teachers_teammate_wheel
+          mkdir -p dist
+          cp bazel-bin/teachers_teammate/*.whl dist/
+
+      - uses: actions/upload-artifact@v4
+        if: ${{ !inputs.skip_artifact_upload }}
+        with:
+          name: ${{ inputs.artifact_name }}
+          retention-days: ${{ inputs.retention_days }}
+          path: dist/*.whl
+
+      - name: Publish wheel to GitHub Release
+        if: ${{ inputs.publish_release_assets }}
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.release_tag }}
+          files: dist/*.whl

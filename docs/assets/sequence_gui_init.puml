@@ -1,0 +1,59 @@
+@startuml Teacher's Teammate — GUI Initialisation
+
+skinparam defaultFontSize 12
+skinparam sequenceArrowThickness 1
+skinparam sequenceGroupBorderColor #888888
+skinparam sequenceLifeLineBorderColor #555555
+skinparam shadowing false
+skinparam noteBackgroundColor #FFFFDD
+
+participant "OS / Shell"        as OS
+participant "gui/__main__"      as MAIN
+participant "QApplication"      as QAPP
+participant "MainWindow"        as WIN
+participant "AppService"        as SVC
+participant "ConfigPanel"       as CPANEL
+participant "ResultsTable"      as TABLE
+participant "LogWidget\nPreviewPanel" as PANE
+participant "QTimer (500 ms)"   as TIMER
+
+OS -> MAIN             : python -m teachers_teammate.gui
+activate MAIN
+MAIN -> QAPP           : QApplication()
+activate QAPP
+MAIN -> WIN            : build_main_window()
+activate WIN
+
+WIN -> SVC             : ProcessingApplicationService()
+activate SVC
+SVC --> WIN            : service
+deactivate SVC
+WIN -> CPANEL          : ConfigPanel()
+activate CPANEL
+CPANEL --> WIN         :
+deactivate CPANEL
+WIN -> TABLE           : ResultsTable()
+activate TABLE
+TABLE --> WIN          :
+deactivate TABLE
+WIN -> PANE            : LogWidget(), PreviewPanel()
+activate PANE
+PANE --> WIN           :
+deactivate PANE
+WIN -> WIN             : OllamaDownloadManager()\nnote right: manages background\nmodel-pull thread; outlives dialogs
+WIN -> WIN             : connect signals\n(paths_changed → _refresh_queue_from_inputs)
+WIN -> TIMER           : singleShot(500 ms, _check_llm_status)
+WIN -> WIN             : _load_toml_if_present()
+note right WIN         : loads ocr.toml if present\nupdates ConfigPanel
+
+MAIN -> QAPP           : app.exec()   [event loop starts]
+QAPP -> WIN            : show()
+
+TIMER -> WIN           : fire _check_llm_status()
+WIN -> SVC             : check_connection(engine=…, url=…)
+activate SVC
+SVC --> WIN            : (connected, model_ok, message)
+deactivate SVC
+WIN -> WIN             : update status label(s)
+
+@enduml

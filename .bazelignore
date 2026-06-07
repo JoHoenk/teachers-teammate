@@ -1,0 +1,9 @@
+.venv
+.venv-licenses
+.build_venv
+build
+dist
+pyinstaller-work
+bazel-bin
+bazel-out
+bazel-testlogs

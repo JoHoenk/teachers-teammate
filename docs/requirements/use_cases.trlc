@@ -1,0 +1,96 @@
+package OCRQualification
+
+section "Functional Requirements" {
+
+    UseCase Batch_OCR_Processing {
+        description = "As a user I want to process mixed document batches (PDF, image, and text files) so that one run produces text recognition and proofreading results for all supported inputs."
+    }
+
+    UseCase TXT_Ingestion_Without_OCR {
+        description = "As a user I want plain text files to bypass image text recognition so that existing text can still enter the proofreading and content review steps."
+    }
+
+    UseCase Preview_Preprocessing {
+        description = "As a user I want to preview how image preparation affects my documents before a long run so that I can choose the right setting for my scan quality."
+    }
+
+    UseCase Selective_Queue_Execution {
+        description = "As a user I want to run only selected files from the list so that I can process a subset without reprocessing the entire folder."
+    }
+
+    UseCase Stage_Specific_Rerun {
+        description = "As a user I want to re-run text recognition, proofreading, or content review from a chosen step so that only the affected results are updated without repeating earlier work."
+    }
+
+    UseCase Config_Aware_Cache_Reuse {
+        description = "As a user I want previously computed results to be reused when neither the source file nor the relevant settings have changed so that unchanged documents are never processed twice."
+    }
+
+    UseCase Manual_Evaluation_On_Demand {
+        description = "As a user I want to trigger a content review on selected results at any time so that I can review corrected text without reprocessing the full document."
+    }
+
+    UseCase Automatic_Content_Evaluation {
+        description = "As a user I want content review to run automatically as part of a batch run when enabled so that corrected text is scored without a separate on-demand step."
+    }
+
+    UseCase AI_Proofreading_Correction {
+        description = "As a user I want recognised text proofread by an AI model so that spelling and wording are corrected, independently of whether anonymization is enabled."
+    }
+
+    UseCase Multi_Provider_Stage_Configuration {
+        description = "As a user I want to configure text recognition, proofreading, and content review providers independently so that I can combine local and cloud AI models per step."
+    }
+
+    UseCase Manual_Text_Editing {
+        description = "As a user I want to edit the recognised and proofread text directly in the preview panel so that I can fix individual mistakes without reprocessing the document."
+    }
+
+    UseCase PII_Anonymization_Before_Correction {
+        description = "As a user I want personal information (names, e-mails, phone numbers, IBANs) replaced with placeholders before text is sent to a proofreading AI, and restored afterwards, so that sensitive data never leaves my machine while proofreading quality is preserved."
+    }
+
+    UseCase Privacy_Preview_Diff {
+        description = "As a user I want to preview a side-by-side comparison of original versus anonymized text for a file so that I can confirm the right information is hidden before enabling anonymization for a run."
+    }
+
+    UseCase Runtime_Addon_Installation {
+        description = "As a user of a packaged build I want to install optional components (privacy add-on, PaddleOCR, graphics card monitoring) from within the app so that I can enable extra features without using a terminal."
+    }
+
+    UseCase Language_Model_Download {
+        description = "As a user I want to download a language model for personal-information detection from within the app so that anonymization works for my document language without any command-line steps."
+    }
+
+    UseCase DOCX_Report_Export {
+        description = "As a user I want text recognition and proofreading results exported as Word documents — automatically during a run or on demand — so that I can hand off proofread documents in a familiar format."
+    }
+
+    UseCase Service_Availability_Check {
+        description = "As a user I want the app to check whether the text recognition engine and AI providers required by my settings are reachable before I start so that I learn about misconfiguration early."
+    }
+
+    UseCase System_Resource_Monitoring {
+        description = "As a user I want to see live system resource usage and per-file processing times during a run so that I can gauge throughput and spot performance bottlenecks."
+    }
+
+    UseCase Headless_CLI_Batch {
+        description = "As an automation user I want to run the full pipeline from the command line using a settings file so that batch processing can be scripted and reproduced without the graphical interface."
+    }
+
+    UseCase OCR_Benchmark_Run {
+        description = "As a user I want to run a single document through a chosen text-recognition configuration in the benchmark app and store the result so that I can build up a set of outputs to compare."
+    }
+
+    UseCase OCR_Run_History {
+        description = "As a user I want each benchmark run kept as a separate timestamped entry per document, with old entries pruned automatically beyond a recent limit, so that I can revisit and compare earlier results without the history growing without bound."
+    }
+
+    UseCase OCR_Run_Comparison {
+        description = "As a user I want to compare two stored runs of the same document side-by-side — the recognised texts, their differences, and an agreement score — so that I can judge text-recognition quality without a ground-truth transcript."
+    }
+
+    UseCase Benchmark_Run_Deletion {
+        description = "As a user I want to delete individual benchmark runs or clear all runs for a document so that I can keep only the results that matter to me."
+    }
+}

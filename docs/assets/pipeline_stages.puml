@@ -1,0 +1,85 @@
+@startuml Teacher's Teammate -- Processing Pipeline
+top to bottom direction
+skinparam defaultFontSize 11
+skinparam shadowing false
+skinparam arrowColor #555555
+
+skinparam package {
+  BackgroundColor #F5F5F5
+  BorderColor #9E9E9E
+  FontColor #1A237E
+  FontStyle bold
+  Padding 8
+}
+
+skinparam component {
+  BackgroundColor #FFFFFF
+  BorderColor #90A4AE
+  FontSize 10
+}
+
+skinparam component<<local>> {
+  BackgroundColor #E8F5E9
+  BorderColor #388E3C
+  FontSize 10
+}
+
+skinparam component<<cloud>> {
+  BackgroundColor #E3F2FD
+  BorderColor #1565C0
+  FontSize 10
+}
+
+' Stage 1: Input
+package "1  Input" as S_IN {
+  component "PDF · JPG / PNG · TXT" as IN <<local>>
+}
+
+' Stage 2: Image Preparation
+package "2  Image Preparation  (local)" as S_PRE {
+  component "Grayscale · Adaptive Threshold · CLAHE · None" as PRE <<local>>
+}
+
+' Stage 3: Text Recognition (OCR)
+package "3  Text Recognition (OCR)" as S_OCR {
+  component "Ollama vision model  (local) -- recommended" as OCR_OL <<local>>
+  component "Tesseract · PaddleOCR  (local) -- alternative engines" as OCR_ALT <<local>>
+  component "Cloud vision model  (cloud)" as OCR_CL <<cloud>>
+}
+
+' Stage 4: Remove Personal Information (optional)
+package "4  Remove Personal Information  (local · optional)" as S_AN {
+  component "AI name detection (spaCy) + pattern matching\n(names · e-mail · phone · IBAN)" as AN <<local>>
+}
+
+' Stage 5: Proofreading (optional)
+package "5  Proofreading  (optional)" as S_CO {
+  component "Ollama  (local)" as CO_OL <<local>>
+  component "Cloud Provider  (cloud)\n(OpenAI · Anthropic · Google · others)" as CO_CLD <<cloud>>
+}
+
+' Stage 6: Content Review (optional)
+package "6  Content Review  (optional)" as S_EV {
+  component "Ollama  (local)" as EV_OL <<local>>
+  component "Cloud Provider  (cloud)\n(OpenAI · Anthropic · Google · others)" as EV_CLD <<cloud>>
+}
+
+' Stage 7: Output
+package "7  Output" as S_OUT {
+  component "Word Document (.docx)" as OUT <<local>>
+}
+
+' Pipeline flow
+S_IN  -down-> S_PRE
+S_PRE -down-> S_OCR
+S_OCR -down-> S_AN  : optional
+S_AN  -down-> S_CO
+S_CO  -down-> S_EV  : optional
+S_EV  -down-> S_OUT
+
+legend right
+  <back:#E8F5E9>local</back>  runs on your computer -- no internet required
+  <back:#E3F2FD>cloud</back>  requires an internet connection and access key
+endlegend
+
+@enduml

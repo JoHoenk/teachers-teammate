@@ -1,0 +1,28 @@
+/*
+ * sphinxcontrib-plantuml svg_inline output embeds the SVG directly in the
+ * DOM inside a <p> or figure element.  Large diagrams (sequence, component)
+ * overflow the content column and break the layout.
+ *
+ * Strategy:
+ *   - Give every figure (plantuml diagrams always land in a figure) a
+ *     horizontal scrollbar when its content is wider than the column.
+ *   - Let the SVG keep its natural width so text stays readable; only
+ *     max it out at 100% when it is smaller than the column.
+ */
+
+figure {
+    overflow-x: auto;
+    max-width: 100%;
+}
+
+figure svg,
+p > svg {
+    display: block;
+    max-width: 100%;
+    height: auto;
+    margin: 0 auto;
+}
+
+figure a img {
+    cursor: zoom-in;
+}

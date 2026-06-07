@@ -1,0 +1,6 @@
+# Use remote JDKs so Java-dependent targets (for example docs tooling) do not
+# require a system JAVA_HOME to be configured.
+build --java_runtime_version=remotejdk_17
+test --java_runtime_version=remotejdk_17
+build --tool_java_runtime_version=remotejdk_17
+test --tool_java_runtime_version=remotejdk_17

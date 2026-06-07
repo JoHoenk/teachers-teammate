@@ -1,0 +1,71 @@
+@startuml Teacher's Teammate — Open Input Folder
+
+skinparam defaultFontSize 12
+skinparam sequenceArrowThickness 1
+skinparam sequenceGroupBorderColor #888888
+skinparam sequenceLifeLineBorderColor #555555
+skinparam shadowing false
+skinparam noteBackgroundColor #FFFFDD
+
+participant "User"              as USER
+participant "ConfigPanel"       as CPANEL
+participant "MainWindow"        as WIN
+participant "AppService"        as SVC
+participant "FileDiscovery"     as DISC
+participant "StateRepository"   as REPO
+participant "FileSystem"        as FS
+participant "ResultsTable"      as TABLE
+
+USER -> CPANEL         : type or browse to input folder
+activate CPANEL
+CPANEL -> WIN          : paths_changed signal
+deactivate CPANEL
+
+activate WIN
+WIN -> WIN             : _refresh_queue_from_inputs()
+WIN -> SVC             : collect_input_files(config)
+activate SVC
+SVC -> DISC            : collect_input_files(config)
+activate DISC
+DISC -> FS             : scan input_dir (recursive if set)
+activate FS
+FS --> DISC            : matching file paths
+deactivate FS
+DISC --> SVC           : sorted list[Path]
+deactivate DISC
+SVC --> WIN            : list[Path]
+deactivate SVC
+
+WIN -> TABLE           : set_queue(file_names, source_ids)
+activate TABLE
+note right TABLE       : queue rows shown with grey "pending" state
+TABLE --> WIN          :
+deactivate TABLE
+
+WIN -> SVC             : load_views(config, files)
+activate SVC
+SVC -> REPO            : load_views(files)
+activate REPO
+loop for each file
+  REPO -> FS           : read {stem}_{hash}.json
+  activate FS
+  FS --> REPO          : DocumentState JSON (or absent)
+  deactivate FS
+  REPO -> REPO         : validate schema, source hash, file existence
+end
+REPO --> SVC           : dict[source_id → DocumentStateView]
+deactivate REPO
+SVC --> WIN            : dict[source_id → DocumentStateView]
+deactivate SVC
+
+loop for each file with valid cached state
+  WIN -> TABLE         : mark_cached(source_id, preview_img,\nraw_text, correction_text,\nocr_done, correction_done)
+  activate TABLE
+  TABLE --> WIN        :
+  deactivate TABLE
+end
+
+WIN -> WIN             : update progress bar\n"Found N file(s) — select rows and press Run"
+deactivate WIN
+
+@enduml

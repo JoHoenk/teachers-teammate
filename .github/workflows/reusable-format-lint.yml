@@ -1,0 +1,25 @@
+name: Reusable Format and Lint
+
+on:
+  workflow_call:
+
+jobs:
+  lint:
+    name: Format & Lint
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Bazel cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/bazel
+          key: bazel-lint-${{ runner.os }}-${{ hashFiles('MODULE.bazel', 'third_party/**') }}
+          restore-keys: bazel-lint-${{ runner.os }}-
+
+      - name: Check formatting
+        run: bazel run //:format.check
+
+      - name: Run Python linters
+        run: bazel test //:lint --test_output=errors

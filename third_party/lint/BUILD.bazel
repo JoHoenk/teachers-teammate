@@ -1,0 +1,44 @@
+load("@rules_python//python/entry_points:py_console_script_binary.bzl", "py_console_script_binary")
+
+# Pylint binary from the pip hub. Pylint and its deps come from the `dev` extra
+# in pyproject.toml (compiled into requirements_dev_lock.txt).
+py_console_script_binary(
+    name = "pylint",
+    pkg = "@ocr_dev_dependencies//pylint:pkg",
+    visibility = ["//visibility:public"],
+    deps = [
+        "@ocr_dev_dependencies//astroid:pkg",
+        "@ocr_dev_dependencies//dill:pkg",
+        "@ocr_dev_dependencies//isort:pkg",
+        "@ocr_dev_dependencies//mccabe:pkg",
+        "@ocr_dev_dependencies//platformdirs:pkg",
+        "@ocr_dev_dependencies//tomlkit:pkg",
+    ],
+)
+
+# Host-platform ruff/ty binaries, pinned via //third_party/lint:tools.bzl.
+# linters.bzl points the ruff/ty aspects at these so the version is explicit and
+# identical between local Bazel and CI.
+alias(
+    name = "ruff",
+    actual = select({
+        "@bazel_tools//src/conditions:linux_x86_64": "@ruff_linux_x86_64//:ruff",
+        "@bazel_tools//src/conditions:linux_aarch64": "@ruff_linux_aarch64//:ruff",
+        "@bazel_tools//src/conditions:darwin_arm64": "@ruff_macos_aarch64//:ruff",
+        "@bazel_tools//src/conditions:darwin_x86_64": "@ruff_macos_x86_64//:ruff",
+        "@bazel_tools//src/conditions:windows_x64": "@ruff_windows_x86_64//:ruff.exe",
+    }),
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "ty",
+    actual = select({
+        "@bazel_tools//src/conditions:linux_x86_64": "@ty_linux_x86_64//:ty",
+        "@bazel_tools//src/conditions:linux_aarch64": "@ty_linux_aarch64//:ty",
+        "@bazel_tools//src/conditions:darwin_arm64": "@ty_macos_aarch64//:ty",
+        "@bazel_tools//src/conditions:darwin_x86_64": "@ty_macos_x86_64//:ty",
+        "@bazel_tools//src/conditions:windows_x64": "@ty_windows_x86_64//:ty.exe",
+    }),
+    visibility = ["//visibility:public"],
+)

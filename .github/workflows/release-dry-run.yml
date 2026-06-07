@@ -1,0 +1,32 @@
+name: Release Dry Run
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version — use v1.0.0-rc (or -pre, -alpha) for a pre-release dry run"
+        required: true
+        type: string
+
+jobs:
+  lint:
+    uses: ./.github/workflows/reusable-format-lint.yml
+
+  test:
+    uses: ./.github/workflows/reusable-tests.yml
+
+  build-wheel:
+    needs: [lint, test]
+    uses: ./.github/workflows/reusable-build-wheel.yml
+    with:
+      version: ${{ inputs.version }}
+      skip_artifact_upload: true
+
+  build-standalone:
+    needs: [lint, test]
+    permissions:
+      contents: write
+    uses: ./.github/workflows/reusable-build-artifacts.yml
+    with:
+      version: ${{ inputs.version }}
+      skip_artifact_upload: true

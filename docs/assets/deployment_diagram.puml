@@ -1,0 +1,76 @@
+@startuml Teacher's Teammate — Deployment Diagram (Layered Runtime)
+top to bottom direction
+
+skinparam defaultFontSize 12
+skinparam nodeBorderColor #555555
+skinparam componentBorderColor #555555
+skinparam arrowColor #333333
+skinparam shadowing false
+skinparam noteBackgroundColor #FFFFDD
+
+node "User's Machine" as LOCAL {
+  package "Presentation" {
+    component "CLI / GUI Adapters" as PRES
+    component "GUI Worker Thread" as WORKER
+  }
+
+  package "Application" {
+    component "ProcessingApplicationService\n+ Application Commands" as APP
+  }
+
+  package "Domain  (policy kernel — no I/O)" {
+    component "Stage semantics\n+ Freshness & invalidation policy" as DOMAIN
+  }
+
+  package "Infrastructure" {
+    component "Pipeline Orchestrator\n+ Workflow Services" as WORKFLOW
+    component "StateRepository\n(per-file JSON cache)" as STATE
+    component "PreviewImageStore\n(preview images)" as ART
+    node "Local OCR Engines" as LOCAL_OCR {
+      component "Tesseract OCR" as TESS
+      component "PaddleOCR" as PADDLE
+    }
+  }
+
+  folder "Input (PDF / PNG / JPG / TXT)" as IN_FILES
+  folder "Output (.docx + artifacts + state cache)" as OUT_FILES
+}
+
+node "Ollama Server\n(localhost or LAN)" as OLLAMA_HOST {
+  component "REST API" as OLLAMA_API
+  database "Vision/OCR models" as OCR_MDL
+  database "Correction/Eval models" as CORR_MDL
+  OLLAMA_API --> OCR_MDL
+  OLLAMA_API --> CORR_MDL
+}
+
+note right of OLLAMA_HOST
+  No documents leave
+  the local network
+  when only local engines
+  and Ollama are used.
+end note
+
+cloud "Cloud LLM APIs\n(optional)" as CLOUD {
+  component "OpenAI / Anthropic\nGoogle / Mistral / Cohere" as PROVIDERS
+}
+
+' Control flow
+PRES   --> APP      : run / rerun / edit intents
+WORKER --> APP      : async command execution
+
+' Application consults domain policy and delegates to infrastructure
+APP --> DOMAIN   : stage order, freshness rules
+APP --> WORKFLOW : orchestrate pipeline
+
+' Infrastructure does all I/O
+WORKFLOW --> STATE        : load / save / invalidate state
+STATE    --> DOMAIN       : apply invalidation rules
+WORKFLOW --> ART          : persist preview artifacts
+WORKFLOW --> LOCAL_OCR    : local OCR path
+WORKFLOW --> OLLAMA_API   : OCR / correction / evaluation HTTP
+WORKFLOW --> CLOUD        : optional correction / evaluation HTTPS
+WORKFLOW --> IN_FILES     : read sources
+WORKFLOW --> OUT_FILES    : write DOCX + text artifacts
+
+@enduml

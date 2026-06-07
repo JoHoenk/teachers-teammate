@@ -1,0 +1,298 @@
+# pyproject.toml — project metadata, build system, linting & formatting
+
+[project]
+name = "teachers-teammate"
+dynamic = ["version"]
+description = "OCR pipeline for handwritten documents"
+readme = "README_wheel.md"
+requires-python = ">=3.12"
+license = { text = "Apache-2.0" }
+dependencies = [
+    "PySide6>=6.7",
+    "qdarkstyle>=3.2",
+    "psutil>=5.9",
+    "requests>=2.32",
+    "opencv-python>=4.9",
+    "pypdfium2>=4.0",
+    "numpy>=1.26",
+    "python-docx>=1.1,<2",
+    "lxml>=4.9",
+    "Pillow>=10",
+    "platformdirs>=4.0",
+    "ollama>=0.4",
+]
+
+[project.optional-dependencies]
+llm = [
+    "langchain-core>=0.3",
+    "langchain-ollama>=0.2",
+    "langchain-openai>=0.2",
+    "langchain-anthropic>=0.1",
+    "langchain-google-genai>=2.0",
+    "langchain-mistralai>=0.1",
+    "mistralai>=1.0",
+    "langchain-cohere>=0.1",
+]
+privacy = [
+    "spacy>=3.7",
+    # GPU acceleration for spaCy NER via cupy — install one matching your CUDA version:
+    #   pip install "spacy[cuda12x]"   # CUDA 12.x
+    #   pip install "spacy[cuda11x]"   # CUDA 11.x
+    # Or use the build script:  SPACY_GPU=1 CUDA_VER=12x ./packaging/build_frozen.sh
+]
+paddle = [
+    # CPU build (works on all machines, no CUDA required)
+    "paddlepaddle>=3.0",
+    "paddleocr>=2.9",
+    # GPU build (requires CUDA toolkit on the machine):
+    #   pip install paddlepaddle-gpu paddleocr
+    # Or use the build script:  PADDLE_GPU=1 CUDA_VER=12x ./packaging/build_frozen.sh
+    # See: https://www.paddlepaddle.org.cn/install/quick
+]
+
+# ── Tooling extras ──────────────────────────────────────────────────────────
+# These are the single source of truth for the lin/test toolchains. The Bazel
+# lock files are compiled from them via `bazel run //:requirements_{dev,test}.update`
+# (see //BUILD). Installing the extra also pulls the base runtime deps, so a
+# `pip install -e ".[test]"` env can run the full suite.
+test = [
+    "pytest>=8.3",
+    "pytest-mock>=3.14",
+    "pytest-qt>=4.4",
+    # Optional runtime deps the unit/correction tests exercise directly.
+    "langchain-core>=0.3",
+    "pytesseract>=0.3",
+]
+dev = [
+    # Lint / static analysis
+    "pylint>=4.0",
+    # Test tooling (pytest-qt etc. come via the [test] extra below)
+    "pytest>=8.3",
+    "pytest-mock>=3.14",
+    "pytest-cov>=6.0",
+    # Build / release helpers
+    "tomlkit",
+    "dill",
+    "pip-licenses>=5.0",
+    # Sphinx documentation
+    "sphinx>=8.0",
+    "furo>=2024.8",
+    "myst-parser>=4.0",
+    "sphinxcontrib-plantuml>=0.30",
+]
+
+[project.scripts]
+teachers-teammate = "teachers_teammate.cli:main"
+teachers-teammate-gui = "teachers_teammate.gui:main_gui"
+teachers-teammate-benchmark = "teachers_teammate.gui.benchmark:main_benchmark"
+
+[build-system]
+requires = ["setuptools>=70", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["teachers_teammate*"]
+
+[tool.setuptools.dynamic]
+version = { attr = "teachers_teammate.__version__" }
+
+# ── Tool configuration ─────────────────────────────────────────────────────
+#
+# Tools configured here:
+#   ruff   — fast linter + formatter (replaces flake8, isort, black)
+#   pylint — deep static analysis
+#   ty     — Rust-based type checker (replaces mypy)
+#
+# Compatible with aspect-build/rules_lint which honours these standard config
+# files when running linters under Bazel.
+# See: https://github.com/aspect-build/rules_lint
+
+# ── ruff ──────────────────────────────────────────────────────────────────
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # pyflakes
+    "I",    # isort import ordering
+    "UP",   # pyupgrade — modernise syntax
+    "B",    # flake8-bugbear — likely bugs
+    "C4",   # flake8-comprehensions — cleaner comprehensions
+    "BLE",  # flake8-blind-except — avoid bare except
+    "PT",   # flake8-pytest-style
+    "RUF",  # ruff-specific rules
+    "SLF",  # flake8-self — flag private-member access (noqa where needed)
+    "ARG",  # flake8-unused-arguments — catch unused params in production code
+    "PLC",  # pylint convention
+    "PLR",  # pylint refactor
+    "PLW",  # pylint warning
+]
+ignore = [
+    "E501",    # line-length: enforced by the formatter instead
+    "PLR2004", # magic-value-comparison: sensor thresholds, UI sizes, and Qt flags in this codebase are self-documenting
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = [
+    "F401",    # Tests frequently import symbols in local scenarios and monkeypatch chains.
+    "I001",    # Local import placement in Given/When/Then tests is intentional.
+    "ARG",     # pytest fixtures are declared as args and injected by name; unused declarations are intentional.
+    "PLW0108", # Lambda callbacks keep signal assertions compact in GUI tests.
+    "PT018",   # Some assertions intentionally bundle state+truthiness checks.
+    "RUF059",  # Unused unpacked values are acceptable in negative-path checks.
+    "SLF001",  # Tests intentionally touch private members to validate behavior.
+]
+
+[tool.ruff.lint.pylint]
+# Match the design limits configured for pylint so only one tool reports violations.
+max-branches = 15
+max-returns = 9
+max-args = 8
+
+[tool.ruff.lint.isort]
+known-first-party = ["teachers_teammate"]
+force-sort-within-sections = true
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "auto"
+docstring-code-format = true
+
+# ── pylint ────────────────────────────────────────────────────────────────
+
+[tool.pylint.main]
+py-version = "3.12"
+jobs = 0                         # auto-detect CPU count
+recursive = true
+source-roots = ["."]
+
+[tool.pylint.typecheck]
+generated-members = ["cv2.*"]
+extension-pkg-allow-list = ["PySide6", "shiboken6", "lxml"]
+# E0401 (import-error) is active so pylint still catches first-party import typos
+# (ty can't — its `unresolved-import` is globally ignored). pylint resolves imports
+# by importing them in its own dev-hub environment, which lacks the runtime packages
+# below, so list them as importable. This keeps E0401 meaningful for first-party /
+# stdlib imports while tolerating the third-party ones pylint can't load.
+ignored-modules = [
+    # Runtime deps present in the typecheck lock but NOT in pylint's dev-hub env.
+    "PySide6",
+    "qdarkstyle",
+    "PIL",
+    "cv2",
+    "docx",
+    "langchain_core",
+    "lxml",
+    "ollama",
+    "pypdfium2",
+    "spacy",
+    # Test-only imports not in pylint's binary env.
+    "pytest",
+    # Optional extras intentionally absent from every lock (lazy-imported).
+    "langchain_openai",
+    "langchain_ollama",
+    "langchain_anthropic",
+    "langchain_google_genai",
+    "langchain_mistralai",
+    "langchain_cohere",
+    "mistralai",
+    "openai",
+    "google.generativeai",
+    "paddle",
+    "paddleocr",
+    "pynvml",
+    "pyamdgpuinfo",
+]
+
+[tool.pylint.messages_control]
+disable = [
+    # ── Whole categories delegated to ruff ────────────────────────────────
+    # ruff PLC / PLR / PLW mirror pylint C / R / W checks exactly.
+    # Running both would double-report the same violation, so pylint's
+    # convention and refactor categories are suppressed here; ruff owns them.
+    "C",      # convention  → ruff E/W/I/UP/PLC
+    "R",      # refactor    → ruff PLR
+    # ── Specific suppressions — ruff owns the equivalent check ────────────
+    "W0212",  # protected-access       → ruff SLF001 (per-line noqa in docx_builder)
+    "W0718",  # broad-exception-caught → ruff BLE001 (per-line noqa throughout)
+    "W0108",  # unnecessary-lambda     → ruff PLW0108 (per-file-ignore in tests)
+    "W0611",  # unused-import          → ruff F401    (per-file-ignore in tests)
+    "W0612",  # unused-variable        → ruff F841
+    "W0613",  # unused-argument        → ruff ARG     (per-file-ignore in tests; per-line noqa where needed in production)
+    # ── Specific suppressions — no ruff equivalent; scoped to test files ──
+    # W0404 (reimported), W0621 (redefined-outer-name) fire on standard pytest
+    # fixture patterns; suppressed per test file via inline pylint: disable comments.
+]
+
+[tool.pylint.basic]
+const-rgx = "[_A-Z][A-Z0-9_]*|__[a-z]+__"
+
+[tool.pylint.classes]
+# The main window's __init__ delegates per-window attribute setup to
+# _init_runtime_state() (keeping __init__ under the statement limit). Treat that
+# helper like __init__ so the attributes it declares are not flagged W0201
+# (attribute-defined-outside-init).
+defining-attr-methods = [
+    "__init__",
+    "__new__",
+    "setUp",
+    "asyncSetUp",
+    "__post_init__",
+    "_init_runtime_state",
+]
+
+[tool.pylint.format]
+max-line-length = 100
+
+[tool.pylint.design]
+max-args = 8
+max-positional-arguments = 6
+max-attributes = 16
+max-bool-expr = 6
+
+[tool.pylint.similarities]
+min-similarity-lines = 8
+ignore-imports = true
+
+# ── ty ────────────────────────────────────────────────────────────────────
+# Astral's Rust-based type checker (successor to mypy in this project).
+# https://docs.astral.sh/ty/
+
+[tool.ty.environment]
+python-version = "3.12"
+
+[tool.ty.rules]
+# The runtime packages ARE resolved under Bazel (see //teachers_teammate:*_typed),
+# but the optional extras (LLM providers, PaddleOCR, GPU libs) are intentionally
+# left out of the typecheck lock, so their lazy imports stay unresolved — tolerate
+# that rather than pin every optional dependency.
+unresolved-import = "ignore"
+# PySide6 stubs use positional 'a0'/'a1' parameter names that differ from our
+# descriptive names; suppress the Liskov-violation noise project-wide.
+invalid-method-override = "ignore"
+
+# Tests legitimately reach into Optional widget accessors (`table.item(r, c)`,
+# `dlg.tabWidget()`) without None-guards — the same latitude the ruff SLF001
+# per-file-ignore grants. Scope this to the test tree only.
+[[tool.ty.overrides]]
+include = ["tests/**"]
+
+[tool.ty.overrides.rules]
+unresolved-attribute = "ignore"
+
+# ── pytest ────────────────────────────────────────────────────────────────
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-v --tb=short"
+markers = [
+    "needs_tesseract: requires the tesseract binary on PATH",
+    "needs_ollama: requires a running Ollama instance",
+    "gui: exercises PySide6 widgets/event loop",
+    "use_case: links test to a named use case from use_cases.trlc",
+]

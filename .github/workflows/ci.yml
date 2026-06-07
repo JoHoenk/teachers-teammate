@@ -1,0 +1,14 @@
+name: CI
+
+on:
+  push:
+    branches: ["main"]
+    tags: ["v*"]
+  pull_request:
+
+jobs:
+  lint:
+    uses: ./.github/workflows/reusable-format-lint.yml
+
+  test:
+    uses: ./.github/workflows/reusable-tests.yml

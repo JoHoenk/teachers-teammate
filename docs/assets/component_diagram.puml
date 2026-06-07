@@ -1,0 +1,122 @@
+@startuml Teacher's Teammate — Layered Component Architecture
+top to bottom direction
+
+skinparam componentStyle rectangle
+skinparam defaultFontSize 12
+skinparam packageBorderColor #888888
+skinparam interfaceBorderColor #336699
+skinparam componentBorderColor #555555
+skinparam arrowColor #333333
+skinparam shadowing false
+
+package "Presentation Layer" {
+  [CLI Adapter\n(cli.py)] as P_CLI
+  [GUI MainWindow] as P_GUI
+  [GUI Worker / Threads] as P_WORKER
+  [GUI Widgets\n(settings, results, preview)] as P_WIDGETS
+  [Benchmark Window + Worker\n(gui/benchmark/)] as P_BENCH
+  [Shared GUI widgets\n(OcrConfigSelector / CompareView / RunsList)] as P_SHARED
+}
+
+package "Application Layer" {
+  [ProcessingApplicationService\n(service.py)] as A_SERVICE
+  [Application Commands\n(commands.py)] as A_CMD
+  [BenchmarkApplicationService\n(benchmark_service.py)] as A_BENCH
+}
+
+package "Domain Layer  (pure functions — no I/O)" {
+  [Stage semantics\n(stages.py)] as D_STAGES
+  [Freshness & invalidation policy\n(freshness.py)] as D_FRESH
+  [Benchmark metrics\n(benchmark.py)] as D_BENCH
+}
+
+package "Infrastructure Layer" {
+  package "Workflow" {
+    [Pipeline Orchestrator\n(OCRPipeline / pipeline.py)] as I_PIPELINE
+    [run_files()\n(coordinator.py)] as I_COORD
+    [FileProcessor] as I_FP
+    [CacheReconciliationService] as I_CACHE
+    [PreprocessService] as I_PREP
+    [OCRStageService] as I_STAGES
+  }
+  [StageBuilder\n(stage_builder.py)] as I_BUILDER
+  [Benchmark runner\n(benchmark/runner.py — OCR only)] as I_BRUN
+  [StateRepository\n(per-file JSON cache — overwrite, no expiry)] as I_STATE
+  [BenchmarkRunStore\n(append-only run history — keep-last-N)] as I_RUNSTORE
+  [PreviewImageStore\n(preview images + intermediates)] as I_ART
+  [FileDiscovery] as I_DISC
+  [LLM Factory + Provider Registry\n(llm_factory.py, providers/)] as I_LLM
+  [OCR Adapters\n(Ollama / Tesseract / Paddle / LangChain)] as I_OCR
+  [Correction & Evaluation Adapters\n(LangChain)] as I_CORR_EVAL
+  [DOCX Adapter\n(DocxDocumentCreator)] as I_DOCX
+}
+
+note bottom of I_RUNSTORE
+  Two distinct stores: the pipeline **cache**
+  (latest result per (output_dir, path), overwritten)
+  vs the benchmark **run store**
+  (append-only history per document hash).
+  The OCR slice both vary is **Config.ocr** (OcrConfig).
+end note
+
+' Shared ABCs defined in interfaces.py at root — implemented by infrastructure
+interface "OCRProcessor" as PORT_OCR
+interface "Corrector" as PORT_CORR
+interface "ImagePreprocessor" as PORT_PRE
+interface "DocumentCreator" as PORT_DOC
+interface "InputProvider" as PORT_IN
+
+' Presentation → Application
+P_CLI --> A_SERVICE
+P_GUI --> A_SERVICE
+P_WORKER --> A_SERVICE
+P_WIDGETS --> P_GUI
+
+' Application internal
+A_SERVICE --> A_CMD : delegates write ops
+A_SERVICE --> I_PIPELINE : run / run_preview_only
+A_SERVICE --> I_STATE : load_views / load_view
+A_SERVICE --> I_DISC : collect_input_files
+A_SERVICE --> I_LLM : list_providers / list_models
+
+' Commands operate on state (which applies domain policy)
+A_CMD --> I_STATE : invalidate / record manual edits
+
+' State repository applies domain policy — does not define it
+I_STATE --> D_STAGES
+I_STATE --> D_FRESH
+
+' Pipeline delegates to workflow services
+I_PIPELINE --> I_COORD
+I_COORD    --> I_FP
+I_FP       --> I_CACHE
+I_FP       --> I_PREP
+I_FP       --> I_STAGES
+I_FP       --> I_CORR_EVAL
+I_CACHE --> I_STATE
+I_CACHE --> I_ART
+
+' Adapters implement ABCs from interfaces.py
+I_OCR      ..|> PORT_OCR
+I_CORR_EVAL ..|> PORT_CORR
+I_PREP     ..|> PORT_PRE
+I_DOCX     ..|> PORT_DOC
+
+' LLM factory is used by adapters
+I_CORR_EVAL --> I_LLM
+I_OCR       --> I_LLM : langchain / ollama path
+
+' ── Benchmark app (reuses OCR stages; separate run store) ──────────────────
+P_WIDGETS --> P_SHARED
+P_BENCH   --> P_SHARED
+P_BENCH   --> A_BENCH
+A_BENCH   --> A_SERVICE : composes (discovery queries)
+A_BENCH   --> I_BRUN    : run_ocr (OCR only)
+A_BENCH   --> I_RUNSTORE : save / list / delete
+A_BENCH   --> D_BENCH   : compare_pair (similarity + stats)
+I_BRUN    --> I_BUILDER : build_ocr / preprocessor
+I_BRUN    --> I_PREP
+I_BRUN    --> I_STAGES
+I_PIPELINE --> I_BUILDER : (shared stage construction)
+
+@enduml

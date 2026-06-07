@@ -1,0 +1,59 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version (e.g. v1.0.0)"
+        required: true
+        type: string
+
+jobs:
+  # ── Quality gate (temporarily disabled) ──────────────────────────────────
+  # lint:
+  #   uses: ./.github/workflows/reusable-format-lint.yml
+
+  # test:
+  #   uses: ./.github/workflows/reusable-tests.yml
+
+  # ── Create the GitHub Release (empty shell, build jobs attach assets) ────
+  create-release:
+    name: Create GitHub Release
+    # needs: [lint, test]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.version }}
+          name: "Release ${{ inputs.version }}"
+          generate_release_notes: true
+          prerelease: ${{ contains(inputs.version, '-') }}
+          make_latest: ${{ !contains(inputs.version, '-') }}
+
+  # ── Wheel (pure-Python, platform-independent) ───────────────────────────
+  build-wheel:
+    needs: [create-release]
+    permissions:
+      contents: write
+    uses: ./.github/workflows/reusable-build-wheel.yml
+    with:
+      version: ${{ inputs.version }}
+      skip_artifact_upload: true
+      publish_release_assets: true
+      release_tag: ${{ inputs.version }}
+
+  # ── Standalone executables + platform installers ─────────────────────────
+  build-standalone:
+    needs: [create-release]
+    permissions:
+      contents: write
+    uses: ./.github/workflows/reusable-build-artifacts.yml
+    with:
+      version: ${{ inputs.version }}
+      skip_artifact_upload: true
+      publish_release_assets: true
+      release_tag: ${{ inputs.version }}

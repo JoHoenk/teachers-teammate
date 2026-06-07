@@ -1,0 +1,59 @@
+"""Bazel targets for Sphinx documentation.
+
+Build and serve:
+    bazel build //docs:html
+    bazel run //docs:html.serve
+"""
+
+load("@rules_python//sphinxdocs:sphinx.bzl", "sphinx_build_binary", "sphinx_docs")
+
+sphinx_build_binary(
+    name = "sphinx-build",
+    data = [
+        "//tools/sphinx:plantuml",
+    ],
+    tags = ["manual"],  # Only needed during doc builds
+    deps = [
+        "//teachers_teammate:ocr_lib",
+        "@ocr_dev_dependencies//furo:pkg",
+        "@ocr_dev_dependencies//myst_parser:pkg",
+        "@ocr_dev_dependencies//sphinx:pkg",
+        "@ocr_dev_dependencies//sphinxcontrib_plantuml:pkg",
+        "@rules_python//python/runfiles",
+        "@trlc//tools/sphinx/extensions/trlc",
+    ],
+)
+
+genrule(
+    name = "test_specs_rst",
+    srcs = [
+        "//tests:use_case_test_files",
+        "//docs/requirements:use_cases.trlc",
+    ],
+    outs = ["test_specs.rst"],
+    cmd = "$(location //tools:extract_test_specs) $(locations //tests:use_case_test_files) --output $@ --use-cases $(location //docs/requirements:use_cases.trlc)",
+    tags = ["manual"],
+    tools = ["//tools:extract_test_specs"],
+)
+
+sphinx_docs(
+    name = "html",
+    srcs = ["conf.py"] + glob([
+        "*.md",
+        "_static/*.css",
+        "_static/*.js",
+    ]) + glob([
+        "assets/*.puml",
+        "assets/*.png",
+    ]) + [
+        ":test_specs_rst",
+        "//docs/requirements:qualification_model.rsl",
+        "//docs/requirements:use_cases.trlc",
+        "//docs/requirements:use_cases_rst",
+    ],
+    allow_persistent_workers = False,
+    config = "conf.py",
+    formats = ["html"],
+    sphinx = ":sphinx-build",
+    tags = ["manual"],
+)

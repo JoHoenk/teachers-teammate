@@ -1,0 +1,12 @@
+Teacher's Teammate
+Copyright 2026 Teacher's Teammate contributors
+
+This product includes software developed by third parties. The full license
+and notice texts for all bundled third-party components are reproduced in:
+
+  - third_party_licenses/third_party_license.txt   (repository)
+  - the "Third-Party Licenses" dialog inside the application
+
+The bundled GUI toolkit (Qt, via PySide6) is used under the terms of the
+GNU Lesser General Public License, version 3 (LGPL-3.0). See the LGPL note in
+docs/index.md for how to obtain the corresponding source and relink.

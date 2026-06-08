@@ -6,16 +6,21 @@ This page covers how Teacher's Teammate is built and released — both via CI an
 
 ## CI pipeline
 
-### Continuous integration (`ci.yml`)
+### Pull request checks (`pull_request_checks.yml`)
 
-Runs on every push to `main` and on all pull requests.
+Runs on every push to `main`, on all pull requests targeting `main`, and on merge-queue checks.
 
 | Job | What it does |
 |-----|-------------|
 | **lint** | ruff + pylint + ty type check |
 | **test** | Full Bazel test suite |
+| **check** | Merge gate — fails unless every job above succeeded. Mark this as the required status check in branch protection. |
 
-### Release dry run (`release-dry-run.yml`)
+### Documentation (`deploy_docs.yml`)
+
+Builds the Sphinx site (`bazel build //docs:html`) on every push to `main` and on PRs touching `docs/`. Pushes to `main` deploy the result to GitHub Pages; PRs only build it as a check.
+
+### Release dry run (`release_dry_run.yml`)
 
 Manual trigger (`workflow_dispatch`) with a version string (e.g. `v1.0.0-rc1`).
 Runs the full build matrix — lint, test, wheel, and all platform standalone builds — but **does not upload artifacts or publish a release**.
@@ -33,7 +38,7 @@ test ──┘         │
                  └──► build-standalone  → platform installers attached to release
 ```
 
-The **build-standalone** job (`reusable-build-artifacts.yml`) runs in parallel on three GitHub-hosted runners:
+The **build-standalone** job (`build_artifacts.yml`) runs in parallel on three GitHub-hosted runners:
 
 | Runner | Steps | Output |
 |--------|-------|--------|

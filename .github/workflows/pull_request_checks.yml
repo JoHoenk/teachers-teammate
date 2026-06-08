@@ -1,0 +1,48 @@
+# Quality gate for pull requests. Runs format-lint and the test suite on every
+# PR, on pushes to main, and when GitHub's merge queue requests checks. Mark the
+# `check` job as required in branch protection to block merges until it passes.
+
+name: Pull Request Checks
+
+on:
+  push:
+    branches: ["main"]
+    tags: ["v*"]
+  pull_request:
+    branches: ["main"]
+    types: [opened, reopened, synchronize]
+  merge_group:
+    types: [checks_requested]
+
+# Cancel superseded runs for the same PR; never cancel push/merge_group runs.
+concurrency:
+  group: pull_request_checks-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  lint:
+    uses: ./.github/workflows/format_lint.yml
+
+  test:
+    uses: ./.github/workflows/tests.yml
+
+  # Single required status check for branch protection on `main`. It stays green
+  # only if every upstream job succeeds, so the protection rule never needs
+  # updating when jobs are added or renamed.
+  check:
+    name: PR merge gate
+    if: always()
+    needs: [lint, test]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify all required jobs passed
+        run: |
+          results='${{ join(needs.*.result, ' ') }}'
+          echo "Upstream job results: ${results}"
+          for result in ${results}; do
+            if [[ "${result}" != "success" ]]; then
+              echo "::error::A required job did not succeed (got '${result}')."
+              exit 1
+            fi
+          done
+          echo "All required jobs passed."

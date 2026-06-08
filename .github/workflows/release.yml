@@ -9,17 +9,20 @@ on:
         type: string
 
 jobs:
-  # ── Quality gate (temporarily disabled) ──────────────────────────────────
-  # lint:
-  #   uses: ./.github/workflows/reusable-format-lint.yml
+  # ── Quality gate ─────────────────────────────────────────────────────────
+  # The merge queue keeps `main` green, but a release is dispatched manually and
+  # may target any ref/tag — and it publishes artifacts publicly, so we re-run
+  # lint + tests here as a hard gate before anything is created.
+  lint:
+    uses: ./.github/workflows/format_lint.yml
 
-  # test:
-  #   uses: ./.github/workflows/reusable-tests.yml
+  test:
+    uses: ./.github/workflows/tests.yml
 
   # ── Create the GitHub Release (empty shell, build jobs attach assets) ────
   create-release:
     name: Create GitHub Release
-    # needs: [lint, test]
+    needs: [lint, test]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -39,7 +42,7 @@ jobs:
     needs: [create-release]
     permissions:
       contents: write
-    uses: ./.github/workflows/reusable-build-wheel.yml
+    uses: ./.github/workflows/build_wheel.yml
     with:
       version: ${{ inputs.version }}
       skip_artifact_upload: true
@@ -51,7 +54,7 @@ jobs:
     needs: [create-release]
     permissions:
       contents: write
-    uses: ./.github/workflows/reusable-build-artifacts.yml
+    uses: ./.github/workflows/build_artifacts.yml
     with:
       version: ${{ inputs.version }}
       skip_artifact_upload: true

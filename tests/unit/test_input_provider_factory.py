@@ -59,6 +59,17 @@ def test_get_input_provider_dispatches_by_suffix(
     assert isinstance(provider, expected_type)
 
 
+def test_get_input_provider_threads_pdf_dpi_to_pdf_provider(tmp_path: Path) -> None:
+    """
+    Given  a .pdf suffix and an explicit pdf_dpi
+    When   get_input_provider is called
+    Then   the constructed PdfInputProvider carries that DPI
+    """
+    provider = get_input_provider(".pdf", tmp_dir=tmp_path, pdf_dpi=150)
+    assert isinstance(provider, PdfInputProvider)
+    assert provider._pdf_dpi == 150
+
+
 # ── Error path ─────────────────────────────────────────────────────────────
 
 

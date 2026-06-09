@@ -360,3 +360,101 @@ def test_parse_args_correction_prompt() -> None:
     args = _parse_args(argv=["--correction-prompt", "my custom prompt"])
 
     assert args.correction_prompt == "my custom prompt"
+
+
+@pytest.mark.use_case("Headless_CLI_Batch")
+def test_parse_args_preprocess_flags_and_dpi() -> None:
+    """
+    Given  every --preprocess-* flag plus --pdf-render-dpi 600
+    When   _parse_args() is called
+    Then   each flag is True and pdf_render_dpi is parsed
+    """
+    from teachers_teammate.cli import _parse_args  # noqa: PLC0415
+
+    args = _parse_args(
+        argv=[
+            "--preprocess-dewarp",
+            "--preprocess-deskew",
+            "--preprocess-border-crop",
+            "--preprocess-denoise",
+            "--preprocess-gamma",
+            "--pdf-render-dpi",
+            "600",
+        ]
+    )
+
+    assert args.preprocess_dewarp is True
+    assert args.preprocess_deskew is True
+    assert args.preprocess_border_crop is True
+    assert args.preprocess_denoise is True
+    assert args.preprocess_gamma is True
+    assert args.pdf_render_dpi == 600
+
+
+@pytest.mark.use_case("Headless_CLI_Batch")
+@pytest.mark.parametrize("bad", ["0", "-100", "50", "700"])
+def test_parse_args_pdf_dpi_out_of_range_exits(bad: str) -> None:
+    """
+    Given  --pdf-render-dpi outside the 72-600 range
+    When   _parse_args() is called
+    Then   argparse rejects it with SystemExit (mirrors the GUI spin-box bounds)
+    """
+    from teachers_teammate.cli import _parse_args  # noqa: PLC0415
+
+    with pytest.raises(SystemExit):
+        _parse_args(argv=["--pdf-render-dpi", bad])
+
+
+@pytest.mark.use_case("Headless_CLI_Batch")
+def test_run_cli_propagates_preprocessing_to_config(tmp_path: Path, monkeypatch) -> None:
+    """
+    Given  preprocessing flags and a PDF DPI passed on the command line
+    When   run_cli() builds the Config and hands it to the application service
+    Then   the OcrConfig carries every preprocessing setting
+    """
+    import os  # noqa: PLC0415
+
+    import teachers_teammate.infrastructure.storage_root as storage_module  # noqa: PLC0415
+    from teachers_teammate.cli import run_cli  # noqa: PLC0415
+
+    captured: list = []
+
+    class _FakeAppService:
+        def list_providers(self) -> list[str]:
+            return ["ollama", "openai"]
+
+        def resolve_config_path(self, explicit: str | None) -> None:
+            return None
+
+        def run_selected(self, config, /, **kwargs):
+            captured.append(config)
+            return 0
+
+        def run_preview_only(self, _config):
+            raise AssertionError("preview-only path should not be used")
+
+    monkeypatch.setattr(storage_module, "default_config_path", lambda: tmp_path / "ocr.toml")
+    original_cwd = os.getcwd()
+    try:
+        os.chdir(tmp_path)
+        rc = run_cli(
+            argv=[
+                "-i",
+                str(tmp_path),
+                "--no-docx",
+                "--preprocess-deskew",
+                "--preprocess-denoise",
+                "--pdf-render-dpi",
+                "150",
+            ],
+            app_service=_FakeAppService(),
+        )
+    finally:
+        os.chdir(original_cwd)
+
+    assert rc == 0
+    ocr = captured[0].ocr
+    assert ocr.deskew is True
+    assert ocr.denoise is True
+    assert ocr.dewarp is False
+    assert ocr.pdf_render_dpi == 150

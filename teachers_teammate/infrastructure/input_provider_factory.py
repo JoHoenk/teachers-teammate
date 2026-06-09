@@ -14,22 +14,22 @@ from pathlib import Path
 from ..exceptions import PipelineInputError
 from ..interfaces import SUPPORTED_SUFFIXES, InputProvider
 
-_ProviderBuilder = Callable[[Path], InputProvider]
+_ProviderBuilder = Callable[[Path, int], InputProvider]
 
 
-def _build_pdf(tmp_dir: Path) -> InputProvider:
+def _build_pdf(tmp_dir: Path, pdf_dpi: int) -> InputProvider:
     from .input_providers import PdfInputProvider  # noqa: PLC0415
 
-    return PdfInputProvider(tmp_dir=tmp_dir)
+    return PdfInputProvider(tmp_dir=tmp_dir, pdf_dpi=pdf_dpi)
 
 
-def _build_image(_tmp_dir: Path) -> InputProvider:
+def _build_image(_tmp_dir: Path, _pdf_dpi: int) -> InputProvider:
     from .input_providers import ImageInputProvider  # noqa: PLC0415
 
     return ImageInputProvider()
 
 
-def _build_text(_tmp_dir: Path) -> InputProvider:
+def _build_text(_tmp_dir: Path, _pdf_dpi: int) -> InputProvider:
     from .input_providers import TextInputProvider  # noqa: PLC0415
 
     return TextInputProvider()
@@ -54,11 +54,11 @@ def supported_suffixes() -> frozenset[str]:
     return SUPPORTED_SUFFIXES
 
 
-def get_input_provider(suffix: str, *, tmp_dir: Path) -> InputProvider:
+def get_input_provider(suffix: str, *, tmp_dir: Path, pdf_dpi: int = 300) -> InputProvider:
     """Resolve and construct an :class:`InputProvider` for *suffix*."""
     normalized = suffix.lower()
     builder = _SUFFIX_TO_BUILDER.get(normalized)
     if builder is None:
         supported = ", ".join(sorted(_SUFFIX_TO_BUILDER))
         raise PipelineInputError(f"Unsupported input suffix '{suffix}'. Supported: {supported}")
-    return builder(tmp_dir)
+    return builder(tmp_dir, pdf_dpi)

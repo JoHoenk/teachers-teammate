@@ -66,6 +66,31 @@ def test_pdf_provider_pages_are_png(tmp_path: Path, sample_pdf: Path) -> None:
         assert p.suffix.lower() == ".png", f"Expected PNG, got: {p.suffix}"
 
 
+def test_pdf_provider_dpi_scales_rendered_resolution(tmp_path: Path, sample_pdf: Path) -> None:
+    """
+    Given  two PdfInputProviders rendering the same PDF at 72 and 300 DPI
+    When   load() is called on each
+    Then   the higher-DPI page is rendered larger (scale == dpi / 72)
+    """
+    from PIL import Image  # noqa: PLC0415
+
+    low_dir = tmp_path / "low"
+    high_dir = tmp_path / "high"
+    low_dir.mkdir()
+    high_dir.mkdir()
+
+    low = PdfInputProvider(tmp_dir=low_dir, pdf_dpi=72).load(sample_pdf)
+    high = PdfInputProvider(tmp_dir=high_dir, pdf_dpi=300).load(sample_pdf)
+
+    lo_path = low.units[0].image_path
+    hi_path = high.units[0].image_path
+    assert lo_path is not None
+    assert hi_path is not None
+    with Image.open(lo_path) as lo, Image.open(hi_path) as hi:
+        assert hi.size[0] > lo.size[0]
+        assert hi.size[1] > lo.size[1]
+
+
 def test_text_provider_loads_text_content(tmp_path: Path) -> None:
     """
     Given  a TextInputProvider and a UTF-8 .txt file

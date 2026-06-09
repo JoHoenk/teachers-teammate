@@ -29,7 +29,7 @@ from pathlib import Path
 import shutil
 import uuid
 
-from ...config import OcrConfig
+from ...config import DEFAULTS, OcrConfig
 from ..storage_root import resolve_storage_root
 
 BENCHMARK_KEEP_LAST_N = 20
@@ -83,6 +83,12 @@ class StoredRun:
                 "model": self.ocr.model,
                 "provider": self.ocr.provider,
                 "preprocess_method": self.ocr.preprocess_method,
+                "pdf_render_dpi": self.ocr.pdf_render_dpi,
+                "dewarp": self.ocr.dewarp,
+                "deskew": self.ocr.deskew,
+                "border_crop": self.ocr.border_crop,
+                "denoise": self.ocr.denoise,
+                "gamma": self.ocr.gamma,
                 "temperature": self.ocr.temperature,
             },
             "language": self.language,
@@ -108,6 +114,13 @@ class StoredRun:
                 model=ocr_raw["model"],
                 provider=ocr_raw["provider"],
                 preprocess_method=ocr_raw["preprocess_method"],
+                # .get() keeps runs written before these fields existed loadable.
+                pdf_render_dpi=ocr_raw.get("pdf_render_dpi", DEFAULTS["pdf_render_dpi"]),
+                dewarp=ocr_raw.get("dewarp", DEFAULTS["preprocess_dewarp"]),
+                deskew=ocr_raw.get("deskew", DEFAULTS["preprocess_deskew"]),
+                border_crop=ocr_raw.get("border_crop", DEFAULTS["preprocess_border_crop"]),
+                denoise=ocr_raw.get("denoise", DEFAULTS["preprocess_denoise"]),
+                gamma=ocr_raw.get("gamma", DEFAULTS["preprocess_gamma"]),
                 temperature=ocr_raw["temperature"],
             ),
             language=raw["language"],
@@ -128,6 +141,19 @@ class StoredRun:
         if model:
             parts.append(model)
         parts.append(ocr.preprocess_method)
+        pre_steps = [
+            name
+            for name, enabled in (
+                ("dewarp", ocr.dewarp),
+                ("deskew", ocr.deskew),
+                ("border_crop", ocr.border_crop),
+                ("denoise", ocr.denoise),
+                ("gamma", ocr.gamma),
+            )
+            if enabled
+        ]
+        if pre_steps:
+            parts.append("+".join(pre_steps))
         return " · ".join(parts)
 
 

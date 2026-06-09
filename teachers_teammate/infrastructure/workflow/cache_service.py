@@ -6,7 +6,7 @@ import dataclasses
 from dataclasses import dataclass
 from pathlib import Path
 
-from ...config import Config
+from ...config import Config, OcrConfig
 from ..ocr_processor import get_ocr_prompt
 from ..preview_image_store import PreviewImageStore
 from ..state_repository import (
@@ -21,6 +21,24 @@ from ..state_repository import (
 # ── Module-level hash helpers (shared with application layer) ─────────────────
 
 
+def _preprocess_fingerprint(ocr: OcrConfig) -> tuple[str, ...]:
+    """Return the preprocessing settings that change the image fed to OCR.
+
+    Every entry must be included in both the OCR cache hash and the preview hash so a
+    toggle (pre-step or PDF DPI) invalidates the cached result instead of returning stale
+    OCR text or a stale preview image.
+    """
+    return (
+        ocr.preprocess_method,
+        str(ocr.pdf_render_dpi),
+        str(ocr.dewarp),
+        str(ocr.deskew),
+        str(ocr.border_crop),
+        str(ocr.denoise),
+        str(ocr.gamma),
+    )
+
+
 def compute_ocr_config_hash(config: Config, ocr_prompt: str) -> str:
     """Return the OCR stage config hash for *config* and *ocr_prompt*."""
     ocr = config.ocr
@@ -31,7 +49,7 @@ def compute_ocr_config_hash(config: Config, ocr_prompt: str) -> str:
         ocr.engine,
         provider,
         model,
-        ocr.preprocess_method,
+        *_preprocess_fingerprint(ocr),
         config.language,
         ocr_prompt,
         format(ocr.temperature, ".1f"),
@@ -122,7 +140,9 @@ class CacheReconciliationService:
         ocr_config_hash = self._ocr_config_hash(ocr_prompt)
         correction_config_hash = self._correction_config_hash()
         eval_config_hash = self._eval_config_hash()
-        preview_config_hash = compute_config_hash("preview", source_hash, cfg.ocr.preprocess_method)
+        preview_config_hash = compute_config_hash(
+            "preview", source_hash, *_preprocess_fingerprint(cfg.ocr)
+        )
 
         # Capture artifact paths before reconciliation so we can delete them if cleared.
         old_preview_img = state.preview_img

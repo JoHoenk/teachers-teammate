@@ -19,12 +19,14 @@ import sys
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QDoubleSpinBox,
     QFormLayout,
     QHBoxLayout,
     QLabel,
     QPushButton,
+    QSpinBox,
     QWidget,
 )
 
@@ -113,6 +115,15 @@ class OcrConfigSelector(QWidget):
         ph.setContentsMargins(0, 0, 0, 0)
         self._preprocess = QComboBox()
         self._preprocess.addItems(["adaptive_threshold", "clahe", "grayscale", "none"])
+        self._preprocess.setToolTip(
+            "Contrast enhancement applied before text recognition.\n\n"
+            "Enhanced contrast (adaptive_threshold) — binary output; robust to uneven\n"
+            "  lighting; best for Ollama and most handwriting.\n"
+            "Balanced contrast (clahe) — grayscale output; improves faint or low-\n"
+            "  contrast text; best for Tesseract.\n"
+            "Grayscale — converts to grayscale without further processing.\n"
+            "None — pass the original image directly to the OCR engine."
+        )
         ph.addWidget(self._preprocess, stretch=1)
         if show_preview_button:
             preview_btn = QPushButton("Preview…")
@@ -122,6 +133,63 @@ class OcrConfigSelector(QWidget):
             )
             ph.addWidget(preview_btn)
         form.addRow("Image preparation:", preprocess_row)
+
+        # Geometric correction checkboxes
+        corrections_row = QWidget()
+        cr = QHBoxLayout(corrections_row)
+        cr.setContentsMargins(0, 0, 0, 0)
+        self._dewarp = QCheckBox("Dewarp")
+        self._dewarp.setToolTip(
+            "Correct perspective distortion.\n"
+            "Use when documents are photographed at an angle or from books.\n"
+            "Has no effect on flat-bed scans."
+        )
+        self._deskew = QCheckBox("Deskew")
+        self._deskew.setToolTip(
+            "Correct page rotation up to ±45°.\n"
+            "Use when handwriting or the scanning angle introduces a tilt.\n"
+            "Skips correction if the detected angle is below 0.5°."
+        )
+        self._border_crop = QCheckBox("Border crop")
+        self._border_crop.setToolTip(
+            "Remove dark scanner borders before OCR.\n"
+            "Reduces image size → faster processing.\n"
+            "Not recommended for photographed documents."
+        )
+        for cb in (self._dewarp, self._deskew, self._border_crop):
+            cr.addWidget(cb)
+        cr.addStretch()
+        form.addRow("Corrections:", corrections_row)
+
+        # Tone / noise enhancements + PDF DPI
+        enhancements_row = QWidget()
+        er = QHBoxLayout(enhancements_row)
+        er.setContentsMargins(0, 0, 0, 0)
+        self._denoise = QCheckBox("Denoise")
+        self._denoise.setToolTip(
+            "Non-local means noise removal.\n"
+            "Use for scans with visible grain or faint pencil artifacts.\n"
+            "Adds ~1-2 s processing time per page."
+        )
+        self._gamma = QCheckBox("Brighten")
+        self._gamma.setToolTip(
+            "Gamma correction (gamma=0.5) to brighten dark or underexposed scans.\n"
+            "Applied before the contrast step for best results."
+        )
+        self._pdf_dpi = QSpinBox()
+        self._pdf_dpi.setRange(72, 600)
+        self._pdf_dpi.setSingleStep(72)
+        self._pdf_dpi.setSuffix(" DPI")
+        self._pdf_dpi.setToolTip(
+            "Resolution for rendering PDF pages to images before OCR.\n"
+            "72 = screen quality, 150 = draft, 300 = recommended, 600 = high quality.\n"
+            "Has no effect on image inputs (JPG, PNG)."
+        )
+        pdf_dpi_lbl = QLabel("PDF:")
+        for w in (self._denoise, self._gamma, pdf_dpi_lbl, self._pdf_dpi):
+            er.addWidget(w)
+        er.addStretch()
+        form.addRow("Enhancements:", enhancements_row)
 
     def _build_temperature_row(self, form: QFormLayout) -> None:
         self._ocr_temperature = QDoubleSpinBox()
@@ -148,6 +216,12 @@ class OcrConfigSelector(QWidget):
             self._ocr_model.setCurrentText(ocr.model)
         _set_combo(self._preprocess, ocr.preprocess_method)
         self._ocr_temperature.setValue(ocr.temperature)
+        self._dewarp.setChecked(ocr.dewarp)
+        self._deskew.setChecked(ocr.deskew)
+        self._border_crop.setChecked(ocr.border_crop)
+        self._denoise.setChecked(ocr.denoise)
+        self._gamma.setChecked(ocr.gamma)
+        self._pdf_dpi.setValue(ocr.pdf_render_dpi)
 
     def get_ocr_config(self) -> OcrConfig:
         """Return the currently selected configuration as an :class:`OcrConfig`."""
@@ -162,6 +236,12 @@ class OcrConfigSelector(QWidget):
             provider=provider,
             preprocess_method=self._preprocess.currentText(),
             temperature=self._ocr_temperature.value(),
+            pdf_render_dpi=self._pdf_dpi.value(),
+            dewarp=self._dewarp.isChecked(),
+            deskew=self._deskew.isChecked(),
+            border_crop=self._border_crop.isChecked(),
+            denoise=self._denoise.isChecked(),
+            gamma=self._gamma.isChecked(),
         )
 
     def refresh(self) -> None:

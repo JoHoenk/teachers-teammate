@@ -142,3 +142,105 @@ def test_list_documents_reports_display_name(tmp_path: Path) -> None:
     store = BenchmarkRunStore(tmp_path)
     _save(store)
     assert store.list_documents() == [("doc1", "sample.pdf")]
+
+
+@pytest.mark.use_case("OCR_Run_Comparison")
+def test_save_round_trips_all_preprocessing_fields(tmp_path: Path) -> None:
+    """
+    Given  a run whose OcrConfig enables pre-steps and a non-default PDF DPI
+    When   it is saved and reloaded from disk via list_for()
+    Then   every preprocessing field survives the JSON round-trip
+
+    Without this, two runs differing only in pre-steps would be indistinguishable.
+    """
+    store = BenchmarkRunStore(tmp_path)
+    ocr = OcrConfig(
+        engine="tesseract",
+        preprocess_method="clahe",
+        pdf_render_dpi=600,
+        dewarp=True,
+        deskew=True,
+        border_crop=False,
+        denoise=True,
+        gamma=False,
+    )
+    store.save(
+        NewRunRequest(
+            document_hash="doc1",
+            document_path="/docs/sample.pdf",
+            display_name="sample.pdf",
+            ocr=ocr,
+            language="English",
+            ocr_config_hash="abc12345",
+            raw_text="text",
+            elapsed_s=1.0,
+        )
+    )
+
+    reloaded = store.list_for("doc1")[0].ocr
+    assert reloaded.pdf_render_dpi == 600
+    assert reloaded.dewarp is True
+    assert reloaded.deskew is True
+    assert reloaded.border_crop is False
+    assert reloaded.denoise is True
+    assert reloaded.gamma is False
+    assert reloaded.preprocess_method == "clahe"
+
+
+def test_from_json_dict_defaults_missing_preprocessing_fields(tmp_path: Path) -> None:
+    """
+    Given  a legacy run JSON written before the preprocessing fields existed
+    When   it is reloaded from disk
+    Then   the missing fields fall back to their defaults instead of raising KeyError
+    """
+    from teachers_teammate.infrastructure.benchmark.run_store import StoredRun  # noqa: PLC0415
+
+    legacy = {
+        "schema_version": 1,
+        "run_id": "2026-01-01T00:00:00Z-abcd1234",
+        "document_hash": "doc1",
+        "document_path": "/docs/sample.pdf",
+        "display_name": "sample.pdf",
+        "ocr_config_hash": "abc12345",
+        "ocr": {
+            "engine": "tesseract",
+            "model": "",
+            "provider": "",
+            "preprocess_method": "none",
+            "temperature": 0.0,
+        },
+        "language": "English",
+        "raw_text": "text",
+        "preview_img": "",
+        "timestamp": "2026-01-01T00:00:00Z",
+        "elapsed_s": 1.0,
+    }
+    run = StoredRun.from_json_dict(legacy)
+    assert run.ocr.pdf_render_dpi == 300
+    assert run.ocr.dewarp is False
+    assert run.ocr.gamma is False
+
+
+def test_config_summary_lists_enabled_pre_steps(tmp_path: Path) -> None:
+    """
+    Given  a stored run with deskew and denoise enabled
+    When   config_summary() is rendered
+    Then   the enabled pre-step names appear and disabled ones do not
+    """
+    store = BenchmarkRunStore(tmp_path)
+    store.save(
+        NewRunRequest(
+            document_hash="doc1",
+            document_path="/docs/sample.pdf",
+            display_name="sample.pdf",
+            ocr=OcrConfig(engine="tesseract", deskew=True, denoise=True),
+            language="English",
+            ocr_config_hash="abc12345",
+            raw_text="text",
+            elapsed_s=1.0,
+        )
+    )
+    summary = store.list_for("doc1")[0].config_summary()
+    assert "deskew" in summary
+    assert "denoise" in summary
+    assert "dewarp" not in summary

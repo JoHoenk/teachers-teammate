@@ -102,6 +102,7 @@ def preprocess_preview(
     source_path: Path,
     method: str,
     tmp_dir: Path,
+    pdf_dpi: int = 300,
 ) -> tuple[Path, Path, list[str]]:
     """Preprocess *source_path* and return paths for both the original and processed image.
 
@@ -114,11 +115,12 @@ def preprocess_preview(
         source_path: Path to a supported input file (PDF or image).
         method:      Preprocessing method name (see :class:`HandwritingPreprocessor`).
         tmp_dir:     Temporary directory for any intermediate and output files.
+        pdf_dpi:     Resolution for PDF page rendering (default 300).
 
     Returns:
         A tuple of ``(original_image_path, preprocessed_image_path, steps_applied)``.
     """
-    provider = get_input_provider(source_path.suffix, tmp_dir=tmp_dir)
+    provider = get_input_provider(source_path.suffix, tmp_dir=tmp_dir, pdf_dpi=pdf_dpi)
     payload = provider.load(source_path)
     image_path = next(
         (

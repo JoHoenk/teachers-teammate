@@ -42,6 +42,23 @@ class _CliAppService(Protocol):
     def run_preview_only(self, config: Config, /) -> int: ...
 
 
+_PDF_DPI_MIN = 72
+_PDF_DPI_MAX = 600
+
+
+def _pdf_dpi_type(value: str) -> int:
+    """Parse and range-check ``--pdf-render-dpi`` (mirrors the GUI's 72-600 spin box)."""
+    try:
+        dpi = int(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(f"'{value}' is not an integer") from exc
+    if not _PDF_DPI_MIN <= dpi <= _PDF_DPI_MAX:
+        raise argparse.ArgumentTypeError(
+            f"DPI must be between {_PDF_DPI_MIN} and {_PDF_DPI_MAX}, got {dpi}"
+        )
+    return dpi
+
+
 def _parse_args(
     providers: list[str] | None = None,
     extra_defaults: dict | None = None,
@@ -164,6 +181,53 @@ def _parse_args(
             "grayscale (grayscale only, no binarisation), or "
             "none (pass the original image directly to the OCR engine)."
         ),
+    )
+    ocr_grp.add_argument(
+        "--pdf-render-dpi",
+        type=_pdf_dpi_type,
+        default=DEFAULTS["pdf_render_dpi"],
+        metavar="DPI",
+        dest="pdf_render_dpi",
+        help=(
+            "Resolution for rendering PDF pages to images before OCR. "
+            "72 = screen quality, 150 = draft OCR, 300 = recommended (default), "
+            "600 = high quality. Has no effect on image inputs (JPG, PNG)."
+        ),
+    )
+    ocr_grp.add_argument(
+        "--preprocess-dewarp",
+        action="store_true",
+        default=DEFAULTS["preprocess_dewarp"],
+        dest="preprocess_dewarp",
+        help="Correct perspective distortion before OCR (photographed pages, book scans).",
+    )
+    ocr_grp.add_argument(
+        "--preprocess-deskew",
+        action="store_true",
+        default=DEFAULTS["preprocess_deskew"],
+        dest="preprocess_deskew",
+        help="Correct page tilt up to ±45° before OCR (minimum-area bounding-rectangle detection).",
+    )
+    ocr_grp.add_argument(
+        "--preprocess-border-crop",
+        action="store_true",
+        default=DEFAULTS["preprocess_border_crop"],
+        dest="preprocess_border_crop",
+        help="Crop dark scanner borders before OCR to reduce image size and processing time.",
+    )
+    ocr_grp.add_argument(
+        "--preprocess-denoise",
+        action="store_true",
+        default=DEFAULTS["preprocess_denoise"],
+        dest="preprocess_denoise",
+        help="Non-local means noise removal before OCR (scanner grain, pencil artifacts).",
+    )
+    ocr_grp.add_argument(
+        "--preprocess-gamma",
+        action="store_true",
+        default=DEFAULTS["preprocess_gamma"],
+        dest="preprocess_gamma",
+        help="Gamma brightening (gamma=0.5) for dark or underexposed scans.",
     )
     ocr_grp.add_argument(
         "--ollama-url",
@@ -407,6 +471,12 @@ def run_cli(
             model=args.ocr_model,
             provider=args.ocr_provider,
             preprocess_method=args.preprocess_method,
+            pdf_render_dpi=args.pdf_render_dpi,
+            dewarp=args.preprocess_dewarp,
+            deskew=args.preprocess_deskew,
+            border_crop=args.preprocess_border_crop,
+            denoise=args.preprocess_denoise,
+            gamma=args.preprocess_gamma,
         ),
         language=args.language,
         ollama_url=args.ollama_url,

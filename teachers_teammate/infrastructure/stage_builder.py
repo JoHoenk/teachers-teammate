@@ -24,7 +24,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from langchain_core.language_models import BaseChatModel
 
-from ..config import Config
+from ..config import Config, OcrConfig
 from ..exceptions import ProviderNotAvailableError
 from ..interfaces import (
     Anonymizer,
@@ -53,8 +53,19 @@ from .workflow.preprocess_service import PreprocessService
 # ── Default constructors ───────────────────────────────────────────────────
 
 
-def _default_build_preprocessor(tmp_dir: Path, save_steps: bool, method: str) -> ImagePreprocessor:
-    return HandwritingPreprocessor(tmp_dir=tmp_dir, save_steps=save_steps, method=method)
+def _default_build_preprocessor(
+    tmp_dir: Path, save_steps: bool, ocr: OcrConfig
+) -> ImagePreprocessor:
+    return HandwritingPreprocessor(
+        tmp_dir=tmp_dir,
+        save_steps=save_steps,
+        method=ocr.preprocess_method,
+        dewarp=ocr.dewarp,
+        deskew=ocr.deskew,
+        border_crop=ocr.border_crop,
+        denoise=ocr.denoise,
+        gamma=ocr.gamma,
+    )
 
 
 def _default_build_tesseract_ocr() -> OCRProcessor:
@@ -129,7 +140,9 @@ class PipelineComponentFactory:
     implementations without subclassing.
     """
 
-    build_preprocessor: Callable[[Path, bool, str], ImagePreprocessor] = _default_build_preprocessor
+    build_preprocessor: Callable[[Path, bool, OcrConfig], ImagePreprocessor] = (
+        _default_build_preprocessor
+    )
     build_tesseract_ocr: Callable[[], OCRProcessor] = _default_build_tesseract_ocr
     build_paddle_ocr: Callable[[str], OCRProcessor] = _default_build_paddle_ocr
     build_langchain_ocr: Callable[[BaseChatModel], OCRProcessor] = _default_build_langchain_ocr
@@ -169,14 +182,18 @@ class StageBuilder:
         return OllamaClient(self.config.ollama_url)
 
     def build_preprocessor(self, output_dir: Path) -> ImagePreprocessor:
-        return self.factory.build_preprocessor(
-            output_dir, self.config.debug, self.config.ocr.preprocess_method
-        )
+        return self.factory.build_preprocessor(output_dir, self.config.debug, self.config.ocr)
 
     def build_preprocessor_service(self, output_dir: Path) -> PreprocessService:
+        from .input_provider_factory import get_input_provider  # noqa: PLC0415
+
+        pdf_dpi = self.config.ocr.pdf_render_dpi
         return PreprocessService(
             tmp_dir=output_dir,
             preprocessor=self.build_preprocessor(output_dir),
+            provider_factory=lambda suffix, tmp_dir: get_input_provider(
+                suffix, tmp_dir=tmp_dir, pdf_dpi=pdf_dpi
+            ),
         )
 
     def build_ocr(self, ollama_client: OllamaClient | None = None) -> OCRProcessor:

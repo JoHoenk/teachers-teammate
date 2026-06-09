@@ -29,6 +29,13 @@ DEFAULTS: dict[str, Any] = {
     "ollama_url": "http://127.0.0.1:11434",
     "ocr_timeout": 180,
     "ocr_temperature": 0.0,
+    # ── Preprocessing (pre-steps and PDF rendering) ───────────────────────────
+    "pdf_render_dpi": 300,
+    "preprocess_dewarp": False,
+    "preprocess_deskew": False,
+    "preprocess_border_crop": False,
+    "preprocess_denoise": False,
+    "preprocess_gamma": False,
     # ── Input / output ────────────────────────────────────────────────────────
     "recursive": False,
     "debug": False,
@@ -78,6 +85,12 @@ class OcrConfig:
     provider: str = DEFAULTS["ocr_provider"]
     preprocess_method: str = DEFAULTS["preprocess_method"]
     temperature: float = DEFAULTS["ocr_temperature"]
+    pdf_render_dpi: int = DEFAULTS["pdf_render_dpi"]
+    dewarp: bool = DEFAULTS["preprocess_dewarp"]
+    deskew: bool = DEFAULTS["preprocess_deskew"]
+    border_crop: bool = DEFAULTS["preprocess_border_crop"]
+    denoise: bool = DEFAULTS["preprocess_denoise"]
+    gamma: bool = DEFAULTS["preprocess_gamma"]
 
     @property
     def effective_model(self) -> str:
@@ -184,6 +197,12 @@ def load_config_file(path: Path) -> dict:
         "anonymizer_secondary_model",
         "anonymizer_patterns",
         "ocr_temperature",
+        "pdf_render_dpi",
+        "preprocess_dewarp",
+        "preprocess_deskew",
+        "preprocess_border_crop",
+        "preprocess_denoise",
+        "preprocess_gamma",
     }
     try:
         with path.open("rb") as fh:

@@ -70,6 +70,85 @@ PaddleOCR is an optional add-on that can be installed from within Teacher's Team
 
 ---
 
+## Image preprocessing
+
+Image preprocessing improves OCR accuracy by cleaning and normalising each document image before it is sent to the text recognition engine. All settings described here are available in **Settings → Text Recognition…** and on the command line via `--preprocess-*` flags.
+
+### How the pipeline works
+
+Every image goes through this fixed sequence of stages:
+
+```
+Grayscale → [Dewarp] → [Deskew] → [Border crop] → [Denoise] → [Brighten] → Contrast method
+```
+
+Steps shown in brackets are optional and off by default. The final **contrast method** (the *Image preparation* dropdown) is always applied unless set to *None*.
+
+Enable `--debug` (or the *Keep preprocessed files* toggle) to save a snapshot after every step — useful for diagnosing which step caused a quality change.
+
+### PDF render resolution
+
+PDF files must be converted to images before OCR. The resolution of this conversion is controlled by **PDF DPI** (default **300 DPI**).
+
+| DPI | Scale | Use case |
+|-----|-------|----------|
+| 72 | 1× | Screen preview only — too low for OCR |
+| 150 | 2× | Draft / fast pass |
+| 300 | 4.2× | Recommended for OCR (default) |
+| 600 | 8.3× | High quality; little benefit above 300 for most models |
+
+This setting has no effect on image inputs (JPG, PNG) — those are used at their native resolution.
+
+### Main contrast method
+
+The *Image preparation* dropdown controls how contrast and binarisation are applied as the final step of the pipeline. Choose one:
+
+| Method | Output | Best for |
+|--------|--------|----------|
+| `adaptive_threshold` | Binary (black/white) | Most handwriting; uneven lighting; default for Ollama |
+| `clahe` | Grayscale | Tesseract; engines that perform their own binarisation; faint or low-contrast text |
+| `grayscale` | Grayscale | Engines that require gray or colour input (e.g. PaddleOCR) |
+| `none` | Original colour | High-quality colour scans; PaddleOCR on printed material |
+
+### Geometric corrections
+
+These steps fix spatial problems in the image before contrast enhancement. Apply them in the order shown; they can be combined freely.
+
+**Dewarp**
+Corrects perspective distortion caused by photographing a document at an angle or scanning an open book. The algorithm finds the largest quadrilateral contour in the image and remaps it to a rectangle. If no clear page boundary is detected (e.g. on flat-bed scans), the image passes through unchanged.
+*Use when:* documents are photographed with a phone or camera, or scanned from a book.
+
+**Deskew**
+Corrects rotational tilt up to ±45°. Uses the minimum-area bounding rectangle of ink pixels to estimate the skew angle. Corrections below 0.5° are skipped to avoid introducing noise.
+*Use when:* handwriting or the scanner mechanism introduces a visible tilt.
+
+**Border crop**
+Removes dark scanner borders by finding the bounding box of non-background pixels and cropping to it (with a 10-pixel margin). Reducing the image area speeds up all subsequent steps.
+*Use when:* flat-bed scans have dark borders. Not recommended for photographed documents where the border is content.
+
+### Tone / noise enhancements
+
+**Denoise**
+Applies non-local means denoising (`h=10`) to suppress scanner grain, paper texture noise, and faint pencil artifacts. Adds approximately 1–2 seconds of processing time per page.
+*Use when:* the scan has visible noise or the source document is old/degraded.
+
+**Brighten**
+Applies gamma correction (γ = 0.5) to raise the tonal midpoint of the image, recovering detail in dark or underexposed scans. Applied before the contrast step so the contrast method works on an already-normalised tone range.
+*Use when:* scans appear dark overall or ink looks faded.
+
+### Recommended combinations
+
+| Scenario | Method | Pre-steps |
+|----------|--------|-----------|
+| Standard flat-bed scan, handwriting | `adaptive_threshold` | Border crop |
+| Degraded or aged document | `adaptive_threshold` | Denoise, Border crop |
+| Photographed document (phone/camera) | `adaptive_threshold` | Dewarp, Deskew |
+| Dark or underexposed scan | `adaptive_threshold` | Brighten, Border crop |
+| Tesseract with faint text | `clahe` | Denoise |
+| Ollama/LangChain, clean high-quality scan | `grayscale` | — |
+
+---
+
 ## Understanding AI models
 
 Both the reading (OCR) models and the proofreading and content-review models are AI

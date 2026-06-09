@@ -481,6 +481,15 @@ py_test(
 )
 
 py_test(
+    name = "test_stage_builder",
+    size = "small",
+    srcs = _COMMON_SRCS + ["unit/test_stage_builder.py"],
+    args = ["unit/test_stage_builder.py"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS + _PIPELINE_DEPS,
+)
+
+py_test(
     name = "test_coordinator",
     size = "small",
     srcs = _COMMON_SRCS + ["unit/test_coordinator.py"],
@@ -695,6 +704,7 @@ test_suite(
         ":test_providers",
         ":test_release_stamp_versions",
         ":test_service",
+        ":test_stage_builder",
         ":test_state_repository",
         ":test_storage_policy",
     ],

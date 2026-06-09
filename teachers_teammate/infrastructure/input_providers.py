@@ -21,8 +21,9 @@ class PdfInputProvider(InputProvider):
     returned as the source preview image for the output document.
     """
 
-    def __init__(self, tmp_dir: Path) -> None:
+    def __init__(self, tmp_dir: Path, pdf_dpi: int = 300) -> None:
         self._tmp_dir = tmp_dir
+        self._pdf_dpi = pdf_dpi
 
     def load(self, file_path: Path) -> InputPayload:
         """Render every page of *file_path* to PNG and return image units.
@@ -41,7 +42,7 @@ class PdfInputProvider(InputProvider):
         try:
             for page_num in range(len(pdf)):
                 page = pdf[page_num]
-                bitmap = page.render(scale=1.0)
+                bitmap = page.render(scale=self._pdf_dpi / 72.0)
                 image = bitmap.to_pil()
                 raw_path = self._tmp_dir / f"{file_path.stem}_page{page_num}.png"
                 image.save(str(raw_path))

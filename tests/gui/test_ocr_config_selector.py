@@ -92,6 +92,34 @@ def test_load_ocr_config_round_trips(selector) -> None:
 
 
 @pytest.mark.gui
+@pytest.mark.use_case("Preview_Preprocessing")
+def test_load_ocr_config_round_trips_preprocessing_fields(selector) -> None:
+    """
+    Given  an OcrConfig with pre-steps and a non-default PDF DPI loaded into the selector
+    When   get_ocr_config() is read back
+    Then   every preprocessing checkbox and the PDF DPI spin box round-trip
+    """
+    selector.load_ocr_config(
+        OcrConfig(
+            engine="tesseract",
+            pdf_render_dpi=150,
+            dewarp=True,
+            deskew=False,
+            border_crop=True,
+            denoise=False,
+            gamma=True,
+        )
+    )
+    ocr = selector.get_ocr_config()
+    assert ocr.pdf_render_dpi == 150
+    assert ocr.dewarp is True
+    assert ocr.deskew is False
+    assert ocr.border_crop is True
+    assert ocr.denoise is False
+    assert ocr.gamma is True
+
+
+@pytest.mark.gui
 def test_native_non_ollama_engine_hides_model_row(selector) -> None:
     """
     Given  the selector

@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from dataclasses import replace
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from teachers_teammate.config import DEFAULTS
+from teachers_teammate.config import DEFAULTS, OcrConfig
 from teachers_teammate.infrastructure.state_repository import DocumentState, OcrResultRecord
 from teachers_teammate.infrastructure.workflow.cache_service import (
     CacheContext,
@@ -211,6 +213,57 @@ def test_ocr_config_hash_changes_with_temperature(tmp_path: Path) -> None:
     svc_a, _, _ = _make_svc(tmp_path, ocr_temperature=0.0)
     svc_b, _, _ = _make_svc(tmp_path, ocr_temperature=0.7)
     assert svc_a._ocr_config_hash("p") != svc_b._ocr_config_hash("p")
+
+
+@pytest.mark.use_case("Config_Aware_Cache_Reuse")
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda o: replace(o, pdf_render_dpi=600),
+        lambda o: replace(o, dewarp=True),
+        lambda o: replace(o, deskew=True),
+        lambda o: replace(o, border_crop=True),
+        lambda o: replace(o, denoise=True),
+        lambda o: replace(o, gamma=True),
+    ],
+    ids=["pdf_render_dpi", "dewarp", "deskew", "border_crop", "denoise", "gamma"],
+)
+def test_ocr_config_hash_changes_with_each_preprocessing_field(
+    tmp_path: Path, mutate: Callable[[OcrConfig], OcrConfig]
+) -> None:
+    """
+    Given  two configs differing only in one preprocessing field (a pre-step or PDF DPI)
+    When   _ocr_config_hash() is called with the same prompt
+    Then   the two hashes differ, so toggling the field invalidates the OCR cache
+
+    Without this, the cache (which has no expiry) returns stale OCR text after a toggle.
+    """
+    base = OcrConfig(engine="tesseract")
+    svc_a, _, _ = _make_svc(tmp_path, ocr=base)
+    svc_b, _, _ = _make_svc(tmp_path, ocr=mutate(base))
+    assert svc_a._ocr_config_hash("p") != svc_b._ocr_config_hash("p")
+
+
+@pytest.mark.use_case("Preview_Preprocessing")
+def test_preview_hash_changes_with_preprocessing_field(tmp_path: Path) -> None:
+    """
+    Given  two configs differing only in a pre-step flag
+    When   prepare() computes the preview config hash for each
+    Then   the two preview hashes differ, so the cached preview image is regenerated
+    """
+    src = tmp_path / "doc.png"
+    src.write_bytes(b"fake-image-bytes")
+
+    def _prepare(ocr: OcrConfig) -> str:
+        svc, repo, _ = _make_svc(tmp_path, ocr=ocr)
+        state = _make_state(str(src))
+        repo.load_or_create.return_value = state
+        repo.reconcile_runtime_config.return_value = state
+        return svc.prepare(src).preview_config_hash
+
+    h_off = _prepare(OcrConfig(engine="tesseract"))
+    h_on = _prepare(OcrConfig(engine="tesseract", denoise=True))
+    assert h_off != h_on
 
 
 def test_correction_config_hash_changes_with_temperature(tmp_path: Path) -> None:

@@ -172,13 +172,17 @@ class DiffWidget(QTextEdit):
             self.setPlainText("(no correction available - skipped or not yet generated)")
             return
 
+        # Get current font size from widget
+        current_font = self.font()
+        font_size_pt = current_font.pointSize()
+
         orig_tokens = self._tokenize(original)
         corr_tokens = self._tokenize(corrected)
         matcher = difflib.SequenceMatcher(None, orig_tokens, corr_tokens, autojunk=False)
 
         parts = [
             "<html><body>"
-            "<pre style='white-space: pre-wrap; font-family: monospace; font-size: 9pt;'>"
+            f"<pre style='white-space: pre-wrap; font-family: monospace; font-size: {font_size_pt}pt;'>"
         ]
         for tag, i1, i2, j1, j2 in matcher.get_opcodes():
             if tag == "equal":
@@ -376,7 +380,12 @@ class PreviewPanel(QWidget):
         font = QFont()
         font.setStyleHint(QFont.StyleHint.TypeWriter)
         font.setPointSize(new_pt)
-        for widget in (self._ocr_text, self._correction_text, self._evaluation_text):
+        for widget in (
+            self._ocr_text,
+            self._correction_text,
+            self._evaluation_text,
+            self._diff_widget,
+        ):
             widget.setFont(font)
         self._font_size_lbl.setText(f"{new_pt} pt")
 

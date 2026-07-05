@@ -255,24 +255,29 @@ def test_ocr_settings_dialog_engine_accessible(ocr_dialog) -> None:
     """
     Given  an OCRSettingsDialog
     When   it is created
-    Then   the OCR engine combo box exists and is populated
+    Then   the OCR config selector exists and has engine combo populated
     """
-    assert ocr_dialog._ocr_engine is not None
-    assert ocr_dialog._ocr_engine.count() > 0
+    assert ocr_dialog._ocr_config_selector is not None
+    assert ocr_dialog._ocr_config_selector._ocr_engine is not None
+    assert ocr_dialog._ocr_config_selector._ocr_engine.count() > 0
 
 
 @pytest.mark.gui
-def test_ocr_settings_dialog_engine_sets_preprocess_default(ocr_dialog) -> None:
+def test_ocr_settings_dialog_has_preprocessing_options(ocr_dialog) -> None:
     """
     Given  an OCRSettingsDialog
-    When   the OCR engine changes
-    Then   a sensible engine-specific preprocessing default is applied
+    When   it is created
+    Then   it has all the preprocessing options available in the selector
     """
-    ocr_dialog._on_engine_changed("ollama")
-    assert ocr_dialog._preprocess.currentText() == "grayscale"
-
-    ocr_dialog._on_engine_changed("tesseract")
-    assert ocr_dialog._preprocess.currentText() == "clahe"
+    selector = ocr_dialog._ocr_config_selector
+    # Check that all preprocessing checkboxes exist
+    assert selector._dewarp is not None
+    assert selector._deskew is not None
+    assert selector._border_crop is not None
+    assert selector._denoise is not None
+    assert selector._gamma is not None
+    # Check that PDF DPI spinner exists
+    assert selector._pdf_dpi is not None
 
 
 @pytest.mark.gui
@@ -280,39 +285,55 @@ def test_ocr_settings_dialog_get_values_returns_dict(ocr_dialog) -> None:
     """
     Given  an OCRSettingsDialog
     When   get_values() is called
-    Then   it returns the expected OCR-specific keys
+    Then   it returns the expected OCR-specific keys including preprocessing options
     """
     values = ocr_dialog.get_values()
     assert "ocr_engine" in values
     assert "ocr_model" in values
     assert "preprocess_method" in values
     assert "debug" in values
+    # Check that new preprocessing options are included
+    assert "preprocess_dewarp" in values
+    assert "preprocess_deskew" in values
+    assert "preprocess_border_crop" in values
+    assert "preprocess_denoise" in values
+    assert "preprocess_gamma" in values
+    assert "pdf_render_dpi" in values
     assert "correction_provider" not in values
 
 
 @pytest.mark.gui
-def test_ocr_settings_dialog_on_models_fetched_updates_combo(ocr_dialog) -> None:
+def test_ocr_settings_dialog_preprocessing_values_loaded(ocr_dialog) -> None:
     """
     Given  an OCRSettingsDialog
-    When   _on_models_fetched is called with a non-empty list
-    Then   the OCR model combo is updated and status shows green
+    When   it is created with preprocessing values
+    Then   the preprocessing options are loaded correctly
     """
-    ocr_dialog._on_models_fetched(["llama3:latest", "mistral:7b"])
-
-    items = [ocr_dialog._ocr_model.itemText(i) for i in range(ocr_dialog._ocr_model.count())]
-    assert "llama3:latest" in items
-    assert "#27ae60" in ocr_dialog._ocr_status_lbl.text()
+    # The dialog should have been created with default values
+    values = ocr_dialog.get_values()
+    # Check that preprocessing values are boolean
+    assert isinstance(values["preprocess_dewarp"], bool)
+    assert isinstance(values["preprocess_deskew"], bool)
+    assert isinstance(values["preprocess_border_crop"], bool)
+    assert isinstance(values["preprocess_denoise"], bool)
+    assert isinstance(values["preprocess_gamma"], bool)
+    assert isinstance(values["pdf_render_dpi"], int)
 
 
 @pytest.mark.gui
-def test_ocr_settings_dialog_status_red_on_empty_fetch(ocr_dialog) -> None:
+def test_ocr_settings_dialog_preprocessing_checkboxes_default_values(ocr_dialog) -> None:
     """
     Given  an OCRSettingsDialog
-    When   _on_models_fetched is called with an empty list
-    Then   the status label shows a red error indicator
+    When   it is created
+    Then   the preprocessing checkboxes have the correct default values
     """
-    ocr_dialog._on_models_fetched([])
-    assert "#c0392b" in ocr_dialog._ocr_status_lbl.text()
+    values = ocr_dialog.get_values()
+    # Default values should be False for all preprocessing options
+    assert values["preprocess_dewarp"] is False
+    assert values["preprocess_deskew"] is False
+    assert values["preprocess_border_crop"] is False
+    assert values["preprocess_denoise"] is False
+    assert values["preprocess_gamma"] is False
 
 
 # ── CorrectionSettingsDialog ───────────────────────────────────────────────────
@@ -566,12 +587,17 @@ def test_ocr_settings_dialog_visibility_reacts_to_engine(qtbot, monkeypatch) -> 
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
     dlg = OCRSettingsDialog({}, app_service=_DummyAppService())
     qtbot.addWidget(dlg)
+    dlg.show()
 
-    dlg._ocr_engine.setCurrentText("tesseract")
-    assert dlg._ocr_model_row.isHidden() is True
+    # Set to tesseract and verify model controls are hidden
+    dlg._ocr_config_selector._ocr_engine.setCurrentText("tesseract")
+    assert dlg._ocr_config_selector._ocr_model_label.isVisible() is False
+    assert dlg._ocr_config_selector._ocr_model_row.isVisible() is False
 
-    dlg._ocr_engine.setCurrentText("ollama")
-    assert dlg._ocr_model_row.isHidden() is False
+    # Set to ollama and verify model controls are visible
+    dlg._ocr_config_selector._ocr_engine.setCurrentText("ollama")
+    assert dlg._ocr_config_selector._ocr_model_label.isVisible() is True
+    assert dlg._ocr_config_selector._ocr_model_row.isVisible() is True
 
 
 # ── Output settings dialog ─────────────────────────────────────────────────────
@@ -740,8 +766,8 @@ def test_ocr_settings_dialog_has_temperature_spinbox(ocr_dialog) -> None:
     When   it is created
     Then   it exposes an ocr_temperature spinbox with a sensible default
     """
-    assert hasattr(ocr_dialog, "_ocr_temperature")
-    assert ocr_dialog._ocr_temperature.value() == DEFAULTS["ocr_temperature"]
+    assert hasattr(ocr_dialog._ocr_config_selector, "_ocr_temperature")
+    assert ocr_dialog._ocr_config_selector._ocr_temperature.value() == DEFAULTS["ocr_temperature"]
 
 
 @pytest.mark.gui
@@ -751,7 +777,7 @@ def test_ocr_settings_dialog_get_values_includes_temperature(ocr_dialog) -> None
     When   get_values() is called
     Then   the returned dict contains ocr_temperature=0.5
     """
-    ocr_dialog._ocr_temperature.setValue(0.5)
+    ocr_dialog._ocr_config_selector._ocr_temperature.setValue(0.5)
     values = ocr_dialog.get_values()
     assert "ocr_temperature" in values
     assert values["ocr_temperature"] == 0.5

@@ -33,7 +33,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..application.service import ProcessingApplicationService
-from ..config import DEFAULTS
+from ..config import DEFAULTS, OcrConfig
 from ._worker import _ConnectionCheckThread  # noqa: F401  kept for external callers
 
 
@@ -164,7 +164,6 @@ class OCRSettingsDialog(QDialog):
             self.setMaximumHeight(screen.availableGeometry().height() - 60)
 
         self._app_service = app_service or ProcessingApplicationService()
-        self._ocr_fetch_thread: _ModelFetchThread | None = None
         self._ollama_url = str(values.get("ollama_url", DEFAULTS["ollama_url"]))
 
         main = QVBoxLayout(self)
@@ -191,224 +190,84 @@ class OCRSettingsDialog(QDialog):
         main.addWidget(buttons)
 
         self._load_values(values)
-        self._on_engine_changed(self._ocr_engine.currentText())
+        # Trigger initial refresh of the selector (this is handled by load_ocr_config)
 
-    def _build_method_group(self) -> QGroupBox:  # noqa: PLR0915
+    def _build_method_group(self) -> QGroupBox:
         """Build the 'Text Recognition Method' settings group."""
+        from ._ocr_config_selector import OcrConfigSelector  # noqa: PLC0415
+
         group = QGroupBox("Text Recognition Method")
-        form = QFormLayout(group)
-        form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapAllRows)
+        layout = QVBoxLayout(group)
 
-        self._ocr_engine = QComboBox()
-        _native = ["ollama", "tesseract", "paddleocr"]
-        _provider_engines = [
-            p for p in _available_providers(self._app_service) if p not in _NATIVE_OCR_ENGINES
-        ]
-        self._ocr_engine.addItems(_native + _provider_engines)
-        self._ocr_engine.currentTextChanged.connect(self._on_engine_changed)
-        form.addRow("Recognition method:", self._ocr_engine)
-
-        self._ocr_extra_warn = QLabel()
-        self._ocr_extra_warn.setStyleSheet("color: #c0392b;")
-        self._ocr_extra_warn.setWordWrap(True)
-        self._ocr_extra_warn.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        self._ocr_extra_warn.setVisible(False)
-        form.addRow("", self._ocr_extra_warn)
-
-        self._ocr_install_btn = QPushButton("Install PaddleOCR Addon…")
-        self._ocr_install_btn.setVisible(False)
-        self._ocr_install_btn.clicked.connect(self._on_install_paddle_addon)
-        form.addRow("", self._ocr_install_btn)
-
-        self._ocr_model_label = QLabel("Model:")
-        self._ocr_model_row = QWidget()
-        ml = QHBoxLayout(self._ocr_model_row)
-        ml.setContentsMargins(0, 0, 0, 0)
-        self._ocr_model = QComboBox()
-        self._ocr_model.setEditable(True)
-        self._ocr_model.addItem(DEFAULTS["ocr_model"])
-        self._ocr_model.setCurrentText(DEFAULTS["ocr_model"])
-        self._ocr_status_lbl = QLabel(_STATUS_LOADING)
-        self._ocr_status_lbl.setTextFormat(Qt.TextFormat.RichText)
-        ml.addWidget(self._ocr_model, stretch=1)
-        ml.addWidget(self._ocr_status_lbl)
-        form.addRow(self._ocr_model_label, self._ocr_model_row)
-
-        preprocess_row = QWidget()
-        ph = QHBoxLayout(preprocess_row)
-        ph.setContentsMargins(0, 0, 0, 0)
-        self._preprocess = QComboBox()
-        self._preprocess.addItems(["adaptive_threshold", "clahe", "grayscale", "none"])
-        self._preprocess.setToolTip(
-            "Image preparation applied before text recognition.\n\n"
-            "Enhanced contrast — sharpens text on white background;\n"
-            "  best for Ollama with handwriting.\n"
-            "Balanced contrast — improves faint or low-contrast text;\n"
-            "  best for Tesseract.\n"
-            "Grayscale — converts to black and white without extra processing.\n"
-            "None — use the original image as-is."
+        # Use OcrConfigSelector for the main OCR configuration (engine, model, preprocessing, temperature)
+        self._ocr_config_selector = OcrConfigSelector(
+            app_service=self._app_service,
+            ollama_url=self._ollama_url,
+            show_preview_button=True,
+            parent=group,
         )
-        self._preview_btn = QPushButton("Preview…")
-        self._preview_btn.setFixedWidth(72)
-        self._preview_btn.setToolTip(
-            "See a side-by-side comparison of the original and prepared image."
-        )
-        self._preview_btn.clicked.connect(
-            lambda: self.preprocess_preview_requested.emit(self._preprocess.currentText())
-        )
-        ph.addWidget(self._preprocess, stretch=1)
-        ph.addWidget(self._preview_btn)
-        form.addRow("Image preparation:", preprocess_row)
 
+        # Connect the selector's signals to our dialog signals
+        self._ocr_config_selector.preprocess_preview_requested.connect(
+            self.preprocess_preview_requested.emit
+        )
+        self._ocr_config_selector.addon_installed.connect(self.addon_installed.emit)
+
+        layout.addWidget(self._ocr_config_selector)
+
+        # Add debug checkbox separately (not part of OcrConfigSelector)
         self._debug = QCheckBox("Keep processed images for inspection")
         self._debug.setToolTip(
             "When enabled, the processed images used for text recognition are\n"
             "kept in a temporary folder after the run."
         )
-        form.addRow("", self._debug)
+        layout.addWidget(self._debug)
 
-        self._ocr_temperature = QDoubleSpinBox()
-        self._ocr_temperature.setRange(0.0, 2.0)
-        self._ocr_temperature.setSingleStep(0.1)
-        self._ocr_temperature.setDecimals(1)
-        self._ocr_temperature.setValue(DEFAULTS["ocr_temperature"])
-        self._ocr_temperature.setToolTip(
-            "Sampling temperature for the AI model (0.0 = deterministic, higher = more creative).\n"
-            "For OCR, keep at 0.0 for consistent, repeatable results."
-        )
-        form.addRow("Temperature:", self._ocr_temperature)
         return group
 
     def _load_values(self, values: dict) -> None:
-        if "ocr_engine" in values:
-            engine = str(values["ocr_engine"])
-            if engine == "langchain" and "ocr_provider" in values:
-                _set_combo(self._ocr_engine, str(values["ocr_provider"]))
-            else:
-                _set_combo(self._ocr_engine, engine)
-        if "ocr_model" in values:
-            self._ocr_model.setCurrentText(str(values["ocr_model"]))
-        if "preprocess_method" in values:
-            _set_combo(self._preprocess, str(values["preprocess_method"]))
+        # Create OcrConfig from the values and load into the selector
+        ocr_config = OcrConfig(
+            engine=str(values.get("ocr_engine", DEFAULTS["ocr_engine"])),
+            model=str(values.get("ocr_model", DEFAULTS["ocr_model"])),
+            provider=str(values.get("ocr_provider", DEFAULTS["ocr_provider"])),
+            preprocess_method=str(values.get("preprocess_method", DEFAULTS["preprocess_method"])),
+            temperature=float(values.get("ocr_temperature", DEFAULTS["ocr_temperature"])),
+            pdf_render_dpi=int(values.get("pdf_render_dpi", DEFAULTS["pdf_render_dpi"])),
+            dewarp=bool(values.get("preprocess_dewarp", DEFAULTS["preprocess_dewarp"])),
+            deskew=bool(values.get("preprocess_deskew", DEFAULTS["preprocess_deskew"])),
+            border_crop=bool(
+                values.get("preprocess_border_crop", DEFAULTS["preprocess_border_crop"])
+            ),
+            denoise=bool(values.get("preprocess_denoise", DEFAULTS["preprocess_denoise"])),
+            gamma=bool(values.get("preprocess_gamma", DEFAULTS["preprocess_gamma"])),
+        )
+        self._ocr_config_selector.load_ocr_config(ocr_config)
+
         if "debug" in values:
             self._debug.setChecked(bool(values["debug"]))
-        if "ocr_temperature" in values:
-            self._ocr_temperature.setValue(float(values["ocr_temperature"]))
-
-    def _on_engine_changed(self, engine: str) -> None:
-        default = self._app_service.default_preprocess_for_engine(engine)
-        if default:
-            idx = self._preprocess.findText(default)
-            if idx >= 0:
-                self._preprocess.setCurrentIndex(idx)
-
-        is_ollama = engine == "ollama"
-        is_provider_engine = engine not in _NATIVE_OCR_ENGINES
-        self._ocr_model_label.setVisible(is_ollama or is_provider_engine)
-        self._ocr_model_row.setVisible(is_ollama or is_provider_engine)
-
-        paddle_missing = engine == "paddleocr" and not self._app_service.is_module_importable(
-            "paddleocr"
-        )
-        frozen = getattr(sys, "frozen", False)
-        if paddle_missing and frozen:
-            warn = "paddleocr is not installed."
-        elif paddle_missing:
-            warn = _install_hint(self._app_service, "paddle", ["paddleocr"])
-        else:
-            warn = ""
-        self._ocr_extra_warn.setText(warn)
-        self._ocr_extra_warn.setVisible(bool(warn))
-        self._ocr_install_btn.setVisible(paddle_missing and frozen)
-
-        if engine not in _NATIVE_OCR_ENGINES:
-            info = self._app_service.get_provider_info(engine)
-            prev = self._ocr_model.currentText()
-            self._ocr_model.clear()
-            models = info.get("models", [])
-            if models:
-                self._ocr_model.addItems(models)
-            idx = self._ocr_model.findText(prev)
-            if idx >= 0:
-                self._ocr_model.setCurrentIndex(idx)
-            elif prev:
-                self._ocr_model.setCurrentText(prev)
-            else:
-                self._ocr_model.setCurrentText(info.get("default_model", ""))
-            self._app_service.invalidate_model_cache(engine)
-
-        self._auto_fetch()
-
-    def _auto_fetch(self) -> None:
-        engine = self._ocr_engine.currentText()
-        if engine == "ollama":
-            cached = self._app_service.get_cached_models("ollama", base_url=self._ollama_url)
-            if cached is not None:
-                self._on_models_fetched(cached)
-                return
-            self._ocr_status_lbl.setText(_STATUS_LOADING)
-            _stop_thread(self._ocr_fetch_thread)
-            url = self._ollama_url
-            self._ocr_fetch_thread = _ModelFetchThread(
-                lambda: self._app_service.list_provider_models("ollama", base_url=url)
-            )
-            self._ocr_fetch_thread.models_ready.connect(self._on_models_fetched)
-            self._ocr_fetch_thread.start()
-        elif engine not in _NATIVE_OCR_ENGINES:
-            info = self._app_service.get_provider_info(engine)
-            if info.get("needs_api_key") and not os.environ.get(info.get("env_key", "")):
-                self._ocr_status_lbl.setText(_STATUS_KEY_MISSING)
-                return
-            cached = self._app_service.get_cached_models(engine)
-            if cached is not None:
-                self._on_models_fetched(cached)
-                return
-            self._ocr_status_lbl.setText(_STATUS_LOADING)
-            _stop_thread(self._ocr_fetch_thread)
-            self._ocr_fetch_thread = _ModelFetchThread(
-                lambda p=engine: self._app_service.list_provider_models(p)
-            )
-            self._ocr_fetch_thread.models_ready.connect(self._on_models_fetched)
-            self._ocr_fetch_thread.start()
-        else:
-            self._ocr_status_lbl.setText("")
-
-    def _on_models_fetched(self, models: list) -> None:
-        if not models:
-            self._ocr_status_lbl.setText(_STATUS_ERROR)
-            return
-        self._ocr_status_lbl.setText(_status_ok(len(models)))
-        prev = self._ocr_model.currentText()
-        self._ocr_model.clear()
-        self._ocr_model.addItems(models)
-        idx = self._ocr_model.findText(prev)
-        if idx >= 0:
-            self._ocr_model.setCurrentIndex(idx)
-        else:
-            self._ocr_model.setCurrentText(prev)
-
-    def _on_install_paddle_addon(self) -> None:
-        from ._addon_installer_dialog import AddonInstallerDialog  # noqa: PLC0415
-
-        dlg = AddonInstallerDialog("paddle", self)
-        dlg.installed.connect(self.addon_installed)
-        dlg.exec()
 
     def get_values(self) -> dict:
         """Return OCR-specific settings for ConfigPanel.update_settings()."""
-        engine = self._ocr_engine.currentText()
-        if engine in _NATIVE_OCR_ENGINES:
-            ocr_engine, ocr_provider = engine, ""
-        else:
-            ocr_engine, ocr_provider = "langchain", engine
-        return {
-            "ocr_engine": ocr_engine,
-            "ocr_provider": ocr_provider,
-            "ocr_model": self._ocr_model.currentText().strip() or DEFAULTS["ocr_model"],
-            "preprocess_method": self._preprocess.currentText(),
+        # Get OCR config from the selector
+        ocr_config = self._ocr_config_selector.get_ocr_config()
+
+        # Build the result dict from the OCR config
+        result = {
+            "ocr_engine": ocr_config.engine,
+            "ocr_provider": ocr_config.provider,
+            "ocr_model": ocr_config.model,
+            "preprocess_method": ocr_config.preprocess_method,
             "debug": self._debug.isChecked(),
-            "ocr_temperature": self._ocr_temperature.value(),
+            "ocr_temperature": ocr_config.temperature,
+            "pdf_render_dpi": ocr_config.pdf_render_dpi,
+            "preprocess_dewarp": ocr_config.dewarp,
+            "preprocess_deskew": ocr_config.deskew,
+            "preprocess_border_crop": ocr_config.border_crop,
+            "preprocess_denoise": ocr_config.denoise,
+            "preprocess_gamma": ocr_config.gamma,
         }
+        return result
 
 
 # ── Correction Settings dialog ────────────────────────────────────────────────

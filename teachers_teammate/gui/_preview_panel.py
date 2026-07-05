@@ -380,7 +380,12 @@ class PreviewPanel(QWidget):
         font = QFont()
         font.setStyleHint(QFont.StyleHint.TypeWriter)
         font.setPointSize(new_pt)
-        for widget in (self._ocr_text, self._correction_text, self._evaluation_text, self._diff_widget):
+        for widget in (
+            self._ocr_text,
+            self._correction_text,
+            self._evaluation_text,
+            self._diff_widget,
+        ):
             widget.setFont(font)
         self._font_size_lbl.setText(f"{new_pt} pt")
 

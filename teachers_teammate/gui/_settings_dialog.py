@@ -192,9 +192,9 @@ class OCRSettingsDialog(QDialog):
         self._load_values(values)
         # Trigger initial refresh of the selector (this is handled by load_ocr_config)
 
-    def _build_method_group(self) -> QGroupBox:  # noqa: PLR0915
+    def _build_method_group(self) -> QGroupBox:
         """Build the 'Text Recognition Method' settings group."""
-        from ._ocr_config_selector import OcrConfigSelector  # noqa: PLC0415  import locally to avoid circular import
+        from ._ocr_config_selector import OcrConfigSelector  # noqa: PLC0415
 
         group = QGroupBox("Text Recognition Method")
         layout = QVBoxLayout(group)
@@ -206,15 +206,13 @@ class OCRSettingsDialog(QDialog):
             show_preview_button=True,
             parent=group,
         )
-        
+
         # Connect the selector's signals to our dialog signals
         self._ocr_config_selector.preprocess_preview_requested.connect(
             self.preprocess_preview_requested.emit
         )
-        self._ocr_config_selector.addon_installed.connect(
-            self.addon_installed.emit
-        )
-        
+        self._ocr_config_selector.addon_installed.connect(self.addon_installed.emit)
+
         layout.addWidget(self._ocr_config_selector)
 
         # Add debug checkbox separately (not part of OcrConfigSelector)
@@ -224,7 +222,7 @@ class OCRSettingsDialog(QDialog):
             "kept in a temporary folder after the run."
         )
         layout.addWidget(self._debug)
-        
+
         return group
 
     def _load_values(self, values: dict) -> None:
@@ -238,22 +236,22 @@ class OCRSettingsDialog(QDialog):
             pdf_render_dpi=int(values.get("pdf_render_dpi", DEFAULTS["pdf_render_dpi"])),
             dewarp=bool(values.get("preprocess_dewarp", DEFAULTS["preprocess_dewarp"])),
             deskew=bool(values.get("preprocess_deskew", DEFAULTS["preprocess_deskew"])),
-            border_crop=bool(values.get("preprocess_border_crop", DEFAULTS["preprocess_border_crop"])),
+            border_crop=bool(
+                values.get("preprocess_border_crop", DEFAULTS["preprocess_border_crop"])
+            ),
             denoise=bool(values.get("preprocess_denoise", DEFAULTS["preprocess_denoise"])),
             gamma=bool(values.get("preprocess_gamma", DEFAULTS["preprocess_gamma"])),
         )
         self._ocr_config_selector.load_ocr_config(ocr_config)
-        
+
         if "debug" in values:
             self._debug.setChecked(bool(values["debug"]))
-
-
 
     def get_values(self) -> dict:
         """Return OCR-specific settings for ConfigPanel.update_settings()."""
         # Get OCR config from the selector
         ocr_config = self._ocr_config_selector.get_ocr_config()
-        
+
         # Build the result dict from the OCR config
         result = {
             "ocr_engine": ocr_config.engine,

@@ -318,7 +318,6 @@ def test_ocr_settings_dialog_preprocessing_values_loaded(ocr_dialog) -> None:
     assert isinstance(values["preprocess_denoise"], bool)
     assert isinstance(values["preprocess_gamma"], bool)
     assert isinstance(values["pdf_render_dpi"], int)
-    assert "#27ae60" in ocr_dialog._ocr_status_lbl.text()
 
 
 @pytest.mark.gui
@@ -328,7 +327,6 @@ def test_ocr_settings_dialog_preprocessing_checkboxes_default_values(ocr_dialog)
     When   it is created
     Then   the preprocessing checkboxes have the correct default values
     """
-    selector = ocr_dialog._ocr_config_selector
     values = ocr_dialog.get_values()
     # Default values should be False for all preprocessing options
     assert values["preprocess_dewarp"] is False
@@ -589,11 +587,14 @@ def test_ocr_settings_dialog_visibility_reacts_to_engine(qtbot, monkeypatch) -> 
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
     dlg = OCRSettingsDialog({}, app_service=_DummyAppService())
     qtbot.addWidget(dlg)
+    dlg.show()
 
+    # Set to tesseract and verify model controls are hidden
     dlg._ocr_config_selector._ocr_engine.setCurrentText("tesseract")
     assert dlg._ocr_config_selector._ocr_model_label.isVisible() is False
     assert dlg._ocr_config_selector._ocr_model_row.isVisible() is False
 
+    # Set to ollama and verify model controls are visible
     dlg._ocr_config_selector._ocr_engine.setCurrentText("ollama")
     assert dlg._ocr_config_selector._ocr_model_label.isVisible() is True
     assert dlg._ocr_config_selector._ocr_model_row.isVisible() is True

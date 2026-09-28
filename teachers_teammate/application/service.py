@@ -11,7 +11,7 @@ import threading
 import time
 import uuid
 
-from ..config import Config
+from ..config import Config, OcrConfig
 from ..infrastructure.addon_manager import ADDON_AMD as ADDON_AMD  # noqa: PLC0414
 from ..infrastructure.addon_manager import ADDON_NVIDIA as ADDON_NVIDIA  # noqa: PLC0414
 from ..infrastructure.addon_manager import ADDON_PADDLE as ADDON_PADDLE  # noqa: PLC0414
@@ -38,6 +38,7 @@ from ..infrastructure.ocr_processor import (
     default_preprocess_for_engine as _infra_default_preprocess_for_engine,
 )
 from ..infrastructure.pipeline import OCRPipeline, preprocess_preview
+from ..infrastructure.stage_builder import PipelineComponentFactory
 from ..infrastructure.state_repository import (
     DocumentState,
     DocumentStateView,
@@ -81,10 +82,14 @@ class ProcessingApplicationService:
         discovery: FileDiscovery | None = None,
         pipeline_factory: Callable[..., OCRPipeline] | None = None,
         state_repository_factory: Callable[[Path], StateRepository] | None = None,
+        component_factory: PipelineComponentFactory | None = None,
     ) -> None:
         self._discovery = discovery or FileDiscovery()
         self._pipeline_factory = pipeline_factory or OCRPipeline
         self._state_repository_factory = state_repository_factory or StateRepository
+        # Used only to keep preprocess_preview() in sync with a non-default factory a
+        # caller's OCRPipeline was built with; pipeline runs configure their own copy.
+        self._component_factory = component_factory or PipelineComponentFactory()
         self._anonymizer_cache: dict[tuple, object] = {}
         self._model_cache: dict[str, tuple[float, list[str]]] = {}
         self._commands = ApplicationCommands(
@@ -253,7 +258,7 @@ class ProcessingApplicationService:
 
     def build_lookup_config(self, input_dir: Path, output_dir: Path) -> Config:
         """Return a minimal Config for reading cached state before output_dir is confirmed."""
-        from ..config import DEFAULTS, OcrConfig  # noqa: PLC0415
+        from ..config import DEFAULTS  # noqa: PLC0415
 
         return Config(
             input_dir=input_dir,
@@ -275,11 +280,13 @@ class ProcessingApplicationService:
     def preprocess_preview(
         self,
         source_path: Path,
-        method: str,
+        ocr: OcrConfig,
         tmp_dir: Path,
     ) -> tuple[Path, Path, list[str]]:
         """Run preprocessing preview for one source file."""
-        return preprocess_preview(source_path, method, tmp_dir)
+        return preprocess_preview(
+            source_path, ocr, tmp_dir, self._component_factory.build_preprocessor
+        )
 
     def anonymize_preview(
         self,

@@ -46,16 +46,16 @@ import logging
 from pathlib import Path
 import threading
 
-from ..config import Config
+from ..config import Config, OcrConfig
 from ..exceptions import OllamaConnectionError, ProviderNotAvailableError
+from ..interfaces import ImagePreprocessor
 from .file_discovery import FileDiscovery
-from .image_preprocessor import HandwritingPreprocessor
 from .input_provider_factory import get_input_provider, supported_suffixes
 from .ollama_utils import OllamaClient
 from .preview_image_store import PreviewImageStore
 from .reporting import Reporter, StdoutReporter
 from .stage_builder import PipelineComponentFactory as PipelineComponentFactory  # noqa: PLC0414
-from .stage_builder import StageBuilder
+from .stage_builder import StageBuilder, default_build_preprocessor
 from .state_repository import StateRepository
 from .storage_root import resolve_artifact_dir, resolve_storage_root
 from .workflow.cache_service import CacheReconciliationService
@@ -100,27 +100,36 @@ def collect_files(config: Config) -> list[Path]:
 
 def preprocess_preview(
     source_path: Path,
-    method: str,
+    ocr: OcrConfig,
     tmp_dir: Path,
-    pdf_dpi: int = 300,
+    build_preprocessor: Callable[
+        [Path, bool, OcrConfig], ImagePreprocessor
+    ] = default_build_preprocessor,
 ) -> tuple[Path, Path, list[str]]:
     """Preprocess *source_path* and return paths for both the original and processed image.
 
     Does not run OCR, correction, or DOCX generation.
 
-    For PDF inputs the first page is rendered to ``tmp_dir`` and used as the
-    original image.  For image inputs the file is used directly.
+    For PDF inputs the first page is rendered to ``tmp_dir`` (at ``ocr.pdf_render_dpi``)
+    and used as the original image.  For image inputs the file is used directly.
+
+    Builds the preprocessor via *build_preprocessor*, which defaults to the same
+    constructor a real run uses (:func:`stage_builder.default_build_preprocessor`). Pass
+    a :class:`PipelineComponentFactory`'s ``build_preprocessor`` (e.g.
+    ``factory.build_preprocessor``) when the caller was configured with a non-default
+    factory, so the preview matches what that run would actually apply.
 
     Args:
         source_path: Path to a supported input file (PDF or image).
-        method:      Preprocessing method name (see :class:`HandwritingPreprocessor`).
+        ocr:         The OCR config slice (method, pre-steps, PDF DPI) to preview.
         tmp_dir:     Temporary directory for any intermediate and output files.
-        pdf_dpi:     Resolution for PDF page rendering (default 300).
+        build_preprocessor: Preprocessor constructor; defaults to
+            :func:`stage_builder.default_build_preprocessor`.
 
     Returns:
         A tuple of ``(original_image_path, preprocessed_image_path, steps_applied)``.
     """
-    provider = get_input_provider(source_path.suffix, tmp_dir=tmp_dir, pdf_dpi=pdf_dpi)
+    provider = get_input_provider(source_path.suffix, tmp_dir=tmp_dir, pdf_dpi=ocr.pdf_render_dpi)
     payload = provider.load(source_path)
     image_path = next(
         (
@@ -133,7 +142,7 @@ def preprocess_preview(
     if image_path is None:
         raise ValueError(f"Preview is only available for image-based inputs: '{source_path.name}'.")
 
-    preprocessor = HandwritingPreprocessor(tmp_dir=tmp_dir, save_steps=False, method=method)
+    preprocessor = build_preprocessor(tmp_dir, False, ocr)
     out_path, steps = preprocessor.preprocess(image_path)
     return image_path, out_path, steps
 

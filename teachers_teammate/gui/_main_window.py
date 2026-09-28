@@ -40,7 +40,7 @@ from ..application.service import (
     ADDON_PRIVACY,
     ProcessingApplicationService,
 )
-from ..config import DEFAULTS, Config, dump_config_file, load_config_file
+from ..config import DEFAULTS, Config, OcrConfig, dump_config_file, load_config_file
 from ._app_bootstrap import create_app
 from ._chart_widget import ChartWidget
 from ._config_panel import ConfigPanel
@@ -97,6 +97,38 @@ class _AnonymizeThread(QThread):
             )
         except Exception as exc:  # noqa: BLE001  # anonymization may raise anything off-thread; report via the done signal
             self.done.emit("", "", str(exc))
+
+
+class _PreprocessPreviewThread(QThread):
+    """Run preprocess_preview() in a background thread for the preprocessing preview dialog.
+
+    Preprocessing a full-resolution scan (denoise, deskew, ...) can take several
+    seconds; running it on the GUI thread would freeze the window until it returns.
+    """
+
+    done = Signal(object, object, object, str)  # original_path, processed_path, steps, error
+
+    def __init__(
+        self,
+        app_service: ProcessingApplicationService,
+        source_path: Path,
+        ocr_config: OcrConfig,
+        tmp_dir: Path,
+    ) -> None:
+        super().__init__()
+        self._svc = app_service
+        self._source_path = source_path
+        self._ocr_config = ocr_config
+        self._tmp_dir = tmp_dir
+
+    def run(self) -> None:
+        try:
+            orig, proc, steps = self._svc.preprocess_preview(
+                self._source_path, self._ocr_config, self._tmp_dir
+            )
+            self.done.emit(orig, proc, steps, "")
+        except Exception as exc:  # noqa: BLE001  # preprocess_preview raises for unsupported files, missing deps, or I/O errors; report via the done signal
+            self.done.emit(None, None, None, str(exc))
 
 
 class _WorkerLike(Protocol):
@@ -232,6 +264,7 @@ class MainWindow(QMainWindow):
         self._config_path: Path | None = None
         self._pull_manager = OllamaDownloadManager(self)
         self._privacy_preview_thread: _AnonymizeThread | None = None
+        self._preprocess_preview_thread: _PreprocessPreviewThread | None = None
         self._result_names: list[str] = []
         self._result_ocr_times: list[float] = []
         self._result_correction_times: list[float] = []
@@ -1484,7 +1517,11 @@ class MainWindow(QMainWindow):
             self._config_panel.update_anonymizer_config(dialog.anonymizer_config)
             self._save_settings(notify=False)
 
-    def _on_preprocess_preview_requested(self, method: str) -> None:
+    def _on_preprocess_preview_requested(self, ocr_config: OcrConfig) -> None:
+        thread = self._preprocess_preview_thread
+        if thread is not None and thread.isRunning():
+            return  # a preview is already in flight; ignore the extra click
+
         input_dir_text = self._config_panel.get_input_dir()
         source_path: Path | None = None
         if input_dir_text:
@@ -1511,22 +1548,44 @@ class MainWindow(QMainWindow):
             source_path = Path(path)
 
         tmp_dir = self._app_service.resolve_preview_tmp_dir()
-        try:
-            orig_path, proc_path, steps = self._app_service.preprocess_preview(
-                source_path,
-                method,
-                tmp_dir,
-            )
-        except Exception as exc:  # noqa: BLE001  # preprocess_preview raises for unsupported files, missing deps, or I/O errors; show a dialog instead of crashing
+
+        thread = _PreprocessPreviewThread(self._app_service, source_path, ocr_config, tmp_dir)
+        self._preprocess_preview_thread = thread
+        # QueuedConnection: guarantees the callback (which builds widgets) runs on the
+        # GUI thread even though the lambda itself isn't a QObject the auto-connection
+        # logic can use to infer that.
+        thread.done.connect(
+            lambda orig, proc, steps, error: self._on_preprocess_preview_done(
+                orig, proc, steps, error, ocr_config, tmp_dir
+            ),
+            Qt.ConnectionType.QueuedConnection,
+        )
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        thread.start()
+
+    def _on_preprocess_preview_done(
+        self,
+        orig_path: Path | None,
+        proc_path: Path | None,
+        steps: list[str] | None,
+        error: str,
+        ocr_config: OcrConfig,
+        tmp_dir: Path,
+    ) -> None:
+        QApplication.restoreOverrideCursor()
+        if error:
             shutil.rmtree(tmp_dir, ignore_errors=True)
-            QMessageBox.warning(self, "Preview failed", str(exc))
+            QMessageBox.warning(self, "Preview failed", error)
             return
+        assert orig_path is not None
+        assert proc_path is not None
+        assert steps is not None
 
         orig_pix = load_pixmap(orig_path)
         proc_pix = load_pixmap(proc_path)
 
         dlg = QDialog(self)
-        dlg.setWindowTitle(f"Preprocessing Preview — {method}")
+        dlg.setWindowTitle(f"Preprocessing Preview — {ocr_config.preprocess_method}")
         dlg.resize(1000, 620)
 
         vbox = QVBoxLayout(dlg)

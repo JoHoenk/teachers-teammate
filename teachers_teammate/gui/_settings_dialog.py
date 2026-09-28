@@ -146,7 +146,7 @@ def _stop_thread(thread: _ModelFetchThread | None) -> None:
 class OCRSettingsDialog(QDialog):
     """Focused dialog for configuring OCR engine, model, and preprocessing."""
 
-    preprocess_preview_requested = Signal(str)
+    preprocess_preview_requested = Signal(object)  # emits the current OcrConfig
     addon_installed = Signal(str)
 
     def __init__(

@@ -120,6 +120,35 @@ def test_load_ocr_config_round_trips_preprocessing_fields(selector) -> None:
 
 
 @pytest.mark.gui
+@pytest.mark.use_case("Preview_Preprocessing")
+def test_preview_button_emits_full_ocr_config(selector, qtbot) -> None:
+    """
+    Given  the selector with deskew and border_crop checked (not just a preprocess method)
+    When   the Preview… button is clicked
+    Then   preprocess_preview_requested carries the complete OcrConfig, pre-steps included
+
+    Regression guard: previously the signal emitted only the preprocess-method string, so
+    the preview dialog silently ignored every checked pre-step checkbox.
+    """
+    from PySide6.QtWidgets import QPushButton  # noqa: PLC0415
+
+    selector._deskew.setChecked(True)
+    selector._border_crop.setChecked(True)
+
+    preview_btn = next(
+        w for w in selector.findChildren(QPushButton) if w.text().startswith("Preview")
+    )
+    with qtbot.waitSignal(selector.preprocess_preview_requested, timeout=1000) as blocker:
+        preview_btn.click()
+
+    (emitted,) = blocker.args
+    assert isinstance(emitted, OcrConfig)
+    assert emitted.deskew is True
+    assert emitted.border_crop is True
+    assert emitted == selector.get_ocr_config()
+
+
+@pytest.mark.gui
 def test_native_non_ollama_engine_hides_model_row(selector) -> None:
     """
     Given  the selector
@@ -130,3 +159,39 @@ def test_native_non_ollama_engine_hides_model_row(selector) -> None:
     assert selector._ocr_model_row.isHidden() is True
     selector._ocr_engine.setCurrentText("ollama")
     assert selector._ocr_model_row.isHidden() is False
+
+
+@pytest.mark.gui
+def test_prestep_checkboxes_disabled_under_preprocess_method_none(selector) -> None:
+    """
+    Given  the selector
+    When   Image preparation is switched to "none" and then back to an active method
+    Then   the pre-step checkboxes are disabled under "none" and re-enabled otherwise
+
+    "none" skips every pre-step (HandwritingPreprocessor.preprocess returns the
+    original file unchanged), so a checked box under it would silently have no effect.
+    """
+    checkboxes = [
+        selector._dewarp,
+        selector._deskew,
+        selector._border_crop,
+        selector._denoise,
+        selector._gamma,
+    ]
+    selector._preprocess.setCurrentText("none")
+    assert all(not cb.isEnabled() for cb in checkboxes)
+
+    selector._preprocess.setCurrentText("grayscale")
+    assert all(cb.isEnabled() for cb in checkboxes)
+
+
+@pytest.mark.gui
+def test_load_ocr_config_disables_prestep_checkboxes_for_method_none(selector) -> None:
+    """
+    Given  an OcrConfig with preprocess_method="none"
+    When   load_ocr_config() populates the selector
+    Then   the pre-step checkboxes are disabled
+    """
+    selector.load_ocr_config(OcrConfig(engine="tesseract", preprocess_method="none"))
+    assert selector._preprocess.currentText() == "none"
+    assert selector._deskew.isEnabled() is False

@@ -52,11 +52,29 @@ def _no_network_in_gui_tests(monkeypatch) -> None:
     monkeypatch.setattr(ProcessingApplicationService, "check_stage_requirements", lambda *_: [])
 
 
+class _DummyUpdateThread:
+    """Stand-in for UpdateCheckThread that never touches the network or starts a QThread.
+
+    Without this, MainWindow.__init__ schedules a real UpdateCheckThread via
+    QTimer.singleShot(0, ...); if a test only spins the event loop briefly, that timer
+    never fires within the test, but it can fire during a *later* test's event-loop
+    spin (the same QApplication persists across the whole session) and touch a
+    MainWindow instance whose widgets are already torn down, crashing the process.
+    """
+
+    def __init__(self, _parent=None) -> None:
+        self.update_available = _DummySignal()
+
+    def start(self) -> None:
+        pass
+
+
 @pytest.fixture
 def main_window(qtbot, monkeypatch) -> MainWindow:
     """Create a MainWindow with startup side effects disabled."""
     monkeypatch.setattr(MainWindow, "_load_toml_if_present", lambda self: None)
     monkeypatch.setattr(MainWindow, "_check_llm_status", lambda self: None)
+    monkeypatch.setattr(main_window_module, "UpdateCheckThread", _DummyUpdateThread)
     win = MainWindow(worker_factory=_DummyWorker)
     qtbot.addWidget(win)
     return win
@@ -836,27 +854,37 @@ def test_main_window_on_preprocess_preview_no_source_user_cancels(
     """
     Given  input dir has no images and user cancels the file dialog
     When   _on_preprocess_preview_requested is called
-    Then   method returns without error
+    Then   method returns without error and no background thread is started
     """
     from unittest.mock import patch  # noqa: PLC0415
+
+    from teachers_teammate.config import OcrConfig  # noqa: PLC0415
 
     monkeypatch.setattr(main_window._config_panel, "get_input_dir", lambda: str(tmp_path))
     with patch(
         "teachers_teammate.gui._main_window.QFileDialog.getOpenFileName", return_value=("", "")
     ):
-        main_window._on_preprocess_preview_requested("none")  # should not raise
+        main_window._on_preprocess_preview_requested(
+            OcrConfig(preprocess_method="none")
+        )  # should not raise
+    assert main_window._preprocess_preview_thread is None
 
 
 @pytest.mark.gui
 def test_main_window_on_preprocess_preview_preprocess_error(
-    main_window, monkeypatch, tmp_path
+    main_window, monkeypatch, tmp_path, qtbot
 ) -> None:
     """
     Given  preprocess_preview raises an exception
-    When   _on_preprocess_preview_requested is called
+    When   _on_preprocess_preview_requested runs its background thread to completion
     Then   a warning dialog is shown and no crash occurs
+
+    preprocess_preview now runs off the GUI thread (see _PreprocessPreviewThread), so
+    the warning only appears once the thread's done signal has been delivered.
     """
     from unittest.mock import patch  # noqa: PLC0415
+
+    from teachers_teammate.config import OcrConfig  # noqa: PLC0415
 
     img_file = tmp_path / "test.png"
     img_file.write_bytes(b"fake")
@@ -869,7 +897,47 @@ def test_main_window_on_preprocess_preview_preprocess_error(
     with (
         patch("teachers_teammate.gui._main_window.QMessageBox") as mock_mb,
     ):
-        main_window._on_preprocess_preview_requested("none")
+        main_window._on_preprocess_preview_requested(OcrConfig(preprocess_method="none"))
+        qtbot.waitUntil(lambda: mock_mb.warning.called, timeout=2000)
+    mock_mb.warning.assert_called_once()
+
+
+@pytest.mark.gui
+def test_main_window_on_preprocess_preview_ignores_concurrent_click(
+    main_window, monkeypatch, tmp_path, qtbot
+) -> None:
+    """
+    Given  a preprocessing preview already running in the background
+    When   _on_preprocess_preview_requested is called again before it finishes
+    Then   the second call is ignored: no second thread replaces the first, and the
+           error dialog for the one background run appears exactly once
+    """
+    import time  # noqa: PLC0415
+    from unittest.mock import patch  # noqa: PLC0415
+
+    from teachers_teammate.config import OcrConfig  # noqa: PLC0415
+
+    img_file = tmp_path / "test.png"
+    img_file.write_bytes(b"fake")
+    monkeypatch.setattr(main_window._config_panel, "get_input_dir", lambda: str(tmp_path))
+
+    call_count = {"n": 0}
+
+    def _slow_failing_preview(*_args, **_kwargs):
+        call_count["n"] += 1
+        time.sleep(0.3)
+        raise ValueError("bad file")
+
+    monkeypatch.setattr(main_window._app_service, "preprocess_preview", _slow_failing_preview)
+
+    with patch("teachers_teammate.gui._main_window.QMessageBox") as mock_mb:
+        main_window._on_preprocess_preview_requested(OcrConfig(preprocess_method="none"))
+        first_thread = main_window._preprocess_preview_thread
+        main_window._on_preprocess_preview_requested(OcrConfig(preprocess_method="none"))
+        assert main_window._preprocess_preview_thread is first_thread
+
+        qtbot.waitUntil(lambda: mock_mb.warning.called, timeout=2000)
+    assert call_count["n"] == 1
     mock_mb.warning.assert_called_once()
 
 

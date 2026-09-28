@@ -53,9 +53,10 @@ from .workflow.preprocess_service import PreprocessService
 # ── Default constructors ───────────────────────────────────────────────────
 
 
-def _default_build_preprocessor(
+def default_build_preprocessor(
     tmp_dir: Path, save_steps: bool, ocr: OcrConfig
 ) -> ImagePreprocessor:
+    """Build the preprocessor for *ocr*'s settings; shared by real runs and the GUI preview."""
     return HandwritingPreprocessor(
         tmp_dir=tmp_dir,
         save_steps=save_steps,
@@ -141,7 +142,7 @@ class PipelineComponentFactory:
     """
 
     build_preprocessor: Callable[[Path, bool, OcrConfig], ImagePreprocessor] = (
-        _default_build_preprocessor
+        default_build_preprocessor
     )
     build_tesseract_ocr: Callable[[], OCRProcessor] = _default_build_tesseract_ocr
     build_paddle_ocr: Callable[[str], OCRProcessor] = _default_build_paddle_ocr

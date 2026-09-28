@@ -49,7 +49,7 @@ from ._settings_dialog import (
 class OcrConfigSelector(QWidget):
     """Engine/model/preprocess/temperature picker producing an :class:`OcrConfig`."""
 
-    preprocess_preview_requested = Signal(str)
+    preprocess_preview_requested = Signal(object)  # emits the current OcrConfig
     addon_installed = Signal(str)
 
     def __init__(
@@ -122,14 +122,16 @@ class OcrConfigSelector(QWidget):
             "Balanced contrast (clahe) — grayscale output; improves faint or low-\n"
             "  contrast text; best for Tesseract.\n"
             "Grayscale — converts to grayscale without further processing.\n"
-            "None — pass the original image directly to the OCR engine."
+            "None — pass the original image directly to the OCR engine.\n"
+            "  Disables the corrections and enhancements below, which have no effect."
         )
+        self._preprocess.currentTextChanged.connect(self._on_preprocess_method_changed)
         ph.addWidget(self._preprocess, stretch=1)
         if show_preview_button:
             preview_btn = QPushButton("Preview…")
             preview_btn.setFixedWidth(72)
             preview_btn.clicked.connect(
-                lambda: self.preprocess_preview_requested.emit(self._preprocess.currentText())
+                lambda: self.preprocess_preview_requested.emit(self.get_ocr_config())
             )
             ph.addWidget(preview_btn)
         form.addRow("Image preparation:", preprocess_row)
@@ -191,6 +193,10 @@ class OcrConfigSelector(QWidget):
         er.addStretch()
         form.addRow("Enhancements:", enhancements_row)
 
+        # "None" skips every pre-step (HandwritingPreprocessor.preprocess returns the
+        # original file unchanged), so the checkboxes above have no effect under it.
+        self._on_preprocess_method_changed(self._preprocess.currentText())
+
     def _build_temperature_row(self, form: QFormLayout) -> None:
         self._ocr_temperature = QDoubleSpinBox()
         self._ocr_temperature.setRange(0.0, 2.0)
@@ -222,6 +228,7 @@ class OcrConfigSelector(QWidget):
         self._denoise.setChecked(ocr.denoise)
         self._gamma.setChecked(ocr.gamma)
         self._pdf_dpi.setValue(ocr.pdf_render_dpi)
+        self._on_preprocess_method_changed(self._preprocess.currentText())
 
     def get_ocr_config(self) -> OcrConfig:
         """Return the currently selected configuration as an :class:`OcrConfig`."""
@@ -260,6 +267,12 @@ class OcrConfigSelector(QWidget):
             thread.wait(5000)
 
     # ── internal ───────────────────────────────────────────────────────────
+
+    def _on_preprocess_method_changed(self, method: str) -> None:
+        """Disable the pre-step checkboxes under "none" -- they would have no effect."""
+        enabled = method != "none"
+        for cb in (self._dewarp, self._deskew, self._border_crop, self._denoise, self._gamma):
+            cb.setEnabled(enabled)
 
     def _on_engine_changed(self, engine: str) -> None:
         default = self._app_service.default_preprocess_for_engine(engine)

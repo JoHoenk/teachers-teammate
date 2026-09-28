@@ -110,6 +110,8 @@ The *Image preparation* dropdown controls how contrast and binarisation are appl
 | `grayscale` | Grayscale | Engines that require gray or colour input (e.g. PaddleOCR) |
 | `none` | Original colour | High-quality colour scans; PaddleOCR on printed material |
 
+Choosing `none` passes the file through unchanged, so the geometric corrections and tone/noise enhancements below never run; their checkboxes are disabled while `none` is selected.
+
 ### Geometric corrections
 
 These steps fix spatial problems in the image before contrast enhancement. Apply them in the order shown; they can be combined freely.
@@ -119,12 +121,12 @@ Corrects perspective distortion caused by photographing a document at an angle o
 *Use when:* documents are photographed with a phone or camera, or scanned from a book.
 
 **Deskew**
-Corrects rotational tilt up to ±45°. Uses the minimum-area bounding rectangle of ink pixels to estimate the skew angle. Corrections below 0.5° are skipped to avoid introducing noise.
+Corrects rotational tilt up to ±45°. Searches candidate angles and picks the one whose ink lines up most sharply into horizontal rows, using a local (adaptive) ink threshold so the paper's own tone and any scanner-bed border never get mistaken for content. Corrections below 0.5° are skipped to avoid introducing noise.
 *Use when:* handwriting or the scanner mechanism introduces a visible tilt.
 
 **Border crop**
-Removes dark scanner borders by finding the bounding box of non-background pixels and cropping to it (with a 10-pixel margin). Reducing the image area speeds up all subsequent steps.
-*Use when:* flat-bed scans have dark borders. Not recommended for photographed documents where the border is content.
+Crops away any border with no content — a dark scanner frame or a plain white/gray margin alike — down to the bounding box of the detected ink (with a 10-pixel margin). Reducing the image area speeds up all subsequent steps.
+*Use when:* the scan or photo has a border (dark or plain) around the content. Not recommended for photographed documents where the border itself is content.
 
 ### Tone / noise enhancements
 

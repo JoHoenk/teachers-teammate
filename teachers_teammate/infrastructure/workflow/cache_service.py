@@ -20,6 +20,26 @@ from ..state_repository import (
 
 # ── Module-level hash helpers (shared with application layer) ─────────────────
 
+# Bump a step's entry here whenever *its* algorithm changes (not just its on/off
+# setting), so cached results computed with the old behaviour are treated as stale
+# even though the user-visible flag didn't change. Steps not listed here have never
+# changed their algorithm, so their fingerprint entry stays a plain "True"/"False".
+# See image_preprocessor.py history for what changed at each version.
+_PRESTEP_ALGO_VERSIONS = {"deskew": "2", "border_crop": "2"}
+
+
+def _prestep_fingerprint(name: str, enabled: bool) -> str:
+    """Return the fingerprint entry for one pre-step flag.
+
+    Only folds the algorithm version in when the step is enabled, so configs that
+    never used it (the common case) keep the same hash -- and cached results -- as
+    before that step's algorithm changed.
+    """
+    if not enabled:
+        return "False"
+    version = _PRESTEP_ALGO_VERSIONS.get(name)
+    return f"True@v{version}" if version else "True"
+
 
 def _preprocess_fingerprint(ocr: OcrConfig) -> tuple[str, ...]:
     """Return the preprocessing settings that change the image fed to OCR.
@@ -27,15 +47,20 @@ def _preprocess_fingerprint(ocr: OcrConfig) -> tuple[str, ...]:
     Every entry must be included in both the OCR cache hash and the preview hash so a
     toggle (pre-step or PDF DPI) invalidates the cached result instead of returning stale
     OCR text or a stale preview image.
+
+    Method "none" skips every pre-step (see HandwritingPreprocessor.preprocess), so the
+    pre-step flags are folded to "False" in that case -- toggling them has no effect on
+    the image and must not force a re-run.
     """
+    runs_presteps = ocr.preprocess_method != "none"
     return (
         ocr.preprocess_method,
         str(ocr.pdf_render_dpi),
-        str(ocr.dewarp),
-        str(ocr.deskew),
-        str(ocr.border_crop),
-        str(ocr.denoise),
-        str(ocr.gamma),
+        _prestep_fingerprint("dewarp", runs_presteps and ocr.dewarp),
+        _prestep_fingerprint("deskew", runs_presteps and ocr.deskew),
+        _prestep_fingerprint("border_crop", runs_presteps and ocr.border_crop),
+        _prestep_fingerprint("denoise", runs_presteps and ocr.denoise),
+        _prestep_fingerprint("gamma", runs_presteps and ocr.gamma),
     )
 
 

@@ -207,52 +207,128 @@ class HandwritingPreprocessor(ImagePreprocessor):
         M = cv2.getPerspectiveTransform(ordered, dst)
         return cv2.warpPerspective(gray, M, (width, height))
 
-    def _deskew_image(self, gray: Any) -> Any:
-        """Correct page rotation up to +/-45 degrees using minimum-area bounding rectangle.
+    def _scanner_bed_mask(self, gray: Any) -> Any:
+        """Return a mask of large dark regions (an exposed scanner bed) plus a halo.
 
-        The pinned ``opencv-python`` (4.13) returns the ``minAreaRect`` angle in the
-        legacy ``[-90, 0)`` range; this normalisation folds it into the smallest-magnitude
-        correction so an already-upright page (raw ``-90``) is left untouched.
+        Opening with a 15x15 kernel removes thin dark strokes (pen ink) while keeping
+        large dark areas; dilating the result by two more passes of the same kernel
+        extends the mask over the bed's edge, so the ink mask below doesn't pick up
+        the transition between bed and page as content.
         """
         import numpy as np  # noqa: PLC0415  # pylint: disable=import-error
 
-        _, binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
-        coords = np.column_stack(np.where(binary > 0))
-        if len(coords) < 10:
-            return gray
-        angle = cv2.minAreaRect(coords)[-1]
-        if angle < -45:
-            angle = -(90 + angle)
-        else:
-            angle = -angle
+        dark = (gray < 128).astype(np.uint8)
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (15, 15))
+        opened = cv2.morphologyEx(dark, cv2.MORPH_OPEN, kernel)
+        return cv2.dilate(opened, kernel, iterations=2) > 0
+
+    def _ink_mask(self, gray: Any) -> Any:
+        """Return a boolean mask of pixels that are ink, independent of paper tone.
+
+        Uses a local (adaptive) threshold rather than a global one, so plain paper
+        counts as background whatever its tone (bright white, off-white, or a gray
+        photographed page) -- unlike a fixed brightness cutoff, which misclassifies
+        a uniformly toned page as content. A light blur first suppresses sensor
+        grain, which would otherwise register as isolated "ink" pixels. The scanner
+        bed (see :meth:`_scanner_bed_mask`) is excluded so a dark border is never
+        counted as content.
+        """
+        blurred = cv2.GaussianBlur(gray, (3, 3), 0)
+        # blockSize=31: matches the neighbourhood used by the adaptive_threshold
+        # method below, tuned for ~300 DPI. C=10: empirically keeps faint (pencil)
+        # strokes while rejecting paper grain -- see image_preprocessor tests.
+        ink = (
+            cv2.adaptiveThreshold(
+                blurred, 1, cv2.ADAPTIVE_THRESH_MEAN_C, cv2.THRESH_BINARY_INV, 31, 10
+            )
+            > 0
+        )
+        return ink & ~self._scanner_bed_mask(gray)
+
+    def _estimate_skew_angle(self, gray: Any) -> float:
+        """Estimate the page's rotation (degrees) using a projection-profile search.
+
+        For each candidate angle, rotates a downscaled copy of the ink mask and
+        scores it by the variance of its row-sum profile: text lines aligned to
+        horizontal rows produce a sharply peaked profile (high variance), while a
+        residual tilt smears ink across many rows (low variance). The best angle is
+        found by a coarse pass (0.5-degree steps over +/-45 degrees) followed by a
+        fine pass (0.05-degree steps around the coarse best).
+
+        Using the ink mask (rather than raw pixel intensity) makes the score
+        independent of paper tone and scanner-bed borders -- both would otherwise
+        register as "ink" and bias the profile toward large, spurious tilts. Ties
+        are broken toward the smallest-magnitude angle, and an angle is only
+        returned if it clearly improves on 0 degrees, so a blank or already-upright
+        page is left alone rather than rotated on a flat/noisy score.
+        """
+        import numpy as np  # noqa: PLC0415  # pylint: disable=import-error
+
+        h, w = gray.shape[:2]
+        scale = min(1.0, 800.0 / max(h, w))
+        small = (
+            cv2.resize(gray, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
+            if scale < 1.0
+            else gray
+        )
+        ink = self._ink_mask(small).astype(np.float32)
+        if ink.mean() < 0.002:
+            return 0.0  # essentially blank -- nothing to align
+        sh, sw = small.shape[:2]
+        center = (sw / 2, sh / 2)
+
+        def score(angle: float) -> float:
+            m = cv2.getRotationMatrix2D(center, angle, 1.0)
+            rotated = cv2.warpAffine(ink, m, (sw, sh), flags=cv2.INTER_LINEAR, borderValue=0)
+            return float(np.var(rotated.sum(axis=1)))
+
+        coarse_angles = sorted((float(a) for a in np.arange(-45.0, 45.01, 0.5)), key=abs)
+        # ty can't match the `key` overload against a local closure here even though
+        # `score` is `(float) -> float`, which satisfies SupportsDunderLT/GT.
+        coarse_best = max(coarse_angles, key=score)  # ty: ignore[no-matching-overload]
+        fine_angles = sorted(
+            (float(a) for a in np.arange(coarse_best - 0.5, coarse_best + 0.51, 0.05)), key=abs
+        )
+        angle = float(max(fine_angles, key=score))  # ty: ignore[no-matching-overload]
+
+        if score(angle) < 1.10 * score(0.0):
+            return 0.0  # no clear improvement over leaving the page as-is
+        return angle
+
+    def _deskew_image(self, gray: Any) -> Any:
+        """Correct page rotation up to +/-45 degrees (see :meth:`_estimate_skew_angle`)."""
+        angle = self._estimate_skew_angle(gray)
         if abs(angle) < 0.5:
             return gray  # skip sub-pixel corrections
         h, w = gray.shape[:2]
-        M = cv2.getRotationMatrix2D((w // 2, h // 2), angle, 1.0)
+        M = cv2.getRotationMatrix2D((w / 2, h / 2), angle, 1.0)
         return cv2.warpAffine(
             gray, M, (w, h), flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_REPLICATE
         )
 
     def _border_crop_image(self, gray: Any) -> Any:
-        """Crop dark scanner borders by finding the bounding box of non-background pixels."""
+        """Crop any border -- dark scanner frame or plain margin -- around the content.
+
+        Uses the ink mask (see :meth:`_ink_mask`) rather than pixel variance, so the
+        crop is independent of paper tone and doesn't mistake sensor grain in a
+        margin for content, or a dark scanner border for content. A row/column
+        counts as content once it has enough ink pixels (scaled to the image size,
+        so a single stray pixel doesn't anchor the crop); the bounding box of all
+        such rows/columns is kept, expanded by a fixed margin.
+        """
         import numpy as np  # noqa: PLC0415  # pylint: disable=import-error
 
-        _, binary = cv2.threshold(gray, 200, 255, cv2.THRESH_BINARY)
-        content_mask = binary < 200
-        rows = np.any(content_mask, axis=1)
-        cols = np.any(content_mask, axis=0)
-        if not rows.any() or not cols.any():
-            return gray  # all background -- nothing to crop
-        rmin = int(np.where(rows)[0][0])
-        rmax = int(np.where(rows)[0][-1])
-        cmin = int(np.where(cols)[0][0])
-        cmax = int(np.where(cols)[0][-1])
-        margin = 10
         h, w = gray.shape[:2]
-        rmin = max(0, rmin - margin)
-        rmax = min(h - 1, rmax + margin)
-        cmin = max(0, cmin - margin)
-        cmax = min(w - 1, cmax + margin)
+        ink = self._ink_mask(gray)
+        rows = np.flatnonzero(ink.sum(axis=1) >= max(3, int(0.002 * w)))
+        cols = np.flatnonzero(ink.sum(axis=0) >= max(3, int(0.002 * h)))
+        if rows.size == 0 or cols.size == 0:
+            return gray  # no content found -- nothing to crop
+        margin = 10
+        rmin = max(0, int(rows[0]) - margin)
+        rmax = min(h - 1, int(rows[-1]) + margin)
+        cmin = max(0, int(cols[0]) - margin)
+        cmax = min(w - 1, int(cols[-1]) + margin)
         return gray[rmin : rmax + 1, cmin : cmax + 1]
 
     def _denoise_image(self, gray: Any) -> Any:

@@ -1101,12 +1101,13 @@ def test_preprocess_preview_raises_for_text_only_input(tmp_path: Path) -> None:
     Then   a ValueError is raised indicating preview is unavailable for text inputs
     """
     import pytest  # noqa: PLC0415
+    from teachers_teammate.config import OcrConfig  # noqa: PLC0415
     from teachers_teammate.infrastructure.pipeline import preprocess_preview  # noqa: PLC0415
 
     txt_file = tmp_path / "notes.txt"
     txt_file.write_text("some handwriting text")
     with pytest.raises(ValueError, match="image-based"):
-        preprocess_preview(txt_file, "none", tmp_path)
+        preprocess_preview(txt_file, OcrConfig(preprocess_method="none"), tmp_path)
 
 
 # ── _print_banner code paths ──────────────────────────────────────────────

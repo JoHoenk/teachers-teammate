@@ -14,6 +14,7 @@ from teachers_teammate.infrastructure.state_repository import DocumentState, Ocr
 from teachers_teammate.infrastructure.workflow.cache_service import (
     CacheContext,
     CacheReconciliationService,
+    _preprocess_fingerprint,
 )
 from tests.conftest import make_config
 
@@ -242,6 +243,78 @@ def test_ocr_config_hash_changes_with_each_preprocessing_field(
     svc_a, _, _ = _make_svc(tmp_path, ocr=base)
     svc_b, _, _ = _make_svc(tmp_path, ocr=mutate(base))
     assert svc_a._ocr_config_hash("p") != svc_b._ocr_config_hash("p")
+
+
+def test_preprocess_fingerprint_matches_legacy_format_when_rewritten_steps_are_off() -> None:
+    """
+    Given  an OcrConfig with deskew and border_crop off (the two pre-steps whose
+           algorithm was rewritten; every other field varies from its default)
+    When   _preprocess_fingerprint() is called
+    Then   every entry is the plain flag value with no "@v..." version suffix
+
+    Regression guard: an algorithm-version marker that applies unconditionally to
+    every entry changes the hash -- and invalidates the cache -- even for configs
+    that never used the rewritten steps and whose OCR output is unaffected.
+    """
+    ocr = OcrConfig(
+        engine="tesseract",
+        preprocess_method="adaptive_threshold",
+        pdf_render_dpi=600,
+        dewarp=True,
+        denoise=True,
+        gamma=True,
+    )
+    assert _preprocess_fingerprint(ocr) == (
+        "adaptive_threshold",
+        "600",
+        "True",
+        "False",
+        "False",
+        "True",
+        "True",
+    )
+
+
+@pytest.mark.parametrize("field", ["deskew", "border_crop"])
+def test_preprocess_fingerprint_versions_only_the_rewritten_steps(field: str) -> None:
+    """
+    Given  an OcrConfig with *field* (deskew or border_crop, whose algorithm changed)
+           enabled alongside dewarp (whose algorithm hasn't changed)
+    When   _preprocess_fingerprint() is called
+    Then   only *field*'s entry carries an "@v" version suffix
+    """
+    if field == "deskew":
+        ocr = OcrConfig(
+            engine="tesseract", preprocess_method="adaptive_threshold", dewarp=True, deskew=True
+        )
+    else:
+        ocr = OcrConfig(
+            engine="tesseract",
+            preprocess_method="adaptive_threshold",
+            dewarp=True,
+            border_crop=True,
+        )
+    names = ["method", "dpi", "dewarp", "deskew", "border_crop", "denoise", "gamma"]
+    fp = dict(zip(names, _preprocess_fingerprint(ocr), strict=True))
+    assert fp["dewarp"] == "True"
+    assert fp[field] == "True@v2"
+
+
+def test_ocr_config_hash_unaffected_by_prestep_flags_under_method_none(tmp_path: Path) -> None:
+    """
+    Given  two configs with preprocess_method="none" that differ only in whether
+           deskew is on
+    When   _ocr_config_hash() is called with the same prompt
+    Then   the two hashes are equal
+
+    "none" skips every pre-step (HandwritingPreprocessor.preprocess returns the
+    original file unchanged), so the flag has no effect on the image fed to OCR and
+    must not force a re-run when toggled.
+    """
+    base = OcrConfig(engine="tesseract", preprocess_method="none")
+    svc_a, _, _ = _make_svc(tmp_path, ocr=base)
+    svc_b, _, _ = _make_svc(tmp_path, ocr=replace(base, deskew=True))
+    assert svc_a._ocr_config_hash("p") == svc_b._ocr_config_hash("p")
 
 
 @pytest.mark.use_case("Preview_Preprocessing")

@@ -90,6 +90,47 @@ def test_run_preview_only_delegates_to_pipeline_factory(tmp_path: Path) -> None:
     assert result == 0
 
 
+# ── preprocess_preview ─────────────────────────────────────────────────────
+
+
+@pytest.mark.unit
+@pytest.mark.use_case("Preview_Preprocessing")
+def test_preprocess_preview_uses_injected_component_factory(
+    tmp_path: Path, sample_png: Path
+) -> None:
+    """
+    Given  a ProcessingApplicationService constructed with a custom component_factory
+    When   preprocess_preview() is called
+    Then   the factory's build_preprocessor is used instead of the module default
+
+    Regression guard: preprocess_preview() used to call
+    stage_builder.default_build_preprocessor directly, so the preview silently
+    diverged from a pipeline configured with a non-default factory.
+    """
+    from teachers_teammate.config import OcrConfig  # noqa: PLC0415
+    from teachers_teammate.infrastructure.stage_builder import (  # noqa: PLC0415
+        PipelineComponentFactory,
+    )
+
+    class _StubPreprocessor:
+        def preprocess(self, image_path):
+            return image_path, ["stub_step"]
+
+    build_preprocessor = MagicMock(return_value=_StubPreprocessor())
+    factory = PipelineComponentFactory(build_preprocessor=build_preprocessor)
+    svc = ProcessingApplicationService(
+        pipeline_factory=MagicMock(),
+        state_repository_factory=MagicMock(),
+        component_factory=factory,
+    )
+    ocr = OcrConfig(preprocess_method="grayscale")
+
+    _original, _processed, steps = svc.preprocess_preview(sample_png, ocr, tmp_path)
+
+    assert steps == ["stub_step"]
+    build_preprocessor.assert_called_once_with(tmp_path, False, ocr)
+
+
 # ── check_connection — engine checks ──────────────────────────────────────
 
 

@@ -160,6 +160,7 @@ OS cache directory (`~/.cache/teachers_teammate` on Linux).
 ├── artifacts/
 │   └── <output_dir_key>/                      # key = sha256(output_dir.resolve())[:16]
 │       ├── <stem>_preprocessed.png            # preview image (one per source stem)
+│       ├── <stem>_original.<ext>              # page before preprocessing (only if steps changed it)
 │       └── state/<stem>_<source_key>.json     # CACHE: one DocumentState per (output_dir, path)
 └── benchmark/
     └── <document_hash>/                       # compute_file_hash(document)

@@ -723,3 +723,165 @@ def test_load_or_create_returns_fresh_state_on_schema_version_mismatch(tmp_path:
 
     assert state.ocr_done is False
     assert state.raw_text == ""
+
+
+# ── original image + preprocessing steps ───────────────────────────────────
+
+
+def test_record_preview_artifact_persists_original_and_steps(tmp_path: Path) -> None:
+    """
+    Given  a repository and a fresh state
+    When   record_preview_artifact stores an original image and steps
+    Then   they survive a save/load round trip and appear on the UI view
+    """
+    repo = _repo(tmp_path)
+    src = _source_file(tmp_path)
+    preview = tmp_path / "doc_preprocessed.png"
+    original = tmp_path / "doc_original.png"
+    preview.write_bytes(b"p")
+    original.write_bytes(b"o")
+    state = repo.create(src, compute_file_hash(src))
+
+    repo.record_preview_artifact(
+        src,
+        state,
+        preview_img=str(preview),
+        source_image=str(preview),
+        preview_config_hash="ph",
+        original_img=str(original),
+        preprocess_steps=["grayscale", "deskew"],
+    )
+
+    loaded = repo.load_valid(src)
+    assert loaded is not None
+    assert loaded.original_img == str(original)
+    assert loaded.preprocess_steps == ["grayscale", "deskew"]
+    view = repo.to_view(src, loaded)
+    assert view.original_img == str(original)
+    assert view.preprocess_steps == ("grayscale", "deskew")
+
+
+def test_state_without_preprocess_info_loads_with_unknown_steps(tmp_path: Path) -> None:
+    """
+    Given  a state file written before original_img/preprocess_steps existed
+    When   it is loaded
+    Then   original_img is empty and preprocess_steps is None (unknown, not "none applied")
+    """
+    repo = _repo(tmp_path)
+    src = _source_file(tmp_path)
+    state = repo.create(src, compute_file_hash(src))
+    data = dataclasses.asdict(state)
+    del data["original_img"]
+    del data["preprocess_steps"]
+    repo.state_path_for_input(src).write_text(json.dumps(data), encoding="utf-8")
+
+    loaded = repo.load_valid(src)
+
+    assert loaded is not None
+    assert loaded.original_img == ""
+    assert loaded.preprocess_steps is None
+    assert repo.to_view(src, loaded).preprocess_steps is None
+
+
+def test_invalidate_preview_artifact_clears_original_and_steps(tmp_path: Path) -> None:
+    """
+    Given  a state with preview, original image and steps
+    When   invalidate_preview_artifact is called
+    Then   original_img and preprocess_steps are reset together with the preview paths
+    """
+    repo = _repo(tmp_path)
+    src = _source_file(tmp_path)
+    state = dataclasses.replace(
+        repo.create(src, compute_file_hash(src)),
+        preview_img="p.png",
+        source_image="p.png",
+        original_img="o.png",
+        preprocess_steps=["grayscale"],
+    )
+
+    cleared = repo.invalidate_preview_artifact(src, state)
+
+    assert cleared.original_img == ""
+    assert cleared.preprocess_steps is None
+    assert cleared.preview_img == ""
+
+
+def test_invalidate_from_stage_ocr_clears_original_and_steps(tmp_path: Path) -> None:
+    """
+    Given  a state with OCR text, an original image and steps
+    When   invalidate_from_stage("ocr") runs
+    Then   original_img and preprocess_steps are cleared
+    """
+    repo = _repo(tmp_path)
+    src = _source_file(tmp_path)
+    repo.save(
+        src,
+        dataclasses.replace(
+            repo.create(src, compute_file_hash(src)),
+            raw_text="text",
+            ocr_done=True,
+            original_img="o.png",
+            preprocess_steps=["grayscale"],
+        ),
+    )
+
+    cleared = repo.invalidate_from_stage(src, "ocr")
+
+    assert cleared is not None
+    assert cleared.original_img == ""
+    assert cleared.preprocess_steps is None
+
+
+def test_load_valid_drops_original_image_missing_on_disk(tmp_path: Path) -> None:
+    """
+    Given  a saved state with an existing preview whose original_img file no longer exists
+    When   load_valid is called
+    Then   original_img is reset to "" while the steps are kept
+    """
+    repo = _repo(tmp_path)
+    src = _source_file(tmp_path)
+    preview = tmp_path / "doc_preprocessed.png"
+    preview.write_bytes(b"png")
+    repo.save(
+        src,
+        dataclasses.replace(
+            repo.create(src, compute_file_hash(src)),
+            preview_img=str(preview),
+            original_img=str(tmp_path / "gone.png"),
+            preprocess_steps=["grayscale"],
+        ),
+    )
+
+    loaded = repo.load_valid(src)
+
+    assert loaded is not None
+    assert loaded.original_img == ""
+    assert loaded.preprocess_steps == ["grayscale"]
+
+
+def test_load_valid_drops_original_and_steps_when_preview_missing(tmp_path: Path) -> None:
+    """
+    Given  a saved state whose preview image is gone but original_img and steps are recorded
+    When   load_valid is called
+    Then   original_img and preprocess_steps are cleared together with preview_img
+    """
+    repo = _repo(tmp_path)
+    src = _source_file(tmp_path)
+    original = tmp_path / "doc_original.png"
+    original.write_bytes(b"png")
+    repo.save(
+        src,
+        dataclasses.replace(
+            repo.create(src, compute_file_hash(src)),
+            preview_img=str(tmp_path / "gone_preprocessed.png"),
+            original_img=str(original),
+            preprocess_steps=["grayscale"],
+        ),
+    )
+
+    loaded = repo.load_valid(src)
+
+    assert loaded is not None
+    assert loaded.preview_img == ""
+    assert loaded.original_img == ""
+    assert loaded.preprocess_steps is None

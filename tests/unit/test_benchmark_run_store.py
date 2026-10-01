@@ -233,7 +233,7 @@ def test_config_summary_lists_enabled_pre_steps(tmp_path: Path) -> None:
             document_hash="doc1",
             document_path="/docs/sample.pdf",
             display_name="sample.pdf",
-            ocr=OcrConfig(engine="tesseract", deskew=True, denoise=True),
+            ocr=OcrConfig(engine="tesseract", dewarp=False, deskew=True, denoise=True),
             language="English",
             ocr_config_hash="abc12345",
             raw_text="text",

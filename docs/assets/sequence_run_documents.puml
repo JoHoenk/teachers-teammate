@@ -45,7 +45,7 @@ deactivate WIN
 
 group Background thread (OCRWorker)
   activate WORKER
-  WORKER -> SVC        : run_selected(config, selected_paths,\non_file_started, on_file_done, …)
+  WORKER -> SVC        : run_selected(config, selected_paths,\nprogress: ProgressCallbacks)
   activate SVC
   SVC -> PIPE          : OCRPipeline(config, …).run()
   activate PIPE

@@ -114,13 +114,14 @@ class StoredRun:
                 model=ocr_raw["model"],
                 provider=ocr_raw["provider"],
                 preprocess_method=ocr_raw["preprocess_method"],
-                # .get() keeps runs written before these fields existed loadable.
+                # .get() keeps runs written before these fields existed loadable.  Runs that
+                # predate the pre-step fields applied none of them, whatever today's defaults.
                 pdf_render_dpi=ocr_raw.get("pdf_render_dpi", DEFAULTS["pdf_render_dpi"]),
-                dewarp=ocr_raw.get("dewarp", DEFAULTS["preprocess_dewarp"]),
-                deskew=ocr_raw.get("deskew", DEFAULTS["preprocess_deskew"]),
-                border_crop=ocr_raw.get("border_crop", DEFAULTS["preprocess_border_crop"]),
-                denoise=ocr_raw.get("denoise", DEFAULTS["preprocess_denoise"]),
-                gamma=ocr_raw.get("gamma", DEFAULTS["preprocess_gamma"]),
+                dewarp=ocr_raw.get("dewarp", False),
+                deskew=ocr_raw.get("deskew", False),
+                border_crop=ocr_raw.get("border_crop", False),
+                denoise=ocr_raw.get("denoise", False),
+                gamma=ocr_raw.get("gamma", False),
                 temperature=ocr_raw["temperature"],
             ),
             language=raw["language"],

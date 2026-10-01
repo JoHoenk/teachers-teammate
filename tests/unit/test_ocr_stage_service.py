@@ -47,6 +47,25 @@ def test_run_pages_empty_input_returns_empty(tmp_path: Path) -> None:
     processor.process_image.assert_not_called()
 
 
+# ── Page progress callback ─────────────────────────────────────────────────
+
+
+def test_run_pages_reports_each_page_before_processing(tmp_path: Path) -> None:
+    """
+    Given  two OCR input pages and an on_page callback
+    When   run_pages is called
+    Then   the callback is invoked once per page with (page_number, total), in order
+    """
+    p1 = tmp_path / "p1.png"
+    p2 = tmp_path / "p2.png"
+    calls: list[tuple[int, int]] = []
+    svc, _processor = _make_svc()
+
+    svc.run_pages([p1, p2], "English", on_page=lambda page, total: calls.append((page, total)))
+
+    assert calls == [(1, 2), (2, 2)]
+
+
 # ── Single page ────────────────────────────────────────────────────────────
 
 

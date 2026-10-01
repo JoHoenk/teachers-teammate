@@ -82,7 +82,7 @@ Every image goes through this fixed sequence of stages:
 Grayscale → [Dewarp] → [Deskew] → [Border crop] → [Denoise] → [Brighten] → Contrast method
 ```
 
-Steps shown in brackets are optional and off by default. The final **contrast method** (the *Image preparation* dropdown) is always applied unless set to *None*.
+Steps shown in brackets are optional. **Dewarp**, **Deskew** and **Denoise** are on by default (untick them in the settings, or pass `--no-preprocess-dewarp`, `--no-preprocess-deskew`, `--no-preprocess-denoise` on the command line); **Border crop** and **Brighten** are off by default. The final **contrast method** (the *Image preparation* dropdown) is always applied unless set to *None*.
 
 Enable `--debug` (or the *Keep preprocessed files* toggle) to save a snapshot after every step — useful for diagnosing which step caused a quality change.
 
@@ -140,6 +140,8 @@ Applies gamma correction (γ = 0.5) to raise the tonal midpoint of the image, re
 
 ### Recommended combinations
 
+The pre-steps column lists steps to enable *in addition to* the defaults (Dewarp, Deskew, Denoise), unless stated otherwise.
+
 | Scenario | Method | Pre-steps |
 |----------|--------|-----------|
 | Standard flat-bed scan, handwriting | `adaptive_threshold` | Border crop |
@@ -147,7 +149,7 @@ Applies gamma correction (γ = 0.5) to raise the tonal midpoint of the image, re
 | Photographed document (phone/camera) | `adaptive_threshold` | Dewarp, Deskew |
 | Dark or underexposed scan | `adaptive_threshold` | Brighten, Border crop |
 | Tesseract with faint text | `clahe` | Denoise |
-| Ollama/LangChain, clean high-quality scan | `grayscale` | — |
+| Ollama/LangChain, clean high-quality scan | `grayscale` | — (untick Dewarp, Deskew, Denoise) |
 
 ---
 

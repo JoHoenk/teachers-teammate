@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 import dataclasses
 from dataclasses import dataclass
 from pathlib import Path
@@ -172,6 +173,7 @@ class CacheReconciliationService:
         # Capture artifact paths before reconciliation so we can delete them if cleared.
         old_preview_img = state.preview_img
         old_source_image = state.source_image
+        old_original_img = state.original_img
 
         state = self._repo.reconcile_runtime_config(
             file,
@@ -190,7 +192,9 @@ class CacheReconciliationService:
 
         # If reconciliation cleared the preview artifacts, delete the actual files.
         if old_preview_img and not state.preview_img:
-            self._artifacts.delete_preview_artifacts(old_preview_img, old_source_image)
+            self._artifacts.delete_preview_artifacts(
+                old_preview_img, old_source_image, old_original_img
+            )
 
         return CacheContext(
             state=state,
@@ -207,16 +211,39 @@ class CacheReconciliationService:
         file: Path,
         ctx: CacheContext,
         source_path: Path,
+        *,
+        original_path: Path | None = None,
+        preprocess_steps: Sequence[str] | None = None,
     ) -> tuple[str, CacheContext]:
-        """Copy *source_path* to the stable artifact location; return (preview_img, updated_ctx)."""
+        """Copy *source_path* to the stable artifact location; return (preview_img, updated_ctx).
+
+        *original_path* is the un-preprocessed page; when given it is stored alongside the
+        preview so the GUI can toggle between both.  *preprocess_steps* records which steps
+        produced the preview (``None`` = unknown, ``[]`` = none applied).
+        """
         stable = self._artifacts.persist_preview_image(stem=file.stem, source_path=source_path)
         preview_img = str(stable)
+        original_img = ""
+        if original_path is not None:
+            # The original is only for the GUI comparison toggle: never fail the file over it.
+            try:
+                original_img = str(
+                    self._artifacts.persist_original_image(
+                        stem=file.stem, source_path=original_path
+                    )
+                )
+            except OSError:
+                original_img = ""
+        if not original_img:
+            self._artifacts.prune_original_images(file.stem)
         new_state = self._repo.record_preview_artifact(
             file,
             ctx.state,
             preview_img=preview_img,
             source_image=preview_img,
             preview_config_hash=ctx.preview_config_hash,
+            original_img=original_img,
+            preprocess_steps=preprocess_steps,
         )
         return preview_img, dataclasses.replace(ctx, state=new_state)
 

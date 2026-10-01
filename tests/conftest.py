@@ -69,7 +69,15 @@ def make_config(tmp_path: Path, **overrides: object):
         "preprocess_method": "preprocess_method",
         "ocr_temperature": "temperature",
     }
-    ocr_defaults: dict = {"engine": "tesseract", "model": "", "preprocess_method": "none"}
+    # Pre-steps are off so tests don't depend on (or pay for) the production defaults.
+    ocr_defaults: dict = {
+        "engine": "tesseract",
+        "model": "",
+        "preprocess_method": "none",
+        "dewarp": False,
+        "deskew": False,
+        "denoise": False,
+    }
     for flat_key, ocr_key in ocr_field_map.items():
         if flat_key in overrides:
             ocr_defaults[ocr_key] = overrides.pop(flat_key)

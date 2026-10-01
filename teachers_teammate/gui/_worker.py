@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 import threading
 import time
 from typing import Any, Protocol
 
 from PySide6.QtCore import QThread, Signal
 
-from ..application.service import ProcessingApplicationService
+from ..application.service import ProcessingApplicationService, ProgressCallbacks
 from ..config import Config
 from ..infrastructure.reporting import CallbackReporter
 from ._types import FileDoneEvent
@@ -23,9 +24,7 @@ class _RunSelectedService(Protocol):
         selected_source_paths: list[str] | None = None,
         stop_event: threading.Event | None = None,
         reporter=None,
-        on_file_started=None,
-        on_ocr_done=None,
-        on_file_done=None,
+        progress: ProgressCallbacks | None = None,
     ) -> int: ...
 
 
@@ -47,6 +46,7 @@ class OCRWorker(QThread):
     -------
     log_line(text)
     file_started(source_id, name, idx, total)
+    stage_started(source_id, name, stage, idx, total)
     ocr_done(source_id, name, idx, total)
     file_done(FileDoneEvent)
     finished_with_code(rc)
@@ -54,6 +54,8 @@ class OCRWorker(QThread):
 
     log_line = Signal(str)
     file_started = Signal(str, str, int, int)  # (source_id, name, idx, total)
+    # stage is "preprocessing" or "ocr"; not emitted when OCR comes from the cache.
+    stage_started = Signal(str, str, str, int, int)  # (source_id, name, stage, idx, total)
     ocr_done = Signal(str, str, int, int)  # (source_id, name, idx, total)
     file_done = Signal(object)  # FileDoneEvent
     finished_with_code = Signal(int)
@@ -89,6 +91,10 @@ class OCRWorker(QThread):
             ocr_done_times.pop(source_id, None)
             file_indices[source_id] = (idx, total)
             self.file_started.emit(source_id, name, idx, total)
+
+        def on_stage_started(source_id: str, stage: str) -> None:
+            idx, total = file_indices.get(source_id, (0, 0))
+            self.stage_started.emit(source_id, Path(source_id).name, stage, idx, total)
 
         def on_ocr_done(source_id: str, name: str) -> None:
             ocr_done_times[source_id] = time.monotonic()
@@ -133,9 +139,12 @@ class OCRWorker(QThread):
             pipeline_kwargs: dict[str, Any] = {
                 "stop_event": self.stop_event,
                 "reporter": reporter,
-                "on_file_started": on_file_started,
-                "on_ocr_done": on_ocr_done,
-                "on_file_done": on_file_done,
+                "progress": ProgressCallbacks(
+                    on_file_started=on_file_started,
+                    on_stage_started=on_stage_started,
+                    on_ocr_done=on_ocr_done,
+                    on_file_done=on_file_done,
+                ),
             }
             if self._selected_source_paths is not None:
                 pipeline_kwargs["selected_source_paths"] = self._selected_source_paths

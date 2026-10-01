@@ -38,6 +38,7 @@ from ..infrastructure.ocr_processor import (
     default_preprocess_for_engine as _infra_default_preprocess_for_engine,
 )
 from ..infrastructure.pipeline import OCRPipeline, preprocess_preview
+from ..infrastructure.reporting import ProgressCallbacks as ProgressCallbacks  # noqa: PLC0414
 from ..infrastructure.stage_builder import PipelineComponentFactory
 from ..infrastructure.state_repository import (
     DocumentState,
@@ -110,9 +111,7 @@ class ProcessingApplicationService:
         selected_source_paths: list[str] | None = None,
         stop_event: threading.Event | None = None,
         reporter=None,
-        on_file_started=None,
-        on_ocr_done=None,
-        on_file_done=None,
+        progress: ProgressCallbacks | None = None,
     ) -> int:
         from ..infrastructure.pipeline import PipelineDependencies  # noqa: PLC0415
 
@@ -122,9 +121,7 @@ class ProcessingApplicationService:
             config_file=config_file,
             selected_source_paths=selected_source_paths,
             dependencies=PipelineDependencies(reporter=reporter) if reporter is not None else None,
-            on_file_started=on_file_started,
-            on_ocr_done=on_ocr_done,
-            on_file_done=on_file_done,
+            progress=progress,
         )
         return pipeline.run()
 

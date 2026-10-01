@@ -406,9 +406,34 @@ def test_parse_args_pdf_dpi_out_of_range_exits(bad: str) -> None:
 
 
 @pytest.mark.use_case("Headless_CLI_Batch")
+def test_parse_args_dewarp_deskew_denoise_default_on_and_can_be_disabled() -> None:
+    """
+    Given  no preprocessing flags, then the matching --no-preprocess-* flags
+    When   _parse_args() is called
+    Then   dewarp/deskew/denoise default to True (border crop and gamma to False)
+           and each --no-preprocess-* flag turns its step off
+    """
+    from teachers_teammate.cli import _parse_args  # noqa: PLC0415
+
+    defaults = _parse_args(argv=[])
+    assert defaults.preprocess_dewarp is True
+    assert defaults.preprocess_deskew is True
+    assert defaults.preprocess_denoise is True
+    assert defaults.preprocess_border_crop is False
+    assert defaults.preprocess_gamma is False
+
+    disabled = _parse_args(
+        argv=["--no-preprocess-dewarp", "--no-preprocess-deskew", "--no-preprocess-denoise"]
+    )
+    assert disabled.preprocess_dewarp is False
+    assert disabled.preprocess_deskew is False
+    assert disabled.preprocess_denoise is False
+
+
+@pytest.mark.use_case("Headless_CLI_Batch")
 def test_run_cli_propagates_preprocessing_to_config(tmp_path: Path, monkeypatch) -> None:
     """
-    Given  preprocessing flags and a PDF DPI passed on the command line
+    Given  preprocessing flags (including a --no-… override) and a PDF DPI on the command line
     When   run_cli() builds the Config and hands it to the application service
     Then   the OcrConfig carries every preprocessing setting
     """
@@ -442,8 +467,8 @@ def test_run_cli_propagates_preprocessing_to_config(tmp_path: Path, monkeypatch)
                 "-i",
                 str(tmp_path),
                 "--no-docx",
-                "--preprocess-deskew",
-                "--preprocess-denoise",
+                "--preprocess-border-crop",
+                "--no-preprocess-dewarp",
                 "--pdf-render-dpi",
                 "150",
             ],
@@ -454,7 +479,8 @@ def test_run_cli_propagates_preprocessing_to_config(tmp_path: Path, monkeypatch)
 
     assert rc == 0
     ocr = captured[0].ocr
-    assert ocr.deskew is True
-    assert ocr.denoise is True
+    assert ocr.border_crop is True
+    assert ocr.deskew is True  # on by default
+    assert ocr.denoise is True  # on by default
     assert ocr.dewarp is False
     assert ocr.pdf_render_dpi == 150

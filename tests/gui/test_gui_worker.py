@@ -22,20 +22,22 @@ class _DummyAppService:
         selected_source_paths=None,
         stop_event=None,
         reporter=None,
-        on_file_started=None,
-        on_ocr_done=None,
-        on_file_done=None,
+        progress=None,
     ) -> int:
         _ = stop_event
         _ = selected_source_paths
         _ = reporter
         source_id = "/tmp/a.png"
-        if on_file_started:
-            on_file_started(source_id, "a.png", 1, 1)
-        if on_ocr_done:
-            on_ocr_done(source_id, "a.png")
-        if on_file_done:
-            on_file_done(source_id, "a.png", True, "saved", "", "raw.txt", "", "")
+        if progress is not None:
+            if progress.on_file_started:
+                progress.on_file_started(source_id, "a.png", 1, 1)
+            if progress.on_stage_started:
+                progress.on_stage_started(source_id, "preprocessing")
+                progress.on_stage_started(source_id, "ocr")
+            if progress.on_ocr_done:
+                progress.on_ocr_done(source_id, "a.png")
+            if progress.on_file_done:
+                progress.on_file_done(source_id, "a.png", True, "saved", "", "raw.txt", "", "")
         return 0
 
 
@@ -81,6 +83,27 @@ def test_ocr_worker_emits_lifecycle_signals(qtbot, tmp_path: Path) -> None:
     qtbot.wait(10)
 
     assert seen == {"started": 1, "ocr": 1, "done": 1, "finished": 1}
+
+
+@pytest.mark.gui
+def test_ocr_worker_emits_stage_started_with_file_position(qtbot, tmp_path: Path) -> None:
+    """
+    Given  a pipeline that reports the preprocessing and OCR stages for a file
+    When   run() is invoked
+    Then   stage_started is emitted for each stage with the file name and its idx/total
+    """
+    cfg = make_config(tmp_path)
+    worker = OCRWorker(cfg, app_service=_DummyAppService())
+    stages: list[tuple] = []
+    worker.stage_started.connect(lambda *args: stages.append(args))
+
+    worker.run()
+    qtbot.wait(10)
+
+    assert stages == [
+        ("/tmp/a.png", "a.png", "preprocessing", 1, 1),
+        ("/tmp/a.png", "a.png", "ocr", 1, 1),
+    ]
 
 
 @pytest.mark.gui

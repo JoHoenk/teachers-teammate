@@ -13,6 +13,7 @@ from pathlib import Path
 
 import pytest
 
+from teachers_teammate.infrastructure.reporting import ProgressCallbacks
 from tests.conftest import make_config, skip_no_tesseract
 
 
@@ -81,7 +82,7 @@ def test_pipeline_on_file_done_callback_is_invoked(tmp_path: Path, sample_png: P
         correction_enabled=False,
         docx_enabled=False,
     )
-    pipeline = OCRPipeline(cfg, on_file_done=_on_done)
+    pipeline = OCRPipeline(cfg, progress=ProgressCallbacks(on_file_done=_on_done))
     pipeline.run()
 
     assert len(results) == 1
@@ -117,7 +118,7 @@ def test_pipeline_on_file_started_callback_is_invoked(tmp_path: Path, sample_png
         correction_enabled=False,
         docx_enabled=False,
     )
-    pipeline = OCRPipeline(cfg, on_file_started=_on_started)
+    pipeline = OCRPipeline(cfg, progress=ProgressCallbacks(on_file_started=_on_started))
     pipeline.run()
 
     assert len(started) == 1
@@ -156,7 +157,9 @@ def test_pipeline_stop_event_halts_processing(tmp_path: Path, sample_png: Path) 
         correction_enabled=False,
         docx_enabled=False,
     )
-    pipeline = OCRPipeline(cfg, stop_event=stop, on_file_started=_on_started)
+    pipeline = OCRPipeline(
+        cfg, stop_event=stop, progress=ProgressCallbacks(on_file_started=_on_started)
+    )
     pipeline.run()
 
     # Only the first file (or very few) should have been processed

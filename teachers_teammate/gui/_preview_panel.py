@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 import difflib
 import html
+from pathlib import Path
 import re
 from typing import Any
 
@@ -25,6 +26,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ._image_utils import load_pixmap
 from ._types import StageStatus
 
 
@@ -108,6 +110,33 @@ class ZoomableImageView(QGraphicsView):
         self.setSceneRect(pix_item.boundingRect())
         self._fitted = True
         self.fitInView(pix_item, Qt.AspectRatioMode.KeepAspectRatio)
+
+    def swap_pixmap(self, pix: QPixmap) -> None:
+        """Replace the image with another rendering of the same page, keeping zoom and pan.
+
+        The visible region is preserved relative to the image size, so a different
+        resolution (e.g. before/after dewarping) still shows the same part of the page.
+        Falls back to :meth:`set_pixmap` when fitted or when there is nothing to compare.
+        """
+        old_item = self._pix_item
+        if old_item is None or pix.isNull() or self._fitted:
+            self.set_pixmap(pix)
+            return
+        old_rect = old_item.boundingRect()
+        center = self.mapToScene(self.viewport().rect().center())
+        frac_x = center.x() / old_rect.width()
+        frac_y = center.y() / old_rect.height()
+        zoom = self.transform().m11()
+        self._scene.clear()
+        new_item = self._scene.addPixmap(pix)
+        assert new_item is not None
+        self._pix_item = new_item
+        new_rect = new_item.boundingRect()
+        self.setSceneRect(new_rect)
+        self.resetTransform()
+        factor = zoom * old_rect.width() / new_rect.width()
+        self.scale(factor, factor)
+        self.centerOn(frac_x * new_rect.width(), frac_y * new_rect.height())
 
     def show_message(self, text: str) -> None:
         self._scene.clear()
@@ -264,6 +293,10 @@ class PreviewPanel(QWidget):
         self._last_raw_text = ""
         self._last_correction_text = ""
         self._current_source_id: str = ""
+        self._processed_pixmap: QPixmap | None = None
+        self._original_path: str = ""
+        self._original_pixmap: QPixmap | None = None  # loaded lazily on first toggle
+        self._preprocess_steps: Sequence[str] | None = None
         self._ocr_text.textChanged.connect(self._on_ocr_text_changed)
         self._correction_text.textChanged.connect(self._on_correction_text_changed)
 
@@ -290,12 +323,25 @@ class PreviewPanel(QWidget):
             _btn.setToolTip(_tip)
             _btn.clicked.connect(_slot)
             tb_layout.addWidget(_btn)
+        self._original_btn = QToolButton()
+        self._original_btn.setText("Original")
+        self._original_btn.setCheckable(True)
+        self._original_btn.setToolTip("Show the page as scanned, before preprocessing")
+        self._original_btn.toggled.connect(self._on_original_toggled)
+        self._original_btn.setVisible(False)
+        tb_layout.addWidget(self._original_btn)
         tb_layout.addStretch()
         _hint_lbl = QLabel("Scroll: zoom · Drag: pan")
         _hint_lbl.setStyleSheet("color: #888; font-size: 8pt;")
         tb_layout.addWidget(_hint_lbl)
 
+        self._prep_lbl = QLabel()
+        self._prep_lbl.setStyleSheet("color: #888; font-size: 8pt; padding: 0 6px 2px 6px;")
+        self._prep_lbl.setWordWrap(True)
+        self._prep_lbl.setVisible(False)
+
         vbox.addWidget(toolbar)
+        vbox.addWidget(self._prep_lbl)
         vbox.addWidget(self._image_view, stretch=1)
         return container
 
@@ -435,8 +481,17 @@ class PreviewPanel(QWidget):
         raw_text: str,
         correction_text: str,
         evaluation_text: str,
+        *,
+        original_path: str | None = None,
+        preprocess_steps: Sequence[str] | None = None,
     ) -> None:
-        """Show the selected result's image and text payloads."""
+        """Show the selected result's image and text payloads.
+
+        *original_path* and *preprocess_steps* describe how the image was produced (see
+        :meth:`set_preprocessing`); leaving them unset hides the original toggle and caption.
+        """
+        self._processed_pixmap = pixmap
+        self.set_preprocessing(original_path, preprocess_steps)
         if not pixmap.isNull():
             self._image_view.set_pixmap(pixmap)
         else:
@@ -480,8 +535,61 @@ class PreviewPanel(QWidget):
         self._diff_widget.set_texts(self._last_raw_text, self._last_correction_text)
         self.correction_text_edited.emit(text)
 
+    def set_preprocessing(self, original_path: str | None, steps: Sequence[str] | None) -> None:
+        """Describe how the shown image was produced and enable the original toggle.
+
+        *steps* lists the applied preprocessing steps (``None`` = unknown, hides the
+        caption; empty = the image is unprocessed).  *original_path* is the page before
+        preprocessing; when it points to an existing file an "Original" toggle lets the
+        user compare it with the processed image.  The file is only loaded on first toggle.
+        """
+        self._original_path = original_path or ""
+        self._original_pixmap = None
+        self._preprocess_steps = steps
+        has_processed = self._processed_pixmap is not None and not self._processed_pixmap.isNull()
+        was_showing_original = self._original_btn.isChecked()
+        self._original_btn.blockSignals(True)
+        self._original_btn.setChecked(False)
+        self._original_btn.blockSignals(False)
+        self._original_btn.setVisible(
+            bool(self._original_path) and Path(self._original_path).is_file() and has_processed
+        )
+        self._refresh_preprocess_caption()
+        if was_showing_original and has_processed:
+            assert self._processed_pixmap is not None
+            self._image_view.swap_pixmap(self._processed_pixmap)
+
+    def _on_original_toggled(self, checked: bool) -> None:
+        if checked and self._original_pixmap is None:
+            self._original_pixmap = load_pixmap(self._original_path)
+        target = self._original_pixmap if checked else self._processed_pixmap
+        if target is not None and not target.isNull():
+            self._image_view.swap_pixmap(target)
+        elif checked:
+            # Unreadable original: undo the toggle so the caption matches the image shown.
+            self._original_btn.blockSignals(True)
+            self._original_btn.setChecked(False)
+            self._original_btn.blockSignals(False)
+        self._refresh_preprocess_caption()
+
+    def _refresh_preprocess_caption(self) -> None:
+        steps = self._preprocess_steps
+        if steps is None:
+            self._prep_lbl.setVisible(False)
+            return
+        if self._original_btn.isChecked():
+            text = "Showing the original page (before preprocessing)"
+        elif steps:
+            text = f"Preprocessed: {', '.join(steps)}"
+        else:
+            text = "No preprocessing applied — showing the original image"
+        self._prep_lbl.setText(text)
+        self._prep_lbl.setVisible(True)
+
     def clear_preview(self) -> None:
         self._image_view.clear()
+        self._processed_pixmap = None
+        self.set_preprocessing(None, None)
         self._loading = True
         self._ocr_text.clear()
         self._correction_text.clear()

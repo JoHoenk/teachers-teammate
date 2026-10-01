@@ -23,6 +23,7 @@ What this module does NOT do
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 import dataclasses
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
@@ -85,6 +86,12 @@ class DocumentState:
     correction_config_hash: str = ""
     eval_config_hash: str = ""
     preview_config_hash: str = ""
+    # Un-preprocessed page render kept next to ``preview_img`` so the GUI can toggle
+    # between original and processed.  Empty when preprocessing changed nothing.
+    original_img: str = ""
+    # Preprocessing steps applied to produce ``preview_img``.  ``None`` means unknown
+    # (state written before this field existed); ``[]`` means none were applied.
+    preprocess_steps: list[str] | None = None
 
 
 @dataclass(frozen=True)
@@ -102,6 +109,8 @@ class DocumentStateView:
     evaluation_done: bool
     cache_status_label: str
     loaded_at: str
+    original_img: str = ""
+    preprocess_steps: tuple[str, ...] | None = None
 
 
 @dataclass(frozen=True)
@@ -175,6 +184,10 @@ class StateRepository:
             evaluation_done=state.evaluation_done,
             cache_status_label=self._cache_status_label(state),
             loaded_at=datetime.now(UTC).isoformat(),
+            original_img=state.original_img,
+            preprocess_steps=(
+                None if state.preprocess_steps is None else tuple(state.preprocess_steps)
+            ),
         )
 
     def load_view(self, input_file: Path) -> DocumentStateView | None:
@@ -232,6 +245,8 @@ class StateRepository:
         preview_img: str,
         source_image: str,
         preview_config_hash: str,
+        original_img: str = "",
+        preprocess_steps: Sequence[str] | None = None,
     ) -> DocumentState:
         """Persist preview artifact paths without changing downstream stage data."""
         new_state = dataclasses.replace(
@@ -239,6 +254,8 @@ class StateRepository:
             preview_img=preview_img,
             source_image=source_image,
             preview_config_hash=preview_config_hash,
+            original_img=original_img,
+            preprocess_steps=None if preprocess_steps is None else list(preprocess_steps),
         )
         self.save(input_file, new_state)
         return new_state
@@ -431,6 +448,8 @@ class StateRepository:
             preview_img="",
             source_image="",
             preview_config_hash="",
+            original_img="",
+            preprocess_steps=None,
         )
         self.save(input_file, new_state)
         return new_state
@@ -459,6 +478,8 @@ class StateRepository:
                 preview_config_hash="",
                 preview_img="",
                 source_image="",
+                original_img="",
+                preprocess_steps=None,
                 raw_text="",
             )
         if policy.clear_correction:
@@ -512,8 +533,26 @@ class StateRepository:
         )
         if not source_image and preview_img:
             source_image = preview_img
-        if preview_img != state.preview_img or source_image != state.source_image:
-            state = dataclasses.replace(state, preview_img=preview_img, source_image=source_image)
+        # original_img and preprocess_steps only describe the preview: drop them together.
+        original_img = (
+            state.original_img
+            if preview_img and state.original_img and Path(state.original_img).exists()
+            else ""
+        )
+        preprocess_steps = state.preprocess_steps if preview_img else None
+        if (
+            preview_img != state.preview_img
+            or source_image != state.source_image
+            or original_img != state.original_img
+            or preprocess_steps != state.preprocess_steps
+        ):
+            state = dataclasses.replace(
+                state,
+                preview_img=preview_img,
+                source_image=source_image,
+                original_img=original_img,
+                preprocess_steps=preprocess_steps,
+            )
         return state
 
     def invalidate_from_stage(self, input_file: Path, stage: str) -> DocumentState | None:

@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import dataclasses
 from dataclasses import dataclass, field
 import threading
 from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock, call
 
 import pytest
@@ -69,6 +71,19 @@ def _make_ctx(state: DocumentState) -> CacheContext:
     )
 
 
+class _ListReporter:
+    """Reporter that records status/warning lines for assertions."""
+
+    def __init__(self) -> None:
+        self.lines: list[str] = []
+
+    def status(self, line: str) -> None:
+        self.lines.append(line.strip())
+
+    def warn(self, line: str) -> None:
+        self.lines.append(line.strip())
+
+
 def _make_processor(
     tmp_path: Path,
     *,
@@ -78,6 +93,7 @@ def _make_processor(
     doc_creator: MagicMock | None = None,
     stop_event: threading.Event | None = None,
     on_ocr_done: MagicMock | None = None,
+    **config_extras: Any,
 ) -> tuple[FileProcessor, MagicMock, MagicMock, MagicMock]:
     returns = returns or _StubReturns()
     cache_service = MagicMock()
@@ -113,6 +129,7 @@ def _make_processor(
         doc_creator=doc_creator or MagicMock(),
         stop_event=stop_event,
         on_ocr_done=on_ocr_done,
+        **config_extras,  # on_stage_started, reporter
     )
     (tmp_path / "output").mkdir(parents=True, exist_ok=True)
     fp = FileProcessor(cfg)
@@ -120,6 +137,36 @@ def _make_processor(
 
 
 # ── Cache hit path ─────────────────────────────────────────────────────────
+
+
+def test_cache_hit_restoring_preview_keeps_recorded_original_and_steps(tmp_path: Path) -> None:
+    """
+    Given  cached OCR whose preview image is missing but source_image, original_img and
+           preprocess_steps are recorded
+    When   process() re-persists the preview from source_image
+    Then   the recorded original and steps are passed along instead of being reset
+    """
+    source_image = tmp_path / "page.png"
+    source_image.write_bytes(b"png")
+    state = dataclasses.replace(
+        _make_state(ocr_done=True, raw_text="cached text", source_image=str(source_image)),
+        original_img=str(tmp_path / "doc_original.png"),
+        preprocess_steps=["grayscale"],
+    )
+    ctx = _make_ctx(state)
+    file = tmp_path / "doc.png"
+    file.write_bytes(b"data")
+
+    fp, cache_svc, _, _ = _make_processor(tmp_path, returns=_StubReturns(cache_ctx=ctx))
+    fp.process(file)
+
+    cache_svc.persist_preview_artifact.assert_called_once_with(
+        file,
+        ctx,
+        source_image,
+        original_path=tmp_path / "doc_original.png",
+        preprocess_steps=["grayscale"],
+    )
 
 
 @pytest.mark.use_case("Config_Aware_Cache_Reuse")
@@ -626,11 +673,11 @@ def test_evaluation_record_oserror_is_nonfatal(tmp_path: Path) -> None:
     assert result.evaluation_text == "quality: good"
 
 
-def test_no_doc_creator_returns_cache_state_updated(tmp_path: Path) -> None:
+def test_no_doc_creator_returns_results_cached_message(tmp_path: Path) -> None:
     """
     Given  doc_creator=None
     When   process() is called
-    Then   result message is 'cache state updated'
+    Then   result message says the results were cached without DOCX output
     """
     state = _make_state()
     ctx = _make_ctx(state)
@@ -668,4 +715,190 @@ def test_no_doc_creator_returns_cache_state_updated(tmp_path: Path) -> None:
     result = fp.process(file)
 
     assert result.ok is True
-    assert result.message == "cache state updated"
+    assert result.message == "results cached (no DOCX output)"
+
+
+# ── Progress narrative & stage callbacks ───────────────────────────────────
+
+
+def _image_returns(
+    tmp_path: Path, steps: list[str], pages: int = 1, ocr_pages: list[str] | None = None
+) -> _StubReturns:
+    page_paths = [tmp_path / f"img{i}.png" for i in range(pages)]
+    return _StubReturns(
+        preprocess_return=(page_paths, steps, tmp_path / "raw.png", None),
+        ocr_return=(ocr_pages or ["text"] * pages, None),
+    )
+
+
+def test_process_reports_preprocessing_and_ocr_progress_in_order(tmp_path: Path) -> None:
+    """
+    Given  a single-page image with grayscale preprocessing
+    When   process() is called
+    Then   the log announces preprocessing, its completion, OCR start and OCR completion in order
+    """
+    reporter = _ListReporter()
+    fp, *_ = _make_processor(
+        tmp_path,
+        returns=_image_returns(tmp_path, ["grayscale"]),
+        reporter=reporter,
+    )
+
+    fp.process(tmp_path / "doc.png")
+
+    assert reporter.lines == [
+        "→ Preprocessing...",
+        "→ Preprocessing done: grayscale (1 page(s))",
+        "→ Running OCR...",
+        "→ OCR done (1 page(s))",
+    ]
+
+
+def test_process_reports_preprocessing_skipped_for_method_none(tmp_path: Path) -> None:
+    """
+    Given  an image input where no preprocessing steps were applied (method none)
+    When   process() is called
+    Then   the log says preprocessing was skipped instead of staying silent
+    """
+    reporter = _ListReporter()
+    fp, *_ = _make_processor(tmp_path, returns=_image_returns(tmp_path, []), reporter=reporter)
+
+    fp.process(tmp_path / "doc.png")
+
+    assert "→ Preprocessing applied no steps" in reporter.lines
+    assert not any(line.startswith("→ Preprocessing done") for line in reporter.lines)
+
+
+def test_process_text_input_reports_skip_without_preprocessing_start(tmp_path: Path) -> None:
+    """
+    Given  a .txt input (text hint, no images)
+    When   process() is called
+    Then   no "Preprocessing..." start line or stage callback is emitted and the log notes
+           that preprocessing was skipped for text input
+    """
+    reporter = _ListReporter()
+    stages = MagicMock()
+    fp, *_ = _make_processor(
+        tmp_path,
+        returns=_StubReturns(preprocess_return=([], [], None, "hello")),
+        on_stage_started=stages,
+        reporter=reporter,
+    )
+
+    fp.process(tmp_path / "doc.txt")
+
+    assert "→ Preprocessing..." not in reporter.lines
+    assert "→ Preprocessing skipped (text input)" in reporter.lines
+    assert not any("Running OCR" in line for line in reporter.lines)
+    stages.assert_not_called()
+
+
+def test_process_notifies_stage_started_for_preprocessing_then_ocr(tmp_path: Path) -> None:
+    """
+    Given  an image input and an on_stage_started callback
+    When   process() is called
+    Then   the callback receives (source_id, "preprocessing") then (source_id, "ocr")
+    """
+    stages = MagicMock()
+    fp, *_ = _make_processor(
+        tmp_path, returns=_image_returns(tmp_path, ["grayscale"]), on_stage_started=stages
+    )
+    file = tmp_path / "doc.png"
+
+    fp.process(file)
+
+    source_id = str(file.resolve())
+    assert stages.call_args_list == [call(source_id, "preprocessing"), call(source_id, "ocr")]
+
+
+def test_process_cache_hit_does_not_notify_stage_started(tmp_path: Path) -> None:
+    """
+    Given  a file whose OCR output is already cached
+    When   process() is called
+    Then   on_stage_started is never invoked (no preprocessing/OCR runs)
+    """
+    state = _make_state(ocr_done=True, raw_text="cached", preview_img="p.png")
+    stages = MagicMock()
+    fp, *_ = _make_processor(
+        tmp_path, returns=_StubReturns(cache_ctx=_make_ctx(state)), on_stage_started=stages
+    )
+
+    fp.process(tmp_path / "doc.png")
+
+    stages.assert_not_called()
+
+
+def test_process_multi_page_passes_page_progress_callback(tmp_path: Path) -> None:
+    """
+    Given  a two-page PDF
+    When   process() is called and the OCR service reports each page
+    Then   the log contains "OCR page 1/2..." and "OCR page 2/2..."
+    """
+    reporter = _ListReporter()
+    fp, _cache, _prep, ocr_svc = _make_processor(
+        tmp_path, returns=_image_returns(tmp_path, ["grayscale"], pages=2), reporter=reporter
+    )
+
+    def _run_pages(inputs, _language, on_page=None):
+        for i in range(len(inputs)):
+            if on_page is not None:
+                on_page(i + 1, len(inputs))
+        return ["a", "b"], None
+
+    ocr_svc.run_pages.side_effect = _run_pages
+
+    fp.process(tmp_path / "doc.pdf")
+
+    assert "→ OCR page 1/2..." in reporter.lines
+    assert "→ OCR page 2/2..." in reporter.lines
+    assert "→ Preprocessing done: grayscale (2 page(s))" in reporter.lines
+
+
+def test_process_single_page_passes_no_page_callback(tmp_path: Path) -> None:
+    """
+    Given  a single-page image
+    When   process() is called
+    Then   run_pages receives on_page=None so no per-page noise is logged
+    """
+    fp, _cache, _prep, ocr_svc = _make_processor(
+        tmp_path, returns=_image_returns(tmp_path, ["grayscale"])
+    )
+
+    fp.process(tmp_path / "doc.png")
+
+    assert ocr_svc.run_pages.call_args.kwargs == {"on_page": None}
+
+
+def test_process_persists_original_when_preprocessing_changed_the_page(tmp_path: Path) -> None:
+    """
+    Given  an image whose raw page exists and differs from the preprocessed output
+    When   process() is called with applied steps
+    Then   persist_preview_artifact receives the raw page as original_path and the steps
+    """
+    raw = tmp_path / "raw.png"
+    raw.write_bytes(b"raw")
+    fp, cache_svc, *_ = _make_processor(
+        tmp_path, returns=_image_returns(tmp_path, ["grayscale", "deskew"])
+    )
+
+    fp.process(tmp_path / "doc.png")
+
+    kwargs = cache_svc.persist_preview_artifact.call_args.kwargs
+    assert kwargs["original_path"] == raw
+    assert kwargs["preprocess_steps"] == ["grayscale", "deskew"]
+
+
+def test_process_keeps_no_original_when_no_steps_applied(tmp_path: Path) -> None:
+    """
+    Given  an image input with preprocessing method none (no steps)
+    When   process() is called
+    Then   no original copy is requested and the recorded steps are an empty list
+    """
+    (tmp_path / "raw.png").write_bytes(b"raw")
+    fp, cache_svc, *_ = _make_processor(tmp_path, returns=_image_returns(tmp_path, []))
+
+    fp.process(tmp_path / "doc.png")
+
+    kwargs = cache_svc.persist_preview_artifact.call_args.kwargs
+    assert kwargs["original_path"] is None
+    assert kwargs["preprocess_steps"] == []

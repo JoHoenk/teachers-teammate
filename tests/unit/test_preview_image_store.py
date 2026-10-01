@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
+from unittest.mock import patch
 
 from teachers_teammate.infrastructure.preview_image_store import PreviewImageStore
 
@@ -163,3 +165,141 @@ def test_cleanup_preserves_preprocessed_png(tmp_path: Path) -> None:
 
     assert preview.exists()
     assert not step.exists()
+
+
+# ── persist_original_image / delete with original ──────────────────────────
+
+
+def test_persist_original_image_copies_with_original_suffix_kept(tmp_path: Path) -> None:
+    """
+    Given  a JPEG source page
+    When   persist_original_image is called
+    Then   it is copied to <stem>_original.jpg in the store root and the source is untouched
+    """
+    store = PreviewImageStore(tmp_path / "store")
+    src = tmp_path / "scan.JPG"
+    src.write_bytes(b"jpegdata")
+
+    target = store.persist_original_image(stem="scan", source_path=src)
+
+    assert target == tmp_path / "store" / "scan_original.jpg"
+    assert target.read_bytes() == b"jpegdata"
+    assert src.exists()
+
+
+def test_persist_original_image_is_noop_when_source_is_target(tmp_path: Path) -> None:
+    """
+    Given  a source page that already lives at the canonical original path
+    When   persist_original_image is called
+    Then   the file is left as-is and its path is returned
+    """
+    store = PreviewImageStore(tmp_path / "store")
+    src = tmp_path / "store" / "scan_original.png"
+    src.write_bytes(b"png")
+
+    assert store.persist_original_image(stem="scan", source_path=src) == src
+    assert src.read_bytes() == b"png"
+
+
+def test_delete_preview_artifacts_also_removes_original(tmp_path: Path) -> None:
+    """
+    Given  preview, source and original image files
+    When   delete_preview_artifacts is called with all three paths
+    Then   all of them are deleted
+    """
+    store = PreviewImageStore(tmp_path / "store")
+    files = [tmp_path / name for name in ("a_preprocessed.png", "a_original.png")]
+    for f in files:
+        f.write_bytes(b"x")
+
+    store.delete_preview_artifacts(str(files[0]), str(files[0]), str(files[1]))
+
+    assert not any(f.exists() for f in files)
+
+
+def test_persist_original_image_hard_links_instead_of_copying(tmp_path: Path) -> None:
+    """
+    Given  a source page on a filesystem that supports hard links
+    When   persist_original_image is called
+    Then   the stored original shares the source's data (no second copy on disk)
+    """
+    store = PreviewImageStore(tmp_path / "store")
+    src = tmp_path / "scan.png"
+    src.write_bytes(b"pngdata")
+
+    target = store.persist_original_image(stem="scan", source_path=src)
+
+    assert os.path.samefile(src, target)
+
+
+def test_persist_original_image_falls_back_to_copy_when_link_fails(tmp_path: Path) -> None:
+    """
+    Given  a filesystem where os.link raises OSError
+    When   persist_original_image is called
+    Then   the page is copied instead
+    """
+    store = PreviewImageStore(tmp_path / "store")
+    src = tmp_path / "scan.png"
+    src.write_bytes(b"pngdata")
+
+    with patch("os.link", side_effect=OSError("cross-device")):
+        target = store.persist_original_image(stem="scan", source_path=src)
+
+    assert target.read_bytes() == b"pngdata"
+    assert not os.path.samefile(src, target)
+
+
+def test_persist_original_image_does_not_write_through_to_source(tmp_path: Path) -> None:
+    """
+    Given  an earlier run that hard-linked the original to its source page
+    When   a different page is persisted for the same stem
+    Then   the new content replaces the stored original and the old source is unchanged
+    """
+    store = PreviewImageStore(tmp_path / "store")
+    old_src = tmp_path / "old.png"
+    old_src.write_bytes(b"old")
+    new_src = tmp_path / "new.png"
+    new_src.write_bytes(b"new")
+    store.persist_original_image(stem="scan", source_path=old_src)
+
+    target = store.persist_original_image(stem="scan", source_path=new_src)
+
+    assert target.read_bytes() == b"new"
+    assert old_src.read_bytes() == b"old"
+
+
+def test_persist_original_image_removes_stale_original_with_other_suffix(tmp_path: Path) -> None:
+    """
+    Given  an earlier original stored as <stem>_original.png
+    When   a JPEG original is persisted for the same stem
+    Then   the stale .png original is removed
+    """
+    store = PreviewImageStore(tmp_path / "store")
+    stale = tmp_path / "store" / "scan_original.png"
+    stale.write_bytes(b"old")
+    src = tmp_path / "scan.jpg"
+    src.write_bytes(b"jpg")
+
+    target = store.persist_original_image(stem="scan", source_path=src)
+
+    assert target.suffix == ".jpg"
+    assert not stale.exists()
+
+
+def test_prune_original_images_leaves_other_stems_alone(tmp_path: Path) -> None:
+    """
+    Given  originals for two different stems
+    When   prune_original_images is called for one stem without keep
+    Then   only that stem's originals are removed
+    """
+    root = tmp_path / "store"
+    store = PreviewImageStore(root)
+    mine = root / "a_original.png"
+    other = root / "b_original.png"
+    mine.write_bytes(b"x")
+    other.write_bytes(b"x")
+
+    store.prune_original_images("a")
+
+    assert not mine.exists()
+    assert other.exists()

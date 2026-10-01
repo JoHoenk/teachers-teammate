@@ -2,15 +2,15 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from dataclasses import dataclass, field
 import logging
 from pathlib import Path
 import threading
 
+from ...domain.stages import PROGRESS_STAGE_OCR, PROGRESS_STAGE_PREPROCESSING
 from ...exceptions import PipelineInputError
 from ...interfaces import AnonymizationMap, Anonymizer, Corrector, DocumentCreator, Evaluator
-from ..reporting import Reporter, StdoutReporter
+from ..reporting import OnOcrDoneFn, OnStageStartedFn, Reporter, StdoutReporter
 from .cache_service import CacheContext, CacheReconciliationService
 from .ocr_service import OCRStageService
 from .preprocess_service import PreprocessService
@@ -45,7 +45,8 @@ class FileProcessorConfig:
     doc_creator: DocumentCreator | None
     anonymizer: Anonymizer | None = None
     stop_event: threading.Event | None = None
-    on_ocr_done: Callable[[str, str], None] | None = None
+    on_ocr_done: OnOcrDoneFn | None = None
+    on_stage_started: OnStageStartedFn | None = None
     reporter: Reporter = field(default_factory=StdoutReporter)
 
 
@@ -76,6 +77,7 @@ class FileProcessor:
         self._doc_creator = config.doc_creator
         self._stop_event = config.stop_event
         self._on_ocr_done = config.on_ocr_done
+        self._on_stage_started = config.on_stage_started
         self._reporter = config.reporter
 
     def process(self, file: Path) -> ProcessingResult:
@@ -145,8 +147,14 @@ class FileProcessor:
         source_image = Path(source_image_str) if source_image_str else None
         if not preview_img and source_image is not None and source_image.exists():
             try:
+                # Re-persisting the preview must not drop what is already recorded about it.
+                kept_original = Path(ctx.state.original_img) if ctx.state.original_img else None
                 preview_img, ctx = self._cache_service.persist_preview_artifact(
-                    file, ctx, source_image
+                    file,
+                    ctx,
+                    source_image,
+                    original_path=kept_original,
+                    preprocess_steps=ctx.state.preprocess_steps,
                 )
             except OSError:
                 pass
@@ -155,9 +163,17 @@ class FileProcessor:
             self._on_ocr_done(str(file.resolve()), file.name)
         return raw_text, preview_img, source_image, ctx
 
+    def _notify_stage(self, file: Path, stage: str) -> None:
+        if self._on_stage_started:
+            self._on_stage_started(str(file.resolve()), stage)
+
     def _run_preprocess_and_ocr(
         self, file: Path, ctx: CacheContext
     ) -> tuple[str, str, Path | None, CacheContext]:
+        is_text_input = file.suffix.lower() == ".txt"
+        if not is_text_input:
+            self._reporter.status("       → Preprocessing...")
+            self._notify_stage(file, PROGRESS_STAGE_PREPROCESSING)
         try:
             ocr_inputs, prep_steps, source_image, raw_text_hint = (
                 self._preprocess_service.preprocess_input(file)
@@ -170,9 +186,22 @@ class FileProcessor:
         preview_img = ""
         preview_source = ocr_inputs[0] if ocr_inputs else source_image
         if preview_source is not None:
+            # Keep the un-preprocessed page too, but only when preprocessing changed it.
+            original_path = (
+                source_image
+                if prep_steps
+                and source_image is not None
+                and source_image != preview_source
+                and source_image.exists()
+                else None
+            )
             try:
                 preview_img, ctx = self._cache_service.persist_preview_artifact(
-                    file, ctx, preview_source
+                    file,
+                    ctx,
+                    preview_source,
+                    original_path=original_path,
+                    preprocess_steps=prep_steps if ocr_inputs else None,
                 )
             except OSError as exc:
                 raise _StageAbort(
@@ -181,8 +210,14 @@ class FileProcessor:
                     )
                 ) from exc
 
-        if prep_steps:
-            self._reporter.status(f"       → Preprocessing: {', '.join(prep_steps)}")
+        if not ocr_inputs:
+            self._reporter.status("       → Preprocessing skipped (text input)")
+        elif not prep_steps:
+            self._reporter.status("       → Preprocessing applied no steps")
+        else:
+            self._reporter.status(
+                f"       → Preprocessing done: {', '.join(prep_steps)} ({len(ocr_inputs)} page(s))"
+            )
 
         if self._stop_event and self._stop_event.is_set():
             raise _StageAbort(ProcessingResult(False, "Stopped by user.", preview_img, "", "", ""))
@@ -191,6 +226,9 @@ class FileProcessor:
             file, ocr_inputs, raw_text_hint, preview_img, source_image, ctx
         )
         return raw_text, preview_img, source_image, ctx
+
+    def _report_ocr_page(self, page: int, total: int) -> None:
+        self._reporter.status(f"       → OCR page {page}/{total}...")
 
     def _run_ocr(
         self,
@@ -206,7 +244,12 @@ class FileProcessor:
             raw_text = raw_text_hint
             self._reporter.status("       → Text input loaded (OCR skipped)")
         else:
-            page_texts, ocr_err = self._ocr_stage_service.run_pages(ocr_inputs, self._language)
+            self._reporter.status("       → Running OCR...")
+            self._notify_stage(file, PROGRESS_STAGE_OCR)
+            on_page = self._report_ocr_page if len(ocr_inputs) > 1 else None
+            page_texts, ocr_err = self._ocr_stage_service.run_pages(
+                ocr_inputs, self._language, on_page=on_page
+            )
             if ocr_err:
                 raise _StageAbort(ProcessingResult(False, ocr_err, preview_img, "", "", ""))
             page_count = len(page_texts)
@@ -331,7 +374,7 @@ class FileProcessor:
                 )
                 saved = docx_file.name
             else:
-                saved = "cache state updated"
+                saved = "results cached (no DOCX output)"
         except Exception as exc:  # noqa: BLE001  # python-docx / PIL errors vary widely; surface message without crashing
             return ProcessingResult(
                 False,

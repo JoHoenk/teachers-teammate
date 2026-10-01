@@ -325,14 +325,13 @@ def test_ocr_settings_dialog_preprocessing_checkboxes_default_values(ocr_dialog)
     """
     Given  an OCRSettingsDialog
     When   it is created
-    Then   the preprocessing checkboxes have the correct default values
+    Then   dewarp, deskew and denoise are pre-selected; border crop and gamma are not
     """
     values = ocr_dialog.get_values()
-    # Default values should be False for all preprocessing options
-    assert values["preprocess_dewarp"] is False
-    assert values["preprocess_deskew"] is False
+    assert values["preprocess_dewarp"] is True
+    assert values["preprocess_deskew"] is True
     assert values["preprocess_border_crop"] is False
-    assert values["preprocess_denoise"] is False
+    assert values["preprocess_denoise"] is True
     assert values["preprocess_gamma"] is False
 
 

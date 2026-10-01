@@ -17,6 +17,19 @@ class StageStatus(StrEnum):
 
 
 @dataclass(frozen=True)
+class PreprocessInfo:
+    """How a document's preview image was produced, for the preview panel.
+
+    ``original_img`` is the page before preprocessing (``""`` if none was kept).
+    ``steps`` lists the applied preprocessing steps: ``None`` = unknown (cache written
+    before this was recorded), ``()`` = none applied.
+    """
+
+    original_img: str = ""
+    steps: tuple[str, ...] | None = None
+
+
+@dataclass(frozen=True)
 class FileDoneEvent:
     """One completed file's result — emitted by ``OCRWorker.file_done`` and rendered by the GUI.
 

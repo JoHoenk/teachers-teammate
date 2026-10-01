@@ -8,6 +8,11 @@ StageName = Literal["ocr", "correction", "evaluation"]
 
 STAGE_ORDER: tuple[StageName, ...] = ("ocr", "correction", "evaluation")
 
+# Per-file progress stages reported while a file is processed (not cache-invalidation stages,
+# hence not part of ``StageName`` / ``STAGE_ORDER``).
+PROGRESS_STAGE_PREPROCESSING = "preprocessing"
+PROGRESS_STAGE_OCR = "ocr"
+
 
 def normalize_stage(stage: str) -> StageName:
     """Normalize and validate a stage label used for invalidation flows."""

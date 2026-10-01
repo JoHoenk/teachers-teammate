@@ -23,7 +23,12 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from teachers_teammate.exceptions import OCRError
-from teachers_teammate.infrastructure.pipeline import OCRPipeline, collect_files
+from teachers_teammate.infrastructure.pipeline import (
+    OCRPipeline,
+    PipelineDependencies,
+    collect_files,
+)
+from teachers_teammate.infrastructure.reporting import ProgressCallbacks
 from teachers_teammate.infrastructure.state_repository import StateRepository
 from teachers_teammate.infrastructure.storage_root import resolve_artifact_dir
 from tests.conftest import make_config
@@ -330,6 +335,64 @@ def test_pipeline_persists_preview_artifact_for_none_preprocess(tmp_path: Path) 
     assert Path(state.preview_img).exists()
 
 
+@pytest.mark.use_case("Preview_Preprocessing")
+def test_pipeline_reports_progress_and_keeps_original_for_grayscale(tmp_path: Path) -> None:
+    """
+    Given  preprocess_method='grayscale', a stubbed Tesseract OCR and one image input
+    When   OCRPipeline.run() completes
+    Then   the log narrates preprocessing then OCR, on_stage_started fires for both stages,
+           and the state records the applied steps plus a persisted original page
+    """
+    cfg = make_config(
+        tmp_path,
+        ocr_engine="tesseract",
+        correction_enabled=False,
+        docx_enabled=False,
+        preprocess_method="grayscale",
+    )
+    page = _place_image(cfg.input_dir, "page.png")
+
+    lines: list[str] = []
+    reporter = MagicMock()
+    reporter.status.side_effect = lambda line: lines.append(line.strip())
+    stages: list[tuple[str, str]] = []
+
+    mock_ocr = MagicMock()
+    mock_ocr.process_image.return_value = "text"
+    with patch(
+        "teachers_teammate.infrastructure.stage_builder.TesseractOCRProcessor",
+        return_value=mock_ocr,
+    ):
+        rc = OCRPipeline(
+            cfg,
+            dependencies=PipelineDependencies(reporter=reporter),
+            progress=ProgressCallbacks(
+                on_stage_started=lambda source_id, stage: stages.append(
+                    (Path(source_id).name, stage)
+                )
+            ),
+        ).run()
+
+    assert rc == 0
+    narrative = [
+        line
+        for line in lines
+        if line.startswith("→") and ("Preprocessing" in line or "OCR" in line)
+    ]
+    assert narrative == [
+        "→ Preprocessing...",
+        "→ Preprocessing done: grayscale (1 page(s))",
+        "→ Running OCR...",
+        "→ OCR done (1 page(s))",
+    ]
+    assert stages == [("page.png", "preprocessing"), ("page.png", "ocr")]
+    state = StateRepository(resolve_artifact_dir(cfg.output_dir) / "state").load(page)
+    assert state is not None
+    assert state.preprocess_steps == ["grayscale"]
+    assert state.original_img.endswith("page_original.png")
+    assert Path(state.original_img).exists()
+
+
 @pytest.mark.use_case("Stage_Specific_Rerun")
 def test_pipeline_reruns_ocr_when_preprocess_method_changes(tmp_path: Path) -> None:
     """
@@ -428,10 +491,12 @@ def test_pipeline_callbacks_are_invoked(tmp_path: Path) -> None:
     ):
         OCRPipeline(
             cfg,
-            on_file_started=lambda _source_id, name, _idx, _total: started.append(name),
-            on_ocr_done=lambda _source_id, name: ocr_done.append(name),
-            on_file_done=lambda _source_id, name, ok, msg, pi, rt, ct, et: file_done.append(
-                (name, ok)
+            progress=ProgressCallbacks(
+                on_file_started=lambda _source_id, name, _idx, _total: started.append(name),
+                on_ocr_done=lambda _source_id, name: ocr_done.append(name),
+                on_file_done=lambda _source_id, name, ok, msg, pi, rt, ct, et: file_done.append(
+                    (name, ok)
+                ),
             ),
         ).run()
 

@@ -239,7 +239,7 @@ def test_ocr_config_hash_changes_with_each_preprocessing_field(
 
     Without this, the cache (which has no expiry) returns stale OCR text after a toggle.
     """
-    base = OcrConfig(engine="tesseract")
+    base = OcrConfig(engine="tesseract", dewarp=False, deskew=False, denoise=False)
     svc_a, _, _ = _make_svc(tmp_path, ocr=base)
     svc_b, _, _ = _make_svc(tmp_path, ocr=mutate(base))
     assert svc_a._ocr_config_hash("p") != svc_b._ocr_config_hash("p")
@@ -261,6 +261,8 @@ def test_preprocess_fingerprint_matches_legacy_format_when_rewritten_steps_are_o
         preprocess_method="adaptive_threshold",
         pdf_render_dpi=600,
         dewarp=True,
+        deskew=False,
+        border_crop=False,
         denoise=True,
         gamma=True,
     )
@@ -334,8 +336,8 @@ def test_preview_hash_changes_with_preprocessing_field(tmp_path: Path) -> None:
         repo.reconcile_runtime_config.return_value = state
         return svc.prepare(src).preview_config_hash
 
-    h_off = _prepare(OcrConfig(engine="tesseract"))
-    h_on = _prepare(OcrConfig(engine="tesseract", denoise=True))
+    h_off = _prepare(OcrConfig(engine="tesseract", dewarp=False, deskew=False, denoise=False))
+    h_on = _prepare(OcrConfig(engine="tesseract", dewarp=False, deskew=False, denoise=True))
     assert h_off != h_on
 
 
@@ -498,10 +500,105 @@ def test_persist_preview_artifact_copies_and_records(tmp_path: Path) -> None:
         preview_img=str(stable_path),
         source_image=str(stable_path),
         preview_config_hash=ctx.preview_config_hash,
+        original_img="",
+        preprocess_steps=None,
     )
     assert preview_img == str(stable_path)
     assert new_ctx.state is new_state
     assert new_ctx.preview_config_hash == ctx.preview_config_hash
+
+
+def test_persist_preview_artifact_stores_original_and_steps(tmp_path: Path) -> None:
+    """
+    Given  an original page image and the preprocessing steps that produced the preview
+    When   persist_preview_artifact() is called with original_path and preprocess_steps
+    Then   the original is persisted via the artifact store and both its path and the
+           steps are recorded on the state
+    """
+    file = tmp_path / "doc.png"
+    source_path = tmp_path / "tmp_preview.png"
+    original_path = tmp_path / "page1.png"
+    stable_path = tmp_path / "artifacts" / "doc_preprocessed.png"
+    stable_original = tmp_path / "artifacts" / "doc_original.png"
+
+    svc, repo, artifacts = _make_svc(tmp_path)
+    artifacts.persist_preview_image.return_value = stable_path
+    artifacts.persist_original_image.return_value = stable_original
+    repo.record_preview_artifact.return_value = _make_state()
+
+    ctx = _make_ctx()
+    svc.persist_preview_artifact(
+        file,
+        ctx,
+        source_path,
+        original_path=original_path,
+        preprocess_steps=["grayscale", "deskew"],
+    )
+
+    artifacts.persist_original_image.assert_called_once_with(
+        stem=file.stem, source_path=original_path
+    )
+    repo.record_preview_artifact.assert_called_once_with(
+        file,
+        ctx.state,
+        preview_img=str(stable_path),
+        source_image=str(stable_path),
+        preview_config_hash=ctx.preview_config_hash,
+        original_img=str(stable_original),
+        preprocess_steps=["grayscale", "deskew"],
+    )
+
+
+def test_persist_preview_artifact_original_copy_failure_is_not_fatal(tmp_path: Path) -> None:
+    """
+    Given  an artifact store whose persist_original_image raises OSError
+    When   persist_preview_artifact() is called with an original_path
+    Then   the preview is still recorded, with no original and the steps preserved
+    """
+    file = tmp_path / "doc.png"
+    stable_path = tmp_path / "artifacts" / "doc_preprocessed.png"
+    svc, repo, artifacts = _make_svc(tmp_path)
+    artifacts.persist_preview_image.return_value = stable_path
+    artifacts.persist_original_image.side_effect = OSError("disk full")
+    repo.record_preview_artifact.return_value = _make_state()
+
+    ctx = _make_ctx()
+    preview_img, _ = svc.persist_preview_artifact(
+        file,
+        ctx,
+        tmp_path / "tmp_preview.png",
+        original_path=tmp_path / "page1.png",
+        preprocess_steps=["grayscale"],
+    )
+
+    assert preview_img == str(stable_path)
+    repo.record_preview_artifact.assert_called_once_with(
+        file,
+        ctx.state,
+        preview_img=str(stable_path),
+        source_image=str(stable_path),
+        preview_config_hash=ctx.preview_config_hash,
+        original_img="",
+        preprocess_steps=["grayscale"],
+    )
+
+
+def test_persist_preview_artifact_prunes_stale_originals_when_none_recorded(
+    tmp_path: Path,
+) -> None:
+    """
+    Given  a re-run that produces no original page
+    When   persist_preview_artifact() is called without original_path
+    Then   leftover <stem>_original.* files from earlier runs are pruned
+    """
+    file = tmp_path / "doc.png"
+    svc, repo, artifacts = _make_svc(tmp_path)
+    artifacts.persist_preview_image.return_value = tmp_path / "artifacts" / "doc_preprocessed.png"
+    repo.record_preview_artifact.return_value = _make_state()
+
+    svc.persist_preview_artifact(file, _make_ctx(), tmp_path / "tmp_preview.png")
+
+    artifacts.prune_original_images.assert_called_once_with(file.stem)
 
 
 def test_persist_preview_artifact_preserves_all_hash_fields(tmp_path: Path) -> None:

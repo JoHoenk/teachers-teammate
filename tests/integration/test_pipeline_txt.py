@@ -12,6 +12,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from teachers_teammate.infrastructure.pipeline import OCRPipeline
+from teachers_teammate.infrastructure.reporting import ProgressCallbacks
 from teachers_teammate.infrastructure.state_repository import StateRepository
 from teachers_teammate.infrastructure.storage_root import resolve_artifact_dir
 from tests.conftest import make_config
@@ -71,7 +72,7 @@ def test_pipeline_txt_input_triggers_on_file_done_callback(tmp_path: Path) -> No
     ) -> None:
         seen.append((success, raw_txt_path))
 
-    rc = OCRPipeline(cfg, on_file_done=_on_done).run()
+    rc = OCRPipeline(cfg, progress=ProgressCallbacks(on_file_done=_on_done)).run()
 
     assert rc == 0
     assert len(seen) == 1
@@ -149,7 +150,7 @@ def test_pipeline_txt_input_non_utf8_falls_back_to_latin1(tmp_path: Path) -> Non
     ) -> None:
         seen.append(success)
 
-    rc = OCRPipeline(cfg, on_file_done=_on_done).run()
+    rc = OCRPipeline(cfg, progress=ProgressCallbacks(on_file_done=_on_done)).run()
 
     assert rc == 0
     assert seen == [True]

@@ -7,14 +7,12 @@ import logging
 from pathlib import Path
 import threading
 
-from ..reporting import Reporter, StdoutReporter
+from ..reporting import OnFileDoneFn, OnFileStartedFn, Reporter, StdoutReporter
 from .file_processor import ProcessingResult
 
 _logger = logging.getLogger(__name__)
 
 ProcessFileFn = Callable[[Path], ProcessingResult]
-OnFileStartedFn = Callable[[str, str, int, int], None]
-OnFileDoneFn = Callable[[str, str, bool, str, str, str, str, str], None]
 CleanupFn = Callable[[], None]
 
 

@@ -69,6 +69,24 @@ def test_run_selected_delegates_to_pipeline_factory(tmp_path: Path) -> None:
 
 
 @pytest.mark.unit
+def test_run_selected_forwards_progress_callbacks_to_pipeline_factory(tmp_path: Path) -> None:
+    """
+    Given  a ProcessingApplicationService with an injected pipeline_factory
+    When   run_selected() is called with a ProgressCallbacks bundle
+    Then   the same bundle is passed to the pipeline factory as ``progress``
+    """
+    from tests.conftest import make_config  # noqa: PLC0415
+
+    factory = MagicMock(return_value=MagicMock(run=lambda: 0))
+    svc = _make_svc(pipeline_factory=factory)
+    progress = service_module.ProgressCallbacks(on_stage_started=MagicMock())
+
+    svc.run_selected(make_config(tmp_path), progress=progress)
+
+    assert factory.call_args.kwargs["progress"] is progress
+
+
+@pytest.mark.unit
 def test_run_preview_only_delegates_to_pipeline_factory(tmp_path: Path) -> None:
     """
     Given  a ProcessingApplicationService with an injected pipeline_factory

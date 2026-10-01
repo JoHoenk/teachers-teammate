@@ -10,7 +10,7 @@ from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import QMenu
 
 from teachers_teammate.gui._results_table import ResultsTable
-from teachers_teammate.gui._types import FileDoneEvent
+from teachers_teammate.gui._types import FileDoneEvent, PreprocessInfo
 
 
 @pytest.mark.gui
@@ -413,3 +413,42 @@ def test_results_table_failed_ocr_shows_cross_with_tooltip(qtbot) -> None:
     assert ocr_cell is not None
     assert ocr_cell.text() == "✗"
     assert error_msg in ocr_cell.toolTip()
+
+
+@pytest.mark.gui
+def test_results_table_preprocessing_info_round_trips_tristate(qtbot) -> None:
+    """
+    Given  queued rows given known steps, empty steps, and no preprocessing info at all
+    When   preprocessing_for_source() is queried
+    Then   steps come back as a tuple, an empty tuple, or None (unknown) respectively
+    """
+    table = ResultsTable()
+    qtbot.addWidget(table)
+    table.set_queue(["a.png", "b.png", "c.png"], source_ids=["/a.png", "/b.png", "/c.png"])
+
+    known = PreprocessInfo("/a_original.png", ("grayscale", "deskew"))
+    table.set_preprocessing("/a.png", known)
+    table.set_preprocessing("/b.png", PreprocessInfo("", ()))
+
+    assert table.preprocessing_for_source("/a.png") == known
+    assert table.preprocessing_for_source("/b.png") == PreprocessInfo("", ())
+    assert table.preprocessing_for_source("/c.png") == PreprocessInfo("", None)
+    assert table.preprocessing_for_source("/missing.png") == PreprocessInfo("", None)
+
+
+@pytest.mark.gui
+def test_results_table_set_row_artifacts_keeps_preprocessing_when_not_given(qtbot) -> None:
+    """
+    Given  a row with stored preprocessing info
+    When   set_row_artifacts() refreshes only the text payloads (no original/steps given)
+    Then   the stored preprocessing info is left untouched
+    """
+    table = ResultsTable()
+    qtbot.addWidget(table)
+    table.set_queue(["a.png"], source_ids=["/a.png"])
+    info = PreprocessInfo("/o.png", ("grayscale",))
+    table.set_row_artifacts("/a.png", "", "raw", "", "", preprocess=info)
+
+    table.set_row_artifacts("/a.png", "", "edited", "", "")
+
+    assert table.preprocessing_for_source("/a.png") == info

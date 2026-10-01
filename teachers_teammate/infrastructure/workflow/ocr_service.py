@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 import threading
 
@@ -22,12 +23,23 @@ class OCRStageService:
         self._processor = processor
         self._stop_event = stop_event
 
-    def run_pages(self, ocr_inputs: list[Path], language: str) -> tuple[list[str], str | None]:
-        """Run OCR on each input path; return ``(page_texts, error_message | None)``."""
+    def run_pages(
+        self,
+        ocr_inputs: list[Path],
+        language: str,
+        on_page: Callable[[int, int], None] | None = None,
+    ) -> tuple[list[str], str | None]:
+        """Run OCR on each input path; return ``(page_texts, error_message | None)``.
+
+        *on_page* is called as ``on_page(page_number, total_pages)`` (1-based) right
+        before each page is sent to the OCR engine.
+        """
         page_texts: list[str] = []
         for i, ocr_path in enumerate(ocr_inputs):
             if self._stop_event and self._stop_event.is_set():
                 return [], "Stopped by user."
+            if on_page is not None:
+                on_page(i + 1, len(ocr_inputs))
             try:
                 result = self._processor.process_image(ocr_path, language=language)
             except OCRError as exc:

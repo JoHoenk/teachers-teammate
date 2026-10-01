@@ -32,6 +32,7 @@ class _DummyWorker:
     def __init__(self, _config, selected_source_paths=None, app_service=None) -> None:
         self.log_line = _DummySignal()
         self.file_started = _DummySignal()
+        self.stage_started = _DummySignal()
         self.ocr_done = _DummySignal()
         self.file_done = _DummySignal()
         self.finished_with_code = _DummySignal()
@@ -311,6 +312,40 @@ def test_main_window_file_done_refreshes_preview_for_selected_row(main_window, m
             "/tmp/page_evaluation.txt",
         )
     ]
+
+
+@pytest.mark.gui
+def test_main_window_file_done_clears_stale_preprocessing_info(main_window, monkeypatch) -> None:
+    """
+    Given  a row that still holds preprocessing info from an earlier run
+    When   _on_file_done reports a failed run and no valid state exists any more
+    Then   the row's preprocessing info is reset instead of keeping the old original/steps
+    """
+    from teachers_teammate.gui._types import PreprocessInfo  # noqa: PLC0415
+
+    source = "/tmp/page.png"
+    main_window._results_table.set_queue(["page.png"], source_ids=[source])
+    main_window._results_table.set_preprocessing(
+        source, PreprocessInfo("/tmp/old.png", ("deskew",))
+    )
+    monkeypatch.setattr(main_window._app_service, "load_view", lambda *_a, **_k: None)
+
+    main_window._on_file_done(
+        FileDoneEvent(
+            source_id=source,
+            name="page.png",
+            ok=False,
+            message="",
+            ocr_s=0.0,
+            correction_s=0.0,
+            preview_img="",
+            raw_txt="",
+            corr_txt="",
+            eval_txt="",
+        )
+    )
+
+    assert main_window._results_table.preprocessing_for_source(source) == PreprocessInfo()
 
 
 @pytest.mark.gui

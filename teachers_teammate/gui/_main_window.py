@@ -41,6 +41,7 @@ from ..application.service import (
     ProcessingApplicationService,
 )
 from ..config import DEFAULTS, Config, OcrConfig, dump_config_file, load_config_file
+from ..domain.stages import PROGRESS_STAGE_OCR, PROGRESS_STAGE_PREPROCESSING
 from ._app_bootstrap import create_app
 from ._chart_widget import ChartWidget
 from ._config_panel import ConfigPanel
@@ -56,7 +57,7 @@ from ._settings_dialog import (
     SettingsDialog,
 )
 from ._stats_widget import SystemStatsWidget
-from ._types import FileDoneEvent
+from ._types import FileDoneEvent, PreprocessInfo
 from ._update_check import UpdateCheckThread
 from ._worker import OCRWorker, _ConnectionCheckThread
 
@@ -134,6 +135,7 @@ class _PreprocessPreviewThread(QThread):
 class _WorkerLike(Protocol):
     log_line: Any
     file_started: Any
+    stage_started: Any
     ocr_done: Any
     file_done: Any
     finished_with_code: Any
@@ -671,6 +673,9 @@ class MainWindow(QMainWindow):
                 correction_done=view.correction_done,
                 evaluation_done=view.evaluation_done,
             )
+            self._results_table.set_preprocessing(
+                source_id, PreprocessInfo(view.original_img, view.preprocess_steps)
+            )
             if view.ocr_done:
                 any_ocr_cached = True
         if any_ocr_cached:
@@ -789,6 +794,7 @@ class MainWindow(QMainWindow):
         )
         self._worker.log_line.connect(self._log.append_text)
         self._worker.file_started.connect(self._on_file_started)
+        self._worker.stage_started.connect(self._on_stage_started)
         self._worker.ocr_done.connect(self._on_ocr_done)
         self._worker.file_done.connect(self._on_file_done)
         self._worker.finished_with_code.connect(self._on_finished)
@@ -924,8 +930,22 @@ class MainWindow(QMainWindow):
 
     def _on_file_started(self, source_id: str, name: str, idx: int, total: int) -> None:
         self._progress.setValue((idx - 1) * self._steps_per_file)
-        self._progress.setFormat(f"[{idx}/{total}] {name} — OCR…")
+        self._progress.setFormat(f"[{idx}/{total}] {name} — starting…")
         self._results_table.mark_processing(source_id)
+        # The previous run's preprocessing info is stale until this run records its own.
+        self._results_table.set_preprocessing(source_id, PreprocessInfo())
+
+    _STAGE_PROGRESS_LABEL: ClassVar[dict[str, str]] = {
+        PROGRESS_STAGE_PREPROCESSING: "preprocessing…",
+        PROGRESS_STAGE_OCR: "OCR…",
+    }
+
+    def _on_stage_started(
+        self, _source_id: str, name: str, stage: str, idx: int, total: int
+    ) -> None:
+        label = self._STAGE_PROGRESS_LABEL.get(stage)
+        if label is not None:
+            self._progress.setFormat(f"[{idx}/{total}] {name} — {label}")
 
     def _on_file_done(self, event: FileDoneEvent) -> None:
         source_id = event.source_id
@@ -939,6 +959,8 @@ class MainWindow(QMainWindow):
         corr_txt = event.corr_txt
         eval_txt = event.eval_txt
         self._results_table.add_result(event)
+        # Refresh from the persisted state even on failure/stop, when on_ocr_done never fired.
+        self._refresh_preprocessing_info(source_id)
         self._export_btn.setEnabled(True)
         if not ok and message:
             QMessageBox.warning(self, "Processing error", f"{name}:\n\n{message}")
@@ -962,6 +984,19 @@ class MainWindow(QMainWindow):
             pix = load_pixmap(preview_img)
             self._current_preview_source_id = source_id
             self._on_preview_requested(pix, raw_txt, corr_txt, eval_txt)
+
+    def _refresh_preprocessing_info(self, source_id: str) -> None:
+        """Re-read how *source_id*'s preview was produced; unknown when no valid state exists."""
+        info = PreprocessInfo()
+        try:
+            source = Path(source_id)
+            if source.exists():
+                view = self._app_service.load_view(self._config_panel.to_config(), source)
+                if view is not None:
+                    info = PreprocessInfo(view.original_img, view.preprocess_steps)
+        except (OSError, ValueError):
+            pass
+        self._results_table.set_preprocessing(source_id, info)
 
     # ── Service status indicator ──────────────────────────────────────────
 
@@ -1147,6 +1182,7 @@ class MainWindow(QMainWindow):
                         view.raw_text,
                         view.correction_text,
                         view.evaluation_text,
+                        preprocess=PreprocessInfo(view.original_img, view.preprocess_steps),
                     )
         except (OSError, ValueError):
             # Non-fatal: preview metadata will be fully attached on file_done.
@@ -1179,16 +1215,24 @@ class MainWindow(QMainWindow):
         correction_txt: str,
         evaluation_txt: str,
     ) -> None:
+        # Determine which source is being previewed (drives preprocessing info and badges).
+        source_id, *_ = self._results_table.selected_entry()
+        if not source_id:
+            source_id = self._current_preview_source_id
+        info = self._results_table.preprocessing_for_source(source_id)
         try:
-            self._preview.load(pixmap, raw_txt, correction_txt, evaluation_txt)
+            self._preview.load(
+                pixmap,
+                raw_txt,
+                correction_txt,
+                evaluation_txt,
+                original_path=info.original_img,
+                preprocess_steps=info.steps,
+            )
         except Exception as exc:  # noqa: BLE001  # preview load may raise on missing/corrupt files; warn instead of crashing
             QMessageBox.warning(self, "Preview", f"Could not load preview content:\n{exc}")
             return
         self._tabs.setCurrentIndex(1)
-        # Determine which source is being previewed and update stage status badges.
-        source_id, *_ = self._results_table.selected_entry()
-        if not source_id:
-            source_id = self._current_preview_source_id
         self._current_preview_source_id = source_id
         self._update_preview_stage_statuses(source_id)
 
@@ -1272,11 +1316,14 @@ class MainWindow(QMainWindow):
             correction_done=state.correction_done,
             evaluation_done=state.evaluation_done,
         )
+        info = self._results_table.preprocessing_for_source(source_id)
         self._preview.load(
             load_pixmap(state.preview_img),
             state.raw_text,
             state.correction_text,
             state.evaluation_text,
+            original_path=info.original_img,
+            preprocess_steps=info.steps,
         )
         self._update_preview_stage_statuses(source_id)
         self._tabs.setCurrentIndex(1)
@@ -1321,11 +1368,14 @@ class MainWindow(QMainWindow):
             correction_done=state.correction_done,
             evaluation_done=state.evaluation_done,
         )
+        info = self._results_table.preprocessing_for_source(source_id)
         self._preview.load(
             load_pixmap(state.preview_img),
             state.raw_text,
             state.correction_text,
             state.evaluation_text,
+            original_path=info.original_img,
+            preprocess_steps=info.steps,
         )
         self._update_preview_stage_statuses(source_id)
         self._tabs.setCurrentIndex(1)
@@ -1522,12 +1572,21 @@ class MainWindow(QMainWindow):
         if thread is not None and thread.isRunning():
             return  # a preview is already in flight; ignore the extra click
 
+        image_suffixes = self._app_service.list_supported_suffixes() - {".txt"}
+        # Prefer the file the user selected in the queue so the preview matches the
+        # document they are looking at, not just whichever file sorts first.
+        source_path: Path | None = next(
+            (
+                Path(sid)
+                for sid in self._results_table.selected_source_ids()
+                if Path(sid).suffix.lower() in image_suffixes and Path(sid).is_file()
+            ),
+            None,
+        )
         input_dir_text = self._config_panel.get_input_dir()
-        source_path: Path | None = None
-        if input_dir_text:
+        if source_path is None and input_dir_text:
             input_dir = Path(input_dir_text)
             if input_dir.is_dir():
-                image_suffixes = self._app_service.list_supported_suffixes() - {".txt"}
                 source_path = next(
                     (
                         f

@@ -199,14 +199,29 @@ def _parse_args(
         action="store_true",
         default=DEFAULTS["preprocess_dewarp"],
         dest="preprocess_dewarp",
-        help="Correct perspective distortion before OCR (photographed pages, book scans).",
+        help="Correct perspective distortion before OCR (photographed pages, book scans) (default).",
+    )
+    ocr_grp.add_argument(
+        "--no-preprocess-dewarp",
+        dest="preprocess_dewarp",
+        action="store_false",
+        help="Do not correct perspective distortion.",
     )
     ocr_grp.add_argument(
         "--preprocess-deskew",
         action="store_true",
         default=DEFAULTS["preprocess_deskew"],
         dest="preprocess_deskew",
-        help="Correct page tilt up to ±45° before OCR (minimum-area bounding-rectangle detection).",
+        help=(
+            "Correct page tilt up to ±45° before OCR (minimum-area bounding-rectangle "
+            "detection) (default)."
+        ),
+    )
+    ocr_grp.add_argument(
+        "--no-preprocess-deskew",
+        dest="preprocess_deskew",
+        action="store_false",
+        help="Do not correct page tilt.",
     )
     ocr_grp.add_argument(
         "--preprocess-border-crop",
@@ -220,7 +235,15 @@ def _parse_args(
         action="store_true",
         default=DEFAULTS["preprocess_denoise"],
         dest="preprocess_denoise",
-        help="Non-local means noise removal before OCR (scanner grain, pencil artifacts).",
+        help=(
+            "Non-local means noise removal before OCR (scanner grain, pencil artifacts) (default)."
+        ),
+    )
+    ocr_grp.add_argument(
+        "--no-preprocess-denoise",
+        dest="preprocess_denoise",
+        action="store_false",
+        help="Do not remove noise.",
     )
     ocr_grp.add_argument(
         "--preprocess-gamma",

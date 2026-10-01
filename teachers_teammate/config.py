@@ -31,10 +31,10 @@ DEFAULTS: dict[str, Any] = {
     "ocr_temperature": 0.0,
     # ── Preprocessing (pre-steps and PDF rendering) ───────────────────────────
     "pdf_render_dpi": 300,
-    "preprocess_dewarp": False,
-    "preprocess_deskew": False,
+    "preprocess_dewarp": True,
+    "preprocess_deskew": True,
     "preprocess_border_crop": False,
-    "preprocess_denoise": False,
+    "preprocess_denoise": True,
     "preprocess_gamma": False,
     # ── Input / output ────────────────────────────────────────────────────────
     "recursive": False,

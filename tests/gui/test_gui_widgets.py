@@ -404,6 +404,193 @@ def test_preview_panel_load_with_valid_paths(qtbot, tmp_path: Path) -> None:
     assert panel._correction_text.toPlainText() == "corrected text"
 
 
+def _solid_pixmap(width: int, height: int) -> QPixmap:
+    pix = QPixmap(width, height)
+    pix.fill()
+    return pix
+
+
+def _solid_png(path: Path, width: int, height: int) -> str:
+    assert _solid_pixmap(width, height).save(str(path), "PNG")
+    return str(path)
+
+
+@pytest.mark.gui
+def test_preview_panel_shows_steps_caption_and_original_toggle(qtbot, tmp_path: Path) -> None:
+    """
+    Given  a loaded PreviewPanel and preprocessing info with an original page
+    When   set_preprocessing() is called and the Original toggle is clicked
+    Then   the caption lists the steps, the toggle becomes visible, and toggling switches
+           the shown image between processed and original
+    """
+    from teachers_teammate.gui._preview_panel import PreviewPanel  # noqa: PLC0415
+
+    panel = PreviewPanel()
+    qtbot.addWidget(panel)
+    panel.show()
+    processed = _solid_pixmap(100, 100)
+    panel.load(processed, "raw", "", "")
+
+    panel.set_preprocessing(_solid_png(tmp_path / "orig.png", 200, 300), ["grayscale", "deskew"])
+
+    assert panel._prep_lbl.isVisible()
+    assert panel._prep_lbl.text() == "Preprocessed: grayscale, deskew"
+    assert panel._original_btn.isVisible()
+    assert panel._original_pixmap is None  # not loaded until first toggle
+
+    panel._original_btn.click()
+    assert panel._original_btn.isChecked()
+    assert "original page" in panel._prep_lbl.text()
+    assert panel._image_view._pix_item is not None
+    assert panel._image_view._pix_item.pixmap().width() == 200
+
+    panel._original_btn.click()
+    assert panel._image_view._pix_item is not None
+    assert panel._image_view._pix_item.pixmap().width() == 100
+    assert panel._prep_lbl.text() == "Preprocessed: grayscale, deskew"
+
+
+@pytest.mark.gui
+def test_preview_panel_load_accepts_preprocessing_info(qtbot, tmp_path: Path) -> None:
+    """
+    Given  a PreviewPanel
+    When   load() is given original_path and preprocess_steps
+    Then   the caption and Original toggle are set up without a separate set_preprocessing call
+    """
+    from teachers_teammate.gui._preview_panel import PreviewPanel  # noqa: PLC0415
+
+    panel = PreviewPanel()
+    qtbot.addWidget(panel)
+    panel.show()
+
+    panel.load(
+        _solid_pixmap(100, 100),
+        "raw",
+        "",
+        "",
+        original_path=_solid_png(tmp_path / "orig.png", 200, 300),
+        preprocess_steps=["deskew"],
+    )
+
+    assert panel._prep_lbl.text() == "Preprocessed: deskew"
+    assert panel._original_btn.isVisible()
+
+
+@pytest.mark.gui
+def test_zoomable_view_swap_pixmap_keeps_zoom_and_visible_region(qtbot) -> None:
+    """
+    Given  a zoomed-in ZoomableImageView showing a 100x100 page
+    When   swap_pixmap() replaces it with a 200x200 rendering of the same page
+    Then   the same fraction of the page stays visible and the view is not re-fitted
+    """
+    from teachers_teammate.gui._preview_panel import ZoomableImageView  # noqa: PLC0415
+
+    view = ZoomableImageView()
+    qtbot.addWidget(view)
+    view.resize(300, 300)
+    view.show()
+    view.set_pixmap(_solid_pixmap(100, 100))
+    view.zoom_in()
+    view.zoom_in()
+    zoom_before = view.transform().m11()
+    visible_before = view.mapToScene(view.viewport().rect()).boundingRect().width() / 100
+
+    view.swap_pixmap(_solid_pixmap(200, 200))
+
+    assert view._fitted is False
+    assert view.transform().m11() == pytest.approx(zoom_before / 2)
+    visible_after = view.mapToScene(view.viewport().rect()).boundingRect().width() / 200
+    assert visible_after == pytest.approx(visible_before, rel=0.05)
+
+
+@pytest.mark.gui
+def test_zoomable_view_swap_pixmap_refits_when_fitted(qtbot) -> None:
+    """
+    Given  a ZoomableImageView that is still fitted to the view
+    When   swap_pixmap() is called
+    Then   the new image is fitted as with set_pixmap()
+    """
+    from teachers_teammate.gui._preview_panel import ZoomableImageView  # noqa: PLC0415
+
+    view = ZoomableImageView()
+    qtbot.addWidget(view)
+    view.resize(300, 300)
+    view.show()
+    view.set_pixmap(_solid_pixmap(100, 100))
+
+    view.swap_pixmap(_solid_pixmap(400, 400))
+
+    assert view._fitted is True
+    assert view.sceneRect().width() == 400
+
+
+@pytest.mark.gui
+def test_preview_panel_caption_states_when_nothing_was_applied(qtbot) -> None:
+    """
+    Given  a loaded PreviewPanel
+    When   set_preprocessing() reports an empty step list and no original
+    Then   the caption says no preprocessing was applied and the toggle stays hidden
+    """
+    from teachers_teammate.gui._preview_panel import PreviewPanel  # noqa: PLC0415
+
+    panel = PreviewPanel()
+    qtbot.addWidget(panel)
+    panel.show()
+    panel.load(_solid_pixmap(50, 50), "raw", "", "")
+
+    panel.set_preprocessing(None, [])
+
+    assert panel._prep_lbl.isVisible()
+    assert "No preprocessing applied" in panel._prep_lbl.text()
+    assert not panel._original_btn.isVisible()
+
+
+@pytest.mark.gui
+def test_preview_panel_hides_caption_when_steps_unknown_and_resets_on_load(
+    qtbot, tmp_path: Path
+) -> None:
+    """
+    Given  a PreviewPanel that showed preprocessing info for one document
+    When   another document is loaded without preprocessing info (legacy cache: steps None)
+    Then   the caption and Original toggle are hidden again
+    """
+    from teachers_teammate.gui._preview_panel import PreviewPanel  # noqa: PLC0415
+
+    panel = PreviewPanel()
+    qtbot.addWidget(panel)
+    panel.show()
+    panel.load(_solid_pixmap(50, 50), "raw", "", "")
+    panel.set_preprocessing(_solid_png(tmp_path / "orig.png", 60, 60), ["grayscale"])
+    assert panel._original_btn.isVisible()
+
+    panel.load(_solid_pixmap(70, 70), "other", "", "")
+
+    assert not panel._prep_lbl.isVisible()
+    assert not panel._original_btn.isVisible()
+
+
+@pytest.mark.gui
+def test_preview_panel_hides_original_toggle_when_original_file_is_missing(
+    qtbot, tmp_path: Path
+) -> None:
+    """
+    Given  a loaded PreviewPanel
+    When   set_preprocessing() points at an original file that no longer exists
+    Then   the Original toggle stays hidden while the steps caption is still shown
+    """
+    from teachers_teammate.gui._preview_panel import PreviewPanel  # noqa: PLC0415
+
+    panel = PreviewPanel()
+    qtbot.addWidget(panel)
+    panel.show()
+    panel.load(_solid_pixmap(50, 50), "raw", "", "")
+
+    panel.set_preprocessing(str(tmp_path / "gone.png"), ["grayscale"])
+
+    assert not panel._original_btn.isVisible()
+    assert panel._prep_lbl.isVisible()
+
+
 @pytest.mark.gui
 def test_preview_panel_load_with_empty_payloads_and_null_pixmap(qtbot, tmp_path: Path) -> None:
     """

@@ -53,7 +53,7 @@ from .file_discovery import FileDiscovery
 from .input_provider_factory import get_input_provider, supported_suffixes
 from .ollama_utils import OllamaClient
 from .preview_image_store import PreviewImageStore
-from .reporting import Reporter, StdoutReporter
+from .reporting import ProgressCallbacks, Reporter, StdoutReporter
 from .stage_builder import PipelineComponentFactory as PipelineComponentFactory  # noqa: PLC0414
 from .stage_builder import StageBuilder, default_build_preprocessor
 from .state_repository import StateRepository
@@ -167,14 +167,9 @@ class OCRPipeline:
         the sink for the run narrative and advisory warnings, defaulting to
         :class:`~teachers_teammate.infrastructure.reporting.StdoutReporter`
         (CLI behaviour).  The GUI injects a reporter that feeds its log pane.
-    on_file_started:
-        Called at the start of each file: ``(source_id, name, idx, total)``.
-    on_ocr_done:
-        Called after OCR (before correction) for each file: ``(source_id, name)``.
-    on_file_done:
-        Called after a file completes (success or failure):
-        ``(source_id, name, ok, message, preview_img_path, raw_text, correction_text, evaluation_text)``.
-        Text strings are empty when the associated stage output was not produced.
+    progress:
+        Optional per-file progress hooks; see
+        :class:`~teachers_teammate.infrastructure.reporting.ProgressCallbacks`.
     """
 
     def __init__(
@@ -185,9 +180,7 @@ class OCRPipeline:
         config_file: Path | None = None,
         selected_source_paths: list[str] | None = None,
         dependencies: PipelineDependencies | None = None,
-        on_file_started: Callable[[str, str, int, int], None] | None = None,
-        on_ocr_done: Callable[[str, str], None] | None = None,
-        on_file_done: Callable[[str, str, bool, str, str, str, str, str], None] | None = None,
+        progress: ProgressCallbacks | None = None,
     ) -> None:
         self._config = config
         self._config_file = config_file
@@ -195,9 +188,7 @@ class OCRPipeline:
         self._selected_source_paths = {
             str(Path(path).resolve()) for path in (selected_source_paths or [])
         }
-        self._on_file_started = on_file_started
-        self._on_ocr_done = on_ocr_done
-        self._on_file_done = on_file_done
+        self._progress = progress or ProgressCallbacks()
         deps = dependencies or PipelineDependencies()
         self._reporter: Reporter = deps.reporter or StdoutReporter()
         self._component_factory = deps.component_factory or PipelineComponentFactory()
@@ -359,8 +350,8 @@ class OCRPipeline:
             process_file=file_processor.process,
             cleanup_tmp=lambda: self._cleanup_tmp(tmp_dir, artifact_store),
             stop_event=self._stop_event,
-            on_file_started=self._on_file_started,
-            on_file_done=self._on_file_done,
+            on_file_started=self._progress.on_file_started,
+            on_file_done=self._progress.on_file_done,
             reporter=self._reporter,
         )
 
@@ -490,7 +481,8 @@ class OCRPipeline:
                 doc_creator=doc_creator,
                 anonymizer=anonymizer,
                 stop_event=self._stop_event,
-                on_ocr_done=self._on_ocr_done,
+                on_ocr_done=self._progress.on_ocr_done,
+                on_stage_started=self._progress.on_stage_started,
                 reporter=self._reporter,
             )
         )

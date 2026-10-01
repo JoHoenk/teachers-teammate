@@ -33,6 +33,8 @@ What this module does NOT do
 from __future__ import annotations
 
 from dataclasses import dataclass
+import glob
+import os
 from pathlib import Path
 import shutil
 
@@ -68,13 +70,47 @@ class PreviewImageStore:
             shutil.copy2(source_path, target)
         return target
 
-    def delete_preview_artifacts(self, preview_img: str, source_image: str) -> None:
+    def persist_original_image(self, *, stem: str, source_path: Path) -> Path:
+        """Store the un-preprocessed page *source_path* next to the preview image.
+
+        Keeps the original file suffix (``<stem>_original.<ext>``) so the file stays a
+        valid image for whatever format the input was.  Used by the GUI to toggle
+        between the original and the preprocessed page.  The file is hard-linked when
+        possible (no extra I/O or disk usage) and copied otherwise; any earlier
+        ``<stem>_original.*`` file with a different suffix is removed.
+        """
+        target = self._root / f"{stem}_original{source_path.suffix.lower() or '.png'}"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if not (target.exists() and source_path.resolve() == target.resolve()):
+            # Unlink first: copying onto a hard link would write through to the source file.
+            target.unlink(missing_ok=True)
+            try:
+                os.link(source_path, target)
+            except OSError:  # unsupported filesystem or cross-device link
+                shutil.copy2(source_path, target)
+        self.prune_original_images(stem, keep=target)
+        return target
+
+    def prune_original_images(self, stem: str, *, keep: Path | None = None) -> None:
+        """Delete stale ``<stem>_original.*`` files except *keep* (best-effort)."""
+        keep_resolved = keep.resolve() if keep is not None else None
+        for stale in self._root.glob(f"{glob.escape(stem)}_original.*"):
+            if keep_resolved is not None and stale.resolve() == keep_resolved:
+                continue
+            try:
+                stale.unlink(missing_ok=True)
+            except OSError:
+                pass
+
+    def delete_preview_artifacts(
+        self, preview_img: str, source_image: str, original_img: str = ""
+    ) -> None:
         """Delete preview image files that were recorded in a now-invalidated state.
 
         Only deletes files that are non-empty paths and actually exist.
         Safe to call with empty strings.
         """
-        for file_path in {preview_img, source_image}:
+        for file_path in {preview_img, source_image, original_img}:
             if file_path:
                 Path(file_path).unlink(missing_ok=True)
 

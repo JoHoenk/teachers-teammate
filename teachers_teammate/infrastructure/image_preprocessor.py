@@ -29,6 +29,7 @@ from ..interfaces import ImagePreprocessor
 
 _logger = logging.getLogger(__name__)
 
+
 # ── Implementation ──────────────────────────────────────────────────
 
 

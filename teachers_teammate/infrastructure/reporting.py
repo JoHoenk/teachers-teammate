@@ -13,8 +13,33 @@ choose the sink:
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import dataclass
 import sys
 from typing import Protocol, runtime_checkable
+
+OnFileStartedFn = Callable[[str, str, int, int], None]  # (source_id, name, idx, total)
+OnStageStartedFn = Callable[[str, str], None]  # (source_id, stage)
+OnOcrDoneFn = Callable[[str, str], None]  # (source_id, name)
+OnFileDoneFn = Callable[[str, str, bool, str, str, str, str, str], None]
+
+
+@dataclass(frozen=True)
+class ProgressCallbacks:
+    """Structured per-file progress hooks for adapters (GUI); every hook is optional.
+
+    ``on_file_started(source_id, name, idx, total)`` fires at the start of each file.
+    ``on_stage_started(source_id, stage)`` fires when a file enters the ``"preprocessing"``
+    or ``"ocr"`` stage (not when OCR is served from the cache).
+    ``on_ocr_done(source_id, name)`` fires after OCR, before correction.
+    ``on_file_done(source_id, name, ok, message, preview_img, raw_text, correction_text,
+    evaluation_text)`` fires after a file completes (success or failure); text strings are
+    empty when the associated stage output was not produced.
+    """
+
+    on_file_started: OnFileStartedFn | None = None
+    on_stage_started: OnStageStartedFn | None = None
+    on_ocr_done: OnOcrDoneFn | None = None
+    on_file_done: OnFileDoneFn | None = None
 
 
 @runtime_checkable

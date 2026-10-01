@@ -58,6 +58,9 @@ def test_version_tuple_empty_string_returns_empty() -> None:
     assert _version_tuple("") == ()
 
 
+# The autouse conftest fixture stubs start() per test; keep the real one for lifetime tests.
+_REAL_START = UpdateCheckThread.start
+
 # ── UpdateCheckThread ─────────────────────────────────────────────────────────
 
 
@@ -177,3 +180,30 @@ def test_malformed_response_is_silent(qtbot) -> None:
 
     qtbot.wait(10)
     assert emitted == []
+
+
+@pytest.mark.gui
+def test_running_thread_is_kept_alive_until_finished(qtbot) -> None:
+    """
+    Given  an UpdateCheckThread blocked on a slow network request
+    When   the caller drops its only reference
+    Then   the thread stays alive (no Qt abort) and is released once it finishes
+    """
+    import threading  # noqa: PLC0415
+
+    from teachers_teammate.gui import _update_check  # noqa: PLC0415
+
+    release = threading.Event()
+
+    def _slow_urlopen(*_args, **_kwargs):
+        release.wait(timeout=5)
+        raise OSError("offline")
+
+    thread = _update_check.UpdateCheckThread()
+    with patch("urllib.request.urlopen", _slow_urlopen):
+        _REAL_START(thread)
+        assert thread in _update_check._RUNNING
+        assert thread.isRunning()
+        del thread
+        release.set()
+        qtbot.waitUntil(lambda: not _update_check._RUNNING, timeout=3000)

@@ -2,11 +2,18 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from PySide6.QtCore import QThread, Signal
 
 import teachers_teammate as _pkg
 
 _RELEASES_API = "https://api.github.com/repos/JoHoenk/teachers-teammate/releases/latest"
+
+# Threads that have been started but not yet finished. Holding a reference here keeps a
+# running QThread from being destroyed (which makes Qt abort the process) when the window
+# that launched it is closed before the network request returns.
+_RUNNING: set[UpdateCheckThread] = set()
 
 
 def _version_tuple(tag: str) -> tuple[int, ...]:
@@ -22,6 +29,17 @@ class UpdateCheckThread(QThread):
     """Check GitHub Releases in the background and emit *update_available* if newer."""
 
     update_available = Signal(str, str)  # (version_tag, html_url)
+
+    def start(self, *args: Any) -> None:
+        """Start the thread and keep it alive until it has finished."""
+        _RUNNING.add(self)
+        self.finished.connect(self._release)
+        super().start(*args)
+
+    def _release(self) -> None:
+        self.wait()
+        _RUNNING.discard(self)
+        self.deleteLater()
 
     def run(self) -> None:
         try:

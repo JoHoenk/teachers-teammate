@@ -359,7 +359,8 @@ class MainWindow(QMainWindow):
         # Pass self as the receiver so the callback is cancelled if the window is destroyed.
         QTimer.singleShot(500, self, self._check_llm_status)
 
-        self._update_thread = UpdateCheckThread(self)
+        # No parent: the thread outlives the window if it is closed during the request.
+        self._update_thread = UpdateCheckThread()
         self._update_thread.update_available.connect(self._show_update_banner)
         QTimer.singleShot(0, self._update_thread.start)
 

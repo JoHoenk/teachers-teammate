@@ -4,11 +4,14 @@
 from __future__ import annotations
 
 import os
+import threading
 from unittest.mock import MagicMock
 
+from PySide6.QtCore import Qt
 import pytest
 
 from teachers_teammate.config import DEFAULTS
+from teachers_teammate.gui import _settings_dialog
 from teachers_teammate.gui._settings_dialog import (
     CorrectionSettingsDialog,
     EvaluationSettingsDialog,
@@ -17,8 +20,10 @@ from teachers_teammate.gui._settings_dialog import (
     SettingsDialog,
 )
 
+from ._service_stubs import RecommendationServiceStub
 
-class _DummyAppService:
+
+class _DummyAppService(RecommendationServiceStub):
     """Minimal app-service stub for settings dialog tests."""
 
     def list_providers(self) -> list[str]:
@@ -66,6 +71,7 @@ class _DummyAppService:
 
 class _CachingDummyAppService(_DummyAppService):
     def __init__(self) -> None:
+        super().__init__()
         self._cache: dict[tuple, list[str]] = {}
 
     def get_cached_models(self, provider: str, *, base_url: str = "") -> list[str] | None:
@@ -440,11 +446,37 @@ def test_correction_settings_dialog_status_red_on_empty_fetch(correction_dialog)
 
 
 @pytest.mark.gui
-def test_correction_settings_dialog_cache_hit_skips_new_thread(qtbot) -> None:
+def test_correction_settings_dialog_cache_hit_skips_new_thread_for_cloud_provider(
+    qtbot, monkeypatch
+) -> None:
     """
-    Given  models are already cached for the current correction provider (ollama)
+    Given  models are already cached for a cloud provider (openai)
     When   _auto_fetch is called
     Then   the cached list is used (no new thread is started)
+    """
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    svc = _CachingDummyAppService()
+    dlg = CorrectionSettingsDialog(
+        {"correction_provider": "openai", "ollama_url": DEFAULTS["ollama_url"]},
+        prompt="",
+        app_service=svc,
+    )
+    qtbot.addWidget(dlg)
+    if dlg._corr_fetch_thread is not None:
+        dlg._corr_fetch_thread.wait(5000)
+    svc.seed_cache("openai", ["gpt-4o"], "")
+    old_thread = dlg._corr_fetch_thread
+    dlg._auto_fetch()
+    assert dlg._corr_fetch_thread is old_thread
+
+
+@pytest.mark.gui
+def test_correction_settings_dialog_ollama_always_fetches_in_a_thread(qtbot) -> None:
+    """
+    Given  Ollama models are already cached
+    When   _auto_fetch is called
+    Then   a thread is started anyway: classifying custom models must never run
+           on the GUI thread, so Ollama has no synchronous cache shortcut
     """
     svc = _CachingDummyAppService()
     url = DEFAULTS["ollama_url"]
@@ -454,10 +486,15 @@ def test_correction_settings_dialog_cache_hit_skips_new_thread(qtbot) -> None:
         app_service=svc,
     )
     qtbot.addWidget(dlg)
+    first = dlg._corr_fetch_thread
+    assert first is not None
+    first.wait(5000)
     svc.seed_cache("ollama", ["llama3:latest"], url)
-    old_thread = dlg._corr_fetch_thread
     dlg._auto_fetch()
-    assert dlg._corr_fetch_thread is old_thread
+    second = dlg._corr_fetch_thread
+    assert second is not None
+    assert second is not first
+    second.wait(5000)
 
 
 @pytest.mark.gui
@@ -637,21 +674,24 @@ def test_downloads_dialog_has_one_tab_per_section(qtbot) -> None:
     """
     Given  the standalone DownloadsDialog
     When   it is constructed
-    Then   it exposes one tab per downloadable section
+    Then   it exposes one tab per downloadable section, Ollama Models first
     """
     from PySide6.QtWidgets import QTabWidget  # noqa: PLC0415
 
     from teachers_teammate.gui._downloads_dialog import DownloadsDialog  # noqa: PLC0415
 
-    dlg = DownloadsDialog(ollama_url="http://127.0.0.1:11434")
+    dlg = DownloadsDialog(
+        ollama_url="http://127.0.0.1:11434",
+        app_service=_DummyAppService(),  # ty: ignore[invalid-argument-type]  # test stub for the concrete service
+    )
     qtbot.addWidget(dlg)
 
     tabs = dlg.findChild(QTabWidget)
     labels = [tabs.tabText(i) for i in range(tabs.count())]
     assert labels == [
+        "Ollama Models",
         "OCR Engines",
         "LLM Providers",
-        "Ollama Models",
         "spaCy",
         "GPU Add-ons",
     ]
@@ -673,7 +713,8 @@ def test_correction_on_models_fetched_has_no_placeholder(correction_dialog) -> N
         for i in range(correction_dialog._correction_model.count())
     ]
     assert "\u2014 default \u2014" not in items
-    assert items[0] == "gpt-4o"
+    # Unknown models get a stable, name-sorted order under the Ollama guidance.
+    assert items == ["gpt-3.5", "gpt-4o"]
 
 
 @pytest.mark.gui
@@ -828,3 +869,307 @@ def test_evaluation_settings_dialog_get_values_includes_temperature(evaluation_d
     values = evaluation_dialog.get_values()
     assert "evaluate_temperature" in values
     assert values["evaluate_temperature"] == pytest.approx(1.0)
+
+
+# ── hardware profile & model guidance ──────────────────────────────────────
+
+
+class _CatalogAppService(_CachingDummyAppService):
+    """Dummy service whose Ollama server has real catalog models installed."""
+
+    def __init__(self, models: list[str]) -> None:
+        super().__init__()
+        self._models = models
+
+    def list_provider_models(self, provider: str, *, base_url: str = "") -> list[str]:
+        _ = base_url
+        return self._models if provider == "ollama" else [f"{provider}-model"]
+
+
+@pytest.mark.use_case("Hardware_Profile_Override")
+def test_settings_dialog_get_values_contains_hardware_profile(settings_dialog) -> None:
+    """
+    Given  the Connections dialog with its "My computer" selector
+    When   get_values() is called
+    Then   the hardware_profile setting is included (AC9)
+    """
+    values = settings_dialog.get_values()
+    assert values["hardware_profile"] in ("auto", "cpu", "8gb", "16gb")
+
+
+@pytest.mark.use_case("Model_Category_Guidance")
+def test_correction_dialog_reading_model_shows_warning_hint(qtbot) -> None:
+    """
+    Given  the Proofreading dialog with a reading model installed
+    When   the reading model is selected
+    Then   the hint is a warning that it is a reading model and names a writing model;
+           the item is flagged in the list as "Reading model only"
+    """
+    service = _CatalogAppService(["qwen3-vl:8b", "qwen3.5:9b"])
+    dlg = CorrectionSettingsDialog(
+        {"correction_provider": "ollama", "correction_model": "qwen3.5:9b"},
+        prompt="Fix.",
+        app_service=service,
+        hardware_profile="8gb",
+    )
+    qtbot.addWidget(dlg)
+    qtbot.waitUntil(lambda: len(dlg._guidance._models) == 2, timeout=5000)
+    dlg._correction_model.setCurrentText("qwen3-vl:8b")
+    hint = dlg._guidance._hint_lbl.text()
+    assert hint.startswith("⚠")
+    assert "reading model" in hint
+    assert "qwen3.5:9b" in hint  # the BEST writing model on 8 GB
+    assert "cannot read scans" not in hint
+    index = dlg._correction_model.findText("qwen3-vl:8b")
+    assert "Reading model only" in dlg._correction_model.itemData(
+        index, Qt.ItemDataRole.ToolTipRole
+    )
+
+
+@pytest.mark.use_case("Model_Recommendation_By_Hardware")
+@pytest.mark.parametrize("dialog_cls", [CorrectionSettingsDialog, EvaluationSettingsDialog])
+@pytest.mark.parametrize(
+    ("profile", "same_models", "expected_visible"),
+    [
+        ("8gb", False, True),
+        ("8gb", True, False),
+        ("16gb", False, False),
+    ],
+)
+def test_same_model_tip_visibility(
+    qtbot, dialog_cls, profile: str, same_models: bool, expected_visible: bool
+) -> None:
+    """
+    Given  a Proofreading or Content Review dialog on a cpu/8gb profile
+    When   both tasks use Ollama
+    Then   the same-model tip is shown only when the two models differ
+           and hidden on larger profiles
+    """
+    own_model = "qwen3.5:9b"
+    other_model = own_model if same_models else "mistral:latest"
+    if dialog_cls is CorrectionSettingsDialog:
+        values = {
+            "correction_provider": "ollama",
+            "correction_model": own_model,
+            "evaluate_provider": "ollama",
+            "evaluate_model": other_model,
+        }
+        dlg = CorrectionSettingsDialog(
+            values, prompt="Fix.", app_service=_DummyAppService(), hardware_profile=profile
+        )
+    else:
+        values = {
+            "evaluate_provider": "ollama",
+            "evaluate_model": own_model,
+            "correction_provider": "ollama",
+            "correction_model": other_model,
+        }
+        dlg = EvaluationSettingsDialog(
+            values, prompt="Check.", app_service=_DummyAppService(), hardware_profile=profile
+        )
+    qtbot.addWidget(dlg)
+    with qtbot.waitSignal(dlg._hw_selector.resolved_changed, timeout=5000):
+        pass
+    # The dialog is not shown in tests, so query the explicit hide flag.
+    assert dlg._same_model_tip_lbl.isHidden() is not expected_visible
+
+
+# ── Connections: URL editing and the shared "My computer" setting ──────────
+
+
+@pytest.mark.use_case("Hardware_Profile_Override")
+def test_typing_the_ollama_url_does_not_redetect_until_editing_finished(qtbot) -> None:
+    """
+    Given  the Connections dialog in automatic hardware mode
+    When   the user types a new Ollama URL character by character
+    Then   no detection runs per keystroke; it runs once when editing finished
+           (review finding #3: a half-typed URL used to re-probe the GPU)
+    """
+    svc = _DummyAppService()
+    dlg = SettingsDialog(
+        {"ollama_url": DEFAULTS["ollama_url"], "hardware_profile": "auto"}, app_service=svc
+    )
+    qtbot.addWidget(dlg)
+    with qtbot.waitSignal(dlg._hardware_selector.resolved_changed, timeout=5000):
+        pass
+    calls_before = len(svc.detect_calls)
+
+    for partial in ("h", "ht", "http", "http://192.168", "http://192.168.1.50:11434"):
+        dlg._ollama_url.setText(partial)
+    qtbot.wait(100)
+    assert len(svc.detect_calls) == calls_before
+
+    with qtbot.waitSignal(dlg._hardware_selector.resolved_changed, timeout=5000):
+        dlg._ollama_url.editingFinished.emit()
+    assert svc.detect_calls[-1][0] == "http://192.168.1.50:11434"
+    assert len(svc.detect_calls) == calls_before + 1
+
+
+@pytest.mark.use_case("Hardware_Profile_Override")
+def test_detect_gpu_button_uses_the_shared_service(qtbot) -> None:
+    """
+    Given  the Connections dialog with an injected service
+    When   the "Detect GPU" button runs
+    Then   the injected service answers (so its cached probe is reused) instead of
+           a freshly constructed one probing the machine again
+    """
+
+    class _Gpu:
+        name = "RTX 4060"
+        vendor = "nvidia"
+
+    class _GpuService(_DummyAppService):
+        def detect_gpus(self, *, refresh: bool = False) -> list:
+            super().detect_gpus(refresh=refresh)
+            return [_Gpu()]
+
+    svc = _GpuService()
+    dlg = SettingsDialog({"ollama_url": DEFAULTS["ollama_url"]}, app_service=svc)
+    qtbot.addWidget(dlg)
+
+    dlg._on_detect_gpu()
+    qtbot.waitUntil(lambda: "RTX 4060" in dlg._gpu_status_lbl.text(), timeout=5000)
+    assert dlg._gpu_detect_thread is not None
+    dlg._gpu_detect_thread.wait(5000)
+
+
+@pytest.mark.use_case("Hardware_Profile_Override")
+def test_detect_gpu_button_probes_again_and_refreshes_my_computer(qtbot) -> None:
+    """
+    Given  the Connections dialog whose first probe already ran
+    When   the user clicks "Detect GPU"
+    Then   the service is asked to probe again (refresh=True — a driver may have been
+           installed since) and "My computer" resolves again from that fresh probe
+    """
+    svc = _DummyAppService()
+    dlg = SettingsDialog(
+        {"ollama_url": DEFAULTS["ollama_url"], "hardware_profile": "auto"}, app_service=svc
+    )
+    qtbot.addWidget(dlg)
+    qtbot.waitUntil(lambda: len(svc.detect_calls) == 1, timeout=5000)
+
+    dlg._on_detect_gpu()
+    qtbot.waitUntil(
+        lambda: dlg._gpu_status_lbl.text() == "No NVIDIA or AMD GPU detected.", timeout=5000
+    )
+    assert svc.gpu_calls == [True]
+    qtbot.waitUntil(lambda: len(svc.detect_calls) == 2, timeout=5000)
+    assert svc.detect_calls[-1][1] is False  # re-resolved from the probe, no second probe
+    assert dlg._gpu_detect_thread is not None
+    dlg._gpu_detect_thread.wait(5000)
+
+
+@pytest.mark.use_case("Hardware_Profile_Override")
+def test_connections_dialog_detects_hardware_for_the_configured_url(qtbot) -> None:
+    """
+    Given  saved settings with Ollama on another computer
+    When   the Connections dialog opens
+    Then   the first "My computer" detection already uses that URL (not the default), so
+           the status text describes the right machine
+    """
+    url = "http://192.168.1.50:11434"
+    svc = _DummyAppService()
+    dlg = SettingsDialog({"ollama_url": url, "hardware_profile": "auto"}, app_service=svc)
+    qtbot.addWidget(dlg)
+    qtbot.waitUntil(lambda: len(svc.detect_calls) >= 1, timeout=5000)
+    assert svc.detect_calls[0][0] == url
+    assert dlg._ollama_url.text() == url
+
+
+@pytest.mark.use_case("Model_Category_Guidance")
+def test_closing_a_dialog_parks_a_running_fetch_thread_without_waiting(qtbot) -> None:
+    """
+    Given  a Proofreading dialog whose model list is still being fetched
+    When   the dialog is closed
+    Then   closing does not block on the thread, the thread is parked (so it is never
+           destroyed while running) and its late answer no longer reaches the dialog
+    """
+    release = threading.Event()
+
+    class _SlowService(_DummyAppService):
+        def list_provider_models(self, provider: str, *, base_url: str = "") -> list[str]:
+            _ = base_url
+            release.wait(10)
+            return [f"{provider}-model"]
+
+    dlg = CorrectionSettingsDialog(
+        {"correction_provider": "ollama", "ollama_url": DEFAULTS["ollama_url"]},
+        prompt="",
+        app_service=_SlowService(),
+        hardware_profile="8gb",
+    )
+    qtbot.addWidget(dlg)
+    thread = dlg._corr_fetch_thread
+    assert thread is not None and thread.isRunning()
+
+    dlg.done(0)
+    assert thread in _settings_dialog._RETIRED_THREADS
+
+    release.set()
+    qtbot.waitUntil(thread.isFinished, timeout=5000)
+    qtbot.wait(50)  # let a (disconnected) late result be delivered, if it were
+    assert dlg._guidance._models == []
+    _settings_dialog._purge_retired_threads()
+    assert thread not in _settings_dialog._RETIRED_THREADS
+
+
+@pytest.mark.use_case("Model_Category_Guidance")
+def test_typed_model_without_tag_counts_as_installed_latest(qtbot) -> None:
+    """
+    Given  a Proofreading dialog whose server lists "mistral:latest"
+    When   the user types "mistral" (the tag Ollama would resolve to :latest)
+    Then   the hint does not claim the model is not downloaded
+    """
+    dlg = CorrectionSettingsDialog(
+        {"correction_provider": "ollama", "ollama_url": DEFAULTS["ollama_url"]},
+        prompt="",
+        app_service=_CatalogAppService(["mistral:latest"]),
+        hardware_profile="8gb",
+        open_downloads=lambda tags, parent: None,
+    )
+    qtbot.addWidget(dlg)
+    qtbot.waitUntil(lambda: dlg._guidance._models == ["mistral:latest"], timeout=5000)
+
+    dlg._correction_model.setCurrentText("mistral")
+    assert "not downloaded" not in dlg._guidance._hint_lbl.text()
+    dlg._correction_model.setCurrentText("mistral-nemo:12b")
+    assert "not downloaded" in dlg._guidance._hint_lbl.text()
+
+
+@pytest.mark.use_case("Hardware_Profile_Override")
+def test_dialog_follows_profile_chosen_in_downloads(qtbot) -> None:
+    """
+    Given  a Proofreading dialog whose best model is not installed
+    When   the user opens Downloads via "Download best choice…" and changes
+           "My computer" to 16 GB there
+    Then   Downloads was opened on top of the dialog and the dialog's hints now
+           follow the 16 GB profile (review finding #9)
+    """
+    received: list[tuple[list[str], object]] = []
+
+    def open_downloads(tags: list[str], parent) -> str | None:
+        received.append((tags, parent))
+        return "16gb"
+
+    svc = _DummyAppService()
+    dlg = CorrectionSettingsDialog(
+        {"correction_provider": "ollama", "ollama_url": DEFAULTS["ollama_url"]},
+        prompt="",
+        app_service=svc,
+        hardware_profile="8gb",
+        open_downloads=open_downloads,
+    )
+    qtbot.addWidget(dlg)
+    qtbot.waitUntil(lambda: dlg._guidance._models == ["ollama-model"], timeout=5000)
+    first_thread = dlg._corr_fetch_thread
+    assert first_thread is not None
+    first_thread.wait(5000)
+    assert dlg._guidance._best_btn.text() == "Download best choice…"
+
+    dlg._guidance._best_btn.click()
+
+    assert received == [(["qwen3.5:9b"], dlg)]
+    assert dlg._hw_selector.setting() == "16gb"
+    qtbot.waitUntil(lambda: dlg._guidance.active_profile() == "16gb", timeout=5000)
+    if dlg._corr_fetch_thread is not None:
+        dlg._corr_fetch_thread.wait(5000)  # the refetch after Downloads closed

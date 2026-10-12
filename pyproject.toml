@@ -189,6 +189,7 @@ ignored-modules = [
     "langchain_core",
     "lxml",
     "ollama",
+    "psutil",
     "pypdfium2",
     "spacy",
     # Test-only imports not in pylint's binary env.

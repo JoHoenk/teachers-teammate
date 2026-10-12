@@ -74,6 +74,22 @@ section "Functional Requirements" {
         description = "As a user I want to see live system resource usage and per-file processing times during a run so that I can gauge throughput and spot performance bottlenecks."
     }
 
+    UseCase Model_Recommendation_By_Hardware {
+        description = "As a user without technical background I want the app to recognise how powerful my computer is and suggest AI models that run well on it, so that I get good results without knowing what graphics memory or model sizes are."
+    }
+
+    UseCase Model_Category_Guidance {
+        description = "As a user I want AI models grouped into reading models (for scans) and writing models (for proofreading and review), and to be warned when I pick a model that cannot do a task, so that no step is configured with an unsuitable model."
+    }
+
+    UseCase Hardware_Profile_Override {
+        description = "As a user I want to change the detected computer type myself, for example when Ollama runs on another computer, and have every settings window use the same choice, so that suggestions match the computer that actually runs the models."
+    }
+
+    UseCase Recommended_Models_On_First_Start {
+        description = "As a first-time user I want the app to pre-select the best reading and writing models for my computer and offer to download them in one step, so that I can start processing without choosing models myself."
+    }
+
     UseCase Headless_CLI_Batch {
         description = "As an automation user I want to run the full pipeline from the command line using a settings file so that batch processing can be scripted and reproduced without the graphical interface."
     }

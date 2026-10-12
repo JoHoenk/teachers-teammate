@@ -5,10 +5,11 @@ Provides:
 * :class:`FakeGuiService` — one in-memory stand-in implementing every query the
   windows/dialogs/widgets call, so they can be constructed without network,
   subprocess, or a real pipeline.  ``get_cached_models`` returns a list (not
-  ``None``) so the model-fetch thread never starts.
+  ``None``) so the model-fetch thread of non-Ollama providers never starts.
 * :func:`neutralize_gui_threads` — monkeypatches the few components that start
-  background threads/subprocess on construct or show, so a smoke test never
-  hits the network and leaves no thread running.
+  background threads/subprocess on construct or show (and the shared
+  ``LatestTask`` background pool), so a smoke test never hits the network and
+  leaves no thread running.
 * :func:`assert_no_running_threads` / :func:`exercise_lifecycle` — drive a widget
   through construct → show → close and assert nothing is left running.
 """
@@ -16,14 +17,22 @@ Provides:
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from PySide6.QtCore import QThread
 from PySide6.QtWidgets import QWidget
 
 from teachers_teammate.application.service import ProcessingApplicationService
 from teachers_teammate.domain.benchmark import PairComparison, compare_pair
+from teachers_teammate.domain.model_catalog import (
+    OLLAMA_CATALOG,
+    DetectionReason,
+    HardwareDetection,
+    HardwareProfile,
+    ModelUses,
+)
 from teachers_teammate.gui import _anonymizer_config_dialog, _downloads_dialog, _settings_dialog
+from teachers_teammate.gui._background import LatestTask
 from teachers_teammate.gui._main_window import MainWindow
 from teachers_teammate.gui._update_check import UpdateCheckThread
 from teachers_teammate.gui._worker import _ConnectionCheckThread
@@ -74,8 +83,52 @@ class FakeGuiService:
     def list_supported_suffixes(self) -> frozenset[str]:
         return frozenset({".pdf", ".png", ".jpg", ".jpeg", ".txt"})
 
-    def detect_gpus(self) -> list:
+    def detect_gpus(self, *, refresh: bool = False) -> list:
+        _ = refresh
         return []
+
+    # ── hardware profiles & model recommendations ─────────────────────────────
+    def ollama_catalog(self) -> tuple:
+        return OLLAMA_CATALOG
+
+    def resolve_hardware_profile(self, setting: str, ollama_url: str) -> HardwareDetection:
+        _ = ollama_url
+        if setting in ("cpu", "8gb", "16gb"):
+            return HardwareDetection(
+                profile=cast(HardwareProfile, setting),
+                reason=DetectionReason.MANUAL,
+            )
+        return HardwareDetection(
+            profile="8gb",
+            reason=DetectionReason.GPU_DETECTED,
+            gpu_name="Test GPU",
+            memory_gb=8.0,
+        )
+
+    def detect_hardware(self, ollama_url: str, *, refresh: bool = False) -> HardwareDetection:
+        _ = refresh
+        return self.resolve_hardware_profile("auto", ollama_url)
+
+    def classify_ollama_models(
+        self, tags: list[str], ollama_url: str, *, cached_only: bool = False
+    ) -> dict[str, ModelUses | None]:
+        _ = ollama_url, cached_only
+        return dict.fromkeys(tags, None)
+
+    def rate_ollama_models(
+        self, tags, task, profile, ollama_url, *, cached_only: bool = False
+    ) -> list:
+        _ = ollama_url, cached_only
+        from teachers_teammate.domain.model_catalog import rate_model  # noqa: PLC0415
+
+        return [rate_model(tag, task, profile) for tag in tags]
+
+    def on_ollama_models_changed(self, ollama_url: str) -> None:
+        _ = ollama_url
+
+    def first_run_model_settings(self, profile) -> dict[str, str]:
+        _ = profile
+        return {"ocr_model": "", "correction_model": "", "evaluate_model": ""}
 
     # ── anonymizer dialog ────────────────────────────────────────────────────
     def spacy_model_for_language(self, language: str) -> str:
@@ -116,12 +169,14 @@ def neutralize_gui_threads(monkeypatch: Any) -> None:
         _ConnectionCheckThread,
         _settings_dialog._GpuDetectThread,
         _settings_dialog._ModelFetchThread,
-        _downloads_dialog._DetectInstalledThread,
         _downloads_dialog._PipInstallThread,
         _anonymizer_config_dialog._SpacyModelFetchThread,
     ):
         monkeypatch.setattr(thread_cls, "start", lambda self: None)
 
+    # Background tasks (hardware detection, installed-model checks, first start)
+    # run on a shared pool: do not start any of them in the smoke harness.
+    monkeypatch.setattr(LatestTask, "submit", lambda self, fn, on_done: 0)
     monkeypatch.setattr(MainWindow, "_check_llm_status", lambda self: None)
     monkeypatch.setattr(MainWindow, "_load_toml_if_present", lambda self: None)
     monkeypatch.setattr(

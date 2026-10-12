@@ -62,6 +62,7 @@ class SettingsDict(TypedDict, total=False):
     ocr_provider: str
     ocr_model: str
     ollama_url: str
+    hardware_profile: str
     ocr_timeout: int
     preprocess_method: str
     preprocess_dewarp: bool

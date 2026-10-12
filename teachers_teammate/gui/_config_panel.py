@@ -63,7 +63,8 @@ class ConfigPanel(QScrollArea):
 
     paths_changed = Signal()
     anonymizer_configure_requested = Signal(str, object)  # language, AnonymizerConfig
-    open_downloads_requested = Signal(int)  # bubbled from DependencyGuardDialog; int = tab index
+    #: Bubbled from DependencyGuardDialog: tab index, model tags to preselect.
+    open_downloads_requested = Signal(int, list)
 
     def __init__(
         self,
@@ -87,6 +88,7 @@ class ConfigPanel(QScrollArea):
             "ocr_provider": DEFAULTS["ocr_provider"],
             "ocr_model": DEFAULTS["ocr_model"],
             "ollama_url": DEFAULTS["ollama_url"],
+            "hardware_profile": DEFAULTS["hardware_profile"],
             "ocr_timeout": DEFAULTS["ocr_timeout"],
             "preprocess_method": DEFAULTS["preprocess_method"],
             "preprocess_dewarp": DEFAULTS["preprocess_dewarp"],
@@ -659,6 +661,7 @@ class ConfigPanel(QScrollArea):
             "ocr_engine",
             "ocr_model",
             "ollama_url",
+            "hardware_profile",
             "preprocess_method",
             "correction_provider",
             "correction_model",
@@ -731,9 +734,19 @@ class ConfigPanel(QScrollArea):
             return True
         from ._downloads_dialog import DownloadsDialog  # noqa: PLC0415
 
-        tab = DownloadsDialog.TAB_SPACY if stage == "anonymizer" else 0
+        tab = DownloadsDialog.TAB_SPACY if stage == "anonymizer" else DownloadsDialog.TAB_OLLAMA
+        # A missing Ollama model is ticked in Downloads, as on the "model missing" path of Run.
+        preselect: list[str] = []
+        if stage in ("correction", "evaluation"):
+            provider, model = (
+                (config.correction_provider, config.effective_correction_model)
+                if stage == "correction"
+                else (config.evaluate_provider, config.effective_evaluate_model)
+            )
+            if provider == "ollama" and model:
+                preselect.append(model)
         dlg = DependencyGuardDialog(stage, issues, self)
-        dlg.open_downloads.connect(lambda: self.open_downloads_requested.emit(tab))
+        dlg.open_downloads.connect(lambda: self.open_downloads_requested.emit(tab, preselect))
         dlg.exec()
         return False
 

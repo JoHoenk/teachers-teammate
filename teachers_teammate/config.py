@@ -16,13 +16,14 @@ import tomllib
 from typing import Any
 
 from ._model_defaults import default_model_for_task
+from .domain.model_catalog import FALLBACK_PROFILE, PROFILE_SETTINGS, best_model
 from .exceptions import ConfigFileParseError
 from .interfaces import SUPPORTED_SUFFIXES as SUPPORTED_SUFFIXES  # noqa: PLC0414
 
 DEFAULTS: dict[str, Any] = {
     # ── OCR ──────────────────────────────────────────────────────────────────
     "ocr_engine": "ollama",
-    "ocr_model": "deepseek-ocr:latest",
+    "ocr_model": best_model("ocr", FALLBACK_PROFILE),
     "ocr_provider": "",
     "language": "English",
     "preprocess_method": "grayscale",
@@ -43,13 +44,13 @@ DEFAULTS: dict[str, Any] = {
     "correction_enabled": True,
     "anonymization_enabled": False,
     "correction_provider": "ollama",
-    "correction_model": "gpt-oss:20b",
+    "correction_model": best_model("general", FALLBACK_PROFILE),
     "correction_prompt": "",
     "correction_temperature": 0.7,
     # ── Evaluation ────────────────────────────────────────────────────────────
     "evaluation_enabled": False,
     "evaluate_provider": "ollama",
-    "evaluate_model": "gpt-oss:20b",
+    "evaluate_model": best_model("general", FALLBACK_PROFILE),
     "evaluate_prompt": (
         "You are a quality evaluator for OCR correction output. "
         "Given corrected text, provide a concise quality report with: "
@@ -65,6 +66,9 @@ DEFAULTS: dict[str, Any] = {
     "docx_enabled": False,
     # ── Anonymizer ────────────────────────────────────────────────────────────
     "anonymizer_secondary_model": None,
+    # ── Hardware recommendations ──────────────────────────────────────────────
+    # "auto" | "cpu" | "8gb" | "16gb" — GUI-only; the pipeline never reads it.
+    "hardware_profile": "auto",
 }
 
 
@@ -203,6 +207,7 @@ def load_config_file(path: Path) -> dict:
         "preprocess_border_crop",
         "preprocess_denoise",
         "preprocess_gamma",
+        "hardware_profile",
     }
     try:
         with path.open("rb") as fh:
@@ -226,6 +231,14 @@ def load_config_file(path: Path) -> dict:
             del result["anonymizer_patterns"]
         else:
             result["anonymizer_patterns"] = [tuple(p) for p in raw_pats]
+
+    if "hardware_profile" in result and result["hardware_profile"] not in PROFILE_SETTINGS:
+        print(
+            f"WARNING: hardware_profile '{result['hardware_profile']}' is not one of "
+            f"{', '.join(PROFILE_SETTINGS)} — falling back to 'auto'.",
+            file=sys.stderr,
+        )
+        del result["hardware_profile"]
 
     return result
 

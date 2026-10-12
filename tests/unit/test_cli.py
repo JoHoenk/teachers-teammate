@@ -484,3 +484,19 @@ def test_run_cli_propagates_preprocessing_to_config(tmp_path: Path, monkeypatch)
     assert ocr.denoise is True  # on by default
     assert ocr.dewarp is False
     assert ocr.pdf_render_dpi == 150
+
+
+@pytest.mark.use_case("Headless_CLI_Batch")
+def test_correction_model_help_names_the_catalog_default(capsys) -> None:
+    """
+    Given  the CLI help for --correction-model
+    When   --help is rendered
+    Then   the Ollama model named there is the catalog default (not a stale literal)
+    """
+    from teachers_teammate._model_defaults import default_model_for_task  # noqa: PLC0415
+    from teachers_teammate.cli import _parse_args  # noqa: PLC0415
+
+    with pytest.raises(SystemExit):
+        _parse_args(argv=["--help"])
+    help_text = " ".join(capsys.readouterr().out.split())
+    assert f"{default_model_for_task('ollama', 'correction')} (ollama)" in help_text

@@ -8,7 +8,7 @@ from unittest.mock import patch
 
 import pytest
 
-from teachers_teammate.config import Config, OcrConfig, load_config_file
+from teachers_teammate.config import DEFAULTS, Config, OcrConfig, dump_config_file, load_config_file
 from teachers_teammate.exceptions import ConfigFileNotFoundError, ConfigFileParseError
 from teachers_teammate.infrastructure.storage_root import (
     compute_cache_key,
@@ -71,7 +71,7 @@ def test_resolve_artifact_dir_is_under_output_dir() -> None:
 @pytest.mark.parametrize(
     ("provider", "expected_default"),
     [
-        ("ollama", "gpt-oss:20b"),
+        ("ollama", "qwen3.5:9b"),
         ("openai", "gpt-4o-mini"),
         ("anthropic", "claude-3-haiku-20240307"),
         ("google", "gemini-2.0-flash"),
@@ -118,7 +118,7 @@ def test_effective_correction_model_unknown_provider_falls_back() -> None:
 @pytest.mark.parametrize(
     ("provider", "expected_default"),
     [
-        ("ollama", "gpt-oss:20b"),
+        ("ollama", "qwen3.5:9b"),
         ("openai", "gpt-4o-mini"),
         ("anthropic", "claude-3-haiku-20240307"),
         ("google", "gemini-2.0-flash"),
@@ -354,3 +354,60 @@ def test_load_config_file_parses_temperature_keys(tmp_path: Path) -> None:
     assert result.get("ocr_temperature") == 0.0
     assert result.get("correction_temperature") == 0.5
     assert result.get("evaluate_temperature") == 0.9
+
+
+# ── hardware_profile setting ───────────────────────────────────────────────
+
+
+def test_hardware_profile_default_is_auto() -> None:
+    """
+    Given  the DEFAULTS mapping
+    When   hardware_profile is inspected
+    Then   the default is "auto"
+    """
+    assert DEFAULTS["hardware_profile"] == "auto"
+
+
+@pytest.mark.use_case("Hardware_Profile_Override")
+def test_load_config_file_keeps_valid_hardware_profile(tmp_path: Path) -> None:
+    """
+    Given  an ocr.toml with a valid hardware_profile value
+    When   load_config_file is called
+    Then   the value is returned unchanged
+    """
+    path = tmp_path / "ocr.toml"
+    path.write_text('hardware_profile = "16gb"\n', encoding="utf-8")
+    values = load_config_file(path)
+    assert values["hardware_profile"] == "16gb"
+
+
+@pytest.mark.use_case("Hardware_Profile_Override")
+def test_load_config_file_drops_invalid_hardware_profile_with_warning(
+    tmp_path: Path, capsys
+) -> None:
+    """
+    Given  an ocr.toml with an invalid hardware_profile value
+    When   load_config_file is called
+    Then   the key is dropped and a warning is printed to stderr (AC11)
+    """
+    path = tmp_path / "ocr.toml"
+    path.write_text('hardware_profile = "supercomputer"\n', encoding="utf-8")
+    values = load_config_file(path)
+    assert "hardware_profile" not in values
+    stderr = capsys.readouterr().err
+    assert "hardware_profile" in stderr
+    assert "auto" in stderr
+
+
+@pytest.mark.use_case("Hardware_Profile_Override")
+def test_dump_config_file_round_trips_hardware_profile(tmp_path: Path) -> None:
+    """
+    Given  a settings dict containing hardware_profile
+    When   it is dumped and loaded back
+    Then   hardware_profile survives the round trip
+    """
+    text = dump_config_file({"hardware_profile": "8gb"})
+    path = tmp_path / "ocr.toml"
+    path.write_text(text, encoding="utf-8")
+    values = load_config_file(path)
+    assert values["hardware_profile"] == "8gb"

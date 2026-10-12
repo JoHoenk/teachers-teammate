@@ -7,10 +7,12 @@ from pathlib import Path
 
 import pytest
 
-from teachers_teammate.config import OcrConfig
+from teachers_teammate.config import DEFAULTS, OcrConfig
 from teachers_teammate.domain.benchmark import compare_pair
 from teachers_teammate.gui.benchmark.composition import build_benchmark_window
 from teachers_teammate.infrastructure.benchmark.run_store import StoredRun
+
+from ._service_stubs import RecommendationServiceStub
 
 
 def _run(run_id: str, text: str) -> StoredRun:
@@ -30,13 +32,15 @@ def _run(run_id: str, text: str) -> StoredRun:
     )
 
 
-class _FakeService:
+class _FakeService(RecommendationServiceStub):
     """In-memory benchmark service satisfying the window's calls and the selector's queries."""
 
-    def __init__(self) -> None:
+    def __init__(self, saved_settings: dict | None = None) -> None:
+        super().__init__()
         self.runs: list[StoredRun] = []
         self.deleted: list[str] = []
         self.cleared = False
+        self.saved_settings = saved_settings or {}
 
     # selector queries
     def list_providers(self) -> list[str]:
@@ -61,6 +65,9 @@ class _FakeService:
 
     def is_module_importable(self, module: str) -> bool:
         return True
+
+    def load_saved_settings(self) -> dict:
+        return dict(self.saved_settings)
 
     # window operations
     def list_supported_suffixes(self):
@@ -140,9 +147,10 @@ def test_run_uses_injected_worker(window, monkeypatch) -> None:
     started = {}
 
     class _FakeWorker:
-        def __init__(self, source, ocr, language, *, app_service) -> None:
+        def __init__(self, source, ocr, language, *, ollama_url, app_service) -> None:
             started["ocr"] = ocr
             started["source"] = source
+            started["ollama_url"] = ollama_url
 
             class _Sig:
                 def connect(self, _fn) -> None: ...
@@ -162,3 +170,41 @@ def test_run_uses_injected_worker(window, monkeypatch) -> None:
 
     assert started.get("started") is True
     assert isinstance(started["ocr"], OcrConfig)
+    assert started["ollama_url"] == DEFAULTS["ollama_url"]  # nothing saved by the main app
+
+
+@pytest.mark.gui
+@pytest.mark.use_case("Hardware_Profile_Override")
+def test_benchmark_follows_the_saved_hardware_profile_and_ollama_url(qtbot) -> None:
+    """
+    Given  settings saved by the main app: a 16 GB computer and Ollama on another host
+    When   the Benchmark window opens and a run is started
+    Then   its model suggestions are for the 16 GB computer and the run uses that server
+    """
+    service = _FakeService({"hardware_profile": "16gb", "ollama_url": "http://192.168.1.50:11434"})
+    win = build_benchmark_window(app_service=service)  # ty: ignore[invalid-argument-type]
+    qtbot.addWidget(win)
+    win._source = Path("/docs/sample.pdf")
+
+    selector = win._selector._hw_selector
+    qtbot.waitUntil(lambda: selector.resolved() is not None, timeout=5000)
+    assert selector.setting() == "16gb"
+    assert selector.resolved().profile == "16gb"
+
+    started = {}
+
+    class _FakeWorker:
+        def __init__(self, source, ocr, language, *, ollama_url, app_service) -> None:
+            started["ollama_url"] = ollama_url
+            self.log_line = self.finished_ok = self.finished_err = type(
+                "_Sig", (), {"connect": lambda self, fn: None}
+            )()
+
+        def start(self) -> None: ...
+
+        def isRunning(self) -> bool:
+            return False
+
+    win._worker_factory = _FakeWorker
+    win._on_run()
+    assert started["ollama_url"] == "http://192.168.1.50:11434"

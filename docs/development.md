@@ -147,6 +147,76 @@ The OCR-only fields live in the nested `Config.ocr` value object
 :width: 100%
 ```
 
+## Ollama model catalog
+
+`domain/model_catalog.py` is the single source of truth for which Ollama models the app
+knows, recommends, and considers suitable for a computer type (hardware profile):
+
+- `OLLAMA_CATALOG` — every catalogued model with its category (`"ocr"` reading model /
+  `"general"` writing model), approximate running memory, download size, and a
+  plain-language note shown as a tooltip.
+- `RECOMMENDED` — the ordered best-model lists per category and profile (`cpu`, `8gb`,
+  `16gb`); the first entry is the "best choice".
+- `suitability()` / `models_for()` — the rating used by the Downloads dialog and the
+  model-selection dialogs.
+- `choose_profile()` — the decision table mapping detected GPUs / Apple unified memory /
+  remote Ollama URLs to a hardware profile.
+
+To add a model: add one `OllamaModelSpec` to `OLLAMA_CATALOG` and (when it should be
+recommended) its tag to the matching `RECOMMENDED` entries. Consistency tests in
+`tests/unit/test_model_catalog.py` check that every recommended tag exists with the
+right category and that every best pick fits its profile budget — new entries must keep
+them green.
+
+The static defaults (`DEFAULTS["ocr_model"]` / `correction_model` / `evaluate_model`,
+the per-task provider defaults, and the Ollama provider's `default_model`) are all
+derived from the catalog via `best_model(category, FALLBACK_PROFILE)`, so they change
+automatically when the catalog changes.
+
+### Who owns what (hardware detection and recommendations)
+
+| Piece | Where | Rule |
+|---|---|---|
+| Decisions (best model, suitability, hardware profile, `rate_model`) | `domain/model_catalog.py` | Pure functions, no I/O — table-test them. |
+| Caches (local hardware probe, model classification) | `application/model_recommendations.py` | One owner. Call `on_ollama_models_changed(url)` after every pull; it evicts the model list *and* the classifications. Only definite classifications are cached. |
+| Texts a teacher reads | `gui/_model_wording.py` | Qt-free; widgets never build these sentences themselves. |
+| Widgets | `gui/_hardware_profile_selector.py`, `gui/_model_guidance.py`, `gui/_downloads_dialog.py` | Presentation only. They rate models through `rate_ollama_models(..., cached_only=True)` — never contacting Ollama on the GUI thread. |
+
+Two details that are easy to get wrong:
+
+- **The local probe describes this computer, not the Ollama URL.** It runs at most once
+  per process (`detect_hardware(refresh=True)` re-runs it); a remote URL never probes
+  at all.
+- **Ollama model lists are always fetched in a background task.** Classifying a custom
+  model needs a server round trip, so the dialogs have no synchronous "cache hit"
+  shortcut for Ollama.
+
+### Background tasks in the GUI
+
+New background work uses `gui/_background.py` instead of a `QThread` subclass:
+
+```python
+self._task = LatestTask(owner=self)            # "latest wins" per widget
+self._task.submit(lambda: service.slow_call(), self._on_done)   # on_done(result, error)
+```
+
+Tasks run on a shared `QThreadPool`; results arrive on the GUI thread through a queued
+signal, results for a destroyed `owner` are dropped, and superseded results of a
+`LatestTask` are ignored. There is no thread object to destroy, so closing a dialog while
+a task runs cannot abort the process. The main window waits a bounded moment for running
+tasks when it closes (`wait_for_background_tasks`). The older `QThread` subclasses remain
+until someone touches them; migrate them one at a time. In GUI tests, patch
+`LatestTask.submit` to keep a smoke test offline (see `neutralize_gui_threads`).
+
+Catalog values can drift as Ollama tags change. The developer tool
+`tools/verify_model_catalog.py` (needs network, not run in CI) compares the catalog
+against the real registry manifests:
+
+```bash
+bazel run //tools:verify_model_catalog            # check tags exist and sizes match
+bazel run //tools:verify_model_catalog -- --ollama  # also inspect capabilities via a local server
+```
+
 ## Storage, hashing & caching
 
 All persistent data lives under a single **storage root**, resolved by

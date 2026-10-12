@@ -58,15 +58,26 @@ Ollama is a free program that runs AI reading models on your own computer. Teach
 
 **Ollama must be running** before you click Run. Download it from [ollama.com/download](https://ollama.com/download) and install it like any other program. The default connection is set to your own computer. If you have Ollama running on a different computer on your home network, enter its address in **Advanced Settings → Connections & API Keys…**.
 
-**Recommended reading models:**
+### Choosing AI models
 
-| Model | Quality | Speed | Notes |
-|---|---|---|---|
-| `qwen3-vl:8b` | ★★★★★ | medium | Best overall for handwriting — recommended default |
-| `deepseek-ocr:latest` | ★★★★☆ | medium | Strong on dense and structured documents |
-| `glm-ocr:latest` | ★★★★☆ | medium | Good for printed and mixed-language scans |
+Teacher's Teammate needs two AI models, and you do not need to know anything about "VRAM" or "model sizes" to pick good ones:
 
-To download a recognition model, open **Advanced Settings → Downloads…** inside the app, go to the **Ollama Models** tab, tick your chosen model, and click **Install / Download Selected** — no technical knowledge needed.
+- a **reading model** turns your scans into text,
+- a **writing model** proofreads and reviews the text.
+
+The app looks at your computer — the **My computer** setting shows what it found — and suggests models that work well on it. It is usually right; you can change the choice yourself under **Advanced Settings → Connections & API Keys…** or in **Downloads**, and every window then uses your choice. If Ollama runs on a different computer, pick that computer's type in the list.
+
+The best models per computer type:
+
+| Your computer | Best reading model | Best writing model |
+|---|---|---|
+| Basic computer or small graphics card (under 8 GB) | `glm-ocr:q8_0` | `qwen3:4b` |
+| Graphics card with about 8 GB memory | `qwen3-vl:8b` | `qwen3.5:9b` |
+| Graphics card with 16 GB memory or more | `qwen3-vl:8b` | `gpt-oss:20b` |
+
+To get a working setup in one step, open **Advanced Settings → Downloads…**, stay on the **Ollama Models** tab (it opens first), and click **Select the best models for my computer** — the app ticks the two models it recommends for your computer. Then click **Install / Download Selected**. On the very first start the app also pre-selects the best models for your computer, and the "model missing" message before a run takes you straight to the Downloads dialog with the missing models already ticked.
+
+Greyed-out models are too large for your computer. They still work — but reading or proofreading can become very slow, so the app asks before downloading one. Models you add yourself stay in the "Other models" group, where each one shows whether it reads scans and writes or only writes. Reading models are meant for turning scans into text; the app warns you when you pick one for proofreading or content review.
 
 ### Other recognition methods
 

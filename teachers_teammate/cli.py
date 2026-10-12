@@ -22,6 +22,7 @@ from pathlib import Path
 import sys
 from typing import Protocol
 
+from ._model_defaults import default_model_for_task
 from .application.service import ProcessingApplicationService
 from .config import (
     DEFAULTS,
@@ -317,8 +318,9 @@ def _parse_args(
         help=(
             "Correction LLM model name. "
             "Auto-selected per provider when omitted: "
-            "hf.co/unsloth/gpt-oss-20b-GGUF:UD-Q4_K_XL (ollama), gpt-4o-mini (openai), "
-            "claude-3-haiku-20240307 (anthropic)."
+            f"{default_model_for_task('ollama', 'correction')} (ollama), "
+            f"{default_model_for_task('openai', 'correction')} (openai), "
+            f"{default_model_for_task('anthropic', 'correction')} (anthropic)."
         ),
     )
     corr_grp.add_argument(

@@ -2,14 +2,19 @@
 
 Extracted from the Settings dialog so it can be reached from its own menu entry.
 Each downloadable category lives on its own tab; a shared log and a single
-"Install / Download Selected" button act across all tabs.
+"Install / Download Selected" button act across all tabs.  The Ollama Models
+tab is first: it groups the curated catalog into reading and writing models
+and ticks the best models for the user's computer (see
+:mod:`teachers_teammate.domain.model_catalog`).
 """
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from collections.abc import Sequence
+from typing import TYPE_CHECKING, cast
 
 from PySide6.QtCore import Qt, QThread, Signal
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QCheckBox,
     QDialog,
@@ -19,6 +24,7 @@ from PySide6.QtWidgets import (
     QHeaderView,
     QLabel,
     QLineEdit,
+    QMessageBox,
     QPlainTextEdit,
     QProgressBar,
     QPushButton,
@@ -32,7 +38,32 @@ from PySide6.QtWidgets import (
 
 from ..application.service import ProcessingApplicationService
 from ..config import DEFAULTS
+from ..domain.model_catalog import (
+    HardwareProfile,
+    ModelCategory,
+    ModelRating,
+    ModelUses,
+    Suitability,
+    best_model,
+    find_spec,
+    normalize_tag,
+    suitability_rank,
+)
+from ._background import LatestTask
 from ._constants import _SPACY_MODEL_CHOICES as _SPACY_MODEL_DOWNLOAD_CHOICES
+from ._hardware_profile_selector import HardwareProfileSelector
+from ._model_wording import (
+    BEST_ALREADY_DOWNLOADED,
+    DOWNLOADS_INTRO,
+    GROUP_OTHER,
+    GROUP_READING,
+    GROUP_WRITING,
+    abilities_text,
+    memory_text,
+    suitability_text,
+    too_large_confirmation,
+    too_large_tooltip,
+)
 
 if TYPE_CHECKING:
     # Real type of the injected pull manager. Imported under TYPE_CHECKING only:
@@ -49,17 +80,14 @@ _ALL_PROVIDER_PACKAGES: dict[str, tuple[str, str]] = {
     "ollama": ("langchain_ollama", "langchain-ollama"),
 }
 
-_CURATED_OLLAMA_MODELS: list[str] = [
-    "deepseek-ocr:latest",
-    "qwen3-vl:8b",
-    "qwen2.5vl:7b",
-    "glm-ocr:q8_0",
-    "mistral:latest",
-    "mistral-nemo:12b",
-    "gemma4:12b",
-    "gpt-oss:20b",
-    "qwen3.5:9b",
-]
+# Tree group rows: group key → (label, catalog category or None for user models).
+_OLLAMA_GROUPS: dict[str, tuple[str, ModelCategory | None]] = {
+    "ocr": (GROUP_READING, "ocr"),
+    "general": (GROUP_WRITING, "general"),
+    "other": (GROUP_OTHER, None),
+}
+
+_GREY = QColor("#888888")
 
 _GPU_DL_PACKAGES: dict[str, str] = {
     "gpu:nvidia": "nvidia-ml-py",
@@ -88,39 +116,40 @@ _PROVIDER_LABELS: dict[str, str] = {
 
 
 def _human_size(n: int) -> str:
-    """Return *n* bytes as a human-readable string (e.g. ``'4.7 GB'``)."""
+    """Return *n* bytes as a human-readable decimal size (e.g. ``'4.7 GB'``).
+
+    Decimal units, like the Ollama library page and the catalog sizes shown for
+    models that are not downloaded yet — the Size column then reads consistently.
+    """
+    size = float(n)
     for unit in ("B", "KB", "MB", "GB", "TB"):
-        if n < 1024 or unit == "TB":
-            return f"{n:.1f} {unit}" if unit != "B" else f"{n} {unit}"
-        n //= 1024
+        if size < 1000 or unit == "TB":
+            return f"{size:.1f} {unit}" if unit != "B" else f"{n} {unit}"
+        size /= 1000
     return str(n)  # unreachable but keeps type-checker happy
 
 
-class _DetectInstalledThread(QThread):
-    """Probes all downloadable items to determine which are already installed."""
-
-    results = Signal(dict)  # key → bool
-
-    def __init__(self, ollama_url: str) -> None:
-        super().__init__()
-        self._ollama_url = ollama_url
-
-    def run(self) -> None:
-        svc = ProcessingApplicationService()
-        spacy_models = [model_id for _, model_id in _SPACY_MODEL_DOWNLOAD_CHOICES]
-        status = svc.get_installation_status(
-            provider_modules=_ALL_PROVIDER_MODULES,
-            spacy_models=spacy_models,
-            gpu_packages=_GPU_MODULE_NAMES,
-            ollama_models=list(_CURATED_OLLAMA_MODELS),
-            ollama_url=self._ollama_url,
-        )
-        result: dict[str, bool | int] = dict(status)
-        result["spacy"] = svc.is_module_importable("spacy")
-        # Add model size information so the UI can show a Size column.
-        for model, size_bytes in svc.list_ollama_model_sizes(self._ollama_url).items():
-            result[f"size:{model}"] = size_bytes
-        self.results.emit(result)
+def _detect_installed(
+    svc: ProcessingApplicationService, ollama_url: str, models: list[str]
+) -> dict[str, object]:
+    """Probe every downloadable item and return what is installed (background task)."""
+    spacy_models = [model_id for _, model_id in _SPACY_MODEL_DOWNLOAD_CHOICES]
+    status = svc.get_installation_status(
+        provider_modules=_ALL_PROVIDER_MODULES,
+        spacy_models=spacy_models,
+        gpu_packages=_GPU_MODULE_NAMES,
+        ollama_models=list(models),
+        ollama_url=ollama_url,
+    )
+    result: dict[str, object] = dict(status)
+    result["spacy"] = svc.is_module_importable("spacy")
+    # Add model size information so the UI can show a Size column.
+    for model, size_bytes in svc.list_ollama_model_sizes(ollama_url).items():
+        result[f"size:{model}"] = size_bytes
+    # Classify models here (the result is cached by the service) so the GUI thread
+    # never blocks on show() requests; the dialog reads the cache afterwards.
+    svc.classify_ollama_models(list(models), ollama_url)
+    return result
 
 
 class _PipInstallThread(QThread):
@@ -152,11 +181,15 @@ class DownloadsDialog(QDialog):
 
     #: Emitted after a successful install round so callers can refresh model lists.
     packages_changed = Signal()
+    #: Emitted when the user changes the "My computer" choice.
+    hardware_profile_changed = Signal(str)
 
-    #: Index of the Ollama Models tab within the tab widget.
-    TAB_OLLAMA = 2
-    #: Index of the spaCy tab within the tab widget.
+    #: Tab indexes within the tab widget (the Ollama tab is first — what new users need most).
+    TAB_OLLAMA = 0
+    TAB_OCR_ENGINES = 1
+    TAB_PROVIDERS = 2
     TAB_SPACY = 3
+    TAB_GPU = 4
 
     def __init__(
         self,
@@ -164,19 +197,41 @@ class DownloadsDialog(QDialog):
         start_tab: int = 0,
         parent: QWidget | None = None,
         pull_manager: OllamaDownloadManager | None = None,
+        hardware_profile: str = "auto",
+        preselect: Sequence[str] = (),
+        app_service: ProcessingApplicationService | None = None,
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Downloads & Packages")
-        self.setMinimumWidth(520)
-        self.setMinimumHeight(520)
+        self.setMinimumWidth(560)
+        self.setMinimumHeight(560)
         self._ollama_url = ollama_url.strip() or DEFAULTS["ollama_url"]
-        self._detect_thread: _DetectInstalledThread | None = None
+        self._svc = app_service or ProcessingApplicationService()
+        self._hardware_profile = hardware_profile
+        self._preselect = [tag for tag in preselect if tag]
+        self._detect_task = LatestTask(self)
+        self._detect_running = False
+        self._detect_again = False  # a pull finished while a detection was running
         self._dl_active_thread: QThread | None = None
         self._detection_started = False
         self._dl_checkboxes: dict[str, QCheckBox] = {}
         self._tesseract_status_lbl: QLabel | None = None
         self._pull_manager = pull_manager  # owned by MainWindow; outlives this dialog
         self._pull_remaining: list[str] = []  # queued models waiting for the current pull
+        self._pulled_any = False  # a model of the current install round arrived
+        # Pre-ticking waits for BOTH the installed check and the hardware detection.
+        self._installed_ready = False
+        self._profile_ready = False
+        self._initial_ticks_done = False
+        self._installed_by_category: dict[ModelCategory, bool] = {"ocr": False, "general": False}
+        self._auto_ticked: set[str] = set()  # ticked by the app, not by the user
+        self._user_touched: set[str] = set()
+        self._programmatic_change = False
+        # Last known tick per row: QTreeWidget emits itemChanged for flag, colour
+        # and text changes too, so a real tick change is detected by comparison.
+        self._check_state: dict[str, Qt.CheckState] = {}
+        self._group_items: dict[str, QTreeWidgetItem] = {}
+        self._model_items: dict[str, QTreeWidgetItem] = {}  # tag → child row
 
         main = QVBoxLayout(self)
         main.setSpacing(8)
@@ -184,9 +239,9 @@ class DownloadsDialog(QDialog):
         tabs = QTabWidget()
         main.addWidget(tabs, stretch=1)
 
+        tabs.addTab(self._build_ollama_models_tab(), "Ollama Models")
         tabs.addTab(self._build_ocr_engines_tab(), "OCR Engines")
         tabs.addTab(self._build_providers_tab(), "LLM Providers")
-        tabs.addTab(self._build_ollama_models_tab(), "Ollama Models")
         tabs.addTab(self._build_spacy_tab(), "spaCy")
         tabs.addTab(self._build_gpu_tab(), "GPU Add-ons")
 
@@ -327,36 +382,260 @@ class DownloadsDialog(QDialog):
         layout = QVBoxLayout(content)
         group = QGroupBox("Ollama Models")
         group_layout = QVBoxLayout(group)
-        group_layout.addWidget(QLabel("Select models to pull from the Ollama registry:"))
-        self._ollama_model_list = QTreeWidget()
-        self._ollama_model_list.setFixedHeight(200)
-        self._ollama_model_list.setColumnCount(3)
-        self._ollama_model_list.setHeaderLabels(["Model", "Installed", "Size"])
-        hdr = self._ollama_model_list.header()
-        hdr.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        hdr.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
-        hdr.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
-        for model in _CURATED_OLLAMA_MODELS:
-            item = QTreeWidgetItem([model, "—", "—"])
-            item.setData(0, Qt.ItemDataRole.UserRole, model)
-            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
-            item.setCheckState(0, Qt.CheckState.Unchecked)
-            self._ollama_model_list.addTopLevelItem(item)
+        group_layout.setSpacing(6)
+
+        # "My computer" selector — the shared hardware-profile setting.
+        self._hardware_selector = HardwareProfileSelector(
+            app_service=self._svc,
+            setting=self._hardware_profile,
+            ollama_url=self._ollama_url,
+        )
+        self._hardware_selector.setting_changed.connect(self.hardware_profile_changed.emit)
+        self._hardware_selector.resolved_changed.connect(self._on_profile_resolved)
+        group_layout.addWidget(self._hardware_selector)
+
+        intro = QLabel(DOWNLOADS_INTRO)
+        intro.setWordWrap(True)
+        group_layout.addWidget(intro)
+
+        best_row = QWidget()
+        br = QHBoxLayout(best_row)
+        br.setContentsMargins(0, 0, 0, 0)
+        self._select_best_btn = QPushButton("Select the best models for my computer")
+        self._select_best_btn.clicked.connect(self._on_select_best_models)
+        br.addWidget(self._select_best_btn)
+        br.addStretch(1)
+        self._ollama_hint_lbl = QLabel("")
+        self._ollama_hint_lbl.setStyleSheet("color: #888; font-size: 11px;")
+        self._ollama_hint_lbl.setWordWrap(True)
+        br.addWidget(self._ollama_hint_lbl, stretch=2)
+        group_layout.addWidget(best_row)
+
+        self._ollama_model_list = self._build_ollama_model_tree()
         group_layout.addWidget(self._ollama_model_list)
+
         custom_row = QWidget()
         cmr = QHBoxLayout(custom_row)
         cmr.setContentsMargins(0, 0, 0, 0)
+        add_label = QLabel("Add a model by name:")
         self._ollama_custom_input = QLineEdit()
-        self._ollama_custom_input.setPlaceholderText("Custom model tag, e.g. llama3.2:latest")
-        add_model_btn = QPushButton("Add to list")
+        self._ollama_custom_input.setPlaceholderText("e.g. llama3.2:latest")
+        add_model_btn = QPushButton("Add")
         add_model_btn.setFixedWidth(90)
         add_model_btn.clicked.connect(self._on_add_custom_ollama_model)
+        cmr.addWidget(add_label)
         cmr.addWidget(self._ollama_custom_input, stretch=1)
         cmr.addWidget(add_model_btn)
         group_layout.addWidget(custom_row)
         layout.addWidget(group)
         layout.addStretch(1)
         return self._scrolled(content)
+
+    def _build_ollama_model_tree(self) -> QTreeWidget:
+        """Build the grouped model tree and populate it from the catalog."""
+        tree = QTreeWidget()
+        tree.setFixedHeight(260)
+        tree.setColumnCount(5)
+        tree.setHeaderLabels(["Model", "Suitability", "Memory", "Downloaded", "Size"])
+        hdr = tree.header()
+        hdr.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        for col in (1, 2, 3, 4):
+            hdr.setSectionResizeMode(col, QHeaderView.ResizeMode.ResizeToContents)
+        for key, (label, _category) in _OLLAMA_GROUPS.items():
+            group_item = QTreeWidgetItem([label])
+            group_item.setFlags(Qt.ItemFlag.ItemIsEnabled)  # not selectable, not checkable
+            tree.addTopLevelItem(group_item)
+            group_item.setExpanded(True)
+            self._group_items[key] = group_item
+        # "Other models" stays hidden while empty.
+        self._group_items["other"].setHidden(True)
+        for spec in self._svc.ollama_catalog():
+            self._add_model_row(spec.tag, "ocr" if spec.category == "ocr" else "general")
+        tree.itemChanged.connect(self._on_model_item_changed)
+        return tree
+
+    def _add_model_row(self, tag: str, group_key: str) -> QTreeWidgetItem:
+        """Add a checkable model row to the *group_key* group; returns the item."""
+        tag = normalize_tag(tag)
+        spec = find_spec(tag)
+        group_item = self._group_items[group_key]
+        self._check_state[tag] = Qt.CheckState.Unchecked  # before the item emits signals
+        item = QTreeWidgetItem(group_item, [tag])
+        item.setData(0, Qt.ItemDataRole.UserRole, tag)
+        item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsEnabled)
+        item.setCheckState(0, Qt.CheckState.Unchecked)
+        if spec is not None:
+            item.setText(2, memory_text(spec.memory_gb))
+            item.setText(4, f"{spec.download_gb:g} GB")
+            item.setToolTip(0, spec.note)
+        else:
+            item.setText(2, "—")
+            item.setText(4, "—")
+            self._group_items["other"].setHidden(False)
+        self._model_items[tag] = item
+        return item
+
+    def _iter_model_items(self) -> list[tuple[str, QTreeWidgetItem]]:
+        """Return ``(tag, item)`` for every model row, walking the group children."""
+        rows: list[tuple[str, QTreeWidgetItem]] = []
+        for i in range(self._ollama_model_list.topLevelItemCount()):
+            group_item = self._ollama_model_list.topLevelItem(i)
+            if group_item is None:
+                continue
+            for j in range(group_item.childCount()):
+                child = group_item.child(j)
+                if child is None:
+                    continue
+                tag = child.data(0, Qt.ItemDataRole.UserRole) or child.text(0)
+                rows.append((str(tag), child))
+        return rows
+
+    def _group_category(self, item: QTreeWidgetItem) -> ModelCategory | None:
+        """Return the catalog category of the group *item* belongs to."""
+        for key, (_label, category) in _OLLAMA_GROUPS.items():
+            if item.parent() is self._group_items.get(key):
+                return category
+        return None
+
+    def _active_profile(self) -> HardwareProfile:
+        """Return the currently active hardware profile ("8gb" until detection lands)."""
+        detection = self._hardware_selector.resolved()
+        if detection is not None:
+            return detection.profile
+        setting = self._hardware_selector.setting()
+        return cast(HardwareProfile, setting if setting != "auto" else "8gb")
+
+    # ── ticking ────────────────────────────────────────────────────────────
+
+    def _set_checked(self, item: QTreeWidgetItem, checked: bool) -> None:
+        """Change a row's tick on behalf of the app (not recorded as a user choice)."""
+        self._programmatic_change = True
+        try:
+            item.setCheckState(0, Qt.CheckState.Checked if checked else Qt.CheckState.Unchecked)
+        finally:
+            self._programmatic_change = False
+
+    def _on_model_item_changed(self, item: QTreeWidgetItem, column: int) -> None:
+        """Remember rows the user ticked or unticked so automatic ticks leave them alone."""
+        if column != 0:
+            return
+        tag = str(item.data(0, Qt.ItemDataRole.UserRole) or item.text(0))
+        state = item.checkState(0)
+        if self._check_state.get(tag) == state:
+            return  # flags, colours or text changed — not the tick
+        self._check_state[tag] = state
+        if self._programmatic_change:
+            return
+        self._user_touched.add(tag)
+        self._auto_ticked.discard(tag)
+
+    def _tick_by_user_intent(self, tag: str) -> None:
+        """Tick *tag* because the user asked for it (button or preselect), if possible."""
+        item = self._model_items.get(tag)
+        if item is None or not (item.flags() & Qt.ItemFlag.ItemIsEnabled):
+            return
+        self._set_checked(item, True)
+        self._user_touched.add(tag)
+        self._auto_ticked.discard(tag)
+
+    def _apply_auto_ticks(self) -> None:
+        """Tick the BEST model of each category that has nothing downloaded yet (AC14).
+
+        Earlier automatic ticks the user did not touch are replaced, so a change
+        of "My computer" moves the suggestion.  Ticked rows are never downloaded
+        without the user clicking *Install / Download Selected*.
+        """
+        for tag in list(self._auto_ticked):
+            item = self._model_items.get(tag)
+            if item is not None and item.flags() & Qt.ItemFlag.ItemIsEnabled:
+                self._set_checked(item, False)
+        self._auto_ticked.clear()
+        profile = self._active_profile()
+        for category, downloaded in self._installed_by_category.items():
+            if downloaded:
+                continue
+            tag = best_model(category, profile)
+            item = self._model_items.get(tag)
+            if item is None or tag in self._user_touched:
+                continue
+            if not (item.flags() & Qt.ItemFlag.ItemIsEnabled):
+                continue
+            self._set_checked(item, True)
+            self._auto_ticked.add(tag)
+
+    def _maybe_apply_initial_ticks(self) -> None:
+        """Run the first automatic ticking once both detections have finished."""
+        if self._initial_ticks_done or not (self._installed_ready and self._profile_ready):
+            return
+        self._initial_ticks_done = True
+        self._apply_auto_ticks()
+
+    def _on_profile_resolved(self, _detection: object) -> None:
+        """The computer type became known or changed: re-rate rows, adjust auto ticks."""
+        self._profile_ready = True
+        self._update_model_suitability()
+        if self._initial_ticks_done:
+            self._apply_auto_ticks()
+        else:
+            self._maybe_apply_initial_ticks()
+
+    def _update_model_suitability(self) -> None:
+        """Re-compute suitability labels, sorting and colours for the active profile."""
+        profile = self._active_profile()
+        for key, (_label, category) in _OLLAMA_GROUPS.items():
+            group_item = self._group_items[key]
+            children: list[QTreeWidgetItem] = []
+            while group_item.childCount():
+                children.append(group_item.takeChild(0))
+            tags = [str(c.data(0, Qt.ItemDataRole.UserRole) or c.text(0)) for c in children]
+            ratings: dict[str, ModelRating] = {}
+            abilities: dict[str, ModelUses | None] = {}
+            # Cache lookups only: the detection task classified the models.
+            if category is not None and tags:
+                ratings = {
+                    r.tag: r
+                    for r in self._svc.rate_ollama_models(
+                        tags, category, profile, self._ollama_url, cached_only=True
+                    )
+                }
+            elif tags:
+                abilities = self._svc.classify_ollama_models(
+                    tags, self._ollama_url, cached_only=True
+                )
+            decorated: list[tuple[int, str, QTreeWidgetItem, Suitability, float | None]] = []
+            for tag, child in zip(tags, children, strict=True):
+                rating = ratings.get(tag)
+                value = rating.suitability if rating is not None else Suitability.UNKNOWN
+                memory = rating.memory_gb if rating is not None else None
+                decorated.append((suitability_rank(value), tag, child, value, memory))
+            decorated.sort(key=lambda entry: (entry[0], entry[1]))
+            for _rank, tag, child, value, memory in decorated:
+                group_item.addChild(child)
+                if category is not None:
+                    child.setText(1, suitability_text(value, profile, category))
+                else:
+                    # Models outside the catalog: say what they can do, not how good.
+                    child.setText(1, abilities_text(abilities.get(tag)))
+                if value is Suitability.TOO_LARGE:
+                    child.setForeground(0, _GREY)
+                    child.setForeground(1, _GREY)
+                    child.setToolTip(1, too_large_tooltip(memory, profile))
+                else:
+                    child.setForeground(0, QColor())
+                    child.setForeground(1, QColor())
+                    child.setToolTip(1, "")
+
+    def _on_select_best_models(self) -> None:
+        """Tick the BEST reading and writing models that are not downloaded yet."""
+        profile = self._active_profile()
+        found = 0
+        for tag in (best_model("ocr", profile), best_model("general", profile)):
+            item = self._model_items.get(tag)
+            if item is None or not (item.flags() & Qt.ItemFlag.ItemIsEnabled):
+                continue  # not listed, or already downloaded
+            self._tick_by_user_intent(tag)
+            found += 1
+        self._ollama_hint_lbl.setText("" if found else BEST_ALREADY_DOWNLOADED)
 
     def _build_spacy_tab(self) -> QScrollArea:
         content = QWidget()
@@ -420,12 +699,35 @@ class DownloadsDialog(QDialog):
             self._pull_manager.error.connect(self._on_manager_pull_error)
 
     def _start_detection(self) -> None:
-        if self._detect_thread is not None and self._detect_thread.isRunning():
+        if self._detect_running:
+            # Something changed while a check was running (e.g. a pull finished):
+            # the running check may predate it, so check once more afterwards.
+            self._detect_again = True
             return
+        self._detect_running = True
         self._dl_detect_lbl.setText("Detecting installed packages…")
-        self._detect_thread = _DetectInstalledThread(self._ollama_url)
-        self._detect_thread.results.connect(self._on_detection_done)
-        self._detect_thread.start()
+        svc = self._svc
+        url = self._ollama_url
+        models = [tag for tag, _item in self._iter_model_items()]
+        self._detect_task.submit(
+            lambda: _detect_installed(svc, url, models), self._on_detect_finished
+        )
+
+    def _on_detect_finished(self, result: object, error: BaseException | None) -> None:
+        self._detect_running = False
+        if error is not None or not isinstance(result, dict):
+            self._dl_detect_lbl.setText(f"Detection failed: {error or 'unexpected result'}")
+            # Nothing is known to be installed, but the suggested ticks and the
+            # requested preselection must not depend on this check (ticking never
+            # downloads anything — that needs a click on Install).
+            self._installed_ready = True
+            self._maybe_apply_initial_ticks()
+            self._tick_preselect_tags()
+        else:
+            self._on_detection_done(result)
+        if self._detect_again:
+            self._detect_again = False
+            self._start_detection()
 
     def _on_detection_done(self, results: dict) -> None:
         self._dl_detect_lbl.setText("Detection complete.")
@@ -449,39 +751,55 @@ class DownloadsDialog(QDialog):
                 cb.setChecked(False)
                 cb.setEnabled(True)
 
-        for i in range(self._ollama_model_list.topLevelItemCount()):
-            item = self._ollama_model_list.topLevelItem(i)
-            if item is None:
-                continue
-            model_id = item.data(0, Qt.ItemDataRole.UserRole) or item.text(0).split("  ✓")[0]
-            installed = results.get(f"ollama:{model_id}", False)
-            size_bytes: int = results.get(f"size:{model_id}", 0)
+        self._installed_by_category = self._apply_model_detection_results(results)
+        self._update_model_suitability()
+        self._installed_ready = True
+        self._maybe_apply_initial_ticks()
+        self._tick_preselect_tags()
+
+    def _apply_model_detection_results(self, results: dict) -> dict[ModelCategory, bool]:
+        """Mark model rows downloaded/disabled; return per-category download flags."""
+        installed_by_category: dict[ModelCategory, bool] = {"ocr": False, "general": False}
+        for tag, item in self._iter_model_items():
+            installed = bool(results.get(f"ollama:{tag}", False))
+            size_bytes = int(results.get(f"size:{tag}", 0))
             size_str = _human_size(size_bytes) if (installed and size_bytes) else "—"
-            item.setText(1, "✓" if installed else "—")
-            item.setText(2, size_str)
-            item.setData(0, Qt.ItemDataRole.UserRole, model_id)
+            item.setText(3, "✓" if installed else "—")
+            item.setText(4, size_str if installed else item.text(4))
             if installed:
-                item.setCheckState(0, Qt.CheckState.Checked)
+                self._set_checked(item, True)
                 item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEnabled)
+                self._auto_ticked.discard(tag)
+                category = self._group_category(item)
+                if find_spec(tag) is not None and category is not None:
+                    installed_by_category[category] = True
             else:
                 item.setFlags(
                     item.flags() | Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsUserCheckable
                 )
+        return installed_by_category
+
+    def _tick_preselect_tags(self) -> None:
+        """Tick requested preselect tags (adding unknown ones to \"Other models\")."""
+        for raw in self._preselect:
+            tag = normalize_tag(raw)
+            if tag not in self._model_items:
+                self._add_model_row(tag, "other")
+            self._tick_by_user_intent(tag)
+        if self._preselect:
+            self._update_model_suitability()
+        self._preselect = []
 
     def _on_add_custom_ollama_model(self) -> None:
-        model = self._ollama_custom_input.text().strip()
+        model = normalize_tag(self._ollama_custom_input.text())
         if not model:
             return
-        for i in range(self._ollama_model_list.topLevelItemCount()):
-            existing = self._ollama_model_list.topLevelItem(i)
-            if existing and existing.data(0, Qt.ItemDataRole.UserRole) == model:
-                return
-        item = QTreeWidgetItem([model, "—", "—"])
-        item.setData(0, Qt.ItemDataRole.UserRole, model)
-        item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsEnabled)
-        item.setCheckState(0, Qt.CheckState.Checked)
-        self._ollama_model_list.addTopLevelItem(item)
+        if model in self._model_items:
+            return  # duplicates (also "name" vs "name:latest") are ignored
+        self._add_model_row(model, "other")
+        self._tick_by_user_intent(model)
         self._ollama_custom_input.clear()
+        self._update_model_suitability()
 
     # ── install pipeline ─────────────────────────────────────────────────────────
 
@@ -519,18 +837,19 @@ class DownloadsDialog(QDialog):
             if cb and cb.isChecked() and cb.isEnabled():
                 spacy_models.append(model_id)
 
-        for i in range(self._ollama_model_list.topLevelItemCount()):
-            item = self._ollama_model_list.topLevelItem(i)
-            if (
-                item
-                and item.checkState(0) == Qt.CheckState.Checked
-                and bool(item.flags() & Qt.ItemFlag.ItemIsEnabled)
+        for tag, item in self._iter_model_items():
+            if item.checkState(0) == Qt.CheckState.Checked and bool(
+                item.flags() & Qt.ItemFlag.ItemIsEnabled
             ):
-                ollama_models.append(item.data(0, Qt.ItemDataRole.UserRole) or item.text(0))
+                ollama_models.append(tag)
 
         if not pip_packages and not spacy_models and not ollama_models:
             return
 
+        if ollama_models and not self._confirm_too_large(ollama_models):
+            return
+
+        self._pulled_any = False
         self._dl_log.clear()
         self._dl_install_btn.setEnabled(False)
 
@@ -588,6 +907,35 @@ class DownloadsDialog(QDialog):
             self._dl_install_btn.setEnabled(True)
             self.packages_changed.emit()
             self._start_detection()
+
+    def _confirm_too_large(self, ollama_models: list[str]) -> bool:
+        """Ask for confirmation before pulling models that exceed the profile budget.
+
+        Returns True when the user chose "Download anyway" (or nothing is too large).
+        """
+        profile = self._active_profile()
+        messages: list[str] = []
+        for tag in ollama_models:
+            item = self._model_items.get(tag)
+            category = self._group_category(item) if item is not None else None
+            if category is None:
+                continue
+            rating = self._svc.rate_ollama_models(
+                [tag], category, profile, self._ollama_url, cached_only=True
+            )[0]
+            if rating.suitability is Suitability.TOO_LARGE:
+                messages.append(too_large_confirmation(tag, rating.memory_gb, profile))
+        if not messages:
+            return True
+        box = QMessageBox(self)
+        box.setWindowTitle("Large model")
+        box.setIcon(QMessageBox.Icon.Warning)
+        box.setText("\n\n".join(messages) + "\n\nDownload anyway?")
+        download_btn = box.addButton("Download anyway", QMessageBox.ButtonRole.AcceptRole)
+        cancel_btn = box.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
+        box.setDefaultButton(cancel_btn)
+        box.exec()
+        return box.clickedButton() == download_btn
 
     def _run_ollama_pulls(self, ollama_models: list) -> None:
         model = ollama_models[0]
@@ -648,6 +996,9 @@ class DownloadsDialog(QDialog):
         self._dl_log.appendPlainText("✓ Ollama model pulled.")
         self._dl_progress.hide()
         self._dl_abort_btn.hide()
+        self._pulled_any = True
+        # The installed-model list and the classifications are stale from now on.
+        self._svc.on_ollama_models_changed(self._ollama_url)
         if remaining:
             self._run_ollama_pulls(remaining)
         else:
@@ -665,6 +1016,11 @@ class DownloadsDialog(QDialog):
         else:
             self._dl_log.appendHtml(f'<span style="color:#c0392b;"><b>Error:</b> {msg}</span>')
         self._dl_install_btn.setEnabled(True)
+        if self._pulled_any:
+            # Earlier models of this round did arrive: show them as downloaded.
+            self._svc.on_ollama_models_changed(self._ollama_url)
+            self.packages_changed.emit()
+            self._start_detection()
 
     def _on_abort(self) -> None:
         from ._addon_installer_dialog import _OllamaPullThread  # noqa: PLC0415

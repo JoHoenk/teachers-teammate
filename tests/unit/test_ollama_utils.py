@@ -7,10 +7,12 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from teachers_teammate.exceptions import OCRError
+from teachers_teammate.exceptions import OCRError, OllamaConnectionError
+from teachers_teammate.infrastructure import ollama_utils
 from teachers_teammate.infrastructure.ollama_utils import (
     OllamaClient,
     _consume_iterator_with_first_token_timeout,
+    is_local_ollama_url,
     normalize_ollama_url,
 )
 
@@ -606,3 +608,277 @@ def test_pull_no_callback(monkeypatch) -> None:
     monkeypatch.setitem(sys.modules, "ollama", mock_ollama)
 
     OllamaClient("http://127.0.0.1:11434").pull("tinyllama")  # no exception
+
+
+# ── is_local_ollama_url ────────────────────────────────────────────────────
+
+
+@pytest.mark.use_case("Hardware_Profile_Override")
+@pytest.mark.parametrize(
+    ("url", "expected"),
+    [
+        ("http://localhost:11434", True),
+        ("127.0.0.1:11434", True),
+        ("http://127.0.0.1:11434", True),
+        ("http://127.8.8.8:11434", True),  # whole 127.0.0.0/8 loopback range
+        ("http://[::1]:11434", True),
+        ("http://0.0.0.0:11434", True),
+        ("", True),  # default URL is local
+        ("http://192.168.1.50:11434", False),
+        ("myserver.lan:11434", False),
+        ("http://ollama.example.com", False),
+        ("http://127.example.com:11434", False),  # a host NAME that merely starts with "127."
+    ],
+)
+def test_is_local_ollama_url(url: str, expected: bool, monkeypatch) -> None:
+    """
+    Given  an Ollama server URL (and a computer that knows itself under no other name)
+    When   is_local_ollama_url is called
+    Then   loopback addresses (and the default URL) count as local, hosts do not
+    """
+    monkeypatch.setattr(ollama_utils, "_own_host_names", lambda: frozenset())
+    assert is_local_ollama_url(url) is expected
+
+
+@pytest.mark.use_case("Hardware_Profile_Override")
+@pytest.mark.parametrize(
+    ("url", "expected"),
+    [
+        ("http://studio-pc:11434", True),  # this computer's host name
+        ("http://STUDIO-PC.local:11434", True),  # case does not matter
+        ("http://10.0.0.7:11434", True),  # this computer's own LAN address
+        ("http://10.0.0.8:11434", False),  # another computer on the same network
+    ],
+)
+def test_is_local_ollama_url_recognises_the_computers_own_names(
+    url: str, expected: bool, monkeypatch
+) -> None:
+    """
+    Given  a computer that knows itself as "studio-pc", "studio-pc.local" and 10.0.0.7
+    When   the Ollama URL names one of these
+    Then   it counts as local (the GPU of this computer is the one that runs the models)
+    """
+    monkeypatch.setattr(
+        ollama_utils,
+        "_own_host_names",
+        lambda: frozenset({"studio-pc", "studio-pc.local", "10.0.0.7"}),
+    )
+    assert is_local_ollama_url(url) is expected
+
+
+@pytest.mark.use_case("Hardware_Profile_Override")
+def test_own_host_names_collects_name_and_addresses_and_survives_lookup_errors(
+    monkeypatch,
+) -> None:
+    """
+    Given  the host-name lookups of the socket module
+    When   the own names are collected
+    Then   host name, FQDN and addresses are lower-cased into one set, and a failing
+           lookup yields an empty set instead of an error
+    """
+    uncached = ollama_utils._own_host_names.__wrapped__
+    monkeypatch.setattr(ollama_utils.socket, "gethostname", lambda: "Studio-PC")
+    monkeypatch.setattr(ollama_utils.socket, "getfqdn", lambda: "Studio-PC.local")
+    monkeypatch.setattr(
+        ollama_utils.socket, "gethostbyname_ex", lambda _h: ("Studio-PC", [], ["10.0.0.7"])
+    )
+    assert uncached() == frozenset({"studio-pc", "studio-pc.local", "10.0.0.7"})
+
+    def failing(_host: str):
+        raise OSError("no resolver")
+
+    monkeypatch.setattr(ollama_utils.socket, "gethostbyname_ex", failing)
+    # Names found before the failing lookup are kept.
+    assert uncached() == frozenset({"studio-pc", "studio-pc.local"})
+
+
+# ── OllamaClient.model_capabilities ────────────────────────────────────────
+
+
+def _make_show_mock_ollama(show_resp: object) -> MagicMock:
+    """Return a mock ``ollama`` module whose Client().show() returns *show_resp*."""
+    mock_client = MagicMock()
+    mock_client.show.return_value = show_resp
+    mock_ollama = MagicMock()
+    mock_ollama.Client.return_value = mock_client
+    return mock_ollama
+
+
+@pytest.mark.use_case("Model_Category_Guidance")
+def test_model_capabilities_uses_show_capabilities_on_new_servers(monkeypatch) -> None:
+    """
+    Given  a newer Ollama server whose show() response lists capabilities
+    When   model_capabilities is called
+    Then   the capabilities are returned lowercased as a frozenset
+    """
+    show_resp = MagicMock()
+    show_resp.capabilities = ["Completion", "Vision"]
+    mock_ollama = _make_show_mock_ollama(show_resp)
+    monkeypatch.setitem(sys.modules, "ollama", mock_ollama)
+
+    caps = OllamaClient("http://127.0.0.1:11434").model_capabilities("qwen3-vl:8b")
+    assert caps == frozenset({"completion", "vision"})
+
+
+@pytest.mark.use_case("Model_Category_Guidance")
+def test_model_capabilities_falls_back_to_families_heuristic(monkeypatch) -> None:
+    """
+    Given  an older server whose show() response has no capabilities but families ["clip"]
+    When   model_capabilities is called
+    Then   the vision-family heuristic returns {"vision"}
+    """
+    show_resp = MagicMock(spec=[])  # no "capabilities" attribute at all
+    details = MagicMock()
+    details.families = ["clip"]
+    show_resp.details = details
+    mock_ollama = _make_show_mock_ollama(show_resp)
+    monkeypatch.setitem(sys.modules, "ollama", mock_ollama)
+
+    assert OllamaClient("http://127.0.0.1:11434").model_capabilities("x") == frozenset({"vision"})
+
+
+@pytest.mark.use_case("Model_Category_Guidance")
+def test_model_capabilities_old_server_text_family_means_completion(monkeypatch) -> None:
+    """
+    Given  an older server reporting families ["general"] (no vision family)
+    When   model_capabilities is called
+    Then   {"completion"} is returned
+    """
+    show_resp = MagicMock(spec=[])
+    details = MagicMock()
+    details.families = ["general"]
+    show_resp.details = details
+    mock_ollama = _make_show_mock_ollama(show_resp)
+    monkeypatch.setitem(sys.modules, "ollama", mock_ollama)
+
+    assert OllamaClient("http://127.0.0.1:11434").model_capabilities("x") == frozenset(
+        {"completion"}
+    )
+
+
+@pytest.mark.use_case("Model_Category_Guidance")
+def test_model_capabilities_returns_none_on_error(monkeypatch) -> None:
+    """
+    Given  show() raises an exception
+    When   model_capabilities is called
+    Then   None is returned (best-effort introspection)
+    """
+    mock_client = MagicMock()
+    mock_client.show.side_effect = Exception("boom")
+    mock_ollama = MagicMock()
+    mock_ollama.Client.return_value = mock_client
+    monkeypatch.setitem(sys.modules, "ollama", mock_ollama)
+
+    assert OllamaClient("http://127.0.0.1:11434").model_capabilities("x") is None
+
+
+@pytest.mark.use_case("Model_Category_Guidance")
+@pytest.mark.parametrize(
+    "error",
+    [ConnectionError("refused"), TimeoutError("slow")],
+    ids=["connection-refused", "timeout"],
+)
+def test_model_capabilities_raises_when_the_server_is_unreachable(monkeypatch, error) -> None:
+    """
+    Given  show() fails because the server cannot be reached or does not answer in time
+    When   model_capabilities is called
+    Then   OllamaConnectionError is raised, so callers can stop asking a dead server
+           (unlike "model unknown", which stays None)
+    """
+    mock_client = MagicMock()
+    mock_client.show.side_effect = error
+    mock_ollama = MagicMock()
+    mock_ollama.Client.return_value = mock_client
+    monkeypatch.setitem(sys.modules, "ollama", mock_ollama)
+
+    with pytest.raises(OllamaConnectionError):
+        OllamaClient("http://127.0.0.1:11434").model_capabilities("x")
+
+
+@pytest.mark.use_case("Model_Category_Guidance")
+def test_client_passes_its_timeout_to_the_ollama_library(monkeypatch) -> None:
+    """
+    Given  a client created with a short timeout
+    When   it talks to the server
+    Then   the timeout reaches ollama.Client (the default stays 10 seconds)
+    """
+    mock_ollama = MagicMock()
+    monkeypatch.setitem(sys.modules, "ollama", mock_ollama)
+
+    OllamaClient("http://127.0.0.1:11434", timeout=3.0).model_capabilities("x")
+    assert mock_ollama.Client.call_args.kwargs["timeout"] == 3.0
+
+    OllamaClient("http://127.0.0.1:11434").model_capabilities("x")
+    assert mock_ollama.Client.call_args.kwargs["timeout"] == 10
+
+
+# ── OllamaClient.check_model ───────────────────────────────────────────────
+
+
+class _RecordingReporter:
+    """Minimal Reporter implementation recording warnings for assertions."""
+
+    def __init__(self) -> None:
+        self.warnings: list[str] = []
+
+    def status(self, line: str) -> None:
+        _ = line
+
+    def warn(self, line: str) -> None:
+        self.warnings.append(line)
+
+
+def _make_check_model_ollama(
+    models: list[str], show_resp: object, ps_models: list[str] | None = None
+) -> MagicMock:
+    """Return a mock ``ollama`` module wired for a check_model() call."""
+    model_objects = []
+    for name in models:
+        m = MagicMock()
+        m.model = name
+        model_objects.append(m)
+    list_resp = MagicMock()
+    list_resp.models = model_objects
+    ps_resp = MagicMock()
+    ps_resp.models = [m for m in model_objects if ps_models is not None and m.model in ps_models]
+    mock_client = MagicMock()
+    mock_client.list.return_value = list_resp
+    mock_client.show.return_value = show_resp
+    mock_client.ps.return_value = ps_resp
+    mock_ollama = MagicMock()
+    mock_ollama.Client.return_value = mock_client
+    return mock_ollama
+
+
+@pytest.mark.use_case("Model_Category_Guidance")
+def test_check_model_warns_for_non_vision_model(monkeypatch) -> None:
+    """
+    Given  an installed model whose capabilities contain no "vision"
+    When   check_model is called
+    Then   a warning is reported through the reporter
+    """
+    show_resp = MagicMock()
+    show_resp.capabilities = ["completion"]
+    mock_ollama = _make_check_model_ollama(["llama3:latest"], show_resp)
+    monkeypatch.setitem(sys.modules, "ollama", mock_ollama)
+
+    reporter = _RecordingReporter()
+    OllamaClient("http://127.0.0.1:11434").check_model("llama3:latest", reporter)
+    assert any("may not support vision" in w for w in reporter.warnings)
+
+
+@pytest.mark.use_case("Model_Category_Guidance")
+def test_check_model_no_warning_for_vision_model(monkeypatch) -> None:
+    """
+    Given  an installed model with the "vision" capability
+    When   check_model is called
+    Then   no vision warning is reported
+    """
+    show_resp = MagicMock()
+    show_resp.capabilities = ["completion", "vision"]
+    mock_ollama = _make_check_model_ollama(["qwen3-vl:8b"], show_resp)
+    monkeypatch.setitem(sys.modules, "ollama", mock_ollama)
+
+    reporter = _RecordingReporter()
+    OllamaClient("http://127.0.0.1:11434").check_model("qwen3-vl:8b", reporter)
+    assert not any("may not support vision" in w for w in reporter.warnings)

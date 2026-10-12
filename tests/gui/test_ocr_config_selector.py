@@ -8,8 +8,10 @@ import pytest
 from teachers_teammate.config import OcrConfig
 from teachers_teammate.gui._ocr_config_selector import OcrConfigSelector
 
+from ._service_stubs import RecommendationServiceStub
 
-class _DummyAppService:
+
+class _DummyAppService(RecommendationServiceStub):
     def list_providers(self) -> list[str]:
         return ["ollama", "openai"]
 
@@ -195,3 +197,126 @@ def test_load_ocr_config_disables_prestep_checkboxes_for_method_none(selector) -
     selector.load_ocr_config(OcrConfig(engine="tesseract", preprocess_method="none"))
     assert selector._preprocess.currentText() == "none"
     assert selector._deskew.isEnabled() is False
+
+
+# ── Ollama model guidance (sorting, hints, use-best button) ────────────────
+
+
+class _OllamaCatalogAppService(_DummyAppService):
+    """Dummy service whose Ollama server has catalog models installed."""
+
+    def __init__(self, models: list[str]) -> None:
+        super().__init__()
+        self._models = models
+
+    def list_provider_models(self, provider: str, *, base_url: str = "") -> list[str]:
+        _ = base_url
+        return list(self._models) if provider == "ollama" else [f"{provider}-model"]
+
+
+_INSTALLED = ["qwen3-vl:8b", "glm-ocr:q8_0", "qwen3.5:9b", "mistral:latest"]
+
+
+def _ollama_selector(
+    qtbot, models: list[str] | None = None, open_downloads=None
+) -> OcrConfigSelector:
+    widget = OcrConfigSelector(
+        app_service=_OllamaCatalogAppService(models if models is not None else _INSTALLED),
+        hardware_profile="8gb",
+        open_downloads=open_downloads,
+    )
+    qtbot.addWidget(widget)
+    with qtbot.waitSignal(widget._hw_selector.resolved_changed, timeout=5000):
+        pass
+    widget.refresh()  # starts the (always threaded) Ollama model fetch
+    installed = models if models is not None else _INSTALLED
+    qtbot.waitUntil(lambda: widget._guidance._models == list(installed), timeout=5000)
+    thread = widget._fetch_thread
+    assert thread is not None
+    thread.wait(5000)
+    return widget
+
+
+@pytest.mark.use_case("Model_Recommendation_By_Hardware")
+def test_ollama_models_sorted_best_first_with_raw_tags(qtbot) -> None:
+    """
+    Given  the selector with a mixed set of installed Ollama models
+    When   the model list is populated
+    Then   the BEST reading model comes first and the combo text stays the raw tag (AC8)
+    """
+    selector = _ollama_selector(qtbot)
+    combo = selector._ocr_model
+    assert combo.itemText(0) == "qwen3-vl:8b"
+    # No decoration anywhere: raw tags only.
+    assert [combo.itemText(i) for i in range(combo.count())] == [
+        "qwen3-vl:8b",
+        "glm-ocr:q8_0",
+        "mistral:latest",
+        "qwen3.5:9b",  # general model → WRONG_KIND, sorted last
+    ]
+    combo.setCurrentText("qwen3-vl:8b")
+    assert selector.get_ocr_config().model == "qwen3-vl:8b"
+
+
+@pytest.mark.use_case("Model_Category_Guidance")
+def test_selecting_general_model_shows_wrong_kind_hint(qtbot) -> None:
+    """
+    Given  the selector with a general model installed
+    When   the general model is selected for the reading task
+    Then   the hint warns that the model cannot read scans (AC6)
+    """
+    selector = _ollama_selector(qtbot)
+    selector._ocr_model.setCurrentText("qwen3.5:9b")
+    hint = selector._guidance._hint_lbl.text()
+    assert "cannot read scans" in hint
+    assert "qwen3-vl:8b" in hint  # suggests a reading model example
+
+
+@pytest.mark.use_case("Model_Recommendation_By_Hardware")
+def test_use_best_choice_selects_installed_best_model(qtbot) -> None:
+    """
+    Given  the BEST reading model is installed
+    When   the "Use best choice" button is clicked
+    Then   the combo selects that model
+    """
+    selector = _ollama_selector(qtbot)
+    selector._ocr_model.setCurrentText("glm-ocr:q8_0")
+    selector._guidance._best_btn.click()
+    assert selector._ocr_model.currentText() == "qwen3-vl:8b"
+
+
+@pytest.mark.use_case("Recommended_Models_On_First_Start")
+def test_download_best_choice_calls_open_downloads(qtbot) -> None:
+    """
+    Given  the BEST reading model is not installed and a callback is injected
+    When   the "Download best choice…" button is clicked
+    Then   the callback receives the BEST model tag
+    """
+    received: list[list[str]] = []
+
+    def open_downloads(tags: list[str], parent) -> str | None:
+        _ = parent
+        received.append(tags)
+        return None
+
+    selector = _ollama_selector(
+        qtbot, models=["glm-ocr:q8_0", "qwen3.5:9b"], open_downloads=open_downloads
+    )
+    selector._guidance._best_btn.click()
+    assert received == [["qwen3-vl:8b"]]
+
+
+@pytest.mark.use_case("Model_Category_Guidance")
+def test_non_ollama_engines_have_no_hint_and_button(qtbot) -> None:
+    """
+    Given  the selector set to tesseract or paddleocr
+    When   the engine is switched
+    Then   no hint line and no "Use best choice" button are shown
+    """
+    selector = _ollama_selector(qtbot)
+    selector._ocr_engine.setCurrentText("tesseract")
+    assert selector._guidance.isHidden() is True
+    selector._ocr_engine.setCurrentText("paddleocr")
+    assert selector._guidance.isHidden() is True
+    selector._ocr_engine.setCurrentText("ollama")
+    assert selector._guidance.isHidden() is False

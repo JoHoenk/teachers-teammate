@@ -7,9 +7,13 @@ connection-check threads use the same code path.
 from __future__ import annotations
 
 from collections.abc import Callable, Iterator
+import functools
+import ipaddress
 import queue
+import socket
 import threading
 from typing import TYPE_CHECKING
+from urllib.parse import urlparse
 
 from ..exceptions import OllamaConnectionError
 from .reporting import Reporter, StdoutReporter
@@ -21,6 +25,10 @@ _DEFAULT_OLLAMA_URL = "http://127.0.0.1:11434"
 
 # How long to wait for the TCP connection to be established.
 _CONNECT_TIMEOUT = 10
+
+# Model families that indicate a model can read images (used as a fallback on
+# older Ollama servers that do not report capabilities).
+_KNOWN_VISION_FAMILIES = frozenset({"clip", "vision", "deepseekocr"})
 
 
 def normalize_ollama_url(url: str) -> str:
@@ -35,6 +43,41 @@ def normalize_ollama_url(url: str) -> str:
     if "://" not in cleaned:
         cleaned = f"http://{cleaned}"
     return cleaned.rstrip("/")
+
+
+@functools.cache
+def _own_host_names() -> frozenset[str]:
+    """Return the names and addresses under which this computer knows itself.
+
+    Only the machine's own host name is resolved — never an arbitrary host — so
+    the lookup is cheap and does not leak the Ollama URL to a DNS server.
+    """
+    names: set[str] = set()
+    try:
+        hostname = socket.gethostname()
+        names.update({hostname, socket.getfqdn()})
+        names.update(socket.gethostbyname_ex(hostname)[2])
+    except OSError:
+        pass
+    return frozenset(name.lower() for name in names if name)
+
+
+def is_local_ollama_url(url: str) -> bool:
+    """Return whether *url* points at this computer.
+
+    True for ``localhost``, the whole loopback range (``127.0.0.0/8``, ``::1``),
+    ``0.0.0.0`` and this computer's own host name or address (so the machine's LAN
+    IP counts as local too); false for anything else.
+    """
+    host = (urlparse(normalize_ollama_url(url)).hostname or "").lower()
+    if not host:
+        return False
+    if host in ("localhost", "0.0.0.0") or host in _own_host_names():
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
 
 
 def models_include(model_name: str, available: list[str]) -> bool:
@@ -95,6 +138,17 @@ def _consume_iterator_with_first_token_timeout[T](
     return results
 
 
+def _is_transport_error(exc: BaseException) -> bool:
+    """Return whether *exc* means "server unreachable or timed out".
+
+    Anything else raised by the client (for example ``ollama.ResponseError`` for
+    an unknown model) means the server did answer.
+    """
+    if isinstance(exc, (ConnectionError, TimeoutError)):
+        return True
+    return type(exc).__module__.split(".", 1)[0] == "httpx"
+
+
 class OllamaClient:
     """All HTTP access to a single Ollama server.
 
@@ -103,14 +157,15 @@ class OllamaClient:
     :meth:`_client`).
     """
 
-    def __init__(self, url: str) -> None:
+    def __init__(self, url: str, *, timeout: float = _CONNECT_TIMEOUT) -> None:
         self.base_url = normalize_ollama_url(url)
+        self._timeout = timeout
 
     def _client(self) -> ollama.Client:
         """Return an ``ollama.Client`` for :attr:`base_url`."""
         import ollama  # noqa: PLC0415
 
-        return ollama.Client(host=self.base_url, timeout=_CONNECT_TIMEOUT)
+        return ollama.Client(host=self.base_url, timeout=self._timeout)
 
     # ── Model discovery ────────────────────────────────────────────────────
 
@@ -173,6 +228,46 @@ class OllamaClient:
         avail_str = ", ".join(models)
         return True, False, f"✗ Model '{model}' not found. Available: {avail_str}"
 
+    def model_capabilities(self, tag: str) -> frozenset[str] | None:
+        """Return the capabilities of *tag* (e.g. ``{"completion", "vision"}``).
+
+        Uses ``show().capabilities`` on newer Ollama servers.  On older servers
+        it falls back to the model-families heuristic: a family in
+        ``{"clip", "vision", "deepseekocr"}`` means the model can read images,
+        any other family means text-only completion.
+
+        Returns:
+            Frozenset of capability names, or ``None`` when the model is unknown
+            to the server or the server reports neither capabilities nor families.
+
+        Raises:
+            :exc:`~teachers_teammate.exceptions.OllamaConnectionError`: The server
+                is unreachable or timed out, so callers can stop asking it.
+        """
+        try:
+            resp = self._client().show(tag)
+        except Exception as exc:  # the Ollama client may raise anything; classified below
+            if _is_transport_error(exc):
+                raise OllamaConnectionError(
+                    f"Cannot reach Ollama at {self.base_url}: {exc}"
+                ) from exc
+            return None  # the server answered but cannot describe the model
+
+        try:
+            caps = getattr(resp, "capabilities", None)
+            if isinstance(caps, (list, tuple, frozenset)) and caps:
+                return frozenset(str(c).lower() for c in caps)
+
+            details = getattr(resp, "details", None)
+            families = list(details.families or []) if details else []
+        except Exception:  # noqa: BLE001  # an unexpected response shape is "no information"
+            return None
+        if any(f.lower() in _KNOWN_VISION_FAMILIES for f in families):
+            return frozenset({"vision"})
+        if families:
+            return frozenset({"completion"})
+        return None
+
     def check_model(self, model_name: str, reporter: Reporter | None = None) -> None:
         """Verify the server is reachable and *model_name* is available.
 
@@ -222,16 +317,14 @@ class OllamaClient:
             )
 
         try:
-            show_resp = client.show(model_name)
-            families = (show_resp.details.families or []) if show_resp.details else []
-            _KNOWN_VISION_FAMILIES = frozenset({"clip", "vision", "deepseekocr"})
-            if families and not any(f.lower() in _KNOWN_VISION_FAMILIES for f in families):
-                reporter.warn(
-                    f"\nWARNING: Model '{model_name}' may not support vision "
-                    f"(families: {families}). OCR results may be poor."
-                )
-        except Exception:  # noqa: BLE001  # model introspection is best-effort; skip the advisory on any error
-            pass
+            capabilities = self.model_capabilities(model_name)
+        except OllamaConnectionError:
+            capabilities = None  # introspection is best-effort; skip the advisory
+        if capabilities is not None and "vision" not in capabilities:
+            reporter.warn(
+                f"\nWARNING: Model '{model_name}' may not support vision — "
+                "it cannot read scans. OCR results may be poor."
+            )
 
         try:
             ps_resp = client.ps()

@@ -2,21 +2,31 @@
 
 This module is intentionally free of infrastructure dependencies so that
 :mod:`teachers_teammate.config` can resolve model defaults without importing
-from the infrastructure layer.
+from the infrastructure layer.  The Ollama defaults come from the domain model
+catalog (:func:`teachers_teammate.domain.model_catalog.best_model`) so there is
+a single source of truth for "which model is recommended for which computer".
 """
 
 from __future__ import annotations
 
+from .domain.model_catalog import FALLBACK_PROFILE, best_model
+
+# Ollama defaults are the BEST picks for the fallback profile (8 GB).  The
+# reading-model default must be a vision model — see
+# domain/model_catalog.py::OLLAMA_CATALOG for the full curated list.
+_OLLAMA_OCR_DEFAULT = best_model("ocr", FALLBACK_PROFILE)
+_OLLAMA_GENERAL_DEFAULT = best_model("general", FALLBACK_PROFILE)
+
 _DEFAULT_MODELS: dict[str, dict[str, str]] = {
     "ocr": {
-        "ollama": "gpt-oss:20b",
+        "ollama": _OLLAMA_OCR_DEFAULT,
         "openai": "gpt-4o",
         "anthropic": "claude-opus-4-5",
         "google": "gemini-2.0-flash",
         "mistral": "pixtral-large-latest",
     },
     "correction": {
-        "ollama": "gpt-oss:20b",
+        "ollama": _OLLAMA_GENERAL_DEFAULT,
         "openai": "gpt-4o-mini",
         "anthropic": "claude-3-haiku-20240307",
         "google": "gemini-2.0-flash",
@@ -24,7 +34,7 @@ _DEFAULT_MODELS: dict[str, dict[str, str]] = {
         "cohere": "command-r-plus",
     },
     "evaluation": {
-        "ollama": "gpt-oss:20b",
+        "ollama": _OLLAMA_GENERAL_DEFAULT,
         "openai": "gpt-4o-mini",
         "anthropic": "claude-3-haiku-20240307",
         "google": "gemini-2.0-flash",

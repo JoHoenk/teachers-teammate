@@ -26,6 +26,15 @@ filegroup(
         "gui/test_benchmark_widgets.py",
         "gui/test_benchmark_window.py",
         "gui/test_benchmark_worker.py",
+        "gui/test_downloads_dialog.py",
+        "gui/test_gui_addon_installer_dialog.py",
+        "gui/test_gui_anonymizer_dialog.py",
+        "gui/test_gui_main_window.py",
+        "gui/test_gui_settings_dialog.py",
+        "gui/test_gui_widgets.py",
+        "gui/test_hardware_profile_selector.py",
+        "gui/test_model_wording.py",
+        "gui/test_ocr_config_selector.py",
         "integration/test_pipeline_preview.py",
         "integration/test_pipeline_run.py",
         "integration/test_pipeline_scenarios.py",
@@ -39,9 +48,16 @@ filegroup(
         "unit/test_cache_service.py",
         "unit/test_cli.py",
         "unit/test_config.py",
+        "unit/test_coordinator.py",
         "unit/test_docx_builder.py",
+        "unit/test_file_discovery.py",
+        "unit/test_file_processor.py",
         "unit/test_gpu_detector.py",
+        "unit/test_model_catalog.py",
+        "unit/test_ollama_utils.py",
+        "unit/test_preprocessor.py",
         "unit/test_service.py",
+        "unit/test_stage_builder.py",
         "unit/test_state_repository.py",
     ],
     visibility = ["//docs:__pkg__"],
@@ -105,6 +121,7 @@ _COMMON_SRCS = [
     "unit/__init__.py",
     "integration/__init__.py",
     "gui/__init__.py",
+    "gui/_service_stubs.py",
 ]
 
 _COMMON_DEPS = [
@@ -427,6 +444,15 @@ py_test(
 )
 
 py_test(
+    name = "test_model_catalog",
+    size = "small",
+    srcs = _COMMON_SRCS + ["unit/test_model_catalog.py"],
+    args = ["unit/test_model_catalog.py"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS + _REQUESTS_DEPS,
+)
+
+py_test(
     name = "test_cache_service",
     size = "small",
     srcs = _COMMON_SRCS + ["unit/test_cache_service.py"],
@@ -598,6 +624,42 @@ py_test(
 )
 
 py_test(
+    name = "test_hardware_profile_selector",
+    size = "small",
+    srcs = _COMMON_SRCS + ["gui/test_hardware_profile_selector.py"],
+    args = ["gui/test_hardware_profile_selector.py"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_lib"],
+)
+
+py_test(
+    name = "test_background",
+    size = "small",
+    srcs = _COMMON_SRCS + ["gui/test_background.py"],
+    args = ["gui/test_background.py"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_lib"],
+)
+
+py_test(
+    name = "test_model_wording",
+    size = "small",
+    srcs = _COMMON_SRCS + ["gui/test_model_wording.py"],
+    args = ["gui/test_model_wording.py"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_lib"],
+)
+
+py_test(
+    name = "test_downloads_dialog",
+    size = "small",
+    srcs = _COMMON_SRCS + ["gui/test_downloads_dialog.py"],
+    args = ["gui/test_downloads_dialog.py"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_lib"],
+)
+
+py_test(
     name = "test_benchmark_window",
     size = "small",
     srcs = _COMMON_SRCS + ["gui/test_benchmark_window.py"],
@@ -693,6 +755,7 @@ test_suite(
         ":test_input_providers",
         ":test_interfaces",
         ":test_llm_factory",
+        ":test_model_catalog",
         ":test_ocr_processor",
         ":test_ocr_stage_service",
         ":test_ocr_text_cleaner",
@@ -713,10 +776,12 @@ test_suite(
 test_suite(
     name = "gui_tests",
     tests = [
+        ":test_background",
         ":test_benchmark_integration",
         ":test_benchmark_widgets",
         ":test_benchmark_window",
         ":test_benchmark_worker",
+        ":test_downloads_dialog",
         ":test_gui_addon_installer_dialog",
         ":test_gui_anonymizer_dialog",
         ":test_gui_bootstrap",
@@ -728,6 +793,8 @@ test_suite(
         ":test_gui_update_check",
         ":test_gui_widgets",
         ":test_gui_worker",
+        ":test_hardware_profile_selector",
+        ":test_model_wording",
         ":test_ocr_config_selector",
     ],
 )

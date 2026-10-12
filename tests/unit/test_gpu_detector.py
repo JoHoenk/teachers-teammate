@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import subprocess
+import sys
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -11,9 +12,12 @@ from teachers_teammate.infrastructure import gpu_detector
 from teachers_teammate.infrastructure.gpu_detector import (
     GpuInfo,
     _parse_amd_smi,
+    _parse_amd_smi_vram,
     _parse_rocm_smi,
+    _parse_rocm_smi_vram,
     _run,
     detect_amd,
+    detect_apple_unified_memory_gb,
     detect_gpus,
     detect_nvidia,
 )
@@ -123,17 +127,44 @@ def test_run_returns_none_on_timeout() -> None:
 # ── detect_nvidia ──────────────────────────────────────────────────────────
 
 
-def test_detect_nvidia_tags_each_line_as_nvidia(monkeypatch) -> None:
+@pytest.mark.use_case("Model_Recommendation_By_Hardware")
+def test_detect_nvidia_parses_name_and_memory_from_one_line(monkeypatch) -> None:
     """
-    Given  nvidia-smi returns two GPU name lines
+    Given  nvidia-smi returns one "name, memory_mib" line
     When   detect_nvidia is called
-    Then   each is returned as a GpuInfo tagged 'nvidia'
+    Then   the GPU is returned with its VRAM in MB
+    """
+    monkeypatch.setattr(gpu_detector, "_run", lambda *_a, **_k: "NVIDIA GeForce RTX 4060, 8188")
+    assert detect_nvidia() == [GpuInfo("nvidia", "NVIDIA GeForce RTX 4060", 8188)]
+
+
+@pytest.mark.use_case("Model_Recommendation_By_Hardware")
+def test_detect_nvidia_parses_multiple_lines(monkeypatch) -> None:
+    """
+    Given  nvidia-smi returns two "name, memory_mib" lines
+    When   detect_nvidia is called
+    Then   both GPUs are returned with their VRAM
     """
     monkeypatch.setattr(
-        gpu_detector, "_run", lambda *_a, **_k: "GeForce RTX 4090\nGeForce RTX 3080\n"
+        gpu_detector,
+        "_run",
+        lambda *_a, **_k: "GeForce RTX 4090, 24564\nGeForce RTX 3080, 10007",
     )
-    result = detect_nvidia()
-    assert result == [GpuInfo("nvidia", "GeForce RTX 4090"), GpuInfo("nvidia", "GeForce RTX 3080")]
+    assert detect_nvidia() == [
+        GpuInfo("nvidia", "GeForce RTX 4090", 24564),
+        GpuInfo("nvidia", "GeForce RTX 3080", 10007),
+    ]
+
+
+@pytest.mark.use_case("Model_Recommendation_By_Hardware")
+def test_detect_nvidia_na_memory_yields_none(monkeypatch) -> None:
+    """
+    Given  nvidia-smi reports "[N/A]" as the memory value
+    When   detect_nvidia is called
+    Then   the GPU is returned with vram_mb=None
+    """
+    monkeypatch.setattr(gpu_detector, "_run", lambda *_a, **_k: "Some NVIDIA GPU, [N/A]")
+    assert detect_nvidia() == [GpuInfo("nvidia", "Some NVIDIA GPU", None)]
 
 
 def test_detect_nvidia_returns_empty_when_no_driver(monkeypatch) -> None:
@@ -217,6 +248,151 @@ def test_detect_amd_returns_empty_when_no_tools(monkeypatch) -> None:
     """
     monkeypatch.setattr(gpu_detector, "_run", lambda *_a, **_k: None)
     assert detect_amd() == []
+
+
+@pytest.mark.use_case("Model_Recommendation_By_Hardware")
+def test_detect_amd_matches_names_and_memory_by_index(monkeypatch) -> None:
+    """
+    Given  rocm-smi returns two GPU names and two VRAM values
+    When   detect_amd is called
+    Then   each GPU carries the VRAM of the same index
+    """
+
+    def fake_run(cmd, **_k):
+        if "--showproductname" in cmd:
+            return (
+                "GPU[0] : Card series: Radeon RX 6800 XT\nGPU[1] : Card series: Radeon RX 7900 XTX"
+            )
+        if "--showmeminfo" in cmd:
+            return (
+                "GPU[0] : VRAM Total Memory (B): 17163091968\n"
+                "GPU[1] : VRAM Total Memory (B): 17179869184"
+            )
+        return None
+
+    monkeypatch.setattr(gpu_detector, "_run", fake_run)
+    assert detect_amd() == [
+        GpuInfo("amd", "Radeon RX 6800 XT", 16368),
+        GpuInfo("amd", "Radeon RX 7900 XTX", 16384),
+    ]
+
+
+@pytest.mark.use_case("Model_Recommendation_By_Hardware")
+def test_detect_amd_missing_memory_entries_give_none(monkeypatch) -> None:
+    """
+    Given  rocm-smi returns two GPU names but only one VRAM value
+    When   detect_amd is called
+    Then   the remaining GPUs get vram_mb=None
+    """
+
+    def fake_run(cmd, **_k):
+        if "--showproductname" in cmd:
+            return (
+                "GPU[0] : Card series: Radeon RX 6800 XT\nGPU[1] : Card series: Radeon RX 7900 XTX"
+            )
+        if "--showmeminfo" in cmd:
+            return "GPU[0] : VRAM Total Memory (B): 17163091968"
+        return None
+
+    monkeypatch.setattr(gpu_detector, "_run", fake_run)
+    assert detect_amd() == [
+        GpuInfo("amd", "Radeon RX 6800 XT", 16368),
+        GpuInfo("amd", "Radeon RX 7900 XTX", None),
+    ]
+
+
+# ── _parse_rocm_smi_vram / _parse_amd_smi_vram ──────────────────────────────
+
+
+@pytest.mark.use_case("Model_Recommendation_By_Hardware")
+def test_parse_rocm_smi_vram_extracts_bytes_as_mb() -> None:
+    """
+    Given  rocm-smi --showmeminfo vram output
+    When   _parse_rocm_smi_vram is called
+    Then   the byte values are returned as MB in GPU order
+    """
+    output = (
+        "===== ROCm System Management =====\n"
+        "GPU[0] : VRAM Total Memory (B): 17163091968\n"
+        "GPU[1] : VRAM Total Memory (B): 17179869184\n"
+    )
+    assert _parse_rocm_smi_vram(output) == [16368, 16384]
+
+
+@pytest.mark.use_case("Model_Recommendation_By_Hardware")
+def test_parse_rocm_smi_vram_skips_noise_and_returns_empty() -> None:
+    """
+    Given  rocm-smi output with no VRAM Total Memory lines
+    When   _parse_rocm_smi_vram is called
+    Then   an empty list is returned
+    """
+    assert _parse_rocm_smi_vram("GPU[0] : Card series: Radeon\nnothing\n") == []
+
+
+@pytest.mark.use_case("Model_Recommendation_By_Hardware")
+def test_parse_amd_smi_vram_extracts_mb_values() -> None:
+    """
+    Given  amd-smi static --vram output
+    When   _parse_amd_smi_vram is called
+    Then   the MB values are returned in GPU order
+    """
+    output = "GPU: 0\n    SIZE: 16368 MB\nGPU: 1\n    SIZE: 8192 MB\n"
+    assert _parse_amd_smi_vram(output) == [16368, 8192]
+
+
+@pytest.mark.use_case("Model_Recommendation_By_Hardware")
+def test_parse_amd_smi_vram_returns_empty_when_no_match() -> None:
+    """
+    Given  amd-smi output without SIZE lines
+    When   _parse_amd_smi_vram is called
+    Then   an empty list is returned
+    """
+    assert _parse_amd_smi_vram("ASIC: some-asic\n") == []
+
+
+# ── detect_apple_unified_memory_gb ───────────────────────────────────────────
+
+
+@pytest.mark.use_case("Model_Recommendation_By_Hardware")
+def test_detect_apple_unified_memory_gb_on_darwin_arm64(monkeypatch) -> None:
+    """
+    Given  a Darwin/arm64 machine with 16 GiB of RAM
+    When   detect_apple_unified_memory_gb is called
+    Then   the total memory in GB is returned
+    """
+    monkeypatch.setattr(gpu_detector.platform, "system", lambda: "Darwin")
+    monkeypatch.setattr(gpu_detector.platform, "machine", lambda: "arm64")
+
+    class _FakeVM:
+        total = 16 * 2**30
+
+    fake_psutil = type("psutil", (), {"virtual_memory": staticmethod(lambda: _FakeVM())})
+    monkeypatch.setitem(sys.modules, "psutil", fake_psutil)
+    assert detect_apple_unified_memory_gb() == 16.0
+
+
+@pytest.mark.use_case("Model_Recommendation_By_Hardware")
+def test_detect_apple_unified_memory_gb_none_off_apple(monkeypatch) -> None:
+    """
+    Given  a non-Apple machine
+    When   detect_apple_unified_memory_gb is called
+    Then   None is returned without touching psutil
+    """
+    monkeypatch.setattr(gpu_detector.platform, "system", lambda: "Linux")
+    monkeypatch.setattr(gpu_detector.platform, "machine", lambda: "x86_64")
+    assert detect_apple_unified_memory_gb() is None
+
+
+@pytest.mark.use_case("Model_Recommendation_By_Hardware")
+def test_detect_apple_unified_memory_gb_none_on_intel_mac(monkeypatch) -> None:
+    """
+    Given  a Darwin machine on x86_64 (Intel Mac)
+    When   detect_apple_unified_memory_gb is called
+    Then   None is returned (unified memory applies to Apple Silicon only)
+    """
+    monkeypatch.setattr(gpu_detector.platform, "system", lambda: "Darwin")
+    monkeypatch.setattr(gpu_detector.platform, "machine", lambda: "x86_64")
+    assert detect_apple_unified_memory_gb() is None
 
 
 # ── detect_gpus ────────────────────────────────────────────────────────────

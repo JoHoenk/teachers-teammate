@@ -46,6 +46,10 @@ class BenchmarkWindow(QMainWindow):
         self._worker: BenchmarkWorker | None = None
         self._source: Path | None = None
         self._language = DEFAULTS["language"]
+        # Follow the main app: its Ollama server and its "My computer" choice.
+        saved = self._service.load_saved_settings()
+        self._ollama_url = str(saved.get("ollama_url") or DEFAULTS["ollama_url"])
+        self._hardware_profile = str(saved.get("hardware_profile") or DEFAULTS["hardware_profile"])
 
         central = QWidget()
         self.setCentralWidget(central)
@@ -72,7 +76,12 @@ class BenchmarkWindow(QMainWindow):
 
         cfg_box = QGroupBox("OCR configuration")
         cfg_layout = QVBoxLayout(cfg_box)
-        self._selector = OcrConfigSelector(app_service=self._service, show_preview_button=False)
+        self._selector = OcrConfigSelector(
+            app_service=self._service,
+            ollama_url=self._ollama_url,
+            hardware_profile=self._hardware_profile,
+            show_preview_button=False,
+        )
         self._selector.refresh()  # apply default engine's preprocess/model on open
         cfg_layout.addWidget(self._selector)
         run_row = QHBoxLayout()
@@ -126,6 +135,7 @@ class BenchmarkWindow(QMainWindow):
             self._source,
             ocr,
             self._language,
+            ollama_url=self._ollama_url,
             app_service=self._service,
         )
         worker.log_line.connect(self._log.append_text)

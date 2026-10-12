@@ -36,8 +36,9 @@ class _SyncSignal:
 class _SyncWorker:
     """Worker that runs run_and_store synchronously so the test is deterministic."""
 
-    def __init__(self, source, ocr, language, *, app_service) -> None:
+    def __init__(self, source, ocr, language, *, ollama_url, app_service) -> None:
         self._source, self._ocr, self._language = source, ocr, language
+        self._ollama_url = ollama_url
         self._service = app_service
         self.log_line = _SyncSignal()
         self.finished_ok = _SyncSignal()
@@ -49,7 +50,12 @@ class _SyncWorker:
 
     def start(self) -> None:
         try:
-            run = self._service.run_and_store(self._source, ocr=self._ocr, language=self._language)
+            run = self._service.run_and_store(
+                self._source,
+                ocr=self._ocr,
+                language=self._language,
+                ollama_url=self._ollama_url,
+            )
         except Exception as exc:  # noqa: BLE001  # mirror the real worker's error path
             self.finished_err.emit(str(exc))
             return

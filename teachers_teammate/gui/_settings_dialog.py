@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import atexit
 from collections.abc import Callable
 import os
 from pathlib import Path
@@ -34,6 +35,15 @@ from PySide6.QtWidgets import (
 
 from ..application.service import ProcessingApplicationService
 from ..config import DEFAULTS, OcrConfig
+from ..domain.model_catalog import (
+    HardwareDetection,
+    HardwareProfile,
+    ModelCategory,
+    ModelRating,
+    ModelUses,
+)
+from ._model_guidance import OpenDownloads
+from ._model_wording import SAME_MODEL_TIP
 from ._worker import _ConnectionCheckThread  # noqa: F401  kept for external callers
 
 
@@ -75,6 +85,24 @@ class _SettingsAppService(Protocol):
 
     def is_module_importable(self, module: str) -> bool: ...
 
+    def detect_hardware(self, ollama_url: str, *, refresh: bool = False) -> HardwareDetection: ...
+
+    def classify_ollama_models(
+        self, tags: list[str], ollama_url: str, *, cached_only: bool = False
+    ) -> dict[str, ModelUses | None]: ...
+
+    def rate_ollama_models(
+        self,
+        tags: list[str],
+        task: ModelCategory,
+        profile: HardwareProfile,
+        ollama_url: str,
+        *,
+        cached_only: bool = False,
+    ) -> list[ModelRating]: ...
+
+    def detect_gpus(self, *, refresh: bool = False) -> list: ...
+
 
 class _ModelFetchThread(QThread):
     """Fetches model names in a background thread via a caller-supplied callable."""
@@ -99,8 +127,14 @@ class _GpuDetectThread(QThread):
 
     detect_done = Signal(list)  # list[GpuInfo]
 
+    def __init__(self, app_service: _SettingsAppService) -> None:
+        super().__init__()
+        self._app_service = app_service
+
     def run(self) -> None:
-        self.detect_done.emit(ProcessingApplicationService().detect_gpus())
+        # "Detect GPU" is a request to look again (a driver may have been installed
+        # since the first probe); the fresh result also feeds "My computer".
+        self.detect_done.emit(self._app_service.detect_gpus(refresh=True))
 
 
 # ── status label helpers ───────────────────────────────────────────────────────
@@ -134,10 +168,47 @@ def _available_providers(app_service: _SettingsAppService) -> list[str]:
     return result
 
 
-def _stop_thread(thread: _ModelFetchThread | None) -> None:
-    if thread is not None and thread.isRunning():
-        thread.quit()
-        thread.wait(200)
+#: Threads that outlived their dialog.  A running ``QThread`` must not be destroyed
+#: (that aborts the whole process) and these run a plain function with no event
+#: loop, so they cannot be interrupted either: they are parked here until they end.
+_RETIRED_THREADS: set[QThread] = set()
+_THREAD_RESULT_SIGNALS = ("models_ready", "error", "detect_done", "finished")
+_RETIRED_WAIT_MS = 3000
+
+
+def _purge_retired_threads() -> None:
+    """Drop retired threads that have finished."""
+    for thread in [t for t in _RETIRED_THREADS if t.isFinished()]:
+        _RETIRED_THREADS.discard(thread)
+
+
+def _retire_thread(thread: QThread | None) -> None:
+    """Detach *thread* from its dialog without blocking the GUI thread.
+
+    Its results are disconnected — a stale answer can no longer touch a widget —
+    and a thread that is still running is kept alive until it ends on its own.
+    """
+    _purge_retired_threads()
+    if thread is None or not thread.isRunning():
+        return
+    for name in _THREAD_RESULT_SIGNALS:
+        signal = getattr(thread, name, None)
+        if signal is None:
+            continue
+        try:
+            signal.disconnect()
+        except (RuntimeError, TypeError):
+            pass  # nothing was connected
+    _RETIRED_THREADS.add(thread)
+
+
+def _wait_for_retired_threads() -> None:
+    """Give retired threads a moment to finish before the interpreter shuts down."""
+    for thread in list(_RETIRED_THREADS):
+        thread.wait(_RETIRED_WAIT_MS)
+
+
+atexit.register(_wait_for_retired_threads)
 
 
 # ── OCR Settings dialog ───────────────────────────────────────────────────────
@@ -155,6 +226,8 @@ class OCRSettingsDialog(QDialog):
         parent: QWidget | None = None,
         *,
         app_service: _SettingsAppService | None = None,
+        hardware_profile: str = "auto",
+        open_downloads: OpenDownloads | None = None,
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Text Recognition Settings")
@@ -178,7 +251,7 @@ class OCRSettingsDialog(QDialog):
         layout = QVBoxLayout(content)
         layout.setSpacing(12)
 
-        layout.addWidget(self._build_method_group())
+        layout.addWidget(self._build_method_group(hardware_profile, open_downloads))
         layout.addStretch(1)
         main.addWidget(scroll, stretch=1)
 
@@ -192,7 +265,14 @@ class OCRSettingsDialog(QDialog):
         self._load_values(values)
         # Trigger initial refresh of the selector (this is handled by load_ocr_config)
 
-    def _build_method_group(self) -> QGroupBox:
+    def done(self, result: int) -> None:
+        """Stop background threads before the dialog is destroyed."""
+        self._ocr_config_selector.stop_threads()
+        super().done(result)
+
+    def _build_method_group(
+        self, hardware_profile: str, open_downloads: OpenDownloads | None
+    ) -> QGroupBox:
         """Build the 'Text Recognition Method' settings group."""
         from ._ocr_config_selector import OcrConfigSelector  # noqa: PLC0415
 
@@ -204,6 +284,8 @@ class OCRSettingsDialog(QDialog):
             app_service=self._app_service,
             ollama_url=self._ollama_url,
             show_preview_button=True,
+            hardware_profile=hardware_profile,
+            open_downloads=open_downloads,
             parent=group,
         )
 
@@ -283,6 +365,8 @@ class CorrectionSettingsDialog(QDialog):
         parent: QWidget | None = None,
         *,
         app_service: _SettingsAppService | None = None,
+        hardware_profile: str = "auto",
+        open_downloads: OpenDownloads | None = None,
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Proofreading Settings")
@@ -294,6 +378,8 @@ class CorrectionSettingsDialog(QDialog):
         self._app_service = app_service or ProcessingApplicationService()
         self._corr_fetch_thread: _ModelFetchThread | None = None
         self._ollama_url = str(values.get("ollama_url", DEFAULTS["ollama_url"]))
+        self._values = values
+        self._open_downloads = open_downloads
 
         main = QVBoxLayout(self)
         main.setSpacing(8)
@@ -308,7 +394,7 @@ class CorrectionSettingsDialog(QDialog):
         layout.setSpacing(12)
 
         layout.addWidget(self._build_prompt_group(prompt))
-        layout.addWidget(self._build_model_group())
+        layout.addWidget(self._build_model_group(hardware_profile))
         layout.addStretch(1)
         main.addWidget(scroll, stretch=1)
 
@@ -332,6 +418,11 @@ class CorrectionSettingsDialog(QDialog):
 
         self._auto_fetch()
 
+    def done(self, result: int) -> None:
+        """Stop background threads before the dialog is destroyed."""
+        _retire_thread(self._corr_fetch_thread)
+        super().done(result)
+
     def _build_prompt_group(self, prompt: str) -> QGroupBox:
         """Build the proofreading-instructions (system prompt) group."""
         prompt_group = QGroupBox("Proofreading Instructions")
@@ -351,11 +442,23 @@ class CorrectionSettingsDialog(QDialog):
         prompt_layout.addWidget(self._prompt_edit)
         return prompt_group
 
-    def _build_model_group(self) -> QGroupBox:
+    def _build_model_group(self, hardware_profile: str = "auto") -> QGroupBox:
         """Build the AI-service (provider + model) group."""
+        from ._hardware_profile_selector import HardwareProfileSelector  # noqa: PLC0415
+        from ._model_guidance import OllamaModelGuidance  # noqa: PLC0415
+
         model_group = QGroupBox("AI Service")
         model_form = QFormLayout(model_group)
         model_form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapAllRows)
+
+        self._hw_selector = HardwareProfileSelector(
+            app_service=self._app_service,
+            setting=hardware_profile,
+            ollama_url=self._ollama_url,
+            read_only=True,
+            parent=model_group,
+        )
+        model_form.addRow(self._hw_selector)
 
         self._correction_provider = QComboBox()
         self._correction_provider.addItems(_available_providers(self._app_service))
@@ -382,6 +485,29 @@ class CorrectionSettingsDialog(QDialog):
         cl.addWidget(self._corr_status_lbl)
         model_form.addRow("AI model:", self._correction_model_row)
 
+        self._guidance = OllamaModelGuidance(
+            combo=self._correction_model,
+            app_service=self._app_service,
+            category="general",
+            profile_selector=self._hw_selector,
+            ollama_url=self._ollama_url,
+            open_downloads=self._open_downloads,
+            refetch=self._refetch_models,
+            parent=model_group,
+        )
+        model_form.addRow("", self._guidance)
+
+        self._same_model_tip_lbl = QLabel(SAME_MODEL_TIP)
+        self._same_model_tip_lbl.setWordWrap(True)
+        self._same_model_tip_lbl.setStyleSheet("color: #888; font-size: 11px;")
+        self._same_model_tip_lbl.setVisible(False)
+        model_form.addRow("", self._same_model_tip_lbl)
+
+        self._correction_model.currentTextChanged.connect(
+            lambda _txt: self._update_same_model_tip()
+        )
+        self._hw_selector.resolved_changed.connect(lambda _d: self._update_same_model_tip())
+
         self._corr_temperature = QDoubleSpinBox()
         self._corr_temperature.setRange(0.0, 2.0)
         self._corr_temperature.setSingleStep(0.1)
@@ -393,6 +519,20 @@ class CorrectionSettingsDialog(QDialog):
         )
         model_form.addRow("Temperature:", self._corr_temperature)
         return model_group
+
+    def _update_same_model_tip(self) -> None:
+        """Show the same-model tip for cpu/8gb profiles with differing Ollama models."""
+        detection = self._hw_selector.resolved()
+        profile = detection.profile if detection is not None else None
+        other_provider = str(self._values.get("evaluate_provider", ""))
+        other_model = str(self._values.get("evaluate_model", ""))
+        show = (
+            profile in ("cpu", "8gb")
+            and self._correction_provider.currentText() == "ollama"
+            and other_provider == "ollama"
+            and self._correction_model.currentText().strip() != other_model
+        )
+        self._same_model_tip_lbl.setVisible(show)
 
     def _on_provider_changed(self, provider: str) -> None:
         info = self._app_service.get_provider_info(provider)
@@ -411,6 +551,8 @@ class CorrectionSettingsDialog(QDialog):
         self._app_service.invalidate_model_cache(
             provider, self._ollama_url if provider == "ollama" else ""
         )
+        # Hint line and "Use best choice" button exist only for Ollama.
+        self._guidance.setVisible(provider == "ollama")
 
         if provider in _PROVIDER_EXTRA:
             _extra, _pkgs = _PROVIDER_EXTRA[provider]
@@ -420,6 +562,14 @@ class CorrectionSettingsDialog(QDialog):
         self._correction_extra_warn.setText(warn)
         self._correction_extra_warn.setVisible(bool(warn))
 
+    def _refetch_models(self) -> None:
+        """Invalidate the model cache and fetch the list again."""
+        self._app_service.invalidate_model_cache(
+            "ollama",
+            self._ollama_url if self._correction_provider.currentText() == "ollama" else "",
+        )
+        self._auto_fetch()
+
     def _auto_fetch(self) -> None:
         provider = self._correction_provider.currentText()
         info = self._app_service.get_provider_info(provider)
@@ -427,15 +577,31 @@ class CorrectionSettingsDialog(QDialog):
             self._corr_status_lbl.setText(_STATUS_KEY_MISSING)
             return
         url = self._ollama_url if provider == "ollama" else ""
-        cached = self._app_service.get_cached_models(provider, base_url=url)
+        # Ollama always goes through the thread (a cache hit there is instant):
+        # classifying custom models must not run on the GUI thread.
+        cached = (
+            None
+            if provider == "ollama"
+            else self._app_service.get_cached_models(provider, base_url=url)
+        )
         if cached is not None:
             self._on_models_fetched(cached)
             return
         self._corr_status_lbl.setText(_STATUS_LOADING)
-        _stop_thread(self._corr_fetch_thread)
-        self._corr_fetch_thread = _ModelFetchThread(
-            lambda p=provider, u=url: self._app_service.list_provider_models(p, base_url=u)
-        )
+        _retire_thread(self._corr_fetch_thread)
+        if provider == "ollama":
+
+            def fetch() -> list[str]:
+                tags = self._app_service.list_provider_models(provider, base_url=url)
+                # Classify here so set_models() only needs cache lookups.
+                self._app_service.classify_ollama_models(tags, url)
+                return tags
+
+            self._corr_fetch_thread = _ModelFetchThread(fetch)
+        else:
+            self._corr_fetch_thread = _ModelFetchThread(
+                lambda p=provider, u=url: self._app_service.list_provider_models(p, base_url=u)
+            )
         self._corr_fetch_thread.models_ready.connect(self._on_models_fetched)
         self._corr_fetch_thread.start()
 
@@ -444,6 +610,10 @@ class CorrectionSettingsDialog(QDialog):
             self._corr_status_lbl.setText(_STATUS_ERROR)
             return
         self._corr_status_lbl.setText(_status_ok(len(models)))
+        if self._correction_provider.currentText() == "ollama":
+            self._guidance.set_models(models)
+            self._update_same_model_tip()  # set_models() blocks the combo's signals
+            return
         prev = self._correction_model.currentText()
         self._correction_model.clear()
         self._correction_model.addItems(models)
@@ -480,6 +650,8 @@ class EvaluationSettingsDialog(QDialog):
         parent: QWidget | None = None,
         *,
         app_service: _SettingsAppService | None = None,
+        hardware_profile: str = "auto",
+        open_downloads: OpenDownloads | None = None,
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Content Review Settings")
@@ -491,6 +663,8 @@ class EvaluationSettingsDialog(QDialog):
         self._app_service = app_service or ProcessingApplicationService()
         self._eval_fetch_thread: _ModelFetchThread | None = None
         self._ollama_url = str(values.get("ollama_url", DEFAULTS["ollama_url"]))
+        self._values = values
+        self._open_downloads = open_downloads
 
         main = QVBoxLayout(self)
         main.setSpacing(8)
@@ -505,7 +679,7 @@ class EvaluationSettingsDialog(QDialog):
         layout.setSpacing(12)
 
         layout.addWidget(self._build_prompt_group(prompt))
-        layout.addWidget(self._build_model_group())
+        layout.addWidget(self._build_model_group(hardware_profile))
         layout.addStretch(1)
         main.addWidget(scroll, stretch=1)
 
@@ -529,6 +703,11 @@ class EvaluationSettingsDialog(QDialog):
 
         self._auto_fetch()
 
+    def done(self, result: int) -> None:
+        """Stop background threads before the dialog is destroyed."""
+        _retire_thread(self._eval_fetch_thread)
+        super().done(result)
+
     def _build_prompt_group(self, prompt: str) -> QGroupBox:
         """Build the content-review-instructions (system prompt) group."""
         prompt_group = QGroupBox("Content Review Instructions")
@@ -546,11 +725,23 @@ class EvaluationSettingsDialog(QDialog):
         prompt_layout.addWidget(self._prompt_edit)
         return prompt_group
 
-    def _build_model_group(self) -> QGroupBox:
+    def _build_model_group(self, hardware_profile: str = "auto") -> QGroupBox:
         """Build the AI-service (provider + model) group."""
+        from ._hardware_profile_selector import HardwareProfileSelector  # noqa: PLC0415
+        from ._model_guidance import OllamaModelGuidance  # noqa: PLC0415
+
         model_group = QGroupBox("AI Service")
         model_form = QFormLayout(model_group)
         model_form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapAllRows)
+
+        self._hw_selector = HardwareProfileSelector(
+            app_service=self._app_service,
+            setting=hardware_profile,
+            ollama_url=self._ollama_url,
+            read_only=True,
+            parent=model_group,
+        )
+        model_form.addRow(self._hw_selector)
 
         self._evaluation_provider = QComboBox()
         self._evaluation_provider.addItems(_available_providers(self._app_service))
@@ -575,6 +766,29 @@ class EvaluationSettingsDialog(QDialog):
         el.addWidget(self._eval_status_lbl)
         model_form.addRow("AI model:", self._evaluation_model_row)
 
+        self._guidance = OllamaModelGuidance(
+            combo=self._evaluation_model,
+            app_service=self._app_service,
+            category="general",
+            profile_selector=self._hw_selector,
+            ollama_url=self._ollama_url,
+            open_downloads=self._open_downloads,
+            refetch=self._refetch_models,
+            parent=model_group,
+        )
+        model_form.addRow("", self._guidance)
+
+        self._same_model_tip_lbl = QLabel(SAME_MODEL_TIP)
+        self._same_model_tip_lbl.setWordWrap(True)
+        self._same_model_tip_lbl.setStyleSheet("color: #888; font-size: 11px;")
+        self._same_model_tip_lbl.setVisible(False)
+        model_form.addRow("", self._same_model_tip_lbl)
+
+        self._evaluation_model.currentTextChanged.connect(
+            lambda _txt: self._update_same_model_tip()
+        )
+        self._hw_selector.resolved_changed.connect(lambda _d: self._update_same_model_tip())
+
         self._eval_temperature = QDoubleSpinBox()
         self._eval_temperature.setRange(0.0, 2.0)
         self._eval_temperature.setSingleStep(0.1)
@@ -586,6 +800,20 @@ class EvaluationSettingsDialog(QDialog):
         )
         model_form.addRow("Temperature:", self._eval_temperature)
         return model_group
+
+    def _update_same_model_tip(self) -> None:
+        """Show the same-model tip for cpu/8gb profiles with differing Ollama models."""
+        detection = self._hw_selector.resolved()
+        profile = detection.profile if detection is not None else None
+        other_provider = str(self._values.get("correction_provider", ""))
+        other_model = str(self._values.get("correction_model", ""))
+        show = (
+            profile in ("cpu", "8gb")
+            and self._evaluation_provider.currentText() == "ollama"
+            and other_provider == "ollama"
+            and self._evaluation_model.currentText().strip() != other_model
+        )
+        self._same_model_tip_lbl.setVisible(show)
 
     def _on_provider_changed(self, provider: str) -> None:
         info = self._app_service.get_provider_info(provider)
@@ -604,6 +832,8 @@ class EvaluationSettingsDialog(QDialog):
         self._app_service.invalidate_model_cache(
             provider, self._ollama_url if provider == "ollama" else ""
         )
+        # Hint line and "Use best choice" button exist only for Ollama.
+        self._guidance.setVisible(provider == "ollama")
 
         if provider in _PROVIDER_EXTRA:
             _extra, _pkgs = _PROVIDER_EXTRA[provider]
@@ -613,6 +843,14 @@ class EvaluationSettingsDialog(QDialog):
         self._eval_extra_warn.setText(warn)
         self._eval_extra_warn.setVisible(bool(warn))
 
+    def _refetch_models(self) -> None:
+        """Invalidate the model cache and fetch the list again."""
+        self._app_service.invalidate_model_cache(
+            "ollama",
+            self._ollama_url if self._evaluation_provider.currentText() == "ollama" else "",
+        )
+        self._auto_fetch()
+
     def _auto_fetch(self) -> None:
         provider = self._evaluation_provider.currentText()
         info = self._app_service.get_provider_info(provider)
@@ -620,15 +858,31 @@ class EvaluationSettingsDialog(QDialog):
             self._eval_status_lbl.setText(_STATUS_KEY_MISSING)
             return
         url = self._ollama_url if provider == "ollama" else ""
-        cached = self._app_service.get_cached_models(provider, base_url=url)
+        # Ollama always goes through the thread (a cache hit there is instant):
+        # classifying custom models must not run on the GUI thread.
+        cached = (
+            None
+            if provider == "ollama"
+            else self._app_service.get_cached_models(provider, base_url=url)
+        )
         if cached is not None:
             self._on_models_fetched(cached)
             return
         self._eval_status_lbl.setText(_STATUS_LOADING)
-        _stop_thread(self._eval_fetch_thread)
-        self._eval_fetch_thread = _ModelFetchThread(
-            lambda p=provider, u=url: self._app_service.list_provider_models(p, base_url=u)
-        )
+        _retire_thread(self._eval_fetch_thread)
+        if provider == "ollama":
+
+            def fetch() -> list[str]:
+                tags = self._app_service.list_provider_models(provider, base_url=url)
+                # Classify here so set_models() only needs cache lookups.
+                self._app_service.classify_ollama_models(tags, url)
+                return tags
+
+            self._eval_fetch_thread = _ModelFetchThread(fetch)
+        else:
+            self._eval_fetch_thread = _ModelFetchThread(
+                lambda p=provider, u=url: self._app_service.list_provider_models(p, base_url=u)
+            )
         self._eval_fetch_thread.models_ready.connect(self._on_models_fetched)
         self._eval_fetch_thread.start()
 
@@ -637,6 +891,10 @@ class EvaluationSettingsDialog(QDialog):
             self._eval_status_lbl.setText(_STATUS_ERROR)
             return
         self._eval_status_lbl.setText(_status_ok(len(models)))
+        if self._evaluation_provider.currentText() == "ollama":
+            self._guidance.set_models(models)
+            self._update_same_model_tip()  # set_models() blocks the combo's signals
+            return
         prev = self._evaluation_model.currentText()
         self._evaluation_model.clear()
         self._evaluation_model.addItems(models)
@@ -692,6 +950,10 @@ class SettingsDialog(QDialog):
         self._detected_gpus: list = []
         self._input_dir = input_dir
         self._app_service = app_service or ProcessingApplicationService()
+        self._hardware_profile_setting = str(values.get("hardware_profile", "auto"))
+        # Known before any widget is built: "My computer" must detect for the
+        # configured server, not for the default one.
+        self._initial_ollama_url = str(values.get("ollama_url") or DEFAULTS["ollama_url"])
 
         main = QVBoxLayout(self)
         main.setSpacing(8)
@@ -721,8 +983,10 @@ class SettingsDialog(QDialog):
         buttons.rejected.connect(self.reject)
         main.addWidget(buttons)
 
-        if "ollama_url" in values:
-            self._ollama_url.setText(str(values["ollama_url"]))
+    def done(self, result: int) -> None:
+        """Detach the GPU-detection thread before the dialog is destroyed."""
+        _retire_thread(self._gpu_detect_thread)
+        super().done(result)
 
     def _build_ollama_group(self) -> QGroupBox:
         """Build the Ollama server-URL group."""
@@ -731,7 +995,7 @@ class SettingsDialog(QDialog):
         ollama_form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapAllRows)
 
         self._ollama_url_label = QLabel("Server URL:")
-        self._ollama_url = QLineEdit(DEFAULTS["ollama_url"])
+        self._ollama_url = QLineEdit(self._initial_ollama_url)
         self._ollama_url.setToolTip(
             "The address of your Ollama server. Used for all text recognition,\n"
             "proofreading, and content review steps that use Ollama."
@@ -749,9 +1013,22 @@ class SettingsDialog(QDialog):
 
     def _build_performance_group(self) -> QGroupBox:
         """Build the GPU-detection / performance group."""
+        from ._hardware_profile_selector import HardwareProfileSelector  # noqa: PLC0415
+
         hw_group = QGroupBox("Performance")
         hw_form = QFormLayout(hw_group)
         hw_form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapAllRows)
+
+        self._hardware_selector = HardwareProfileSelector(
+            app_service=self._app_service,
+            setting=self._hardware_profile_setting,
+            ollama_url=self._ollama_url.text(),
+        )
+        # editingFinished, not textChanged: a half-typed URL must not trigger detection.
+        self._ollama_url.editingFinished.connect(
+            lambda: self._hardware_selector.set_ollama_url(self._ollama_url.text().strip())
+        )
+        hw_form.addRow(self._hardware_selector)
 
         self._gpu_detect_btn = QPushButton("Detect GPU")
         self._gpu_detect_btn.setFixedWidth(120)
@@ -944,13 +1221,15 @@ class SettingsDialog(QDialog):
         self._gpu_detect_btn.setEnabled(False)
         self._gpu_status_lbl.setText("Detecting…")
         self._gpu_install_btn.setVisible(False)
-        self._gpu_detect_thread = _GpuDetectThread()
+        self._gpu_detect_thread = _GpuDetectThread(self._app_service)
         self._gpu_detect_thread.detect_done.connect(self._on_gpu_detected)
         self._gpu_detect_thread.finished.connect(lambda: self._gpu_detect_btn.setEnabled(True))
         self._gpu_detect_thread.start()
 
     def _on_gpu_detected(self, gpus: list) -> None:
         self._detected_gpus = gpus
+        # The probe was just repeated: let "My computer" describe the new result.
+        self._hardware_selector.refresh_status()
         if not gpus:
             self._gpu_status_lbl.setText("No NVIDIA or AMD GPU detected.")
             self._gpu_install_btn.setVisible(False)
@@ -976,6 +1255,7 @@ class SettingsDialog(QDialog):
         """Return connection settings for ConfigPanel.update_settings()."""
         return {
             "ollama_url": self._ollama_url.text().strip() or DEFAULTS["ollama_url"],
+            "hardware_profile": self._hardware_selector.setting(),
         }
 
 

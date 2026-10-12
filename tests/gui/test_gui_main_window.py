@@ -1181,3 +1181,275 @@ def test_main_window_env_var_takes_priority_over_stored_credential(qtbot, monkey
     qtbot.addWidget(win)
 
     assert os.environ["TEST_CRED_KEY_PRIO"] == "env-value"
+
+
+# ── first-start model choice (AC12/AC13) ──────────────────────────────────
+
+
+def _make_first_start_window(qtbot, monkeypatch, tmp_path: Path, detection) -> MainWindow:
+    """Create a MainWindow that takes the first-start path (no ocr.toml)."""
+    monkeypatch.setattr(main_window_module, "UpdateCheckThread", _DummyUpdateThread)
+    monkeypatch.setattr(MainWindow, "_check_llm_status", lambda self: None)
+    monkeypatch.setattr(
+        ProcessingApplicationService, "resolve_config_path", lambda self, explicit: None
+    )
+    monkeypatch.setattr(
+        ProcessingApplicationService,
+        "default_config_path",
+        lambda self: tmp_path / "ocr.toml",
+    )
+    monkeypatch.setattr(
+        ProcessingApplicationService, "detect_hardware", lambda self, url, **_kw: detection
+    )
+    win = MainWindow(worker_factory=_DummyWorker)
+    qtbot.addWidget(win)
+    return win
+
+
+@pytest.mark.use_case("Recommended_Models_On_First_Start")
+def test_first_start_selects_best_models_for_profile(qtbot, monkeypatch, tmp_path: Path) -> None:
+    """
+    Given  a first start (no ocr.toml) on a detected 16 GB machine
+    When   background detection finishes
+    Then   the models are set to the 16 GB BEST picks, the choice is logged,
+           and settings are saved (AC12)
+    """
+    from teachers_teammate.domain.model_catalog import DetectionReason, HardwareDetection  # noqa: PLC0415
+
+    detection = HardwareDetection(
+        profile="16gb", reason=DetectionReason.GPU_DETECTED, gpu_name="RTX 4090", memory_gb=24.0
+    )
+    win = _make_first_start_window(qtbot, monkeypatch, tmp_path, detection)
+    qtbot.waitUntil(lambda: "First start" in win._log.toPlainText(), timeout=5000)
+
+    settings = win._config_panel.get_settings_dict()
+    assert settings["ocr_model"] == "qwen3-vl:8b"
+    assert settings["correction_model"] == "gpt-oss:20b"
+    assert settings["evaluate_model"] == "gpt-oss:20b"
+    assert "chose reading model qwen3-vl:8b and writing model gpt-oss:20b" in win._log.toPlainText()
+    saved = (tmp_path / "ocr.toml").read_text(encoding="utf-8")
+    assert 'ocr_model = "qwen3-vl:8b"' in saved
+
+
+@pytest.mark.use_case("Recommended_Models_On_First_Start")
+def test_existing_config_models_untouched(qtbot, monkeypatch, tmp_path: Path) -> None:
+    """
+    Given  an existing ocr.toml with a custom model
+    When   the window starts
+    Then   no detection-based model change happens (AC13)
+    """
+    from teachers_teammate.domain.model_catalog import DetectionReason, HardwareDetection  # noqa: PLC0415
+
+    config_path = tmp_path / "ocr.toml"
+    config_path.write_text(
+        'ocr_model = "my-model:latest"\n'
+        'correction_model = "my-writer:latest"\n'
+        'evaluate_model = "my-writer:latest"\n',
+        encoding="utf-8",
+    )
+    detection = HardwareDetection(
+        profile="16gb", reason=DetectionReason.GPU_DETECTED, gpu_name="RTX 4090", memory_gb=24.0
+    )
+    detect_calls: list = []
+    monkeypatch.setattr(main_window_module, "UpdateCheckThread", _DummyUpdateThread)
+    monkeypatch.setattr(MainWindow, "_check_llm_status", lambda self: None)
+    monkeypatch.setattr(
+        ProcessingApplicationService, "resolve_config_path", lambda self, explicit: config_path
+    )
+    monkeypatch.setattr(
+        ProcessingApplicationService,
+        "default_config_path",
+        lambda self: config_path,
+    )
+
+    def _spy_detect(self, url, **_kw):
+        detect_calls.append(url)
+        return detection
+
+    monkeypatch.setattr(ProcessingApplicationService, "detect_hardware", _spy_detect)
+    win = MainWindow(worker_factory=_DummyWorker)
+    qtbot.addWidget(win)
+
+    settings = win._config_panel.get_settings_dict()
+    assert settings["ocr_model"] == "my-model:latest"
+    assert settings["correction_model"] == "my-writer:latest"
+    assert detect_calls == []
+
+
+@pytest.mark.use_case("Recommended_Models_On_First_Start")
+def test_first_start_non_ollama_correction_provider_untouched(
+    qtbot, monkeypatch, tmp_path: Path
+) -> None:
+    """
+    Given  a first start where the correction provider is not Ollama
+    When   background detection finishes
+    Then   correction_model is not replaced
+    """
+    from teachers_teammate.config import DEFAULTS  # noqa: PLC0415
+    from teachers_teammate.domain.model_catalog import DetectionReason, HardwareDetection  # noqa: PLC0415
+
+    monkeypatch.setitem(DEFAULTS, "correction_provider", "openai")
+    detection = HardwareDetection(
+        profile="16gb", reason=DetectionReason.GPU_DETECTED, gpu_name="RTX 4090", memory_gb=24.0
+    )
+    win = _make_first_start_window(qtbot, monkeypatch, tmp_path, detection)
+    qtbot.waitUntil(lambda: "First start" in win._log.toPlainText(), timeout=5000)
+    settings = win._config_panel.get_settings_dict()
+    assert settings["correction_model"] == DEFAULTS["correction_model"]
+    assert settings["ocr_model"] == "qwen3-vl:8b"  # ocr provider still updated
+
+
+@pytest.mark.use_case("Hardware_Profile_Override")
+def test_hardware_profile_changed_persists_to_settings(
+    main_window, monkeypatch, tmp_path: Path
+) -> None:
+    """
+    Given  a MainWindow
+    When   the Downloads dialog reports a hardware_profile change
+    Then   the value is stored in the config panel and saved to ocr.toml
+    """
+    monkeypatch.setattr(
+        ProcessingApplicationService,
+        "default_config_path",
+        lambda self: tmp_path / "ocr.toml",
+    )
+    main_window._on_hardware_profile_changed("16gb")
+    assert main_window._config_panel.get_settings_dict()["hardware_profile"] == "16gb"
+    saved = (tmp_path / "ocr.toml").read_text(encoding="utf-8")
+    assert 'hardware_profile = "16gb"' in saved
+
+
+# ── downloads wiring (review findings #1, #9, #10 and the GPU tab) ─────────
+
+
+@pytest.mark.use_case("Model_Category_Guidance")
+def test_finished_pull_evicts_cached_model_list(main_window, monkeypatch) -> None:
+    """
+    Given  a pull that finished (possibly after the Downloads dialog was closed)
+    When   the pull manager reports it
+    Then   the main window evicts the model list of the server it pulled from, so
+           the pre-run "model missing" check does not use a stale cache
+    """
+    evicted: list[str] = []
+    monkeypatch.setattr(
+        ProcessingApplicationService,
+        "on_ollama_models_changed",
+        lambda self, url: evicted.append(url),
+    )
+    main_window._pull_manager._current_url = "http://gpu-box:11434"
+    main_window._on_pull_finished("qwen3-vl:8b")
+    assert evicted == ["http://gpu-box:11434"]
+
+
+@pytest.mark.use_case("Recommended_Models_On_First_Start")
+def test_missing_model_box_opens_downloads_with_models_preselected(
+    main_window, monkeypatch
+) -> None:
+    """
+    Given  a run whose configured models are not installed
+    When   the user chooses "Open Downloads →" in the warning
+    Then   Downloads opens with exactly the missing models preselected
+    """
+    from unittest.mock import MagicMock  # noqa: PLC0415
+
+    class _Box:
+        class Icon:
+            Warning = None
+
+        class ButtonRole:
+            RejectRole = None
+            ActionRole = None
+
+        def __init__(self, *_a, **_k) -> None:
+            self._buttons: list[object] = []
+
+        def setWindowTitle(self, _t: str) -> None: ...
+        def setText(self, _t: str) -> None: ...
+        def setIcon(self, _i: object) -> None: ...
+
+        def addButton(self, text: str, _role: object) -> object:
+            button = object()
+            self._buttons.append(button)
+            return button
+
+        def exec(self) -> int:
+            return 0
+
+        def clickedButton(self) -> object:
+            return self._buttons[-1]  # "Open Downloads →"
+
+    monkeypatch.setattr(main_window._config_panel, "to_config", lambda: MagicMock())
+    monkeypatch.setattr(
+        ProcessingApplicationService,
+        "check_ollama_models_ready",
+        lambda self, config: ["qwen3-vl:8b", "qwen3.5:9b"],
+    )
+    monkeypatch.setattr(main_window_module, "QMessageBox", _Box)
+    opened: list[dict] = []
+    monkeypatch.setattr(
+        main_window, "_open_downloads_dialog_ollama_tab", lambda **kw: opened.append(kw)
+    )
+
+    main_window._on_run()
+
+    assert opened == [{"preselect": ["qwen3-vl:8b", "qwen3.5:9b"]}]
+
+
+@pytest.mark.use_case("Hardware_Profile_Override")
+def test_downloads_callback_uses_given_parent_and_returns_profile(main_window, monkeypatch) -> None:
+    """
+    Given  the callback task dialogs use to open Downloads
+    When   a dialog calls it with itself as parent
+    Then   Downloads opens on top of that dialog with the models preselected and
+           the callback returns the saved "My computer" setting
+    """
+    from PySide6.QtWidgets import QWidget  # noqa: PLC0415
+
+    main_window._config_panel.update_settings({"hardware_profile": "16gb"})
+    recorded: list[dict] = []
+    monkeypatch.setattr(
+        main_window, "_open_downloads_dialog_ollama_tab", lambda **kw: recorded.append(kw)
+    )
+    parent = QWidget()
+    qtbot_parent = parent  # keep a reference for the assertion below
+
+    result = main_window._make_downloads_callback()(["gpt-oss:20b"], parent)
+
+    assert result == "16gb"
+    assert recorded == [
+        {"start_tab": 0, "preselect": ["gpt-oss:20b"], "dialog_parent": qtbot_parent}
+    ]
+
+
+@pytest.mark.use_case("Runtime_Addon_Installation")
+def test_stats_gpu_button_opens_the_gpu_addons_tab(main_window, monkeypatch) -> None:
+    """
+    Given  the GPU button of the system-stats widget
+    When   it requests the Downloads dialog
+    Then   the GPU add-ons tab is opened (it used to open the first tab)
+    """
+    from teachers_teammate.gui._downloads_dialog import DownloadsDialog  # noqa: PLC0415
+
+    recorded: list[dict] = []
+    monkeypatch.setattr(
+        main_window, "_open_downloads_dialog_ollama_tab", lambda **kw: recorded.append(kw)
+    )
+    main_window._stats.open_downloads_requested.emit()
+    assert recorded == [{"start_tab": DownloadsDialog.TAB_GPU}]
+
+
+def test_close_waits_for_background_tasks(main_window, monkeypatch, tmp_path: Path) -> None:
+    """
+    Given  a MainWindow
+    When   it is closed
+    Then   running background tasks get a bounded moment to finish
+    """
+    monkeypatch.setattr(
+        ProcessingApplicationService, "default_config_path", lambda self: tmp_path / "ocr.toml"
+    )
+    waited: list[bool] = []
+    monkeypatch.setattr(
+        main_window_module, "wait_for_background_tasks", lambda *a, **k: waited.append(True)
+    )
+    main_window.close()
+    assert waited == [True]

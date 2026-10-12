@@ -12,6 +12,14 @@ import time
 import uuid
 
 from ..config import Config, OcrConfig
+from ..domain.model_catalog import (
+    HardwareDetection,
+    HardwareProfile,
+    ModelCategory,
+    ModelRating,
+    ModelUses,
+    OllamaModelSpec,
+)
 from ..infrastructure.addon_manager import ADDON_AMD as ADDON_AMD  # noqa: PLC0414
 from ..infrastructure.addon_manager import ADDON_NVIDIA as ADDON_NVIDIA  # noqa: PLC0414
 from ..infrastructure.addon_manager import ADDON_PADDLE as ADDON_PADDLE  # noqa: PLC0414
@@ -62,6 +70,7 @@ from ..infrastructure.workflow.cache_service import (
 )
 from ..interfaces import SUPPORTED_SUFFIXES
 from .commands import ApplicationCommands
+from .model_recommendations import ModelRecommendationService
 
 
 @dataclasses.dataclass(frozen=True)
@@ -93,6 +102,10 @@ class ProcessingApplicationService:
         self._component_factory = component_factory or PipelineComponentFactory()
         self._anonymizer_cache: dict[tuple, object] = {}
         self._model_cache: dict[str, tuple[float, list[str]]] = {}
+        # Owns hardware detection and model classification (and their caches).
+        self._recommendations = ModelRecommendationService(
+            invalidate_model_list=self._evict_ollama_model_list
+        )
         self._commands = ApplicationCommands(
             discovery=self._discovery,
             state_store_factory=self._state_store,
@@ -197,6 +210,21 @@ class ProcessingApplicationService:
         """Return provider metadata used for model picker defaults."""
         return get_provider_info(provider)
 
+    @staticmethod
+    def _model_cache_key(provider: str, base_url: str = "") -> str:
+        """Return the cache key for *provider*'s model list.
+
+        Ollama URLs are normalised so ``"http://host:11434/"`` and
+        ``"http://host:11434"`` — and an omitted URL, which means the default
+        server — share one entry; otherwise an invalidation could miss the entry
+        that was cached under the other spelling.
+        """
+        if provider == "ollama":
+            from ..infrastructure.ollama_utils import normalize_ollama_url  # noqa: PLC0415
+
+            return f"ollama:{normalize_ollama_url(base_url)}"
+        return f"{provider}:{base_url}" if base_url else provider
+
     def list_provider_models(self, provider: str, *, base_url: str = "") -> list[str]:
         """Return available models for a provider (result is TTL-cached per instance)."""
         cached = self.get_cached_models(provider, base_url=base_url)
@@ -204,22 +232,76 @@ class ProcessingApplicationService:
             return cached
         kwargs: dict[str, str] = {"base_url": base_url} if base_url else {}
         result = list_provider_models(provider, **kwargs)
-        key = f"{provider}:{base_url}" if base_url else provider
-        self._model_cache[key] = (time.monotonic(), result)
+        self._model_cache[self._model_cache_key(provider, base_url)] = (time.monotonic(), result)
         return result
 
     def get_cached_models(self, provider: str, *, base_url: str = "") -> list[str] | None:
         """Return cached model list for *provider* if still within TTL, else ``None``."""
-        key = f"{provider}:{base_url}" if base_url else provider
-        entry = self._model_cache.get(key)
+        entry = self._model_cache.get(self._model_cache_key(provider, base_url))
         if entry and (time.monotonic() - entry[0]) < self._MODEL_CACHE_TTL_S:
             return entry[1]
         return None
 
     def invalidate_model_cache(self, provider: str, base_url: str = "") -> None:
-        """Evict the cached model list for *provider* (forces re-fetch on next call)."""
-        key = f"{provider}:{base_url}" if base_url else provider
-        self._model_cache.pop(key, None)
+        """Evict the cached model list for *provider* (forces re-fetch on next call).
+
+        For Ollama this also forgets the model classifications of that server.
+        """
+        self._model_cache.pop(self._model_cache_key(provider, base_url), None)
+        if provider == "ollama":
+            self._recommendations.invalidate_classification(base_url)
+
+    def _evict_ollama_model_list(self, normalized_url: str) -> None:
+        """Drop only the cached Ollama model list (the recommender evicts the rest)."""
+        self._model_cache.pop(self._model_cache_key("ollama", normalized_url), None)
+
+    # ── Hardware profiles & model recommendations (delegated) ─────────────
+
+    def detect_hardware(self, ollama_url: str, *, refresh: bool = False) -> HardwareDetection:
+        """Return the hardware detection for the machine that runs Ollama."""
+        return self._recommendations.detect_hardware(ollama_url, refresh=refresh)
+
+    def resolve_hardware_profile(self, setting: str, ollama_url: str) -> HardwareDetection:
+        """Resolve the ``hardware_profile`` *setting* into a concrete detection."""
+        return self._recommendations.resolve_hardware_profile(setting, ollama_url)
+
+    def ollama_catalog(self) -> tuple[OllamaModelSpec, ...]:
+        """Return the curated Ollama model catalog."""
+        return self._recommendations.ollama_catalog()
+
+    def best_ollama_model(self, category: ModelCategory, profile: HardwareProfile) -> str:
+        """Return the BEST Ollama model tag for *category* on *profile*."""
+        return self._recommendations.best_ollama_model(category, profile)
+
+    def classify_ollama_models(
+        self, tags: list[str], ollama_url: str, *, cached_only: bool = False
+    ) -> dict[str, ModelUses | None]:
+        """Return ``{tag: "ocr" | "general" | None}``; ``cached_only`` never contacts Ollama."""
+        return self._recommendations.classify_ollama_models(
+            tags, ollama_url, cached_only=cached_only
+        )
+
+    def rate_ollama_models(
+        self,
+        tags: list[str],
+        task: ModelCategory,
+        profile: HardwareProfile,
+        ollama_url: str,
+        *,
+        cached_only: bool = False,
+    ) -> list[ModelRating]:
+        """Return a :class:`ModelRating` per tag for *task* on *profile*."""
+        return self._recommendations.rate_ollama_models(
+            tags, task, profile, ollama_url, cached_only=cached_only
+        )
+
+    def first_run_model_settings(self, profile: HardwareProfile) -> dict[str, str]:
+        """Return the first-start model settings (BEST picks) for *profile*."""
+        return self._recommendations.first_run_model_settings(profile)
+
+    def on_ollama_models_changed(self, ollama_url: str) -> None:
+        """Evict the model list and classifications of *ollama_url* (call after a pull)."""
+        self._recommendations.on_ollama_models_changed(ollama_url)
 
     def default_model_for_task(self, provider: str, task: str) -> str:
         """Resolve default model for provider and task."""
@@ -583,12 +665,18 @@ class ProcessingApplicationService:
                 result[key] = importlib.util.find_spec(pkg_module) is not None
 
         if ollama_models:
+            from ..domain.model_catalog import normalize_tag  # noqa: PLC0415
+
             try:
-                pulled = set(self.list_provider_models("ollama", base_url=ollama_url))
+                # Compare normalised tags: "llama3.2" and "llama3.2:latest" are one model.
+                pulled = {
+                    normalize_tag(name)
+                    for name in self.list_provider_models("ollama", base_url=ollama_url)
+                }
             except Exception:  # noqa: BLE001  # Ollama may be unreachable; treat as no models pulled
                 pulled = set()
             for model in ollama_models:
-                result[f"ollama:{model}"] = model in pulled
+                result[f"ollama:{model}"] = normalize_tag(model) in pulled
 
         if langchain_packages:
             for key, module_name in langchain_packages.items():
@@ -608,11 +696,14 @@ class ProcessingApplicationService:
 
     # ── GPU / addon installer helpers ─────────────────────────────────────
 
-    def detect_gpus(self) -> list[GpuInfo]:
-        """Return all detected NVIDIA and AMD GPUs."""
-        from ..infrastructure.gpu_detector import detect_gpus as _detect  # noqa: PLC0415
+    def detect_gpus(self, *, refresh: bool = False) -> list[GpuInfo]:
+        """Return all detected NVIDIA and AMD GPUs.
 
-        return _detect()
+        Served from the process-wide hardware probe, so the "Detect GPU" button
+        and the "My computer" detection never probe the machine twice;
+        ``refresh=True`` probes again.
+        """
+        return self._recommendations.detected_gpus(refresh=refresh)
 
     def addon_packages_dir(self) -> Path:
         """Return the persistent user-writable directory for addon packages."""

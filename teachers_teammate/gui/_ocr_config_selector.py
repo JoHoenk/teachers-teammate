@@ -31,6 +31,8 @@ from PySide6.QtWidgets import (
 )
 
 from ..config import DEFAULTS, OcrConfig
+from ._hardware_profile_selector import HardwareProfileSelector
+from ._model_guidance import OllamaModelGuidance, OpenDownloads
 from ._settings_dialog import (
     _NATIVE_OCR_ENGINES,
     _STATUS_ERROR,
@@ -39,10 +41,10 @@ from ._settings_dialog import (
     _available_providers,
     _install_hint,
     _ModelFetchThread,
+    _retire_thread,
     _set_combo,
     _SettingsAppService,
     _status_ok,
-    _stop_thread,
 )
 
 
@@ -58,6 +60,8 @@ class OcrConfigSelector(QWidget):
         app_service: _SettingsAppService,
         ollama_url: str = DEFAULTS["ollama_url"],
         show_preview_button: bool = True,
+        hardware_profile: str = "auto",
+        open_downloads: OpenDownloads | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -68,8 +72,18 @@ class OcrConfigSelector(QWidget):
         form = QFormLayout(self)
         form.setContentsMargins(0, 0, 0, 0)
         form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapAllRows)
+
+        self._hw_selector = HardwareProfileSelector(
+            app_service=app_service,
+            setting=hardware_profile,
+            ollama_url=ollama_url,
+            read_only=True,
+            parent=self,
+        )
+        form.addRow(self._hw_selector)
+
         self._build_engine_row(form)
-        self._build_model_row(form)
+        self._build_model_row(form, open_downloads)
         self._build_preprocess_row(form, show_preview_button)
         self._build_temperature_row(form)
 
@@ -94,7 +108,7 @@ class OcrConfigSelector(QWidget):
         self._install_btn.clicked.connect(self._on_install_paddle_addon)
         form.addRow("", self._install_btn)
 
-    def _build_model_row(self, form: QFormLayout) -> None:
+    def _build_model_row(self, form: QFormLayout, open_downloads: OpenDownloads | None) -> None:
         self._ocr_model_label = QLabel("Model:")
         self._ocr_model_row = QWidget()
         ml = QHBoxLayout(self._ocr_model_row)
@@ -108,6 +122,19 @@ class OcrConfigSelector(QWidget):
         ml.addWidget(self._ocr_model, stretch=1)
         ml.addWidget(self._status_lbl)
         form.addRow(self._ocr_model_label, self._ocr_model_row)
+
+        # Suitability hint + "Use best choice" button (Ollama engine only).
+        self._guidance = OllamaModelGuidance(
+            combo=self._ocr_model,
+            app_service=self._app_service,
+            category="ocr",
+            profile_selector=self._hw_selector,
+            ollama_url=self._ollama_url,
+            open_downloads=open_downloads,
+            refetch=self._refetch_ollama_models,
+            parent=self,
+        )
+        form.addRow("", self._guidance)
 
     def _build_preprocess_row(self, form: QFormLayout, show_preview_button: bool) -> None:
         preprocess_row = QWidget()
@@ -210,6 +237,8 @@ class OcrConfigSelector(QWidget):
     def set_ollama_url(self, url: str) -> None:
         """Update the Ollama base URL used when fetching models."""
         self._ollama_url = url or DEFAULTS["ollama_url"]
+        self._hw_selector.set_ollama_url(self._ollama_url)
+        self._guidance.set_ollama_url(self._ollama_url)
 
     def load_ocr_config(self, ocr: OcrConfig) -> None:
         """Populate the controls from an :class:`OcrConfig` value object."""
@@ -256,15 +285,15 @@ class OcrConfigSelector(QWidget):
         self._on_engine_changed(self._ocr_engine.currentText())
 
     def stop_threads(self) -> None:
-        """Wait for any in-flight model-fetch thread to finish (call before closing).
+        """Detach any in-flight model-fetch thread (call before closing).
 
-        The fetch thread runs a plain function with no event loop, so ``quit()``
-        cannot interrupt it; we wait for it to complete so it is not destroyed
-        while still running (which aborts the process).
+        The fetch thread runs a plain function with no event loop, so it cannot be
+        interrupted and must not be destroyed while running (that aborts the
+        process).  It is parked until it ends on its own, without blocking the
+        GUI thread.  Hardware detection needs no handling: it runs on the shared
+        background pool.
         """
-        thread = self._fetch_thread
-        if thread is not None and thread.isRunning():
-            thread.wait(5000)
+        _retire_thread(self._fetch_thread)
 
     # ── internal ───────────────────────────────────────────────────────────
 
@@ -285,6 +314,8 @@ class OcrConfigSelector(QWidget):
         is_provider_engine = engine not in _NATIVE_OCR_ENGINES
         self._ocr_model_label.setVisible(is_ollama or is_provider_engine)
         self._ocr_model_row.setVisible(is_ollama or is_provider_engine)
+        # Hint line and "Use best choice" button exist only for Ollama.
+        self._guidance.setVisible(is_ollama)
 
         paddle_missing = engine == "paddleocr" and not self._app_service.is_module_importable(
             "paddleocr"
@@ -321,16 +352,19 @@ class OcrConfigSelector(QWidget):
     def _auto_fetch(self) -> None:
         engine = self._ocr_engine.currentText()
         if engine == "ollama":
-            cached = self._app_service.get_cached_models("ollama", base_url=self._ollama_url)
-            if cached is not None:
-                self._on_models_fetched(cached)
-                return
+            # Always fetch in the thread (a cache hit there is instant): the
+            # classification of custom models must not run on the GUI thread.
             self._status_lbl.setText(_STATUS_LOADING)
-            _stop_thread(self._fetch_thread)
+            _retire_thread(self._fetch_thread)
             url = self._ollama_url
-            self._fetch_thread = _ModelFetchThread(
-                lambda: self._app_service.list_provider_models("ollama", base_url=url)
-            )
+
+            def fetch() -> list[str]:
+                tags = self._app_service.list_provider_models("ollama", base_url=url)
+                # Classify here so set_models() only needs cache lookups.
+                self._app_service.classify_ollama_models(tags, url)
+                return tags
+
+            self._fetch_thread = _ModelFetchThread(fetch)
             self._fetch_thread.models_ready.connect(self._on_models_fetched)
             self._fetch_thread.start()
         elif engine not in _NATIVE_OCR_ENGINES:
@@ -343,7 +377,7 @@ class OcrConfigSelector(QWidget):
                 self._on_models_fetched(cached)
                 return
             self._status_lbl.setText(_STATUS_LOADING)
-            _stop_thread(self._fetch_thread)
+            _retire_thread(self._fetch_thread)
             self._fetch_thread = _ModelFetchThread(
                 lambda p=engine: self._app_service.list_provider_models(p)
             )
@@ -352,11 +386,21 @@ class OcrConfigSelector(QWidget):
         else:
             self._status_lbl.setText("")
 
+    def _refetch_ollama_models(self) -> None:
+        """Invalidate the Ollama model cache and fetch the list again."""
+        self._app_service.invalidate_model_cache("ollama", base_url=self._ollama_url)
+        self._auto_fetch()
+
     def _on_models_fetched(self, models: list) -> None:
         if not models:
             self._status_lbl.setText(_STATUS_ERROR)
             return
         self._status_lbl.setText(_status_ok(len(models)))
+        if self._ocr_engine.currentText() == "ollama":
+            # Guidance sorts by suitability and decorates via roles; the combo
+            # text stays the raw tag.
+            self._guidance.set_models(models)
+            return
         prev = self._ocr_model.currentText()
         self._ocr_model.clear()
         self._ocr_model.addItems(models)

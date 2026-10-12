@@ -16,17 +16,35 @@ Ollama runs AI vision models locally on your machine. Teacher's Teammate sends e
 
 **Ollama must be running** before you start a processing run. Download it from [ollama.com/download](https://ollama.com/download) and install it like any other program. By default Teacher's Teammate connects to `http://127.0.0.1:11434` (your own computer). If you run Ollama on a dedicated machine on your local network, change the address in **Advanced Settings → Connections & API Keys…** or set `ollama_url` in the settings file — for example `http://192.168.1.50:11434`.
 
+**Upgrading from an earlier version:** the built-in default models changed. Without explicit model settings the app (and the command line) now uses `qwen3-vl:8b` for reading (before: `deepseek-ocr:latest`) and `qwen3.5:9b` for proofreading and content review (before: `gpt-oss:20b`) on the default 8 GB profile. Download them in **Advanced Settings → Downloads…**, or keep your previous choice by setting `ocr_model`, `correction_model` and `evaluate_model` in the settings file. Settings you saved earlier are not changed.
+
 **Reading models and hardware requirements:**
 
-The memory a model needs depends on its size, measured in billions of parameters (b). Ollama loads models using 4-bit quantisation by default, which significantly reduces memory usage compared to the full model weight.
+Teacher's Teammate distinguishes three computer types ("hardware profiles"): a basic computer or small graphics card (`cpu`), a graphics card with about 8 GB of memory (`8gb`), and a graphics card with 16 GB or more (`16gb`). The type is detected automatically from the graphics card and its memory (on Apple Silicon, from the shared memory), and shown as the **My computer** setting. The profile decides which models the app calls a best choice and which it marks as too large.
 
-| Model | Parameters | Min. VRAM (GPU) | Min. RAM (CPU-only) | Notes |
-|---|---|---|---|---|
-| `deepseek-ocr:latest` | ~3 b | 4 GB | 8 GB | Strong on dense and structured documents |
-| `qwen3-vl:8b` | ~8 b | 6 GB | 12 GB | Best overall for handwriting — recommended |
-| `glm-ocr:latest` | ~9 b | 8 GB | 16 GB | Good for printed and mixed-language scans |
+**Reading models** (turn scans into text):
 
-A dedicated graphics card (GPU) with enough video memory (VRAM) gives the best throughput. CPU-only inference works but is considerably slower — expect several minutes per page for larger models.
+| Model | Memory (running) | Download | cpu | 8 GB | 16 GB | Notes |
+|---|---|---|---|---|---|---|
+| `glm-ocr:q8_0` | ~2.5 GB | 1.6 GB | ★ best | good | good | Small and fast; printed and mixed-language pages |
+| `qwen3-vl:8b` | ~7 GB | 6.1 GB | too slow | ★ best | ★ best | Best overall for handwriting |
+| `deepseek-ocr:latest` | ~7 GB | 6.7 GB | too slow | good | good | Strong on dense, structured pages |
+| `qwen2.5vl:7b` | ~7 GB | 6.0 GB | too slow | works | works | Older version of qwen3-vl |
+
+**Writing models** (proofreading and content review):
+
+| Model | Memory (running) | Download | cpu | 8 GB | 16 GB | Notes |
+|---|---|---|---|---|---|---|
+| `qwen3:4b` | ~3.5 GB | 2.5 GB | ★ best | works | works | Small model for computers without a graphics card |
+| `qwen3.5:9b` | ~7 GB | 6.6 GB | too slow | ★ best | good | Best writing model for 8 GB |
+| `mistral:latest` | ~5.5 GB | 4.4 GB | too slow | good | works | Reliable all-rounder |
+| `mistral-nemo:12b` | ~8.5 GB | 7.1 GB | too slow | too large | good | Good with long texts |
+| `gemma4:12b` | ~9.5 GB | 8.0 GB | too slow | too large | good | Larger writing model |
+| `gpt-oss:20b` | ~14 GB | 13.8 GB | too slow | too large | ★ best | Best writing model for 16 GB |
+
+The `hardware_profile` setting in the settings file (TOML format) controls the profile. Allowed values are `auto` (detect — default), `cpu`, `8gb` and `16gb`; an invalid value falls back to `auto` with a warning. With `auto` the app picks the profile from the largest detected graphics card (≥ 15 GB → `16gb`, ≥ 7 GB → `8gb`, otherwise `cpu`; on Apple Silicon it uses two thirds of the shared memory with the same thresholds). When `ollama_url` points at another computer, local detection is skipped and `8gb` is assumed — change the profile yourself if you know what that machine has. An address that names *this* computer (its own host name or network address) counts as this computer. The setting affects only recommendations; it never changes which model is configured.
+
+A dedicated graphics card (GPU) with enough video memory (VRAM) gives the best throughput. Models marked "too large"/"too slow" for your profile still run — Ollama falls back to CPU inference — but expect several minutes per page for larger models. The Downloads dialog asks for confirmation before downloading such a model.
 
 **Downloading reading models:**
 
@@ -36,7 +54,7 @@ Open **Advanced Settings → Downloads…** inside Teacher's Teammate, go to the
 ollama pull qwen3-vl:8b
 ```
 
-Any [vision model available on Ollama](https://ollama.com/library) can be used; the models listed above are the tested and recommended choices. Some newer reading models are distributed through Hugging Face rather than the Ollama library — see *Understanding AI models* below for how to install those.
+Any [vision model available on Ollama](https://ollama.com/library) can be used; the models listed above are the tested and recommended choices. Models that are not in the built-in catalog stay in the **Other models** group. The app asks Ollama what such a model can do: a model that can read images may be used for reading *and* writing, a text-only model for writing only; a model whose abilities cannot be determined is marked "No suggestion available". The size of these models is unknown, so they are never marked as too large. The built-in reading models are the other way round: they are meant for turning scans into text and are not offered for proofreading or content review. Some newer reading models are distributed through Hugging Face rather than the Ollama library — see *Understanding AI models* below for how to install those.
 
 ### 2. [Tesseract](https://tesseract-ocr.github.io/) OCR
 

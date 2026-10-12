@@ -43,11 +43,14 @@ from ..application.service import (
 from ..config import DEFAULTS, Config, OcrConfig, dump_config_file, load_config_file
 from ..domain.stages import PROGRESS_STAGE_OCR, PROGRESS_STAGE_PREPROCESSING
 from ._app_bootstrap import create_app
+from ._background import LatestTask, wait_for_background_tasks
 from ._chart_widget import ChartWidget
 from ._config_panel import ConfigPanel
 from ._help_dialog import AboutDialog, HelpDialog, ThirdPartyLicensesDialog
 from ._image_utils import load_icon, load_pixmap
 from ._log_widget import LogWidget
+from ._model_guidance import OpenDownloads
+from ._model_wording import profile_text
 from ._preview_panel import DiffWidget, PreviewPanel, ZoomableImageView
 from ._results_table import ResultsTable
 from ._settings_dialog import (
@@ -191,6 +194,7 @@ class OllamaDownloadManager(QObject):
         super().__init__(parent)
         self._thread: QThread | None = None
         self._current_model: str = ""
+        self._current_url: str = ""
 
     @property
     def is_active(self) -> bool:
@@ -200,6 +204,11 @@ class OllamaDownloadManager(QObject):
     def current_model(self) -> str:
         return self._current_model
 
+    @property
+    def current_url(self) -> str:
+        """Ollama server of the latest (or running) pull."""
+        return self._current_url
+
     def start(self, url: str, model_name: str) -> None:
         """Start pulling *model_name* from *url*. No-op if a pull is already running."""
         if self.is_active:
@@ -207,6 +216,7 @@ class OllamaDownloadManager(QObject):
         from ._addon_installer_dialog import _OllamaPullThread  # noqa: PLC0415
 
         self._current_model = model_name
+        self._current_url = url
         thread = _OllamaPullThread(url, model_name)
         thread.progress.connect(self.progress)
         thread.finished_ok.connect(self._on_finished_ok)
@@ -266,6 +276,7 @@ class MainWindow(QMainWindow):
         self._config_path: Path | None = None
         self._pull_manager = OllamaDownloadManager(self)
         self._privacy_preview_thread: _AnonymizeThread | None = None
+        self._first_run_task = LatestTask(self)
         self._preprocess_preview_thread: _PreprocessPreviewThread | None = None
         self._result_names: list[str] = []
         self._result_ocr_times: list[float] = []
@@ -432,7 +443,9 @@ class MainWindow(QMainWindow):
         )
         self._config_panel.set_service(self._app_service)
         self._config_panel.open_downloads_requested.connect(
-            lambda tab: self._open_downloads_dialog_ollama_tab(start_tab=tab)
+            lambda tab, preselect: self._open_downloads_dialog_ollama_tab(
+                start_tab=tab, preselect=list(preselect)
+            )
         )
         layout.addWidget(self._config_panel)
 
@@ -531,7 +544,7 @@ class MainWindow(QMainWindow):
         chart_splitter = QSplitter(Qt.Orientation.Vertical)
         self._chart = ChartWidget()
         self._stats = SystemStatsWidget()
-        self._stats.open_downloads_requested.connect(self._open_downloads_dialog)
+        self._stats.open_downloads_requested.connect(self._open_downloads_gpu_tab)
         chart_splitter.addWidget(self._chart)
         chart_splitter.addWidget(self._stats)
         chart_splitter.setStretchFactor(0, 3)
@@ -563,7 +576,10 @@ class MainWindow(QMainWindow):
                 pass
         QTimer.singleShot(0, lambda s=sizes: self._main_splitter.setSizes(s))
 
-        if config_path is None:
+        if config_path is None or not config_path.exists():
+            # First start (no ocr.toml yet): pick the best models for this
+            # computer once detection finishes, then persist the choice.
+            self._apply_first_start_model_settings()
             return
         self._config_path = config_path
         try:
@@ -583,6 +599,55 @@ class MainWindow(QMainWindow):
             self._log.append_text(f"Loaded settings from {config_path}\n")
         except Exception as exc:  # noqa: BLE001  # config file may be missing, malformed, or use an unexpected type; log the warning and continue
             self._log.append_text(f"WARNING: Could not load {config_path}: {exc}\n")
+
+    def _apply_first_start_model_settings(self) -> None:
+        """Start first-start hardware detection in the background (AC12/AC13)."""
+        service = self._app_service
+        ollama_url = self._current_ollama_url()
+        # Detection must never get in the way of starting the app: any failure
+        # simply leaves the static defaults in place.
+        self._first_run_task.submit(
+            lambda: service.detect_hardware(ollama_url), self._on_first_start_detection
+        )
+
+    def _on_first_start_detection(self, detection: object, error: BaseException | None) -> None:
+        """Replace untouched static defaults with the BEST models for the profile."""
+        from ..domain.model_catalog import HardwareDetection  # noqa: PLC0415
+
+        if error is not None or not isinstance(detection, HardwareDetection):
+            return
+        settings = self._config_panel.get_settings_dict()
+        best = self._app_service.first_run_model_settings(detection.profile)
+        apply: dict[str, str] = {}
+        if (
+            settings.get("ocr_engine") == "ollama"
+            and settings.get("ocr_model") == DEFAULTS["ocr_model"]
+        ):
+            apply["ocr_model"] = best["ocr_model"]
+        if (
+            settings.get("correction_provider") == "ollama"
+            and settings.get("correction_model") == DEFAULTS["correction_model"]
+        ):
+            apply["correction_model"] = best["correction_model"]
+        if (
+            settings.get("evaluate_provider") == "ollama"
+            and settings.get("evaluate_model") == DEFAULTS["evaluate_model"]
+        ):
+            apply["evaluate_model"] = best["evaluate_model"]
+        if not apply:
+            return
+        self._config_panel.update_settings(apply)
+        ocr_model = apply.get("ocr_model", str(settings.get("ocr_model", "")))
+        general_model = apply.get("correction_model") or apply.get(
+            "evaluate_model", best["correction_model"]
+        )
+        self._log.append_text(
+            f"First start: chose reading model {ocr_model} and writing model "
+            f"{general_model} for your computer ({profile_text(detection.profile)}). "
+            "You can download them under Advanced Settings → Downloads.\n"
+        )
+        self._save_settings(notify=False)
+        self._check_llm_status()
 
     def _save_settings(self, *, notify: bool = True, silent_on_error: bool = False) -> None:
         # Persist window geometry and splitter sizes to QSettings (UI state, not pipeline config)
@@ -609,6 +674,11 @@ class MainWindow(QMainWindow):
             self._save_settings(notify=False, silent_on_error=True)
         except Exception:  # noqa: BLE001  # never block window close on a settings-save error
             pass
+        self._first_run_task.cancel()
+        # Let the window disappear before waiting: running background tasks are
+        # given a moment to end, and the user should not see a frozen window.
+        self.hide()
+        wait_for_background_tasks()
         event.accept()
 
     # ── Run / Stop ────────────────────────────────────────────────────────
@@ -711,18 +781,18 @@ class MainWindow(QMainWindow):
             downloads_btn = box.addButton("Open Downloads →", QMessageBox.ButtonRole.ActionRole)
             box.exec()
             if box.clickedButton() is downloads_btn:
-                self._open_downloads_dialog_ollama_tab()
+                self._open_downloads_dialog_ollama_tab(preselect=list(missing_models))
             return
+
+        from ._downloads_dialog import DownloadsDialog  # noqa: PLC0415
 
         stages_to_check: list[tuple[str, int]] = []
         if config.anonymization_enabled:
-            from ._downloads_dialog import DownloadsDialog  # noqa: PLC0415
-
             stages_to_check.append(("anonymizer", DownloadsDialog.TAB_SPACY))
         if config.correction_enabled:
-            stages_to_check.append(("correction", 0))
+            stages_to_check.append(("correction", DownloadsDialog.TAB_OLLAMA))
         if config.evaluation_enabled:
-            stages_to_check.append(("evaluation", 0))
+            stages_to_check.append(("evaluation", DownloadsDialog.TAB_OLLAMA))
         for stage, tab in stages_to_check:
             issues = self._app_service.check_stage_requirements(config, stage)
             if issues:
@@ -1136,6 +1206,11 @@ class MainWindow(QMainWindow):
             self._pull_progress_bar.setToolTip(f"{mb_done:.1f} / {mb_total:.1f} MB")
 
     def _on_pull_finished(self, _model_name: str) -> None:
+        # Also covers pulls that finish after the Downloads dialog was closed:
+        # without this the cached model list stays stale for minutes.
+        self._app_service.on_ollama_models_changed(
+            self._pull_manager.current_url or self._current_ollama_url()
+        )
         self._restore_status_labels()
 
     def _on_pull_error(self, msg: str) -> None:
@@ -1441,10 +1516,13 @@ class MainWindow(QMainWindow):
 
     def _open_ocr_settings(self) -> None:
         """Open the focused OCR Settings dialog."""
+        settings = self._config_panel.get_settings_dict()
         dialog = OCRSettingsDialog(
-            self._config_panel.get_settings_dict(),
+            settings,
             self,
             app_service=self._app_service,
+            hardware_profile=self._current_hardware_profile(),
+            open_downloads=self._make_downloads_callback(),
         )
         dialog.preprocess_preview_requested.connect(self._on_preprocess_preview_requested)
         dialog.addon_installed.connect(self._on_addon_installed)
@@ -1462,6 +1540,8 @@ class MainWindow(QMainWindow):
             self._config_panel.get_correction_prompt(),
             self,
             app_service=self._app_service,
+            hardware_profile=self._current_hardware_profile(),
+            open_downloads=self._make_downloads_callback(),
         )
         if dialog.exec() == QDialog.DialogCode.Accepted:
             self._config_panel.update_settings(dialog.get_values())
@@ -1477,6 +1557,8 @@ class MainWindow(QMainWindow):
             self._config_panel.get_evaluation_prompt(),
             self,
             app_service=self._app_service,
+            hardware_profile=self._current_hardware_profile(),
+            open_downloads=self._make_downloads_callback(),
         )
         if dialog.exec() == QDialog.DialogCode.Accepted:
             self._config_panel.update_settings(dialog.get_values())
@@ -1516,17 +1598,59 @@ class MainWindow(QMainWindow):
     def _open_downloads_dialog(self) -> None:
         self._open_downloads_dialog_ollama_tab(start_tab=0)
 
-    def _open_downloads_dialog_ollama_tab(self, *, start_tab: int = 2) -> None:
+    def _open_downloads_gpu_tab(self) -> None:
+        """Open Downloads on the GPU add-ons tab (used by the stats widget's GPU button)."""
         from ._downloads_dialog import DownloadsDialog  # noqa: PLC0415
 
-        ollama_url = str(self._config_panel.get_settings_dict().get("ollama_url", ""))
+        self._open_downloads_dialog_ollama_tab(start_tab=DownloadsDialog.TAB_GPU)
+
+    def _current_hardware_profile(self) -> str:
+        """Return the saved hardware-profile setting shared by every dialog."""
+        return str(self._config_panel.get_settings_dict().get("hardware_profile", "auto"))
+
+    def _current_ollama_url(self) -> str:
+        return str(self._config_panel.get_settings_dict().get("ollama_url", DEFAULTS["ollama_url"]))
+
+    def _make_downloads_callback(self) -> OpenDownloads:
+        """Return the callback task dialogs use to open Downloads on top of themselves.
+
+        The callback returns the ``hardware_profile`` setting after the dialog
+        closed so the calling dialog can follow a "My computer" change.
+        """
+
+        def open_downloads(preselect: list[str], parent: QWidget | None) -> str | None:
+            self._open_downloads_dialog_ollama_tab(
+                start_tab=0, preselect=list(preselect), dialog_parent=parent
+            )
+            return self._current_hardware_profile()
+
+        return open_downloads
+
+    def _on_hardware_profile_changed(self, setting: str) -> None:
+        """Persist a "My computer" change made in the Downloads dialog."""
+        self._config_panel.update_settings({"hardware_profile": setting})
+        self._save_settings(notify=False)
+
+    def _open_downloads_dialog_ollama_tab(
+        self,
+        *,
+        start_tab: int = 0,
+        preselect: list[str] | None = None,
+        dialog_parent: QWidget | None = None,
+    ) -> None:
+        from ._downloads_dialog import DownloadsDialog  # noqa: PLC0415
+
         dialog = DownloadsDialog(
-            ollama_url=ollama_url,
+            ollama_url=self._current_ollama_url(),
             start_tab=start_tab,
-            parent=self,
+            parent=dialog_parent or self,
             pull_manager=self._pull_manager,
+            hardware_profile=self._current_hardware_profile(),
+            preselect=preselect or (),
+            app_service=self._app_service,
         )
         dialog.packages_changed.connect(self._check_llm_status)
+        dialog.hardware_profile_changed.connect(self._on_hardware_profile_changed)
         dialog.exec()
 
     def _on_addon_installed(self, addon: str) -> None:

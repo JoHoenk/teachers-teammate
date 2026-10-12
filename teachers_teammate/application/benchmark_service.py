@@ -15,15 +15,22 @@ from collections.abc import Callable
 from pathlib import Path
 import threading
 
-from ..config import DEFAULTS, Config, OcrConfig
+from ..config import DEFAULTS, Config, OcrConfig, load_config_file
 from ..domain.benchmark import PairComparison, compare_pair
+from ..domain.model_catalog import (
+    HardwareDetection,
+    HardwareProfile,
+    ModelCategory,
+    ModelRating,
+    ModelUses,
+)
 from ..infrastructure.benchmark.run_store import BenchmarkRunStore, NewRunRequest, StoredRun
 from ..infrastructure.benchmark.runner import OcrRunResult, run_ocr
 from ..infrastructure.ocr_processor import get_ocr_prompt
 from ..infrastructure.stage_builder import PipelineComponentFactory
 from ..infrastructure.state_repository import compute_file_hash
 from ..infrastructure.workflow.cache_service import compute_ocr_config_hash
-from .service import ProcessingApplicationService
+from .service import GpuInfo, ProcessingApplicationService
 
 _Runner = Callable[..., OcrRunResult]
 
@@ -59,6 +66,19 @@ class BenchmarkApplicationService:
     def default_preprocess_for_engine(self, engine: str) -> str:
         return self._processing.default_preprocess_for_engine(engine)
 
+    def load_saved_settings(self) -> dict:
+        """Return the settings the main app saved (``ocr.toml``), or ``{}``.
+
+        Benchmark has no settings of its own: it follows the main app's Ollama
+        server and "My computer" choice.  A missing or unreadable file is not an
+        error — the defaults apply.
+        """
+        try:
+            path = self._processing.resolve_config_path(None)
+            return load_config_file(path) if path is not None else {}
+        except Exception:  # noqa: BLE001  # a broken settings file must never keep Benchmark from opening
+            return {}
+
     def get_provider_info(self, provider: str) -> dict:
         return self._processing.get_provider_info(provider)
 
@@ -73,6 +93,38 @@ class BenchmarkApplicationService:
 
     def is_module_importable(self, module: str) -> bool:
         return self._processing.is_module_importable(module)
+
+    def resolve_hardware_profile(self, setting: str, ollama_url: str) -> HardwareDetection:
+        """Return the hardware detection for *setting* (delegated)."""
+        return self._processing.resolve_hardware_profile(setting, ollama_url)
+
+    def detect_hardware(self, ollama_url: str, *, refresh: bool = False) -> HardwareDetection:
+        """Detect the hardware profile (delegated)."""
+        return self._processing.detect_hardware(ollama_url, refresh=refresh)
+
+    def detect_gpus(self, *, refresh: bool = False) -> list[GpuInfo]:
+        """Return the GPUs of this computer (delegated, served from the shared probe)."""
+        return self._processing.detect_gpus(refresh=refresh)
+
+    def classify_ollama_models(
+        self, tags: list[str], ollama_url: str, *, cached_only: bool = False
+    ) -> dict[str, ModelUses | None]:
+        """Classify Ollama models into reading/writing models (delegated)."""
+        return self._processing.classify_ollama_models(tags, ollama_url, cached_only=cached_only)
+
+    def rate_ollama_models(
+        self,
+        tags: list[str],
+        task: ModelCategory,
+        profile: HardwareProfile,
+        ollama_url: str,
+        *,
+        cached_only: bool = False,
+    ) -> list[ModelRating]:
+        """Rate Ollama models for a task on a hardware profile (delegated)."""
+        return self._processing.rate_ollama_models(
+            tags, task, profile, ollama_url, cached_only=cached_only
+        )
 
     def default_model_for_task(self, provider: str, task: str) -> str:
         return self._processing.default_model_for_task(provider, task)

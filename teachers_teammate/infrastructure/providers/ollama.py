@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from langchain_core.language_models import BaseChatModel
 
+from teachers_teammate.domain.model_catalog import FALLBACK_PROFILE, best_model
 from teachers_teammate.exceptions import ProviderNotAvailableError
 
 _DEFAULT_BASE_URL = "http://127.0.0.1:11434"
@@ -18,7 +19,7 @@ PROVIDER_INFO: dict = {
     "env_key": "",
     "needs_base_url": True,
     "can_list_models": True,
-    "default_model": "hf.co/unsloth/gpt-oss-20b-GGUF:UD-Q4_K_XL",
+    "default_model": best_model("general", FALLBACK_PROFILE),
     "models": [],
 }
 

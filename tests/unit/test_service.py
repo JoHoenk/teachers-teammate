@@ -837,3 +837,380 @@ def test_invalidate_model_cache_forces_refetch() -> None:
         svc.list_provider_models("openai")
 
     assert call_count == 2
+
+
+# ── hardware profiles & model recommendations ───────────────────────────────
+
+
+@pytest.mark.use_case("Hardware_Profile_Override")
+def test_resolve_hardware_profile_manual_setting_skips_detection(monkeypatch) -> None:
+    """
+    Given  a concrete hardware_profile setting ("16gb")
+    When   resolve_hardware_profile is called
+    Then   a MANUAL detection is returned and no detection runs
+    """
+    svc = _make_svc()
+    calls = []
+    monkeypatch.setattr(
+        service_module.ProcessingApplicationService,
+        "detect_hardware",
+        lambda self, url, **kw: calls.append(url),  # pylint: disable=unnecessary-lambda
+    )
+    detection = svc.resolve_hardware_profile("16gb", "http://127.0.0.1:11434")
+    assert detection.profile == "16gb"
+    from teachers_teammate.domain.model_catalog import DetectionReason  # noqa: PLC0415
+
+    assert detection.reason is DetectionReason.MANUAL
+    assert calls == []
+
+
+@pytest.mark.use_case("Model_Recommendation_By_Hardware")
+def test_detect_hardware_probes_this_computer_once(monkeypatch) -> None:
+    """
+    Given  a service with patched GPU detection
+    When   detect_hardware is called repeatedly, also with differently written URLs
+    Then   the detector runs once (process-lifetime probe); refresh re-runs it
+    """
+    from teachers_teammate.infrastructure import gpu_detector  # noqa: PLC0415
+    from teachers_teammate.domain.model_catalog import DetectionReason, HardwareDetection  # noqa: PLC0415
+
+    calls = []
+
+    def fake_detect_gpus():
+        calls.append("gpu")
+        return [gpu_detector.GpuInfo("nvidia", "RTX 4060", 8188)]
+
+    monkeypatch.setattr(gpu_detector, "detect_gpus", fake_detect_gpus)
+    monkeypatch.setattr(gpu_detector, "detect_apple_unified_memory_gb", lambda: None)
+
+    svc = _make_svc()
+    first = svc.detect_hardware("http://127.0.0.1:11434")
+    second = svc.detect_hardware("http://127.0.0.1:11434")
+    # Editing the URL (trailing slash, host spelling) must not probe again.
+    third = svc.detect_hardware("http://localhost:11434/")
+    assert first.profile == "8gb"
+    assert first.reason is DetectionReason.GPU_DETECTED
+    assert second == first
+    assert third == first
+    assert calls == ["gpu"]
+
+    refreshed = svc.detect_hardware("http://127.0.0.1:11434", refresh=True)
+    assert isinstance(refreshed, HardwareDetection)
+    assert calls == ["gpu", "gpu"]
+
+
+@pytest.mark.use_case("Hardware_Profile_Override")
+def test_detect_hardware_remote_url_skips_local_gpus(monkeypatch) -> None:
+    """
+    Given  an Ollama URL pointing at another computer
+    When   detect_hardware is called
+    Then   the REMOTE profile is returned without consulting local GPUs
+    """
+    from teachers_teammate.domain.model_catalog import DetectionReason  # noqa: PLC0415
+
+    def exploding_detect_gpus():
+        raise AssertionError("local GPU detection must not run for remote URLs")
+
+    from teachers_teammate.infrastructure import gpu_detector  # noqa: PLC0415
+
+    monkeypatch.setattr(gpu_detector, "detect_gpus", exploding_detect_gpus)
+    monkeypatch.setattr(gpu_detector, "detect_apple_unified_memory_gb", exploding_detect_gpus)
+
+    svc = _make_svc()
+    detection = svc.detect_hardware("http://192.168.1.50:11434")
+    assert detection.profile == "8gb"
+    assert detection.reason is DetectionReason.REMOTE_SERVER
+    assert detection.host == "192.168.1.50"
+    assert detection.gpu_name is None
+
+
+@pytest.mark.use_case("Hardware_Profile_Override")
+def test_resolve_hardware_profile_unknown_setting_treated_as_auto(monkeypatch) -> None:
+    """
+    Given  an invalid hardware_profile setting value
+    When   resolve_hardware_profile is called
+    Then   the value is treated as "auto" and detection runs
+    """
+    from teachers_teammate.infrastructure import gpu_detector  # noqa: PLC0415
+    from teachers_teammate.domain.model_catalog import DetectionReason  # noqa: PLC0415
+
+    monkeypatch.setattr(
+        gpu_detector, "detect_gpus", lambda: [gpu_detector.GpuInfo("nvidia", "RTX 4060", 8188)]
+    )
+    monkeypatch.setattr(gpu_detector, "detect_apple_unified_memory_gb", lambda: None)
+
+    svc = _make_svc()
+    detection = svc.resolve_hardware_profile("bogus", "http://127.0.0.1:11434")
+    assert detection.profile == "8gb"
+    assert detection.reason is DetectionReason.GPU_DETECTED
+
+
+@pytest.mark.use_case("Model_Category_Guidance")
+def test_classify_ollama_models_uses_catalog_and_caches_capabilities(monkeypatch) -> None:
+    """
+    Given  a mix of catalogued and custom model tags
+    When   classify_ollama_models is called twice
+    Then   catalogued tags resolve from the catalog, unknown tags via
+           model_capabilities, and the result is cached (no second server call)
+    """
+    svc = _make_svc()
+    caps_calls = []
+
+    class _FakeClient:
+        def __init__(self, url: str, *, timeout: float = 0.0) -> None:
+            _ = url, timeout
+
+        def model_capabilities(self, tag: str):
+            caps_calls.append(tag)
+            return frozenset({"vision"}) if "vl" in tag else frozenset({"completion"})
+
+    from teachers_teammate.infrastructure import ollama_utils  # noqa: PLC0415
+
+    monkeypatch.setattr(ollama_utils, "OllamaClient", _FakeClient)
+
+    tags = ["qwen3-vl:8b", "my-custom-vl:latest", "my-custom-text:latest"]
+    result = svc.classify_ollama_models(tags, "http://127.0.0.1:11434")
+    assert result["qwen3-vl:8b"] == frozenset({"ocr"})
+    # A model that can read images may be used for reading AND writing.
+    assert result["my-custom-vl:latest"] == frozenset({"ocr", "general"})
+    assert result["my-custom-text:latest"] == frozenset({"general"})
+    assert sorted(caps_calls) == ["my-custom-text:latest", "my-custom-vl:latest"]
+
+    # Second call is fully cached — the server is not asked again.
+    svc.classify_ollama_models(tags, "http://127.0.0.1:11434")
+    assert len(caps_calls) == 2
+
+    # invalidate_model_cache clears the classification cache.
+    svc.invalidate_model_cache("ollama", "http://127.0.0.1:11434")
+    svc.classify_ollama_models(tags, "http://127.0.0.1:11434")
+    assert len(caps_calls) == 4
+
+    # ... also when the URL is written differently (trailing slash).
+    svc.on_ollama_models_changed("http://127.0.0.1:11434/")
+    svc.classify_ollama_models(tags, "http://127.0.0.1:11434")
+    assert len(caps_calls) == 6
+
+
+@pytest.mark.use_case("Recommended_Models_On_First_Start")
+@pytest.mark.parametrize(
+    "profile",
+    ["cpu", "8gb", "16gb"],
+)
+def test_first_run_model_settings_return_best_models(profile: str) -> None:
+    """
+    Given  a hardware profile
+    When   first_run_model_settings is called
+    Then   ocr_model is the BEST reading model and correction/evaluate are the
+           BEST writing model for that profile
+    """
+    from teachers_teammate.domain.model_catalog import best_model  # noqa: PLC0415
+
+    from typing import cast  # noqa: PLC0415
+
+    from teachers_teammate.domain.model_catalog import HardwareProfile  # noqa: PLC0415
+
+    svc = _make_svc()
+    settings = svc.first_run_model_settings(cast(HardwareProfile, profile))
+    assert settings["ocr_model"] == best_model("ocr", cast(HardwareProfile, profile))
+    assert settings["correction_model"] == best_model("general", cast(HardwareProfile, profile))
+    assert settings["evaluate_model"] == best_model("general", cast(HardwareProfile, profile))
+
+
+@pytest.mark.use_case("Model_Category_Guidance")
+def test_unknown_classification_is_not_cached(monkeypatch) -> None:
+    """
+    Given  a custom model whose capabilities could not be read (None)
+    When   it is classified twice
+    Then   the server is asked both times — "unknown" is never cached, so a
+           model that was not pulled yet is recognised as soon as it is
+    """
+    svc = _make_svc()
+    answers = iter([None, frozenset({"vision"})])
+    asked: list[str] = []
+
+    class _FakeClient:
+        def __init__(self, url: str, *, timeout: float = 0.0) -> None:
+            _ = url, timeout
+
+        def model_capabilities(self, tag: str):
+            asked.append(tag)
+            return next(answers)
+
+    from teachers_teammate.infrastructure import ollama_utils  # noqa: PLC0415
+
+    monkeypatch.setattr(ollama_utils, "OllamaClient", _FakeClient)
+    url = "http://127.0.0.1:11434"
+    assert svc.classify_ollama_models(["my-model:latest"], url) == {"my-model:latest": None}
+    assert svc.classify_ollama_models(["my-model:latest"], url) == {
+        "my-model:latest": frozenset({"ocr", "general"})
+    }
+    assert asked == ["my-model:latest", "my-model:latest"]
+
+
+@pytest.mark.use_case("Model_Category_Guidance")
+def test_unreachable_server_is_asked_once_not_per_model(monkeypatch) -> None:
+    """
+    Given  several custom models and a server that cannot be reached
+    When   they are classified
+    Then   the server is contacted only for the first model (one timeout, not one per
+           model), every model maps to None, and a later call asks again
+    """
+    from teachers_teammate.exceptions import OllamaConnectionError  # noqa: PLC0415
+    from teachers_teammate.infrastructure import ollama_utils  # noqa: PLC0415
+
+    asked: list[str] = []
+    timeouts: list[float] = []
+
+    class _DownClient:
+        def __init__(self, url: str, *, timeout: float = 0.0) -> None:
+            _ = url
+            timeouts.append(timeout)
+
+        def model_capabilities(self, tag: str):
+            asked.append(tag)
+            raise OllamaConnectionError("down")
+
+    monkeypatch.setattr(ollama_utils, "OllamaClient", _DownClient)
+    svc = _make_svc()
+    tags = ["a:latest", "b:latest", "c:latest"]
+    assert svc.classify_ollama_models(tags, "http://127.0.0.1:11434") == dict.fromkeys(tags)
+    assert asked == ["a:latest"]
+    assert timeouts and all(0 < t <= 5 for t in timeouts)  # a short, bounded wait
+
+    svc.classify_ollama_models(tags, "http://127.0.0.1:11434")
+    assert asked == ["a:latest", "a:latest"]  # nothing was cached
+
+
+@pytest.mark.use_case("Model_Category_Guidance")
+def test_cached_only_classification_never_contacts_the_server(monkeypatch) -> None:
+    """
+    Given  a custom model that is not classified yet
+    When   classify_ollama_models is called with cached_only=True
+    Then   the server is not contacted and the model maps to None
+    """
+    svc = _make_svc()
+
+    def exploding_client(url, **_kw):
+        raise AssertionError("cached_only must not contact the server")
+
+    from teachers_teammate.infrastructure import ollama_utils  # noqa: PLC0415
+
+    monkeypatch.setattr(ollama_utils, "OllamaClient", exploding_client)
+    result = svc.classify_ollama_models(
+        ["qwen3-vl:8b", "custom:latest"], "http://x:1", cached_only=True
+    )
+    assert result == {"qwen3-vl:8b": frozenset({"ocr"}), "custom:latest": None}
+
+
+@pytest.mark.use_case("Model_Recommendation_By_Hardware")
+def test_rate_ollama_models_rates_catalog_and_custom_models(monkeypatch) -> None:
+    """
+    Given  a catalogued model and a custom vision model on the server
+    When   rate_ollama_models is called for the reading task on 8 GB
+    Then   the catalog model is BEST with its memory/note and the custom one is
+           a WORKS model for reading (the single rating path of the widgets)
+    """
+    from teachers_teammate.domain.model_catalog import Suitability  # noqa: PLC0415
+    from teachers_teammate.infrastructure import ollama_utils  # noqa: PLC0415
+
+    class _FakeClient:
+        def __init__(self, url: str, *, timeout: float = 0.0) -> None:
+            _ = url, timeout
+
+        def model_capabilities(self, tag: str):
+            _ = tag
+            return frozenset({"vision"})
+
+    monkeypatch.setattr(ollama_utils, "OllamaClient", _FakeClient)
+    svc = _make_svc()
+    ratings = svc.rate_ollama_models(
+        ["qwen3-vl:8b", "my-vision:latest"], "ocr", "8gb", "http://127.0.0.1:11434"
+    )
+    best, custom = ratings
+    assert best.suitability is Suitability.BEST
+    assert best.memory_gb == 7.0
+    assert best.note
+    assert custom.suitability is Suitability.WORKS
+    assert custom.model_uses == frozenset({"ocr", "general"})
+    assert custom.memory_gb is None
+
+
+@pytest.mark.use_case("Model_Category_Guidance")
+def test_ollama_model_cache_key_ignores_url_spelling(monkeypatch) -> None:
+    """
+    Given  the model list cached under "http://host:11434/"
+    When   it is invalidated through "http://host:11434"
+    Then   the entry is gone (both spellings share one cache entry)
+    """
+    calls: list[str] = []
+
+    def fake_list(provider: str, **_kw) -> list[str]:
+        calls.append(provider)
+        return ["a:latest"]
+
+    monkeypatch.setattr(service_module, "list_provider_models", fake_list)
+    svc = _make_svc()
+    svc.list_provider_models("ollama", base_url="http://host:11434/")
+    svc.list_provider_models("ollama", base_url="http://host:11434")
+    assert len(calls) == 1  # second call was a cache hit
+    svc.invalidate_model_cache("ollama", "http://host:11434")
+    svc.list_provider_models("ollama", base_url="http://host:11434/")
+    assert len(calls) == 2
+
+
+@pytest.mark.use_case("Model_Category_Guidance")
+def test_on_ollama_models_changed_evicts_list_and_classification(monkeypatch) -> None:
+    """
+    Given  a cached model list and cached classifications
+    When   on_ollama_models_changed is called (a pull finished)
+    Then   the next lookup asks the server again
+    """
+    installed = ["a:latest"]
+    monkeypatch.setattr(service_module, "list_provider_models", lambda p, **kw: list(installed))
+    svc = _make_svc()
+    url = "http://127.0.0.1:11434"
+    assert svc.list_provider_models("ollama", base_url=url) == ["a:latest"]
+    installed.append("b:latest")  # a pull finished
+    assert svc.list_provider_models("ollama", base_url=url) == ["a:latest"]  # stale cache
+    svc.on_ollama_models_changed(url)
+    assert svc.list_provider_models("ollama", base_url=url) == ["a:latest", "b:latest"]
+
+
+@pytest.mark.use_case("Model_Recommendation_By_Hardware")
+def test_installation_status_compares_normalised_tags(monkeypatch) -> None:
+    """
+    Given  an installed model "llama3.2:latest"
+    When   the installation status asks for "llama3.2" (no suffix)
+    Then   it counts as installed
+    """
+    monkeypatch.setattr(service_module, "list_provider_models", lambda p, **kw: ["llama3.2:latest"])
+    svc = _make_svc()
+    status = svc.get_installation_status(
+        ollama_models=["llama3.2", "other:1b"], ollama_url="http://127.0.0.1:11434"
+    )
+    assert status["ollama:llama3.2"] is True
+    assert status["ollama:other:1b"] is False
+
+
+@pytest.mark.use_case("Model_Recommendation_By_Hardware")
+def test_detect_gpus_is_served_from_the_shared_probe(monkeypatch) -> None:
+    """
+    Given  hardware detection that already probed this computer
+    When   detect_gpus() is called afterwards (the "Detect GPU" button)
+    Then   the machine is not probed a second time
+    """
+    from teachers_teammate.infrastructure import gpu_detector  # noqa: PLC0415
+
+    calls: list[str] = []
+
+    def fake_detect_gpus():
+        calls.append("gpu")
+        return [gpu_detector.GpuInfo("nvidia", "RTX 4060", 8188)]
+
+    monkeypatch.setattr(gpu_detector, "detect_gpus", fake_detect_gpus)
+    monkeypatch.setattr(gpu_detector, "detect_apple_unified_memory_gb", lambda: None)
+    svc = _make_svc()
+    svc.detect_hardware("http://127.0.0.1:11434")
+    gpus = svc.detect_gpus()
+    assert [g.name for g in gpus] == ["RTX 4060"]
+    assert calls == ["gpu"]

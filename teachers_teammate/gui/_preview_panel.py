@@ -9,7 +9,7 @@ from pathlib import Path
 import re
 from typing import Any
 
-from PySide6.QtCore import QEvent, QObject, Qt, Signal
+from PySide6.QtCore import QEvent, QObject, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QFont, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QGraphicsPixmapItem,
@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QPushButton,
     QSplitter,
+    QStackedWidget,
     QTabWidget,
     QTextEdit,
     QToolButton,
@@ -26,6 +27,13 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ..application.formatting import TextFormatter
+from ._formatted_text import (
+    FormattedTextEdit,
+    document_from_qt,
+    install_formatting_shortcuts,
+    render_html,
+)
 from ._image_utils import load_pixmap
 from ._types import StageStatus
 
@@ -192,8 +200,13 @@ class DiffWidget(QTextEdit):
         font.setStyleHint(QFont.StyleHint.TypeWriter)
         font.setPointSize(9)
         self.setFont(font)
+        self._last_key: tuple[str, str, int] | None = None
 
     def set_texts(self, original: str, corrected: str) -> None:
+        key = (original, corrected, self.font().pointSize())
+        if key == self._last_key:
+            return  # same comparison at the same size: keep the rendered diff (and scroll)
+        self._last_key = key
         if not original:
             self.setPlainText("(no OCR text available for comparison)")
             return
@@ -246,6 +259,7 @@ class DiffWidget(QTextEdit):
         return "".join(html.escape(token) for token in tokens)
 
     def clear_diff(self) -> None:
+        self._last_key = None
         self.clear()
 
 
@@ -267,6 +281,11 @@ class _ZoomScrollFilter(QObject):
         return False
 
 
+# Pause after the last keystroke in a formatted view before the edit is converted back to
+# Markdown, stored and re-diffed (each of those passes covers the whole document).
+_EDIT_COMMIT_DELAY_MS = 400
+
+
 class PreviewPanel(QWidget):
     """Zoomable preprocessed image + OCR/correction/evaluation + diff."""
 
@@ -282,6 +301,13 @@ class PreviewPanel(QWidget):
         self._base_font_pt = 9
         self._text_zoom = 0
         self._font_size_lbl: QLabel  # assigned in _build_text_zoom_bar
+        self._source_btn: QPushButton  # assigned in _build_text_zoom_bar
+        self._formatter = TextFormatter()
+        # What each formatted view currently shows, as ``(source text, format)``: typing in one
+        # view must not re-render the other, and a view that is not shown is not rendered.
+        self._rendered: dict[QTextEdit, tuple[str, str]] = {}
+        # Markup-free text per slot ("raw" / "correction"), keyed by the text and format.
+        self._plain_cache: dict[str, tuple[str, str, str]] = {}
 
         splitter = QSplitter(Qt.Orientation.Horizontal)
         splitter.addWidget(self._build_image_panel())
@@ -292,6 +318,16 @@ class PreviewPanel(QWidget):
         self._loading = False
         self._last_raw_text = ""
         self._last_correction_text = ""
+        self._text_format = "plain"  # notation of the OCR text and of its correction
+        self._rendering = False  # True while a formatted view is being filled from source
+        self._editing_view: QTextEdit | None = None  # formatted view the user is typing in
+        # Formatted view with typed text not yet converted to source, and the timer that
+        # commits it once typing pauses (or earlier: focus loss, mode switch, load).
+        self._pending_view: QTextEdit | None = None
+        self._edit_timer = QTimer(self)
+        self._edit_timer.setSingleShot(True)
+        self._edit_timer.setInterval(_EDIT_COMMIT_DELAY_MS)
+        self._edit_timer.timeout.connect(self.flush_pending_edit)
         self._current_source_id: str = ""
         self._processed_pixmap: QPixmap | None = None
         self._original_path: str = ""
@@ -299,6 +335,12 @@ class PreviewPanel(QWidget):
         self._preprocess_steps: Sequence[str] | None = None
         self._ocr_text.textChanged.connect(self._on_ocr_text_changed)
         self._correction_text.textChanged.connect(self._on_correction_text_changed)
+        self._ocr_view.textChanged.connect(lambda: self._on_view_edited(self._ocr_view))
+        self._correction_view.textChanged.connect(
+            lambda: self._on_view_edited(self._correction_view)
+        )
+        self._ocr_view.focus_lost.connect(self.flush_pending_edit)
+        self._correction_view.focus_lost.connect(self.flush_pending_edit)
 
     def _build_image_panel(self) -> QWidget:
         self._image_view = ZoomableImageView()
@@ -355,13 +397,20 @@ class PreviewPanel(QWidget):
         font.setStyleHint(QFont.StyleHint.TypeWriter)
         font.setPointSize(self._base_font_pt)
 
+        # ``_ocr_text`` / ``_correction_text`` hold the stored text (plain or Markdown source)
+        # and are the editable source of truth.  For Markdown text the ``*_view`` widgets show
+        # it formatted; a stack per stage switches between the two.
         self._ocr_text = QTextEdit()
         self._ocr_text.setReadOnly(False)
         self._ocr_text.setFont(font)
+        self._ocr_view = self._make_formatted_view(font)
+        self._ocr_stack = self._make_stack(self._ocr_view, self._ocr_text)
 
         self._correction_text = QTextEdit()
         self._correction_text.setReadOnly(False)
         self._correction_text.setFont(font)
+        self._correction_view = self._make_formatted_view(font)
+        self._correction_stack = self._make_stack(self._correction_view, self._correction_text)
 
         self._evaluation_text = QTextEdit()
         self._evaluation_text.setReadOnly(True)
@@ -374,9 +423,9 @@ class PreviewPanel(QWidget):
         self._correction_nav = _StageNavBar("content review")
         self._correction_nav.run_requested.connect(lambda: self._on_run_stage("evaluation"))
 
-        self._text_tabs.addTab(self._make_nav_tab(self._ocr_text, self._ocr_nav), "Extracted Text")
+        self._text_tabs.addTab(self._make_nav_tab(self._ocr_stack, self._ocr_nav), "Extracted Text")
         self._text_tabs.addTab(
-            self._make_nav_tab(self._correction_text, self._correction_nav), "Proofread Text"
+            self._make_nav_tab(self._correction_stack, self._correction_nav), "Proofread Text"
         )
         self._text_tabs.addTab(self._diff_widget, "± Changes")
         self._text_tabs.addTab(self._evaluation_text, "Content Review")
@@ -389,7 +438,13 @@ class PreviewPanel(QWidget):
         vbox.addWidget(self._text_tabs, stretch=1)
 
         scroll_filter = _ZoomScrollFilter(self._change_text_zoom, self)
-        for _te in (self._ocr_text, self._correction_text, self._evaluation_text):
+        for _te in (
+            self._ocr_text,
+            self._correction_text,
+            self._ocr_view,
+            self._correction_view,
+            self._evaluation_text,
+        ):
             _te.installEventFilter(scroll_filter)
 
         return container
@@ -399,6 +454,15 @@ class PreviewPanel(QWidget):
         layout = QHBoxLayout(bar)
         layout.setContentsMargins(4, 2, 4, 2)
         layout.setSpacing(4)
+        self._source_btn = QPushButton("Source")
+        self._source_btn.setCheckable(True)
+        self._source_btn.setToolTip(
+            "Show the stored text with its formatting marks (Markdown) instead of the "
+            "formatted view. Edits made there are saved as written."
+        )
+        self._source_btn.toggled.connect(self._apply_view_modes)
+        self._source_btn.setVisible(False)
+        layout.addWidget(self._source_btn)
         layout.addStretch()
         zoom_out_btn = QPushButton("A-")
         zoom_out_btn.setFixedWidth(32)
@@ -429,16 +493,129 @@ class PreviewPanel(QWidget):
         for widget in (
             self._ocr_text,
             self._correction_text,
+            self._ocr_view,
+            self._correction_view,
             self._evaluation_text,
             self._diff_widget,
         ):
             widget.setFont(font)
         self._font_size_lbl.setText(f"{new_pt} pt")
 
+    # ── formatted / source views ──────────────────────────────────────────────────
+
+    @staticmethod
+    def _make_formatted_view(font: QFont) -> FormattedTextEdit:
+        """Rich-text editor for Markdown text; edits are converted back to Markdown."""
+        view = FormattedTextEdit()
+        view.setReadOnly(False)
+        view.setFont(font)
+        view.setToolTip(
+            "Ctrl+B bold · Ctrl+I italic · Ctrl+U underline · "
+            "Ctrl+Shift+X crossed out · Ctrl+Shift+= inserted above the line"
+        )
+        install_formatting_shortcuts(view)
+        return view
+
+    @staticmethod
+    def _make_stack(formatted: QWidget, source: QWidget) -> QStackedWidget:
+        stack = QStackedWidget()
+        stack.addWidget(formatted)  # index 0
+        stack.addWidget(source)  # index 1
+        stack.setCurrentIndex(1)
+        return stack
+
+    def _refresh_formatted_views(self) -> None:
+        """Re-render the formatted views whose stored (source) text changed and are shown."""
+        text_format = self._text_format
+        for view, source, stack in (
+            (self._ocr_view, self._ocr_text, self._ocr_stack),
+            (self._correction_view, self._correction_text, self._correction_stack),
+        ):
+            if view is self._editing_view or view is self._pending_view:
+                continue  # the user is typing here; the source is derived from it
+            if text_format != "markdown":
+                if self._rendered.pop(view, None) is not None:
+                    self._set_view_html(view, None)
+                continue
+            if stack.currentIndex() != 0:
+                continue  # showing the source; rendered when the toggle switches back
+            text = source.toPlainText()
+            if self._rendered.get(view) == (text, text_format):
+                continue
+            self._rendered[view] = (text, text_format)
+            self._set_view_html(view, render_html(self._formatter.document(text, text_format)))
+
+    def _set_view_html(self, view: QTextEdit, html_text: str | None) -> None:
+        """Fill *view* (or clear it for ``None``) without treating it as a user edit."""
+        self._rendering = True
+        try:
+            if html_text is None:
+                view.clear()
+            else:
+                view.setHtml(html_text)
+        finally:
+            self._rendering = False
+
+    def _apply_view_modes(self) -> None:
+        """Show the formatted view for Markdown text unless "Source" is toggled on."""
+        self.flush_pending_edit()  # the source must hold the typed text before it is shown
+        is_markdown = self._text_format == "markdown"
+        stack_index = 1 if self._source_btn.isChecked() or not is_markdown else 0
+        self._ocr_stack.setCurrentIndex(stack_index)
+        self._correction_stack.setCurrentIndex(stack_index)
+        self._source_btn.setVisible(is_markdown)
+        self._refresh_formatted_views()
+
+    def _on_view_edited(self, view: QTextEdit) -> None:
+        """Note a keystroke in a formatted view; the conversion waits for a typing pause."""
+        if self._rendering or self._loading or self._editing_view is not None:
+            return
+        if self._pending_view is not None and self._pending_view is not view:
+            self.flush_pending_edit()
+        self._pending_view = view
+        self._edit_timer.start()
+
+    def flush_pending_edit(self) -> None:
+        """Store typed-but-uncommitted text of a formatted view as source text right now."""
+        self._edit_timer.stop()
+        view, self._pending_view = self._pending_view, None
+        if view is not None:
+            self._commit_view_edit(view)
+
+    def _commit_view_edit(self, view: QTextEdit) -> None:
+        """Convert an edit in a formatted view back to Markdown and store it as source."""
+        source = self._ocr_text if view is self._ocr_view else self._correction_text
+        markdown = self._formatter.markdown(document_from_qt(view.document()))
+        if markdown == source.toPlainText():
+            return
+        text_format = self._text_format
+        self._editing_view = view
+        try:
+            source.setPlainText(markdown)  # fires the source handler, which emits the edit signal
+        finally:
+            self._editing_view = None
+        self._rendered[view] = (markdown, text_format)  # the view already shows this text
+
+    def _diff_texts(self) -> tuple[str, str]:
+        """Return the stored OCR and correction text without markup, for diffing."""
+        return (
+            self._plain("raw", self._last_raw_text, self._text_format),
+            self._plain("correction", self._last_correction_text, self._text_format),
+        )
+
+    def _plain(self, slot: str, text: str, text_format: str) -> str:
+        """Return *text* without markup, re-parsing only when the slot's text changed."""
+        cached = self._plain_cache.get(slot)
+        if cached is not None and cached[:2] == (text, text_format):
+            return cached[2]
+        plain = self._formatter.plain_text(text, text_format)
+        self._plain_cache[slot] = (text, text_format, plain)
+        return plain
+
     # ── stage navigation ──────────────────────────────────────────────────────────
 
     @staticmethod
-    def _make_nav_tab(text_widget: QTextEdit, nav_bar: _StageNavBar) -> QWidget:
+    def _make_nav_tab(text_widget: QWidget, nav_bar: _StageNavBar) -> QWidget:
         """Wrap a text editor and a nav bar into a single tab widget."""
         tab = QWidget()
         tab_layout = QVBoxLayout(tab)
@@ -484,12 +661,16 @@ class PreviewPanel(QWidget):
         *,
         original_path: str | None = None,
         preprocess_steps: Sequence[str] | None = None,
+        text_format: str = "plain",
     ) -> None:
         """Show the selected result's image and text payloads.
 
         *original_path* and *preprocess_steps* describe how the image was produced (see
         :meth:`set_preprocessing`); leaving them unset hides the original toggle and caption.
+        *text_format* says whether the OCR and correction texts are ``"plain"`` or
+        ``"markdown"``; Markdown is shown formatted (switch to the source with the toggle).
         """
+        self.flush_pending_edit()  # typed text must not be lost to the replaced content
         self._processed_pixmap = pixmap
         self.set_preprocessing(original_path, preprocess_steps)
         if not pixmap.isNull():
@@ -513,7 +694,9 @@ class PreviewPanel(QWidget):
 
         self._last_raw_text = self._ocr_text.toPlainText()
         self._last_correction_text = self._correction_text.toPlainText()
-        self._diff_widget.set_texts(self._last_raw_text, self._last_correction_text)
+        self._text_format = self._formatter.normalize(text_format)
+        self._apply_view_modes()  # also renders the formatted views that are shown
+        self._diff_widget.set_texts(*self._diff_texts())
 
     def _on_ocr_text_changed(self) -> None:
         if self._loading:
@@ -522,7 +705,8 @@ class PreviewPanel(QWidget):
         if text == self._last_raw_text:
             return
         self._last_raw_text = text
-        self._diff_widget.set_texts(self._last_raw_text, self._last_correction_text)
+        self._refresh_formatted_views()
+        self._diff_widget.set_texts(*self._diff_texts())
         self.ocr_text_edited.emit(text)
 
     def _on_correction_text_changed(self) -> None:
@@ -532,7 +716,8 @@ class PreviewPanel(QWidget):
         if text == self._last_correction_text:
             return
         self._last_correction_text = text
-        self._diff_widget.set_texts(self._last_raw_text, self._last_correction_text)
+        self._refresh_formatted_views()
+        self._diff_widget.set_texts(*self._diff_texts())
         self.correction_text_edited.emit(text)
 
     def set_preprocessing(self, original_path: str | None, steps: Sequence[str] | None) -> None:
@@ -587,14 +772,19 @@ class PreviewPanel(QWidget):
         self._prep_lbl.setVisible(True)
 
     def clear_preview(self) -> None:
+        self.flush_pending_edit()
         self._image_view.clear()
         self._processed_pixmap = None
         self.set_preprocessing(None, None)
         self._loading = True
         self._ocr_text.clear()
         self._correction_text.clear()
+        self._ocr_view.clear()
+        self._correction_view.clear()
         self._evaluation_text.clear()
         self._loading = False
         self._last_raw_text = ""
         self._last_correction_text = ""
+        self._text_format = "plain"
+        self._apply_view_modes()
         self._diff_widget.clear_diff()

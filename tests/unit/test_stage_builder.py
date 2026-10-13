@@ -64,3 +64,35 @@ def test_build_preprocessor_service_uses_configured_pdf_dpi(tmp_path: Path) -> N
 
     assert isinstance(provider, PdfInputProvider)
     assert provider._pdf_dpi == 150
+
+
+def test_build_ocr_postprocessor_uses_factory_callable(tmp_path: Path) -> None:
+    """
+    Given  a PipelineComponentFactory whose build_ocr_postprocessor is overridden
+    When   StageBuilder.build_ocr_postprocessor() is called
+    Then   the injected instance is returned (so adapters/tests can swap the notation stage)
+    """
+    import dataclasses  # noqa: PLC0415
+
+    sentinel = object()
+    factory = dataclasses.replace(
+        PipelineComponentFactory(), build_ocr_postprocessor=lambda: sentinel
+    )
+    builder = StageBuilder(make_config(tmp_path), factory)
+
+    assert builder.build_ocr_postprocessor() is sentinel
+
+
+def test_default_ocr_postprocessor_understands_layout_html(tmp_path: Path) -> None:
+    """
+    Given  the default factory
+    When   its postprocessor processes Chandra-style HTML
+    Then   Markdown is produced
+    """
+    builder = StageBuilder(make_config(tmp_path), PipelineComponentFactory())
+
+    result = builder.build_ocr_postprocessor().process_pages(
+        ['<div data-label="Text"><p><b>x</b></p></div>']
+    )
+
+    assert (result.text, result.text_format) == ("**x**", "markdown")

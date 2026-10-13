@@ -74,6 +74,10 @@ class DocumentState:
     raw_text: str = ""
     correction_text: str = ""
     evaluation_text: str = ""
+    # Notation of ``raw_text`` and ``correction_text`` (the corrector answers in the notation
+    # it was given): "plain" (verbatim) or "markdown".  The default keeps state written
+    # before this field existed rendering as plain text.
+    raw_text_format: str = "plain"
     ocr_done: bool = False
     correction_done: bool = False
     evaluation_done: bool = False
@@ -111,6 +115,9 @@ class DocumentStateView:
     loaded_at: str
     original_img: str = ""
     preprocess_steps: tuple[str, ...] | None = None
+    raw_text_format: str = "plain"
+    """Notation of ``raw_text`` and ``correction_text`` (the corrector answers in the
+    notation it was given)."""
 
 
 @dataclass(frozen=True)
@@ -144,6 +151,7 @@ class OcrResultRecord:
     evaluate_prompt: str
     ocr_config_hash: str
     preview_config_hash: str
+    raw_text_format: str = "plain"
 
 
 class StateRepository:
@@ -188,6 +196,7 @@ class StateRepository:
             preprocess_steps=(
                 None if state.preprocess_steps is None else tuple(state.preprocess_steps)
             ),
+            raw_text_format=state.raw_text_format,
         )
 
     def load_view(self, input_file: Path) -> DocumentStateView | None:
@@ -225,12 +234,27 @@ class StateRepository:
             return None
         try:
             raw = json.loads(path.read_text(encoding="utf-8"))
-            state = DocumentState(**raw)
+            known = {field.name for field in dataclasses.fields(DocumentState)}
+            # Fields dropped by newer versions are ignored rather than discarding the cache.
+            state = DocumentState(**{key: value for key, value in raw.items() if key in known})
         except (OSError, json.JSONDecodeError, TypeError, ValueError):
             return None
         if state.schema_version != self._SCHEMA_VERSION:
             return None
+        if "raw_text_format" not in raw and self._is_unrecognised_markup(state.raw_text):
+            # Written before notations were tracked: this OCR text is raw model markup that
+            # would be shown (and corrected) as literal text.  Treat it as missing so the
+            # document is re-processed; plain-looking legacy text stays valid.
+            return None
         return state
+
+    @staticmethod
+    def _is_unrecognised_markup(raw_text: str) -> bool:
+        if not raw_text:
+            return False
+        from .ocr_formats import looks_like_markup  # noqa: PLC0415
+
+        return looks_like_markup(raw_text)
 
     def save(self, input_file: Path, state: DocumentState) -> None:
         path = self.state_path_for_input(input_file)
@@ -273,6 +297,7 @@ class StateRepository:
             preview_img=record.preview_img,
             source_image=record.source_image,
             raw_text=record.raw_text,
+            raw_text_format=record.raw_text_format,
             ocr_done=bool(record.raw_text),
             correction_done=False,
             evaluation_done=False,
@@ -300,7 +325,11 @@ class StateRepository:
         correction_prompt: str,
         correction_config_hash: str,
     ) -> DocumentState:
-        """Persist correction output and invalidate evaluation output."""
+        """Persist correction output and invalidate evaluation output.
+
+        The corrector sees ``raw_text`` and answers in the same notation, so the correction
+        shares the state's ``raw_text_format``.
+        """
         new_state = dataclasses.replace(
             state,
             correction_done=bool(correction_text),
@@ -345,18 +374,21 @@ class StateRepository:
         raw_text: str,
         preview_img: str,
         ocr_config_hash: str = "",
+        raw_text_format: str | None = None,
     ) -> DocumentState:
         """Persist a manual OCR-text edit and invalidate downstream stages.
 
         *ocr_config_hash* should be the current expected OCR config hash so the
         edit is treated as fresh by reconciliation; otherwise the next run would
-        flag it stale and discard it.
+        flag it stale and discard it.  *raw_text_format* is the notation the edited
+        text is written in; ``None`` keeps the state's current notation.
         """
         new_state = dataclasses.replace(
             state,
             preview_img=preview_img,
             source_image=preview_img,
             raw_text=raw_text,
+            raw_text_format=raw_text_format or state.raw_text_format,
             ocr_done=bool(raw_text),
             ocr_config_hash=ocr_config_hash,
             correction_done=False,
@@ -481,6 +513,7 @@ class StateRepository:
                 original_img="",
                 preprocess_steps=None,
                 raw_text="",
+                raw_text_format="plain",
             )
         if policy.clear_correction:
             updates.update(

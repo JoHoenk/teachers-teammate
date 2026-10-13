@@ -1453,3 +1453,49 @@ def test_close_waits_for_background_tasks(main_window, monkeypatch, tmp_path: Pa
     )
     main_window.close()
     assert waited == [True]
+
+
+@pytest.mark.gui
+def test_main_window_file_done_keeps_the_reported_text_format_without_state(
+    main_window, monkeypatch
+) -> None:
+    """
+    Given  a finished file whose Markdown format the pipeline reported
+    When   _on_file_done runs and the persisted state cannot be read back
+    Then   the row keeps the Markdown format instead of falling back to plain
+    """
+    source = "/tmp/page.png"
+    main_window._results_table.set_queue(["page.png"], source_ids=[source])
+    monkeypatch.setattr(main_window._app_service, "load_view", lambda *_a, **_k: None)
+
+    main_window._on_file_done(
+        FileDoneEvent(
+            source_id=source,
+            name="page.png",
+            ok=True,
+            message="",
+            ocr_s=0.0,
+            correction_s=0.0,
+            raw_txt="**x**",
+            text_format="markdown",
+        )
+    )
+
+    assert main_window._results_table.text_format_for_source(source) == "markdown"
+
+
+@pytest.mark.gui
+def test_main_window_file_started_keeps_the_text_format_of_the_shown_texts(main_window) -> None:
+    """
+    Given  a row that shows Markdown OCR text from the previous run
+    When   the file is started again (re-run) and the user then edits its OCR text
+    Then   the edit is stored with the "markdown" format, not reset to plain: the row still
+           holds the old Markdown text until the new result replaces it
+    """
+    source = "/tmp/rerun.png"
+    main_window._results_table.set_queue(["rerun.png"], source_ids=[source])
+    main_window._results_table.set_text_format(source, "markdown")
+
+    main_window._on_file_started(source, "rerun.png", 1, 1)
+
+    assert main_window._results_table.text_format_for_source(source) == "markdown"

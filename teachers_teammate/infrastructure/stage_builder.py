@@ -24,6 +24,8 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from langchain_core.language_models import BaseChatModel
 
+    from .ocr_formats import OcrOutputPostprocessor
+
 from ..config import Config, OcrConfig
 from ..exceptions import ProviderNotAvailableError
 from ..interfaces import (
@@ -129,6 +131,12 @@ def _default_build_anonymizer(language: str, config: AnonymizerConfig) -> Anonym
     return SpacyAnonymizer(language, config)
 
 
+def _default_build_ocr_postprocessor() -> OcrOutputPostprocessor:
+    from .ocr_formats import OcrOutputPostprocessor  # noqa: PLC0415
+
+    return OcrOutputPostprocessor()
+
+
 # ── Factory ────────────────────────────────────────────────────────────────
 
 
@@ -161,6 +169,7 @@ class PipelineComponentFactory:
     )
     build_doc_creator: Callable[[str], DocumentCreator] = _default_build_doc_creator
     build_anonymizer: Callable[[str, AnonymizerConfig], Anonymizer] = _default_build_anonymizer
+    build_ocr_postprocessor: Callable[[], OcrOutputPostprocessor] = _default_build_ocr_postprocessor
 
 
 # ── Builder ────────────────────────────────────────────────────────────────
@@ -293,6 +302,10 @@ class StageBuilder:
             cfg.evaluate_temperature,
         )
         return factory.build_evaluator(llm, cfg.evaluate_prompt)
+
+    def build_ocr_postprocessor(self) -> OcrOutputPostprocessor:
+        """Build the notation detector/parser applied to every page of OCR output."""
+        return self.factory.build_ocr_postprocessor()
 
     def build_doc_creator(self) -> DocumentCreator | None:
         if not self.config.docx_enabled:

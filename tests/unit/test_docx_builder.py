@@ -4,10 +4,12 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 from docx import Document
 import pytest
 
+from teachers_teammate.domain.formatted_text import Span
 from teachers_teammate.infrastructure.docx_builder import DocxDocumentCreator
 
 # ── table format ───────────────────────────────────────────────────────────
@@ -204,87 +206,126 @@ def test_insert_image_writes_unavailable_text_on_failure(tmp_path: Path) -> None
 # ── Internal helpers ───────────────────────────────────────────────────────
 
 
+def _plain_lines(text: str) -> list[tuple[Span, ...]]:
+    return [(Span(line),) if line else () for line in text.split("\n")]
+
+
 def test_fill_cell_with_diffs_equal_lines_no_comments(tmp_path: Path) -> None:
     """
     Given  identical raw and corrected multi-line text
-    When   _fill_cell_with_diffs() is called
+    When   _fill_cell_with_styled_diffs() is called
     Then   the pending comments list remains empty
     """
-    from docx import Document  # noqa: PLC0415
-
     creator = DocxDocumentCreator(fmt="comments")
-    doc = Document()
-    table = doc.add_table(rows=1, cols=1)
-    cell = table.rows[0].cells[0]
-    text = "line one\nline two\nline three"
+    cell = Document().add_table(rows=1, cols=1).rows[0].cells[0]
+    lines = _plain_lines("line one\nline two\nline three")
     pending: list = []
-    creator._fill_cell_with_diffs(cell, text, text, pending)
+
+    creator._fill_cell_with_styled_diffs(cell, lines, lines, pending)
+
     assert pending == []
 
 
 def test_fill_cell_with_diffs_replace_adds_comments(tmp_path: Path) -> None:
     """
     Given  raw and corrected text with a replaced line
-    When   _fill_cell_with_diffs() is called
+    When   _fill_cell_with_styled_diffs() is called
     Then   at least one comment is appended to the pending list
     """
-    from docx import Document  # noqa: PLC0415
-
     creator = DocxDocumentCreator(fmt="comments")
-    doc = Document()
-    table = doc.add_table(rows=1, cols=1)
-    cell = table.rows[0].cells[0]
+    cell = Document().add_table(rows=1, cols=1).rows[0].cells[0]
     pending: list = []
-    creator._fill_cell_with_diffs(cell, "old line\nend", "new line\nend", pending)
+
+    creator._fill_cell_with_styled_diffs(
+        cell, _plain_lines("old line\nend"), _plain_lines("new line\nend"), pending
+    )
+
     assert len(pending) > 0
 
 
-def test_add_line_with_word_diff_handles_insert_opcode(tmp_path: Path) -> None:
+def test_styled_word_diff_handles_insert_opcode(tmp_path: Path) -> None:
     """
     Given  a raw line with fewer words than the corrected line (insert opcode)
-    When   _add_line_with_word_diff() is called
+    When   _add_styled_line_with_word_diff() is called
     Then   a comment is added for the inserted words
     """
-    from docx import Document  # noqa: PLC0415
-
     creator = DocxDocumentCreator(fmt="comments")
-    doc = Document()
-    para = doc.add_paragraph()
+    para = Document().add_paragraph()
     comments: list = []
-    creator._add_line_with_word_diff(para, "hello", "hello world here", comments)
+
+    creator._add_styled_line_with_word_diff(para, (Span("hello"),), "hello world here", comments)
+
     assert len(comments) > 0
 
 
-def test_add_line_with_word_diff_handles_delete_opcode(tmp_path: Path) -> None:
+def test_styled_word_diff_handles_delete_opcode(tmp_path: Path) -> None:
     """
     Given  a raw line with more words than the corrected line (delete opcode)
-    When   _add_line_with_word_diff() is called
+    When   _add_styled_line_with_word_diff() is called
     Then   a comment with '→ (delete)' text is added
     """
-    from docx import Document  # noqa: PLC0415
-
     creator = DocxDocumentCreator(fmt="comments")
-    doc = Document()
-    para = doc.add_paragraph()
+    para = Document().add_paragraph()
     comments: list = []
-    creator._add_line_with_word_diff(para, "hello extra words", "hello", comments)
+
+    creator._add_styled_line_with_word_diff(para, (Span("hello extra words"),), "hello", comments)
+
     assert any("delete" in c[1].lower() for c in comments)
 
 
-def test_add_line_with_word_diff_both_empty_is_noop(tmp_path: Path) -> None:
+def test_styled_word_diff_both_empty_is_noop(tmp_path: Path) -> None:
     """
-    Given  both raw_line and corr_line are empty strings
-    When   _add_line_with_word_diff() is called
+    Given  both the raw line and the corrected line are empty
+    When   _add_styled_line_with_word_diff() is called
     Then   no exception is raised and no comments are added
     """
-    from docx import Document  # noqa: PLC0415
-
     creator = DocxDocumentCreator(fmt="comments")
-    doc = Document()
-    para = doc.add_paragraph()
+    para = Document().add_paragraph()
     comments: list = []
-    creator._add_line_with_word_diff(para, "", "", comments)
+
+    creator._add_styled_line_with_word_diff(para, (), "", comments)
+
     assert comments == []
+
+
+def test_comments_layout_keeps_spaces_between_words_of_different_styles(tmp_path: Path) -> None:
+    """
+    Given  Markdown raw text whose neighbouring words have different styles and a correction
+    When   the comments layout is created
+    Then   the OCR cell reads "Hello world again Haus Hause" with a space between every word
+    """
+    out = tmp_path / "styled.docx"
+
+    DocxDocumentCreator(fmt="comments").create(
+        raw_text="Hello **world** again ~~Haus~~ Hause",
+        corrected_text="Hello world again Haus Hause!",
+        out_path=out,
+        title="t",
+        text_format="markdown",
+    )
+
+    cell_text = Document(str(out)).tables[0].rows[1].cells[1].text
+    assert cell_text == "Hello world again Haus Hause"
+
+
+def test_table_layout_shows_a_placeholder_for_figures_without_alt_text(tmp_path: Path) -> None:
+    """
+    Given  Markdown raw text with an image that has no alt text
+    When   the table layout is created
+    Then   the OCR cell shows "[image]" like the preview and the comments layout do
+    """
+    out = tmp_path / "figure.docx"
+
+    DocxDocumentCreator(fmt="table").create(
+        raw_text="before\n\n![]()\n\n**after**",
+        corrected_text=None,
+        out_path=out,
+        title="t",
+        text_format="markdown",
+    )
+
+    cell_text = Document(str(out)).tables[0].rows[1].cells[1].text
+    assert cell_text.split("\n") == ["before", "[image]", "after"]
 
 
 def test_attach_comments_part_adds_relationship_to_document(tmp_path: Path) -> None:
@@ -360,3 +401,120 @@ def test_comments_format_round_trip_is_parseable(tmp_path: Path) -> None:
     DocxDocumentCreator(fmt="comments").create("raw text", "corrected text", out, "title")
 
     assert Document(str(out)).paragraphs
+
+
+# ── Markdown formatting ────────────────────────────────────────────────────
+
+
+def _runs(doc: Any, text: str) -> list:
+    """All runs in the document (body + table cells) whose text equals *text*."""
+    found = []
+    paragraphs = list(doc.paragraphs)
+    for table in doc.tables:
+        for row in table.rows:
+            for cell in row.cells:
+                paragraphs.extend(cell.paragraphs)
+    for para in paragraphs:
+        found.extend(run for run in para.runs if run.text == text)
+    return found
+
+
+def test_table_format_keeps_markdown_styles_as_word_runs(tmp_path: Path) -> None:
+    """
+    Given  Markdown OCR text with bold, a struck-out word and a superscript insertion
+    When   create(text_format="markdown") writes the table layout
+    Then   the runs carry bold / strike / superscript and no Markdown markers are left
+    """
+    out = tmp_path / "md.docx"
+
+    DocxDocumentCreator(fmt="table").create(
+        raw_text="**Dear diary** my ~~backpack~~ <sup>passport</sup> and *me*",
+        corrected_text=None,
+        out_path=out,
+        title="T",
+        text_format="markdown",
+    )
+
+    doc = Document(str(out))
+    assert _runs(doc, "Dear diary")[0].bold
+    assert _runs(doc, "backpack")[0].font.strike
+    assert _runs(doc, "passport")[0].font.superscript
+    assert _runs(doc, "me")[0].italic
+    all_text = " ".join(
+        p.text for t in doc.tables for r in t.rows for c in r.cells for p in c.paragraphs
+    )
+    assert "**" not in all_text
+    assert "~~" not in all_text
+    assert "<sup>" not in all_text
+
+
+def test_table_format_plain_text_is_written_verbatim(tmp_path: Path) -> None:
+    """
+    Given  plain text containing Markdown-looking characters
+    When   create() is called with the default text_format
+    Then   the characters are written verbatim, without any formatting
+    """
+    out = tmp_path / "plain.docx"
+
+    DocxDocumentCreator(fmt="table").create(
+        raw_text="**not bold**", corrected_text="~~not struck~~", out_path=out, title="T"
+    )
+
+    doc = Document(str(out))
+    assert _runs(doc, "**not bold**")
+    assert _runs(doc, "~~not struck~~")
+    assert not _runs(doc, "**not bold**")[0].bold
+
+
+def test_table_format_renders_markdown_lists_headings_and_tables(tmp_path: Path) -> None:
+    """
+    Given  Markdown with a heading, a bullet list and a table
+    When   create(text_format="markdown") writes the table layout
+    Then   the heading is bold, list items are indented paragraphs and the table is nested
+    """
+    out = tmp_path / "blocks.docx"
+
+    DocxDocumentCreator(fmt="table").create(
+        raw_text="# Title\n\n- one\n- two\n\n| A | B |\n| --- | --- |\n| 1 | 2 |",
+        corrected_text=None,
+        out_path=out,
+        title="T",
+        text_format="markdown",
+    )
+
+    doc = Document(str(out))
+    assert _runs(doc, "Title")[0].bold
+    cell = doc.tables[0].rows[1].cells[1]
+    items = [p for p in cell.paragraphs if p.text.startswith("1. ") or "one" in p.text]
+    assert items
+    assert items[0].paragraph_format.left_indent is not None
+    nested = cell.tables
+    assert len(nested) == 1
+    assert [[c.text for c in row.cells] for row in nested[0].rows] == [["A", "B"], ["1", "2"]]
+
+
+def test_comments_format_diffs_markdown_text_and_keeps_styles(tmp_path: Path) -> None:
+    """
+    Given  Markdown OCR text with a struck word and a correction that fixes a typo
+    When   create(text_format="markdown") writes the comments layout
+    Then   the typo is commented, the struck word keeps its formatting, no markers remain
+    """
+    out = tmp_path / "md_comments.docx"
+
+    DocxDocumentCreator(fmt="comments").create(
+        raw_text="I ~~hate~~ lov this",
+        corrected_text="I ~~hate~~ love this",
+        out_path=out,
+        title="T",
+        text_format="markdown",
+    )
+
+    doc = Document(str(out))
+    assert _runs(doc, "hate ")[0].font.strike or _runs(doc, "hate")[0].font.strike
+    body = doc.element.body.xml
+    assert "commentReference" in body
+    all_text = " ".join(
+        p.text for t in doc.tables for r in t.rows for c in r.cells for p in c.paragraphs
+    )
+    assert "lov" in all_text
+    assert "~~" not in all_text

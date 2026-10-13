@@ -5,13 +5,17 @@ Produces a landscape Word document in one of two layouts:
 
 * ``table``    — three columns: Original Image | OCR Result | Correction Proposal
 * ``comments`` — two columns: Original Image | OCR Result, with Word diff-comments
+
+Text stored as Markdown (``text_format="markdown"``) keeps its formatting: bold, italic,
+underline, strikethrough, super-/subscript, headings, lists and tables become Word runs
+and paragraphs.  Plain text is written exactly as before.
 """
 
 from __future__ import annotations
 
 from datetime import UTC, datetime
 import difflib
-from itertools import zip_longest
+from itertools import groupby, zip_longest
 import logging
 from pathlib import Path
 from typing import Any
@@ -26,6 +30,16 @@ from docx.oxml.ns import qn
 from docx.shared import Inches, Pt, RGBColor
 from lxml import etree
 
+from ..domain.formatted_text import (
+    Block,
+    FormattedDocument,
+    Span,
+    Style,
+    TextFormat,
+    flat_chunks,
+    list_markers,
+    normalize_text_format,
+)
 from ..interfaces import DocumentCreator
 
 _logger = logging.getLogger(__name__)
@@ -41,6 +55,77 @@ _COMMENTS_CT = "application/vnd.openxmlformats-officedocument.wordprocessingml.c
 _COMMENTS_REL = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments"
 _W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 _COMMENTS_AUTHOR = "Teacher's Teammate"
+_BODY_PT = 10
+_HEADING_PT = 12
+_LIST_INDENT_PT = 14
+_MUTED_COLOUR = RGBColor(0x66, 0x66, 0x66)
+
+_Word = tuple[str, Style]
+"""A whitespace-free word and the style it was written in."""
+
+
+def _apply_style(run: Any, style: Style) -> None:
+    """Set the character formatting of *run* from *style* (unset flags stay inherited)."""
+    if Style.BOLD in style:
+        run.bold = True
+    if Style.ITALIC in style:
+        run.italic = True
+    if Style.UNDERLINE in style:
+        run.underline = True
+    if Style.STRIKE in style:
+        run.font.strike = True
+    if Style.SUPERSCRIPT in style:
+        run.font.superscript = True
+    if Style.SUBSCRIPT in style:
+        run.font.subscript = True
+
+
+def _words(spans: tuple[Span, ...] | list[Span]) -> list[_Word]:
+    return [(word, span.style) for span in spans for word in span.text.split()]
+
+
+def _style_groups(words: list[_Word]) -> list[tuple[str, Style]]:
+    """Join consecutive words of one style into ``(text, style)`` runs."""
+    return [
+        (" ".join(word for word, _ in group), style)
+        for style, group in groupby(words, key=lambda word: word[1])
+    ]
+
+
+def _split_lines(spans: tuple[Span, ...]) -> list[tuple[Span, ...]]:
+    """Split *spans* at ``"\n"`` into one span tuple per line."""
+    lines: list[list[Span]] = [[]]
+    for span in spans:
+        pieces = span.text.split("\n")
+        for index, piece in enumerate(pieces):
+            if index:
+                lines.append([])
+            if piece:
+                lines[-1].append(Span(piece, span.style))
+    return [tuple(line) for line in lines]
+
+
+def _styled_lines(doc: FormattedDocument) -> list[tuple[Span, ...]]:
+    """Flatten *doc* to lines of styled spans, with a blank line between blocks."""
+    lines: list[tuple[Span, ...]] = []
+    for spans, tight in flat_chunks(doc):
+        if lines and not tight:
+            lines.append(())
+        lines.extend(_split_lines(spans))
+    return lines
+
+
+def _lines_of(text: str, text_format: TextFormat) -> list[tuple[Span, ...]]:
+    """Return stored *text* as lines of styled spans (plain text: one unstyled span per line)."""
+    if text_format != "markdown":
+        return [(Span(line),) if line else () for line in text.splitlines()]
+    from .ocr_formats import parse_stored_text  # noqa: PLC0415
+
+    return _styled_lines(parse_stored_text(text, "markdown"))
+
+
+def _line_text(line: tuple[Span, ...]) -> str:
+    return "".join(span.text for span in line)
 
 
 class DocxDocumentCreator(DocumentCreator):
@@ -57,6 +142,7 @@ class DocxDocumentCreator(DocumentCreator):
         title: str,
         *,
         source_image: str | Path | None = None,
+        text_format: TextFormat = "plain",
     ) -> None:
         """Write a landscape .docx to *out_path*.
 
@@ -69,13 +155,27 @@ class DocxDocumentCreator(DocumentCreator):
             out_path:       Destination path (parent directory must exist).
             title:          Document heading.
             source_image:   Path to the source image shown in column 1.
+            text_format:    ``"markdown"`` keeps bold/strikethrough/... as Word formatting.
         """
+        text_format = normalize_text_format(text_format)
         if self._fmt == "comments":
             self._build_with_comments(
-                raw_text, corrected_text, out_path, title, image_path=source_image
+                raw_text,
+                corrected_text,
+                out_path,
+                title,
+                image_path=source_image,
+                text_format=text_format,
             )
         else:
-            self._build_table(raw_text, corrected_text, out_path, title, image_path=source_image)
+            self._build_table(
+                raw_text,
+                corrected_text,
+                out_path,
+                title,
+                image_path=source_image,
+                text_format=text_format,
+            )
 
     def _build_table(
         self,
@@ -85,6 +185,7 @@ class DocxDocumentCreator(DocumentCreator):
         title: str,
         *,
         image_path: str | Path | None = None,
+        text_format: TextFormat = "plain",
     ) -> None:
         """
         Write a landscape three-column .docx file to *out_path*.
@@ -130,9 +231,16 @@ class DocxDocumentCreator(DocumentCreator):
         content[2].width = _TXT_COL_WIDTH
         if image_path is not None:
             self._insert_image(content[0], str(image_path), _IMG_COL_WIDTH)
-        self._fill_cell(content[1], raw_text)
-        placeholder = corrected_text if corrected_text else "(correction skipped)"
-        self._fill_cell(content[2], placeholder, italic=not corrected_text)
+        if text_format == "markdown":
+            self._fill_cell_formatted(content[1], raw_text)
+            if corrected_text:
+                self._fill_cell_formatted(content[2], corrected_text)
+            else:
+                self._fill_cell(content[2], "(correction skipped)", italic=True)
+        else:
+            self._fill_cell(content[1], raw_text)
+            placeholder = corrected_text if corrected_text else "(correction skipped)"
+            self._fill_cell(content[2], placeholder, italic=not corrected_text)
 
         doc.save(str(out_path))
 
@@ -144,6 +252,7 @@ class DocxDocumentCreator(DocumentCreator):
         title: str,
         *,
         image_path: str | Path | None = None,
+        text_format: TextFormat = "plain",
     ) -> None:
         """
         Write a landscape .docx to *out_path* (two-column: image + OCR text).
@@ -189,7 +298,14 @@ class DocxDocumentCreator(DocumentCreator):
 
         pending: list[tuple[int, str]] = []
         if corrected_text:
-            self._fill_cell_with_diffs(content[1], raw_text, corrected_text, pending)
+            self._fill_cell_with_styled_diffs(
+                content[1],
+                _lines_of(raw_text, text_format),
+                _lines_of(corrected_text, text_format),
+                pending,
+            )
+        elif text_format == "markdown":
+            self._fill_cell_formatted(content[1], raw_text)
         else:
             self._fill_cell(content[1], raw_text)
         if pending:
@@ -232,17 +348,83 @@ class DocxDocumentCreator(DocumentCreator):
         run.italic = italic
         run.font.size = Pt(10)
 
-    def _fill_cell_with_diffs(
+    def _fill_cell_formatted(self, cell: Any, markdown: str) -> None:
+        """Fill *cell* with Markdown *markdown*, keeping its formatting as Word runs."""
+        from .ocr_formats import parse_stored_text  # noqa: PLC0415
+
+        self._fill_cell_document(cell, parse_stored_text(markdown, "markdown"))
+
+    def _fill_cell_document(self, cell: Any, doc: FormattedDocument) -> None:
+        """Write the blocks of *doc* into *cell* as paragraphs, lists and nested tables."""
+        first = True
+        for block, marker in list_markers(doc.blocks):
+            if block.kind == "table":
+                if block.rows:
+                    self._add_nested_table(cell, block)
+                    first = False
+                continue
+            if block.kind != "figure" and not block.text.strip():
+                continue
+            para = cell.paragraphs[0] if first else cell.add_paragraph()
+            first = False
+            para.alignment = WD_ALIGN_PARAGRAPH.LEFT
+            if block.kind == "list_item":
+                para.paragraph_format.left_indent = Pt(_LIST_INDENT_PT * (block.level + 1))
+                self._add_run(para, marker)
+            if block.kind == "figure":
+                run = para.add_run(f"[{block.text.strip() or 'image'}]")
+                run.italic = True
+                run.font.size = Pt(_BODY_PT)
+                run.font.color.rgb = _MUTED_COLOUR
+                continue
+            for span in block.spans:
+                bold = block.kind == "heading"
+                size = _HEADING_PT if block.kind == "heading" else _BODY_PT
+                self._add_run(para, span.text, span.style, bold=bold, size=size)
+
+    def _add_nested_table(self, cell: Any, block: Block) -> None:
+        width = max(len(row) for row in block.rows)
+        table = cell.add_table(rows=len(block.rows), cols=width)
+        table.style = "Table Grid"
+        for row_index, row in enumerate(block.rows):
+            for col_index, spans in enumerate(row):
+                para = table.cell(row_index, col_index).paragraphs[0]
+                for span in spans:
+                    self._add_run(para, span.text, span.style, bold=row_index == 0)
+
+    @staticmethod
+    def _add_run(
+        para: Any,
+        text: str,
+        style: Style = Style.NONE,
+        *,
+        bold: bool = False,
+        size: int = _BODY_PT,
+    ) -> Any:
+        run = para.add_run(text)
+        run.font.size = Pt(size)
+        _apply_style(run, style)
+        if bold:
+            run.bold = True
+        return run
+
+    def _fill_cell_with_styled_diffs(
         self,
         cell: Any,
-        raw: str,
-        corrected: str,
+        raw_lines: list[tuple[Span, ...]],
+        corr_lines: list[tuple[Span, ...]],
         comments: list[tuple[int, str]],
     ) -> None:
-        """Fill *cell* with *raw*, annotating diffs against *corrected* as Word comments."""
-        raw_lines = raw.splitlines()
-        corr_lines = corrected.splitlines()
-        matcher = difflib.SequenceMatcher(None, raw_lines, corr_lines, autojunk=False)
+        """Fill *cell* with the styled *raw_lines*, commenting where *corr_lines* differ.
+
+        Lines are diffed by their text; styles only decide how the raw words are written.
+        """
+        matcher = difflib.SequenceMatcher(
+            None,
+            [_line_text(line) for line in raw_lines],
+            [_line_text(line) for line in corr_lines],
+            autojunk=False,
+        )
         first = True
         for tag, i1, i2, j1, j2 in matcher.get_opcodes():
             raw_block = raw_lines[i1:i2]
@@ -251,29 +433,34 @@ class DocxDocumentCreator(DocumentCreator):
                 for line in raw_block:
                     para = cell.paragraphs[0] if first else cell.add_paragraph()
                     first = False
-                    self._add_plain_run(para, line)
+                    for span in line:
+                        self._add_plain_run(para, span.text, span.style)
             else:
-                for raw_line, corr_line in zip_longest(raw_block, corr_block, fillvalue=""):
+                for raw_line, corr_line in zip_longest(raw_block, corr_block, fillvalue=()):
                     para = cell.paragraphs[0] if first else cell.add_paragraph()
                     first = False
-                    self._add_line_with_word_diff(para, raw_line, corr_line, comments)
+                    self._add_styled_line_with_word_diff(
+                        para, raw_line, _line_text(corr_line), comments
+                    )
 
-    def _add_line_with_word_diff(
+    def _add_styled_line_with_word_diff(
         self,
         para: Any,
-        raw_line: str,
+        raw_spans: tuple[Span, ...],
         corr_line: str,
         comments: list[tuple[int, str]],
     ) -> None:
-        """Add *raw_line* to *para*, marking word-level diffs against *corr_line* as comments."""
-        raw_words = raw_line.split()
+        """Add the styled *raw_spans* to *para*, commenting word diffs against *corr_line*."""
+        raw_words = _words(raw_spans)
         corr_words = corr_line.split()
         if not raw_words and not corr_words:
             return
-        matcher = difflib.SequenceMatcher(None, raw_words, corr_words, autojunk=False)
-        parts: list[tuple[str, str | None]] = []
+        matcher = difflib.SequenceMatcher(
+            None, [word for word, _ in raw_words], corr_words, autojunk=False
+        )
+        parts: list[tuple[list[_Word], str | None]] = []
         for tag, i1, i2, j1, j2 in matcher.get_opcodes():
-            raw_chunk = " ".join(raw_words[i1:i2])
+            raw_chunk = raw_words[i1:i2]
             corr_chunk = " ".join(corr_words[j1:j2])
             if tag == "equal":
                 parts.append((raw_chunk, None))
@@ -282,33 +469,50 @@ class DocxDocumentCreator(DocumentCreator):
             elif tag == "delete":
                 parts.append((raw_chunk, "\u2192 (delete)"))
             else:  # insert — no raw anchor; annotate as inline marker with a comment
-                parts.append((f"[+{corr_chunk}]", f'\u2192 (insert "{corr_chunk}")'))
-        for idx, (text, comment_text) in enumerate(parts):
-            spaced = text + (" " if idx < len(parts) - 1 else "")
+                parts.append(
+                    ([(f"[+{corr_chunk}]", Style.NONE)], f'\u2192 (insert "{corr_chunk}")')
+                )
+        for idx, (words, comment_text) in enumerate(parts):
+            groups = _style_groups(words)
+            # Words of different styles are separate runs, so each run but the line's last
+            # carries the blank that separates it from the next word.
+            is_last_part = idx == len(parts) - 1
+            groups = [
+                (text if is_last_part and index == len(groups) - 1 else text + " ", style)
+                for index, (text, style) in enumerate(groups)
+            ]
             if comment_text is None:
-                self._add_plain_run(para, spaced)
+                for text, style in groups:
+                    self._add_plain_run(para, text, style)
             else:
                 cid = len(comments)
                 comments.append((cid, comment_text))
-                self._add_commented_run(para, spaced, cid)
+                self._add_commented_runs(para, groups, cid)
 
     @staticmethod
-    def _add_plain_run(para: Any, text: str) -> None:
+    def _add_plain_run(para: Any, text: str, style: Style = Style.NONE) -> None:
         run = para.add_run(text)
-        run.font.size = Pt(10)
+        run.font.size = Pt(_BODY_PT)
+        _apply_style(run, style)
 
     @staticmethod
-    def _add_commented_run(para: Any, text: str, comment_id: int) -> None:
-        """Add a yellow-highlighted run in *para* anchored to *comment_id*."""
+    def _add_commented_runs(para: Any, groups: list[tuple[str, Style]], comment_id: int) -> None:
+        """Add yellow-highlighted runs in *para* anchored to *comment_id*."""
+        if not groups:
+            return
         range_start = OxmlElement("w:commentRangeStart")
         range_start.set(qn("w:id"), str(comment_id))
-        run = para.add_run(text)
-        run.font.size = Pt(10)
-        run.font.highlight_color = WD_COLOR_INDEX.YELLOW
-        run._r.addprevious(range_start)  # noqa: SLF001  # python-docx has no public API for OOXML comment range anchors; _r exposes the underlying lxml element
+        runs = []
+        for text, style in groups:
+            run = para.add_run(text)
+            run.font.size = Pt(_BODY_PT)
+            run.font.highlight_color = WD_COLOR_INDEX.YELLOW
+            _apply_style(run, style)
+            runs.append(run)
+        runs[0]._r.addprevious(range_start)  # noqa: SLF001  # python-docx has no public API for OOXML comment range anchors; _r exposes the underlying lxml element
         range_end = OxmlElement("w:commentRangeEnd")
         range_end.set(qn("w:id"), str(comment_id))
-        run._r.addnext(range_end)  # noqa: SLF001  # python-docx has no public API for OOXML comment range anchors; _r exposes the underlying lxml element
+        runs[-1]._r.addnext(range_end)  # noqa: SLF001  # python-docx has no public API for OOXML comment range anchors; _r exposes the underlying lxml element
         ref_r = OxmlElement("w:r")
         ref_rpr = OxmlElement("w:rPr")
         ref_style = OxmlElement("w:rStyle")

@@ -71,6 +71,7 @@ filegroup(
 _TESTS_TYPED_DEPS = [
     "@ocr_test_dependencies//langchain_core:pkg",
     "@ocr_test_dependencies//lxml:pkg",
+    "@ocr_test_dependencies//markdown_it_py:pkg",
     "@ocr_test_dependencies//numpy:pkg",
     "@ocr_test_dependencies//ollama:pkg",
     "@ocr_test_dependencies//opencv_python:pkg",
@@ -141,6 +142,13 @@ _CV_DEPS = [
     "@ocr_test_dependencies//opencv_python:pkg",
 ]
 
+# infrastructure/ocr_formats parses OCR output with markdown-it-py (Markdown) and lxml (HTML).
+# lxml also arrives with python-docx, but is listed so format tests do not rely on that.
+_FORMAT_DEPS = [
+    "@ocr_test_dependencies//lxml:pkg",
+    "@ocr_test_dependencies//markdown_it_py:pkg",
+]
+
 # ── Individual py_test targets ────────────────────────────────────────────
 
 _REQUESTS_DEPS = ["@ocr_test_dependencies//requests:pkg"]
@@ -160,6 +168,7 @@ _GUI_DEPS = [
 # ocr_processor + ollama_utils (→ requests), and input_providers (→ pypdfium2).
 # Any test that imports from pipeline needs all of these.
 _PIPELINE_DEPS = (
+    _FORMAT_DEPS +
     _LANGCHAIN_DEPS +
     _IMAGE_DEPS +
     _PDF_DEPS +
@@ -202,7 +211,7 @@ py_test(
     srcs = _COMMON_SRCS + ["unit/test_benchmark_run_store.py"],
     args = ["unit/test_benchmark_run_store.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS,
+    deps = _COMMON_DEPS + _FORMAT_DEPS,
 )
 
 py_test(
@@ -284,6 +293,15 @@ py_test(
     args = ["unit/test_ocr_processor.py"],
     main = "run_test.py",
     deps = _COMMON_DEPS + _LANGCHAIN_DEPS + _IMAGE_DEPS + _REQUESTS_DEPS,
+)
+
+py_test(
+    name = "test_ocr_formats",
+    size = "small",
+    srcs = _COMMON_SRCS + ["unit/test_ocr_formats.py"],
+    args = ["unit/test_ocr_formats.py"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS + _FORMAT_DEPS,
 )
 
 py_test(
@@ -413,7 +431,7 @@ py_test(
     srcs = _COMMON_SRCS + ["unit/test_state_repository.py"],
     args = ["unit/test_state_repository.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS,
+    deps = _COMMON_DEPS + _FORMAT_DEPS,
 )
 
 py_test(
@@ -565,6 +583,15 @@ py_test(
     size = "small",
     srcs = _COMMON_SRCS + ["gui/test_gui_settings_dialog.py"],
     args = ["gui/test_gui_settings_dialog.py"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_lib"],
+)
+
+py_test(
+    name = "test_gui_formatted_text",
+    size = "small",
+    srcs = _COMMON_SRCS + ["gui/test_gui_formatted_text.py"],
+    args = ["gui/test_gui_formatted_text.py"],
     main = "run_test.py",
     deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_lib"],
 )
@@ -756,6 +783,7 @@ test_suite(
         ":test_interfaces",
         ":test_llm_factory",
         ":test_model_catalog",
+        ":test_ocr_formats",
         ":test_ocr_processor",
         ":test_ocr_stage_service",
         ":test_ocr_text_cleaner",
@@ -786,6 +814,7 @@ test_suite(
         ":test_gui_anonymizer_dialog",
         ":test_gui_bootstrap",
         ":test_gui_config_panel",
+        ":test_gui_formatted_text",
         ":test_gui_lifecycle",
         ":test_gui_main_window",
         ":test_gui_results_table",

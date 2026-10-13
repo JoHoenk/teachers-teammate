@@ -55,6 +55,8 @@ Config
   → ImagePreprocessor    (image_preprocessor.py)   adaptive_threshold / CLAHE / grayscale / none
   → OCRProcessor         (ocr_processor.py)        Ollama | Tesseract | Paddle | LangChain
      (TXT files bypass OCR — content flows directly to the next stage)
+  → OcrOutputPostprocessor (ocr_formats/)          plain | Markdown | Chandra HTML → stored
+                                                   as plain or canonical Markdown (raw_text_format)
   → Anonymizer           (anonymizer.py)           spaCy NER + regex, optional
   → Corrector            (correction.py)           LangChain-based, optional
   → Evaluator            (evaluation.py)           LangChain-based, optional
@@ -74,6 +76,7 @@ Config
 | New pipeline stage | Add ABC to `interfaces.py`, implement in `infrastructure/`, route through `FileProcessor` |
 | New LLM provider | Add `<name>.py` to `infrastructure/providers/` with a `create()` function |
 | New input file type | Add suffix to `SUPPORTED_SUFFIXES` in `interfaces.py` **and** a builder to `_SUFFIX_TO_BUILDER` in `infrastructure/input_provider_factory.py` |
+| New OCR output notation (HTML/Markdown/…) | Add an `OcrOutputParser` to `infrastructure/ocr_formats/` and list it in `default_parsers()`; model in `domain/formatted_text.py`, adapters use `application/formatting.py:TextFormatter` (see `docs/development.md` → "OCR output formats") |
 | New GUI capability/check | Implement in `ProcessingApplicationService`, call it from the GUI — never duplicate discovery logic in widgets |
 | Benchmark app changes | Domain metrics in `domain/benchmark.py`; run persistence in `infrastructure/benchmark/run_store.py`; OCR-only run in `infrastructure/benchmark/runner.py`; orchestration in `application/benchmark_service.py`; GUI in `gui/benchmark/` (reuse `gui/_ocr_config_selector.py`). The OCR config slice is `Config.ocr` (`config.py:OcrConfig`). |
 
@@ -97,6 +100,7 @@ delete). See `docs/development.md` → "Storage, hashing & caching".
 
 - **Line length**: 100. Double quotes. Config under `[tool.ruff]` in `pyproject.toml`.
 - **Lazy imports** (imports inside functions): add `# noqa: PLC0415`.
+- **Text notation**: `raw_text` / `correction_text` are plain *or* Markdown (see `raw_text_format`). Never feed them to diffs/metrics directly — use `TextFormatter.plain_text`; never parse them from a widget — use `TextFormatter.document`.
 - **Type checker**: `ty` (Astral, Rust-based). Configure under `[tool.ty]` in `pyproject.toml`. Runtime packages (PySide6, numpy, spaCy, …) are resolved under Bazel via the lint-only `//teachers_teammate:gui_lib_typed` / `ocr_lib_typed` targets (which carry the pip deps; the wheel libs stay clean). Optional extras (LLM providers, PaddleOCR, GPU libs) are intentionally not wired, so `unresolved-import` is kept ignored for their lazy imports.
 - **Suppress ty with `# ty: ignore[<rule>]`, NOT `# type: ignore[...]`.** ty uses its own directive and rule names (`assignment`→`invalid-assignment`, `arg-type`→`invalid-argument-type`, `override`→`invalid-method-override`, `union-attr`→`unresolved-attribute`, …); mypy-style `# type: ignore` is silently inert. Prefer fixing or a precise `# ty: ignore[<rule>]` with a reason.
 - **Run linters through Bazel only.** ruff/ty versions are pinned in `third_party/lint/tools.bzl` (wired from `MODULE.bazel`); a `ruff`/`ty` installed into a local `.venv` can be a different version and give different results. Use `bazel test //:lint` and `bazel run //:format.fix` — do not run venv `ruff`/`ty` directly.

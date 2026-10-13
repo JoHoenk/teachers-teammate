@@ -181,7 +181,7 @@ group Background thread (OCRWorker)
       deactivate OUT
     end
 
-    FP -> FP            : emit on_file_done\n(source_id, ok, preview_img, raw_text, …)
+    FP -> FP            : emit on_file_done\n(FileDoneResult: source_id, ok, preview_img, raw_text, text_format, …)
     FP --> COORD        :
     deactivate FP
   end

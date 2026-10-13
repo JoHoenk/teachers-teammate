@@ -11,6 +11,7 @@ from teachers_teammate.gui._worker import (
     OCRWorker,
     _ConnectionCheckThread,
 )
+from teachers_teammate.infrastructure.reporting import FileDoneResult
 from tests.conftest import make_config
 
 
@@ -37,7 +38,16 @@ class _DummyAppService:
             if progress.on_ocr_done:
                 progress.on_ocr_done(source_id, "a.png")
             if progress.on_file_done:
-                progress.on_file_done(source_id, "a.png", True, "saved", "", "raw.txt", "", "")
+                progress.on_file_done(
+                    FileDoneResult(
+                        source_id,
+                        "a.png",
+                        True,
+                        "saved",
+                        raw_text="raw.txt",
+                        text_format="markdown",
+                    )
+                )
         return 0
 
 
@@ -180,3 +190,21 @@ def test_connection_thread_no_engine_or_provider(qtbot) -> None:
     qtbot.wait(10)
     assert results and results[0][0] is False
     assert "Nothing" in results[0][1]
+
+
+@pytest.mark.gui
+def test_ocr_worker_file_done_event_carries_the_text_format(qtbot, tmp_path: Path) -> None:
+    """
+    Given  a pipeline that reports the text format of a finished file
+    When   run() is invoked
+    Then   the file_done event carries that format, so the preview does not depend on a
+           later state lookup
+    """
+    worker = OCRWorker(make_config(tmp_path), app_service=_DummyAppService())
+    events: list = []
+    worker.file_done.connect(events.append)
+
+    worker.run()
+    qtbot.wait(10)
+
+    assert [event.text_format for event in events] == ["markdown"]

@@ -1214,3 +1214,79 @@ def test_detect_gpus_is_served_from_the_shared_probe(monkeypatch) -> None:
     gpus = svc.detect_gpus()
     assert [g.name for g in gpus] == ["RTX 4060"]
     assert calls == ["gpu"]
+
+
+@pytest.mark.unit
+def test_export_docx_keeps_markdown_formatting(tmp_path: Path) -> None:
+    """
+    Given  cached Markdown OCR text with a crossed-out word
+    When   export_docx() is called with text_format="markdown"
+    Then   the DOCX run for that word is struck through and no markers are written
+    """
+    from docx import Document  # noqa: PLC0415
+
+    svc = _make_svc()
+    out = tmp_path / "out" / "doc.docx"
+
+    svc.export_docx(
+        tmp_path / "doc.png", "my ~~backpack~~ bag", "", "", out, text_format="markdown"
+    )
+
+    cells = Document(str(out)).tables[0].rows[1].cells
+    runs = [run for para in cells[1].paragraphs for run in para.runs]
+    assert any(run.text == "backpack" and run.font.strike for run in runs)
+    assert "~~" not in cells[1].text
+
+
+@pytest.mark.unit
+def test_export_docx_defaults_to_plain_text(tmp_path: Path) -> None:
+    """
+    Given  cached plain text that contains Markdown-looking characters
+    When   export_docx() is called without a text_format
+    Then   the characters are written verbatim
+    """
+    from docx import Document  # noqa: PLC0415
+
+    svc = _make_svc()
+    out = tmp_path / "doc.docx"
+
+    svc.export_docx(tmp_path / "doc.png", "~~keep~~", "", "", out)
+
+    assert "~~keep~~" in Document(str(out)).tables[0].rows[1].cells[1].text
+
+
+@pytest.mark.unit
+def test_manual_correction_edit_stores_the_notation_of_a_synthesised_ocr_text(
+    tmp_path: Path,
+) -> None:
+    """
+    Given  no state yet and a Markdown OCR text shown in the GUI
+    When   the user edits the correction (record_manual_correction_edit)
+    Then   the synthesised state stores the OCR text as Markdown, not plain
+    """
+    from tests.conftest import make_config  # noqa: PLC0415
+
+    from teachers_teammate.infrastructure.file_discovery import (  # noqa: PLC0415
+        FileDiscovery,
+    )
+    from teachers_teammate.infrastructure.state_repository import (  # noqa: PLC0415
+        StateRepository,
+    )
+
+    source = tmp_path / "note.txt"
+    source.write_text("hello")
+    repo = StateRepository(tmp_path / "state")
+    commands = ApplicationCommands(discovery=FileDiscovery(), state_store_factory=lambda _c: repo)
+
+    state = commands.record_manual_correction_edit(
+        make_config(tmp_path),
+        source=source,
+        raw_text="~~a~~ b",
+        preview_img="",
+        edited_text="~~a~~ b!",
+        raw_text_format="markdown",
+    )
+
+    assert state is not None
+    assert (state.raw_text, state.raw_text_format) == ("~~a~~ b", "markdown")
+    assert state.correction_text == "~~a~~ b!"

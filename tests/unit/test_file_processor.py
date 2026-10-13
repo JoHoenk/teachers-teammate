@@ -902,3 +902,118 @@ def test_process_keeps_no_original_when_no_steps_applied(tmp_path: Path) -> None
     kwargs = cache_svc.persist_preview_artifact.call_args.kwargs
     assert kwargs["original_path"] is None
     assert kwargs["preprocess_steps"] == []
+
+
+# ── Text notation (plain / markdown) ──────────────────────────────────────
+
+
+def _markdown_ctx(**state_kwargs: Any) -> CacheContext:
+    """A cache context whose OCR text is stored as Markdown."""
+    state = dataclasses.replace(_make_state(**state_kwargs), raw_text_format="markdown")
+    return _make_ctx(state)
+
+
+def test_postprocessed_ocr_text_and_format_are_recorded(tmp_path: Path) -> None:
+    """
+    Given  a postprocessor that turns the page texts into Markdown
+    When   process() runs OCR
+    Then   the Markdown is what gets recorded and returned, with its format
+    """
+    postprocessor = MagicMock()
+    postprocessor.process_pages.return_value = MagicMock(text="~~a~~ b", text_format="markdown")
+    ctx = _markdown_ctx()
+    fp, cache_svc, _, _ = _make_processor(
+        tmp_path,
+        returns=_StubReturns(cache_ctx=ctx, ocr_return=(["<del>a</del> b"], None)),
+        postprocessor=postprocessor,
+    )
+
+    result = fp.process(tmp_path / "doc.png")
+
+    assert result.ok is True
+    assert result.raw_text == "~~a~~ b"
+    assert result.text_format == "markdown"
+    postprocessor.process_pages.assert_called_once_with(["<del>a</del> b"])
+    record_kwargs = cache_svc.record_ocr.call_args.kwargs
+    assert record_kwargs["raw_text"] == "~~a~~ b"
+    assert record_kwargs["raw_text_format"] == "markdown"
+
+
+def test_text_input_is_recorded_as_plain_without_postprocessing(tmp_path: Path) -> None:
+    """
+    Given  a .txt input (raw_text_hint) and a postprocessor
+    When   process() is called
+    Then   the postprocessor is not consulted and the text is recorded as plain
+    """
+    postprocessor = MagicMock()
+    fp, cache_svc, _, _ = _make_processor(
+        tmp_path,
+        returns=_StubReturns(preprocess_return=([], [], None, "**not markdown**")),
+        postprocessor=postprocessor,
+    )
+
+    result = fp.process(tmp_path / "doc.txt")
+
+    assert result.raw_text == "**not markdown**"
+    postprocessor.process_pages.assert_not_called()
+    assert cache_svc.record_ocr.call_args.kwargs["raw_text_format"] == "plain"
+
+
+def test_without_postprocessor_pages_are_joined_as_before(tmp_path: Path) -> None:
+    """
+    Given  no postprocessor and two OCR pages
+    When   process() is called
+    Then   the pages are joined with "Page N:" labels and recorded as plain text
+    """
+    fp, cache_svc, _, _ = _make_processor(
+        tmp_path, returns=_StubReturns(ocr_return=(["one", "two"], None))
+    )
+
+    result = fp.process(tmp_path / "doc.pdf")
+
+    assert result.raw_text == "Page 1:\none\nPage 2:\ntwo"
+    assert cache_svc.record_ocr.call_args.kwargs["raw_text_format"] == "plain"
+
+
+def test_markdown_text_format_reaches_corrector_evaluator_and_docx(tmp_path: Path) -> None:
+    """
+    Given  cached OCR text stored as Markdown, a corrector, an evaluator and a doc creator
+    When   process() is called
+    Then   each of them is told the text is Markdown and the result carries the format
+    """
+    ctx = _markdown_ctx(ocr_done=True, raw_text="~~a~~ b", preview_img="p.png")
+    corrector = MagicMock()
+    corrector.correct.return_value = ("~~a~~ b!", None)
+    evaluator = MagicMock()
+    evaluator.evaluate.return_value = ("fine", None)
+    doc_creator = MagicMock()
+    fp, cache_svc, _, _ = _make_processor(
+        tmp_path,
+        returns=_StubReturns(cache_ctx=ctx),
+        corrector=corrector,
+        evaluator=evaluator,
+        doc_creator=doc_creator,
+    )
+
+    result = fp.process(tmp_path / "doc.png")
+
+    assert corrector.correct.call_args.kwargs == {"text_format": "markdown"}
+    assert evaluator.evaluate.call_args.kwargs == {"text_format": "markdown"}
+    assert doc_creator.create.call_args.kwargs["text_format"] == "markdown"
+    assert result.text_format == "markdown"
+    assert cache_svc.record_correction.call_args.kwargs == {"correction_text": "~~a~~ b!"}
+
+
+def test_plain_text_is_corrected_with_plain_format(tmp_path: Path) -> None:
+    """
+    Given  OCR text stored as plain text and a corrector
+    When   process() is called
+    Then   the corrector is told text_format="plain" (so its prompt stays unchanged)
+    """
+    corrector = MagicMock()
+    corrector.correct.return_value = ("fixed", None)
+    fp, _, _, _ = _make_processor(tmp_path, corrector=corrector)
+
+    fp.process(tmp_path / "doc.png")
+
+    assert corrector.correct.call_args.kwargs == {"text_format": "plain"}

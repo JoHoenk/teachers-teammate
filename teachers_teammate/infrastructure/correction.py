@@ -15,6 +15,8 @@ if TYPE_CHECKING:
 
     from .ollama_utils import OllamaClient
 
+from ..domain.formatted_text import TextFormat
+from ..domain.notation import with_notation_hint
 from ..interfaces import Corrector
 from ._llm_invoke import invoke_langchain_chain, invoke_ollama_chat
 
@@ -128,11 +130,15 @@ class LangChainCorrector(Corrector):
         self._llm = llm
         self._prompt = prompt
 
-    def correct(self, raw_text: str, language: str) -> tuple[str, str | None]:
+    def correct(
+        self, raw_text: str, language: str, *, text_format: TextFormat = "plain"
+    ) -> tuple[str, str | None]:
         """Return proofread text and an optional warning. On error, returns raw text with warning."""
         return invoke_langchain_chain(
             self._llm,
-            system=_resolve_prompt(self._prompt, language),
+            system=with_notation_hint(
+                _resolve_prompt(self._prompt, language), text_format, task="correction"
+            ),
             human="Language: {language}\n\nText:\n\n{text}",
             variables={"text": raw_text, "language": language},
             fallback=raw_text,
@@ -163,9 +169,13 @@ class NativeOllamaCorrector(Corrector):
         self._timeout = timeout
         self._temperature = temperature
 
-    def correct(self, raw_text: str, language: str) -> tuple[str, str | None]:
+    def correct(
+        self, raw_text: str, language: str, *, text_format: TextFormat = "plain"
+    ) -> tuple[str, str | None]:
         """Return proofread text and an optional warning. On error, returns raw text with warning."""
-        system = _resolve_prompt(self._prompt, language)
+        system = with_notation_hint(
+            _resolve_prompt(self._prompt, language), text_format, task="correction"
+        )
         return invoke_ollama_chat(
             self._client,
             model=self._model,

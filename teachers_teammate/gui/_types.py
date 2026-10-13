@@ -47,6 +47,8 @@ class FileDoneEvent:
     raw_txt: str = ""
     corr_txt: str = ""
     eval_txt: str = ""
+    text_format: str = "plain"
+    """Notation of ``raw_txt`` / ``corr_txt``: ``"plain"`` or ``"markdown"``."""
 
     @property
     def total_s(self) -> float:

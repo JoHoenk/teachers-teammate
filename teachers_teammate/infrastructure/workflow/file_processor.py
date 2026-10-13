@@ -6,7 +6,9 @@ from dataclasses import dataclass, field
 import logging
 from pathlib import Path
 import threading
+from typing import TYPE_CHECKING
 
+from ...domain.formatted_text import TextFormat, normalize_text_format
 from ...domain.stages import PROGRESS_STAGE_OCR, PROGRESS_STAGE_PREPROCESSING
 from ...exceptions import PipelineInputError
 from ...interfaces import AnonymizationMap, Anonymizer, Corrector, DocumentCreator, Evaluator
@@ -14,6 +16,9 @@ from ..reporting import OnOcrDoneFn, OnStageStartedFn, Reporter, StdoutReporter
 from .cache_service import CacheContext, CacheReconciliationService
 from .ocr_service import OCRStageService
 from .preprocess_service import PreprocessService
+
+if TYPE_CHECKING:
+    from ..ocr_formats import OcrOutputPostprocessor
 
 _logger = logging.getLogger(__name__)
 
@@ -29,6 +34,8 @@ class ProcessingResult:
     correction_text: str
     evaluation_text: str
     warnings: tuple[str, ...] = ()
+    text_format: TextFormat = "plain"
+    """Notation of ``raw_text`` and ``correction_text`` (``"plain"`` or ``"markdown"``)."""
 
 
 @dataclass(frozen=True)
@@ -44,6 +51,7 @@ class FileProcessorConfig:
     evaluation: Evaluator | None
     doc_creator: DocumentCreator | None
     anonymizer: Anonymizer | None = None
+    postprocessor: OcrOutputPostprocessor | None = None
     stop_event: threading.Event | None = None
     on_ocr_done: OnOcrDoneFn | None = None
     on_stage_started: OnStageStartedFn | None = None
@@ -73,6 +81,7 @@ class FileProcessor:
         self._ocr_stage_service = config.ocr_stage_service
         self._correction = config.correction
         self._anonymizer = config.anonymizer
+        self._postprocessor = config.postprocessor
         self._evaluation = config.evaluation
         self._doc_creator = config.doc_creator
         self._stop_event = config.stop_event
@@ -86,10 +95,19 @@ class FileProcessor:
         try:
             ctx = self._prepare_cache(file)
             raw_text, preview_img, source_image, ctx = self._run_preprocess_or_cache(file, ctx)
+            text_format = self._text_format(ctx)
 
             if self._stop_event and self._stop_event.is_set():
                 raise _StageAbort(
-                    ProcessingResult(False, "Stopped by user.", preview_img, raw_text, "", "")
+                    ProcessingResult(
+                        False,
+                        "Stopped by user.",
+                        preview_img,
+                        raw_text,
+                        "",
+                        "",
+                        text_format=text_format,
+                    )
                 )
 
             correction_text, ctx, correction_warnings = self._run_correction_or_cache(
@@ -104,16 +122,21 @@ class FileProcessor:
 
         return self._write_docx(
             docx_file,
-            file.stem,
             raw_text,
             correction_text,
             evaluation_text,
             preview_img,
             source_image,
             all_warnings,
+            text_format=text_format,
         )
 
     # ── Stage helpers ─────────────────────────────────────────────────────
+
+    @staticmethod
+    def _text_format(ctx: CacheContext) -> TextFormat:
+        """Notation of the document's OCR text (and so of its correction)."""
+        return normalize_text_format(ctx.state.raw_text_format)
 
     def _prepare_cache(self, file: Path) -> CacheContext:
         try:
@@ -240,6 +263,7 @@ class FileProcessor:
         ctx: CacheContext,
     ) -> tuple[str, CacheContext]:
         page_count = 0
+        raw_text_format: TextFormat = "plain"
         if raw_text_hint is not None:
             raw_text = raw_text_hint
             self._reporter.status("       → Text input loaded (OCR skipped)")
@@ -253,11 +277,16 @@ class FileProcessor:
             if ocr_err:
                 raise _StageAbort(ProcessingResult(False, ocr_err, preview_img, "", "", ""))
             page_count = len(page_texts)
-            raw_text = (
-                "\n".join(f"Page {i + 1}:\n{t}" for i, t in enumerate(page_texts))
-                if page_count > 1
-                else page_texts[0]
-            )
+            if self._postprocessor is not None:
+                processed = self._postprocessor.process_pages(page_texts)
+                raw_text = processed.text
+                raw_text_format = processed.text_format
+            else:
+                raw_text = (
+                    "\n".join(f"Page {i + 1}:\n{t}" for i, t in enumerate(page_texts))
+                    if page_count > 1
+                    else page_texts[0]
+                )
 
         if not raw_text:
             raise _StageAbort(
@@ -271,6 +300,7 @@ class FileProcessor:
                 raw_text=raw_text,
                 preview_img=preview_img,
                 source_image=preview_img or (str(source_image) if source_image else ""),
+                raw_text_format=raw_text_format,
             )
         except OSError as exc:
             raise _StageAbort(
@@ -304,7 +334,10 @@ class FileProcessor:
             text_for_correction, anon_map = self._anonymizer.anonymize(raw_text)
             self._reporter.status("       → PII anonymized before correction")
 
-        corrected_text, corr_warning = self._correction.correct(text_for_correction, self._language)
+        text_format = self._text_format(ctx)
+        corrected_text, corr_warning = self._correction.correct(
+            text_for_correction, self._language, text_format=text_format
+        )
         corrected_text = corrected_text or ""
         corr_warnings: list[str] = [corr_warning] if corr_warning else []
 
@@ -343,7 +376,9 @@ class FileProcessor:
             return cache_state.evaluation_text, []
 
         self._reporter.status("       → Running evaluation...")
-        eval_text, eval_warning = self._evaluation.evaluate(correction_text, self._language)
+        eval_text, eval_warning = self._evaluation.evaluate(
+            correction_text, self._language, text_format=self._text_format(ctx)
+        )
         eval_warnings: list[str] = [eval_warning] if eval_warning else []
         if eval_text:
             try:
@@ -355,13 +390,14 @@ class FileProcessor:
     def _write_docx(
         self,
         docx_file: Path,
-        stem: str,
         raw_text: str,
         corrected_text: str,
         evaluation_text: str,
         preview_img: str,
         source_image: Path | None,
         warnings: tuple[str, ...] = (),
+        *,
+        text_format: TextFormat = "plain",
     ) -> ProcessingResult:
         try:
             if self._doc_creator is not None:
@@ -369,8 +405,9 @@ class FileProcessor:
                     raw_text,
                     corrected_text,
                     docx_file,
-                    stem,
+                    docx_file.stem,
                     source_image=source_image,
+                    text_format=text_format,
                 )
                 saved = docx_file.name
             else:
@@ -383,7 +420,15 @@ class FileProcessor:
                 raw_text,
                 corrected_text,
                 evaluation_text,
+                text_format=text_format,
             )
         return ProcessingResult(
-            True, saved, preview_img, raw_text, corrected_text, evaluation_text, warnings
+            True,
+            saved,
+            preview_img,
+            raw_text,
+            corrected_text,
+            evaluation_text,
+            warnings,
+            text_format=text_format,
         )

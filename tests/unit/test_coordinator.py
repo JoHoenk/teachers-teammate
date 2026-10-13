@@ -9,6 +9,7 @@ from unittest.mock import MagicMock, call
 
 import pytest
 
+from teachers_teammate.infrastructure.reporting import FileDoneResult
 from teachers_teammate.infrastructure.workflow.coordinator import run_files
 from teachers_teammate.infrastructure.workflow.file_processor import ProcessingResult
 
@@ -94,7 +95,7 @@ def test_run_files_on_file_done_called_per_file(tmp_path: Path) -> None:
     """
     Given  two files and an on_file_done callback
     When   run_files is called
-    Then   on_file_done is called with 8 arguments for each file
+    Then   on_file_done is called once per file with a FileDoneResult
     """
     f1 = tmp_path / "doc.png"
     on_done = MagicMock()
@@ -102,8 +103,10 @@ def test_run_files_on_file_done_called_per_file(tmp_path: Path) -> None:
     run_files([f1], process_file=_success, cleanup_tmp=MagicMock(), on_file_done=on_done)
 
     assert on_done.call_count == 1
-    args = on_done.call_args[0]
-    assert len(args) == 8  # source_id, name, success, msg, preview, raw, corr, eval
+    result = on_done.call_args[0][0]
+    assert isinstance(result, FileDoneResult)
+    assert result.name == "doc.png"
+    assert result.ok is True
 
 
 # ── Stop event ─────────────────────────────────────────────────────────────
@@ -178,3 +181,25 @@ def test_run_files_empty_list_returns_empty_and_cleans_up(tmp_path: Path) -> Non
     assert succeeded == []
     assert failed == []
     cleanup.assert_called_once()
+
+
+def test_run_files_reports_text_format_with_file_done(tmp_path: Path) -> None:
+    """
+    Given  a file whose result is Markdown text and an on_file_done callback
+    When   run_files is called
+    Then   the FileDoneResult it receives carries the text and its "markdown" format
+    """
+    f1 = tmp_path / "doc.png"
+    on_done = MagicMock()
+
+    def _markdown(_file: Path) -> ProcessingResult:
+        return ProcessingResult(True, "doc.docx", "", "**x**", "", "", text_format="markdown")
+
+    run_files([f1], process_file=_markdown, cleanup_tmp=MagicMock(), on_file_done=on_done)
+
+    on_done.assert_called_once()
+    result = on_done.call_args[0][0]
+    assert isinstance(result, FileDoneResult)
+    assert result.source_id == str(f1.resolve())
+    assert result.raw_text == "**x**"
+    assert result.text_format == "markdown"

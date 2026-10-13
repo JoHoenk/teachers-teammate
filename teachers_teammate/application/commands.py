@@ -56,8 +56,13 @@ class ApplicationCommands:
         source: Path,
         edited_text: str,
         preview_img: str,
+        raw_text_format: str | None = None,
     ) -> DocumentState | None:
-        """Persist a manually edited OCR result for *source*."""
+        """Persist a manually edited OCR result for *source*.
+
+        *raw_text_format* is the notation the edited text is written in; ``None`` keeps the
+        notation the state already has.
+        """
         ocr_config_hash = compute_ocr_config_hash(config, get_ocr_prompt(config.language))
         return self._record_manual_ocr_edit(
             self._state_store_factory(config),
@@ -65,6 +70,7 @@ class ApplicationCommands:
             edited_text=edited_text,
             preview_img=preview_img,
             ocr_config_hash=ocr_config_hash,
+            raw_text_format=raw_text_format,
         )
 
     def record_manual_correction_edit(
@@ -75,8 +81,13 @@ class ApplicationCommands:
         raw_text: str,
         preview_img: str,
         edited_text: str,
+        raw_text_format: str = "plain",
     ) -> DocumentState | None:
-        """Persist a manually edited correction result for *source*."""
+        """Persist a manually edited correction result for *source*.
+
+        *raw_text_format* is the notation of *raw_text*; it is stored when the edit has to
+        synthesise the OCR text because the state has none yet.
+        """
         ocr_config_hash = compute_ocr_config_hash(config, get_ocr_prompt(config.language))
         correction_config_hash = compute_correction_config_hash(config)
         return self._record_manual_correction_edit(
@@ -87,6 +98,7 @@ class ApplicationCommands:
             edited_text=edited_text,
             ocr_config_hash=ocr_config_hash,
             correction_config_hash=correction_config_hash,
+            raw_text_format=raw_text_format,
         )
 
     # ── Private helpers ───────────────────────────────────────────────────
@@ -139,6 +151,7 @@ class ApplicationCommands:
         edited_text: str,
         preview_img: str,
         ocr_config_hash: str = "",
+        raw_text_format: str | None = None,
     ) -> DocumentState | None:
         state = cls._load_or_create_state(store, source)
         if state is None:
@@ -150,6 +163,7 @@ class ApplicationCommands:
                 raw_text=edited_text,
                 preview_img=preview_img,
                 ocr_config_hash=ocr_config_hash,
+                raw_text_format=raw_text_format,
             )
         except OSError:
             return None
@@ -165,6 +179,7 @@ class ApplicationCommands:
         edited_text: str,
         ocr_config_hash: str = "",
         correction_config_hash: str = "",
+        raw_text_format: str = "plain",
     ) -> DocumentState | None:
         state = cls._load_or_create_state(store, source)
         if state is None:
@@ -176,6 +191,7 @@ class ApplicationCommands:
             updates["source_image"] = preview_img
         if not state.raw_text:
             updates["raw_text"] = raw_text
+            updates["raw_text_format"] = raw_text_format
             updates["ocr_done"] = bool(raw_text)
             # The synthesised OCR text is fresh under the current config; stamp
             # its hash so reconciliation does not flag it stale on the next run.

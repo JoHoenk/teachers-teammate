@@ -244,3 +244,97 @@ def test_config_summary_lists_enabled_pre_steps(tmp_path: Path) -> None:
     assert "deskew" in summary
     assert "denoise" in summary
     assert "dewarp" not in summary
+
+
+def test_save_round_trips_text_format(tmp_path: Path) -> None:
+    """
+    Given  a run saved with Markdown text
+    When   it is listed again
+    Then   raw_text_format survives the JSON round trip
+    """
+    store = BenchmarkRunStore(tmp_path)
+    store.save(
+        NewRunRequest(
+            document_hash="doc1",
+            document_path="/docs/sample.pdf",
+            display_name="sample.pdf",
+            ocr=OcrConfig(engine="tesseract", model="", preprocess_method="none"),
+            language="English",
+            ocr_config_hash="abc12345",
+            raw_text="~~a~~",
+            elapsed_s=1.0,
+            raw_text_format="markdown",
+        )
+    )
+
+    (run,) = store.list_for("doc1")
+
+    assert run.raw_text_format == "markdown"
+
+
+def _legacy_run_json(raw_text: str) -> dict:
+    """A run JSON written before raw_text_format existed."""
+    return {
+        "schema_version": 1,
+        "run_id": "r",
+        "document_hash": "d",
+        "document_path": "/d.pdf",
+        "display_name": "d.pdf",
+        "ocr_config_hash": "h",
+        "ocr": {
+            "engine": "tesseract",
+            "model": "",
+            "provider": "",
+            "preprocess_method": "none",
+            "temperature": 0.0,
+        },
+        "language": "English",
+        "raw_text": raw_text,
+        "preview_img": "",
+        "timestamp": "2026-01-01T00:00:00Z",
+        "elapsed_s": 1.0,
+    }
+
+
+def test_from_json_dict_defaults_text_format_to_plain() -> None:
+    """
+    Given  a legacy run JSON without raw_text_format holding ordinary text
+    When   it is reloaded
+    Then   the run is treated as plain text
+    """
+    from teachers_teammate.infrastructure.benchmark.run_store import StoredRun  # noqa: PLC0415
+
+    run = StoredRun.from_json_dict(_legacy_run_json("Ein Satz.\nNoch einer."))
+
+    assert (run.raw_text, run.raw_text_format) == ("Ein Satz.\nNoch einer.", "plain")
+
+
+def test_from_json_dict_upgrades_legacy_model_markup() -> None:
+    """
+    Given  a legacy run JSON without raw_text_format whose text is raw layout HTML
+    When   it is reloaded
+    Then   the run is upgraded to canonical Markdown, so compare/metrics ignore the markup
+    """
+    from teachers_teammate.infrastructure.benchmark.run_store import StoredRun  # noqa: PLC0415
+
+    html_text = '<div data-bbox="0 0 1 1" data-label="Text"><p>Hallo <b>Welt</b></p></div>'
+
+    run = StoredRun.from_json_dict(_legacy_run_json(html_text))
+
+    assert (run.raw_text, run.raw_text_format) == ("Hallo **Welt**", "markdown")
+
+
+def test_from_json_dict_keeps_explicit_plain_text_untouched() -> None:
+    """
+    Given  a run JSON that records raw_text_format "plain" for text containing "**"
+    When   it is reloaded
+    Then   the text is not re-interpreted
+    """
+    from teachers_teammate.infrastructure.benchmark.run_store import StoredRun  # noqa: PLC0415
+
+    raw = _legacy_run_json("**not bold**")
+    raw["raw_text_format"] = "plain"
+
+    run = StoredRun.from_json_dict(raw)
+
+    assert (run.raw_text, run.raw_text_format) == ("**not bold**", "plain")

@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from teachers_teammate.infrastructure.reporting import ProgressCallbacks
+from teachers_teammate.infrastructure.reporting import FileDoneResult, ProgressCallbacks
 from tests.conftest import make_config, skip_no_tesseract
 
 
@@ -63,17 +63,8 @@ def test_pipeline_on_file_done_callback_is_invoked(tmp_path: Path, sample_png: P
 
     results: list[tuple] = []
 
-    def _on_done(
-        _source_id: str,
-        path: str,
-        success: bool,
-        _msg: str,
-        _preview_img: object,
-        raw: str,
-        corrected: str,
-        _evaluated: str,
-    ) -> None:
-        results.append((path, success, raw, corrected))
+    def _on_done(result: FileDoneResult) -> None:
+        results.append((result.name, result.ok, result.raw_text, result.correction_text))
 
     cfg = make_config(
         tmp_path,

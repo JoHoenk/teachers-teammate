@@ -16,7 +16,7 @@ Ollama runs AI vision models locally on your machine. Teacher's Teammate sends e
 
 **Ollama must be running** before you start a processing run. Download it from [ollama.com/download](https://ollama.com/download) and install it like any other program. By default Teacher's Teammate connects to `http://127.0.0.1:11434` (your own computer). If you run Ollama on a dedicated machine on your local network, change the address in **Advanced Settings → Connections & API Keys…** or set `ollama_url` in the settings file — for example `http://192.168.1.50:11434`.
 
-**Upgrading from an earlier version:** the built-in default models changed. Without explicit model settings the app (and the command line) now uses `qwen3-vl:8b` for reading (before: `deepseek-ocr:latest`) and `qwen3.5:9b` for proofreading and content review (before: `gpt-oss:20b`) on the default 8 GB profile. Download them in **Advanced Settings → Downloads…**, or keep your previous choice by setting `ocr_model`, `correction_model` and `evaluate_model` in the settings file. Settings you saved earlier are not changed.
+**Upgrading from an earlier version:** the built-in default models changed. Without explicit model settings the app (and the command line) now uses `hf.co/prithivMLmods/chandra-ocr-2-GGUF:Q8_0` for reading (before: `deepseek-ocr:latest`) and `gpt-oss:20b` for proofreading and content review. These defaults apply on every computer; the recommendations in the tables below still depend on your hardware profile. Download them in **Advanced Settings → Downloads…**, or keep your previous choice by setting `ocr_model`, `correction_model` and `evaluate_model` in the settings file. Settings you saved earlier are not changed.
 
 **Reading models and hardware requirements:**
 
@@ -26,9 +26,11 @@ Teacher's Teammate distinguishes three computer types ("hardware profiles"): a b
 
 | Model | Memory (running) | Download | cpu | 8 GB | 16 GB | Notes |
 |---|---|---|---|---|---|---|
+| `hf.co/prithivMLmods/chandra-ocr-2-GGUF:Q8_0` | ~6.5 GB | 5.5 GB | too slow | ★ best | ★ best | Default. Full pages with tables and handwriting; keeps the page layout |
 | `glm-ocr:q8_0` | ~2.5 GB | 1.6 GB | ★ best | good | good | Small and fast; printed and mixed-language pages |
-| `qwen3-vl:8b` | ~7 GB | 6.1 GB | too slow | ★ best | ★ best | Best overall for handwriting |
+| `qwen3-vl:8b` | ~7 GB | 6.1 GB | too slow | good | good | Best overall for handwriting among the Ollama library models |
 | `deepseek-ocr:latest` | ~7 GB | 6.7 GB | too slow | good | good | Strong on dense, structured pages |
+| `qwen3.5:9b` | ~7 GB | 6.6 GB | too slow | good | good | Alternative: a writing model that can also read scanned pages (listed below) |
 | `qwen2.5vl:7b` | ~7 GB | 6.0 GB | too slow | works | works | Older version of qwen3-vl |
 
 **Writing models** (proofreading and content review):
@@ -36,11 +38,12 @@ Teacher's Teammate distinguishes three computer types ("hardware profiles"): a b
 | Model | Memory (running) | Download | cpu | 8 GB | 16 GB | Notes |
 |---|---|---|---|---|---|---|
 | `qwen3:4b` | ~3.5 GB | 2.5 GB | ★ best | works | works | Small model for computers without a graphics card |
-| `qwen3.5:9b` | ~7 GB | 6.6 GB | too slow | ★ best | good | Best writing model for 8 GB |
+| `qwen3.5:9b` | ~7 GB | 6.6 GB | too slow | ★ best | good | Best writing model for 8 GB; can also read scanned pages |
+| `gemma4:latest` | ~7.5 GB | 6.6 GB | too slow | works | works | Compact writing model |
 | `mistral:latest` | ~5.5 GB | 4.4 GB | too slow | good | works | Reliable all-rounder |
 | `mistral-nemo:12b` | ~8.5 GB | 7.1 GB | too slow | too large | good | Good with long texts |
 | `gemma4:12b` | ~9.5 GB | 8.0 GB | too slow | too large | good | Larger writing model |
-| `gpt-oss:20b` | ~14 GB | 13.8 GB | too slow | too large | ★ best | Best writing model for 16 GB |
+| `gpt-oss:20b` | ~14 GB | 13.8 GB | too slow | too large | ★ best | Default. Best writing model for 16 GB |
 
 The `hardware_profile` setting in the settings file (TOML format) controls the profile. Allowed values are `auto` (detect — default), `cpu`, `8gb` and `16gb`; an invalid value falls back to `auto` with a warning. With `auto` the app picks the profile from the largest detected graphics card (≥ 15 GB → `16gb`, ≥ 7 GB → `8gb`, otherwise `cpu`; on Apple Silicon it uses two thirds of the shared memory with the same thresholds). When `ollama_url` points at another computer, local detection is skipped and `8gb` is assumed — change the profile yourself if you know what that machine has. An address that names *this* computer (its own host name or network address) counts as this computer. The setting affects only recommendations; it never changes which model is configured.
 

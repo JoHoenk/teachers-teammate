@@ -16,14 +16,14 @@ import tomllib
 from typing import Any
 
 from ._model_defaults import default_model_for_task
-from .domain.model_catalog import FALLBACK_PROFILE, PROFILE_SETTINGS, best_model
+from .domain.model_catalog import DEFAULT_OCR_MODEL, DEFAULT_WRITING_MODEL, PROFILE_SETTINGS
 from .exceptions import ConfigFileParseError
 from .interfaces import SUPPORTED_SUFFIXES as SUPPORTED_SUFFIXES  # noqa: PLC0414
 
 DEFAULTS: dict[str, Any] = {
     # ── OCR ──────────────────────────────────────────────────────────────────
     "ocr_engine": "ollama",
-    "ocr_model": best_model("ocr", FALLBACK_PROFILE),
+    "ocr_model": DEFAULT_OCR_MODEL,
     "ocr_provider": "",
     "language": "English",
     "preprocess_method": "grayscale",
@@ -44,13 +44,13 @@ DEFAULTS: dict[str, Any] = {
     "correction_enabled": True,
     "anonymization_enabled": False,
     "correction_provider": "ollama",
-    "correction_model": best_model("general", FALLBACK_PROFILE),
+    "correction_model": DEFAULT_WRITING_MODEL,
     "correction_prompt": "",
     "correction_temperature": 0.7,
     # ── Evaluation ────────────────────────────────────────────────────────────
     "evaluation_enabled": False,
     "evaluate_provider": "ollama",
-    "evaluate_model": best_model("general", FALLBACK_PROFILE),
+    "evaluate_model": DEFAULT_WRITING_MODEL,
     "evaluate_prompt": (
         "You are a quality evaluator for OCR correction output. "
         "Given corrected text, provide a concise quality report with: "

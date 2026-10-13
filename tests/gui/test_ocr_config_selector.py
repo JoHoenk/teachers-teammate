@@ -6,6 +6,7 @@ from __future__ import annotations
 import pytest
 
 from teachers_teammate.config import OcrConfig
+from teachers_teammate.domain.model_catalog import DEFAULT_OCR_MODEL
 from teachers_teammate.gui._ocr_config_selector import OcrConfigSelector
 
 from ._service_stubs import RecommendationServiceStub
@@ -214,7 +215,7 @@ class _OllamaCatalogAppService(_DummyAppService):
         return list(self._models) if provider == "ollama" else [f"{provider}-model"]
 
 
-_INSTALLED = ["qwen3-vl:8b", "glm-ocr:q8_0", "qwen3.5:9b", "mistral:latest"]
+_INSTALLED = [DEFAULT_OCR_MODEL, "qwen3-vl:8b", "glm-ocr:q8_0", "qwen3.5:9b", "mistral:latest"]
 
 
 def _ollama_selector(
@@ -246,13 +247,14 @@ def test_ollama_models_sorted_best_first_with_raw_tags(qtbot) -> None:
     """
     selector = _ollama_selector(qtbot)
     combo = selector._ocr_model
-    assert combo.itemText(0) == "qwen3-vl:8b"
-    # No decoration anywhere: raw tags only.
+    assert combo.itemText(0) == DEFAULT_OCR_MODEL
+    # No decoration anywhere: raw tags only; GOOD models follow, sorted by name.
     assert [combo.itemText(i) for i in range(combo.count())] == [
-        "qwen3-vl:8b",
+        DEFAULT_OCR_MODEL,
         "glm-ocr:q8_0",
-        "mistral:latest",
-        "qwen3.5:9b",  # general model → WRONG_KIND, sorted last
+        "qwen3-vl:8b",
+        "qwen3.5:9b",  # writing model that also reads scans → GOOD
+        "mistral:latest",  # general model → WRONG_KIND, sorted last
     ]
     combo.setCurrentText("qwen3-vl:8b")
     assert selector.get_ocr_config().model == "qwen3-vl:8b"
@@ -266,10 +268,10 @@ def test_selecting_general_model_shows_wrong_kind_hint(qtbot) -> None:
     Then   the hint warns that the model cannot read scans (AC6)
     """
     selector = _ollama_selector(qtbot)
-    selector._ocr_model.setCurrentText("qwen3.5:9b")
+    selector._ocr_model.setCurrentText("mistral:latest")
     hint = selector._guidance._hint_lbl.text()
     assert "cannot read scans" in hint
-    assert "qwen3-vl:8b" in hint  # suggests a reading model example
+    assert DEFAULT_OCR_MODEL in hint  # suggests a reading model example
 
 
 @pytest.mark.use_case("Model_Recommendation_By_Hardware")
@@ -282,7 +284,7 @@ def test_use_best_choice_selects_installed_best_model(qtbot) -> None:
     selector = _ollama_selector(qtbot)
     selector._ocr_model.setCurrentText("glm-ocr:q8_0")
     selector._guidance._best_btn.click()
-    assert selector._ocr_model.currentText() == "qwen3-vl:8b"
+    assert selector._ocr_model.currentText() == DEFAULT_OCR_MODEL
 
 
 @pytest.mark.use_case("Recommended_Models_On_First_Start")
@@ -303,7 +305,7 @@ def test_download_best_choice_calls_open_downloads(qtbot) -> None:
         qtbot, models=["glm-ocr:q8_0", "qwen3.5:9b"], open_downloads=open_downloads
     )
     selector._guidance._best_btn.click()
-    assert received == [["qwen3-vl:8b"]]
+    assert received == [[DEFAULT_OCR_MODEL]]
 
 
 @pytest.mark.use_case("Model_Category_Guidance")

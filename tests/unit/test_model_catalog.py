@@ -9,7 +9,8 @@ import pytest
 from teachers_teammate._model_defaults import _DEFAULT_MODELS
 from teachers_teammate.config import DEFAULTS
 from teachers_teammate.domain.model_catalog import (
-    FALLBACK_PROFILE,
+    DEFAULT_OCR_MODEL,
+    DEFAULT_WRITING_MODEL,
     HARDWARE_PROFILES,
     MEMORY_BUDGET_GB,
     OLLAMA_CATALOG,
@@ -20,7 +21,7 @@ from teachers_teammate.domain.model_catalog import (
     HardwareProfile,
     ModelUses,
     Suitability,
-    best_model,
+    catalog_uses,
     choose_profile,
     find_spec,
     models_for,
@@ -62,7 +63,7 @@ def test_recommended_lists_reference_existing_catalog_entries() -> None:
     """
     Given  the RECOMMENDED mapping
     When   every (category, profile) list is inspected
-    Then   each list is non-empty and every tag exists in the catalog with the same category
+    Then   each list is non-empty and every tag exists in the catalog for that category
     """
     for category, per_profile in RECOMMENDED.items():
         for profile in HARDWARE_PROFILES:
@@ -71,7 +72,7 @@ def test_recommended_lists_reference_existing_catalog_entries() -> None:
             for tag in tags:
                 spec = find_spec(tag)
                 assert spec is not None, f"{tag} is not in the catalog"
-                assert spec.category == category
+                assert category in catalog_uses(spec)
 
 
 @pytest.mark.use_case("Model_Recommendation_By_Hardware")
@@ -119,16 +120,19 @@ def test_normalize_tag_leaves_tagged_names_unchanged() -> None:
     ("tag", "profile", "expected"),
     [
         # BEST: first entry of the RECOMMENDED list
-        ("qwen3-vl:8b", "8gb", Suitability.BEST),
+        (DEFAULT_OCR_MODEL, "8gb", Suitability.BEST),
+        (DEFAULT_OCR_MODEL, "16gb", Suitability.BEST),
         ("glm-ocr:q8_0", "cpu", Suitability.BEST),
         ("qwen3.5:9b", "8gb", Suitability.BEST),
         ("gpt-oss:20b", "16gb", Suitability.BEST),
         # GOOD: further entries of the RECOMMENDED list
+        ("qwen3-vl:8b", "8gb", Suitability.GOOD),
         ("deepseek-ocr:latest", "8gb", Suitability.GOOD),
         ("mistral:latest", "8gb", Suitability.GOOD),
         # WORKS: catalogued and within the budget but not recommended
         ("qwen2.5vl:7b", "8gb", Suitability.WORKS),
         ("mistral:latest", "16gb", Suitability.WORKS),
+        ("gemma4:latest", "8gb", Suitability.WORKS),
         # TOO_LARGE: memory need exceeds the profile budget
         ("qwen3-vl:8b", "cpu", Suitability.TOO_LARGE),
         ("gpt-oss:20b", "8gb", Suitability.TOO_LARGE),
@@ -152,7 +156,22 @@ def test_suitability_general_model_for_ocr_task_is_wrong_kind() -> None:
     When   suitability is computed for the "ocr" category
     Then   the result is WRONG_KIND
     """
-    assert suitability("qwen3.5:9b", "ocr", "8gb") is Suitability.WRONG_KIND
+    assert suitability("mistral:latest", "ocr", "8gb") is Suitability.WRONG_KIND
+    assert suitability("gemma4:latest", "ocr", "8gb") is Suitability.WRONG_KIND
+
+
+@pytest.mark.use_case("Model_Category_Guidance")
+def test_qwen35_is_a_good_reading_alternative_and_still_the_best_writing_model() -> None:
+    """
+    Given  qwen3.5:9b, a writing model that can also read scanned pages
+    When   it is rated for reading and for writing on the 8gb profile
+    Then   it is GOOD for reading and BEST for writing
+    """
+    spec = find_spec("qwen3.5:9b")
+    assert spec is not None
+    assert catalog_uses(spec) == frozenset({"ocr", "general"})
+    assert suitability("qwen3.5:9b", "ocr", "8gb") is Suitability.GOOD
+    assert suitability("qwen3.5:9b", "general", "8gb") is Suitability.BEST
 
 
 @pytest.mark.use_case("Model_Category_Guidance")
@@ -221,13 +240,11 @@ def test_models_for_sorts_by_suitability_then_name() -> None:
     rows = models_for("ocr", "8gb")
     tags = [spec.tag for spec, _value in rows]
     values = [value for _spec, value in rows]
-    assert tags[0] == "qwen3-vl:8b"
+    assert tags[0] == DEFAULT_OCR_MODEL
     assert values[0] is Suitability.BEST
-    # deepseek-ocr and glm-ocr are both GOOD — sorted by name afterwards
-    assert tags[1] == "deepseek-ocr:latest"
-    assert values[1] is Suitability.GOOD
-    assert tags[2] == "glm-ocr:q8_0"
-    assert values[2] is Suitability.GOOD
+    # the GOOD rows are sorted by name afterwards
+    assert tags[1:5] == ["deepseek-ocr:latest", "glm-ocr:q8_0", "qwen3-vl:8b", "qwen3.5:9b"]
+    assert values[1:5] == [Suitability.GOOD] * 4
     assert tags[-1] == "qwen2.5vl:7b"
     assert values[-1] is Suitability.WORKS
 
@@ -300,6 +317,7 @@ def test_default_ocr_model_is_a_catalogued_reading_model() -> None:
     When   the Ollama OCR default is inspected
     Then   it is a catalogued reading model (regression: gpt-oss cannot read images)
     """
+    assert DEFAULTS["ocr_model"] == DEFAULT_OCR_MODEL
     spec = find_spec(DEFAULTS["ocr_model"])
     assert spec is not None
     assert spec.category == "ocr"
@@ -308,13 +326,16 @@ def test_default_ocr_model_is_a_catalogued_reading_model() -> None:
     assert spec.category == "ocr"
 
 
-def test_default_writing_models_equal_best_fallback_general_model() -> None:
+def test_default_writing_models_equal_the_default_writing_model() -> None:
     """
     Given  the static DEFAULTS, per-task model defaults, and provider metadata
     When   the Ollama writing-model defaults are inspected
-    Then   all equal best_model("general", FALLBACK_PROFILE)
+    Then   all equal DEFAULT_WRITING_MODEL, a catalogued writing model
     """
-    expected = best_model("general", FALLBACK_PROFILE)
+    expected = DEFAULT_WRITING_MODEL
+    spec = find_spec(expected)
+    assert spec is not None
+    assert spec.category == "general"
     assert DEFAULTS["correction_model"] == expected
     assert DEFAULTS["evaluate_model"] == expected
     assert _DEFAULT_MODELS["correction"]["ollama"] == expected
@@ -386,10 +407,10 @@ def test_rate_model_bundles_everything_a_widget_needs() -> None:
     """
     from teachers_teammate.domain.model_catalog import rate_model  # noqa: PLC0415
 
-    best = rate_model("qwen3-vl:8b", "ocr", "8gb")
+    best = rate_model(DEFAULT_OCR_MODEL, "ocr", "8gb")
     assert best.suitability is Suitability.BEST
     assert best.model_uses == frozenset({"ocr"})
-    assert best.memory_gb == 7.0
+    assert best.memory_gb == 6.5
     assert best.note
 
     custom = rate_model(
@@ -410,8 +431,8 @@ def test_catalog_notes_do_not_claim_unverified_capabilities() -> None:
     """
     Given  the catalog
     When   the notes of writing models are read
-    Then   none claims image reading (gemma4:12b was never verified to read images)
+    Then   none claims image reading unless it is catalogued as a reading model too
     """
     for spec in OLLAMA_CATALOG:
-        if spec.category == "general":
+        if spec.category == "general" and "ocr" not in spec.also_uses:
             assert "image" not in spec.note.lower(), spec.tag

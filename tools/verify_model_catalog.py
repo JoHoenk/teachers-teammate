@@ -13,6 +13,9 @@ What it does:
   ``https://registry.ollama.ai/v2/library/<name>/manifests/<tag>`` and reports
   the sum of layer sizes as the real download size, comparing it with the
   catalog ``download_gb`` estimate (tolerance: ±25 % + 0.5 GB).
+* For ``hf.co/<user>/<repo>:<quant>`` tags, sums the GGUF file of that quant
+  (plus the smallest ``mmproj`` file, if the repository has one) from the
+  Hugging Face file list instead.
 * With ``--ollama``, additionally asks a local Ollama server (``ollama show``)
   for each model's capabilities and prints whether it can read images — this is
   how the gemma4:12b open question (plan §10) can be settled.
@@ -93,16 +96,41 @@ def _resolve_to_single_manifest(manifest: dict) -> dict | None:
     return None
 
 
+def _hf_total_gb(tag: str) -> float | None:
+    """Return the download size (decimal GB) of an ``hf.co/<user>/<repo>:<quant>`` tag."""
+    repo, _, quant = tag.removeprefix("hf.co/").partition(":")
+    url = f"https://huggingface.co/api/models/{repo}?blobs=true"
+    try:
+        with urllib.request.urlopen(url, timeout=15) as response:
+            files = json.load(response).get("siblings", [])
+    except Exception as exc:  # noqa: BLE001  # any network/parse error is reported per tag
+        print(f"  ERROR fetching Hugging Face file list: {exc}")
+        return None
+    ggufs = [(f["rfilename"].lower(), int(f.get("size") or 0)) for f in files]
+    ggufs = [(name, size) for name, size in ggufs if name.endswith(".gguf")]
+    model = [size for name, size in ggufs if "mmproj" not in name and quant.lower() in name]
+    if not model:
+        print(f"  ERROR: no GGUF file for quant {quant!r}")
+        return None
+    projector = [size for name, size in ggufs if "mmproj" in name]
+    return (sum(model) + (min(projector) if projector else 0)) / 1e9
+
+
 def _check_download_size(spec) -> bool:
     print(f"{spec.tag} ({spec.category}, memory ~{spec.memory_gb:g} GB)")
-    manifest = _fetch_manifest(spec.tag)
-    if manifest is None:
-        return False
-    single = _resolve_to_single_manifest(manifest)
-    real_gb = _manifest_total_gb(single) if single is not None else None
-    if real_gb is None:
-        print("  ERROR: manifest has no layers (index without a resolvable child?)")
-        return False
+    if spec.tag.startswith("hf.co/"):
+        real_gb = _hf_total_gb(spec.tag)
+        if real_gb is None:
+            return False
+    else:
+        manifest = _fetch_manifest(spec.tag)
+        if manifest is None:
+            return False
+        single = _resolve_to_single_manifest(manifest)
+        real_gb = _manifest_total_gb(single) if single is not None else None
+        if real_gb is None:
+            print("  ERROR: manifest has no layers (index without a resolvable child?)")
+            return False
     ok = abs(real_gb - spec.download_gb) <= (
         _TOLERANCE_FACTOR * max(spec.download_gb, real_gb) + _TOLERANCE_GB
     )

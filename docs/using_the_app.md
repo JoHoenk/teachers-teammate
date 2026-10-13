@@ -72,8 +72,8 @@ The best models per computer type:
 | Your computer | Best reading model | Best writing model |
 |---|---|---|
 | Basic computer or small graphics card (under 8 GB) | `glm-ocr:q8_0` | `qwen3:4b` |
-| Graphics card with about 8 GB memory | `qwen3-vl:8b` | `qwen3.5:9b` |
-| Graphics card with 16 GB memory or more | `qwen3-vl:8b` | `gpt-oss:20b` |
+| Graphics card with about 8 GB memory | `hf.co/prithivMLmods/chandra-ocr-2-GGUF:Q8_0` | `qwen3.5:9b` |
+| Graphics card with 16 GB memory or more | `hf.co/prithivMLmods/chandra-ocr-2-GGUF:Q8_0` | `gpt-oss:20b` |
 
 To get a working setup in one step, open **Advanced Settings → Downloads…**, stay on the **Ollama Models** tab (it opens first), and click **Select the best models for my computer** — the app ticks the two models it recommends for your computer. Then click **Install / Download Selected**. On the very first start the app also pre-selects the best models for your computer, and the "model missing" message before a run takes you straight to the Downloads dialog with the missing models already ticked.
 

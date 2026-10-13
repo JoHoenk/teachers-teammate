@@ -169,9 +169,17 @@ right category and that every best pick fits its profile budget — new entries 
 them green.
 
 The static defaults (`DEFAULTS["ocr_model"]` / `correction_model` / `evaluate_model`,
-the per-task provider defaults, and the Ollama provider's `default_model`) are all
-derived from the catalog via `best_model(category, FALLBACK_PROFILE)`, so they change
-automatically when the catalog changes.
+the per-task provider defaults, and the Ollama provider's `default_model`) all come from
+`DEFAULT_OCR_MODEL` / `DEFAULT_WRITING_MODEL` in the catalog module. They are independent
+of the hardware profile — the per-profile `RECOMMENDED` lists only drive the GUI
+recommendations — so a default may be "too large" for a small profile.
+
+A writing model that can also read scanned pages lists `also_uses=frozenset({"ocr"})`;
+`catalog_uses()`, `suitability()` and `models_for()` then treat it as a reading model as
+well (the Downloads dialog still lists it once, under its primary category). Entries
+whose tag starts with `hf.co/` are pulled from Hugging Face, so
+`tools/verify_model_catalog.py` checks them against the Hugging Face file list instead
+of the Ollama registry.
 
 ### Who owns what (hardware detection and recommendations)
 

@@ -10,6 +10,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from teachers_teammate.domain.model_catalog import (
+    DEFAULT_OCR_MODEL,
     OLLAMA_CATALOG,
     DetectionReason,
     HardwareDetection,
@@ -142,7 +143,7 @@ def test_suitability_column_and_sort_order_follow_profile(qtbot) -> None:
     dlg = _make_dialog(qtbot)
     dlg._on_detection_done(_detection_results(dlg, set()))
     reading = dlg._group_items["ocr"]
-    assert reading.child(0).text(0) == "qwen3-vl:8b"
+    assert reading.child(0).text(0) == DEFAULT_OCR_MODEL
     assert reading.child(0).text(1) == "★ Best choice"
     writing = dlg._group_items["general"]
     assert writing.child(0).text(0) == "qwen3.5:9b"
@@ -202,7 +203,7 @@ def test_select_best_ticks_undownloaded_best_models(qtbot) -> None:
     deepseek = dlg._model_items["deepseek-ocr:latest"]
     deepseek.setCheckState(0, Qt.CheckState.Checked)
     dlg._on_select_best_models()
-    assert dlg._model_items["qwen3-vl:8b"].checkState(0) is Qt.CheckState.Checked
+    assert dlg._model_items[DEFAULT_OCR_MODEL].checkState(0) is Qt.CheckState.Checked
     assert dlg._model_items["qwen3.5:9b"].checkState(0) is Qt.CheckState.Checked
     assert deepseek.checkState(0) is Qt.CheckState.Checked
 
@@ -215,7 +216,7 @@ def test_select_best_reports_when_already_downloaded(qtbot) -> None:
     Then   the status line says the best models are already downloaded
     """
     dlg = _make_dialog(qtbot)
-    dlg._on_detection_done(_detection_results(dlg, {"qwen3-vl:8b", "qwen3.5:9b"}))
+    dlg._on_detection_done(_detection_results(dlg, {DEFAULT_OCR_MODEL, "qwen3.5:9b"}))
     dlg._on_select_best_models()
     assert dlg._ollama_hint_lbl.text() == (
         "The best models for your computer are already downloaded."
@@ -233,7 +234,7 @@ def test_pre_ticking_when_no_model_of_category_downloaded(qtbot) -> None:
 
     dlg = _make_dialog(qtbot)
     dlg._on_detection_done(_detection_results(dlg, set()))
-    assert dlg._model_items["qwen3-vl:8b"].checkState(0) is Qt.CheckState.Checked
+    assert dlg._model_items[DEFAULT_OCR_MODEL].checkState(0) is Qt.CheckState.Checked
     assert dlg._model_items["qwen3.5:9b"].checkState(0) is Qt.CheckState.Checked
 
 
@@ -248,7 +249,7 @@ def test_no_pre_ticking_when_category_already_downloaded(qtbot) -> None:
 
     dlg = _make_dialog(qtbot)
     dlg._on_detection_done(_detection_results(dlg, {"glm-ocr:q8_0", "qwen3.5:9b"}))
-    assert dlg._model_items["qwen3-vl:8b"].checkState(0) is Qt.CheckState.Unchecked
+    assert dlg._model_items[DEFAULT_OCR_MODEL].checkState(0) is Qt.CheckState.Unchecked
 
 
 @pytest.mark.use_case("Recommended_Models_On_First_Start")
@@ -297,12 +298,12 @@ def test_download_install_collects_ticked_child_rows(qtbot) -> None:
     # Undo the pre-ticking so the test controls exactly what is ticked.
     for _tag, row in dlg._iter_model_items():
         row.setCheckState(0, Qt.CheckState.Unchecked)
-    dlg._model_items["qwen3-vl:8b"].setCheckState(0, Qt.CheckState.Checked)
+    dlg._model_items[DEFAULT_OCR_MODEL].setCheckState(0, Qt.CheckState.Checked)
     dlg._model_items["deepseek-ocr:latest"].setCheckState(0, Qt.CheckState.Checked)
     pulls = MagicMock()
     dlg._run_ollama_pulls = pulls  # ty: ignore[invalid-assignment]  # test patches the pull pipeline
     dlg._on_download_install()
-    pulls.assert_called_once_with(["qwen3-vl:8b", "deepseek-ocr:latest"])
+    pulls.assert_called_once_with([DEFAULT_OCR_MODEL, "deepseek-ocr:latest"])
 
 
 # ── too-large confirmation ──────────────────────────────────────────────────
@@ -466,7 +467,7 @@ def test_failed_installed_check_still_ticks_best_models_and_preselect(qtbot) -> 
     dlg = _make_dialog(qtbot, service=service, preselect=["llama3.2:latest"])
     dlg.show()
     qtbot.waitUntil(lambda: "Detection failed" in dlg._dl_detect_lbl.text(), timeout=5000)
-    assert _ticked(dlg) == {"qwen3-vl:8b", "qwen3.5:9b", "llama3.2:latest"}
+    assert _ticked(dlg) == {DEFAULT_OCR_MODEL, "qwen3.5:9b", "llama3.2:latest"}
 
 
 # ── profile change signal ────────────────────────────────────────────────────
@@ -545,7 +546,7 @@ def test_profile_change_replaces_untouched_auto_ticks_and_keeps_user_ticks(qtbot
 
     dlg = _make_dialog(qtbot)
     dlg._on_detection_done(_detection_results(dlg, set()))
-    assert _ticked(dlg) == {"qwen3-vl:8b", "qwen3.5:9b"}
+    assert _ticked(dlg) == {DEFAULT_OCR_MODEL, "qwen3.5:9b"}
     dlg._model_items["mistral:latest"].setCheckState(0, Qt.CheckState.Checked)
 
     _choose_computer(qtbot, dlg, _CPU_TEXT)
@@ -564,11 +565,11 @@ def test_user_unticking_an_auto_tick_is_respected_after_profile_change(qtbot) ->
 
     dlg = _make_dialog(qtbot)
     dlg._on_detection_done(_detection_results(dlg, set()))
-    dlg._model_items["qwen3-vl:8b"].setCheckState(0, Qt.CheckState.Unchecked)
+    dlg._model_items[DEFAULT_OCR_MODEL].setCheckState(0, Qt.CheckState.Unchecked)
 
     _choose_computer(qtbot, dlg, _16GB_TEXT)
 
-    assert "qwen3-vl:8b" not in _ticked(dlg)  # 16 GB recommends it as well
+    assert DEFAULT_OCR_MODEL not in _ticked(dlg)  # 16 GB recommends it as well
     assert "gpt-oss:20b" in _ticked(dlg)
 
 
@@ -682,14 +683,14 @@ def test_finished_pull_shows_model_as_downloaded_without_waiting_for_cache(
     dlg = _make_dialog(qtbot, service=_real_service())
     dlg._start_detection()
     qtbot.waitUntil(lambda: dlg._installed_ready, timeout=5000)
-    assert dlg._model_items["qwen3-vl:8b"].text(3) == "—"
+    assert dlg._model_items[DEFAULT_OCR_MODEL].text(3) == "—"
 
-    fake_ollama.installed["qwen3-vl:8b"] = 6_000_000_000  # the pull arrived
+    fake_ollama.installed[DEFAULT_OCR_MODEL] = 6_000_000_000  # the pull arrived
     dlg._on_ollama_pull_done([])
 
-    qtbot.waitUntil(lambda: dlg._model_items["qwen3-vl:8b"].text(3) == "✓", timeout=5000)
+    qtbot.waitUntil(lambda: dlg._model_items[DEFAULT_OCR_MODEL].text(3) == "✓", timeout=5000)
     # Decimal GB, like the catalog sizes shown before the download.
-    assert dlg._model_items["qwen3-vl:8b"].text(4) == "6.0 GB"
+    assert dlg._model_items[DEFAULT_OCR_MODEL].text(4) == "6.0 GB"
 
 
 @pytest.mark.use_case("Model_Category_Guidance")

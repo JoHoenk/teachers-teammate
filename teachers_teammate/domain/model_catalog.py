@@ -41,9 +41,11 @@ PROFILE_SETTINGS: tuple[HardwareProfileSetting, ...] = ("auto", *HARDWARE_PROFIL
 # not a hard limit: larger models still run, just slowly.
 MEMORY_BUDGET_GB: dict[HardwareProfile, float] = {"cpu": 4.0, "8gb": 7.5, "16gb": 15.5}
 
-#: Profile used for static defaults (DEFAULTS, CLI, providers) and as fallback
-#: when nothing is known about the machine.
-FALLBACK_PROFILE: HardwareProfile = "8gb"
+#: Static default models (config DEFAULTS, CLI, provider metadata).  They apply
+#: regardless of hardware; the per-profile picks in :data:`RECOMMENDED` only drive
+#: the hardware-aware GUI recommendations.
+DEFAULT_OCR_MODEL = "hf.co/prithivMLmods/chandra-ocr-2-GGUF:Q8_0"
+DEFAULT_WRITING_MODEL = "gpt-oss:20b"
 
 # ── hardware detection thresholds ─────────────────────────────────────────────
 
@@ -61,7 +63,8 @@ class OllamaModelSpec:
 
     #: Normalised model tag, always including the ``:tag`` suffix.
     tag: str
-    #: "ocr" (reading model) or "general" (writing model).
+    #: "ocr" (reading model) or "general" (writing model).  The Downloads dialog
+    #: lists the model in this group.
     category: ModelCategory
     #: Approximate memory (GB) while running (weights + ~8k context).
     memory_gb: float
@@ -69,12 +72,23 @@ class OllamaModelSpec:
     download_gb: float
     #: Plain-language one-liner shown as tooltip.
     note: str
+    #: Further tasks the model is verified for besides ``category`` (a writing
+    #: model that can also read images).
+    also_uses: ModelUses = frozenset()
 
 
 # Download sizes (decimal GB) were checked against the Ollama registry manifests
-# with ``tools/verify_model_catalog.py`` on 2026-10-12.  ``memory_gb`` is an
-# estimate (weights + ~8k context) that cannot be read from a manifest.
+# with ``tools/verify_model_catalog.py`` on 2026-10-12 (the Hugging Face entry
+# against the repository file list).  ``memory_gb`` is an estimate (weights + ~8k
+# context) that cannot be read from a manifest.
 OLLAMA_CATALOG: tuple[OllamaModelSpec, ...] = (
+    OllamaModelSpec(
+        tag=DEFAULT_OCR_MODEL,
+        category="ocr",
+        memory_gb=6.5,
+        download_gb=5.5,
+        note="Built for full pages with tables and handwriting. Keeps the page layout.",
+    ),
     OllamaModelSpec(
         tag="glm-ocr:q8_0",
         category="ocr",
@@ -115,7 +129,8 @@ OLLAMA_CATALOG: tuple[OllamaModelSpec, ...] = (
         category="general",
         memory_gb=7.0,
         download_gb=6.6,
-        note="Best writing model for 8 GB.",
+        note="Best writing model for 8 GB. Can also read scanned pages.",
+        also_uses=frozenset({"ocr"}),
     ),
     OllamaModelSpec(
         tag="mistral:latest",
@@ -132,6 +147,13 @@ OLLAMA_CATALOG: tuple[OllamaModelSpec, ...] = (
         note="Good with long texts.",
     ),
     OllamaModelSpec(
+        tag="gemma4:latest",
+        category="general",
+        memory_gb=7.5,
+        download_gb=6.6,
+        note="Compact writing model.",
+    ),
+    OllamaModelSpec(
         tag="gemma4:12b",
         category="general",
         memory_gb=9.5,
@@ -139,7 +161,7 @@ OLLAMA_CATALOG: tuple[OllamaModelSpec, ...] = (
         note="Larger writing model.",
     ),
     OllamaModelSpec(
-        tag="gpt-oss:20b",
+        tag=DEFAULT_WRITING_MODEL,
         category="general",
         memory_gb=14.0,
         download_gb=13.8,
@@ -155,8 +177,20 @@ RECOMMENDED: dict[ModelCategory, dict[HardwareProfile, tuple[str, ...]]] = {
         "cpu": ("glm-ocr:q8_0",),
         # 16 GB reading list intentionally equals the 8 GB list until a larger
         # vision model has been validated with the Benchmark app (plan §10).
-        "8gb": ("qwen3-vl:8b", "deepseek-ocr:latest", "glm-ocr:q8_0"),
-        "16gb": ("qwen3-vl:8b", "deepseek-ocr:latest", "glm-ocr:q8_0"),
+        "8gb": (
+            DEFAULT_OCR_MODEL,
+            "qwen3-vl:8b",
+            "deepseek-ocr:latest",
+            "qwen3.5:9b",
+            "glm-ocr:q8_0",
+        ),
+        "16gb": (
+            DEFAULT_OCR_MODEL,
+            "qwen3-vl:8b",
+            "deepseek-ocr:latest",
+            "qwen3.5:9b",
+            "glm-ocr:q8_0",
+        ),
     },
     "general": {
         "cpu": ("qwen3:4b",),
@@ -201,8 +235,8 @@ def find_spec(tag: str) -> OllamaModelSpec | None:
 
 
 def catalog_uses(spec: OllamaModelSpec) -> ModelUses:
-    """Return the uses of a catalogued model: exactly its curated category."""
-    return frozenset({spec.category})
+    """Return the uses of a catalogued model: its curated category plus ``also_uses``."""
+    return frozenset({spec.category}) | spec.also_uses
 
 
 def uses_from_capabilities(capabilities: Collection[str]) -> ModelUses:
@@ -237,7 +271,9 @@ def suitability(
        → :attr:`Suitability.UNKNOWN`.
     2. *category* not among the model's uses → :attr:`Suitability.WRONG_KIND`.
        A catalogued reading model is therefore never offered for writing: the
-       dedicated OCR models do not follow a proofreading prompt well.
+       dedicated OCR models do not follow a proofreading prompt well.  A catalogued
+       writing model is a reading model too only when it lists ``"ocr"`` in
+       ``also_uses``.
     3. Tag is ``RECOMMENDED[category][profile][0]`` → ``BEST``; elsewhere in that
        list → ``GOOD``.
     4. Not catalogued (custom model) → ``WORKS`` (its size is unknown, so it is
@@ -337,7 +373,7 @@ def models_for(
     result = [
         (spec, suitability(spec.tag, category, profile))
         for spec in OLLAMA_CATALOG
-        if spec.category == category
+        if category in catalog_uses(spec)
     ]
     result.sort(key=lambda pair: (_SUITABILITY_RANK[pair[1]], pair[0].tag))
     return result

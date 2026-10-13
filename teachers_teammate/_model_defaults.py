@@ -3,19 +3,18 @@
 This module is intentionally free of infrastructure dependencies so that
 :mod:`teachers_teammate.config` can resolve model defaults without importing
 from the infrastructure layer.  The Ollama defaults come from the domain model
-catalog (:func:`teachers_teammate.domain.model_catalog.best_model`) so there is
-a single source of truth for "which model is recommended for which computer".
+catalog (``DEFAULT_OCR_MODEL`` / ``DEFAULT_WRITING_MODEL``) so there is a single
+source of truth for the model names.
 """
 
 from __future__ import annotations
 
-from .domain.model_catalog import FALLBACK_PROFILE, best_model
+from .domain.model_catalog import DEFAULT_OCR_MODEL, DEFAULT_WRITING_MODEL
 
-# Ollama defaults are the BEST picks for the fallback profile (8 GB).  The
-# reading-model default must be a vision model — see
+# The reading-model default must be a vision model — see
 # domain/model_catalog.py::OLLAMA_CATALOG for the full curated list.
-_OLLAMA_OCR_DEFAULT = best_model("ocr", FALLBACK_PROFILE)
-_OLLAMA_GENERAL_DEFAULT = best_model("general", FALLBACK_PROFILE)
+_OLLAMA_OCR_DEFAULT = DEFAULT_OCR_MODEL
+_OLLAMA_GENERAL_DEFAULT = DEFAULT_WRITING_MODEL
 
 _DEFAULT_MODELS: dict[str, dict[str, str]] = {
     "ocr": {

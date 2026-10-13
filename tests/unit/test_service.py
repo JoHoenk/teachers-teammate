@@ -1127,7 +1127,7 @@ def test_rate_ollama_models_rates_catalog_and_custom_models(monkeypatch) -> None
         ["qwen3-vl:8b", "my-vision:latest"], "ocr", "8gb", "http://127.0.0.1:11434"
     )
     best, custom = ratings
-    assert best.suitability is Suitability.BEST
+    assert best.suitability is Suitability.GOOD  # BEST on 8 GB is the default reading model
     assert best.memory_gb == 7.0
     assert best.note
     assert custom.suitability is Suitability.WORKS

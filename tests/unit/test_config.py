@@ -71,7 +71,7 @@ def test_resolve_artifact_dir_is_under_output_dir() -> None:
 @pytest.mark.parametrize(
     ("provider", "expected_default"),
     [
-        ("ollama", "qwen3.5:9b"),
+        ("ollama", "gpt-oss:20b"),
         ("openai", "gpt-4o-mini"),
         ("anthropic", "claude-3-haiku-20240307"),
         ("google", "gemini-2.0-flash"),
@@ -118,7 +118,7 @@ def test_effective_correction_model_unknown_provider_falls_back() -> None:
 @pytest.mark.parametrize(
     ("provider", "expected_default"),
     [
-        ("ollama", "qwen3.5:9b"),
+        ("ollama", "gpt-oss:20b"),
         ("openai", "gpt-4o-mini"),
         ("anthropic", "claude-3-haiku-20240307"),
         ("google", "gemini-2.0-flash"),

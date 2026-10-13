@@ -9,6 +9,7 @@ import threading
 import pytest
 
 from teachers_teammate.application.service import ProcessingApplicationService
+from teachers_teammate.domain.model_catalog import DEFAULT_OCR_MODEL
 from teachers_teammate.gui import _main_window as main_window_module
 from teachers_teammate.gui._main_window import MainWindow
 from teachers_teammate.gui._types import FileDoneEvent
@@ -1223,12 +1224,15 @@ def test_first_start_selects_best_models_for_profile(qtbot, monkeypatch, tmp_pat
     qtbot.waitUntil(lambda: "First start" in win._log.toPlainText(), timeout=5000)
 
     settings = win._config_panel.get_settings_dict()
-    assert settings["ocr_model"] == "qwen3-vl:8b"
+    assert settings["ocr_model"] == DEFAULT_OCR_MODEL
     assert settings["correction_model"] == "gpt-oss:20b"
     assert settings["evaluate_model"] == "gpt-oss:20b"
-    assert "chose reading model qwen3-vl:8b and writing model gpt-oss:20b" in win._log.toPlainText()
+    assert (
+        f"chose reading model {DEFAULT_OCR_MODEL} and writing model gpt-oss:20b"
+        in win._log.toPlainText()
+    )
     saved = (tmp_path / "ocr.toml").read_text(encoding="utf-8")
-    assert 'ocr_model = "qwen3-vl:8b"' in saved
+    assert f'ocr_model = "{DEFAULT_OCR_MODEL}"' in saved
 
 
 @pytest.mark.use_case("Recommended_Models_On_First_Start")
@@ -1296,7 +1300,7 @@ def test_first_start_non_ollama_correction_provider_untouched(
     qtbot.waitUntil(lambda: "First start" in win._log.toPlainText(), timeout=5000)
     settings = win._config_panel.get_settings_dict()
     assert settings["correction_model"] == DEFAULTS["correction_model"]
-    assert settings["ocr_model"] == "qwen3-vl:8b"  # ocr provider still updated
+    assert settings["ocr_model"] == DEFAULT_OCR_MODEL  # ocr provider still updated
 
 
 @pytest.mark.use_case("Hardware_Profile_Override")

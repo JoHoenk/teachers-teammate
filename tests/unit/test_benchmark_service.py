@@ -95,3 +95,46 @@ def test_compare_returns_similarity(tmp_path: Path) -> None:
 
     result = service.compare(a, b)
     assert 0.0 < result.similarity < 1.0
+
+
+def test_run_and_store_persists_text_format(tmp_path: Path) -> None:
+    """
+    Given  a runner result with Markdown text
+    When   run_and_store() persists it
+    Then   the stored run carries the format
+    """
+    runner = lambda *a, **k: OcrRunResult(  # noqa: E731
+        "~~a~~ b", None, 0.2, None, raw_text_format="markdown"
+    )
+    service = _service(tmp_path, runner)
+    source = _source(tmp_path)
+
+    run = service.run_and_store(
+        source, ocr=OcrConfig(engine="tesseract", model=""), language="English"
+    )
+
+    assert run.raw_text_format == "markdown"
+
+
+def test_compare_ignores_formatting_marks(tmp_path: Path) -> None:
+    """
+    Given  one run stored as Markdown and another stored as plain text with the same words
+    When   compare() is called
+    Then   the runs are identical -- markup never counts as a text difference
+    """
+    import dataclasses  # noqa: PLC0415
+
+    runner = lambda *a, **k: OcrRunResult("hello old world", None, 0.1, None)  # noqa: E731
+    service = _service(tmp_path, runner)
+    source = _source(tmp_path)
+    plain = service.run_and_store(
+        source, ocr=OcrConfig(engine="tesseract", model=""), language="English"
+    )
+    markdown = dataclasses.replace(
+        plain, raw_text="**hello** ~~old~~ world", raw_text_format="markdown"
+    )
+
+    comparison = service.compare(plain, markdown)
+
+    assert comparison.similarity == 1.0
+    assert comparison.stats_b.words == 3

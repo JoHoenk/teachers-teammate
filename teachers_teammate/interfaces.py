@@ -9,6 +9,9 @@ Interfaces:
 * :class:`InputProvider`    — loads a source file into raw page images
 * :class:`ImagePreprocessor` — transforms raw images before OCR
 * :class:`OCRProcessor`      — extracts text from a preprocessed image
+* :class:`OcrOutputParser`   — turns one engine's notation into a :class:`FormattedDocument`
+* :class:`TextRenderer`      — renders a :class:`FormattedDocument` as text
+* :class:`DocumentFilter`    — drops or rewrites blocks of a parsed document
 * :class:`Corrector`         — proofreads extracted text
 * :class:`Evaluator`         — assesses quality of corrected text
 * :class:`DocumentCreator`   — writes the pipeline output to a file
@@ -19,7 +22,9 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, ClassVar, Literal, Protocol, runtime_checkable
+
+from .domain.formatted_text import FormattedDocument, TextFormat
 
 if TYPE_CHECKING:
     from langchain_core.language_models import BaseChatModel
@@ -141,6 +146,43 @@ class OCRProcessor(ABC):
         """
 
 
+class OcrOutputParser(ABC):
+    """Parses one OCR engine notation (HTML, Markdown, plain text, …) into the document model.
+
+    Parsers are tried in order by
+    :class:`~teachers_teammate.infrastructure.ocr_formats.OcrOutputPostprocessor`; the first
+    whose :meth:`can_parse` accepts the text wins.  To support a new notation, implement this
+    ABC in ``infrastructure/ocr_formats/`` and add the class to ``default_parsers()``.
+    """
+
+    name: ClassVar[str]
+    """Short identifier, e.g. ``"chandra_html"``; recorded for diagnostics."""
+
+    @abstractmethod
+    def can_parse(self, text: str) -> bool:
+        """Return ``True`` when *text* is written in this parser's notation."""
+
+    @abstractmethod
+    def parse(self, text: str) -> FormattedDocument:
+        """Return the :class:`FormattedDocument` described by *text*."""
+
+
+class TextRenderer(ABC):
+    """Renders a :class:`FormattedDocument` to a string notation."""
+
+    @abstractmethod
+    def render(self, doc: FormattedDocument) -> str:
+        """Return *doc* as text."""
+
+
+class DocumentFilter(ABC):
+    """Rewrites a parsed document, e.g. dropping page headers and footers."""
+
+    @abstractmethod
+    def apply(self, doc: FormattedDocument) -> FormattedDocument:
+        """Return the filtered document."""
+
+
 class Corrector(ABC):
     """Proofreads and corrects extracted text.
 
@@ -152,7 +194,9 @@ class Corrector(ABC):
     """
 
     @abstractmethod
-    def correct(self, raw_text: str, language: str) -> tuple[str, str | None]:
+    def correct(
+        self, raw_text: str, language: str, *, text_format: TextFormat = "plain"
+    ) -> tuple[str, str | None]:
         """Return ``(corrected_text, warning_or_none)``.
 
         On success, return ``(corrected_text, None)``.
@@ -162,6 +206,9 @@ class Corrector(ABC):
         Args:
             raw_text: Text to proofread.
             language: Language of the text.
+            text_format: Notation of *raw_text*.  ``"markdown"`` text uses ``~~crossed out~~``
+                and ``<sup>inserted</sup>`` marks that the implementation should explain
+                to the model and keep intact.
 
         Returns:
             Tuple of corrected text and an optional warning string.
@@ -179,7 +226,9 @@ class Evaluator(ABC):
     """
 
     @abstractmethod
-    def evaluate(self, corrected_text: str, language: str) -> tuple[str, str | None]:
+    def evaluate(
+        self, corrected_text: str, language: str, *, text_format: TextFormat = "plain"
+    ) -> tuple[str, str | None]:
         """Return ``(evaluation_report, warning_or_none)``.
 
         On success, return ``(report, None)``.
@@ -189,6 +238,7 @@ class Evaluator(ABC):
         Args:
             corrected_text: The corrected text to assess.
             language: Language of the text.
+            text_format: Notation of *corrected_text* (see :meth:`Corrector.correct`).
 
         Returns:
             Tuple of quality report string (or empty) and an optional warning string.
@@ -241,6 +291,7 @@ class DocumentCreator(ABC):
         title: str,
         *,
         source_image: str | Path | None = None,
+        text_format: TextFormat = "plain",
     ) -> None:
         """Write output document to *out_path*.
 
@@ -250,4 +301,6 @@ class DocumentCreator(ABC):
             out_path: Destination file path (parent directory must exist).
             title: Document heading.
             source_image: Optional path to the source image for visual preview.
+            text_format: Notation of *raw_text* and *corrected_text*; ``"markdown"`` text
+                should be written with its formatting (bold, strikethrough, ...).
         """

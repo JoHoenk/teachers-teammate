@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ...application.formatting import TextFormatter
 from ...infrastructure.benchmark.run_store import StoredRun
 
 _RUN_ID_ROLE = Qt.ItemDataRole.UserRole
@@ -41,6 +42,7 @@ class RunsList(QWidget):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._runs: list[StoredRun] = []
+        self._word_counts: dict[str, int] = {}
         self._a_id = ""
         self._b_id = ""
 
@@ -70,6 +72,11 @@ class RunsList(QWidget):
     def set_runs(self, runs: list[StoredRun]) -> None:
         """Populate the list; drop A/B selections that no longer exist."""
         self._runs = runs
+        # Markup is not text: count the words a reader sees, once per run.
+        self._word_counts = {
+            run.run_id: len(TextFormatter.plain_text(run.raw_text, run.raw_text_format).split())
+            for run in runs
+        }
         valid_ids = {r.run_id for r in runs}
         if self._a_id not in valid_ids:
             self._a_id = ""
@@ -86,7 +93,7 @@ class RunsList(QWidget):
                 marker += "[A] "
             if run.run_id == self._b_id:
                 marker += "[B] "
-            words = len(run.raw_text.split())
+            words = self._word_counts.get(run.run_id, 0)
             text = f"{marker}{_short_time(run.timestamp)} · {run.config_summary()} · {words} words"
             item = QListWidgetItem(text)
             item.setData(_RUN_ID_ROLE, run.run_id)

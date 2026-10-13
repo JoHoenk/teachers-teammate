@@ -11,7 +11,7 @@ from PySide6.QtCore import QThread, Signal
 
 from ..application.service import ProcessingApplicationService, ProgressCallbacks
 from ..config import Config
-from ..infrastructure.reporting import CallbackReporter
+from ..infrastructure.reporting import CallbackReporter, FileDoneResult
 from ._types import FileDoneEvent
 
 
@@ -101,16 +101,8 @@ class OCRWorker(QThread):
             idx, total = file_indices.get(source_id, (0, 0))
             self.ocr_done.emit(source_id, name, idx, total)
 
-        def on_file_done(
-            source_id: str,
-            name: str,
-            ok: bool,
-            msg: str,
-            preview_img: str,
-            raw_txt: str,
-            corr_txt: str,
-            eval_txt: str,
-        ) -> None:
+        def on_file_done(result: FileDoneResult) -> None:
+            source_id = result.source_id
             now = time.monotonic()
             start = file_start_times.get(source_id, now)
             ocr_t = ocr_done_times.get(source_id, now)
@@ -123,15 +115,16 @@ class OCRWorker(QThread):
             self.file_done.emit(
                 FileDoneEvent(
                     source_id=source_id,
-                    name=name,
-                    ok=ok,
-                    message=msg,
+                    name=result.name,
+                    ok=result.ok,
+                    message=result.message,
                     ocr_s=ocr_s,
                     correction_s=correction_s,
-                    preview_img=preview_img,
-                    raw_txt=raw_txt,
-                    corr_txt=corr_txt,
-                    eval_txt=eval_txt,
+                    preview_img=result.preview_img,
+                    raw_txt=result.raw_text,
+                    corr_txt=result.correction_text,
+                    eval_txt=result.evaluation_text,
+                    text_format=result.text_format,
                 )
             )
 

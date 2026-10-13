@@ -166,3 +166,76 @@ def test_native_ollama_corrector_default_temperature(mocker) -> None:
 
     call_kwargs = mock_chat.call_args.kwargs
     assert call_kwargs["options"]["temperature"] == 0.7
+
+
+# ── Markdown notation hint ─────────────────────────────────────────────────
+
+
+def _captured_ollama_prompt(mocker, text_format: str | None) -> str:
+    from teachers_teammate.infrastructure.correction import NativeOllamaCorrector  # noqa: PLC0415
+    from teachers_teammate.infrastructure.ollama_utils import OllamaClient  # noqa: PLC0415
+
+    mock_chat = mocker.patch.object(OllamaClient, "chat", return_value="ok")
+    corrector = NativeOllamaCorrector(model="m", client=OllamaClient("http://localhost:11434"))
+    if text_format is None:
+        corrector.correct("~~a~~ b", "English")
+    else:
+        corrector.correct("~~a~~ b", "English", text_format=text_format)  # ty: ignore[invalid-argument-type]  # parametrised literal
+    return mock_chat.call_args.args[1]
+
+
+def test_native_ollama_corrector_explains_markdown_notation(mocker) -> None:
+    """
+    Given  a NativeOllamaCorrector and text flagged as Markdown
+    When   correct(text_format="markdown") is called
+    Then   the prompt tells the model what ~~strikethrough~~ and <sup> mean and to keep them
+    """
+    prompt = _captured_ollama_prompt(mocker, "markdown")
+
+    assert "~~text~~ marks words the writer crossed out" in prompt
+    assert "<sup>text</sup>" in prompt
+    assert prompt.startswith(ENGLISH_PROMPT)
+
+
+def test_native_ollama_corrector_prompt_unchanged_for_plain_text(mocker) -> None:
+    """
+    Given  a NativeOllamaCorrector and plain text (explicit or default format)
+    When   correct() is called
+    Then   no notation hint is added, so plain-text prompts stay exactly as before
+    """
+    explicit = _captured_ollama_prompt(mocker, "plain")
+    default = _captured_ollama_prompt(mocker, None)
+
+    assert explicit == default
+    assert "Markdown" not in explicit
+
+
+def test_langchain_corrector_adds_notation_hint_to_system_message(monkeypatch) -> None:
+    """
+    Given  a LangChainCorrector and Markdown text
+    When   correct(text_format="markdown") is called
+    Then   the system message sent to the template contains the notation hint
+    """
+    captured: list = []
+
+    class _Chain:
+        def __or__(self, _other):
+            return self
+
+        def invoke(self, payload):
+            return payload["text"]
+
+    def fake_from_messages(messages):
+        captured.extend(messages)
+        return _Chain()
+
+    monkeypatch.setattr(
+        "langchain_core.prompts.ChatPromptTemplate.from_messages", fake_from_messages
+    )
+    monkeypatch.setattr("langchain_core.output_parsers.StrOutputParser", lambda: object())
+
+    LangChainCorrector(object()).correct("x", "English", text_format="markdown")  # ty: ignore[invalid-argument-type]  # stub llm
+
+    system = next(content for role, content in captured if role == "system")
+    assert system.startswith(ENGLISH_PROMPT)
+    assert "crossed out" in system

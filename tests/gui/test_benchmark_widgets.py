@@ -12,7 +12,7 @@ from teachers_teammate.gui.benchmark._runs_list import RunsList
 from teachers_teammate.infrastructure.benchmark.run_store import StoredRun
 
 
-def _run(run_id: str, text: str) -> StoredRun:
+def _run(run_id: str, text: str, raw_text_format: str = "plain") -> StoredRun:
     return StoredRun(
         schema_version=1,
         run_id=run_id,
@@ -26,6 +26,7 @@ def _run(run_id: str, text: str) -> StoredRun:
         preview_img="",
         timestamp=f"2026-06-06T10:00:0{run_id}",
         elapsed_s=1.0,
+        raw_text_format=raw_text_format,
     )
 
 
@@ -130,3 +131,23 @@ def test_runs_list_drops_stale_ab_on_refresh(qtbot) -> None:
     widget.set_runs([_run("2", "b")])
 
     assert emitted[-1] == ("", "")
+
+
+@pytest.mark.gui
+@pytest.mark.use_case("OCR_Run_Comparison")
+def test_runs_list_counts_words_without_markup(qtbot) -> None:
+    """
+    Given  a Markdown run whose raw text has bold marks, a heading and a table rule
+    When   the RunsList shows it
+    Then   the word count is the number of words a reader sees, as for the same plain text
+    """
+    widget = RunsList()
+    qtbot.addWidget(widget)
+    markdown = "# Titel\n\nHallo **liebe** Welt\n\n| a | b |\n| --- | --- |\n| 1 | 2 |"
+
+    widget.set_runs([_run("1", markdown, "markdown")])
+
+    # "Titel", "Hallo liebe Welt", and the table rows "a | b" / "1 | 2" -- not the
+    # 20 whitespace-separated tokens of the Markdown source.
+    assert len(markdown.split()) == 20
+    assert "10 words" in widget._list.item(0).text()

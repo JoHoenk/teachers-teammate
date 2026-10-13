@@ -885,3 +885,225 @@ def test_load_valid_drops_original_and_steps_when_preview_missing(tmp_path: Path
     assert loaded.preview_img == ""
     assert loaded.original_img == ""
     assert loaded.preprocess_steps is None
+
+
+# ── Text notation (raw_text_format) ───────────────────────────────────────
+
+
+def _ocr_record(source_hash: str, **overrides: str) -> OcrResultRecord:
+    fields = {
+        "source_hash": source_hash,
+        "raw_text": "**x**",
+        "preview_img": "",
+        "source_image": "",
+        "ocr_prompt": "",
+        "correction_prompt": "",
+        "evaluate_prompt": "",
+        "ocr_config_hash": "ocr-hash",
+        "preview_config_hash": "",
+    }
+    fields.update(overrides)
+    return OcrResultRecord(**fields)
+
+
+def _write_legacy_state(repo: StateRepository, src: Path, raw_text: str) -> None:
+    """Write a state JSON without raw_text_format, as older versions did."""
+    state = repo.create(src, compute_file_hash(src))
+    legacy = dataclasses.asdict(
+        dataclasses.replace(state, raw_text=raw_text, ocr_done=True, correction_done=False)
+    )
+    del legacy["raw_text_format"]
+    repo.state_path_for_input(src).write_text(json.dumps(legacy), encoding="utf-8")
+
+
+def test_plain_state_written_before_text_format_fields_loads_as_plain(tmp_path: Path) -> None:
+    """
+    Given  a state JSON on disk that lacks raw_text_format and holds ordinary plain text
+    When   load_valid() and load_view() are called
+    Then   it still loads, and the text is treated as plain
+    """
+    repo = _repo(tmp_path)
+    src = _source_file(tmp_path)
+    _write_legacy_state(repo, src, "Das ist ein Satz.\nUnd noch einer.")
+
+    loaded = repo.load_valid(src)
+    view = repo.load_view(src)
+
+    assert loaded is not None
+    assert loaded.raw_text_format == "plain"
+    assert view is not None
+    assert view.raw_text_format == "plain"
+
+
+@pytest.mark.parametrize(
+    "markup",
+    ["**fett** und ~~weg~~", '<div data-bbox="0 0 1 1" data-label="Text"><p>Hallo</p></div>'],
+)
+def test_markup_state_written_before_text_format_fields_is_dropped(
+    tmp_path: Path, markup: str
+) -> None:
+    """
+    Given  a state JSON without raw_text_format whose OCR text is raw Markdown / layout HTML
+    When   load_valid() and load_view() are called
+    Then   no state is returned, so the document is processed again instead of showing the
+           markup as literal text
+    """
+    repo = _repo(tmp_path)
+    src = _source_file(tmp_path)
+    _write_legacy_state(repo, src, markup)
+
+    assert repo.load_valid(src) is None
+    assert repo.load_view(src) is None
+
+
+def test_markup_state_with_text_format_field_is_kept(tmp_path: Path) -> None:
+    """
+    Given  a current state JSON (with raw_text_format) whose plain text contains "**"
+    When   load_valid() is called
+    Then   the state is kept: only states without the field are treated as legacy
+    """
+    repo = _repo(tmp_path)
+    src = _source_file(tmp_path)
+    state = repo.create(src, compute_file_hash(src))
+    repo.save(
+        src, dataclasses.replace(state, raw_text="**x**", raw_text_format="plain", ocr_done=True)
+    )
+
+    loaded = repo.load_valid(src)
+
+    assert loaded is not None
+    assert loaded.raw_text == "**x**"
+
+
+def test_state_with_fields_dropped_by_newer_versions_still_loads(tmp_path: Path) -> None:
+    """
+    Given  a state JSON that still carries the removed ocr_source_output / correction_text_format
+    When   load_valid() is called
+    Then   the unknown keys are ignored and the cached texts are kept
+    """
+    repo = _repo(tmp_path)
+    src = _source_file(tmp_path)
+    state = repo.create(src, compute_file_hash(src))
+    payload = dataclasses.asdict(
+        dataclasses.replace(state, raw_text="**x**", raw_text_format="markdown", ocr_done=True)
+    )
+    payload["ocr_source_output"] = "<b>x</b>"
+    payload["correction_text_format"] = "markdown"
+    repo.state_path_for_input(src).write_text(json.dumps(payload), encoding="utf-8")
+
+    loaded = repo.load_valid(src)
+
+    assert loaded is not None
+    assert (loaded.raw_text, loaded.raw_text_format) == ("**x**", "markdown")
+
+
+def test_record_ocr_result_persists_the_text_format(tmp_path: Path) -> None:
+    """
+    Given  an OCR record whose text was parsed into Markdown from layout HTML
+    When   record_ocr_result() is called and the state reloaded
+    Then   raw_text_format is persisted and exposed on the view
+    """
+    repo = _repo(tmp_path)
+    src = _source_file(tmp_path)
+    state = repo.create(src, compute_file_hash(src))
+
+    repo.record_ocr_result(
+        src, state, _ocr_record(compute_file_hash(src), raw_text_format="markdown")
+    )
+
+    loaded = repo.load_valid(src)
+    view = repo.load_view(src)
+    assert loaded is not None
+    assert loaded.raw_text_format == "markdown"
+    assert view is not None
+    assert view.raw_text_format == "markdown"
+
+
+def test_correction_shares_the_raw_text_format_on_the_view(tmp_path: Path) -> None:
+    """
+    Given  a state whose OCR text is Markdown
+    When   record_correction_result() is called and the view loaded
+    Then   the view reports the correction in the same notation
+    """
+    repo = _repo(tmp_path)
+    src = _source_file(tmp_path)
+    state = dataclasses.replace(
+        repo.create(src, compute_file_hash(src)),
+        raw_text="~~a~~",
+        raw_text_format="markdown",
+        ocr_done=True,
+    )
+
+    repo.record_correction_result(
+        src,
+        state,
+        correction_text="~~a~~ fixed",
+        correction_prompt="",
+        correction_config_hash="c",
+    )
+
+    view = repo.load_view(src)
+    assert view is not None
+    assert view.correction_text == "~~a~~ fixed"
+    assert view.raw_text_format == "markdown"
+
+
+def test_manual_ocr_edit_keeps_the_text_format(tmp_path: Path) -> None:
+    """
+    Given  a state with Markdown OCR text
+    When   the user edits the text (Source view) and record_manual_ocr_edit() is called
+    Then   the edited text stays flagged as Markdown
+    """
+    repo = _repo(tmp_path)
+    src = _source_file(tmp_path)
+    state = dataclasses.replace(
+        repo.create(src, compute_file_hash(src)),
+        raw_text="**x**",
+        raw_text_format="markdown",
+        ocr_done=True,
+    )
+
+    updated = repo.record_manual_ocr_edit(src, state, raw_text="**y**", preview_img="")
+
+    assert updated.raw_text == "**y**"
+    assert updated.raw_text_format == "markdown"
+
+
+def test_manual_ocr_edit_stores_the_notation_it_is_written_in(tmp_path: Path) -> None:
+    """
+    Given  a fresh (plain) state and an edit written in Markdown
+    When   record_manual_ocr_edit() is called with raw_text_format="markdown"
+    Then   the state is flagged Markdown, so the preview does not flip to the source view
+    """
+    repo = _repo(tmp_path)
+    src = _source_file(tmp_path)
+    state = repo.create(src, compute_file_hash(src))
+
+    updated = repo.record_manual_ocr_edit(
+        src, state, raw_text="**y**", preview_img="", raw_text_format="markdown"
+    )
+
+    assert updated.raw_text_format == "markdown"
+
+
+def test_reset_from_ocr_stage_returns_the_format_to_plain(tmp_path: Path) -> None:
+    """
+    Given  a state with Markdown OCR text and a Markdown correction
+    When   the state is reset from the OCR stage
+    Then   the format returns to plain and the texts are cleared
+    """
+    repo = _repo(tmp_path)
+    src = _source_file(tmp_path)
+    state = dataclasses.replace(
+        repo.create(src, compute_file_hash(src)),
+        raw_text="**x**",
+        raw_text_format="markdown",
+        correction_text="**x!**",
+        ocr_done=True,
+        correction_done=True,
+    )
+
+    cleared = repo.reset_from_stage(src, state, "ocr")
+
+    assert cleared.raw_text_format == "plain"
+    assert (cleared.raw_text, cleared.correction_text) == ("", "")

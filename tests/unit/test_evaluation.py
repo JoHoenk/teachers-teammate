@@ -129,3 +129,29 @@ def test_native_ollama_evaluator_default_temperature(mocker) -> None:
 
     call_kwargs = mock_chat.call_args.kwargs
     assert call_kwargs["options"]["temperature"] == 0.7
+
+
+# ── Markdown notation hint ─────────────────────────────────────────────────
+
+
+def test_native_ollama_evaluator_marks_struck_text_as_not_submitted(mocker) -> None:
+    """
+    Given  a NativeOllamaEvaluator and Markdown text
+    When   evaluate(text_format="markdown") is called
+    Then   the prompt says crossed-out words are not part of the submission
+    """
+    from teachers_teammate.infrastructure.evaluation import NativeOllamaEvaluator  # noqa: PLC0415
+    from teachers_teammate.infrastructure.ollama_utils import OllamaClient  # noqa: PLC0415
+
+    mock_chat = mocker.patch.object(OllamaClient, "chat", return_value="ok")
+    evaluator = NativeOllamaEvaluator(
+        model="m", client=OllamaClient("http://localhost:11434"), prompt="Grade it."
+    )
+
+    evaluator.evaluate("~~a~~ b", "English", text_format="markdown")
+    evaluator.evaluate("a b", "English")
+
+    markdown_prompt, plain_prompt = (c.args[1] for c in mock_chat.call_args_list)
+    assert "not part of the submission" in markdown_prompt
+    assert markdown_prompt.startswith("Grade it.")
+    assert "Markdown" not in plain_prompt

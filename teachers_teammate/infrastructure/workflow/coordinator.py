@@ -7,7 +7,7 @@ import logging
 from pathlib import Path
 import threading
 
-from ..reporting import OnFileDoneFn, OnFileStartedFn, Reporter, StdoutReporter
+from ..reporting import FileDoneResult, OnFileDoneFn, OnFileStartedFn, Reporter, StdoutReporter
 from .file_processor import ProcessingResult
 
 _logger = logging.getLogger(__name__)
@@ -47,14 +47,17 @@ def run_files(
                 # column with ⚠ on partial failure; empty string means all stages succeeded.
                 msg = "; ".join(result.warnings) if result.ok else result.message
                 on_file_done(
-                    source_id,
-                    file.name,
-                    result.ok,
-                    msg,
-                    result.preview_img,
-                    result.raw_text,
-                    result.correction_text,
-                    result.evaluation_text,
+                    FileDoneResult(
+                        source_id=source_id,
+                        name=file.name,
+                        ok=result.ok,
+                        message=msg,
+                        preview_img=result.preview_img,
+                        raw_text=result.raw_text,
+                        correction_text=result.correction_text,
+                        evaluation_text=result.evaluation_text,
+                        text_format=result.text_format,
+                    )
                 )
             if result.ok:
                 reporter.status(f"       → Saved: {result.message}")

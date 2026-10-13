@@ -50,6 +50,7 @@ class NewRunRequest:
     raw_text: str
     elapsed_s: float
     preview_src: Path | None = None
+    raw_text_format: str = "plain"
 
 
 @dataclass(frozen=True)
@@ -68,6 +69,9 @@ class StoredRun:
     preview_img: str
     timestamp: str
     elapsed_s: float
+    # Notation of ``raw_text`` ("plain" | "markdown").  Runs written before this existed
+    # load as plain text, or upgraded to Markdown when their text is model markup.
+    raw_text_format: str = "plain"
 
     def to_json_dict(self) -> dict:
         """Return a JSON-serializable dict (the nested OcrConfig is flattened to a sub-dict)."""
@@ -96,12 +100,22 @@ class StoredRun:
             "preview_img": self.preview_img,
             "timestamp": self.timestamp,
             "elapsed_s": self.elapsed_s,
+            "raw_text_format": self.raw_text_format,
         }
 
     @classmethod
     def from_json_dict(cls, raw: dict) -> StoredRun:
         """Reconstruct a StoredRun from a parsed JSON dict."""
         ocr_raw = raw["ocr"]
+        raw_text = raw["raw_text"]
+        raw_text_format = raw.get("raw_text_format")
+        if raw_text_format is None and raw_text:
+            # Written before notations were tracked: model markup would be compared as text.
+            from ..ocr_formats import looks_like_markup, upgrade_legacy_text  # noqa: PLC0415
+
+            if looks_like_markup(raw_text):
+                upgraded = upgrade_legacy_text(raw_text)
+                raw_text, raw_text_format = upgraded.text, upgraded.text_format
         return cls(
             schema_version=raw["schema_version"],
             run_id=raw["run_id"],
@@ -125,10 +139,11 @@ class StoredRun:
                 temperature=ocr_raw["temperature"],
             ),
             language=raw["language"],
-            raw_text=raw["raw_text"],
+            raw_text=raw_text,
             preview_img=raw["preview_img"],
             timestamp=raw["timestamp"],
             elapsed_s=raw["elapsed_s"],
+            raw_text_format=raw_text_format or "plain",
         )
 
     def config_summary(self) -> str:
@@ -206,6 +221,7 @@ class BenchmarkRunStore:
             preview_img=preview_img,
             timestamp=now.isoformat(),
             elapsed_s=request.elapsed_s,
+            raw_text_format=request.raw_text_format,
         )
         (doc_dir / f"{run_id}.json").write_text(
             json.dumps(run.to_json_dict(), indent=2), encoding="utf-8"

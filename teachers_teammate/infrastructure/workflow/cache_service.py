@@ -255,6 +255,7 @@ class CacheReconciliationService:
         raw_text: str,
         preview_img: str,
         source_image: str,
+        raw_text_format: str = "plain",
     ) -> CacheContext:
         """Persist OCR result and return updated context."""
         cfg = self._config
@@ -271,6 +272,7 @@ class CacheReconciliationService:
                 evaluate_prompt=cfg.evaluate_prompt,
                 ocr_config_hash=ctx.ocr_config_hash,
                 preview_config_hash=ctx.preview_config_hash,
+                raw_text_format=raw_text_format,
             ),
         )
         return dataclasses.replace(ctx, state=new_state)

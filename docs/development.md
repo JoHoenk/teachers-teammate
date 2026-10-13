@@ -279,6 +279,66 @@ Because the benchmark store is append-only, it bounds growth two ways:
   `infrastructure/benchmark/run_store.py`). On each save, runs for that document
   beyond the newest N are evicted (both the JSON and its preview image).
 
+## OCR output formats & formatted text
+
+OCR engines answer in different notations: plain text (Tesseract, Paddle), Markdown (many
+vision-language models) or layout HTML (Chandra: `<div data-bbox=… data-label=…>` with inline
+`<b>`, `<sup>`, `<del>`). There is no standard for this, so the pipeline normalises every
+answer once, right after OCR, and everything downstream works on one canonical form.
+
+```text
+engine output ─► clean_ocr_text ─► OcrOutputPostprocessor ─► text + text_format  (stored)
+                 (think blocks)    detect → parse → filter
+```
+
+| Piece | Where | Role |
+|---|---|---|
+| `FormattedDocument` (`Block`, `Span`, `Style`) | `domain/formatted_text.py` | format-neutral model: paragraphs, headings, lists, tables, figures; inline bold/italic/underline/strike/super-/subscript |
+| `OcrOutputParser` | `interfaces.py` | one notation → `FormattedDocument` (`can_parse`, `parse`) |
+| `ChandraHtmlParser`, `MarkdownParser`, `PlainTextParser` | `infrastructure/ocr_formats/` | tried in that order; plain always matches |
+| `DocumentFilter` (`DropPageFurniture`) | `infrastructure/ocr_formats/filters.py` | drops page numbers from headers/footers (other header/footer text is content and stays) |
+| `MarkdownRenderer`, `PlainTextRenderer` | `infrastructure/ocr_formats/renderers.py` | canonical Markdown for storage; markup-free text for diffs and metrics |
+| `TextFormatter` | `application/formatting.py` | what adapters (GUI/CLI) call; they never import parsers |
+
+**Stored form.** `DocumentState.raw_text` is either the engine's text verbatim
+(`raw_text_format == "plain"`, e.g. Tesseract output, `.txt` input) or canonical Markdown
+(`"markdown"`: CommonMark + GFM strikethrough/tables + inline `<sup>`/`<sub>`/`<u>`).
+Text is only treated as Markdown when the engine's output carried real formatting, so plain
+OCR output containing `- ` or `*` is never reinterpreted. The correction is written in the
+notation of the raw text, so one `raw_text_format` field covers both. The field has a
+default, so existing cache entries and benchmark runs load as plain text without a schema
+bump — except entries written before the field existed whose text *is* raw model markup:
+`StateRepository.load` drops those (the document is processed again) and
+`StoredRun.from_json_dict` upgrades them to Markdown in memory, so markup is never shown or
+compared as literal text. A model answer wrapped in one code fence (```` ```markdown ````)
+is looked through before parsing.
+
+**Escaping.** `MarkdownRenderer` escapes only what CommonMark would interpret (`snake_case`
+words and e-mail addresses stay free of backslashes, so the anonymizer's patterns still
+match). Inline styles use Markdown delimiters when their flanking rules allow it and fall
+back to `<b>`/`<i>`/`<s>` tags next to punctuation or other delimiters, so parsing the stored
+text always yields the same styled spans. Ordered lists keep their numbers (`Block.number`
+is recorded only where counting from 1 would be wrong).
+
+**Who sees what.**
+
+| Consumer | Receives |
+|---|---|
+| Corrector / evaluator | the stored text; for Markdown the system prompt gains a notation hint (`domain/notation.py`): crossed-out words are context, not to be corrected; inserted words belong to the sentence |
+| Diff tab, benchmark similarity/word counts | `PlainTextRenderer` output — formatting marks never count as differences, crossed-out words are kept |
+| DOCX | Word runs (bold, italic, underline, strikethrough, super-/subscript), headings, indented lists, nested tables |
+| Preview panel | formatted rich text (`gui/_formatted_text.py`); the **Source** toggle shows the stored Markdown |
+
+**Editing.** The formatted view is editable (Ctrl+B / I / U, Ctrl+Shift+X crossed out,
+Ctrl+Shift+= inserted above the line). Edits are converted back to Markdown
+(`document_from_qt` → `MarkdownRenderer`) and saved like any other manual edit. Bounding
+boxes of layout engines are not kept.
+
+**Adding a notation** (hOCR, DocTags, …): implement `OcrOutputParser` in
+`infrastructure/ocr_formats/`, add it to `default_parsers()` ahead of `PlainTextParser`, and
+add the module to `_OCR_SRCS` in `teachers_teammate/BUILD`. Parsers must be total: an
+exception falls through to the next parser, ending at plain text.
+
 ## Error handling
 
 ### Design goals

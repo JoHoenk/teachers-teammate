@@ -444,6 +444,29 @@ def test_record_correction_delegates_to_repo(tmp_path: Path) -> None:
     assert result.correction_config_hash == ctx.correction_config_hash
 
 
+def test_record_ocr_forwards_text_format(tmp_path: Path) -> None:
+    """
+    Given  OCR output that was parsed from layout HTML into Markdown
+    When   record_ocr() is called with the format
+    Then   it lands in the OcrResultRecord handed to the repository
+    """
+    file = tmp_path / "doc.png"
+    svc, repo, _ = _make_svc(tmp_path)
+    repo.record_ocr_result.return_value = _make_state()
+
+    svc.record_ocr(
+        file,
+        _make_ctx(),
+        raw_text="**x**",
+        preview_img="p.png",
+        source_image="s.png",
+        raw_text_format="markdown",
+    )
+
+    record = repo.record_ocr_result.call_args.args[2]
+    assert record.raw_text_format == "markdown"
+
+
 # ── record_evaluation() ───────────────────────────────────────────────────
 
 

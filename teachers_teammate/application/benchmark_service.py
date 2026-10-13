@@ -30,6 +30,7 @@ from ..infrastructure.ocr_processor import get_ocr_prompt
 from ..infrastructure.stage_builder import PipelineComponentFactory
 from ..infrastructure.state_repository import compute_file_hash
 from ..infrastructure.workflow.cache_service import compute_ocr_config_hash
+from .formatting import TextFormatter
 from .service import GpuInfo, ProcessingApplicationService
 
 _Runner = Callable[..., OcrRunResult]
@@ -203,6 +204,7 @@ class BenchmarkApplicationService:
                 raw_text=result.raw_text,
                 elapsed_s=result.elapsed_s,
                 preview_src=result.preview_img,
+                raw_text_format=result.raw_text_format,
             )
         )
 
@@ -215,5 +217,11 @@ class BenchmarkApplicationService:
         self._store.delete_all_for(compute_file_hash(source))
 
     def compare(self, a: StoredRun, b: StoredRun) -> PairComparison:
-        """Return the pairwise comparison of two stored runs."""
-        return compare_pair(a.raw_text, b.raw_text)
+        """Return the pairwise comparison of two stored runs.
+
+        Markup is stripped first so formatting notation never counts as a text difference.
+        """
+        return compare_pair(
+            TextFormatter.plain_text(a.raw_text, a.raw_text_format),
+            TextFormatter.plain_text(b.raw_text, b.raw_text_format),
+        )

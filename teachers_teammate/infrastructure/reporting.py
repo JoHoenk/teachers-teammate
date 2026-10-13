@@ -20,7 +20,30 @@ from typing import Protocol, runtime_checkable
 OnFileStartedFn = Callable[[str, str, int, int], None]  # (source_id, name, idx, total)
 OnStageStartedFn = Callable[[str, str], None]  # (source_id, stage)
 OnOcrDoneFn = Callable[[str, str], None]  # (source_id, name)
-OnFileDoneFn = Callable[[str, str, bool, str, str, str, str, str], None]
+
+
+@dataclass(frozen=True)
+class FileDoneResult:
+    """Outcome of one file, handed to ``ProgressCallbacks.on_file_done``.
+
+    Text strings are empty when the associated stage output was not produced.
+    ``message`` is the joined stage warnings on success (empty when every stage succeeded)
+    and the error otherwise.
+    """
+
+    source_id: str
+    name: str
+    ok: bool
+    message: str
+    preview_img: str = ""
+    raw_text: str = ""
+    correction_text: str = ""
+    evaluation_text: str = ""
+    text_format: str = "plain"
+    """Notation (``"plain"`` or ``"markdown"``) of ``raw_text`` and ``correction_text``."""
+
+
+OnFileDoneFn = Callable[[FileDoneResult], None]
 
 
 @dataclass(frozen=True)
@@ -31,9 +54,8 @@ class ProgressCallbacks:
     ``on_stage_started(source_id, stage)`` fires when a file enters the ``"preprocessing"``
     or ``"ocr"`` stage (not when OCR is served from the cache).
     ``on_ocr_done(source_id, name)`` fires after OCR, before correction.
-    ``on_file_done(source_id, name, ok, message, preview_img, raw_text, correction_text,
-    evaluation_text)`` fires after a file completes (success or failure); text strings are
-    empty when the associated stage output was not produced.
+    ``on_file_done(result)`` fires with a :class:`FileDoneResult` after a file completes
+    (success or failure).
     """
 
     on_file_started: OnFileStartedFn | None = None

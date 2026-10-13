@@ -101,6 +101,7 @@ class ResultsTable(QTableWidget):
     _ROLE_EVAL = Qt.ItemDataRole.UserRole + 4
     _ROLE_SOURCE = Qt.ItemDataRole.UserRole + 5
     _ROLE_PREPROCESS = Qt.ItemDataRole.UserRole + 6  # PreprocessInfo
+    _ROLE_TEXT_FORMAT = Qt.ItemDataRole.UserRole + 7  # "plain" | "markdown"
 
     _STAGE_ACTIVE_COLORS: ClassVar[dict[int, str]] = {
         _COL_OCR: _COLOUR_OCR_BAR,
@@ -388,6 +389,22 @@ class ResultsTable(QTableWidget):
             return PreprocessInfo()
         info = item.data(self._ROLE_PREPROCESS)
         return info if isinstance(info, PreprocessInfo) else PreprocessInfo()
+
+    def set_text_format(self, source_id: str, text_format: str) -> None:
+        """Record the notation (plain / markdown) of *source_id*'s stored texts."""
+        row = self._row_for_source(source_id)
+        item = self.item(row, self._COL_FILE) if row is not None else None
+        if item is not None:
+            item.setData(self._ROLE_TEXT_FORMAT, text_format)
+
+    def text_format_for_source(self, source_id: str) -> str:
+        """Return the notation of *source_id*'s texts (plain when not recorded)."""
+        row = self._row_for_source(source_id)
+        item = self.item(row, self._COL_FILE) if row is not None else None
+        if item is None:
+            return "plain"
+        text_format = item.data(self._ROLE_TEXT_FORMAT)
+        return "markdown" if text_format == "markdown" else "plain"
 
     def source_id_for_row(self, row: int) -> str:
         item = self.item(row, self._COL_FILE)

@@ -78,3 +78,36 @@ def test_run_ocr_uses_text_input_directly(tmp_path: Path) -> None:
     result = run_ocr(config, txt, component_factory=_factory_with(_StubOCR("UNUSED")))
     assert result.error is None
     assert result.raw_text == "plain text content"
+
+
+def test_run_ocr_parses_layout_html_into_markdown(tmp_path: Path, sample_png: Path) -> None:
+    """
+    Given  an OCR engine that answers with Chandra-style layout HTML
+    When   run_ocr() is called
+    Then   the text is Markdown (page footer dropped)
+    """
+    html = (
+        '<div data-bbox="1 2 3 4" data-label="Text"><p>my <del>backpack</del> bag</p></div>'
+        '<div data-bbox="5 6 7 8" data-label="Page-Footer"><p>4</p></div>'
+    )
+    config = make_config(tmp_path, ocr_engine="tesseract", preprocess_method="none")
+
+    result = run_ocr(config, sample_png, component_factory=_factory_with(_StubOCR(html)))
+
+    assert result.error is None
+    assert result.raw_text == "my ~~backpack~~ bag"
+    assert result.raw_text_format == "markdown"
+
+
+def test_run_ocr_keeps_plain_engine_output_plain(tmp_path: Path, sample_png: Path) -> None:
+    """
+    Given  an OCR engine that answers with ordinary text
+    When   run_ocr() is called
+    Then   the format is plain and the text is returned verbatim
+    """
+    config = make_config(tmp_path, ocr_engine="tesseract", preprocess_method="none")
+
+    result = run_ocr(config, sample_png, component_factory=_factory_with(_StubOCR("- a\n- b")))
+
+    assert result.raw_text == "- a\n- b"
+    assert result.raw_text_format == "plain"

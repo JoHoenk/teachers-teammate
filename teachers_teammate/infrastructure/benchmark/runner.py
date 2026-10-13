@@ -32,6 +32,7 @@ class OcrRunResult:
     preview_img: Path | None
     elapsed_s: float
     error: str | None
+    raw_text_format: str = "plain"
 
 
 def run_ocr(
@@ -71,7 +72,14 @@ def run_ocr(
         if error is not None:
             return OcrRunResult("", None, time.monotonic() - start, error)
 
+        processed = builder.build_ocr_postprocessor().process_pages(page_texts, label_pages=False)
         preview = source_image or (ocr_inputs[0] if ocr_inputs else None)
-        return OcrRunResult("\n\n".join(page_texts), preview, time.monotonic() - start, None)
+        return OcrRunResult(
+            processed.text,
+            preview,
+            time.monotonic() - start,
+            None,
+            raw_text_format=processed.text_format,
+        )
     except Exception as exc:  # noqa: BLE001  # any stage may raise (engine missing, IO, provider); report, don't crash
         return OcrRunResult("", None, time.monotonic() - start, str(exc))

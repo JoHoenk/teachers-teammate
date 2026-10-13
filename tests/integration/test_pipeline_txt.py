@@ -12,7 +12,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from teachers_teammate.infrastructure.pipeline import OCRPipeline
-from teachers_teammate.infrastructure.reporting import ProgressCallbacks
+from teachers_teammate.infrastructure.reporting import FileDoneResult, ProgressCallbacks
 from teachers_teammate.infrastructure.state_repository import StateRepository
 from teachers_teammate.infrastructure.storage_root import resolve_artifact_dir
 from tests.conftest import make_config
@@ -60,17 +60,8 @@ def test_pipeline_txt_input_triggers_on_file_done_callback(tmp_path: Path) -> No
 
     seen: list[tuple[bool, str]] = []
 
-    def _on_done(
-        _source_id: str,
-        _name: str,
-        success: bool,
-        _msg: str,
-        _preview: str,
-        raw_txt_path: str,
-        _corr_txt_path: str,
-        _eval_txt_path: str,
-    ) -> None:
-        seen.append((success, raw_txt_path))
+    def _on_done(result: FileDoneResult) -> None:
+        seen.append((result.ok, result.raw_text))
 
     rc = OCRPipeline(cfg, progress=ProgressCallbacks(on_file_done=_on_done)).run()
 
@@ -138,17 +129,8 @@ def test_pipeline_txt_input_non_utf8_falls_back_to_latin1(tmp_path: Path) -> Non
 
     seen: list[bool] = []
 
-    def _on_done(
-        _source_id: str,
-        _name: str,
-        success: bool,
-        _msg: str,
-        _preview: str,
-        _raw: str,
-        _corr: str,
-        _eval: str,
-    ) -> None:
-        seen.append(success)
+    def _on_done(result: FileDoneResult) -> None:
+        seen.append(result.ok)
 
     rc = OCRPipeline(cfg, progress=ProgressCallbacks(on_file_done=_on_done)).run()
 

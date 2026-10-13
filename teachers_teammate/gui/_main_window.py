@@ -747,6 +747,7 @@ class MainWindow(QMainWindow):
             self._results_table.set_preprocessing(
                 source_id, PreprocessInfo(view.original_img, view.preprocess_steps)
             )
+            self._results_table.set_text_format(source_id, view.raw_text_format)
             if view.ocr_done:
                 any_ocr_cached = True
         if any_ocr_cached:
@@ -968,6 +969,7 @@ class MainWindow(QMainWindow):
                     preview_img,
                     out_path,
                     docx_format=docx_format,
+                    text_format=self._results_table.text_format_for_source(source_id),
                 )
                 self._log.append_text(f"DOCX saved: {out_path}\n")
             except Exception as exc:  # noqa: BLE001  # python-docx/PIL errors vary; collect per-file and continue the batch
@@ -1004,6 +1006,8 @@ class MainWindow(QMainWindow):
         self._progress.setFormat(f"[{idx}/{total}] {name} — starting…")
         self._results_table.mark_processing(source_id)
         # The previous run's preprocessing info is stale until this run records its own.
+        # The text format is deliberately kept: the row still shows the previous texts, and
+        # a format that no longer matches them would save an edit in the wrong notation.
         self._results_table.set_preprocessing(source_id, PreprocessInfo())
 
     _STAGE_PROGRESS_LABEL: ClassVar[dict[str, str]] = {
@@ -1031,7 +1035,7 @@ class MainWindow(QMainWindow):
         eval_txt = event.eval_txt
         self._results_table.add_result(event)
         # Refresh from the persisted state even on failure/stop, when on_ocr_done never fired.
-        self._refresh_preprocessing_info(source_id)
+        self._refresh_preprocessing_info(source_id, text_format=event.text_format)
         self._export_btn.setEnabled(True)
         if not ok and message:
             QMessageBox.warning(self, "Processing error", f"{name}:\n\n{message}")
@@ -1056,8 +1060,12 @@ class MainWindow(QMainWindow):
             self._current_preview_source_id = source_id
             self._on_preview_requested(pix, raw_txt, corr_txt, eval_txt)
 
-    def _refresh_preprocessing_info(self, source_id: str) -> None:
-        """Re-read how *source_id*'s preview was produced; unknown when no valid state exists."""
+    def _refresh_preprocessing_info(self, source_id: str, *, text_format: str = "plain") -> None:
+        """Re-read how *source_id*'s preview was produced; unknown when no valid state exists.
+
+        *text_format* is the notation the pipeline reported for the texts; it is kept when the
+        persisted state cannot be read back (e.g. the output directory changed meanwhile).
+        """
         info = PreprocessInfo()
         try:
             source = Path(source_id)
@@ -1065,9 +1073,11 @@ class MainWindow(QMainWindow):
                 view = self._app_service.load_view(self._config_panel.to_config(), source)
                 if view is not None:
                     info = PreprocessInfo(view.original_img, view.preprocess_steps)
+                    text_format = view.raw_text_format
         except (OSError, ValueError):
             pass
         self._results_table.set_preprocessing(source_id, info)
+        self._results_table.set_text_format(source_id, text_format)
 
     # ── Service status indicator ──────────────────────────────────────────
 
@@ -1260,6 +1270,7 @@ class MainWindow(QMainWindow):
                         view.evaluation_text,
                         preprocess=PreprocessInfo(view.original_img, view.preprocess_steps),
                     )
+                    self._results_table.set_text_format(source_id, view.raw_text_format)
         except (OSError, ValueError):
             # Non-fatal: preview metadata will be fully attached on file_done.
             pass
@@ -1304,6 +1315,7 @@ class MainWindow(QMainWindow):
                 evaluation_txt,
                 original_path=info.original_img,
                 preprocess_steps=info.steps,
+                text_format=self._results_table.text_format_for_source(source_id),
             )
         except Exception as exc:  # noqa: BLE001  # preview load may raise on missing/corrupt files; warn instead of crashing
             QMessageBox.warning(self, "Preview", f"Could not load preview content:\n{exc}")
@@ -1371,6 +1383,7 @@ class MainWindow(QMainWindow):
             source=source,
             edited_text=edited_text,
             preview_img=preview_img,
+            raw_text_format=self._results_table.text_format_for_source(source_id),
         )
         if state is None:
             return
@@ -1393,6 +1406,7 @@ class MainWindow(QMainWindow):
             evaluation_done=state.evaluation_done,
         )
         info = self._results_table.preprocessing_for_source(source_id)
+        self._results_table.set_text_format(source_id, state.raw_text_format)
         self._preview.load(
             load_pixmap(state.preview_img),
             state.raw_text,
@@ -1400,6 +1414,7 @@ class MainWindow(QMainWindow):
             state.evaluation_text,
             original_path=info.original_img,
             preprocess_steps=info.steps,
+            text_format=state.raw_text_format,
         )
         self._update_preview_stage_statuses(source_id)
         self._tabs.setCurrentIndex(1)
@@ -1423,6 +1438,7 @@ class MainWindow(QMainWindow):
             raw_text=raw_txt,
             preview_img=preview_img,
             edited_text=edited_text,
+            raw_text_format=self._results_table.text_format_for_source(source_id),
         )
         if state is None:
             return
@@ -1445,6 +1461,7 @@ class MainWindow(QMainWindow):
             evaluation_done=state.evaluation_done,
         )
         info = self._results_table.preprocessing_for_source(source_id)
+        self._results_table.set_text_format(source_id, state.raw_text_format)
         self._preview.load(
             load_pixmap(state.preview_img),
             state.raw_text,
@@ -1452,6 +1469,7 @@ class MainWindow(QMainWindow):
             state.evaluation_text,
             original_path=info.original_img,
             preprocess_steps=info.steps,
+            text_format=state.raw_text_format,
         )
         self._update_preview_stage_statuses(source_id)
         self._tabs.setCurrentIndex(1)

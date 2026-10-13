@@ -16,6 +16,8 @@ if TYPE_CHECKING:
     from .ollama_utils import OllamaClient
 
 from ..config import DEFAULTS
+from ..domain.formatted_text import TextFormat
+from ..domain.notation import with_notation_hint
 from ..interfaces import Evaluator
 from ._llm_invoke import invoke_langchain_chain, invoke_ollama_chat
 
@@ -27,10 +29,12 @@ class LangChainEvaluator(Evaluator):
         self._llm = llm
         self._prompt = prompt or DEFAULTS["evaluate_prompt"]
 
-    def evaluate(self, corrected_text: str, language: str) -> tuple[str, str | None]:
+    def evaluate(
+        self, corrected_text: str, language: str, *, text_format: TextFormat = "plain"
+    ) -> tuple[str, str | None]:
         return invoke_langchain_chain(
             self._llm,
-            system=self._prompt,
+            system=with_notation_hint(self._prompt, text_format, task="evaluation"),
             human="Language: {language}\n\nCorrected text:\n\n{text}",
             variables={"text": corrected_text, "language": language},
             fallback="",
@@ -60,11 +64,14 @@ class NativeOllamaEvaluator(Evaluator):
         self._timeout = timeout
         self._temperature = temperature
 
-    def evaluate(self, corrected_text: str, language: str) -> tuple[str, str | None]:
+    def evaluate(
+        self, corrected_text: str, language: str, *, text_format: TextFormat = "plain"
+    ) -> tuple[str, str | None]:
+        system = with_notation_hint(self._prompt, text_format, task="evaluation")
         return invoke_ollama_chat(
             self._client,
             model=self._model,
-            prompt=f"{self._prompt}\n\nLanguage: {language}\n\nCorrected text:\n\n{corrected_text}",
+            prompt=f"{system}\n\nLanguage: {language}\n\nCorrected text:\n\n{corrected_text}",
             timeout=self._timeout,
             temperature=self._temperature,
             fallback="",

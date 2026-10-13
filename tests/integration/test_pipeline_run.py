@@ -494,9 +494,7 @@ def test_pipeline_callbacks_are_invoked(tmp_path: Path) -> None:
             progress=ProgressCallbacks(
                 on_file_started=lambda _source_id, name, _idx, _total: started.append(name),
                 on_ocr_done=lambda _source_id, name: ocr_done.append(name),
-                on_file_done=lambda _source_id, name, ok, msg, pi, rt, ct, et: file_done.append(
-                    (name, ok)
-                ),
+                on_file_done=lambda result: file_done.append((result.name, result.ok)),
             ),
         ).run()
 
@@ -1569,3 +1567,125 @@ def test_pipeline_run_with_different_providers_per_stage_produces_full_state(
     assert state.ocr_done is True
     assert state.correction_done is True
     assert state.evaluation_done is True
+
+
+# ── Rich OCR output (layout HTML / Markdown) ──────────────────────────────
+
+_CHANDRA_OUTPUT = (
+    '<div data-bbox="10 10 300 40" data-label="Text"><p>Dear <b>diary</b>, my '
+    "<del>backpack</del> <sup>passport</sup> is here</p></div>"
+    '<div data-bbox="853 946 871 959" data-label="Page-Footer"><p>4</p></div>'
+)
+
+
+def _run_with_ocr_output(tmp_path: Path, output: str, **config_overrides):
+    cfg = make_config(
+        tmp_path,
+        ocr_engine="tesseract",
+        preprocess_method="none",
+        **{"correction_enabled": False, "docx_enabled": False, **config_overrides},
+    )
+    _place_image(cfg.input_dir)
+    mock_proc = MagicMock()
+    mock_proc.process_image.return_value = output
+    return cfg, mock_proc
+
+
+@pytest.mark.use_case("Batch_OCR_Processing")
+def test_pipeline_stores_layout_html_as_markdown(tmp_path: Path) -> None:
+    """
+    Given  an OCR engine that answers with Chandra-style layout HTML
+    When   OCRPipeline.run() is called
+    Then   the cache holds Markdown (formatting kept, page footer dropped), flagged "markdown"
+    """
+    cfg, mock_proc = _run_with_ocr_output(tmp_path, _CHANDRA_OUTPUT)
+
+    with patch(
+        "teachers_teammate.infrastructure.stage_builder.TesseractOCRProcessor",
+        return_value=mock_proc,
+    ):
+        rc = OCRPipeline(cfg).run()
+
+    assert rc == 0
+    state = StateRepository(resolve_artifact_dir(cfg.output_dir) / "state").load(
+        cfg.input_dir / "page.png"
+    )
+    assert state is not None
+    assert state.raw_text == "Dear **diary**, my ~~backpack~~ <sup>passport</sup> is here"
+    assert state.raw_text_format == "markdown"
+
+
+def test_pipeline_tells_corrector_the_text_is_markdown_and_formats_the_docx(
+    tmp_path: Path,
+) -> None:
+    """
+    Given  layout-HTML OCR output, a mocked corrector and DOCX output enabled
+    When   OCRPipeline.run() is called
+    Then   the corrector is called with text_format="markdown" and the DOCX keeps the
+           crossed-out word struck through
+    """
+    from docx import Document  # noqa: PLC0415
+
+    cfg, mock_proc = _run_with_ocr_output(
+        tmp_path, _CHANDRA_OUTPUT, correction_enabled=True, docx_enabled=True
+    )
+    mock_corrector = MagicMock()
+    mock_corrector.correct.return_value = (
+        "Dear **diary**, my ~~backpack~~ <sup>passport</sup> is here.",
+        None,
+    )
+
+    with (
+        patch(
+            "teachers_teammate.infrastructure.stage_builder.TesseractOCRProcessor",
+            return_value=mock_proc,
+        ),
+        patch(
+            "teachers_teammate.infrastructure.stage_builder.LangChainCorrector",
+            return_value=mock_corrector,
+        ),
+        patch("teachers_teammate.infrastructure.stage_builder.build_llm", return_value=MagicMock()),
+    ):
+        rc = OCRPipeline(cfg).run()
+
+    assert rc == 0
+    assert mock_corrector.correct.call_args.kwargs == {"text_format": "markdown"}
+    state = StateRepository(resolve_artifact_dir(cfg.output_dir) / "state").load(
+        cfg.input_dir / "page.png"
+    )
+    assert state is not None
+    assert state.raw_text_format == "markdown"
+    assert state.correction_text.startswith("Dear **diary**")
+    docx = Document(str(cfg.output_dir / "page.docx"))
+    runs = [
+        run
+        for row in docx.tables[0].rows
+        for cell in row.cells
+        for para in cell.paragraphs
+        for run in para.runs
+    ]
+    assert any(run.text == "backpack" and run.font.strike for run in runs)
+    assert any(run.text == "passport" and run.font.superscript for run in runs)
+
+
+def test_pipeline_keeps_tesseract_style_plain_text_verbatim(tmp_path: Path) -> None:
+    """
+    Given  an OCR engine that answers with plain text containing list dashes and asterisks
+    When   OCRPipeline.run() is called
+    Then   the text is stored verbatim and flagged "plain"
+    """
+    text = "- first\n- second\n2 * 3 = 6"
+    cfg, mock_proc = _run_with_ocr_output(tmp_path, text)
+
+    with patch(
+        "teachers_teammate.infrastructure.stage_builder.TesseractOCRProcessor",
+        return_value=mock_proc,
+    ):
+        rc = OCRPipeline(cfg).run()
+
+    assert rc == 0
+    state = StateRepository(resolve_artifact_dir(cfg.output_dir) / "state").load(
+        cfg.input_dir / "page.png"
+    )
+    assert state is not None
+    assert (state.raw_text, state.raw_text_format) == (text, "plain")

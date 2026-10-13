@@ -70,6 +70,7 @@ from ..infrastructure.workflow.cache_service import (
 )
 from ..interfaces import SUPPORTED_SUFFIXES
 from .commands import ApplicationCommands
+from .formatting import TextFormatter
 from .model_recommendations import ModelRecommendationService
 
 
@@ -411,8 +412,13 @@ class ProcessingApplicationService:
         out_path: Path,
         *,
         docx_format: str = "table",
+        text_format: str = "plain",
     ) -> None:
-        """Generate a DOCX for *source* from cached text and write it to *out_path*."""
+        """Generate a DOCX for *source* from cached text and write it to *out_path*.
+
+        *text_format* is the notation of *raw_text* / *correction_text* (``"markdown"`` keeps
+        bold, strikethrough, ... as Word formatting).
+        """
         from ..infrastructure.docx_builder import DocxDocumentCreator  # noqa: PLC0415
 
         out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -423,6 +429,7 @@ class ProcessingApplicationService:
             out_path,
             source.stem,
             source_image=preview_img or None,
+            text_format=TextFormatter.normalize(text_format),
         )
 
     def resolve_preview_tmp_dir(self) -> Path:
@@ -788,9 +795,14 @@ class ProcessingApplicationService:
         source: Path,
         edited_text: str,
         preview_img: str,
+        raw_text_format: str | None = None,
     ) -> DocumentState | None:
         return self._commands.record_manual_ocr_edit(
-            config, source=source, edited_text=edited_text, preview_img=preview_img
+            config,
+            source=source,
+            edited_text=edited_text,
+            preview_img=preview_img,
+            raw_text_format=raw_text_format,
         )
 
     def record_manual_correction_edit(
@@ -801,6 +813,7 @@ class ProcessingApplicationService:
         raw_text: str,
         preview_img: str,
         edited_text: str,
+        raw_text_format: str = "plain",
     ) -> DocumentState | None:
         return self._commands.record_manual_correction_edit(
             config,
@@ -808,4 +821,5 @@ class ProcessingApplicationService:
             raw_text=raw_text,
             preview_img=preview_img,
             edited_text=edited_text,
+            raw_text_format=raw_text_format,
         )

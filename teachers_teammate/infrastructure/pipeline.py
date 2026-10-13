@@ -480,6 +480,7 @@ class OCRPipeline:
                 evaluation=evaluation,
                 doc_creator=doc_creator,
                 anonymizer=anonymizer,
+                postprocessor=builder.build_ocr_postprocessor(),
                 stop_event=self._stop_event,
                 on_ocr_done=self._progress.on_ocr_done,
                 on_stage_started=self._progress.on_stage_started,

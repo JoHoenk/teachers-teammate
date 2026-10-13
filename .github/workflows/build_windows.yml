@@ -1,0 +1,49 @@
+name: Build Windows Installer
+
+# Manual, private test build: produces the NSIS installer as a workflow-run
+# artifact (no GitHub Release, no tag). Download it with:
+#   gh run download <run-id> -n teachers-teammate-windows
+#
+# Only the newest build is kept: once a build succeeds, artifacts from earlier
+# runs are deleted (a failed build leaves the previous one in place).
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version stamped into the installer (e.g. v0.0.0-test)"
+        required: true
+        type: string
+        default: "v0.0.0-test"
+
+env:
+  ARTIFACT_NAME: teachers-teammate-windows
+
+jobs:
+  build-windows:
+    permissions:
+      contents: write
+    uses: ./.github/workflows/build_artifacts.yml
+    with:
+      version: ${{ inputs.version }}
+      platforms: '["windows"]'
+      retention_days: 2
+
+  prune-old-artifacts:
+    name: Delete previous Windows artifacts
+    needs: [build-windows]
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+    steps:
+      - name: Delete artifacts from earlier runs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api --paginate \
+            "repos/${{ github.repository }}/actions/artifacts?name=${ARTIFACT_NAME}&per_page=100" \
+            --jq '.artifacts[] | select(.workflow_run.id != ${{ github.run_id }}) | .id' |
+          while read -r id; do
+            echo "Deleting artifact ${id}"
+            gh api -X DELETE "repos/${{ github.repository }}/actions/artifacts/${id}"
+          done

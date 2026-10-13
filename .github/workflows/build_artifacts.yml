@@ -33,6 +33,11 @@ on:
         required: false
         type: boolean
         default: false
+      platforms:
+        description: 'JSON array of platforms to build (subset of ["linux","windows","macos"])'
+        required: false
+        type: string
+        default: '["linux","windows","macos"]'
 
 jobs:
   build-package:
@@ -44,13 +49,16 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # `artifact` is filtered by the `platforms` input; the `include`
+        # entries below only attach the runner OS to the matching combination.
+        artifact: ${{ fromJSON(inputs.platforms) }}
         include:
-          - os: ubuntu-latest
-            artifact: linux
-          - os: windows-latest
-            artifact: windows
-          - os: macos-latest
-            artifact: macos
+          - artifact: linux
+            os: ubuntu-latest
+          - artifact: windows
+            os: windows-latest
+          - artifact: macos
+            os: macos-latest
 
     steps:
       - uses: actions/checkout@v4

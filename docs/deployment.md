@@ -26,6 +26,17 @@ Manual trigger (`workflow_dispatch`) with a version string (e.g. `v1.0.0-rc1`).
 Runs the full build matrix — lint, test, wheel, and all platform standalone builds — but **does not upload artifacts or publish a release**.
 Use this to validate the build before cutting a real release.
 
+### Windows test build (`build_windows.yml`)
+
+Manual trigger with an optional version string (default `v0.0.0-test`).
+Builds only the Windows NSIS installer — no lint/test gate, no release, no tag — and uploads it as a workflow-run artifact with 2-day retention. After a successful build, artifacts from earlier runs of this workflow are deleted, so only the newest installer is kept (a failed build leaves the previous one in place):
+
+```bash
+gh workflow run build_windows.yml -f version=v0.0.0-test
+gh run watch
+gh run download <run-id> -n teachers-teammate-windows
+```
+
 ### Release (`release.yml`)
 
 Manual trigger with a version string (e.g. `v1.2.3`).

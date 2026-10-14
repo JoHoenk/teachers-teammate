@@ -187,6 +187,28 @@ class OllamaClient:
 
     # ── Connectivity checks ────────────────────────────────────────────────
 
+    def list_models_or_error(self) -> tuple[list[str], str]:
+        """Return ``(models, error)`` from a single request to the server.
+
+        *error* is ``""`` when the server answered (even with no model downloaded)
+        and a user-facing message when it could not be reached.  Unlike
+        :meth:`list_models` this tells "unreachable" apart from "no models" without
+        a second round-trip, which matters when the server times out.
+        """
+        try:
+            resp = self._client().list()
+            return [m.model for m in resp.models if m.model], ""
+        except Exception as exc:  # noqa: BLE001  # any client error means unreachable; the message is classified below
+            exc_str = str(exc).lower()
+            if any(w in exc_str for w in ("connect", "refused", "network", "unreachable")):
+                return (
+                    [],
+                    f"✗ Cannot connect to Ollama at {self.base_url} — is it running? (ollama serve)",
+                )
+            if "timeout" in exc_str:
+                return [], f"✗ Connection timed out at {self.base_url} — check URL and network"
+            return [], f"✗ Unexpected error contacting Ollama: {exc}"
+
     def check_connection(self, model: str = "") -> tuple[bool, bool, str]:
         """Return ``(connected, model_ok, message)`` for the Ollama server.
 
@@ -196,24 +218,9 @@ class OllamaClient:
         * ``connected=True, model_ok=True`` — server is up and *model* is
           available (or no model was requested).
         """
-        try:
-            resp = self._client().list()
-            models = [m.model for m in resp.models if m.model]
-        except Exception as exc:  # noqa: BLE001  # any client error means unreachable; the message is classified below
-            exc_str = str(exc).lower()
-            if any(w in exc_str for w in ("connect", "refused", "network", "unreachable")):
-                return (
-                    False,
-                    False,
-                    f"✗ Cannot connect to Ollama at {self.base_url} — is it running? (ollama serve)",
-                )
-            if "timeout" in exc_str:
-                return (
-                    False,
-                    False,
-                    f"✗ Connection timed out at {self.base_url} — check URL and network",
-                )
-            return False, False, f"✗ Unexpected error contacting Ollama: {exc}"
+        models, error = self.list_models_or_error()
+        if error:
+            return False, False, error
 
         if not models:
             return (

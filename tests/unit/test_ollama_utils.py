@@ -882,3 +882,23 @@ def test_check_model_no_warning_for_vision_model(monkeypatch) -> None:
     reporter = _RecordingReporter()
     OllamaClient("http://127.0.0.1:11434").check_model("qwen3-vl:8b", reporter)
     assert not any("may not support vision" in w for w in reporter.warnings)
+
+
+def test_list_models_or_error_tells_unreachable_from_empty(monkeypatch) -> None:
+    """
+    Given  one server that answers with no models and one that cannot be reached
+    When   OllamaClient.list_models_or_error() is called on each
+    Then   the first yields ([], "") and the second ([], <message>), one request each
+    """
+    mock_ollama = _make_mock_ollama([])
+    monkeypatch.setitem(sys.modules, "ollama", mock_ollama)
+    client = mock_ollama.Client.return_value
+
+    assert OllamaClient("http://127.0.0.1:11434").list_models_or_error() == ([], "")
+
+    client.list.side_effect = ConnectionError("Connection refused")
+    models, error = OllamaClient("http://127.0.0.1:11434").list_models_or_error()
+
+    assert models == []
+    assert "Cannot connect to Ollama" in error
+    assert client.list.call_count == 2

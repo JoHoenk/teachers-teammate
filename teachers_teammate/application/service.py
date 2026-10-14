@@ -82,6 +82,24 @@ class RequirementIssue:
     fixable_via_downloads: bool
 
 
+@dataclasses.dataclass(frozen=True)
+class RunPreflight:
+    """Outcome of the checks made before a run starts (first blocker wins)."""
+
+    #: Why Ollama cannot be used ("" when it is reachable or not needed).
+    ollama_unreachable: str = ""
+    #: Configured Ollama models that are not downloaded.
+    missing_models: tuple[str, ...] = ()
+    #: Stage whose requirements are unmet ("" when all are met) and the unmet issues.
+    stage: str = ""
+    stage_issues: tuple[RequirementIssue, ...] = ()
+
+    @property
+    def ok(self) -> bool:
+        """Whether the run may start."""
+        return not (self.ollama_unreachable or self.missing_models or self.stage_issues)
+
+
 class ProcessingApplicationService:
     """Coordinates processing and state transitions behind a small app-facing API."""
 
@@ -233,8 +251,20 @@ class ProcessingApplicationService:
             return cached
         kwargs: dict[str, str] = {"base_url": base_url} if base_url else {}
         result = list_provider_models(provider, **kwargs)
-        self._model_cache[self._model_cache_key(provider, base_url)] = (time.monotonic(), result)
+        self._store_models(provider, base_url, result)
         return result
+
+    def _store_models(self, provider: str, base_url: str, models: list[str]) -> None:
+        """Cache *models*, unless empty.
+
+        An empty list means "unreachable" (or nothing downloaded yet): never cache it,
+        or a server that was started a moment later would keep being reported as down.
+        """
+        if models:
+            self._model_cache[self._model_cache_key(provider, base_url)] = (
+                time.monotonic(),
+                models,
+            )
 
     def get_cached_models(self, provider: str, *, base_url: str = "") -> list[str] | None:
         """Return cached model list for *provider* if still within TTL, else ``None``."""
@@ -504,39 +534,78 @@ class ProcessingApplicationService:
 
         return dict(OllamaClient(url or "http://127.0.0.1:11434").list_models_with_size())
 
-    def check_ollama_models_ready(self, config: Config) -> list[str]:
-        """Return names of Ollama models that are configured but not installed.
-
-        Checks OCR, correction, and evaluation stages.  Uses the in-process
-        model cache (5-minute TTL) to avoid redundant network calls.
-        """
-        needs_ollama = (
+    @staticmethod
+    def _ollama_needed(config: Config) -> bool:
+        """Return whether any enabled stage of *config* talks to Ollama."""
+        return (
             config.ocr.engine == "ollama"
             or (config.correction_enabled and config.correction_provider == "ollama")
             or (config.evaluation_enabled and config.evaluate_provider == "ollama")
         )
-        if not needs_ollama:
-            return []
-        from ..infrastructure.ollama_utils import models_include  # noqa: PLC0415
 
-        url = config.ollama_url
-        installed = list(self.list_provider_models("ollama", base_url=url))
-        if not installed:  # Ollama unreachable — don't block the run
-            return []
-        missing: list[str] = []
-        if config.ocr.engine == "ollama":
-            model = config.ocr.model or ""
-            if model and not models_include(model, installed):
-                missing.append(model)
+    @staticmethod
+    def configured_ollama_models(config: Config) -> list[str]:
+        """Return the deduplicated Ollama models the enabled stages of *config* use."""
+        models: list[str] = []
+        if config.ocr.engine == "ollama" and config.ocr.model:
+            models.append(config.ocr.model)
         if config.correction_enabled and config.correction_provider == "ollama":
             model = config.effective_correction_model or ""
-            if model and model not in missing and not models_include(model, installed):
-                missing.append(model)
+            if model and model not in models:
+                models.append(model)
         if config.evaluation_enabled and config.evaluate_provider == "ollama":
             model = config.effective_evaluate_model or ""
-            if model and model not in missing and not models_include(model, installed):
-                missing.append(model)
-        return missing
+            if model and model not in models:
+                models.append(model)
+        return models
+
+    def _installed_ollama_models(self, url: str) -> tuple[list[str], str]:
+        """Return ``(installed, unreachable)`` for the Ollama server at *url*.
+
+        *unreachable* is ``""`` when the server answered — also when it has no model
+        downloaded yet — and the connection message otherwise.  Makes at most one
+        request (none within the model-cache TTL), so an unreachable server costs a
+        single timeout instead of one per question asked of it.
+        """
+        cached = self.get_cached_models("ollama", base_url=url)
+        if cached is not None:
+            return list(cached), ""
+        from ..infrastructure.ollama_utils import OllamaClient  # noqa: PLC0415
+
+        installed, unreachable = OllamaClient(url).list_models_or_error()
+        self._store_models("ollama", url, installed)
+        return installed, unreachable
+
+    def check_run_preflight(self, config: Config) -> RunPreflight:
+        """Return the first unmet requirement before a run, or an all-clear result.
+
+        Makes blocking network calls: call it from a background thread, never from
+        the GUI thread.  Order: Ollama reachable → models downloaded → stage
+        requirements (anonymizer, correction, evaluation).
+        """
+        if self._ollama_needed(config):
+            from ..infrastructure.ollama_utils import models_include  # noqa: PLC0415
+
+            installed, unreachable = self._installed_ollama_models(config.ollama_url)
+            if unreachable:
+                return RunPreflight(ollama_unreachable=unreachable)
+            configured = self.configured_ollama_models(config)
+            missing = [m for m in configured if not models_include(m, installed)]
+            if missing:
+                return RunPreflight(missing_models=tuple(missing))
+
+        stages: list[str] = []
+        if config.anonymization_enabled:
+            stages.append("anonymizer")
+        if config.correction_enabled:
+            stages.append("correction")
+        if config.evaluation_enabled:
+            stages.append("evaluation")
+        for stage in stages:
+            issues = self.check_stage_requirements(config, stage)
+            if issues:
+                return RunPreflight(stage=stage, stage_issues=tuple(issues))
+        return RunPreflight()
 
     def check_stage_requirements(self, config: Config, stage: str) -> list[RequirementIssue]:
         """Return unmet requirements for enabling *stage* ('correction', 'evaluation', 'anonymizer').
@@ -556,12 +625,19 @@ class ProcessingApplicationService:
             if provider == "ollama":
                 from ..infrastructure.ollama_utils import models_include  # noqa: PLC0415
 
-                installed = self.list_provider_models("ollama", base_url=config.ollama_url)
-                if not installed:
+                installed, unreachable = self._installed_ollama_models(config.ollama_url)
+                if unreachable:
                     issues.append(
                         RequirementIssue(
                             "Ollama is not running. Start it with `ollama serve`.",
                             fixable_via_downloads=False,
+                        )
+                    )
+                elif not installed:
+                    issues.append(
+                        RequirementIssue(
+                            "No model is downloaded in Ollama yet.",
+                            fixable_via_downloads=True,
                         )
                     )
                 elif model and not models_include(model, installed):

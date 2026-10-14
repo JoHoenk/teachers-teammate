@@ -135,12 +135,19 @@ try:
                     _Qt.AspectRatioMode.KeepAspectRatio,
                     _Qt.TransformationMode.SmoothTransformation,
                 )
-            _early_splash = _QSplash(_pix, _Qt.WindowType.WindowStaysOnTopHint)
+            # No always-on-top hint: a startup error dialog must never end up hidden behind it.
+            _early_splash = _QSplash(_pix)
             _early_splash.show()
             _qt_app.processEvents()
 except Exception:  # noqa: BLE001
     pass
 
-from teachers_teammate.gui import main_gui  # noqa: E402
+try:
+    from teachers_teammate.gui import main_gui  # noqa: E402
+except BaseException:
+    # A failed import must not leave the splash covering the error dialog.
+    if _early_splash is not None:
+        _early_splash.close()
+    raise
 
 main_gui(early_splash=_early_splash)

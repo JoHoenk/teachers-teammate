@@ -1290,3 +1290,197 @@ def test_manual_correction_edit_stores_the_notation_of_a_synthesised_ocr_text(
     assert state is not None
     assert (state.raw_text, state.raw_text_format) == ("~~a~~ b", "markdown")
     assert state.correction_text == "~~a~~ b!"
+
+
+# ── Run preflight & model-list caching ──────────────────────────────────────
+
+
+def _ollama_config(tmp_path: Path, **overrides):
+    """Config whose OCR and proofreading both use Ollama."""
+    from tests.conftest import make_config  # noqa: PLC0415
+
+    values: dict = {
+        "ocr_engine": "ollama",
+        "ocr_model": "qwen3-vl:8b",
+        "correction_enabled": True,
+        "correction_provider": "ollama",
+        "correction_model": "qwen3.5:9b",
+    }
+    values.update(overrides)
+    return make_config(tmp_path, **values)
+
+
+def _server_answers(models: list[str], error: str = ""):
+    """Patch the single Ollama request that lists models with ``(models, error)``."""
+    return patch(
+        "teachers_teammate.infrastructure.ollama_utils.OllamaClient.list_models_or_error",
+        return_value=(models, error),
+    )
+
+
+@pytest.mark.unit
+def test_empty_model_list_is_not_cached(tmp_path: Path) -> None:
+    """
+    Given  an Ollama server that is unreachable (empty model list) at first
+    When   it is started and the list is requested again
+    Then   the second call asks the server again instead of serving the cached failure
+    """
+    svc = _make_svc()
+    answers = [[], ["qwen3-vl:8b"]]
+
+    with patch(
+        "teachers_teammate.application.service.list_provider_models",
+        side_effect=lambda *_a, **_k: answers.pop(0),
+    ):
+        first = svc.list_provider_models("ollama", base_url="http://127.0.0.1:11434")
+        second = svc.list_provider_models("ollama", base_url="http://127.0.0.1:11434")
+
+    assert first == []
+    assert second == ["qwen3-vl:8b"]
+
+
+@pytest.mark.unit
+def test_preflight_reports_unreachable_ollama(tmp_path: Path) -> None:
+    """
+    Given  a config that needs Ollama and a server that cannot be reached
+    When   the run preflight is computed
+    Then   it carries the connection message and nothing else
+    """
+    svc = _make_svc()
+    cfg = _ollama_config(tmp_path)
+
+    with _server_answers([], "✗ Cannot connect to Ollama") as request:
+        result = svc.check_run_preflight(cfg)
+
+    request.assert_called_once()  # one timeout, not one per question
+    assert result.ok is False
+    assert result.ollama_unreachable == "✗ Cannot connect to Ollama"
+    assert result.missing_models == ()
+
+
+@pytest.mark.unit
+def test_preflight_lists_missing_models(tmp_path: Path) -> None:
+    """
+    Given  a reachable server that only has the reading model downloaded
+    When   the run preflight is computed
+    Then   the proofreading model is reported as missing
+    """
+    svc = _make_svc()
+    cfg = _ollama_config(tmp_path)
+
+    with _server_answers(["qwen3-vl:8b"]):
+        result = svc.check_run_preflight(cfg)
+
+    assert result.missing_models == ("qwen3.5:9b",)
+    assert result.ollama_unreachable == ""
+
+
+@pytest.mark.unit
+def test_preflight_connected_server_without_models_reports_all_missing(tmp_path: Path) -> None:
+    """
+    Given  a reachable Ollama server with no model downloaded at all
+    When   the run preflight is computed
+    Then   it is not called "unreachable": both configured models are missing
+    """
+    svc = _make_svc()
+    cfg = _ollama_config(tmp_path)
+
+    with _server_answers([]):
+        result = svc.check_run_preflight(cfg)
+
+    assert result.ollama_unreachable == ""
+    assert result.missing_models == ("qwen3-vl:8b", "qwen3.5:9b")
+
+
+@pytest.mark.unit
+def test_preflight_ok_when_everything_is_available(tmp_path: Path) -> None:
+    """
+    Given  a reachable server with all configured models downloaded
+    When   the run preflight is computed
+    Then   the run may start
+    """
+    svc = _make_svc()
+    cfg = _ollama_config(tmp_path)
+
+    with _server_answers(["qwen3-vl:8b", "qwen3.5:9b"]):
+        result = svc.check_run_preflight(cfg)
+
+    assert result.ok is True
+
+
+@pytest.mark.unit
+def test_preflight_needs_no_ollama_for_other_engines(tmp_path: Path) -> None:
+    """
+    Given  a config that uses Tesseract and no Ollama stage
+    When   the run preflight is computed
+    Then   the Ollama server is never contacted and the run may start
+    """
+    from tests.conftest import make_config  # noqa: PLC0415
+
+    svc = _make_svc()
+    cfg = make_config(tmp_path, ocr_engine="tesseract", correction_enabled=False)
+
+    with patch(
+        "teachers_teammate.application.service.list_provider_models",
+        side_effect=AssertionError("Ollama must not be contacted"),
+    ):
+        result = svc.check_run_preflight(cfg)
+
+    assert result.ok is True
+
+
+@pytest.mark.unit
+def test_stage_requirements_distinguish_no_models_from_not_running(tmp_path: Path) -> None:
+    """
+    Given  a server that answers but has no model downloaded
+    When   the proofreading requirements are checked
+    Then   the issue says no model is downloaded (fixable in Downloads), not "not running"
+    """
+    svc = _make_svc()
+    cfg = _ollama_config(tmp_path)
+
+    with _server_answers([]):
+        issues = svc.check_stage_requirements(cfg, "correction")
+
+    assert [i.message for i in issues] == ["No model is downloaded in Ollama yet."]
+    assert issues[0].fixable_via_downloads is True
+
+    with _server_answers([], "✗ Cannot connect to Ollama") as request:
+        issues = svc.check_stage_requirements(cfg, "correction")
+
+    request.assert_called_once()
+    assert [i.message for i in issues] == ["Ollama is not running. Start it with `ollama serve`."]
+    assert issues[0].fixable_via_downloads is False
+
+
+@pytest.mark.unit
+def test_preflight_asks_an_installed_models_server_only_once(tmp_path: Path) -> None:
+    """
+    Given  a reachable server whose model list was fetched by an earlier check
+    When   the run preflight and the stage requirements are computed within the cache TTL
+    Then   the server is not asked again
+    """
+    svc = _make_svc()
+    cfg = _ollama_config(tmp_path)
+
+    with _server_answers(["qwen3-vl:8b", "qwen3.5:9b"]) as request:
+        assert svc.check_run_preflight(cfg).ok is True
+        assert svc.check_stage_requirements(cfg, "correction") == []
+
+    request.assert_called_once()
+
+
+@pytest.mark.unit
+def test_unreachable_server_is_asked_again_on_the_next_check(tmp_path: Path) -> None:
+    """
+    Given  a server that was unreachable at the first preflight
+    When   it has been started and the preflight is computed again
+    Then   the failure was not cached and the run may start
+    """
+    svc = _make_svc()
+    cfg = _ollama_config(tmp_path)
+
+    with _server_answers([], "✗ Cannot connect to Ollama"):
+        assert svc.check_run_preflight(cfg).ollama_unreachable
+    with _server_answers(["qwen3-vl:8b", "qwen3.5:9b"]):
+        assert svc.check_run_preflight(cfg).ok is True

@@ -28,7 +28,9 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ..application.service import RequirementIssue
 from ..config import DEFAULTS, Config, OcrConfig
+from ._background import LatestTask
 from ._constants import _LANGUAGES
 from ._types import SettingsDict
 
@@ -77,6 +79,11 @@ class ConfigPanel(QScrollArea):
         self._preset_prompts: dict[str, str] = preset_prompts or {}
         self._default_prompt: str = default_prompt
         self._service: object | None = None  # ProcessingApplicationService, set via set_service()
+        # One per stage: ticking a box must only make *its own* earlier check stale.
+        self._guard_tasks: dict[str, LatestTask] = {}
+        # True while load_from_dict applies saved state: stage requirement guards only
+        # make sense for a user ticking a box, not for restoring settings at startup.
+        self._loading = False
         self.setWidgetResizable(True)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setMinimumWidth(340)
@@ -402,14 +409,9 @@ class ConfigPanel(QScrollArea):
         if not checked:
             self._settings_dict["correction_enabled"] = False
             return
-        if not self._check_stage_and_guard(self._correction_enabled, "correction"):
-            self._correction_enabled.blockSignals(True)
-            self._correction_enabled.setChecked(False)
-            self._correction_enabled.blockSignals(False)
-            self._settings_dict["correction_enabled"] = False
-            return
         self._settings_dict["correction_enabled"] = True
         self._correction_prompt_btn.setEnabled(True)
+        self._guard_stage("correction")
 
     def _update_anonymize_visibility(self) -> None:
         pass  # driven by _on_anonymization_changed
@@ -418,25 +420,15 @@ class ConfigPanel(QScrollArea):
         if not checked:
             self._settings_dict["evaluation_enabled"] = False
             return
-        if not self._check_stage_and_guard(self._evaluation_enabled, "evaluation"):
-            self._evaluation_enabled.blockSignals(True)
-            self._evaluation_enabled.setChecked(False)
-            self._evaluation_enabled.blockSignals(False)
-            self._settings_dict["evaluation_enabled"] = False
-            return
         self._settings_dict["evaluation_enabled"] = True
+        self._guard_stage("evaluation")
 
     def _on_anonymization_changed(self, checked: bool = True) -> None:
         if not checked:
             self._settings_dict["anonymization_enabled"] = False
             return
-        if not self._check_stage_and_guard(self._anonymization_enabled, "anonymizer"):
-            self._anonymization_enabled.blockSignals(True)
-            self._anonymization_enabled.setChecked(False)
-            self._anonymization_enabled.blockSignals(False)
-            self._settings_dict["anonymization_enabled"] = False
-            return
         self._settings_dict["anonymization_enabled"] = True
+        self._guard_stage("anonymizer")
 
     def build_anonymizer_config(self) -> object:
         """Build an :class:`AnonymizerConfig` from the current settings dict.
@@ -613,7 +605,18 @@ class ConfigPanel(QScrollArea):
             combo.setCurrentIndex(idx)
 
     def load_from_dict(self, values: dict) -> None:
-        """Populate fields from a dict (e.g. loaded from ocr.toml)."""
+        """Populate fields from a dict (e.g. loaded from ocr.toml).
+
+        Requirement guards are suspended meanwhile: restoring saved settings must not
+        contact Ollama or open dialogs (this runs inside the window constructor).
+        """
+        self._loading = True
+        try:
+            self._load_from_dict(values)
+        finally:
+            self._loading = False
+
+    def _load_from_dict(self, values: dict) -> None:
         if "input" in values:
             path = Path(str(values["input"]))
             if path.is_dir():
@@ -695,43 +698,104 @@ class ConfigPanel(QScrollArea):
         """Inject the application service so the panel can run requirement checks."""
         self._service = service
 
-    def _check_stage_and_guard(self, checkbox: QCheckBox, stage: str) -> bool:
-        """Run requirement checks for *stage*; show guard dialog if any fail.
+    def _stage_checkbox(self, stage: str) -> QCheckBox:
+        """Return the enable checkbox of pipeline *stage*."""
+        if stage == "correction":
+            return self._correction_enabled
+        if stage == "evaluation":
+            return self._evaluation_enabled
+        return self._anonymization_enabled
 
-        Returns True when all checks pass (checkbox should stay checked).
-        Returns False when checks fail (caller should revert the checkbox).
+    def _guard_stage(self, stage: str) -> None:
+        """Check the requirements of *stage* in the background after the user enabled it.
+
+        The check contacts Ollama (or imports spaCy), so it must never run on the GUI
+        thread.  The box stays ticked meanwhile; if a requirement is unmet it is
+        unticked and the guard dialog explains why.  Nothing happens while saved
+        settings are being loaded.
         """
-        if not checkbox.isChecked() or self._service is None:
-            return True
+        checkbox = self._stage_checkbox(stage)
+        if self._loading or not checkbox.isChecked() or self._service is None:
+            return
         from ..application.service import ProcessingApplicationService  # noqa: PLC0415
-        from ._dependency_guard_dialog import DependencyGuardDialog  # noqa: PLC0415
+
+        service: ProcessingApplicationService = self._service  # ty: ignore[invalid-assignment]  # _service is injected as object; narrowed to the concrete service type
+        config = self.lookup_config()
+        task = self._guard_tasks.setdefault(stage, LatestTask(self))
+        task.submit(
+            lambda: service.check_stage_requirements(config, stage),
+            lambda result, error: self._on_stage_guard_result(config, stage, result, error),
+        )
+
+    def lookup_config(self) -> Config:
+        """Return a Config of the live panel values for requirement lookups.
+
+        Unlike :meth:`to_config` it needs no valid input/output folder, so it also works
+        at start-up and before a folder was chosen.  Requires :meth:`set_service`.
+        """
+        from ..application.service import ProcessingApplicationService  # noqa: PLC0415
 
         service: ProcessingApplicationService = self._service  # ty: ignore[invalid-assignment]  # _service is injected as object; narrowed to the concrete service type
         config = service.build_lookup_config(
             Path(self.get_input_dir() or "."),
             Path(self._settings_dict.get("output_dir") or "."),
         )
-        # Overlay live panel values so checks use the currently selected providers/models
-        config = dataclasses.replace(
+        settings = self._settings_dict
+        return dataclasses.replace(
             config,
+            ocr=dataclasses.replace(
+                config.ocr,
+                engine=str(settings.get("ocr_engine", config.ocr.engine)),
+                model=str(settings.get("ocr_model", config.ocr.model)),
+            ),
+            correction_enabled=self._correction_enabled.isChecked(),
+            evaluation_enabled=self._evaluation_enabled.isChecked(),
             correction_provider=str(
-                self._settings_dict.get("correction_provider", config.correction_provider)
+                settings.get("correction_provider", config.correction_provider)
             ),
-            correction_model=str(
-                self._settings_dict.get("correction_model", config.correction_model or "")
-            ),
-            evaluate_provider=str(
-                self._settings_dict.get("evaluate_provider", config.evaluate_provider)
-            ),
-            evaluate_model=str(
-                self._settings_dict.get("evaluate_model", config.evaluate_model or "")
-            ),
-            ollama_url=str(self._settings_dict.get("ollama_url", config.ollama_url)),
+            correction_model=str(settings.get("correction_model", config.correction_model or "")),
+            evaluate_provider=str(settings.get("evaluate_provider", config.evaluate_provider)),
+            evaluate_model=str(settings.get("evaluate_model", config.evaluate_model or "")),
+            ollama_url=str(settings.get("ollama_url", config.ollama_url)),
             language=self._language.currentText().strip(),
         )
-        issues = service.check_stage_requirements(config, stage)
-        if not issues:
-            return True
+
+    @staticmethod
+    def _stage_inputs(config: Config, stage: str) -> tuple[str, ...]:
+        """Return the config values the requirements of *stage* depend on."""
+        if stage == "correction":
+            return (
+                config.correction_provider,
+                config.effective_correction_model,
+                config.ollama_url,
+            )
+        if stage == "evaluation":
+            return (config.evaluate_provider, config.effective_evaluate_model, config.ollama_url)
+        return (config.language,)
+
+    def _on_stage_guard_result(
+        self, config: Config, stage: str, result: object, error: BaseException | None
+    ) -> None:
+        """Untick *stage* and explain when its background requirement check failed."""
+        if error is not None or not isinstance(result, list) or not result:
+            return  # all met (or the check itself failed: never block the UI on that)
+        issues = [issue for issue in result if isinstance(issue, RequirementIssue)]
+        checkbox = self._stage_checkbox(stage)
+        if not checkbox.isChecked():
+            return  # the user unticked it in the meantime
+        if self._stage_inputs(self.lookup_config(), stage) != self._stage_inputs(config, stage):
+            return  # the user chose another model/provider/server: this answer is outdated
+        checkbox.blockSignals(True)
+        checkbox.setChecked(False)
+        checkbox.blockSignals(False)
+        if stage == "correction":
+            self._settings_dict["correction_enabled"] = False
+        elif stage == "evaluation":
+            self._settings_dict["evaluation_enabled"] = False
+        else:
+            self._settings_dict["anonymization_enabled"] = False
+
+        from ._dependency_guard_dialog import DependencyGuardDialog  # noqa: PLC0415
         from ._downloads_dialog import DownloadsDialog  # noqa: PLC0415
 
         tab = DownloadsDialog.TAB_SPACY if stage == "anonymizer" else DownloadsDialog.TAB_OLLAMA
@@ -748,7 +812,6 @@ class ConfigPanel(QScrollArea):
         dlg = DependencyGuardDialog(stage, issues, self)
         dlg.open_downloads.connect(lambda: self.open_downloads_requested.emit(tab, preselect))
         dlg.exec()
-        return False
 
     def restore_defaults(self) -> None:
         self.load_from_dict(DEFAULTS)

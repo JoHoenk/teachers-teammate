@@ -14,7 +14,7 @@ from collections.abc import Sequence
 from typing import TYPE_CHECKING, cast
 
 from PySide6.QtCore import Qt, QThread, Signal
-from PySide6.QtGui import QColor
+from PySide6.QtGui import QBrush, QColor
 from PySide6.QtWidgets import (
     QCheckBox,
     QDialog,
@@ -53,11 +53,13 @@ from ._background import LatestTask
 from ._constants import _SPACY_MODEL_CHOICES as _SPACY_MODEL_DOWNLOAD_CHOICES
 from ._hardware_profile_selector import HardwareProfileSelector
 from ._model_wording import (
+    ADD_MODEL_NOTE,
     BEST_ALREADY_DOWNLOADED,
     DOWNLOADS_INTRO,
     GROUP_OTHER,
     GROUP_READING,
     GROUP_WRITING,
+    MODEL_ALREADY_LISTED,
     abilities_text,
     memory_text,
     suitability_text,
@@ -250,6 +252,12 @@ class DownloadsDialog(QDialog):
 
         self._build_status_and_actions(main)
 
+        # Enter in a text field must only do what that field does.  QDialog would also
+        # "press" its default button (the first push button, e.g. Install Selected).
+        for button in self.findChildren(QPushButton):
+            button.setAutoDefault(False)
+            button.setDefault(False)
+
     def _build_status_and_actions(self, main: QVBoxLayout) -> None:
         """Build the detection label, progress bar, log, action row, and close button."""
         self._dl_detect_lbl = QLabel("Detecting installed packages…")
@@ -423,10 +431,15 @@ class DownloadsDialog(QDialog):
         add_model_btn = QPushButton("Add")
         add_model_btn.setFixedWidth(90)
         add_model_btn.clicked.connect(self._on_add_custom_ollama_model)
+        self._ollama_custom_input.returnPressed.connect(self._on_add_custom_ollama_model)
         cmr.addWidget(add_label)
         cmr.addWidget(self._ollama_custom_input, stretch=1)
         cmr.addWidget(add_model_btn)
         group_layout.addWidget(custom_row)
+        add_note = QLabel(ADD_MODEL_NOTE)
+        add_note.setStyleSheet("color: #888; font-size: 11px;")
+        add_note.setWordWrap(True)
+        group_layout.addWidget(add_note)
         layout.addWidget(group)
         layout.addStretch(1)
         return self._scrolled(content)
@@ -621,8 +634,11 @@ class DownloadsDialog(QDialog):
                     child.setForeground(1, _GREY)
                     child.setToolTip(1, too_large_tooltip(memory, profile))
                 else:
-                    child.setForeground(0, QColor())
-                    child.setForeground(1, QColor())
+                    # An empty QBrush (no brush) restores the theme's text colour.  A
+                    # QColor() would be an *invalid* solid colour, painted black: unreadable
+                    # on the dark theme (text and tick box of every non-"too large" row).
+                    child.setForeground(0, QBrush())
+                    child.setForeground(1, QBrush())
                     child.setToolTip(1, "")
 
     def _on_select_best_models(self) -> None:
@@ -794,8 +810,16 @@ class DownloadsDialog(QDialog):
         model = normalize_tag(self._ollama_custom_input.text())
         if not model:
             return
-        if model in self._model_items:
-            return  # duplicates (also "name" vs "name:latest") are ignored
+        existing = self._model_items.get(model)
+        if existing is not None:
+            # Duplicates (also "name" vs "name:latest") get no second row: show the
+            # existing one, tick it when it can still be downloaded, and say so.
+            self._tick_by_user_intent(model)
+            self._ollama_model_list.scrollToItem(existing)
+            self._ollama_model_list.setCurrentItem(existing)
+            self._ollama_hint_lbl.setText(MODEL_ALREADY_LISTED)
+            self._ollama_custom_input.clear()
+            return
         self._add_model_row(model, "other")
         self._tick_by_user_intent(model)
         self._ollama_custom_input.clear()

@@ -192,5 +192,157 @@ def test_guard_dialog_opens_downloads_on_ollama_tab_with_missing_model_ticked(
 
     panel._correction_enabled.setChecked(False)
     panel._correction_enabled.setChecked(True)
+    qtbot.waitUntil(lambda: bool(requests), timeout=3000)
 
     assert requests == [(DownloadsDialog.TAB_OLLAMA, ["qwen3.5:9b"])]
+    assert panel._correction_enabled.isChecked() is False  # unticked: requirement unmet
+
+
+@pytest.mark.gui
+def test_loading_saved_settings_does_not_run_the_requirement_guard(qtbot, monkeypatch) -> None:
+    """
+    Given  proofreading enabled in the saved settings and Ollama not reachable
+    When   the settings are loaded into the panel (as at application start)
+    Then   no requirement check runs and no dialog opens, the box stays ticked
+    """
+    from teachers_teammate.gui._dependency_guard_dialog import DependencyGuardDialog  # noqa: PLC0415
+
+    calls: list[str] = []
+    dialogs: list[object] = []
+
+    class _Service(_GuardService):
+        def check_stage_requirements(self, config, stage: str):
+            calls.append(stage)
+            return super().check_stage_requirements(config, stage)
+
+    monkeypatch.setattr(DependencyGuardDialog, "exec", lambda self: dialogs.append(self))
+    panel = ConfigPanel()
+    qtbot.addWidget(panel)
+    panel.set_service(_Service())
+
+    panel.load_from_dict({"correction_enabled": True, "evaluation_enabled": True})
+    qtbot.wait(100)  # a (wrongly) scheduled background check would have finished by now
+
+    assert calls == []
+    assert dialogs == []
+    assert panel._correction_enabled.isChecked() is True
+    assert panel._evaluation_enabled.isChecked() is True
+
+
+@pytest.mark.gui
+def test_ticking_a_stage_checks_requirements_off_the_gui_thread(qtbot, monkeypatch) -> None:
+    """
+    Given  a requirement check that blocks until released
+    When   the user ticks "Enable proofreading"
+    Then   the call returns at once (box ticked) and the dialog only appears after
+           the check finished and found an unmet requirement
+    """
+    import threading  # noqa: PLC0415
+
+    from teachers_teammate.gui._dependency_guard_dialog import DependencyGuardDialog  # noqa: PLC0415
+
+    release = threading.Event()
+    dialogs: list[object] = []
+
+    class _SlowService(_GuardService):
+        def check_stage_requirements(self, config, stage: str):
+            assert release.wait(timeout=5), "test never released the check"
+            return super().check_stage_requirements(config, stage)
+
+    monkeypatch.setattr(DependencyGuardDialog, "exec", lambda self: dialogs.append(self))
+    panel = ConfigPanel()
+    qtbot.addWidget(panel)
+    panel.set_service(_SlowService())
+    panel._correction_enabled.setChecked(False)
+
+    panel._correction_enabled.setChecked(True)
+
+    assert panel._correction_enabled.isChecked() is True  # not blocked, not reverted yet
+    assert dialogs == []
+    release.set()
+    qtbot.waitUntil(lambda: bool(dialogs), timeout=3000)
+    assert panel._correction_enabled.isChecked() is False
+
+
+@pytest.mark.gui
+def test_outdated_guard_result_for_a_replaced_model_is_ignored(qtbot, monkeypatch) -> None:
+    """
+    Given  a requirement check for model X that is still running
+    When   the user switches proofreading to model Y before it reports "X is missing"
+    Then   the late answer neither unticks the box nor opens the guard dialog
+    """
+    import threading  # noqa: PLC0415
+
+    from teachers_teammate.gui._dependency_guard_dialog import DependencyGuardDialog  # noqa: PLC0415
+
+    release = threading.Event()
+    started = threading.Event()
+    dialogs: list[object] = []
+
+    class _SlowService(_GuardService):
+        def check_stage_requirements(self, config, stage: str):
+            started.set()
+            assert release.wait(timeout=5), "test never released the check"
+            return super().check_stage_requirements(config, stage)
+
+    monkeypatch.setattr(DependencyGuardDialog, "exec", lambda self: dialogs.append(self))
+    panel = ConfigPanel()
+    qtbot.addWidget(panel)
+    panel.set_service(_SlowService())
+    panel.update_settings({"correction_provider": "ollama", "correction_model": "model-x"})
+    panel._correction_enabled.setChecked(False)
+    panel._correction_enabled.setChecked(True)
+    assert started.wait(timeout=3)
+
+    panel.update_settings({"correction_model": "model-y"})
+    release.set()
+    qtbot.wait(200)  # the (outdated) result was delivered by now
+
+    assert dialogs == []
+    assert panel._correction_enabled.isChecked() is True
+
+
+@pytest.mark.gui
+def test_only_the_latest_guard_check_of_a_stage_counts(qtbot, monkeypatch) -> None:
+    """
+    Given  proofreading was ticked twice, so two checks are in flight
+    When   the first (outdated) one finds a problem and the second one finds none
+    Then   no dialog is shown and the box stays ticked
+    """
+    import threading  # noqa: PLC0415
+
+    from teachers_teammate.application.service import RequirementIssue  # noqa: PLC0415
+    from teachers_teammate.gui._dependency_guard_dialog import DependencyGuardDialog  # noqa: PLC0415
+
+    gates = [threading.Event(), threading.Event()]
+    answers = [[RequirementIssue("Model is not downloaded.", True)], []]
+    calls = {"n": 0}
+    lock = threading.Lock()
+    dialogs: list[object] = []
+
+    class _Service(_GuardService):
+        def check_stage_requirements(self, config, stage: str):
+            with lock:
+                index = calls["n"]
+                calls["n"] += 1
+            assert gates[index].wait(timeout=5), "test never released the check"
+            return answers[index]
+
+    monkeypatch.setattr(DependencyGuardDialog, "exec", lambda self: dialogs.append(self))
+    panel = ConfigPanel()
+    qtbot.addWidget(panel)
+    panel.set_service(_Service())
+    panel._correction_enabled.setChecked(False)
+    panel._correction_enabled.setChecked(True)
+    qtbot.waitUntil(lambda: calls["n"] == 1, timeout=3000)
+    panel._correction_enabled.setChecked(False)
+    panel._correction_enabled.setChecked(True)
+    qtbot.waitUntil(lambda: calls["n"] == 2, timeout=3000)
+
+    gates[1].set()
+    qtbot.wait(100)
+    gates[0].set()  # the outdated check reports last
+    qtbot.wait(200)
+
+    assert dialogs == []
+    assert panel._correction_enabled.isChecked() is True

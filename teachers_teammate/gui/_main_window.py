@@ -11,7 +11,7 @@ import shutil
 import sys
 from typing import Any, ClassVar, Protocol
 
-from PySide6.QtCore import QObject, QSettings, Qt, QThread, QTimer, Signal
+from PySide6.QtCore import QEvent, QObject, QSettings, Qt, QThread, QTimer, Signal
 from PySide6.QtGui import QAction, QDragEnterEvent, QDropEvent, QIcon, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
@@ -39,11 +39,12 @@ from ..application.service import (
     ADDON_PADDLE,
     ADDON_PRIVACY,
     ProcessingApplicationService,
+    RunPreflight,
 )
 from ..config import DEFAULTS, Config, OcrConfig, dump_config_file, load_config_file
 from ..domain.stages import PROGRESS_STAGE_OCR, PROGRESS_STAGE_PREPROCESSING
 from ._app_bootstrap import create_app
-from ._background import LatestTask, wait_for_background_tasks
+from ._background import LatestTask, run_in_background, wait_for_background_tasks
 from ._chart_widget import ChartWidget
 from ._config_panel import ConfigPanel
 from ._help_dialog import AboutDialog, HelpDialog, ThirdPartyLicensesDialog
@@ -62,7 +63,7 @@ from ._settings_dialog import (
 from ._stats_widget import SystemStatsWidget
 from ._types import FileDoneEvent, PreprocessInfo
 from ._update_check import UpdateCheckThread
-from ._worker import OCRWorker, _ConnectionCheckThread
+from ._worker import OCRWorker
 
 
 class _AnonymizeThread(QThread):
@@ -290,7 +291,17 @@ class MainWindow(QMainWindow):
         self._status_container: QWidget
         self._status_row_layout: QHBoxLayout
         self._status_labels: dict[str, QLabel] = {}
-        self._llm_check_thread: _ConnectionCheckThread | None = None
+        # One latest-wins background check per status-row service.
+        self._status_tasks: dict[str, LatestTask] = {}
+        # Ollama status that is red is re-checked every few seconds: it may be started
+        # after the app.
+        self._ollama_connected = True
+        # True while the requirement check of a Run / stage re-run is in flight.
+        self._preflight_running = False
+        self._ollama_retry_timer = QTimer(self)
+        self._ollama_retry_timer.setSingleShot(True)
+        self._ollama_retry_timer.setInterval(self._OLLAMA_RETRY_MS)
+        self._ollama_retry_timer.timeout.connect(self._recheck_ollama_status)
         self._update_thread: UpdateCheckThread | None = None
         self._update_banner: QFrame
         self._stats: SystemStatsWidget
@@ -555,6 +566,8 @@ class MainWindow(QMainWindow):
 
     # ── Settings persistence ──────────────────────────────────────────────
 
+    #: How often a red Ollama status is re-checked (the server may start after the app).
+    _OLLAMA_RETRY_MS = 10_000
     _QSETTINGS_ORG = "TeachersTeammate"
     _QSETTINGS_APP = "TeachersTeammate"
 
@@ -675,6 +688,9 @@ class MainWindow(QMainWindow):
         except Exception:  # noqa: BLE001  # never block window close on a settings-save error
             pass
         self._first_run_task.cancel()
+        self._ollama_retry_timer.stop()
+        for task in self._status_tasks.values():
+            task.cancel()
         # Let the window disappear before waiting: running background tasks are
         # given a moment to end, and the user should not see a frozen window.
         self.hide()
@@ -761,51 +777,103 @@ class MainWindow(QMainWindow):
             self._progress.setValue(0)
             self._progress.setFormat("Idle")
 
+    def _run_in_progress(self) -> bool:
+        """Return whether a requirement check or an OCR worker is already active."""
+        return self._preflight_running or bool(self._worker and self._worker.isRunning())
+
+    def _warn_busy(self) -> None:
+        QMessageBox.information(
+            self,
+            "Please wait",
+            "A run or requirement check is still in progress. Try again when it has finished.",
+        )
+
     def _on_run(self) -> None:
+        if self._run_in_progress():
+            return
         try:
             config = self._config_panel.to_config()
         except ValueError as exc:
             QMessageBox.warning(self, "Configuration error", str(exc))
             return
+        self._check_requirements_then(config, lambda: self._continue_run(config))
 
-        missing_models = self._app_service.check_ollama_models_ready(config)
-        if missing_models:
-            model_list = "".join(f"\n  • {m}" for m in missing_models)
-            box = QMessageBox(self)
-            box.setWindowTitle("AI model not yet downloaded")
-            box.setText(
-                f"The following model(s) are not installed in Ollama:{model_list}\n\n"
-                "Please download them first using Advanced Settings → Downloads."
-            )
-            box.setIcon(QMessageBox.Icon.Warning)
-            box.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
-            downloads_btn = box.addButton("Open Downloads →", QMessageBox.ButtonRole.ActionRole)
-            box.exec()
-            if box.clickedButton() is downloads_btn:
-                self._open_downloads_dialog_ollama_tab(preselect=list(missing_models))
+    def _check_requirements_then(self, config: Config, on_ready: Callable[[], None]) -> None:
+        """Check the requirements of *config* off the GUI thread, then call *on_ready*.
+
+        The checks contact Ollama, so they must not block the GUI.  Until the result is
+        in, Run is disabled and :meth:`_run_in_progress` reports busy, so no second
+        worker can be started from the Run button or the right-click menu.
+        """
+        self._preflight_running = True
+        self._run_btn.setEnabled(False)
+        self._progress.setRange(0, 100)
+        self._progress.setValue(0)
+        self._progress.setFormat("Checking requirements…")
+        service = self._app_service
+        run_in_background(
+            lambda: service.check_run_preflight(config),
+            lambda result, error: self._on_preflight_done(on_ready, result, error),
+            owner=self,
+        )
+
+    def _on_preflight_done(
+        self, on_ready: Callable[[], None], result: object, error: BaseException | None
+    ) -> None:
+        """Show the first unmet requirement, or continue with *on_ready*."""
+        self._preflight_running = False
+        self._run_btn.setEnabled(True)
+        self._progress.setFormat("Idle")
+        if error is not None or not isinstance(result, RunPreflight) or result.ok:
+            # All met — or the check itself failed: do not block; the pipeline reports
+            # real problems.
+            on_ready()
             return
-
+        if result.ollama_unreachable:
+            self._ollama_connected = False
+            QMessageBox.warning(
+                self,
+                "Ollama is not running",
+                f"{result.ollama_unreachable}\n\nStart it with `ollama serve`, then press Run "
+                "again.",
+            )
+            self._start_ollama_check()
+            return
+        if result.missing_models:
+            self._show_missing_models(result.missing_models)
+            return
+        from ._dependency_guard_dialog import DependencyGuardDialog  # noqa: PLC0415
         from ._downloads_dialog import DownloadsDialog  # noqa: PLC0415
 
-        stages_to_check: list[tuple[str, int]] = []
-        if config.anonymization_enabled:
-            stages_to_check.append(("anonymizer", DownloadsDialog.TAB_SPACY))
-        if config.correction_enabled:
-            stages_to_check.append(("correction", DownloadsDialog.TAB_OLLAMA))
-        if config.evaluation_enabled:
-            stages_to_check.append(("evaluation", DownloadsDialog.TAB_OLLAMA))
-        for stage, tab in stages_to_check:
-            issues = self._app_service.check_stage_requirements(config, stage)
-            if issues:
-                from ._dependency_guard_dialog import DependencyGuardDialog  # noqa: PLC0415
+        tab = (
+            DownloadsDialog.TAB_SPACY
+            if result.stage == "anonymizer"
+            else DownloadsDialog.TAB_OLLAMA
+        )
+        dlg = DependencyGuardDialog(result.stage, list(result.stage_issues), self)
+        dlg.open_downloads.connect(
+            lambda t=tab: self._open_downloads_dialog_ollama_tab(start_tab=t)
+        )
+        dlg.exec()
 
-                dlg = DependencyGuardDialog(stage, issues, self)
-                dlg.open_downloads.connect(
-                    lambda t=tab: self._open_downloads_dialog_ollama_tab(start_tab=t)
-                )
-                dlg.exec()
-                return
+    def _show_missing_models(self, missing_models: tuple[str, ...]) -> None:
+        """Tell the user which configured Ollama models are not downloaded yet."""
+        model_list = "".join(f"\n  • {m}" for m in missing_models)
+        box = QMessageBox(self)
+        box.setWindowTitle("AI model not yet downloaded")
+        box.setText(
+            f"The following model(s) are not installed in Ollama:{model_list}\n\n"
+            "Please download them first using Advanced Settings → Downloads."
+        )
+        box.setIcon(QMessageBox.Icon.Warning)
+        box.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
+        downloads_btn = box.addButton("Open Downloads →", QMessageBox.ButtonRole.ActionRole)
+        box.exec()
+        if box.clickedButton() is downloads_btn:
+            self._open_downloads_dialog_ollama_tab(preselect=list(missing_models))
 
+    def _continue_run(self, config: Config) -> None:
+        """Queue the files and start the worker once all requirements are met."""
         queued_source_ids = self._results_table.queued_source_ids()
         queue_was_empty = not queued_source_ids
         if queue_was_empty:
@@ -876,7 +944,10 @@ class MainWindow(QMainWindow):
         self._worker.start()
 
     def _on_stage_run_requested(self, selected_source_ids: list[str], stage: str) -> None:
-        """Invalidate cache from *stage* onward and run selected rows."""
+        """Check the requirements, then invalidate cache from *stage* onward and run rows."""
+        if self._run_in_progress():
+            self._warn_busy()
+            return
         try:
             config = self._config_panel.to_config()
         except ValueError as exc:
@@ -884,13 +955,30 @@ class MainWindow(QMainWindow):
             return
 
         # Running a stage from the right-click menu is an explicit, per-entry action:
-        # force the requested stage on for this run regardless of the enable checkboxes
-        # (which only govern the main "Run"). Evaluation also needs correction text.
-        if stage == "correction":
-            config = dataclasses.replace(config, correction_enabled=True)
+        # run exactly that stage regardless of the enable checkboxes (which only govern
+        # the main "Run"), and nothing after it.  The cache of the later stages was just
+        # cleared, so leaving them enabled would silently run the whole chain again.
+        # Evaluation also needs correction text (cached, or computed first).
+        if stage == "ocr":
+            config = dataclasses.replace(
+                config,
+                correction_enabled=False,
+                evaluation_enabled=False,
+                anonymization_enabled=False,
+            )
+        elif stage == "correction":
+            config = dataclasses.replace(config, correction_enabled=True, evaluation_enabled=False)
         elif stage == "evaluation":
             config = dataclasses.replace(config, evaluation_enabled=True, correction_enabled=True)
 
+        # Check before touching the cache: a re-run that cannot work (Ollama stopped, model
+        # missing) must not throw away the results that are there.
+        self._check_requirements_then(
+            config, lambda: self._run_stage(config, selected_source_ids, stage)
+        )
+
+    def _run_stage(self, config: Config, selected_source_ids: list[str], stage: str) -> None:
+        """Invalidate the cache from *stage* onward and start the worker on the rows."""
         run_source_ids, failures, no_files = self._app_service.invalidate_from_stage(
             config,
             selected_source_ids=selected_source_ids,
@@ -1126,52 +1214,54 @@ class MainWindow(QMainWindow):
             self._status_labels[svc] = lbl
             self._status_row_layout.addWidget(lbl)
 
-            if svc == "ollama":
-                pass  # resolved asynchronously below
-            else:
-                is_engine = svc in self._app_service.list_ocr_engines()
-                if is_engine:
-                    connected, model_ok, _ = self._app_service.check_connection(engine=svc, url=url)
-                else:
-                    connected, model_ok, _ = self._app_service.check_connection(
-                        provider=svc, url=url
-                    )
-                self._set_service_status(svc, connected, model_ok)
-
         self._status_row_layout.addStretch()
 
+        # Every check can block (HTTP, importing paddle, probing CUDA): run them all in
+        # the background; each result colours its label when it arrives.
+        for svc in services:
+            if svc != "ollama":
+                self._start_service_check(svc, url)
         if "ollama" in services:
-            ollama_models = self._collect_ollama_models(
-                settings, correction_enabled, evaluation_enabled
-            )
-            check_model = ollama_models[0] if ollama_models else ""
-            self._llm_check_thread = _ConnectionCheckThread(
-                engine="ollama", url=url, model=check_model
-            )
-            self._llm_check_thread.check_done.connect(self._on_llm_check_done)
-            self._llm_check_thread.start()
+            self._start_ollama_check()
+        else:
+            self._ollama_retry_timer.stop()
 
-    def _collect_ollama_models(
-        self,
-        settings: dict,
-        correction_enabled: bool,
-        evaluation_enabled: bool,
-    ) -> list[str]:
-        """Return deduplicated list of Ollama model names currently configured."""
-        models: list[str] = []
-        if settings.get("ocr_engine") == "ollama":
-            m = settings.get("ocr_model", "")
-            if m:
-                models.append(m)
-        if correction_enabled and settings.get("correction_provider") == "ollama":
-            m = settings.get("correction_model", "")
-            if m and m not in models:
-                models.append(m)
-        if evaluation_enabled and settings.get("evaluate_provider") == "ollama":
-            m = settings.get("evaluate_model", "")
-            if m and m not in models:
-                models.append(m)
-        return models
+    def _start_service_check(self, svc: str, url: str, model: str = "") -> None:
+        """Check service *svc* in the background and colour its status label."""
+        service = self._app_service
+        kind = "engine" if svc in service.list_ocr_engines() else "provider"
+        task = self._status_tasks.setdefault(svc, LatestTask(self))
+        task.submit(
+            lambda: service.check_connection(url=url, model=model, **{kind: svc}),
+            lambda result, error: self._on_service_check_done(svc, result, error),
+        )
+
+    def _on_service_check_done(self, svc: str, result: object, error: BaseException | None) -> None:
+        connected, model_ok, message = False, False, ""
+        if error is None and isinstance(result, tuple) and len(result) == 3:
+            connected, model_ok, message = bool(result[0]), bool(result[1]), str(result[2])
+        if svc == "ollama":
+            self._on_llm_check_done(connected, model_ok, message)
+        else:
+            self._set_service_status(svc, connected, model_ok)
+
+    def _start_ollama_check(self) -> None:
+        """Check the Ollama server (and the configured model) in the background."""
+        settings = self._config_panel.get_settings_dict()
+        url = settings.get("ollama_url", DEFAULTS["ollama_url"])
+        models = self._app_service.configured_ollama_models(self._config_panel.lookup_config())
+        self._start_service_check("ollama", url, models[0] if models else "")
+
+    def _recheck_ollama_status(self) -> None:
+        """Re-check Ollama while its status is red (retry timer / window activation)."""
+        if "ollama" in self._status_labels and not self._ollama_connected:
+            self._start_ollama_check()
+
+    def changeEvent(self, event: QEvent) -> None:
+        """Re-check a red Ollama status when the window becomes active again."""
+        super().changeEvent(event)
+        if event.type() == QEvent.Type.ActivationChange and self.isActiveWindow():
+            self._recheck_ollama_status()
 
     def _set_service_status(self, svc: str, connected: bool, model_ok: bool = True) -> None:
         lbl = self._status_labels.get(svc)
@@ -1187,6 +1277,11 @@ class MainWindow(QMainWindow):
 
     def _on_llm_check_done(self, connected: bool, model_ok: bool, _msg: str) -> None:
         self._set_service_status("ollama", connected, model_ok)
+        self._ollama_connected = connected
+        if connected:
+            self._ollama_retry_timer.stop()
+        else:
+            self._ollama_retry_timer.start()
 
     # ── Ollama pull progress (status bar area) ────────────────────────────────────
 
@@ -1865,7 +1960,7 @@ def main_gui(
                         Qt.AspectRatioMode.KeepAspectRatio,
                         Qt.TransformationMode.SmoothTransformation,
                     )
-                _splash = QSplashScreen(_pix, Qt.WindowType.WindowStaysOnTopHint)
+                _splash = QSplashScreen(_pix)
                 _splash.show()
                 assert isinstance(app, QApplication)
                 app.processEvents()
@@ -1874,8 +1969,14 @@ def main_gui(
     app.setStyleSheet(qdarkstyle.load_stylesheet(qt_api="pyside6"))
 
     factory = window_factory or build_main_window
-    window = factory()
-    window.show()
+    try:
+        window = factory()
+        window.show()
+    except BaseException:
+        # Never leave the splash up behind an error dialog or a failed start.
+        if _splash is not None:
+            _splash.close()
+        raise
 
     if _splash is not None:
         _splash.finish(window)

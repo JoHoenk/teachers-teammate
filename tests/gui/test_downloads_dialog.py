@@ -763,3 +763,92 @@ def test_tab_constants_point_at_the_matching_tabs(qtbot) -> None:
     assert tabs.tabText(DownloadsDialog.TAB_PROVIDERS) == "LLM Providers"
     assert tabs.tabText(DownloadsDialog.TAB_SPACY) == "spaCy"
     assert tabs.tabText(DownloadsDialog.TAB_GPU) == "GPU Add-ons"
+
+
+@pytest.mark.use_case("Model_Category_Guidance")
+def test_rated_rows_use_the_theme_text_colour(qtbot) -> None:
+    """
+    Given  the model tree after the suitability labels were computed
+    When   the foreground of a row that is not "too large" is read
+    Then   no explicit (invalid, black) colour is set: the theme's text colour applies
+    """
+    from PySide6.QtCore import Qt  # noqa: PLC0415
+
+    dlg = _make_dialog(qtbot)
+    dlg._update_model_suitability()
+
+    checked = 0
+    for _tag, item in dlg._iter_model_items():
+        for column in (0, 1):
+            brush = item.foreground(column)
+            if item.text(1).startswith("Too "):
+                continue
+            # An empty QBrush has no style; a QColor() brush would be a solid black.
+            assert brush.style() == Qt.BrushStyle.NoBrush
+            checked += 1
+    assert checked > 0
+
+
+@pytest.mark.use_case("Model_Category_Guidance")
+def test_adding_a_listed_model_selects_it_and_says_so(qtbot) -> None:
+    """
+    Given  a catalog model that is already a row (no duplicate may be created)
+    When   its name is added again by hand
+    Then   the existing row is ticked and shown, and a hint says it is already listed
+    """
+    from PySide6.QtCore import Qt  # noqa: PLC0415
+
+    dlg = _make_dialog(qtbot)
+    tag = OLLAMA_CATALOG[0].tag
+    before = len(dlg._model_items)
+
+    dlg._ollama_custom_input.setText(tag)
+    dlg._on_add_custom_ollama_model()
+
+    assert len(dlg._model_items) == before
+    assert dlg._model_items[tag].checkState(0) is Qt.CheckState.Checked
+    assert dlg._ollama_hint_lbl.text() == "That model is already in the list."
+    assert dlg._ollama_custom_input.text() == ""
+
+
+@pytest.mark.use_case("Model_Category_Guidance")
+def test_enter_in_the_name_field_adds_the_model(qtbot) -> None:
+    """
+    Given  a model name typed into the "Add a model by name" field
+    When   the user presses Enter
+    Then   the model is added exactly like with the Add button
+    """
+    from PySide6.QtCore import Qt  # noqa: PLC0415
+
+    dlg = _make_dialog(qtbot)
+    dlg._ollama_custom_input.setText("llama3.2:latest")
+
+    dlg._ollama_custom_input.returnPressed.emit()
+
+    assert dlg._model_items["llama3.2:latest"].checkState(0) is Qt.CheckState.Checked
+
+
+def test_enter_in_the_name_field_does_not_press_a_dialog_button(qtbot, monkeypatch) -> None:
+    """
+    Given  a model name typed into the "Add a model by name" field of the shown dialog
+    When   the user presses the real Enter key
+    Then   only the model is added: no dialog button (Install, Close, …) is activated
+    """
+    from PySide6.QtCore import Qt  # noqa: PLC0415
+    from PySide6.QtTest import QTest  # noqa: PLC0415
+    from PySide6.QtWidgets import QPushButton  # noqa: PLC0415
+
+    dlg = _make_dialog(qtbot)
+    pressed: list[str] = []
+    for button in dlg.findChildren(QPushButton):
+        button.clicked.connect(lambda _=False, b=button: pressed.append(b.text()))
+    dlg.show()
+    qtbot.waitExposed(dlg)
+    dlg._ollama_custom_input.setFocus()
+    dlg._ollama_custom_input.setText("llama3.2:latest")
+
+    QTest.keyClick(dlg._ollama_custom_input, Qt.Key.Key_Return)
+
+    assert "llama3.2:latest" in dlg._model_items
+    assert pressed == []
+    assert dlg.isVisible() is True

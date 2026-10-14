@@ -205,6 +205,8 @@ DOWNLOADS_INTRO = (
     "scans into text, and a writing model that proofreads and reviews the text."
 )
 BEST_ALREADY_DOWNLOADED = "The best models for your computer are already downloaded."
+MODEL_ALREADY_LISTED = "That model is already in the list."
+ADD_MODEL_NOTE = "Added models are downloaded when you click Install / Download Selected."
 GROUP_READING = "Reading models — turn scans into text"
 GROUP_WRITING = "Writing models — proofread and review the text"
 GROUP_OTHER = "Other models (added by you)"

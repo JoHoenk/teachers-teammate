@@ -8,7 +8,7 @@ Qt HTML or DOCX runs.  This module is pure data: no I/O, no third-party imports.
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Iterator
+from collections.abc import Iterable, Iterator, Sequence
 import dataclasses
 from dataclasses import dataclass, field
 import enum
@@ -25,6 +25,22 @@ MARKDOWN: TextFormat = "markdown"
 def normalize_text_format(value: str | None) -> TextFormat:
     """Return *value* as a :data:`TextFormat`, falling back to ``"plain"`` when unknown."""
     return MARKDOWN if value == MARKDOWN else PLAIN
+
+
+def join_labelled_pages(pages: Sequence[str], *, markdown: bool = False) -> str:
+    """Join per-page text with ``Page N:`` labels; a single page is returned unlabelled.
+
+    In Markdown the label is followed by a blank line and pages without text are dropped
+    (numbering is kept).  Every source of multi-page text (OCR, embedded PDF text) uses
+    this so the stored ``raw_text`` has one shape.
+    """
+    if len(pages) == 1:
+        return pages[0]
+    if markdown:
+        return "\n\n".join(
+            f"Page {i + 1}:\n\n{text}" for i, text in enumerate(pages) if text.strip()
+        )
+    return "\n".join(f"Page {i + 1}:\n{text}" for i, text in enumerate(pages))
 
 
 class Style(enum.Flag):

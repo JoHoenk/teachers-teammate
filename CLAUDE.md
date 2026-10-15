@@ -76,6 +76,7 @@ Config
 | New pipeline stage | Add ABC to `interfaces.py`, implement in `infrastructure/`, route through `FileProcessor` |
 | New LLM provider | Add `<name>.py` to `infrastructure/providers/` with a `create()` function |
 | New input file type | Add suffix to `SUPPORTED_SUFFIXES` in `interfaces.py` **and** a builder to `_SUFFIX_TO_BUILDER` in `infrastructure/input_provider_factory.py` |
+| PDF embedded-text rules | Thresholds/modes in `domain/pdf_text_layer.py`; measurement in `PdfInputProvider` (`infrastructure/input_providers.py`); setting is `OcrConfig.pdf_text_layer` (default `auto`), passed to providers via `InputOptions` in `input_provider_factory.py`; benchmark always OCRs |
 | New OCR output notation (HTML/Markdown/…) | Add an `OcrOutputParser` to `infrastructure/ocr_formats/` and list it in `default_parsers()`; model in `domain/formatted_text.py`, adapters use `application/formatting.py:TextFormatter` (see `docs/development.md` → "OCR output formats") |
 | New GUI capability/check | Implement in `ProcessingApplicationService`, call it from the GUI — never duplicate discovery logic in widgets |
 | Benchmark app changes | Domain metrics in `domain/benchmark.py`; run persistence in `infrastructure/benchmark/run_store.py`; OCR-only run in `infrastructure/benchmark/runner.py`; orchestration in `application/benchmark_service.py`; GUI in `gui/benchmark/` (reuse `gui/_ocr_config_selector.py`). The OCR config slice is `Config.ocr` (`config.py:OcrConfig`). |

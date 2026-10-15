@@ -103,12 +103,18 @@ class InputUnit:
         return InputUnit(kind="text", text=value)
 
 
+TextOrigin = Literal["file", "pdf_text_layer"]
+"""Where a payload's text units come from: a plain text file or a PDF's embedded text."""
+
+
 @dataclass(frozen=True)
 class InputPayload:
     """Provider output: ingestion units plus optional source image for document preview."""
 
     units: list[InputUnit]
     source_image: Path | None = None
+    text_origin: TextOrigin | None = None
+    """Set when the units hold text that replaces OCR; ``None`` for image payloads."""
 
 
 class ImagePreprocessor(ABC):

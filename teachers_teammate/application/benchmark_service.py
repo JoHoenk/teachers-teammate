@@ -12,6 +12,7 @@ or the domain metrics directly.
 from __future__ import annotations
 
 from collections.abc import Callable
+import dataclasses
 from pathlib import Path
 import threading
 
@@ -181,6 +182,8 @@ class BenchmarkApplicationService:
         Raises:
             BenchmarkRunError: if the OCR run fails (engine missing, IO, etc.).
         """
+        # Always OCR: embedded PDF text would make every engine return the same text.
+        ocr = dataclasses.replace(ocr, pdf_text_layer="never")
         config = self.build_config(source, ocr=ocr, language=language, ollama_url=ollama_url)
         if on_progress is not None:
             on_progress(f"Running OCR · {ocr.engine} · {ocr.effective_model or ocr.model}")
@@ -190,7 +193,7 @@ class BenchmarkApplicationService:
         if result.error is not None:
             raise BenchmarkRunError(result.error)
 
-        ocr_config_hash = compute_ocr_config_hash(config, get_ocr_prompt(language))
+        ocr_config_hash = compute_ocr_config_hash(config, get_ocr_prompt(language), source)
         if on_progress is not None:
             on_progress("Storing run…")
         return self._store.save(

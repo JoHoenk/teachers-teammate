@@ -30,6 +30,7 @@ from .config import (
     OcrConfig,
     load_config_file,
 )
+from .domain.pdf_text_layer import PDF_TEXT_LAYER_MODES
 from .exceptions import ConfigFileNotFoundError, ConfigFileParseError
 
 
@@ -193,6 +194,18 @@ def _parse_args(
             "Resolution for rendering PDF pages to images before OCR. "
             "72 = screen quality, 150 = draft OCR, 300 = recommended (default), "
             "600 = high quality. Has no effect on image inputs (JPG, PNG)."
+        ),
+    )
+    ocr_grp.add_argument(
+        "--pdf-text-layer",
+        choices=PDF_TEXT_LAYER_MODES,
+        default=DEFAULTS["pdf_text_layer"],
+        dest="pdf_text_layer",
+        help=(
+            "Use a PDF's embedded text instead of OCR. "
+            "auto = only when every page is clean, text-only (no scans, no handwriting, "
+            "annotations or form fields) (default); always = whenever every page has any text; "
+            "never = always OCR. Has no effect on image or TXT inputs."
         ),
     )
     ocr_grp.add_argument(
@@ -497,6 +510,7 @@ def run_cli(
             provider=args.ocr_provider,
             preprocess_method=args.preprocess_method,
             pdf_render_dpi=args.pdf_render_dpi,
+            pdf_text_layer=args.pdf_text_layer,
             dewarp=args.preprocess_dewarp,
             deskew=args.preprocess_deskew,
             border_crop=args.preprocess_border_crop,

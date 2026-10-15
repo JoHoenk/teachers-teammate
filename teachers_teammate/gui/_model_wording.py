@@ -97,6 +97,20 @@ _WRONG_KIND_LABELS: dict[ModelCategory, str] = {
 }
 
 
+#: Compact labels for the narrow Suitability column of the downloads list; the
+#: full wording (``suitability_text``) is kept for combo boxes and tooltips.
+_COMPACT_LABELS: dict[Suitability, str] = {
+    Suitability.BEST: "★ Best",
+    Suitability.GOOD: "Good",
+    Suitability.WORKS: "Works",
+    Suitability.UNKNOWN: "No suggestion",
+}
+_COMPACT_WRONG_KIND_LABELS: dict[ModelCategory, str] = {
+    "ocr": "Can't read scans",
+    "general": "Reading only",
+}
+
+
 def suitability_text(value: Suitability, profile: HardwareProfile, task: ModelCategory) -> str:
     """Return the short label for a suitability value of a *task* model on *profile*."""
     if value is Suitability.TOO_LARGE:
@@ -108,12 +122,23 @@ def suitability_text(value: Suitability, profile: HardwareProfile, task: ModelCa
     return _SUITABILITY_LABELS[value]
 
 
+def compact_suitability_text(
+    value: Suitability, profile: HardwareProfile, task: ModelCategory
+) -> str:
+    """Return the compact label for the downloads list (the tooltip has the details)."""
+    if value is Suitability.TOO_LARGE:
+        return "Too slow" if profile == "cpu" else "Too large"
+    if value is Suitability.WRONG_KIND:
+        return _COMPACT_WRONG_KIND_LABELS[task]
+    return _COMPACT_LABELS[value]
+
+
 def abilities_text(uses: ModelUses | None) -> str:
     """Return what a model that is not in the catalog can be used for."""
     if uses is None:
-        return _SUITABILITY_LABELS[Suitability.UNKNOWN]
+        return _COMPACT_LABELS[Suitability.UNKNOWN]
     if "ocr" in uses:
-        return "Reads scans and writes"
+        return "Reads & writes"
     return "Writes only"
 
 

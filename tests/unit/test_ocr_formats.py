@@ -930,3 +930,19 @@ def test_text_formatter_parses_the_same_stored_text_once() -> None:
     assert TextFormatter.plain_text(text, "markdown") is first_plain
     assert first_plain == "Ein fetter Satz mit Fehler - einmalig " + "x" * 17
     assert TextFormatter.plain_text(text, "plain") is text
+
+
+def test_join_labelled_pages_matches_postprocessor_output() -> None:
+    """
+    Given  per-page texts
+    When   join_labelled_pages() and OcrOutputPostprocessor.process_pages() label them
+    Then   both produce the same "Page N:" shape, and a single page stays unlabelled
+    """
+    from teachers_teammate.domain.formatted_text import join_labelled_pages  # noqa: PLC0415
+
+    pages = ["first", "second"]
+
+    assert join_labelled_pages(pages) == "Page 1:\nfirst\nPage 2:\nsecond"
+    assert join_labelled_pages(pages) == OcrOutputPostprocessor().process_pages(pages).text
+    assert join_labelled_pages(["only"]) == "only"
+    assert join_labelled_pages(["a", " "], markdown=True) == "Page 1:\n\na"

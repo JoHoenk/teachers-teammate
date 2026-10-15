@@ -63,7 +63,7 @@ class ApplicationCommands:
         *raw_text_format* is the notation the edited text is written in; ``None`` keeps the
         notation the state already has.
         """
-        ocr_config_hash = compute_ocr_config_hash(config, get_ocr_prompt(config.language))
+        ocr_config_hash = compute_ocr_config_hash(config, get_ocr_prompt(config.language), source)
         return self._record_manual_ocr_edit(
             self._state_store_factory(config),
             source=source,
@@ -88,7 +88,7 @@ class ApplicationCommands:
         *raw_text_format* is the notation of *raw_text*; it is stored when the edit has to
         synthesise the OCR text because the state has none yet.
         """
-        ocr_config_hash = compute_ocr_config_hash(config, get_ocr_prompt(config.language))
+        ocr_config_hash = compute_ocr_config_hash(config, get_ocr_prompt(config.language), source)
         correction_config_hash = compute_correction_config_hash(config)
         return self._record_manual_correction_edit(
             self._state_store_factory(config),

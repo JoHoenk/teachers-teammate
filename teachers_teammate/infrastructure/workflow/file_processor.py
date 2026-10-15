@@ -8,14 +8,14 @@ from pathlib import Path
 import threading
 from typing import TYPE_CHECKING
 
-from ...domain.formatted_text import TextFormat, normalize_text_format
+from ...domain.formatted_text import TextFormat, join_labelled_pages, normalize_text_format
 from ...domain.stages import PROGRESS_STAGE_OCR, PROGRESS_STAGE_PREPROCESSING
 from ...exceptions import PipelineInputError
 from ...interfaces import AnonymizationMap, Anonymizer, Corrector, DocumentCreator, Evaluator
 from ..reporting import OnOcrDoneFn, OnStageStartedFn, Reporter, StdoutReporter
 from .cache_service import CacheContext, CacheReconciliationService
 from .ocr_service import OCRStageService
-from .preprocess_service import PreprocessService
+from .preprocess_service import PreparedInput, PreprocessService
 
 if TYPE_CHECKING:
     from ..ocr_formats import OcrOutputPostprocessor
@@ -198,14 +198,17 @@ class FileProcessor:
             self._reporter.status("       → Preprocessing...")
             self._notify_stage(file, PROGRESS_STAGE_PREPROCESSING)
         try:
-            ocr_inputs, prep_steps, source_image, raw_text_hint = (
-                self._preprocess_service.preprocess_input(file)
-            )
+            prepared = self._preprocess_service.preprocess_input(file)
         except (OSError, ValueError, RuntimeError, PipelineInputError) as exc:
             raise _StageAbort(
                 ProcessingResult(False, f"Preprocessing failed: {exc}", "", "", "", "")
             ) from exc
 
+        ocr_inputs, prep_steps, source_image = (
+            prepared.ocr_inputs,
+            prepared.steps,
+            prepared.source_image,
+        )
         preview_img = ""
         preview_source = ocr_inputs[0] if ocr_inputs else source_image
         if preview_source is not None:
@@ -245,9 +248,7 @@ class FileProcessor:
         if self._stop_event and self._stop_event.is_set():
             raise _StageAbort(ProcessingResult(False, "Stopped by user.", preview_img, "", "", ""))
 
-        raw_text, ctx = self._run_ocr(
-            file, ocr_inputs, raw_text_hint, preview_img, source_image, ctx
-        )
+        raw_text, ctx = self._run_ocr(file, ocr_inputs, prepared, preview_img, source_image, ctx)
         return raw_text, preview_img, source_image, ctx
 
     def _report_ocr_page(self, page: int, total: int) -> None:
@@ -257,16 +258,20 @@ class FileProcessor:
         self,
         file: Path,
         ocr_inputs: list[Path],
-        raw_text_hint: str | None,
+        prepared: PreparedInput,
         preview_img: str,
         source_image: Path | None,
         ctx: CacheContext,
     ) -> tuple[str, CacheContext]:
+        raw_text_hint = prepared.raw_text_hint
         page_count = 0
         raw_text_format: TextFormat = "plain"
         if raw_text_hint is not None:
             raw_text = raw_text_hint
-            self._reporter.status("       → Text input loaded (OCR skipped)")
+            if prepared.text_origin == "pdf_text_layer":
+                self._reporter.status("       → Embedded PDF text used (OCR skipped)")
+            else:
+                self._reporter.status("       → Text input loaded (OCR skipped)")
         else:
             self._reporter.status("       → Running OCR...")
             self._notify_stage(file, PROGRESS_STAGE_OCR)
@@ -282,11 +287,7 @@ class FileProcessor:
                 raw_text = processed.text
                 raw_text_format = processed.text_format
             else:
-                raw_text = (
-                    "\n".join(f"Page {i + 1}:\n{t}" for i, t in enumerate(page_texts))
-                    if page_count > 1
-                    else page_texts[0]
-                )
+                raw_text = join_labelled_pages(page_texts)
 
         if not raw_text:
             raise _StageAbort(

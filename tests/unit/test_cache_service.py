@@ -18,6 +18,8 @@ from teachers_teammate.infrastructure.workflow.cache_service import (
 )
 from tests.conftest import make_config
 
+_PDF = Path("worksheet.pdf")
+
 
 # ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -135,10 +137,21 @@ def test_ocr_config_hash_is_deterministic(tmp_path: Path) -> None:
     Then   both calls return the same string
     """
     svc, _, _ = _make_svc(tmp_path)
-    h1 = svc._ocr_config_hash("Transcribe.")
-    h2 = svc._ocr_config_hash("Transcribe.")
+    h1 = svc._ocr_config_hash("Transcribe.", _PDF)
+    h2 = svc._ocr_config_hash("Transcribe.", _PDF)
     assert h1 == h2
     assert h1 != ""
+
+
+def test_ocr_config_hash_changes_with_pdf_text_layer(tmp_path: Path) -> None:
+    """
+    Given  two configs that differ only in the PDF text-layer mode
+    When   _ocr_config_hash is called with the same prompt
+    Then   the hashes differ so switching mode re-runs cached PDFs
+    """
+    svc_auto, _, _ = _make_svc(tmp_path, ocr=OcrConfig(engine="tesseract", pdf_text_layer="auto"))
+    svc_never, _, _ = _make_svc(tmp_path, ocr=OcrConfig(engine="tesseract", pdf_text_layer="never"))
+    assert svc_auto._ocr_config_hash("p", _PDF) != svc_never._ocr_config_hash("p", _PDF)
 
 
 def test_ocr_config_hash_changes_with_engine(tmp_path: Path) -> None:
@@ -149,7 +162,7 @@ def test_ocr_config_hash_changes_with_engine(tmp_path: Path) -> None:
     """
     svc_a, _, _ = _make_svc(tmp_path, ocr_engine="tesseract")
     svc_b, _, _ = _make_svc(tmp_path, ocr_engine="ollama")
-    assert svc_a._ocr_config_hash("p") != svc_b._ocr_config_hash("p")
+    assert svc_a._ocr_config_hash("p", _PDF) != svc_b._ocr_config_hash("p", _PDF)
 
 
 @pytest.mark.use_case("Config_Aware_Cache_Reuse")
@@ -176,7 +189,9 @@ def test_ocr_config_hash_independent_of_correction_provider(tmp_path: Path) -> N
     """
     svc_a, _, _ = _make_svc(tmp_path, ocr_engine="tesseract", correction_provider="openai")
     svc_b, _, _ = _make_svc(tmp_path, ocr_engine="tesseract", correction_provider="anthropic")
-    assert svc_a._ocr_config_hash("Transcribe.") == svc_b._ocr_config_hash("Transcribe.")
+    assert svc_a._ocr_config_hash("Transcribe.", _PDF) == svc_b._ocr_config_hash(
+        "Transcribe.", _PDF
+    )
 
 
 @pytest.mark.use_case("Multi_Provider_Stage_Configuration")
@@ -194,7 +209,7 @@ def test_three_stage_hashes_are_all_different_when_providers_differ(tmp_path: Pa
         evaluation_enabled=True,
         evaluate_provider="anthropic",
     )
-    ocr_h = svc._ocr_config_hash("Transcribe.")
+    ocr_h = svc._ocr_config_hash("Transcribe.", _PDF)
     corr_h = svc._correction_config_hash()
     eval_h = svc._eval_config_hash()
     assert ocr_h != ""
@@ -213,7 +228,7 @@ def test_ocr_config_hash_changes_with_temperature(tmp_path: Path) -> None:
     """
     svc_a, _, _ = _make_svc(tmp_path, ocr_temperature=0.0)
     svc_b, _, _ = _make_svc(tmp_path, ocr_temperature=0.7)
-    assert svc_a._ocr_config_hash("p") != svc_b._ocr_config_hash("p")
+    assert svc_a._ocr_config_hash("p", _PDF) != svc_b._ocr_config_hash("p", _PDF)
 
 
 @pytest.mark.use_case("Config_Aware_Cache_Reuse")
@@ -242,7 +257,7 @@ def test_ocr_config_hash_changes_with_each_preprocessing_field(
     base = OcrConfig(engine="tesseract", dewarp=False, deskew=False, denoise=False)
     svc_a, _, _ = _make_svc(tmp_path, ocr=base)
     svc_b, _, _ = _make_svc(tmp_path, ocr=mutate(base))
-    assert svc_a._ocr_config_hash("p") != svc_b._ocr_config_hash("p")
+    assert svc_a._ocr_config_hash("p", _PDF) != svc_b._ocr_config_hash("p", _PDF)
 
 
 def test_preprocess_fingerprint_matches_legacy_format_when_rewritten_steps_are_off() -> None:
@@ -266,7 +281,7 @@ def test_preprocess_fingerprint_matches_legacy_format_when_rewritten_steps_are_o
         denoise=True,
         gamma=True,
     )
-    assert _preprocess_fingerprint(ocr) == (
+    assert _preprocess_fingerprint(ocr, _PDF) == (
         "adaptive_threshold",
         "600",
         "True",
@@ -297,7 +312,7 @@ def test_preprocess_fingerprint_versions_only_the_rewritten_steps(field: str) ->
             border_crop=True,
         )
     names = ["method", "dpi", "dewarp", "deskew", "border_crop", "denoise", "gamma"]
-    fp = dict(zip(names, _preprocess_fingerprint(ocr), strict=True))
+    fp = dict(zip(names, _preprocess_fingerprint(ocr, _PDF), strict=True))
     assert fp["dewarp"] == "True"
     assert fp[field] == "True@v2"
 
@@ -316,7 +331,7 @@ def test_ocr_config_hash_unaffected_by_prestep_flags_under_method_none(tmp_path:
     base = OcrConfig(engine="tesseract", preprocess_method="none")
     svc_a, _, _ = _make_svc(tmp_path, ocr=base)
     svc_b, _, _ = _make_svc(tmp_path, ocr=replace(base, deskew=True))
-    assert svc_a._ocr_config_hash("p") == svc_b._ocr_config_hash("p")
+    assert svc_a._ocr_config_hash("p", _PDF) == svc_b._ocr_config_hash("p", _PDF)
 
 
 @pytest.mark.use_case("Preview_Preprocessing")
@@ -644,3 +659,20 @@ def test_persist_preview_artifact_preserves_all_hash_fields(tmp_path: Path) -> N
     assert new_ctx.correction_config_hash == ctx.correction_config_hash
     assert new_ctx.eval_config_hash == ctx.eval_config_hash
     assert new_ctx.preview_config_hash == ctx.preview_config_hash
+
+
+@pytest.mark.parametrize("mode", ["always", "never"])
+def test_pdf_text_layer_mode_changes_hash_only_for_pdfs(tmp_path: Path, mode: str) -> None:
+    """
+    Given  an OCR config switched away from the default "auto" PDF text-layer mode
+    When   the OCR config hash is computed for a PDF and for a JPG
+    Then   the PDF hash changes while the JPG hash stays valid (its OCR input is unchanged)
+    """
+    base = OcrConfig(engine="tesseract")
+    svc_auto, _, _ = _make_svc(tmp_path, ocr=base)
+    svc_mode, _, _ = _make_svc(tmp_path, ocr=replace(base, pdf_text_layer=mode))
+
+    jpg, txt = Path("scan.jpg"), Path("notes.TXT")
+    assert svc_auto._ocr_config_hash("p", _PDF) != svc_mode._ocr_config_hash("p", _PDF)
+    assert svc_auto._ocr_config_hash("p", jpg) == svc_mode._ocr_config_hash("p", jpg)
+    assert svc_auto._ocr_config_hash("p", txt) == svc_mode._ocr_config_hash("p", txt)

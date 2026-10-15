@@ -61,6 +61,7 @@ from ._model_wording import (
     GROUP_WRITING,
     MODEL_ALREADY_LISTED,
     abilities_text,
+    compact_suitability_text,
     memory_text,
     suitability_text,
     too_large_confirmation,
@@ -205,7 +206,7 @@ class DownloadsDialog(QDialog):
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Downloads & Packages")
-        self.setMinimumWidth(560)
+        self.setMinimumWidth(760)
         self.setMinimumHeight(560)
         self._ollama_url = ollama_url.strip() or DEFAULTS["ollama_url"]
         self._svc = app_service or ProcessingApplicationService()
@@ -447,12 +448,17 @@ class DownloadsDialog(QDialog):
     def _build_ollama_model_tree(self) -> QTreeWidget:
         """Build the grouped model tree and populate it from the catalog."""
         tree = QTreeWidget()
-        tree.setFixedHeight(260)
-        tree.setColumnCount(5)
-        tree.setHeaderLabels(["Model", "Suitability", "Memory", "Downloaded", "Size"])
+        tree.setMinimumHeight(320)
+        tree.setColumnCount(4)
+        tree.setHeaderLabels(["Model", "Suitability", "Memory", "Size"])
         hdr = tree.header()
+        # The model name is what the user needs most: it takes the free width and can
+        # never shrink below a readable minimum, the other columns fit their content.
+        hdr.setStretchLastSection(False)
         hdr.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        for col in (1, 2, 3, 4):
+        hdr.setMinimumSectionSize(70)
+        tree.setColumnWidth(0, 300)
+        for col in (1, 2, 3):
             hdr.setSectionResizeMode(col, QHeaderView.ResizeMode.ResizeToContents)
         for key, (label, _category) in _OLLAMA_GROUPS.items():
             group_item = QTreeWidgetItem([label])
@@ -479,11 +485,11 @@ class DownloadsDialog(QDialog):
         item.setCheckState(0, Qt.CheckState.Unchecked)
         if spec is not None:
             item.setText(2, memory_text(spec.memory_gb))
-            item.setText(4, f"{spec.download_gb:g} GB")
+            item.setText(3, f"{spec.download_gb:g} GB")
             item.setToolTip(0, spec.note)
         else:
             item.setText(2, "—")
-            item.setText(4, "—")
+            item.setText(3, "—")
             self._group_items["other"].setHidden(False)
         self._model_items[tag] = item
         return item
@@ -625,7 +631,7 @@ class DownloadsDialog(QDialog):
             for _rank, tag, child, value, memory in decorated:
                 group_item.addChild(child)
                 if category is not None:
-                    child.setText(1, suitability_text(value, profile, category))
+                    child.setText(1, compact_suitability_text(value, profile, category))
                 else:
                     # Models outside the catalog: say what they can do, not how good.
                     child.setText(1, abilities_text(abilities.get(tag)))
@@ -639,7 +645,11 @@ class DownloadsDialog(QDialog):
                     # on the dark theme (text and tick box of every non-"too large" row).
                     child.setForeground(0, QBrush())
                     child.setForeground(1, QBrush())
-                    child.setToolTip(1, "")
+                    # The column shows a compact label; the tooltip has the full wording.
+                    child.setToolTip(
+                        1,
+                        suitability_text(value, profile, category) if category is not None else "",
+                    )
 
     def _on_select_best_models(self) -> None:
         """Tick the BEST reading and writing models that are not downloaded yet."""
@@ -779,10 +789,9 @@ class DownloadsDialog(QDialog):
         for tag, item in self._iter_model_items():
             installed = bool(results.get(f"ollama:{tag}", False))
             size_bytes = int(results.get(f"size:{tag}", 0))
-            size_str = _human_size(size_bytes) if (installed and size_bytes) else "—"
-            item.setText(3, "✓" if installed else "—")
-            item.setText(4, size_str if installed else item.text(4))
             if installed:
+                # Downloaded rows are marked in the Size column: "✓ 4.7 GB".
+                item.setText(3, f"✓ {_human_size(size_bytes)}" if size_bytes else "✓")
                 self._set_checked(item, True)
                 item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEnabled)
                 self._auto_ticked.discard(tag)
@@ -790,6 +799,9 @@ class DownloadsDialog(QDialog):
                 if find_spec(tag) is not None and category is not None:
                     installed_by_category[category] = True
             else:
+                # Not downloaded (any more): the Size column shows the catalog download size.
+                spec = find_spec(tag)
+                item.setText(3, f"{spec.download_gb:g} GB" if spec is not None else "—")
                 item.setFlags(
                     item.flags() | Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsUserCheckable
                 )

@@ -31,6 +31,11 @@ from PySide6.QtWidgets import (
 )
 
 from ..config import DEFAULTS, OcrConfig
+from ..domain.pdf_text_layer import (
+    PDF_TEXT_LAYER_MODES,
+    PdfTextLayerMode,
+    normalize_pdf_text_layer,
+)
 from ._hardware_profile_selector import HardwareProfileSelector
 from ._model_guidance import OllamaModelGuidance, OpenDownloads
 from ._settings_dialog import (
@@ -60,6 +65,7 @@ class OcrConfigSelector(QWidget):
         app_service: _SettingsAppService,
         ollama_url: str = DEFAULTS["ollama_url"],
         show_preview_button: bool = True,
+        show_pdf_text_layer: bool = True,
         hardware_profile: str = "auto",
         open_downloads: OpenDownloads | None = None,
         parent: QWidget | None = None,
@@ -68,6 +74,7 @@ class OcrConfigSelector(QWidget):
         self._app_service = app_service
         self._ollama_url = ollama_url
         self._fetch_thread: _ModelFetchThread | None = None
+        self._pdf_text_layer: QComboBox | None = None
 
         form = QFormLayout(self)
         form.setContentsMargins(0, 0, 0, 0)
@@ -86,6 +93,8 @@ class OcrConfigSelector(QWidget):
         self._build_model_row(form, open_downloads)
         self._build_preprocess_row(form, show_preview_button)
         self._build_temperature_row(form)
+        if show_pdf_text_layer:
+            self._build_pdf_text_layer_row(form)
 
     def _build_engine_row(self, form: QFormLayout) -> None:
         self._ocr_engine = QComboBox()
@@ -232,6 +241,20 @@ class OcrConfigSelector(QWidget):
         self._ocr_temperature.setValue(DEFAULTS["ocr_temperature"])
         form.addRow("Temperature:", self._ocr_temperature)
 
+    def _build_pdf_text_layer_row(self, form: QFormLayout) -> None:
+        self._pdf_text_layer = QComboBox()
+        self._pdf_text_layer.addItems(list(PDF_TEXT_LAYER_MODES))
+        self._pdf_text_layer.setToolTip(
+            "Use the text embedded in a PDF instead of recognising it.\n\n"
+            "auto — only when every page is clean, text-only (no scans, no\n"
+            "  handwriting, annotations or form fields); otherwise the pages\n"
+            "  are recognised.\n"
+            "always — whenever every page contains any text.\n"
+            "never — always recognise the rendered pages.\n"
+            "Has no effect on image or text files."
+        )
+        form.addRow("PDF text layer:", self._pdf_text_layer)
+
     # ── public API ─────────────────────────────────────────────────────────
 
     def set_ollama_url(self, url: str) -> None:
@@ -257,6 +280,8 @@ class OcrConfigSelector(QWidget):
         self._denoise.setChecked(ocr.denoise)
         self._gamma.setChecked(ocr.gamma)
         self._pdf_dpi.setValue(ocr.pdf_render_dpi)
+        if self._pdf_text_layer is not None:
+            _set_combo(self._pdf_text_layer, ocr.pdf_text_layer)
         self._on_preprocess_method_changed(self._preprocess.currentText())
 
     def get_ocr_config(self) -> OcrConfig:
@@ -273,12 +298,18 @@ class OcrConfigSelector(QWidget):
             preprocess_method=self._preprocess.currentText(),
             temperature=self._ocr_temperature.value(),
             pdf_render_dpi=self._pdf_dpi.value(),
+            pdf_text_layer=self._selected_pdf_text_layer(),
             dewarp=self._dewarp.isChecked(),
             deskew=self._deskew.isChecked(),
             border_crop=self._border_crop.isChecked(),
             denoise=self._denoise.isChecked(),
             gamma=self._gamma.isChecked(),
         )
+
+    def _selected_pdf_text_layer(self) -> PdfTextLayerMode:
+        if self._pdf_text_layer is None:
+            return DEFAULTS["pdf_text_layer"]
+        return normalize_pdf_text_layer(self._pdf_text_layer.currentText())
 
     def refresh(self) -> None:
         """Re-apply engine-dependent state (visibility, defaults, model fetch)."""

@@ -195,14 +195,15 @@ class StageBuilder:
         return self.factory.build_preprocessor(output_dir, self.config.debug, self.config.ocr)
 
     def build_preprocessor_service(self, output_dir: Path) -> PreprocessService:
-        from .input_provider_factory import get_input_provider  # noqa: PLC0415
+        """Build the input-loading/preprocessing service."""
+        from .input_provider_factory import InputOptions, get_input_provider  # noqa: PLC0415
 
-        pdf_dpi = self.config.ocr.pdf_render_dpi
+        options = InputOptions.from_ocr(self.config.ocr)
         return PreprocessService(
             tmp_dir=output_dir,
             preprocessor=self.build_preprocessor(output_dir),
             provider_factory=lambda suffix, tmp_dir: get_input_provider(
-                suffix, tmp_dir=tmp_dir, pdf_dpi=pdf_dpi
+                suffix, tmp_dir=tmp_dir, options=options
             ),
         )
 

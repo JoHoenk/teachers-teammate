@@ -182,7 +182,6 @@ class ProcessingApplicationService:
         store = self._state_store(config)
 
         ocr_prompt = get_ocr_prompt(config.language)
-        expected_ocr_hash = compute_ocr_config_hash(config, ocr_prompt)
         expected_corr_hash = compute_correction_config_hash(config)
         expected_eval_hash = compute_eval_config_hash(config)
 
@@ -197,7 +196,7 @@ class ProcessingApplicationService:
                 StageHashes(
                     ocr_done=state.ocr_done,
                     ocr_config_hash=state.ocr_config_hash,
-                    expected_ocr_config_hash=expected_ocr_hash,
+                    expected_ocr_config_hash=compute_ocr_config_hash(config, ocr_prompt, file),
                     correction_done=state.correction_done,
                     correction_config_hash=state.correction_config_hash,
                     expected_correction_config_hash=expected_corr_hash,

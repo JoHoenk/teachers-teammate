@@ -138,17 +138,17 @@ def test_suitability_column_and_sort_order_follow_profile(qtbot) -> None:
     """
     Given  the dialog resolved to the 8gb profile
     When   the suitability column is inspected
-    Then   the BEST models come first with the "★ Best choice" label
+    Then   the BEST models come first with the "★ Best" label
     """
     dlg = _make_dialog(qtbot)
     dlg._on_detection_done(_detection_results(dlg, set()))
     reading = dlg._group_items["ocr"]
     assert reading.child(0).text(0) == DEFAULT_OCR_MODEL
-    assert reading.child(0).text(1) == "★ Best choice"
+    assert reading.child(0).text(1) == "★ Best"
     writing = dlg._group_items["general"]
     assert writing.child(0).text(0) == "qwen3.5:9b"
     gpt_oss = dlg._model_items["gpt-oss:20b"]
-    assert gpt_oss.text(1) == "Too large for this computer"
+    assert gpt_oss.text(1) == "Too large"
 
 
 @pytest.mark.use_case("Model_Recommendation_By_Hardware")
@@ -164,7 +164,7 @@ def test_switching_profile_updates_suitability(qtbot) -> None:
         dlg._hardware_selector._combo.setCurrentText("Graphics card with 16 GB memory or more")
     writing = dlg._group_items["general"]
     assert writing.child(0).text(0) == "gpt-oss:20b"
-    assert writing.child(0).text(1) == "★ Best choice"
+    assert writing.child(0).text(1) == "★ Best"
 
 
 @pytest.mark.use_case("Model_Recommendation_By_Hardware")
@@ -280,7 +280,7 @@ def test_detection_marks_rows_downloaded_and_disables_them(qtbot) -> None:
     dlg = _make_dialog(qtbot)
     dlg._on_detection_done(_detection_results(dlg, {"glm-ocr:q8_0"}))
     row = dlg._model_items["glm-ocr:q8_0"]
-    assert row.text(3) == "✓"
+    assert row.text(3).startswith("✓")
     assert not bool(row.flags() & Qt.ItemFlag.ItemIsEnabled)
     assert row.checkState(0) is Qt.CheckState.Checked
 
@@ -441,7 +441,7 @@ def test_pulled_custom_model_stays_in_other_and_shows_abilities(qtbot) -> None:
     """
     Given  a custom model that was pulled and that the server reports as able to read images
     When   detection finishes
-    Then   its row stays in "Other models" and says what it can do ("Reads scans and writes")
+    Then   its row stays in "Other models" and says what it can do ("Reads & writes")
     """
     service = _StubService()
     service.custom_uses = {"my-vision-model:latest": frozenset({"ocr", "general"})}
@@ -451,7 +451,7 @@ def test_pulled_custom_model_stays_in_other_and_shows_abilities(qtbot) -> None:
     dlg._on_detection_done(_detection_results(dlg, {"my-vision-model:latest"}))
     assert "my-vision-model:latest" in _group_tags(dlg, "other")
     assert "my-vision-model:latest" not in _group_tags(dlg, "ocr")
-    assert dlg._model_items["my-vision-model:latest"].text(1) == "Reads scans and writes"
+    assert dlg._model_items["my-vision-model:latest"].text(1) == "Reads & writes"
 
 
 @pytest.mark.use_case("Model_Category_Guidance")
@@ -587,8 +587,8 @@ def test_too_large_tooltip_is_cleared_when_model_fits_again(qtbot) -> None:
 
     _choose_computer(qtbot, dlg, _16GB_TEXT)
 
-    assert row.toolTip(1) == ""
-    assert row.text(1) == "★ Best choice"
+    assert "14 GB" not in row.toolTip(1)  # the "too large" explanation is gone
+    assert row.text(1) == "★ Best"
 
 
 @pytest.mark.use_case("Model_Category_Guidance")
@@ -683,14 +683,13 @@ def test_finished_pull_shows_model_as_downloaded_without_waiting_for_cache(
     dlg = _make_dialog(qtbot, service=_real_service())
     dlg._start_detection()
     qtbot.waitUntil(lambda: dlg._installed_ready, timeout=5000)
-    assert dlg._model_items[DEFAULT_OCR_MODEL].text(3) == "—"
+    assert not dlg._model_items[DEFAULT_OCR_MODEL].text(3).startswith("✓")
 
     fake_ollama.installed[DEFAULT_OCR_MODEL] = 6_000_000_000  # the pull arrived
     dlg._on_ollama_pull_done([])
 
-    qtbot.waitUntil(lambda: dlg._model_items[DEFAULT_OCR_MODEL].text(3) == "✓", timeout=5000)
-    # Decimal GB, like the catalog sizes shown before the download.
-    assert dlg._model_items[DEFAULT_OCR_MODEL].text(4) == "6.0 GB"
+    # Decimal GB, like the catalog sizes shown before the download; "✓" marks it downloaded.
+    qtbot.waitUntil(lambda: dlg._model_items[DEFAULT_OCR_MODEL].text(3) == "✓ 6.0 GB", timeout=5000)
 
 
 @pytest.mark.use_case("Model_Category_Guidance")
@@ -734,8 +733,8 @@ def test_pulled_custom_models_stay_in_other_with_their_abilities(
 
     qtbot.waitUntil(
         lambda: (
-            dlg._model_items["reader-a:latest"].text(1) == "Reads scans and writes"
-            and dlg._model_items["reader-c:latest"].text(1) == "Reads scans and writes"
+            dlg._model_items["reader-a:latest"].text(1) == "Reads & writes"
+            and dlg._model_items["reader-c:latest"].text(1) == "Reads & writes"
             and dlg._model_items["writer-b:latest"].text(1) == "Writes only"
         ),
         timeout=5000,

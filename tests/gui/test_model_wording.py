@@ -161,15 +161,40 @@ def test_suitability_labels(value: Suitability, profile: str, task: str, label: 
 
 
 @pytest.mark.use_case("Model_Category_Guidance")
+@pytest.mark.parametrize(
+    ("value", "profile", "task", "label"),
+    [
+        (Suitability.BEST, "8gb", "ocr", "★ Best"),
+        (Suitability.GOOD, "8gb", "general", "Good"),
+        (Suitability.WORKS, "8gb", "ocr", "Works"),
+        (Suitability.TOO_LARGE, "8gb", "general", "Too large"),
+        (Suitability.TOO_LARGE, "cpu", "ocr", "Too slow"),
+        (Suitability.WRONG_KIND, "16gb", "ocr", "Can't read scans"),
+        (Suitability.WRONG_KIND, "16gb", "general", "Reading only"),
+        (Suitability.UNKNOWN, "16gb", "ocr", "No suggestion"),
+    ],
+)
+def test_compact_suitability_labels(
+    value: Suitability, profile: str, task: str, label: str
+) -> None:
+    """
+    Given  a suitability value, a profile and the task the model is chosen for
+    When   the compact label for the narrow downloads column is requested
+    Then   a short label is returned (the full wording stays in the tooltip)
+    """
+    assert wording.compact_suitability_text(value, profile, task) == label  # ty: ignore[invalid-argument-type]  # literals
+
+
+@pytest.mark.use_case("Model_Category_Guidance")
 def test_abilities_text_describes_models_outside_the_catalog() -> None:
     """
     Given  the uses of a model that is not in the catalog
     When   the abilities text is requested
     Then   it says whether the model reads scans and writes, only writes, or is unknown
     """
-    assert wording.abilities_text(frozenset({"ocr", "general"})) == "Reads scans and writes"
+    assert wording.abilities_text(frozenset({"ocr", "general"})) == "Reads & writes"
     assert wording.abilities_text(frozenset({"general"})) == "Writes only"
-    assert wording.abilities_text(None) == "No suggestion available"
+    assert wording.abilities_text(None) == "No suggestion"
 
 
 @pytest.mark.use_case("Model_Category_Guidance")

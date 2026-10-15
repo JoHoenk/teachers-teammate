@@ -30,6 +30,7 @@ from PySide6.QtWidgets import (
 
 from ..application.service import RequirementIssue
 from ..config import DEFAULTS, Config, OcrConfig
+from ..domain.pdf_text_layer import normalize_pdf_text_layer
 from ._background import LatestTask
 from ._constants import _LANGUAGES
 from ._types import SettingsDict
@@ -104,6 +105,7 @@ class ConfigPanel(QScrollArea):
             "preprocess_denoise": DEFAULTS["preprocess_denoise"],
             "preprocess_gamma": DEFAULTS["preprocess_gamma"],
             "pdf_render_dpi": DEFAULTS["pdf_render_dpi"],
+            "pdf_text_layer": DEFAULTS["pdf_text_layer"],
             "correction_provider": DEFAULTS["correction_provider"],
             "correction_model": DEFAULTS["correction_model"],
             "evaluate_provider": DEFAULTS["evaluate_provider"],
@@ -532,6 +534,10 @@ class ConfigPanel(QScrollArea):
         """Apply values returned by :class:`SettingsDialog`."""
         self._settings_dict.update(settings)
 
+    def _ocr_config_from_settings(self) -> OcrConfig:
+        """Build the :class:`OcrConfig` slice from the stored advanced settings."""
+        return OcrConfig.from_settings(self._settings_dict)
+
     def to_config(self) -> Config:
         """Build and return a Config from current field values."""
         input_text = self.get_input_dir()
@@ -552,17 +558,7 @@ class ConfigPanel(QScrollArea):
             # The GUI is intentionally always-recursive; no toggle is exposed.
             recursive=True,
             debug=bool(self._settings_dict.get("debug", DEFAULTS["debug"])),
-            ocr=OcrConfig(
-                engine=self._settings_dict.get("ocr_engine", DEFAULTS["ocr_engine"]),
-                provider=self._settings_dict.get("ocr_provider", DEFAULTS["ocr_provider"]),
-                model=self._settings_dict.get("ocr_model", DEFAULTS["ocr_model"]),
-                preprocess_method=self._settings_dict.get(
-                    "preprocess_method", DEFAULTS["preprocess_method"]
-                ),
-                temperature=float(
-                    self._settings_dict.get("ocr_temperature", DEFAULTS["ocr_temperature"])
-                ),
-            ),
+            ocr=self._ocr_config_from_settings(),
             language=self._language.currentText().strip() or DEFAULTS["language"],
             ollama_url=self._settings_dict.get("ollama_url", DEFAULTS["ollama_url"]),
             ocr_timeout=int(self._settings_dict.get("ocr_timeout", DEFAULTS["ocr_timeout"])),
@@ -662,6 +658,7 @@ class ConfigPanel(QScrollArea):
         """Copy the recognised string/scalar/flag keys from *values* into the settings dict."""
         for key in (
             "ocr_engine",
+            "ocr_provider",
             "ocr_model",
             "ollama_url",
             "hardware_profile",
@@ -675,8 +672,27 @@ class ConfigPanel(QScrollArea):
             if key in values:
                 self._settings_dict[key] = str(values[key])
 
-        if "ocr_timeout" in values:
-            self._settings_dict["ocr_timeout"] = int(values["ocr_timeout"])
+        if "pdf_text_layer" in values:
+            self._settings_dict["pdf_text_layer"] = normalize_pdf_text_layer(
+                str(values["pdf_text_layer"])
+            )
+
+        for key in ("ocr_timeout", "pdf_render_dpi"):
+            if key in values:
+                self._settings_dict[key] = int(values[key])
+
+        if "ocr_temperature" in values:
+            self._settings_dict["ocr_temperature"] = float(values["ocr_temperature"])
+
+        for key in (
+            "preprocess_dewarp",
+            "preprocess_deskew",
+            "preprocess_border_crop",
+            "preprocess_denoise",
+            "preprocess_gamma",
+        ):
+            if key in values:
+                self._settings_dict[key] = bool(values[key])
 
         if "debug" in values:
             self._settings_dict["debug"] = bool(values["debug"])
@@ -743,11 +759,7 @@ class ConfigPanel(QScrollArea):
         settings = self._settings_dict
         return dataclasses.replace(
             config,
-            ocr=dataclasses.replace(
-                config.ocr,
-                engine=str(settings.get("ocr_engine", config.ocr.engine)),
-                model=str(settings.get("ocr_model", config.ocr.model)),
-            ),
+            ocr=self._ocr_config_from_settings(),
             correction_enabled=self._correction_enabled.isChecked(),
             evaluation_enabled=self._evaluation_enabled.isChecked(),
             correction_provider=str(

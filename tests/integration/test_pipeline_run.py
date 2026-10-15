@@ -31,6 +31,7 @@ from teachers_teammate.infrastructure.pipeline import (
 from teachers_teammate.infrastructure.reporting import ProgressCallbacks
 from teachers_teammate.infrastructure.state_repository import StateRepository
 from teachers_teammate.infrastructure.storage_root import resolve_artifact_dir
+from teachers_teammate.infrastructure.workflow.preprocess_service import PreparedInput
 from tests.conftest import make_config
 
 # ── Helpers ────────────────────────────────────────────────────────────────
@@ -1319,7 +1320,7 @@ def test_preview_file_text_unit_prints_and_returns_true(tmp_path: Path) -> None:
     pipeline._reporter = StdoutReporter()
 
     mock_service = MagicMock(spec=PreprocessService)
-    mock_service.preprocess_input.return_value = ([], [], None, "some text")
+    mock_service.preprocess_input.return_value = PreparedInput([], [], None, "some text", "file")
     result = pipeline._preview_file(tmp_path / "doc.txt", mock_service)
 
     assert result is True

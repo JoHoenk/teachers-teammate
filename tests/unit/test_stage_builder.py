@@ -66,6 +66,23 @@ def test_build_preprocessor_service_uses_configured_pdf_dpi(tmp_path: Path) -> N
     assert provider._pdf_dpi == 150
 
 
+@pytest.mark.use_case("Batch_OCR_Processing")
+def test_build_preprocessor_service_passes_configured_pdf_text_layer(
+    tmp_path: Path,
+) -> None:
+    """
+    Given  a Config with pdf_text_layer="always"
+    When   the preprocessor service is built
+    Then   the PDF provider uses the configured mode
+    """
+    config = make_config(tmp_path, ocr=OcrConfig(engine="tesseract", pdf_text_layer="always"))
+    builder = StageBuilder(config=config, factory=PipelineComponentFactory())
+
+    provider = builder.build_preprocessor_service(tmp_path)._provider_factory(".pdf", tmp_path)
+
+    assert provider._text_layer == "always"
+
+
 def test_build_ocr_postprocessor_uses_factory_callable(tmp_path: Path) -> None:
     """
     Given  a PipelineComponentFactory whose build_ocr_postprocessor is overridden

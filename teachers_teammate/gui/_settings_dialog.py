@@ -308,22 +308,7 @@ class OCRSettingsDialog(QDialog):
         return group
 
     def _load_values(self, values: dict) -> None:
-        # Create OcrConfig from the values and load into the selector
-        ocr_config = OcrConfig(
-            engine=str(values.get("ocr_engine", DEFAULTS["ocr_engine"])),
-            model=str(values.get("ocr_model", DEFAULTS["ocr_model"])),
-            provider=str(values.get("ocr_provider", DEFAULTS["ocr_provider"])),
-            preprocess_method=str(values.get("preprocess_method", DEFAULTS["preprocess_method"])),
-            temperature=float(values.get("ocr_temperature", DEFAULTS["ocr_temperature"])),
-            pdf_render_dpi=int(values.get("pdf_render_dpi", DEFAULTS["pdf_render_dpi"])),
-            dewarp=bool(values.get("preprocess_dewarp", DEFAULTS["preprocess_dewarp"])),
-            deskew=bool(values.get("preprocess_deskew", DEFAULTS["preprocess_deskew"])),
-            border_crop=bool(
-                values.get("preprocess_border_crop", DEFAULTS["preprocess_border_crop"])
-            ),
-            denoise=bool(values.get("preprocess_denoise", DEFAULTS["preprocess_denoise"])),
-            gamma=bool(values.get("preprocess_gamma", DEFAULTS["preprocess_gamma"])),
-        )
+        ocr_config = OcrConfig.from_settings(values)
         self._ocr_config_selector.load_ocr_config(ocr_config)
 
         if "debug" in values:
@@ -343,6 +328,7 @@ class OCRSettingsDialog(QDialog):
             "debug": self._debug.isChecked(),
             "ocr_temperature": ocr_config.temperature,
             "pdf_render_dpi": ocr_config.pdf_render_dpi,
+            "pdf_text_layer": ocr_config.pdf_text_layer,
             "preprocess_dewarp": ocr_config.dewarp,
             "preprocess_deskew": ocr_config.deskew,
             "preprocess_border_crop": ocr_config.border_crop,

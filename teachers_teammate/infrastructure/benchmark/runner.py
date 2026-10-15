@@ -60,12 +60,12 @@ def run_ocr(
         ollama_client = OllamaClient(config.ollama_url) if config.ocr.engine == "ollama" else None
         ocr = builder.build_ocr(ollama_client)
         preprocess_service = builder.build_preprocessor_service(tmp_dir)
-        ocr_inputs, _steps, source_image, raw_text_hint = preprocess_service.preprocess_input(
-            source
-        )
+        prepared = preprocess_service.preprocess_input(source)
+        ocr_inputs = prepared.ocr_inputs
+        source_image = prepared.source_image
 
-        if raw_text_hint is not None:
-            return OcrRunResult(raw_text_hint, None, time.monotonic() - start, None)
+        if prepared.raw_text_hint is not None:
+            return OcrRunResult(prepared.raw_text_hint, None, time.monotonic() - start, None)
 
         ocr_stage = OCRStageService(processor=ocr, stop_event=stop_event)
         page_texts, error = ocr_stage.run_pages(ocr_inputs, config.language)

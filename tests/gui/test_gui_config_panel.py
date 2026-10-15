@@ -346,3 +346,70 @@ def test_only_the_latest_guard_check_of_a_stage_counts(qtbot, monkeypatch) -> No
 
     assert dialogs == []
     assert panel._correction_enabled.isChecked() is True
+
+
+@pytest.mark.gui
+def test_config_panel_to_config_applies_preprocess_and_pdf_settings(qtbot, tmp_path: Path) -> None:
+    """
+    Given  a ConfigPanel whose settings disable dewarp/deskew/denoise, enable border crop and
+           gamma, and set 150 DPI and the "never" PDF text layer
+    When   to_config() is called
+    Then   the OcrConfig carries those values instead of the defaults
+    """
+    input_dir = tmp_path / "input"
+    input_dir.mkdir()
+    panel = ConfigPanel()
+    qtbot.addWidget(panel)
+    panel.set_input_dir(str(input_dir))
+    panel.update_settings(
+        {
+            "preprocess_dewarp": False,
+            "preprocess_deskew": False,
+            "preprocess_denoise": False,
+            "preprocess_border_crop": True,
+            "preprocess_gamma": True,
+            "pdf_render_dpi": 150,
+            "pdf_text_layer": "never",
+        }
+    )
+
+    ocr = panel.to_config().ocr
+
+    assert not (ocr.dewarp or ocr.deskew or ocr.denoise)
+    assert ocr.border_crop and ocr.gamma
+    assert ocr.pdf_render_dpi == 150
+    assert ocr.pdf_text_layer == "never"
+
+
+def test_load_from_dict_restores_advanced_ocr_settings(qtbot, tmp_path: Path) -> None:
+    """
+    Given  a settings dict (as read from ocr.toml) with the PDF text layer, render DPI,
+           temperature, provider and pre-step flags set
+    When   load_from_dict() and then to_config() are called
+    Then   the OcrConfig carries those values instead of falling back to the defaults
+    """
+    input_dir = tmp_path / "input"
+    input_dir.mkdir()
+    panel = ConfigPanel()
+    qtbot.addWidget(panel)
+    panel.set_input_dir(str(input_dir))
+
+    panel.load_from_dict(
+        {
+            "pdf_text_layer": "Never",
+            "pdf_render_dpi": 150,
+            "ocr_temperature": 0.4,
+            "ocr_provider": "openai",
+            "preprocess_dewarp": False,
+            "preprocess_gamma": True,
+        }
+    )
+
+    ocr = panel.to_config().ocr
+    assert ocr.pdf_text_layer == "never"
+    assert ocr.pdf_render_dpi == 150
+    assert ocr.temperature == pytest.approx(0.4)
+    assert ocr.provider == "openai"
+    assert ocr.dewarp is False
+    assert ocr.gamma is True
+    assert panel.to_dict()["pdf_text_layer"] == "never"

@@ -7,7 +7,9 @@ from pathlib import Path
 import pytest
 
 from teachers_teammate.infrastructure.input_provider_factory import (
+    InputOptions,
     get_input_provider,
+    input_settings_fingerprint,
     supported_suffixes,
 )
 from teachers_teammate.infrastructure.input_providers import (
@@ -65,9 +67,46 @@ def test_get_input_provider_threads_pdf_dpi_to_pdf_provider(tmp_path: Path) -> N
     When   get_input_provider is called
     Then   the constructed PdfInputProvider carries that DPI
     """
-    provider = get_input_provider(".pdf", tmp_dir=tmp_path, pdf_dpi=150)
+    provider = get_input_provider(".pdf", tmp_dir=tmp_path, options=InputOptions(pdf_dpi=150))
     assert isinstance(provider, PdfInputProvider)
     assert provider._pdf_dpi == 150
+
+
+def test_get_input_provider_threads_text_layer_mode_to_pdf_provider(tmp_path: Path) -> None:
+    """
+    Given  a .pdf suffix and InputOptions with pdf_text_layer="never"
+    When   get_input_provider is called
+    Then   the constructed PdfInputProvider carries that mode
+    """
+    options = InputOptions(pdf_text_layer="never")
+
+    provider = get_input_provider(".pdf", tmp_dir=tmp_path, options=options)
+
+    assert isinstance(provider, PdfInputProvider)
+    assert provider._text_layer == "never"
+
+
+@pytest.mark.parametrize(
+    ("suffix", "mode", "expected"),
+    [
+        (".pdf", "auto", ()),
+        (".PDF", "never", ("pdf_text_layer=never",)),
+        (".pdf", "always", ("pdf_text_layer=always",)),
+        (".png", "never", ()),
+        (".txt", "always", ()),
+    ],
+)
+def test_input_settings_fingerprint_only_covers_affected_formats(
+    suffix: str, mode: str, expected: tuple[str, ...]
+) -> None:
+    """
+    Given  an input suffix and a PDF text-layer mode
+    When   input_settings_fingerprint is called
+    Then   only a non-default mode on a PDF contributes, other formats and "auto" give ()
+    """
+    options = InputOptions(pdf_text_layer=mode)  # ty: ignore[invalid-argument-type]
+
+    assert input_settings_fingerprint(suffix, options) == expected
 
 
 # ── Error path ─────────────────────────────────────────────────────────────

@@ -9,6 +9,7 @@ build a :class:`Config` and hand it to
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 import sys
@@ -17,6 +18,12 @@ from typing import Any
 
 from ._model_defaults import default_model_for_task
 from .domain.model_catalog import DEFAULT_OCR_MODEL, DEFAULT_WRITING_MODEL, PROFILE_SETTINGS
+from .domain.pdf_text_layer import (
+    PDF_TEXT_LAYER_MODES,
+    PdfTextLayerMode,
+    normalize_pdf_text_layer,
+    parse_pdf_text_layer,
+)
 from .exceptions import ConfigFileParseError
 from .interfaces import SUPPORTED_SUFFIXES as SUPPORTED_SUFFIXES  # noqa: PLC0414
 
@@ -32,6 +39,8 @@ DEFAULTS: dict[str, Any] = {
     "ocr_temperature": 0.0,
     # ── Preprocessing (pre-steps and PDF rendering) ───────────────────────────
     "pdf_render_dpi": 300,
+    # "auto" | "always" | "never" — use a PDF's embedded text instead of OCR.
+    "pdf_text_layer": "auto",
     "preprocess_dewarp": True,
     "preprocess_deskew": True,
     "preprocess_border_crop": False,
@@ -90,11 +99,44 @@ class OcrConfig:
     preprocess_method: str = DEFAULTS["preprocess_method"]
     temperature: float = DEFAULTS["ocr_temperature"]
     pdf_render_dpi: int = DEFAULTS["pdf_render_dpi"]
+    pdf_text_layer: PdfTextLayerMode = DEFAULTS["pdf_text_layer"]
+    """Whether a PDF's embedded text may replace OCR (``auto``/``always``/``never``)."""
     dewarp: bool = DEFAULTS["preprocess_dewarp"]
     deskew: bool = DEFAULTS["preprocess_deskew"]
     border_crop: bool = DEFAULTS["preprocess_border_crop"]
     denoise: bool = DEFAULTS["preprocess_denoise"]
     gamma: bool = DEFAULTS["preprocess_gamma"]
+
+    def __post_init__(self) -> None:
+        # Programmatic callers and GUI settings bypass argparse ``choices``; fold
+        # case/whitespace and fall back to "auto" for anything that is not a mode.
+        self.pdf_text_layer = normalize_pdf_text_layer(self.pdf_text_layer)
+
+    @classmethod
+    def from_settings(cls, values: Mapping[str, object]) -> OcrConfig:
+        """Build an :class:`OcrConfig` from a flat settings dict (``ocr.toml`` key names).
+
+        Keys that are missing fall back to :data:`DEFAULTS`.  This is the single place the
+        GUI's flat settings (``ocr_engine``, ``preprocess_dewarp``, …) map onto the fields.
+        """
+
+        def get(key: str) -> Any:
+            return values.get(key, DEFAULTS[key])
+
+        return cls(
+            engine=str(get("ocr_engine")),
+            model=str(get("ocr_model")),
+            provider=str(get("ocr_provider")),
+            preprocess_method=str(get("preprocess_method")),
+            temperature=float(get("ocr_temperature")),
+            pdf_render_dpi=int(get("pdf_render_dpi")),
+            pdf_text_layer=get("pdf_text_layer"),
+            dewarp=bool(get("preprocess_dewarp")),
+            deskew=bool(get("preprocess_deskew")),
+            border_crop=bool(get("preprocess_border_crop")),
+            denoise=bool(get("preprocess_denoise")),
+            gamma=bool(get("preprocess_gamma")),
+        )
 
     @property
     def effective_model(self) -> str:
@@ -202,6 +244,7 @@ def load_config_file(path: Path) -> dict:
         "anonymizer_patterns",
         "ocr_temperature",
         "pdf_render_dpi",
+        "pdf_text_layer",
         "preprocess_dewarp",
         "preprocess_deskew",
         "preprocess_border_crop",
@@ -217,6 +260,19 @@ def load_config_file(path: Path) -> dict:
     except tomllib.TOMLDecodeError as exc:
         raise ConfigFileParseError(f"Could not parse config file {path}: {exc}") from exc
     result = {k: v for k, v in raw.items() if k in known_keys}
+
+    if "pdf_text_layer" in result:
+        raw_mode = result["pdf_text_layer"]
+        mode = parse_pdf_text_layer(raw_mode)
+        if mode is not None:
+            result["pdf_text_layer"] = mode
+        else:
+            print(
+                f"WARNING: pdf_text_layer must be one of {', '.join(PDF_TEXT_LAYER_MODES)}"
+                f" (got {raw_mode!r}) — ignored.",
+                file=sys.stderr,
+            )
+            del result["pdf_text_layer"]
 
     if "anonymizer_patterns" in result:
         raw_pats = result["anonymizer_patterns"]

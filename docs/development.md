@@ -287,6 +287,41 @@ Because the benchmark store is append-only, it bounds growth two ways:
   `infrastructure/benchmark/run_store.py`). On each save, runs for that document
   beyond the newest N are evicted (both the JSON and its preview image).
 
+## PDF embedded text
+
+`PdfInputProvider` (`infrastructure/input_providers.py`) checks a PDF's text layer
+before rendering pages for OCR.  When it is trusted, the provider returns one text
+unit — the same path TXT files take, so `FileProcessor` skips OCR — and renders only
+page 1 as the preview/source image.
+
+The decision is a pure policy in `domain/pdf_text_layer.py`, controlled by
+`ocr.pdf_text_layer` (`--pdf-text-layer`, TOML key `pdf_text_layer`):
+
+| Mode | Embedded text is used when … |
+|---|---|
+| `auto` (default) | every page has ≥ 50 clean characters, images cover at most 5 % of the page, there are no content annotations (ink, text boxes, form fields, stamps …) and no curved/diagonal vector paths (pen strokes) |
+| `always` | every page has some printable text |
+| `never` | never — always OCR (the previous behaviour) |
+
+The checks guard against a junk scanner OCR layer and against handwriting kept as an
+image, annotation or vector strokes on top of typed text; such documents fall back to OCR
+as a whole (no per-page mixing).  The limits are deliberately strict: a wrongly rejected
+text layer only costs OCR time, a wrongly trusted one silently drops student work.  Control
+characters in the embedded text are removed before it is stored.  Pages are measured lazily
+and only up to the first one that rules the text layer out.
+
+Where the setting applies:
+
+- Input options travel as one `InputOptions` object (`infrastructure/input_provider_factory.py`);
+  builders pick what they need.  The factory also answers which options affect a suffix
+  (`input_settings_fingerprint`), so the OCR config hash only contains the mode for PDF
+  sources and only when it is not `auto` — caches from before the setting existed, and every
+  image/TXT result, stay valid.
+- `InputPayload.text_origin` says whether text came from a TXT file or a PDF text layer; the
+  `FileProcessor` status message uses it.
+- `BenchmarkApplicationService` forces `never` (embedded text would make every engine return
+  the same text), and the preprocessing preview always renders an image.
+
 ## OCR output formats & formatted text
 
 OCR engines answer in different notations: plain text (Tesseract, Paddle), Markdown (many

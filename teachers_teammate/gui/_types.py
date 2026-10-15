@@ -66,6 +66,7 @@ class SettingsDict(TypedDict, total=False):
     ollama_url: str
     hardware_profile: str
     ocr_timeout: int
+    ocr_temperature: float
     preprocess_method: str
     preprocess_dewarp: bool
     preprocess_deskew: bool
@@ -73,6 +74,7 @@ class SettingsDict(TypedDict, total=False):
     preprocess_denoise: bool
     preprocess_gamma: bool
     pdf_render_dpi: int
+    pdf_text_layer: str
     correction_provider: str
     correction_model: str
     evaluate_provider: str

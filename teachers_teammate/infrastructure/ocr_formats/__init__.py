@@ -22,6 +22,7 @@ import logging
 from ...domain.formatted_text import (
     FormattedDocument,
     TextFormat,
+    join_labelled_pages,
     normalize_text_format,
 )
 from ...interfaces import DocumentFilter, OcrOutputParser, TextRenderer
@@ -138,11 +139,7 @@ class OcrOutputPostprocessor:
             return pages[0]
         if not label_pages:
             return "\n\n".join(pages)
-        if markdown:
-            return "\n\n".join(
-                f"Page {i + 1}:\n\n{text}" for i, text in enumerate(pages) if text.strip()
-            )
-        return "\n".join(f"Page {i + 1}:\n{text}" for i, text in enumerate(pages))
+        return join_labelled_pages(pages, markdown=markdown)
 
 
 def parse_stored_text(text: str, text_format: str | None) -> FormattedDocument:

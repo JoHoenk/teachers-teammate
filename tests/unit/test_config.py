@@ -411,3 +411,58 @@ def test_dump_config_file_round_trips_hardware_profile(tmp_path: Path) -> None:
     path.write_text(text, encoding="utf-8")
     values = load_config_file(path)
     assert values["hardware_profile"] == "8gb"
+
+
+# ── pdf_text_layer values ──────────────────────────────────────────────────
+
+
+def test_ocr_config_normalizes_pdf_text_layer_case() -> None:
+    """
+    Given  an OcrConfig created with a differently-cased, padded text-layer mode
+    When   the config is constructed
+    Then   the mode is normalized so "Never" does not fall through to the auto rules
+    """
+    assert OcrConfig(pdf_text_layer=" Never ").pdf_text_layer == "never"  # ty: ignore[invalid-argument-type]
+
+
+def test_load_config_file_normalizes_pdf_text_layer(tmp_path: Path) -> None:
+    """
+    Given  a config file with pdf_text_layer = "Always"
+    When   load_config_file() is called
+    Then   the value is returned lowercased
+    """
+    cfg_file = tmp_path / "ocr.toml"
+    cfg_file.write_text('pdf_text_layer = "Always"\n')
+
+    assert load_config_file(cfg_file)["pdf_text_layer"] == "always"
+
+
+def test_load_config_file_drops_invalid_pdf_text_layer(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """
+    Given  a config file with an unknown pdf_text_layer mode
+    When   load_config_file() is called
+    Then   the key is ignored and a warning is printed to stderr
+    """
+    cfg_file = tmp_path / "ocr.toml"
+    cfg_file.write_text('pdf_text_layer = "off"\n')
+
+    assert "pdf_text_layer" not in load_config_file(cfg_file)
+    assert "pdf_text_layer must be one of" in capsys.readouterr().err
+
+
+def test_ocr_config_from_settings_maps_flat_keys_and_defaults() -> None:
+    """
+    Given  a flat settings dict with some OCR keys missing
+    When   OcrConfig.from_settings() is called
+    Then   present keys map onto the fields and missing ones take the defaults
+    """
+    ocr = OcrConfig.from_settings(
+        {"ocr_engine": "tesseract", "preprocess_dewarp": False, "pdf_text_layer": "NEVER"}
+    )
+
+    assert ocr.engine == "tesseract"
+    assert ocr.dewarp is False
+    assert ocr.pdf_text_layer == "never"
+    assert ocr.pdf_render_dpi == DEFAULTS["pdf_render_dpi"]

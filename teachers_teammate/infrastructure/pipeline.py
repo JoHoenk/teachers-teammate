@@ -50,7 +50,7 @@ from ..config import Config, OcrConfig
 from ..exceptions import OllamaConnectionError, ProviderNotAvailableError
 from ..interfaces import ImagePreprocessor
 from .file_discovery import FileDiscovery
-from .input_provider_factory import get_input_provider, supported_suffixes
+from .input_provider_factory import InputOptions, get_input_provider, supported_suffixes
 from .ollama_utils import OllamaClient
 from .preview_image_store import PreviewImageStore
 from .reporting import ProgressCallbacks, Reporter, StdoutReporter
@@ -129,7 +129,9 @@ def preprocess_preview(
     Returns:
         A tuple of ``(original_image_path, preprocessed_image_path, steps_applied)``.
     """
-    provider = get_input_provider(source_path.suffix, tmp_dir=tmp_dir, pdf_dpi=ocr.pdf_render_dpi)
+    # A preview shows the preprocessed page image, so the PDF is always rendered.
+    options = InputOptions(pdf_dpi=ocr.pdf_render_dpi, pdf_text_layer="never")
+    provider = get_input_provider(source_path.suffix, tmp_dir=tmp_dir, options=options)
     payload = provider.load(source_path)
     image_path = next(
         (
@@ -356,12 +358,12 @@ class OCRPipeline:
         )
 
     def _preview_file(self, file: Path, preprocess_service: PreprocessService) -> bool:
-        preprocessed, steps, _, raw_text_hint = preprocess_service.preprocess_input(file)
-        if raw_text_hint is not None:
+        prepared = preprocess_service.preprocess_input(file)
+        if prepared.raw_text_hint is not None:
             self._reporter.status("       → skipped preprocessing (text input)")
         else:
-            for out_path in preprocessed:
-                self._reporter.status(f"       → {out_path.name}  ({', '.join(steps)})")
+            for out_path in prepared.ocr_inputs:
+                self._reporter.status(f"       → {out_path.name}  ({', '.join(prepared.steps)})")
         return True
 
     def _print_banner(self) -> None:

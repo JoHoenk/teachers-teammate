@@ -81,6 +81,7 @@ class BenchmarkWindow(QMainWindow):
             ollama_url=self._ollama_url,
             hardware_profile=self._hardware_profile,
             show_preview_button=False,
+            show_pdf_text_layer=False,
         )
         self._selector.refresh()  # apply default engine's preprocess/model on open
         cfg_layout.addWidget(self._selector)

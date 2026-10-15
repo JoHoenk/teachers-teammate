@@ -13,6 +13,7 @@ import pytest
 
 from teachers_teammate.infrastructure.state_repository import DocumentState
 from teachers_teammate.infrastructure.workflow.cache_service import CacheContext
+from teachers_teammate.infrastructure.workflow.preprocess_service import PreparedInput
 from teachers_teammate.infrastructure.workflow.file_processor import (
     FileProcessor,
     FileProcessorConfig,
@@ -27,7 +28,9 @@ class _StubReturns:
     """Return values for the mocked services built by `_make_processor`."""
 
     cache_ctx: CacheContext | None = None
-    preprocess_return: tuple | None = None
+    preprocess_return: (
+        tuple[list[Path], list[str], Path | None, str | None] | PreparedInput | None
+    ) = None
     ocr_return: tuple[list[str], str | None] = field(
         default_factory=lambda: (["extracted text"], None)
     )
@@ -114,7 +117,12 @@ def _make_processor(
         tmp_path / "img.png",
         None,
     )
-    preprocess_service.preprocess_input.return_value = preprocess_return
+    if isinstance(preprocess_return, PreparedInput):
+        prepared = preprocess_return
+    else:
+        ocr_inputs, steps, source_image, text_hint = preprocess_return
+        prepared = PreparedInput(ocr_inputs, steps, source_image, text_hint, None)
+    preprocess_service.preprocess_input.return_value = prepared
 
     ocr_stage_service.run_pages.return_value = returns.ocr_return
 
@@ -344,6 +352,29 @@ def test_text_input_skips_ocr_stage(tmp_path: Path) -> None:
     assert result.ok is True
     assert result.raw_text == "plain text content"
     ocr_svc.run_pages.assert_not_called()
+
+
+@pytest.mark.use_case("Batch_OCR_Processing")
+def test_pdf_text_layer_skips_ocr_and_reports_embedded_text(tmp_path: Path) -> None:
+    """
+    Given  preprocess_service returns the embedded text of a PDF (text_origin="pdf_text_layer")
+    When   process() is called
+    Then   OCR is not run and the status line says embedded PDF text was used
+    """
+    reporter = _ListReporter()
+    prepared = PreparedInput(
+        [], [], tmp_path / "page.png", "typed worksheet text", "pdf_text_layer"
+    )
+    fp, _, _, ocr_svc = _make_processor(
+        tmp_path, returns=_StubReturns(preprocess_return=prepared), reporter=reporter
+    )
+
+    result = fp.process(tmp_path / "doc.pdf")
+
+    assert result.ok is True
+    assert result.raw_text == "typed worksheet text"
+    ocr_svc.run_pages.assert_not_called()
+    assert "→ Embedded PDF text used (OCR skipped)" in reporter.lines
 
 
 # ── Fresh OCR ─────────────────────────────────────────────────────────────
@@ -688,11 +719,8 @@ def test_no_doc_creator_returns_results_cached_message(tmp_path: Path) -> None:
     cache_svc.record_ocr.return_value = ctx
 
     preprocess_svc = MagicMock()
-    preprocess_svc.preprocess_input.return_value = (
-        [tmp_path / "img.png"],
-        [],
-        tmp_path / "img.png",
-        None,
+    preprocess_svc.preprocess_input.return_value = PreparedInput(
+        [tmp_path / "img.png"], [], tmp_path / "img.png", None, None
     )
 
     ocr_svc = MagicMock()

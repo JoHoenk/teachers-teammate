@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from ...config import Config, OcrConfig
+from ..input_provider_factory import InputOptions, input_settings_fingerprint
 from ..ocr_processor import get_ocr_prompt
 from ..preview_image_store import PreviewImageStore
 from ..state_repository import (
@@ -42,7 +43,7 @@ def _prestep_fingerprint(name: str, enabled: bool) -> str:
     return f"True@v{version}" if version else "True"
 
 
-def _preprocess_fingerprint(ocr: OcrConfig) -> tuple[str, ...]:
+def _preprocess_fingerprint(ocr: OcrConfig, source: Path) -> tuple[str, ...]:
     """Return the preprocessing settings that change the image fed to OCR.
 
     Every entry must be included in both the OCR cache hash and the preview hash so a
@@ -52,11 +53,17 @@ def _preprocess_fingerprint(ocr: OcrConfig) -> tuple[str, ...]:
     Method "none" skips every pre-step (see HandwritingPreprocessor.preprocess), so the
     pre-step flags are folded to "False" in that case -- toggling them has no effect on
     the image and must not force a re-run.
+
+    *source* is the file being processed: format-specific input settings (the PDF text-layer
+    mode) are only included for the formats they affect, so changing one does not invalidate
+    results of other files.
     """
     runs_presteps = ocr.preprocess_method != "none"
+    text_layer = input_settings_fingerprint(source.suffix, InputOptions.from_ocr(ocr))
     return (
         ocr.preprocess_method,
         str(ocr.pdf_render_dpi),
+        *text_layer,
         _prestep_fingerprint("dewarp", runs_presteps and ocr.dewarp),
         _prestep_fingerprint("deskew", runs_presteps and ocr.deskew),
         _prestep_fingerprint("border_crop", runs_presteps and ocr.border_crop),
@@ -65,8 +72,8 @@ def _preprocess_fingerprint(ocr: OcrConfig) -> tuple[str, ...]:
     )
 
 
-def compute_ocr_config_hash(config: Config, ocr_prompt: str) -> str:
-    """Return the OCR stage config hash for *config* and *ocr_prompt*."""
+def compute_ocr_config_hash(config: Config, ocr_prompt: str, source: Path) -> str:
+    """Return the OCR stage config hash for *config* and *ocr_prompt* when OCR-ing *source*."""
     ocr = config.ocr
     provider = ocr.provider if ocr.engine == "langchain" else ocr.engine
     model = ocr.effective_model if ocr.engine == "langchain" else ocr.model
@@ -75,7 +82,7 @@ def compute_ocr_config_hash(config: Config, ocr_prompt: str) -> str:
         ocr.engine,
         provider,
         model,
-        *_preprocess_fingerprint(ocr),
+        *_preprocess_fingerprint(ocr, source),
         config.language,
         ocr_prompt,
         format(ocr.temperature, ".1f"),
@@ -145,8 +152,8 @@ class CacheReconciliationService:
 
     # ── Config hash helpers (delegate to module-level functions) ──────────────
 
-    def _ocr_config_hash(self, ocr_prompt: str) -> str:
-        return compute_ocr_config_hash(self._config, ocr_prompt)
+    def _ocr_config_hash(self, ocr_prompt: str, source: Path) -> str:
+        return compute_ocr_config_hash(self._config, ocr_prompt, source)
 
     def _correction_config_hash(self) -> str:
         return compute_correction_config_hash(self._config)
@@ -163,11 +170,11 @@ class CacheReconciliationService:
         state = self._repo.load_or_create(file, source_hash)
 
         ocr_prompt = get_ocr_prompt(cfg.language)
-        ocr_config_hash = self._ocr_config_hash(ocr_prompt)
+        ocr_config_hash = self._ocr_config_hash(ocr_prompt, file)
         correction_config_hash = self._correction_config_hash()
         eval_config_hash = self._eval_config_hash()
         preview_config_hash = compute_config_hash(
-            "preview", source_hash, *_preprocess_fingerprint(cfg.ocr)
+            "preview", source_hash, *_preprocess_fingerprint(cfg.ocr, file)
         )
 
         # Capture artifact paths before reconciliation so we can delete them if cleared.

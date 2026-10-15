@@ -4,10 +4,24 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from pathlib import Path
+from typing import NamedTuple
 
 from ...exceptions import PipelineInputError
-from ...interfaces import ImagePreprocessor, InputPayload, InputProvider
+from ...interfaces import ImagePreprocessor, InputPayload, InputProvider, TextOrigin
 from ..input_provider_factory import get_input_provider
+
+
+class PreparedInput(NamedTuple):
+    """Result of :meth:`PreprocessService.preprocess_input`."""
+
+    ocr_inputs: list[Path]
+    """OCR-ready (preprocessed) page images; empty when the input is text."""
+    steps: list[str]
+    source_image: Path | None
+    """Image used as the document's source preview, if any."""
+    raw_text_hint: str | None
+    """Text that replaces OCR (TXT file or PDF text layer); ``None`` when OCR is needed."""
+    text_origin: TextOrigin | None
 
 
 class PreprocessService:
@@ -34,8 +48,8 @@ class PreprocessService:
     def preprocess_input(
         self,
         file: Path,
-    ) -> tuple[list[Path], list[str], Path | None, str | None]:
-        """Return ``(paths_for_ocr, steps_applied, source_image_for_docx, raw_text_hint)``."""
+    ) -> PreparedInput:
+        """Load *file* and preprocess its page images (or pass its text through)."""
         payload = self.load_input(file)
         if not payload.units:
             raise PipelineInputError(f"Input '{file.name}' produced no units.")
@@ -66,4 +80,6 @@ class PreprocessService:
             raise PipelineInputError(
                 f"Input '{file.name}' produced no usable image or text content."
             )
-        return preprocessed, steps, payload.source_image, raw_text_hint
+        return PreparedInput(
+            preprocessed, steps, payload.source_image, raw_text_hint, payload.text_origin
+        )

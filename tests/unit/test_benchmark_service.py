@@ -26,6 +26,30 @@ def _source(tmp_path: Path) -> Path:
 
 
 @pytest.mark.use_case("OCR_Benchmark_Run")
+def test_run_and_store_never_uses_pdf_text_layer(tmp_path: Path) -> None:
+    """
+    Given  an OCR config that would trust a PDF's embedded text (pdf_text_layer="always")
+    When   run_and_store() is called
+    Then   the runner receives pdf_text_layer="never" so the engine under test really OCRs
+    """
+    seen: list[str] = []
+
+    def runner(config, *_args, **_kwargs):
+        seen.append(config.ocr.pdf_text_layer)
+        return OcrRunResult("hello text", None, 0.2, None)
+
+    service = _service(tmp_path, runner)
+
+    service.run_and_store(
+        _source(tmp_path),
+        ocr=OcrConfig(engine="tesseract", model="", pdf_text_layer="always"),
+        language="English",
+    )
+
+    assert seen == ["never"]
+
+
+@pytest.mark.use_case("OCR_Benchmark_Run")
 def test_run_and_store_persists_and_returns_run(tmp_path: Path) -> None:
     """
     Given  a runner that succeeds

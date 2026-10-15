@@ -18,6 +18,11 @@ jobs:
           key: bazel-test-${{ runner.os }}-${{ hashFiles('MODULE.bazel', 'requirements_test_lock.txt') }}
           restore-keys: bazel-test-${{ runner.os }}-
 
+      - name: Allow unprivileged user namespaces (Bazel linux-sandbox)
+        # Ubuntu 24.04 runners block them via AppArmor, which makes Bazel fall
+        # back to the weaker processwrapper-sandbox.
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+
       - name: Install Qt system libraries
         run: |
           sudo apt-get update -qq

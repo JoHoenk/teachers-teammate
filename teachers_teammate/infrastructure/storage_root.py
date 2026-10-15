@@ -25,6 +25,7 @@ What this module does NOT do
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 import hashlib
 import os
@@ -115,16 +116,25 @@ def resolve_artifact_dir(output_dir: Path) -> Path:
 
 
 def resolve_storage_root() -> StorageRoot:
-    """Resolve a writable storage root using ordered policy candidates."""
-    candidates: list[tuple[Path, str]] = []
+    """Resolve a writable storage root using ordered policy candidates.
+
+    Candidates are resolved lazily so an unusable platform cache dir (for example a
+    read-only home) is never touched when the override already works.
+    """
+    candidates: list[tuple[Callable[[], Path], str]] = []
     override = os.environ.get("TEACHERS_TEAMMATE_TMPDIR", "").strip()
     if override:
-        candidates.append((Path(override), "override"))
+        candidates.append((lambda: Path(override), "override"))
 
-    candidates.append((_get_platform_cache_dir(), "platform"))
+    candidates.append((_get_platform_cache_dir, "platform"))
 
     failures: list[str] = []
-    for candidate, source in candidates:
+    for resolve, source in candidates:
+        try:
+            candidate = resolve()
+        except OSError as exc:
+            failures.append(f"{source}: {exc}")
+            continue
         ok, reason = _probe_writable(candidate)
         if ok:
             return StorageRoot(path=candidate, source=source)

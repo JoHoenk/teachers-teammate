@@ -18,6 +18,11 @@ jobs:
           key: bazel-lint-${{ runner.os }}-${{ hashFiles('MODULE.bazel', 'third_party/**') }}
           restore-keys: bazel-lint-${{ runner.os }}-
 
+      - name: Allow unprivileged user namespaces (Bazel linux-sandbox)
+        # Ubuntu 24.04 runners block them via AppArmor, which makes Bazel fall
+        # back to the weaker processwrapper-sandbox.
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+
       - name: Check formatting
         run: bazel run //:format.check
 

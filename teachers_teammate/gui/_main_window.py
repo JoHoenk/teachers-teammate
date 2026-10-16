@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QProgressBar,
     QPushButton,
+    QSizePolicy,
     QSplashScreen,
     QSplitter,
     QStyle,
@@ -364,7 +365,7 @@ class MainWindow(QMainWindow):
         self._main_splitter.setStretchFactor(0, 0)
         self._main_splitter.setStretchFactor(1, 1)
         content_row.addWidget(self._main_splitter)
-        root.addLayout(content_row)
+        root.addLayout(content_row, 1)
 
         self._results_table.preview_requested.connect(self._on_preview_requested)
         self._results_table.stage_run_requested.connect(self._on_stage_run_requested)
@@ -1682,6 +1683,8 @@ class MainWindow(QMainWindow):
     def _build_update_banner(self) -> QFrame:
         banner = QFrame()
         banner.setObjectName("UpdateBanner")
+        # Never grow taller than the content: the splitter below takes all spare height.
+        banner.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum)
         banner.setStyleSheet(
             "#UpdateBanner { background: #6a5200; border-radius: 4px; padding: 2px; }"
         )

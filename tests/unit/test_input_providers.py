@@ -163,6 +163,21 @@ def test_pdf_provider_never_mode_renders_text_pdf(tmp_path: Path) -> None:
     payload = PdfInputProvider(tmp_dir=tmp_path, text_layer="never").load(pdf)
 
     assert [unit.kind for unit in payload.units] == ["image", "image"]
+    assert payload.text_layer_note == "text layer ignored (mode: never)"
+
+
+def test_pdf_provider_text_layer_used_has_no_fallback_note(tmp_path: Path) -> None:
+    """
+    Given  a text-only PDF
+    When   load() is called in auto mode
+    Then   the embedded text is used and no fallback note is set
+    """
+    pdf = write_text_pdf(tmp_path / "typed.pdf", [_LONG_TEXT])
+
+    payload = PdfInputProvider(tmp_dir=tmp_path, text_layer="auto").load(pdf)
+
+    assert payload.text_origin == "pdf_text_layer"
+    assert payload.text_layer_note is None
 
 
 def test_pdf_provider_auto_mode_renders_scanned_pdf(tmp_path: Path, sample_pdf: Path) -> None:
@@ -174,6 +189,7 @@ def test_pdf_provider_auto_mode_renders_scanned_pdf(tmp_path: Path, sample_pdf: 
     payload = PdfInputProvider(tmp_dir=tmp_path, text_layer="auto").load(sample_pdf)
 
     assert [unit.kind for unit in payload.units] == ["image"]
+    assert payload.text_layer_note == "page 1: no embedded text"
 
 
 @pytest.mark.parametrize(

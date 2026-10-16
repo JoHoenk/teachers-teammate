@@ -22,6 +22,8 @@ class PreparedInput(NamedTuple):
     raw_text_hint: str | None
     """Text that replaces OCR (TXT file or PDF text layer); ``None`` when OCR is needed."""
     text_origin: TextOrigin | None
+    text_layer_note: str | None = None
+    """Why a PDF's text layer was not used and OCR runs instead; ``None`` otherwise."""
 
 
 class PreprocessService:
@@ -81,5 +83,10 @@ class PreprocessService:
                 f"Input '{file.name}' produced no usable image or text content."
             )
         return PreparedInput(
-            preprocessed, steps, payload.source_image, raw_text_hint, payload.text_origin
+            preprocessed,
+            steps,
+            payload.source_image,
+            raw_text_hint,
+            payload.text_origin,
+            payload.text_layer_note,
         )

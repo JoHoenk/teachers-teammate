@@ -81,6 +81,23 @@ def page_has_usable_text(stats: PageTextStats) -> bool:
     )
 
 
+def unusable_text_reason(stats: PageTextStats) -> str | None:
+    """Return why *stats* rule out the text layer in ``auto`` mode, or ``None`` if usable."""
+    if stats.char_count == 0:
+        return "no embedded text"
+    if stats.char_count < MIN_CHARS_PER_PAGE:
+        return "too little embedded text"
+    if stats.printable_ratio < MIN_PRINTABLE_RATIO:
+        return "embedded text is garbled"
+    if stats.image_coverage > MAX_IMAGE_COVERAGE:
+        return "contains images (scanned or pasted)"
+    if stats.has_content_annotations:
+        return "contains annotations or form fields"
+    if stats.freehand_path_count >= MIN_FREEHAND_PATHS:
+        return "contains hand-drawn strokes"
+    return None
+
+
 def use_text_layer(mode: PdfTextLayerMode, pages: Iterable[PageTextStats]) -> bool:
     """Return True when the document's embedded text should replace OCR.
 

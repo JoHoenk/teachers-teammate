@@ -115,6 +115,8 @@ class InputPayload:
     source_image: Path | None = None
     text_origin: TextOrigin | None = None
     """Set when the units hold text that replaces OCR; ``None`` for image payloads."""
+    text_layer_note: str | None = None
+    """For a PDF that fell back to OCR: why its text layer was not used (for the status log)."""
 
 
 class ImagePreprocessor(ABC):

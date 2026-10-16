@@ -23,6 +23,7 @@ from ..domain.pdf_text_layer import (
     PageTextStats,
     PdfTextLayerMode,
     page_has_usable_text,
+    unusable_text_reason,
     use_text_layer,
 )
 from ..interfaces import InputPayload, InputProvider, InputUnit
@@ -226,8 +227,10 @@ class PdfInputProvider(InputProvider):
         pdf = pdfium.PdfDocument(str(file_path))
         try:
             page_count = len(pdf)
+            text_layer_note: str | None = "text layer ignored (mode: never)"
             if self._text_layer != "never":
                 texts: list[str] = []
+                measured: list[PageTextStats] = []
 
                 def measure_pages() -> Iterator[PageTextStats]:
                     for page_num in range(page_count):
@@ -239,6 +242,7 @@ class PdfInputProvider(InputProvider):
                         finally:
                             page.close()
                         texts.append(page_text)
+                        measured.append(page_stats)
                         yield page_stats
 
                 # Pages are measured on demand and only up to the first one that rules
@@ -250,6 +254,13 @@ class PdfInputProvider(InputProvider):
                         source_image=preview,
                         text_origin="pdf_text_layer",
                     )
+                # The scan stops at the first page that rules the text layer out: the last one.
+                text_layer_note = (
+                    "PDF has no pages"
+                    if not measured
+                    else f"page {len(measured)}: "
+                    + (unusable_text_reason(measured[-1]) or "no embedded text")
+                )
 
             units: list[InputUnit] = []
             source_image: Path | None = None
@@ -260,7 +271,7 @@ class PdfInputProvider(InputProvider):
                     source_image = raw_path
         finally:
             pdf.close()
-        return InputPayload(units=units, source_image=source_image)
+        return InputPayload(units=units, source_image=source_image, text_layer_note=text_layer_note)
 
     def _render_page(self, pdf: pdfium.PdfDocument, page_num: int, file_path: Path) -> Path:
         """Render page *page_num* of *pdf* to a PNG in the temp dir and return its path."""

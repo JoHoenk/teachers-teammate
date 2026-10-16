@@ -273,6 +273,8 @@ class FileProcessor:
             else:
                 self._reporter.status("       → Text input loaded (OCR skipped)")
         else:
+            if prepared.text_layer_note:
+                self._reporter.status(f"       → PDF {prepared.text_layer_note} — using OCR")
             self._reporter.status("       → Running OCR...")
             self._notify_stage(file, PROGRESS_STAGE_OCR)
             on_page = self._report_ocr_page if len(ocr_inputs) > 1 else None

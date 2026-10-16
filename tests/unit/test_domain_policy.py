@@ -17,6 +17,7 @@ from teachers_teammate.domain.pdf_text_layer import (
     normalize_pdf_text_layer,
     parse_pdf_text_layer,
     page_has_usable_text,
+    unusable_text_reason,
     use_text_layer,
 )
 from teachers_teammate.domain.stages import normalize_stage
@@ -212,3 +213,34 @@ def test_parse_pdf_text_layer(value: object, expected: str | None) -> None:
     Then   a valid mode (case/whitespace folded) is returned, anything else gives None
     """
     assert parse_pdf_text_layer(value) == expected
+
+
+@pytest.mark.parametrize(
+    ("stats", "expected"),
+    [
+        pytest.param(PageTextStats(0, 0.0, 0.0), "no embedded text", id="no_text"),
+        pytest.param(PageTextStats(5, 1.0, 0.0), "too little embedded text", id="little_text"),
+        pytest.param(PageTextStats(500, 0.2, 0.0), "embedded text is garbled", id="garbled"),
+        pytest.param(
+            PageTextStats(500, 1.0, 1.0), "contains images (scanned or pasted)", id="images"
+        ),
+        pytest.param(
+            PageTextStats(500, 1.0, 0.0, has_content_annotations=True),
+            "contains annotations or form fields",
+            id="annotations",
+        ),
+        pytest.param(
+            PageTextStats(500, 1.0, 0.0, freehand_path_count=MIN_FREEHAND_PATHS),
+            "contains hand-drawn strokes",
+            id="strokes",
+        ),
+        pytest.param(PageTextStats(500, 1.0, 0.0), None, id="usable"),
+    ],
+)
+def test_unusable_text_reason(stats: PageTextStats, expected: str | None) -> None:
+    """
+    Given  page measurements that fail one criterion (or none)
+    When   unusable_text_reason() is called
+    Then   it names that criterion, or returns None for a usable page
+    """
+    assert unusable_text_reason(stats) == expected

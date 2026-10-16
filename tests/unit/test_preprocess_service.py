@@ -65,7 +65,7 @@ def test_preprocess_input_image_unit_calls_preprocessor(tmp_path: Path) -> None:
         preprocess_return=(proc_img, ["grayscale"]),
     )
 
-    paths, steps, source_image, raw_text_hint, _ = svc.preprocess_input(tmp_path / "doc.png")
+    paths, steps, source_image, raw_text_hint, _, _ = svc.preprocess_input(tmp_path / "doc.png")
 
     preprocessor.preprocess.assert_called_once_with(img)
     assert proc_img in paths
@@ -94,7 +94,7 @@ def test_preprocess_input_multiple_image_units_only_first_steps_kept(tmp_path: P
         provider_factory=lambda suffix, td: provider(),
     )
 
-    paths, steps, _, _, _ = svc.preprocess_input(tmp_path / "doc.pdf")
+    paths, steps, _, _, _, _ = svc.preprocess_input(tmp_path / "doc.pdf")
 
     assert paths == [proc1, proc2]
     assert steps == ["step_a"]  # only first page steps
@@ -112,7 +112,7 @@ def test_preprocess_input_text_unit_returns_raw_text_hint(tmp_path: Path) -> Non
     payload = InputPayload(units=[_text_unit("hello world")], source_image=None)
     svc, _, preprocessor = _make_svc(tmp_path=tmp_path, payload=payload)
 
-    paths, steps, source_image, raw_text_hint, _ = svc.preprocess_input(tmp_path / "doc.txt")
+    paths, steps, source_image, raw_text_hint, _, _ = svc.preprocess_input(tmp_path / "doc.txt")
 
     assert paths == []
     assert raw_text_hint == "hello world"
@@ -129,7 +129,7 @@ def test_preprocess_input_multiple_text_units_joined(tmp_path: Path) -> None:
     payload = InputPayload(units=[_text_unit("first"), _text_unit("second")], source_image=None)
     svc, _, _ = _make_svc(tmp_path=tmp_path, payload=payload)
 
-    _, _, _, raw_text_hint, _ = svc.preprocess_input(tmp_path / "doc.txt")
+    _, _, _, raw_text_hint, _, _ = svc.preprocess_input(tmp_path / "doc.txt")
 
     assert raw_text_hint is not None
     assert "first" in raw_text_hint  # pylint: disable=unsupported-membership-test

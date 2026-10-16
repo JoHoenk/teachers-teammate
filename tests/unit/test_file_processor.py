@@ -377,6 +377,35 @@ def test_pdf_text_layer_skips_ocr_and_reports_embedded_text(tmp_path: Path) -> N
     assert "→ Embedded PDF text used (OCR skipped)" in reporter.lines
 
 
+@pytest.mark.use_case("Batch_OCR_Processing")
+def test_pdf_text_layer_fallback_reports_reason_before_ocr(tmp_path: Path) -> None:
+    """
+    Given  a PDF whose text layer was rejected (text_layer_note set)
+    When   process() is called
+    Then   the status line names the reason and OCR runs
+    """
+    reporter = _ListReporter()
+    prepared = PreparedInput(
+        [tmp_path / "page.png"],
+        [],
+        tmp_path / "page.png",
+        None,
+        None,
+        "page 2: contains images (scanned or pasted)",
+    )
+    fp, _, _, ocr_svc = _make_processor(
+        tmp_path,
+        returns=_StubReturns(preprocess_return=prepared, ocr_return=(["scanned"], None)),
+        reporter=reporter,
+    )
+
+    result = fp.process(tmp_path / "doc.pdf")
+
+    assert result.ok is True
+    ocr_svc.run_pages.assert_called_once()
+    assert "→ PDF page 2: contains images (scanned or pasted) — using OCR" in reporter.lines
+
+
 # ── Fresh OCR ─────────────────────────────────────────────────────────────
 
 

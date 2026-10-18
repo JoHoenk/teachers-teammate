@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 import re
 import sys
 
+from ..domain.formatted_text import INLINE_TAG_ALTERNATION
 from ..interfaces import AnonymizationMap, Anonymizer
 
 # ── Default regex patterns ─────────────────────────────────────────────────
@@ -30,6 +31,48 @@ DEFAULT_PATTERNS: list[tuple[str, str]] = [
         r"(?<!\d)(?:\+?\d{1,3}[\s\-.]?)?\(?\d{2,4}\)?[\s\-.]?\d{3,4}[\s\-.]?\d{3,6}(?!\d)",
     ),
 ]
+
+# ── Markdown markup ────────────────────────────────────────────────────────
+
+# Stored text may be Markdown: inline style tags, emphasis/strikethrough runs and the
+# backslash of an escape would split names for the NER model (``<sup>Anna</sup>``).
+_MARKUP_RE = re.compile(
+    rf"</?(?:{INLINE_TAG_ALTERNATION}|br)\s*/?>"
+    r"|\*+|~~+|\\(?=[!-/:-@\[-`{-~])",
+    re.IGNORECASE,
+)
+
+
+def _ner_view(text: str, markup: list[tuple[int, int]]) -> str:
+    """Return *text* with every markup span blanked out, so offsets still match *text*."""
+    chars = list(text)
+    for start, end in markup:
+        chars[start:end] = " " * (end - start)
+    return "".join(chars)
+
+
+def _split_at_markup(
+    start: int, end: int, surface: str, text: str, markup: list[tuple[int, int]]
+) -> list[tuple[int, int, str]]:
+    """Return the entity ``start:end`` as one span per stretch of text between markup.
+
+    ``**Anna** Mueller`` becomes two names rather than one span that would swallow the
+    closing ``**`` and leave the opening one unbalanced.
+    """
+    inside = [(s, e) for s, e in markup if s < end and e > start]
+    if not inside:
+        return [(start, end, surface)]
+    pieces: list[tuple[int, int, str]] = []
+    cursor = start
+    for mark_start, mark_end in [*inside, (end, end)]:
+        piece = text[cursor : max(cursor, mark_start)]
+        lead = len(piece) - len(piece.lstrip())
+        stripped = piece.strip()
+        if stripped:
+            pieces.append((cursor + lead, cursor + lead + len(stripped), stripped))
+        cursor = max(cursor, mark_end)
+    return pieces
+
 
 # ── Language → spacy model mapping ─────────────────────────────────────────
 
@@ -152,18 +195,21 @@ class SpacyAnonymizer(Anonymizer):
         result = text
 
         # ── NER: collect person spans ──────────────────────────────────────
-        primary_spans = [
-            (ent.start_char, ent.end_char, ent.text)
-            for ent in self._nlp(result).ents
-            if ent.label_ in _NER_PERSON_LABELS
-        ]
+        markup = [match.span() for match in _MARKUP_RE.finditer(text)]
+        ner_text = _ner_view(text, markup)
+
+        def person_spans(nlp) -> list[tuple[int, int, str]]:
+            return [
+                span
+                for ent in nlp(ner_text).ents
+                if ent.label_ in _NER_PERSON_LABELS
+                for span in _split_at_markup(ent.start_char, ent.end_char, ent.text, text, markup)
+            ]
+
+        primary_spans = person_spans(self._nlp)
 
         if self._nlp_secondary is not None:
-            secondary_spans = [
-                (ent.start_char, ent.end_char, ent.text)
-                for ent in self._nlp_secondary(result).ents
-                if ent.label_ in _NER_PERSON_LABELS
-            ]
+            secondary_spans = person_spans(self._nlp_secondary)
             # Union: add secondary spans that don't overlap any primary span.
             covered = [(s, e) for s, e, _ in primary_spans]
             extra = [

@@ -253,7 +253,9 @@ def test_styled_word_diff_handles_insert_opcode(tmp_path: Path) -> None:
     para = Document().add_paragraph()
     comments: list = []
 
-    creator._add_styled_line_with_word_diff(para, (Span("hello"),), "hello world here", comments)
+    creator._add_styled_line_with_word_diff(
+        para, (Span("hello"),), (Span("hello world here"),), comments
+    )
 
     assert len(comments) > 0
 
@@ -268,7 +270,9 @@ def test_styled_word_diff_handles_delete_opcode(tmp_path: Path) -> None:
     para = Document().add_paragraph()
     comments: list = []
 
-    creator._add_styled_line_with_word_diff(para, (Span("hello extra words"),), "hello", comments)
+    creator._add_styled_line_with_word_diff(
+        para, (Span("hello extra words"),), (Span("hello"),), comments
+    )
 
     assert any("delete" in c[1].lower() for c in comments)
 
@@ -283,7 +287,7 @@ def test_styled_word_diff_both_empty_is_noop(tmp_path: Path) -> None:
     para = Document().add_paragraph()
     comments: list = []
 
-    creator._add_styled_line_with_word_diff(para, (), "", comments)
+    creator._add_styled_line_with_word_diff(para, (), (), comments)
 
     assert comments == []
 
@@ -518,3 +522,51 @@ def test_comments_format_diffs_markdown_text_and_keeps_styles(tmp_path: Path) ->
     )
     assert "lov" in all_text
     assert "~~" not in all_text
+
+
+def test_comments_format_comments_a_correction_that_drops_a_strikethrough(tmp_path: Path) -> None:
+    """
+    Given  Markdown OCR text with a struck word and a correction with the same words
+           but without the strikethrough
+    When   create(text_format="markdown") writes the comments layout
+    Then   the changed formatting is commented although the words are identical
+    """
+    out = tmp_path / "md_style_change.docx"
+
+    DocxDocumentCreator(fmt="comments").create(
+        raw_text="I ~~hate~~ love this",
+        corrected_text="I hate love this",
+        out_path=out,
+        title="T",
+        text_format="markdown",
+    )
+
+    comments_xml = _comments_xml(out)
+    assert "formatting changed" in comments_xml
+
+
+def test_comments_format_does_not_comment_unchanged_formatting(tmp_path: Path) -> None:
+    """
+    Given  Markdown OCR text and a correction that keeps every word and its formatting
+    When   create(text_format="markdown") writes the comments layout
+    Then   no comment is attached
+    """
+    out = tmp_path / "md_same.docx"
+
+    DocxDocumentCreator(fmt="comments").create(
+        raw_text="I ~~hate~~ **love** this",
+        corrected_text="I ~~hate~~ **love** this",
+        out_path=out,
+        title="T",
+        text_format="markdown",
+    )
+
+    assert "commentReference" not in Document(str(out)).element.body.xml
+
+
+def _comments_xml(path: Path) -> str:
+    import zipfile  # noqa: PLC0415
+
+    with zipfile.ZipFile(path) as archive:
+        name = next(n for n in archive.namelist() if "comments" in n.lower())
+        return archive.read(name).decode("utf-8")

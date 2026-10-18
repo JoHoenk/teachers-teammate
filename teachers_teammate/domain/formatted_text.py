@@ -215,6 +215,9 @@ INLINE_TAG_STYLE: dict[str, Style] = {
 }
 """HTML inline tag name -> the :class:`Style` it switches on (shared by all parsers)."""
 
+INLINE_TAG_ALTERNATION = "|".join(sorted(INLINE_TAG_STYLE, key=lambda tag: (-len(tag), tag)))
+"""The tag names of :data:`INLINE_TAG_STYLE` as a regex alternation, longest name first."""
+
 LIST_INDENT = "    "
 """Indentation of one list nesting level in flattened and Markdown text."""
 

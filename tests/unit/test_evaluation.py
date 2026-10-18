@@ -155,3 +155,23 @@ def test_native_ollama_evaluator_marks_struck_text_as_not_submitted(mocker) -> N
     assert "not part of the submission" in markdown_prompt
     assert markdown_prompt.startswith("Grade it.")
     assert "Markdown" not in plain_prompt
+
+
+# ── Tidying of the answer ──────────────────────────────────────────────────
+
+
+def test_evaluator_strips_reasoning_and_a_code_fence_from_the_review(mocker) -> None:
+    """
+    Given  a NativeOllamaEvaluator whose model leaks a <think> block and fences its review
+    When   evaluate() is called
+    Then   the stored review is only the review text
+    """
+    from teachers_teammate.infrastructure.evaluation import NativeOllamaEvaluator  # noqa: PLC0415
+    from teachers_teammate.infrastructure.ollama_utils import OllamaClient  # noqa: PLC0415
+
+    mocker.patch.object(
+        OllamaClient, "chat", return_value="<think>hm</think>\n```markdown\n**Good** work\n```"
+    )
+    evaluator = NativeOllamaEvaluator(model="m", client=OllamaClient("http://localhost:11434"))
+
+    assert evaluator.evaluate("text", "English") == ("**Good** work", None)

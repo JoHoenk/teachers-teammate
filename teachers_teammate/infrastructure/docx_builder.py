@@ -124,8 +124,9 @@ def _lines_of(text: str, text_format: TextFormat) -> list[tuple[Span, ...]]:
     return _styled_lines(parse_stored_text(text, "markdown"))
 
 
-def _line_text(line: tuple[Span, ...]) -> str:
-    return "".join(span.text for span in line)
+def _line_key(line: tuple[Span, ...]) -> tuple[_Word, ...]:
+    """Return what makes a line "the same" for diffing: its words and how each is styled."""
+    return tuple(_words(line))
 
 
 class DocxDocumentCreator(DocumentCreator):
@@ -417,12 +418,13 @@ class DocxDocumentCreator(DocumentCreator):
     ) -> None:
         """Fill *cell* with the styled *raw_lines*, commenting where *corr_lines* differ.
 
-        Lines are diffed by their text; styles only decide how the raw words are written.
+        Lines are diffed by their words and styles; a word whose style the correction changed
+        (a crossed-out word that lost its strikethrough) is commented like a changed word.
         """
         matcher = difflib.SequenceMatcher(
             None,
-            [_line_text(line) for line in raw_lines],
-            [_line_text(line) for line in corr_lines],
+            [_line_key(line) for line in raw_lines],
+            [_line_key(line) for line in corr_lines],
             autojunk=False,
         )
         first = True
@@ -439,31 +441,32 @@ class DocxDocumentCreator(DocumentCreator):
                 for raw_line, corr_line in zip_longest(raw_block, corr_block, fillvalue=()):
                     para = cell.paragraphs[0] if first else cell.add_paragraph()
                     first = False
-                    self._add_styled_line_with_word_diff(
-                        para, raw_line, _line_text(corr_line), comments
-                    )
+                    self._add_styled_line_with_word_diff(para, raw_line, corr_line, comments)
 
     def _add_styled_line_with_word_diff(
         self,
         para: Any,
         raw_spans: tuple[Span, ...],
-        corr_line: str,
+        corr_spans: tuple[Span, ...],
         comments: list[tuple[int, str]],
     ) -> None:
-        """Add the styled *raw_spans* to *para*, commenting word diffs against *corr_line*."""
+        """Add the styled *raw_spans* to *para*, commenting word diffs against *corr_spans*."""
         raw_words = _words(raw_spans)
-        corr_words = corr_line.split()
+        corr_words = _words(corr_spans)
         if not raw_words and not corr_words:
             return
         matcher = difflib.SequenceMatcher(
-            None, [word for word, _ in raw_words], corr_words, autojunk=False
+            None, [word for word, _ in raw_words], [word for word, _ in corr_words], autojunk=False
         )
         parts: list[tuple[list[_Word], str | None]] = []
         for tag, i1, i2, j1, j2 in matcher.get_opcodes():
             raw_chunk = raw_words[i1:i2]
-            corr_chunk = " ".join(corr_words[j1:j2])
+            corr_chunk = " ".join(word for word, _ in corr_words[j1:j2])
             if tag == "equal":
-                parts.append((raw_chunk, None))
+                pairs = zip(raw_chunk, corr_words[j1:j2], strict=True)
+                for same_style, group in groupby(pairs, key=lambda pair: pair[0][1] == pair[1][1]):
+                    words = [raw for raw, _corr in group]
+                    parts.append((words, None if same_style else "\u2192 (formatting changed)"))
             elif tag == "replace":
                 parts.append((raw_chunk, f'\u2192 "{corr_chunk}"'))
             elif tag == "delete":

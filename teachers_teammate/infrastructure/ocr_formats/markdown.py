@@ -18,6 +18,7 @@ from lxml import etree
 from markdown_it import MarkdownIt
 
 from ...domain.formatted_text import (
+    INLINE_TAG_ALTERNATION,
     INLINE_TAG_STYLE,
     Block,
     FormattedDocument,
@@ -34,15 +35,22 @@ from .chandra_html import parse_html_blocks
 if TYPE_CHECKING:
     from markdown_it.token import Token
 
+# Inline style tags the parser understands (<b>, <strike>, <ins>, ...) and the layout tags of
+# HTML a model may answer with instead of Markdown (<table>, <p>, <br>, ...).
+_LAYOUT_TAGS = r"table|thead|tbody|tr|td|th|p|div|ul|ol|li|h[1-6]|blockquote"
+
 # Constructs that mark text as Markdown.  Deliberately conservative -- a bare "- item"
-# list or a stray "*" is common in plain OCR output and must not trigger parsing.
+# list or a stray "*" is common in plain OCR output and must not trigger parsing, and neither
+# does "# 3 apples" (a number sign before a count, not a heading).
 _SIGNAL_RE = re.compile(
-    r"""
+    rf"""
       \*\*\S(?:.*?\S)?\*\*                                  # **bold**
     | ~~\S(?:.*?\S)?~~                                      # ~~struck~~
-    | ^\#{1,6}[ \t]+\S                                      # # heading
-    | ^[ \t]*\|?[ \t]*:?-{3,}:?[ \t]*(?:\|[ \t]*:?-{3,}:?[ \t]*)+\|?[ \t]*$   # table rule
-    | </?(?:sup|sub|u|b|i|em|strong|del|s)>                 # inline style tags
+    | ^\#{{1,6}}[ \t]+(?!\d)\S                                # # heading
+    | ^[ \t]*\|?[ \t]*:?-{{3,}}:?[ \t]*(?:\|[ \t]*:?-{{3,}}:?[ \t]*)+\|?[ \t]*$   # table rule
+    | </?(?:{INLINE_TAG_ALTERNATION})>                                 # inline style tags
+    | </?(?:{_LAYOUT_TAGS})(?:\s[^<>]*)?/?>                  # HTML layout tags
+    | <br\s*/?>                                             # HTML line break
     | !\[[^\]]*\]\([^)]*\)                                  # image
     """,
     re.MULTILINE | re.VERBOSE | re.IGNORECASE,

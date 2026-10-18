@@ -26,6 +26,7 @@ from ...domain.formatted_text import (
     normalize_text_format,
 )
 from ...interfaces import DocumentFilter, OcrOutputParser, TextRenderer
+from ..ocr_text_cleaner import clean_ocr_text
 from .chandra_html import ChandraHtmlParser
 from .filters import DropPageFurniture
 from .markdown import MarkdownParser, unwrap_fenced_page
@@ -43,9 +44,11 @@ __all__ = [
     "PlainTextParser",
     "PlainTextRenderer",
     "ProcessedOcrText",
+    "clean_llm_answer",
     "default_filters",
     "default_parsers",
     "looks_like_markup",
+    "normalize_llm_answer",
     "parse_stored_text",
     "plain_text_of",
     "upgrade_legacy_text",
@@ -89,17 +92,24 @@ class OcrOutputPostprocessor:
         """Return ``(document, parser_name)`` using the first parser that accepts *text*.
 
         A code fence around the whole answer (chat models wrap Markdown/HTML in one) is
-        looked through when the content inside is richer than plain text.
+        looked through.
+        """
+        _text, doc, name = self._detect(text)
+        return doc, name
+
+    def _detect(self, text: str) -> tuple[str, FormattedDocument, str]:
+        """Return ``(page_text, document, parser_name)``; *page_text* has no wrapping fence.
+
+        The fence is dropped even when what it wraps is plain text, so a plain answer is not
+        stored with its backticks.
         """
         unwrapped = unwrap_fenced_page(text)
         if unwrapped != text:
-            parsed = self._parse_with_parsers(unwrapped)
-            if parsed is not None:
-                return parsed
-        return self._parse_with_parsers(text) or (
-            self._fallback.parse(text),
-            self._fallback.name,
-        )
+            text = unwrapped.strip()
+        parsed = self._parse_with_parsers(text)
+        if parsed is not None:
+            return text, *parsed
+        return text, self._fallback.parse(text), self._fallback.name
 
     def _parse_with_parsers(self, text: str) -> tuple[FormattedDocument, str] | None:
         """Parse with the first non-fallback parser that accepts *text* (``None`` if none)."""
@@ -120,13 +130,14 @@ class OcrOutputPostprocessor:
             label_pages: Prefix multi-page text with ``Page N:`` lines (the pipeline format).
                 When false, pages are separated by a blank line only.
         """
-        parsed = [self.parse_page(page) for page in pages]
-        if all(name == self._fallback.name for _doc, name in parsed):
-            plain = self._join(list(pages), label_pages=label_pages, markdown=False)
+        parsed = [self._detect(page) for page in pages]
+        if all(name == self._fallback.name for _text, _doc, name in parsed):
+            texts = [text for text, _doc, _name in parsed]
+            plain = self._join(texts, label_pages=label_pages, markdown=False)
             return ProcessedOcrText(plain, "plain")
 
         rendered: list[str] = []
-        for page_doc, _name in parsed:
+        for _text, page_doc, _name in parsed:
             for doc_filter in self._filters:
                 page_doc = doc_filter.apply(page_doc)  # noqa: PLW2901  # filters fold left over the page
             rendered.append(self._renderer.render(page_doc))
@@ -174,3 +185,35 @@ def looks_like_markup(text: str) -> bool:
 def upgrade_legacy_text(text: str) -> ProcessedOcrText:
     """Post-process *text* that was stored before notations were tracked, as one page."""
     return OcrOutputPostprocessor().process_pages([text], label_pages=False)
+
+
+def clean_llm_answer(answer: str) -> str:
+    """Strip reasoning blocks, control tokens and a code fence around a whole *answer*.
+
+    What every chat answer (proofreading, review) needs before it is stored, whatever
+    notation the text is in.
+    """
+    cleaned = clean_ocr_text(answer)
+    if not cleaned:
+        return cleaned
+    return unwrap_fenced_page(cleaned).strip()
+
+
+def normalize_llm_answer(answer: str, text_format: str | None, *, source: str = "") -> str:
+    """Return a proofreading *answer* in the notation of the text it answers.
+
+    On top of :func:`clean_llm_answer`:
+
+    * Markdown text: the model was told its input is Markdown, so the answer is read as
+      Markdown and written back canonically (HTML tags, odd list markers, ... included).
+    * plain text: markup the model added although *source* had none is removed, so the
+      answer does not show stray asterisks.
+    """
+    cleaned = clean_llm_answer(answer)
+    if not cleaned:
+        return cleaned
+    if normalize_text_format(text_format) == "markdown":
+        return MarkdownRenderer().render(MarkdownParser().parse(cleaned))
+    if source and looks_like_markup(cleaned) and not looks_like_markup(source):
+        return plain_text_of(cleaned, "markdown")
+    return cleaned

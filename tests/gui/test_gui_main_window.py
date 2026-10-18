@@ -2253,3 +2253,169 @@ def test_closing_the_window_stops_the_ollama_retries(main_window) -> None:
     main_window.closeEvent(QCloseEvent())
 
     assert main_window._ollama_retry_timer.isActive() is False
+
+
+def _gpu_monitoring_window(main_window, monkeypatch):
+    """Isolate settings, record installs/refreshes and capture the consent question."""
+    store: dict = {}
+
+    class _Settings(_MemorySettings):
+        pass
+
+    _Settings.store = store
+    monkeypatch.setattr(main_window_module, "QSettings", _Settings)
+    installs: list[str] = []
+    asked: list[str] = []
+    refreshed: list[bool] = []
+    monkeypatch.setattr(
+        main_window._app_service, "install_gpu_monitoring", lambda addon: installs.append(addon)
+    )
+    monkeypatch.setattr(
+        main_window._stats, "refresh_gpu_monitoring", lambda: refreshed.append(True) or True
+    )
+    # Run the "background" install synchronously.
+    monkeypatch.setattr(
+        main_window_module,
+        "run_in_background",
+        lambda fn, on_done, owner=None: on_done(fn(), None),
+    )
+
+    def answer(answer_yes: bool):
+        def question(_parent, title, _text, *_a, **_k):
+            asked.append(title)
+            button = main_window_module.QMessageBox.StandardButton
+            return button.Yes if answer_yes else button.No
+
+        monkeypatch.setattr(main_window_module.QMessageBox, "question", staticmethod(question))
+
+    return store, installs, asked, refreshed, answer
+
+
+@pytest.mark.gui
+def test_gpu_monitoring_is_downloaded_after_the_user_agrees(main_window, monkeypatch) -> None:
+    """
+    Given  a GPU-monitoring package is missing and the user was not asked yet
+    When   the main window learns about it and the user answers Yes
+    Then   the package is installed, the answer is remembered and System Stats is refreshed
+    """
+    store, installs, asked, refreshed, answer = _gpu_monitoring_window(main_window, monkeypatch)
+    answer(True)
+
+    main_window._on_gpu_monitoring_needed("nvidia", None)
+
+    assert asked == ["Show GPU usage?"]
+    assert store[main_window._GPU_MONITORING_CHOICE_KEY] == "yes"
+    assert installs == ["nvidia"]
+    assert refreshed == [True]
+    assert "Installed GPU monitoring" in main_window._log.toPlainText()
+
+
+@pytest.mark.gui
+def test_gpu_monitoring_is_not_downloaded_after_the_user_declines(main_window, monkeypatch) -> None:
+    """
+    Given  a GPU-monitoring package is missing and the user was not asked yet
+    When   the user answers No, and the window learns about it again at the next start
+    Then   nothing is downloaded, and the user is not asked a second time
+    """
+    store, installs, asked, _refreshed, answer = _gpu_monitoring_window(main_window, monkeypatch)
+    answer(False)
+
+    main_window._on_gpu_monitoring_needed("nvidia", None)
+    main_window._on_gpu_monitoring_needed("nvidia", None)
+
+    assert asked == ["Show GPU usage?"]
+    assert store[main_window._GPU_MONITORING_CHOICE_KEY] == "no"
+    assert installs == []
+
+
+@pytest.mark.gui
+def test_gpu_monitoring_is_downloaded_without_asking_after_an_earlier_yes(
+    main_window, monkeypatch
+) -> None:
+    """
+    Given  the user agreed to the download in an earlier session
+    When   the main window learns that the package is missing again
+    Then   it is downloaded without asking again
+    """
+    store, installs, asked, _refreshed, _answer = _gpu_monitoring_window(main_window, monkeypatch)
+    store[main_window._GPU_MONITORING_CHOICE_KEY] = "yes"
+
+    main_window._on_gpu_monitoring_needed("amd", None)
+
+    assert asked == []
+    assert installs == ["amd"]
+
+
+@pytest.mark.gui
+def test_gpu_monitoring_failure_is_remembered_and_not_retried(main_window, monkeypatch) -> None:
+    """
+    Given  the user agreed but pip fails (for example offline)
+    When   the failure arrives, and the next start finds the package missing again
+    Then   a notice is logged once, the failure is remembered and no new download starts
+    """
+    store, installs, asked, refreshed, _answer = _gpu_monitoring_window(main_window, monkeypatch)
+    store[main_window._GPU_MONITORING_CHOICE_KEY] = "yes"
+
+    main_window._on_gpu_monitoring_installed("nvidia", RuntimeError("pip exited with code 1"))
+
+    log = main_window._log.toPlainText()
+    assert "could not be installed" in log
+    assert "Downloads" in log
+    assert refreshed == []
+    assert store[main_window._GPU_MONITORING_FAILED_KEY] == main_window_module.__version__
+
+    main_window._on_gpu_monitoring_needed("nvidia", None)
+
+    assert installs == []
+    assert asked == []
+
+
+@pytest.mark.gui
+def test_gpu_monitoring_retries_after_an_app_update(main_window, monkeypatch) -> None:
+    """
+    Given  the download failed in an older app version
+    When   the main window learns that the package is missing
+    Then   the download is tried again
+    """
+    store, installs, _asked, _refreshed, _answer = _gpu_monitoring_window(main_window, monkeypatch)
+    store[main_window._GPU_MONITORING_CHOICE_KEY] = "yes"
+    store[main_window._GPU_MONITORING_FAILED_KEY] = "0.0.0-older"
+
+    main_window._on_gpu_monitoring_needed("nvidia", None)
+
+    assert installs == ["nvidia"]
+
+
+@pytest.mark.gui
+def test_gpu_monitoring_nothing_to_do_is_silent(main_window, monkeypatch) -> None:
+    """
+    Given  nothing needs installing (no GPU, package present, or source checkout)
+    When   the main window receives the None result, or an error from the probe
+    Then   the user is not asked and nothing is logged
+    """
+    _store, installs, asked, refreshed, _answer = _gpu_monitoring_window(main_window, monkeypatch)
+    before = main_window._log.toPlainText()
+
+    main_window._on_gpu_monitoring_needed(None, None)
+    main_window._on_gpu_monitoring_needed(None, RuntimeError("probe failed"))
+
+    assert (installs, asked, refreshed) == ([], [], [])
+    assert main_window._log.toPlainText() == before
+
+
+@pytest.mark.gui
+def test_gpu_monitoring_installed_but_unreadable_is_reported_honestly(
+    main_window, monkeypatch
+) -> None:
+    """
+    Given  the package installed but the driver gives it no readings (refresh finds no rows)
+    When   the main window receives the result
+    Then   the log says so instead of claiming System Stats shows the GPU
+    """
+    monkeypatch.setattr(main_window._stats, "refresh_gpu_monitoring", lambda: False)
+
+    main_window._on_gpu_monitoring_installed("nvidia", None)
+
+    log = main_window._log.toPlainText()
+    assert "no readings" in log
+    assert "Installed GPU monitoring" not in log

@@ -1607,3 +1607,104 @@ def test_unreachable_server_is_asked_again_on_the_next_check(tmp_path: Path) -> 
         assert svc.check_run_preflight(cfg).ollama_unreachable
     with _server_answers(["qwen3-vl:8b", "qwen3.5:9b"]):
         assert svc.check_run_preflight(cfg).ok is True
+
+
+# ── GPU monitoring add-on ─────────────────────────────────────────────────────
+
+_AM = "teachers_teammate.infrastructure.addon_manager"
+
+
+@pytest.mark.unit
+def test_pending_gpu_monitoring_addon_names_the_missing_package() -> None:
+    """
+    Given  a frozen build, an NVIDIA GPU and no pynvml
+    When   pending_gpu_monitoring_addon is called
+    Then   the NVIDIA add-on is returned and nothing is installed
+    """
+    from teachers_teammate.infrastructure.gpu_detector import GpuInfo  # noqa: PLC0415
+
+    svc = _make_svc()
+    with (
+        patch(f"{_AM}.can_install_addons", return_value=True),
+        patch.object(svc, "detect_gpus", return_value=[GpuInfo("nvidia", "RTX", 8188)]),
+        patch(f"{_AM}.is_addon_importable", return_value=False),
+        patch(f"{_AM}.install_addon_subprocess") as install,
+    ):
+        assert svc.pending_gpu_monitoring_addon() == "nvidia"
+    install.assert_not_called()
+
+
+@pytest.mark.unit
+def test_pending_gpu_monitoring_addon_is_none_outside_frozen_builds() -> None:
+    """
+    Given  a source checkout (add-ons cannot be installed)
+    When   pending_gpu_monitoring_addon is called
+    Then   None is returned and the hardware is not even probed
+    """
+    svc = _make_svc()
+    with (
+        patch(f"{_AM}.can_install_addons", return_value=False),
+        patch.object(svc, "detect_gpus", side_effect=AssertionError("no probe expected")),
+    ):
+        assert svc.pending_gpu_monitoring_addon() is None
+
+
+@pytest.mark.unit
+def test_pending_gpu_monitoring_addon_is_none_when_present_or_no_gpu() -> None:
+    """
+    Given  a frozen build where the package already imports, or no GPU is found
+    When   pending_gpu_monitoring_addon is called
+    Then   None is returned
+    """
+    from teachers_teammate.infrastructure.gpu_detector import GpuInfo  # noqa: PLC0415
+
+    svc = _make_svc()
+    with patch(f"{_AM}.can_install_addons", return_value=True):
+        with (
+            patch.object(svc, "detect_gpus", return_value=[GpuInfo("nvidia", "RTX", 8188)]),
+            patch(f"{_AM}.is_addon_importable", return_value=True),
+        ):
+            assert svc.pending_gpu_monitoring_addon() is None
+        with patch.object(svc, "detect_gpus", return_value=[]):
+            assert svc.pending_gpu_monitoring_addon() is None
+
+
+@pytest.mark.unit
+def test_install_gpu_monitoring_installs_with_timeout_and_refreshes_imports(
+    tmp_path: Path,
+) -> None:
+    """
+    Given  the NVIDIA add-on is to be installed unattended
+    When   install_gpu_monitoring is called
+    Then   pip runs with the background network timeout and the import caches are refreshed
+    """
+    svc = _make_svc()
+    with (
+        patch(f"{_AM}.get_packages_dir", return_value=tmp_path),
+        patch(f"{_AM}.install_addon_subprocess") as install,
+        patch(f"{_AM}.inject_packages_dir") as inject,
+        patch(f"{_AM}.clear_stale_modules") as clear,
+    ):
+        svc.install_gpu_monitoring("nvidia")
+
+    assert install.call_args.args[:2] == ("nvidia", tmp_path)
+    assert install.call_args.kwargs["network_timeout"] > 0
+    inject.assert_called_once()
+    clear.assert_called_once_with("nvidia")
+
+
+@pytest.mark.unit
+def test_install_gpu_monitoring_propagates_pip_failure() -> None:
+    """
+    Given  pip fails (for example offline)
+    When   install_gpu_monitoring is called
+    Then   the RuntimeError reaches the caller, which reports it
+    """
+    svc = _make_svc()
+    with (
+        patch(f"{_AM}.install_addon_subprocess", side_effect=RuntimeError("pip exited")),
+        patch(f"{_AM}.inject_packages_dir") as inject,
+        pytest.raises(RuntimeError, match="pip exited"),
+    ):
+        svc.install_gpu_monitoring("nvidia")
+    inject.assert_not_called()

@@ -865,6 +865,56 @@ class ProcessingApplicationService:
 
         install_packages_subprocess(packages, get_packages_dir(), progress_cb)
 
+    def pending_gpu_monitoring_addon(self) -> str | None:
+        """Return the live-GPU-monitoring add-on this computer needs but lacks, or None.
+
+        ``None`` unless the app can install add-ons (frozen build), a supported GPU is
+        present and its package is missing.  Installs nothing.  Slow (hardware probe):
+        call from a background thread.
+
+        Returns:
+            ``"nvidia"`` or ``"amd"``, or ``None``.
+        """
+        from ..infrastructure.addon_manager import (  # noqa: PLC0415
+            can_install_addons,
+            gpu_monitoring_addon,
+            is_addon_importable,
+        )
+
+        if not can_install_addons():
+            return None
+        addon = gpu_monitoring_addon(gpu.vendor for gpu in self.detect_gpus())
+        if addon is None or is_addon_importable(addon):
+            return None
+        return addon
+
+    def install_gpu_monitoring(self, addon: str) -> None:
+        """Install the GPU-monitoring *addon* unattended and make it importable.
+
+        Uses a short network timeout so a network that drops traffic fails instead of
+        hanging.  Slow: call from a background thread.
+
+        Raises:
+            OSError: if the packages directory cannot be written.
+            RuntimeError: if pip fails (offline, blocked, …).
+        """
+        from ..infrastructure.addon_manager import (  # noqa: PLC0415
+            BACKGROUND_PIP_TIMEOUT_S,
+            clear_stale_modules,
+            get_packages_dir,
+            inject_packages_dir,
+            install_addon_subprocess,
+        )
+
+        install_addon_subprocess(
+            addon,
+            get_packages_dir(),
+            lambda _line: None,
+            network_timeout=BACKGROUND_PIP_TIMEOUT_S,
+        )
+        inject_packages_dir()
+        clear_stale_modules(addon)
+
     def download_spacy_model(
         self,
         model: str,

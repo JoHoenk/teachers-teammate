@@ -820,6 +820,56 @@ def test_stats_widget_refreshes_amd_metrics(qtbot, monkeypatch) -> None:
     assert w._vram_bar.value() == 50
 
 
+@pytest.mark.gui
+@pytest.mark.use_case("System_Resource_Monitoring")
+def test_stats_widget_shows_gpu_rows_after_package_is_installed(qtbot, monkeypatch) -> None:
+    """
+    Given  a SystemStatsWidget without GPU monitoring (button shown)
+    When   the package becomes usable and refresh_gpu_monitoring is called
+    Then   the GPU and VRAM rows replace the button without a restart (True is returned)
+    """
+    from teachers_teammate.gui import _stats_widget as sw  # noqa: PLC0415
+
+    monkeypatch.setattr(sw, "_NVML_AVAILABLE", False)
+    monkeypatch.setattr(sw, "_AMDGPU_AVAILABLE", False)
+    w = sw.SystemStatsWidget()
+    qtbot.addWidget(w)
+    assert w._gpu_bar is None
+    assert w._gpu_button is not None
+
+    def fake_probe() -> None:
+        monkeypatch.setattr(sw, "_NVML_AVAILABLE", True)
+        monkeypatch.setattr(sw, "_nvml", MagicMock())
+
+    monkeypatch.setattr(sw, "_probe_gpu_monitoring", fake_probe)
+    assert w.refresh_gpu_monitoring() is True
+
+    assert w._gpu_bar is not None
+    assert w._vram_bar is not None
+    assert w._gpu_button is None
+
+
+@pytest.mark.gui
+def test_stats_widget_keeps_button_when_package_still_unusable(qtbot, monkeypatch) -> None:
+    """
+    Given  a SystemStatsWidget without GPU monitoring
+    When   refresh_gpu_monitoring finds nothing usable
+    Then   False is returned, the button stays and no GPU rows are added
+    """
+    from teachers_teammate.gui import _stats_widget as sw  # noqa: PLC0415
+
+    monkeypatch.setattr(sw, "_NVML_AVAILABLE", False)
+    monkeypatch.setattr(sw, "_AMDGPU_AVAILABLE", False)
+    monkeypatch.setattr(sw, "_probe_gpu_monitoring", lambda: None)
+    w = sw.SystemStatsWidget()
+    qtbot.addWidget(w)
+
+    assert w.refresh_gpu_monitoring() is False
+
+    assert w._gpu_bar is None
+    assert w._gpu_button is not None
+
+
 # ── HelpDialog ────────────────────────────────────────────────────────────
 
 

@@ -67,6 +67,7 @@ _OCR_SRCS = [
     "infrastructure/stage_builder.py",
     "infrastructure/state_repository.py",
     "infrastructure/storage_root.py",
+    "infrastructure/subprocess_utils.py",
     "infrastructure/workflow/__init__.py",
     "infrastructure/workflow/cache_service.py",
     "infrastructure/workflow/coordinator.py",

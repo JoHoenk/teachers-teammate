@@ -553,6 +553,25 @@ In development (non-frozen) builds, both code paths fall back to the standard
 `[sys.executable, "-m", "pip", "install", "--upgrade", ...]` without `--target`, so packages
 land in the active venv as usual.
 
+All pip installs run one at a time (`_PIP_LOCK` in `addon_manager.py`), so the automatic
+install below and the Downloads dialog never write to the packages directory together.
+
+### GPU monitoring package (automatic, with consent)
+
+The System Stats panel needs `pynvml` (NVIDIA) or `pyamdgpuinfo` (AMD, Linux only).  In a
+frozen build the main window asks the service (`pending_gpu_monitoring_addon`, background
+thread) whether this computer has a GPU whose package is missing.  If so, it asks the user
+**once** before downloading it (answer kept in QSettings under `gpu_monitoring/download`),
+then installs it with a short network timeout (`install_gpu_monitoring`) and refreshes the
+panel without a restart.  A failed install is remembered per app version
+(`gpu_monitoring/failed_in_version`) and is not retried automatically; the Downloads dialog
+remains the manual path.  Source checkouts are never touched (`can_install_addons`).
+
+GPU *detection* (`infrastructure/gpu_detector.py`) does not need that package: it reads the
+Windows display-adapter registry keys or Linux sysfs first and runs `nvidia-smi` /
+`rocm-smi` / `amd-smi` only to complete a name or memory size.  AMD integrated graphics
+(under 1 GB of dedicated memory) is never reported.
+
 ### spaCy library
 
 spaCy is an optional dependency (the privacy/anonymization feature).  It is installed from

@@ -37,7 +37,10 @@ from PySide6.QtWidgets import (
 )
 import qdarkstyle
 
+from .. import __version__
 from ..application.service import (
+    ADDON_AMD,
+    ADDON_NVIDIA,
     ADDON_PADDLE,
     ADDON_PRIVACY,
     ProcessingApplicationService,
@@ -281,6 +284,7 @@ class MainWindow(QMainWindow):
 
         self._load_credentials_from_settings()
         self._load_toml_if_present()
+        self._install_gpu_monitoring_in_background()
 
     def _init_runtime_state(self) -> None:
         """Initialise per-window runtime state and declare widgets built later."""
@@ -651,6 +655,75 @@ class MainWindow(QMainWindow):
         )
         self._log.append_text(f"NOTICE: {message}\n")
         QMessageBox.information(self, "Text recognition changed", message)
+
+    #: QSettings: "yes"/"no" once the user answered the GPU-monitoring download question.
+    _GPU_MONITORING_CHOICE_KEY = "gpu_monitoring/download"
+    #: QSettings: app version in which the automatic download last failed.
+    _GPU_MONITORING_FAILED_KEY = "gpu_monitoring/failed_in_version"
+
+    def _install_gpu_monitoring_in_background(self) -> None:
+        """Offer the live GPU monitoring package for this computer's GPU, if missing.
+
+        Looks for the need in the background; does nothing in source checkouts,
+        without a supported GPU, or when the package is already installed.
+        """
+        run_in_background(
+            self._app_service.pending_gpu_monitoring_addon,
+            self._on_gpu_monitoring_needed,
+            owner=self,
+        )
+
+    def _on_gpu_monitoring_needed(self, addon: object, error: BaseException | None) -> None:
+        """Ask once before downloading the monitoring package, then install it."""
+        if error is not None or not isinstance(addon, str):
+            return
+        qs = QSettings(self._QSETTINGS_ORG, self._QSETTINGS_APP)
+        choice = str(qs.value(self._GPU_MONITORING_CHOICE_KEY, "") or "")
+        if choice == "no":
+            return
+        if str(qs.value(self._GPU_MONITORING_FAILED_KEY, "") or "") == __version__:
+            return  # it failed before; Downloads installs it on request
+        if choice != "yes":
+            answer = QMessageBox.question(
+                self,
+                "Show GPU usage?",
+                "Teacher's Teammate can show how busy your graphics card is in the "
+                "System Stats panel.\n\n"
+                "This downloads one small package from the Python Package Index "
+                "(PyPI); no documents or personal data are sent.\n\n"
+                "Download it now? You can also do this later under Downloads.",
+            )
+            choice = "yes" if answer == QMessageBox.StandardButton.Yes else "no"
+            qs.setValue(self._GPU_MONITORING_CHOICE_KEY, choice)
+            if choice == "no":
+                return
+        self._log.append_text("Downloading the GPU monitoring package for System Stats…\n")
+        service = self._app_service
+        run_in_background(
+            lambda: service.install_gpu_monitoring(addon),
+            lambda _result, err: self._on_gpu_monitoring_installed(addon, err),
+            owner=self,
+        )
+
+    def _on_gpu_monitoring_installed(self, addon: object, error: BaseException | None) -> None:
+        if error is not None:
+            QSettings(self._QSETTINGS_ORG, self._QSETTINGS_APP).setValue(
+                self._GPU_MONITORING_FAILED_KEY, __version__
+            )
+            self._log.append_text(
+                f"NOTICE: GPU monitoring could not be installed: {error}\n"
+                "It can be installed later under Downloads.\n"
+            )
+            return
+        if addon is None:
+            return
+        if self._stats.refresh_gpu_monitoring():
+            self._log.append_text("Installed GPU monitoring for the System Stats panel.\n")
+        else:
+            self._log.append_text(
+                "NOTICE: GPU monitoring was installed, but the driver gives no readings "
+                "for this graphics card.\n"
+            )
 
     def _apply_first_start_model_settings(self) -> None:
         """Start first-start hardware detection in the background (AC12/AC13)."""
@@ -1854,6 +1927,7 @@ class MainWindow(QMainWindow):
             app_service=self._app_service,
         )
         dialog.packages_changed.connect(self._check_llm_status)
+        dialog.packages_changed.connect(self._stats.refresh_gpu_monitoring)
         dialog.hardware_profile_changed.connect(self._on_hardware_profile_changed)
         dialog.exec()
 
@@ -1874,6 +1948,8 @@ class MainWindow(QMainWindow):
                 "PaddleOCR has been installed.\n\n"
                 "Go to Settings → Text Recognition and select 'paddleocr' as the recognition method.",
             )
+        elif addon in (ADDON_NVIDIA, ADDON_AMD):
+            self._stats.refresh_gpu_monitoring()
         self._check_llm_status()
 
     def _open_anonymizer_settings_from_menu(self) -> None:

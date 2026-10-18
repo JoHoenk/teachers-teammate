@@ -10,12 +10,16 @@ import pytest
 
 from teachers_teammate.infrastructure import addon_manager
 from teachers_teammate.infrastructure.addon_manager import (
+    ADDON_AMD,
+    ADDON_NVIDIA,
     ADDON_PADDLE,
     ADDON_PRIVACY,
     _packages_dir_readable,
+    can_install_addons,
     clear_stale_modules,
     download_spacy_model_subprocess,
     get_packages_dir,
+    gpu_monitoring_addon,
     inject_packages_dir,
     install_addon_subprocess,
     is_addon_importable,
@@ -523,3 +527,182 @@ def test_inject_packages_dir_skips_when_unreadable(tmp_path: Path, monkeypatch) 
         assert pkg_str not in sys.path
     finally:
         sys.path[:] = original
+
+
+# ── gpu_monitoring_addon / can_install_addons ─────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    ("vendors", "platform_name", "expected"),
+    [
+        (["nvidia"], "win32", ADDON_NVIDIA),
+        (["nvidia"], "linux", ADDON_NVIDIA),
+        (["amd"], "linux", ADDON_AMD),
+        (["amd"], "win32", None),
+        (["amd"], "darwin", None),
+        (["amd", "nvidia"], "linux", ADDON_NVIDIA),
+        ([], "linux", None),
+    ],
+)
+def test_gpu_monitoring_addon_follows_vendor_and_platform(vendors, platform_name, expected) -> None:
+    """
+    Given  detected GPU vendors on a platform
+    When   gpu_monitoring_addon is called
+    Then   NVIDIA wins, AMD only counts on Linux, and no GPU means no add-on
+    """
+    assert gpu_monitoring_addon(vendors, platform_name) == expected
+
+
+def test_can_install_addons_false_in_source_checkout(monkeypatch) -> None:
+    """
+    Given  a normal (not frozen) Python process
+    When   can_install_addons is called
+    Then   False is returned so a dev environment is never modified automatically
+    """
+    monkeypatch.delattr(sys, "frozen", raising=False)
+    assert can_install_addons() is False
+
+
+def test_can_install_addons_true_for_frozen_build_with_pip(monkeypatch) -> None:
+    """
+    Given  a frozen build in which pip can be imported
+    When   can_install_addons is called
+    Then   True is returned
+    """
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    with patch("importlib.util.find_spec", return_value=object()):
+        assert can_install_addons() is True
+
+
+def test_can_install_addons_false_for_frozen_build_without_pip(monkeypatch) -> None:
+    """
+    Given  a frozen build without a bundled pip
+    When   can_install_addons is called
+    Then   False is returned
+    """
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    with patch("importlib.util.find_spec", return_value=None):
+        assert can_install_addons() is False
+
+
+# ── unattended installs: network timeout and serialisation ───────────────────
+
+
+def test_install_addon_subprocess_passes_network_timeout_to_pip(tmp_path: Path) -> None:
+    """
+    Given  an unattended install with a network timeout
+    When   install_addon_subprocess() is called in a frozen build
+    Then   pip gets --timeout and --retries 1 before the package names
+    """
+    captured: list[list[str]] = []
+
+    def fake_popen(cmd: list[str], **_kwargs: object) -> object:
+        captured.append(cmd)
+        return _FakeProc()
+
+    with (
+        patch.object(sys, "frozen", True, create=True),
+        patch("subprocess.Popen", side_effect=fake_popen),
+    ):
+        install_addon_subprocess(ADDON_NVIDIA, tmp_path / "pkg", lambda _: None, network_timeout=15)
+
+    cmd = captured[0]
+    assert cmd[cmd.index("--timeout") + 1] == "15"
+    assert cmd[cmd.index("--retries") + 1] == "1"
+    assert cmd.index("--timeout") < cmd.index("nvidia-ml-py")
+
+
+def test_install_addon_subprocess_keeps_pip_defaults_without_timeout(tmp_path: Path) -> None:
+    """
+    Given  an install started by the user (no network timeout)
+    When   install_addon_subprocess() is called
+    Then   no --timeout argument is passed
+    """
+    captured: list[list[str]] = []
+
+    def fake_popen(cmd: list[str], **_kwargs: object) -> object:
+        captured.append(cmd)
+        return _FakeProc()
+
+    with patch("subprocess.Popen", side_effect=fake_popen):
+        install_addon_subprocess(ADDON_NVIDIA, tmp_path / "pkg", lambda _: None)
+
+    assert "--timeout" not in captured[0]
+
+
+def test_pip_installs_run_one_at_a_time(tmp_path: Path) -> None:
+    """
+    Given  two installs started from different threads (automatic one and Downloads)
+    When   both run
+    Then   the second pip process starts only after the first one has finished
+    """
+    import threading  # noqa: PLC0415
+
+    events: list[str] = []
+    first_started = threading.Event()
+    release_first = threading.Event()
+
+    class _SlowProc(_FakeProc):
+        def __init__(self, label: str) -> None:
+            super().__init__()
+            self.label = label
+
+        def __enter__(self) -> object:
+            events.append(f"start {self.label}")
+            if self.label == "a":
+                first_started.set()
+                release_first.wait(timeout=5)
+            return self
+
+        def __exit__(self, *_: object) -> None:
+            events.append(f"end {self.label}")
+
+    labels = iter(["a", "b"])
+
+    def fake_popen(_cmd: list[str], **_kwargs: object) -> object:
+        return _SlowProc(next(labels))
+
+    def run() -> None:
+        install_addon_subprocess(ADDON_NVIDIA, tmp_path / "pkg", lambda _: None)
+
+    with patch("subprocess.Popen", side_effect=fake_popen):
+        t1 = threading.Thread(target=run)
+        t1.start()
+        assert first_started.wait(timeout=5)
+        t2 = threading.Thread(target=run)
+        t2.start()
+        t2.join(timeout=0.3)
+        assert t2.is_alive()  # waits for the lock while "a" still runs
+        release_first.set()
+        t1.join(timeout=5)
+        t2.join(timeout=5)
+
+    assert events == ["start a", "end a", "start b", "end b"]
+
+
+def test_no_console_window_kwargs_on_windows(monkeypatch) -> None:
+    """
+    Given  the platform is Windows
+    When   no_console_window_kwargs is called
+    Then   CREATE_NO_WINDOW is returned as creationflags
+    """
+    from teachers_teammate.infrastructure.subprocess_utils import (  # noqa: PLC0415
+        no_console_window_kwargs,
+    )
+
+    monkeypatch.setattr(sys, "platform", "win32")
+    assert no_console_window_kwargs() == {"creationflags": 0x08000000}
+
+
+def test_no_console_window_kwargs_elsewhere(monkeypatch) -> None:
+    """
+    Given  the platform is Linux
+    When   no_console_window_kwargs is called
+    Then   nothing is returned, because creationflags exists only on Windows
+    """
+    from teachers_teammate.infrastructure.subprocess_utils import (  # noqa: PLC0415
+        no_console_window_kwargs,
+    )
+
+    monkeypatch.setattr(sys, "platform", "linux")
+    assert no_console_window_kwargs() == {}

@@ -3,6 +3,7 @@
 Manages optional feature groups that are not bundled in the base installer:
   - privacy  (spacy)
   - paddle   (paddlepaddle + paddleocr)
+  - nvidia / amd  (live GPU monitoring; installed automatically when a GPU is found)
 
 The frozen binary re-invokes itself with ``--_pip_install_mode`` to run pip
 inside the same Python interpreter that was bundled by PyInstaller, then
@@ -12,19 +13,30 @@ to ``sys.path`` at every startup.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 import importlib
 import importlib.util
 import os
 from pathlib import Path
 import subprocess
 import sys
+import threading
+
+from .subprocess_utils import no_console_window_kwargs
 
 ADDON_PRIVACY = "privacy"
 ADDON_PADDLE = "paddle"
 ADDON_NVIDIA = "nvidia"
 ADDON_AMD = "amd"
 ADDON_TESSERACT = "tesseract_py"
+
+#: pip runs one at a time: two installs into the same ``--target`` directory (the
+#: automatic GPU-monitoring install and the Downloads dialog) would corrupt each other.
+_PIP_LOCK = threading.Lock()
+
+#: Per-connection network timeout (seconds) for installs nobody is watching, so a
+#: network that silently drops traffic cannot hold a background thread for minutes.
+BACKGROUND_PIP_TIMEOUT_S = 15
 
 # LangChain provider addons — one constant per installable package.
 ADDON_LLM_CORE = "llm_core"
@@ -153,6 +165,37 @@ def is_addon_importable(addon: str) -> bool:
     return bool(module) and importlib.util.find_spec(module) is not None
 
 
+def can_install_addons() -> bool:
+    """Return True when add-ons can be pip-installed without touching a dev environment.
+
+    Only frozen builds qualify: they carry their own pip and install into the
+    private packages directory.  A source checkout would modify the active
+    virtual environment, so nothing is ever installed there automatically.
+    """
+    if not getattr(sys, "frozen", False):
+        return False
+    return importlib.util.find_spec("pip") is not None
+
+
+def gpu_monitoring_addon(vendors: Iterable[str], platform_name: str | None = None) -> str | None:
+    """Return the add-on that gives live GPU/VRAM readings for *vendors*, or None.
+
+    NVIDIA wins when both vendors are present (same order as the GPU dialog).
+    ``pyamdgpuinfo`` reads the Linux ``amdgpu`` sysfs interface, so an AMD GPU on
+    another platform has no add-on.
+
+    Args:
+        vendors: ``GpuInfo.vendor`` values of the detected GPUs.
+        platform_name: ``sys.platform`` value; defaults to the running platform.
+    """
+    found = set(vendors)
+    if "nvidia" in found:
+        return ADDON_NVIDIA
+    if "amd" in found and (platform_name or sys.platform).startswith("linux"):
+        return ADDON_AMD
+    return None
+
+
 def clear_stale_modules(addon: str) -> None:
     """Evict cached sys.modules entries left over from a failed import attempt.
 
@@ -179,19 +222,29 @@ def install_packages_subprocess(
     packages: list[str],
     target: Path,
     progress_cb: Callable[[str], None],
+    *,
+    network_timeout: int | None = None,
 ) -> None:
     """Install *packages* into *target* using the bundled pip (frozen) or system pip (source).
 
     In frozen builds the executable re-invokes itself with ``--_pip_install_mode``
     so that pip runs inside the same Python interpreter that PyInstaller bundled.
     In non-frozen builds a regular ``python -m pip install --upgrade`` is used.
-    Output lines are streamed to *progress_cb* in real time.
+    Output lines are streamed to *progress_cb* in real time.  Installs are
+    serialised process-wide.
+
+    Args:
+        network_timeout: Per-connection timeout in seconds (with a single retry)
+            for installs that run unattended; ``None`` keeps pip's defaults.
 
     Raises:
         OSError: if *target* cannot be created (permissions, disk full).
         RuntimeError: if pip exits with a non-zero return code.
     """
     target.mkdir(parents=True, exist_ok=True)
+    network = (
+        ["--timeout", str(network_timeout), "--retries", "1"] if network_timeout is not None else []
+    )
 
     if getattr(sys, "frozen", False):
         cmd = [
@@ -201,22 +254,21 @@ def install_packages_subprocess(
             "--target",
             str(target),
             "--prefer-binary",
+            *network,
             *packages,
         ]
     else:
-        cmd = [sys.executable, "-m", "pip", "install", "--upgrade", *packages]
+        cmd = [sys.executable, "-m", "pip", "install", "--upgrade", *network, *packages]
 
     kwargs: dict = {
         "stdout": subprocess.PIPE,
         "stderr": subprocess.STDOUT,
         "text": True,
         "bufsize": 1,
+        **no_console_window_kwargs(),
     }
-    # Prevent a console window from flashing on Windows windowed builds.
-    if sys.platform == "win32":
-        kwargs["creationflags"] = 0x08000000  # CREATE_NO_WINDOW
 
-    with subprocess.Popen(cmd, **kwargs) as proc:
+    with _PIP_LOCK, subprocess.Popen(cmd, **kwargs) as proc:
         assert proc.stdout is not None
         for line in proc.stdout:
             progress_cb(line)
@@ -232,6 +284,8 @@ def install_addon_subprocess(
     addon: str,
     target: Path,
     progress_cb: Callable[[str], None],
+    *,
+    network_timeout: int | None = None,
 ) -> None:
     """Install *addon* packages into *target* using the bundled pip.
 
@@ -240,7 +294,9 @@ def install_addon_subprocess(
         OSError: if *target* cannot be created (permissions, disk full).
         RuntimeError: if pip exits with a non-zero return code.
     """
-    install_packages_subprocess(_ADDON_PACKAGES[addon], target, progress_cb)
+    install_packages_subprocess(
+        _ADDON_PACKAGES[addon], target, progress_cb, network_timeout=network_timeout
+    )
 
 
 def download_spacy_model_subprocess(
@@ -310,11 +366,10 @@ def download_spacy_model_subprocess(
         "stderr": subprocess.STDOUT,
         "text": True,
         "bufsize": 1,
+        **no_console_window_kwargs(),
     }
-    if sys.platform == "win32":
-        kwargs["creationflags"] = 0x08000000  # CREATE_NO_WINDOW
 
-    with subprocess.Popen(cmd, **kwargs) as proc:
+    with _PIP_LOCK, subprocess.Popen(cmd, **kwargs) as proc:
         assert proc.stdout is not None
         for line in proc.stdout:
             progress_cb(line)

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import importlib
+
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtWidgets import (
     QGroupBox,
@@ -21,25 +23,41 @@ except ImportError:
     _PSUTIL_AVAILABLE = False
 
 _nvml = None
-try:
-    import pynvml as _nvml
-
-    _nvml.nvmlInit()
-    _NVML_AVAILABLE = True
-except Exception:  # noqa: BLE001  # nvmlInit() raises if no NVIDIA driver is present; treat as unavailable
-    _NVML_AVAILABLE = False
-
+_NVML_AVAILABLE = False
 _AMD_GPU = None
 _AMDGPU_AVAILABLE = False
-try:
-    import pyamdgpuinfo
 
-    _gpus = pyamdgpuinfo.detect_gpus()
-    if _gpus:
-        _AMD_GPU = _gpus[0]
-        _AMDGPU_AVAILABLE = True
-except Exception:  # noqa: BLE001  # pyamdgpuinfo raises if no AMD GPU is present; treat as unavailable
-    pass
+
+def _probe_gpu_monitoring() -> None:
+    """(Re)load ``pynvml`` / ``pyamdgpuinfo`` and record which one can read a GPU.
+
+    Runs at import and again after the package was installed while the app is
+    running, so the GPU rows appear without a restart.
+    """
+    global _nvml, _NVML_AVAILABLE, _AMD_GPU, _AMDGPU_AVAILABLE  # noqa: PLW0603  # pylint: disable=global-statement  # module-level handles, replaced on re-probe
+    importlib.invalidate_caches()  # a package installed after start-up must be found
+
+    try:
+        import pynvml  # noqa: PLC0415
+
+        pynvml.nvmlInit()
+        _nvml = pynvml
+        _NVML_AVAILABLE = True
+    except Exception:  # noqa: BLE001  # nvmlInit() raises if no NVIDIA driver is present; treat as unavailable
+        _NVML_AVAILABLE = False
+
+    try:
+        import pyamdgpuinfo  # noqa: PLC0415
+
+        gpus = pyamdgpuinfo.detect_gpus()
+        _AMD_GPU = gpus[0] if gpus else None
+        _AMDGPU_AVAILABLE = bool(gpus)
+    except Exception:  # noqa: BLE001  # pyamdgpuinfo raises if no AMD GPU is present; treat as unavailable
+        _AMD_GPU = None
+        _AMDGPU_AVAILABLE = False
+
+
+_probe_gpu_monitoring()
 
 
 class SystemStatsWidget(QGroupBox):
@@ -54,59 +72,87 @@ class SystemStatsWidget(QGroupBox):
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__("System Stats", parent)
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(6, 8, 6, 6)
-        layout.setSpacing(3)
-
-        if not _PSUTIL_AVAILABLE:
-            layout.addWidget(QLabel("Install psutil for live system stats."))
-            self._enabled = False
-            return
-
-        self._enabled = True
-
-        def _make_row(name: str) -> tuple[QProgressBar, QLabel]:
-            row = QWidget()
-            h = QHBoxLayout(row)
-            h.setContentsMargins(0, 0, 0, 0)
-            h.setSpacing(4)
-            lbl = QLabel(name)
-            lbl.setFixedWidth(40)
-            progress_bar = QProgressBar()
-            progress_bar.setRange(0, 100)
-            progress_bar.setTextVisible(False)
-            progress_bar.setFixedHeight(10)
-            val = QLabel("\u2013")
-            val.setFixedWidth(100)
-            val.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-            fnt = val.font()
-            fnt.setPointSize(8)
-            val.setFont(fnt)
-            h.addWidget(lbl)
-            h.addWidget(progress_bar, stretch=1)
-            h.addWidget(val)
-            layout.addWidget(row)
-            return progress_bar, val
-
-        self._cpu_bar, self._cpu_val = _make_row("CPU")
-        self._ram_bar, self._ram_val = _make_row("RAM")
+        self._layout = QVBoxLayout(self)
+        self._layout.setContentsMargins(6, 8, 6, 6)
+        self._layout.setSpacing(3)
         self._gpu_bar: QProgressBar | None = None
         self._gpu_val: QLabel | None = None
         self._vram_bar: QProgressBar | None = None
         self._vram_val: QLabel | None = None
-        if _NVML_AVAILABLE or _AMDGPU_AVAILABLE:
-            self._gpu_bar, self._gpu_val = _make_row("GPU")
-            self._vram_bar, self._vram_val = _make_row("VRAM")
-        else:
-            _gpu_btn = QPushButton("GPU monitoring unavailable — Open Downloads…")
-            _gpu_btn.clicked.connect(self.open_downloads_requested)
-            layout.addWidget(_gpu_btn)
+        self._gpu_button: QPushButton | None = None
+
+        if not _PSUTIL_AVAILABLE:
+            self._layout.addWidget(QLabel("Install psutil for live system stats."))
+            self._enabled = False
+            return
+
+        self._enabled = True
+        self._cpu_bar, self._cpu_val = self._make_row("CPU")
+        self._ram_bar, self._ram_val = self._make_row("RAM")
+        self._show_gpu_rows_or_button()
 
         self._timer = QTimer(self)
         self._timer.setInterval(1000)
         self._timer.timeout.connect(self._refresh)
         self._timer.start()
         self._refresh()
+
+    def _make_row(self, name: str) -> tuple[QProgressBar, QLabel]:
+        row = QWidget()
+        h = QHBoxLayout(row)
+        h.setContentsMargins(0, 0, 0, 0)
+        h.setSpacing(4)
+        lbl = QLabel(name)
+        lbl.setFixedWidth(40)
+        progress_bar = QProgressBar()
+        progress_bar.setRange(0, 100)
+        progress_bar.setTextVisible(False)
+        progress_bar.setFixedHeight(10)
+        val = QLabel("\u2013")
+        val.setFixedWidth(100)
+        val.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        fnt = val.font()
+        fnt.setPointSize(8)
+        val.setFont(fnt)
+        h.addWidget(lbl)
+        h.addWidget(progress_bar, stretch=1)
+        h.addWidget(val)
+        self._layout.addWidget(row)
+        return progress_bar, val
+
+    def _show_gpu_rows_or_button(self) -> None:
+        """Show the GPU/VRAM rows when a monitoring package works, else the Downloads button."""
+        if _NVML_AVAILABLE or _AMDGPU_AVAILABLE:
+            self._gpu_bar, self._gpu_val = self._make_row("GPU")
+            self._vram_bar, self._vram_val = self._make_row("VRAM")
+        else:
+            self._gpu_button = QPushButton("GPU monitoring unavailable — Open Downloads…")
+            self._gpu_button.clicked.connect(self.open_downloads_requested)
+            self._layout.addWidget(self._gpu_button)
+
+    def refresh_gpu_monitoring(self) -> bool:
+        """Look for a newly installed GPU monitoring package and show the GPU rows.
+
+        Call after ``pynvml`` / ``pyamdgpuinfo`` was installed; no restart is needed.
+        Does nothing when the rows are already shown or the package still does not work.
+
+        Returns:
+            True when the GPU rows are shown afterwards.
+        """
+        if not self._enabled:
+            return False
+        if self._gpu_bar is not None:
+            return True
+        _probe_gpu_monitoring()
+        if not (_NVML_AVAILABLE or _AMDGPU_AVAILABLE):
+            return False
+        if self._gpu_button is not None:
+            self._layout.removeWidget(self._gpu_button)
+            self._gpu_button.deleteLater()
+            self._gpu_button = None
+        self._show_gpu_rows_or_button()
+        self._refresh()
+        return True
 
     def _refresh(self) -> None:
         if not self._enabled:

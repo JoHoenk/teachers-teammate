@@ -76,7 +76,7 @@ All commands are run from the **repository root**.
 source .venv/bin/activate
 
 # Install the package with provider extras
-pip install -e ".[providers]"
+pip install -e ".[llm]"
 pip install "pyinstaller>=6.0"
 ```
 
@@ -118,8 +118,8 @@ Outputs:
 | `third_party_licenses/manual_review.md` | Packages where no license file was found in the wheel |
 | `teachers_teammate/assets/third_party_licenses.md` | Single bundled file shown in **Help → Third-Party Licenses** |
 
-The `third_party_licenses/` directory is not committed (listed in `.gitignore`).
-Only `teachers_teammate/assets/third_party_licenses.md` should be committed.
+Both `third_party_licenses/` and `teachers_teammate/assets/third_party_licenses.md` are
+committed; only the throwaway `.venv-licenses/` is ignored.
 
 ### Standalone binary
 

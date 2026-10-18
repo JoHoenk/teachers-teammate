@@ -1,12 +1,31 @@
 Teacher's Teammate
 Copyright 2026 Teacher's Teammate contributors
 
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
 This product includes software developed by third parties. The full license
 and notice texts for all bundled third-party components are reproduced in:
 
   - third_party_licenses/third_party_license.txt   (repository)
   - the "Third-Party Licenses" dialog inside the application
 
+Qt / PySide6 (LGPL-3.0)
+-----------------------
 The bundled GUI toolkit (Qt, via PySide6) is used under the terms of the
-GNU Lesser General Public License, version 3 (LGPL-3.0). See the LGPL note in
-docs/index.md for how to obtain the corresponding source and relink.
+GNU Lesser General Public License, version 3 (LGPL-3.0). Qt is dynamically
+linked: the installer ships the Qt shared libraries and the application loads
+them at runtime, so they can be replaced with a compatible build. The complete
+source code of Teacher's Teammate is publicly available at
+https://github.com/JoHoenk/teachers-teammate, satisfying the LGPL relink
+requirement.
+
+Optional components
+-------------------
+Optional OCR, LLM, and privacy features (LangChain, spaCy, PaddleOCR, ...) are
+not bundled. They are installed on demand and are governed by their own
+licenses.
+
+Installer artifacts
+-------------------
+Third-party code embedded in the platform installers (e.g. the NSIS stub in the
+Windows setup.exe) is covered in tools/packaging/THIRD_PARTY_NOTICES.md.

@@ -18,10 +18,10 @@ For runtime tuning and provider/model strategy, see the
 # Create a virtualenv and install all dependencies (including dev and test extras)
 python -m venv .venv
 source .venv/bin/activate          # Windows: .venv\Scripts\activate
-pip install -e ".[dev,providers]"
+pip install -e ".[dev,test,llm]"
 ```
 
-If you have `uv` installed, replace the two `pip` lines with `uv sync`.
+If you have `uv` installed, use `uv venv` and `uv pip install -e ".[dev,test,llm]"` instead.
 
 ## Development checks
 

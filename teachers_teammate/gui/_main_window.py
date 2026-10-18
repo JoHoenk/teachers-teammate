@@ -15,6 +15,7 @@ from PySide6.QtCore import QEvent, QObject, QSettings, Qt, QThread, QTimer, Sign
 from PySide6.QtGui import QAction, QDragEnterEvent, QDropEvent, QIcon, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
+    QCheckBox,
     QDialog,
     QDialogButtonBox,
     QFileDialog,
@@ -42,12 +43,21 @@ from ..application.service import (
     ProcessingApplicationService,
     RunPreflight,
 )
-from ..config import DEFAULTS, Config, OcrConfig, dump_config_file, load_config_file
+from ..config import (
+    DEFAULTS,
+    Config,
+    OcrConfig,
+    dump_config_file,
+    load_config_file,
+    unavailable_ocr_engine,
+)
+from ..domain.data_location import LOCAL_OCR_ENGINES, OCR_ENGINE_NAMES
 from ..domain.stages import PROGRESS_STAGE_OCR, PROGRESS_STAGE_PREPROCESSING
 from ._app_bootstrap import create_app
 from ._background import LatestTask, run_in_background, wait_for_background_tasks
 from ._chart_widget import ChartWidget
 from ._config_panel import ConfigPanel
+from ._data_flow_summary import advice_text
 from ._help_dialog import AboutDialog, HelpDialog, ThirdPartyLicensesDialog
 from ._image_utils import load_icon, load_pixmap
 from ._log_widget import LogWidget
@@ -419,6 +429,13 @@ class MainWindow(QMainWindow):
         anon_act = QAction("Anonymizer Settings\u2026", self)
         anon_act.triggered.connect(self._open_anonymizer_settings_from_menu)
         advanced_menu.addAction(anon_act)
+        reset_ack_act = QAction("Ask Before Sending Data Away Again", self)
+        reset_ack_act.setToolTip(
+            "Forget every “Don't ask again” answer, so the question comes back before a run "
+            "that sends content away from this computer."
+        )
+        reset_ack_act.triggered.connect(self._forget_acknowledged_flows)
+        advanced_menu.addAction(reset_ack_act)
 
         help_menu = bar.addMenu("Help")
         assert help_menu is not None
@@ -611,8 +628,29 @@ class MainWindow(QMainWindow):
             # shown consistently on startup.
             self._refresh_queue_from_inputs()
             self._log.append_text(f"Loaded settings from {config_path}\n")
+            self._tell_if_ocr_engine_was_replaced(config_path)
         except Exception as exc:  # noqa: BLE001  # config file may be missing, malformed, or use an unexpected type; log the warning and continue
             self._log.append_text(f"WARNING: Could not load {config_path}: {exc}\n")
+
+    def _tell_if_ocr_engine_was_replaced(self, config_path: Path) -> None:
+        """Say so when the saved settings named an online text-recognition engine.
+
+        Such a setting is replaced by the default (see ``load_config_file``).  Doing that
+        silently would leave the next run failing for a reason the teacher never chose.
+        """
+        retired = unavailable_ocr_engine(config_path)
+        if not retired:
+            return
+        message = (
+            f"Your saved settings used “{retired}” for text recognition. Reading pages "
+            "online is no longer offered, because a page cannot be anonymised before it "
+            "is read, so the app now uses "
+            f"{DEFAULTS['ocr_engine']} on your computer instead "
+            f"({', '.join(LOCAL_OCR_ENGINES)} are available).\n\n"
+            "Proofreading and content review are not affected."
+        )
+        self._log.append_text(f"NOTICE: {message}\n")
+        QMessageBox.information(self, "Text recognition changed", message)
 
     def _apply_first_start_model_settings(self) -> None:
         """Start first-start hardware detection in the background (AC12/AC13)."""
@@ -814,7 +852,9 @@ class MainWindow(QMainWindow):
         service = self._app_service
         run_in_background(
             lambda: service.check_run_preflight(config),
-            lambda result, error: self._on_preflight_done(on_ready, result, error),
+            lambda result, error: self._on_preflight_done(
+                lambda: self._confirm_data_flow_then(config, on_ready), result, error
+            ),
             owner=self,
         )
 
@@ -829,6 +869,14 @@ class MainWindow(QMainWindow):
             # All met — or the check itself failed: do not block; the pipeline reports
             # real problems.
             on_ready()
+            return
+        if result.ocr_not_allowed:
+            QMessageBox.warning(
+                self,
+                "Text recognition must stay on your computer",
+                f"{result.ocr_not_allowed}\n\nChange it under Advanced Settings → Text "
+                "Recognition Method.",
+            )
             return
         if result.ollama_unreachable:
             self._ollama_connected = False
@@ -856,6 +904,51 @@ class MainWindow(QMainWindow):
             lambda t=tab: self._open_downloads_dialog_ollama_tab(start_tab=t)
         )
         dlg.exec()
+
+    _ACK_FLOWS_KEY = "privacy/acknowledged_data_flows"
+
+    def _acknowledged_flows(self) -> set[str]:
+        """Return the data flows the user chose not to be asked about again."""
+        qs = QSettings(self._QSETTINGS_ORG, self._QSETTINGS_APP)
+        return {line for line in str(qs.value(self._ACK_FLOWS_KEY, "") or "").split("\n") if line}
+
+    def _forget_acknowledged_flows(self) -> None:
+        """Drop every "Don't ask again" answer."""
+        QSettings(self._QSETTINGS_ORG, self._QSETTINGS_APP).remove(self._ACK_FLOWS_KEY)
+        self._log.append_text("Confirmations before sending data away were reset.\n")
+
+    def _acknowledge_flow(self, fingerprint: str) -> None:
+        flows = self._acknowledged_flows() | {fingerprint}
+        QSettings(self._QSETTINGS_ORG, self._QSETTINGS_APP).setValue(
+            self._ACK_FLOWS_KEY, "\n".join(sorted(flows))
+        )
+
+    def _confirm_data_flow_then(self, config: Config, on_ready: Callable[[], None]) -> None:
+        """Ask once before a run that sends content away from this computer."""
+        flow = self._app_service.describe_data_flow(config)
+        if not flow.leaves_computer or flow.fingerprint in self._acknowledged_flows():
+            on_ready()
+            return
+        lines = "\n".join(f"  • {stage.summary}" for stage in flow.outbound)
+        advice = "".join(f"\n\n{advice_text(tip)}" for tip in flow.advice)
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Warning)
+        box.setWindowTitle("Your documents will leave this computer")
+        box.setText(
+            f"These steps send content away from this computer:\n\n{lines}{advice}\n\n"
+            "Make sure your school's data protection rules allow this."
+        )
+        remember = QCheckBox("Don't ask again for these settings")
+        box.setCheckBox(remember)
+        go = box.addButton("Continue", QMessageBox.ButtonRole.AcceptRole)
+        cancel = box.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
+        box.setDefaultButton(cancel)
+        box.exec()
+        if box.clickedButton() is not go:
+            return
+        if remember.isChecked():
+            self._acknowledge_flow(flow.fingerprint)
+        on_ready()
 
     def _show_missing_models(self, missing_models: tuple[str, ...]) -> None:
         """Tell the user which configured Ollama models are not downloaded yet."""
@@ -1170,17 +1263,12 @@ class MainWindow(QMainWindow):
 
     # ── Service status indicator ──────────────────────────────────────────
 
-    _SERVICE_DISPLAY: ClassVar[dict[str, str]] = {
-        "ollama": "Ollama",
-        "tesseract": "Tesseract",
-        "paddleocr": "PaddleOCR",
-        "openai": "OpenAI",
-        "anthropic": "Anthropic",
-        "google": "Google",
-        "mistral": "Mistral",
-        "cohere": "Cohere",
-        "langchain": "LangChain",
-    }
+    def _service_display_name(self, svc: str) -> str:
+        """Return the name shown for *svc*: an OCR engine's, else the provider's declared one."""
+        if svc in OCR_ENGINE_NAMES:
+            return OCR_ENGINE_NAMES[svc]
+        info = self._app_service.get_provider_info(svc)
+        return str(info.get("display_name") or svc.title())
 
     def _check_llm_status(self) -> None:
         """Rebuild the per-service status row and run availability checks."""
@@ -1209,7 +1297,7 @@ class MainWindow(QMainWindow):
         self._status_labels = {}
 
         for svc in services:
-            display = self._SERVICE_DISPLAY.get(svc, svc.title())
+            display = self._service_display_name(svc)
             lbl = QLabel(f"● {display}")
             lbl.setStyleSheet("color: #888; font-size: 9pt; padding: 1px 3px;")
             self._status_labels[svc] = lbl
@@ -1935,6 +2023,8 @@ def main_gui(
                         so it is already visible during startup.  When provided the internal
                         splash-creation logic is skipped and the caller's splash is reused.
     """
+    # Start the slow own-host-name lookup before any widget asks where a step runs.
+    ProcessingApplicationService.warm_up_locality_checks()
     # Suppress Qt's D-Bus tray warning when org.kde.StatusNotifierWatcher is absent.
     os.environ.setdefault("QT_LOGGING_RULES", "qt.qpa.tray*=false")
     if sys.stderr is not None:

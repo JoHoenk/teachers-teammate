@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 
 from teachers_teammate.config import OcrConfig
+from teachers_teammate.exceptions import OnlineOcrNotAllowedError
 from teachers_teammate.infrastructure.image_preprocessor import HandwritingPreprocessor
 from teachers_teammate.infrastructure.stage_builder import (
     PipelineComponentFactory,
@@ -113,3 +115,64 @@ def test_default_ocr_postprocessor_understands_layout_html(tmp_path: Path) -> No
     )
 
     assert (result.text, result.text_format) == ("**x**", "markdown")
+
+
+@pytest.mark.parametrize("engine", ["langchain", "openai"])
+def test_build_ocr_refuses_online_engines(tmp_path: Path, engine: str) -> None:
+    """
+    Given  a Config whose OCR engine is an online vision model
+    When   StageBuilder.build_ocr() is called
+    Then   it raises OnlineOcrNotAllowedError before any LLM is built
+    """
+    build_llm = MagicMock()
+    factory = PipelineComponentFactory(build_llm=build_llm)
+    config = make_config(tmp_path, ocr=OcrConfig(engine=engine, model="gpt-4o"))
+    builder = StageBuilder(config=config, factory=factory)
+
+    with pytest.raises(OnlineOcrNotAllowedError, match="whole page"):
+        builder.build_ocr()
+
+    build_llm.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("model", "url"),
+    [
+        ("qwen3-vl:235b-cloud", "http://127.0.0.1:11434"),
+        ("deepseek-ocr:latest", "https://ollama.com"),
+    ],
+)
+def test_build_ocr_refuses_ollama_cloud(tmp_path: Path, model: str, url: str) -> None:
+    """
+    Given  Ollama OCR with a cloud model, or pointed at Ollama's hosted API
+    When   StageBuilder.build_ocr() is called
+    Then   it raises OnlineOcrNotAllowedError and builds no OCR processor
+    """
+    build_ollama_ocr = MagicMock()
+    factory = PipelineComponentFactory(build_ollama_ocr=build_ollama_ocr)
+    config = make_config(tmp_path, ocr=OcrConfig(engine="ollama", model=model), ollama_url=url)
+    builder = StageBuilder(config=config, factory=factory)
+
+    with pytest.raises(OnlineOcrNotAllowedError, match="Ollama's servers"):
+        builder.build_ocr(MagicMock())
+
+    build_ollama_ocr.assert_not_called()
+
+
+def test_build_ocr_allows_downloaded_ollama_model_on_another_computer(tmp_path: Path) -> None:
+    """
+    Given  Ollama OCR with a downloaded model on a school server
+    When   StageBuilder.build_ocr() is called
+    Then   the Ollama OCR processor is built (a server you run is allowed)
+    """
+    build_ollama_ocr = MagicMock()
+    factory = PipelineComponentFactory(build_ollama_ocr=build_ollama_ocr)
+    config = make_config(
+        tmp_path,
+        ocr=OcrConfig(engine="ollama", model="deepseek-ocr:latest"),
+        ollama_url="http://school-server:11434",
+    )
+
+    StageBuilder(config=config, factory=factory).build_ocr(MagicMock())
+
+    build_ollama_ocr.assert_called_once()

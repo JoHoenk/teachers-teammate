@@ -10,6 +10,13 @@ from __future__ import annotations
 
 from typing import cast
 
+from teachers_teammate.domain.data_location import (
+    STAGE_OCR,
+    DataFlow,
+    DataFlowStage,
+    DataLocation,
+    StageLocation,
+)
 from teachers_teammate.domain.model_catalog import (
     OLLAMA_CATALOG,
     DetectionReason,
@@ -24,7 +31,28 @@ from teachers_teammate.domain.model_catalog import (
 )
 
 
-class RecommendationServiceStub:
+class LocalDataFlowStub:
+    """Reports every step as running on this computer (the common, uneventful case)."""
+
+    def describe_data_flow(self, config) -> DataFlow:
+        _ = config
+        here = StageLocation(DataLocation.THIS_COMPUTER, "Ollama")
+        return DataFlow((DataFlowStage(STAGE_OCR, here, "page images"),))
+
+    def describe_ocr_location(self, engine: str, model: str, ollama_url: str) -> StageLocation:
+        _ = model, ollama_url
+        return StageLocation(DataLocation.THIS_COMPUTER, engine)
+
+    def describe_ocr_refusal(self, engine: str, model: str, ollama_url: str) -> str:
+        _ = engine, model, ollama_url
+        return ""
+
+    def describe_llm_location(self, provider: str, model: str, ollama_url: str) -> StageLocation:
+        _ = model, ollama_url
+        return StageLocation(DataLocation.THIS_COMPUTER, provider)
+
+
+class RecommendationServiceStub(LocalDataFlowStub):
     """Deterministic ``detect_hardware`` / classification / rating methods.
 
     ``detection`` is what automatic detection returns (an 8 GB graphics card by

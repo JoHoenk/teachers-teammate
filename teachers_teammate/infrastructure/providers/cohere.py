@@ -21,6 +21,7 @@ if TYPE_CHECKING:
 from teachers_teammate.infrastructure.providers._helpers import api_key_check, import_guard
 
 PROVIDER_INFO: dict = {
+    "display_name": "Cohere",
     "needs_api_key": True,
     "env_key": "COHERE_API_KEY",
     "needs_base_url": False,

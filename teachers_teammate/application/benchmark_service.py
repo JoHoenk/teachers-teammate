@@ -18,6 +18,7 @@ import threading
 
 from ..config import DEFAULTS, Config, OcrConfig, load_config_file
 from ..domain.benchmark import PairComparison, compare_pair
+from ..domain.data_location import StageLocation
 from ..domain.model_catalog import (
     HardwareDetection,
     HardwareProfile,
@@ -68,6 +69,15 @@ class BenchmarkApplicationService:
     def default_preprocess_for_engine(self, engine: str) -> str:
         return self._processing.default_preprocess_for_engine(engine)
 
+    def describe_ocr_location(self, engine: str, model: str, ollama_url: str) -> StageLocation:
+        return self._processing.describe_ocr_location(engine, model, ollama_url)
+
+    def describe_ocr_refusal(self, engine: str, model: str, ollama_url: str) -> str:
+        return self._processing.describe_ocr_refusal(engine, model, ollama_url)
+
+    def describe_llm_location(self, provider: str, model: str, ollama_url: str) -> StageLocation:
+        return self._processing.describe_llm_location(provider, model, ollama_url)
+
     def load_saved_settings(self) -> dict:
         """Return the settings the main app saved (``ocr.toml``), or ``{}``.
 
@@ -86,6 +96,9 @@ class BenchmarkApplicationService:
 
     def list_provider_models(self, provider: str, *, base_url: str = "") -> list[str]:
         return self._processing.list_provider_models(provider, base_url=base_url)
+
+    def list_ocr_models(self, base_url: str = "") -> list[str]:
+        return self._processing.list_ocr_models(base_url)
 
     def get_cached_models(self, provider: str, *, base_url: str = "") -> list[str] | None:
         return self._processing.get_cached_models(provider, base_url=base_url)
@@ -186,7 +199,7 @@ class BenchmarkApplicationService:
         ocr = dataclasses.replace(ocr, pdf_text_layer="never")
         config = self.build_config(source, ocr=ocr, language=language, ollama_url=ollama_url)
         if on_progress is not None:
-            on_progress(f"Running OCR · {ocr.engine} · {ocr.effective_model or ocr.model}")
+            on_progress(f"Running OCR · {ocr.engine} · {ocr.model}")
         result = self._runner(
             config, source, component_factory=self._component_factory, stop_event=stop_event
         )

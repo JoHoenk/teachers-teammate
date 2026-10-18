@@ -114,7 +114,7 @@ class FileProcessor:
                 file, raw_text, preview_img, ctx
             )
             evaluation_text, eval_warnings = self._run_evaluation_or_cache(
-                file, correction_text, ctx
+                file, raw_text, correction_text, preview_img, ctx
             )
             all_warnings = tuple(correction_warnings + eval_warnings)
         except _StageAbort as abort:
@@ -319,6 +319,40 @@ class FileProcessor:
 
         return raw_text, ctx
 
+    def _anonymize_for(self, stage: str, text: str) -> tuple[str, AnonymizationMap]:
+        """Hide personal data in *text* before an LLM *stage* sees it (no-op without anonymiser)."""
+        if self._anonymizer is None:
+            return text, {}
+        anonymized, anon_map = self._anonymizer.anonymize(text)
+        self._reporter.status(f"       → PII anonymized before {stage}")
+        return anonymized, anon_map
+
+    def _restore_pii(
+        self,
+        text: str,
+        anon_map: AnonymizationMap,
+        *,
+        preview_img: str,
+        raw_text: str,
+        correction_text: str = "",
+    ) -> str:
+        """Put the real personal data back into *text*; abort the file when that fails."""
+        if not (anon_map and text and self._anonymizer is not None):
+            return text
+        try:
+            return self._anonymizer.restore(text, anon_map)
+        except (ValueError, KeyError) as exc:
+            raise _StageAbort(
+                ProcessingResult(
+                    False,
+                    f"PII restore failed: {exc}",
+                    preview_img,
+                    raw_text,
+                    correction_text,
+                    "",
+                )
+            ) from exc
+
     def _run_correction_or_cache(
         self, file: Path, raw_text: str, preview_img: str, ctx: CacheContext
     ) -> tuple[str, CacheContext, list[str]]:
@@ -331,28 +365,16 @@ class FileProcessor:
             return cache_state.correction_text, ctx, []
 
         self._reporter.status("       → Running correction...")
-        anon_map: AnonymizationMap = {}
-        text_for_correction = raw_text
-        if self._anonymizer is not None:
-            text_for_correction, anon_map = self._anonymizer.anonymize(raw_text)
-            self._reporter.status("       → PII anonymized before correction")
+        text_for_correction, anon_map = self._anonymize_for("correction", raw_text)
 
         text_format = self._text_format(ctx)
         corrected_text, corr_warning = self._correction.correct(
             text_for_correction, self._language, text_format=text_format
         )
-        corrected_text = corrected_text or ""
+        corrected_text = self._restore_pii(
+            corrected_text or "", anon_map, preview_img=preview_img, raw_text=raw_text
+        )
         corr_warnings: list[str] = [corr_warning] if corr_warning else []
-
-        if anon_map and corrected_text and self._anonymizer is not None:
-            try:
-                corrected_text = self._anonymizer.restore(corrected_text, anon_map)
-            except (ValueError, KeyError) as exc:
-                raise _StageAbort(
-                    ProcessingResult(
-                        False, f"PII restore failed: {exc}", preview_img, raw_text, "", ""
-                    )
-                ) from exc
 
         if corrected_text:
             try:
@@ -367,7 +389,9 @@ class FileProcessor:
     def _run_evaluation_or_cache(
         self,
         file: Path,
+        raw_text: str,
         correction_text: str,
+        preview_img: str,
         ctx: CacheContext,
     ) -> tuple[str, list[str]]:
         if self._evaluation is None or not correction_text:
@@ -379,8 +403,18 @@ class FileProcessor:
             return cache_state.evaluation_text, []
 
         self._reporter.status("       → Running evaluation...")
+        # The proofread text has its real names back, so hide them again: the review may
+        # run on an online service just like proofreading.
+        text_for_evaluation, anon_map = self._anonymize_for("evaluation", correction_text)
         eval_text, eval_warning = self._evaluation.evaluate(
-            correction_text, self._language, text_format=self._text_format(ctx)
+            text_for_evaluation, self._language, text_format=self._text_format(ctx)
+        )
+        eval_text = self._restore_pii(
+            eval_text or "",
+            anon_map,
+            preview_img=preview_img,
+            raw_text=raw_text,
+            correction_text=correction_text,
         )
         eval_warnings: list[str] = [eval_warning] if eval_warning else []
         if eval_text:

@@ -7,6 +7,8 @@ from pathlib import Path
 import pytest
 from teachers_teammate.gui._config_panel import ConfigPanel
 
+from ._service_stubs import LocalDataFlowStub
+
 
 @pytest.mark.gui
 def test_config_panel_to_config_maps_values(qtbot, tmp_path: Path) -> None:
@@ -143,7 +145,7 @@ def test_config_panel_set_selected_files_overrides_folder(qtbot, tmp_path: Path)
     assert panel.get_input_dir() == str(folder)
 
 
-class _GuardService:
+class _GuardService(LocalDataFlowStub):
     """Service stub reporting one missing Ollama model for the requirement check."""
 
     def build_lookup_config(self, input_dir: Path, output_dir: Path):
@@ -399,7 +401,6 @@ def test_load_from_dict_restores_advanced_ocr_settings(qtbot, tmp_path: Path) ->
             "pdf_text_layer": "Never",
             "pdf_render_dpi": 150,
             "ocr_temperature": 0.4,
-            "ocr_provider": "openai",
             "preprocess_dewarp": False,
             "preprocess_gamma": True,
         }
@@ -409,7 +410,149 @@ def test_load_from_dict_restores_advanced_ocr_settings(qtbot, tmp_path: Path) ->
     assert ocr.pdf_text_layer == "never"
     assert ocr.pdf_render_dpi == 150
     assert ocr.temperature == pytest.approx(0.4)
-    assert ocr.provider == "openai"
     assert ocr.dewarp is False
     assert ocr.gamma is True
     assert panel.to_dict()["pdf_text_layer"] == "never"
+
+
+class _FlowService(_GuardService):
+    """Reports online proofreading, with names hidden only when the Step 3 box is ticked."""
+
+    def check_stage_requirements(self, config, stage: str):
+        _ = config, stage
+        return []  # nothing missing, so ticking a box never opens a dialog
+
+    def describe_data_flow(self, config):
+        from teachers_teammate.domain.data_location import (  # noqa: PLC0415
+            DataFlow,
+            DataFlowStage,
+            DataLocation,
+            StageLocation,
+        )
+
+        here = StageLocation(DataLocation.THIS_COMPUTER, "Ollama")
+        cloud = StageLocation(DataLocation.ONLINE, "OpenAI")
+        return DataFlow(
+            (
+                DataFlowStage("ocr", here, "page images"),
+                DataFlowStage("correction", cloud, "text", config.anonymization_enabled),
+            )
+        )
+
+
+@pytest.mark.gui
+def test_summary_follows_the_step_3_checkbox(qtbot) -> None:
+    """
+    Given  a panel whose proofreading is online
+    When   "Remove personal info" is ticked
+    Then   the summary no longer advises hiding names
+    """
+    panel = ConfigPanel()
+    qtbot.addWidget(panel)
+    panel.set_service(_FlowService())
+    assert "Remove personal info" in panel._data_flow_summary._body.text()
+
+    panel._anonymization_enabled.setChecked(True)
+
+    assert "Remove personal info" not in panel._data_flow_summary._body.text()
+    assert "Some data leaves this computer." in panel._data_flow_summary._body.text()
+
+
+class _FlowServiceMissingPrivacy(_FlowService):
+    """Like :class:`_FlowService`, but the privacy add-on is missing."""
+
+    def check_stage_requirements(self, config, stage: str):
+        from teachers_teammate.application.service import RequirementIssue  # noqa: PLC0415
+
+        _ = config, stage
+        return [RequirementIssue("Privacy add-on is missing.", fixable_via_downloads=True)]
+
+
+@pytest.mark.gui
+def test_summary_follows_a_stage_the_guard_unticked(qtbot, monkeypatch) -> None:
+    """
+    Given  online proofreading and a missing privacy add-on
+    When   "Remove personal info" is ticked and the requirement check unticks it again
+    Then   the summary shows the unhidden state again and advises hiding names
+    """
+    from teachers_teammate.gui._dependency_guard_dialog import DependencyGuardDialog  # noqa: PLC0415
+
+    monkeypatch.setattr(DependencyGuardDialog, "exec", lambda self: 0)
+    panel = ConfigPanel()
+    qtbot.addWidget(panel)
+    panel.set_service(_FlowServiceMissingPrivacy())
+
+    panel._anonymization_enabled.setChecked(True)
+    qtbot.waitUntil(lambda: not panel._anonymization_enabled.isChecked(), timeout=3000)
+
+    assert "Remove personal info" in panel._data_flow_summary._body.text()
+
+
+@pytest.mark.gui
+def test_summary_refreshes_after_settings_dialog_changes(qtbot) -> None:
+    """
+    Given  a panel showing its data flow
+    When   the settings dialog hands back new values
+    Then   the summary is rendered again from the live settings
+    """
+    panel = ConfigPanel()
+    qtbot.addWidget(panel)
+    calls: list[int] = []
+
+    class _CountingService(_FlowService):
+        def describe_data_flow(self, config):
+            calls.append(1)
+            return super().describe_data_flow(config)
+
+    panel.set_service(_CountingService())
+    calls.clear()
+
+    panel.update_settings({"correction_provider": "openai"})
+
+    assert calls == [1]
+
+
+@pytest.mark.gui
+def test_loading_settings_renders_the_summary_once(qtbot) -> None:
+    """
+    Given  a panel showing its data flow
+    When   saved settings that flip several checkboxes are loaded
+    Then   the summary is rendered once, from the final settings, not once per checkbox
+    """
+    panel = ConfigPanel()
+    qtbot.addWidget(panel)
+    calls: list[int] = []
+
+    class _CountingService(_FlowService):
+        def describe_data_flow(self, config):
+            calls.append(1)
+            return super().describe_data_flow(config)
+
+    panel.set_service(_CountingService())
+    calls.clear()
+
+    panel.load_from_dict(
+        {
+            "correction_enabled": True,
+            "evaluation_enabled": True,
+            "anonymization_enabled": True,
+        }
+    )
+
+    assert calls == [1]
+
+
+@pytest.mark.gui
+def test_saved_online_ocr_engine_falls_back_to_the_local_default(qtbot) -> None:
+    """
+    Given  saved settings from an older version with an online OCR engine
+    When   they are loaded into the panel
+    Then   the engine is the local default
+    """
+    panel = ConfigPanel()
+    qtbot.addWidget(panel)
+
+    panel.load_from_dict({"ocr_engine": "langchain", "ocr_provider": "openai"})
+
+    assert panel.get_settings_dict()["ocr_engine"] == "ollama"
+    assert "ocr_provider" not in panel.to_dict()

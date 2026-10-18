@@ -399,6 +399,15 @@ py_test(
 )
 
 py_test(
+    name = "test_data_location",
+    size = "small",
+    srcs = _COMMON_SRCS + ["unit/test_data_location.py"],
+    args = ["unit/test_data_location.py"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS + _PIPELINE_DEPS,
+)
+
+py_test(
     name = "test_domain_policy",
     size = "small",
     srcs = _COMMON_SRCS + ["unit/test_domain_policy.py"],
@@ -773,6 +782,7 @@ test_suite(
         ":test_config",
         ":test_coordinator",
         ":test_correction",
+        ":test_data_location",
         ":test_docx_builder",
         ":test_domain_policy",
         ":test_evaluation",

@@ -3,27 +3,17 @@
 This module is intentionally free of infrastructure dependencies so that
 :mod:`teachers_teammate.config` can resolve model defaults without importing
 from the infrastructure layer.  The Ollama defaults come from the domain model
-catalog (``DEFAULT_OCR_MODEL`` / ``DEFAULT_WRITING_MODEL``) so there is a single
-source of truth for the model names.
+catalog (``DEFAULT_WRITING_MODEL``) so there is a single source of truth for the model
+name.  There is no OCR task: text recognition runs only on engines the user controls.
 """
 
 from __future__ import annotations
 
-from .domain.model_catalog import DEFAULT_OCR_MODEL, DEFAULT_WRITING_MODEL
+from .domain.model_catalog import DEFAULT_WRITING_MODEL
 
-# The reading-model default must be a vision model — see
-# domain/model_catalog.py::OLLAMA_CATALOG for the full curated list.
-_OLLAMA_OCR_DEFAULT = DEFAULT_OCR_MODEL
 _OLLAMA_GENERAL_DEFAULT = DEFAULT_WRITING_MODEL
 
 _DEFAULT_MODELS: dict[str, dict[str, str]] = {
-    "ocr": {
-        "ollama": _OLLAMA_OCR_DEFAULT,
-        "openai": "gpt-4o",
-        "anthropic": "claude-opus-4-5",
-        "google": "gemini-2.0-flash",
-        "mistral": "pixtral-large-latest",
-    },
     "correction": {
         "ollama": _OLLAMA_GENERAL_DEFAULT,
         "openai": "gpt-4o-mini",

@@ -12,6 +12,7 @@ import time
 import uuid
 
 from ..config import Config, OcrConfig
+from ..domain.data_location import DataFlow, StageLocation, is_ollama_cloud_model
 from ..domain.model_catalog import (
     HardwareDetection,
     HardwareProfile,
@@ -45,6 +46,7 @@ from ..infrastructure.ocr_processor import (
 from ..infrastructure.ocr_processor import (
     default_preprocess_for_engine as _infra_default_preprocess_for_engine,
 )
+from ..infrastructure.ollama_utils import warm_up_own_host_names
 from ..infrastructure.pipeline import OCRPipeline, preprocess_preview
 from ..infrastructure.reporting import ProgressCallbacks as ProgressCallbacks  # noqa: PLC0414
 from ..infrastructure.stage_builder import PipelineComponentFactory
@@ -70,6 +72,7 @@ from ..infrastructure.workflow.cache_service import (
 )
 from ..interfaces import SUPPORTED_SUFFIXES
 from .commands import ApplicationCommands
+from .data_flow import describe_data_flow, llm_location, ocr_location, ocr_refusal
 from .formatting import TextFormatter
 from .model_recommendations import ModelRecommendationService
 
@@ -86,6 +89,9 @@ class RequirementIssue:
 class RunPreflight:
     """Outcome of the checks made before a run starts (first blocker wins)."""
 
+    #: Why text recognition may not run with these settings ("" when it may), e.g. an
+    #: Ollama cloud model: pages must be read on a computer the user controls.
+    ocr_not_allowed: str = ""
     #: Why Ollama cannot be used ("" when it is reachable or not needed).
     ollama_unreachable: str = ""
     #: Configured Ollama models that are not downloaded.
@@ -97,7 +103,12 @@ class RunPreflight:
     @property
     def ok(self) -> bool:
         """Whether the run may start."""
-        return not (self.ollama_unreachable or self.missing_models or self.stage_issues)
+        return not (
+            self.ocr_not_allowed
+            or self.ollama_unreachable
+            or self.missing_models
+            or self.stage_issues
+        )
 
 
 class ProcessingApplicationService:
@@ -575,13 +586,50 @@ class ProcessingApplicationService:
         self._store_models("ollama", url, installed)
         return installed, unreachable
 
+    def describe_data_flow(self, config: Config) -> DataFlow:
+        """Return where each enabled step of *config* runs (this computer, another, online)."""
+        return describe_data_flow(config, self.get_provider_info)
+
+    def describe_ocr_location(self, engine: str, model: str, ollama_url: str) -> StageLocation:
+        """Return where text recognition with these settings runs."""
+        return ocr_location(engine, model, ollama_url)
+
+    def describe_ocr_refusal(self, engine: str, model: str, ollama_url: str) -> str:
+        """Return why text recognition with these settings is refused, or ``""`` when allowed."""
+        return ocr_refusal(engine, model, ollama_url)
+
+    def list_ocr_models(self, base_url: str = "") -> list[str]:
+        """Return the Ollama models usable for text recognition (cloud models are left out)."""
+        return [
+            model
+            for model in self.list_provider_models("ollama", base_url=base_url)
+            if not is_ollama_cloud_model(model)
+        ]
+
+    def describe_llm_location(self, provider: str, model: str, ollama_url: str) -> StageLocation:
+        """Return where proofreading / content review with *provider* and *model* runs."""
+        return llm_location(provider, model, ollama_url, self.get_provider_info)
+
+    @staticmethod
+    def ocr_refusal_for_run(config: Config) -> str:
+        """Return why this run must not start, or ``""`` when text recognition is allowed.
+
+        Needs no network access.  Settings that would read pages online are refused for
+        every run, whatever files it holds: the fix is one model choice, and it keeps the
+        rule independent of which files happen to need recognition.
+        """
+        return ocr_refusal(config.ocr.engine, config.ocr.model, config.ollama_url)
+
     def check_run_preflight(self, config: Config) -> RunPreflight:
         """Return the first unmet requirement before a run, or an all-clear result.
 
         Makes blocking network calls: call it from a background thread, never from
-        the GUI thread.  Order: Ollama reachable → models downloaded → stage
-        requirements (anonymizer, correction, evaluation).
+        the GUI thread.  Order: text recognition allowed → Ollama reachable → models
+        downloaded → stage requirements (anonymizer, correction, evaluation).
         """
+        ocr_reason = self.ocr_refusal_for_run(config)
+        if ocr_reason:
+            return RunPreflight(ocr_not_allowed=ocr_reason)
         if self._ollama_needed(config):
             from ..infrastructure.ollama_utils import models_include  # noqa: PLC0415
 
@@ -833,6 +881,15 @@ class ProcessingApplicationService:
         from ..infrastructure.addon_manager import clear_stale_modules  # noqa: PLC0415
 
         clear_stale_modules(addon)
+
+    @staticmethod
+    def warm_up_locality_checks() -> None:
+        """Start, in the background, the lookup that tells whether an Ollama URL is this computer.
+
+        Call it at start-up so classifying where a step runs never waits for the network
+        on the GUI thread.
+        """
+        warm_up_own_host_names()
 
     def inject_addon_packages_dir(self) -> None:
         """Prepend the addon packages directory to sys.path (idempotent)."""

@@ -19,6 +19,11 @@ from teachers_teammate.infrastructure.state_repository import DocumentState
 # ── Helpers ────────────────────────────────────────────────────────────────
 
 
+def _discovery_of(*names: str) -> MagicMock:
+    """File discovery that finds the files called *names* (none by default)."""
+    return MagicMock(collect_input_files=MagicMock(return_value=[Path(n) for n in names]))
+
+
 def _make_svc(
     *,
     pipeline_factory=None,
@@ -1337,6 +1342,124 @@ def test_empty_model_list_is_not_cached(tmp_path: Path) -> None:
 
     assert first == []
     assert second == ["qwen3-vl:8b"]
+
+
+@pytest.mark.unit
+def test_preflight_blocks_ollama_cloud_ocr_model_without_contacting_the_server(
+    tmp_path: Path,
+) -> None:
+    """
+    Given  an OCR model that runs on Ollama's servers
+    When   the run preflight is computed
+    Then   the run is refused first, with the reason, and Ollama is never asked
+    """
+    svc = _make_svc(discovery=_discovery_of("page.png"))
+    cfg = _ollama_config(tmp_path, ocr_model="qwen3-vl:235b-cloud")
+
+    with _server_answers([]) as request:
+        result = svc.check_run_preflight(cfg)
+
+    request.assert_not_called()
+    assert result.ok is False
+    assert "Ollama's servers" in result.ocr_not_allowed
+
+
+@pytest.mark.unit
+def test_preflight_blocks_online_ocr_engine(tmp_path: Path) -> None:
+    """
+    Given  a config whose OCR engine is an online vision model
+    When   the run preflight is computed
+    Then   the run is refused because pages cannot be anonymised before they are read
+    """
+    from tests.conftest import make_config  # noqa: PLC0415
+
+    cfg = make_config(tmp_path, ocr_engine="langchain")
+
+    result = _make_svc(discovery=_discovery_of("page.png")).check_run_preflight(cfg)
+
+    assert result.ok is False
+    assert "whole page" in result.ocr_not_allowed
+
+
+@pytest.mark.unit
+def test_preflight_refuses_cloud_ocr_settings_whatever_the_files(tmp_path: Path) -> None:
+    """
+    Given  OCR settings that would send pages to Ollama's servers and a folder of .txt files
+    When   the run preflight is computed
+    Then   OCR is still refused: the rule belongs to the settings, not to which files are run
+    """
+    svc = _make_svc(discovery=_discovery_of("a.txt", "b.TXT"))
+    cfg = _ollama_config(tmp_path, ocr_model="qwen3-vl:235b-cloud", correction_enabled=False)
+
+    result = svc.check_run_preflight(cfg)
+
+    assert "Ollama's servers" in result.ocr_not_allowed
+
+
+@pytest.mark.unit
+def test_ocr_refusal_for_run_is_empty_for_a_local_model(tmp_path: Path) -> None:
+    """
+    Given  OCR settings with a model downloaded to Ollama
+    When   ocr_refusal_for_run is asked
+    Then   nothing is refused
+    """
+    cfg = _ollama_config(tmp_path, ocr_model="qwen3-vl:8b")
+
+    assert _make_svc().ocr_refusal_for_run(cfg) == ""
+
+
+@pytest.mark.unit
+def test_list_ocr_models_leaves_out_ollama_cloud_models() -> None:
+    """
+    Given  an Ollama server with a downloaded model and a cloud model
+    When   the models usable for text recognition are listed
+    Then   only the downloaded model is offered, since the cloud model would receive the pages
+    """
+    svc = _make_svc()
+
+    with patch.object(
+        ProcessingApplicationService,
+        "list_provider_models",
+        return_value=["qwen3-vl:8b", "qwen3-vl:235b-cloud"],
+    ):
+        assert svc.list_ocr_models("http://127.0.0.1:11434") == ["qwen3-vl:8b"]
+
+
+@pytest.mark.unit
+def test_describe_ocr_refusal_names_the_reason_for_cloud_models_only() -> None:
+    """
+    Given  a cloud model and a downloaded model on the local Ollama server
+    When   the refusal for each is asked for
+    Then   only the cloud model has a reason, which says it runs on Ollama's servers
+    """
+    svc = _make_svc()
+    url = "http://127.0.0.1:11434"
+
+    assert "Ollama's servers" in svc.describe_ocr_refusal("ollama", "qwen3-vl:235b-cloud", url)
+    assert svc.describe_ocr_refusal("ollama", "qwen3-vl:8b", url) == ""
+    assert svc.describe_ocr_refusal("tesseract", "", url) == ""
+
+
+@pytest.mark.unit
+def test_describe_data_flow_uses_provider_metadata(tmp_path: Path) -> None:
+    """
+    Given  local text recognition and OpenAI proofreading
+    When   the service describes the data flow
+    Then   proofreading is an online service named by its provider's display name
+    """
+    from tests.conftest import make_config  # noqa: PLC0415
+
+    cfg = make_config(
+        tmp_path,
+        ocr_engine="tesseract",
+        correction_enabled=True,
+        correction_provider="openai",
+    )
+
+    flow = _make_svc().describe_data_flow(cfg)
+
+    assert [s.stage for s in flow.outbound] == ["correction"]
+    assert flow.outbound[0].location.service == "OpenAI (ChatGPT)"
 
 
 @pytest.mark.unit

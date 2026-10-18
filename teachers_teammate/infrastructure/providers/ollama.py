@@ -15,6 +15,9 @@ _DEFAULT_BASE_URL = "http://127.0.0.1:11434"
 # Metadata consumed by the GUI (and any other caller of llm_factory.get_provider_info).
 # ``models`` is intentionally empty: Ollama's model list is fetched live via the API.
 PROVIDER_INFO: dict = {
+    "display_name": "Ollama",
+    # Runs on the server at base_url (usually this computer), not at a vendor.
+    "self_hosted": True,
     "needs_api_key": False,
     "env_key": "",
     "needs_base_url": True,

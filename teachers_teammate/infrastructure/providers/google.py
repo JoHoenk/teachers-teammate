@@ -24,6 +24,7 @@ if TYPE_CHECKING:
 from teachers_teammate.infrastructure.providers._helpers import api_key_check, import_guard
 
 PROVIDER_INFO: dict = {
+    "display_name": "Google (Gemini)",
     "needs_api_key": True,  # key is read from $GOOGLE_API_KEY by LangChain
     "env_key": "GOOGLE_API_KEY",
     "needs_base_url": False,

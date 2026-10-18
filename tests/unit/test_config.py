@@ -8,7 +8,14 @@ from unittest.mock import patch
 
 import pytest
 
-from teachers_teammate.config import DEFAULTS, Config, OcrConfig, dump_config_file, load_config_file
+from teachers_teammate.config import (
+    DEFAULTS,
+    Config,
+    OcrConfig,
+    dump_config_file,
+    load_config_file,
+    unavailable_ocr_engine,
+)
 from teachers_teammate.exceptions import ConfigFileNotFoundError, ConfigFileParseError
 from teachers_teammate.infrastructure.storage_root import (
     compute_cache_key,
@@ -24,7 +31,6 @@ def _cfg(**overrides: Any) -> Config:
     ocr_map = {
         "ocr_engine": "engine",
         "ocr_model": "model",
-        "ocr_provider": "provider",
         "preprocess_method": "preprocess_method",
         "ocr_temperature": "temperature",
     }
@@ -203,6 +209,105 @@ def test_load_config_file_returns_recognised_keys(tmp_path: Path) -> None:
     result = load_config_file(cfg_file)
     assert result.get("language") == "German"
     assert "unknown_key" not in result
+
+
+@pytest.mark.parametrize("engine", ["langchain", "openai", "gpt"])
+def test_load_config_file_replaces_online_ocr_engine(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], engine: str
+) -> None:
+    """
+    Given  a settings file from an older version naming an online OCR engine
+    When   load_config_file() is called
+    Then   the engine falls back to the default and a warning explains why
+    """
+    cfg_file = tmp_path / "ocr.toml"
+    cfg_file.write_text(f'ocr_engine = "{engine}"\nocr_provider = "openai"\n')
+    result = load_config_file(cfg_file)
+    assert result["ocr_engine"] == DEFAULTS["ocr_engine"]
+    assert "ocr_provider" not in result
+    assert "stays on this computer" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    ("line", "expected"),
+    [
+        ('ocr_engine = "langchain"', "langchain"),
+        ('ocr_engine = "openai"', "openai"),
+        ('ocr_engine = "Tesseract"', ""),
+        ('ocr_engine = "ollama"', ""),
+        ('language = "German"', ""),
+    ],
+)
+def test_unavailable_ocr_engine_names_what_was_replaced(
+    tmp_path: Path, line: str, expected: str
+) -> None:
+    """
+    Given  a settings file with an online, a local or no OCR engine
+    When   unavailable_ocr_engine() is asked
+    Then   it names the online engine, and is empty otherwise
+    """
+    cfg_file = tmp_path / "ocr.toml"
+    cfg_file.write_text(line + "\n")
+
+    assert unavailable_ocr_engine(cfg_file) == expected
+
+
+def test_unavailable_ocr_engine_is_empty_for_an_unreadable_file(tmp_path: Path) -> None:
+    """
+    Given  a settings file that is not valid TOML
+    When   unavailable_ocr_engine() is asked
+    Then   it answers "" instead of raising (loading reports the parse error itself)
+    """
+    cfg_file = tmp_path / "ocr.toml"
+    cfg_file.write_text("not = = toml")
+
+    assert unavailable_ocr_engine(cfg_file) == ""
+
+
+def test_load_config_file_resets_model_of_replaced_online_engine(tmp_path: Path) -> None:
+    """
+    Given  a settings file naming an online engine together with its online model
+    When   load_config_file() is called
+    Then   the model is reset too, so the replacement engine is not asked for 'gpt-4o'
+    """
+    cfg_file = tmp_path / "ocr.toml"
+    cfg_file.write_text('ocr_engine = "langchain"\nocr_model = "gpt-4o"\n')
+
+    assert load_config_file(cfg_file)["ocr_model"] == DEFAULTS["ocr_model"]
+
+
+def test_load_config_file_keeps_model_of_local_engine(tmp_path: Path) -> None:
+    """
+    Given  a settings file naming Ollama and a model
+    When   load_config_file() is called
+    Then   the model is kept
+    """
+    cfg_file = tmp_path / "ocr.toml"
+    cfg_file.write_text('ocr_engine = "ollama"\nocr_model = "my-model:7b"\n')
+
+    assert load_config_file(cfg_file)["ocr_model"] == "my-model:7b"
+
+
+def test_load_config_file_keeps_local_ocr_engines(tmp_path: Path) -> None:
+    """
+    Given  a settings file naming Tesseract
+    When   load_config_file() is called
+    Then   the engine is kept (case and spaces folded)
+    """
+    cfg_file = tmp_path / "ocr.toml"
+    cfg_file.write_text('ocr_engine = " Tesseract "\n')
+    assert load_config_file(cfg_file)["ocr_engine"] == "tesseract"
+
+
+def test_ocr_config_from_settings_replaces_online_engine() -> None:
+    """
+    Given  saved GUI settings whose ocr_engine is an online provider
+    When   OcrConfig.from_settings() is called
+    Then   the engine is the local default, so pages are never uploaded
+    """
+    ocr = OcrConfig.from_settings({"ocr_engine": "langchain", "ocr_model": "gpt-4o"})
+    assert ocr.engine == DEFAULTS["ocr_engine"]
+    assert ocr.model == DEFAULTS["ocr_model"]
 
 
 def test_load_config_file_passes_through_unknown_provider(tmp_path: Path) -> None:

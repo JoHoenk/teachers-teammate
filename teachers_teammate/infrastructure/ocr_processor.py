@@ -3,33 +3,30 @@
 :class:`OllamaOCRProcessor` — uses an Ollama vision model (default).
 :class:`TesseractOCRProcessor` — uses a local Tesseract installation.
 :class:`PaddleOCRProcessor` — uses PaddleOCR (fully local, no server needed).
-:class:`LangChainOCRProcessor` — uses any LangChain vision-capable model.
 
-All four implement :class:`~teachers_teammate.interfaces.OCRProcessor`.
+All three implement :class:`~teachers_teammate.interfaces.OCRProcessor`.  Online vision
+models are intentionally not supported: a page cannot be anonymised before it is read.
 """
 
 from __future__ import annotations
 
 import base64
 from pathlib import Path
-from typing import TYPE_CHECKING
 
+from ..domain.data_location import LOCAL_OCR_ENGINES
 from ..exceptions import OCRError, ProviderNotAvailableError
 from ..interfaces import OCRProcessor
 from .ollama_utils import OllamaClient
 
-if TYPE_CHECKING:
-    from langchain_core.language_models import BaseChatModel
-
 _OCR_PROMPT = "Extract all visible text from this image in {language} exactly as written."
 
-SUPPORTED_OCR_ENGINES: list[str] = ["ollama", "tesseract", "paddleocr", "langchain"]
+# Every engine reads pages on a computer the user controls (see domain/data_location.py).
+SUPPORTED_OCR_ENGINES: list[str] = list(LOCAL_OCR_ENGINES)
 
 _ENGINE_PREPROCESS_DEFAULTS: dict[str, str] = {
     "ollama": "grayscale",
     "tesseract": "clahe",
     "paddleocr": "grayscale",
-    "langchain": "grayscale",
 }
 
 
@@ -246,66 +243,6 @@ class PaddleOCRProcessor(OCRProcessor):
             return "\n".join(rec_texts)
         except RuntimeError as exc:
             raise OCRError(str(exc)) from exc
-        except OCRError:
-            raise
-        except Exception as exc:
-            raise OCRError(str(exc)) from exc
-
-
-class LangChainOCRProcessor(OCRProcessor):
-    """Calls any LangChain vision-capable model to extract text from a single image.
-
-    Accepts any :class:`~langchain_core.language_models.BaseChatModel` that
-    supports multimodal input (images).  Use
-    :func:`~teachers_teammate.infrastructure.llm_factory.build_llm` to build the model before
-    passing it in — this works with all supported providers (OpenAI, Anthropic,
-    Google, Ollama, …).
-
-    The image is base64-encoded and sent as a ``data:`` URI so no external
-    file hosting is needed.
-    """
-
-    def __init__(self, model: BaseChatModel) -> None:
-        self._model = model
-
-    def process_image(self, image_path: Path, language: str = "English") -> str:
-        """Extract text from *image_path* using a LangChain vision model.
-
-        Args:
-            image_path: Path to the preprocessed image.
-            language:   Language of the document text.
-
-        Raises:
-            :exc:`~teachers_teammate.exceptions.OCRError`: on failure.
-        """
-        try:
-            from langchain_core.messages import HumanMessage  # noqa: PLC0415
-            from langchain_core.output_parsers import StrOutputParser  # noqa: PLC0415
-        except ImportError as exc:  # pragma: no cover
-            raise OCRError(f"langchain-core is not installed: {exc}") from exc
-        try:
-            b64 = _encode_image(image_path)
-            suffix = image_path.suffix.lower().lstrip(".")
-            mime = (
-                "jpeg"
-                if suffix in ("jpg", "jpeg")
-                else (suffix if suffix in ("png", "gif", "webp") else "png")
-            )
-            prompt = get_ocr_prompt(language)
-            message = HumanMessage(
-                content=[
-                    {
-                        "type": "image_url",
-                        "image_url": {"url": f"data:image/{mime};base64,{b64}"},
-                    },
-                    {"type": "text", "text": prompt},
-                ]
-            )
-            chain = self._model | StrOutputParser()
-            result: str = chain.invoke([message])
-            if not result.strip():
-                raise OCRError("model returned an empty response")
-            return result
         except OCRError:
             raise
         except Exception as exc:

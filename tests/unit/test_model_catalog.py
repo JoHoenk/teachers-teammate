@@ -316,14 +316,13 @@ def test_default_ocr_model_is_a_catalogued_reading_model() -> None:
     Given  the static DEFAULTS and per-task model defaults
     When   the Ollama OCR default is inspected
     Then   it is a catalogued reading model (regression: gpt-oss cannot read images)
+           and no online provider has an OCR default
     """
     assert DEFAULTS["ocr_model"] == DEFAULT_OCR_MODEL
     spec = find_spec(DEFAULTS["ocr_model"])
     assert spec is not None
     assert spec.category == "ocr"
-    spec = find_spec(_DEFAULT_MODELS["ocr"]["ollama"])
-    assert spec is not None
-    assert spec.category == "ocr"
+    assert "ocr" not in _DEFAULT_MODELS  # no online provider ever reads pages
 
 
 def test_default_writing_models_equal_the_default_writing_model() -> None:

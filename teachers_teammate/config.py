@@ -17,6 +17,7 @@ import tomllib
 from typing import Any
 
 from ._model_defaults import default_model_for_task
+from .domain.data_location import LOCAL_OCR_ENGINES
 from .domain.model_catalog import DEFAULT_OCR_MODEL, DEFAULT_WRITING_MODEL, PROFILE_SETTINGS
 from .domain.pdf_text_layer import (
     PDF_TEXT_LAYER_MODES,
@@ -31,7 +32,6 @@ DEFAULTS: dict[str, Any] = {
     # ── OCR ──────────────────────────────────────────────────────────────────
     "ocr_engine": "ollama",
     "ocr_model": DEFAULT_OCR_MODEL,
-    "ocr_provider": "",
     "language": "English",
     "preprocess_method": "grayscale",
     "ollama_url": "http://127.0.0.1:11434",
@@ -81,11 +81,41 @@ DEFAULTS: dict[str, Any] = {
 }
 
 
+def normalize_ocr_engine(value: object) -> str:
+    """Return *value* if it is a local OCR engine, else the default engine.
+
+    Settings files written by older versions may name an online engine (``langchain`` or a
+    provider such as ``openai``).  Text recognition never goes online any more, so those
+    fall back to the default instead of silently uploading pages.
+    """
+    engine = str(value).strip().lower()
+    if engine in LOCAL_OCR_ENGINES:
+        return engine
+    print(
+        f"WARNING: ocr_engine {value!r} is not available (text recognition stays on this "
+        f"computer; choose one of {', '.join(LOCAL_OCR_ENGINES)}) — using "
+        f"'{DEFAULTS['ocr_engine']}'.",
+        file=sys.stderr,
+    )
+    return DEFAULTS["ocr_engine"]
+
+
+def normalize_ocr_model(value: object, model: object) -> str:
+    """Return *model*, or the default OCR model when *value* named an unavailable engine.
+
+    A model name saved next to an online engine (``gpt-4o``) means nothing to the engine
+    that replaces it, so it is reset together with the engine.
+    """
+    if str(value).strip().lower() in LOCAL_OCR_ENGINES:
+        return str(model)
+    return DEFAULTS["ocr_model"]
+
+
 @dataclass
 class OcrConfig:
     """The OCR slice of the runtime configuration.
 
-    Holds only the fields that vary per OCR run (engine/model/provider/
+    Holds only the fields that vary per OCR run (engine/model/
     preprocessing/temperature).  Shared fields the OCR stage *reads* but that are
     also consumed by correction/evaluation — ``language``, ``ollama_url``,
     ``ocr_timeout`` — stay on :class:`Config`.  Both the pipeline and the
@@ -94,8 +124,6 @@ class OcrConfig:
 
     engine: str = DEFAULTS["ocr_engine"]
     model: str = DEFAULTS["ocr_model"]
-    # Used only when ``engine == "langchain"``.
-    provider: str = DEFAULTS["ocr_provider"]
     preprocess_method: str = DEFAULTS["preprocess_method"]
     temperature: float = DEFAULTS["ocr_temperature"]
     pdf_render_dpi: int = DEFAULTS["pdf_render_dpi"]
@@ -124,9 +152,8 @@ class OcrConfig:
             return values.get(key, DEFAULTS[key])
 
         return cls(
-            engine=str(get("ocr_engine")),
-            model=str(get("ocr_model")),
-            provider=str(get("ocr_provider")),
+            engine=normalize_ocr_engine(get("ocr_engine")),
+            model=normalize_ocr_model(get("ocr_engine"), get("ocr_model")),
             preprocess_method=str(get("preprocess_method")),
             temperature=float(get("ocr_temperature")),
             pdf_render_dpi=int(get("pdf_render_dpi")),
@@ -137,13 +164,6 @@ class OcrConfig:
             denoise=bool(get("preprocess_denoise")),
             gamma=bool(get("preprocess_gamma")),
         )
-
-    @property
-    def effective_model(self) -> str:
-        """Return the OCR model, falling back to provider defaults for the langchain engine."""
-        if self.model:
-            return self.model
-        return default_model_for_task(self.provider, "ocr")
 
 
 @dataclass
@@ -203,6 +223,32 @@ class Config:
         return default_model_for_task(self.evaluate_provider, "evaluation")
 
 
+def _read_toml(path: Path) -> dict[str, Any]:
+    """Return the parsed TOML of *path*, raising :exc:`ConfigFileParseError` on failure."""
+    try:
+        with path.open("rb") as fh:
+            return tomllib.load(fh)
+    except OSError as exc:
+        raise ConfigFileParseError(f"Cannot read config file '{path}': {exc}") from exc
+    except tomllib.TOMLDecodeError as exc:
+        raise ConfigFileParseError(f"Could not parse config file {path}: {exc}") from exc
+
+
+def unavailable_ocr_engine(path: Path) -> str:
+    """Return the OCR engine *path* names if it is no longer available, else ``""``.
+
+    :func:`load_config_file` already swaps such an engine for the default; this tells a
+    GUI what was swapped so it can say so instead of changing the setting silently.
+    """
+    try:
+        engine = _read_toml(path).get("ocr_engine")
+    except ConfigFileParseError:
+        return ""
+    if engine is None or str(engine).strip().lower() in LOCAL_OCR_ENGINES:
+        return ""
+    return str(engine)
+
+
 def load_config_file(path: Path) -> dict:
     """Parse *path* as TOML and return a dict of recognised pipeline keys.
 
@@ -222,7 +268,6 @@ def load_config_file(path: Path) -> dict:
         "debug",
         "ocr_engine",
         "ocr_model",
-        "ocr_provider",
         "language",
         "preprocess_method",
         "ollama_url",
@@ -252,14 +297,14 @@ def load_config_file(path: Path) -> dict:
         "preprocess_gamma",
         "hardware_profile",
     }
-    try:
-        with path.open("rb") as fh:
-            raw = tomllib.load(fh)
-    except OSError as exc:
-        raise ConfigFileParseError(f"Cannot read config file '{path}': {exc}") from exc
-    except tomllib.TOMLDecodeError as exc:
-        raise ConfigFileParseError(f"Could not parse config file {path}: {exc}") from exc
+    raw = _read_toml(path)
     result = {k: v for k, v in raw.items() if k in known_keys}
+
+    if "ocr_engine" in result:
+        result["ocr_model"] = normalize_ocr_model(
+            result["ocr_engine"], result.get("ocr_model", DEFAULTS["ocr_model"])
+        )
+        result["ocr_engine"] = normalize_ocr_engine(result["ocr_engine"])
 
     if "pdf_text_layer" in result:
         raw_mode = result["pdf_text_layer"]

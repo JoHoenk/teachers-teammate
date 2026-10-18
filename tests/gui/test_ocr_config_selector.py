@@ -3,9 +3,12 @@
 
 from __future__ import annotations
 
+import html
+
 import pytest
 
 from teachers_teammate.config import OcrConfig
+from teachers_teammate.domain.data_location import DataLocation, StageLocation
 from teachers_teammate.domain.model_catalog import DEFAULT_OCR_MODEL
 from teachers_teammate.gui._ocr_config_selector import OcrConfigSelector
 
@@ -17,7 +20,7 @@ class _DummyAppService(RecommendationServiceStub):
         return ["ollama", "openai"]
 
     def list_ocr_engines(self) -> list[str]:
-        return ["ollama", "tesseract", "paddleocr", "langchain"]
+        return ["ollama", "tesseract", "paddleocr"]
 
     def default_preprocess_for_engine(self, engine: str) -> str:
         return {"ollama": "grayscale", "tesseract": "clahe"}.get(engine, "")
@@ -33,6 +36,11 @@ class _DummyAppService(RecommendationServiceStub):
     def list_provider_models(self, provider: str, *, base_url: str = "") -> list[str]:
         _ = base_url
         return [f"{provider}-model"]
+
+    def list_ocr_models(self, base_url: str = "") -> list[str]:
+        return [
+            m for m in self.list_provider_models("ollama", base_url=base_url) if "cloud" not in m
+        ]
 
     def get_cached_models(self, provider: str, *, base_url: str = "") -> list[str] | None:
         return [f"{provider}-cached"]
@@ -57,25 +65,22 @@ def test_get_ocr_config_for_native_engine(selector) -> None:
     """
     Given  the selector set to a native engine (tesseract)
     When   get_ocr_config() is called
-    Then   it returns an OcrConfig with that engine and no langchain provider
+    Then   it returns an OcrConfig with that engine
     """
     selector._ocr_engine.setCurrentText("tesseract")
     ocr = selector.get_ocr_config()
     assert ocr.engine == "tesseract"
-    assert ocr.provider == ""
 
 
 @pytest.mark.gui
-def test_get_ocr_config_for_provider_engine_uses_langchain(selector) -> None:
+def test_online_providers_are_not_offered_as_recognition_methods(selector) -> None:
     """
-    Given  the selector set to a provider engine (openai)
-    When   get_ocr_config() is called
-    Then   the engine is 'langchain' and provider records the chosen provider
+    Given  an app service that also lists online LLM providers (openai)
+    When   the recognition-method choices are read
+    Then   only engines that run on the user's computer are offered
     """
-    selector._ocr_engine.setCurrentText("openai")
-    ocr = selector.get_ocr_config()
-    assert ocr.engine == "langchain"
-    assert ocr.provider == "openai"
+    engines = [selector._ocr_engine.itemText(i) for i in range(selector._ocr_engine.count())]
+    assert engines == ["ollama", "tesseract", "paddleocr"]
 
 
 @pytest.mark.gui
@@ -322,3 +327,107 @@ def test_non_ollama_engines_have_no_hint_and_button(qtbot) -> None:
     assert selector._guidance.isHidden() is True
     selector._ocr_engine.setCurrentText("ollama")
     assert selector._guidance.isHidden() is False
+
+
+@pytest.mark.use_case("Model_Category_Guidance")
+def test_ollama_cloud_models_are_not_offered_for_reading_pages(qtbot) -> None:
+    """
+    Given  an Ollama server that also lists a cloud model (processed on ollama.com)
+    When   the reading-model list is populated
+    Then   the cloud model is left out, so pages cannot be sent there by accident
+    """
+    models = ["qwen3-vl:8b", "qwen3-vl:235b-cloud"]
+    selector = OcrConfigSelector(
+        app_service=_OllamaCatalogAppService(models), hardware_profile="8gb"
+    )
+    qtbot.addWidget(selector)
+    with qtbot.waitSignal(selector._hw_selector.resolved_changed, timeout=5000):
+        pass
+    selector.refresh()
+    qtbot.waitUntil(lambda: selector._guidance._models == ["qwen3-vl:8b"], timeout=5000)
+    thread = selector._fetch_thread
+    assert thread is not None
+    thread.wait(5000)
+
+    combo = selector._ocr_model
+    assert [combo.itemText(i) for i in range(combo.count())] == ["qwen3-vl:8b"]
+
+
+class _LocationAppService(_DummyAppService):
+    """Service reporting a chosen place for text recognition."""
+
+    def __init__(self, location: StageLocation) -> None:
+        super().__init__()
+        self._location = location
+
+    def describe_ocr_location(self, engine: str, model: str, ollama_url: str) -> StageLocation:
+        _ = engine, model, ollama_url
+        return self._location
+
+    def describe_ocr_refusal(self, engine: str, model: str, ollama_url: str) -> str:
+        _ = engine, model, ollama_url
+        if self._location.location is DataLocation.ONLINE:
+            return "The model runs on Ollama's servers, not on your computer."
+        return ""
+
+
+@pytest.mark.gui
+@pytest.mark.parametrize(
+    ("location", "expected"),
+    [
+        (StageLocation(DataLocation.THIS_COMPUTER, "Ollama"), "pages never leave it"),
+        (
+            StageLocation(DataLocation.OTHER_COMPUTER, "Ollama", "school-server"),
+            "pages are sent there",
+        ),
+    ],
+)
+def test_selector_says_where_pages_are_read(qtbot, location, expected) -> None:
+    """
+    Given  the selector and a service that reports where the engine runs
+    When   the hint is rendered
+    Then   it names the place and what that means for the pages
+    """
+    widget = OcrConfigSelector(app_service=_LocationAppService(location))
+    qtbot.addWidget(widget)
+
+    text = widget._where_hint.text()
+
+    assert location.label in text
+    assert expected in text
+
+
+@pytest.mark.gui
+def test_selector_refuses_a_hosted_ollama_server_even_for_a_plain_model(qtbot) -> None:
+    """
+    Given  a service that places the engine online because the server is Ollama's hosted API
+    When   the selector shows a model without a cloud tag
+    Then   the hint says it is not allowed, as it does for cloud models
+    """
+    widget = OcrConfigSelector(
+        app_service=_LocationAppService(StageLocation(DataLocation.ONLINE, "Ollama cloud"))
+    )
+    qtbot.addWidget(widget)
+
+    widget._ocr_model.setCurrentText("qwen3-vl:8b")
+
+    assert "not allowed" in html.unescape(widget._where_hint.text())
+
+
+@pytest.mark.gui
+def test_selector_warns_when_a_cloud_model_is_typed_in(qtbot) -> None:
+    """
+    Given  the selector with Ollama chosen
+    When   an Ollama cloud model is typed into the model box
+    Then   the hint says it is not allowed and its tooltip explains the model runs on
+           Ollama's servers
+    """
+    widget = OcrConfigSelector(
+        app_service=_LocationAppService(StageLocation(DataLocation.ONLINE, "Ollama cloud"))
+    )
+    qtbot.addWidget(widget)
+
+    widget._ocr_model.setCurrentText("qwen3-vl:235b-cloud")
+
+    assert "not allowed" in html.unescape(widget._where_hint.text())
+    assert "Ollama's servers" in widget._where_hint.toolTip()

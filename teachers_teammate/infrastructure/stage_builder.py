@@ -27,7 +27,8 @@ if TYPE_CHECKING:
     from .ocr_formats import OcrOutputPostprocessor
 
 from ..config import Config, OcrConfig
-from ..exceptions import ProviderNotAvailableError
+from ..domain.data_location import online_ocr_reason
+from ..exceptions import OnlineOcrNotAllowedError, ProviderNotAvailableError
 from ..interfaces import (
     Anonymizer,
     Corrector,
@@ -43,12 +44,11 @@ from .evaluation import LangChainEvaluator, NativeOllamaEvaluator
 from .image_preprocessor import HandwritingPreprocessor
 from .llm_factory import build_llm
 from .ocr_processor import (
-    LangChainOCRProcessor,
     OllamaOCRProcessor,
     PaddleOCRProcessor,
     TesseractOCRProcessor,
 )
-from .ollama_utils import OllamaClient
+from .ollama_utils import OllamaClient, ollama_host
 from .reporting import Reporter, StdoutReporter
 from .workflow.preprocess_service import PreprocessService
 
@@ -77,10 +77,6 @@ def _default_build_tesseract_ocr() -> OCRProcessor:
 
 def _default_build_paddle_ocr(language: str) -> OCRProcessor:
     return PaddleOCRProcessor(language=language)
-
-
-def _default_build_langchain_ocr(llm: BaseChatModel) -> OCRProcessor:
-    return LangChainOCRProcessor(llm)
 
 
 def _default_build_ollama_ocr(
@@ -154,7 +150,6 @@ class PipelineComponentFactory:
     )
     build_tesseract_ocr: Callable[[], OCRProcessor] = _default_build_tesseract_ocr
     build_paddle_ocr: Callable[[str], OCRProcessor] = _default_build_paddle_ocr
-    build_langchain_ocr: Callable[[BaseChatModel], OCRProcessor] = _default_build_langchain_ocr
     build_ollama_ocr: Callable[[str, OllamaClient, int, float], OCRProcessor] = (
         _default_build_ollama_ocr
     )
@@ -208,23 +203,22 @@ class StageBuilder:
         )
 
     def build_ocr(self, ollama_client: OllamaClient | None = None) -> OCRProcessor:
+        """Build the OCR processor; refuse settings that would read pages online.
+
+        Raises:
+            OnlineOcrNotAllowedError: the engine or model would receive the page images
+                on a computer the user does not control.
+        """
         cfg = self.config
         ocr = cfg.ocr
         factory = self.factory
+        reason = online_ocr_reason(ocr.engine, ocr.model, ollama_host(cfg.ollama_url))
+        if reason:
+            raise OnlineOcrNotAllowedError(reason)
         if ocr.engine == "tesseract":
             return factory.build_tesseract_ocr()
         if ocr.engine == "paddleocr":
             return factory.build_paddle_ocr(cfg.language)
-        if ocr.engine == "langchain":
-            if not ocr.provider:
-                raise ValueError(
-                    "ocr_provider must be set when ocr_engine is 'langchain' "
-                    "(e.g. --ocr-provider openai)"
-                )
-            llm = factory.build_llm(
-                ocr.provider, ocr.effective_model, cfg.ollama_url, ocr.temperature
-            )
-            return factory.build_langchain_ocr(llm)
         client = ollama_client or self._build_ollama_client()
         return factory.build_ollama_ocr(ocr.model, client, cfg.ocr_timeout, ocr.temperature)
 

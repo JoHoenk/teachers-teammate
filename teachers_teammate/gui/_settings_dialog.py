@@ -35,6 +35,7 @@ from PySide6.QtWidgets import (
 
 from ..application.service import ProcessingApplicationService
 from ..config import DEFAULTS, OcrConfig
+from ..domain.data_location import StageLocation
 from ..domain.model_catalog import (
     HardwareDetection,
     HardwareProfile,
@@ -42,6 +43,7 @@ from ..domain.model_catalog import (
     ModelRating,
     ModelUses,
 )
+from ._data_flow_summary import LocationHint, text_note
 from ._model_guidance import OpenDownloads
 from ._model_wording import SAME_MODEL_TIP
 from ._worker import _ConnectionCheckThread  # noqa: F401  kept for external callers
@@ -61,10 +63,6 @@ _PROVIDER_EXTRA: dict[str, tuple[str, list[str]]] = {
     "cohere": ("providers", ["langchain_cohere"]),
 }
 
-# Engines that map directly to a pipeline stage without a LangChain provider wrapper.
-_NATIVE_OCR_ENGINES: frozenset[str] = frozenset({"ollama", "tesseract", "paddleocr"})
-
-
 # ── background threads ────────────────────────────────────────────────────────
 
 
@@ -78,6 +76,8 @@ class _SettingsAppService(Protocol):
     def get_provider_info(self, provider: str) -> dict: ...
 
     def list_provider_models(self, provider: str, *, base_url: str = "") -> list[str]: ...
+
+    def list_ocr_models(self, base_url: str = "") -> list[str]: ...
 
     def get_cached_models(self, provider: str, *, base_url: str = "") -> list[str] | None: ...
 
@@ -102,6 +102,14 @@ class _SettingsAppService(Protocol):
     ) -> list[ModelRating]: ...
 
     def detect_gpus(self, *, refresh: bool = False) -> list: ...
+
+    def describe_ocr_location(self, engine: str, model: str, ollama_url: str) -> StageLocation: ...
+
+    def describe_ocr_refusal(self, engine: str, model: str, ollama_url: str) -> str: ...
+
+    def describe_llm_location(
+        self, provider: str, model: str, ollama_url: str
+    ) -> StageLocation: ...
 
 
 class _ModelFetchThread(QThread):
@@ -322,7 +330,6 @@ class OCRSettingsDialog(QDialog):
         # Build the result dict from the OCR config
         result = {
             "ocr_engine": ocr_config.engine,
-            "ocr_provider": ocr_config.provider,
             "ocr_model": ocr_config.model,
             "preprocess_method": ocr_config.preprocess_method,
             "debug": self._debug.isChecked(),
@@ -451,6 +458,9 @@ class CorrectionSettingsDialog(QDialog):
         self._correction_provider.currentTextChanged.connect(self._on_provider_changed)
         model_form.addRow("AI service:", self._correction_provider)
 
+        self._where_hint = LocationHint()
+        model_form.addRow("", self._where_hint)
+
         self._correction_extra_warn = QLabel()
         self._correction_extra_warn.setStyleSheet("color: #c0392b;")
         self._correction_extra_warn.setWordWrap(True)
@@ -492,6 +502,7 @@ class CorrectionSettingsDialog(QDialog):
         self._correction_model.currentTextChanged.connect(
             lambda _txt: self._update_same_model_tip()
         )
+        self._correction_model.currentTextChanged.connect(lambda _txt: self._update_where_hint())
         self._hw_selector.resolved_changed.connect(lambda _d: self._update_same_model_tip())
 
         self._corr_temperature = QDoubleSpinBox()
@@ -547,6 +558,16 @@ class CorrectionSettingsDialog(QDialog):
             warn = ""
         self._correction_extra_warn.setText(warn)
         self._correction_extra_warn.setVisible(bool(warn))
+        self._update_where_hint()
+
+    def _update_where_hint(self) -> None:
+        """Say where the chosen AI service runs, so online use is never a surprise."""
+        location = self._app_service.describe_llm_location(
+            self._correction_provider.currentText(),
+            self._correction_model.currentText().strip(),
+            self._ollama_url,
+        )
+        self._where_hint.set_location(location, text_note(location))
 
     def _refetch_models(self) -> None:
         """Invalidate the model cache and fetch the list again."""
@@ -734,6 +755,9 @@ class EvaluationSettingsDialog(QDialog):
         self._evaluation_provider.currentTextChanged.connect(self._on_provider_changed)
         model_form.addRow("AI service:", self._evaluation_provider)
 
+        self._where_hint = LocationHint()
+        model_form.addRow("", self._where_hint)
+
         self._eval_extra_warn = QLabel()
         self._eval_extra_warn.setStyleSheet("color: #c0392b;")
         self._eval_extra_warn.setWordWrap(True)
@@ -773,6 +797,7 @@ class EvaluationSettingsDialog(QDialog):
         self._evaluation_model.currentTextChanged.connect(
             lambda _txt: self._update_same_model_tip()
         )
+        self._evaluation_model.currentTextChanged.connect(lambda _txt: self._update_where_hint())
         self._hw_selector.resolved_changed.connect(lambda _d: self._update_same_model_tip())
 
         self._eval_temperature = QDoubleSpinBox()
@@ -828,6 +853,16 @@ class EvaluationSettingsDialog(QDialog):
             warn = ""
         self._eval_extra_warn.setText(warn)
         self._eval_extra_warn.setVisible(bool(warn))
+        self._update_where_hint()
+
+    def _update_where_hint(self) -> None:
+        """Say where the chosen AI service runs, so online use is never a surprise."""
+        location = self._app_service.describe_llm_location(
+            self._evaluation_provider.currentText(),
+            self._evaluation_model.currentText().strip(),
+            self._ollama_url,
+        )
+        self._where_hint.set_location(location, text_note(location))
 
     def _refetch_models(self) -> None:
         """Invalidate the model cache and fetch the list again."""

@@ -29,10 +29,11 @@ from PySide6.QtWidgets import (
 )
 
 from ..application.service import RequirementIssue
-from ..config import DEFAULTS, Config, OcrConfig
+from ..config import DEFAULTS, Config, OcrConfig, normalize_ocr_engine, normalize_ocr_model
 from ..domain.pdf_text_layer import normalize_pdf_text_layer
 from ._background import LatestTask
 from ._constants import _LANGUAGES
+from ._data_flow_summary import DataFlowSummary
 from ._types import SettingsDict
 
 
@@ -93,7 +94,6 @@ class ConfigPanel(QScrollArea):
         # Advanced settings stored here; edited via the Settings dialog.
         self._settings_dict: SettingsDict = {
             "ocr_engine": DEFAULTS["ocr_engine"],
-            "ocr_provider": DEFAULTS["ocr_provider"],
             "ocr_model": DEFAULTS["ocr_model"],
             "ollama_url": DEFAULTS["ollama_url"],
             "hardware_profile": DEFAULTS["hardware_profile"],
@@ -133,6 +133,9 @@ class ConfigPanel(QScrollArea):
         self._layout.setContentsMargins(8, 8, 8, 8)
         self._layout.setSpacing(6)
 
+        self._data_flow_summary = DataFlowSummary()
+        self._layout.addWidget(self._data_flow_summary)
+        self._layout.addWidget(self._separator())
         self._build_step1_select_input()
         self._layout.addWidget(self._separator())
         self._build_step2_language()
@@ -244,8 +247,9 @@ class ConfigPanel(QScrollArea):
             self._step_header(
                 "Step 3: Remove Personal Information",
                 "Automatically hides names, email addresses, and phone numbers\n"
-                "before sending text to the AI service for proofreading.\n"
+                "before text is sent to the AI service for proofreading and content review.\n"
                 "The original information is restored in the final document.\n"
+                "Not needed while everything runs on this computer.\n"
                 "Requires the Privacy add-on (see Downloads).",
             )
         )
@@ -407,7 +411,21 @@ class ConfigPanel(QScrollArea):
 
     # ── visibility updates ────────────────────────────────────────────────────────
 
+    def refresh_data_flow(self) -> None:
+        """Re-render the "where are my documents processed" box for the live settings.
+
+        Does nothing while settings are being loaded: :meth:`load_from_dict` renders once
+        at the end instead of once per restored checkbox.
+        """
+        if self._service is None or self._loading:
+            return
+        from ..application.service import ProcessingApplicationService  # noqa: PLC0415
+
+        service: ProcessingApplicationService = self._service  # ty: ignore[invalid-assignment]  # _service is injected as object; narrowed to the concrete service type
+        self._data_flow_summary.set_flow(service.describe_data_flow(self.lookup_config()))
+
     def _update_correction_visibility(self, checked: bool = True) -> None:
+        self.refresh_data_flow()
         if not checked:
             self._settings_dict["correction_enabled"] = False
             return
@@ -419,6 +437,7 @@ class ConfigPanel(QScrollArea):
         pass  # driven by _on_anonymization_changed
 
     def _on_evaluation_enabled_changed(self, checked: bool) -> None:
+        self.refresh_data_flow()
         if not checked:
             self._settings_dict["evaluation_enabled"] = False
             return
@@ -426,6 +445,7 @@ class ConfigPanel(QScrollArea):
         self._guard_stage("evaluation")
 
     def _on_anonymization_changed(self, checked: bool = True) -> None:
+        self.refresh_data_flow()
         if not checked:
             self._settings_dict["anonymization_enabled"] = False
             return
@@ -533,6 +553,7 @@ class ConfigPanel(QScrollArea):
     def update_settings(self, settings: dict) -> None:
         """Apply values returned by :class:`SettingsDialog`."""
         self._settings_dict.update(settings)
+        self.refresh_data_flow()
 
     def _ocr_config_from_settings(self) -> OcrConfig:
         """Build the :class:`OcrConfig` slice from the stored advanced settings."""
@@ -611,6 +632,7 @@ class ConfigPanel(QScrollArea):
             self._load_from_dict(values)
         finally:
             self._loading = False
+        self.refresh_data_flow()
 
     def _load_from_dict(self, values: dict) -> None:
         if "input" in values:
@@ -654,11 +676,27 @@ class ConfigPanel(QScrollArea):
             self._language.currentTextChanged.connect(self._on_language_changed)
         self._on_language_changed(self._language.currentText())
 
+    @staticmethod
+    def _with_local_ocr_engine(values: dict) -> dict:
+        """Return *values* with an unavailable OCR engine (and its model) replaced.
+
+        A settings file from an older version may name an online engine: fall back to the
+        default engine and reset the model that went with it.
+        """
+        if "ocr_engine" not in values:
+            return values
+        fixed = {**values, "ocr_engine": normalize_ocr_engine(values["ocr_engine"])}
+        if "ocr_model" in values:
+            fixed["ocr_model"] = normalize_ocr_model(values["ocr_engine"], values["ocr_model"])
+        return fixed
+
     def _apply_settings_dict_values(self, values: dict) -> None:
         """Copy the recognised string/scalar/flag keys from *values* into the settings dict."""
+        values = self._with_local_ocr_engine(values)
+        if "ocr_engine" in values:
+            self._settings_dict["ocr_engine"] = values["ocr_engine"]
+
         for key in (
-            "ocr_engine",
-            "ocr_provider",
             "ocr_model",
             "ollama_url",
             "hardware_profile",
@@ -713,6 +751,7 @@ class ConfigPanel(QScrollArea):
     def set_service(self, service: object) -> None:
         """Inject the application service so the panel can run requirement checks."""
         self._service = service
+        self.refresh_data_flow()
 
     def _stage_checkbox(self, stage: str) -> QCheckBox:
         """Return the enable checkbox of pipeline *stage*."""
@@ -762,6 +801,7 @@ class ConfigPanel(QScrollArea):
             ocr=self._ocr_config_from_settings(),
             correction_enabled=self._correction_enabled.isChecked(),
             evaluation_enabled=self._evaluation_enabled.isChecked(),
+            anonymization_enabled=self._anonymization_enabled.isChecked(),
             correction_provider=str(
                 settings.get("correction_provider", config.correction_provider)
             ),
@@ -800,6 +840,7 @@ class ConfigPanel(QScrollArea):
         checkbox.blockSignals(True)
         checkbox.setChecked(False)
         checkbox.blockSignals(False)
+        self.refresh_data_flow()  # signals were blocked: the box must be told itself
         if stage == "correction":
             self._settings_dict["correction_enabled"] = False
         elif stage == "evaluation":

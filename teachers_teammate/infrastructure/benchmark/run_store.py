@@ -36,6 +36,16 @@ BENCHMARK_KEEP_LAST_N = 20
 _SCHEMA_VERSION = 1
 _DOCUMENT_META = "document.json"
 
+# Models that online OCR runs used before they were removed.  Old runs stored no model
+# and showed the provider's default, so that default is frozen here rather than looked
+# up in ``_model_defaults`` (which no longer has an OCR task).
+_LEGACY_ONLINE_OCR_MODELS = {
+    "openai": "gpt-4o",
+    "anthropic": "claude-opus-4-5",
+    "google": "gemini-2.0-flash",
+    "mistral": "pixtral-large-latest",
+}
+
 
 @dataclass(frozen=True)
 class NewRunRequest:
@@ -51,6 +61,23 @@ class NewRunRequest:
     elapsed_s: float
     preview_src: Path | None = None
     raw_text_format: str = "plain"
+
+
+def _legacy_engine(ocr_raw: dict) -> str:
+    """Return the engine of a stored OCR config, naming the provider of old online runs."""
+    engine = ocr_raw["engine"]
+    if engine == "langchain":
+        return ocr_raw.get("provider") or engine
+    return engine
+
+
+def _legacy_model(ocr_raw: dict) -> str:
+    """Return the model of a stored OCR config; old online runs without one used the default."""
+    model = ocr_raw["model"]
+    provider = ocr_raw.get("provider")
+    if not model and ocr_raw["engine"] == "langchain" and provider:
+        return _LEGACY_ONLINE_OCR_MODELS.get(provider, model)
+    return model
 
 
 @dataclass(frozen=True)
@@ -85,7 +112,6 @@ class StoredRun:
             "ocr": {
                 "engine": self.ocr.engine,
                 "model": self.ocr.model,
-                "provider": self.ocr.provider,
                 "preprocess_method": self.ocr.preprocess_method,
                 "pdf_render_dpi": self.ocr.pdf_render_dpi,
                 "dewarp": self.ocr.dewarp,
@@ -124,9 +150,11 @@ class StoredRun:
             display_name=raw["display_name"],
             ocr_config_hash=raw["ocr_config_hash"],
             ocr=OcrConfig(
-                engine=ocr_raw["engine"],
-                model=ocr_raw["model"],
-                provider=ocr_raw["provider"],
+                # Runs from when online vision models were allowed stored engine
+                # "langchain" plus a provider: show the provider so history still reads
+                # "openai · gpt-4o"; such a config can no longer be run again.
+                engine=_legacy_engine(ocr_raw),
+                model=_legacy_model(ocr_raw),
                 preprocess_method=ocr_raw["preprocess_method"],
                 # .get() keeps runs written before these fields existed loadable.  Runs that
                 # predate the pre-step fields applied none of them, whatever today's defaults.
@@ -149,13 +177,9 @@ class StoredRun:
     def config_summary(self) -> str:
         """Return a short human-readable label of the OCR configuration."""
         ocr = self.ocr
-        engine = ocr.engine
-        if engine == "langchain":
-            engine = f"{ocr.provider}"
-        model = ocr.effective_model if engine == ocr.provider else ocr.model
-        parts = [engine]
-        if model:
-            parts.append(model)
+        parts = [ocr.engine]
+        if ocr.model:
+            parts.append(ocr.model)
         parts.append(ocr.preprocess_method)
         pre_steps = [
             name

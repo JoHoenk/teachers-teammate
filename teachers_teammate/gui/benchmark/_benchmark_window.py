@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
 )
 
 from ...application.benchmark_service import BenchmarkApplicationService
+from ...application.service import ProcessingApplicationService
 from ...config import DEFAULTS
 from .._app_bootstrap import create_app
 from .._log_widget import LogWidget
@@ -209,6 +210,8 @@ def main_benchmark(*, window_factory=None) -> None:
     """Launch the benchmark GUI."""
     from .._main_window import _app_icon  # noqa: PLC0415  reuse the shared app icon
 
+    # Start the slow own-host-name lookup before any widget asks where a step runs.
+    ProcessingApplicationService.warm_up_locality_checks()
     app = create_app(icon_factory=_app_icon)
     factory = window_factory or build_benchmark_window
     window = factory()

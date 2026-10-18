@@ -61,7 +61,6 @@ class SettingsDict(TypedDict, total=False):
     and consumed by :meth:`~teachers_teammate.gui._config_panel.ConfigPanel.load_from_dict`."""
 
     ocr_engine: str
-    ocr_provider: str
     ocr_model: str
     ollama_url: str
     hardware_profile: str

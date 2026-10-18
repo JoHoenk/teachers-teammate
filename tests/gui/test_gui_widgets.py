@@ -1016,3 +1016,128 @@ def test_load_icon_returns_empty_icon_for_empty_path(qtbot) -> None:
 
     icon = load_icon("")
     assert icon.isNull()
+
+
+# ── DataFlowSummary / LocationHint ────────────────────────────────────────
+
+
+def _flow(*stages):
+    from teachers_teammate.domain.data_location import DataFlow  # noqa: PLC0415
+
+    return DataFlow(tuple(stages))
+
+
+def _stage(name: str, location, service: str, receives: str = "text", hidden: bool = False):
+    from teachers_teammate.domain.data_location import (  # noqa: PLC0415
+        DataFlowStage,
+        StageLocation,
+    )
+
+    return DataFlowStage(name, StageLocation(location, service), receives, hidden)
+
+
+@pytest.mark.gui
+def test_data_flow_summary_reassures_when_everything_is_local(qtbot) -> None:
+    """
+    Given  a data flow where every step runs on this computer
+    When   the summary is rendered
+    Then   each step is listed and it says everything stays on this computer
+    """
+    from teachers_teammate.domain.data_location import DataLocation  # noqa: PLC0415
+    from teachers_teammate.gui._data_flow_summary import DataFlowSummary  # noqa: PLC0415
+
+    box = DataFlowSummary()
+    qtbot.addWidget(box)
+
+    box.set_flow(
+        _flow(
+            _stage("ocr", DataLocation.THIS_COMPUTER, "Ollama", "page images"),
+            _stage("correction", DataLocation.THIS_COMPUTER, "Ollama"),
+        )
+    )
+
+    text = box._body.text()
+    assert "Text recognition" in text
+    assert "Proofreading" in text
+    assert "Everything stays on this computer." in text
+    assert "leaves this computer" not in text
+
+
+@pytest.mark.gui
+def test_data_flow_summary_warns_and_advises_for_online_steps(qtbot) -> None:
+    """
+    Given  proofreading on an online service with names not hidden
+    When   the summary is rendered
+    Then   it names the service, says data leaves, and advises hiding names
+    """
+    from teachers_teammate.domain.data_location import DataLocation  # noqa: PLC0415
+    from teachers_teammate.gui._data_flow_summary import DataFlowSummary  # noqa: PLC0415
+
+    box = DataFlowSummary()
+    qtbot.addWidget(box)
+
+    box.set_flow(
+        _flow(
+            _stage("ocr", DataLocation.THIS_COMPUTER, "Tesseract", "page images"),
+            _stage("correction", DataLocation.ONLINE, "OpenAI (ChatGPT)"),
+        )
+    )
+
+    text = box._body.text()
+    assert "Online service (OpenAI (ChatGPT))" in text
+    assert "Some data leaves this computer." in text
+    assert "Remove personal info" in text
+
+
+@pytest.mark.gui
+def test_data_flow_summary_escapes_service_names(qtbot) -> None:
+    """
+    Given  a service name containing markup
+    When   the summary is rendered
+    Then   the markup is shown as text, not interpreted
+    """
+    from teachers_teammate.domain.data_location import DataLocation  # noqa: PLC0415
+    from teachers_teammate.gui._data_flow_summary import DataFlowSummary  # noqa: PLC0415
+
+    box = DataFlowSummary()
+    qtbot.addWidget(box)
+
+    box.set_flow(_flow(_stage("correction", DataLocation.ONLINE, "<b>x</b>")))
+
+    assert "&lt;b&gt;x&lt;/b&gt;" in box._body.text()
+
+
+@pytest.mark.gui
+def test_location_hint_shows_place_and_note(qtbot) -> None:
+    """
+    Given  a LocationHint
+    When   a place and a note are set
+    Then   both appear, and the note is escaped
+    """
+    from teachers_teammate.domain.data_location import (  # noqa: PLC0415
+        DataLocation,
+        StageLocation,
+    )
+    from teachers_teammate.gui._data_flow_summary import LocationHint  # noqa: PLC0415
+
+    hint = LocationHint()
+    qtbot.addWidget(hint)
+
+    hint.set_location(StageLocation(DataLocation.ONLINE, "OpenAI"), "text <is> sent")
+
+    assert "Online service (OpenAI)" in hint.text()
+    assert "text &lt;is&gt; sent" in hint.text()
+
+
+@pytest.mark.gui
+def test_every_advice_code_has_wording_for_the_teacher() -> None:
+    """
+    Given  the advice codes the domain can produce
+    When   the GUI looks up their wording
+    Then   each one has a sentence, so a new code cannot reach the screen without text
+    """
+    from teachers_teammate.domain.data_location import Advice  # noqa: PLC0415
+    from teachers_teammate.gui._data_flow_summary import advice_text  # noqa: PLC0415
+
+    for advice in Advice:
+        assert advice_text(advice).strip()

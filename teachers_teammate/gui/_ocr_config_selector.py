@@ -3,18 +3,18 @@
 Encapsulates the engine / model / preprocessing / temperature controls plus the
 background model-fetch behaviour, so both the main settings dialog and the
 benchmark app drive OCR selection through one widget.  All discovery
-(providers, models, preprocess defaults) is delegated to the injected
-application service — the widget contains presentation only, no business logic.
+(engines, models, preprocess defaults, where an engine runs) is delegated to the
+injected application service — the widget contains presentation only, no business logic.
+Only engines that read pages on a computer the user controls are offered: online
+vision models would receive the whole page, names included.
 
-The shared, stateless helpers (provider availability filtering, the model-fetch
-thread, status-label rendering, the native-engine set) live in
+The shared, stateless helpers (the model-fetch thread, status-label rendering) live in
 :mod:`teachers_teammate.gui._settings_dialog` and are reused here so the logic
 has a single source.
 """
 
 from __future__ import annotations
 
-import os
 import sys
 
 from PySide6.QtCore import Qt, Signal
@@ -31,19 +31,18 @@ from PySide6.QtWidgets import (
 )
 
 from ..config import DEFAULTS, OcrConfig
+from ..domain.data_location import DataLocation
 from ..domain.pdf_text_layer import (
     PDF_TEXT_LAYER_MODES,
     PdfTextLayerMode,
     normalize_pdf_text_layer,
 )
+from ._data_flow_summary import LocationHint
 from ._hardware_profile_selector import HardwareProfileSelector
 from ._model_guidance import OllamaModelGuidance, OpenDownloads
 from ._settings_dialog import (
-    _NATIVE_OCR_ENGINES,
     _STATUS_ERROR,
-    _STATUS_KEY_MISSING,
     _STATUS_LOADING,
-    _available_providers,
     _install_hint,
     _ModelFetchThread,
     _retire_thread,
@@ -95,16 +94,20 @@ class OcrConfigSelector(QWidget):
         self._build_temperature_row(form)
         if show_pdf_text_layer:
             self._build_pdf_text_layer_row(form)
+        self._update_where_hint()
 
     def _build_engine_row(self, form: QFormLayout) -> None:
         self._ocr_engine = QComboBox()
-        native = ["ollama", "tesseract", "paddleocr"]
-        provider_engines = [
-            p for p in _available_providers(self._app_service) if p not in _NATIVE_OCR_ENGINES
-        ]
-        self._ocr_engine.addItems(native + provider_engines)
+        self._ocr_engine.addItems(self._app_service.list_ocr_engines())
+        self._ocr_engine.setToolTip(
+            "Pages are always read on a computer you control. Online services are not offered: "
+            "they would receive the whole page, including names and grades."
+        )
         self._ocr_engine.currentTextChanged.connect(self._on_engine_changed)
         form.addRow("Recognition method:", self._ocr_engine)
+
+        self._where_hint = LocationHint()
+        form.addRow("", self._where_hint)
 
         self._extra_warn = QLabel()
         self._extra_warn.setStyleSheet("color: #c0392b;")
@@ -126,6 +129,7 @@ class OcrConfigSelector(QWidget):
         self._ocr_model.setEditable(True)
         self._ocr_model.addItem(DEFAULTS["ocr_model"])
         self._ocr_model.setCurrentText(DEFAULTS["ocr_model"])
+        self._ocr_model.currentTextChanged.connect(lambda _text: self._update_where_hint())
         self._status_lbl = QLabel(_STATUS_LOADING)
         self._status_lbl.setTextFormat(Qt.TextFormat.RichText)
         ml.addWidget(self._ocr_model, stretch=1)
@@ -262,11 +266,11 @@ class OcrConfigSelector(QWidget):
         self._ollama_url = url or DEFAULTS["ollama_url"]
         self._hw_selector.set_ollama_url(self._ollama_url)
         self._guidance.set_ollama_url(self._ollama_url)
+        self._update_where_hint()
 
     def load_ocr_config(self, ocr: OcrConfig) -> None:
         """Populate the controls from an :class:`OcrConfig` value object."""
-        engine = ocr.provider if ocr.engine == "langchain" else ocr.engine
-        _set_combo(self._ocr_engine, engine)
+        _set_combo(self._ocr_engine, ocr.engine)
         # Re-apply engine-dependent state first (it resets preprocess to the engine
         # default and populates the model list), then override with the saved values.
         self.refresh()
@@ -286,15 +290,9 @@ class OcrConfigSelector(QWidget):
 
     def get_ocr_config(self) -> OcrConfig:
         """Return the currently selected configuration as an :class:`OcrConfig`."""
-        engine = self._ocr_engine.currentText()
-        if engine in _NATIVE_OCR_ENGINES:
-            ocr_engine, provider = engine, ""
-        else:
-            ocr_engine, provider = "langchain", engine
         return OcrConfig(
-            engine=ocr_engine,
+            engine=self._ocr_engine.currentText(),
             model=self._ocr_model.currentText().strip() or DEFAULTS["ocr_model"],
-            provider=provider,
             preprocess_method=self._preprocess.currentText(),
             temperature=self._ocr_temperature.value(),
             pdf_render_dpi=self._pdf_dpi.value(),
@@ -342,9 +340,8 @@ class OcrConfigSelector(QWidget):
                 self._preprocess.setCurrentIndex(idx)
 
         is_ollama = engine == "ollama"
-        is_provider_engine = engine not in _NATIVE_OCR_ENGINES
-        self._ocr_model_label.setVisible(is_ollama or is_provider_engine)
-        self._ocr_model_row.setVisible(is_ollama or is_provider_engine)
+        self._ocr_model_label.setVisible(is_ollama)
+        self._ocr_model_row.setVisible(is_ollama)
         # Hint line and "Use best choice" button exist only for Ollama.
         self._guidance.setVisible(is_ollama)
 
@@ -362,23 +359,24 @@ class OcrConfigSelector(QWidget):
         self._extra_warn.setVisible(bool(warn))
         self._install_btn.setVisible(paddle_missing and frozen)
 
-        if is_provider_engine:
-            info = self._app_service.get_provider_info(engine)
-            prev = self._ocr_model.currentText()
-            self._ocr_model.clear()
-            models = info.get("models", [])
-            if models:
-                self._ocr_model.addItems(models)
-            idx = self._ocr_model.findText(prev)
-            if idx >= 0:
-                self._ocr_model.setCurrentIndex(idx)
-            elif prev:
-                self._ocr_model.setCurrentText(prev)
-            else:
-                self._ocr_model.setCurrentText(info.get("default_model", ""))
-            self._app_service.invalidate_model_cache(engine)
-
         self._auto_fetch()
+        self._update_where_hint()
+
+    def _update_where_hint(self) -> None:
+        """Say where the chosen engine reads pages (and warn about cloud models)."""
+        engine = self._ocr_engine.currentText()
+        model = self._ocr_model.currentText().strip()
+        location = self._app_service.describe_ocr_location(engine, model, self._ollama_url)
+        refusal = self._app_service.describe_ocr_refusal(engine, model, self._ollama_url)
+        details = ""
+        if refusal:
+            note = "not allowed"
+            details = refusal
+        elif location.location is DataLocation.THIS_COMPUTER:
+            note = "pages never leave it"
+        else:
+            note = "pages are sent there"
+        self._where_hint.set_location(location, note, details)
 
     def _auto_fetch(self) -> None:
         engine = self._ocr_engine.currentText()
@@ -390,28 +388,12 @@ class OcrConfigSelector(QWidget):
             url = self._ollama_url
 
             def fetch() -> list[str]:
-                tags = self._app_service.list_provider_models("ollama", base_url=url)
+                tags = self._app_service.list_ocr_models(url)
                 # Classify here so set_models() only needs cache lookups.
                 self._app_service.classify_ollama_models(tags, url)
                 return tags
 
             self._fetch_thread = _ModelFetchThread(fetch)
-            self._fetch_thread.models_ready.connect(self._on_models_fetched)
-            self._fetch_thread.start()
-        elif engine not in _NATIVE_OCR_ENGINES:
-            info = self._app_service.get_provider_info(engine)
-            if info.get("needs_api_key") and not os.environ.get(info.get("env_key", "")):
-                self._status_lbl.setText(_STATUS_KEY_MISSING)
-                return
-            cached = self._app_service.get_cached_models(engine)
-            if cached is not None:
-                self._on_models_fetched(cached)
-                return
-            self._status_lbl.setText(_STATUS_LOADING)
-            _retire_thread(self._fetch_thread)
-            self._fetch_thread = _ModelFetchThread(
-                lambda p=engine: self._app_service.list_provider_models(p)
-            )
             self._fetch_thread.models_ready.connect(self._on_models_fetched)
             self._fetch_thread.start()
         else:
@@ -427,19 +409,9 @@ class OcrConfigSelector(QWidget):
             self._status_lbl.setText(_STATUS_ERROR)
             return
         self._status_lbl.setText(_status_ok(len(models)))
-        if self._ocr_engine.currentText() == "ollama":
-            # Guidance sorts by suitability and decorates via roles; the combo
-            # text stays the raw tag.
-            self._guidance.set_models(models)
-            return
-        prev = self._ocr_model.currentText()
-        self._ocr_model.clear()
-        self._ocr_model.addItems(models)
-        idx = self._ocr_model.findText(prev)
-        if idx >= 0:
-            self._ocr_model.setCurrentIndex(idx)
-        else:
-            self._ocr_model.setCurrentText(prev)
+        # Guidance sorts by suitability and decorates via roles; the combo text stays the
+        # raw tag.
+        self._guidance.set_models(models)
 
     def _on_install_paddle_addon(self) -> None:
         from ._addon_installer_dialog import AddonInstallerDialog  # noqa: PLC0415

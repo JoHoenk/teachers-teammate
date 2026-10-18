@@ -252,9 +252,16 @@ OS cache directory (`~/.cache/teachers_teammate` on Linux).
 - `compute_file_hash(path)` (`state_repository.py`) — SHA-256 of the file
   contents; the **identity of a document** regardless of its path or name.
 - `compute_ocr_config_hash(config, ocr_prompt)` (`workflow/cache_service.py`) — a
-  fingerprint of the OCR stage configuration (engine, provider, model, preprocess
-  method, language, prompt, temperature). Used by the cache to detect stale
-  stages and by the benchmark store to label runs.
+  fingerprint of the OCR stage configuration (engine, model, preprocess
+  method, language, prompt, temperature). The engine is hashed twice: a "provider"
+  slot used to sit next to it, and keeping the shape keeps existing cached OCR results
+  valid. Used by the cache to detect stale stages and by the benchmark store to label
+  runs.
+- `compute_correction_config_hash` / `compute_eval_config_hash` include an
+  `"anonymized"` part while anonymisation is on (both stages see its text), so
+  switching it on or off re-runs proofreading and content review for cached files.
+  The part is absent while it is off, so results cached before the flag was hashed stay
+  valid.
 - `compute_cache_key(value)` (`storage_root.py`) — a short (16-char) stable key
   used to map a path (output dir / source file) to an on-disk file name.
 

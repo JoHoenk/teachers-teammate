@@ -181,6 +181,30 @@ def test_correction_config_hash_independent_of_ocr_engine(tmp_path: Path) -> Non
     assert svc_a._correction_config_hash() == svc_b._correction_config_hash()
 
 
+def test_correction_config_hash_changes_with_anonymization(tmp_path: Path) -> None:
+    """
+    Given  two services differing only in whether personal info is removed
+    When   _correction_config_hash() is called on each
+    Then   the hashes differ, so a proofreading made on real names is not reused for hidden ones
+    """
+    plain, _, _ = _make_svc(tmp_path, correction_enabled=True, anonymization_enabled=False)
+    hidden, _, _ = _make_svc(tmp_path, correction_enabled=True, anonymization_enabled=True)
+
+    assert plain._correction_config_hash() != hidden._correction_config_hash()
+
+
+def test_eval_config_hash_changes_with_anonymization(tmp_path: Path) -> None:
+    """
+    Given  two services differing only in whether personal info is removed
+    When   _eval_config_hash() is called on each
+    Then   the hashes differ, so a review made on real names is not reused for hidden ones
+    """
+    plain, _, _ = _make_svc(tmp_path, evaluation_enabled=True, anonymization_enabled=False)
+    hidden, _, _ = _make_svc(tmp_path, evaluation_enabled=True, anonymization_enabled=True)
+
+    assert plain._eval_config_hash() != hidden._eval_config_hash()
+
+
 def test_ocr_config_hash_independent_of_correction_provider(tmp_path: Path) -> None:
     """
     Given  two services differing only in correction_provider (all OCR params identical)

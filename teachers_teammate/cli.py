@@ -30,6 +30,7 @@ from .config import (
     OcrConfig,
     load_config_file,
 )
+from .domain.data_location import LOCAL_OCR_ENGINES, DataFlow
 from .domain.pdf_text_layer import PDF_TEXT_LAYER_MODES
 from .exceptions import ConfigFileNotFoundError, ConfigFileParseError
 
@@ -40,6 +41,10 @@ class _CliAppService(Protocol):
     def resolve_config_path(self, explicit: str | None) -> Path | None: ...
 
     def run_selected(self, config: Config, /, *, config_file: Path | None = None) -> int: ...
+
+    def describe_data_flow(self, config: Config, /) -> DataFlow: ...
+
+    def ocr_refusal_for_run(self, config: Config, /) -> str: ...
 
     def run_preview_only(self, config: Config, /) -> int: ...
 
@@ -144,24 +149,12 @@ def _parse_args(
     ocr_grp.add_argument(
         "--ocr-engine",
         default=DEFAULTS["ocr_engine"],
-        choices=["ollama", "tesseract", "paddleocr", "langchain"],
+        choices=list(LOCAL_OCR_ENGINES),
         metavar="ENGINE",
         help=(
-            "OCR engine: ollama (vision model via Ollama), tesseract (local install), "
-            "paddleocr (local PaddleOCR), or langchain (any vision-capable LangChain provider)."
-        ),
-    )
-
-    ocr_provider_choices: list[str] | None = ["", *(providers)] if providers is not None else None
-    ocr_grp.add_argument(
-        "--ocr-provider",
-        default="",
-        choices=ocr_provider_choices,
-        metavar="PROVIDER",
-        dest="ocr_provider",
-        help=(
-            "LangChain provider for OCR (only used with --ocr-engine langchain): "
-            f"{', '.join(providers or [])}."
+            "OCR engine: ollama (vision model via Ollama), tesseract (local install), or "
+            "paddleocr (local PaddleOCR). Online services are not offered: reading a page "
+            "needs the whole page, so personal information cannot be hidden first."
         ),
     )
     ocr_grp.add_argument(
@@ -433,7 +426,6 @@ def _validate_providers(args: argparse.Namespace, valid: frozenset[str]) -> list
     for attr, label in (
         ("correction_provider", "correction_provider"),
         ("evaluate_provider", "evaluate_provider"),
-        ("ocr_provider", "ocr_provider"),
     ):
         value = getattr(args, attr, "")
         if value and value not in valid:
@@ -443,6 +435,19 @@ def _validate_providers(args: argparse.Namespace, valid: frozenset[str]) -> list
             )
             setattr(args, attr, DEFAULTS.get(attr, ""))
     return warnings
+
+
+def _print_data_flow(flow: DataFlow) -> None:
+    """Tell the user where their documents are processed before anything starts."""
+    print("Where your documents are processed:", file=sys.stderr)
+    for stage in flow.stages:
+        marker = "!" if stage.leaves_computer else "-"
+        print(f"  {marker} {stage.summary}", file=sys.stderr)
+    if flow.leaves_computer:
+        print(
+            "  ! Data leaves this computer. Check that this is allowed for your documents.",
+            file=sys.stderr,
+        )
 
 
 def run_cli(
@@ -507,7 +512,6 @@ def run_cli(
         ocr=OcrConfig(
             engine=args.ocr_engine,
             model=args.ocr_model,
-            provider=args.ocr_provider,
             preprocess_method=args.preprocess_method,
             pdf_render_dpi=args.pdf_render_dpi,
             pdf_text_layer=args.pdf_text_layer,
@@ -535,6 +539,11 @@ def run_cli(
 
     if args.preview_only:
         return service.run_preview_only(config)
+    refusal = service.ocr_refusal_for_run(config)
+    if refusal:
+        print(f"ERROR: {refusal}", file=sys.stderr)
+        return 1
+    _print_data_flow(service.describe_data_flow(config))
     return service.run_selected(config, config_file=config_path)
 
 

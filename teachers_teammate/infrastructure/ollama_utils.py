@@ -45,12 +45,20 @@ def normalize_ollama_url(url: str) -> str:
     return cleaned.rstrip("/")
 
 
+def ollama_host(url: str) -> str:
+    """Return the host name of the Ollama server at *url* (the default server when empty)."""
+    normalized = normalize_ollama_url(url)
+    return urlparse(normalized).hostname or normalized
+
+
 @functools.cache
 def _own_host_names() -> frozenset[str]:
     """Return the names and addresses under which this computer knows itself.
 
     Only the machine's own host name is resolved — never an arbitrary host — so
-    the lookup is cheap and does not leak the Ollama URL to a DNS server.
+    the lookup does not leak the Ollama URL to a DNS server.  It can still be slow on a
+    misconfigured network: call :func:`warm_up_own_host_names` early so the answer is
+    ready before a GUI thread asks.
     """
     names: set[str] = set()
     try:
@@ -60,6 +68,11 @@ def _own_host_names() -> frozenset[str]:
     except OSError:
         pass
     return frozenset(name.lower() for name in names if name)
+
+
+def warm_up_own_host_names() -> None:
+    """Resolve this computer's own names in a background thread (idempotent, non-blocking)."""
+    threading.Thread(target=_own_host_names, name="own-host-names", daemon=True).start()
 
 
 def is_local_ollama_url(url: str) -> bool:
@@ -72,12 +85,16 @@ def is_local_ollama_url(url: str) -> bool:
     host = (urlparse(normalize_ollama_url(url)).hostname or "").lower()
     if not host:
         return False
-    if host in ("localhost", "0.0.0.0") or host in _own_host_names():
+    if host in ("localhost", "0.0.0.0"):
         return True
     try:
-        return ipaddress.ip_address(host).is_loopback
+        if ipaddress.ip_address(host).is_loopback:
+            return True
     except ValueError:
-        return False
+        pass
+    # Only now look up the computer's own names: the cheap checks above answer the
+    # common (default) URL without ever waiting on the network.
+    return host in _own_host_names()
 
 
 def models_include(model_name: str, available: list[str]) -> bool:

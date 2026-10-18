@@ -10,6 +10,7 @@ if TYPE_CHECKING:
 from teachers_teammate.infrastructure.providers._helpers import api_key_check, import_guard
 
 PROVIDER_INFO: dict = {
+    "display_name": "OpenAI (ChatGPT)",
     "needs_api_key": True,
     "env_key": "OPENAI_API_KEY",
     "needs_base_url": False,

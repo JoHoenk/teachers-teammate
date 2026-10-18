@@ -75,18 +75,26 @@ def _preprocess_fingerprint(ocr: OcrConfig, source: Path) -> tuple[str, ...]:
 def compute_ocr_config_hash(config: Config, ocr_prompt: str, source: Path) -> str:
     """Return the OCR stage config hash for *config* and *ocr_prompt* when OCR-ing *source*."""
     ocr = config.ocr
-    provider = ocr.provider if ocr.engine == "langchain" else ocr.engine
-    model = ocr.effective_model if ocr.engine == "langchain" else ocr.model
     return compute_config_hash(
         "ocr",
         ocr.engine,
-        provider,
-        model,
+        # The engine is hashed twice on purpose: a "provider" slot used to sit here, and
+        # keeping the shape keeps every existing cached OCR result valid.
+        ocr.engine,
+        ocr.model,
         *_preprocess_fingerprint(ocr, source),
         config.language,
         ocr_prompt,
         format(ocr.temperature, ".1f"),
     )
+
+
+def _anonymization_fingerprint(config: Config) -> tuple[str, ...]:
+    """Return the hash parts for anonymisation: correction and evaluation both see its text.
+
+    Empty when off, so results cached before the flag was hashed stay valid.
+    """
+    return ("anonymized",) if config.anonymization_enabled else ()
 
 
 def compute_correction_config_hash(config: Config) -> str:
@@ -100,6 +108,7 @@ def compute_correction_config_hash(config: Config) -> str:
         config.language,
         config.correction_prompt,
         format(config.correction_temperature, ".1f"),
+        *_anonymization_fingerprint(config),
     )
 
 
@@ -114,6 +123,7 @@ def compute_eval_config_hash(config: Config) -> str:
         config.language,
         config.evaluate_prompt,
         format(config.evaluate_temperature, ".1f"),
+        *_anonymization_fingerprint(config),
     )
 
 

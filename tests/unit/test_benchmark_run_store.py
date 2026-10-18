@@ -221,6 +221,74 @@ def test_from_json_dict_defaults_missing_preprocessing_fields(tmp_path: Path) ->
     assert run.ocr.gamma is False
 
 
+def test_online_run_from_an_older_version_still_reads_in_history() -> None:
+    """
+    Given  a stored run made when online vision models were allowed (engine langchain, openai)
+    When   it is reloaded
+    Then   it names the provider and model so the history still reads "openai · gpt-4o"
+    """
+    from teachers_teammate.infrastructure.benchmark.run_store import StoredRun  # noqa: PLC0415
+
+    old = {
+        "schema_version": 1,
+        "run_id": "2026-01-01T00:00:00Z-abcd1234",
+        "document_hash": "doc1",
+        "document_path": "/docs/sample.pdf",
+        "display_name": "sample.pdf",
+        "ocr_config_hash": "abc12345",
+        "ocr": {
+            "engine": "langchain",
+            "model": "gpt-4o",
+            "provider": "openai",
+            "preprocess_method": "none",
+            "temperature": 0.0,
+        },
+        "language": "English",
+        "raw_text": "text",
+        "preview_img": "",
+        "timestamp": "2026-01-01T00:00:00Z",
+        "elapsed_s": 1.0,
+    }
+
+    run = StoredRun.from_json_dict(old)
+
+    assert run.config_summary() == "openai · gpt-4o · none"
+    assert "provider" not in run.to_json_dict()["ocr"]
+
+
+def test_online_run_without_a_stored_model_shows_the_providers_default() -> None:
+    """
+    Given  a stored online run (engine langchain, openai) saved with an empty model
+    When   it is reloaded
+    Then   its summary shows the OCR model the provider used by default (not a writing
+           model), so runs stay distinguishable
+    """
+    from teachers_teammate.infrastructure.benchmark.run_store import StoredRun  # noqa: PLC0415
+
+    old = {
+        "schema_version": 1,
+        "run_id": "2026-01-01T00:00:00Z-abcd1234",
+        "document_hash": "doc1",
+        "document_path": "/docs/sample.pdf",
+        "display_name": "sample.pdf",
+        "ocr_config_hash": "abc12345",
+        "ocr": {
+            "engine": "langchain",
+            "model": "",
+            "provider": "openai",
+            "preprocess_method": "none",
+            "temperature": 0.0,
+        },
+        "language": "English",
+        "raw_text": "text",
+        "preview_img": "",
+        "timestamp": "2026-01-01T00:00:00Z",
+        "elapsed_s": 1.0,
+    }
+
+    assert StoredRun.from_json_dict(old).config_summary() == "openai · gpt-4o · none"
+
+
 def test_config_summary_lists_enabled_pre_steps(tmp_path: Path) -> None:
     """
     Given  a stored run with deskew and denoise enabled

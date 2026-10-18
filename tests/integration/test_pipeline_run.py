@@ -718,55 +718,43 @@ def test_pipeline_run_proceeds_when_ollama_model_found(tmp_path: Path) -> None:
 # ── Engine selection ───────────────────────────────────────────────────────
 
 
-def test_pipeline_setup_raises_error_for_langchain_without_provider(tmp_path: Path) -> None:
+def test_pipeline_refuses_online_ocr_engine(tmp_path: Path, capsys) -> None:
     """
-    Given  ocr_engine='langchain' with no ocr_provider set
-    When   OCRPipeline.run() is called
-    Then   returns 1 (ValueError from _setup_services propagates as failure)
+    Given  ocr_engine='langchain' (an online vision model, as older versions allowed)
+    When   OCRPipeline.run() is called on an image
+    Then   it returns 1 and explains that text recognition must stay on this computer
     """
     cfg = make_config(
         tmp_path,
         ocr_engine="langchain",
-        ocr_provider="",
         correction_enabled=False,
         docx_enabled=False,
     )
     _place_image(cfg.input_dir)
 
-    rc = OCRPipeline(cfg).run()
+    with patch("teachers_teammate.infrastructure.stage_builder.build_llm") as mock_build:
+        rc = OCRPipeline(cfg).run()
 
     assert rc == 1
+    mock_build.assert_not_called()
+    assert "not available" in capsys.readouterr().err
 
 
-@pytest.mark.use_case("Multi_Provider_Stage_Configuration")
-def test_pipeline_setup_creates_langchain_ocr_processor(tmp_path: Path) -> None:
+def test_pipeline_refuses_online_ocr_engine_even_for_text_files(tmp_path: Path) -> None:
     """
-    Given  ocr_engine='langchain' with ocr_provider='openai' and a mocked build_llm
+    Given  online OCR settings (never allowed for pages) and only a .txt file to process
     When   OCRPipeline.run() is called
-    Then   build_llm is called for the OCR LLM and the file is processed
+    Then   it still returns 1: the rule belongs to the settings, not to the files
     """
     cfg = make_config(
         tmp_path,
         ocr_engine="langchain",
-        ocr_provider="openai",
-        ocr_model="gpt-4o",
         correction_enabled=False,
         docx_enabled=False,
-        preprocess_method="none",
     )
-    _place_image(cfg.input_dir)
+    (cfg.input_dir / "note.txt").write_text("Hello world", encoding="utf-8")
 
-    mock_llm = MagicMock()
-    mock_chain = MagicMock()
-    mock_chain.invoke.return_value = "extracted text"
-    mock_llm.__or__ = MagicMock(return_value=mock_chain)
-
-    with patch(
-        "teachers_teammate.infrastructure.stage_builder.build_llm", return_value=mock_llm
-    ) as mock_build:
-        OCRPipeline(cfg).run()
-
-    mock_build.assert_called()
+    assert OCRPipeline(cfg).run() == 1
 
 
 def test_pipeline_setup_creates_paddleocr_processor(tmp_path: Path) -> None:

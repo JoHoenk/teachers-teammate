@@ -74,7 +74,8 @@ Config
 | Task | What to change |
 |---|---|
 | New pipeline stage | Add ABC to `interfaces.py`, implement in `infrastructure/`, route through `FileProcessor` |
-| New LLM provider | Add `<name>.py` to `infrastructure/providers/` with a `create()` function |
+| New LLM provider | Add `<name>.py` to `infrastructure/providers/` with a `create()` function. Set `PROVIDER_INFO["display_name"]`; a provider that runs on the user's own server rather than at a vendor sets `"self_hosted": True` — **anything else is shown (and confirmed) as an online service**. |
+| Where a step runs / what leaves the computer | Rules in `domain/data_location.py`, classification in `application/data_flow.py`; GUI/CLI only render it. Text recognition never uses online engines (`LOCAL_OCR_ENGINES`, `online_ocr_reason`) |
 | New input file type | Add suffix to `SUPPORTED_SUFFIXES` in `interfaces.py` **and** a builder to `_SUFFIX_TO_BUILDER` in `infrastructure/input_provider_factory.py` |
 | PDF embedded-text rules | Thresholds/modes in `domain/pdf_text_layer.py`; measurement in `PdfInputProvider` (`infrastructure/input_providers.py`); setting is `OcrConfig.pdf_text_layer` (default `auto`), passed to providers via `InputOptions` in `input_provider_factory.py`; benchmark always OCRs |
 | New OCR output notation (HTML/Markdown/…) | Add an `OcrOutputParser` to `infrastructure/ocr_formats/` and list it in `default_parsers()`; model in `domain/formatted_text.py`, adapters use `application/formatting.py:TextFormatter` (see `docs/development.md` → "OCR output formats") |

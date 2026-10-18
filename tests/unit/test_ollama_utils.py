@@ -16,6 +16,18 @@ from teachers_teammate.infrastructure.ollama_utils import (
     normalize_ollama_url,
 )
 
+
+_REAL_OWN_HOST_NAMES = ollama_utils._own_host_names  # tests below monkeypatch the module name
+
+
+@pytest.fixture(autouse=True)
+def _fresh_own_host_names():
+    """Keep the cached lookup of the computer's own names from leaking between tests."""
+    _REAL_OWN_HOST_NAMES.cache_clear()
+    yield
+    _REAL_OWN_HOST_NAMES.cache_clear()
+
+
 # ── normalize_ollama_url ───────────────────────────────────────────────────
 
 
@@ -640,6 +652,25 @@ def test_is_local_ollama_url(url: str, expected: bool, monkeypatch) -> None:
     assert is_local_ollama_url(url) is expected
 
 
+@pytest.mark.parametrize(
+    "url", ["", "localhost:11434", "http://127.0.0.1:11434", "http://[::1]:11434"]
+)
+def test_is_local_ollama_url_answers_loopback_without_looking_up_own_names(
+    url: str, monkeypatch
+) -> None:
+    """
+    Given  a lookup of the computer's own names that must never run
+    When   is_local_ollama_url is called with the default or a loopback URL
+    Then   it answers True without that (possibly slow) lookup
+    """
+
+    def forbidden() -> frozenset[str]:
+        raise AssertionError("own names looked up for a loopback URL")
+
+    monkeypatch.setattr(ollama_utils, "_own_host_names", forbidden)
+    assert is_local_ollama_url(url) is True
+
+
 @pytest.mark.use_case("Hardware_Profile_Override")
 @pytest.mark.parametrize(
     ("url", "expected"),
@@ -676,7 +707,11 @@ def test_own_host_names_collects_name_and_addresses_and_survives_lookup_errors(
     Then   host name, FQDN and addresses are lower-cased into one set, and a failing
            lookup yields an empty set instead of an error
     """
-    uncached = ollama_utils._own_host_names.__wrapped__
+
+    def uncached() -> frozenset[str]:
+        ollama_utils._own_host_names.cache_clear()
+        return ollama_utils._own_host_names()
+
     monkeypatch.setattr(ollama_utils.socket, "gethostname", lambda: "Studio-PC")
     monkeypatch.setattr(ollama_utils.socket, "getfqdn", lambda: "Studio-PC.local")
     monkeypatch.setattr(
@@ -690,6 +725,33 @@ def test_own_host_names_collects_name_and_addresses_and_survives_lookup_errors(
     monkeypatch.setattr(ollama_utils.socket, "gethostbyname_ex", failing)
     # Names found before the failing lookup are kept.
     assert uncached() == frozenset({"studio-pc", "studio-pc.local"})
+
+
+@pytest.mark.use_case("Hardware_Profile_Override")
+def test_warm_up_resolves_own_names_once_in_the_background(monkeypatch) -> None:
+    """
+    Given  an empty cache of this computer's own names
+    When   the warm-up runs and the names are then asked for
+    Then   the lookup ran once, off the calling thread, and later asks reuse its answer
+    """
+    import threading  # noqa: PLC0415
+
+    calls: list[str] = []
+
+    def hostname() -> str:
+        calls.append(threading.current_thread().name)
+        return "studio-pc"
+
+    ollama_utils._own_host_names.cache_clear()
+    monkeypatch.setattr(ollama_utils.socket, "gethostname", hostname)
+    monkeypatch.setattr(ollama_utils.socket, "getfqdn", lambda: "studio-pc")
+    monkeypatch.setattr(ollama_utils.socket, "gethostbyname_ex", lambda _h: ("", [], []))
+
+    ollama_utils.warm_up_own_host_names()
+    names = ollama_utils._own_host_names()
+
+    assert names == frozenset({"studio-pc"})
+    assert calls == ["own-host-names"]
 
 
 # ── OllamaClient.model_capabilities ────────────────────────────────────────

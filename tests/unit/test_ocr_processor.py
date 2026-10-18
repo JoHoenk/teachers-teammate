@@ -252,67 +252,6 @@ def test_tesseract_raises_ocr_error_on_pytesseract_exception(
             proc.process_image(sample_png, language="English")
 
 
-# ── LangChainOCRProcessor ──────────────────────────────────────────────────
-
-
-def test_langchain_ocr_returns_model_output(sample_png: Path) -> None:
-    """
-    Given  a mocked LangChain model that returns 'langchain text'
-    When   LangChainOCRProcessor.process_image() is called
-    Then   'langchain text' is returned
-    """
-    from teachers_teammate.infrastructure.ocr_processor import LangChainOCRProcessor  # noqa: PLC0415
-
-    mock_model = MagicMock()
-    # Simulate chain.invoke() returning the text
-    mock_chain_result = "langchain text"
-    # The processor builds: chain = self._model | StrOutputParser()
-    # We mock __or__ on the model to return an object whose invoke returns our text
-    mock_chain = MagicMock()
-    mock_chain.invoke.return_value = mock_chain_result
-    mock_model.__or__ = MagicMock(return_value=mock_chain)
-
-    proc = LangChainOCRProcessor(mock_model)
-    result = proc.process_image(sample_png, language="English")
-    assert result == "langchain text"
-
-
-def test_langchain_ocr_raises_ocr_error_on_empty_response(sample_png: Path) -> None:
-    """
-    Given  a mocked LangChain model chain that returns an empty string
-    When   LangChainOCRProcessor.process_image() is called
-    Then   an OCRError is raised with 'empty response' in the message
-    """
-    from teachers_teammate.infrastructure.ocr_processor import LangChainOCRProcessor  # noqa: PLC0415
-
-    mock_model = MagicMock()
-    mock_chain = MagicMock()
-    mock_chain.invoke.return_value = "   "  # whitespace only → treated as empty
-    mock_model.__or__ = MagicMock(return_value=mock_chain)
-
-    proc = LangChainOCRProcessor(mock_model)
-    with pytest.raises(OCRError, match="empty response"):
-        proc.process_image(sample_png, language="English")
-
-
-def test_langchain_ocr_raises_ocr_error_on_invoke_exception(sample_png: Path) -> None:
-    """
-    Given  a mocked LangChain model chain that raises a ValueError
-    When   LangChainOCRProcessor.process_image() is called
-    Then   an OCRError is raised (not the raw ValueError)
-    """
-    from teachers_teammate.infrastructure.ocr_processor import LangChainOCRProcessor  # noqa: PLC0415
-
-    mock_model = MagicMock()
-    mock_chain = MagicMock()
-    mock_chain.invoke.side_effect = ValueError("bad token")
-    mock_model.__or__ = MagicMock(return_value=mock_chain)
-
-    proc = LangChainOCRProcessor(mock_model)
-    with pytest.raises(OCRError):
-        proc.process_image(sample_png, language="English")
-
-
 # ── OllamaOCRProcessor — payload construction ──────────────────────────────
 
 

@@ -377,14 +377,10 @@ class OCRPipeline:
         reporter.status(f"  OCR engine    : {cfg.ocr.engine}")
         if cfg.ocr.engine == "ollama":
             reporter.status(f"  OCR model     : {cfg.ocr.model}")
-        elif cfg.ocr.engine == "langchain":
-            reporter.status(f"  OCR provider  : {cfg.ocr.provider}")
-            reporter.status(f"  OCR model     : {cfg.ocr.effective_model}")
         reporter.status(f"  Preprocess    : {cfg.ocr.preprocess_method}")
         reporter.status(f"  Language      : {cfg.language}")
         if (
-            cfg.ocr.engine in ("ollama",)
-            or (cfg.ocr.engine == "langchain" and cfg.ocr.provider == "ollama")
+            cfg.ocr.engine == "ollama"
             or (cfg.correction_enabled and cfg.correction_provider == "ollama")
             or (cfg.evaluation_enabled and cfg.evaluate_provider == "ollama")
         ):
@@ -448,8 +444,6 @@ class OCRPipeline:
         )
 
         ocr = builder.build_ocr(ollama_client)
-        if cfg.ocr.engine == "langchain":
-            reporter.status("Building OCR LLM... OK")
 
         correction, anonymizer = builder.build_correction_and_anonymizer(ollama_client)
         if cfg.correction_enabled:

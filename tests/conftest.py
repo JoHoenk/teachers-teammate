@@ -213,7 +213,6 @@ def make_config(tmp_path: Path, **overrides: object):
     ocr_field_map = {
         "ocr_engine": "engine",
         "ocr_model": "model",
-        "ocr_provider": "provider",
         "preprocess_method": "preprocess_method",
         "ocr_temperature": "temperature",
     }

@@ -4,7 +4,7 @@
 
 The app is divided into two main areas:
 
-- **Settings panel (left side)** — everything you need to set up a run: which folders to use, which reading method to apply, whether to use AI proofreading, and so on. Below the settings you will find coloured status indicators (one per feature the current setup uses) and the action buttons — **Run Selected**, **Stop**, **Export Word…**, **Restore Defaults** — with a progress bar.
+- **Settings panel (left side)** — everything you need to set up a run: which folders to use, which reading method to apply, whether to use AI proofreading, and so on. At the top, a box called **Where your documents are processed** shows, for each step, whether it runs on this computer (green dot), on another computer (orange) or on an online service (red) — see *Where your documents are processed* below. Below the settings you will find coloured status indicators (one per feature the current setup uses) and the action buttons — **Run Selected**, **Stop**, **Export Word…**, **Restore Defaults** — with a progress bar.
 
 - **Work area (right side)** — three tabs:
   - **Processing** — a list of your files (one row per document) with status indicators and a live activity log below it.
@@ -83,6 +83,14 @@ Greyed-out models are too large for your computer. They still work — but readi
 
 Additional recognition methods are available for specific situations — for example, working without internet access or on computers with limited resources. For details, see the {doc}`Advanced User Guide <advanced_user_guide>`.
 
+### Recognition always stays on computers you control
+
+Reading a page needs the whole page — the handwriting, the student's name at the top, the grade in the margin. None of that can be hidden beforehand, because names can only be found once the text has been read. For this reason Teacher's Teammate does **not** offer online services (such as ChatGPT, Claude or Gemini) for text recognition, and it also refuses Ollama *cloud* models (names ending in `-cloud` or `:cloud`), which run on Ollama's servers rather than on your computer. If you try to start a run with one of these, the app explains why and does not start.
+
+If your saved settings from an older version used an online service for text recognition, the app tells you at start-up that it now uses Ollama on your computer instead.
+
+Ollama on another computer that you or your school run (see *Connections & API Keys*) is allowed; the box described below then shows it as "On another computer" with its name.
+
 ---
 
 ## Image preparation
@@ -97,7 +105,9 @@ For a full description of all image preparation options and when to use each one
 
 ## Protecting privacy (anonymization)
 
-When **Remove personal information before proofreading** is turned on, the app finds names, email addresses, phone numbers, and bank account numbers in the text and replaces them with stand-ins — for example `[PERSON_1]` or `[EMAIL_1]` — before sending anything to the AI. Once the corrected text comes back, the stand-ins are replaced with the original values, so the final Word document contains the real text. This only works when proofreading is also turned on.
+When **Remove personal information before proofreading** is turned on, the app finds names, email addresses, phone numbers, and bank account numbers in the text and replaces them with stand-ins — for example `[PERSON_1]` or `[EMAIL_1]` — before sending anything to the AI. Once the corrected text comes back, the stand-ins are replaced with the original values, so the final Word document contains the real text. The same protection applies to **content review**. This only works when proofreading is also turned on. Switching it on or off makes the app proofread and review already processed documents again, because their text is now sent in a different form.
+
+You do not need this while everything runs on your own computer — it matters when proofreading or content review uses an online service.
 
 This feature requires the **Privacy add-on** to be installed. You can install it from inside the app — see *Installing extra features* below.
 
@@ -108,6 +118,22 @@ The anonymizer helps reduce exposure of personal information but is not a certif
 To see how this will affect a specific document, select its row in the results list and choose **Personal Information Preview…** — the app shows the original and anonymized text side by side.
 
 For detailed settings and configuration options for the anonymizer, see the {doc}`Advanced User Guide <advanced_user_guide>`.
+
+---
+
+## Where your documents are processed
+
+The box at the top of the settings panel lists every step of the current setup and where it runs:
+
+| Dot | Meaning |
+|---|---|
+| Green — *On this computer* | Nothing leaves your computer for this step. |
+| Orange — *On another computer (name)* | The step runs on an Ollama server that is not this computer, for example a school server. |
+| Red — *Online service (name)* | The step runs on the internet. Ollama cloud models count as online services. |
+
+Below the list the box says either **Everything stays on this computer.** or **Some data leaves this computer.** — and, where it helps, what you can do about it (for example, turning on *Remove personal info*). The same one-line "runs on …" note appears next to the service pickers in **Settings**.
+
+Before a run that sends something away from your computer, the app asks you to confirm, listing the steps and whether names are replaced. "Replaced where detected" is deliberate wording: the replacement is automatic and can miss a name (see the warning under *Protecting privacy*). You can tick **Don't ask again for these settings**; the question comes back as soon as the setup changes (another service, or names no longer replaced). To bring every question back, use **Advanced Settings → Ask Before Sending Data Away Again**.
 
 ---
 

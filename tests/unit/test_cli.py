@@ -6,6 +6,8 @@ from pathlib import Path
 
 import pytest
 
+from teachers_teammate.domain.data_location import DataFlow
+
 # ── _parse_args ────────────────────────────────────────────────────────────
 
 
@@ -151,6 +153,12 @@ def test_main_exits_when_no_output_and_docx_enabled(tmp_path: Path, monkeypatch)
         def resolve_config_path(self, explicit: str | None) -> None:
             return None
 
+        def describe_data_flow(self, config):
+            return DataFlow(())
+
+        def ocr_refusal_for_run(self, config):
+            return ""
+
         def run_selected(self, config, /, **kwargs):
             raise AssertionError("should not reach pipeline — guard must exit before run")
 
@@ -187,6 +195,12 @@ def test_main_allows_missing_output_when_no_docx(tmp_path: Path, monkeypatch) ->
 
         def resolve_config_path(self, explicit: str | None) -> None:
             return None
+
+        def describe_data_flow(self, config):
+            return DataFlow(())
+
+        def ocr_refusal_for_run(self, config):
+            return ""
 
         def run_selected(self, config, /, **kwargs):
             captured.append(config)
@@ -245,6 +259,12 @@ def test_main_loads_config_file_defaults(tmp_path: Path) -> None:
         def resolve_config_path(self, explicit: str | None):
             return Path(explicit) if explicit else None
 
+        def describe_data_flow(self, config):
+            return DataFlow(())
+
+        def ocr_refusal_for_run(self, config):
+            return ""
+
         def run_selected(self, config, /, **kwargs):
             captured.append(config)
             return 0
@@ -279,6 +299,12 @@ def test_main_uses_exit_fn_with_run_cli_result(tmp_path: Path) -> None:
 
         def resolve_config_path(self, explicit: str | None) -> None:
             return None
+
+        def describe_data_flow(self, config):
+            return DataFlow(())
+
+        def ocr_refusal_for_run(self, config):
+            return ""
 
         def run_selected(self, _config, /, **kwargs):
             return 7
@@ -451,6 +477,12 @@ def test_run_cli_propagates_preprocessing_to_config(tmp_path: Path, monkeypatch)
         def resolve_config_path(self, explicit: str | None) -> None:
             return None
 
+        def describe_data_flow(self, config):
+            return DataFlow(())
+
+        def ocr_refusal_for_run(self, config):
+            return ""
+
         def run_selected(self, config, /, **kwargs):
             captured.append(config)
             return 0
@@ -500,3 +532,130 @@ def test_correction_model_help_names_the_catalog_default(capsys) -> None:
         _parse_args(argv=["--help"])
     help_text = " ".join(capsys.readouterr().out.split())
     assert f"{default_model_for_task('ollama', 'correction')} (ollama)" in help_text
+
+
+@pytest.mark.use_case("Headless_CLI_Batch")
+@pytest.mark.parametrize("engine", ["langchain", "openai"])
+def test_ocr_engine_choices_exclude_online_engines(engine: str, capsys) -> None:
+    """
+    Given  --ocr-engine naming an online engine
+    When   the arguments are parsed
+    Then   argparse rejects it: text recognition only offers engines on the user's computer
+    """
+    from teachers_teammate.cli import _parse_args  # noqa: PLC0415
+
+    with pytest.raises(SystemExit):
+        _parse_args(["ollama"], {}, ["-i", ".", "--ocr-engine", engine])
+
+    assert "invalid choice" in capsys.readouterr().err
+
+
+@pytest.mark.use_case("Headless_CLI_Batch")
+def test_ocr_provider_option_is_gone(capsys) -> None:
+    """
+    Given  the removed --ocr-provider option
+    When   the arguments are parsed
+    Then   argparse reports it as unrecognised
+    """
+    from teachers_teammate.cli import _parse_args  # noqa: PLC0415
+
+    with pytest.raises(SystemExit):
+        _parse_args(["ollama"], {}, ["-i", ".", "--ocr-provider", "openai"])
+
+    assert "unrecognized arguments" in capsys.readouterr().err
+
+
+@pytest.mark.use_case("Headless_CLI_Batch")
+def test_run_cli_tells_where_documents_are_processed(tmp_path: Path, capsys) -> None:
+    """
+    Given  a run whose proofreading goes to an online service
+    When   run_cli() starts the pipeline
+    Then   stderr lists every step, flags the one that leaves, and warns about it first
+    """
+    from teachers_teammate.cli import run_cli  # noqa: PLC0415
+    from teachers_teammate.domain.data_location import (  # noqa: PLC0415
+        DataFlowStage,
+        DataLocation,
+        StageLocation,
+    )
+
+    flow = DataFlow(
+        (
+            DataFlowStage(
+                "ocr", StageLocation(DataLocation.THIS_COMPUTER, "Tesseract"), "page images"
+            ),
+            DataFlowStage(
+                "correction", StageLocation(DataLocation.ONLINE, "OpenAI"), "text", False
+            ),
+        )
+    )
+    calls: list[str] = []
+
+    class _FakeAppService:
+        def list_providers(self) -> list[str]:
+            return ["ollama", "openai"]
+
+        def resolve_config_path(self, explicit):
+            return None
+
+        def describe_data_flow(self, config):
+            calls.append("describe")
+            return flow
+
+        def ocr_refusal_for_run(self, config):
+            return ""
+
+        def run_selected(self, config, /, **kwargs):
+            calls.append("run")
+            return 0
+
+        def run_preview_only(self, config):
+            raise AssertionError("preview-only path should not be used")
+
+    rc = run_cli(argv=["-i", str(tmp_path), "--no-docx"], app_service=_FakeAppService())
+
+    err = capsys.readouterr().err
+    assert rc == 0
+    assert calls == ["describe", "run"]
+    assert "- Text recognition: On this computer" in err
+    assert "! Proofreading: Online service (OpenAI) — receives text, names sent as written" in err
+    assert "Data leaves this computer" in err
+
+
+@pytest.mark.use_case("Headless_CLI_Batch")
+def test_run_cli_refuses_online_text_recognition_before_anything_starts(
+    tmp_path: Path, capsys
+) -> None:
+    """
+    Given  an application service that refuses the OCR settings of the run
+    When   run_cli() is called
+    Then   it prints the reason, exits with 1, and neither announces a data flow nor runs
+    """
+    from teachers_teammate.cli import run_cli  # noqa: PLC0415
+
+    class _FakeAppService:
+        def list_providers(self) -> list[str]:
+            return ["ollama", "openai"]
+
+        def resolve_config_path(self, explicit):
+            return None
+
+        def ocr_refusal_for_run(self, config):
+            return "Text recognition must stay on your computer."
+
+        def describe_data_flow(self, config):
+            raise AssertionError("no data flow may be announced for a refused run")
+
+        def run_selected(self, config, /, **kwargs):
+            raise AssertionError("a refused run must not start")
+
+        def run_preview_only(self, config):
+            raise AssertionError("preview-only path should not be used")
+
+    rc = run_cli(
+        argv=["-i", str(tmp_path), "--no-docx", "--ocr-model", "gpt-oss:120b-cloud"],
+        app_service=_FakeAppService(),
+    )
+
+    assert rc == 1
+    assert "ERROR: Text recognition must stay on your computer." in capsys.readouterr().err

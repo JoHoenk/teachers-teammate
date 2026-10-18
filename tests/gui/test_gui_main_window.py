@@ -3,8 +3,10 @@
 
 from __future__ import annotations
 
+import dataclasses
 from pathlib import Path
 import threading
+from typing import ClassVar
 
 import pytest
 
@@ -64,6 +66,21 @@ def _no_network_in_gui_tests(monkeypatch) -> None:
         ProcessingApplicationService,
         "check_connection",
         lambda self, **_kw: (False, False, "offline (test)"),
+    )
+
+
+_REAL_CONFIRM_DATA_FLOW = MainWindow._confirm_data_flow_then
+
+
+@pytest.fixture(autouse=True)
+def _no_privacy_prompt(monkeypatch) -> None:
+    """Skip the "documents will leave this computer" question: tests must never block on it.
+
+    ``make_config`` proofreads with an online provider, so many runs would ask.  The tests
+    of the question itself restore the real method through the ``confirm_box`` fixture.
+    """
+    monkeypatch.setattr(
+        MainWindow, "_confirm_data_flow_then", lambda self, _config, on_ready: on_ready()
     )
 
 
@@ -546,6 +563,24 @@ def test_main_window_check_llm_status_tesseract_ok(qtbot, monkeypatch) -> None:
     lbl = win._status_labels["tesseract"]
     # green = available (the result arrives from a background task)
     _wait_for(lambda: "#27ae60" in lbl.styleSheet())
+
+
+@pytest.mark.gui
+def test_main_window_names_providers_as_they_declare_themselves(qtbot, monkeypatch) -> None:
+    """
+    Given  a provider whose PROVIDER_INFO declares a display name
+    When   the status row names it
+    Then   that name is used, as in the data-flow box, and engines keep their own names
+    """
+    monkeypatch.setattr(MainWindow, "_load_toml_if_present", lambda self: None)
+    win = MainWindow()
+    qtbot.addWidget(win)
+    monkeypatch.setattr(
+        win._app_service, "get_provider_info", lambda p: {"display_name": "OpenAI (ChatGPT)"}
+    )
+
+    assert win._service_display_name("openai") == "OpenAI (ChatGPT)"
+    assert win._service_display_name("tesseract") == "Tesseract"
 
 
 @pytest.mark.gui
@@ -1767,6 +1802,288 @@ def test_run_shows_unmet_stage_requirement_dialog(
 
     assert shown == ["Correction — Missing Requirements"]
     assert main_window._worker is None
+
+
+# ── Where the documents are processed ────────────────────────────────────────
+
+
+class _MemorySettings:
+    """In-memory QSettings stand-in so tests never touch the user's real settings."""
+
+    store: ClassVar[dict] = {}
+
+    def __init__(self, *_args) -> None:
+        pass
+
+    def value(self, key, default=None):
+        return self.store.get(key, default)
+
+    def setValue(self, key, value) -> None:
+        self.store[key] = value
+
+    def remove(self, key) -> None:
+        self.store.pop(key, None)
+
+
+def _online_proofreading_config(tmp_path: Path):
+    return make_config(
+        tmp_path,
+        ocr_engine="tesseract",
+        correction_enabled=True,
+        correction_provider="openai",
+    )
+
+
+class _ConfirmBox:
+    """Stand-in for the confirmation QMessageBox: records the text, clicks a chosen button."""
+
+    clicks = "Continue"
+    remember = False
+    texts: ClassVar[list[str]] = []
+
+    class Icon:
+        Warning = 0
+
+    class ButtonRole:
+        AcceptRole = 0
+        RejectRole = 1
+
+    def __init__(self, _parent=None) -> None:
+        self._buttons: dict[str, object] = {}
+        self._checkbox = None
+        self._clicked = None
+
+    def setIcon(self, _icon) -> None:
+        pass
+
+    def setWindowTitle(self, _title) -> None:
+        pass
+
+    def setText(self, text) -> None:
+        self.texts.append(text)
+
+    def setCheckBox(self, box) -> None:
+        self._checkbox = box
+        box.setChecked(type(self).remember)
+
+    def addButton(self, label, _role):
+        button = object()
+        self._buttons[label] = button
+        return button
+
+    def setDefaultButton(self, _button) -> None:
+        pass
+
+    def exec(self) -> None:
+        self._clicked = self._buttons[type(self).clicks]
+
+    def clickedButton(self):
+        return self._clicked
+
+
+@pytest.fixture
+def confirm_box(monkeypatch):
+    """Replace the confirmation dialog and settings store; return the dialog class."""
+    _ConfirmBox.clicks, _ConfirmBox.remember, _ConfirmBox.texts = "Continue", False, []
+    _MemorySettings.store = {}
+    monkeypatch.setattr(MainWindow, "_confirm_data_flow_then", _REAL_CONFIRM_DATA_FLOW)
+    monkeypatch.setattr(main_window_module, "QMessageBox", _ConfirmBox)
+    monkeypatch.setattr(main_window_module, "QSettings", _MemorySettings)
+    return _ConfirmBox
+
+
+@pytest.mark.gui
+def test_run_refuses_online_ocr_with_an_explanation(
+    qtbot, main_window, monkeypatch, tmp_path: Path
+) -> None:
+    """
+    Given  a preflight that refuses text recognition (e.g. an Ollama cloud model)
+    When   Run is pressed
+    Then   the reason is shown, no worker starts and Run is usable again
+    """
+    cfg = make_config(tmp_path)
+    monkeypatch.setattr(main_window._config_panel, "to_config", lambda: cfg)
+    monkeypatch.setattr(
+        ProcessingApplicationService,
+        "check_run_preflight",
+        lambda self, config: RunPreflight(ocr_not_allowed="Runs on Ollama's servers."),
+    )
+    shown: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        main_window_module.QMessageBox,
+        "warning",
+        lambda _parent, title, text: shown.append((title, text)),
+    )
+
+    main_window._on_run()
+    qtbot.waitUntil(lambda: bool(shown), timeout=3000)
+
+    assert shown[0][0] == "Text recognition must stay on your computer"
+    assert "Runs on Ollama's servers." in shown[0][1]
+    assert main_window._worker is None
+    assert main_window._run_btn.isEnabled() is True
+
+
+@pytest.mark.gui
+def test_local_run_starts_without_a_privacy_question(
+    qtbot, main_window, confirm_box, tmp_path: Path
+) -> None:
+    """
+    Given  a run where everything stays on this computer
+    When   the data flow is confirmed
+    Then   the run continues straight away and nothing is asked
+    """
+    started: list[int] = []
+
+    main_window._confirm_data_flow_then(make_config(tmp_path), lambda: started.append(1))
+
+    assert started == [1]
+    assert confirm_box.texts == []
+
+
+@pytest.mark.gui
+def test_online_run_asks_first_and_cancel_stops_it(
+    qtbot, main_window, confirm_box, tmp_path: Path
+) -> None:
+    """
+    Given  proofreading on an online service
+    When   the user is asked and presses Cancel
+    Then   the question names the step and says names are sent as written, and the run does not start
+    """
+    confirm_box.clicks = "Cancel"
+    started: list[int] = []
+
+    main_window._confirm_data_flow_then(
+        _online_proofreading_config(tmp_path), lambda: started.append(1)
+    )
+
+    assert started == []
+    assert "Proofreading: Online service (OpenAI" in confirm_box.texts[0]
+    assert "names sent as written" in confirm_box.texts[0]
+    assert "Remove personal info" in confirm_box.texts[0]
+
+
+@pytest.mark.gui
+def test_online_run_continues_and_is_asked_again_by_default(
+    qtbot, main_window, confirm_box, tmp_path: Path
+) -> None:
+    """
+    Given  an online run the user confirms without ticking "don't ask again"
+    When   the same run is started twice
+    Then   it continues both times and is asked both times
+    """
+    started: list[int] = []
+    cfg = _online_proofreading_config(tmp_path)
+
+    main_window._confirm_data_flow_then(cfg, lambda: started.append(1))
+    main_window._confirm_data_flow_then(cfg, lambda: started.append(1))
+
+    assert started == [1, 1]
+    assert len(confirm_box.texts) == 2
+
+
+@pytest.mark.gui
+def test_dont_ask_again_applies_only_to_the_same_data_flow(
+    qtbot, main_window, confirm_box, tmp_path: Path
+) -> None:
+    """
+    Given  an online run confirmed with "don't ask again"
+    When   the same run starts again, then a run that also reviews online
+    Then   the first is not asked, the changed one is
+    """
+    confirm_box.remember = True
+    started: list[int] = []
+    cfg = _online_proofreading_config(tmp_path)
+
+    main_window._confirm_data_flow_then(cfg, lambda: started.append(1))
+    asked_before = len(confirm_box.texts)
+    main_window._confirm_data_flow_then(cfg, lambda: started.append(2))
+    main_window._confirm_data_flow_then(
+        dataclasses.replace(cfg, evaluation_enabled=True, evaluate_provider="openai"),
+        lambda: started.append(3),
+    )
+
+    assert started == [1, 2, 3]
+    assert asked_before == 1
+    assert len(confirm_box.texts) == 2
+
+
+@pytest.mark.gui
+def test_forgetting_acknowledged_flows_asks_again(
+    qtbot, main_window, confirm_box, tmp_path: Path
+) -> None:
+    """
+    Given  an online run confirmed with "don't ask again"
+    When   the confirmations are reset from the menu action
+    Then   the same run is asked about again
+    """
+    confirm_box.remember = True
+    cfg = _online_proofreading_config(tmp_path)
+    main_window._confirm_data_flow_then(cfg, lambda: None)
+    main_window._confirm_data_flow_then(cfg, lambda: None)
+    assert len(confirm_box.texts) == 1
+
+    main_window._forget_acknowledged_flows()
+    main_window._confirm_data_flow_then(cfg, lambda: None)
+
+    assert len(confirm_box.texts) == 2
+
+
+@pytest.mark.gui
+def test_online_ocr_engine_in_saved_settings_is_announced(
+    qtbot, monkeypatch, tmp_path: Path
+) -> None:
+    """
+    Given  a settings file from an older version that names an online OCR engine
+    When   the window loads it
+    Then   the teacher is told the engine was replaced, instead of it changing silently
+    """
+    config_path = tmp_path / "ocr.toml"
+    config_path.write_text('ocr_engine = "openai"\nocr_model = "gpt-4o"\n', encoding="utf-8")
+    shown: list[tuple[str, str]] = []
+    monkeypatch.setattr(MainWindow, "_check_llm_status", lambda self: None)
+    monkeypatch.setattr(
+        ProcessingApplicationService, "resolve_config_path", lambda self, _: config_path
+    )
+    monkeypatch.setattr(
+        main_window_module.QMessageBox,
+        "information",
+        lambda _parent, title, text: shown.append((title, text)),
+    )
+
+    win = MainWindow()
+    qtbot.addWidget(win)
+
+    assert shown and shown[0][0] == "Text recognition changed"
+    assert "openai" in shown[0][1]
+    assert "ollama" in shown[0][1]
+
+
+@pytest.mark.gui
+def test_local_ocr_engine_in_saved_settings_is_not_announced(
+    qtbot, monkeypatch, tmp_path: Path
+) -> None:
+    """
+    Given  a settings file that names a local OCR engine
+    When   the window loads it
+    Then   no notice is shown
+    """
+    config_path = tmp_path / "ocr.toml"
+    config_path.write_text('ocr_engine = "tesseract"\n', encoding="utf-8")
+    shown: list[str] = []
+    monkeypatch.setattr(MainWindow, "_check_llm_status", lambda self: None)
+    monkeypatch.setattr(
+        ProcessingApplicationService, "resolve_config_path", lambda self, _: config_path
+    )
+    monkeypatch.setattr(
+        main_window_module.QMessageBox,
+        "information",
+        lambda _parent, title, _text: shown.append(title),
+    )
+
+    qtbot.addWidget(MainWindow())
+
+    assert "Text recognition changed" not in shown
 
 
 # ── Ollama status heals itself ───────────────────────────────────────────────

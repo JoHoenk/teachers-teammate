@@ -575,6 +575,96 @@ def test_evaluation_cache_hit_skips_evaluator(tmp_path: Path) -> None:
 
 
 @pytest.mark.use_case("Automatic_Content_Evaluation")
+def test_evaluation_never_sees_real_names_when_anonymizing(tmp_path: Path) -> None:
+    """
+    Given  anonymization is on and the proofread text contains a real name
+    When   process() runs the content review
+    Then   the evaluator receives the placeholder text, and the stored review has the
+           real name restored
+    """
+    corrector = MagicMock()
+    corrector.correct.return_value = ("Anna Weber wrote this.", None)
+    evaluator = MagicMock()
+    evaluator.evaluate.return_value = ("[PERSON_1] writes clearly.", None)
+    anonymizer = MagicMock()
+    anonymizer.anonymize.side_effect = lambda text: (
+        text.replace("Anna Weber", "[PERSON_1]"),
+        {"[PERSON_1]": "Anna Weber"},
+    )
+    anonymizer.restore.side_effect = lambda text, mapping: text.replace(
+        "[PERSON_1]", mapping["[PERSON_1]"]
+    )
+    fp, cache, _, _ = _make_processor(
+        tmp_path, corrector=corrector, evaluator=evaluator, anonymizer=anonymizer
+    )
+
+    result = fp.process(tmp_path / "doc.png")
+
+    sent_to_evaluator = evaluator.evaluate.call_args.args[0]
+    assert "Anna Weber" not in sent_to_evaluator
+    assert "[PERSON_1]" in sent_to_evaluator
+    assert result.evaluation_text == "Anna Weber writes clearly."
+    assert cache.record_evaluation.call_args.kwargs["evaluation_text"] == (
+        "Anna Weber writes clearly."
+    )
+
+
+@pytest.mark.use_case("Automatic_Content_Evaluation")
+def test_failed_restore_after_evaluation_is_a_clean_failure(tmp_path: Path) -> None:
+    """
+    Given  anonymization is on and restoring names into the review fails
+    When   process() runs the content review
+    Then   the file fails with a "PII restore failed" result (keeping the proofread text)
+           instead of an unhandled exception
+    """
+    corrector = MagicMock()
+    corrector.correct.return_value = ("Anna Weber wrote this.", None)
+    evaluator = MagicMock()
+    evaluator.evaluate.return_value = ("[PERSON_1] writes clearly.", None)
+    anonymizer = MagicMock()
+    anonymizer.anonymize.side_effect = lambda text: (
+        text.replace("Anna Weber", "[PERSON_1]"),
+        {"[PERSON_1]": "Anna Weber"},
+    )
+    restored = iter(["Anna Weber wrote this.", ValueError("bad placeholder")])
+
+    def restore(_text: str, _mapping: dict) -> str:
+        outcome = next(restored)
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
+
+    anonymizer.restore.side_effect = restore
+    fp, _, _, _ = _make_processor(
+        tmp_path, corrector=corrector, evaluator=evaluator, anonymizer=anonymizer
+    )
+
+    result = fp.process(tmp_path / "doc.png")
+
+    assert result.ok is False
+    assert "PII restore failed" in result.message
+    assert result.correction_text == "Anna Weber wrote this."
+
+
+@pytest.mark.use_case("Automatic_Content_Evaluation")
+def test_evaluation_text_is_unchanged_without_anonymizer(tmp_path: Path) -> None:
+    """
+    Given  no anonymizer is configured
+    When   process() runs the content review
+    Then   the evaluator receives the proofread text as it is
+    """
+    corrector = MagicMock()
+    corrector.correct.return_value = ("Anna Weber wrote this.", None)
+    evaluator = MagicMock()
+    evaluator.evaluate.return_value = ("fine", None)
+    fp, _, _, _ = _make_processor(tmp_path, corrector=corrector, evaluator=evaluator)
+
+    fp.process(tmp_path / "doc.png")
+
+    assert evaluator.evaluate.call_args.args[0] == "Anna Weber wrote this."
+
+
+@pytest.mark.use_case("Automatic_Content_Evaluation")
 def test_fresh_evaluation_calls_evaluator(tmp_path: Path) -> None:
     """
     Given  evaluation_done=False and an evaluator is provided with correction present

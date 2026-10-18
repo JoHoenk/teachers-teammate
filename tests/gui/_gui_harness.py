@@ -37,8 +37,10 @@ from teachers_teammate.gui._main_window import MainWindow
 from teachers_teammate.gui._update_check import UpdateCheckThread
 from teachers_teammate.gui._worker import _ConnectionCheckThread
 
+from ._service_stubs import LocalDataFlowStub
 
-class FakeGuiService:
+
+class FakeGuiService(LocalDataFlowStub):
     """Deterministic, offline stand-in for the application services used by the GUI."""
 
     # ── OCR discovery queries (settings dialogs, OcrConfigSelector) ──────────
@@ -46,7 +48,7 @@ class FakeGuiService:
         return ["ollama", "openai"]
 
     def list_ocr_engines(self) -> list[str]:
-        return ["ollama", "tesseract", "paddleocr", "langchain"]
+        return ["ollama", "tesseract", "paddleocr"]
 
     def default_preprocess_for_engine(self, engine: str) -> str:
         return {"ollama": "grayscale", "tesseract": "clahe"}.get(engine, "none")
@@ -61,6 +63,9 @@ class FakeGuiService:
 
     def list_provider_models(self, provider: str, *, base_url: str = "") -> list[str]:
         return [f"{provider}-model"]
+
+    def list_ocr_models(self, base_url: str = "") -> list[str]:
+        return self.list_provider_models("ollama", base_url=base_url)
 
     def get_cached_models(self, provider: str, *, base_url: str = "") -> list[str] | None:
         # Non-None → the selector/settings dialogs skip starting a fetch thread.

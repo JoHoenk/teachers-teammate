@@ -34,6 +34,14 @@ class ProviderNotAvailableError(RuntimeError):
     """
 
 
+class OnlineOcrNotAllowedError(ValueError):
+    """Raised when text recognition would run on an online service.
+
+    Reading a page needs the whole page — names, grades, handwriting — so it must stay on a
+    computer the user controls.  ``str(exc)`` explains what to choose instead.
+    """
+
+
 class OllamaConnectionError(RuntimeError):
     """Raised when the Ollama service cannot be reached or returns an error.
 

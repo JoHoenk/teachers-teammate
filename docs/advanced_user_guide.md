@@ -8,7 +8,9 @@ This guide is for technically-minded users who want to configure the processing 
 
 Text recognition — also called OCR (Optical Character Recognition) — is the process of converting an image of a document into machine-readable text. From this point the abbreviation **OCR** is used throughout.
 
-The OCR engine can be switched in **Settings → Text Recognition…** or by changing the `ocr_engine` key in the settings file (TOML format).
+The OCR engine can be switched in **Settings → Text Recognition…** or by changing the `ocr_engine` key in the settings file (TOML format). On the command line use `--ocr-engine`.
+
+Only engines that read pages on a computer you control are available: `ollama`, `tesseract` and `paddleocr`. Online vision models (the former `langchain` engine and `--ocr-provider`) were removed because a page cannot be anonymised before it is read. A settings file that still names one falls back to `ollama` with a warning, and Ollama cloud models (tags ending in `cloud`) are refused for OCR.
 
 ### 1. Ollama (default)
 
@@ -339,11 +341,12 @@ Prioritises speed and works without internet access. Best suited for cleanly pri
 
 ### Hybrid cloud setup
 
-Keeps documents on the local machine for text recognition while using cloud AI to maximise proofreading and content review quality.
+Keeps documents on the local machine for text recognition while using cloud AI to maximise proofreading and content review quality. Turn on `anonymization_enabled` so names are hidden from both online steps.
 
 - OCR: `ocr_engine=ollama` (local vision model)
 - Proofreading: `correction_provider=openai`
 - Content review: `evaluate_provider=anthropic`
+- Privacy: `anonymization_enabled=true`
 
 ---
 

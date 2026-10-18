@@ -30,14 +30,13 @@ class _DummyAppService(RecommendationServiceStub):
         return ["ollama", "openai"]
 
     def list_ocr_engines(self) -> list[str]:
-        return ["ollama", "tesseract", "paddleocr", "langchain"]
+        return ["ollama", "tesseract", "paddleocr"]
 
     def default_preprocess_for_engine(self, engine: str) -> str:
         return {
             "ollama": "grayscale",
             "tesseract": "clahe",
             "paddleocr": "grayscale",
-            "langchain": "grayscale",
         }.get(engine, "")
 
     def get_provider_info(self, provider: str) -> dict:
@@ -58,6 +57,9 @@ class _DummyAppService(RecommendationServiceStub):
     def list_provider_models(self, provider: str, *, base_url: str = "") -> list[str]:
         _ = base_url
         return [f"{provider}-model"]
+
+    def list_ocr_models(self, base_url: str = "") -> list[str]:
+        return self.list_provider_models("ollama", base_url=base_url)
 
     def get_cached_models(self, provider: str, *, base_url: str = "") -> list[str] | None:
         return None

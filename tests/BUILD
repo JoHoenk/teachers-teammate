@@ -256,7 +256,7 @@ py_test(
     srcs = _COMMON_SRCS + ["unit/test_correction.py"],
     args = ["unit/test_correction.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS + _LANGCHAIN_DEPS,
+    deps = _COMMON_DEPS + _FORMAT_DEPS + _LANGCHAIN_DEPS,
 )
 
 py_test(
@@ -265,7 +265,7 @@ py_test(
     srcs = _COMMON_SRCS + ["unit/test_evaluation.py"],
     args = ["unit/test_evaluation.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS + _LANGCHAIN_DEPS,
+    deps = _COMMON_DEPS + _FORMAT_DEPS + _LANGCHAIN_DEPS,
 )
 
 py_test(

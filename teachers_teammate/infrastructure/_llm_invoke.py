@@ -12,6 +12,8 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from langchain_core.language_models import BaseChatModel
 
     from .ollama_utils import OllamaClient
@@ -64,3 +66,15 @@ def invoke_ollama_chat(
         )
     except Exception as exc:  # noqa: BLE001  # client may raise any transport error; degrade with a warning
         return fallback, f"{failure_prefix} ({exc}){failure_suffix}"
+
+
+def tidy_answer(
+    result: tuple[str, str | None], postprocess: Callable[[str], str]
+) -> tuple[str, str | None]:
+    """Apply *postprocess* to the text of a successful ``(text, warning)`` result.
+
+    A failed call returns its fallback with a warning; that fallback is the caller's own
+    text and stays exactly as it was.
+    """
+    text, warning = result
+    return (text, warning) if warning is not None else (postprocess(text), None)

@@ -19,7 +19,14 @@ from ..config import DEFAULTS
 from ..domain.formatted_text import TextFormat
 from ..domain.notation import with_notation_hint
 from ..interfaces import Evaluator
-from ._llm_invoke import invoke_langchain_chain, invoke_ollama_chat
+from ._llm_invoke import invoke_langchain_chain, invoke_ollama_chat, tidy_answer
+
+
+def _tidy_review(answer: str) -> str:
+    """Drop reasoning blocks, control tokens and a wrapping code fence from a review."""
+    from .ocr_formats import clean_llm_answer  # noqa: PLC0415
+
+    return clean_llm_answer(answer)
 
 
 class LangChainEvaluator(Evaluator):
@@ -32,7 +39,7 @@ class LangChainEvaluator(Evaluator):
     def evaluate(
         self, corrected_text: str, language: str, *, text_format: TextFormat = "plain"
     ) -> tuple[str, str | None]:
-        return invoke_langchain_chain(
+        result = invoke_langchain_chain(
             self._llm,
             system=with_notation_hint(self._prompt, text_format, task="evaluation"),
             human="Language: {language}\n\nCorrected text:\n\n{text}",
@@ -40,6 +47,7 @@ class LangChainEvaluator(Evaluator):
             fallback="",
             failure_prefix="Evaluation failed",
         )
+        return tidy_answer(result, _tidy_review)
 
 
 class NativeOllamaEvaluator(Evaluator):
@@ -68,7 +76,7 @@ class NativeOllamaEvaluator(Evaluator):
         self, corrected_text: str, language: str, *, text_format: TextFormat = "plain"
     ) -> tuple[str, str | None]:
         system = with_notation_hint(self._prompt, text_format, task="evaluation")
-        return invoke_ollama_chat(
+        result = invoke_ollama_chat(
             self._client,
             model=self._model,
             prompt=f"{system}\n\nLanguage: {language}\n\nCorrected text:\n\n{corrected_text}",
@@ -77,3 +85,4 @@ class NativeOllamaEvaluator(Evaluator):
             fallback="",
             failure_prefix="Evaluation failed",
         )
+        return tidy_answer(result, _tidy_review)

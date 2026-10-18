@@ -11,6 +11,8 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from langchain_core.language_models import BaseChatModel
 
     from .ollama_utils import OllamaClient
@@ -18,7 +20,19 @@ if TYPE_CHECKING:
 from ..domain.formatted_text import TextFormat
 from ..domain.notation import with_notation_hint
 from ..interfaces import Corrector
-from ._llm_invoke import invoke_langchain_chain, invoke_ollama_chat
+from ._llm_invoke import invoke_langchain_chain, invoke_ollama_chat, tidy_answer
+
+
+def _tidy_answer(raw_text: str, text_format: TextFormat) -> Callable[[str], str]:
+    """Return the function that brings a proofreading answer into the notation of *raw_text*."""
+
+    def tidy(answer: str) -> str:
+        from .ocr_formats import normalize_llm_answer  # noqa: PLC0415
+
+        return normalize_llm_answer(answer, text_format, source=raw_text)
+
+    return tidy
+
 
 ENGLISH_PROMPT = (
     "You are a proofreading assistant. "
@@ -134,7 +148,7 @@ class LangChainCorrector(Corrector):
         self, raw_text: str, language: str, *, text_format: TextFormat = "plain"
     ) -> tuple[str, str | None]:
         """Return proofread text and an optional warning. On error, returns raw text with warning."""
-        return invoke_langchain_chain(
+        result = invoke_langchain_chain(
             self._llm,
             system=with_notation_hint(
                 _resolve_prompt(self._prompt, language), text_format, task="correction"
@@ -145,6 +159,7 @@ class LangChainCorrector(Corrector):
             failure_prefix="Correction failed",
             failure_suffix="; keeping original text.",
         )
+        return tidy_answer(result, _tidy_answer(raw_text, text_format))
 
 
 class NativeOllamaCorrector(Corrector):
@@ -176,7 +191,7 @@ class NativeOllamaCorrector(Corrector):
         system = with_notation_hint(
             _resolve_prompt(self._prompt, language), text_format, task="correction"
         )
-        return invoke_ollama_chat(
+        result = invoke_ollama_chat(
             self._client,
             model=self._model,
             prompt=f"{system}\n\nLanguage: {language}\n\nText:\n\n{raw_text}",
@@ -186,3 +201,4 @@ class NativeOllamaCorrector(Corrector):
             failure_prefix="Correction failed",
             failure_suffix="; keeping original text.",
         )
+        return tidy_answer(result, _tidy_answer(raw_text, text_format))

@@ -469,3 +469,62 @@ def test_anonymizer_raises_oserror_when_configured_primary_model_missing() -> No
     with patch.dict(sys.modules, {"spacy": mock_spacy}):
         with pytest.raises(OSError, match="configured model not found"):
             SpacyAnonymizer("English", AnonymizerConfig(primary_model="custom_model_sm"))
+
+
+# ── anonymize: Markdown markup ─────────────────────────────────────────────
+
+
+def test_anonymize_hides_markdown_markup_from_the_ner_model() -> None:
+    """
+    Given  Markdown text where a name sits inside <sup> tags and bold markers
+    When   anonymize() is called
+    Then   the NER model sees the same text with the markup blanked out (offsets unchanged)
+           and the name is replaced in the original, markup intact
+    """
+    text = "Hallo <sup>Anna</sup> und **Ben** hier"
+    anon = _make_anonymizer(
+        [
+            (text.index("Anna"), text.index("Anna") + 4, "Anna", "PERSON"),
+            (text.index("Ben"), text.index("Ben") + 3, "Ben", "PERSON"),
+        ]
+    )
+
+    result, mapping = anon.anonymize(text)
+
+    seen = anon._nlp.call_args.args[0]
+    assert len(seen) == len(text)
+    assert "<" not in seen and "*" not in seen
+    assert seen.split() == ["Hallo", "Anna", "und", "Ben", "hier"]
+    assert result == "Hallo <sup>[PERSON_1]</sup> und **[PERSON_2]** hier"
+    assert mapping == {"[PERSON_1]": "Anna", "[PERSON_2]": "Ben"}
+
+
+def test_anonymize_splits_a_name_that_spans_markup() -> None:
+    """
+    Given  a NER entity "Anna** Müller" that runs across a closing bold marker
+    When   anonymize() is called
+    Then   both words are replaced separately, so the markers stay balanced, and
+           restore() gives back the original text
+    """
+    text = "Von **Anna** Müller"
+    start = text.index("Anna")
+    anon = _make_anonymizer([(start, len(text), "Anna   Müller", "PERSON")])
+
+    result, mapping = anon.anonymize(text)
+
+    assert result == "Von **[PERSON_1]** [PERSON_2]"
+    assert mapping == {"[PERSON_1]": "Anna", "[PERSON_2]": "Müller"}
+    assert anon.restore(result, mapping) == text
+
+
+def test_anonymize_leaves_text_without_markup_untouched_for_the_ner_model() -> None:
+    """
+    Given  plain text without any markup
+    When   anonymize() is called
+    Then   the NER model receives exactly that text
+    """
+    anon = _make_anonymizer([])
+
+    anon.anonymize("Alice went to the shop.")
+
+    assert anon._nlp.call_args.args[0] == "Alice went to the shop."

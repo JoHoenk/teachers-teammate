@@ -361,7 +361,18 @@ bump — except entries written before the field existed whose text *is* raw mod
 `StateRepository.load` drops those (the document is processed again) and
 `StoredRun.from_json_dict` upgrades them to Markdown in memory, so markup is never shown or
 compared as literal text. A model answer wrapped in one code fence (```` ```markdown ````)
-is looked through before parsing.
+is looked through before parsing, and the fence is dropped even when it wraps plain text.
+Beside Chandra's `data-*` HTML, HTML a model writes on its own (`<table>`, `<p>`, `<br>`,
+`<strike>`, …) is recognised as markup; a `# ` before a number (`# 3 Äpfel`) is not a heading.
+
+**Answers of the proofreading and review models** pass through the same cleaning before they
+are stored (`normalize_llm_answer` / `clean_llm_answer` in `ocr_formats/__init__.py`, applied
+by the correctors and evaluators via `tidy_answer`): reasoning blocks, control tokens and a
+wrapping code fence are removed. A correction of a Markdown text is read as Markdown and
+written back canonically; for a plain text, markup the model added on its own is removed. A
+failed call returns its fallback untouched. In the DOCX comments layout a word whose
+formatting the correction changed (a crossed-out word that lost its strikethrough) gets a
+comment like a changed word.
 
 **Escaping.** `MarkdownRenderer` escapes only what CommonMark would interpret (`snake_case`
 words and e-mail addresses stay free of backslashes, so the anonymizer's patterns still

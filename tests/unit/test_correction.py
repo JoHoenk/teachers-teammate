@@ -239,3 +239,79 @@ def test_langchain_corrector_adds_notation_hint_to_system_message(monkeypatch) -
     system = next(content for role, content in captured if role == "system")
     assert system.startswith(ENGLISH_PROMPT)
     assert "crossed out" in system
+
+
+# ── Tidying of the answer ──────────────────────────────────────────────────
+
+
+def test_correct_strips_reasoning_and_a_code_fence_from_the_answer() -> None:
+    """
+    Given  a model that answers with a <think> block and the text inside a code fence
+    When   correct() is called on plain text
+    Then   the stored correction is only the text, without reasoning or backticks
+    """
+    llm = FakeListChatModel(responses=["<think>check</think>\n```\nHello world.\n```"])
+
+    result = LangChainCorrector(llm).correct("Helo wrold.", "English")
+
+    assert result == ("Hello world.", None)
+
+
+def test_correct_writes_a_markdown_answer_in_canonical_markdown() -> None:
+    """
+    Given  Markdown text and a model that wraps its answer in a ```markdown fence and
+           uses an HTML strike tag instead of ~~
+    When   correct(text_format="markdown") is called
+    Then   the correction is canonical Markdown that parses like the original
+    """
+    llm = FakeListChatModel(responses=["```markdown\nI <strike>hate</strike> **love** this\n```"])
+
+    text, warning = LangChainCorrector(llm).correct(
+        "I ~~hate~~ **lov** this", "English", text_format="markdown"
+    )
+
+    assert (text, warning) == ("I ~~hate~~ **love** this", None)
+
+
+def test_correct_removes_markup_the_model_added_to_plain_text() -> None:
+    """
+    Given  plain text and a model that answers with **bold** words
+    When   correct() is called without a text format
+    Then   the correction contains no asterisks
+    """
+    llm = FakeListChatModel(responses=["This is **very** good."])
+
+    text, _warning = LangChainCorrector(llm).correct("This is very god.", "English")
+
+    assert text == "This is very good."
+
+
+def test_native_ollama_corrector_tidies_the_answer(mocker) -> None:
+    """
+    Given  a NativeOllamaCorrector whose model answers inside a code fence
+    When   correct() is called
+    Then   the fence is removed from the returned correction
+    """
+    from teachers_teammate.infrastructure.correction import NativeOllamaCorrector  # noqa: PLC0415
+    from teachers_teammate.infrastructure.ollama_utils import OllamaClient  # noqa: PLC0415
+
+    mocker.patch.object(OllamaClient, "chat", return_value="```\nfixed text\n```")
+    corrector = NativeOllamaCorrector(model="m", client=OllamaClient("http://localhost:11434"))
+
+    assert corrector.correct("fixd text", "English") == ("fixed text", None)
+
+
+def test_correct_keeps_the_original_text_untouched_when_the_model_fails() -> None:
+    """
+    Given  a model that fails and Markdown text that would change if it were tidied
+    When   correct(text_format="markdown") is called
+    Then   the fallback is the exact original text
+    """
+    original = "- a\n- b <strike>c</strike>"
+
+    text, warning = LangChainCorrector(FakeListChatModel(responses=[])).correct(
+        original, "English", text_format="markdown"
+    )
+
+    assert text == original
+    assert warning is not None

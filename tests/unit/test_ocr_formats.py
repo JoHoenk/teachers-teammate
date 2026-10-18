@@ -25,7 +25,9 @@ from teachers_teammate.infrastructure.ocr_formats import (
     OcrOutputPostprocessor,
     PlainTextParser,
     PlainTextRenderer,
+    clean_llm_answer,
     looks_like_markup,
+    normalize_llm_answer,
     parse_stored_text,
     plain_text_of,
     upgrade_legacy_text,
@@ -850,17 +852,30 @@ def test_postprocessor_does_not_unwrap_a_fence_in_another_language() -> None:
     ]
 
 
-def test_postprocessor_keeps_a_fenced_page_without_markup_verbatim() -> None:
+@pytest.mark.parametrize("info", ["", "markdown", "html"])
+def test_postprocessor_drops_a_fence_around_a_plain_answer(info: str) -> None:
     """
-    Given  a bare fence around ordinary text
+    Given  a model answer that wraps ordinary text in one code fence
     When   process_pages is called
-    Then   the page stays plain and verbatim
+    Then   the page stays plain, without the backticks
     """
-    page = "```\nHallo Welt\n```"
+    page = f"```{info}\nHallo Welt\nZweite Zeile\n```"
 
     result = OcrOutputPostprocessor().process_pages([page])
 
-    assert (result.text, result.text_format) == (page, "plain")
+    assert (result.text, result.text_format) == ("Hallo Welt\nZweite Zeile", "plain")
+
+
+def test_postprocessor_drops_the_fence_of_a_plain_page_next_to_a_rich_page() -> None:
+    """
+    Given  two pages: a fenced plain answer and a Markdown answer
+    When   process_pages is called
+    Then   the document is Markdown and the plain page is written without its fence
+    """
+    result = OcrOutputPostprocessor().process_pages(["```\nHallo Welt\n```", "**fett**"])
+
+    assert result.text == "Page 1:\n\nHallo Welt\n\nPage 2:\n\n**fett**"
+    assert result.text_format == "markdown"
 
 
 def test_markdown_parser_keeps_a_second_paragraph_inside_its_list_item() -> None:
@@ -946,3 +961,137 @@ def test_join_labelled_pages_matches_postprocessor_output() -> None:
     assert join_labelled_pages(pages) == OcrOutputPostprocessor().process_pages(pages).text
     assert join_labelled_pages(["only"]) == "only"
     assert join_labelled_pages(["a", " "], markdown=True) == "Page 1:\n\na"
+
+
+# ── detection of notations without Datalab attributes ─────────────────────
+
+
+def test_postprocessor_parses_plain_html_tables() -> None:
+    """
+    Given  a model answer that is an HTML table without Chandra's data-* attributes
+    When   process_pages is called
+    Then   the table becomes a Markdown table instead of literal tags
+    """
+    page = "<table><tr><th>A</th><th>B</th></tr><tr><td>1</td><td>2</td></tr></table>"
+
+    result = OcrOutputPostprocessor().process_pages([page])
+
+    assert (result.text, result.text_format) == (
+        "| A | B |\n| --- | --- |\n| 1 | 2 |",
+        "markdown",
+    )
+
+
+def test_postprocessor_parses_html_paragraphs_with_line_breaks() -> None:
+    """
+    Given  a model answer written as <p> and <br> HTML
+    When   process_pages is called
+    Then   the tags are gone and the line break is kept
+    """
+    result = OcrOutputPostprocessor().process_pages(["<p>Hallo<br>Welt</p>"])
+
+    assert (result.text, result.text_format) == ("Hallo\nWelt", "markdown")
+
+
+@pytest.mark.parametrize(
+    ("page", "expected"),
+    [
+        ("Ein <strike>altes</strike> Wort", "Ein ~~altes~~ Wort"),
+        ("Ein <ins>neues</ins> Wort", "Ein <u>neues</u> Wort"),
+        ("Ein <del>altes</del> Wort", "Ein ~~altes~~ Wort"),
+    ],
+)
+def test_postprocessor_detects_every_inline_style_tag_it_can_parse(
+    page: str, expected: str
+) -> None:
+    """
+    Given  a page whose only markup is an inline style tag the parser knows
+    When   process_pages is called
+    Then   the page is detected as rich and written in the canonical notation
+    """
+    result = OcrOutputPostprocessor().process_pages([page])
+
+    assert (result.text, result.text_format) == (expected, "markdown")
+
+
+def test_a_number_sign_before_a_count_is_not_a_heading() -> None:
+    """
+    Given  a page that starts with "# 3 Äpfel" (a number sign, not a Markdown heading)
+    When   process_pages is called
+    Then   the page stays plain and verbatim, while "# Titel" is still a heading
+    """
+    plain = OcrOutputPostprocessor().process_pages(["# 3 Äpfel kosten 2 Euro"])
+    heading = OcrOutputPostprocessor().process_pages(["# Titel\n\nText"])
+
+    assert (plain.text, plain.text_format) == ("# 3 Äpfel kosten 2 Euro", "plain")
+    assert heading.text_format == "markdown"
+
+
+# ── answers of the proofreading and review models ─────────────────────────
+
+
+def test_clean_llm_answer_strips_reasoning_and_fence() -> None:
+    """
+    Given  an answer with a <think> block and a code fence around the text
+    When   clean_llm_answer() is called
+    Then   only the text is left
+    """
+    answer = "<think>hmm</think>\n```markdown\n**Hallo** Welt\n```"
+
+    assert clean_llm_answer(answer) == "**Hallo** Welt"
+
+
+def test_clean_llm_answer_keeps_a_fence_in_another_language() -> None:
+    """
+    Given  an answer that is a fenced Python snippet
+    When   clean_llm_answer() is called
+    Then   the answer is returned unchanged
+    """
+    answer = "```python\nx = 1\n```"
+
+    assert clean_llm_answer(answer) == answer
+
+
+def test_normalize_llm_answer_reads_a_markdown_answer_as_markdown() -> None:
+    """
+    Given  a fenced answer for a Markdown text, mixing HTML strike tags and Markdown
+    When   normalize_llm_answer() is called for "markdown"
+    Then   the answer is written in the canonical notation
+    """
+    answer = "```markdown\nEin <strike>altes</strike> **Wort**\n```"
+
+    assert normalize_llm_answer(answer, "markdown") == "Ein ~~altes~~ **Wort**"
+
+
+def test_normalize_llm_answer_removes_markup_the_model_added_to_plain_text() -> None:
+    """
+    Given  plain source text and an answer that sets a word in **bold**
+    When   normalize_llm_answer() is called for "plain"
+    Then   the answer is returned without the asterisks
+    """
+    answer = "Das ist **wichtig** und ~~falsch~~."
+
+    assert normalize_llm_answer(answer, "plain", source="Das ist wichtig und falsch") == (
+        "Das ist wichtig und falsch."
+    )
+
+
+def test_normalize_llm_answer_keeps_markup_that_the_plain_source_already_had() -> None:
+    """
+    Given  a plain source that itself contains **stars** (so the answer may keep them)
+    When   normalize_llm_answer() is called for "plain"
+    Then   the answer is not touched
+    """
+    source = "Preis: **neu**"
+    # ``**neu**`` is a Markdown signal, so the source counts as marked up and is kept verbatim.
+    assert normalize_llm_answer("Preis: **neu**!", "plain", source=source) == "Preis: **neu**!"
+
+
+def test_normalize_llm_answer_returns_empty_answers_unchanged() -> None:
+    """
+    Given  an answer that is empty after cleaning
+    When   normalize_llm_answer() is called
+    Then   an empty string is returned for both notations
+    """
+    assert normalize_llm_answer("<think>x</think>", "markdown") == ""
+    assert normalize_llm_answer("", "plain", source="a") == ""

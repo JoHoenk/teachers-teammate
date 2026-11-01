@@ -32,7 +32,7 @@ jobs:
   prune-old-artifacts:
     name: Delete previous Windows artifacts
     needs: [build-windows]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       actions: write
     steps:

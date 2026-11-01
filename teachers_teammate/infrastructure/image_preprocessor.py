@@ -30,6 +30,39 @@ from ..interfaces import ImagePreprocessor
 _logger = logging.getLogger(__name__)
 
 
+def _read_image(path: Path) -> Any:
+    """Load *path* as a BGR array, or ``None`` if it cannot be read.
+
+    ``cv2.imread`` takes the path as a narrow string, which on Windows is decoded
+    with the ANSI code page, so names like ``märz_page0.png`` are never found.
+    Reading the bytes in Python and decoding them in memory avoids that.
+    """
+    import numpy as np  # noqa: PLC0415  # pylint: disable=import-error
+
+    try:
+        data = np.fromfile(path, dtype=np.uint8)
+    except OSError:
+        return None
+    if data.size == 0:
+        return None
+    return cv2.imdecode(data, cv2.IMREAD_COLOR)
+
+
+def _write_image(path: Path, image: Any) -> None:
+    """Encode *image* by the extension of *path* and write it (Unicode-safe, see above).
+
+    Raises:
+        PipelineInputError: if encoding or writing fails.
+    """
+    ok, encoded = cv2.imencode(path.suffix or ".png", image)
+    if not ok:
+        raise PipelineInputError(f"Cannot encode image: {path}")
+    try:
+        encoded.tofile(path)
+    except OSError as exc:
+        raise PipelineInputError(f"Cannot write image: {path}: {exc}") from exc
+
+
 # ── Implementation ──────────────────────────────────────────────────
 
 
@@ -94,7 +127,7 @@ class HandwritingPreprocessor(ImagePreprocessor):
                 _source_dpi = _pil.info.get("dpi")
         except Exception as exc:  # noqa: BLE001  # PIL may raise format-specific errors; log DPI warning and continue
             _logger.warning("Could not read DPI from %s: %s", image_path, exc)
-        image: Any = cv2.imread(str(image_path))
+        image: Any = _read_image(image_path)
         if image is None:
             raise PipelineInputError(f"Cannot read image: {image_path}")
 
@@ -125,7 +158,7 @@ class HandwritingPreprocessor(ImagePreprocessor):
 
         if self._method == "grayscale":
             out_path = self._output_path(image_path)
-            cv2.imwrite(str(out_path), image)
+            _write_image(out_path, image)
             if _source_dpi:
                 try:
                     with _PILImage.open(out_path) as _pil_out:
@@ -157,7 +190,7 @@ class HandwritingPreprocessor(ImagePreprocessor):
             self._save_step(image, stem, step_num, "adaptive_threshold")
 
         out_path = self._output_path(image_path)
-        cv2.imwrite(str(out_path), image)
+        _write_image(out_path, image)
 
         # Restore DPI metadata that cv2 strips on write.
         if _source_dpi:
@@ -350,7 +383,7 @@ class HandwritingPreprocessor(ImagePreprocessor):
         if not self._save_steps or self._tmp_dir is None:
             return
         path = self._tmp_dir / f"{stem}_step{step_num}_{name}.jpg"
-        cv2.imwrite(str(path), image)
+        _write_image(path, image)
 
     def _output_path(self, image_path: Path) -> Path:
         # PNG is lossless and compresses binary images far better than JPEG;

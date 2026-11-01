@@ -7,6 +7,7 @@ from typing import Any
 
 import pytest
 
+from teachers_teammate.exceptions import PipelineInputError
 from teachers_teammate.infrastructure.image_preprocessor import HandwritingPreprocessor
 
 
@@ -645,3 +646,53 @@ def test_dewarp_remaps_a_quadrilateral(tmp_path: Path) -> None:
     assert result is not None
     # A successful perspective remap crops to the quad: smaller than the 400x400 source.
     assert result.shape[0] < 400 or result.shape[1] < 400
+
+
+@pytest.mark.parametrize("method", ["adaptive_threshold", "clahe", "grayscale"])
+def test_non_ascii_path_is_read_and_written(tmp_path: Path, sample_png: Path, method: str) -> None:
+    """
+    Given  an image whose name contains a non-ASCII character (märz_page0.png)
+           and OpenCV file functions that cannot open such paths (as on Windows)
+    When   preprocess() is called with save_steps enabled
+    Then   the image is preprocessed, and the output and step snapshots are written
+    """
+    from unittest.mock import patch  # noqa: PLC0415
+
+    src = tmp_path / "märz_page0.png"
+    src.write_bytes(sample_png.read_bytes())
+
+    def ascii_only(path: Any, *_args: Any, **_kwargs: Any) -> None:
+        raise AssertionError(f"OpenCV must not open file paths directly: {path}")
+
+    with (
+        patch("teachers_teammate.infrastructure.image_preprocessor.cv2.imread", ascii_only),
+        patch("teachers_teammate.infrastructure.image_preprocessor.cv2.imwrite", ascii_only),
+    ):
+        p = HandwritingPreprocessor(tmp_dir=tmp_path, method=method, save_steps=True)
+        out, _ = p.preprocess(src)
+
+    assert out.name == "märz_page0_preprocessed.png"
+    assert out.stat().st_size > 0
+    assert list(tmp_path.glob("märz_page0_step*.jpg"))
+
+
+def test_unreadable_image_raises_pipeline_input_error(tmp_path: Path) -> None:
+    """
+    Given  a file with a non-ASCII name that is not a decodable image
+    When   preprocess() is called
+    Then   PipelineInputError("Cannot read image") is raised
+    """
+    bad = tmp_path / "märz.png"
+    bad.write_bytes(b"not an image")
+    with pytest.raises(PipelineInputError, match="Cannot read image"):
+        HandwritingPreprocessor(tmp_dir=tmp_path, method="clahe").preprocess(bad)
+
+
+def test_missing_image_raises_pipeline_input_error(tmp_path: Path) -> None:
+    """
+    Given  a path that does not exist
+    When   preprocess() is called
+    Then   PipelineInputError("Cannot read image") is raised
+    """
+    with pytest.raises(PipelineInputError, match="Cannot read image"):
+        HandwritingPreprocessor(tmp_dir=tmp_path, method="clahe").preprocess(tmp_path / "x.png")

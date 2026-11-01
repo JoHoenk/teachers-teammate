@@ -605,7 +605,8 @@ class DownloadsDialog(QDialog):
             group_item = self._group_items[key]
             children: list[QTreeWidgetItem] = []
             while group_item.childCount():
-                children.append(group_item.takeChild(0))
+                if (child := group_item.takeChild(0)) is not None:
+                    children.append(child)
             tags = [str(c.data(0, Qt.ItemDataRole.UserRole) or c.text(0)) for c in children]
             ratings: dict[str, ModelRating] = {}
             abilities: dict[str, ModelUses | None] = {}

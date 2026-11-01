@@ -1,7 +1,7 @@
 """PII anonymization for OCR text before it is sent to a correction LLM.
 
 Implements :class:`~teachers_teammate.interfaces.Anonymizer` using spacy NER for
-person names and regex patterns for structural PII (email, phone, IBAN).
+person names and regex patterns for structural PII (email, phone, IBAN, street, postcode, dates).
 
 Install the optional dependency group to use this module::
 
@@ -23,14 +23,113 @@ from ..interfaces import AnonymizationMap, Anonymizer
 
 # ── Default regex patterns ─────────────────────────────────────────────────
 
+# Street and postcode patterns are German formats. They stay on one line and never span more
+# than one capitalised word before/after the match, so they cannot swallow a neighbouring name.
+_WORD = r"[A-ZÄÖÜ][a-zäöüß]+(?:-[A-ZÄÖÜ][a-zäöüß]+)*"
+_STREET_SUFFIX = r"(?:straße|strasse|str\.|weg|platz|allee|gasse|ring|damm|ufer)"
+_STREET_WORD = r"(?:Straße|Strasse|Str\.|Weg|Platz|Allee|Gasse|Ring|Damm|Ufer)"
+# "Der Weg 5 km" is a sentence, not an address: a leading article rules out the two-word form.
+_ARTICLE = (
+    r"(?:Der|Die|Das|Dem|Den|Des|Ein|Eine|Einem|Einen|Einer|Kein|Keine|Jeder|Jede|"
+    r"Diese|Dieser|Mein|Meine|Sein|Seine|Ihr|Ihre|Unser|Unsere)"
+)
+# One to three digits (so years do not count) and an optional letter: "12", "5a", "12 a".
+_HOUSE_NO = r"[ ]?\d{1,3}(?:[ ]?[a-z])?\b"
+_MONTHS = (
+    r"(?:Januar|Februar|März|Maerz|April|Mai|Juni|Juli|August|September|Oktober|November|Dezember)"
+)
+_MONTHS_EN = (
+    r"(?:January|February|March|April|May|June|July|August|September|October|November|December)"
+)
+_ORDINAL_EN = r"(?:st|nd|rd|th)?"
+_DAY = r"(?:0?[1-9]|[12]\d|3[01])"
+_MONTH = r"(?:0?[1-9]|1[0-2])"
+# Capitalised nouns that follow a five-digit number in ordinary prose ("20000 Menschen").
+_NOT_CITY = (
+    r"(?:Euro|Dollar|Menschen|Einwohner|Einwohnern|Jahre|Jahren|Meter|Metern|"
+    r"Kilometer|Kilometern|Tonnen|Soldaten|Mal)\b"
+)
+# A postcode starts a line, follows a comma, "in ", "D-" or a placeholder (a street just replaced).
+_POSTCODE_START = r"(?:(?<![^\n])|(?<=,)|(?<=,[ ])|(?<=\bin[ ])|(?<=\][ ])|(?<=\bD-))"
+
 DEFAULT_PATTERNS: list[tuple[str, str]] = [
+    ("IBAN", r"\b[A-Z]{2}\d{2}[A-Z0-9]{4}\d{7}[A-Z0-9]{0,16}\b"),
+    ("EMAIL", r"\b[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}\b"),
+    # German street + house number: "Hauptstraße 12", "Berliner Straße 5a",
+    # "Konrad-Adenauer-Straße 5"
+    (
+        "STREET",
+        r"\b(?:(?:St\.|Sankt)[ ])?(?:"
+        + _WORD
+        + _STREET_SUFFIX
+        + "|(?!"
+        + _ARTICLE
+        + "[ -])"
+        + _WORD
+        + "[ -]"
+        + _STREET_WORD
+        + ")"
+        + _HOUSE_NO,
+    ),
+    # German postcode + one-word city: "10115 Berlin"
+    ("POSTCODE_CITY", _POSTCODE_START + r"\d{5}[ ]+(?!" + _NOT_CITY + ")" + _WORD),
+    # Dates: "01.02.2010", "1/2/10", "2010-02-01", "1. Februar 2010", "March 5, 2024"
+    (
+        "DATE",
+        r"(?<![\d.])" + _DAY + r"[./][ ]?" + _MONTH + r"[./][ ]?(?:\d{4}|\d{2})(?!\d|\.\d)",
+    ),
+    ("DATE_ISO", r"(?<!\d)\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])(?!\d)"),
+    (
+        "DATE_TEXT",
+        r"(?:(?<!\d)"
+        + _DAY
+        + r"\.?[ ]*"
+        + _MONTHS
+        + "|(?<!\\d)"
+        + _DAY
+        + _ORDINAL_EN
+        + "[ ]+"
+        + _MONTHS_EN
+        + r"|\b"
+        + _MONTHS_EN
+        + "[ ]+"
+        + _DAY
+        + _ORDINAL_EN
+        + r",?)[ ]+\d{4}(?!\d)",
+    ),
+    (
+        "PHONE",
+        r"(?<!\d)(?:\+?\d{1,3}[\s\-.]?)?\(?\d{2,4}\)?[\s\-.]?\d{3,4}[\s\-.]?\d{3,6}(?!\d)",
+    ),
+]
+
+# The patterns saved by versions that only knew IBAN, EMAIL and PHONE.  A configuration that still
+# holds exactly this list never customised the patterns, so it follows the current defaults.
+_LEGACY_DEFAULT_PATTERNS: tuple[tuple[str, str], ...] = (
     ("IBAN", r"\b[A-Z]{2}\d{2}[A-Z0-9]{4}\d{7}[A-Z0-9]{0,16}\b"),
     ("EMAIL", r"\b[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}\b"),
     (
         "PHONE",
         r"(?<!\d)(?:\+?\d{1,3}[\s\-.]?)?\(?\d{2,4}\)?[\s\-.]?\d{3,4}[\s\-.]?\d{3,6}(?!\d)",
     ),
-]
+)
+
+
+def resolve_patterns(
+    configured: list[tuple[str, str]] | tuple[tuple[str, str], ...] | None,
+) -> tuple[tuple[str, str], ...]:
+    """Return the regex patterns to apply for a *configured* pattern list.
+
+    ``None`` and the list of the earlier built-in defaults mean "use the current defaults";
+    any other list, including an empty one (no regex anonymization), is kept as it is.
+    """
+    if configured is None:
+        return tuple(DEFAULT_PATTERNS)
+    patterns = tuple((tag, pattern) for tag, pattern in configured)
+    if patterns == _LEGACY_DEFAULT_PATTERNS:
+        return tuple(DEFAULT_PATTERNS)
+    return patterns
+
 
 # ── Markdown markup ────────────────────────────────────────────────────────
 
@@ -41,6 +140,26 @@ _MARKUP_RE = re.compile(
     r"|\*+|~~+|\\(?=[!-/:-@\[-`{-~])",
     re.IGNORECASE,
 )
+
+
+# NER models often absorb the street word that follows a name ("Anna Müller Hauptstraße 12");
+# a trailing token like this is left to the STREET pattern instead of becoming part of the name.
+_TRAILING_STREET_RE = re.compile(
+    r"(?:^|\s+)(?:[\w.-]+(?:weg|platz|gasse|allee|damm|ufer)|[\w.-]*(?:straße|strasse|str\.))\s*$",
+    re.IGNORECASE,
+)
+
+
+def _trim_street(start: int, end: int, surface: str) -> tuple[int, int, str] | None:
+    """Return the span without a trailing street word, or ``None`` if nothing is left.
+
+    A bare surname such as "Platz" stays whole: only a street word with a stem before it counts.
+    """
+    match = _TRAILING_STREET_RE.search(surface)
+    if match is None:
+        return start, end, surface
+    surface = surface[: match.start()]
+    return (start, start + len(surface), surface) if surface.strip() else None
 
 
 def _ner_view(text: str, markup: list[tuple[int, int]]) -> str:
@@ -112,7 +231,8 @@ class AnonymizerConfig:
             regardless of language.
         patterns: Regex patterns applied after NER, as ``(tag, pattern)``
             pairs.  An empty tuple skips regex anonymization entirely.
-            Defaults to :data:`DEFAULT_PATTERNS` (IBAN, EMAIL, PHONE).
+            Defaults to :data:`DEFAULT_PATTERNS` (IBAN, EMAIL, street,
+            postcode + city, dates, PHONE).
     """
 
     secondary_model: str | None = None
@@ -126,10 +246,11 @@ class AnonymizerConfig:
 class SpacyAnonymizer(Anonymizer):
     """Anonymizes PII using spacy NER (person names) and regex (configurable patterns).
 
-    The first NER pass always uses the model for the document language.  An
-    optional second pass with a different model (e.g. a multilingual model)
-    catches names that the language-specific model misses; its results are
-    merged with the primary pass by taking the union of non-overlapping spans.
+    The first NER pass uses the model for the document language unless
+    ``config.primary_model`` overrides it.  An optional second pass with a
+    different model (e.g. a multilingual model) catches names that the
+    first model misses; its results are merged with the primary pass by
+    taking the union of non-overlapping spans.
 
     The same surface text always receives the same placeholder within one call
     to :meth:`anonymize`, so the correction LLM sees consistent tokens and
@@ -141,7 +262,7 @@ class SpacyAnonymizer(Anonymizer):
             ``config.primary_model``.
         config: Anonymization configuration.  Defaults to
             :class:`AnonymizerConfig` with no secondary model and the
-            built-in patterns (IBAN, EMAIL, PHONE).
+            built-in patterns (IBAN, EMAIL, street, postcode + city, dates, PHONE).
 
     Raises:
         ImportError: If spacy is not installed.
@@ -177,7 +298,8 @@ class SpacyAnonymizer(Anonymizer):
                 self._nlp_secondary = spacy.load(self._config.secondary_model)
             except OSError:
                 print(
-                    f"ERROR: secondary spacy model '{self._config.secondary_model}' is not downloaded. "
+                    f"ERROR: secondary spacy model '{self._config.secondary_model}' "
+                    "is not downloaded. "
                     f"Run: python -m spacy download {self._config.secondary_model}",
                     file=sys.stderr,
                 )
@@ -199,12 +321,13 @@ class SpacyAnonymizer(Anonymizer):
         ner_text = _ner_view(text, markup)
 
         def person_spans(nlp) -> list[tuple[int, int, str]]:
-            return [
-                span
+            pieces = (
+                piece
                 for ent in nlp(ner_text).ents
                 if ent.label_ in _NER_PERSON_LABELS
-                for span in _split_at_markup(ent.start_char, ent.end_char, ent.text, text, markup)
-            ]
+                for piece in _split_at_markup(ent.start_char, ent.end_char, ent.text, text, markup)
+            )
+            return [span for piece in pieces if (span := _trim_street(*piece)) is not None]
 
         primary_spans = person_spans(self._nlp)
 

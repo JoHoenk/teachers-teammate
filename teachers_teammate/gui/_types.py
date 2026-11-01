@@ -86,6 +86,7 @@ class SettingsDict(TypedDict, total=False):
     correction_enabled: bool
     evaluation_enabled: bool
     anonymization_enabled: bool
+    anonymizer_primary_model: str | None
     anonymizer_secondary_model: str | None
     anonymizer_patterns: list | None
     debug: bool

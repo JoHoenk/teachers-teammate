@@ -1,8 +1,9 @@
 """Configuration panel — main pipeline settings.
 
 Advanced model/provider settings (OCR engine, model, Ollama URL, correction
-provider/model, evaluation provider/model, preprocessing method, and output options) are managed via the
-Settings dialog (accessible from the menu bar) and stored in ``_settings_dict``.
+provider/model, evaluation provider/model, preprocessing method, and output
+options) are managed via the Settings dialog (accessible from the menu bar) and
+stored in ``_settings_dict``.
 """
 
 from __future__ import annotations
@@ -119,6 +120,7 @@ class ConfigPanel(QScrollArea):
             "anonymization_enabled": DEFAULTS["anonymization_enabled"],
             "debug": DEFAULTS["debug"],
         }
+        self._settings_dict["anonymizer_primary_model"] = None
         self._settings_dict["anonymizer_secondary_model"] = None
         self._settings_dict["anonymizer_patterns"] = None
 
@@ -366,7 +368,8 @@ class ConfigPanel(QScrollArea):
             None,
             "Select Input Files",
             start,
-            "Supported files (*.pdf *.PDF *.png *.PNG *.jpg *.JPG *.jpeg *.JPEG *.tiff *.TIFF *.tif *.TIF *.txt *.TXT);;All files (*)",
+            "Supported files (*.pdf *.PDF *.png *.PNG *.jpg *.JPG *.jpeg *.JPEG "
+            "*.tiff *.TIFF *.tif *.TIF *.txt *.TXT);;All files (*)",
             options=options,
         )
         if paths:
@@ -423,7 +426,8 @@ class ConfigPanel(QScrollArea):
             return
         from ..application.service import ProcessingApplicationService  # noqa: PLC0415
 
-        service: ProcessingApplicationService = self._service  # ty: ignore[invalid-assignment]  # _service is injected as object; narrowed to the concrete service type
+        # _service is injected as object; narrowed to the concrete service type
+        service: ProcessingApplicationService = self._service  # ty: ignore[invalid-assignment]
         self._data_flow_summary.set_flow(service.describe_data_flow(self.lookup_config()))
 
     def _update_correction_visibility(self, checked: bool = True) -> None:
@@ -457,22 +461,21 @@ class ConfigPanel(QScrollArea):
     def build_anonymizer_config(self) -> object:
         """Build an :class:`AnonymizerConfig` from the current settings dict.
 
-        ``anonymizer_patterns`` of ``None`` means "use the default patterns";
-        a non-empty list overrides them (mirrors ``Config.anonymizer_patterns``).
+        ``anonymizer_patterns`` of ``None`` (or the list of the earlier built-in
+        defaults) means "use the current default patterns"; any other list, even an
+        empty one, overrides them (mirrors ``Config.anonymizer_patterns``).
         Centralised here so callers (this panel and the main window's privacy
         preview) do not each rebuild the config from raw settings keys.
         """
         from ..application.service import (  # noqa: PLC0415
-            DEFAULT_ANONYMIZER_PATTERNS,
             AnonymizerConfig,
+            resolve_anonymizer_patterns,
         )
 
-        patterns = self._settings_dict.get("anonymizer_patterns")
         return AnonymizerConfig(
+            primary_model=self._settings_dict.get("anonymizer_primary_model") or None,
             secondary_model=self._settings_dict.get("anonymizer_secondary_model") or None,
-            patterns=tuple(patterns)
-            if patterns is not None
-            else tuple(DEFAULT_ANONYMIZER_PATTERNS),
+            patterns=resolve_anonymizer_patterns(self._settings_dict.get("anonymizer_patterns")),
         )
 
     def _on_configure_anonymizer(self) -> None:
@@ -485,13 +488,19 @@ class ConfigPanel(QScrollArea):
 
     def update_anonymizer_config(self, config: object) -> None:
         """Write an updated AnonymizerConfig back into the settings dict."""
-        from ..application.service import AnonymizerConfig  # noqa: PLC0415
+        from ..application.service import (  # noqa: PLC0415
+            DEFAULT_ANONYMIZER_PATTERNS,
+            AnonymizerConfig,
+        )
 
         if not isinstance(config, AnonymizerConfig):
             return
+        self._settings_dict["anonymizer_primary_model"] = config.primary_model
         self._settings_dict["anonymizer_secondary_model"] = config.secondary_model
+        # Unchanged defaults stay symbolic (None) so later changes to them reach this user;
+        # an empty list is kept, it means "no regex anonymization".
         self._settings_dict["anonymizer_patterns"] = (
-            list(config.patterns) if config.patterns else None
+            None if config.patterns == tuple(DEFAULT_ANONYMIZER_PATTERNS) else list(config.patterns)
         )
 
     # ── public API ────────────────────────────────────────────────────────────────
@@ -591,11 +600,15 @@ class ConfigPanel(QScrollArea):
             ocr_timeout=int(self._settings_dict.get("ocr_timeout", DEFAULTS["ocr_timeout"])),
             correction_enabled=self._correction_enabled.isChecked(),
             anonymization_enabled=self._anonymization_enabled.isChecked(),
+            anonymizer_primary_model=self._settings_dict.get(
+                "anonymizer_primary_model", DEFAULTS["anonymizer_primary_model"]
+            )
+            or None,
             anonymizer_secondary_model=self._settings_dict.get(
                 "anonymizer_secondary_model", DEFAULTS["anonymizer_secondary_model"]
             )
             or None,
-            anonymizer_patterns=self._settings_dict.get("anonymizer_patterns") or None,
+            anonymizer_patterns=self._settings_dict.get("anonymizer_patterns"),
             correction_provider=self._settings_dict.get(
                 "correction_provider", DEFAULTS["correction_provider"]
             ),
@@ -746,12 +759,16 @@ class ConfigPanel(QScrollArea):
             if key in values:
                 self._settings_dict[key] = bool(values[key])
 
+        if "anonymizer_primary_model" in values:
+            self._settings_dict["anonymizer_primary_model"] = (
+                values["anonymizer_primary_model"] or None
+            )
         if "anonymizer_secondary_model" in values:
             self._settings_dict["anonymizer_secondary_model"] = (
                 values["anonymizer_secondary_model"] or None
             )
         if "anonymizer_patterns" in values:
-            self._settings_dict["anonymizer_patterns"] = values["anonymizer_patterns"] or None
+            self._settings_dict["anonymizer_patterns"] = values["anonymizer_patterns"]
 
     def set_service(self, service: object) -> None:
         """Inject the application service so the panel can run requirement checks."""
@@ -779,7 +796,8 @@ class ConfigPanel(QScrollArea):
             return
         from ..application.service import ProcessingApplicationService  # noqa: PLC0415
 
-        service: ProcessingApplicationService = self._service  # ty: ignore[invalid-assignment]  # _service is injected as object; narrowed to the concrete service type
+        # _service is injected as object; narrowed to the concrete service type
+        service: ProcessingApplicationService = self._service  # ty: ignore[invalid-assignment]
         config = self.lookup_config()
         task = self._guard_tasks.setdefault(stage, LatestTask(self))
         task.submit(
@@ -795,7 +813,8 @@ class ConfigPanel(QScrollArea):
         """
         from ..application.service import ProcessingApplicationService  # noqa: PLC0415
 
-        service: ProcessingApplicationService = self._service  # ty: ignore[invalid-assignment]  # _service is injected as object; narrowed to the concrete service type
+        # _service is injected as object; narrowed to the concrete service type
+        service: ProcessingApplicationService = self._service  # ty: ignore[invalid-assignment]
         config = service.build_lookup_config(
             Path(self.get_input_dir() or "."),
             Path(self._settings_dict.get("output_dir") or "."),

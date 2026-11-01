@@ -37,7 +37,7 @@ from ..interfaces import (
     ImagePreprocessor,
     OCRProcessor,
 )
-from .anonymizer import DEFAULT_PATTERNS, AnonymizerConfig
+from .anonymizer import AnonymizerConfig, resolve_patterns
 from .correction import LangChainCorrector, NativeOllamaCorrector
 from .docx_builder import DocxDocumentCreator
 from .evaluation import LangChainEvaluator, NativeOllamaEvaluator
@@ -264,10 +264,9 @@ class StageBuilder:
         cfg = self.config
         try:
             anon_config = AnonymizerConfig(
+                primary_model=cfg.anonymizer_primary_model,
                 secondary_model=cfg.anonymizer_secondary_model,
-                patterns=tuple(cfg.anonymizer_patterns)
-                if cfg.anonymizer_patterns is not None
-                else tuple(DEFAULT_PATTERNS),
+                patterns=resolve_patterns(cfg.anonymizer_patterns),
             )
             return self.factory.build_anonymizer(cfg.language, anon_config)
         except (ImportError, OSError) as exc:

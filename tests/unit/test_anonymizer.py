@@ -15,7 +15,10 @@ from teachers_teammate.infrastructure.anonymizer import (
     AnonymizerConfig,
     DEFAULT_PATTERNS,
     SpacyAnonymizer,
+    _LEGACY_DEFAULT_PATTERNS,
     _spacy_model_for,
+    _trim_street,
+    resolve_patterns,
 )
 
 
@@ -95,7 +98,7 @@ def test_anonymizer_config_with_list_patterns_is_not_hashable() -> None:
     """
     Given  an AnonymizerConfig whose patterns field holds a list instead of a tuple
     When   it is used as a dict key (e.g. as a cache key in anonymize_preview)
-    Then   a TypeError is raised — regression guard for the privacy-preview 'unhashable type list' bug
+    Then   a TypeError is raised (regression guard for the privacy-preview 'unhashable list' bug)
     """
     cfg = AnonymizerConfig.__new__(AnonymizerConfig)
     # bypass frozen enforcement to inject a list (simulates the buggy _main_window code path)
@@ -298,6 +301,200 @@ def test_anonymize_replaces_iban() -> None:
     result, mapping = anon.anonymize(text)
     assert "[IBAN_1]" in result
     assert "DE89370400440532013000" not in result
+
+
+@pytest.mark.parametrize(
+    ("text", "tag", "surface"),
+    [
+        ("Wir wohnen in der Hauptstraße 12.", "STREET", "Hauptstraße 12"),
+        ("Berliner Straße 5a", "STREET", "Berliner Straße 5a"),
+        ("St. Martin Straße 7", "STREET", "St. Martin Straße 7"),
+        ("Sankt Martin Straße 7", "STREET", "Sankt Martin Straße 7"),
+        ("Konrad-Adenauer-Straße 5", "STREET", "Konrad-Adenauer-Straße 5"),
+        ("Sankt-Jakob-Platz 4", "STREET", "Sankt-Jakob-Platz 4"),
+        ("Bahnhofstr. 5", "STREET", "Bahnhofstr. 5"),
+        ("Hauptstraße 12 a", "STREET", "Hauptstraße 12 a"),
+        ("10115 Berlin", "POSTCODE_CITY", "10115 Berlin"),
+        ("D-10115 Berlin", "POSTCODE_CITY", "10115 Berlin"),
+        ("wohnt in 10115 Berlin-Mitte.", "POSTCODE_CITY", "10115 Berlin-Mitte"),
+        ("geboren am 01.02.2010", "DATE", "01.02.2010"),
+        ("Abgabe am 31.12.1999", "DATE", "31.12.1999"),
+        ("Abgabe 1/2/10", "DATE", "1/2/10"),
+        ("Stand 2010-02-01", "DATE_ISO", "2010-02-01"),
+        ("am 5. März 2024", "DATE_TEXT", "5. März 2024"),
+        ("Termin: 5.März 2024", "DATE_TEXT", "5.März 2024"),
+        ("born March 5, 2024", "DATE_TEXT", "March 5, 2024"),
+        ("born March 5 2024", "DATE_TEXT", "March 5 2024"),
+        ("born 5 March 2024", "DATE_TEXT", "5 March 2024"),
+        ("born 5th March 2024", "DATE_TEXT", "5th March 2024"),
+        ("born May 1st, 1999", "DATE_TEXT", "May 1st, 1999"),
+    ],
+)
+def test_anonymize_default_address_and_date_patterns(text: str, tag: str, surface: str) -> None:
+    """
+    Given  text containing a street, postcode + city or a date
+    When   anonymize() is called with the default patterns
+    Then   exactly that surface is replaced by the matching '[<TAG>_1]' placeholder
+    """
+    result, mapping = _make_anonymizer().anonymize(text)
+    assert mapping == {f"[{tag}_1]": surface}
+    assert surface not in result
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Im Jahr 1990 fiel die Mauer.",
+        "Zur Aufgabe 3 habe ich keine Lösung.",
+        "In der Klasse 7 sind wir 25 Kinder.",
+        "Am Ende 2 Punkte.",
+        "Der Weg 5 km lang.",
+        "Es kamen 20000 Menschen zur Demo.",
+        "Das kostet 50000 Euro.",
+        "Das dauert in 10000 Jahren.",
+        "Siehe Aufgabe 1.13.2 im Buch.",
+        "Abschnitt 1.2.10.4",
+        "Raum 204",
+        "In March 2024 we met.",
+        "March was cold, 2024 was warm.",
+        "Im März 2024 war es kalt.",
+    ],
+)
+def test_default_patterns_leave_ordinary_school_text_alone(text: str) -> None:
+    """
+    Given  everyday sentences with numbers that are no address, postcode or date
+    When   anonymize() is called with the default patterns
+    Then   nothing is replaced and the mapping stays empty
+    """
+    result, mapping = _make_anonymizer().anonymize(text)
+    assert result == text
+    assert mapping == {}
+
+
+def test_street_match_keeps_the_space_after_the_house_number() -> None:
+    """
+    Given  a street and house number followed by a lower-case word, and the same street again
+    When   anonymize() is called with the default patterns
+    Then   the space stays outside the match and both occurrences share one placeholder
+    """
+    text = "Hauptstraße 12 und Hauptstraße 12."
+    result, mapping = _make_anonymizer().anonymize(text)
+    assert result == "[STREET_1] und [STREET_1]."
+    assert mapping == {"[STREET_1]": "Hauptstraße 12"}
+
+
+def test_postcode_city_follows_a_street_on_the_same_line() -> None:
+    """
+    Given  a street followed by postcode and city on the same line, after a comma or a space
+    When   anonymize() is called with the default patterns
+    Then   both the street and the postcode + city are replaced
+    """
+    for text in ("Hauptstraße 12, 10115 Berlin", "Hauptstraße 12 10115 Berlin"):
+        result, mapping = _make_anonymizer().anonymize(text)
+        assert list(mapping.values()) == ["Hauptstraße 12", "10115 Berlin"], text
+        assert "Hauptstraße" not in result and "Berlin" not in result
+
+
+def test_address_patterns_do_not_swallow_neighbouring_names() -> None:
+    """
+    Given  names that stand next to an address, on the same and on the following line
+    When   anonymize() is called with the default patterns
+    Then   only the street / postcode + city is replaced and the names stay untouched
+    """
+    text = "Anna Müller Hauptstraße 12\n10115 Berlin\nHerr Schmidt kommt"
+    result, mapping = _make_anonymizer().anonymize(text)
+    assert mapping == {"[STREET_1]": "Hauptstraße 12", "[POSTCODE_CITY_1]": "10115 Berlin"}
+    assert result == "Anna Müller [STREET_1]\n[POSTCODE_CITY_1]\nHerr Schmidt kommt"
+
+
+def test_person_span_loses_trailing_street_word() -> None:
+    """
+    Given  an NER entity that absorbed the street word after a name
+    When   anonymize() is called
+    Then   only the name becomes a person placeholder and the street is anonymized as STREET
+    """
+    text = "Anna Müller Hauptstraße 12"
+    anon = _make_anonymizer([(0, 23, "Anna Müller Hauptstraße", "PER")])
+    result, mapping = anon.anonymize(text)
+    assert result == "[PERSON_1] [STREET_1]"
+    assert mapping == {"[PERSON_1]": "Anna Müller", "[STREET_1]": "Hauptstraße 12"}
+
+
+@pytest.mark.parametrize(
+    ("entity", "street"),
+    [
+        ("Anna Müller Lindenweg", "Lindenweg 3"),
+        ("Anna Müller Bahnhofstr.", "Bahnhofstr. 3"),
+        ("Anna Müller Konrad-Adenauer-Straße", "Konrad-Adenauer-Straße 3"),
+    ],
+)
+def test_person_span_loses_trailing_street_stems(entity: str, street: str) -> None:
+    """
+    Given  an NER entity that absorbed a street word ending in -weg, -str. or a hyphenated -Straße
+    When   anonymize() is called
+    Then   only the name becomes a person placeholder and the street is replaced as STREET
+    """
+    text = f"Anna Müller {street}"
+    result, mapping = _make_anonymizer([(0, len(entity), entity, "PER")]).anonymize(text)
+    assert result == "[PERSON_1] [STREET_1]"
+    assert mapping == {"[PERSON_1]": "Anna Müller", "[STREET_1]": street}
+
+
+@pytest.mark.parametrize("name", ["Anna Platz", "Anna Gasse", "Hans Damm", "Anna Hering"])
+def test_trim_street_keeps_surnames_that_look_like_street_words(name: str) -> None:
+    """
+    Given  a person span whose surname equals a street word or merely ends like one
+    When   _trim_street() is applied
+    Then   the span is returned unchanged
+    """
+    assert _trim_street(0, len(name), name) == (0, len(name), name)
+
+
+def test_trim_street_drops_a_span_that_is_only_a_street_word() -> None:
+    """
+    Given  an NER entity that is just a street name ("Goethestraße")
+    When   anonymize() is called
+    Then   no person placeholder is made and the STREET pattern replaces the address
+    """
+    text = "Goethestraße 5"
+    result, mapping = _make_anonymizer([(0, 12, "Goethestraße", "PER")]).anonymize(text)
+    assert result == "[STREET_1]"
+    assert mapping == {"[STREET_1]": "Goethestraße 5"}
+
+
+# ── resolve_patterns ───────────────────────────────────────────────────────
+
+
+def test_resolve_patterns_none_gives_current_defaults() -> None:
+    """
+    Given  no configured patterns (None)
+    When   resolve_patterns() is called
+    Then   the current default patterns are returned
+    """
+    assert resolve_patterns(None) == tuple(DEFAULT_PATTERNS)
+
+
+def test_resolve_patterns_upgrades_the_earlier_default_list() -> None:
+    """
+    Given  a saved list that is exactly the earlier IBAN / EMAIL / PHONE defaults
+    When   resolve_patterns() is called, with a list and with a tuple
+    Then   the current default patterns are returned
+    """
+    assert resolve_patterns(list(_LEGACY_DEFAULT_PATTERNS)) == tuple(DEFAULT_PATTERNS)
+    assert resolve_patterns(_LEGACY_DEFAULT_PATTERNS) == tuple(DEFAULT_PATTERNS)
+
+
+def test_resolve_patterns_keeps_custom_and_empty_lists() -> None:
+    """
+    Given  a customised list, and an empty list
+    When   resolve_patterns() is called
+    Then   each is returned unchanged; the empty list means no regex anonymization
+    """
+    custom = [("ID", r"\d+")]
+    assert resolve_patterns(custom) == (("ID", r"\d+"),)
+    assert resolve_patterns([]) == ()
+    changed = [*_LEGACY_DEFAULT_PATTERNS[:2]]
+    assert resolve_patterns(changed) == tuple(changed)
 
 
 def test_anonymize_custom_patterns_used() -> None:

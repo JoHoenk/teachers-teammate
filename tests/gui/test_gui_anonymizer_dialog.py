@@ -405,7 +405,11 @@ def test_dialog_remove_selected_drops_row(qtbot) -> None:
 
 @pytest.mark.gui
 def test_dialog_restore_default_patterns_repopulates(qtbot) -> None:
-    """Given a dialog with custom patterns / When defaults are restored / Then the table holds the defaults."""
+    """
+    Given  a dialog with custom patterns
+    When   defaults are restored
+    Then   the table holds the defaults
+    """
     cfg = AnonymizerConfig(patterns=(("ONLY", r"\d+"),))
     dlg = _make_dialog(qtbot, config=cfg)
 
@@ -496,7 +500,11 @@ def test_dialog_run_preview_empty_input_is_noop(qtbot) -> None:
 
 @pytest.mark.gui
 def test_dialog_run_preview_shows_spacy_missing_on_import_error(qtbot) -> None:
-    """Given anonymize_preview raises ImportError / When previewing / Then a spaCy-missing error is shown."""
+    """
+    Given  anonymize_preview raises ImportError
+    When   previewing
+    Then   a spaCy-missing error is shown
+    """
     svc = MagicMock()
     svc.anonymize_preview.side_effect = ImportError("no spacy")
     dlg = _make_dialog(qtbot, app_service=svc)
@@ -706,3 +714,123 @@ def test_configure_dialog_reject_leaves_config_unchanged(qtbot) -> None:
 
     # Config panel's stored patterns unchanged because dialog was rejected
     assert panel._settings_dict["anonymizer_patterns"] == [("ORIG", r"\w+")]
+
+
+@pytest.mark.gui
+def test_primary_model_survives_save_and_reload(qtbot, tmp_path) -> None:
+    """
+    Given  an anonymizer config whose primary model was changed from Auto to German
+    When   the settings are saved to ocr.toml and loaded into a fresh config panel
+    Then   the primary model is restored and reaches both the pipeline Config and the dialog
+    """
+    from teachers_teammate.config import dump_config_file, load_config_file  # noqa: PLC0415
+    from teachers_teammate.gui._config_panel import ConfigPanel  # noqa: PLC0415
+
+    panel = ConfigPanel()
+    qtbot.addWidget(panel)
+    (tmp_path / "in").mkdir()
+    (tmp_path / "out").mkdir()
+    panel.set_input_dir(str(tmp_path / "in"))
+    panel._settings_dict["output_dir"] = str(tmp_path / "out")
+    panel.update_anonymizer_config(AnonymizerConfig(primary_model="de_core_news_sm"))
+    config_path = tmp_path / "ocr.toml"
+    config_path.write_text(dump_config_file(panel.to_dict()), encoding="utf-8")
+
+    reloaded = ConfigPanel()
+    qtbot.addWidget(reloaded)
+    reloaded.load_from_dict(load_config_file(config_path))
+
+    assert reloaded.build_anonymizer_config().primary_model == "de_core_news_sm"
+    assert reloaded.to_config().anonymizer_primary_model == "de_core_news_sm"
+
+
+@pytest.mark.gui
+def test_primary_auto_is_not_persisted_as_a_model(qtbot, tmp_path) -> None:
+    """
+    Given  an anonymizer config whose primary model is Auto (None)
+    When   it is written back into the config panel
+    Then   no primary model is stored and the language decides the model again
+    """
+    from teachers_teammate.gui._config_panel import ConfigPanel  # noqa: PLC0415
+
+    panel = ConfigPanel()
+    qtbot.addWidget(panel)
+    (tmp_path / "in").mkdir()
+    (tmp_path / "out").mkdir()
+    panel.set_input_dir(str(tmp_path / "in"))
+    panel._settings_dict["output_dir"] = str(tmp_path / "out")
+    panel.update_anonymizer_config(AnonymizerConfig(primary_model="de_core_news_sm"))
+    panel.update_anonymizer_config(AnonymizerConfig(primary_model=None))
+
+    assert panel.build_anonymizer_config().primary_model is None
+    assert panel.to_config().anonymizer_primary_model is None
+
+
+def _panel_with_dirs(qtbot, tmp_path):
+    """Return a ConfigPanel with valid input and output folders."""
+    from teachers_teammate.gui._config_panel import ConfigPanel  # noqa: PLC0415
+
+    panel = ConfigPanel()
+    qtbot.addWidget(panel)
+    (tmp_path / "in").mkdir()
+    (tmp_path / "out").mkdir()
+    panel.set_input_dir(str(tmp_path / "in"))
+    panel._settings_dict["output_dir"] = str(tmp_path / "out")
+    return panel
+
+
+@pytest.mark.gui
+def test_earlier_default_patterns_resolve_to_current_defaults(qtbot, tmp_path) -> None:
+    """
+    Given  settings that still hold the earlier IBAN / EMAIL / PHONE pattern list
+    When   the anonymizer config is built for the dialog, the export menu and the preview
+    Then   it holds the current default patterns
+    """
+    from teachers_teammate.infrastructure.anonymizer import (  # noqa: PLC0415
+        _LEGACY_DEFAULT_PATTERNS,
+    )
+
+    panel = _panel_with_dirs(qtbot, tmp_path)
+    panel._settings_dict["anonymizer_patterns"] = list(_LEGACY_DEFAULT_PATTERNS)
+
+    assert panel.build_anonymizer_config().patterns == tuple(DEFAULT_PATTERNS)
+
+
+@pytest.mark.gui
+def test_unchanged_default_patterns_are_stored_as_none(qtbot, tmp_path) -> None:
+    """
+    Given  a dialog result whose patterns are exactly the current defaults
+    When   it is written back into the config panel
+    Then   no pattern list is stored, so later changes to the defaults reach this user
+    """
+    panel = _panel_with_dirs(qtbot, tmp_path)
+    panel._settings_dict["anonymizer_patterns"] = [("ORIG", r"\w+")]
+
+    panel.update_anonymizer_config(AnonymizerConfig())
+
+    assert panel._settings_dict["anonymizer_patterns"] is None
+    assert panel.to_config().anonymizer_patterns is None
+
+
+@pytest.mark.gui
+def test_empty_pattern_list_survives_save_and_reload(qtbot, tmp_path) -> None:
+    """
+    Given  an anonymizer config with all regex patterns removed
+    When   the settings are saved to ocr.toml and loaded into a fresh config panel
+    Then   the list stays empty in the panel, the pipeline Config and the anonymizer config
+    """
+    from teachers_teammate.config import dump_config_file, load_config_file  # noqa: PLC0415
+    from teachers_teammate.gui._config_panel import ConfigPanel  # noqa: PLC0415
+
+    panel = _panel_with_dirs(qtbot, tmp_path)
+    panel.update_anonymizer_config(AnonymizerConfig(patterns=()))
+    assert panel.to_config().anonymizer_patterns == []
+    config_path = tmp_path / "ocr.toml"
+    config_path.write_text(dump_config_file(panel.to_dict()), encoding="utf-8")
+
+    reloaded = ConfigPanel()
+    qtbot.addWidget(reloaded)
+    reloaded.load_from_dict(load_config_file(config_path))
+
+    assert reloaded.build_anonymizer_config().patterns == ()
+    assert reloaded.to_config().anonymizer_patterns == []

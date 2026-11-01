@@ -41,7 +41,8 @@ class _SpacyModelFetchThread(QThread):
     def run(self) -> None:
         try:
             self.models_ready.emit(ProcessingApplicationService().list_installed_spacy_models())
-        except Exception as exc:  # noqa: BLE001  # spaCy discovery may raise anything; report via signals and emit an empty list
+        except Exception as exc:  # noqa: BLE001
+            # spaCy discovery may raise anything; report via signals and emit an empty list
             self.error.emit(str(exc))
             self.models_ready.emit([])
 
@@ -55,7 +56,7 @@ class AnonymizerConfigDialog(QDialog):
     * **Secondary model** — an optional additional pass to catch names the
       primary model misses.  Leave as ``(none)`` to skip.
     * **Regex patterns** — applied after NER (collapsed by default; expand to
-      customise IBAN / EMAIL / PHONE or add your own).
+      customise the built-in patterns or add your own).
 
     Args:
         language: Document language — used to derive the primary NER model label
@@ -233,7 +234,10 @@ class AnonymizerConfigDialog(QDialog):
         remove_btn = QPushButton("Remove selected")
         remove_btn.clicked.connect(self._remove_selected)
         restore_btn = QPushButton("Restore defaults")
-        restore_btn.setToolTip("Reset patterns to the built-in defaults (IBAN, Email, Phone).")
+        restore_btn.setToolTip(
+            "Reset patterns to the built-in defaults "
+            "(IBAN, email, phone, dates, and German street and postcode formats)."
+        )
         restore_btn.clicked.connect(self._restore_default_patterns)
         btn_row.addWidget(add_btn)
         btn_row.addWidget(remove_btn)
@@ -312,7 +316,8 @@ class AnonymizerConfigDialog(QDialog):
         # Derive the auto label for the primary combo
         try:
             auto_model = ProcessingApplicationService().spacy_model_for_language(self._language)
-        except Exception:  # noqa: BLE001  # model lookup is best-effort; fall back to the generic auto label
+        except Exception:  # noqa: BLE001
+            # model lookup is best-effort; fall back to the generic auto label
             auto_model = ""
         auto_label = f"{_AUTO_PRIMARY}: {auto_model}" if auto_model else _AUTO_PRIMARY
 
@@ -415,7 +420,8 @@ class AnonymizerConfigDialog(QDialog):
         n = self._invalid_count()
         if n:
             self._error_label.setText(
-                f"{n} pattern{'s' if n > 1 else ''} {'have' if n > 1 else 'has'} errors — fix before saving."
+                f"{n} pattern{'s' if n > 1 else ''} {'have' if n > 1 else 'has'} errors"
+                " — fix before saving."
             )
             self._error_label.setVisible(True)
         else:
@@ -461,7 +467,8 @@ class AnonymizerConfigDialog(QDialog):
                 )
                 self._preview_error.setVisible(True)
             return
-        except Exception as exc:  # noqa: BLE001  # anonymization preview may raise anything; show the error in the panel
+        except Exception as exc:  # noqa: BLE001
+            # anonymization preview may raise anything; show the error in the panel
             self._preview_error.setText(f"Preview failed: {exc}")
             self._preview_error.setVisible(True)
             return

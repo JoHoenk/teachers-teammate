@@ -7,6 +7,8 @@ from enum import Enum
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import QMenu, QWidget
 
+from ..domain.output_files import ANONYMIZED_TEXT_SUFFIX, DOCX_SUFFIX, TEXT_SUFFIX
+
 
 class ExportKind(Enum):
     """What an export writes."""
@@ -42,9 +44,9 @@ _LABELS = {
     ExportKind.TEXT_ANONYMIZED: "Anonymized Text File…",
 }
 _FILE_SUFFIXES = {
-    ExportKind.DOCX: ".docx",
-    ExportKind.TEXT: ".txt",
-    ExportKind.TEXT_ANONYMIZED: "_anonymized.txt",
+    ExportKind.DOCX: DOCX_SUFFIX,
+    ExportKind.TEXT: TEXT_SUFFIX,
+    ExportKind.TEXT_ANONYMIZED: ANONYMIZED_TEXT_SUFFIX,
 }
 
 

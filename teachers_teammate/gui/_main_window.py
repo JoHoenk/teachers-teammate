@@ -937,6 +937,14 @@ class MainWindow(QMainWindow):
         in, Run is disabled and :meth:`_run_in_progress` reports busy, so no second
         worker can be started from the Run button or the right-click menu.
         """
+        refusal = self._app_service.output_refusal_for_run(config)
+        if refusal:
+            QMessageBox.warning(
+                self,
+                "Choose another output folder",
+                f"{refusal}\n\nChange it under Settings → Output Settings.",
+            )
+            return
         self._preflight_running = True
         self._run_btn.setEnabled(False)
         self._progress.setRange(0, 100)
@@ -1241,7 +1249,20 @@ class MainWindow(QMainWindow):
         )
         if not folder:
             return []
-        return [(sid, Path(folder) / (Path(sid).stem + kind.file_suffix)) for sid in source_ids]
+        # Same-named documents from different subfolders keep their subfolders.
+        input_dir = self._config_panel.get_input_dir()
+        return [
+            (
+                sid,
+                self._app_service.export_target(
+                    Path(sid),
+                    Path(input_dir) if input_dir else None,
+                    Path(folder),
+                    kind.file_suffix,
+                ),
+            )
+            for sid in source_ids
+        ]
 
     @staticmethod
     def _drop_colliding_targets(
@@ -1264,9 +1285,12 @@ class MainWindow(QMainWindow):
 
     def _confirm_replace_existing(self, targets: list[tuple[str, Path]]) -> bool:
         """Ask once before a folder export replaces files (the Save dialog asks for one file)."""
-        existing = [out.name for _sid, out in targets if out.exists()]
-        if not existing:
+        existing_paths = [out for _sid, out in targets if out.exists()]
+        if not existing_paths:
             return True
+        # Files of different subfolders can share a name, so show where they are.
+        root = Path(os.path.commonpath([out.parent for out in existing_paths]))
+        existing = [out.relative_to(root).as_posix() for out in existing_paths]
         shown = "\n".join(existing[:10]) + ("\n…" if len(existing) > 10 else "")
         answer = QMessageBox.question(
             self,
@@ -1278,7 +1302,11 @@ class MainWindow(QMainWindow):
         return answer == QMessageBox.StandardButton.Yes
 
     def _confirm_text_export_folder(self, targets: list[tuple[str, Path]]) -> bool:
-        """Warn when text files would land in the input folder, where the next run reads them."""
+        """Warn when text files would land in the input folder, where the next run reads them.
+
+        A one-off export only asks; a run with text files configured there is refused
+        (:meth:`ProcessingApplicationService.output_refusal_for_run`) since it would repeat.
+        """
         input_dir = self._config_panel.get_input_dir()
         # With an explicit file selection a run reads only those files.
         if not input_dir or self._config_panel.get_selected_files():

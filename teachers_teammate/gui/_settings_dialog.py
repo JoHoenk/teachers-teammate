@@ -1284,7 +1284,7 @@ class SettingsDialog(QDialog):
 
 
 class OutputSettingsDialog(QDialog):
-    """Modal dialog for configuring DOCX output options."""
+    """Modal dialog for choosing the output folder and which files a run saves there."""
 
     def __init__(self, values: dict, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -1294,7 +1294,7 @@ class OutputSettingsDialog(QDialog):
         main = QVBoxLayout(self)
         main.setSpacing(12)
 
-        out_group = QGroupBox("Word Document Output")
+        out_group = QGroupBox("Output Files")
         out_form = QFormLayout(out_group)
         out_form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapAllRows)
 
@@ -1328,13 +1328,14 @@ class OutputSettingsDialog(QDialog):
             "Comments — two columns with tracked changes shown as Word comments."
         )
         out_form.addRow(self._docx_format_label, self._docx_format)
+        self._add_text_file_rows(out_form)
 
         main.addWidget(out_group)
 
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
         )
-        buttons.accepted.connect(self.accept)
+        buttons.accepted.connect(self._on_accept)
         buttons.rejected.connect(self.reject)
         main.addWidget(buttons)
 
@@ -1346,7 +1347,44 @@ class OutputSettingsDialog(QDialog):
             idx = self._docx_format.findText(str(values["docx_format"]))
             if idx >= 0:
                 self._docx_format.setCurrentIndex(idx)
+        self._text_enabled.setChecked(bool(values.get("text_enabled", False)))
+        self._text_anonymized_enabled.setChecked(bool(values.get("text_anonymized_enabled", False)))
         self._update_visibility()
+
+    def _add_text_file_rows(self, out_form: QFormLayout) -> None:
+        self._text_enabled = QCheckBox("Create text files")
+        self._text_enabled.setToolTip(
+            "Save the extracted text of each input file as a text file (name.txt)."
+        )
+        out_form.addRow(self._text_enabled)
+
+        self._text_anonymized_enabled = QCheckBox("Create anonymized text files")
+        self._text_anonymized_enabled.setToolTip(
+            "Save the extracted text with names and other personal data replaced by\n"
+            "placeholders (name_anonymized.txt). Runs on this computer and needs the\n"
+            "privacy add-on (spaCy)."
+        )
+        out_form.addRow(self._text_anonymized_enabled)
+
+        text_hint = QLabel(
+            "Text files need an output folder outside the input folder; otherwise the next "
+            "run would read them as new documents."
+        )
+        text_hint.setWordWrap(True)
+        text_hint.setStyleSheet("color: #888; font-size: 8pt;")
+        out_form.addRow(text_hint)
+
+    def _on_accept(self) -> None:
+        # Blank means "next to your documents", i.e. the input folder.
+        wants_text = self._text_enabled.isChecked() or self._text_anonymized_enabled.isChecked()
+        if wants_text and not self._output_dir.text().strip():
+            QMessageBox.warning(
+                self,
+                "Output folder needed",
+                "Choose a folder outside the input folder to save text files to.",
+            )
+            return
+        self.accept()
 
     def _on_browse_output_dir(self) -> None:
         start = self._output_dir.text().strip() or str(Path.home())
@@ -1364,4 +1402,6 @@ class OutputSettingsDialog(QDialog):
             "output_dir": self._output_dir.text().strip(),
             "docx_enabled": self._docx_enabled.isChecked(),
             "docx_format": self._docx_format.currentText(),
+            "text_enabled": self._text_enabled.isChecked(),
+            "text_anonymized_enabled": self._text_anonymized_enabled.isChecked(),
         }

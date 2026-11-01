@@ -9,6 +9,13 @@ import threading
 from typing import TYPE_CHECKING
 
 from ...domain.formatted_text import TextFormat, join_labelled_pages, normalize_text_format
+from ...domain.output_files import (
+    ANONYMIZED_TEXT_SUFFIX,
+    DOCX_SUFFIX,
+    TEXT_SUFFIX,
+    feeds_inputs,
+    output_path,
+)
 from ...domain.stages import PROGRESS_STAGE_OCR, PROGRESS_STAGE_PREPROCESSING
 from ...exceptions import PipelineInputError
 from ...interfaces import AnonymizationMap, Anonymizer, Corrector, DocumentCreator, Evaluator
@@ -51,6 +58,14 @@ class FileProcessorConfig:
     evaluation: Evaluator | None
     doc_creator: DocumentCreator | None
     anonymizer: Anonymizer | None = None
+    input_dir: Path | None = None
+    """Root of the inputs; outputs keep the subfolders below it (``None`` = flat output)."""
+    recursive: bool = True
+    """Whether the run reads subfolders of *input_dir* (text files must not land in them)."""
+    write_text: bool = False
+    """Save the extracted text as ``<name>.txt``."""
+    text_anonymizer: Anonymizer | None = None
+    """Set to save the extracted text with personal data replaced as ``<name>_anonymized.txt``."""
     postprocessor: OcrOutputPostprocessor | None = None
     stop_event: threading.Event | None = None
     on_ocr_done: OnOcrDoneFn | None = None
@@ -75,6 +90,16 @@ class FileProcessor:
 
     def __init__(self, config: FileProcessorConfig) -> None:
         self._output_dir = config.output_dir
+        self._input_dir = config.input_dir.resolve() if config.input_dir is not None else None
+        self._recursive = config.recursive
+        self._write_text = config.write_text
+        self._text_anonymizer = config.text_anonymizer
+        # Output file -> the input document that owns it, for the whole run.
+        self._claimed: dict[Path, Path] = {}
+        self._claim_lock = threading.Lock()
+        # Anonymized text of the current file, so the correction stage and the text file
+        # do not run the same NER pass twice.
+        self._anon_memo: dict[str, tuple[str, AnonymizationMap]] = {}
         self._language = config.language
         self._cache_service = config.cache_service
         self._preprocess_service = config.preprocess_service
@@ -91,7 +116,7 @@ class FileProcessor:
 
     def process(self, file: Path) -> ProcessingResult:
         """Process *file* through all pipeline stages."""
-        docx_file = self._output_dir / (file.stem + ".docx")
+        self._anon_memo.clear()
         try:
             ctx = self._prepare_cache(file)
             raw_text, preview_img, source_image, ctx = self._run_preprocess_or_cache(file, ctx)
@@ -120,8 +145,8 @@ class FileProcessor:
         except _StageAbort as abort:
             return abort.result
 
-        return self._write_docx(
-            docx_file,
+        return self._write_outputs(
+            file,
             raw_text,
             correction_text,
             evaluation_text,
@@ -323,9 +348,17 @@ class FileProcessor:
         """Hide personal data in *text* before an LLM *stage* sees it (no-op without anonymiser)."""
         if self._anonymizer is None:
             return text, {}
-        anonymized, anon_map = self._anonymizer.anonymize(text)
+        anonymized, anon_map = self._anonymize_text(self._anonymizer, text)
         self._reporter.status(f"       → PII anonymized before {stage}")
         return anonymized, anon_map
+
+    def _anonymize_text(self, anonymizer: Anonymizer, text: str) -> tuple[str, AnonymizationMap]:
+        """Anonymize *text*; the stage anonymizer remembers results for the current file."""
+        if anonymizer is not self._anonymizer:
+            return anonymizer.anonymize(text)
+        if text not in self._anon_memo:
+            self._anon_memo[text] = anonymizer.anonymize(text)
+        return self._anon_memo[text]
 
     def _restore_pii(
         self,
@@ -424,9 +457,60 @@ class FileProcessor:
                 _logger.warning("Could not save evaluation state for %s: %s", file.name, exc)
         return eval_text or "", eval_warnings
 
-    def _write_docx(
+    def _output_file(self, file: Path, suffix: str) -> Path:
+        return output_path(file.resolve(), self._input_dir, self._output_dir, suffix)
+
+    def _planned_outputs(self, file: Path) -> dict[str, Path]:
+        """Return ``{suffix: path}`` for every output file this run writes for *file*."""
+        suffixes: list[str] = []
+        if self._doc_creator is not None:
+            suffixes.append(DOCX_SUFFIX)
+        if self._write_text:
+            suffixes.append(TEXT_SUFFIX)
+        if self._text_anonymizer is not None:
+            suffixes.append(ANONYMIZED_TEXT_SUFFIX)
+        return {suffix: self._output_file(file, suffix) for suffix in suffixes}
+
+    def _shown(self, target: Path) -> str:
+        """Name an output file by its path below the output folder (subfolders can repeat names)."""
+        return target.relative_to(self._output_dir).as_posix()
+
+    def _claim_outputs(self, file: Path, targets: dict[str, Path]) -> None:
+        """Reserve *targets* for *file*; refuse targets that would harm inputs or other outputs.
+
+        Nothing is written for a refused file, and nothing is reserved.
+
+        Raises:
+            ValueError: a text file would replace an input document or land where the run reads
+                inputs, or another document of this run already writes the same output file.
+        """
+        source = file.resolve()
+        for suffix, target in targets.items():
+            if suffix == DOCX_SUFFIX:  # Word documents are not an input type
+                continue
+            if target.resolve() == source:
+                raise ValueError(f"{target.name} is the input document and would be overwritten")
+            if self._input_dir is not None and feeds_inputs(
+                target.parent.resolve(), self._input_dir, recursive=self._recursive
+            ):
+                raise ValueError(
+                    f"{self._shown(target)} would be read as an input document by the next run; "
+                    "choose an output folder outside the input folder."
+                )
+        with self._claim_lock:
+            for target in targets.values():
+                owner = self._claimed.get(target.resolve())
+                if owner is not None and owner != source:
+                    raise ValueError(
+                        f"{self._shown(target)} would replace the output of {owner.name}; "
+                        "rename one of the two documents."
+                    )
+            for target in targets.values():
+                self._claimed[target.resolve()] = source
+
+    def _write_outputs(
         self,
-        docx_file: Path,
+        file: Path,
         raw_text: str,
         corrected_text: str,
         evaluation_text: str,
@@ -436,8 +520,28 @@ class FileProcessor:
         *,
         text_format: TextFormat = "plain",
     ) -> ProcessingResult:
+        def failed(message: str) -> ProcessingResult:
+            return ProcessingResult(
+                False,
+                message,
+                preview_img,
+                raw_text,
+                corrected_text,
+                evaluation_text,
+                text_format=text_format,
+            )
+
+        targets = self._planned_outputs(file)
+        try:
+            self._claim_outputs(file, targets)
+        except ValueError as exc:
+            return failed(f"Output files not saved: {exc}")
+
+        saved: list[str] = []
         try:
             if self._doc_creator is not None:
+                docx_file = targets[DOCX_SUFFIX]
+                docx_file.parent.mkdir(parents=True, exist_ok=True)
                 self._doc_creator.create(
                     raw_text,
                     corrected_text,
@@ -446,22 +550,17 @@ class FileProcessor:
                     source_image=source_image,
                     text_format=text_format,
                 )
-                saved = docx_file.name
-            else:
-                saved = "results cached (no DOCX output)"
+                saved.append(self._shown(docx_file))
         except Exception as exc:  # noqa: BLE001  # python-docx / PIL errors vary widely; surface message without crashing
-            return ProcessingResult(
-                False,
-                f"DOCX creation failed: {exc}",
-                preview_img,
-                raw_text,
-                corrected_text,
-                evaluation_text,
-                text_format=text_format,
-            )
+            return failed(f"DOCX creation failed: {exc}")
+        try:
+            self._write_text_files(targets, raw_text, text_format, saved)
+        except Exception as exc:  # noqa: BLE001  # NER / file-system errors vary; surface message without crashing
+            already = f" (already saved: {', '.join(saved)})" if saved else ""
+            return failed(f"Text file creation failed: {exc}{already}")
         return ProcessingResult(
             True,
-            saved,
+            ", ".join(saved) or "results cached (no output files)",
             preview_img,
             raw_text,
             corrected_text,
@@ -469,3 +568,28 @@ class FileProcessor:
             warnings,
             text_format=text_format,
         )
+
+    def _write_text_files(
+        self, targets: dict[str, Path], raw_text: str, text_format: TextFormat, saved: list[str]
+    ) -> None:
+        """Save the extracted text (plain and/or anonymized) as UTF-8 text.
+
+        Like the Export menu: the OCR text without markup; anonymizing runs on the text in
+        its stored notation, and the placeholder mapping is dropped. Every file is appended
+        to *saved* as soon as it is written, so a failure still reports what already exists.
+        """
+        jobs: list[tuple[Path, str]] = []
+        if TEXT_SUFFIX in targets:
+            jobs.append((targets[TEXT_SUFFIX], raw_text))
+        if ANONYMIZED_TEXT_SUFFIX in targets and self._text_anonymizer is not None:
+            anonymized, _mapping = self._anonymize_text(self._text_anonymizer, raw_text)
+            jobs.append((targets[ANONYMIZED_TEXT_SUFFIX], anonymized))
+        if jobs and text_format == "markdown":
+            # Only Markdown needs the parser (and its dependencies); plain text is written as is.
+            from ..ocr_formats import plain_text_of  # noqa: PLC0415
+
+            jobs = [(target, plain_text_of(text, text_format)) for target, text in jobs]
+        for target, text in jobs:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(text, encoding="utf-8")
+            saved.append(self._shown(target))

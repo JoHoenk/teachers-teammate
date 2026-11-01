@@ -494,7 +494,7 @@ py_test(
     srcs = _COMMON_SRCS + ["unit/test_file_processor.py"],
     args = ["unit/test_file_processor.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS + _REQUESTS_DEPS,
+    deps = _COMMON_DEPS + _REQUESTS_DEPS + _FORMAT_DEPS,
 )
 
 py_test(

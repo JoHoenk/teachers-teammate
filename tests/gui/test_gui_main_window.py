@@ -1926,6 +1926,41 @@ def test_run_refuses_online_ocr_with_an_explanation(
 
 
 @pytest.mark.gui
+def test_run_with_text_files_in_the_input_folder_is_refused(
+    qtbot, main_window, monkeypatch, tmp_path: Path
+) -> None:
+    """
+    Given  text files switched on with the output folder being the input folder
+    When   Run is pressed
+    Then   the reason and where to change it are shown, no check or worker starts, and
+           Run stays usable
+    """
+    cfg = make_config(tmp_path, output_dir=tmp_path / "input", text_enabled=True)
+    monkeypatch.setattr(main_window._config_panel, "to_config", lambda: cfg)
+    preflight: list[object] = []
+    monkeypatch.setattr(
+        ProcessingApplicationService,
+        "check_run_preflight",
+        lambda self, config: preflight.append(config) or RunPreflight(),
+    )
+    shown: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        main_window_module.QMessageBox,
+        "warning",
+        lambda _parent, title, text: shown.append((title, text)),
+    )
+
+    main_window._on_run()
+
+    assert shown[0][0] == "Choose another output folder"
+    assert "next run would read them as new documents" in shown[0][1]
+    assert "Output Settings" in shown[0][1]
+    assert preflight == []
+    assert main_window._worker is None
+    assert main_window._run_btn.isEnabled() is True
+
+
+@pytest.mark.gui
 def test_local_run_starts_without_a_privacy_question(
     qtbot, main_window, confirm_box, tmp_path: Path
 ) -> None:
@@ -2709,6 +2744,34 @@ def test_export_into_a_folder_asks_before_replacing_existing_files(
     assert asked == ["Replace existing files?"]
     assert (out / "a.txt").read_text(encoding="utf-8") == expected
     assert (out / "b.txt").exists() is (expected == "alpha")
+
+
+@pytest.mark.gui
+def test_replace_question_names_files_by_their_subfolder(
+    main_window, monkeypatch, tmp_path: Path
+) -> None:
+    """
+    Given  two same-named exports in different subfolders of the chosen folder already exist
+    When   the user is asked whether to replace them
+    Then   the question tells them apart by subfolder instead of listing "a.txt" twice
+    """
+    out = tmp_path / "out"
+    for name in ("class1", "class2"):
+        (out / name).mkdir(parents=True)
+        (out / name / "a.txt").write_text("old", encoding="utf-8")
+    targets = [("s1", out / "class1" / "a.txt"), ("s2", out / "class2" / "a.txt")]
+    texts: list[str] = []
+
+    def _question(_parent, _title, text, *_args):
+        texts.append(text)
+        return main_window_module.QMessageBox.StandardButton.No
+
+    monkeypatch.setattr(main_window_module.QMessageBox, "question", _question)
+
+    assert main_window._confirm_replace_existing(targets) is False
+
+    assert "class1/a.txt" in texts[0]
+    assert "class2/a.txt" in texts[0]
 
 
 @pytest.mark.gui

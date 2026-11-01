@@ -1932,3 +1932,62 @@ def test_is_in_input_folder(tmp_path: Path) -> None:
     assert check(inputs / "sub", inputs, recursive=True)
     assert not check(inputs / "sub", inputs, recursive=False)
     assert not check(tmp_path / "out", inputs, recursive=True)
+
+
+@pytest.mark.unit
+def test_export_target_keeps_input_subfolder(tmp_path: Path) -> None:
+    """
+    Given  two same-named documents in different subfolders of the input folder
+    When   export_target() places them in one export folder
+    Then   each keeps its subfolder, so they do not collide
+    """
+    inputs = tmp_path / "in"
+    target = ProcessingApplicationService.export_target
+
+    first = target(inputs / "class1" / "essay.png", inputs, tmp_path / "out", ".docx")
+    second = target(inputs / "class2" / "essay.png", inputs, tmp_path / "out", ".docx")
+
+    assert first == tmp_path / "out" / "class1" / "essay.docx"
+    assert second == tmp_path / "out" / "class2" / "essay.docx"
+
+
+@pytest.mark.unit
+def test_output_refusal_for_text_files_in_input_folder(tmp_path: Path) -> None:
+    """
+    Given  text output enabled with the output folder inside the input folder
+    When   output_refusal_for_run() is asked
+    Then   the run is refused; outside the input folder, or without text files, it is fine
+    """
+    from tests.conftest import make_config  # noqa: PLC0415
+
+    inputs = tmp_path / "in"
+    (inputs / "out").mkdir(parents=True)
+    (tmp_path / "out").mkdir()
+    refusal = ProcessingApplicationService.output_refusal_for_run
+    inside = make_config(
+        tmp_path, input_dir=inputs, output_dir=inputs / "out", recursive=True, text_enabled=True
+    )
+
+    assert "input folder" in refusal(inside)
+    assert refusal(dataclasses.replace(inside, text_enabled=False, docx_enabled=True)) == ""
+    assert refusal(dataclasses.replace(inside, output_dir=tmp_path / "out")) == ""
+    assert refusal(dataclasses.replace(inside, text_enabled=False, text_anonymized_enabled=True))
+
+
+@pytest.mark.unit
+def test_preflight_checks_anonymizer_for_anonymized_text_files(tmp_path: Path) -> None:
+    """
+    Given  anonymized text output enabled (anonymization before proofreading off)
+           and no spaCy model installed
+    When   check_run_preflight() runs
+    Then   the anonymizer requirement is reported
+    """
+    from tests.conftest import make_config  # noqa: PLC0415
+
+    cfg = make_config(tmp_path, ocr_engine="tesseract", text_anonymized_enabled=True)
+    svc = _make_svc()
+
+    with patch.object(svc, "list_installed_spacy_models", return_value=[]):
+        result = svc.check_run_preflight(cfg)
+
+    assert result.stage == "anonymizer"

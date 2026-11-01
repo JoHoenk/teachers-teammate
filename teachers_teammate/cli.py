@@ -8,7 +8,8 @@ Usage::
     python -m teachers_teammate -i <input_folder> -o <output_folder> [options]
 
 Supported input formats: PDF, JPG, JPEG, PNG, TXT
-Output per file: <stem>.docx  (in output folder)
+Output per file: <stem>.docx, <stem>.txt (--text), <stem>_anonymized.txt (--text-anonymized)
+                 in the output folder, below the same sub-folder as the input has
                  OCR/correction/evaluation stage text is cached in JSON state (in temp cache dir)
 Preprocessing images are cleaned up after each run (kept with --debug).
 """
@@ -45,6 +46,8 @@ class _CliAppService(Protocol):
     def describe_data_flow(self, config: Config, /) -> DataFlow: ...
 
     def ocr_refusal_for_run(self, config: Config, /) -> str: ...
+
+    def output_refusal_for_run(self, config: Config, /) -> str: ...
 
     def run_preview_only(self, config: Config, /) -> int: ...
 
@@ -406,6 +409,23 @@ def _parse_args(
         help="Skip DOCX generation; only cache state is written.",
     )
     out_grp.add_argument(
+        "--text",
+        dest="text_enabled",
+        action="store_true",
+        default=DEFAULTS["text_enabled"],
+        help="Also save the extracted text of each file as <name>.txt.",
+    )
+    out_grp.add_argument(
+        "--text-anonymized",
+        dest="text_anonymized_enabled",
+        action="store_true",
+        default=DEFAULTS["text_anonymized_enabled"],
+        help=(
+            "Also save the extracted text with personal data replaced by placeholders "
+            "as <name>_anonymized.txt (needs spaCy)."
+        ),
+    )
+    out_grp.add_argument(
         "--docx-format",
         default=DEFAULTS["docx_format"],
         choices=["table", "comments"],
@@ -490,11 +510,13 @@ def run_cli(
             file=sys.stderr,
         )
         return 1
-    if args.output is None and args.docx_enabled:
+    if args.output is None and (
+        args.docx_enabled or args.text_enabled or args.text_anonymized_enabled
+    ):
         print(
             "ERROR: No output folder specified. "
             "Use -o/--output or set 'output' in the config file. "
-            "(Output can be omitted only when --no-docx is set.)",
+            "(Output can be omitted only when no output files are written.)",
             file=sys.stderr,
         )
         return 1
@@ -535,11 +557,13 @@ def run_cli(
         evaluate_prompt=args.evaluate_prompt,
         docx_format=args.docx_format,
         docx_enabled=args.docx_enabled,
+        text_enabled=args.text_enabled,
+        text_anonymized_enabled=args.text_anonymized_enabled,
     )
 
     if args.preview_only:
         return service.run_preview_only(config)
-    refusal = service.ocr_refusal_for_run(config)
+    refusal = service.ocr_refusal_for_run(config) or service.output_refusal_for_run(config)
     if refusal:
         print(f"ERROR: {refusal}", file=sys.stderr)
         return 1

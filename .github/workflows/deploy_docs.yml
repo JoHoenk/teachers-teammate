@@ -54,7 +54,7 @@ jobs:
           test -f _site/index.html || { echo "::error::no index.html produced"; exit 1; }
 
       - name: Upload Pages artifact
-        uses: actions/upload-pages-artifact@v3
+        uses: actions/upload-pages-artifact@v5
         with:
           path: _site
 

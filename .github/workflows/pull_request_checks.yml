@@ -19,6 +19,9 @@ concurrency:
   group: pull_request_checks-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
+permissions:
+  contents: read
+
 jobs:
   lint:
     uses: ./.github/workflows/format_lint.yml

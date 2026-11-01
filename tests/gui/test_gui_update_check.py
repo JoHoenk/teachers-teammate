@@ -91,9 +91,7 @@ def test_update_available_emitted_when_newer(qtbot) -> None:
         thread.run()
 
     qtbot.wait(10)
-    assert len(emitted) == 1
-    assert emitted[0][0] == "1.0.0"
-    assert "example.com" in emitted[0][1]
+    assert emitted == [("1.0.0", "https://example.com/rel")]
 
 
 @pytest.mark.gui

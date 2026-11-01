@@ -153,7 +153,7 @@ jobs:
       # (dist/teachers-teammate/) from being swept up alongside the .dmg.
       - name: Upload build artifact (Linux)
         if: ${{ runner.os == 'Linux' && !inputs.skip_artifact_upload }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ inputs.artifact_prefix }}-${{ matrix.artifact }}
           retention-days: ${{ inputs.retention_days }}
@@ -163,7 +163,7 @@ jobs:
 
       - name: Upload build artifact (Windows)
         if: ${{ runner.os == 'Windows' && !inputs.skip_artifact_upload }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ inputs.artifact_prefix }}-${{ matrix.artifact }}
           retention-days: ${{ inputs.retention_days }}
@@ -171,7 +171,7 @@ jobs:
 
       - name: Upload build artifact (macOS)
         if: ${{ runner.os == 'macOS' && !inputs.skip_artifact_upload }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ inputs.artifact_prefix }}-${{ matrix.artifact }}
           retention-days: ${{ inputs.retention_days }}

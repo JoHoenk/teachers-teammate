@@ -1708,3 +1708,227 @@ def test_install_gpu_monitoring_propagates_pip_failure() -> None:
     ):
         svc.install_gpu_monitoring("nvidia")
     inject.assert_not_called()
+
+
+# ── export_text / is_in_input_folder ──────────────────────────────────────
+
+
+@pytest.mark.unit
+def test_export_text_writes_plain_text_unchanged(tmp_path: Path) -> None:
+    """
+    Given  extracted plain text for a scan
+    When   export_text() is called without anonymization
+    Then   the file holds exactly that text, UTF-8 encoded, and the folder is created
+    """
+    out = tmp_path / "out" / "scan.txt"
+
+    _make_svc().export_text(tmp_path / "scan.png", "Grüße, Anna", out)
+
+    assert out.read_text(encoding="utf-8") == "Grüße, Anna"
+
+
+@pytest.mark.unit
+def test_export_text_writes_markdown_as_plain_text(tmp_path: Path) -> None:
+    """
+    Given  extracted text stored as Markdown
+    When   export_text() is called
+    Then   the file holds the text without Markdown markup
+    """
+    out = tmp_path / "scan.txt"
+
+    _make_svc().export_text(tmp_path / "scan.png", "my **bold** bag", out, text_format="markdown")
+
+    assert out.read_text(encoding="utf-8") == "my bold bag"
+
+
+@pytest.mark.unit
+def test_export_text_anonymizes_with_the_given_language_and_config(tmp_path: Path) -> None:
+    """
+    Given  an anonymizer that replaces "Anna" with a placeholder
+    When   export_text() is called with anonymize=True
+    Then   the anonymized text is written, the anonymizer got the language and config,
+           and the placeholder mapping appears nowhere in the file
+    """
+    anonymizer = MagicMock()
+    anonymizer.anonymize.return_value = ("Dear [PERSON_1]", {"[PERSON_1]": "Anna"})
+    config = service_module.AnonymizerConfig()
+    out = tmp_path / "scan_anonymized.txt"
+    svc = _make_svc()
+
+    with patch(
+        "teachers_teammate.infrastructure.anonymizer.SpacyAnonymizer", return_value=anonymizer
+    ) as ctor:
+        svc.export_text(
+            tmp_path / "scan.png",
+            "Dear Anna",
+            out,
+            anonymize=True,
+            language="German",
+            anonymizer_config=config,
+        )
+
+    ctor.assert_called_once_with("German", config)
+    anonymizer.anonymize.assert_called_once_with("Dear Anna")
+    assert out.read_text(encoding="utf-8") == "Dear [PERSON_1]"
+    assert "Anna" not in out.read_text(encoding="utf-8")
+
+
+@pytest.mark.unit
+def test_export_text_refuses_to_overwrite_the_source(tmp_path: Path) -> None:
+    """
+    Given  a .txt input document
+    When   export_text() is asked to write to the source file itself
+    Then   a ValueError is raised and the source keeps its content
+    """
+    source = tmp_path / "essay.txt"
+    source.write_text("original", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="input document"):
+        _make_svc().export_text(source, "extracted", source)
+
+    assert source.read_text(encoding="utf-8") == "original"
+
+
+@pytest.mark.unit
+def test_export_text_refuses_to_overwrite_another_input_document(tmp_path: Path) -> None:
+    """
+    Given  scan.png and scan.txt are both inputs of the same run
+    When   export_text() for scan.png targets scan.txt, with scan.txt listed as protected
+    Then   a ValueError is raised and scan.txt keeps its content
+    """
+    sibling = tmp_path / "scan.txt"
+    sibling.write_text("original", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="input document"):
+        _make_svc().export_text(
+            tmp_path / "scan.png", "extracted", sibling, protected=[sibling, tmp_path / "x.pdf"]
+        )
+
+    assert sibling.read_text(encoding="utf-8") == "original"
+
+
+@pytest.mark.unit
+def test_export_text_anonymizes_markdown_before_converting_it_to_plain_text(
+    tmp_path: Path,
+) -> None:
+    """
+    Given  Markdown text and an anonymizer that hides "Anna"
+    When   export_text() is called with anonymize=True
+    Then   the anonymizer sees the stored Markdown (as in the privacy preview) and the file
+           holds the anonymized text without markup, with the placeholder intact
+    """
+    anonymizer = MagicMock()
+    anonymizer.anonymize.return_value = ("my **[PERSON_1]** bag", {"[PERSON_1]": "Anna"})
+    out = tmp_path / "scan_anonymized.txt"
+
+    with patch(
+        "teachers_teammate.infrastructure.anonymizer.SpacyAnonymizer", return_value=anonymizer
+    ):
+        _make_svc().export_text(
+            tmp_path / "scan.png", "my **Anna** bag", out, text_format="markdown", anonymize=True
+        )
+
+    anonymizer.anonymize.assert_called_once_with("my **Anna** bag")
+    assert out.read_text(encoding="utf-8") == "my [PERSON_1] bag"
+
+
+@pytest.mark.unit
+def test_anonymizer_is_never_used_by_two_threads_at_once() -> None:
+    """
+    Given  a shared anonymizer and several threads anonymizing through the service
+    When   the threads run at the same time
+    Then   the anonymizer is never entered by more than one thread at a time
+    """
+    import threading  # noqa: PLC0415
+    import time  # noqa: PLC0415
+
+    lock = threading.Lock()
+    state = {"inside": 0, "max": 0}
+
+    def _slow_anonymize(text: str):
+        with lock:
+            state["inside"] += 1
+            state["max"] = max(state["max"], state["inside"])
+        time.sleep(0.02)
+        with lock:
+            state["inside"] -= 1
+        return text, {}
+
+    anonymizer = MagicMock()
+    anonymizer.anonymize.side_effect = _slow_anonymize
+    svc = _make_svc()
+
+    with patch(
+        "teachers_teammate.infrastructure.anonymizer.SpacyAnonymizer", return_value=anonymizer
+    ) as ctor:
+        threads = [
+            threading.Thread(target=svc.anonymize_preview, args=("text", "English"))
+            for _ in range(6)
+        ]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+    assert state["max"] == 1
+    ctor.assert_called_once()
+
+
+@pytest.mark.unit
+def test_export_text_reports_a_missing_spacy_model(tmp_path: Path) -> None:
+    """
+    Given  a spaCy model that is not downloaded
+    When   export_text() is called with anonymize=True
+    Then   the OSError reaches the caller and no file is written
+    """
+    out = tmp_path / "scan_anonymized.txt"
+
+    with (
+        patch(
+            "teachers_teammate.infrastructure.anonymizer.SpacyAnonymizer",
+            side_effect=OSError("model missing"),
+        ),
+        pytest.raises(OSError, match="model missing"),
+    ):
+        _make_svc().export_text(tmp_path / "scan.png", "text", out, anonymize=True)
+
+    assert not out.exists()
+
+
+@pytest.mark.unit
+def test_warm_up_anonymizer_builds_it_once_for_later_exports(tmp_path: Path) -> None:
+    """
+    Given  a service whose anonymizer was warmed up
+    When   anonymize_preview() is called with the same language and config
+    Then   the cached anonymizer is reused instead of being built again
+    """
+    anonymizer = MagicMock()
+    anonymizer.anonymize.return_value = ("x", {})
+    svc = _make_svc()
+
+    with patch(
+        "teachers_teammate.infrastructure.anonymizer.SpacyAnonymizer", return_value=anonymizer
+    ) as ctor:
+        svc.warm_up_anonymizer("English")
+        svc.anonymize_preview("text", "English")
+
+    ctor.assert_called_once()
+
+
+@pytest.mark.unit
+def test_is_in_input_folder(tmp_path: Path) -> None:
+    """
+    Given  an input folder with a subfolder, and a sibling folder
+    When   is_in_input_folder() is asked about each
+    Then   the folder itself always counts, a subfolder only when scanning is recursive,
+           and a sibling never
+    """
+    inputs = tmp_path / "in"
+    (inputs / "sub").mkdir(parents=True)
+    (tmp_path / "out").mkdir()
+    check = ProcessingApplicationService.is_in_input_folder
+
+    assert check(inputs, inputs, recursive=False)
+    assert check(inputs / "sub", inputs, recursive=True)
+    assert not check(inputs / "sub", inputs, recursive=False)
+    assert not check(tmp_path / "out", inputs, recursive=True)

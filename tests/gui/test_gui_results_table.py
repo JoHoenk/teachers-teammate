@@ -9,6 +9,7 @@ from PySide6.QtCore import QPoint, QItemSelectionModel
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import QMenu
 
+from teachers_teammate.gui._export_menu import ExportKind
 from teachers_teammate.gui._results_table import ResultsTable
 from teachers_teammate.gui._types import FileDoneEvent, PreprocessInfo
 
@@ -452,3 +453,41 @@ def test_results_table_set_row_artifacts_keeps_preprocessing_when_not_given(qtbo
     table.set_row_artifacts("/a.png", "", "edited", "", "")
 
     assert table.preprocessing_for_source("/a.png") == info
+
+
+@pytest.mark.gui
+@pytest.mark.parametrize(
+    ("entry", "kind"),
+    [
+        ("Word Document…", ExportKind.DOCX),
+        ("Text File…", ExportKind.TEXT),
+        ("Anonymized Text File…", ExportKind.TEXT_ANONYMIZED),
+    ],
+)
+def test_results_table_export_submenu_emits_export_requested(
+    qtbot, monkeypatch, entry: str, kind: ExportKind
+) -> None:
+    """
+    Given  a selected queue row and a context menu with an Export submenu
+    When   the user picks one of its entries
+    Then   export_requested emits the selected source id and that export kind
+    """
+    table = ResultsTable()
+    qtbot.addWidget(table)
+    table.set_queue(["a.png"])
+    table.selectRow(0)
+
+    class _PickingMenu(QMenu):
+        def exec(self, *args, **kwargs):  # Qt naming: overrides QMenu.exec
+            for action in self.actions():
+                submenu = action.menu()
+                if submenu is not None and action.text() == "Export":
+                    return next(a for a in submenu.actions() if a.text() == entry)
+            raise AssertionError("no Export submenu")
+
+    monkeypatch.setattr("teachers_teammate.gui._results_table.QMenu", _PickingMenu)
+
+    with qtbot.waitSignal(table.export_requested, timeout=1000) as sig:
+        table._on_context_menu_requested(QPoint(1, 1))
+
+    assert sig.args == [["a.png"], kind]

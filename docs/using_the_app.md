@@ -4,7 +4,7 @@
 
 The app is divided into two main areas:
 
-- **Settings panel (left side)** — everything you need to set up a run: which folders to use, which reading method to apply, whether to use AI proofreading, and so on. At the top, a box called **Where your documents are processed** shows, for each step, whether it runs on this computer (green dot), on another computer (orange) or on an online service (red) — see *Where your documents are processed* below. Below the settings you will find coloured status indicators (one per feature the current setup uses) and the action buttons — **Run Selected**, **Stop**, **Export Word…**, **Restore Defaults** — with a progress bar.
+- **Settings panel (left side)** — everything you need to set up a run: which folders to use, which reading method to apply, whether to use AI proofreading, and so on. At the top, a box called **Where your documents are processed** shows, for each step, whether it runs on this computer (green dot), on another computer (orange) or on an online service (red) — see *Where your documents are processed* below. Below the settings you will find coloured status indicators (one per feature the current setup uses) and the action buttons — **Run Selected**, **Stop**, **Export**, **Restore Defaults** — with a progress bar.
 
 - **Work area (right side)** — three tabs:
   - **Processing** — a list of your files (one row per document) with status indicators and a live activity log below it.
@@ -185,7 +185,12 @@ Right-click a row for more options:
 - **Re-run Text Recognition** — re-extract the text for the selected rows.
 - **Re-run Proofreading** — run the proofreading step again for the selected rows.
 - **Run Content Review** — generate a content review report for the selected rows without reprocessing anything else.
-- **Export as Word Document…** — save a Word file for the selected rows; a single row prompts you to choose a file name, multiple rows prompt for a destination folder.
+- **Export ▸** — save the selected rows (the **Export** button below the settings offers the same choices, for the selected rows or all rows when none is selected). A single row prompts you to choose a file name, multiple rows prompt for a destination folder.
+  - **Word Document…** — a Word file with the extracted and proofread text.
+  - **Text File…** — the extracted text as a plain text file (`<name>.txt`), without any Markdown markup.
+  - **Anonymized Text File…** — the extracted text with names and other personal data replaced by placeholders such as `[PERSON_1]` (`<name>_anonymized.txt`). It uses your **Anonymizer Settings…** and runs entirely on this computer. The list of replaced names is not saved, so the original names cannot be recovered from the file. This needs the privacy add-on and a language model for your document language; if one is missing you are told once.
+
+  A text file is never written over any of the documents in your list, so an existing `essay.txt` you are processing stays untouched. When you export several files into one folder you are asked before existing files there are replaced, and a document whose name is already taken by another file of the same export is skipped and reported. If you work with a whole folder, you are also asked first before saving into it, because the next run would read the new file as another document.
 - **Personal Information Preview…** — compare the original extracted text and the anonymized version side by side.
 
 ---

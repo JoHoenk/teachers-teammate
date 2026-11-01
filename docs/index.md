@@ -28,7 +28,7 @@ Teacher's Teammate processes each document through a series of steps:
 #. **Text recognition** — the app recognises the text in each page or image.
 #. **Remove personal information** (optional) — names, phone numbers, email addresses, and bank account numbers are replaced with stand-ins before any text is sent to an AI.
 #. **Proofread** (optional) — an AI reviews the text and corrects any errors.
-#. **Export** — results are saved as Word documents (.docx), one per input file.
+#. **Export** — results are saved as Word documents (.docx), one per input file, or exported as plain or anonymized text files.
 
 ## Privacy — your responsibility
 

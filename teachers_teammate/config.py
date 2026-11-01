@@ -73,6 +73,9 @@ DEFAULTS: dict[str, Any] = {
     # ── Output ────────────────────────────────────────────────────────────────
     "docx_format": "table",
     "docx_enabled": False,
+    # Text files of the extracted text, plain and with personal data replaced.
+    "text_enabled": False,
+    "text_anonymized_enabled": False,
     # ── Anonymizer ────────────────────────────────────────────────────────────
     "anonymizer_secondary_model": None,
     # ── Hardware recommendations ──────────────────────────────────────────────
@@ -197,6 +200,8 @@ class Config:
     # ── Output ───────────────────────────────────────────────────────────────
     docx_format: str = DEFAULTS["docx_format"]
     docx_enabled: bool = DEFAULTS["docx_enabled"]
+    text_enabled: bool = DEFAULTS["text_enabled"]
+    text_anonymized_enabled: bool = DEFAULTS["text_anonymized_enabled"]
 
     # ── Anonymizer ───────────────────────────────────────────────────────────
     anonymizer_secondary_model: str | None = None
@@ -209,6 +214,16 @@ class Config:
 
     # ── Internal ─────────────────────────────────────────────────────────────
     ocr_timeout: int = DEFAULTS["ocr_timeout"]
+
+    @property
+    def writes_text_files(self) -> bool:
+        """Whether a run saves text files (which the next run must not read as inputs)."""
+        return self.text_enabled or self.text_anonymized_enabled
+
+    @property
+    def writes_output_files(self) -> bool:
+        """Whether a run saves any file into ``output_dir`` (not just the cache)."""
+        return self.docx_enabled or self.writes_text_files
 
     @property
     def effective_correction_model(self) -> str:
@@ -285,6 +300,8 @@ def load_config_file(path: Path) -> dict:
         "evaluate_temperature",
         "docx_format",
         "docx_enabled",
+        "text_enabled",
+        "text_anonymized_enabled",
         "anonymizer_secondary_model",
         "anonymizer_patterns",
         "ocr_temperature",

@@ -190,7 +190,7 @@ Right-click a row for more options:
   - **Text File…** — the extracted text as a plain text file (`<name>.txt`), without any Markdown markup.
   - **Anonymized Text File…** — the extracted text with names and other personal data replaced by placeholders such as `[PERSON_1]` (`<name>_anonymized.txt`). It uses your **Anonymizer Settings…** and runs entirely on this computer. The list of replaced names is not saved, so the original names cannot be recovered from the file. This needs the privacy add-on and a language model for your document language; if one is missing you are told once.
 
-  A text file is never written over any of the documents in your list, so an existing `essay.txt` you are processing stays untouched. When you export several files into one folder you are asked before existing files there are replaced, and a document whose name is already taken by another file of the same export is skipped and reported. If you work with a whole folder, you are also asked first before saving into it, because the next run would read the new file as another document.
+  A text file is never written over any of the documents in your list, so an existing `essay.txt` you are processing stays untouched. When you export several files into one folder, files from sub-folders of your input folder keep those sub-folders (`class1/essay.png` → `<folder>/class1/essay.docx`), so documents with the same name do not replace each other. You are asked before existing files there are replaced, and a document whose name is already taken by another file of the same export is skipped and reported. If you work with a whole folder, you are also asked first before saving into it, because the next run would read the new file as another document.
 - **Personal Information Preview…** — compare the original extracted text and the anonymized version side by side.
 
 ---
@@ -221,7 +221,7 @@ Extra features can be installed from inside the app — no external downloads or
 
 ## Tips
 
-- **Word documents are opt-in** — a run saves results internally and fills the list by default. Turn on Word output in **Output Settings…** to write documents automatically during a run, or export on demand from the results list.
-- **Sub-folders** — enable **Recursive** in Output Settings to include files inside sub-folders in a single run.
+- **Output files are opt-in** — a run saves results internally and fills the list by default. In **Output Settings…** choose which files a run writes automatically: **Word documents**, **text files** (`<name>.txt`) and **anonymized text files** (`<name>_anonymized.txt`, same rules as the export above). Or export on demand from the results list. Text files need an output folder outside the input folder; otherwise the next run would read them as new documents, so a run with text files going there does not start. (The Export menu only asks first, because it is a one-off save you may want in that folder.) If two documents would write the same output file — for example `essay.png` and `essay.pdf` in one folder — the second one is reported as failed instead of replacing the first.
+- **Sub-folders** — files inside sub-folders of the input folder are always included, and their output files go into the same sub-folders below the output folder (`class1/essay.png` → `<output>/class1/essay.docx`).
 - **Output formats** — the **table** format puts the original image, extracted text, and corrected text in three columns; the **comments** format attaches the corrections as Word comments next to the original text.
 - **Check anonymization on a real file** — select a row in the results list and choose **Personal Information Preview…** to see exactly what the app will hide before sending text to the AI.

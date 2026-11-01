@@ -25,6 +25,7 @@ _OCR_SRCS = [
     "domain/freshness.py",
     "domain/model_catalog.py",
     "domain/notation.py",
+    "domain/output_files.py",
     "domain/pdf_text_layer.py",
     "domain/stages.py",
     "exceptions.py",

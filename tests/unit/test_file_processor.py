@@ -862,7 +862,256 @@ def test_no_doc_creator_returns_results_cached_message(tmp_path: Path) -> None:
     result = fp.process(file)
 
     assert result.ok is True
-    assert result.message == "results cached (no DOCX output)"
+    assert result.message == "results cached (no output files)"
+
+
+# ── Output paths & text files ──────────────────────────────────────────────
+
+
+def test_docx_keeps_input_subfolder(tmp_path: Path) -> None:
+    """
+    Given  an input file in a subfolder of the input folder
+    When   process() writes the DOCX
+    Then   it goes into the same subfolder below the output folder
+    """
+    input_dir = tmp_path / "in"
+    file = input_dir / "class1" / "essay.png"
+    file.parent.mkdir(parents=True)
+    file.write_bytes(b"png")
+    doc_creator = MagicMock()
+    fp, _, _, _ = _make_processor(tmp_path, doc_creator=doc_creator, input_dir=input_dir)
+
+    result = fp.process(file)
+
+    assert result.ok is True
+    out_path = doc_creator.create.call_args.args[2]
+    assert out_path == tmp_path / "output" / "class1" / "essay.docx"
+    assert out_path.parent.is_dir()
+
+
+def test_same_named_files_in_subfolders_do_not_collide(tmp_path: Path) -> None:
+    """
+    Given  two inputs with the same name in different subfolders and text output on
+    When   both are processed
+    Then   each text file lands in its own subfolder, so neither replaces the other
+    """
+    input_dir = tmp_path / "in"
+    files = [input_dir / name / "essay.png" for name in ("class1", "class2")]
+    for file in files:
+        file.parent.mkdir(parents=True)
+        file.write_bytes(b"png")
+    fp, _, _, _ = _make_processor(tmp_path, input_dir=input_dir, write_text=True)
+
+    for file in files:
+        assert fp.process(file).ok is True
+
+    for name in ("class1", "class2"):
+        assert (tmp_path / "output" / name / "essay.txt").read_text(encoding="utf-8") == (
+            "extracted text"
+        )
+
+
+def test_text_files_plain_and_anonymized(tmp_path: Path) -> None:
+    """
+    Given  plain and anonymized text output enabled
+    When   process() finishes
+    Then   name.txt holds the OCR text, name_anonymized.txt the anonymized text,
+           and the result message lists every written file
+    """
+    anonymizer = MagicMock()
+    anonymizer.anonymize.return_value = ("[PERSON_1] wrote this", {"[PERSON_1]": "Anna"})
+    file = tmp_path / "essay.png"
+    fp, _, _, _ = _make_processor(
+        tmp_path,
+        returns=_StubReturns(ocr_return=(["Anna wrote this"], None)),
+        write_text=True,
+        text_anonymizer=anonymizer,
+    )
+
+    result = fp.process(file)
+
+    assert result.ok is True
+    out = tmp_path / "output"
+    assert (out / "essay.txt").read_text(encoding="utf-8") == "Anna wrote this"
+    assert (out / "essay_anonymized.txt").read_text(encoding="utf-8") == ("[PERSON_1] wrote this")
+    anonymizer.anonymize.assert_called_once_with("Anna wrote this")
+    assert result.message == "essay.docx, essay.txt, essay_anonymized.txt"
+
+
+def test_text_file_never_replaces_text_input(tmp_path: Path) -> None:
+    """
+    Given  a TXT input and text output into the same folder
+    When   process() would write essay.txt over the input essay.txt
+    Then   the file fails with a message and the input is untouched
+    """
+    out = tmp_path / "output"
+    out.mkdir()
+    file = out / "essay.txt"
+    file.write_text("original", encoding="utf-8")
+    fp, _, _, _ = _make_processor(tmp_path, write_text=True)
+
+    result = fp.process(file)
+
+    assert result.ok is False
+    assert "Output files not saved" in result.message
+    assert "essay.txt is the input document" in result.message
+    assert file.read_text(encoding="utf-8") == "original"
+
+
+def test_anonymizer_error_fails_the_file(tmp_path: Path) -> None:
+    """
+    Given  plain and anonymized text output whose anonymizer raises
+    When   process() writes the outputs
+    Then   the file fails with a text-file message instead of crashing the run, the message
+           names the DOCX that was already saved, and no text file is left half-written
+    """
+    anonymizer = MagicMock()
+    anonymizer.anonymize.side_effect = OSError("spaCy model missing")
+    fp, _, _, _ = _make_processor(tmp_path, write_text=True, text_anonymizer=anonymizer)
+
+    result = fp.process(tmp_path / "essay.png")
+
+    assert result.ok is False
+    assert "spaCy model missing" in result.message
+    assert "already saved: essay.docx" in result.message
+    assert not (tmp_path / "output" / "essay.txt").exists()
+
+
+def test_markdown_text_is_written_without_markup_after_anonymizing(tmp_path: Path) -> None:
+    """
+    Given  OCR text stored as Markdown and plain plus anonymized text output
+    When   process() writes the text files
+    Then   the anonymizer sees the Markdown as stored and both files hold it without markup
+    """
+    anonymizer = MagicMock()
+    anonymizer.anonymize.return_value = ("**[PERSON_1]** wrote", {})
+    ctx = _markdown_ctx(ocr_done=True, raw_text="**Anna** wrote", preview_img="p.png")
+    fp, _, _, _ = _make_processor(
+        tmp_path,
+        returns=_StubReturns(cache_ctx=ctx),
+        write_text=True,
+        text_anonymizer=anonymizer,
+    )
+
+    result = fp.process(tmp_path / "essay.png")
+
+    assert result.ok is True
+    anonymizer.anonymize.assert_called_once_with("**Anna** wrote")
+    out = tmp_path / "output"
+    assert (out / "essay.txt").read_text(encoding="utf-8") == "Anna wrote"
+    assert (out / "essay_anonymized.txt").read_text(encoding="utf-8") == "[PERSON_1] wrote"
+
+
+def test_text_file_where_the_run_reads_inputs_is_refused(tmp_path: Path) -> None:
+    """
+    Given  an input folder inside the output folder, with a subfolder of the same name
+    When   process() would save a text file into the input folder
+    Then   the file fails before anything is written, so no input is replaced or created
+    """
+    input_dir = tmp_path / "output" / "in"
+    file = input_dir / "in" / "essay.png"
+    file.parent.mkdir(parents=True)
+    file.write_bytes(b"png")
+    doc_creator = MagicMock()
+    fp, _, _, _ = _make_processor(
+        tmp_path, doc_creator=doc_creator, input_dir=input_dir, write_text=True
+    )
+
+    result = fp.process(file)
+
+    assert result.ok is False
+    assert "Output files not saved" in result.message
+    assert "output folder outside the input folder" in result.message
+    assert not (input_dir / "essay.txt").exists()
+    doc_creator.create.assert_not_called()
+
+
+def test_text_file_below_input_subfolder_is_fine_when_not_recursive(tmp_path: Path) -> None:
+    """
+    Given  a run that does not read subfolders and text output in a folder below the inputs
+    When   process() saves the text file
+    Then   it is written, because the next run would not look there
+    """
+    input_dir = tmp_path
+    file = input_dir / "essay.png"
+    fp, _, _, _ = _make_processor(tmp_path, input_dir=input_dir, recursive=False, write_text=True)
+
+    result = fp.process(file)
+
+    assert result.ok is True
+    assert (tmp_path / "output" / "essay.txt").read_text(encoding="utf-8") == "extracted text"
+
+
+@pytest.mark.parametrize(
+    ("first", "second", "clash"),
+    [
+        ("essay.png", "essay.pdf", "essay.docx"),
+        ("essay.png", "essay_anonymized.png", "essay_anonymized.txt"),
+    ],
+)
+def test_two_documents_writing_the_same_output_file_fail_the_second(
+    tmp_path: Path, first: str, second: str, clash: str
+) -> None:
+    """
+    Given  two inputs of one folder whose output files have the same name
+    When   both are processed in one run
+    Then   the first keeps its file and the second fails naming the clash, writing nothing
+    """
+    anonymizer = MagicMock()
+    anonymizer.anonymize.return_value = ("anonymized", {})
+    doc_creator = MagicMock()
+    fp, _, _, _ = _make_processor(
+        tmp_path,
+        doc_creator=doc_creator,
+        input_dir=tmp_path / "in",
+        write_text=True,
+        text_anonymizer=anonymizer,
+    )
+
+    ok_first = fp.process(tmp_path / "in" / first)
+    created_before = doc_creator.create.call_count
+    result = fp.process(tmp_path / "in" / second)
+
+    assert ok_first.ok is True
+    assert result.ok is False
+    assert f"{clash} would replace the output of {first}" in result.message
+    assert doc_creator.create.call_count == created_before
+
+
+def test_processing_the_same_document_again_is_not_a_collision(tmp_path: Path) -> None:
+    """
+    Given  a document that was already processed by this processor
+    When   it is processed again (a re-run of the same file)
+    Then   it may write its output files again
+    """
+    fp, _, _, _ = _make_processor(tmp_path, input_dir=tmp_path / "in", write_text=True)
+
+    assert fp.process(tmp_path / "in" / "essay.png").ok is True
+    assert fp.process(tmp_path / "in" / "essay.png").ok is True
+
+
+def test_same_text_is_anonymized_once_for_correction_and_text_file(tmp_path: Path) -> None:
+    """
+    Given  anonymization before correction and an anonymized text file from the same anonymizer
+    When   process() runs
+    Then   the text is analysed once and both uses get that result
+    """
+    corrector = MagicMock()
+    corrector.correct.return_value = ("fixed", None)
+    anonymizer = MagicMock()
+    anonymizer.anonymize.return_value = ("[PERSON_1] wrote", {"[PERSON_1]": "Anna"})
+    anonymizer.restore.side_effect = lambda text, _mapping: text
+    fp, _, _, _ = _make_processor(
+        tmp_path, corrector=corrector, anonymizer=anonymizer, text_anonymizer=anonymizer
+    )
+
+    result = fp.process(tmp_path / "essay.png")
+
+    assert result.ok is True
+    anonymizer.anonymize.assert_called_once_with("extracted text")
+    assert (tmp_path / "output" / "essay_anonymized.txt").read_text(encoding="utf-8") == (
+        "[PERSON_1] wrote"
+    )
 
 
 # ── Progress narrative & stage callbacks ───────────────────────────────────

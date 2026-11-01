@@ -47,6 +47,7 @@ from pathlib import Path
 import threading
 
 from ..config import Config, OcrConfig
+from ..domain.output_files import output_folder_refusal
 from ..exceptions import OllamaConnectionError, ProviderNotAvailableError
 from ..interfaces import ImagePreprocessor
 from .file_discovery import FileDiscovery
@@ -206,6 +207,15 @@ class OCRPipeline:
         """Execute the full pipeline. Returns 0 on success, 1 if any file failed."""
         cfg = self._config
         reporter = self._reporter
+        refusal = output_folder_refusal(
+            writes_text_files=cfg.writes_text_files,
+            output_dir=cfg.output_dir.resolve(),
+            input_dir=cfg.input_dir.resolve(),
+            recursive=cfg.recursive,
+        )
+        if refusal:
+            reporter.warn(f"ERROR: {refusal}")
+            return 1
         tmp_dir = resolve_artifact_dir(cfg.output_dir)
         cfg.output_dir.mkdir(parents=True, exist_ok=True)
         tmp_dir.mkdir(parents=True, exist_ok=True)
@@ -420,6 +430,15 @@ class OCRPipeline:
             reporter.status("  DOCX output   : disabled")
         else:
             reporter.status(f"  DOCX format   : {cfg.docx_format}")
+        text_files = [
+            name
+            for name, enabled in (
+                ("plain", cfg.text_enabled),
+                ("anonymized", cfg.text_anonymized_enabled),
+            )
+            if enabled
+        ]
+        reporter.status(f"  Text files    : {', '.join(text_files) or 'disabled'}")
         reporter.status(_LINE)
 
     def _setup_services(
@@ -454,6 +473,7 @@ class OCRPipeline:
             reporter.status("Building evaluation LLM... OK")
 
         doc_creator = builder.build_doc_creator()
+        text_anonymizer = builder.build_text_anonymizer(anonymizer)
 
         cache_service = self._cache_service or CacheReconciliationService(
             state_repo=state_repo,
@@ -468,6 +488,10 @@ class OCRPipeline:
         return FileProcessor(
             FileProcessorConfig(
                 output_dir=cfg.output_dir,
+                input_dir=cfg.input_dir,
+                recursive=cfg.recursive,
+                write_text=cfg.text_enabled,
+                text_anonymizer=text_anonymizer,
                 language=cfg.language,
                 cache_service=cache_service,
                 preprocess_service=preprocess_service,

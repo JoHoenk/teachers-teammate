@@ -672,6 +672,44 @@ def test_output_settings_dialog_round_trips_output_dir(qtbot) -> None:
 
 
 @pytest.mark.gui
+def test_output_settings_dialog_round_trips_text_file_options(qtbot) -> None:
+    """
+    Given  an OutputSettingsDialog seeded with both text-file options on
+    When   get_values() is called
+    Then   both options are returned as set, next to the Word option
+    """
+    dlg = OutputSettingsDialog(
+        {"output_dir": "/tmp/reports", "text_enabled": True, "text_anonymized_enabled": True}
+    )
+    qtbot.addWidget(dlg)
+
+    values = dlg.get_values()
+
+    assert values["text_enabled"] is True
+    assert values["text_anonymized_enabled"] is True
+    assert "docx_enabled" in values
+
+
+@pytest.mark.gui
+def test_output_settings_dialog_needs_folder_for_text_files(qtbot) -> None:
+    """
+    Given  an OutputSettingsDialog with text files on and no output folder
+    When   OK is pressed
+    Then   a warning is shown and the dialog stays open
+    """
+    from unittest.mock import patch  # noqa: PLC0415
+
+    dlg = OutputSettingsDialog({"text_enabled": True})
+    qtbot.addWidget(dlg)
+
+    with patch("teachers_teammate.gui._settings_dialog.QMessageBox.warning") as warn:
+        dlg._on_accept()
+
+    warn.assert_called_once()
+    assert dlg.result() != dlg.DialogCode.Accepted
+
+
+@pytest.mark.gui
 def test_downloads_dialog_has_one_tab_per_section(qtbot) -> None:
     """
     Given  the standalone DownloadsDialog

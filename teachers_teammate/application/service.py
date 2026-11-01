@@ -22,6 +22,7 @@ from ..domain.model_catalog import (
     ModelUses,
     OllamaModelSpec,
 )
+from ..domain.output_files import feeds_inputs, output_folder_refusal, output_path
 from ..infrastructure.addon_manager import ADDON_AMD as ADDON_AMD  # noqa: PLC0414
 from ..infrastructure.addon_manager import ADDON_NVIDIA as ADDON_NVIDIA  # noqa: PLC0414
 from ..infrastructure.addon_manager import ADDON_PADDLE as ADDON_PADDLE  # noqa: PLC0414
@@ -543,8 +544,17 @@ class ProcessingApplicationService:
     @staticmethod
     def is_in_input_folder(folder: Path, input_dir: Path, *, recursive: bool) -> bool:
         """Return whether files written to *folder* would be found as inputs of *input_dir*."""
-        folder, input_dir = folder.resolve(), input_dir.resolve()
-        return folder == input_dir or (recursive and input_dir in folder.parents)
+        return feeds_inputs(folder.resolve(), input_dir.resolve(), recursive=recursive)
+
+    @staticmethod
+    def export_target(source: Path, input_dir: Path | None, folder: Path, suffix: str) -> Path:
+        """Return where a folder export saves *source*: the subfolder it has below
+        *input_dir*, recreated below *folder* (so same-named files in different subfolders
+        do not replace each other).
+        """
+        return output_path(
+            source.resolve(), input_dir.resolve() if input_dir else None, folder, suffix
+        )
 
     def resolve_preview_tmp_dir(self) -> Path:
         """Return a fresh unique temporary directory for preview preprocessing."""
@@ -694,6 +704,20 @@ class ProcessingApplicationService:
         """
         return ocr_refusal(config.ocr.engine, config.ocr.model, config.ollama_url)
 
+    @staticmethod
+    def output_refusal_for_run(config: Config) -> str:
+        """Return why this run's output folder must not be used, or ``""`` when it is fine.
+
+        Text files saved where the run looks for inputs would be read as new documents
+        the next time.
+        """
+        return output_folder_refusal(
+            writes_text_files=config.writes_text_files,
+            output_dir=config.output_dir.resolve(),
+            input_dir=config.input_dir.resolve(),
+            recursive=config.recursive,
+        )
+
     def check_run_preflight(self, config: Config) -> RunPreflight:
         """Return the first unmet requirement before a run, or an all-clear result.
 
@@ -716,7 +740,7 @@ class ProcessingApplicationService:
                 return RunPreflight(missing_models=tuple(missing))
 
         stages: list[str] = []
-        if config.anonymization_enabled:
+        if config.anonymization_enabled or config.text_anonymized_enabled:
             stages.append("anonymizer")
         if config.correction_enabled:
             stages.append("correction")

@@ -81,6 +81,8 @@ class SettingsDict(TypedDict, total=False):
     output_dir: str
     docx_format: str
     docx_enabled: bool
+    text_enabled: bool
+    text_anonymized_enabled: bool
     correction_enabled: bool
     evaluation_enabled: bool
     anonymization_enabled: bool

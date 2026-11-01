@@ -176,3 +176,36 @@ def test_build_ocr_allows_downloaded_ollama_model_on_another_computer(tmp_path: 
     StageBuilder(config=config, factory=factory).build_ocr(MagicMock())
 
     build_ollama_ocr.assert_called_once()
+
+
+def test_build_text_anonymizer_only_when_enabled(tmp_path: Path) -> None:
+    """
+    Given  anonymized text files off, then on
+    When   build_text_anonymizer() is called
+    Then   it returns None when off, and builds an anonymizer from the factory when on
+    """
+    anonymizer = MagicMock()
+    factory = PipelineComponentFactory(build_anonymizer=MagicMock(return_value=anonymizer))
+
+    off = StageBuilder(config=make_config(tmp_path), factory=factory)
+    on = StageBuilder(config=make_config(tmp_path, text_anonymized_enabled=True), factory=factory)
+
+    assert off.build_text_anonymizer() is None
+    assert on.build_text_anonymizer() is anonymizer
+    factory.build_anonymizer.assert_called_once()
+
+
+def test_build_text_anonymizer_reuses_shared_anonymizer(tmp_path: Path) -> None:
+    """
+    Given  anonymized text files on and an anonymizer already built for proofreading
+    When   build_text_anonymizer(shared) is called
+    Then   the shared instance is returned and no second one is built
+    """
+    factory = PipelineComponentFactory(build_anonymizer=MagicMock())
+    shared = MagicMock()
+    builder = StageBuilder(
+        config=make_config(tmp_path, text_anonymized_enabled=True), factory=factory
+    )
+
+    assert builder.build_text_anonymizer(shared) is shared
+    factory.build_anonymizer.assert_not_called()

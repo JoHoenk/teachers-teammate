@@ -113,6 +113,8 @@ class ConfigPanel(QScrollArea):
             "output_dir": "",
             "docx_format": DEFAULTS["docx_format"],
             "docx_enabled": DEFAULTS["docx_enabled"],
+            "text_enabled": DEFAULTS["text_enabled"],
+            "text_anonymized_enabled": DEFAULTS["text_anonymized_enabled"],
             "evaluation_enabled": DEFAULTS["evaluation_enabled"],
             "anonymization_enabled": DEFAULTS["anonymization_enabled"],
             "debug": DEFAULTS["debug"],
@@ -563,10 +565,14 @@ class ConfigPanel(QScrollArea):
         """Build and return a Config from current field values."""
         input_text = self.get_input_dir()
         output_text = str(self._settings_dict.get("output_dir", "")).strip()
-        docx_enabled = bool(self._settings_dict.get("docx_enabled", True))
+        docx_enabled = bool(self._settings_dict.get("docx_enabled", DEFAULTS["docx_enabled"]))
+        text_enabled = bool(self._settings_dict.get("text_enabled", DEFAULTS["text_enabled"]))
+        text_anonymized_enabled = bool(
+            self._settings_dict.get("text_anonymized_enabled", DEFAULTS["text_anonymized_enabled"])
+        )
         if not input_text:
             raise ValueError("Input folder is required.")
-        if not output_text and docx_enabled:
+        if not output_text and (docx_enabled or text_enabled or text_anonymized_enabled):
             raise ValueError("Output folder is required.")
         input_dir = Path(input_text)
         if not input_dir.is_dir():
@@ -613,6 +619,8 @@ class ConfigPanel(QScrollArea):
             ),
             docx_format=self._settings_dict.get("docx_format", DEFAULTS["docx_format"]),
             docx_enabled=docx_enabled,
+            text_enabled=text_enabled,
+            text_anonymized_enabled=text_anonymized_enabled,
         )
 
     @staticmethod
@@ -728,19 +736,16 @@ class ConfigPanel(QScrollArea):
             "preprocess_border_crop",
             "preprocess_denoise",
             "preprocess_gamma",
+            "debug",
+            "docx_enabled",
+            "text_enabled",
+            "text_anonymized_enabled",
+            "evaluation_enabled",
+            "anonymization_enabled",
         ):
             if key in values:
                 self._settings_dict[key] = bool(values[key])
 
-        if "debug" in values:
-            self._settings_dict["debug"] = bool(values["debug"])
-
-        if "docx_enabled" in values:
-            self._settings_dict["docx_enabled"] = bool(values["docx_enabled"])
-        if "evaluation_enabled" in values:
-            self._settings_dict["evaluation_enabled"] = bool(values["evaluation_enabled"])
-        if "anonymization_enabled" in values:
-            self._settings_dict["anonymization_enabled"] = bool(values["anonymization_enabled"])
         if "anonymizer_secondary_model" in values:
             self._settings_dict["anonymizer_secondary_model"] = (
                 values["anonymizer_secondary_model"] or None

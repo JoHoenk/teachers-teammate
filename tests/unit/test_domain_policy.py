@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from teachers_teammate.domain.freshness import (
@@ -19,6 +21,12 @@ from teachers_teammate.domain.pdf_text_layer import (
     page_has_usable_text,
     unusable_text_reason,
     use_text_layer,
+)
+from teachers_teammate.domain.output_files import (
+    TEXT_IN_INPUT_FOLDER,
+    feeds_inputs,
+    output_folder_refusal,
+    output_path,
 )
 from teachers_teammate.domain.stages import normalize_stage
 
@@ -244,3 +252,69 @@ def test_unusable_text_reason(stats: PageTextStats, expected: str | None) -> Non
     Then   it names that criterion, or returns None for a usable page
     """
     assert unusable_text_reason(stats) == expected
+
+
+def test_output_path_keeps_subfolder_below_input_dir() -> None:
+    """
+    Given  a source in a subfolder of the input folder
+    When   output_path() is asked for its output
+    Then   the same subfolder is used below the output folder
+    """
+    result = output_path(Path("/in/class1/essay.png"), Path("/in"), Path("/out"), ".docx")
+
+    assert result == Path("/out/class1/essay.docx")
+
+
+@pytest.mark.parametrize("input_dir", [None, Path("/elsewhere")])
+def test_output_path_is_flat_outside_input_dir(input_dir: Path | None) -> None:
+    """
+    Given  no input folder, or a source outside it
+    When   output_path() is asked for its output
+    Then   the file goes straight into the output folder
+    """
+    result = output_path(Path("/in/class1/essay.png"), input_dir, Path("/out"), ".txt")
+
+    assert result == Path("/out/essay.txt")
+
+
+def test_feeds_inputs() -> None:
+    """
+    Given  an input folder, a subfolder and a sibling folder
+    When   feeds_inputs() is asked about each
+    Then   the folder itself always counts, a subfolder only when recursive, a sibling never
+    """
+    inputs = Path("/in")
+
+    assert feeds_inputs(inputs, inputs, recursive=False)
+    assert feeds_inputs(inputs / "out", inputs, recursive=True)
+    assert not feeds_inputs(inputs / "out", inputs, recursive=False)
+    assert not feeds_inputs(Path("/out"), inputs, recursive=True)
+
+
+@pytest.mark.parametrize(
+    ("writes_text", "output_dir", "recursive", "refused"),
+    [
+        (True, "/in", False, True),
+        (True, "/in/results", True, True),
+        (True, "/in/results", False, False),
+        (True, "/out", True, False),
+        (False, "/in", True, False),
+    ],
+)
+def test_output_folder_refusal(
+    writes_text: bool, output_dir: str, recursive: bool, refused: bool
+) -> None:
+    """
+    Given  an input folder and an output folder, with or without text files
+    When   output_folder_refusal() is asked
+    Then   only text files in a folder the next run reads (the input folder, or below it when
+           subfolders are read) are refused, with the reason
+    """
+    reason = output_folder_refusal(
+        writes_text_files=writes_text,
+        output_dir=Path(output_dir),
+        input_dir=Path("/in"),
+        recursive=recursive,
+    )
+
+    assert reason == (TEXT_IN_INPUT_FOLDER if refused else "")

@@ -256,18 +256,31 @@ class StageBuilder:
                     "disabling anonymization."
                 )
             else:
-                try:
-                    anon_config = AnonymizerConfig(
-                        secondary_model=cfg.anonymizer_secondary_model,
-                        patterns=tuple(cfg.anonymizer_patterns)
-                        if cfg.anonymizer_patterns is not None
-                        else tuple(DEFAULT_PATTERNS),
-                    )
-                    anonymizer = factory.build_anonymizer(cfg.language, anon_config)
-                except (ImportError, OSError) as exc:
-                    raise ProviderNotAvailableError(f"Cannot initialise anonymizer: {exc}") from exc
+                anonymizer = self._build_anonymizer()
 
         return correction, anonymizer
+
+    def _build_anonymizer(self) -> Anonymizer:
+        cfg = self.config
+        try:
+            anon_config = AnonymizerConfig(
+                secondary_model=cfg.anonymizer_secondary_model,
+                patterns=tuple(cfg.anonymizer_patterns)
+                if cfg.anonymizer_patterns is not None
+                else tuple(DEFAULT_PATTERNS),
+            )
+            return self.factory.build_anonymizer(cfg.language, anon_config)
+        except (ImportError, OSError) as exc:
+            raise ProviderNotAvailableError(f"Cannot initialise anonymizer: {exc}") from exc
+
+    def build_text_anonymizer(self, shared: Anonymizer | None = None) -> Anonymizer | None:
+        """Return the anonymizer for anonymized text files, or ``None`` when they are off.
+
+        Reuses *shared* (the anonymizer that protects the LLM stages) when there is one.
+        """
+        if not self.config.text_anonymized_enabled:
+            return None
+        return shared or self._build_anonymizer()
 
     def build_evaluation(
         self,

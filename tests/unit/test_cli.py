@@ -159,6 +159,9 @@ def test_main_exits_when_no_output_and_docx_enabled(tmp_path: Path, monkeypatch)
         def ocr_refusal_for_run(self, config):
             return ""
 
+        def output_refusal_for_run(self, config):
+            return ""
+
         def run_selected(self, config, /, **kwargs):
             raise AssertionError("should not reach pipeline — guard must exit before run")
 
@@ -200,6 +203,9 @@ def test_main_allows_missing_output_when_no_docx(tmp_path: Path, monkeypatch) ->
             return DataFlow(())
 
         def ocr_refusal_for_run(self, config):
+            return ""
+
+        def output_refusal_for_run(self, config):
             return ""
 
         def run_selected(self, config, /, **kwargs):
@@ -265,6 +271,9 @@ def test_main_loads_config_file_defaults(tmp_path: Path) -> None:
         def ocr_refusal_for_run(self, config):
             return ""
 
+        def output_refusal_for_run(self, config):
+            return ""
+
         def run_selected(self, config, /, **kwargs):
             captured.append(config)
             return 0
@@ -304,6 +313,9 @@ def test_main_uses_exit_fn_with_run_cli_result(tmp_path: Path) -> None:
             return DataFlow(())
 
         def ocr_refusal_for_run(self, config):
+            return ""
+
+        def output_refusal_for_run(self, config):
             return ""
 
         def run_selected(self, _config, /, **kwargs):
@@ -483,6 +495,9 @@ def test_run_cli_propagates_preprocessing_to_config(tmp_path: Path, monkeypatch)
         def ocr_refusal_for_run(self, config):
             return ""
 
+        def output_refusal_for_run(self, config):
+            return ""
+
         def run_selected(self, config, /, **kwargs):
             captured.append(config)
             return 0
@@ -605,6 +620,9 @@ def test_run_cli_tells_where_documents_are_processed(tmp_path: Path, capsys) -> 
         def ocr_refusal_for_run(self, config):
             return ""
 
+        def output_refusal_for_run(self, config):
+            return ""
+
         def run_selected(self, config, /, **kwargs):
             calls.append("run")
             return 0
@@ -643,6 +661,9 @@ def test_run_cli_refuses_online_text_recognition_before_anything_starts(
         def ocr_refusal_for_run(self, config):
             return "Text recognition must stay on your computer."
 
+        def output_refusal_for_run(self, config):
+            return ""
+
         def describe_data_flow(self, config):
             raise AssertionError("no data flow may be announced for a refused run")
 
@@ -659,3 +680,128 @@ def test_run_cli_refuses_online_text_recognition_before_anything_starts(
 
     assert rc == 1
     assert "ERROR: Text recognition must stay on your computer." in capsys.readouterr().err
+
+
+class _TextFlagsAppService:
+    """Application service stub for the text-file flags; records configs, refuses on demand."""
+
+    def __init__(self, output_refusal: str = "") -> None:
+        self.configs: list = []
+        self._output_refusal = output_refusal
+
+    def list_providers(self) -> list[str]:
+        return ["ollama", "openai"]
+
+    def resolve_config_path(self, explicit):
+        return None
+
+    def describe_data_flow(self, config):
+        return DataFlow(())
+
+    def ocr_refusal_for_run(self, config):
+        return ""
+
+    def output_refusal_for_run(self, config):
+        return self._output_refusal
+
+    def run_selected(self, config, /, **kwargs):
+        self.configs.append(config)
+        return 0
+
+    def run_preview_only(self, config):
+        raise AssertionError("preview-only path should not be used")
+
+
+@pytest.mark.use_case("Headless_CLI_Batch")
+def test_parse_args_text_file_flags() -> None:
+    """
+    Given  --text and --text-anonymized, and a call without them
+    When   _parse_args() is called
+    Then   the flags are True only when given
+    """
+    from teachers_teammate.cli import _parse_args  # noqa: PLC0415
+
+    given = _parse_args(argv=["-i", "/in", "-o", "/out", "--text", "--text-anonymized"])
+    absent = _parse_args(argv=["-i", "/in", "-o", "/out"])
+
+    assert (given.text_enabled, given.text_anonymized_enabled) == (True, True)
+    assert (absent.text_enabled, absent.text_anonymized_enabled) == (False, False)
+
+
+@pytest.mark.use_case("Headless_CLI_Batch")
+def test_run_cli_passes_text_file_flags_to_config(tmp_path: Path) -> None:
+    """
+    Given  --no-docx --text --text-anonymized with an output folder
+    When   run_cli() is called
+    Then   the Config asks for both text files and no Word document
+    """
+    from teachers_teammate.cli import run_cli  # noqa: PLC0415
+
+    service = _TextFlagsAppService()
+
+    rc = run_cli(
+        argv=[
+            "-i",
+            str(tmp_path),
+            "-o",
+            str(tmp_path / "out"),
+            "--no-docx",
+            "--text",
+            "--text-anonymized",
+        ],
+        app_service=service,
+    )
+
+    assert rc == 0
+    config = service.configs[0]
+    assert (config.docx_enabled, config.text_enabled, config.text_anonymized_enabled) == (
+        False,
+        True,
+        True,
+    )
+    assert config.writes_text_files is True
+
+
+@pytest.mark.use_case("Headless_CLI_Batch")
+@pytest.mark.parametrize("flag", ["--text", "--text-anonymized"])
+def test_run_cli_text_files_need_an_output_folder(
+    tmp_path: Path, monkeypatch, capsys, flag: str
+) -> None:
+    """
+    Given  a text-file flag but no -o, no config file and no Word output
+    When   run_cli() is called
+    Then   it exits with 1 and says an output folder is needed, without starting a run
+    """
+    import teachers_teammate.infrastructure.storage_root as storage_module  # noqa: PLC0415
+    from teachers_teammate.cli import run_cli  # noqa: PLC0415
+
+    monkeypatch.setattr(storage_module, "default_config_path", lambda: tmp_path / "ocr.toml")
+    monkeypatch.chdir(tmp_path)
+    service = _TextFlagsAppService()
+
+    rc = run_cli(argv=["-i", str(tmp_path), "--no-docx", flag], app_service=service)
+
+    assert rc == 1
+    assert "No output folder specified" in capsys.readouterr().err
+    assert service.configs == []
+
+
+@pytest.mark.use_case("Headless_CLI_Batch")
+def test_run_cli_refuses_an_output_folder_the_service_rejects(tmp_path: Path, capsys) -> None:
+    """
+    Given  an application service that refuses the output folder (text files in the inputs)
+    When   run_cli() is called
+    Then   it prints the reason, exits with 1 and does not start the run
+    """
+    from teachers_teammate.cli import run_cli  # noqa: PLC0415
+
+    service = _TextFlagsAppService(output_refusal="Text files cannot be saved there.")
+
+    rc = run_cli(
+        argv=["-i", str(tmp_path), "-o", str(tmp_path), "--no-docx", "--text"],
+        app_service=service,
+    )
+
+    assert rc == 1
+    assert "ERROR: Text files cannot be saved there." in capsys.readouterr().err
+    assert service.configs == []

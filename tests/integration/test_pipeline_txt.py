@@ -6,12 +6,13 @@ validate that OCR is bypassed for plain-text inputs.
 
 from __future__ import annotations
 
+import dataclasses
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from teachers_teammate.infrastructure.pipeline import OCRPipeline
+from teachers_teammate.infrastructure.pipeline import OCRPipeline, PipelineDependencies
 from teachers_teammate.infrastructure.reporting import FileDoneResult, ProgressCallbacks
 from teachers_teammate.infrastructure.state_repository import StateRepository
 from teachers_teammate.infrastructure.storage_root import resolve_artifact_dir
@@ -136,3 +137,55 @@ def test_pipeline_txt_input_non_utf8_falls_back_to_latin1(tmp_path: Path) -> Non
 
     assert rc == 0
     assert seen == [True]
+
+
+def test_pipeline_saves_text_files_below_the_input_subfolder(tmp_path: Path) -> None:
+    """
+    Given  a recursive run with text files switched on and two inputs of the same name in
+           different subfolders
+    When   OCRPipeline.run() is called
+    Then   each text file is saved in its own subfolder of the output folder, so neither
+           replaces the other
+    """
+    cfg = make_config(
+        tmp_path,
+        ocr_engine="tesseract",
+        correction_enabled=False,
+        docx_enabled=False,
+        text_enabled=True,
+        recursive=True,
+    )
+    for name in ("class1", "class2"):
+        (cfg.input_dir / name).mkdir()
+        (cfg.input_dir / name / "essay.txt").write_text(f"text of {name}", encoding="utf-8")
+
+    rc = OCRPipeline(cfg).run()
+
+    assert rc == 0
+    for name in ("class1", "class2"):
+        assert (cfg.output_dir / name / "essay.txt").read_text(encoding="utf-8") == (
+            f"text of {name}"
+        )
+
+
+def test_pipeline_refuses_text_files_in_the_input_folder_before_creating_it(
+    tmp_path: Path,
+) -> None:
+    """
+    Given  a recursive run with text files whose not yet existing output folder lies in
+           the input folder
+    When   OCRPipeline.run() is called
+    Then   it fails with 1, reports why, and creates neither the folder nor any file
+    """
+    cfg = make_config(tmp_path, correction_enabled=False, text_enabled=True, recursive=True)
+    cfg = dataclasses.replace(cfg, output_dir=cfg.input_dir / "results")
+    (cfg.input_dir / "note.txt").write_text("hello", encoding="utf-8")
+    warnings: list[str] = []
+    reporter = MagicMock()
+    reporter.warn.side_effect = warnings.append
+
+    rc = OCRPipeline(cfg, dependencies=PipelineDependencies(reporter=reporter)).run()
+
+    assert rc == 1
+    assert "next run would read them as new documents" in warnings[0]
+    assert not cfg.output_dir.exists()

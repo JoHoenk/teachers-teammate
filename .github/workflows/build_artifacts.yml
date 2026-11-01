@@ -54,7 +54,7 @@ jobs:
         artifact: ${{ fromJSON(inputs.platforms) }}
         include:
           - artifact: linux
-            os: ubuntu-latest
+            os: ubuntu-24.04
           - artifact: windows
             os: windows-latest
           - artifact: macos

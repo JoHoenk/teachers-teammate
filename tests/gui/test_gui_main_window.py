@@ -17,6 +17,7 @@ from teachers_teammate.application.service import (
 )
 from teachers_teammate.domain.model_catalog import DEFAULT_OCR_MODEL
 from teachers_teammate.gui import _main_window as main_window_module
+from teachers_teammate.gui._export_menu import ExportKind
 from teachers_teammate.gui._main_window import MainWindow
 from teachers_teammate.gui._types import FileDoneEvent
 from teachers_teammate.infrastructure.storage_root import resolve_artifact_dir
@@ -2419,3 +2420,394 @@ def test_gpu_monitoring_installed_but_unreadable_is_reported_honestly(
     log = main_window._log.toPlainText()
     assert "no readings" in log
     assert "Installed GPU monitoring" not in log
+
+
+# ── Export menu ───────────────────────────────────────────────────────────
+
+
+def _queue_with_text(window: MainWindow, folder: Path, texts: dict[str, str]) -> list[str]:
+    """Queue one row per *texts* key (a file name in *folder*) holding that extracted text."""
+    ids = [str(folder / name) for name in texts]
+    window._results_table.set_queue(list(texts), source_ids=ids)
+    for source_id, text in zip(ids, texts.values(), strict=True):
+        window._results_table.set_row_artifacts(source_id, "", text, "", "")
+    return ids
+
+
+def _pick_folder(monkeypatch, folder: Path) -> None:
+    monkeypatch.setattr(
+        main_window_module.QFileDialog, "getExistingDirectory", lambda *_a, **_k: str(folder)
+    )
+
+
+def _pick_file(monkeypatch, path: Path) -> None:
+    monkeypatch.setattr(
+        main_window_module.QFileDialog, "getSaveFileName", lambda *_a, **_k: (str(path), "")
+    )
+
+
+@pytest.mark.gui
+def test_export_button_offers_word_text_and_anonymized_text(main_window) -> None:
+    """
+    Given  the main window
+    When   the Export button's menu is inspected
+    Then   the button is called Export and offers Word, text and anonymized text
+    """
+    menu = main_window._export_btn.menu()
+
+    assert main_window._export_btn.text() == "Export"
+    assert [a.text() for a in menu.actions()] == [
+        "Word Document…",
+        "Text File…",
+        "Anonymized Text File…",
+    ]
+
+
+@pytest.mark.gui
+def test_export_text_writes_one_file_per_row_and_skips_rows_without_text(
+    main_window, monkeypatch, tmp_path: Path
+) -> None:
+    """
+    Given  two rows with extracted text and one without
+    When   the text export runs into a chosen folder
+    Then   a .txt file per row with text is written and the empty row is reported
+    """
+    out = tmp_path / "out"
+    ids = _queue_with_text(
+        main_window, tmp_path / "scans", {"a.png": "alpha", "b.png": "beta", "c.png": ""}
+    )
+    _pick_folder(monkeypatch, out)
+    warnings: list[str] = []
+    monkeypatch.setattr(
+        main_window_module.QMessageBox, "warning", lambda _p, _t, msg: warnings.append(msg)
+    )
+
+    main_window._on_export_requested(ids, ExportKind.TEXT)
+    _wait_for(lambda: not main_window._text_export_running and bool(warnings))
+
+    assert (out / "a.txt").read_text(encoding="utf-8") == "alpha"
+    assert (out / "b.txt").read_text(encoding="utf-8") == "beta"
+    assert not (out / "c.txt").exists()
+    assert "c.png" in warnings[0]
+
+
+@pytest.mark.gui
+def test_export_anonymized_text_writes_the_anonymized_file(
+    main_window, monkeypatch, tmp_path: Path
+) -> None:
+    """
+    Given  a row with extracted text and an anonymizer that hides "Anna"
+    When   the anonymized text export runs
+    Then   <stem>_anonymized.txt holds the anonymized text
+    """
+    from unittest.mock import MagicMock, patch  # noqa: PLC0415
+
+    out = tmp_path / "out"
+    ids = _queue_with_text(main_window, tmp_path / "scans", {"a.png": "Dear Anna"})
+    _pick_file(monkeypatch, out / "a_anonymized.txt")
+    anonymizer = MagicMock()
+    anonymizer.anonymize.return_value = ("Dear [PERSON_1]", {"[PERSON_1]": "Anna"})
+    warnings: list[str] = []
+    monkeypatch.setattr(
+        main_window_module.QMessageBox, "warning", lambda _p, _t, msg: warnings.append(msg)
+    )
+
+    with patch(
+        "teachers_teammate.infrastructure.anonymizer.SpacyAnonymizer", return_value=anonymizer
+    ):
+        main_window._on_export_requested(ids, ExportKind.TEXT_ANONYMIZED)
+        _wait_for(lambda: not main_window._text_export_running)
+
+    assert warnings == []
+    assert (out / "a_anonymized.txt").read_text(encoding="utf-8") == "Dear [PERSON_1]"
+
+
+@pytest.mark.gui
+def test_export_anonymized_text_explains_a_missing_spacy_once(
+    main_window, monkeypatch, tmp_path: Path
+) -> None:
+    """
+    Given  two rows and no spaCy installed
+    When   the anonymized text export runs
+    Then   one message explains spaCy is missing and no file is written
+    """
+    from unittest.mock import patch  # noqa: PLC0415
+
+    out = tmp_path / "out"
+    ids = _queue_with_text(main_window, tmp_path / "scans", {"a.png": "x", "b.png": "y"})
+    _pick_folder(monkeypatch, out)
+    warnings: list[str] = []
+    monkeypatch.setattr(
+        main_window_module.QMessageBox, "warning", lambda _p, _t, msg: warnings.append(msg)
+    )
+
+    with patch(
+        "teachers_teammate.infrastructure.anonymizer.SpacyAnonymizer",
+        side_effect=ImportError("No module named 'spacy'"),
+    ):
+        main_window._on_export_requested(ids, ExportKind.TEXT_ANONYMIZED)
+        _wait_for(lambda: bool(warnings))
+
+    assert len(warnings) == 1
+    assert "spaCy" in warnings[0]
+    assert not out.exists()
+
+
+@pytest.mark.gui
+def test_export_text_into_the_input_folder_can_be_declined(
+    main_window, monkeypatch, tmp_path: Path
+) -> None:
+    """
+    Given  an input folder, and a text export aimed at that same folder
+    When   the user answers "No" to the warning that the files would be read as inputs
+    Then   nothing is written
+    """
+    scans = tmp_path / "scans"
+    scans.mkdir()
+    ids = _queue_with_text(main_window, scans, {"a.png": "alpha"})
+    monkeypatch.setattr(main_window._config_panel, "get_input_dir", lambda: str(scans))
+    _pick_file(monkeypatch, scans / "a.txt")
+    asked: list[str] = []
+
+    def _no(_parent, title, _text, *_a):
+        asked.append(title)
+        return main_window_module.QMessageBox.StandardButton.No
+
+    monkeypatch.setattr(main_window_module.QMessageBox, "question", _no)
+
+    main_window._on_export_requested(ids, ExportKind.TEXT)
+
+    assert asked == ["Save into the input folder?"]
+    assert not (scans / "a.txt").exists()
+    assert not main_window._text_export_running
+
+
+def _capture_warnings(monkeypatch) -> list[str]:
+    warnings: list[str] = []
+    monkeypatch.setattr(
+        main_window_module.QMessageBox, "warning", lambda _p, _t, msg: warnings.append(msg)
+    )
+    return warnings
+
+
+def _answer_questions(monkeypatch, answer) -> list[str]:
+    """Answer every QMessageBox.question with *answer*; return the titles asked."""
+    asked: list[str] = []
+
+    def _answer(_parent, title, _text, *_a):
+        asked.append(title)
+        return answer
+
+    monkeypatch.setattr(main_window_module.QMessageBox, "question", _answer)
+    return asked
+
+
+@pytest.mark.gui
+def test_export_toolbar_exports_the_selected_rows_else_all_rows(
+    main_window, monkeypatch, tmp_path: Path
+) -> None:
+    """
+    Given  two queued rows
+    When   an Export menu entry is chosen with nothing selected, then with one row selected
+    Then   the first export covers both rows and the second only the selected one
+    """
+    ids = _queue_with_text(main_window, tmp_path / "scans", {"a.png": "x", "b.png": "y"})
+    calls: list[tuple[list[str], ExportKind]] = []
+    monkeypatch.setattr(
+        main_window,
+        "_on_export_requested",
+        lambda source_ids, kind: calls.append((source_ids, kind)),
+    )
+
+    main_window._on_export_toolbar(ExportKind.TEXT)
+    main_window._results_table.selectRow(1)
+    main_window._on_export_toolbar(ExportKind.DOCX)
+
+    assert calls == [(ids, ExportKind.TEXT), ([ids[1]], ExportKind.DOCX)]
+
+
+@pytest.mark.gui
+def test_export_toolbar_menu_entry_starts_that_export(
+    main_window, monkeypatch, tmp_path: Path
+) -> None:
+    """
+    Given  a queued row
+    When   the "Anonymized Text File…" entry of the Export button's menu is triggered
+    Then   an anonymized text export is requested for that row
+    """
+    ids = _queue_with_text(main_window, tmp_path / "scans", {"a.png": "x"})
+    calls: list[tuple[list[str], ExportKind]] = []
+    monkeypatch.setattr(
+        main_window,
+        "_on_export_requested",
+        lambda source_ids, kind: calls.append((source_ids, kind)),
+    )
+
+    main_window._export_btn.menu().actions()[2].trigger()
+
+    assert calls == [(ids, ExportKind.TEXT_ANONYMIZED)]
+
+
+@pytest.mark.gui
+@pytest.mark.parametrize("kind", [ExportKind.DOCX, ExportKind.TEXT])
+def test_export_skips_documents_that_would_share_an_output_file(
+    main_window, monkeypatch, tmp_path: Path, kind: ExportKind
+) -> None:
+    """
+    Given  x.png and x.pdf, which both map to the same output name in one folder
+    When   they are exported together
+    Then   only the first is exported and the second is reported instead of overwriting it
+    """
+    scans, out = tmp_path / "scans", tmp_path / "out"
+    ids = [str(scans / "x.png"), str(scans / "x.pdf")]
+    main_window._results_table.set_queue(["x.png", "x.pdf"], source_ids=ids)
+    for sid in ids:
+        main_window._results_table.set_row_artifacts(sid, "", "text", "", "")
+    _pick_folder(monkeypatch, out)
+    warnings = _capture_warnings(monkeypatch)
+    written: list[Path] = []
+    service = main_window._app_service
+    monkeypatch.setattr(
+        service, "export_docx", lambda _s, _r, _c, _i, path, **_k: written.append(path)
+    )
+    monkeypatch.setattr(service, "export_text", lambda _s, _r, path, **_k: written.append(path))
+
+    main_window._on_export_requested(ids, kind)
+    _wait_for(lambda: bool(warnings))
+
+    assert written == [out / ("x" + kind.file_suffix)]
+    assert "x.pdf" in warnings[0]
+    assert "x.png" not in warnings[0]
+
+
+@pytest.mark.gui
+@pytest.mark.parametrize(
+    ("answer", "expected"),
+    [
+        (main_window_module.QMessageBox.StandardButton.No, "old"),
+        (main_window_module.QMessageBox.StandardButton.Yes, "alpha"),
+    ],
+)
+def test_export_into_a_folder_asks_before_replacing_existing_files(
+    main_window, monkeypatch, tmp_path: Path, answer, expected: str
+) -> None:
+    """
+    Given  a.txt already exists in the chosen folder and two rows are exported there
+    When   the user is asked whether to replace it
+    Then   "No" keeps the old file and exports nothing, "Yes" replaces it
+    """
+    out = tmp_path / "out"
+    out.mkdir()
+    (out / "a.txt").write_text("old", encoding="utf-8")
+    ids = _queue_with_text(main_window, tmp_path / "scans", {"a.png": "alpha", "b.png": "beta"})
+    _pick_folder(monkeypatch, out)
+    asked = _answer_questions(monkeypatch, answer)
+
+    main_window._on_export_requested(ids, ExportKind.TEXT)
+    _wait_for(lambda: not main_window._text_export_running)
+
+    assert asked == ["Replace existing files?"]
+    assert (out / "a.txt").read_text(encoding="utf-8") == expected
+    assert (out / "b.txt").exists() is (expected == "alpha")
+
+
+@pytest.mark.gui
+def test_export_text_never_replaces_another_input_document(
+    main_window, monkeypatch, tmp_path: Path
+) -> None:
+    """
+    Given  a.png and a.txt are both inputs, and a.txt holds the teacher's original text
+    When   a.png is exported as a text file named a.txt
+    Then   a.txt keeps its content and the export reports it as an input document
+    """
+    scans = tmp_path / "scans"
+    scans.mkdir()
+    (scans / "a.txt").write_text("original", encoding="utf-8")
+    ids = _queue_with_text(main_window, scans, {"a.png": "ocr result", "a.txt": "original"})
+    _pick_file(monkeypatch, scans / "a.txt")
+    warnings = _capture_warnings(monkeypatch)
+
+    main_window._on_export_requested([ids[0]], ExportKind.TEXT)
+    _wait_for(lambda: bool(warnings))
+
+    assert (scans / "a.txt").read_text(encoding="utf-8") == "original"
+    assert "a.png" in warnings[0]
+    assert "input document" in warnings[0]
+
+
+@pytest.mark.gui
+def test_export_text_into_the_input_folder_writes_after_confirming(
+    main_window, monkeypatch, tmp_path: Path
+) -> None:
+    """
+    Given  an input folder, and a text export aimed at a subfolder of it
+    When   the user answers "Yes" to the warning that the files would be read as inputs
+    Then   the file is written
+    """
+    scans = tmp_path / "scans"
+    ids = _queue_with_text(main_window, scans, {"a.png": "alpha"})
+    monkeypatch.setattr(main_window._config_panel, "get_input_dir", lambda: str(scans))
+    _pick_file(monkeypatch, scans / "sub" / "a.txt")
+    asked = _answer_questions(monkeypatch, main_window_module.QMessageBox.StandardButton.Yes)
+
+    main_window._on_export_requested(ids, ExportKind.TEXT)
+    _wait_for(lambda: not main_window._text_export_running)
+
+    assert asked == ["Save into the input folder?"]
+    assert (scans / "sub" / "a.txt").read_text(encoding="utf-8") == "alpha"
+
+
+@pytest.mark.gui
+@pytest.mark.parametrize("folder_mode", [False, True])
+def test_input_folder_warning_only_applies_to_folder_and_text_exports(
+    main_window, monkeypatch, tmp_path: Path, folder_mode: bool
+) -> None:
+    """
+    Given  an export into the input folder, either as an explicit file selection or a Word export
+    When   it is started
+    Then   no input-folder warning is shown, since a run would not read the new file
+    """
+    scans = tmp_path / "scans"
+    scans.mkdir()
+    ids = _queue_with_text(main_window, scans, {"a.png": "alpha"})
+    panel = main_window._config_panel
+    monkeypatch.setattr(panel, "get_input_dir", lambda: str(scans))
+    monkeypatch.setattr(
+        panel, "get_selected_files", lambda: None if folder_mode else [scans / "a.png"]
+    )
+    monkeypatch.setattr(main_window._app_service, "export_docx", lambda *_a, **_k: None)
+    asked = _answer_questions(monkeypatch, main_window_module.QMessageBox.StandardButton.No)
+    kind = ExportKind.DOCX if folder_mode else ExportKind.TEXT
+    _pick_file(monkeypatch, scans / ("a" + kind.file_suffix))
+
+    main_window._on_export_requested(ids, kind)
+    _wait_for(lambda: not main_window._text_export_running)
+
+    assert asked == []
+
+
+@pytest.mark.gui
+def test_export_anonymized_text_with_missing_spacy_also_lists_skipped_rows(
+    main_window, monkeypatch, tmp_path: Path
+) -> None:
+    """
+    Given  one row with text, one without, and no spaCy installed
+    When   the anonymized text export runs
+    Then   the single message explains the missing spaCy and also lists the skipped row
+    """
+    from unittest.mock import patch  # noqa: PLC0415
+
+    ids = _queue_with_text(main_window, tmp_path / "scans", {"a.png": "x", "c.png": ""})
+    _pick_folder(monkeypatch, tmp_path / "out")
+    warnings = _capture_warnings(monkeypatch)
+
+    with patch(
+        "teachers_teammate.infrastructure.anonymizer.SpacyAnonymizer",
+        side_effect=ImportError("No module named 'spacy'"),
+    ):
+        main_window._on_export_requested(ids, ExportKind.TEXT_ANONYMIZED)
+        _wait_for(lambda: bool(warnings))
+
+    assert len(warnings) == 1
+    assert "spaCy" in warnings[0]
+    assert "c.png" in warnings[0]

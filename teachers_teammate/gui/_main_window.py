@@ -9,7 +9,7 @@ import os
 from pathlib import Path
 import shutil
 import sys
-from typing import Any, ClassVar, Protocol
+from typing import Any, ClassVar, NamedTuple, Protocol
 
 from PySide6.QtCore import QEvent, QObject, QSettings, Qt, QThread, QTimer, Signal
 from PySide6.QtGui import QAction, QDragEnterEvent, QDropEvent, QIcon, QPixmap
@@ -61,6 +61,7 @@ from ._background import LatestTask, run_in_background, wait_for_background_task
 from ._chart_widget import ChartWidget
 from ._config_panel import ConfigPanel
 from ._data_flow_summary import advice_text
+from ._export_menu import ExportKind, build_export_menu
 from ._help_dialog import AboutDialog, HelpDialog, ThirdPartyLicensesDialog
 from ._image_utils import load_icon, load_pixmap
 from ._log_widget import LogWidget
@@ -78,6 +79,24 @@ from ._stats_widget import SystemStatsWidget
 from ._types import FileDoneEvent, PreprocessInfo
 from ._update_check import UpdateCheckThread
 from ._worker import OCRWorker
+
+
+class _TextExportOutcome(NamedTuple):
+    """Result of a background text export."""
+
+    written: list[Path]
+    failed: list[str]
+
+
+def _spacy_problem(exc: BaseException) -> str | None:
+    """Explain a missing spaCy install / model (``None`` for any other error)."""
+    if isinstance(exc, ImportError):
+        if getattr(sys, "frozen", False):
+            return "spaCy is not installed.\n\nUse the Install Privacy Addon button in Settings."
+        return f'spaCy not installed: {exc}\n\nInstall: pip install "teachers-teammate[privacy]"'
+    if isinstance(exc, OSError):
+        return f"spaCy model missing: {exc}\n\nRun: python -m spacy download <model>"
+    return None
 
 
 class _AnonymizeThread(QThread):
@@ -102,18 +121,8 @@ class _AnonymizeThread(QThread):
         try:
             anonymized, _ = self._svc.anonymize_preview(self._text, self._language, self._config)
             self.done.emit(self._text, anonymized, "")
-        except ImportError as exc:
-            if getattr(sys, "frozen", False):
-                msg = "spaCy is not installed.\n\nUse the Install Privacy Addon button in Settings."
-            else:
-                msg = f'spaCy not installed: {exc}\n\nInstall: pip install "teachers-teammate[privacy]"'
-            self.done.emit("", "", msg)
-        except OSError as exc:
-            self.done.emit(
-                "",
-                "",
-                f"spaCy model missing: {exc}\n\nRun: python -m spacy download <model>",
-            )
+        except (ImportError, OSError) as exc:
+            self.done.emit("", "", _spacy_problem(exc) or str(exc))
         except Exception as exc:  # noqa: BLE001  # anonymization may raise anything off-thread; report via the done signal
             self.done.emit("", "", str(exc))
 
@@ -313,6 +322,7 @@ class MainWindow(QMainWindow):
         self._ollama_connected = True
         # True while the requirement check of a Run / stage re-run is in flight.
         self._preflight_running = False
+        self._text_export_running = False
         self._ollama_retry_timer = QTimer(self)
         self._ollama_retry_timer.setSingleShot(True)
         self._ollama_retry_timer.setInterval(self._OLLAMA_RETRY_MS)
@@ -384,7 +394,7 @@ class MainWindow(QMainWindow):
         self._results_table.preview_requested.connect(self._on_preview_requested)
         self._results_table.stage_run_requested.connect(self._on_stage_run_requested)
         self._results_table.privacy_preview_requested.connect(self._on_privacy_preview_requested)
-        self._results_table.export_docx_requested.connect(self._on_export_docx_requested)
+        self._results_table.export_requested.connect(self._on_export_requested)
         self._config_panel.paths_changed.connect(self._refresh_queue_from_inputs)
         self._config_panel.anonymizer_configure_requested.connect(
             self._open_anonymizer_config_dialog
@@ -464,6 +474,28 @@ class MainWindow(QMainWindow):
     def _open_about_dialog(self) -> None:
         AboutDialog(self).exec()
 
+    def _build_export_button(self) -> QPushButton:
+        """Return the Export button; its menu offers Word, text and anonymized text."""
+        style = self.style()
+        assert style is not None
+        button = QPushButton("Export")
+        button.setIcon(
+            QIcon.fromTheme(
+                "document-export",
+                style.standardIcon(QStyle.StandardPixmap.SP_DialogSaveButton),
+            )
+        )
+        button.setMinimumHeight(32)
+        button.setEnabled(False)
+        button.setToolTip(
+            "Save results as Word documents or text files, optionally anonymized "
+            "(also available via right-click)"
+        )
+        menu, kinds = build_export_menu(button)
+        menu.triggered.connect(lambda action: self._on_export_toolbar(kinds[action]))
+        button.setMenu(menu)
+        return button
+
     def _build_left_panel(self) -> QWidget:
         left = QWidget()
         layout = QVBoxLayout(left)
@@ -522,19 +554,7 @@ class MainWindow(QMainWindow):
         self._stop_btn.setMinimumHeight(32)
         self._stop_btn.setEnabled(False)
         self._stop_btn.clicked.connect(self._on_stop)
-        self._export_btn = QPushButton("Export DOCX…")
-        self._export_btn.setIcon(
-            QIcon.fromTheme(
-                "document-export",
-                _style.standardIcon(QStyle.StandardPixmap.SP_DialogSaveButton),
-            )
-        )
-        self._export_btn.setMinimumHeight(32)
-        self._export_btn.setEnabled(False)
-        self._export_btn.setToolTip(
-            "Save results as Word documents (also available via right-click)"
-        )
-        self._export_btn.clicked.connect(self._on_export_docx_toolbar)
+        self._export_btn = self._build_export_button()
         btn_layout.addWidget(self._run_btn)
         btn_layout.addWidget(self._stop_btn)
         btn_layout.addWidget(self._export_btn)
@@ -1174,41 +1194,113 @@ class MainWindow(QMainWindow):
         self._steps_per_file = 1 if not config.correction_enabled else 2
         self._start_worker(config, run_source_ids)
 
-    def _on_export_docx_toolbar(self) -> None:
+    def _on_export_toolbar(self, kind: ExportKind) -> None:
         source_ids = (
             self._results_table.selected_source_ids() or self._results_table.queued_source_ids()
         )
         if source_ids:
-            self._on_export_docx_requested(source_ids)
+            self._on_export_requested(source_ids, kind)
 
-    def _on_export_docx_requested(self, source_ids: list[str]) -> None:
+    def _on_export_requested(self, source_ids: list[str], kind: ExportKind) -> None:
+        if kind.is_text and self._text_export_running:
+            QMessageBox.information(self, "Please wait", "A text export is still running.")
+            return
+        targets = self._pick_export_targets(source_ids, kind)
+        if not targets:
+            return
+        # One folder for several documents: two inputs with the same name would collide.
+        targets, errors = self._drop_colliding_targets(targets)
+        if len(source_ids) > 1 and not self._confirm_replace_existing(targets):
+            return
+        if kind.is_text and not self._confirm_text_export_folder(targets):
+            return
+        if kind is ExportKind.DOCX:
+            self._export_docx(targets, errors)
+        else:
+            self._export_text(targets, errors, anonymize=kind is ExportKind.TEXT_ANONYMIZED)
+
+    def _pick_export_targets(
+        self, source_ids: list[str], kind: ExportKind
+    ) -> list[tuple[str, Path]]:
+        """Ask where to save and return ``(source_id, output path)`` pairs (empty = cancelled)."""
         # Suggested starting directory: last run output dir → config output → input dir
         start_dir = self._results_table.get_output_dir()
         if start_dir is None:
             d = self._config_panel.get_output_dir() or self._config_panel.get_input_dir()
             start_dir = Path(d) if d else Path.home()
 
-        docx_format = str(self._config_panel.get_settings_dict().get("docx_format", "table"))
-
         # For a single file show Save As; for multiple files show a folder picker.
         if len(source_ids) == 1:
-            source = Path(source_ids[0])
-            suggested = str(start_dir / (source.stem + ".docx"))
+            suggested = str(start_dir / (Path(source_ids[0]).stem + kind.file_suffix))
             dest, _ = QFileDialog.getSaveFileName(
-                self, "Save DOCX", suggested, "Word Document (*.docx)"
+                self, f"Save {kind.label.rstrip('…')}", suggested, kind.file_filter
             )
-            if not dest:
-                return
-            targets = [(source_ids[0], Path(dest))]
-        else:
-            folder = QFileDialog.getExistingDirectory(
-                self, "Save DOCX files to folder", str(start_dir)
-            )
-            if not folder:
-                return
-            targets = [(sid, Path(folder) / (Path(sid).stem + ".docx")) for sid in source_ids]
+            return [(source_ids[0], Path(dest))] if dest else []
+        folder = QFileDialog.getExistingDirectory(
+            self, f"Save {kind.label.rstrip('…')}s to folder", str(start_dir)
+        )
+        if not folder:
+            return []
+        return [(sid, Path(folder) / (Path(sid).stem + kind.file_suffix)) for sid in source_ids]
 
+    @staticmethod
+    def _drop_colliding_targets(
+        targets: list[tuple[str, Path]],
+    ) -> tuple[list[tuple[str, Path]], list[str]]:
+        """Keep the first target per output file; report the later ones that would replace it."""
+        kept: list[tuple[str, Path]] = []
         errors: list[str] = []
+        claimed: set[Path] = set()
+        for source_id, out_path in targets:
+            if out_path.resolve() in claimed:
+                errors.append(
+                    f"{Path(source_id).name}: {out_path.name} would overwrite another file "
+                    "of this export."
+                )
+            else:
+                claimed.add(out_path.resolve())
+                kept.append((source_id, out_path))
+        return kept, errors
+
+    def _confirm_replace_existing(self, targets: list[tuple[str, Path]]) -> bool:
+        """Ask once before a folder export replaces files (the Save dialog asks for one file)."""
+        existing = [out.name for _sid, out in targets if out.exists()]
+        if not existing:
+            return True
+        shown = "\n".join(existing[:10]) + ("\n…" if len(existing) > 10 else "")
+        answer = QMessageBox.question(
+            self,
+            "Replace existing files?",
+            f"{len(existing)} file(s) already exist and will be replaced:\n\n{shown}",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        return answer == QMessageBox.StandardButton.Yes
+
+    def _confirm_text_export_folder(self, targets: list[tuple[str, Path]]) -> bool:
+        """Warn when text files would land in the input folder, where the next run reads them."""
+        input_dir = self._config_panel.get_input_dir()
+        # With an explicit file selection a run reads only those files.
+        if not input_dir or self._config_panel.get_selected_files():
+            return True
+        # Folder mode always scans subfolders (see ConfigPanel.to_config).
+        if not any(
+            self._app_service.is_in_input_folder(out.parent, Path(input_dir), recursive=True)
+            for _sid, out in targets
+        ):
+            return True
+        answer = QMessageBox.question(
+            self,
+            "Save into the input folder?",
+            "Text files in the input folder are read as new documents the next time you run.\n\n"
+            "Save here anyway?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        return answer == QMessageBox.StandardButton.Yes
+
+    def _export_docx(self, targets: list[tuple[str, Path]], errors: list[str]) -> None:
+        docx_format = str(self._config_panel.get_settings_dict().get("docx_format", "table"))
         for source_id, out_path in targets:
             _sid, _name, preview_img, raw_txt, corr_txt, _eval = (
                 self._results_table.entry_for_source(source_id)
@@ -1233,7 +1325,78 @@ class MainWindow(QMainWindow):
         if errors:
             QMessageBox.warning(
                 self,
-                "Export DOCX",
+                "Export Word Document",
+                "Could not export the following file(s):\n\n" + "\n".join(errors),
+            )
+
+    def _export_text(
+        self, targets: list[tuple[str, Path]], errors: list[str], *, anonymize: bool
+    ) -> None:
+        """Write the extracted text of each target; anonymizing is slow, so it runs off-thread."""
+        service = self._app_service
+        language = str(self._config_panel.to_dict().get("language") or "English")
+        anon_config = self._config_panel.build_anonymizer_config() if anonymize else None
+        # Every input of the run is protected, not just the row's own file: exporting
+        # ``essay.png`` as ``essay.txt`` must not replace an ``essay.txt`` that is an input too.
+        protected = [Path(sid) for sid in self._results_table.queued_source_ids()]
+        jobs: list[tuple[Path, str, Path, str]] = []
+        for source_id, out_path in targets:
+            raw_txt = self._results_table.entry_for_source(source_id)[3]
+            if not raw_txt.strip():
+                errors.append(f"{Path(source_id).name}: No OCR text — run the pipeline first.")
+            else:
+                text_format = self._results_table.text_format_for_source(source_id)
+                jobs.append((Path(source_id), raw_txt, out_path, text_format))
+        if not jobs:
+            self._show_text_export_errors(errors)
+            return
+        preflight_errors = list(errors)
+
+        def work() -> _TextExportOutcome:
+            if anonymize:
+                # Fails once, up front, when spaCy or its model is missing.
+                service.warm_up_anonymizer(language, anon_config)
+            written: list[Path] = []
+            failed = list(preflight_errors)
+            for source, raw_txt, out_path, text_format in jobs:
+                try:
+                    service.export_text(
+                        source,
+                        raw_txt,
+                        out_path,
+                        text_format=text_format,
+                        anonymize=anonymize,
+                        language=language,
+                        anonymizer_config=anon_config,
+                        protected=protected,
+                    )
+                    written.append(out_path)
+                except Exception as exc:  # noqa: BLE001  # NER/IO errors vary; collect per-file and continue the batch
+                    failed.append(f"{source.name}: {exc}")
+            return _TextExportOutcome(written, failed)
+
+        def done(result: object, error: BaseException | None) -> None:
+            self._text_export_running = False
+            if error is not None:
+                message = (_spacy_problem(error) if anonymize else None) or str(error)
+                if preflight_errors:
+                    message += "\n\nAlso skipped:\n" + "\n".join(preflight_errors)
+                QMessageBox.warning(self, "Export Text", message)
+                return
+            if not isinstance(result, _TextExportOutcome):
+                return
+            for out_path in result.written:
+                self._log.append_text(f"Text saved: {out_path}\n")
+            self._show_text_export_errors(result.failed)
+
+        self._text_export_running = True
+        run_in_background(work, done, owner=self)
+
+    def _show_text_export_errors(self, errors: list[str]) -> None:
+        if errors:
+            QMessageBox.warning(
+                self,
+                "Export Text",
                 "Could not export the following file(s):\n\n" + "\n".join(errors),
             )
 

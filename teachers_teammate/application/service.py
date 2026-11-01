@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 import dataclasses
 import importlib.util
 from pathlib import Path
 import shutil
 import threading
 import time
+from typing import TYPE_CHECKING
 import uuid
 
 from ..config import Config, OcrConfig
@@ -76,6 +77,9 @@ from .data_flow import describe_data_flow, llm_location, ocr_location, ocr_refus
 from .formatting import TextFormatter
 from .model_recommendations import ModelRecommendationService
 
+if TYPE_CHECKING:
+    from ..infrastructure.anonymizer import SpacyAnonymizer
+
 
 @dataclasses.dataclass(frozen=True)
 class RequirementIssue:
@@ -130,7 +134,10 @@ class ProcessingApplicationService:
         # Used only to keep preprocess_preview() in sync with a non-default factory a
         # caller's OCRPipeline was built with; pipeline runs configure their own copy.
         self._component_factory = component_factory or PipelineComponentFactory()
-        self._anonymizer_cache: dict[tuple, object] = {}
+        self._anonymizer_cache: dict[tuple, SpacyAnonymizer] = {}
+        # A spaCy pipeline is not safe to share between threads (a privacy preview and a
+        # background text export may run at once), so building and running are serialized.
+        self._anonymizer_lock = threading.RLock()
         self._model_cache: dict[str, tuple[float, list[str]]] = {}
         # Owns hardware detection and model classification (and their caches).
         self._recommendations = ModelRecommendationService(
@@ -408,6 +415,36 @@ class ProcessingApplicationService:
             source_path, ocr, tmp_dir, self._component_factory.build_preprocessor
         )
 
+    def warm_up_anonymizer(self, language: str, config: object | None = None) -> None:
+        """Load (and cache) the anonymizer for *language* so a missing model shows up early.
+
+        Raises:
+            ImportError: spacy is not installed.
+            OSError: a required spacy language model is not downloaded.
+        """
+        with self._anonymizer_lock:
+            self._anonymizer(language, config)
+
+    def _anonymizer(self, language: str, config: object | None) -> SpacyAnonymizer:
+        """Return the cached anonymizer for *language*/*config*; callers hold the lock."""
+        from ..infrastructure.anonymizer import SpacyAnonymizer  # noqa: PLC0415
+
+        anon_config: AnonymizerConfig = (
+            config if isinstance(config, AnonymizerConfig) else AnonymizerConfig()
+        )
+        cache_key = (language, anon_config)
+        cached = self._anonymizer_cache.get(cache_key)
+        if cached is None:
+            cached = SpacyAnonymizer(language, anon_config)
+            self._anonymizer_cache[cache_key] = cached
+        return cached
+
+    def _anonymize(
+        self, text: str, language: str, config: object | None
+    ) -> tuple[str, dict[str, str]]:
+        with self._anonymizer_lock:
+            return self._anonymizer(language, config).anonymize(text)
+
     def anonymize_preview(
         self,
         text: str,
@@ -426,22 +463,12 @@ class ProcessingApplicationService:
             ImportError: spacy is not installed.
             OSError: a required spacy language model is not downloaded.
         """
-        from ..infrastructure.anonymizer import SpacyAnonymizer  # noqa: PLC0415
-
-        anon_config: AnonymizerConfig = (
-            config if isinstance(config, AnonymizerConfig) else AnonymizerConfig()
-        )
-        cache_key = (language, anon_config)
-        cached = self._anonymizer_cache.get(cache_key)
-        if cached is None:
-            cached = SpacyAnonymizer(language, anon_config)
-            self._anonymizer_cache[cache_key] = cached
-        assert isinstance(cached, SpacyAnonymizer)
-        return cached.anonymize(text)
+        return self._anonymize(text, language, config)
 
     def clear_anonymizer_cache(self) -> None:
         """Evict all cached SpacyAnonymizer instances."""
-        self._anonymizer_cache.clear()
+        with self._anonymizer_lock:
+            self._anonymizer_cache.clear()
 
     def export_docx(
         self,
@@ -471,6 +498,53 @@ class ProcessingApplicationService:
             source_image=preview_img or None,
             text_format=TextFormatter.normalize(text_format),
         )
+
+    def export_text(
+        self,
+        source: Path,
+        raw_text: str,
+        out_path: Path,
+        *,
+        text_format: str = "plain",
+        anonymize: bool = False,
+        language: str = "English",
+        anonymizer_config: object | None = None,
+        protected: Collection[Path] = (),
+    ) -> None:
+        """Write the extracted text of *source* to *out_path* as a UTF-8 text file.
+
+        Markdown is written as plain text.  With *anonymize* the personal data is replaced
+        by placeholders (``[PERSON_1]``, ...) using the local anonymizer, on the text in its
+        stored notation (as the pipeline and the privacy preview do); the placeholder mapping
+        is dropped, so the original names cannot be recovered from the file.
+
+        Args:
+            protected: Further documents that must not be overwritten (the other inputs of
+                the same export); *source* itself is always protected.
+
+        Raises:
+            ValueError: *out_path* is *source* or one of *protected* (an input document).
+            ImportError: *anonymize* is set and spacy is not installed.
+            OSError: the file cannot be written, or a required spacy model is not downloaded.
+        """
+        target = out_path.resolve()
+        if target == source.resolve() or target in {p.resolve() for p in protected}:
+            raise ValueError(
+                f"{out_path.name} is an input document and would be overwritten; "
+                "choose another name or folder."
+            )
+        text = raw_text
+        if anonymize:
+            text, _mapping = self.anonymize_preview(text, language, anonymizer_config)
+        text = TextFormatter.plain_text(text, text_format)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_text(text, encoding="utf-8")
+
+    @staticmethod
+    def is_in_input_folder(folder: Path, input_dir: Path, *, recursive: bool) -> bool:
+        """Return whether files written to *folder* would be found as inputs of *input_dir*."""
+        folder, input_dir = folder.resolve(), input_dir.resolve()
+        return folder == input_dir or (recursive and input_dir in folder.parents)
 
     def resolve_preview_tmp_dir(self) -> Path:
         """Return a fresh unique temporary directory for preview preprocessing."""

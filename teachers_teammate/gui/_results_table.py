@@ -29,6 +29,7 @@ from ._constants import (
     _COLOUR_OCR_BAR,
     _COLOUR_OK,
 )
+from ._export_menu import build_export_menu
 from ._image_utils import load_pixmap
 from ._types import FileDoneEvent, PreprocessInfo, StageStatus
 
@@ -86,7 +87,7 @@ class ResultsTable(QTableWidget):
     preview_requested = Signal(QPixmap, str, str, str)
     stage_run_requested = Signal(list, str)
     privacy_preview_requested = Signal(str, str)  # source_id, raw_txt
-    export_docx_requested = Signal(list)  # list[str] source_ids
+    export_requested = Signal(list, object)  # list[str] source_ids, ExportKind
 
     _COL_FILE = 0
     _COL_OCR = 1
@@ -530,7 +531,8 @@ class ResultsTable(QTableWidget):
         rerun_correction = menu.addAction("Re-run Proofreading")
         rerun_evaluation = menu.addAction("Run Content Review")
         menu.addSeparator()
-        export_docx = menu.addAction("Export as Word Document…")
+        export_menu, export_kinds = build_export_menu(menu)
+        menu.addMenu(export_menu)
         menu.addSeparator()
         privacy_preview = menu.addAction("Personal Information Preview…")
 
@@ -543,8 +545,8 @@ class ResultsTable(QTableWidget):
             self.stage_run_requested.emit(selected_source_ids, "correction")
         elif action is rerun_evaluation:
             self.stage_run_requested.emit(selected_source_ids, "evaluation")
-        elif action is export_docx:
-            self.export_docx_requested.emit(selected_source_ids)
+        elif action in export_kinds:
+            self.export_requested.emit(selected_source_ids, export_kinds[action])
         elif action is privacy_preview:
             first_id = selected_source_ids[0]
             first_row = self._row_by_source.get(first_id)

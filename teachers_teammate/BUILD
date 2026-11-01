@@ -91,6 +91,7 @@ _GUI_SRCS = [
     "gui/_data_flow_summary.py",
     "gui/_dependency_guard_dialog.py",
     "gui/_downloads_dialog.py",
+    "gui/_export_menu.py",
     "gui/_formatted_text.py",
     "gui/_help_dialog.py",
     "gui/_hardware_profile_selector.py",

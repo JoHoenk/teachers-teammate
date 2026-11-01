@@ -12,7 +12,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Set up Bazel cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.cache/bazel
           key: bazel-test-${{ runner.os }}-${{ hashFiles('MODULE.bazel', 'requirements_test_lock.txt') }}

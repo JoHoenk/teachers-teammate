@@ -256,7 +256,7 @@ Use the preview tool in **Settings → Text Recognition…** to compare methods 
 
 ## Anonymization before proofreading
 
-When proofreading is enabled, the raw OCR text is sent to an AI model. If documents contain personal information (PII) — names, email addresses, phone numbers, or IBANs — you can enable anonymization to replace that information with stand-ins before it leaves your machine.
+When proofreading is enabled, the raw OCR text is sent to an AI model. If documents contain personal information (PII) — names, email addresses, phone numbers, IBANs, street addresses, or dates — you can enable anonymization to replace that information with stand-ins before it leaves your machine.
 
 :::{warning} Anonymization is not a guarantee
 The anonymizer is a detection aid, not a certified data-protection tool. AI name-detection models miss names they were not trained on, pattern rules do not cover every possible format, and OCR errors can cause personal information to go undetected. Always review the anonymized output before sending sensitive documents to a cloud provider. You remain responsible for compliance with applicable data-protection regulations (such as GDPR).
@@ -270,6 +270,16 @@ After OCR, the anonymizer scans the text for PII and replaces each detected item
 | Email addresses | Pattern matching (regex) | `alice@example.com` |
 | Phone numbers | Pattern matching (regex) | `+49 30 12345`, `(030) 9876 543` |
 | IBANs | Pattern matching (regex) | `DE89 3704 0044 0532 0130 00` |
+| Street addresses (German formats) | Pattern matching (regex) | `Hauptstraße 12`, `Konrad-Adenauer-Straße 5`, `10115 Berlin` |
+| Dates | Pattern matching (regex) | `01.02.2010`, `2010-02-01`, `5. März 2024`, `March 5, 2024` |
+
+### Pattern rules and their limits
+
+The street and postcode patterns only know German formats. A street needs a house number and a street word (`…straße`, `…weg`, `…platz`, `Straße`, `Weg`, …, optionally after `St.` or `Sankt`); a postcode is only recognised at the start of a line or after a comma, `in` or `D-`. Dates are recognised as numbers (`01.02.2010`, `1/2/10`, `2010-02-01`) and with a German or English month name (`5. März 2024`, `March 5, 2024`, `5th March 2024`); a month and year without a day (`März 2024`) is left alone.
+
+Because the proofreading and the content review both receive the anonymized text, every replaced date is hidden from them. In a history essay a year such as `9.11.1989` is replaced too. A section number such as `Aufgabe 1.2.10` can also be read as a date. If that gets in the way, remove the `DATE` patterns in **Advanced Settings → Anonymizer Settings… → Regex Patterns**.
+
+Your pattern list is only stored once you change it. Settings saved while the built-in list was still IBAN, email and phone switch to the current built-in list automatically. Proofread text that already exists is kept; the *anonymized text* files and exports always use the patterns that are current when you create them.
 
 ### spaCy and language models
 

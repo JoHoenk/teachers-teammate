@@ -92,7 +92,9 @@ def compute_ocr_config_hash(config: Config, ocr_prompt: str, source: Path) -> st
 def _anonymization_fingerprint(config: Config) -> tuple[str, ...]:
     """Return the hash parts for anonymisation: correction and evaluation both see its text.
 
-    Empty when off, so results cached before the flag was hashed stay valid.
+    Empty when off, so results cached before the flag was hashed stay valid.  The patterns and
+    models are left out on purpose: they only change what is replaced and put back again, and
+    the anonymized text files are rebuilt from the OCR text with the current settings every run.
     """
     return ("anonymized",) if config.anonymization_enabled else ()
 

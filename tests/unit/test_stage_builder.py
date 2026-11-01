@@ -209,3 +209,46 @@ def test_build_text_anonymizer_reuses_shared_anonymizer(tmp_path: Path) -> None:
 
     assert builder.build_text_anonymizer(shared) is shared
     factory.build_anonymizer.assert_not_called()
+
+
+def test_anonymizer_receives_models_and_current_default_patterns(tmp_path: Path) -> None:
+    """
+    Given  a config with primary and secondary models and the earlier IBAN / EMAIL / PHONE list
+    When   the stage anonymizer and the anonymized-text anonymizer are built
+    Then   both get the models and the current default patterns instead of the old list
+    """
+    from teachers_teammate.infrastructure.anonymizer import (  # noqa: PLC0415
+        _LEGACY_DEFAULT_PATTERNS,
+        DEFAULT_PATTERNS,
+    )
+
+    factory = PipelineComponentFactory(build_anonymizer=MagicMock())
+    config = make_config(
+        tmp_path,
+        text_anonymized_enabled=True,
+        anonymizer_primary_model="de_core_news_sm",
+        anonymizer_secondary_model="xx_ent_wiki_sm",
+        anonymizer_patterns=list(_LEGACY_DEFAULT_PATTERNS),
+    )
+
+    StageBuilder(config=config, factory=factory).build_text_anonymizer()
+
+    language, anon_config = factory.build_anonymizer.call_args.args
+    assert language == config.language
+    assert anon_config.primary_model == "de_core_news_sm"
+    assert anon_config.secondary_model == "xx_ent_wiki_sm"
+    assert anon_config.patterns == tuple(DEFAULT_PATTERNS)
+
+
+def test_anonymizer_keeps_custom_and_empty_pattern_lists(tmp_path: Path) -> None:
+    """
+    Given  a config with a custom pattern list, and one with an empty list
+    When   the anonymizer is built for each
+    Then   the custom list is kept and the empty list stays empty (no regex anonymization)
+    """
+    factory = PipelineComponentFactory(build_anonymizer=MagicMock())
+
+    for patterns in ([("ID", r"\d+")], []):
+        config = make_config(tmp_path, text_anonymized_enabled=True, anonymizer_patterns=patterns)
+        StageBuilder(config=config, factory=factory).build_text_anonymizer()
+        assert factory.build_anonymizer.call_args.args[1].patterns == tuple(patterns)

@@ -77,6 +77,7 @@ DEFAULTS: dict[str, Any] = {
     "text_enabled": False,
     "text_anonymized_enabled": False,
     # ── Anonymizer ────────────────────────────────────────────────────────────
+    "anonymizer_primary_model": None,
     "anonymizer_secondary_model": None,
     # ── Hardware recommendations ──────────────────────────────────────────────
     # "auto" | "cpu" | "8gb" | "16gb" — GUI-only; the pipeline never reads it.
@@ -204,8 +205,11 @@ class Config:
     text_anonymized_enabled: bool = DEFAULTS["text_anonymized_enabled"]
 
     # ── Anonymizer ───────────────────────────────────────────────────────────
+    # None = derive the spaCy model from the document language ("Auto")
+    anonymizer_primary_model: str | None = None
     anonymizer_secondary_model: str | None = None
-    # None = use DEFAULT_PATTERNS from anonymizer module; [] = no regex patterns
+    # None (or the earlier built-in list) = current DEFAULT_PATTERNS from the anonymizer module;
+    # [] = no regex patterns
     anonymizer_patterns: list[tuple[str, str]] | None = None
 
     # ── Temperature ──────────────────────────────────────────────────────────
@@ -302,6 +306,7 @@ def load_config_file(path: Path) -> dict:
         "docx_enabled",
         "text_enabled",
         "text_anonymized_enabled",
+        "anonymizer_primary_model",
         "anonymizer_secondary_model",
         "anonymizer_patterns",
         "ocr_temperature",
@@ -343,7 +348,8 @@ def load_config_file(path: Path) -> dict:
             for p in raw_pats
         ):
             print(
-                "WARNING: anonymizer_patterns must be a list of [tag, pattern] string pairs — ignored.",
+                "WARNING: anonymizer_patterns must be a list of [tag, pattern] string pairs"
+                " — ignored.",
                 file=sys.stderr,
             )
             del result["anonymizer_patterns"]

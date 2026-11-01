@@ -33,6 +33,9 @@ from ..infrastructure.anonymizer import (
 
 # ── Re-exports for GUI/CLI use — keeps infrastructure types out of adapter layers ──
 from ..infrastructure.anonymizer import AnonymizerConfig as AnonymizerConfig  # noqa: PLC0414
+from ..infrastructure.anonymizer import (
+    resolve_patterns as resolve_anonymizer_patterns,  # noqa: F401
+)
 from ..infrastructure.file_discovery import FileDiscovery
 from ..infrastructure.gpu_detector import GpuInfo as GpuInfo  # noqa: PLC0414
 from ..infrastructure.llm_factory import (
@@ -753,8 +756,9 @@ class ProcessingApplicationService:
         return RunPreflight()
 
     def check_stage_requirements(self, config: Config, stage: str) -> list[RequirementIssue]:
-        """Return unmet requirements for enabling *stage* ('correction', 'evaluation', 'anonymizer').
+        """Return unmet requirements for enabling *stage*.
 
+        *stage* is 'correction', 'evaluation' or 'anonymizer'.
         Empty list means all requirements are satisfied.
         """
         issues: list[RequirementIssue] = []
@@ -849,7 +853,8 @@ class ProcessingApplicationService:
             import spacy.util  # noqa: PLC0415
 
             return sorted(spacy.util.get_installed_models())
-        except Exception:  # noqa: BLE001  # spaCy may be absent or its model registry may fail; degrade to an empty list
+        except Exception:  # noqa: BLE001
+            # spaCy may be absent or its model registry may fail; degrade to an empty list
             return []
 
     def get_installation_status(
@@ -901,7 +906,8 @@ class ProcessingApplicationService:
                     normalize_tag(name)
                     for name in self.list_provider_models("ollama", base_url=ollama_url)
                 }
-            except Exception:  # noqa: BLE001  # Ollama may be unreachable; treat as no models pulled
+            except Exception:  # noqa: BLE001
+                # Ollama may be unreachable; treat as no models pulled
                 pulled = set()
             for model in ollama_models:
                 result[f"ollama:{model}"] = normalize_tag(model) in pulled

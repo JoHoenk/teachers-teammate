@@ -57,6 +57,10 @@ _COMMON: list[str] = [
     "--hidden-import",
     "teachers_teammate.infrastructure.providers.mistral",
     "--hidden-import",
+    "teachers_teammate.infrastructure.providers.mistral_eu",
+    "--hidden-import",
+    "teachers_teammate.infrastructure.providers._mistral_common",
+    "--hidden-import",
     "teachers_teammate.infrastructure.providers.cohere",
     # Bundle pip so the frozen binary can re-invoke itself in pip-dispatch mode
     # for the in-app addon installer.

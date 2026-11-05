@@ -57,12 +57,12 @@ _ADDON_PACKAGES: dict[str, list[str]] = {
     ADDON_AMD: ["pyamdgpuinfo"],
     ADDON_TESSERACT: ["pytesseract>=0.3"],
     # LangChain packages — not bundled by PyInstaller; installed at runtime via Downloads.
-    ADDON_LLM_CORE: ["langchain-core>=0.3"],
+    ADDON_LLM_CORE: ["langchain-core>=1.4.7"],
     ADDON_LLM_OLLAMA: ["langchain-ollama>=0.2"],
     ADDON_LLM_OPENAI: ["langchain-openai>=0.2"],
     ADDON_LLM_ANTHROPIC: ["langchain-anthropic>=0.1"],
     ADDON_LLM_GOOGLE: ["langchain-google-genai>=2.0"],
-    ADDON_LLM_MISTRAL: ["langchain-mistralai>=0.1"],
+    ADDON_LLM_MISTRAL: ["langchain-mistralai>=1.1"],
     ADDON_LLM_COHERE: ["langchain-cohere>=0.1"],
 }
 

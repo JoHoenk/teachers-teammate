@@ -73,5 +73,5 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=["teachers_teammate/assets/teachers_teammate_icon.png"],
+    icon=["/home/jochen/git/teachers-teammate/teachers_teammate/assets/teachers_teammate_icon.png"],
 )

@@ -20,6 +20,7 @@ _DEFAULT_MODELS: dict[str, dict[str, str]] = {
         "anthropic": "claude-3-haiku-20240307",
         "google": "gemini-2.0-flash",
         "mistral": "mistral-small-latest",
+        "mistral_eu": "mistral-small-latest",
         "cohere": "command-r-plus",
     },
     "evaluation": {
@@ -28,6 +29,7 @@ _DEFAULT_MODELS: dict[str, dict[str, str]] = {
         "anthropic": "claude-3-haiku-20240307",
         "google": "gemini-2.0-flash",
         "mistral": "mistral-small-latest",
+        "mistral_eu": "mistral-small-latest",
         "cohere": "command-r-plus",
     },
 }

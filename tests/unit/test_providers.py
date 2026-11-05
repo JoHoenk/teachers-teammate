@@ -7,8 +7,11 @@ so newly added providers are automatically covered without any changes here.
 from __future__ import annotations
 
 import importlib
+import io
+import json
 from pathlib import Path
 from types import ModuleType
+import urllib.error
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -91,10 +94,18 @@ def test_all_expected_providers_are_present() -> None:
     """
     Given  the providers directory
     When   all .py module names are collected
-    Then   the six expected provider modules (ollama, openai, anthropic, google,
-           mistral, cohere) are all present
+    Then   the expected provider modules (ollama, openai, anthropic, google, mistral,
+           mistral_eu, cohere) are all present
     """
-    for expected in ("ollama", "openai", "anthropic", "google", "mistral", "cohere"):
+    for expected in (
+        "ollama",
+        "openai",
+        "anthropic",
+        "google",
+        "mistral",
+        "mistral_eu",
+        "cohere",
+    ):
         assert expected in _PROVIDER_NAMES, f"Provider module '{expected}.py' not found"
 
 
@@ -212,6 +223,7 @@ def test_ollama_create_returns_base_chat_model() -> None:
         ("anthropic", "langchain_anthropic"),
         ("google", "langchain_google_genai"),
         ("mistral", "langchain_mistralai"),
+        ("mistral_eu", "langchain_mistralai"),
         ("cohere", "langchain_cohere"),
     ],
 )
@@ -232,53 +244,140 @@ def test_uninstalled_provider_create_raises_runtime_error(
             mod.create("some-model")
 
 
-# ── list_models() — mistral ───────────────────────────────────────────────
+# ── list_models() / create() — mistral (global + EU) ──────────────────────
+
+_MISTRAL_PROVIDERS = [
+    ("mistral", "https://api.mistral.ai/v1"),
+    ("mistral_eu", "https://api.eu.mistral.ai/v1"),
+]
 
 
-def test_mistral_list_models_returns_api_models_when_sdk_available() -> None:
+_URLOPEN = "teachers_teammate.infrastructure.providers._mistral_common.urllib.request.urlopen"
+
+
+def _models_response(payload: object) -> MagicMock:
+    """A urlopen() result (context manager) whose body is *payload* as JSON."""
+    body = io.BytesIO(json.dumps(payload).encode())
+    response = MagicMock()
+    response.__enter__.return_value = body
+    return response
+
+
+@pytest.mark.parametrize(("name", "base_url"), _MISTRAL_PROVIDERS)
+def test_mistral_list_models_queries_own_endpoint_and_keeps_chat_models(
+    name: str, base_url: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """
-    Given  the mistralai SDK is available and client.models.list() succeeds
-    When   mistral.list_models() is called
-    Then   the model IDs from the API response are returned (sorted)
+    Given  an API key and an endpoint answering with chat, embedding and archived models
+    When   list_models() of the global or the EU provider is called
+    Then   that provider's own /models URL is asked, with the key as bearer token, and only
+           the non-archived chat models are returned, sorted
     """
-    import sys  # noqa: PLC0415
+    monkeypatch.setenv("MISTRAL_API_KEY", "k-test")
+    response = _models_response(
+        {
+            "data": [
+                {"id": "mistral-small-latest", "capabilities": {"completion_chat": True}},
+                {"id": "mistral-embed", "capabilities": {"completion_chat": False}},
+                {"id": "old-model", "archived": True, "capabilities": {"completion_chat": True}},
+                {"id": "codestral-latest"},
+            ]
+        }
+    )
+    with patch(_URLOPEN, return_value=response) as urlopen:
+        result = _load(name).list_models()
 
-    fake_model = MagicMock()
-    fake_model.id = "mistral-large-latest"
-    fake_result = MagicMock()
-    fake_result.data = [fake_model]
-
-    fake_client = MagicMock()
-    fake_client.models.list.return_value = fake_result  # pylint: disable=no-member
-
-    fake_mistral_mod = MagicMock()
-    fake_mistral_mod.Mistral.return_value = fake_client
-
-    with patch.dict(sys.modules, {"mistralai": fake_mistral_mod}):
-        mod = _load("mistral")
-        result = mod.list_models()
-
-    assert result == ["mistral-large-latest"]
+    request = urlopen.call_args.args[0]
+    assert result == ["codestral-latest", "mistral-small-latest"]
+    assert request.full_url == f"{base_url}/models"
+    assert request.get_header("Authorization") == "Bearer k-test"
 
 
-def test_mistral_list_models_falls_back_to_static_on_exception() -> None:
+@pytest.mark.parametrize("name", [n for n, _ in _MISTRAL_PROVIDERS])
+def test_mistral_list_models_without_key_returns_static_list_without_network(
+    name: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """
-    Given  the mistralai SDK raises an exception (e.g. auth error)
-    When   mistral.list_models() is called
+    Given  no MISTRAL_API_KEY is set
+    When   list_models() is called
+    Then   the static fallback list is returned and no request is made
+    """
+    monkeypatch.delenv("MISTRAL_API_KEY", raising=False)
+    with patch(_URLOPEN) as urlopen:
+        result = _load(name).list_models()
+
+    assert result == list(_load(name).PROVIDER_INFO["models"])
+    urlopen.assert_not_called()
+
+
+@pytest.mark.parametrize("name", [n for n, _ in _MISTRAL_PROVIDERS])
+@pytest.mark.parametrize("failure", ["http_error", "bad_json", "wrong_shape", "empty"])
+def test_mistral_list_models_falls_back_to_static_on_failure(
+    name: str, failure: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """
+    Given  an API key, and the models request fails, returns invalid JSON, an unexpected
+           shape or lists no models
+    When   list_models() is called
     Then   the static fallback list from PROVIDER_INFO is returned
     """
+    monkeypatch.setenv("MISTRAL_API_KEY", "k-test")
+    kwargs: dict = {}
+    if failure == "http_error":
+        kwargs["side_effect"] = urllib.error.HTTPError("u", 401, "Unauthorized", None, None)  # ty: ignore[invalid-argument-type]
+    elif failure == "bad_json":
+        response = MagicMock()
+        response.__enter__.return_value = io.BytesIO(b"<html>")
+        kwargs["return_value"] = response
+    elif failure == "wrong_shape":
+        kwargs["return_value"] = _models_response(["not", "a", "dict"])
+    else:
+        kwargs["return_value"] = _models_response({"data": []})
+    with patch(_URLOPEN, **kwargs):
+        result = _load(name).list_models()
+
+    assert result == list(_load(name).PROVIDER_INFO["models"])
+
+
+@pytest.mark.parametrize(("name", "base_url"), _MISTRAL_PROVIDERS)
+def test_mistral_create_passes_explicit_endpoint_and_seed(
+    name: str, base_url: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """
+    Given  langchain_mistralai is installed (mocked) and MISTRAL_BASE_URL points elsewhere
+    When   create() of the global or the EU provider is called
+    Then   ChatMistralAI gets the provider's own endpoint (never the environment's), the
+           model, the temperature and a fixed random_seed
+    """
     import sys  # noqa: PLC0415
 
-    fake_mistral_mod = MagicMock()
-    fake_mistral_mod.Mistral.side_effect = Exception("auth error")
+    monkeypatch.setenv("MISTRAL_BASE_URL", "https://elsewhere.example/v1")
+    fake_mod = MagicMock()
+    with patch.dict(sys.modules, {"langchain_mistralai": fake_mod}):
+        _load(name).create("mistral-small-latest", temperature=0.2)
 
-    with patch.dict(sys.modules, {"mistralai": fake_mistral_mod}):
-        mod = _load("mistral")
-        result = mod.list_models()
+    kwargs = fake_mod.ChatMistralAI.call_args.kwargs
+    assert kwargs["endpoint"] == base_url
+    assert kwargs["model"] == "mistral-small-latest"
+    assert kwargs["temperature"] == 0.2
+    assert isinstance(kwargs["random_seed"], int)
 
-    from teachers_teammate.infrastructure.providers.mistral import PROVIDER_INFO  # noqa: PLC0415
 
-    assert result == list(PROVIDER_INFO["models"])
+def test_mistral_providers_share_key_and_differ_in_display_name() -> None:
+    """
+    Given  the global and the EU Mistral providers
+    When   their PROVIDER_INFO is compared
+    Then   they use the same API key variable and models, are both online services, and the
+           EU one is named so the region is visible wherever the app says where data goes
+    """
+    glob, eu = _load("mistral").PROVIDER_INFO, _load("mistral_eu").PROVIDER_INFO
+
+    assert glob["env_key"] == eu["env_key"] == "MISTRAL_API_KEY"
+    assert glob["models"] == eu["models"]
+    assert not glob.get("self_hosted")
+    assert not eu.get("self_hosted")
+    assert "EU" in eu["display_name"]
+    assert "EU" not in glob["display_name"]
 
 
 # ── list_models() — google ────────────────────────────────────────────────
@@ -372,7 +471,6 @@ def test_openai_list_models_returns_chat_models_from_api() -> None:
     [
         ("anthropic", "langchain_anthropic", "ChatAnthropic"),
         ("google", "langchain_google_genai", "ChatGoogleGenerativeAI"),
-        ("mistral", "langchain_mistralai", "ChatMistralAI"),
         ("cohere", "langchain_cohere", "ChatCohere"),
     ],
 )

@@ -60,6 +60,7 @@ def _install_hint(service: _SettingsAppService, extra: str, packages: list[str])
 
 _PROVIDER_EXTRA: dict[str, tuple[str, list[str]]] = {
     "mistral": ("providers", ["langchain_mistralai"]),
+    "mistral_eu": ("providers", ["langchain_mistralai"]),
     "cohere": ("providers", ["langchain_cohere"]),
 }
 
@@ -1121,11 +1122,14 @@ class SettingsDialog(QDialog):
         qs.beginGroup("credentials")
         stored_keys = set(qs.childKeys())
         qs.endGroup()
+        shown: set[str] = set()
         for p in self._app_service.list_providers():
             info = self._app_service.get_provider_info(p)
             env_key: str = info.get("env_key", "")
-            if not env_key:
+            # Providers can share one key (Mistral global and EU): one row is enough.
+            if not env_key or env_key in shown:
                 continue
+            shown.add(env_key)
             value = os.environ.get(env_key, "")
             if not value:
                 qs2 = QSettings("TeachersTeammate", "TeachersTeammate")

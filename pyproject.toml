@@ -25,13 +25,12 @@ dependencies = [
 
 [project.optional-dependencies]
 llm = [
-    "langchain-core>=0.3",
+    "langchain-core>=1.4.7",
     "langchain-ollama>=0.2",
     "langchain-openai>=0.2",
     "langchain-anthropic>=0.1",
     "langchain-google-genai>=2.0",
-    "langchain-mistralai>=0.1",
-    "mistralai>=1.0",
+    "langchain-mistralai>=1.1",
     "langchain-cohere>=0.1",
 ]
 privacy = [
@@ -203,7 +202,6 @@ ignored-modules = [
     "langchain_google_genai",
     "langchain_mistralai",
     "langchain_cohere",
-    "mistralai",
     "openai",
     "google.generativeai",
     "paddle",

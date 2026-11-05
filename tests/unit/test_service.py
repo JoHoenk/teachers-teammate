@@ -293,6 +293,7 @@ def test_check_connection_provider_ollama_success(monkeypatch) -> None:
         ("anthropic", "ANTHROPIC_API_KEY"),
         ("google", "GOOGLE_API_KEY"),
         ("mistral", "MISTRAL_API_KEY"),
+        ("mistral_eu", "MISTRAL_API_KEY"),
         ("cohere", "COHERE_API_KEY"),
     ],
 )

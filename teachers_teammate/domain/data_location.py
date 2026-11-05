@@ -184,6 +184,11 @@ class DataFlow:
         )
 
     @property
+    def outbound_summary(self) -> str:
+        """The steps that leave this computer as one line, for a list of remembered answers."""
+        return "; ".join(stage.summary for stage in self.outbound)
+
+    @property
     def advice(self) -> tuple[Advice, ...]:
         """What the user can still do to keep more on this computer."""
         tips: list[Advice] = []
@@ -201,3 +206,34 @@ class DataFlow:
     def stage(self, name: str) -> DataFlowStage | None:
         """Return the step called *name*, or ``None`` when it is not part of the run."""
         return next((s for s in self.stages if s.stage == name), None)
+
+
+def describe_fingerprint(fingerprint: str) -> str:
+    """Return a readable line for a stored :attr:`DataFlow.fingerprint`.
+
+    Answers remembered by an earlier version kept only the fingerprint, which no person can
+    read (``correction:online:Mistral::0``).  The line says the same as
+    :attr:`DataFlowStage.summary` for each step, minus what the fingerprint does not hold; a
+    part that does not parse is kept as it is, so nothing is ever hidden from the list.
+    """
+    lines: list[str] = []
+    for part in fingerprint.split("|"):
+        fields = part.split(":")
+        if len(fields) < 5:
+            lines.append(part)
+            continue
+        stage, where, service, host, hidden = (
+            fields[0],
+            fields[1],
+            fields[2],
+            fields[3:-1],
+            fields[-1],
+        )
+        try:
+            place = StageLocation(DataLocation(where), service, ":".join(host)).label
+        except ValueError:
+            lines.append(part)
+            continue
+        names = "names replaced where detected" if hidden == "1" else "names sent as written"
+        lines.append(f"{_STAGE_TITLES.get(stage, stage)}: {place} — {names}")
+    return "; ".join(lines)

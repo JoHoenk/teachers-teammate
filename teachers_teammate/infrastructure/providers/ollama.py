@@ -22,6 +22,9 @@ PROVIDER_INFO: dict = {
     "env_key": "",
     "needs_base_url": True,
     "can_list_models": True,
+    "package": {"module": "langchain_ollama", "pip": "langchain-ollama"},
+    # The app talks to Ollama directly; the LangChain connector is an optional extra.
+    "package_optional": True,
     "default_model": DEFAULT_WRITING_MODEL,
     "models": [],
 }

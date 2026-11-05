@@ -52,6 +52,7 @@ from ..domain.model_catalog import (
 from ._background import LatestTask
 from ._constants import _SPACY_MODEL_CHOICES as _SPACY_MODEL_DOWNLOAD_CHOICES
 from ._hardware_profile_selector import HardwareProfileSelector
+from ._model_guidance import PROVIDER_PREFIX
 from ._model_wording import (
     ADD_MODEL_NOTE,
     BEST_ALREADY_DOWNLOADED,
@@ -63,6 +64,7 @@ from ._model_wording import (
     abilities_text,
     compact_suitability_text,
     memory_text,
+    slow_text,
     suitability_text,
     too_large_confirmation,
     too_large_tooltip,
@@ -72,16 +74,6 @@ if TYPE_CHECKING:
     # Real type of the injected pull manager. Imported under TYPE_CHECKING only:
     # _main_window lazily imports this dialog, so a runtime import would be circular.
     from ._main_window import OllamaDownloadManager
-
-# provider_name → (importable_module, pip_package_name)
-_ALL_PROVIDER_PACKAGES: dict[str, tuple[str, str]] = {
-    "openai": ("langchain_openai", "langchain-openai"),
-    "anthropic": ("langchain_anthropic", "langchain-anthropic"),
-    "google": ("langchain_google_genai", "langchain-google-genai"),
-    "mistral": ("langchain_mistralai", "langchain-mistralai"),
-    "cohere": ("langchain_cohere", "langchain-cohere"),
-    "ollama": ("langchain_ollama", "langchain-ollama"),
-}
 
 # Tree group rows: group key → (label, catalog category or None for user models).
 _OLLAMA_GROUPS: dict[str, tuple[str, ModelCategory | None]] = {
@@ -103,16 +95,11 @@ _GPU_MODULE_NAMES: dict[str, str] = {
     "gpu:amd": "pyamdgpuinfo",
 }
 
-# provider_name → importable module name (for installation-status checking)
-_ALL_PROVIDER_MODULES: dict[str, str] = {
-    name: module for name, (module, _) in _ALL_PROVIDER_PACKAGES.items()
-}
-
 _PROVIDER_LABELS: dict[str, str] = {
     "openai": "OpenAI  (langchain-openai)",
     "anthropic": "Anthropic  (langchain-anthropic)",
     "google": "Google Gemini  (langchain-google-genai)",
-    "mistral": "Mistral  (langchain-mistralai)",
+    "mistral": "Mistral and Mistral (EU)  (langchain-mistralai)",
     "cohere": "Cohere  (langchain-cohere)",
     "ollama": "Ollama LangChain connector  (langchain-ollama)",
 }
@@ -138,7 +125,9 @@ def _detect_installed(
     """Probe every downloadable item and return what is installed (background task)."""
     spacy_models = [model_id for _, model_id in _SPACY_MODEL_DOWNLOAD_CHOICES]
     status = svc.get_installation_status(
-        provider_modules=_ALL_PROVIDER_MODULES,
+        provider_modules={
+            name: module for name, (module, _pip) in svc.list_provider_packages().items()
+        },
         spacy_models=spacy_models,
         gpu_packages=_GPU_MODULE_NAMES,
         ollama_models=list(models),
@@ -211,7 +200,14 @@ class DownloadsDialog(QDialog):
         self._ollama_url = ollama_url.strip() or DEFAULTS["ollama_url"]
         self._svc = app_service or ProcessingApplicationService()
         self._hardware_profile = hardware_profile
-        self._preselect = [tag for tag in preselect if tag]
+        self._preselect = [tag for tag in preselect if tag and not tag.startswith(PROVIDER_PREFIX)]
+        self._provider_packages = self._svc.list_provider_packages()
+        # "provider:<name>" asks for an LLM provider package, not an Ollama model.
+        self._preselect_providers = [
+            self._package_key(tag.removeprefix(PROVIDER_PREFIX))
+            for tag in preselect
+            if tag.startswith(PROVIDER_PREFIX)
+        ]
         self._detect_task = LatestTask(self)
         self._detect_running = False
         self._detect_again = False  # a pull finished while a detection was running
@@ -248,6 +244,8 @@ class DownloadsDialog(QDialog):
         tabs.addTab(self._build_spacy_tab(), "spaCy")
         tabs.addTab(self._build_gpu_tab(), "GPU Add-ons")
 
+        if self._preselect_providers:
+            start_tab = self.TAB_PROVIDERS
         if start_tab:
             tabs.setCurrentIndex(start_tab)
 
@@ -377,14 +375,33 @@ class DownloadsDialog(QDialog):
         layout = QVBoxLayout(content)
         group = QGroupBox("LLM Provider Packages")
         group_layout = QVBoxLayout(group)
-        for prov, (_, pip_pkg) in _ALL_PROVIDER_PACKAGES.items():
-            lbl = _PROVIDER_LABELS.get(prov, f"{prov}  ({pip_pkg})")
+        for prov, (_, pip_pkg) in self._provider_packages.items():
+            lbl = _PROVIDER_LABELS.get(prov) or f"{self._provider_name(prov)}  ({pip_pkg})"
             cb = QCheckBox(lbl)
-            self._dl_checkboxes[f"provider:{prov}"] = cb
+            self._dl_checkboxes[f"{PROVIDER_PREFIX}{prov}"] = cb
             group_layout.addWidget(cb)
         layout.addWidget(group)
         layout.addStretch(1)
         return self._scrolled(content)
+
+    def _package_key(self, provider: str) -> str:
+        """Return the checkbox key of the package *provider* needs.
+
+        Providers that share a package (Mistral and Mistral EU) have one checkbox, listed
+        under the first of them, so a request for the other one is mapped onto it.
+        """
+        if provider not in self._provider_packages:
+            package = self._svc.get_provider_info(provider).get("package")
+            pip = package.get("pip") if isinstance(package, dict) else None
+            for name, (_module, listed_pip) in self._provider_packages.items():
+                if pip is not None and listed_pip == pip:
+                    provider = name
+                    break
+        return f"{PROVIDER_PREFIX}{provider}"
+
+    def _provider_name(self, provider: str) -> str:
+        """Return the display name of *provider* (its own name when it has none)."""
+        return str(self._svc.get_provider_info(provider).get("display_name", provider))
 
     def _build_ollama_models_tab(self) -> QScrollArea:
         content = QWidget()
@@ -524,6 +541,11 @@ class DownloadsDialog(QDialog):
         setting = self._hardware_selector.setting()
         return cast(HardwareProfile, setting if setting != "auto" else "8gb")
 
+    def _active_system_memory_gb(self) -> float | None:
+        """Return the computer's memory in GB when known (it rates models too big for the card)."""
+        detection = self._hardware_selector.resolved()
+        return detection.system_memory_gb if detection is not None else None
+
     # ── ticking ────────────────────────────────────────────────────────────
 
     def _set_checked(self, item: QTreeWidgetItem, checked: bool) -> None:
@@ -601,6 +623,7 @@ class DownloadsDialog(QDialog):
     def _update_model_suitability(self) -> None:
         """Re-compute suitability labels, sorting and colours for the active profile."""
         profile = self._active_profile()
+        memory_gb = self._active_system_memory_gb()
         for key, (_label, category) in _OLLAMA_GROUPS.items():
             group_item = self._group_items[key]
             children: list[QTreeWidgetItem] = []
@@ -615,7 +638,12 @@ class DownloadsDialog(QDialog):
                 ratings = {
                     r.tag: r
                     for r in self._svc.rate_ollama_models(
-                        tags, category, profile, self._ollama_url, cached_only=True
+                        tags,
+                        category,
+                        profile,
+                        self._ollama_url,
+                        cached_only=True,
+                        system_memory_gb=memory_gb,
                     )
                 }
             elif tags:
@@ -640,6 +668,10 @@ class DownloadsDialog(QDialog):
                     child.setForeground(0, _GREY)
                     child.setForeground(1, _GREY)
                     child.setToolTip(1, too_large_tooltip(memory, profile))
+                elif value is Suitability.SLOW:
+                    child.setForeground(0, QBrush())
+                    child.setForeground(1, QBrush())
+                    child.setToolTip(1, slow_text(memory, profile))
                 else:
                     # An empty QBrush (no brush) restores the theme's text colour.  A
                     # QColor() would be an *invalid* solid colour, painted black: unreadable
@@ -808,8 +840,17 @@ class DownloadsDialog(QDialog):
                 )
         return installed_by_category
 
+    def _tick_preselect_providers(self) -> None:
+        """Tick the requested provider packages that are not installed yet."""
+        for key in self._preselect_providers:
+            cb = self._dl_checkboxes.get(key)
+            if cb is not None and cb.isEnabled():
+                cb.setChecked(True)
+        self._preselect_providers = []
+
     def _tick_preselect_tags(self) -> None:
         """Tick requested preselect tags (adding unknown ones to \"Other models\")."""
+        self._tick_preselect_providers()
         for raw in self._preselect:
             tag = normalize_tag(raw)
             if tag not in self._model_items:
@@ -851,8 +892,8 @@ class DownloadsDialog(QDialog):
             cb = self._dl_checkboxes.get(key)
             if cb and cb.isChecked() and cb.isEnabled():
                 packages.extend(pkgs)
-        for provider, (_, pip_pkg) in _ALL_PROVIDER_PACKAGES.items():
-            cb = self._dl_checkboxes.get(f"provider:{provider}")
+        for provider, (_, pip_pkg) in self._provider_packages.items():
+            cb = self._dl_checkboxes.get(f"{PROVIDER_PREFIX}{provider}")
             if cb and cb.isChecked() and cb.isEnabled():
                 packages.append(pip_pkg)
         for key, pkg in _GPU_DL_PACKAGES.items():
@@ -958,7 +999,12 @@ class DownloadsDialog(QDialog):
             if category is None:
                 continue
             rating = self._svc.rate_ollama_models(
-                [tag], category, profile, self._ollama_url, cached_only=True
+                [tag],
+                category,
+                profile,
+                self._ollama_url,
+                cached_only=True,
+                system_memory_gb=self._active_system_memory_gb(),
             )[0]
             if rating.suitability is Suitability.TOO_LARGE:
                 messages.append(too_large_confirmation(tag, rating.memory_gb, profile))

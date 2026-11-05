@@ -68,6 +68,7 @@ from ._log_widget import LogWidget
 from ._model_guidance import OpenDownloads
 from ._model_wording import profile_text
 from ._preview_panel import DiffWidget, PreviewPanel, ZoomableImageView
+from ._privacy_settings import SECTION_DETECTION, SECTION_SENDING, FlowAcknowledgements
 from ._results_table import ResultsTable
 from ._settings_dialog import (
     CorrectionSettingsDialog,
@@ -440,16 +441,13 @@ class MainWindow(QMainWindow):
         downloads_act = QAction("Downloads\u2026", self)
         downloads_act.triggered.connect(self._open_downloads_dialog)
         advanced_menu.addAction(downloads_act)
-        anon_act = QAction("Anonymizer Settings\u2026", self)
-        anon_act.triggered.connect(self._open_anonymizer_settings_from_menu)
-        advanced_menu.addAction(anon_act)
-        reset_ack_act = QAction("Ask Before Sending Data Away Again", self)
-        reset_ack_act.setToolTip(
-            "Forget every “Don't ask again” answer, so the question comes back before a run "
-            "that sends content away from this computer."
+        privacy_act = QAction("Privacy Settings\u2026", self)
+        privacy_act.setToolTip(
+            "What may leave this computer, and how names and other personal information "
+            "are found and replaced."
         )
-        reset_ack_act.triggered.connect(self._forget_acknowledged_flows)
-        advanced_menu.addAction(reset_ack_act)
+        privacy_act.triggered.connect(self._open_privacy_settings_from_menu)
+        advanced_menu.addAction(privacy_act)
 
         help_menu = bar.addMenu("Help")
         assert help_menu is not None
@@ -994,40 +992,31 @@ class MainWindow(QMainWindow):
             return
         from ._dependency_guard_dialog import DependencyGuardDialog  # noqa: PLC0415
         from ._downloads_dialog import DownloadsDialog  # noqa: PLC0415
+        from ._model_guidance import PROVIDER_PREFIX  # noqa: PLC0415
 
         tab = (
             DownloadsDialog.TAB_SPACY
             if result.stage == "anonymizer"
             else DownloadsDialog.TAB_OLLAMA
         )
+        # A missing provider package is installed on the providers tab.
+        packages = [f"{PROVIDER_PREFIX}{i.provider}" for i in result.stage_issues if i.provider]
         dlg = DependencyGuardDialog(result.stage, list(result.stage_issues), self)
         dlg.open_downloads.connect(
-            lambda t=tab: self._open_downloads_dialog_ollama_tab(start_tab=t)
+            lambda t=tab, ps=packages: self._open_downloads_dialog_ollama_tab(
+                start_tab=t, preselect=ps
+            )
         )
         dlg.exec()
 
-    _ACK_FLOWS_KEY = "privacy/acknowledged_data_flows"
-
-    def _acknowledged_flows(self) -> set[str]:
-        """Return the data flows the user chose not to be asked about again."""
-        qs = QSettings(self._QSETTINGS_ORG, self._QSETTINGS_APP)
-        return {line for line in str(qs.value(self._ACK_FLOWS_KEY, "") or "").split("\n") if line}
-
-    def _forget_acknowledged_flows(self) -> None:
-        """Drop every "Don't ask again" answer."""
-        QSettings(self._QSETTINGS_ORG, self._QSETTINGS_APP).remove(self._ACK_FLOWS_KEY)
-        self._log.append_text("Confirmations before sending data away were reset.\n")
-
-    def _acknowledge_flow(self, fingerprint: str) -> None:
-        flows = self._acknowledged_flows() | {fingerprint}
-        QSettings(self._QSETTINGS_ORG, self._QSETTINGS_APP).setValue(
-            self._ACK_FLOWS_KEY, "\n".join(sorted(flows))
-        )
+    def _acknowledgements(self) -> FlowAcknowledgements:
+        """Return the store of "don't ask again" answers (read and written through QSettings)."""
+        return FlowAcknowledgements(lambda: QSettings(self._QSETTINGS_ORG, self._QSETTINGS_APP))
 
     def _confirm_data_flow_then(self, config: Config, on_ready: Callable[[], None]) -> None:
         """Ask once before a run that sends content away from this computer."""
         flow = self._app_service.describe_data_flow(config)
-        if not flow.leaves_computer or flow.fingerprint in self._acknowledged_flows():
+        if not flow.leaves_computer or flow.fingerprint in self._acknowledgements().fingerprints():
             on_ready()
             return
         lines = "\n".join(f"  • {stage.summary}" for stage in flow.outbound)
@@ -1039,7 +1028,7 @@ class MainWindow(QMainWindow):
             f"These steps send content away from this computer:\n\n{lines}{advice}\n\n"
             "Make sure your school's data protection rules allow this."
         )
-        remember = QCheckBox("Don't ask again for these settings")
+        remember = QCheckBox("Don't ask again for these settings (change under Privacy Settings)")
         box.setCheckBox(remember)
         go = box.addButton("Continue", QMessageBox.ButtonRole.AcceptRole)
         cancel = box.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
@@ -1048,7 +1037,7 @@ class MainWindow(QMainWindow):
         if box.clickedButton() is not go:
             return
         if remember.isChecked():
-            self._acknowledge_flow(flow.fingerprint)
+            self._acknowledgements().remember(flow)
         on_ready()
 
     def _show_missing_models(self, missing_models: tuple[str, ...]) -> None:
@@ -2129,7 +2118,7 @@ class MainWindow(QMainWindow):
                 self,
                 "Privacy Addon Installed",
                 "The Privacy add-on has been installed.\n\n"
-                "Open Advanced Settings → Anonymizer Settings to download a language model\n"
+                "Open Advanced Settings → Privacy Settings to download a language model\n"
                 "before using personal information removal.",
             )
         elif addon == ADDON_PADDLE:
@@ -2143,8 +2132,10 @@ class MainWindow(QMainWindow):
             self._stats.refresh_gpu_monitoring()
         self._check_llm_status()
 
-    def _open_anonymizer_settings_from_menu(self) -> None:
-        self._config_panel.request_anonymizer_config()
+    def _open_privacy_settings_from_menu(self) -> None:
+        """Open Privacy Settings on its first tab (what may leave this computer)."""
+        language, config = self._config_panel.anonymizer_context()
+        self._open_anonymizer_config_dialog(language, config, section=SECTION_SENDING)
 
     def _open_output_settings_dialog(self) -> None:
         from ._settings_dialog import OutputSettingsDialog  # noqa: PLC0415
@@ -2155,10 +2146,20 @@ class MainWindow(QMainWindow):
             self._save_settings(notify=False)
             self._refresh_queue_from_inputs()
 
-    def _open_anonymizer_config_dialog(self, language: str, config: object) -> None:
-        from ._anonymizer_config_dialog import AnonymizerConfigDialog  # noqa: PLC0415
+    def _open_anonymizer_config_dialog(
+        self, language: str, config: object, *, section: str = SECTION_DETECTION
+    ) -> None:
+        """Open Privacy Settings; the panel's "personal info" button lands on its detection tab."""
+        from ._privacy_settings_dialog import PrivacySettingsDialog  # noqa: PLC0415
 
-        dialog = AnonymizerConfigDialog(language, config, self._app_service, self)
+        dialog = PrivacySettingsDialog(
+            language,
+            config,
+            self._app_service,
+            self,
+            acknowledgements=self._acknowledgements(),
+            section=section,
+        )
         if dialog.exec() == QDialog.DialogCode.Accepted:
             self._config_panel.update_anonymizer_config(dialog.anonymizer_config)
             self._save_settings(notify=False)

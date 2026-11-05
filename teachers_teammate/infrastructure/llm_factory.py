@@ -25,6 +25,7 @@ if TYPE_CHECKING:
     from langchain_core.language_models import BaseChatModel
 
 from .._model_defaults import default_model_for_task as default_model_for_task  # noqa: PLC0414
+from ..domain.model_listing import ModelListing
 from ..exceptions import ProviderNotAvailableError
 from ..interfaces import LLMProviderModule
 
@@ -95,6 +96,48 @@ def list_provider_models(provider: str, **kwargs: object) -> list[str]:
     except Exception as exc:  # noqa: BLE001  # provider list_models() may raise anything; return static fallback list
         _logger.warning("Could not list models for provider '%s': %s", provider, exc)
         return []
+
+
+def list_provider_models_checked(provider: str, **kwargs: object) -> ModelListing:
+    """Return the models of *provider* together with where the list came from.
+
+    A provider that can tell live from built-in answers (``list_models_checked``) says so
+    itself.  For the others, the metadata decides: a service that cannot be asked
+    (``can_list_models`` false) has a built-in list by design, one that can be asked is
+    live, and an empty live answer simply means "nothing to list yet".
+    """
+    try:
+        mod = importlib.import_module(f".providers.{provider}", package=__package__)
+        checked = getattr(mod, "list_models_checked", None)
+        if checked is not None:
+            return checked(**kwargs)
+    except Exception as exc:  # noqa: BLE001  # provider list_models_checked() may raise anything; report as a failed listing
+        _logger.warning("Could not list models for provider '%s': %s", provider, exc)
+        return ModelListing(_builtin_models(provider), "failed", "the model list could not be read")
+    models = list_provider_models(provider, **kwargs)
+    can_list = bool(get_provider_info(provider).get("can_list_models"))
+    return ModelListing(models, "live" if can_list else "builtin")
+
+
+def _builtin_models(provider: str) -> list[str]:
+    """Return the models *provider* lists in its metadata (empty when that cannot be read)."""
+    try:
+        return list(get_provider_info(provider).get("models", []))
+    except Exception:  # noqa: BLE001  # a broken provider module must not turn into a second failure
+        return []
+
+
+def provider_package(provider: str) -> tuple[str, str] | None:
+    """Return ``(importable module, pip name)`` of the package *provider* uses, or ``None``."""
+    package = get_provider_info(provider).get("package")
+    if not isinstance(package, dict):
+        return None
+    return str(package["module"]), str(package["pip"])
+
+
+def provider_package_required(provider: str) -> bool:
+    """Whether *provider* cannot work without its package (Ollama's connector is optional)."""
+    return not get_provider_info(provider).get("package_optional", False)
 
 
 def check_provider_connection(provider: str, **kwargs: object) -> tuple[bool, str]:

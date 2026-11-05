@@ -6,7 +6,9 @@ in the order they are tried:
   - Windows: the display-adapter registry keys (vendor, name and VRAM of every
     vendor; starts no process, so no console window can flash up)
   - Linux:   sysfs ``/sys/class/drm`` (vendor of every card, VRAM of AMD)
-  - NVIDIA:  nvidia-smi  (needed on Linux for name and memory; Windows fallback)
+  - NVIDIA:  nvidia-smi  (needed on Linux for name and memory; Windows fallback; also
+             looked up at its usual install paths when it is not on PATH), then the
+             optional ``pynvml`` package when it is installed
   - AMD:     rocm-smi    (ROCm < 5.7) / amd-smi (ROCm 5.7+): the marketing name on
              Linux, and the fallback when the operating system has no answer
 
@@ -19,6 +21,8 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+import logging
+import os
 from pathlib import Path
 import platform
 import re
@@ -27,6 +31,8 @@ import sys
 from typing import Any
 
 from .subprocess_utils import no_console_window_kwargs
+
+_logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -79,15 +85,24 @@ def _parse_vram_mb(value: str) -> int | None:
         return None
 
 
-def detect_nvidia() -> list[GpuInfo]:
-    """Return detected NVIDIA GPUs via nvidia-smi (cross-platform).
+def _nvidia_smi_commands() -> list[str]:
+    """Return the ``nvidia-smi`` programs to try, in order.
 
-    The query returns ``"name, memory_total_mib"`` per line; a non-numeric
-    memory value (for example ``[N/A]``) yields ``vram_mb=None``.
+    ``PATH`` first.  A packaged app can start with a ``PATH`` that lacks the driver folder
+    although the tool is installed, so on Windows its two usual locations follow.
     """
-    out = _run(["nvidia-smi", "--query-gpu=name,memory.total", "--format=csv,noheader,nounits"])
-    if not out:
-        return []
+    commands = ["nvidia-smi"]
+    if sys.platform == "win32":
+        system_root = os.environ.get("SystemRoot", r"C:\Windows")
+        program_files = os.environ.get("ProgramFiles", r"C:\Program Files")
+        commands += [
+            str(Path(system_root) / "System32" / "nvidia-smi.exe"),
+            str(Path(program_files) / "NVIDIA Corporation" / "NVSMI" / "nvidia-smi.exe"),
+        ]
+    return commands
+
+
+def _parse_nvidia_smi(out: str) -> list[GpuInfo]:
     gpus: list[GpuInfo] = []
     for line in out.splitlines():
         if not line.strip():
@@ -97,6 +112,52 @@ def detect_nvidia() -> list[GpuInfo]:
         if not name:
             continue
         gpus.append(GpuInfo("nvidia", name, _parse_vram_mb(mem_raw)))
+    return gpus
+
+
+def _detect_nvidia_nvml() -> list[GpuInfo]:
+    """Return NVIDIA GPUs through the optional ``pynvml`` package (empty when unavailable)."""
+    try:
+        import pynvml  # noqa: PLC0415
+    except ImportError:
+        return []
+    try:
+        pynvml.nvmlInit()
+        try:
+            gpus: list[GpuInfo] = []
+            for index in range(pynvml.nvmlDeviceGetCount()):
+                handle = pynvml.nvmlDeviceGetHandleByIndex(index)
+                name = pynvml.nvmlDeviceGetName(handle)
+                if isinstance(name, bytes):
+                    name = name.decode("utf-8", "replace")
+                total = pynvml.nvmlDeviceGetMemoryInfo(handle).total
+                gpus.append(GpuInfo("nvidia", str(name), _bytes_to_mb(int(total))))
+            return gpus
+        finally:
+            pynvml.nvmlShutdown()
+    except Exception as exc:  # noqa: BLE001  # NVML raises its own error type per failure (no driver, no device); detection must degrade, not fail
+        _logger.info("NVML could not read the NVIDIA GPUs: %s", exc)
+        return []
+
+
+def detect_nvidia() -> list[GpuInfo]:
+    """Return detected NVIDIA GPUs via nvidia-smi (cross-platform), then NVML.
+
+    The query returns ``"name, memory_total_mib"`` per line; a non-numeric
+    memory value (for example ``[N/A]``) yields ``vram_mb=None``.
+    """
+    for command in _nvidia_smi_commands():
+        out = _run([command, "--query-gpu=name,memory.total", "--format=csv,noheader,nounits"])
+        if out:
+            gpus = _parse_nvidia_smi(out)
+            if gpus:
+                _logger.info("nvidia-smi (%s) reported %s", command, gpus)
+                return gpus
+    gpus = _detect_nvidia_nvml()
+    if gpus:
+        _logger.info("NVML reported %s", gpus)
+    else:
+        _logger.info("No NVIDIA GPU found through nvidia-smi or NVML")
     return gpus
 
 
@@ -204,6 +265,49 @@ def detect_apple_unified_memory_gb() -> float | None:
         return psutil.virtual_memory().total / 2**30
     except Exception:  # noqa: BLE001  # psutil may be missing in stripped environments; degrade to None
         return None
+
+
+def detect_system_memory_gb() -> float | None:
+    """Return the total memory (RAM) of this computer in GB, or ``None`` when unreadable.
+
+    ``psutil`` is used when it is installed; otherwise the operating system is asked
+    directly, so the answer does not depend on an optional package.
+    """
+    try:
+        import psutil  # noqa: PLC0415
+
+        return psutil.virtual_memory().total / 2**30
+    except Exception:  # noqa: BLE001  # psutil may be missing in stripped environments; ask the OS instead
+        pass
+    try:
+        if sys.platform == "win32":
+            return _windows_total_memory_bytes() / 2**30
+        return os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES") / 2**30
+    except (AttributeError, OSError, ValueError):
+        return None
+
+
+def _windows_total_memory_bytes() -> int:
+    """Return the physical memory in bytes through ``GlobalMemoryStatusEx``."""
+    import ctypes  # noqa: PLC0415
+
+    class _MemoryStatus(ctypes.Structure):
+        _fields_ = [
+            ("dwLength", ctypes.c_ulong),
+            ("dwMemoryLoad", ctypes.c_ulong),
+            ("ullTotalPhys", ctypes.c_ulonglong),
+            ("ullAvailPhys", ctypes.c_ulonglong),
+            ("ullTotalPageFile", ctypes.c_ulonglong),
+            ("ullAvailPageFile", ctypes.c_ulonglong),
+            ("ullTotalVirtual", ctypes.c_ulonglong),
+            ("ullAvailVirtual", ctypes.c_ulonglong),
+            ("sullAvailExtendedVirtual", ctypes.c_ulonglong),
+        ]
+
+    status = _MemoryStatus(ctypes.sizeof(_MemoryStatus))  # first field: the structure's size
+    if not ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(status)):  # ty: ignore[unresolved-attribute]  # windll exists on Windows only
+        raise OSError("GlobalMemoryStatusEx failed")
+    return int(status.ullTotalPhys)
 
 
 def _vendor_from_pci_id(match_id: str) -> str | None:
@@ -406,4 +510,11 @@ def detect_gpus() -> list[GpuInfo]:
             return []
         return [gpu for gpu in _prefer_complete(found, tool) if not _is_integrated(gpu)]
 
-    return for_vendor("nvidia", detect_nvidia) + for_vendor("amd", detect_amd)
+    gpus = for_vendor("nvidia", detect_nvidia) + for_vendor("amd", detect_amd)
+    _logger.info(
+        "GPU detection (%s): operating system saw %s; result %s",
+        "registry" if registry is not None else sys.platform,
+        os_gpus,
+        gpus,
+    )
+    return gpus

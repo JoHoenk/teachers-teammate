@@ -31,6 +31,7 @@ from teachers_teammate.domain.model_catalog import (
     HardwareProfile,
     ModelUses,
 )
+from teachers_teammate.domain.model_listing import ModelListing
 from teachers_teammate.gui import _anonymizer_config_dialog, _downloads_dialog, _settings_dialog
 from teachers_teammate.gui._background import LatestTask
 from teachers_teammate.gui._main_window import MainWindow
@@ -71,12 +72,22 @@ class FakeGuiService(LocalDataFlowStub):
         # Non-None → the selector/settings dialogs skip starting a fetch thread.
         return [f"{provider}-model"]
 
+    def get_cached_listing(self, provider: str, *, base_url: str = "") -> ModelListing | None:
+        return ModelListing([f"{provider}-model"])
+
+    def list_provider_models_checked(self, provider: str, *, base_url: str = "") -> ModelListing:
+        return ModelListing(self.list_provider_models(provider, base_url=base_url))
+
     def invalidate_model_cache(self, provider: str, base_url: str = "") -> None:
         _ = (provider, base_url)
 
     def is_module_importable(self, module: str) -> bool:
         _ = module
         return True
+
+    def missing_provider_package(self, provider: str) -> str | None:
+        _ = provider
+        return None
 
     def default_model_for_task(self, provider: str, task: str) -> str:
         return f"{provider}-{task}"
@@ -121,12 +132,19 @@ class FakeGuiService(LocalDataFlowStub):
         return dict.fromkeys(tags, None)
 
     def rate_ollama_models(
-        self, tags, task, profile, ollama_url, *, cached_only: bool = False
+        self,
+        tags,
+        task,
+        profile,
+        ollama_url,
+        *,
+        cached_only: bool = False,
+        system_memory_gb: float | None = None,
     ) -> list:
         _ = ollama_url, cached_only
         from teachers_teammate.domain.model_catalog import rate_model  # noqa: PLC0415
 
-        return [rate_model(tag, task, profile) for tag in tags]
+        return [rate_model(tag, task, profile, system_memory_gb=system_memory_gb) for tag in tags]
 
     def on_ollama_models_changed(self, ollama_url: str) -> None:
         _ = ollama_url

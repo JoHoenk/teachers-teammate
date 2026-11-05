@@ -339,6 +339,168 @@ def test_mistral_list_models_falls_back_to_static_on_failure(
     assert result == list(_load(name).PROVIDER_INFO["models"])
 
 
+@pytest.mark.parametrize("name", [n for n, _ in _MISTRAL_PROVIDERS])
+def test_mistral_listing_of_a_live_answer_is_marked_live(
+    name: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """
+    Given  an API key and an endpoint that answers with chat models
+    When   list_models_checked() is called
+    Then   the listing is live and has no problem text
+    """
+    monkeypatch.setenv("MISTRAL_API_KEY", "k-test")
+    with patch(_URLOPEN, return_value=_models_response({"data": [{"id": "glm-test"}]})):
+        listing = _load(name).list_models_checked()
+
+    assert (listing.source, listing.models, listing.problem) == ("live", ["glm-test"], "")
+
+
+@pytest.mark.parametrize("name", [n for n, _ in _MISTRAL_PROVIDERS])
+@pytest.mark.parametrize(
+    ("failure", "expected_problem"),
+    [
+        ("no_key", "no Mistral key is set"),
+        ("refused", "Mistral did not accept the key"),
+        ("server_error", "Mistral answered with error 500"),
+        ("offline", "no connection to Mistral"),
+        ("bad_json", "Mistral answered unexpectedly"),
+        ("empty", "Mistral returned no chat models"),
+    ],
+)
+def test_mistral_listing_after_a_failure_says_why_and_is_not_live(
+    name: str, failure: str, expected_problem: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """
+    Given  a key that is missing, refused, a server error, no connection, an invalid answer
+           or an answer without chat models
+    When   list_models_checked() is called
+    Then   the built-in list is returned marked as failed, with the reason in plain words,
+           so the dialog cannot present it as the service's own answer
+    """
+    if failure == "no_key":
+        monkeypatch.delenv("MISTRAL_API_KEY", raising=False)
+    else:
+        monkeypatch.setenv("MISTRAL_API_KEY", "k-test")
+    kwargs: dict = {}
+    if failure == "refused":
+        kwargs["side_effect"] = urllib.error.HTTPError("u", 401, "Unauthorized", None, None)  # ty: ignore[invalid-argument-type]
+    elif failure == "server_error":
+        kwargs["side_effect"] = urllib.error.HTTPError("u", 500, "Server", None, None)  # ty: ignore[invalid-argument-type]
+    elif failure == "offline":
+        kwargs["side_effect"] = urllib.error.URLError("unreachable")
+    elif failure == "bad_json":
+        response = MagicMock()
+        response.__enter__.return_value = io.BytesIO(b"<html>")
+        kwargs["return_value"] = response
+    elif failure == "empty":
+        kwargs["return_value"] = _models_response({"data": []})
+    with patch(_URLOPEN, **kwargs):
+        listing = _load(name).list_models_checked()
+
+    assert listing.source == "failed"
+    assert listing.problem == expected_problem
+    assert listing.models == list(_load(name).PROVIDER_INFO["models"])
+
+
+@pytest.mark.parametrize("name", ["openai", "google"])
+def test_listing_of_keyed_providers_without_key_is_failed_without_network(
+    name: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """
+    Given  the provider's API key is not set
+    When   list_models_checked() is called
+    Then   the built-in list is returned as a failed listing and the SDK is never asked
+    """
+    mod = _load(name)
+    monkeypatch.delenv(mod.PROVIDER_INFO["env_key"], raising=False)
+
+    listing = mod.list_models_checked()
+
+    assert listing.source == "failed"
+    assert "key is set" in listing.problem
+    assert listing.models == list(mod.PROVIDER_INFO["models"])
+
+
+@pytest.mark.parametrize(
+    ("status", "expected"),
+    [
+        (401, "did not accept the key"),
+        (403, "did not accept the key"),
+        (None, "answered unexpectedly"),
+    ],
+)
+def test_problem_from_exception_reads_the_http_status(status: int | None, expected: str) -> None:
+    """
+    Given  an SDK error carrying an HTTP status (or none)
+    When   problem_from_exception() describes it
+    Then   a refused key is named as such and anything unknown is "answered unexpectedly"
+    """
+    from teachers_teammate.infrastructure.providers._helpers import (  # noqa: PLC0415
+        problem_from_exception,
+    )
+
+    exc = RuntimeError("boom")
+    exc.status_code = status
+
+    assert expected in problem_from_exception(exc, "Acme")
+
+
+@pytest.mark.parametrize(
+    ("code", "expected"),
+    [
+        (400, "Acme did not accept the key"),
+        (401, "Acme did not accept the key"),
+        (403, "Acme did not accept the key"),
+        (404, "Acme answered with error 404"),
+        (500, "Acme answered with error 500"),
+    ],
+)
+def test_problem_from_exception_reads_the_status_of_a_plain_http_error(
+    code: int, expected: str
+) -> None:
+    """
+    Given  an error from a plain HTTP request (urllib), which is an OSError too
+    When   problem_from_exception() describes it
+    Then   its status decides (a refused key, or the error number) and it is not reported as
+           a missing connection
+    """
+    from teachers_teammate.infrastructure.providers._helpers import (  # noqa: PLC0415
+        problem_from_exception,
+    )
+
+    exc = urllib.error.HTTPError("u", code, "x", None, None)  # ty: ignore[invalid-argument-type]
+
+    assert problem_from_exception(exc, "Acme") == expected
+
+
+def test_problem_from_exception_names_a_missing_connection() -> None:
+    """
+    Given  a connection error
+    When   problem_from_exception() describes it
+    Then   it says there is no connection to the service
+    """
+    from teachers_teammate.infrastructure.providers._helpers import (  # noqa: PLC0415
+        problem_from_exception,
+    )
+
+    assert problem_from_exception(ConnectionError("down"), "Acme") == "no connection to Acme"
+
+
+@pytest.mark.parametrize("name", _PROVIDER_NAMES)
+def test_provider_declares_the_package_it_needs(name: str) -> None:
+    """
+    Given  a provider module
+    When   its PROVIDER_INFO is read
+    Then   it names the importable module and the pip package it needs, so the dialogs and
+           the run check need no list of their own
+    """
+    package = _load(name).PROVIDER_INFO.get("package")
+
+    assert isinstance(package, dict)
+    assert package["module"].startswith("langchain_")
+    assert package["pip"].startswith("langchain-")
+
+
 @pytest.mark.parametrize(("name", "base_url"), _MISTRAL_PROVIDERS)
 def test_mistral_create_passes_explicit_endpoint_and_seed(
     name: str, base_url: str, monkeypatch: pytest.MonkeyPatch
@@ -383,52 +545,100 @@ def test_mistral_providers_share_key_and_differ_in_display_name() -> None:
 # ── list_models() — google ────────────────────────────────────────────────
 
 
-def test_google_list_models_returns_api_models_when_sdk_available() -> None:
+_GOOGLE_URLOPEN = "teachers_teammate.infrastructure.providers.google.urllib.request.urlopen"
+
+
+def test_google_list_models_asks_the_rest_api_and_keeps_text_generating_gemini_models(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """
-    Given  google.generativeai is available and list_models() returns Gemini models
-    When   google.list_models() is called
-    Then   the filtered and sorted model names (without 'models/' prefix) are returned
+    Given  a Google key and an answer in two pages with Gemini, embedding and non-Gemini models
+    When   google.list_models_checked() is called
+    Then   every page is read with the key in a header (not the URL), and only the Gemini
+           models that can generate text come back, sorted and without the 'models/' prefix,
+           marked as live
     """
-    import sys  # noqa: PLC0415
+    monkeypatch.setenv("GOOGLE_API_KEY", "k-test")
+    pages = [
+        _models_response(
+            {
+                "models": [
+                    {
+                        "name": "models/gemini-2.0-flash",
+                        "supportedGenerationMethods": ["generateContent"],
+                    },
+                    {
+                        "name": "models/embedding-001",
+                        "supportedGenerationMethods": ["embedContent"],
+                    },
+                    {
+                        "name": "models/text-bison-001",
+                        "supportedGenerationMethods": ["generateContent"],
+                    },
+                ],
+                "nextPageToken": "page2",
+            }
+        ),
+        _models_response(
+            {
+                "models": [
+                    {
+                        "name": "models/gemini-1.5-pro",
+                        "supportedGenerationMethods": ["generateContent", "countTokens"],
+                    },
+                    {
+                        "name": "models/gemini-embedding",
+                        "supportedGenerationMethods": ["embedContent"],
+                    },
+                ]
+            }
+        ),
+    ]
+    with patch(_GOOGLE_URLOPEN, side_effect=pages) as urlopen:
+        listing = _load("google").list_models_checked()
 
-    fake_m1 = MagicMock()
-    fake_m1.name = "models/gemini-2.0-flash"
-    fake_m1.supported_generation_methods = ["generateContent"]
-
-    fake_m2 = MagicMock()
-    fake_m2.name = "models/text-bison-001"
-    fake_m2.supported_generation_methods = ["generateContent"]
-
-    fake_genai_mod = MagicMock()
-    fake_genai_mod.list_models.return_value = [fake_m1, fake_m2]
-
-    with patch.dict(sys.modules, {"google.generativeai": fake_genai_mod}):
-        import teachers_teammate.infrastructure.providers.google as google_mod  # noqa: PLC0415
-
-        result = google_mod.list_models()
-
-    assert "gemini-2.0-flash" in result
+    first, second = (call.args[0] for call in urlopen.call_args_list)
+    assert (listing.source, listing.models) == ("live", ["gemini-1.5-pro", "gemini-2.0-flash"])
+    assert first.get_header("X-goog-api-key") == "k-test"
+    assert "k-test" not in first.full_url
+    assert "pageToken=page2" in second.full_url
 
 
-def test_google_list_models_falls_back_to_static_on_exception() -> None:
+@pytest.mark.parametrize(
+    ("failure", "expected_problem"),
+    [
+        ("bad_key", "Google did not accept the key"),
+        ("server_error", "Google answered with error 500"),
+        ("offline", "no connection to Google"),
+        ("empty", "Google returned no chat models"),
+    ],
+)
+def test_google_listing_after_a_failure_says_why_and_falls_back_to_the_static_list(
+    failure: str, expected_problem: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """
-    Given  google.generativeai raises an exception when list_models() is called
-    When   google.list_models() is called
-    Then   the static fallback list from PROVIDER_INFO is returned
+    Given  a Google key and an answer that is a wrong key (400), a server error, no connection
+           or a list without Gemini models
+    When   google.list_models_checked() and list_models() are called
+    Then   the static list is returned as a failed listing with the reason in plain words
     """
-    import sys  # noqa: PLC0415
+    monkeypatch.setenv("GOOGLE_API_KEY", "k-test")
+    kwargs: dict = {}
+    if failure == "bad_key":
+        kwargs["side_effect"] = urllib.error.HTTPError("u", 400, "Bad Request", None, None)  # ty: ignore[invalid-argument-type]
+    elif failure == "server_error":
+        kwargs["side_effect"] = urllib.error.HTTPError("u", 500, "Server", None, None)  # ty: ignore[invalid-argument-type]
+    elif failure == "offline":
+        kwargs["side_effect"] = urllib.error.URLError("unreachable")
+    else:
+        kwargs["return_value"] = _models_response({"models": []})
+    mod = _load("google")
+    with patch(_GOOGLE_URLOPEN, **kwargs):
+        listing = mod.list_models_checked()
+        plain = mod.list_models()
 
-    fake_genai_mod = MagicMock()
-    fake_genai_mod.list_models.side_effect = Exception("API error")
-
-    with patch.dict(sys.modules, {"google.generativeai": fake_genai_mod}):
-        import teachers_teammate.infrastructure.providers.google as google_mod  # noqa: PLC0415
-
-        result = google_mod.list_models()
-
-    from teachers_teammate.infrastructure.providers.google import PROVIDER_INFO  # noqa: PLC0415
-
-    assert result == list(PROVIDER_INFO["models"])
+    assert (listing.source, listing.problem) == ("failed", expected_problem)
+    assert listing.models == plain == list(mod.PROVIDER_INFO["models"])
 
 
 # ── list_models() — openai success path ──────────────────────────────────

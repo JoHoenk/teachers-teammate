@@ -34,6 +34,11 @@ _TIER_MEMORY_GB: dict[str, int] = {"8gb": 8, "16gb": 16}
 
 CHECKING_COMPUTER = "Checking your computer…"
 NO_SUGGESTION_FOR_COMPUTER = "No suggestion available for this computer."
+#: Shown when the check itself failed, so it is not mistaken for "nothing to suggest".
+CHECK_COMPUTER_FAILED = (
+    "Your computer could not be checked (details are in the log), so suggestions assume "
+    "a graphics card with about 8 GB. If you know what your computer has, choose it in the list."
+)
 READ_ONLY_PROFILE_TOOLTIP = (
     "You can change this under Advanced Settings → Connections & API Keys, or in Downloads."
 )
@@ -54,8 +59,19 @@ def auto_profile_text(profile: str) -> str:
     return f"{PROFILE_TEXT['auto']} — {profile_text(profile)}"
 
 
+def _computer_memory_sentence(detection: HardwareDetection) -> str:
+    """Return `` Computer memory: N GB.`` when the memory is known (it rates big models)."""
+    if detection.system_memory_gb is None:
+        return ""
+    return f" Computer memory: {detection.system_memory_gb:.0f} GB."
+
+
 def detection_status_text(detection: HardwareDetection) -> str:
     """Return the status line shown below the "My computer" choice."""
+    return _detection_summary(detection) + _computer_memory_sentence(detection)
+
+
+def _detection_summary(detection: HardwareDetection) -> str:
     memory = detection.memory_gb
     if detection.reason is DetectionReason.GPU_DETECTED and memory is not None:
         return f"Found: {detection.gpu_name} with {memory:.0f} GB graphics memory."
@@ -86,6 +102,7 @@ _SUITABILITY_LABELS: dict[Suitability, str] = {
     Suitability.BEST: "★ Best choice",
     Suitability.GOOD: "Good choice",
     Suitability.WORKS: "Works",
+    Suitability.SLOW: "Works, but slower",
     Suitability.UNKNOWN: "No suggestion available",
 }
 
@@ -103,6 +120,7 @@ _COMPACT_LABELS: dict[Suitability, str] = {
     Suitability.BEST: "★ Best",
     Suitability.GOOD: "Good",
     Suitability.WORKS: "Works",
+    Suitability.SLOW: "Slower",
     Suitability.UNKNOWN: "No suggestion",
 }
 _COMPACT_WRONG_KIND_LABELS: dict[ModelCategory, str] = {
@@ -160,6 +178,20 @@ def too_large_text(memory_gb: float | None, profile: HardwareProfile) -> str:
     )
 
 
+def slow_text(memory_gb: float | None, profile: HardwareProfile) -> str:
+    """Explain why a model runs slower: part of it uses the computer's memory (tooltip, hint)."""
+    need = f"This model needs about {memory_gb:g} GB" if memory_gb is not None else "This model"
+    if profile == "cpu":
+        return (
+            f"{need}. Without a large graphics card it runs on the processor using your "
+            "computer's memory: it works, but slower."
+        )
+    return (
+        f"{need}, more than the graphics card holds. Part of it runs on the processor using "
+        "your computer's memory: it works, but slower."
+    )
+
+
 def too_large_tooltip(memory_gb: float | None, profile: HardwareProfile) -> str:
     """Return the tooltip for a TOO_LARGE model row."""
     return f"{too_large_text(memory_gb, profile)} It will still work, but it can be very slow."
@@ -204,6 +236,8 @@ def model_hint(
         return "Good choice for your computer."
     if value is Suitability.WORKS:
         return "Works on your computer."
+    if value is Suitability.SLOW:
+        return slow_text(memory_gb, profile)
     if value is Suitability.TOO_LARGE:
         return f"⚠ {too_large_text(memory_gb, profile)} It may be very slow."
     if value is Suitability.WRONG_KIND:

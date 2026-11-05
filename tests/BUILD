@@ -30,6 +30,7 @@ filegroup(
         "gui/test_gui_addon_installer_dialog.py",
         "gui/test_gui_anonymizer_dialog.py",
         "gui/test_gui_main_window.py",
+        "gui/test_gui_privacy_settings.py",
         "gui/test_gui_settings_dialog.py",
         "gui/test_gui_widgets.py",
         "gui/test_hardware_profile_selector.py",
@@ -54,6 +55,7 @@ filegroup(
         "unit/test_file_processor.py",
         "unit/test_gpu_detector.py",
         "unit/test_model_catalog.py",
+        "unit/test_model_listing.py",
         "unit/test_ollama_utils.py",
         "unit/test_preprocessor.py",
         "unit/test_service.py",
@@ -480,6 +482,15 @@ py_test(
 )
 
 py_test(
+    name = "test_model_listing",
+    size = "small",
+    srcs = _COMMON_SRCS + ["unit/test_model_listing.py"],
+    args = ["unit/test_model_listing.py"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS,
+)
+
+py_test(
     name = "test_cache_service",
     size = "small",
     srcs = _COMMON_SRCS + ["unit/test_cache_service.py"],
@@ -628,6 +639,15 @@ py_test(
     size = "small",
     srcs = _COMMON_SRCS + ["gui/test_gui_anonymizer_dialog.py"],
     args = ["gui/test_gui_anonymizer_dialog.py"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_lib"],
+)
+
+py_test(
+    name = "test_gui_privacy_settings",
+    size = "small",
+    srcs = _COMMON_SRCS + ["gui/test_gui_privacy_settings.py"],
+    args = ["gui/test_gui_privacy_settings.py"],
     main = "run_test.py",
     deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_lib"],
 )
@@ -793,6 +813,7 @@ test_suite(
         ":test_interfaces",
         ":test_llm_factory",
         ":test_model_catalog",
+        ":test_model_listing",
         ":test_ocr_formats",
         ":test_ocr_processor",
         ":test_ocr_stage_service",
@@ -827,6 +848,7 @@ test_suite(
         ":test_gui_formatted_text",
         ":test_gui_lifecycle",
         ":test_gui_main_window",
+        ":test_gui_privacy_settings",
         ":test_gui_results_table",
         ":test_gui_settings_dialog",
         ":test_gui_update_check",

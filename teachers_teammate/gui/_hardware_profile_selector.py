@@ -9,20 +9,17 @@ running is harmless.  The wording lives in :mod:`._model_wording`.
 
 from __future__ import annotations
 
-from typing import Protocol, cast
+import logging
+from typing import Protocol
 
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import QComboBox, QHBoxLayout, QLabel, QVBoxLayout, QWidget
 
 from ..config import DEFAULTS
-from ..domain.model_catalog import (
-    PROFILE_SETTINGS,
-    DetectionReason,
-    HardwareDetection,
-    HardwareProfile,
-)
+from ..domain.model_catalog import PROFILE_SETTINGS, HardwareDetection
 from ._background import LatestTask
 from ._model_wording import (
+    CHECK_COMPUTER_FAILED,
     CHECKING_COMPUTER,
     NO_SUGGESTION_FOR_COMPUTER,
     PROFILE_TEXT,
@@ -33,11 +30,15 @@ from ._model_wording import (
     read_only_profile_text,
 )
 
+_logger = logging.getLogger(__name__)
+
 _STATUS_STYLE = "color: #888; font-size: 11px;"
 
 
 class _ProfileService(Protocol):
     def detect_hardware(self, ollama_url: str, *, refresh: bool = False) -> HardwareDetection: ...
+
+    def resolve_hardware_profile(self, setting: str, ollama_url: str) -> HardwareDetection: ...
 
 
 class HardwareProfileSelector(QWidget):
@@ -169,17 +170,21 @@ class HardwareProfileSelector(QWidget):
 
         def resolve() -> HardwareDetection:
             if setting != "auto":
-                return HardwareDetection(
-                    profile=cast(HardwareProfile, setting), reason=DetectionReason.MANUAL
-                )
+                # Through the service: a chosen profile still carries this computer's memory.
+                return service.resolve_hardware_profile(setting, url)
             return service.detect_hardware(url, refresh=refresh)
 
         self._task.submit(resolve, self._on_resolved)
 
     def _on_resolved(self, result: object, error: BaseException | None) -> None:
         if error is not None or not isinstance(result, HardwareDetection):
-            # Detection must never get in the way; the app falls back to 8 GB hints.
-            self._status_lbl.setText(NO_SUGGESTION_FOR_COMPUTER)
+            # Detection must never get in the way; the app falls back to 8 GB hints.  A
+            # failure is said and logged, so it is not mistaken for "nothing to suggest".
+            if error is not None:
+                _logger.warning("Checking this computer failed", exc_info=error)
+                self._status_lbl.setText(CHECK_COMPUTER_FAILED)
+            else:
+                self._status_lbl.setText(NO_SUGGESTION_FOR_COMPUTER)
             self.resolved_changed.emit(None)
             return
         self._detection = result

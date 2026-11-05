@@ -240,3 +240,70 @@ def test_profile_texts_cover_every_setting() -> None:
     for setting in ("auto", "cpu", "8gb", "16gb"):
         assert wording.profile_text(setting)
     assert len({wording.profile_text(s) for s in ("auto", "cpu", "8gb", "16gb")}) == 4
+
+
+# ── memory of the computer and slow models ──────────────────────────────────
+
+
+@pytest.mark.use_case("Model_Recommendation_By_Hardware")
+def test_status_line_names_the_computers_memory_when_known() -> None:
+    """
+    Given  a detection with a 16 GB graphics card and 32 GB of computer memory
+    When   the status line is built
+    Then   it names the card and the computer's memory; without the memory figure the
+           sentence is the same as before
+    """
+    detection = HardwareDetection(
+        profile="16gb",
+        reason=DetectionReason.GPU_DETECTED,
+        gpu_name="NVIDIA GeForce RTX 3080 Laptop GPU",
+        memory_gb=16.0,
+        system_memory_gb=32.0,
+    )
+    plain = HardwareDetection(
+        profile="16gb",
+        reason=DetectionReason.GPU_DETECTED,
+        gpu_name="NVIDIA GeForce RTX 3080 Laptop GPU",
+        memory_gb=16.0,
+    )
+
+    assert wording.detection_status_text(detection) == (
+        "Found: NVIDIA GeForce RTX 3080 Laptop GPU with 16 GB graphics memory. "
+        "Computer memory: 32 GB."
+    )
+    assert wording.detection_status_text(plain) == (
+        "Found: NVIDIA GeForce RTX 3080 Laptop GPU with 16 GB graphics memory."
+    )
+
+
+@pytest.mark.use_case("Model_Recommendation_By_Hardware")
+def test_slow_models_are_labelled_and_explained_without_alarm() -> None:
+    """
+    Given  a model rated "slow" for a computer with an 8 GB card
+    When   its labels, tooltip and hint are built
+    Then   it says it works but slower and explains that part runs on the processor, and the
+           hint is not a warning (no "too large", no warning sign)
+    """
+    label = wording.suitability_text(Suitability.SLOW, "8gb", "general")
+    compact = wording.compact_suitability_text(Suitability.SLOW, "8gb", "general")
+    hint = wording.model_hint(
+        Suitability.SLOW, "8gb", task="general", memory_gb=14.0, best_for_task="qwen3.5:9b"
+    )
+
+    assert label == "Works, but slower"
+    assert compact == "Slower"
+    assert "about 14 GB" in hint and "processor" in hint and "slower" in hint
+    assert "⚠" not in hint and "too large" not in hint.lower()
+    assert not wording.is_warning(Suitability.SLOW)
+
+
+@pytest.mark.use_case("Model_Recommendation_By_Hardware")
+def test_slow_text_without_a_graphics_card_says_it_runs_on_the_processor() -> None:
+    """
+    Given  a computer without a large graphics card
+    When   the slow text is built
+    Then   it says the model runs on the processor using the computer's memory
+    """
+    text = wording.slow_text(14.0, "cpu")
+
+    assert "processor" in text and "memory" in text and "slower" in text

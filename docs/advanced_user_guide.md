@@ -47,9 +47,9 @@ Teacher's Teammate distinguishes three computer types ("hardware profiles"): a b
 | `gemma4:12b` | ~9.5 GB | 8.0 GB | too slow | too large | good | Larger writing model |
 | `gpt-oss:20b` | ~14 GB | 13.8 GB | too slow | too large | ★ best | Default. Best writing model for 16 GB |
 
-The `hardware_profile` setting in the settings file (TOML format) controls the profile. Allowed values are `auto` (detect — default), `cpu`, `8gb` and `16gb`; an invalid value falls back to `auto` with a warning. With `auto` the app picks the profile from the largest detected graphics card (≥ 15 GB → `16gb`, ≥ 7 GB → `8gb`, otherwise `cpu`; on Apple Silicon it uses two thirds of the shared memory with the same thresholds). When `ollama_url` points at another computer, local detection is skipped and `8gb` is assumed — change the profile yourself if you know what that machine has. An address that names *this* computer (its own host name or network address) counts as this computer. The setting affects only recommendations; it never changes which model is configured.
+The `hardware_profile` setting in the settings file (TOML format) controls the profile. Allowed values are `auto` (detect — default), `cpu`, `8gb` and `16gb`; an invalid value falls back to `auto` with a warning. With `auto` the app picks the profile from the largest detected graphics card (≥ 15 GB → `16gb`, ≥ 7 GB → `8gb`, otherwise `cpu`; on Apple Silicon it uses two thirds of the shared memory with the same thresholds). When `ollama_url` points at another computer, local detection is skipped and `8gb` is assumed — change the profile yourself if you know what that machine has. An address that names *this* computer (its own host name or network address) counts as this computer. The setting affects only recommendations; it never changes which model is configured. The computer's own memory (RAM) is read as well: a model that is too big for the graphics card but fits within the card's budget plus half the computer's memory is rated **Slower** (it runs partly on the processor) instead of too large; without a graphics card, half the computer's memory is the limit. The memory figure belongs to this computer, so it is not used when Ollama runs on another one, nor on Apple Silicon, where the graphics share already comes out of that same memory. The check, its result and any error are written to the log (`INFO` level); when the check itself fails, the **My computer** line says so.
 
-A dedicated graphics card (GPU) with enough video memory (VRAM) gives the best throughput. Models marked "too large"/"too slow" for your profile still run — Ollama falls back to CPU inference — but expect several minutes per page for larger models. The Downloads dialog asks for confirmation before downloading such a model.
+A dedicated graphics card (GPU) with enough video memory (VRAM) gives the best throughput. Models marked "too large"/"too slow" for your profile (or "slower", when the computer's memory helps) still run — Ollama falls back to CPU inference — but expect several minutes per page for larger models. The Downloads dialog asks for confirmation before downloading such a model.
 
 **Downloading reading models:**
 
@@ -277,7 +277,7 @@ After OCR, the anonymizer scans the text for PII and replaces each detected item
 
 The street and postcode patterns only know German formats. A street needs a house number and a street word (`…straße`, `…weg`, `…platz`, `Straße`, `Weg`, …, optionally after `St.` or `Sankt`); a postcode is only recognised at the start of a line or after a comma, `in` or `D-`. Dates are recognised as numbers (`01.02.2010`, `1/2/10`, `2010-02-01`) and with a German or English month name (`5. März 2024`, `March 5, 2024`, `5th March 2024`); a month and year without a day (`März 2024`) is left alone.
 
-Because the proofreading and the content review both receive the anonymized text, every replaced date is hidden from them. In a history essay a year such as `9.11.1989` is replaced too. A section number such as `Aufgabe 1.2.10` can also be read as a date. If that gets in the way, remove the `DATE` patterns in **Advanced Settings → Anonymizer Settings… → Regex Patterns**.
+Because the proofreading and the content review both receive the anonymized text, every replaced date is hidden from them. In a history essay a year such as `9.11.1989` is replaced too. A section number such as `Aufgabe 1.2.10` can also be read as a date. If that gets in the way, remove the `DATE` patterns in **Advanced Settings → Privacy Settings… → Personal info: patterns**.
 
 Your pattern list is only stored once you change it. Settings saved while the built-in list was still IBAN, email and phone switch to the current built-in list automatically. Proofread text that already exists is kept; the *anonymized text* files and exports always use the patterns that are current when you create them.
 
@@ -288,7 +288,7 @@ Person-name detection is powered by [spaCy](https://spacy.io/), an open-source n
 The Privacy add-on (which includes spaCy) and the language models are both installed from inside the app:
 
 - **Privacy add-on**: click the *Install Privacy Add-on* button (shown automatically when the feature is missing).
-- **Language models**: open **Advanced Settings → Anonymizer Settings…** → **Download Model** and choose a model from the list.
+- **Language models**: open **Advanced Settings → Privacy Settings…** → **Personal info: detection** → **Download Model** and choose a model from the list.
 
 **Available language models:**
 
@@ -298,7 +298,7 @@ The Privacy add-on (which includes spaCy) and the language models are both insta
 | `de_core_news_sm` | German | ~15 MB | Higher accuracy for German-only documents |
 | `en_core_web_sm` | English | ~15 MB | Higher accuracy for English-only documents |
 
-Teacher's Teammate supports a **primary** and an optional **secondary** language model simultaneously. Using two models — for example, multilingual + German — increases recall for names that the first model misses. Configure this in **Advanced Settings → Anonymizer Settings…**.
+Teacher's Teammate supports a **primary** and an optional **secondary** language model simultaneously. Using two models — for example, multilingual + German — increases recall for names that the first model misses. Configure this in **Advanced Settings → Privacy Settings… → Personal info: detection**.
 
 Enable anonymization via the **Remove personal information before proofreading** checkbox, or set `anonymization_enabled = true` in the settings file. Anonymization only runs when proofreading is also enabled.
 

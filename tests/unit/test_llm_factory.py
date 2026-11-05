@@ -9,7 +9,10 @@ from teachers_teammate.infrastructure.llm_factory import (
     build_llm,
     get_provider_info,
     list_provider_models,
+    list_provider_models_checked,
     list_providers,
+    provider_package,
+    provider_package_required,
 )
 
 _REQUIRED_INFO_KEYS = frozenset(
@@ -235,3 +238,122 @@ def test_build_llm_forwards_temperature_with_base_url(mocker) -> None:
     mock_provider.create.assert_called_once_with(
         "llama3", base_url="http://custom:11434", temperature=0.1
     )
+
+
+def test_checked_listing_of_a_provider_that_cannot_be_asked_is_builtin(mocker) -> None:
+    """
+    Given  a provider that cannot list its models (can_list_models false)
+    When   list_provider_models_checked() is called
+    Then   its static list is returned and marked built-in (by design, not a failure)
+    """
+    mock_mod = mocker.Mock(spec=["PROVIDER_INFO"])
+    mock_mod.PROVIDER_INFO = {"models": ["m-1"], "can_list_models": False}
+    mocker.patch(
+        "teachers_teammate.infrastructure.llm_factory.importlib.import_module",
+        return_value=mock_mod,
+    )
+
+    listing = list_provider_models_checked("anthropic")
+
+    assert (listing.models, listing.source) == (["m-1"], "builtin")
+
+
+def test_checked_listing_of_a_provider_that_can_be_asked_is_live(mocker) -> None:
+    """
+    Given  a provider that lists its models (can_list_models true, no list_models_checked)
+    When   list_provider_models_checked() is called
+    Then   the answer is marked live
+    """
+    mock_mod = mocker.Mock(spec=["PROVIDER_INFO", "list_models"])
+    mock_mod.PROVIDER_INFO = {"models": [], "can_list_models": True}
+    mock_mod.list_models.return_value = ["a:latest"]
+    mocker.patch(
+        "teachers_teammate.infrastructure.llm_factory.importlib.import_module",
+        return_value=mock_mod,
+    )
+
+    listing = list_provider_models_checked("ollama", base_url="http://x")
+
+    assert (listing.models, listing.source) == (["a:latest"], "live")
+
+
+def test_checked_listing_uses_the_provider_own_checked_function(mocker) -> None:
+    """
+    Given  a provider with its own list_models_checked()
+    When   list_provider_models_checked() is called
+    Then   that provider's listing is returned unchanged (it knows live from fallback)
+    """
+    from teachers_teammate.domain.model_listing import ModelListing  # noqa: PLC0415
+
+    expected = ModelListing(["fallback"], "failed", "no key")
+    mock_mod = mocker.Mock()
+    mock_mod.list_models_checked.return_value = expected
+    mocker.patch(
+        "teachers_teammate.infrastructure.llm_factory.importlib.import_module",
+        return_value=mock_mod,
+    )
+
+    assert list_provider_models_checked("mistral") is expected
+
+
+def test_checked_listing_reports_a_provider_that_raises_as_failed(mocker) -> None:
+    """
+    Given  a provider whose list_models_checked() raises
+    When   list_provider_models_checked() is called
+    Then   a failed, empty listing comes back instead of the exception
+    """
+    mock_mod = mocker.Mock()
+    mock_mod.list_models_checked.side_effect = RuntimeError("boom")
+    mocker.patch(
+        "teachers_teammate.infrastructure.llm_factory.importlib.import_module",
+        return_value=mock_mod,
+    )
+
+    listing = list_provider_models_checked("mistral")
+
+    assert listing.source == "failed"
+    assert listing.models == []
+
+
+def test_checked_listing_of_a_provider_that_raises_keeps_its_builtin_models(mocker) -> None:
+    """
+    Given  a provider whose list_models_checked() raises but whose metadata lists models
+    When   list_provider_models_checked() is called
+    Then   the listing is failed with a reason and carries the built-in models, so the dialog
+           still has names to offer
+    """
+    mock_mod = mocker.Mock()
+    mock_mod.PROVIDER_INFO = {"models": ["m-1", "m-2"]}
+    mock_mod.list_models_checked.side_effect = RuntimeError("boom")
+    mocker.patch(
+        "teachers_teammate.infrastructure.llm_factory.importlib.import_module",
+        return_value=mock_mod,
+    )
+
+    listing = list_provider_models_checked("mistral")
+
+    assert (listing.source, listing.models) == ("failed", ["m-1", "m-2"])
+    assert listing.problem
+
+
+def test_provider_package_names_module_and_pip_name() -> None:
+    """
+    Given  the Mistral providers, which share one package, and a name that is no provider
+    When   provider_package() is read
+    Then   both Mistral providers name langchain_mistralai / langchain-mistralai, and the
+           unknown name has none
+    """
+    assert provider_package("mistral") == ("langchain_mistralai", "langchain-mistralai")
+    assert provider_package("mistral_eu") == provider_package("mistral")
+    assert provider_package("nonexistent") is None
+
+
+def test_the_ollama_connector_is_optional_and_the_others_are_required() -> None:
+    """
+    Given  the providers
+    When   provider_package_required() is asked
+    Then   Ollama (talked to directly) needs no package, every online service does
+    """
+    assert provider_package_required("ollama") is False
+    assert provider_package_required("mistral") is True
+    assert provider_package_required("openai") is True

@@ -11,6 +11,7 @@ from PySide6.QtCore import Qt
 import pytest
 
 from teachers_teammate.config import DEFAULTS
+from teachers_teammate.domain.model_listing import ModelListing
 from teachers_teammate.gui import _settings_dialog
 from teachers_teammate.gui._settings_dialog import (
     CorrectionSettingsDialog,
@@ -105,7 +106,7 @@ def test_settings_dialog_is_connections_only(settings_dialog) -> None:
     Then   it has an Ollama URL field and a credentials table (no tab widget)
     """
     assert hasattr(settings_dialog, "_ollama_url")
-    assert hasattr(settings_dialog, "_cred_table")
+    assert hasattr(settings_dialog, "_cred_rows")
     assert not hasattr(settings_dialog, "_ocr_engine")
     assert not hasattr(settings_dialog, "_correction_provider")
     assert not hasattr(settings_dialog, "_evaluation_provider")
@@ -164,16 +165,7 @@ def test_settings_dialog_get_values_applies_default_url(settings_dialog) -> None
 
 
 def _find_cred_field(dlg: SettingsDialog, env_key: str):
-    from PySide6.QtWidgets import QComboBox, QLineEdit  # noqa: PLC0415
-
-    for row in range(dlg._cred_table.rowCount()):
-        combo = dlg._cred_table.cellWidget(row, 0)
-        if isinstance(combo, QComboBox):
-            data = combo.currentData()
-            if isinstance(data, tuple) and len(data) == 2 and data[1] == env_key:
-                widget = dlg._cred_table.cellWidget(row, 1)
-                return widget if isinstance(widget, QLineEdit) else None
-    return None
+    return dlg._credential_field(env_key)
 
 
 @pytest.mark.gui
@@ -242,6 +234,126 @@ def test_settings_dialog_clear_api_key_removes_from_env(qtbot, monkeypatch) -> N
 
     assert "OPENAI_API_KEY" not in os.environ
     mock_qs.remove.assert_called_with("credentials/OPENAI_API_KEY")
+
+
+def _credentials_dialog(qtbot, monkeypatch) -> SettingsDialog:
+    for name in ("OPENAI_API_KEY", "MISTRAL_API_KEY"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setattr("teachers_teammate.gui._settings_dialog.QSettings", _EmptySettings)
+    dlg = SettingsDialog({}, app_service=_ProviderAppService())
+    qtbot.addWidget(dlg)
+    dlg.resize(520, 700)
+    dlg.show()
+    return dlg
+
+
+class _EmptySettings:
+    """QSettings stand-in with nothing stored, so the dialog starts without key rows."""
+
+    def __init__(self, *_args) -> None:
+        pass
+
+    def beginGroup(self, _name: str) -> None:
+        pass
+
+    def endGroup(self) -> None:
+        pass
+
+    def childKeys(self) -> list[str]:
+        return []
+
+    def value(self, _key: str, default: object = None) -> object:
+        return default
+
+    def setValue(self, _key: str, _value: object) -> None:
+        pass
+
+    def remove(self, _key: str) -> None:
+        pass
+
+
+@pytest.mark.gui
+def test_adding_a_key_row_gives_a_field_wide_enough_to_paste_into(qtbot, monkeypatch) -> None:
+    """
+    Given  a Connections dialog with no key saved yet
+    When   a key row is added for Mistral
+    Then   the field is wide (the old table squeezed it to a sliver), the service is named in
+           full above it, and the Remove button is not cut off
+    """
+    dlg = _credentials_dialog(qtbot, monkeypatch)
+    dlg._cred_add_combo.setCurrentIndex(dlg._cred_add_combo.findData("MISTRAL_API_KEY"))
+
+    dlg._cred_add_btn.click()
+
+    row = dlg._cred_rows[0]
+    assert row.field.width() >= 200
+    assert row.field.placeholderText() == "Paste your API key here"
+    labels = " ".join(label.text() for label in row.findChildren(type(dlg._ollama_url_label)))
+    assert "Mistral · Mistral (EU)" in labels
+    remove = next(b for b in row.findChildren(_settings_dialog.QPushButton) if b.text() == "Remove")
+    assert remove.width() >= remove.sizeHint().width()
+
+
+@pytest.mark.gui
+def test_providers_sharing_a_key_get_one_row_and_a_used_key_leaves_the_picker(
+    qtbot, monkeypatch
+) -> None:
+    """
+    Given  Mistral and Mistral (EU), which share MISTRAL_API_KEY
+    When   the key is added
+    Then   one row serves both and the picker no longer offers that key; removing the row
+           offers it again
+    """
+    dlg = _credentials_dialog(qtbot, monkeypatch)
+    keys = [dlg._cred_add_combo.itemData(i) for i in range(dlg._cred_add_combo.count())]
+    assert keys.count("MISTRAL_API_KEY") == 1
+
+    dlg._cred_add_combo.setCurrentIndex(keys.index("MISTRAL_API_KEY"))
+    dlg._cred_add_btn.click()
+
+    assert [row.env_key for row in dlg._cred_rows] == ["MISTRAL_API_KEY"]
+    assert dlg._cred_add_combo.findData("MISTRAL_API_KEY") < 0
+
+    dlg._remove_cred_row(dlg._cred_rows[0])
+
+    assert dlg._cred_rows == []
+    assert dlg._cred_add_combo.findData("MISTRAL_API_KEY") >= 0
+
+
+@pytest.mark.gui
+def test_the_key_can_be_shown_to_check_what_was_pasted(qtbot, monkeypatch) -> None:
+    """
+    Given  a key row with a pasted key
+    When   Show is pressed and then Hide
+    Then   the key is readable while shown and masked again afterwards
+    """
+    dlg = _credentials_dialog(qtbot, monkeypatch)
+    dlg._cred_add_btn.click()
+    row = dlg._cred_rows[0]
+    row.field.setText("sk-abc")
+    assert row.field.echoMode() == _settings_dialog.QLineEdit.EchoMode.Password
+
+    row._reveal.click()
+    assert row.field.echoMode() == _settings_dialog.QLineEdit.EchoMode.Normal
+    assert row._reveal.text() == "Hide"
+
+    row._reveal.click()
+    assert row.field.echoMode() == _settings_dialog.QLineEdit.EchoMode.Password
+    assert row._reveal.text() == "Show"
+
+
+@pytest.mark.gui
+def test_the_picker_disappears_when_every_service_has_a_key(qtbot, monkeypatch) -> None:
+    """
+    Given  a Connections dialog
+    When   a row is added for every service that needs a key
+    Then   the picker is hidden (there is nothing left to add)
+    """
+    dlg = _credentials_dialog(qtbot, monkeypatch)
+    while dlg._cred_add_combo.count():
+        dlg._cred_add_btn.click()
+
+    assert dlg._cred_add_row.isHidden()
 
 
 # ── OCRSettingsDialog ──────────────────────────────────────────────────────────
@@ -413,27 +525,21 @@ def test_correction_settings_dialog_on_provider_changed_seeds_model(
         },
     )
     correction_dialog._on_provider_changed("openai")
-    items = [
-        correction_dialog._correction_model.itemText(i)
-        for i in range(correction_dialog._correction_model.count())
-    ]
+    items = [correction_dialog._model.itemText(i) for i in range(correction_dialog._model.count())]
     assert "openai-model-1" in items
 
 
 @pytest.mark.gui
-def test_correction_settings_dialog_on_models_fetched_updates_combo(correction_dialog) -> None:
+def test_correction_settings_dialog_shows_a_fetched_listing_in_the_combo(correction_dialog) -> None:
     """
     Given  a CorrectionSettingsDialog
-    When   _on_models_fetched is called with a list
+    When   a live listing is shown
     Then   the correction model combo is updated and status shows green
     """
-    correction_dialog._on_models_fetched(["gpt-4o", "gpt-3.5-turbo"])
-    items = [
-        correction_dialog._correction_model.itemText(i)
-        for i in range(correction_dialog._correction_model.count())
-    ]
+    correction_dialog._show_listing(ModelListing(["gpt-4o", "gpt-3.5-turbo"]))
+    items = [correction_dialog._model.itemText(i) for i in range(correction_dialog._model.count())]
     assert "gpt-4o" in items
-    assert "#27ae60" in correction_dialog._corr_status_lbl.text()
+    assert "#27ae60" in correction_dialog._status_lbl.text()
 
 
 @pytest.mark.gui
@@ -444,7 +550,7 @@ def test_correction_settings_dialog_status_red_on_empty_fetch(correction_dialog)
     Then   the status label shows a red error indicator
     """
     correction_dialog._on_models_fetched([])
-    assert "#c0392b" in correction_dialog._corr_status_lbl.text()
+    assert "#c0392b" in correction_dialog._status_lbl.text()
 
 
 @pytest.mark.gui
@@ -464,12 +570,12 @@ def test_correction_settings_dialog_cache_hit_skips_new_thread_for_cloud_provide
         app_service=svc,
     )
     qtbot.addWidget(dlg)
-    if dlg._corr_fetch_thread is not None:
-        dlg._corr_fetch_thread.wait(5000)
+    if dlg._fetch_thread is not None:
+        dlg._fetch_thread.wait(5000)
     svc.seed_cache("openai", ["gpt-4o"], "")
-    old_thread = dlg._corr_fetch_thread
+    old_thread = dlg._fetch_thread
     dlg._auto_fetch()
-    assert dlg._corr_fetch_thread is old_thread
+    assert dlg._fetch_thread is old_thread
 
 
 @pytest.mark.gui
@@ -488,12 +594,12 @@ def test_correction_settings_dialog_ollama_always_fetches_in_a_thread(qtbot) -> 
         app_service=svc,
     )
     qtbot.addWidget(dlg)
-    first = dlg._corr_fetch_thread
+    first = dlg._fetch_thread
     assert first is not None
     first.wait(5000)
     svc.seed_cache("ollama", ["llama3:latest"], url)
     dlg._auto_fetch()
-    second = dlg._corr_fetch_thread
+    second = dlg._fetch_thread
     assert second is not None
     assert second is not first
     second.wait(5000)
@@ -518,6 +624,293 @@ def test_correction_settings_dialog_provider_change_triggers_cache_invalidation(
     dlg._on_provider_changed("ollama")
 
     assert svc.get_cached_models("ollama", base_url=DEFAULTS["ollama_url"]) is None
+
+
+# ── AI service: provider switch, model list source, install hint ──────────────
+
+
+class _ProviderAppService(_CachingDummyAppService):
+    """Service with Mistral and Mistral (EU) whose model answers and missing package are set."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.checked_calls: list[str] = []
+        self.invalidated: list[str] = []
+        self.listing = ModelListing(["glm-live", "mistral-large-latest"], "live")
+        self.missing: dict[str, str] = {}
+
+    def list_providers(self) -> list[str]:
+        return ["mistral", "mistral_eu", "ollama", "openai"]
+
+    def get_provider_info(self, provider: str) -> dict:
+        if provider in ("mistral", "mistral_eu"):
+            return {
+                "display_name": "Mistral" if provider == "mistral" else "Mistral (EU)",
+                "models": ["mistral-small-latest", "open-mistral-nemo"],
+                "default_model": "mistral-small-latest",
+                "needs_api_key": True,
+                "env_key": "MISTRAL_API_KEY",
+            }
+        return super().get_provider_info(provider)
+
+    def list_provider_models_checked(self, provider: str, *, base_url: str = "") -> ModelListing:
+        self.checked_calls.append(provider)
+        return self.listing
+
+    def invalidate_model_cache(self, provider: str, base_url: str = "") -> None:
+        self.invalidated.append(provider)
+        super().invalidate_model_cache(provider, base_url)
+
+    def missing_provider_package(self, provider: str) -> str | None:
+        return self.missing.get(provider)
+
+
+def _wait_for_fetch(qtbot, dlg, svc: _ProviderAppService, calls: int) -> None:
+    """Wait until the dialog asked the service *calls* times and showed the answer."""
+    qtbot.waitUntil(lambda: len(svc.checked_calls) >= calls, timeout=5000)
+    thread = dlg._fetch_thread
+    if thread is not None:
+        thread.wait(5000)
+    qtbot.waitUntil(
+        lambda: "●" in dlg._status_lbl.text() and "loading" not in dlg._status_lbl.text()
+    )
+
+
+@pytest.mark.gui
+@pytest.mark.parametrize("dialog_cls", [CorrectionSettingsDialog, EvaluationSettingsDialog])
+def test_switching_provider_asks_the_new_service_and_drops_the_old_model_name(
+    qtbot, monkeypatch, dialog_cls
+) -> None:
+    """
+    Given  a dialog on Ollama with an Ollama model typed in, and a Mistral key set
+    When   the user picks Mistral as the AI service
+    Then   Mistral is asked for its models (the live list replaces the built-in one) and the
+           Ollama tag does not stay in the model field
+    """
+    monkeypatch.setenv("MISTRAL_API_KEY", "k-test")
+    svc = _ProviderAppService()
+    key = "correction" if dialog_cls is CorrectionSettingsDialog else "evaluate"
+    dlg = dialog_cls(
+        {f"{key}_provider": "ollama", f"{key}_model": "qwen3.5:9b"},
+        prompt="",
+        app_service=svc,
+    )
+    qtbot.addWidget(dlg)
+    assert dlg._model.currentText() == "qwen3.5:9b"
+
+    dlg._provider.setCurrentText("mistral")
+    _wait_for_fetch(qtbot, dlg, svc, calls=1)
+
+    assert svc.checked_calls == ["mistral"]
+    items = [dlg._model.itemText(i) for i in range(dlg._model.count())]
+    assert items == ["glm-live", "mistral-large-latest"]
+    assert dlg._model.currentText() == "mistral-small-latest"  # the default, not the Ollama tag
+    assert "#27ae60" in dlg._status_lbl.text()
+
+
+@pytest.mark.gui
+def test_a_failed_listing_without_any_models_still_says_why(qtbot, monkeypatch) -> None:
+    """
+    Given  a service whose answer failed and carries no built-in models to fall back on
+    When   the dialog shows it
+    Then   the status line gives the reason and "Try again", not just a dash
+    """
+    monkeypatch.setenv("MISTRAL_API_KEY", "k-test")
+    svc = _ProviderAppService()
+    svc.listing = ModelListing([], "failed", "the model list could not be read")
+    dlg = CorrectionSettingsDialog(
+        {"correction_provider": "mistral", "correction_model": ""}, prompt="", app_service=svc
+    )
+    qtbot.addWidget(dlg)
+    _wait_for_fetch(qtbot, dlg, svc, calls=1)
+
+    status = dlg._status_lbl.text()
+    assert "no models to show" in status
+    assert "the model list could not be read" in status
+    assert "Try again" in status
+
+
+@pytest.mark.gui
+def test_picking_an_online_provider_does_not_throw_away_its_remembered_model_list(
+    qtbot, monkeypatch
+) -> None:
+    """
+    Given  a dialog on Ollama and a Mistral key
+    When   the user picks Mistral
+    Then   the remembered Mistral list is not dropped (only "Try again" does that), so a list
+           fetched a moment ago is shown again without asking the online service once more
+    """
+    monkeypatch.setenv("MISTRAL_API_KEY", "k-test")
+    svc = _ProviderAppService()
+    dlg = CorrectionSettingsDialog(
+        {"correction_provider": "ollama", "correction_model": ""}, prompt="", app_service=svc
+    )
+    qtbot.addWidget(dlg)
+
+    dlg._provider.setCurrentText("mistral")
+    _wait_for_fetch(qtbot, dlg, svc, calls=1)
+
+    assert "mistral" not in svc.invalidated
+
+
+@pytest.mark.gui
+def test_opening_the_dialog_asks_the_service_once(qtbot, monkeypatch) -> None:
+    """
+    Given  a saved provider that is not the first in the list
+    When   the dialog opens
+    Then   the service is asked exactly once, for the saved provider (selecting it while
+           loading must not start a fetch of its own)
+    """
+    monkeypatch.setenv("MISTRAL_API_KEY", "k-test")
+    svc = _ProviderAppService()
+    dlg = CorrectionSettingsDialog(
+        {"correction_provider": "mistral_eu", "correction_model": "glm-live"},
+        prompt="",
+        app_service=svc,
+    )
+    qtbot.addWidget(dlg)
+
+    _wait_for_fetch(qtbot, dlg, svc, calls=1)
+
+    assert svc.checked_calls == ["mistral_eu"]
+    assert dlg._model.currentText() == "glm-live"
+
+
+@pytest.mark.gui
+def test_a_late_answer_for_the_previous_service_is_ignored(qtbot, monkeypatch) -> None:
+    """
+    Given  a dialog that has moved from OpenAI to Mistral
+    When   the answer of the earlier OpenAI request arrives afterwards
+    Then   it does not touch the model list or the status of Mistral
+    """
+    monkeypatch.setenv("MISTRAL_API_KEY", "k-test")
+    svc = _ProviderAppService()
+    dlg = CorrectionSettingsDialog(
+        {"correction_provider": "mistral", "correction_model": ""}, prompt="", app_service=svc
+    )
+    qtbot.addWidget(dlg)
+    _wait_for_fetch(qtbot, dlg, svc, calls=1)
+    before = [dlg._model.itemText(i) for i in range(dlg._model.count())]
+    status = dlg._status_lbl.text()
+
+    dlg._on_listing_ready("openai", ModelListing(["gpt-late"]))
+
+    assert [dlg._model.itemText(i) for i in range(dlg._model.count())] == before
+    assert dlg._status_lbl.text() == status
+
+
+@pytest.mark.gui
+def test_a_failed_listing_is_shown_as_the_built_in_list_with_the_reason(qtbot, monkeypatch) -> None:
+    """
+    Given  Mistral cannot be asked because the key is refused
+    When   the dialog shows the models
+    Then   the status says it is the built-in list and why (not a green "N models"), and
+           offers to try again, which asks the service again
+    """
+    monkeypatch.setenv("MISTRAL_API_KEY", "k-wrong")
+    svc = _ProviderAppService()
+    svc.listing = ModelListing(
+        ["mistral-small-latest", "open-mistral-nemo"], "failed", "Mistral did not accept the key"
+    )
+    dlg = CorrectionSettingsDialog(
+        {"correction_provider": "mistral", "correction_model": ""}, prompt="", app_service=svc
+    )
+    qtbot.addWidget(dlg)
+    _wait_for_fetch(qtbot, dlg, svc, calls=1)
+
+    status = dlg._status_lbl.text()
+    assert "built-in list of 2 models" in status
+    assert "Mistral did not accept the key" in status
+    assert "Try again" in status
+    assert "#27ae60" not in status
+
+    dlg._status_lbl.linkActivated.emit("retry")
+    _wait_for_fetch(qtbot, dlg, svc, calls=2)
+
+    assert svc.checked_calls == ["mistral", "mistral"]
+    assert svc.invalidated[-1] == "mistral"  # the provider asked, not always "ollama"
+
+
+@pytest.mark.gui
+@pytest.mark.parametrize(
+    ("listing", "expected"),
+    [
+        (ModelListing(["a", "b"], "live"), "2 models"),
+        (ModelListing(["a"], "builtin"), "1 model · built-in list"),
+    ],
+)
+def test_live_and_by_design_built_in_lists_are_told_apart(
+    qtbot, monkeypatch, listing: ModelListing, expected: str
+) -> None:
+    """
+    Given  a list the service returned, or the built-in list of a service that cannot be asked
+    When   the dialog shows it
+    Then   the first is a green count and the second says "built-in list" in grey
+    """
+    monkeypatch.setenv("MISTRAL_API_KEY", "k-test")
+    svc = _ProviderAppService()
+    dlg = CorrectionSettingsDialog({"correction_provider": "mistral"}, prompt="", app_service=svc)
+    qtbot.addWidget(dlg)
+    _wait_for_fetch(qtbot, dlg, svc, calls=1)
+
+    dlg._show_listing(listing)
+
+    assert expected in dlg._status_lbl.text()
+
+
+@pytest.mark.gui
+def test_a_missing_provider_package_offers_the_install_in_downloads(qtbot, monkeypatch) -> None:
+    """
+    Given  Mistral is chosen while its package is not installed, and Downloads can be opened
+    When   the dialog is shown and the Install button is pressed
+    Then   the hint says Mistral support is not installed yet (no "download the full release"),
+           Downloads is opened on the Mistral package, and afterwards the hint is checked again
+    """
+    monkeypatch.setenv("MISTRAL_API_KEY", "k-test")
+    svc = _ProviderAppService()
+    svc.missing = {"mistral": "langchain-mistralai"}
+    opened: list[list[str]] = []
+
+    def open_downloads(preselect: list[str], parent) -> str | None:
+        _ = parent
+        opened.append(list(preselect))
+        svc.missing = {}  # the user installed it
+        return None
+
+    dlg = CorrectionSettingsDialog(
+        {"correction_provider": "mistral"},
+        prompt="",
+        app_service=svc,
+        open_downloads=open_downloads,
+    )
+    qtbot.addWidget(dlg)
+    dlg.show()
+
+    hint = dlg._package_hint
+    assert "Mistral support is not installed yet." in hint.message()
+    assert "full-featured release" not in hint.message()
+
+    hint._button.click()
+
+    assert opened == [["provider:mistral"]]
+    assert hint.isHidden()
+
+
+@pytest.mark.gui
+def test_no_install_hint_when_the_package_is_installed(qtbot, monkeypatch) -> None:
+    """
+    Given  a provider whose package is installed
+    When   the dialog is shown
+    Then   no install hint appears
+    """
+    monkeypatch.setenv("MISTRAL_API_KEY", "k-test")
+    dlg = CorrectionSettingsDialog(
+        {"correction_provider": "mistral"}, prompt="", app_service=_ProviderAppService()
+    )
+    qtbot.addWidget(dlg)
+    dlg.show()
+
+    assert dlg._package_hint.isHidden()
 
 
 # ── EvaluationSettingsDialog ───────────────────────────────────────────────────
@@ -578,10 +971,7 @@ def test_evaluation_settings_dialog_on_provider_changed_seeds_model(
         },
     )
     evaluation_dialog._on_provider_changed("openai")
-    items = [
-        evaluation_dialog._evaluation_model.itemText(i)
-        for i in range(evaluation_dialog._evaluation_model.count())
-    ]
+    items = [evaluation_dialog._model.itemText(i) for i in range(evaluation_dialog._model.count())]
     assert "openai-eval-1" in items
 
 
@@ -593,12 +983,9 @@ def test_evaluation_settings_dialog_on_models_fetched_updates_combo(evaluation_d
     Then   the evaluation model combo is updated and status shows green
     """
     evaluation_dialog._on_models_fetched(["claude-3-haiku", "claude-3-opus"])
-    items = [
-        evaluation_dialog._evaluation_model.itemText(i)
-        for i in range(evaluation_dialog._evaluation_model.count())
-    ]
+    items = [evaluation_dialog._model.itemText(i) for i in range(evaluation_dialog._model.count())]
     assert "claude-3-haiku" in items
-    assert "#27ae60" in evaluation_dialog._eval_status_lbl.text()
+    assert "#27ae60" in evaluation_dialog._status_lbl.text()
 
 
 @pytest.mark.gui
@@ -609,7 +996,7 @@ def test_evaluation_settings_dialog_status_red_on_empty_fetch(evaluation_dialog)
     Then   the evaluation status label shows a red error indicator
     """
     evaluation_dialog._on_models_fetched([])
-    assert "#c0392b" in evaluation_dialog._eval_status_lbl.text()
+    assert "#c0392b" in evaluation_dialog._status_lbl.text()
 
 
 # ── OCR engine/provider visibility ─────────────────────────────────────────────
@@ -748,10 +1135,7 @@ def test_correction_on_models_fetched_has_no_placeholder(correction_dialog) -> N
     Then   the combo lists only real models, with no default placeholder row
     """
     correction_dialog._on_models_fetched(["gpt-4o", "gpt-3.5"])
-    items = [
-        correction_dialog._correction_model.itemText(i)
-        for i in range(correction_dialog._correction_model.count())
-    ]
+    items = [correction_dialog._model.itemText(i) for i in range(correction_dialog._model.count())]
     assert "\u2014 default \u2014" not in items
     # Unknown models get a stable, name-sorted order under the Ollama guidance.
     assert items == ["gpt-3.5", "gpt-4o"]
@@ -776,9 +1160,9 @@ def test_correction_on_provider_changed_preselects_default_model(
             "env_key": "",
         },
     )
-    correction_dialog._correction_model.setCurrentText("")
+    correction_dialog._model.setCurrentText("")
     correction_dialog._on_provider_changed("openai")
-    assert correction_dialog._correction_model.currentText() == "openai-model-2"
+    assert correction_dialog._model.currentText() == "openai-model-2"
 
 
 @pytest.mark.gui
@@ -789,7 +1173,7 @@ def test_correction_get_values_returns_selected_model(correction_dialog) -> None
     Then   the selected model name is returned (no placeholder-to-empty mapping)
     """
     correction_dialog._on_models_fetched(["gpt-4o"])
-    correction_dialog._correction_model.setCurrentIndex(0)
+    correction_dialog._model.setCurrentIndex(0)
     values = correction_dialog.get_values()
     assert values["correction_model"] == "gpt-4o"
 
@@ -802,7 +1186,7 @@ def test_correction_get_values_preserves_explicit_model(correction_dialog) -> No
     Then   the selected model name is returned unchanged
     """
     correction_dialog._on_models_fetched(["gpt-4o", "gpt-3.5"])
-    correction_dialog._correction_model.setCurrentText("gpt-4o")
+    correction_dialog._model.setCurrentText("gpt-4o")
     values = correction_dialog.get_values()
     assert values["correction_model"] == "gpt-4o"
 
@@ -815,10 +1199,7 @@ def test_evaluation_on_models_fetched_has_no_placeholder(evaluation_dialog) -> N
     Then   the combo lists only real models, with no default placeholder row
     """
     evaluation_dialog._on_models_fetched(["claude-3-haiku"])
-    items = [
-        evaluation_dialog._evaluation_model.itemText(i)
-        for i in range(evaluation_dialog._evaluation_model.count())
-    ]
+    items = [evaluation_dialog._model.itemText(i) for i in range(evaluation_dialog._model.count())]
     assert "\u2014 default \u2014" not in items
     assert items[0] == "claude-3-haiku"
 
@@ -831,7 +1212,7 @@ def test_evaluation_get_values_returns_selected_model(evaluation_dialog) -> None
     Then   the selected model name is returned (no placeholder-to-empty mapping)
     """
     evaluation_dialog._on_models_fetched(["claude-3-haiku"])
-    evaluation_dialog._evaluation_model.setCurrentIndex(0)
+    evaluation_dialog._model.setCurrentIndex(0)
     values = evaluation_dialog.get_values()
     assert values["evaluate_model"] == "claude-3-haiku"
 
@@ -870,8 +1251,8 @@ def test_correction_settings_dialog_has_temperature_spinbox(correction_dialog) -
     When   it is created
     Then   it exposes a _corr_temperature spinbox with a sensible default
     """
-    assert hasattr(correction_dialog, "_corr_temperature")
-    assert correction_dialog._corr_temperature.value() == DEFAULTS["correction_temperature"]
+    assert hasattr(correction_dialog, "_temperature")
+    assert correction_dialog._temperature.value() == DEFAULTS["correction_temperature"]
 
 
 @pytest.mark.gui
@@ -881,7 +1262,7 @@ def test_correction_settings_dialog_get_values_includes_temperature(correction_d
     When   get_values() is called
     Then   the returned dict contains correction_temperature=0.3
     """
-    correction_dialog._corr_temperature.setValue(0.3)
+    correction_dialog._temperature.setValue(0.3)
     values = correction_dialog.get_values()
     assert "correction_temperature" in values
     assert values["correction_temperature"] == pytest.approx(0.3)
@@ -894,8 +1275,8 @@ def test_evaluation_settings_dialog_has_temperature_spinbox(evaluation_dialog) -
     When   it is created
     Then   it exposes an _eval_temperature spinbox with a sensible default
     """
-    assert hasattr(evaluation_dialog, "_eval_temperature")
-    assert evaluation_dialog._eval_temperature.value() == DEFAULTS["evaluate_temperature"]
+    assert hasattr(evaluation_dialog, "_temperature")
+    assert evaluation_dialog._temperature.value() == DEFAULTS["evaluate_temperature"]
 
 
 @pytest.mark.gui
@@ -905,7 +1286,7 @@ def test_evaluation_settings_dialog_get_values_includes_temperature(evaluation_d
     When   get_values() is called
     Then   the returned dict contains evaluate_temperature=1.0
     """
-    evaluation_dialog._eval_temperature.setValue(1.0)
+    evaluation_dialog._temperature.setValue(1.0)
     values = evaluation_dialog.get_values()
     assert "evaluate_temperature" in values
     assert values["evaluate_temperature"] == pytest.approx(1.0)
@@ -924,6 +1305,43 @@ class _CatalogAppService(_CachingDummyAppService):
     def list_provider_models(self, provider: str, *, base_url: str = "") -> list[str]:
         _ = base_url
         return self._models if provider == "ollama" else [f"{provider}-model"]
+
+
+@pytest.mark.use_case("Model_Recommendation_By_Hardware")
+@pytest.mark.parametrize(
+    ("memory_gb", "fragment", "warning"),
+    [
+        (32.0, "slower", False),  # fits with the computer's memory: informative, not an alarm
+        (None, "very slow", True),  # memory unknown: the warning as before
+    ],
+)
+def test_hint_for_a_model_too_big_for_the_card_depends_on_the_computers_memory(
+    qtbot, memory_gb: float | None, fragment: str, warning: bool
+) -> None:
+    """
+    Given  an 8 GB graphics profile and an installed gpt-oss:20b (about 14 GB)
+    When   the model is selected in the Proofreading dialog
+    Then   with 32 GB of computer memory the hint explains it runs slower (no warning); without
+           that figure it still warns that the model may be very slow
+    """
+    service = _CatalogAppService(["gpt-oss:20b", "qwen3.5:9b"])
+    service.system_memory_gb = memory_gb
+    dlg = CorrectionSettingsDialog(
+        {"correction_provider": "ollama", "correction_model": "qwen3.5:9b"},
+        prompt="Fix.",
+        app_service=service,
+        hardware_profile="8gb",
+    )
+    qtbot.addWidget(dlg)
+    qtbot.waitUntil(lambda: len(dlg._guidance._models) == 2, timeout=5000)
+    with qtbot.waitSignal(dlg._hw_selector.resolved_changed, timeout=5000):
+        dlg._hw_selector.set_setting("8gb")  # resolve again, now with the memory known
+
+    dlg._model.setCurrentText("gpt-oss:20b")
+    hint = dlg._guidance._hint_lbl.text()
+
+    assert fragment in hint.lower()
+    assert hint.startswith("⚠") is warning
 
 
 @pytest.mark.use_case("Hardware_Profile_Override")
@@ -954,16 +1372,14 @@ def test_correction_dialog_reading_model_shows_warning_hint(qtbot) -> None:
     )
     qtbot.addWidget(dlg)
     qtbot.waitUntil(lambda: len(dlg._guidance._models) == 2, timeout=5000)
-    dlg._correction_model.setCurrentText("qwen3-vl:8b")
+    dlg._model.setCurrentText("qwen3-vl:8b")
     hint = dlg._guidance._hint_lbl.text()
     assert hint.startswith("⚠")
     assert "reading model" in hint
     assert "qwen3.5:9b" in hint  # the BEST writing model on 8 GB
     assert "cannot read scans" not in hint
-    index = dlg._correction_model.findText("qwen3-vl:8b")
-    assert "Reading model only" in dlg._correction_model.itemData(
-        index, Qt.ItemDataRole.ToolTipRole
-    )
+    index = dlg._model.findText("qwen3-vl:8b")
+    assert "Reading model only" in dlg._model.itemData(index, Qt.ItemDataRole.ToolTipRole)
 
 
 @pytest.mark.use_case("Model_Recommendation_By_Hardware")
@@ -1139,7 +1555,7 @@ def test_closing_a_dialog_parks_a_running_fetch_thread_without_waiting(qtbot) ->
         hardware_profile="8gb",
     )
     qtbot.addWidget(dlg)
-    thread = dlg._corr_fetch_thread
+    thread = dlg._fetch_thread
     assert thread is not None and thread.isRunning()
 
     dlg.done(0)
@@ -1170,9 +1586,9 @@ def test_typed_model_without_tag_counts_as_installed_latest(qtbot) -> None:
     qtbot.addWidget(dlg)
     qtbot.waitUntil(lambda: dlg._guidance._models == ["mistral:latest"], timeout=5000)
 
-    dlg._correction_model.setCurrentText("mistral")
+    dlg._model.setCurrentText("mistral")
     assert "not downloaded" not in dlg._guidance._hint_lbl.text()
-    dlg._correction_model.setCurrentText("mistral-nemo:12b")
+    dlg._model.setCurrentText("mistral-nemo:12b")
     assert "not downloaded" in dlg._guidance._hint_lbl.text()
 
 
@@ -1201,7 +1617,7 @@ def test_dialog_follows_profile_chosen_in_downloads(qtbot) -> None:
     )
     qtbot.addWidget(dlg)
     qtbot.waitUntil(lambda: dlg._guidance._models == ["ollama-model"], timeout=5000)
-    first_thread = dlg._corr_fetch_thread
+    first_thread = dlg._fetch_thread
     assert first_thread is not None
     first_thread.wait(5000)
     assert dlg._guidance._best_btn.text() == "Download best choice…"
@@ -1211,5 +1627,5 @@ def test_dialog_follows_profile_chosen_in_downloads(qtbot) -> None:
     assert received == [(["qwen3.5:9b"], dlg)]
     assert dlg._hw_selector.setting() == "16gb"
     qtbot.waitUntil(lambda: dlg._guidance.active_profile() == "16gb", timeout=5000)
-    if dlg._corr_fetch_thread is not None:
-        dlg._corr_fetch_thread.wait(5000)  # the refetch after Downloads closed
+    if dlg._fetch_thread is not None:
+        dlg._fetch_thread.wait(5000)  # the refetch after Downloads closed

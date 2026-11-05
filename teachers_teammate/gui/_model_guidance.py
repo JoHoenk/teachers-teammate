@@ -44,6 +44,10 @@ from ._model_wording import (
 #: (``None`` when unknown).  Supplied by the main window.
 OpenDownloads = Callable[[list[str], "QWidget | None"], "str | None"]
 
+#: Prefix of the Downloads checkbox keys, and of the ``preselect`` entries, that name an AI
+#: service's package (``provider:mistral``) rather than an Ollama model.
+PROVIDER_PREFIX = "provider:"
+
 _GREY = QColor("#888888")
 _ORANGE = QColor("#e67e22")
 _HINT_STYLE = "color: #888; font-size: 11px;"
@@ -59,6 +63,7 @@ class _GuidanceService(Protocol):
         ollama_url: str,
         *,
         cached_only: bool = False,
+        system_memory_gb: float | None = None,
     ) -> list[ModelRating]: ...
 
 
@@ -146,12 +151,22 @@ class OllamaModelGuidance(QWidget):
             return detection.profile
         return "8gb"
 
+    def active_system_memory_gb(self) -> float | None:
+        """Return the computer's memory in GB when known (it rates models too big for the card)."""
+        detection = self._selector.resolved()
+        return detection.system_memory_gb if detection is not None else None
+
     # ── internal ───────────────────────────────────────────────────────────
 
     def _rate(self, tags: list[str]) -> None:
         """(Re-)rate *tags* for the active profile; cache hits only, no network."""
         ratings = self._service.rate_ollama_models(
-            tags, self._category, self.active_profile(), self._ollama_url, cached_only=True
+            tags,
+            self._category,
+            self.active_profile(),
+            self._ollama_url,
+            cached_only=True,
+            system_memory_gb=self.active_system_memory_gb(),
         )
         self._ratings = {rating.tag: rating for rating in ratings}
 
@@ -160,7 +175,12 @@ class OllamaModelGuidance(QWidget):
         rating = self._ratings.get(tag)
         if rating is None:
             rating = self._service.rate_ollama_models(
-                [tag], self._category, self.active_profile(), self._ollama_url, cached_only=True
+                [tag],
+                self._category,
+                self.active_profile(),
+                self._ollama_url,
+                cached_only=True,
+                system_memory_gb=self.active_system_memory_gb(),
             )[0]
             self._ratings[tag] = rating
         return rating

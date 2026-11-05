@@ -29,6 +29,7 @@ from teachers_teammate.domain.model_catalog import (
     find_spec,
     rate_model,
 )
+from teachers_teammate.domain.model_listing import ModelListing
 
 
 class LocalDataFlowStub:
@@ -66,10 +67,38 @@ class RecommendationServiceStub(LocalDataFlowStub):
         memory_gb=8.0,
     )
 
+    #: Memory of "this computer" reported with a chosen profile (``None`` = unknown).
+    system_memory_gb: float | None = None
+
     def __init__(self) -> None:
         self.detect_calls: list[tuple[str, bool]] = []
         self.changed_urls: list[str] = []
         self.gpu_calls: list[bool] = []  # the ``refresh`` flag of every detect_gpus call
+
+    # providers ──────────────────────────────────────────────────────────────
+    # Defaults for the model-list and package calls the AI-service dialogs make; a stub that
+    # has models to offer overrides ``list_provider_models`` / ``get_cached_models``.
+    def list_provider_models(self, provider: str, *, base_url: str = "") -> list[str]:
+        _ = provider, base_url
+        return []
+
+    def get_cached_models(self, provider: str, *, base_url: str = "") -> list[str] | None:
+        _ = provider, base_url
+        return None
+
+    def list_provider_models_checked(self, provider: str, *, base_url: str = "") -> ModelListing:
+        return ModelListing(list(self.list_provider_models(provider, base_url=base_url)))
+
+    def get_cached_listing(self, provider: str, *, base_url: str = "") -> ModelListing | None:
+        cached = self.get_cached_models(provider, base_url=base_url)  # pylint: disable=assignment-from-none  # subclasses return lists
+        return ModelListing(list(cached)) if cached is not None else None
+
+    def missing_provider_package(self, provider: str) -> str | None:
+        _ = provider
+        return None
+
+    def list_provider_packages(self) -> dict[str, tuple[str, str]]:
+        return {}
 
     # hardware ───────────────────────────────────────────────────────────────
     def detect_hardware(self, ollama_url: str, *, refresh: bool = False) -> HardwareDetection:
@@ -79,7 +108,9 @@ class RecommendationServiceStub(LocalDataFlowStub):
     def resolve_hardware_profile(self, setting: str, ollama_url: str) -> HardwareDetection:
         if setting in ("cpu", "8gb", "16gb"):
             return HardwareDetection(
-                profile=cast(HardwareProfile, setting), reason=DetectionReason.MANUAL
+                profile=cast(HardwareProfile, setting),
+                reason=DetectionReason.MANUAL,
+                system_memory_gb=self.system_memory_gb,
             )
         return self.detect_hardware(ollama_url)
 
@@ -109,10 +140,18 @@ class RecommendationServiceStub(LocalDataFlowStub):
         ollama_url: str,
         *,
         cached_only: bool = False,
+        system_memory_gb: float | None = None,
     ) -> list[ModelRating]:
         classification = self.classify_ollama_models(tags, ollama_url, cached_only=cached_only)
         return [
-            rate_model(tag, task, profile, detected_uses=classification.get(tag)) for tag in tags
+            rate_model(
+                tag,
+                task,
+                profile,
+                detected_uses=classification.get(tag),
+                system_memory_gb=system_memory_gb,
+            )
+            for tag in tags
         ]
 
     def on_ollama_models_changed(self, ollama_url: str) -> None:

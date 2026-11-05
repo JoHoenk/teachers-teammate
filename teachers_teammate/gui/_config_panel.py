@@ -482,6 +482,10 @@ class ConfigPanel(QScrollArea):
         language = self._language.currentText().strip()
         self.anonymizer_configure_requested.emit(language, self.build_anonymizer_config())
 
+    def anonymizer_context(self) -> tuple[str, object]:
+        """Return ``(document language, current AnonymizerConfig)`` for the privacy dialog."""
+        return self._language.currentText().strip(), self.build_anonymizer_config()
+
     def request_anonymizer_config(self) -> None:
         """Emit anonymizer_configure_requested (called from the menu action)."""
         self._on_configure_anonymizer()
@@ -874,6 +878,7 @@ class ConfigPanel(QScrollArea):
 
         from ._dependency_guard_dialog import DependencyGuardDialog  # noqa: PLC0415
         from ._downloads_dialog import DownloadsDialog  # noqa: PLC0415
+        from ._model_guidance import PROVIDER_PREFIX  # noqa: PLC0415
 
         tab = DownloadsDialog.TAB_SPACY if stage == "anonymizer" else DownloadsDialog.TAB_OLLAMA
         # A missing Ollama model is ticked in Downloads, as on the "model missing" path of Run.
@@ -886,6 +891,10 @@ class ConfigPanel(QScrollArea):
             )
             if provider == "ollama" and model:
                 preselect.append(model)
+        # A missing provider package is installed on the providers tab.
+        packages = [f"{PROVIDER_PREFIX}{issue.provider}" for issue in issues if issue.provider]
+        if packages:
+            tab, preselect = DownloadsDialog.TAB_PROVIDERS, packages
         dlg = DependencyGuardDialog(stage, issues, self)
         dlg.open_downloads.connect(lambda: self.open_downloads_requested.emit(tab, preselect))
         dlg.exec()

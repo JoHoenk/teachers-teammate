@@ -21,6 +21,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 import dataclasses
+import logging
 import threading
 from typing import cast
 from urllib.parse import urlparse
@@ -47,6 +48,8 @@ from ..domain.model_catalog import (
 from ..exceptions import OllamaConnectionError
 from ..infrastructure.gpu_detector import GpuInfo
 
+_logger = logging.getLogger(__name__)
+
 #: How long the classification waits for one ``show()`` answer.  The names it asks
 #: about are already installed, so a healthy server answers at once; a short limit
 #: keeps a hung server from blocking a dialog (or closing the app) for long.
@@ -59,6 +62,7 @@ class _LocalProbe:
 
     gpus: tuple[GpuInfo, ...]
     apple_unified_memory_gb: float | None
+    system_memory_gb: float | None = None
 
     def as_local_hardware(self) -> LocalHardware:
         return LocalHardware(
@@ -67,6 +71,7 @@ class _LocalProbe:
                 for gpu in self.gpus
             ),
             apple_unified_memory_gb=self.apple_unified_memory_gb,
+            system_memory_gb=self.system_memory_gb,
         )
 
 
@@ -84,6 +89,7 @@ class ModelRecommendationService:
         self._invalidate_model_list = invalidate_model_list or (lambda _url: None)
         self._probe: _LocalProbe | None = None
         self._probe_lock = threading.Lock()
+        self._system_memory: tuple[float | None] | None = None  # read once, a 1-tuple when read
         self._cache_lock = threading.RLock()
         # normalised URL -> {tag -> definite category}; unknown results are never stored.
         self._classification: dict[str, dict[str, ModelUses]] = {}
@@ -101,7 +107,9 @@ class ModelRecommendationService:
                 self._probe = _LocalProbe(
                     gpus=tuple(gpu_detector.detect_gpus()),
                     apple_unified_memory_gb=gpu_detector.detect_apple_unified_memory_gb(),
+                    system_memory_gb=gpu_detector.detect_system_memory_gb(),
                 )
+                _logger.info("Probed this computer: %s", self._probe)
             return self._probe
 
     def local_hardware(self, *, refresh: bool = False) -> LocalHardware:
@@ -133,11 +141,14 @@ class ModelRecommendationService:
                 host=urlparse(url).hostname or url,
             )
         local = self.local_hardware(refresh=refresh)
-        return choose_profile(
+        detection = choose_profile(
             gpus=local.gpus,
             apple_unified_memory_gb=local.apple_unified_memory_gb,
             ollama_is_remote=False,
+            system_memory_gb=local.system_memory_gb,
         )
+        _logger.info("Hardware profile for %s: %s", url, detection)
+        return detection
 
     def resolve_hardware_profile(self, setting: str, ollama_url: str) -> HardwareDetection:
         """Resolve the ``hardware_profile`` *setting* into a concrete detection.
@@ -148,9 +159,32 @@ class ModelRecommendationService:
         """
         if setting in HARDWARE_PROFILES:
             return HardwareDetection(
-                profile=cast(HardwareProfile, setting), reason=DetectionReason.MANUAL
+                profile=cast(HardwareProfile, setting),
+                reason=DetectionReason.MANUAL,
+                system_memory_gb=self._local_system_memory_gb(ollama_url),
             )
         return self.detect_hardware(ollama_url)
+
+    def _local_system_memory_gb(self, ollama_url: str) -> float | None:
+        """Return this computer's memory when Ollama runs here, else ``None`` (it is unknown).
+
+        A chosen profile needs no hardware probe, but a model that does not fit on the
+        card is still rated by the memory the computer has, so that is read separately and
+        once: it is a quick query, unlike the graphics probe.
+        """
+        from ..infrastructure import gpu_detector  # noqa: PLC0415
+        from ..infrastructure.ollama_utils import (  # noqa: PLC0415
+            is_local_ollama_url,
+            normalize_ollama_url,
+        )
+
+        if not is_local_ollama_url(normalize_ollama_url(ollama_url)):
+            return None
+        if gpu_detector.detect_apple_unified_memory_gb() is not None:
+            return None  # the graphics share is carved out of this memory: no second helping
+        if self._system_memory is None:
+            self._system_memory = (gpu_detector.detect_system_memory_gb(),)
+        return self._system_memory[0]
 
     # ── catalog ────────────────────────────────────────────────────────────
 
@@ -244,16 +278,26 @@ class ModelRecommendationService:
         ollama_url: str,
         *,
         cached_only: bool = False,
+        system_memory_gb: float | None = None,
     ) -> list[ModelRating]:
         """Return a :class:`ModelRating` per tag — the single rating path for widgets.
 
         Pass ``cached_only=True`` from the GUI thread (after a background thread
         has classified the tags); the default may contact the server for tags
-        that are not catalogued.
+        that are not catalogued.  *system_memory_gb* is the memory of the computer that
+        runs the models (``HardwareDetection.system_memory_gb``): with it, a model too big
+        for the graphics card but within reach of that memory is rated slow, not too large.
         """
         classification = self.classify_ollama_models(tags, ollama_url, cached_only=cached_only)
         return [
-            rate_model(tag, task, profile, detected_uses=classification.get(tag)) for tag in tags
+            rate_model(
+                tag,
+                task,
+                profile,
+                detected_uses=classification.get(tag),
+                system_memory_gb=system_memory_gb,
+            )
+            for tag in tags
         ]
 
     # ── invalidation ───────────────────────────────────────────────────────

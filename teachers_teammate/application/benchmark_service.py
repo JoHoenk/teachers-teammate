@@ -26,6 +26,7 @@ from ..domain.model_catalog import (
     ModelRating,
     ModelUses,
 )
+from ..domain.model_listing import ModelListing
 from ..infrastructure.benchmark.run_store import BenchmarkRunStore, NewRunRequest, StoredRun
 from ..infrastructure.benchmark.runner import OcrRunResult, run_ocr
 from ..infrastructure.ocr_processor import get_ocr_prompt
@@ -97,6 +98,12 @@ class BenchmarkApplicationService:
     def list_provider_models(self, provider: str, *, base_url: str = "") -> list[str]:
         return self._processing.list_provider_models(provider, base_url=base_url)
 
+    def list_provider_models_checked(self, provider: str, *, base_url: str = "") -> ModelListing:
+        return self._processing.list_provider_models_checked(provider, base_url=base_url)
+
+    def get_cached_listing(self, provider: str, *, base_url: str = "") -> ModelListing | None:
+        return self._processing.get_cached_listing(provider, base_url=base_url)
+
     def list_ocr_models(self, base_url: str = "") -> list[str]:
         return self._processing.list_ocr_models(base_url)
 
@@ -108,6 +115,9 @@ class BenchmarkApplicationService:
 
     def is_module_importable(self, module: str) -> bool:
         return self._processing.is_module_importable(module)
+
+    def missing_provider_package(self, provider: str) -> str | None:
+        return self._processing.missing_provider_package(provider)
 
     def resolve_hardware_profile(self, setting: str, ollama_url: str) -> HardwareDetection:
         """Return the hardware detection for *setting* (delegated)."""
@@ -135,10 +145,16 @@ class BenchmarkApplicationService:
         ollama_url: str,
         *,
         cached_only: bool = False,
+        system_memory_gb: float | None = None,
     ) -> list[ModelRating]:
         """Rate Ollama models for a task on a hardware profile (delegated)."""
         return self._processing.rate_ollama_models(
-            tags, task, profile, ollama_url, cached_only=cached_only
+            tags,
+            task,
+            profile,
+            ollama_url,
+            cached_only=cached_only,
+            system_memory_gb=system_memory_gb,
         )
 
     def default_model_for_task(self, provider: str, task: str) -> str:

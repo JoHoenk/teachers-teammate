@@ -41,6 +41,11 @@ PROFILE_SETTINGS: tuple[HardwareProfileSetting, ...] = ("auto", *HARDWARE_PROFIL
 # not a hard limit: larger models still run, just slowly.
 MEMORY_BUDGET_GB: dict[HardwareProfile, float] = {"cpu": 4.0, "8gb": 7.5, "16gb": 15.5}
 
+#: Share of the computer's own memory (RAM) a model may use when it does not fit on the
+#: graphics card: Ollama then runs the rest on the processor, which works but is slower.
+#: The other half is left for the operating system and the app.
+RAM_OFFLOAD_SHARE = 0.5
+
 #: Static default models (config DEFAULTS, CLI, provider metadata).  They apply
 #: regardless of hardware; the per-profile picks in :data:`RECOMMENDED` only drive
 #: the hardware-aware GUI recommendations.
@@ -206,6 +211,8 @@ class Suitability(StrEnum):
     BEST = "best"
     GOOD = "good"
     WORKS = "works"
+    #: Too big for the graphics card, but fits with the help of the computer's memory.
+    SLOW = "slow"
     TOO_LARGE = "too_large"
     WRONG_KIND = "wrong_kind"
     UNKNOWN = "unknown"
@@ -262,6 +269,7 @@ def suitability(
     profile: HardwareProfile,
     *,
     detected_uses: ModelUses | None = None,
+    system_memory_gb: float | None = None,
 ) -> Suitability:
     """Rate how well *tag* suits *category* on *profile*.
 
@@ -278,7 +286,12 @@ def suitability(
        list → ``GOOD``.
     4. Not catalogued (custom model) → ``WORKS`` (its size is unknown, so it is
        never called too large).
-    5. ``memory_gb`` above the profile budget → ``TOO_LARGE``, otherwise ``WORKS``.
+    5. ``memory_gb`` within the profile budget → ``WORKS``.
+    6. Above it, but within reach of the computer's memory (*system_memory_gb*, when known)
+       → :attr:`Suitability.SLOW`: part of the model runs on the processor.  With a
+       graphics card that reach is the card's budget plus :data:`RAM_OFFLOAD_SHARE` of the
+       memory; for ``cpu`` the budget *is* main memory, so it is that share alone.
+       Otherwise ``TOO_LARGE``.
 
     Args:
         tag: Model tag (normalisation is applied internally).
@@ -287,6 +300,10 @@ def suitability(
         detected_uses: Uses reported by the Ollama server for models that are not
             in the catalog (see :func:`uses_from_capabilities`).  ``None`` means
             "unknown".
+        system_memory_gb: Memory (RAM) the model may spill into, or ``None`` when unknown
+            (a server on another computer) or already part of the budget (Apple Silicon,
+            where the graphics share is carved out of the same memory); without it nothing
+            is ``SLOW``.
     """
     spec = find_spec(tag)
     uses = catalog_uses(spec) if spec is not None else detected_uses
@@ -306,9 +323,16 @@ def suitability(
         # Custom model: size unknown — never called too large.
         return Suitability.WORKS
 
-    if spec.memory_gb > MEMORY_BUDGET_GB[profile]:
-        return Suitability.TOO_LARGE
-    return Suitability.WORKS
+    budget = MEMORY_BUDGET_GB[profile]
+    if spec.memory_gb <= budget:
+        return Suitability.WORKS
+    if system_memory_gb is not None:
+        offload = RAM_OFFLOAD_SHARE * system_memory_gb
+        # The cpu budget is already main memory: adding the share again would count it twice.
+        reach = offload if profile == "cpu" else budget + offload
+        if spec.memory_gb <= reach:
+            return Suitability.SLOW
+    return Suitability.TOO_LARGE
 
 
 #: Sort rank of suitability values (BEST first, WRONG_KIND last).
@@ -316,14 +340,15 @@ _SUITABILITY_RANK: dict[Suitability, int] = {
     Suitability.BEST: 0,
     Suitability.GOOD: 1,
     Suitability.WORKS: 2,
-    Suitability.TOO_LARGE: 3,
-    Suitability.UNKNOWN: 4,
-    Suitability.WRONG_KIND: 5,
+    Suitability.SLOW: 3,
+    Suitability.TOO_LARGE: 4,
+    Suitability.UNKNOWN: 5,
+    Suitability.WRONG_KIND: 6,
 }
 
 
 def suitability_rank(value: Suitability) -> int:
-    """Return the sort rank of *value* (BEST = 0 … WRONG_KIND = 5)."""
+    """Return the sort rank of *value* (BEST = 0 … WRONG_KIND = 6)."""
     return _SUITABILITY_RANK[value]
 
 
@@ -349,6 +374,7 @@ def rate_model(
     profile: HardwareProfile,
     *,
     detected_uses: ModelUses | None = None,
+    system_memory_gb: float | None = None,
 ) -> ModelRating:
     """Rate *tag* for *task* on *profile* — the single rating path for all callers."""
     spec = find_spec(tag)
@@ -357,7 +383,9 @@ def rate_model(
         tag=tag,
         task=task,
         model_uses=model_uses,
-        suitability=suitability(tag, task, profile, detected_uses=detected_uses),
+        suitability=suitability(
+            tag, task, profile, detected_uses=detected_uses, system_memory_gb=system_memory_gb
+        ),
         memory_gb=spec.memory_gb if spec is not None else None,
         note=spec.note if spec is not None else "",
     )
@@ -408,6 +436,10 @@ class HardwareDetection:
     memory_gb: float | None = None
     #: Host name of the Ollama server for REMOTE_SERVER, otherwise ``None``.
     host: str | None = None
+    #: Memory (RAM) of the computer that runs the models, in GB; ``None`` when unknown
+    #: (a server on another computer) or already counted in the profile (Apple Silicon).  Lets
+    #: models too big for the graphics card be rated "slower" instead of "too large".
+    system_memory_gb: float | None = None
 
 
 @dataclass(frozen=True)
@@ -418,6 +450,8 @@ class LocalHardware:
     gpus: tuple[tuple[str, float | None], ...] = ()
     #: Total unified memory (GB) on Apple Silicon, ``None`` elsewhere.
     apple_unified_memory_gb: float | None = None
+    #: Memory (RAM) of this computer in GB, ``None`` when it could not be read.
+    system_memory_gb: float | None = None
 
 
 def _profile_for_memory_gb(memory_gb: float) -> HardwareProfile:
@@ -435,6 +469,7 @@ def choose_profile(
     apple_unified_memory_gb: float | None,
     ollama_is_remote: bool,
     host: str | None = None,
+    system_memory_gb: float | None = None,
 ) -> HardwareDetection:
     """Derive the hardware profile from raw detection results.
 
@@ -454,6 +489,10 @@ def choose_profile(
         apple_unified_memory_gb: Total unified memory (GB) on Apple Silicon, or ``None``.
         ollama_is_remote: True when the configured Ollama URL is not this machine.
         host: Host name of the remote Ollama server (only used for REMOTE_SERVER).
+        system_memory_gb: Memory (RAM) of this computer, carried into the result; it says
+            nothing about a remote server and is ignored for it.  Apple Silicon ignores it
+            too: its graphics share is part of that same memory, so it cannot be offloaded
+            into a second time.
     """
     if ollama_is_remote:
         return HardwareDetection(profile="8gb", reason=DetectionReason.REMOTE_SERVER, host=host)
@@ -466,6 +505,7 @@ def choose_profile(
             reason=DetectionReason.GPU_DETECTED,
             gpu_name=name,
             memory_gb=mem,
+            system_memory_gb=system_memory_gb,
         )
 
     if gpus:
@@ -474,6 +514,7 @@ def choose_profile(
             reason=DetectionReason.GPU_MEMORY_UNKNOWN,
             gpu_name=gpus[0][0],
             memory_gb=None,
+            system_memory_gb=system_memory_gb,
         )
 
     if apple_unified_memory_gb is not None:
@@ -486,4 +527,6 @@ def choose_profile(
             memory_gb=apple_unified_memory_gb,
         )
 
-    return HardwareDetection(profile="cpu", reason=DetectionReason.NO_GPU_FOUND)
+    return HardwareDetection(
+        profile="cpu", reason=DetectionReason.NO_GPU_FOUND, system_memory_gb=system_memory_gb
+    )

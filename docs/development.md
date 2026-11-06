@@ -136,7 +136,10 @@ layering:
 - **Presentation** `gui/benchmark/` — a thin window reusing shared widgets
   (`_ocr_config_selector.OcrConfigSelector`, `_preview_panel` `ZoomableImageView`
   /`DiffWidget`, `_log_widget.LogWidget`, `_app_bootstrap.create_app`,
-  `_qt_stream.QtStream`).
+  `_qt_stream.QtStream`). The main window's proofreading tab uses
+  `_review_views.ReviewDiffView` / `ReviewNotesView` instead (see *Correction review:
+  schema, splice, align* below); plain `DiffWidget` is still what the benchmark compare
+  view and the privacy preview dialog show.
 
 The OCR-only fields live in the nested `Config.ocr` value object
 (`config.py:OcrConfig`), which both the pipeline and the benchmark vary.
@@ -178,6 +181,18 @@ the per-task provider defaults, and the Ollama provider's `default_model`) all c
 `DEFAULT_OCR_MODEL` / `DEFAULT_WRITING_MODEL` in the catalog module. They are independent
 of the hardware profile — the per-profile `RECOMMENDED` lists only drive the GUI
 recommendations — so a default may be "too large" for a small profile.
+
+A writing model needs `structured_output=True` to be offered for proofreading with
+explanations: the review is bound to a JSON schema, and a model that cannot
+answer it would fall back to *Corrections only* on every file. `DEFAULT_WRITING_MODEL` and
+the first entry of every `RECOMMENDED["general"]` list must carry the flag — a test enforces
+it. The flag is not guessed: `tools/verify_model_catalog.py --structured-output` runs the
+real review prompt against three fixture texts (plain English, plain German, Markdown) on
+every `general` model that is reachable through a local Ollama server and reports the value
+to enter in the catalog by hand, like the download sizes. A
+mismatch against the catalog counts as a failure. `STRUCTURED_OUTPUT_UNVERIFIED_MODEL`
+names the writing model not yet checked (`gpt-oss:20b`): it is offered and used like any other
+model, but has no badge.
 
 A writing model that can also read scanned pages lists `also_uses=frozenset({"ocr"})`;
 `catalog_uses()`, `suitability()` and `models_for()` then treat it as a reading model as
@@ -444,6 +459,132 @@ boxes of layout engines are not kept.
 add the module to `_OCR_SRCS` in `teachers_teammate/BUILD`. Parsers must be total: an
 exception falls through to the next parser, ending at plain text.
 
+## Correction review: schema, splice, align
+
+Proofreading answers with a *review*, not a text: the corrected sentence plus one
+explanation per edit, and a table of unclear or ambiguous expressions. Three pieces
+make it work.
+
+**Schema, answer format, message** (`infrastructure/correction_schema.py`,
+`domain/answer_format.py`). `CorrectionAnswer` (sentences → changes, plus `unclear`) is the
+Pydantic model both provider paths are bound to: Ollama through
+`OllamaClient.chat(format=CorrectionAnswer.model_json_schema())`, online providers through
+`with_structured_output(..., include_raw=True)`. The system message has two parts. The
+*instructions* (the seven presets in `domain/correction_prompts.py`) say what to correct and
+are per language. The *answer format* (`REVIEW_FORMAT` / `TEXT_FORMAT`) says how to fill in the
+reply: one English text per mode, **no language names, no placeholders**. It describes the
+structure field by field, because Ollama's `format=` only constrains the keys and never shows
+the model the schema's field descriptions (online providers see them as well). The languages
+travel in the message that carries the text (`Text language: …`, `Explanation language: …`;
+`correction.py:_human_template`), so the answer format is plain text a teacher can edit.
+Never put output-format rules into a preset. A test keeps `REVIEW_FIELDS` and the schema in
+step: every field name must appear in `REVIEW_FORMAT`. On the native Ollama path
+`OllamaClient.chat(system=...)` sends the instructions as a real `system` message (it used to
+send everything as one user message). `ANSWER_FORMAT_VERSION` (= `CONTRACT_VERSION`) is part
+of the correction cache hash and is bumped with every change of the formats or the schema.
+
+**Editable answer format.** `answer_format_review` / `answer_format_text` (`""` = built-in)
+are settings in `DEFAULTS`, `Config`, the config file and the GUI settings dict, stored with
+the `answer_format_version` they were written for. `config.py:migrate_answer_formats()` —
+called by `load_config_file` and `ConfigPanel.load_from_dict` — drops an edit written for
+another version (with a warning on stderr), so an old edit never describes another structure
+than the one the app asks for. The editor (`gui/_prompt_editor.py:_FormatBox`) shows a hint
+when an edited review format no longer names a field (`domain/answer_format.py:missing_fields`).
+There is no CLI flag; set them in the config file.
+
+**What the cache is keyed on.** `compute_correction_config_hash()` hashes the *resolved*
+instructions and answer formats (from `instruction_parts()`), not the settings: `""` means
+"the built-in text", which can change with the app, and editing a preset must not serve results
+made with the old text.
+
+**Storing prompts as references** (`domain/correction_prompts.py`, `config.py`,
+`gui/_config_panel.py`). A saved `correction_prompt` of `""` means "the built-in prompt of
+the document language" — the GUI never stores preset *text*. Copies that older versions
+saved are recognised by `is_preset_prompt_text()` (against `PRESET_PROMPTS` and
+`LEGACY_PRESET_PROMPTS`, the presets of every released version, compared after whitespace
+normalisation) and reset to `""` on load, in `ConfigPanel.load_from_dict` and in the CLI's
+`load_config_file`; `evaluate_prompt` gets the same check against its default. The dialog
+policy and the answer format come from `instruction_parts()` via
+`ProcessingApplicationService.correction_instructions()` — the same code path the
+corrector uses, so what the dialog shows is what is sent. The prompt editor is **one editable
+box that always shows the text in use** (`prompt or builtin`); *Reset to default* puts the
+built-in text back, and leaving the editor with the built-in text unchanged stores `""`, not a
+copy (`PromptEditor.prompt()`). The unreleased texts of the review window
+(`SUPERSEDED_PRESET_PROMPTS`) are recognised like the released ones. `normalize_output_mode()` / `normalize_level()` in
+`domain/correction_policy.py` give an unknown setting the same meaning in every layer, and
+the saved output mode is used as it is for every model: there is no per-model block, because
+Ollama's `format=` is enforced by the engine and works with all local models (a model that
+still fails falls back to corrections only per file). `structured_output` in the catalog only
+decides the `explanations ✓` badge; to earn it, run
+`tools/verify_model_catalog.py --structured-output` against the model and enter the result.
+
+**Splice** (`domain/correction_review.py:splice`). The model answers only the sentences it
+changed, so the full text is rebuilt by walking the anonymized source with a cursor and
+replacing each `original` with its `corrected`: exact match, then whitespace-normalised
+(OCR line breaks), then fuzzy. The fuzzy lookup compares the anchor with whole
+sentence-like pieces of the text after the cursor (up to four in a row; `difflib` ratio
+≥ 0.9, the earliest best one wins). It must return a complete piece, never a fragment:
+replacing a fragment would leave the rest of the old sentence in the text. It searches the
+rest of the text, not a window next to the cursor, because the model returns only changed
+sentences, which are rarely adjacent. Text between anchors is copied verbatim, so line
+breaks, paragraphs and Markdown marks survive. A sentence that matches nowhere is *unplaced*: not applied, its
+index recorded, and the caller falls back to text mode when nothing at all could be placed.
+
+**Align** (`domain/correction_review.py:align`, entered through
+`application/correction_review.py:CorrectionReviewPresenter.aligned`). The local word diff
+stays the ground truth: `align()` diffs raw against corrected and attaches notes to hunks.
+A note belongs to a hunk when it *changes* the hunk's tokens (`change_tokens()`: what only
+one side of the note has, punctuation included, so `Tom → Tom,` is the comma). Notes of the
+hunk's own sentence come first; a note may serve several hunks, because the word diff cuts
+`his friend → her friends` in two, and a note not used yet wins a tie. A hunk without a
+note is either the model's change without a reason (`by_teacher=False`, shown as "no
+explanation") or the teacher's own edit (`by_teacher=True`, "your change"); it is the
+teacher's when its new words are not in the model's version of its sentence. A hunk outside
+every changed sentence never borrows a note from another sentence (only from a sentence whose
+wording could not be found in the text at all). Alignment is
+recomputed from `(raw, corrected, review)` on every render and needs no extra state. A note
+whose hunk is gone becomes an *orphan* ("not in the text"). Unclear expressions are
+searched independently of each other, because the model lists them in any order. Every
+count shown anywhere (`review_summary()`) is the number of *listed* hunks of the aligned review:
+spelling and punctuation hunks (`AlignedChange.is_minor`, `MINOR_CATEGORIES`; a note-less hunk
+that touches no word character counts too) are marked in the text but listed only as one
+collapsed line in the notes view and left out of the DOCX *Explanations* list.
+Hunks come from `diff_opcodes()`, which the GUI diff uses as well so the numbers agree; it
+reports a whitespace-only difference (an OCR line break the model joined into a space) as
+`equal`, so it is never listed as an unexplained change.
+`align()` takes plain text and strips Markdown marks from the anchors itself, so the DOCX
+builder can call it without importing the application layer. The DOCX comments layout cuts
+the text into whitespace words, which line up with the hunks only roughly, so it asks for
+the note that changes most of a part's tokens instead of looking up exact hunks.
+
+**Failures** (`infrastructure/_llm_invoke.py:StructuredResult`). A schema-bound request
+ends as success or as one of three failures. `transport`: the provider call raised; the
+source text is kept and the warning is the complete "Correction failed (…)" sentence.
+`unsupported`: the model or provider cannot bind a schema at all; no repair is attempted.
+`invalid`: it answered, but not in the schema. An invalid answer with some text gets one
+repair request that quotes the validation error. Unsupported, invalid-and-empty and
+still-invalid answers all end in the corrections-only fallback for that file, with the
+fixed fallback warning; the raw validation error is only ever sent back to the model.
+A `transport` failure sets `CorrectionOutcome.failed`, and `FileProcessor` then does not store
+the unchanged source as a finished correction; a corrections-only fallback is stored. An
+Ollama server that answers the `format` request with HTTP 400/422 counts as `unsupported`
+(`OCRError.status_code`), not as a network failure.
+
+In the diff the changed and unclear words themselves are the links (`note:N`,
+`unclear:N`); a superscript `?` appears only for an unclear expression a change covers
+completely, since links cannot nest. Every highlight sets its text colour as well as its
+background: the app runs on a dark theme, whose light text is unreadable on light colours.
+
+Link tooltips in the diff are shown from a `ToolTip` event handler, not through an HTML
+`title` attribute: Qt does not decode entities in attribute values, so a quote in an
+explanation would show as `&quot;`.
+
+`pydantic` is imported by `correction_schema.py`, so it is declared in `pyproject.toml`
+(it already arrives with `ollama`).
+
+Both functions are pure and table-tested in `tests/unit/test_correction_review.py`; the
+review views are tested with pytest-qt in `tests/gui/test_gui_review_views.py`.
+
 ## Error handling
 
 ### Design goals
@@ -681,3 +822,12 @@ can start.
 | spaCy language models | pip wheel from GitHub Releases | packages_dir | `inject_packages_dir()` |
 | Ollama models | Ollama HTTP API (`/api/pull`) | Ollama data dir | Ollama server running |
 | Tesseract | OS package manager (not in-app) | System PATH | Tesseract binary on PATH |
+
+**Focus in the Changes tab** (`gui/_review_views.py`). Choosing a change or an unclear
+expression — by clicking its words in the text or its number in the list — marks it in both
+views. The text uses Qt *extra selections* (`ReviewDiffView._apply_focus`, found through the
+anchor name of the links), not HTML, so a click neither re-renders the page nor loses the
+scroll position; the list marks the entry with the focus background and opens the collapsed
+minor-changes line when the entry is in it. List numbers run 1…n over the listed changes while
+the links keep the hunk number of the diff. Tests click with `qtbot.mouseClick` on a position
+found with `anchorAt()`; emitting `anchorClicked` by hand would not show what a person sees.

@@ -69,6 +69,110 @@ def _pdf_dpi_type(value: str) -> int:
     return dpi
 
 
+def _add_correction_args(parser: argparse.ArgumentParser, providers: list[str] | None) -> None:
+    """Add the correction argument group to *parser*."""
+    corr_grp = parser.add_argument_group("correction")
+    corr_grp.add_argument(
+        "--correction",
+        dest="correction_enabled",
+        action="store_true",
+        default=DEFAULTS["correction_enabled"],
+        help="Enable the LLM correction step (default).",
+    )
+    corr_grp.add_argument(
+        "--no-correction",
+        dest="correction_enabled",
+        action="store_false",
+        help="Skip the LLM correction step (DOCX is still created without column 2).",
+    )
+    corr_grp.add_argument(
+        "--anonymization",
+        dest="anonymization_enabled",
+        action="store_true",
+        default=DEFAULTS["anonymization_enabled"],
+        help=(
+            "Anonymize PII (person names, emails, phone numbers) in OCR text before "
+            "sending to the correction LLM. Requires spacy and a language model: "
+            "pip install 'teachers_teammate[privacy]' && python -m spacy download en_core_web_sm"
+        ),
+    )
+    corr_grp.add_argument(
+        "--no-anonymization",
+        dest="anonymization_enabled",
+        action="store_false",
+        help="Disable PII anonymization before correction (default).",
+    )
+    corr_grp.add_argument(
+        "--correction-provider",
+        default=DEFAULTS["correction_provider"],
+        choices=providers,
+        metavar="PROVIDER",
+        help=(
+            f"LLM provider for correction: {', '.join(providers or [])}."
+            if providers
+            else "LLM provider for correction."
+        ),
+    )
+    corr_grp.add_argument(
+        "--correction-model",
+        default=DEFAULTS["correction_model"],
+        metavar="MODEL",
+        help=(
+            "Correction LLM model name. "
+            "Auto-selected per provider when omitted: "
+            f"{default_model_for_task('ollama', 'correction')} (ollama), "
+            f"{default_model_for_task('openai', 'correction')} (openai), "
+            f"{default_model_for_task('anthropic', 'correction')} (anthropic)."
+        ),
+    )
+    corr_grp.add_argument(
+        "--correction-prompt",
+        default=DEFAULTS["correction_prompt"],
+        metavar="PROMPT",
+        help=(
+            "System prompt for the correction LLM. "
+            "Built-in presets: english (default), german, french, spanish, italian, "
+            "portuguese, dutch, or a custom system prompt string. "
+            "A prompt without {level} ignores --correction-level."
+        ),
+    )
+    corr_grp.add_argument(
+        "--correction-level",
+        default=DEFAULTS["correction_level"],
+        choices=["A1", "A2", "B1", "B2", "C1", "C2"],
+        metavar="LEVEL",
+        help="CEFR level the correction aims at (default: %(default)s).",
+    )
+    corr_grp.add_argument(
+        "--explanation-language",
+        default=DEFAULTS["explanation_language"],
+        metavar="LANGUAGE",
+        help=(
+            "Language of the change explanations and the unclear table "
+            "(preset name such as 'german'). Default: the language of the text."
+        ),
+    )
+    corr_grp.add_argument(
+        "--corrections-only",
+        dest="correction_output",
+        action="store_const",
+        const="text",
+        default=DEFAULTS["correction_output"],
+        help=(
+            "Skip the explanations and the unclear table (faster); "
+            "only the corrected text is produced."
+        ),
+    )
+    corr_grp.add_argument(
+        "--explanations",
+        dest="correction_output",
+        action="store_const",
+        const="review",
+        help="Explain the changes and list unclear expressions (default; overrides a config "
+        'file that sets correction_output = "text").',
+    )
+
+
 def _parse_args(
     providers: list[str] | None = None,
     extra_defaults: dict | None = None,
@@ -278,70 +382,7 @@ def _parse_args(
     )
 
     # ── Correction ─────────────────────────────────────────────────────────
-    corr_grp = parser.add_argument_group("correction")
-    corr_grp.add_argument(
-        "--correction",
-        dest="correction_enabled",
-        action="store_true",
-        default=DEFAULTS["correction_enabled"],
-        help="Enable the LLM correction step (default).",
-    )
-    corr_grp.add_argument(
-        "--no-correction",
-        dest="correction_enabled",
-        action="store_false",
-        help="Skip the LLM correction step (DOCX is still created without column 2).",
-    )
-    corr_grp.add_argument(
-        "--anonymization",
-        dest="anonymization_enabled",
-        action="store_true",
-        default=DEFAULTS["anonymization_enabled"],
-        help=(
-            "Anonymize PII (person names, emails, phone numbers) in OCR text before "
-            "sending to the correction LLM. Requires spacy and a language model: "
-            "pip install 'teachers_teammate[privacy]' && python -m spacy download en_core_web_sm"
-        ),
-    )
-    corr_grp.add_argument(
-        "--no-anonymization",
-        dest="anonymization_enabled",
-        action="store_false",
-        help="Disable PII anonymization before correction (default).",
-    )
-    corr_grp.add_argument(
-        "--correction-provider",
-        default=DEFAULTS["correction_provider"],
-        choices=providers,
-        metavar="PROVIDER",
-        help=(
-            f"LLM provider for correction: {', '.join(providers or [])}."
-            if providers
-            else "LLM provider for correction."
-        ),
-    )
-    corr_grp.add_argument(
-        "--correction-model",
-        default=DEFAULTS["correction_model"],
-        metavar="MODEL",
-        help=(
-            "Correction LLM model name. "
-            "Auto-selected per provider when omitted: "
-            f"{default_model_for_task('ollama', 'correction')} (ollama), "
-            f"{default_model_for_task('openai', 'correction')} (openai), "
-            f"{default_model_for_task('anthropic', 'correction')} (anthropic)."
-        ),
-    )
-    corr_grp.add_argument(
-        "--correction-prompt",
-        default=DEFAULTS["correction_prompt"],
-        metavar="PROMPT",
-        help=(
-            "System prompt for the correction LLM. "
-            "Built-in presets: 'english' (default) or 'german'. "
-            "Or supply a custom system prompt string."
-        ),
-    )
+    _add_correction_args(parser, providers)
 
     # ── Evaluation ───────────────────────────────────────────────────────
     eval_grp = parser.add_argument_group("evaluation")
@@ -551,6 +592,11 @@ def run_cli(
         correction_provider=args.correction_provider,
         correction_model=args.correction_model,
         correction_prompt=args.correction_prompt,
+        correction_level=args.correction_level,
+        explanation_language=args.explanation_language,
+        correction_output=args.correction_output,
+        answer_format_review=getattr(args, "answer_format_review", ""),
+        answer_format_text=getattr(args, "answer_format_text", ""),
         evaluation_enabled=args.evaluation_enabled,
         evaluate_provider=args.evaluate_provider,
         evaluate_model=args.evaluate_model,

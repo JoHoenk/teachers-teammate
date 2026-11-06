@@ -12,7 +12,7 @@ import pytest
 
 from teachers_teammate.application import service as service_module
 from teachers_teammate.application.commands import ApplicationCommands
-from teachers_teammate.application.service import ProcessingApplicationService
+from teachers_teammate.application.service import DocxExport, ProcessingApplicationService
 from teachers_teammate.domain.model_listing import ModelListing
 from teachers_teammate.infrastructure.state_repository import DocumentState
 
@@ -1251,7 +1251,12 @@ def test_export_docx_keeps_markdown_formatting(tmp_path: Path) -> None:
     out = tmp_path / "out" / "doc.docx"
 
     svc.export_docx(
-        tmp_path / "doc.png", "my ~~backpack~~ bag", "", "", out, text_format="markdown"
+        tmp_path / "doc.png",
+        "my ~~backpack~~ bag",
+        "",
+        "",
+        out,
+        options=DocxExport(text_format="markdown"),
     )
 
     cells = Document(str(out)).tables[0].rows[1].cells
@@ -2215,3 +2220,60 @@ def test_hardware_detection_is_logged(monkeypatch, caplog) -> None:
     text = caplog.text
     assert "Probed this computer" in text and "RTX 3080" in text
     assert "Hardware profile" in text and "gpu_memory_unknown" in text
+
+
+def test_correction_instructions_matches_what_the_corrector_sends(monkeypatch) -> None:
+    """
+    Given  the service method that builds the dialog's "policy" and "fixed" parts
+    When   a review request is built with the same settings
+    Then   both parts are exactly the pieces of the system message the corrector sends
+    """
+    from langchain_core.language_models.fake_chat_models import (  # noqa: PLC0415
+        FakeListChatModel,
+    )
+
+    from teachers_teammate.infrastructure import (  # noqa: PLC0415
+        correction as correction_module,
+    )
+    from teachers_teammate.infrastructure._llm_invoke import (  # noqa: PLC0415
+        StructuredResult,
+    )
+    from teachers_teammate.infrastructure.correction import (  # noqa: PLC0415
+        GERMAN_PROMPT,
+        CorrectionSettings,
+        LangChainCorrector,
+    )
+    from teachers_teammate.infrastructure.correction_schema import (  # noqa: PLC0415
+        fill_placeholders,
+    )
+
+    captured: list[str] = []
+
+    def fake(_llm, **kwargs):
+        captured.append(kwargs["system"])
+        return StructuredResult(error="(stop)", failure="transport")
+
+    monkeypatch.setattr(correction_module, "invoke_langchain_structured", fake)
+    LangChainCorrector(
+        FakeListChatModel(responses=[]),
+        settings=CorrectionSettings(level="B2", explanation_language=""),
+    ).correct("x", "German")
+    system = correction_module._instructions(
+        "",
+        "German",
+        level="B2",
+        text_format="plain",
+        mode="review",
+    )
+    assert system == captured[0]
+
+    policy, fixed = ProcessingApplicationService().correction_instructions(
+        prompt="",
+        language="German",
+        level="B2",
+        output_mode="review",
+        text_format="plain",
+    )
+    assert system == f"{policy}\n\n{fixed}"
+    assert "Answer with a JSON object" in fixed
+    assert fill_placeholders(GERMAN_PROMPT, level="B2") == policy

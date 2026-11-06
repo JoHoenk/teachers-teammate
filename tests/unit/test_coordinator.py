@@ -9,6 +9,12 @@ from unittest.mock import MagicMock, call
 
 import pytest
 
+from teachers_teammate.domain.correction_review import (
+    ChangeNote,
+    CorrectionReview,
+    SentenceNote,
+    UnclearNote,
+)
 from teachers_teammate.infrastructure.reporting import FileDoneResult
 from teachers_teammate.infrastructure.workflow.coordinator import run_files
 from teachers_teammate.infrastructure.workflow.file_processor import ProcessingResult
@@ -203,3 +209,41 @@ def test_run_files_reports_text_format_with_file_done(tmp_path: Path) -> None:
     assert result.source_id == str(f1.resolve())
     assert result.raw_text == "**x**"
     assert result.text_format == "markdown"
+
+
+def test_run_files_reports_the_counts_of_the_diff_not_of_the_notes(tmp_path: Path) -> None:
+    """
+    Given  a result whose single note explains an edit that the word diff splits in two hunks,
+           plus one unclear expression
+    When   run_files() reports the file
+    Then   the summary line counts the two hunks and the unclear expression
+    """
+    review = CorrectionReview(
+        sentences=(
+            SentenceNote(
+                "She met his friend.",
+                "She met her friends.",
+                (ChangeNote("his friend", "her friends", "word_choice", "Agreement."),),
+            ),
+        ),
+        unclear=(UnclearNote("She", "Who?", "Anna"),),
+    )
+    result = ProcessingResult(
+        True,
+        "doc.docx",
+        "preview.png",
+        "She met his friend.",
+        "She met her friends.",
+        "",
+        correction_review=review,
+    )
+    reporter = MagicMock()
+
+    run_files(
+        [tmp_path / "doc.png"],
+        process_file=lambda _p: result,
+        cleanup_tmp=lambda: None,
+        reporter=reporter,
+    )
+
+    reporter.status.assert_any_call("       \u2192 2 changes, 1 unclear")

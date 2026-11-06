@@ -38,7 +38,11 @@ from ..interfaces import (
     OCRProcessor,
 )
 from .anonymizer import AnonymizerConfig, resolve_patterns
-from .correction import LangChainCorrector, NativeOllamaCorrector
+from .correction import (
+    CorrectionSettings,
+    LangChainCorrector,
+    NativeOllamaCorrector,
+)
 from .docx_builder import DocxDocumentCreator
 from .evaluation import LangChainEvaluator, NativeOllamaEvaluator
 from .image_preprocessor import HandwritingPreprocessor
@@ -93,8 +97,10 @@ def _default_build_llm(
     return build_llm(provider, model, base_url=base_url, temperature=temperature)
 
 
-def _default_build_corrector(llm: BaseChatModel, prompt: str) -> Corrector:
-    return LangChainCorrector(llm, prompt)
+def _default_build_corrector(
+    llm: BaseChatModel, prompt: str, settings: CorrectionSettings
+) -> Corrector:
+    return LangChainCorrector(llm, prompt, settings=settings)
 
 
 def _default_build_evaluator(llm: BaseChatModel, prompt: str) -> Evaluator:
@@ -102,10 +108,20 @@ def _default_build_evaluator(llm: BaseChatModel, prompt: str) -> Evaluator:
 
 
 def _default_build_native_ollama_corrector(
-    model: str, client: OllamaClient, prompt: str, timeout: float, temperature: float
+    model: str,
+    client: OllamaClient,
+    prompt: str,
+    timeout: float,
+    temperature: float,
+    settings: CorrectionSettings,
 ) -> Corrector:
     return NativeOllamaCorrector(
-        model=model, client=client, prompt=prompt, timeout=timeout, temperature=temperature
+        model=model,
+        client=client,
+        prompt=prompt,
+        timeout=timeout,
+        temperature=temperature,
+        settings=settings,
     )
 
 
@@ -117,8 +133,8 @@ def _default_build_native_ollama_evaluator(
     )
 
 
-def _default_build_doc_creator(fmt: str) -> DocumentCreator:
-    return DocxDocumentCreator(fmt=fmt)
+def _default_build_doc_creator(fmt: str, labels_language: str = "") -> DocumentCreator:
+    return DocxDocumentCreator(fmt=fmt, labels_language=labels_language)
 
 
 def _default_build_anonymizer(language: str, config: AnonymizerConfig) -> Anonymizer:
@@ -154,15 +170,17 @@ class PipelineComponentFactory:
         _default_build_ollama_ocr
     )
     build_llm: Callable[[str, str, str, float], BaseChatModel] = _default_build_llm
-    build_corrector: Callable[[BaseChatModel, str], Corrector] = _default_build_corrector
-    build_evaluator: Callable[[BaseChatModel, str], Evaluator] = _default_build_evaluator
-    build_native_ollama_corrector: Callable[[str, OllamaClient, str, float, float], Corrector] = (
-        _default_build_native_ollama_corrector
+    build_corrector: Callable[[BaseChatModel, str, CorrectionSettings], Corrector] = (
+        _default_build_corrector
     )
+    build_evaluator: Callable[[BaseChatModel, str], Evaluator] = _default_build_evaluator
+    build_native_ollama_corrector: Callable[
+        [str, OllamaClient, str, float, float, CorrectionSettings], Corrector
+    ] = _default_build_native_ollama_corrector
     build_native_ollama_evaluator: Callable[[str, OllamaClient, str, float, float], Evaluator] = (
         _default_build_native_ollama_evaluator
     )
-    build_doc_creator: Callable[[str], DocumentCreator] = _default_build_doc_creator
+    build_doc_creator: Callable[[str, str], DocumentCreator] = _default_build_doc_creator
     build_anonymizer: Callable[[str, AnonymizerConfig], Anonymizer] = _default_build_anonymizer
     build_ocr_postprocessor: Callable[[], OcrOutputPostprocessor] = _default_build_ocr_postprocessor
 
@@ -233,21 +251,24 @@ class StageBuilder:
         if cfg.correction_enabled:
             if cfg.correction_provider == "ollama":
                 client = ollama_client or self._build_ollama_client()
+                settings = self._correction_settings()
                 correction = factory.build_native_ollama_corrector(
                     cfg.effective_correction_model,
                     client,
                     cfg.correction_prompt,
                     float(cfg.ocr_timeout),
                     cfg.correction_temperature,
+                    settings,
                 )
             else:
+                settings = self._correction_settings()
                 llm = factory.build_llm(
                     cfg.correction_provider,
                     cfg.effective_correction_model,
                     cfg.ollama_url,
                     cfg.correction_temperature,
                 )
-                correction = factory.build_corrector(llm, cfg.correction_prompt)
+                correction = factory.build_corrector(llm, cfg.correction_prompt, settings)
 
         if cfg.anonymization_enabled:
             if not cfg.correction_enabled:
@@ -259,6 +280,19 @@ class StageBuilder:
                 anonymizer = self._build_anonymizer()
 
         return correction, anonymizer
+
+    def _correction_settings(self) -> CorrectionSettings:
+        """Collect the review settings the corrector needs from the configuration."""
+        cfg = self.config
+        return CorrectionSettings(
+            prompt=cfg.correction_prompt,
+            level=cfg.correction_level,
+            explanation_language=cfg.explanation_language,
+            output_mode=cfg.correction_output,
+            answer_format_review=cfg.answer_format_review,
+            answer_format_text=cfg.answer_format_text,
+            strict_schema=cfg.correction_provider == "openai",
+        )
 
     def _build_anonymizer(self) -> Anonymizer:
         cfg = self.config
@@ -317,4 +351,7 @@ class StageBuilder:
     def build_doc_creator(self) -> DocumentCreator | None:
         if not self.config.docx_enabled:
             return None
-        return self.factory.build_doc_creator(self.config.docx_format)
+        cfg = self.config
+        return self.factory.build_doc_creator(
+            cfg.docx_format, cfg.explanation_language or cfg.language
+        )

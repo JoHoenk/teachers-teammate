@@ -73,7 +73,7 @@ The best models per computer type:
 |---|---|---|
 | Basic computer or small graphics card (under 8 GB) | `glm-ocr:q8_0` | `qwen3:4b` |
 | Graphics card with about 8 GB memory | `hf.co/prithivMLmods/chandra-ocr-2-GGUF:Q8_0` | `qwen3.5:9b` |
-| Graphics card with 16 GB memory or more | `hf.co/prithivMLmods/chandra-ocr-2-GGUF:Q8_0` | `gpt-oss:20b` |
+| Graphics card with 16 GB memory or more | `hf.co/prithivMLmods/chandra-ocr-2-GGUF:Q8_0` | `qwen3.5:9b` |
 
 To get a working setup in one step, open **Advanced Settings → Downloads…**, stay on the **Ollama Models** tab (it opens first), and click **Select the best models for my computer** — the app ticks the two models it recommends for your computer. Then click **Install / Download Selected**. On the very first start the app also pre-selects the best models for your computer, and the "model missing" message before a run takes you straight to the Downloads dialog with the missing models already ticked.
 
@@ -151,14 +151,93 @@ When you pick a service, the app asks it for its current list of models. The lin
 
 | Service | Model | Notes |
 |---|---|---|
-| Ollama | `gpt-oss:20b` | Best quality for local proofreading |
-| Ollama | `gemma3:12b` | Strong quality, lighter than the 20b model |
-| Ollama | `llama3.1:8b` | Fast, lightweight option |
-| OpenAI | `gpt-4o` | High quality online option |
-| Anthropic | `claude-3-5-sonnet-latest` | High quality online option |
+| Ollama | `qwen3.5:9b` | Default. Explains every change and also reads scans |
+| Ollama | `mistral-nemo:12b` | Good with long texts, explains changes |
+| Ollama | `gpt-oss:20b` | Strongest writer, but no explanations — corrections only |
+| OpenAI | `gpt-4o-mini` | High quality online option |
+| Anthropic | `claude-haiku-4-5` | Fast online option |
 | Google | `gemini-2.0-flash` | Fast online option |
 
-To use a local Ollama proofreading model, download it first in **Advanced Settings → Downloads…** → **Ollama Models** tab.
+To use a local Ollama proofreading model, download it first in **Advanced Settings → Downloads…** → **Ollama Models** tab. Models the app has checked for explanations show a small `explanations ✓` note in the model list.
+
+### Reading the proofreading notes
+
+Proofreading does not just return a corrected text: it explains every change and lists the
+passages that it could not make sense of, even when they are grammatically correct.
+
+Open a document and switch to the **Changes** tab. Its title carries the counts —
+`Changes (7 · 2 ?)` means 7 corrections in the list and 2 unclear passages. The same
+counts appear in the status line below the text, in the filter buttons, and on the command
+line. A correction of several words (`his friend → her friends`) can be marked in more than
+one place; it has one explanation, shown at each of them.
+
+The left half is the text with the corrections marked, as before. The marked words are
+links: hovering over a change shows the reason, and clicking it marks the change in strong
+yellow and marks the matching note on the right. Clicking the number of a note on the right
+does the same the other way round and scrolls the text to the change. Passages highlighted in
+orange are unclear expressions; they link to their note the same way. A difference in line
+breaks or spaces alone is not counted as a change.
+
+The right half lists the notes. Use the filter at the top to see **All**, only the
+**Changes**, or only the **Unclear** items:
+
+- A **change** shows what was replaced (`have → has`), its kind (*Grammar*,
+  *Word choice*, *Word order*), and one sentence saying why. **Spelling and punctuation
+  corrections** explain themselves, so they are not listed one by one: the text still marks
+  them, and one line at the end of the list (`▸ 5 spelling and punctuation corrections`)
+  opens them. They are not counted in the title either. If you edit the
+  text yourself in the **Proofread Text** tab, your own edits appear as `your change`, and a
+  correction you undo moves to a section **Not in the text** at the end of the list (click
+  its title to open it). A correction the AI made without giving a reason reads
+  `no explanation`.
+- An **unclear expression** has three parts: the original wording, why it is unclear, and a
+  recommended version. The **Unclear** filter shows them as a three-column table. When the
+  intended meaning cannot be told from the text, the recommendation is labelled
+  **Suggestion** — treat it as one option, not as a correction.
+
+The **Proofread Text** tab stays clean: it holds only the corrected text, no markers, so you
+can keep editing it and export it. The results list shows a small `?2` badge next to files
+that contain unclear expressions.
+
+Two settings belong to the review. The **Level** dropdown in the proofreading step (A1–C2,
+default B2) tells the AI how strictly to correct: at B2 it fixes real errors and leaves a
+correct though simple wording alone. **Explanation language**, in **Settings →
+Proofreading Settings…**, sets the language of the explanations and of the note tables;
+*Same as the text* keeps them in the language of the document. The same dialog holds
+**Corrections only (faster)**.
+
+If you switch on **Corrections only (faster)**, proofreading returns the corrected text
+without explanations and without the unclear list — faster, and it works with every model.
+Every model is asked for explanations unless you tick **Corrections only**; models the app
+has checked show `explanations ✓`. When a model fails to answer in the explanation format
+(`gpt-oss:20b`, for example, is not checked yet), that single file falls back to corrections
+only automatically; a short banner above the text then says so. With an older Ollama
+(before version 0.5) the app also uses corrections only and tells you that updating Ollama
+gives you the explanations.
+
+### Your own instructions
+
+**Settings → Proofreading Settings… → Proofreading Instructions** (and the panel's
+**Instructions…** button) shows what the AI is told. The **Instructions** box always holds the
+text that is really used: the built-in instructions of the document language, matched to the
+**Level** setting (`{level}` is replaced by it). You can change them right in the box.
+**Reset to default** puts the built-in text back. As long as the box holds the built-in text,
+it keeps following the document language; once you change it, your instructions are used for
+every language, and a one-line note under **Instructions…** in the panel says so. If your own
+text sets an output format itself ("return only …", "JSON", "[unclear]"), a hint warns you
+that it may confuse the model, because the app sets the format.
+
+**Answer format (advanced)**, collapsed below, is the part the app adds: it tells the model
+how to fill in its reply — corrected sentences with an explanation each, a list of unclear
+expressions, never markers in the text — and that corrections stay in the language of the
+document while explanations use the explanation language. There is one format for **With
+explanations** and one for **Corrections only**; both can be edited, each with its own
+**Reset to default**. The app reads the reply in this format, so change it only if you know
+what you are doing: a hint warns you when an edited format no longer names a field the app
+needs, and when the model does not follow it, the file falls back to corrections only. A format
+you edited is tied to the version of the app it was written for; after an update that changes
+the format, your edit is not used and the built-in one applies again. For Markdown texts a
+read-only note about crossed-out and inserted words is added as well.
 
 ---
 
@@ -173,7 +252,7 @@ Lighter AI models work well for content review:
 | Ollama | `gemma3:12b` |
 | Ollama | `llama3.1:8b` |
 | OpenAI | `gpt-4o-mini` |
-| Anthropic | `claude-3-haiku-20240307` |
+| Anthropic | `claude-haiku-4-5` |
 | Google | `gemini-2.0-flash` |
 
 ---

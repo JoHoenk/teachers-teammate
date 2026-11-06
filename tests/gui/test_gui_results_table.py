@@ -9,9 +9,10 @@ from PySide6.QtCore import QPoint, QItemSelectionModel
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import QMenu
 
+from teachers_teammate.domain.correction_review import CorrectionReview, UnclearNote
 from teachers_teammate.gui._export_menu import ExportKind
 from teachers_teammate.gui._results_table import ResultsTable
-from teachers_teammate.gui._types import FileDoneEvent, PreprocessInfo
+from teachers_teammate.gui._types import FileDoneEvent, PreprocessInfo, StageStatus
 
 
 @pytest.mark.gui
@@ -491,3 +492,33 @@ def test_results_table_export_submenu_emits_export_requested(
         table._on_context_menu_requested(QPoint(1, 1))
 
     assert sig.args == [["a.png"], kind]
+
+
+@pytest.mark.gui
+def test_unclear_badge_keeps_the_proofreading_stage_done(qtbot) -> None:
+    """
+    Given  a file whose proofreading finished and whose review has two unclear expressions
+    When   the badge is set, set again with one expression, and removed
+    Then   the stage reads as done each time and the cell text never accumulates badges
+    """
+    table = ResultsTable()
+    qtbot.addWidget(table)
+    table.set_queue(["a.pdf"])
+    table.mark_processing("a.pdf")
+    table.mark_correcting("a.pdf")
+    table.mark_evaluating("a.pdf")  # proofreading is done once evaluation starts
+    note = UnclearNote(expression="it", why="w", recommendation="r")
+    cell = table.item(0, ResultsTable._COL_CORRECTION)
+    assert cell is not None
+
+    table.set_correction_review("a.pdf", CorrectionReview(unclear=(note, note)))
+    assert "?" in cell.text()
+    assert table.get_stage_statuses_for_source("a.pdf")[1] is StageStatus.DONE
+
+    table.set_correction_review("a.pdf", CorrectionReview(unclear=(note,)))
+    assert cell.text().count("?") == 1
+    assert table.get_stage_statuses_for_source("a.pdf")[1] is StageStatus.DONE
+
+    table.set_correction_review("a.pdf", CorrectionReview())
+    assert cell.text() == "✓"
+    assert table.get_stage_statuses_for_source("a.pdf")[1] is StageStatus.DONE

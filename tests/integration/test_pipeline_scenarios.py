@@ -14,6 +14,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from docx import Document
 
+from teachers_teammate.domain.correction_review import CorrectionOutcome
 from teachers_teammate.exceptions import OCRError
 from teachers_teammate.infrastructure.pipeline import OCRPipeline
 from teachers_teammate.infrastructure.state_repository import StateRepository
@@ -58,7 +59,7 @@ def test_correction_produces_openable_docx(tmp_path: Path, fmt: str) -> None:
     source.write_text("teh quik broWn fox", encoding="utf-8")
 
     corrector = MagicMock()
-    corrector.correct.return_value = ("the quick brown fox", None)
+    corrector.correct.return_value = CorrectionOutcome("the quick brown fox")
     build_llm_patch, corrector_patch = _patch_correction(corrector)
 
     with build_llm_patch, corrector_patch:
@@ -93,7 +94,7 @@ def test_evaluation_stage_runs_and_persists(tmp_path: Path) -> None:
     source.write_text("student answer", encoding="utf-8")
 
     corrector = MagicMock()
-    corrector.correct.return_value = ("corrected answer", None)
+    corrector.correct.return_value = CorrectionOutcome("corrected answer")
     evaluator = MagicMock()
     evaluator.evaluate.return_value = ("Grade: A. Well done.", None)
     build_llm_patch, corrector_patch = _patch_correction(corrector)
@@ -140,7 +141,7 @@ def test_anonymizer_runs_before_correction_and_restores(tmp_path: Path) -> None:
     anonymizer.anonymize.return_value = ("Dear <NAME_0>", {"<NAME_0>": "Alice"})
     anonymizer.restore.return_value = "Dear Alice (corrected)"
     corrector = MagicMock()
-    corrector.correct.return_value = ("Dear <NAME_0> (corrected)", None)
+    corrector.correct.return_value = CorrectionOutcome("Dear <NAME_0> (corrected)")
     build_llm_patch, corrector_patch = _patch_correction(corrector)
 
     with (
@@ -182,7 +183,7 @@ def test_second_run_reuses_cached_correction(tmp_path: Path) -> None:
     source.write_text("original text", encoding="utf-8")
 
     corrector = MagicMock()
-    corrector.correct.return_value = ("corrected text", None)
+    corrector.correct.return_value = CorrectionOutcome("corrected text")
     build_llm_patch, corrector_patch = _patch_correction(corrector)
 
     with build_llm_patch, corrector_patch:
@@ -202,7 +203,7 @@ def test_changed_correction_config_recomputes(tmp_path: Path) -> None:
     """
     source_text = "original text"
     corrector = MagicMock()
-    corrector.correct.return_value = ("corrected text", None)
+    corrector.correct.return_value = CorrectionOutcome("corrected text")
 
     cfg1 = make_config(
         tmp_path,

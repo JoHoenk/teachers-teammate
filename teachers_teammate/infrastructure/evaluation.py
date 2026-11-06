@@ -83,6 +83,6 @@ class NativeOllamaEvaluator(Evaluator):
             timeout=self._timeout,
             temperature=self._temperature,
             fallback="",
-            failure_prefix="Evaluation failed",
+            failure="Evaluation failed ({exc}).",
         )
         return tidy_answer(result, _tidy_review)

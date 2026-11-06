@@ -8,6 +8,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from ...config import Config, OcrConfig
+from ..correction import instruction_parts
+from ..correction_schema import CONTRACT_VERSION
 from ..input_provider_factory import InputOptions, input_settings_fingerprint
 from ..ocr_processor import get_ocr_prompt
 from ..preview_image_store import PreviewImageStore
@@ -103,13 +105,38 @@ def compute_correction_config_hash(config: Config) -> str:
     """Return the correction stage config hash for *config*, or '' when disabled."""
     if not config.correction_enabled:
         return ""
+    # What is sent, not the setting: "" means "the built-in text", which can change with the
+    # app, so the resolved instructions and answer formats are what must key the cache.
+    policy, review_format = instruction_parts(
+        config.correction_prompt,
+        config.language,
+        level=config.correction_level,
+        text_format="plain",
+        mode="review",
+        answer_format=config.answer_format_review,
+    )
+    _, text_format = instruction_parts(
+        config.correction_prompt,
+        config.language,
+        level=config.correction_level,
+        text_format="plain",
+        mode="text",
+        answer_format=config.answer_format_text,
+    )
     return compute_config_hash(
         "correction",
         config.correction_provider,
         config.effective_correction_model,
         config.language,
-        config.correction_prompt,
+        policy,
+        review_format,
+        text_format,
         format(config.correction_temperature, ".1f"),
+        # Review settings change the answer itself, so they belong in the key.
+        config.correction_level,
+        config.explanation_language,
+        config.correction_output,
+        f"contract-{CONTRACT_VERSION}",
         *_anonymization_fingerprint(config),
     )
 
@@ -302,6 +329,8 @@ class CacheReconciliationService:
         ctx: CacheContext,
         *,
         correction_text: str,
+        correction_review: dict | None = None,
+        correction_warning: str = "",
     ) -> CacheContext:
         """Persist correction result and return updated context."""
         new_state = self._repo.record_correction_result(
@@ -310,6 +339,8 @@ class CacheReconciliationService:
             correction_text=correction_text,
             correction_prompt=self._config.correction_prompt,
             correction_config_hash=ctx.correction_config_hash,
+            correction_review=correction_review,
+            correction_warning=correction_warning,
         )
         return dataclasses.replace(ctx, state=new_state)
 

@@ -19,6 +19,7 @@ import threading
 from ..config import DEFAULTS, Config, OcrConfig, load_config_file
 from ..domain.benchmark import PairComparison, compare_pair
 from ..domain.data_location import StageLocation
+from ..domain.formatted_text import TextFormat
 from ..domain.model_catalog import (
     HardwareDetection,
     HardwareProfile,
@@ -118,6 +119,40 @@ class BenchmarkApplicationService:
 
     def missing_provider_package(self, provider: str) -> str | None:
         return self._processing.missing_provider_package(provider)
+
+    def list_correction_prompt_presets(self) -> dict[str, str]:
+        return self._processing.list_correction_prompt_presets()
+
+    def default_correction_prompt(self) -> str:
+        return self._processing.default_correction_prompt()
+
+    def correction_instructions(
+        self,
+        *,
+        prompt: str,
+        language: str,
+        level: str = "B2",
+        output_mode: str = "review",
+        text_format: TextFormat = "plain",
+        answer_format: str = "",
+    ) -> tuple[str, str]:
+        return self._processing.correction_instructions(
+            prompt=prompt,
+            language=language,
+            level=level,
+            output_mode=output_mode,
+            text_format=text_format,
+            answer_format=answer_format,
+        )
+
+    def default_answer_formats(self) -> tuple[str, str]:
+        return self._processing.default_answer_formats()
+
+    def correction_notation_hint(self) -> str:
+        return self._processing.correction_notation_hint()
+
+    def evaluation_fixed_instructions(self, text_format: TextFormat = "plain") -> str:
+        return self._processing.evaluation_fixed_instructions(text_format)
 
     def resolve_hardware_profile(self, setting: str, ollama_url: str) -> HardwareDetection:
         """Return the hardware detection for *setting* (delegated)."""

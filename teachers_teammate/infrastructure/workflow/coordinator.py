@@ -7,6 +7,7 @@ import logging
 from pathlib import Path
 import threading
 
+from ...domain.correction_review import align, review_summary
 from ..reporting import FileDoneResult, OnFileDoneFn, OnFileStartedFn, Reporter, StdoutReporter
 from .file_processor import ProcessingResult
 
@@ -57,10 +58,15 @@ def run_files(
                         correction_text=result.correction_text,
                         evaluation_text=result.evaluation_text,
                         text_format=result.text_format,
+                        correction_review=result.correction_review,
+                        correction_warning=result.correction_warning,
                     )
                 )
             if result.ok:
                 reporter.status(f"       → Saved: {result.message}")
+                summary = _review_line(result)
+                if summary:
+                    reporter.status(f"       → {summary}")
                 for warning in result.warnings:
                     _logger.warning("%s", warning)
                 succeeded.append(file.name)
@@ -70,3 +76,17 @@ def run_files(
     finally:
         cleanup_tmp()
     return succeeded, failed
+
+
+def _review_line(result: ProcessingResult) -> str:
+    """Return ``"7 changes, 2 unclear"`` for *result*, counted on the diff of the saved texts."""
+    if result.correction_review is None:
+        return ""
+    from ..ocr_formats import plain_text_of  # noqa: PLC0415
+
+    aligned = align(
+        plain_text_of(result.raw_text, result.text_format),
+        plain_text_of(result.correction_text, result.text_format),
+        result.correction_review,
+    )
+    return review_summary(aligned)

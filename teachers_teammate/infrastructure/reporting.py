@@ -15,7 +15,10 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 import sys
-from typing import Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
+
+if TYPE_CHECKING:
+    from ..domain.correction_review import CorrectionReview
 
 OnFileStartedFn = Callable[[str, str, int, int], None]  # (source_id, name, idx, total)
 OnStageStartedFn = Callable[[str, str], None]  # (source_id, stage)
@@ -41,6 +44,10 @@ class FileDoneResult:
     evaluation_text: str = ""
     text_format: str = "plain"
     """Notation (``"plain"`` or ``"markdown"``) of ``raw_text`` and ``correction_text``."""
+    correction_review: CorrectionReview | None = None
+    """Explanations and unclear expressions; ``None`` when the file has no review."""
+    correction_warning: str = ""
+    """Why the file has no review (fallback to corrections-only); empty when there is one."""
 
 
 OnFileDoneFn = Callable[[FileDoneResult], None]

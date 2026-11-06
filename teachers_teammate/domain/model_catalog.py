@@ -50,7 +50,16 @@ RAM_OFFLOAD_SHARE = 0.5
 #: regardless of hardware; the per-profile picks in :data:`RECOMMENDED` only drive
 #: the hardware-aware GUI recommendations.
 DEFAULT_OCR_MODEL = "hf.co/prithivMLmods/chandra-ocr-2-GGUF:Q8_0"
-DEFAULT_WRITING_MODEL = "gpt-oss:20b"
+#: The default writing model must be one that passes the structured-output check:
+#: proofreading explains every change, which needs an answer the model can be constrained to.
+DEFAULT_WRITING_MODEL = "qwen3.5:9b"
+#: A writing model not (yet) checked for explanations.  Reasoning models such as
+#: ``gpt-oss:20b`` have been reported to combine Ollama's schema-constrained decoding badly
+#: with their own output format.  It is still asked for explanations like any other model (an
+#: unusable answer falls back to corrections only for that file); it just carries no
+#: ``explanations ✓`` badge until ``tools/verify_model_catalog.py --structured-output`` has
+#: been run on it.
+STRUCTURED_OUTPUT_UNVERIFIED_MODEL = "gpt-oss:20b"
 
 # ── hardware detection thresholds ─────────────────────────────────────────────
 
@@ -80,6 +89,10 @@ class OllamaModelSpec:
     #: Further tasks the model is verified for besides ``category`` (a writing
     #: model that can also read images).
     also_uses: ModelUses = frozenset()
+    #: Whether the model was checked to answer the correction review's JSON schema reliably
+    #: (``tools/verify_model_catalog.py --structured-output``).  It only decides the
+    #: ``explanations ✓`` badge; it never switches the proofreading mode.
+    structured_output: bool = False
 
 
 # Download sizes (decimal GB) were checked against the Ollama registry manifests
@@ -128,6 +141,7 @@ OLLAMA_CATALOG: tuple[OllamaModelSpec, ...] = (
         memory_gb=3.5,
         download_gb=2.5,
         note="Small writing model for computers without a graphics card.",
+        structured_output=True,
     ),
     OllamaModelSpec(
         tag="qwen3.5:9b",
@@ -136,6 +150,7 @@ OLLAMA_CATALOG: tuple[OllamaModelSpec, ...] = (
         download_gb=6.6,
         note="Best writing model for 8 GB. Can also read scanned pages.",
         also_uses=frozenset({"ocr"}),
+        structured_output=True,
     ),
     OllamaModelSpec(
         tag="mistral:latest",
@@ -143,6 +158,7 @@ OLLAMA_CATALOG: tuple[OllamaModelSpec, ...] = (
         memory_gb=5.5,
         download_gb=4.4,
         note="Reliable all-rounder.",
+        structured_output=True,
     ),
     OllamaModelSpec(
         tag="mistral-nemo:12b",
@@ -150,6 +166,7 @@ OLLAMA_CATALOG: tuple[OllamaModelSpec, ...] = (
         memory_gb=8.5,
         download_gb=7.1,
         note="Good with long texts.",
+        structured_output=True,
     ),
     OllamaModelSpec(
         tag="gemma4:latest",
@@ -157,6 +174,7 @@ OLLAMA_CATALOG: tuple[OllamaModelSpec, ...] = (
         memory_gb=7.5,
         download_gb=6.6,
         note="Compact writing model.",
+        structured_output=True,
     ),
     OllamaModelSpec(
         tag="gemma4:12b",
@@ -164,13 +182,14 @@ OLLAMA_CATALOG: tuple[OllamaModelSpec, ...] = (
         memory_gb=9.5,
         download_gb=8.0,
         note="Larger writing model.",
+        structured_output=True,
     ),
     OllamaModelSpec(
-        tag=DEFAULT_WRITING_MODEL,
+        tag=STRUCTURED_OUTPUT_UNVERIFIED_MODEL,
         category="general",
         memory_gb=14.0,
         download_gb=13.8,
-        note="Best writing model for 16 GB.",
+        note="Strongest writing model for 16 GB, but not checked for explanations.",
     ),
 )
 
@@ -200,7 +219,14 @@ RECOMMENDED: dict[ModelCategory, dict[HardwareProfile, tuple[str, ...]]] = {
     "general": {
         "cpu": ("qwen3:4b",),
         "8gb": ("qwen3.5:9b", "mistral:latest"),
-        "16gb": ("gpt-oss:20b", "qwen3.5:9b", "mistral-nemo:12b", "gemma4:12b"),
+        # The first entry of every list must be checked for structured output (the default
+        # writing model is); the reasoning model follows, not yet checked.
+        "16gb": (
+            DEFAULT_WRITING_MODEL,
+            STRUCTURED_OUTPUT_UNVERIFIED_MODEL,
+            "mistral-nemo:12b",
+            "gemma4:12b",
+        ),
     },
 }
 
@@ -366,6 +392,9 @@ class ModelRating:
     memory_gb: float | None
     #: Plain-language catalog note; empty for custom models.
     note: str
+    #: ``True`` when the model is verified to answer the review's JSON schema,
+    #: ``False`` when it is known not to, ``None`` when the model is not catalogued.
+    structured_output: bool | None = None
 
 
 def rate_model(
@@ -388,6 +417,7 @@ def rate_model(
         ),
         memory_gb=spec.memory_gb if spec is not None else None,
         note=spec.note if spec is not None else "",
+        structured_output=spec.structured_output if spec is not None else None,
     )
 
 

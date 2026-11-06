@@ -805,3 +805,22 @@ def test_run_cli_refuses_an_output_folder_the_service_rejects(tmp_path: Path, ca
     assert rc == 1
     assert "ERROR: Text files cannot be saved there." in capsys.readouterr().err
     assert service.configs == []
+
+
+@pytest.mark.use_case("Headless_CLI_Batch")
+def test_parse_args_explanations_flag_overrides_a_config_file_that_turned_them_off() -> None:
+    """
+    Given  defaults that say correction_output = "text" (as a config file would set them)
+    When   --explanations is passed, or --corrections-only, or neither
+    Then   the flag decides, and without a flag the config value stays
+    """
+    from teachers_teammate.cli import _parse_args  # noqa: PLC0415
+
+    defaults = {"correction_output": "text"}
+
+    assert _parse_args(argv=["--explanations"], extra_defaults=defaults).correction_output == (
+        "review"
+    )
+    assert _parse_args(argv=["--corrections-only"]).correction_output == "text"
+    assert _parse_args(argv=[], extra_defaults=defaults).correction_output == "text"
+    assert _parse_args(argv=[]).correction_output == "review"

@@ -11,6 +11,7 @@ import pytest
 
 from teachers_teammate.domain.model_catalog import (
     DEFAULT_OCR_MODEL,
+    DEFAULT_WRITING_MODEL,
     OLLAMA_CATALOG,
     DetectionReason,
     HardwareDetection,
@@ -164,7 +165,8 @@ def test_switching_profile_updates_suitability(qtbot) -> None:
     with qtbot.waitSignal(dlg._hardware_selector.resolved_changed, timeout=5000):
         dlg._hardware_selector._combo.setCurrentText("Graphics card with 16 GB memory or more")
     writing = dlg._group_items["general"]
-    assert writing.child(0).text(0) == "gpt-oss:20b"
+    # The first entry of every profile is the writing model that supports explanations.
+    assert writing.child(0).text(0) == DEFAULT_WRITING_MODEL
     assert writing.child(0).text(1) == "★ Best"
 
 
@@ -706,15 +708,15 @@ def test_user_unticking_an_auto_tick_is_respected_after_profile_change(qtbot) ->
     _choose_computer(qtbot, dlg, _16GB_TEXT)
 
     assert DEFAULT_OCR_MODEL not in _ticked(dlg)  # 16 GB recommends it as well
-    assert "gpt-oss:20b" in _ticked(dlg)
+    assert DEFAULT_WRITING_MODEL in _ticked(dlg)
 
 
 @pytest.mark.use_case("Model_Recommendation_By_Hardware")
 def test_too_large_tooltip_is_cleared_when_model_fits_again(qtbot) -> None:
     """
     Given  gpt-oss shown as too large on 8 GB (with an explanatory tooltip)
-    When   the profile changes to 16 GB, where it is the best choice
-    Then   the tooltip of the suitability column is gone
+    When   the profile changes to 16 GB, where it fits
+    Then   the tooltip of the suitability column is gone and the row is rated "Good"
     """
     dlg = _make_dialog(qtbot)
     dlg._on_detection_done(_detection_results(dlg, set()))
@@ -724,7 +726,8 @@ def test_too_large_tooltip_is_cleared_when_model_fits_again(qtbot) -> None:
     _choose_computer(qtbot, dlg, _16GB_TEXT)
 
     assert "14 GB" not in row.toolTip(1)  # the "too large" explanation is gone
-    assert row.text(1) == "★ Best"
+    # qwen3.5:9b is the 16 GB best choice: the default writing model explains its changes.
+    assert row.text(1) == "Good"
 
 
 @pytest.mark.use_case("Model_Category_Guidance")

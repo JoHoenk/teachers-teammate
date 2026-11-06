@@ -43,6 +43,7 @@ from ..application.service import (
     ADDON_NVIDIA,
     ADDON_PADDLE,
     ADDON_PRIVACY,
+    DocxExport,
     ProcessingApplicationService,
     RunPreflight,
 )
@@ -890,6 +891,9 @@ class MainWindow(QMainWindow):
                 correction_done=view.correction_done,
                 evaluation_done=view.evaluation_done,
             )
+            self._results_table.set_correction_review(
+                source_id, view.correction_review, view.correction_warning
+            )
             self._results_table.set_preprocessing(
                 source_id, PreprocessInfo(view.original_img, view.preprocess_steps)
             )
@@ -1317,7 +1321,12 @@ class MainWindow(QMainWindow):
         return answer == QMessageBox.StandardButton.Yes
 
     def _export_docx(self, targets: list[tuple[str, Path]], errors: list[str]) -> None:
-        docx_format = str(self._config_panel.get_settings_dict().get("docx_format", "table"))
+        settings = self._config_panel.get_settings_dict()
+        docx_format = str(settings.get("docx_format", "table"))
+        # "Same as the text" (empty) means the language of the text, as in the pipeline.
+        explanation_language = str(
+            settings.get("explanation_language") or self._config_panel.to_dict().get("language", "")
+        )
         for source_id, out_path in targets:
             _sid, _name, preview_img, raw_txt, corr_txt, _eval = (
                 self._results_table.entry_for_source(source_id)
@@ -1332,8 +1341,12 @@ class MainWindow(QMainWindow):
                     corr_txt,
                     preview_img,
                     out_path,
-                    docx_format=docx_format,
-                    text_format=self._results_table.text_format_for_source(source_id),
+                    options=DocxExport(
+                        docx_format=docx_format,
+                        text_format=self._results_table.text_format_for_source(source_id),
+                        review=self._results_table.review_for_source(source_id),
+                        labels_language=explanation_language,
+                    ),
                 )
                 self._log.append_text(f"DOCX saved: {out_path}\n")
             except Exception as exc:  # noqa: BLE001  # python-docx/PIL errors vary; collect per-file and continue the batch
@@ -1750,9 +1763,10 @@ class MainWindow(QMainWindow):
                 raw_txt,
                 correction_txt,
                 evaluation_txt,
-                original_path=info.original_img,
-                preprocess_steps=info.steps,
+                preprocess=info,
                 text_format=self._results_table.text_format_for_source(source_id),
+                correction_review=self._results_table.review_for_source(source_id),
+                correction_warning=self._results_table.correction_warning_for_source(source_id),
             )
         except Exception as exc:  # noqa: BLE001  # preview load may raise on missing/corrupt files; warn instead of crashing
             QMessageBox.warning(self, "Preview", f"Could not load preview content:\n{exc}")
@@ -1842,6 +1856,7 @@ class MainWindow(QMainWindow):
             correction_done=state.correction_done,
             evaluation_done=state.evaluation_done,
         )
+        self._results_table.set_correction_review(source_id, state.review, state.correction_warning)
         info = self._results_table.preprocessing_for_source(source_id)
         self._results_table.set_text_format(source_id, state.raw_text_format)
         self._preview.load(
@@ -1849,9 +1864,10 @@ class MainWindow(QMainWindow):
             state.raw_text,
             state.correction_text,
             state.evaluation_text,
-            original_path=info.original_img,
-            preprocess_steps=info.steps,
+            preprocess=info,
             text_format=state.raw_text_format,
+            correction_review=state.review,
+            correction_warning=state.correction_warning,
         )
         self._update_preview_stage_statuses(source_id)
         self._tabs.setCurrentIndex(1)
@@ -1897,6 +1913,7 @@ class MainWindow(QMainWindow):
             correction_done=state.correction_done,
             evaluation_done=state.evaluation_done,
         )
+        self._results_table.set_correction_review(source_id, state.review, state.correction_warning)
         info = self._results_table.preprocessing_for_source(source_id)
         self._results_table.set_text_format(source_id, state.raw_text_format)
         self._preview.load(
@@ -1904,9 +1921,10 @@ class MainWindow(QMainWindow):
             state.raw_text,
             state.correction_text,
             state.evaluation_text,
-            original_path=info.original_img,
-            preprocess_steps=info.steps,
+            preprocess=info,
             text_format=state.raw_text_format,
+            correction_review=state.review,
+            correction_warning=state.correction_warning,
         )
         self._update_preview_stage_statuses(source_id)
         self._tabs.setCurrentIndex(1)
@@ -1990,6 +2008,7 @@ class MainWindow(QMainWindow):
     def _open_correction_settings(self) -> None:
         """Open the focused Correction Settings dialog (provider, model, system prompt)."""
         settings = self._config_panel.get_settings_dict()
+        settings["language"] = self._config_panel.lookup_language()
         dialog = CorrectionSettingsDialog(
             settings,
             self._config_panel.get_correction_prompt(),

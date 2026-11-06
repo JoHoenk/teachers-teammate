@@ -418,8 +418,8 @@ class OCRPipeline:
             reporter.status(
                 f"  Correction    : {cfg.correction_provider} / {cfg.effective_correction_model}"
             )
-            if cfg.anonymization_enabled:
-                reporter.status("  Anonymization : enabled (PII removed before correction)")
+        if cfg.anonymization_enabled:
+            reporter.status("  Anonymization : enabled (PII removed after text recognition)")
         if not cfg.evaluation_enabled:
             reporter.status("  Evaluation    : disabled")
         else:

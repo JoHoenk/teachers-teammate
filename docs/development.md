@@ -247,6 +247,17 @@ keys and wording.  What it relies on:
 - **Choosing another provider asks that provider.** The change handler shows the built-in
   names and starts a fetch tagged with the provider; an answer for any other provider is
   dropped.  A model name from the previous provider is kept only if the new one offers it.
+- **Every provider declares where it processes data** in `PROVIDER_INFO["data_region"]`:
+  `"eu"`, `"non_eu"` or `"unknown"`.  A missing key counts as `"unknown"`, which is shown
+  like "outside the EU" — a school can only rely on what a vendor actually declares, so
+  "not declared" must never read as "EU".  `PROVIDER_INFO["vendor_country"]` is optional
+  and only fills the tooltip.  A provider whose region depends on the settings (a custom
+  base URL, a regional endpoint such as `api.eu.mistral.ai`) adds a module function
+  `data_region(**settings) -> str`; `llm_factory.get_provider_data_region()` prefers it
+  over the key and returns `"unknown"` for anything missing, unrecognised or raising.
+  `application/data_flow.py` turns the answer into `StageLocation.region`
+  (`domain/data_location.py:DataRegion`), which feeds `PrivacyLevel` and the
+  "don't ask again" fingerprint.
 
 ### Remembered "don't ask again" answers
 
@@ -255,8 +266,61 @@ keys and wording.  What it relies on:
 `<fingerprint>` or `<fingerprint>\t<readable summary>`).  The question before a run, the
 list in Privacy Settings and "Ask again" all use it.  Records from earlier versions hold the
 fingerprint only; `domain/data_location.py:describe_fingerprint()` turns it into words.
+
+The fingerprint is versioned.  Version 2 starts with `v2|` and adds the data region, so an
+answer given before the region was shown no longer matches and the user is asked once more
+(correct: the region was not part of that answer).  Parts are separated by `|` and their
+fields by `:` — the host may itself contain a colon and is always the field before the
+last one, which is why the age of a record is a prefix rather than another field.
+`describe_fingerprint()` reads both formats.
 `PrivacySettingsDialog` (`gui/_privacy_settings_dialog.py`) extends the anonymizer dialog
 with a first tab for these answers; its changes are applied on OK only.
+
+### "What is sent for this file": who builds it and who shows it
+
+`application/sent_text.py` answers the one question the status box leaves open — *which text
+does the service read?* — without spaCy, a model or a widget:
+
+- `describe_sent_texts(flow, *, raw_text, correction_text, anonymize, preview_extracted,
+  correction_prompt, evaluation_prompt)` walks `DataFlow.outbound` (the steps that leave the
+  computer) and returns a frozen `SentText` per step: proofreading gets the extracted text,
+  content review the proofread text, each anonymized first when the step says names are
+  hidden.  A step whose names are hidden needs `anonymize`; without it the text is reported
+  as written, because hiding it is impossible.
+- The function keeps an internal `hidden()` memo, so every distinct text is anonymized at
+  most once.  The proofreading section, the content-review section and the comparison view
+  therefore share one spaCy pass, and the shared cache behind `anonymize`
+  (`application/service.py`, see *Shared anonymization cache*) answers the second call.
+- `preview_extracted` asks for the anonymized extracted text as well, for the dialog's
+  original-vs-anonymized tab; the service passes `config.anonymization_enabled`, so the tab
+  appears exactly when names are actually being hidden.
+- `ProcessingApplicationService.describe_sent_texts()` supplies `anonymize` (the caching
+  preview anonymizer, `None` when removal is off) and builds the prompts with the same code
+  the stages use (`_sent_correction_prompt` / `_sent_evaluation_prompt`), so the dialog cannot
+  drift from what a run sends.  `SentTexts` carries the sections, `flow.level`, the raw text
+  and the anonymized raw text.
+
+`gui/_what_is_sent_dialog.py` only presents that report: one `_SentSection` per step (title
+and badge, the names note, the text with placeholders highlighted by
+`highlighted_html()`, the instructions in a collapsed block), a *Personal information* tab
+built from `DiffWidget`, and — for a local run — `Everything stays on this computer.`  The
+main window fetches the report in a `_SentTextsThread` (a small "Working out what is sent…"
+dialog is shown meanwhile) and shows it modally.
+
+### Cell tooltips in the results table
+
+The results table shows where a stage's text went without adding a column:
+`data_flow_changed` on the config panel (emitted by `refresh_data_flow()`, which caches the
+`DataFlow`) and the main window's `_on_data_flow_changed` push
+`{stage.stage: stage_tooltip(stage)}` into `ResultsTable.set_stage_tooltips()`.
+`stage_tooltip()` (`gui/_data_flow_summary.py`) is the one-line wording, e.g.
+*Sent to Mistral (EU), names hidden*.
+
+A cell can already carry its own message (an unclear count, a warning, an error).  That text
+lives in `_ROLE_NOTE` and is written through `_set_note()`; `_compose_tooltip()` joins the
+stage line and the cell's note with a blank line, so neither replaces the other.
+`_refresh_cell_tooltips()` recomposes every proofreading and content-review cell after the
+tooltips change and at the end of `set_queue()`.
 
 ### Background tasks in the GUI
 
@@ -320,9 +384,82 @@ OS cache directory (`~/.cache/teachers_teammate` on Linux).
   `"anonymized"` part while anonymisation is on (both stages see its text), so
   switching it on or off re-runs proofreading and content review for cached files.
   The part is absent while it is off, so results cached before the flag was hashed stay
-  valid.
+  valid.  While it is on, the part also holds the resolved anonymizer settings —
+  primary and secondary spaCy model plus every regex pattern (`tag=pattern`) — so a
+  changed pattern no longer leaves a proofreading in place that was made with the old
+  placeholders.  `installed_models` is deliberately not part of it: the hash is
+  computed without importing spaCy.
 - `compute_cache_key(value)` (`storage_root.py`) — a short (16-char) stable key
   used to map a path (output dir / source file) to an on-disk file name.
+
+### Shared anonymization cache
+
+`ProcessingApplicationService` keeps two caches under one `RLock`
+(`application/service.py`):
+
+- `_anonymizer_cache` — one `SpacyAnonymizer` per `(language, resolved settings)`;
+  building one loads the spaCy models.
+- `_anonymization_cache` — an `AnonymizationResultCache` (LRU, a few hundred texts,
+  memory only) holding the anonymized text and its placeholder map, keyed by language
+  plus resolved settings plus the SHA-256 of the text.
+
+A pipeline run gets its anonymizer from the service: `run_selected()` hands the
+`PipelineDependencies` a `PipelineComponentFactory` whose `build_anonymizer` is
+`ProcessingApplicationService.build_cached_anonymizer`.  That returns a
+`CachedAnonymizer` over the same two caches, so a run, `anonymize_preview()` and
+`export_text(anonymize=True)` analyse a given text once per session and settings —
+whichever came first fills the cache for the others.  `FileProcessor` no longer keeps a
+per-file memo: it anonymizes the extracted text once, right after recognition, and hands
+that result to proofreading and to the `_anonymized.txt` output.
+
+Nothing anonymized is written to disk.  `clear_anonymizer_cache()` empties both caches
+(switching the privacy settings or the language invalidates the entries anyway, because
+the settings are part of the key).  The GUI's `OCRWorker` receives the main window's
+service, so a run fills the cache that the window's previews and exports read; a worker
+created without one builds its own service and shares nothing.
+
+### Hiding names in the preview (`domain/anonymization.py`)
+
+`domain/anonymization.py` is pure — no spaCy, no Qt, no I/O — and holds both directions of
+the placeholder map (placeholder → original surface text):
+
+- `restore(text, mapping)` — literal placeholder → original; what a run does with the text a
+  proofreader returns.  `SpacyAnonymizer.restore` delegates to it.
+- `mask(text, mapping)` — the inverse, used to show the *other* tabs with the stand-ins the
+  extracted text got.  Longest original first (one regex alternation, so `"Anna Müller"` is
+  not cut by `"Anna"`), and an original is only replaced where it stands as a word
+  (`(?<!\w)` / `(?!\w)` only when the value starts or ends with a word character, so
+  `"+49 30 …"` still matches as a whole).  A name the proofreader respelled is not found;
+  that is a documented limitation, not a guess.
+
+The panel (`gui/_preview_panel.py`) keeps the texts *unmasked* in `_stored_raw`,
+`_stored_correction`, `_stored_evaluation` and `_stored_review` and refills the views through
+`_refill_texts()` — masked when the setting is on, and read-only while it is (an edit would be
+saved with the stand-ins).  `_on_ocr_text_changed` / `_on_correction_text_changed` also keep
+the stored text current, so switching the setting off shows the teacher's edits.  Placeholders
+are marked as chips: `gui/_formatted_text.py:chip_placeholders()` wraps them in the rendered
+Markdown HTML (markup is skipped, so a stand-in that reads like a tag cannot break the
+document), and `_placeholder_selections()` gives the plain-text views the same highlight via
+`setExtraSelections`.  No tooltip ever names the original.
+
+`PreviewPanel` asks for the stand-ins with `anonymization_needed(text)` — once per text
+(`_anon_requested`) — and the window answers through `_AnonymizePreviewThread`, which calls
+`ProcessingApplicationService.anonymize_preview()` off the GUI thread and therefore reuses the
+shared cache above (a run then needs no second spaCy pass, and vice versa).  A result that
+belongs to a text the panel no longer shows is dropped (`set_anonymization(..., raw_text=…)`),
+and a failure keeps the names hidden behind a note instead of showing them.  Changing the
+anonymizer settings in the dialog calls `invalidate_anonymization()`.
+
+The setting itself is a GUI preference, not part of `Config`: `View → Hide personal
+information in texts` and the eye button both end in `MainWindow._apply_display_anonymized`,
+which stores `privacy/display_anonymized` (`gui/_privacy_settings.py`,
+`display_anonymized()` / `set_display_anonymized()`) and calls
+`PreviewPanel.set_display_anonymized()`.  The menu entry is enabled only while
+`ProcessingApplicationService.anonymizer_available(language)` holds — spaCy importable and the
+model of the document language installed — so a missing add-on greys it out with a tooltip
+pointing at the Downloads dialog instead of failing later.  The answer is cached per document
+language and refreshed on `data_flow_changed` (the language may have changed) and after the
+privacy add-on is installed.
 
 ### Cache vs benchmark store
 

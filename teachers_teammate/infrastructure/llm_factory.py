@@ -19,12 +19,14 @@ from __future__ import annotations
 import importlib
 import logging
 from pathlib import Path
+from types import ModuleType
 from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
     from langchain_core.language_models import BaseChatModel
 
 from .._model_defaults import default_model_for_task as default_model_for_task  # noqa: PLC0414
+from ..domain.data_location import DataRegion
 from ..domain.model_listing import ModelListing
 from ..exceptions import ProviderNotAvailableError
 from ..interfaces import LLMProviderModule
@@ -60,6 +62,42 @@ def get_provider_info(provider: str) -> dict:
         return getattr(mod, "PROVIDER_INFO", {})
     except ImportError:
         return {}
+
+
+def get_provider_data_region(provider: str, **settings: object) -> str:
+    """Return where *provider* processes data: ``"eu"``, ``"non_eu"`` or ``"unknown"``.
+
+    A provider module declares the region in ``PROVIDER_INFO["data_region"]``, or as a
+    ``data_region(**settings)`` function when the answer depends on the settings (a custom
+    base URL, a regional endpoint).  The function wins, so a provider that offers several
+    regions reports the one the current settings use.
+
+    Anything missing, unrecognised or broken is ``"unknown"``: a school can only rely on
+    what a vendor actually declares, so "not declared" must never read as "EU".
+    """
+    module = _import_provider_module(provider)
+    if module is None:
+        return DataRegion.UNKNOWN.value
+    declared = getattr(module, "data_region", None)
+    if callable(declared):
+        try:
+            declared = declared(**settings)
+        except Exception:  # noqa: BLE001  # a provider helper may raise anything
+            return DataRegion.UNKNOWN.value
+    elif declared is None:
+        declared = getattr(module, "PROVIDER_INFO", {}).get("data_region", "")
+    try:
+        return DataRegion(str(declared)).value
+    except ValueError:
+        return DataRegion.UNKNOWN.value
+
+
+def _import_provider_module(provider: str) -> ModuleType | None:
+    """Import a provider module, or return ``None`` when it (or its package) is missing."""
+    try:
+        return importlib.import_module(f".providers.{provider}", package=__package__)
+    except ImportError:
+        return None
 
 
 def _load_provider(provider: str) -> LLMProviderModule:

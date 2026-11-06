@@ -22,6 +22,8 @@ from teachers_teammate.infrastructure.providers._helpers import api_key_check, i
 
 PROVIDER_INFO: dict = {
     "display_name": "Cohere",
+    "data_region": "non_eu",
+    "vendor_country": "Canada",
     "needs_api_key": True,
     "env_key": "COHERE_API_KEY",
     "needs_base_url": False,

@@ -105,7 +105,9 @@ For a full description of all image preparation options and when to use each one
 
 ## Protecting privacy (anonymization)
 
-When **Remove personal information before proofreading** is turned on, the app finds names, email addresses, phone numbers, and bank account numbers in the text and replaces them with stand-ins — for example `[PERSON_1]` or `[EMAIL_1]` — before sending anything to the AI. Once the corrected text comes back, the stand-ins are replaced with the original values, so the final Word document contains the real text. The same protection applies to **content review**. This only works when proofreading is also turned on. Switching it on or off makes the app proofread and review already processed documents again, because their text is now sent in a different form.
+When **Remove personal information** is turned on, the app finds names, email addresses, phone numbers, and bank account numbers in the text and replaces them with stand-ins — for example `[PERSON_1]` or `[EMAIL_1]`. This happens straight after text recognition, so it also works with **recognition only**: the run log notes how many items were hidden, and nothing leaves the computer to make it happen. Once the corrected text comes back from proofreading, the stand-ins are replaced with the original values, so the final Word document and text file contain the real text. The same protection applies to **content review**. Switching it on or off makes the app proofread and review already processed documents again, because their text is now sent in a different form.
+
+The anonymizer runs once per text and settings per session: what a run hid is reused by **What is sent for this file…**, by **Anonymized Text File…** and by the privacy view setting, so the app does not analyse the same text twice. Only the anonymized text file and that view keep the placeholders; Word documents and plain text files always hold the original names.
 
 You do not need this while everything runs on your own computer — it matters when proofreading or content review uses an online service.
 
@@ -115,7 +117,7 @@ This feature requires the **Privacy add-on** to be installed. You can install it
 The anonymizer helps reduce exposure of personal information but is not a certified privacy tool. AI models can miss names they were not trained on, and reading errors may cause some personal information to go undetected. Always review the anonymized text before sending sensitive documents to an online service. You remain responsible for compliance with applicable privacy laws.
 :::
 
-To see how this will affect a specific document, select its row in the results list and choose **Personal Information Preview…** — the app shows the original and anonymized text side by side.
+To see how this will affect a specific document, select its row in the results list and choose **What is sent for this file…** — the **Personal information** tab there shows the original and anonymized text side by side.
 
 For detailed settings and configuration options for the anonymizer, see the {doc}`Advanced User Guide <advanced_user_guide>`.
 
@@ -129,11 +131,103 @@ The box at the top of the settings panel lists every step of the current setup a
 |---|---|
 | Green — *On this computer* | Nothing leaves your computer for this step. |
 | Orange — *On another computer (name)* | The step runs on an Ollama server that is not this computer, for example a school server. |
-| Red — *Online service (name)* | The step runs on the internet. Ollama cloud models count as online services. |
+| Yellow — *Online service (name) · EU · names hidden* | Anonymized text goes to a service in the European Union. |
+| Orange — *Online service (name) · outside the EU · names hidden* | Anonymized text goes to a service outside the EU, or to one that does not say where it processes data. |
+| Red — *Online service (name) · EU or outside the EU · names as written* | The text is sent with the names in it. |
 
-Below the list the box says either **Everything stays on this computer.** or **Some data leaves this computer.** — and, where it helps, what you can do about it (for example, turning on *Remove personal info*). The same one-line "runs on …" note appears next to the service pickers in **Settings**.
+**Personal info removal** is listed as its own line, after text recognition. It always stays
+on this computer and says *On (spaCy en + de)* — the detection models in use — or *Off*.
 
-Before a run that sends something away from your computer, the app asks you to confirm, listing the steps and whether names are replaced. "Replaced where detected" is deliberate wording: the replacement is automatic and can miss a name (see the warning under *Protecting privacy*). You can tick **Don't ask again for these settings**; the question comes back as soon as the setup changes (another service, or names no longer replaced). Open **Advanced Settings → Privacy Settings…** to see everything you chose not to be asked about, in words (for example *Proofreading: Online service (Mistral) — receives text, names sent as written*). There you can take back single answers or **Ask again for all**; the changes apply when you press OK. The same window holds the personal-info settings (detection and patterns).
+**Where is my data processed?** Each service says where it processes documents: **EU** for a
+member state of the European Union, **outside the EU** for everything else — including the
+United Kingdom, Switzerland, Norway and the other EEA countries, and any provider that does
+not declare its region. Hover over a line to see the vendor's home country.
+
+The last line of the box names the least private thing that happens, in green, yellow,
+orange or red — *Everything stays on this computer.*, *Anonymized text is sent to a service
+in the EU.*, *Anonymized text is sent to a service outside the EU.*, *Text with names is
+sent to a service in the EU.*, *Text with names is sent to a service outside the EU.* or
+*Data goes to another computer you control.* Below it come the suggestions that help, for
+example turning on *Remove personal info* or choosing a service in the EU. The same one-line
+"runs on …" note appears next to the service pickers in **Settings**.
+
+Before a run that sends something away from your computer, the app asks you to confirm with
+the same wording: the overall level, then one line per step with its place and whether names
+are replaced. "Replaced where detected" is deliberate wording: the replacement is automatic
+and can miss a name (see the warning under *Protecting privacy*). You can tick **Don't ask
+again for these settings**; the question comes back as soon as the setup changes (another
+service, another region, or names no longer replaced). Open **Advanced Settings → Privacy
+Settings…** to see everything you chose not to be asked about, in words (for example
+*Proofreading: Online service (Mistral (EU)) · EU — names sent as written*). There you can
+take back single answers or **Ask again for all**; the changes apply when you press OK. The
+same window holds the personal-info settings (detection and patterns). Answers saved by an
+earlier version are still shown and honoured, but they ask once more for setups that now
+involve a region.
+
+---
+
+## What is sent for this file
+
+The box tells you where your documents go. To see what actually goes there, select a row in
+the results list and choose **What is sent for this file…**. The app takes a moment to hide
+the personal information the same way a run would, then opens a window with one section per
+step that leaves your computer — proofreading first, then content review. Steps that stay on
+this computer are not listed; if nothing leaves, the window simply says *Everything stays on
+this computer.*
+
+Each section names its destination and what the service gets to read:
+
+- the service and its host, with **EU** or **outside the EU** — the same wording as in the
+  box, so *Mistral (EU)* and *Mistral* are no longer easy to confuse;
+- **names hidden** or **names as written**. If *Remove personal info* is off, the section
+  warns you that the names are sent as written;
+- the text exactly as it will be sent, including the stand-ins the anonymizer produced.
+  Hidden items are highlighted, so you can see at a glance what the service cannot read.
+
+The instructions the app sends along with the text — your proofreading instructions, or the
+content-review question — are folded away under **Show the instructions sent**. They are part
+of what leaves the computer, so you can read them too.
+
+The **Personal information** tab holds the original extracted text next to the anonymized
+version, for a line-by-line comparison — this is where the former *Personal Information
+Preview* went. It is there whenever *Remove personal information* is on and the file has
+extracted text.
+
+The rest of the time, hover over a **Proofreading** or **Content Review** cell in the results
+list to read where that file's text went and whether its names were hidden — for example
+*Sent to Mistral (EU), names hidden* or *Sent to OpenAI, outside the EU, names written*.
+
+---
+
+## Hiding names while you read
+
+Hand the screen to a colleague, or show a proofread text to the class, without the names of
+the children in it: **View → Hide personal information in texts** replaces every name the
+anonymizer knows with its stand-in — `[PERSON_1]`, `[EMAIL_1]` and so on — in the
+**Extracted Text**, **Proofread Text**, **Changes**, **Content Review** and the review notes
+at once. The same stand-ins appear in every tab, so a note that talks about `[PERSON_1]` is
+about the same child as in the text. The eye button in the header above the texts does the
+same and follows the menu entry.
+
+This works like *Remove personal information* (see *Protecting privacy* above): the extracted
+text is anonymized with the current detection settings and models the first time you switch
+the setting on, in the background — a short *Hiding personal information…* note stands in
+meanwhile. Everything already hidden in this session is reused, so switching the setting back
+and forth costs nothing. The setting is remembered for the next start.
+
+While it is on, the **Extracted Text** and **Proofread Text** tabs cannot be edited — an edit
+would be saved with the stand-ins instead of the names. The note above the texts says
+**Turn off 'Hide personal information' to edit.**; switch the setting off to work on the text
+again. Word documents, text files and the anonymized text file are not affected: only the
+preview is masked, and the original names are never shown in a tooltip.
+
+Hiding needs the **Privacy add-on** and a detection model for the document language. Without
+them the menu entry stays greyed out; its tooltip points at **Advanced Settings → Downloads**.
+
+One limitation: a name the proofreader spelled differently — *Meier* corrected to *Maier* —
+is not found in the proofread text or the changes, because the stand-ins are matched against
+the spelling of the extracted text. The extracted text, the changes that do not touch a name,
+and everything the anonymizer did recognize are hidden as expected.
 
 ---
 
@@ -272,7 +366,7 @@ Right-click a row for more options:
   - **Anonymized Text File…** — the extracted text with names and other personal data replaced by placeholders such as `[PERSON_1]` (`<name>_anonymized.txt`). It uses your **Privacy Settings…** and runs entirely on this computer. The list of replaced names is not saved, so the original names cannot be recovered from the file. This needs the privacy add-on and a language model for your document language; if one is missing you are told once.
 
   A text file is never written over any of the documents in your list, so an existing `essay.txt` you are processing stays untouched. When you export several files into one folder, files from sub-folders of your input folder keep those sub-folders (`class1/essay.png` → `<folder>/class1/essay.docx`), so documents with the same name do not replace each other. You are asked before existing files there are replaced, and a document whose name is already taken by another file of the same export is skipped and reported. If you work with a whole folder, you are also asked first before saving into it, because the next run would read the new file as another document.
-- **Personal Information Preview…** — compare the original extracted text and the anonymized version side by side.
+- **What is sent for this file…** — show, step by step, exactly which text leaves your computer and what the service is told to do with it (see *What is sent for this file* above).
 
 ---
 
@@ -305,4 +399,4 @@ Extra features can be installed from inside the app — no external downloads or
 - **Output files are opt-in** — a run saves results internally and fills the list by default. In **Output Settings…** choose which files a run writes automatically: **Word documents**, **text files** (`<name>.txt`) and **anonymized text files** (`<name>_anonymized.txt`, same rules as the export above). Or export on demand from the results list. Text files need an output folder outside the input folder; otherwise the next run would read them as new documents, so a run with text files going there does not start. (The Export menu only asks first, because it is a one-off save you may want in that folder.) If two documents would write the same output file — for example `essay.png` and `essay.pdf` in one folder — the second one is reported as failed instead of replacing the first.
 - **Sub-folders** — files inside sub-folders of the input folder are always included, and their output files go into the same sub-folders below the output folder (`class1/essay.png` → `<output>/class1/essay.docx`).
 - **Output formats** — the **table** format puts the original image, extracted text, and corrected text in three columns; the **comments** format attaches the corrections as Word comments next to the original text.
-- **Check anonymization on a real file** — select a row in the results list and choose **Personal Information Preview…** to see exactly what the app will hide before sending text to the AI.
+- **Check what a service sees** — select a row in the results list and choose **What is sent for this file…** to read the exact text and instructions each service receives, with the hidden names marked.

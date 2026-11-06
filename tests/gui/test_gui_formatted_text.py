@@ -526,3 +526,20 @@ def test_enter_after_a_figure_placeholder_starts_an_unstyled_paragraph(qtbot) ->
 
     assert [block.kind for block in result.blocks] == ["figure", "paragraph"]
     assert result.blocks[1].spans == (Span("Antwort"),)
+
+
+@pytest.mark.gui
+def test_chip_placeholders_keeps_the_placeholder_text(qtbot) -> None:
+    """
+    Given  rendered HTML that contains placeholders and markup
+    When   chip_placeholders() wraps them
+    Then   each placeholder stays readable inside its chip and markup is untouched
+    """
+    from teachers_teammate.gui._formatted_text import chip_placeholders  # noqa: PLC0415
+
+    marked = chip_placeholders("<p>[PERSON_1] met [PERSON_2]</p>", ["[PERSON_1]", "[PERSON_2]"])
+
+    assert marked.count("<span") == 2
+    assert ">[PERSON_1]</span>" in marked
+    assert ">[PERSON_2]</span>" in marked
+    assert marked.startswith("<p>") and marked.endswith("</p>")

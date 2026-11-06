@@ -445,7 +445,7 @@ def test_summary_follows_the_step_3_checkbox(qtbot) -> None:
     """
     Given  a panel whose proofreading is online
     When   "Remove personal info" is ticked
-    Then   the summary no longer advises hiding names
+    Then   the summary no longer advises hiding names and says only anonymized text leaves
     """
     panel = ConfigPanel()
     qtbot.addWidget(panel)
@@ -455,7 +455,10 @@ def test_summary_follows_the_step_3_checkbox(qtbot) -> None:
     panel._anonymization_enabled.setChecked(True)
 
     assert "Remove personal info" not in panel._data_flow_summary._body.text()
-    assert "Some data leaves this computer." in panel._data_flow_summary._body.text()
+    assert (
+        "Anonymized text is sent to a service outside the EU."
+        in panel._data_flow_summary._body.text()
+    )
 
 
 class _FlowServiceMissingPrivacy(_FlowService):
@@ -683,3 +686,50 @@ def test_config_panel_drops_answer_formats_of_another_version(qtbot, capsys) -> 
     assert settings["answer_format_review"] == ""
     assert settings["answer_format_text"] == ""
     assert "answer format" in capsys.readouterr().err
+
+
+@pytest.mark.gui
+def test_lookup_config_carries_the_anonymizer_rules_and_instructions(qtbot) -> None:
+    """
+    Given  a panel with an own extra model, no regex patterns and a custom prompt
+    When   lookup_config() is read (the "What is sent" dialog and the status box use it)
+    Then   the config holds those settings instead of the defaults
+    """
+    panel = ConfigPanel()
+    qtbot.addWidget(panel)
+    panel.set_service(_GuardService())
+    panel.update_settings(
+        {
+            "anonymizer_primary_model": "de_core_news_sm",
+            "anonymizer_secondary_model": None,
+            "anonymizer_patterns": [],
+            "explanation_language": "German",
+        }
+    )
+    panel._correction_prompt_text = "Mein eigener Auftrag."
+
+    config = panel.lookup_config()
+
+    assert config.anonymizer_primary_model == "de_core_news_sm"
+    assert config.anonymizer_secondary_model == "none"
+    assert config.anonymizer_patterns == []
+    assert config.correction_prompt == "Mein eigener Auftrag."
+    assert config.explanation_language == "German"
+
+
+@pytest.mark.gui
+def test_changing_the_document_language_refreshes_the_data_flow(qtbot) -> None:
+    """
+    Given  a panel with a service
+    When   the document language changes
+    Then   the data flow is described again and announced (models and availability depend on it)
+    """
+    panel = ConfigPanel()
+    qtbot.addWidget(panel)
+    panel.set_service(_GuardService())
+    announced: list[object] = []
+    panel.data_flow_changed.connect(announced.append)
+
+    panel._language.setCurrentText("German")
+
+    assert announced

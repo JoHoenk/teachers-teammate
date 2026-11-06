@@ -206,3 +206,30 @@ def recommendation_caption(is_suggestion: bool) -> str:
 def suggestion_note(is_suggestion: bool) -> str:
     """Return the parenthetical shown under a suggested version, or ``""``."""
     return MEANING_NOT_CERTAIN if is_suggestion else ""
+
+
+# ── What is sent for this file ────────────────────────────────────────────────
+
+WHAT_IS_SENT_TITLE = "What is sent for this file"
+WHAT_IS_SENT_WORKING = "Working out what is sent…"
+NO_TEXT_YET = "No text recognized for this file yet."
+
+
+# ── Hiding personal information in the previews ───────────────────────────────
+
+HIDE_PERSONAL_INFO_ACTION = "Hide personal information in texts"
+HIDE_PERSONAL_INFO_TIP = (
+    "Show placeholder tokens such as [PERSON_1] instead of names and other personal\n"
+    "information in the extracted text, the proofread text, the changes and the content\n"
+    "review. A GUI preference, not part of the processing settings."
+)
+HIDE_PERSONAL_INFO_UNAVAILABLE_TIP = (
+    "Hiding personal information needs the Privacy add-on and a spaCy model for the\n"
+    "document language. Open Advanced Settings → Downloads to install them."
+)
+HIDING_PERSONAL_INFO = "Hiding personal information…"
+HIDING_PERSONAL_INFO_FAILED = "Personal information could not be hidden: {reason}"
+TURN_OFF_HIDING_TO_EDIT = "Turn off 'Hide personal information' to edit."
+HIDE_PERSONAL_INFO_BUTTON = "👁"
+HIDE_PERSONAL_INFO_BUTTON_TIP = "Hide personal information in the texts shown here"
+SHOW_PERSONAL_INFO_BUTTON_TIP = "Show names again in the texts shown here"

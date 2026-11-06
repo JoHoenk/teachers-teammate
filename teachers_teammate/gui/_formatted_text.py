@@ -8,7 +8,9 @@ about: crossed-out words (red, struck through) and insertions written above the 
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 import html
+import re
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import (
@@ -129,6 +131,37 @@ def render_html(doc: FormattedDocument) -> str:
             parts.append(f"<p>{_spans_html(block.spans)}</p>")
     parts.append(lists.close())
     parts.append("</body></html>")
+    return "".join(parts)
+
+
+#: Highlight for a placeholder, so a teacher sees at once what was replaced.
+PLACEHOLDER_STYLE = "background-color:#fde68a; font-weight:bold;"
+
+_TAG_SPLIT = re.compile(r"(<[^>]*>)")
+
+
+def chip_placeholders(html_text: str, placeholders: Sequence[str]) -> str:
+    """Wrap every occurrence of *placeholders* in *html_text* in a highlighted chip.
+
+    *html_text* is already-rendered HTML and the placeholders are matched as they appear
+    escaped there; markup is skipped, so a placeholder that happens to read like a tag or
+    an attribute value cannot break the document.  Longer placeholders win over shorter
+    ones that are part of them, so ``[PERSON_1]`` is a whole chip even when ``[PERSON]``
+    is also in the list.
+    """
+    tokens = [html.escape(token) for token in dict.fromkeys(placeholders) if token]
+    if not tokens or not html_text:
+        return html_text
+    tokens.sort(key=len, reverse=True)
+    pattern = re.compile("(" + "|".join(re.escape(token) for token in tokens) + ")")
+
+    def chip(match: re.Match[str]) -> str:
+        return f'<span style="{PLACEHOLDER_STYLE}">{match.group(0)}</span>'
+
+    parts = _TAG_SPLIT.split(html_text)
+    # Even indices are text, odd ones are tags: only the text may be wrapped.
+    for index in range(0, len(parts), 2):
+        parts[index] = pattern.sub(chip, parts[index])
     return "".join(parts)
 
 

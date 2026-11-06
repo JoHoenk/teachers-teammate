@@ -13,6 +13,7 @@ import pytest
 from teachers_teammate.application import service as service_module
 from teachers_teammate.application.commands import ApplicationCommands
 from teachers_teammate.application.service import ProcessingApplicationService
+from teachers_teammate.domain.model_listing import ModelListing
 from teachers_teammate.infrastructure.state_repository import DocumentState
 
 
@@ -22,6 +23,11 @@ from teachers_teammate.infrastructure.state_repository import DocumentState
 def _discovery_of(*names: str) -> MagicMock:
     """File discovery that finds the files called *names* (none by default)."""
     return MagicMock(collect_input_files=MagicMock(return_value=[Path(n) for n in names]))
+
+
+def _as_listing(fake):
+    """Wrap a fake that returns model names as the checked listing the service asks for."""
+    return lambda provider, **kwargs: ModelListing(list(fake(provider, **kwargs)))
 
 
 def _make_svc(
@@ -810,7 +816,8 @@ def test_list_provider_models_uses_ttl_cache() -> None:
         return ["model-a", "model-b"]
 
     with patch(
-        "teachers_teammate.application.service.list_provider_models", side_effect=_fake_list
+        "teachers_teammate.application.service.list_provider_models_checked",
+        side_effect=_as_listing(_fake_list),
     ):
         first = svc.list_provider_models("openai")
         second = svc.list_provider_models("openai")
@@ -836,7 +843,8 @@ def test_invalidate_model_cache_forces_refetch() -> None:
         return ["model-a"]
 
     with patch(
-        "teachers_teammate.application.service.list_provider_models", side_effect=_fake_list
+        "teachers_teammate.application.service.list_provider_models_checked",
+        side_effect=_as_listing(_fake_list),
     ):
         svc.list_provider_models("openai")
         svc.invalidate_model_cache("openai")
@@ -1154,7 +1162,7 @@ def test_ollama_model_cache_key_ignores_url_spelling(monkeypatch) -> None:
         calls.append(provider)
         return ["a:latest"]
 
-    monkeypatch.setattr(service_module, "list_provider_models", fake_list)
+    monkeypatch.setattr(service_module, "list_provider_models_checked", _as_listing(fake_list))
     svc = _make_svc()
     svc.list_provider_models("ollama", base_url="http://host:11434/")
     svc.list_provider_models("ollama", base_url="http://host:11434")
@@ -1172,7 +1180,11 @@ def test_on_ollama_models_changed_evicts_list_and_classification(monkeypatch) ->
     Then   the next lookup asks the server again
     """
     installed = ["a:latest"]
-    monkeypatch.setattr(service_module, "list_provider_models", lambda p, **kw: list(installed))
+    monkeypatch.setattr(
+        service_module,
+        "list_provider_models_checked",
+        _as_listing(lambda p, **kw: list(installed)),
+    )
     svc = _make_svc()
     url = "http://127.0.0.1:11434"
     assert svc.list_provider_models("ollama", base_url=url) == ["a:latest"]
@@ -1189,7 +1201,11 @@ def test_installation_status_compares_normalised_tags(monkeypatch) -> None:
     When   the installation status asks for "llama3.2" (no suffix)
     Then   it counts as installed
     """
-    monkeypatch.setattr(service_module, "list_provider_models", lambda p, **kw: ["llama3.2:latest"])
+    monkeypatch.setattr(
+        service_module,
+        "list_provider_models_checked",
+        _as_listing(lambda p, **kw: ["llama3.2:latest"]),
+    )
     svc = _make_svc()
     status = svc.get_installation_status(
         ollama_models=["llama3.2", "other:1b"], ollama_url="http://127.0.0.1:11434"
@@ -1335,8 +1351,8 @@ def test_empty_model_list_is_not_cached(tmp_path: Path) -> None:
     answers = [[], ["qwen3-vl:8b"]]
 
     with patch(
-        "teachers_teammate.application.service.list_provider_models",
-        side_effect=lambda *_a, **_k: answers.pop(0),
+        "teachers_teammate.application.service.list_provider_models_checked",
+        side_effect=_as_listing(lambda *_a, **_k: answers.pop(0)),
     ):
         first = svc.list_provider_models("ollama", base_url="http://127.0.0.1:11434")
         second = svc.list_provider_models("ollama", base_url="http://127.0.0.1:11434")
@@ -1545,7 +1561,7 @@ def test_preflight_needs_no_ollama_for_other_engines(tmp_path: Path) -> None:
     cfg = make_config(tmp_path, ocr_engine="tesseract", correction_enabled=False)
 
     with patch(
-        "teachers_teammate.application.service.list_provider_models",
+        "teachers_teammate.application.service.list_provider_models_checked",
         side_effect=AssertionError("Ollama must not be contacted"),
     ):
         result = svc.check_run_preflight(cfg)
@@ -1992,3 +2008,210 @@ def test_preflight_checks_anonymizer_for_anonymized_text_files(tmp_path: Path) -
         result = svc.check_run_preflight(cfg)
 
     assert result.stage == "anonymizer"
+
+
+# ── provider packages and model-list source ───────────────────────────────
+
+
+@pytest.mark.unit
+def test_failed_listing_is_asked_again_while_a_live_one_is_remembered() -> None:
+    """
+    Given  a provider whose first answer is a failed listing (no key) and then a live one
+    When   the models are listed three times
+    Then   the failed answer is not remembered (the second call asks again, and so notices a
+           key entered meanwhile), the live one is, and the cache reports its source
+    """
+    svc = _make_svc()
+    answers = [
+        ModelListing(["built-in"], "failed", "no Mistral key is set"),
+        ModelListing(["glm-live"], "live"),
+    ]
+    calls = 0
+
+    def fake(_provider: str, **_kw: str) -> ModelListing:
+        nonlocal calls
+        calls += 1
+        return answers.pop(0)
+
+    with patch("teachers_teammate.application.service.list_provider_models_checked", fake):
+        first = svc.list_provider_models_checked("mistral")
+        second = svc.list_provider_models_checked("mistral")
+        third = svc.list_provider_models_checked("mistral")
+
+    assert (first.source, second.source, third.source) == ("failed", "live", "live")
+    assert calls == 2
+    cached = svc.get_cached_listing("mistral")
+    assert cached is not None and cached.models == ["glm-live"]
+
+
+@pytest.mark.unit
+def test_missing_provider_package_names_the_pip_package_only_when_absent() -> None:
+    """
+    Given  a service where langchain_mistralai is absent but langchain_openai is installed
+    When   missing_provider_package() is asked for each, and for Ollama
+    Then   Mistral (global and EU) names its pip package, the installed one and Ollama (whose
+           connector is optional) name none
+    """
+    svc = _make_svc()
+    absent = {"langchain_mistralai"}
+
+    with patch.object(
+        ProcessingApplicationService,
+        "is_module_importable",
+        lambda _self, module: module not in absent,
+    ):
+        assert svc.missing_provider_package("mistral") == "langchain-mistralai"
+        assert svc.missing_provider_package("mistral_eu") == "langchain-mistralai"
+        assert svc.missing_provider_package("openai") is None
+        assert svc.missing_provider_package("ollama") is None
+
+
+@pytest.mark.unit
+def test_provider_packages_list_a_shared_package_once() -> None:
+    """
+    Given  Mistral global and EU, which use one package
+    When   list_provider_packages() is read
+    Then   the package appears once, and every other provider has its own entry
+    """
+    packages = _make_svc().list_provider_packages()
+
+    pip_names = [pip for _module, pip in packages.values()]
+    assert pip_names.count("langchain-mistralai") == 1
+    assert len(pip_names) == len(set(pip_names))
+    assert {"openai", "anthropic", "google", "cohere", "ollama"} <= set(packages)
+
+
+@pytest.mark.unit
+def test_stage_requirements_report_a_missing_provider_package_before_asking_the_server(
+    tmp_path: Path,
+) -> None:
+    """
+    Given  proofreading with Mistral while langchain_mistralai is not installed
+    When   the stage requirements are checked
+    Then   one issue says Mistral support is not installed, is fixable in Downloads, and names
+           the provider so the app can open the providers tab with it ticked
+    """
+    svc = _make_svc()
+    cfg = dataclasses.replace(
+        _ollama_config(tmp_path), correction_provider="mistral", correction_model="m"
+    )
+
+    with patch.object(ProcessingApplicationService, "is_module_importable", lambda *_a: False):
+        issues = svc.check_stage_requirements(cfg, "correction")
+
+    assert [(i.message, i.fixable_via_downloads, i.provider) for i in issues] == [
+        ("Mistral support is not installed yet.", True, "mistral")
+    ]
+
+
+@pytest.mark.unit
+def test_is_module_importable_refreshes_the_import_caches() -> None:
+    """
+    Given  a package installed while the app is running
+    When   is_module_importable() is asked
+    Then   the import caches are invalidated first, so the new package is found at once
+    """
+    with patch("teachers_teammate.application.service.importlib.invalidate_caches") as refresh:
+        _make_svc().is_module_importable("json")
+
+    refresh.assert_called_once()
+
+
+# ── this computer's memory in hardware detection and ratings ──────────────
+
+
+@pytest.mark.unit
+def test_detect_hardware_reports_the_computers_memory_from_the_probe(monkeypatch) -> None:
+    """
+    Given  a computer with a 16 GB card and 32 GB of memory
+    When   detect_hardware is called for the local server
+    Then   the detection carries both, and a model too big for the card is rated slow with it
+    """
+    from teachers_teammate.infrastructure import gpu_detector  # noqa: PLC0415
+
+    monkeypatch.setattr(
+        gpu_detector, "detect_gpus", lambda: [gpu_detector.GpuInfo("nvidia", "RTX 3080", 16384)]
+    )
+    monkeypatch.setattr(gpu_detector, "detect_apple_unified_memory_gb", lambda: None)
+    monkeypatch.setattr(gpu_detector, "detect_system_memory_gb", lambda: 32.0)
+    svc = _make_svc()
+
+    detection = svc.detect_hardware("http://127.0.0.1:11434")
+
+    assert (detection.profile, detection.memory_gb, detection.system_memory_gb) == (
+        "16gb",
+        16.0,
+        32.0,
+    )
+    rating = svc.rate_ollama_models(
+        ["gpt-oss:20b"], "general", "8gb", "http://127.0.0.1:11434", system_memory_gb=32.0
+    )[0]
+    assert rating.suitability.value == "slow"
+
+
+@pytest.mark.unit
+def test_a_chosen_profile_carries_the_memory_only_for_a_local_server(monkeypatch) -> None:
+    """
+    Given  a chosen profile ("8gb") and a computer with 32 GB of memory
+    When   it is resolved for the local server and for a server on another computer
+    Then   the local one reports the memory without probing the graphics card; the remote one
+           reports none (that memory belongs to another computer)
+    """
+    from teachers_teammate.infrastructure import gpu_detector  # noqa: PLC0415
+
+    def no_graphics_probe(*_a, **_k):
+        raise AssertionError("a chosen profile must not probe the graphics card")
+
+    monkeypatch.setattr(gpu_detector, "detect_gpus", no_graphics_probe)
+    monkeypatch.setattr(gpu_detector, "detect_apple_unified_memory_gb", lambda: None)
+    monkeypatch.setattr(gpu_detector, "detect_system_memory_gb", lambda: 32.0)
+    svc = _make_svc()
+
+    local = svc.resolve_hardware_profile("8gb", "http://127.0.0.1:11434")
+    remote = svc.resolve_hardware_profile("8gb", "http://192.168.1.50:11434")
+
+    assert local.system_memory_gb == 32.0
+    assert remote.system_memory_gb is None
+
+
+@pytest.mark.unit
+def test_a_chosen_profile_on_apple_silicon_carries_no_separate_memory(monkeypatch) -> None:
+    """
+    Given  an Apple Silicon computer (its graphics share is part of the shared memory)
+    When   a profile is chosen by hand for the local server
+    Then   no separate memory figure is reported, so a model is not offloaded into memory
+           the profile already counts
+    """
+    from teachers_teammate.infrastructure import gpu_detector  # noqa: PLC0415
+
+    monkeypatch.setattr(gpu_detector, "detect_apple_unified_memory_gb", lambda: 16.0)
+    monkeypatch.setattr(gpu_detector, "detect_system_memory_gb", lambda: 16.0)
+
+    detection = _make_svc().resolve_hardware_profile("8gb", "http://127.0.0.1:11434")
+
+    assert detection.system_memory_gb is None
+
+
+@pytest.mark.unit
+def test_hardware_detection_is_logged(monkeypatch, caplog) -> None:
+    """
+    Given  a probe of this computer
+    When   detect_hardware is called
+    Then   the probe and the resulting profile are logged, so a wrong suggestion can be traced
+    """
+    import logging  # noqa: PLC0415
+
+    from teachers_teammate.infrastructure import gpu_detector  # noqa: PLC0415
+
+    monkeypatch.setattr(
+        gpu_detector, "detect_gpus", lambda: [gpu_detector.GpuInfo("nvidia", "RTX 3080", None)]
+    )
+    monkeypatch.setattr(gpu_detector, "detect_apple_unified_memory_gb", lambda: None)
+    monkeypatch.setattr(gpu_detector, "detect_system_memory_gb", lambda: 16.0)
+
+    with caplog.at_level(logging.INFO):
+        _make_svc().detect_hardware("http://127.0.0.1:11434")
+
+    text = caplog.text
+    assert "Probed this computer" in text and "RTX 3080" in text
+    assert "Hardware profile" in text and "gpu_memory_unknown" in text

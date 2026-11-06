@@ -19,10 +19,21 @@ class _StubService:
     def __init__(self, detection: HardwareDetection) -> None:
         self.detection = detection
         self.detect_calls: list[tuple[str, bool]] = []
+        self.manual_memory_gb: float | None = None  # what a chosen profile reports as memory
 
     def detect_hardware(self, ollama_url: str, *, refresh: bool = False) -> HardwareDetection:
         self.detect_calls.append((ollama_url, refresh))
         return self.detection
+
+    def resolve_hardware_profile(self, setting: str, ollama_url: str) -> HardwareDetection:
+        _ = ollama_url
+        if setting in ("cpu", "8gb", "16gb"):
+            return HardwareDetection(
+                profile=setting,  # ty: ignore[invalid-argument-type]  # narrowed by the check above
+                reason=DetectionReason.MANUAL,
+                system_memory_gb=self.manual_memory_gb,
+            )
+        return self.detect_hardware(ollama_url)
 
 
 _GPU_DETECTED = HardwareDetection(
@@ -268,3 +279,60 @@ def test_refresh_status_resolves_again_without_probing_again(qtbot, stub_service
         ("http://127.0.0.1:11434", False),
         ("http://127.0.0.1:11434", False),
     ]
+
+
+@pytest.mark.use_case("Model_Recommendation_By_Hardware")
+def test_a_failed_check_is_said_and_logged_not_shown_as_no_suggestion(
+    qtbot, stub_service, caplog
+) -> None:
+    """
+    Given  a computer check that raises
+    When   the selector resolves
+    Then   the status line says the computer could not be checked (and that suggestions assume
+           8 GB), the error is logged with its traceback, and the result is None --
+           instead of the silent "no suggestion" the same line showed for a failure and for
+           "nothing to suggest"
+    """
+    import logging  # noqa: PLC0415
+
+    class _Failing(_StubService):
+        def detect_hardware(self, ollama_url: str, *, refresh: bool = False):
+            raise RuntimeError("nvidia-smi exploded")
+
+    widget = HardwareProfileSelector(app_service=_Failing(_GPU_DETECTED))
+    qtbot.addWidget(widget)
+    with (
+        caplog.at_level(logging.WARNING),
+        qtbot.waitSignal(widget.resolved_changed, timeout=5000) as blocker,
+    ):
+        pass
+
+    assert blocker.args[0] is None
+    status = widget._status_lbl.text()
+    assert "could not be checked" in status and "8 GB" in status
+    assert status != "No suggestion available for this computer."
+    record = next(r for r in caplog.records if "Checking this computer failed" in r.message)
+    assert record.exc_info is not None
+    assert "nvidia-smi exploded" in str(record.exc_info[1])
+
+
+@pytest.mark.use_case("Hardware_Profile_Override")
+def test_a_chosen_profile_is_resolved_through_the_service_and_keeps_the_memory(
+    qtbot, stub_service
+) -> None:
+    """
+    Given  a chosen profile on a computer with 32 GB of memory
+    When   the selector resolves
+    Then   the detection is MANUAL with that profile and carries the memory (a chosen profile
+           still rates models too big for the card by it), and no graphics probe ran
+    """
+    stub_service.manual_memory_gb = 32.0
+    widget = HardwareProfileSelector(app_service=stub_service, setting="8gb")
+    qtbot.addWidget(widget)
+    with qtbot.waitSignal(widget.resolved_changed, timeout=5000) as blocker:
+        pass
+
+    detection = blocker.args[0]
+    assert (detection.profile, detection.system_memory_gb) == ("8gb", 32.0)
+    assert detection.reason is DetectionReason.MANUAL
+    assert stub_service.detect_calls == []

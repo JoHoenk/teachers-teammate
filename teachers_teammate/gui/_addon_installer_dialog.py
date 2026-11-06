@@ -34,7 +34,7 @@ _ADDON_META: dict[str, dict] = {
         "title": "Install Privacy Addon",
         "description": (
             "This installs <b>spaCy</b>, the NLP library used for PII anonymization.<br><br>"
-            "After installation, open <i>Anonymizer Settings</i> to download a language "
+            "After installation, open <i>Privacy Settings</i> to download a language "
             "model for your language before using anonymization."
         ),
         "size_warning": "",

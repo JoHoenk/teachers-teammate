@@ -15,6 +15,7 @@ PROVIDER_INFO: dict = {
     "env_key": "ANTHROPIC_API_KEY",
     "needs_base_url": False,
     "can_list_models": False,
+    "package": {"module": "langchain_anthropic", "pip": "langchain-anthropic"},
     "default_model": "claude-3-haiku-20240307",
     "models": [
         "claude-opus-4-5",

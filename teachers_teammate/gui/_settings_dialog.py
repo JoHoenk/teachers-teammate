@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import atexit
 from collections.abc import Callable
+import html
 import os
 from pathlib import Path
 import sys
@@ -19,16 +20,15 @@ from PySide6.QtWidgets import (
     QDoubleSpinBox,
     QFileDialog,
     QFormLayout,
+    QGridLayout,
     QGroupBox,
     QHBoxLayout,
-    QHeaderView,
     QLabel,
     QLineEdit,
     QMessageBox,
     QPlainTextEdit,
     QPushButton,
     QScrollArea,
-    QTableWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -43,26 +43,67 @@ from ..domain.model_catalog import (
     ModelRating,
     ModelUses,
 )
+from ..domain.model_listing import ModelListing
 from ._data_flow_summary import LocationHint, text_note
-from ._model_guidance import OpenDownloads
+from ._model_guidance import PROVIDER_PREFIX, OpenDownloads
 from ._model_wording import SAME_MODEL_TIP
 from ._worker import _ConnectionCheckThread  # noqa: F401  kept for external callers
 
-
-def _install_hint(service: _SettingsAppService, extra: str, packages: list[str]) -> str:
-    """Return a warning string when *packages* are not importable, else empty string."""
-    if all(service.is_module_importable(p) for p in packages):
-        return ""
-    if getattr(sys, "frozen", False):
-        return "⚠ Not included in this build — download the full-featured release."
-    return f'⚠ Not installed — run:  pip install "teachers-teammate[{extra}]"'
+PACKAGE_MISSING = "{name} support is not installed yet."
+INSTALL_BUTTON = "Install…"
+INSTALL_BUTTON_TOOLTIP = "Opens Downloads, where this package can be installed with one click."
+PIP_HINT = "Or run:  pip install {pip}"
 
 
-_PROVIDER_EXTRA: dict[str, tuple[str, list[str]]] = {
-    "mistral": ("providers", ["langchain_mistralai"]),
-    "mistral_eu": ("providers", ["langchain_mistralai"]),
-    "cohere": ("providers", ["langchain_cohere"]),
-}
+class _PackageHint(QWidget):
+    """Says an AI service's package is missing and offers to install it from Downloads."""
+
+    #: Emitted after Downloads closed, so the dialog can look again.
+    downloads_closed = Signal()
+
+    def __init__(self, open_downloads: OpenDownloads | None, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._open_downloads = open_downloads
+        self._provider = ""
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        self._label = QLabel()
+        self._label.setStyleSheet("color: #c0392b;")
+        self._label.setWordWrap(True)
+        self._label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        layout.addWidget(self._label, stretch=1)
+        self._button = QPushButton(INSTALL_BUTTON)
+        self._button.setToolTip(INSTALL_BUTTON_TOOLTIP)
+        self._button.setVisible(open_downloads is not None)
+        self._button.clicked.connect(self._on_install)
+        layout.addWidget(self._button, alignment=Qt.AlignmentFlag.AlignTop)
+        self.setVisible(False)
+
+    def show_missing(self, provider: str, display_name: str, pip_name: str) -> None:
+        """Show that *provider*'s package *pip_name* is missing."""
+        self._provider = provider
+        text = f"⚠ {PACKAGE_MISSING.format(name=display_name)}"
+        if not getattr(sys, "frozen", False):
+            text += f"\n{PIP_HINT.format(pip=pip_name)}"
+        self._label.setText(text)
+        self.setVisible(True)
+
+    def clear(self) -> None:
+        """Hide the hint (the package is installed, or the service needs none)."""
+        self._provider = ""
+        self._label.clear()
+        self.setVisible(False)
+
+    def message(self) -> str:
+        """Return the shown text (empty while hidden)."""
+        return self._label.text() if not self.isHidden() else ""
+
+    def _on_install(self) -> None:
+        if self._open_downloads is None or not self._provider:
+            return
+        self._open_downloads([f"{PROVIDER_PREFIX}{self._provider}"], self.window())
+        self.downloads_closed.emit()
+
 
 # ── background threads ────────────────────────────────────────────────────────
 
@@ -80,13 +121,23 @@ class _SettingsAppService(Protocol):
 
     def list_ocr_models(self, base_url: str = "") -> list[str]: ...
 
+    def list_provider_models_checked(
+        self, provider: str, *, base_url: str = ""
+    ) -> ModelListing: ...
+
     def get_cached_models(self, provider: str, *, base_url: str = "") -> list[str] | None: ...
+
+    def get_cached_listing(self, provider: str, *, base_url: str = "") -> ModelListing | None: ...
 
     def invalidate_model_cache(self, provider: str, base_url: str = "") -> None: ...
 
     def is_module_importable(self, module: str) -> bool: ...
 
+    def missing_provider_package(self, provider: str) -> str | None: ...
+
     def detect_hardware(self, ollama_url: str, *, refresh: bool = False) -> HardwareDetection: ...
+
+    def resolve_hardware_profile(self, setting: str, ollama_url: str) -> HardwareDetection: ...
 
     def classify_ollama_models(
         self, tags: list[str], ollama_url: str, *, cached_only: bool = False
@@ -100,6 +151,7 @@ class _SettingsAppService(Protocol):
         ollama_url: str,
         *,
         cached_only: bool = False,
+        system_memory_gb: float | None = None,
     ) -> list[ModelRating]: ...
 
     def detect_gpus(self, *, refresh: bool = False) -> list: ...
@@ -114,21 +166,33 @@ class _SettingsAppService(Protocol):
 
 
 class _ModelFetchThread(QThread):
-    """Fetches model names in a background thread via a caller-supplied callable."""
+    """Fetches model names in a background thread via a caller-supplied callable.
+
+    The callable returns the names, or a :class:`ModelListing` that also says whether they
+    are live.  *tag* (the provider the fetch is for) comes back with the answer, so a late
+    answer for a provider the user has already left can be told apart and dropped.
+    """
 
     models_ready = Signal(list)
+    listing_ready = Signal(str, object)  # (tag, ModelListing)
     error = Signal(str)
 
-    def __init__(self, fetch_fn: Callable[[], list[str]]) -> None:
+    def __init__(self, fetch_fn: Callable[[], list[str] | ModelListing], tag: str = "") -> None:
         super().__init__()
         self._fetch_fn = fetch_fn
+        self._tag = tag
 
     def run(self) -> None:
         try:
-            self.models_ready.emit(self._fetch_fn())
+            result = self._fetch_fn()
         except Exception as exc:  # noqa: BLE001  # provider model fetch may raise any network/auth error; report via signals
             self.error.emit(str(exc))
             self.models_ready.emit([])
+            self.listing_ready.emit(self._tag, ModelListing([], "failed", str(exc)))
+            return
+        listing = result if isinstance(result, ModelListing) else ModelListing(list(result))
+        self.models_ready.emit(listing.models)
+        self.listing_ready.emit(self._tag, listing)
 
 
 class _GpuDetectThread(QThread):
@@ -157,6 +221,25 @@ def _status_ok(n: int) -> str:
     return f'<span style="color:#27ae60;">● {n} model{"s" if n != 1 else ""}</span>'
 
 
+def _listing_status(listing: ModelListing) -> str:
+    """Return the status line for *listing*: live, built-in by design, or built-in after a failure.
+
+    A failed query must not look like a successful one, so it says why and offers to retry.
+    """
+    count = len(listing.models)
+    noun = "model" if count == 1 else "models"
+    if listing.source == "failed":
+        what = f"built-in list of {count} {noun}" if count else "no models to show"
+        return (
+            f'<span style="color:#e67e22;">● {what} — '
+            f"{html.escape(listing.problem or 'the service could not be asked')}</span> "
+            '<a href="retry">Try again</a>'
+        )
+    if listing.source == "builtin":
+        return f'<span style="color:#888;">● {count} {noun} · built-in list</span>'
+    return _status_ok(count)
+
+
 # ── module-level helpers ──────────────────────────────────────────────────────
 
 
@@ -181,7 +264,7 @@ def _available_providers(app_service: _SettingsAppService) -> list[str]:
 #: (that aborts the whole process) and these run a plain function with no event
 #: loop, so they cannot be interrupted either: they are parked here until they end.
 _RETIRED_THREADS: set[QThread] = set()
-_THREAD_RESULT_SIGNALS = ("models_ready", "error", "detect_done", "finished")
+_THREAD_RESULT_SIGNALS = ("models_ready", "listing_ready", "error", "detect_done", "finished")
 _RETIRED_WAIT_MS = 3000
 
 
@@ -218,6 +301,69 @@ def _wait_for_retired_threads() -> None:
 
 
 atexit.register(_wait_for_retired_threads)
+
+
+# ── API key rows ──────────────────────────────────────────────────────────────
+
+SHOW_KEY = "Show"
+HIDE_KEY = "Hide"
+KEY_NOT_SET = "(not set)"
+KEY_PLACEHOLDER = "Paste your API key here"
+REMOVE_KEY = "Remove"
+ADD_KEY = "Add key"
+
+
+class _CredentialRow(QWidget):
+    """One API key: the service it belongs to, a field wide enough to paste into, Show/Remove.
+
+    The name sits above the field instead of in a column beside it, so no column can be
+    squeezed to a sliver and cut the name or the buttons.
+    """
+
+    remove_requested = Signal(object)
+
+    def __init__(
+        self,
+        env_key: str,
+        title: str,
+        value: str = "",
+        *,
+        placeholder: str = KEY_NOT_SET,
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self.env_key = env_key
+        layout = QGridLayout(self)
+        layout.setContentsMargins(0, 4, 0, 4)
+        layout.setHorizontalSpacing(6)
+        layout.setColumnStretch(0, 1)
+
+        name = QLabel(
+            f"<b>{html.escape(title)}</b> <span style='color:#888;'>({html.escape(env_key)})</span>"
+        )
+        name.setTextFormat(Qt.TextFormat.RichText)
+        name.setWordWrap(True)
+        layout.addWidget(name, 0, 0)
+
+        self.field = QLineEdit(value)
+        self.field.setEchoMode(QLineEdit.EchoMode.Password)
+        self.field.setPlaceholderText(placeholder)
+        self.field.setMinimumWidth(220)
+        layout.addWidget(self.field, 1, 0)
+
+        self._reveal = QPushButton(SHOW_KEY)
+        self._reveal.setCheckable(True)
+        self._reveal.toggled.connect(self._on_reveal_toggled)
+        layout.addWidget(self._reveal, 1, 1)
+
+        remove = QPushButton(REMOVE_KEY)  # shares the column with Show, so both are as wide as it
+        remove.clicked.connect(lambda _=False: self.remove_requested.emit(self))
+        layout.addWidget(remove, 0, 1)
+
+    def _on_reveal_toggled(self, shown: bool) -> None:
+        mode = QLineEdit.EchoMode.Normal if shown else QLineEdit.EchoMode.Password
+        self.field.setEchoMode(mode)
+        self._reveal.setText(HIDE_KEY if shown else SHOW_KEY)
 
 
 # ── OCR Settings dialog ───────────────────────────────────────────────────────
@@ -346,11 +492,30 @@ class OCRSettingsDialog(QDialog):
         return result
 
 
-# ── Correction Settings dialog ────────────────────────────────────────────────
+# ── AI service dialogs (Proofreading and Content Review) ─────────────────────
 
 
-class CorrectionSettingsDialog(QDialog):
-    """Focused dialog for configuring the correction system prompt, provider, and model."""
+class _AiServiceDialog(QDialog):
+    """Instructions, provider, model and temperature: the dialog of one AI-service step.
+
+    Proofreading and Content Review ask for the same thing -- which instructions, which AI
+    service, which model -- and differ only in the settings keys and the wording.  The
+    subclasses are therefore just configuration, and a fix (such as asking the service again
+    after the provider changed) exists once.
+    """
+
+    #: Window title and the wording of the instructions group.
+    _TITLE = ""
+    _PROMPT_TITLE = ""
+    _PROMPT_NOTE = ""
+    _PROMPT_PLACEHOLDER = ""
+    #: Settings keys of this dialog's service, and of the other step's (for the same-model tip).
+    _PROVIDER_KEY = ""
+    _MODEL_KEY = ""
+    _TEMPERATURE_KEY = ""
+    _OTHER_PROVIDER_KEY = ""
+    _OTHER_MODEL_KEY = ""
+    _TEMPERATURE_TOOLTIP = ""
 
     def __init__(
         self,
@@ -363,14 +528,14 @@ class CorrectionSettingsDialog(QDialog):
         open_downloads: OpenDownloads | None = None,
     ) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Proofreading Settings")
+        self.setWindowTitle(self._TITLE)
         self.setMinimumWidth(480)
         screen = QApplication.primaryScreen()
         if screen:
             self.setMaximumHeight(screen.availableGeometry().height() - 60)
 
-        self._app_service = app_service or ProcessingApplicationService()
-        self._corr_fetch_thread: _ModelFetchThread | None = None
+        self._app_service: _SettingsAppService = app_service or ProcessingApplicationService()
+        self._fetch_thread: _ModelFetchThread | None = None
         self._ollama_url = str(values.get("ollama_url", DEFAULTS["ollama_url"]))
         self._values = values
         self._open_downloads = open_downloads
@@ -399,42 +564,41 @@ class CorrectionSettingsDialog(QDialog):
         buttons.rejected.connect(self.reject)
         main.addWidget(buttons)
 
-        # Seed model list for initial provider
-        self._on_provider_changed(self._correction_provider.currentText())
-
-        # Load saved values
-        if "correction_provider" in values:
-            _set_combo(self._correction_provider, str(values["correction_provider"]))
-        if "correction_model" in values:
-            self._correction_model.setCurrentText(str(values["correction_model"]))
-        if "correction_temperature" in values:
-            self._corr_temperature.setValue(float(values["correction_temperature"]))
-
-        self._auto_fetch()
+        self._load_service_values(values)
 
     def done(self, result: int) -> None:
         """Stop background threads before the dialog is destroyed."""
-        _retire_thread(self._corr_fetch_thread)
+        _retire_thread(self._fetch_thread)
         super().done(result)
 
     def _build_prompt_group(self, prompt: str) -> QGroupBox:
-        """Build the proofreading-instructions (system prompt) group."""
-        prompt_group = QGroupBox("Proofreading Instructions")
+        """Build the instructions (system prompt) group."""
+        prompt_group = QGroupBox(self._PROMPT_TITLE)
         prompt_layout = QVBoxLayout(prompt_group)
-        prompt_note = QLabel(
-            "Leave empty to use the built-in default instructions for the selected language."
-        )
+        prompt_note = QLabel(self._PROMPT_NOTE)
         prompt_note.setWordWrap(True)
         prompt_note.setStyleSheet("color: #888; font-size: 10px;")
         prompt_layout.addWidget(prompt_note)
         self._prompt_edit = QPlainTextEdit()
         self._prompt_edit.setPlainText(prompt)
-        self._prompt_edit.setPlaceholderText(
-            "Leave empty to use the built-in default proofreading instructions."
-        )
+        self._prompt_edit.setPlaceholderText(self._PROMPT_PLACEHOLDER)
         self._prompt_edit.setMinimumHeight(120)
         prompt_layout.addWidget(self._prompt_edit)
         return prompt_group
+
+    def get_prompt(self) -> str:
+        """Return the edited system prompt text."""
+        return self._prompt_edit.toPlainText().strip()
+
+    def get_values(self) -> dict:
+        """Return this step's provider, model and temperature for ConfigPanel.update_settings()."""
+        return {
+            self._PROVIDER_KEY: self._provider.currentText(),
+            self._MODEL_KEY: self._model.currentText().strip(),
+            self._TEMPERATURE_KEY: self._temperature.value(),
+        }
+
+    # ── widgets ───────────────────────────────────────────────────────────────
 
     def _build_model_group(self, hardware_profile: str = "auto") -> QGroupBox:
         """Build the AI-service (provider + model) group."""
@@ -454,36 +618,30 @@ class CorrectionSettingsDialog(QDialog):
         )
         model_form.addRow(self._hw_selector)
 
-        self._correction_provider = QComboBox()
-        self._correction_provider.addItems(_available_providers(self._app_service))
-        self._correction_provider.currentTextChanged.connect(self._on_provider_changed)
-        model_form.addRow("AI service:", self._correction_provider)
+        self._provider = QComboBox()
+        self._provider.addItems(_available_providers(self._app_service))
+        self._provider.currentTextChanged.connect(self._on_provider_selected)
+        model_form.addRow("AI service:", self._provider)
 
         self._where_hint = LocationHint()
         model_form.addRow("", self._where_hint)
 
-        self._correction_extra_warn = QLabel()
-        self._correction_extra_warn.setStyleSheet("color: #c0392b;")
-        self._correction_extra_warn.setWordWrap(True)
-        self._correction_extra_warn.setTextInteractionFlags(
-            Qt.TextInteractionFlag.TextSelectableByMouse
-        )
-        self._correction_extra_warn.setVisible(False)
-        model_form.addRow("", self._correction_extra_warn)
+        self._package_hint = _PackageHint(self._open_downloads)
+        self._package_hint.downloads_closed.connect(self._on_downloads_closed)
+        model_form.addRow("", self._package_hint)
 
-        self._correction_model_row = QWidget()
-        cl = QHBoxLayout(self._correction_model_row)
-        cl.setContentsMargins(0, 0, 0, 0)
-        self._correction_model = QComboBox()
-        self._correction_model.setEditable(True)
-        self._corr_status_lbl = QLabel(_STATUS_LOADING)
-        self._corr_status_lbl.setTextFormat(Qt.TextFormat.RichText)
-        cl.addWidget(self._correction_model, stretch=1)
-        cl.addWidget(self._corr_status_lbl)
-        model_form.addRow("AI model:", self._correction_model_row)
+        self._model = QComboBox()
+        self._model.setEditable(True)
+        model_form.addRow("AI model:", self._model)
+
+        self._status_lbl = QLabel(_STATUS_LOADING)
+        self._status_lbl.setTextFormat(Qt.TextFormat.RichText)
+        self._status_lbl.setWordWrap(True)
+        self._status_lbl.linkActivated.connect(lambda _link: self._refetch_models())
+        model_form.addRow("", self._status_lbl)
 
         self._guidance = OllamaModelGuidance(
-            combo=self._correction_model,
+            combo=self._model,
             app_service=self._app_service,
             category="general",
             profile_selector=self._hw_selector,
@@ -500,89 +658,123 @@ class CorrectionSettingsDialog(QDialog):
         self._same_model_tip_lbl.setVisible(False)
         model_form.addRow("", self._same_model_tip_lbl)
 
-        self._correction_model.currentTextChanged.connect(
-            lambda _txt: self._update_same_model_tip()
-        )
-        self._correction_model.currentTextChanged.connect(lambda _txt: self._update_where_hint())
+        self._model.currentTextChanged.connect(lambda _txt: self._update_same_model_tip())
+        self._model.currentTextChanged.connect(lambda _txt: self._update_where_hint())
         self._hw_selector.resolved_changed.connect(lambda _d: self._update_same_model_tip())
 
-        self._corr_temperature = QDoubleSpinBox()
-        self._corr_temperature.setRange(0.0, 2.0)
-        self._corr_temperature.setSingleStep(0.1)
-        self._corr_temperature.setDecimals(1)
-        self._corr_temperature.setValue(DEFAULTS["correction_temperature"])
-        self._corr_temperature.setToolTip(
-            "Sampling temperature for the proofreading model\n"
-            "(0.0 = deterministic, higher = more creative)."
-        )
-        model_form.addRow("Temperature:", self._corr_temperature)
+        self._temperature = QDoubleSpinBox()
+        self._temperature.setRange(0.0, 2.0)
+        self._temperature.setSingleStep(0.1)
+        self._temperature.setDecimals(1)
+        self._temperature.setValue(DEFAULTS[self._TEMPERATURE_KEY])
+        self._temperature.setToolTip(self._TEMPERATURE_TOOLTIP)
+        model_form.addRow("Temperature:", self._temperature)
         return model_group
+
+    def _load_service_values(self, values: dict) -> None:
+        """Apply the saved provider, model and temperature, then ask the service for models.
+
+        The provider is set without its change handler: the handler also starts a fetch,
+        and here exactly one is wanted, after the saved model is in place.
+        """
+        if self._PROVIDER_KEY in values:
+            self._provider.blockSignals(True)
+            _set_combo(self._provider, str(values[self._PROVIDER_KEY]))
+            self._provider.blockSignals(False)
+        self._on_provider_changed(self._provider.currentText())
+        if self._MODEL_KEY in values:
+            self._model.setCurrentText(str(values[self._MODEL_KEY]))
+        if self._TEMPERATURE_KEY in values:
+            self._temperature.setValue(float(values[self._TEMPERATURE_KEY]))
+        self._auto_fetch()
+
+    # ── provider change ───────────────────────────────────────────────────────
+
+    def _on_provider_selected(self, provider: str) -> None:
+        """The user picked another AI service: show its models, then ask it for the live list."""
+        self._on_provider_changed(provider)
+        self._auto_fetch()
+
+    def _on_provider_changed(self, provider: str) -> None:
+        """Show *provider*'s built-in models and any warning; the live list follows separately.
+
+        A model name from the previous service is kept only if this one offers it: an Ollama
+        tag in the Mistral field would be sent to Mistral as it stands.
+        """
+        info = self._app_service.get_provider_info(provider)
+        previous = self._model.currentText().strip()
+        models = list(info.get("models", []))
+        self._model.clear()
+        if models:
+            self._model.addItems(models)
+        if previous and previous in models:
+            self._model.setCurrentText(previous)
+        else:
+            self._model.setCurrentText(info.get("default_model", ""))
+        if provider == "ollama":
+            # The local list changes whenever a model is pulled or removed, and is cheap to
+            # ask for.  An online service's list fetched a moment ago is still good (a failed
+            # one is never cached), so it is kept; "Try again" drops it on request.
+            self._app_service.invalidate_model_cache(provider, self._ollama_url)
+        # Hint line and "Use best choice" button exist only for Ollama.
+        self._guidance.setVisible(provider == "ollama")
+        self._update_package_hint(provider)
+        self._update_where_hint()
+
+    def _update_package_hint(self, provider: str) -> None:
+        """Show the install hint when *provider*'s package is missing, else hide it."""
+        pip_name = self._app_service.missing_provider_package(provider)
+        if not pip_name:
+            self._package_hint.clear()
+            return
+        name = self._app_service.get_provider_info(provider).get("display_name", provider)
+        self._package_hint.show_missing(provider, str(name), pip_name)
+
+    def _on_downloads_closed(self) -> None:
+        """Downloads may have installed the package: look again, and ask the service."""
+        self._update_package_hint(self._provider.currentText())
+        self._refetch_models()
+
+    def _update_where_hint(self) -> None:
+        """Say where the chosen AI service runs, so online use is never a surprise."""
+        location = self._app_service.describe_llm_location(
+            self._provider.currentText(),
+            self._model.currentText().strip(),
+            self._ollama_url,
+        )
+        self._where_hint.set_location(location, text_note(location))
 
     def _update_same_model_tip(self) -> None:
         """Show the same-model tip for cpu/8gb profiles with differing Ollama models."""
         detection = self._hw_selector.resolved()
         profile = detection.profile if detection is not None else None
-        other_provider = str(self._values.get("evaluate_provider", ""))
-        other_model = str(self._values.get("evaluate_model", ""))
+        other_provider = str(self._values.get(self._OTHER_PROVIDER_KEY, ""))
+        other_model = str(self._values.get(self._OTHER_MODEL_KEY, ""))
         show = (
             profile in ("cpu", "8gb")
-            and self._correction_provider.currentText() == "ollama"
+            and self._provider.currentText() == "ollama"
             and other_provider == "ollama"
-            and self._correction_model.currentText().strip() != other_model
+            and self._model.currentText().strip() != other_model
         )
         self._same_model_tip_lbl.setVisible(show)
 
-    def _on_provider_changed(self, provider: str) -> None:
-        info = self._app_service.get_provider_info(provider)
-        prev = self._correction_model.currentText()
-        self._correction_model.clear()
-        models = info.get("models", [])
-        if models:
-            self._correction_model.addItems(models)
-        idx = self._correction_model.findText(prev)
-        if idx >= 0:
-            self._correction_model.setCurrentIndex(idx)
-        elif prev:
-            self._correction_model.setCurrentText(prev)
-        else:
-            self._correction_model.setCurrentText(info.get("default_model", ""))
-        self._app_service.invalidate_model_cache(
-            provider, self._ollama_url if provider == "ollama" else ""
-        )
-        # Hint line and "Use best choice" button exist only for Ollama.
-        self._guidance.setVisible(provider == "ollama")
-
-        if provider in _PROVIDER_EXTRA:
-            _extra, _pkgs = _PROVIDER_EXTRA[provider]
-            warn = _install_hint(self._app_service, _extra, _pkgs)
-        else:
-            warn = ""
-        self._correction_extra_warn.setText(warn)
-        self._correction_extra_warn.setVisible(bool(warn))
-        self._update_where_hint()
-
-    def _update_where_hint(self) -> None:
-        """Say where the chosen AI service runs, so online use is never a surprise."""
-        location = self._app_service.describe_llm_location(
-            self._correction_provider.currentText(),
-            self._correction_model.currentText().strip(),
-            self._ollama_url,
-        )
-        self._where_hint.set_location(location, text_note(location))
+    # ── model list ────────────────────────────────────────────────────────────
 
     def _refetch_models(self) -> None:
-        """Invalidate the model cache and fetch the list again."""
+        """Invalidate the model cache of the current service and fetch the list again."""
+        provider = self._provider.currentText()
         self._app_service.invalidate_model_cache(
-            "ollama",
-            self._ollama_url if self._correction_provider.currentText() == "ollama" else "",
+            provider, self._ollama_url if provider == "ollama" else ""
         )
         self._auto_fetch()
 
     def _auto_fetch(self) -> None:
-        provider = self._correction_provider.currentText()
+        # A fetch still running belongs to a service that may no longer be the chosen one.
+        _retire_thread(self._fetch_thread)
+        provider = self._provider.currentText()
         info = self._app_service.get_provider_info(provider)
         if info.get("needs_api_key") and not os.environ.get(info.get("env_key", "")):
-            self._corr_status_lbl.setText(_STATUS_KEY_MISSING)
+            self._status_lbl.setText(_STATUS_KEY_MISSING)
             return
         url = self._ollama_url if provider == "ollama" else ""
         # Ollama always goes through the thread (a cache hit there is instant):
@@ -590,354 +782,102 @@ class CorrectionSettingsDialog(QDialog):
         cached = (
             None
             if provider == "ollama"
-            else self._app_service.get_cached_models(provider, base_url=url)
+            else self._app_service.get_cached_listing(provider, base_url=url)
         )
         if cached is not None:
-            self._on_models_fetched(cached)
+            self._show_listing(cached)
             return
-        self._corr_status_lbl.setText(_STATUS_LOADING)
-        _retire_thread(self._corr_fetch_thread)
+        self._status_lbl.setText(_STATUS_LOADING)
         if provider == "ollama":
 
-            def fetch() -> list[str]:
+            def fetch() -> ModelListing:
                 tags = self._app_service.list_provider_models(provider, base_url=url)
                 # Classify here so set_models() only needs cache lookups.
                 self._app_service.classify_ollama_models(tags, url)
-                return tags
+                return ModelListing(tags)
 
-            self._corr_fetch_thread = _ModelFetchThread(fetch)
         else:
-            self._corr_fetch_thread = _ModelFetchThread(
-                lambda p=provider, u=url: self._app_service.list_provider_models(p, base_url=u)
-            )
-        self._corr_fetch_thread.models_ready.connect(self._on_models_fetched)
-        self._corr_fetch_thread.start()
+
+            def fetch() -> ModelListing:
+                return self._app_service.list_provider_models_checked(provider, base_url=url)
+
+        self._fetch_thread = _ModelFetchThread(fetch, tag=provider)
+        self._fetch_thread.listing_ready.connect(self._on_listing_ready)
+        self._fetch_thread.start()
+
+    def _on_listing_ready(self, provider: str, listing: object) -> None:
+        """Show a fetched list, unless it is for a service the user has already left."""
+        if provider != self._provider.currentText() or not isinstance(listing, ModelListing):
+            return
+        self._show_listing(listing)
 
     def _on_models_fetched(self, models: list) -> None:
+        self._show_listing(ModelListing(list(models)))
+
+    def _show_listing(self, listing: ModelListing) -> None:
+        """Fill the model field and the status line from *listing*."""
+        models = listing.models
         if not models:
-            self._corr_status_lbl.setText(_STATUS_ERROR)
+            # A failed answer says why (and offers a retry); only a silent empty one is a dash.
+            self._status_lbl.setText(
+                _listing_status(listing) if listing.source == "failed" else _STATUS_ERROR
+            )
             return
-        self._corr_status_lbl.setText(_status_ok(len(models)))
-        if self._correction_provider.currentText() == "ollama":
+        self._status_lbl.setText(_listing_status(listing))
+        if self._provider.currentText() == "ollama":
             self._guidance.set_models(models)
             self._update_same_model_tip()  # set_models() blocks the combo's signals
             return
-        prev = self._correction_model.currentText()
-        self._correction_model.clear()
-        self._correction_model.addItems(models)
-        idx = self._correction_model.findText(prev)
+        previous = self._model.currentText()
+        self._model.clear()
+        self._model.addItems(models)
+        idx = self._model.findText(previous)
         if idx >= 0:
-            self._correction_model.setCurrentIndex(idx)
+            self._model.setCurrentIndex(idx)
         else:
-            self._correction_model.setCurrentText(prev)
+            self._model.setCurrentText(previous)
 
-    def get_prompt(self) -> str:
-        """Return the edited system prompt text."""
-        return self._prompt_edit.toPlainText().strip()
 
-    def get_values(self) -> dict:
-        """Return correction-specific settings for ConfigPanel.update_settings()."""
-        model = self._correction_model.currentText().strip()
-        return {
-            "correction_provider": self._correction_provider.currentText(),
-            "correction_model": model,
-            "correction_temperature": self._corr_temperature.value(),
-        }
+# ── Correction Settings dialog ────────────────────────────────────────────────
+
+
+class CorrectionSettingsDialog(_AiServiceDialog):
+    """Focused dialog for configuring the correction system prompt, provider, and model."""
+
+    _TITLE = "Proofreading Settings"
+    _PROMPT_TITLE = "Proofreading Instructions"
+    _PROMPT_NOTE = "Leave empty to use the built-in default instructions for the selected language."
+    _PROMPT_PLACEHOLDER = "Leave empty to use the built-in default proofreading instructions."
+    _PROVIDER_KEY = "correction_provider"
+    _MODEL_KEY = "correction_model"
+    _TEMPERATURE_KEY = "correction_temperature"
+    _OTHER_PROVIDER_KEY = "evaluate_provider"
+    _OTHER_MODEL_KEY = "evaluate_model"
+    _TEMPERATURE_TOOLTIP = (
+        "Sampling temperature for the proofreading model\n"
+        "(0.0 = deterministic, higher = more creative)."
+    )
 
 
 # ── Evaluation Settings dialog ────────────────────────────────────────────────
 
 
-class EvaluationSettingsDialog(QDialog):
+class EvaluationSettingsDialog(_AiServiceDialog):
     """Focused dialog for configuring the evaluation system prompt, provider, and model."""
 
-    def __init__(
-        self,
-        values: dict,
-        prompt: str,
-        parent: QWidget | None = None,
-        *,
-        app_service: _SettingsAppService | None = None,
-        hardware_profile: str = "auto",
-        open_downloads: OpenDownloads | None = None,
-    ) -> None:
-        super().__init__(parent)
-        self.setWindowTitle("Content Review Settings")
-        self.setMinimumWidth(480)
-        screen = QApplication.primaryScreen()
-        if screen:
-            self.setMaximumHeight(screen.availableGeometry().height() - 60)
-
-        self._app_service = app_service or ProcessingApplicationService()
-        self._eval_fetch_thread: _ModelFetchThread | None = None
-        self._ollama_url = str(values.get("ollama_url", DEFAULTS["ollama_url"]))
-        self._values = values
-        self._open_downloads = open_downloads
-
-        main = QVBoxLayout(self)
-        main.setSpacing(8)
-
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QScrollArea.Shape.NoFrame)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        content = QWidget()
-        scroll.setWidget(content)
-        layout = QVBoxLayout(content)
-        layout.setSpacing(12)
-
-        layout.addWidget(self._build_prompt_group(prompt))
-        layout.addWidget(self._build_model_group(hardware_profile))
-        layout.addStretch(1)
-        main.addWidget(scroll, stretch=1)
-
-        buttons = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
-        )
-        buttons.accepted.connect(self.accept)
-        buttons.rejected.connect(self.reject)
-        main.addWidget(buttons)
-
-        # Seed model list for initial provider
-        self._on_provider_changed(self._evaluation_provider.currentText())
-
-        # Load saved values
-        if "evaluate_provider" in values:
-            _set_combo(self._evaluation_provider, str(values["evaluate_provider"]))
-        if "evaluate_model" in values:
-            self._evaluation_model.setCurrentText(str(values["evaluate_model"]))
-        if "evaluate_temperature" in values:
-            self._eval_temperature.setValue(float(values["evaluate_temperature"]))
-
-        self._auto_fetch()
-
-    def done(self, result: int) -> None:
-        """Stop background threads before the dialog is destroyed."""
-        _retire_thread(self._eval_fetch_thread)
-        super().done(result)
-
-    def _build_prompt_group(self, prompt: str) -> QGroupBox:
-        """Build the content-review-instructions (system prompt) group."""
-        prompt_group = QGroupBox("Content Review Instructions")
-        prompt_layout = QVBoxLayout(prompt_group)
-        prompt_note = QLabel("Leave empty to use the built-in default content review instructions.")
-        prompt_note.setWordWrap(True)
-        prompt_note.setStyleSheet("color: #888; font-size: 10px;")
-        prompt_layout.addWidget(prompt_note)
-        self._prompt_edit = QPlainTextEdit()
-        self._prompt_edit.setPlainText(prompt)
-        self._prompt_edit.setPlaceholderText(
-            "Leave empty to use the built-in default content review instructions."
-        )
-        self._prompt_edit.setMinimumHeight(120)
-        prompt_layout.addWidget(self._prompt_edit)
-        return prompt_group
-
-    def _build_model_group(self, hardware_profile: str = "auto") -> QGroupBox:
-        """Build the AI-service (provider + model) group."""
-        from ._hardware_profile_selector import HardwareProfileSelector  # noqa: PLC0415
-        from ._model_guidance import OllamaModelGuidance  # noqa: PLC0415
-
-        model_group = QGroupBox("AI Service")
-        model_form = QFormLayout(model_group)
-        model_form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapAllRows)
-
-        self._hw_selector = HardwareProfileSelector(
-            app_service=self._app_service,
-            setting=hardware_profile,
-            ollama_url=self._ollama_url,
-            read_only=True,
-            parent=model_group,
-        )
-        model_form.addRow(self._hw_selector)
-
-        self._evaluation_provider = QComboBox()
-        self._evaluation_provider.addItems(_available_providers(self._app_service))
-        self._evaluation_provider.currentTextChanged.connect(self._on_provider_changed)
-        model_form.addRow("AI service:", self._evaluation_provider)
-
-        self._where_hint = LocationHint()
-        model_form.addRow("", self._where_hint)
-
-        self._eval_extra_warn = QLabel()
-        self._eval_extra_warn.setStyleSheet("color: #c0392b;")
-        self._eval_extra_warn.setWordWrap(True)
-        self._eval_extra_warn.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        self._eval_extra_warn.setVisible(False)
-        model_form.addRow("", self._eval_extra_warn)
-
-        self._evaluation_model_row = QWidget()
-        el = QHBoxLayout(self._evaluation_model_row)
-        el.setContentsMargins(0, 0, 0, 0)
-        self._evaluation_model = QComboBox()
-        self._evaluation_model.setEditable(True)
-        self._eval_status_lbl = QLabel(_STATUS_LOADING)
-        self._eval_status_lbl.setTextFormat(Qt.TextFormat.RichText)
-        el.addWidget(self._evaluation_model, stretch=1)
-        el.addWidget(self._eval_status_lbl)
-        model_form.addRow("AI model:", self._evaluation_model_row)
-
-        self._guidance = OllamaModelGuidance(
-            combo=self._evaluation_model,
-            app_service=self._app_service,
-            category="general",
-            profile_selector=self._hw_selector,
-            ollama_url=self._ollama_url,
-            open_downloads=self._open_downloads,
-            refetch=self._refetch_models,
-            parent=model_group,
-        )
-        model_form.addRow("", self._guidance)
-
-        self._same_model_tip_lbl = QLabel(SAME_MODEL_TIP)
-        self._same_model_tip_lbl.setWordWrap(True)
-        self._same_model_tip_lbl.setStyleSheet("color: #888; font-size: 11px;")
-        self._same_model_tip_lbl.setVisible(False)
-        model_form.addRow("", self._same_model_tip_lbl)
-
-        self._evaluation_model.currentTextChanged.connect(
-            lambda _txt: self._update_same_model_tip()
-        )
-        self._evaluation_model.currentTextChanged.connect(lambda _txt: self._update_where_hint())
-        self._hw_selector.resolved_changed.connect(lambda _d: self._update_same_model_tip())
-
-        self._eval_temperature = QDoubleSpinBox()
-        self._eval_temperature.setRange(0.0, 2.0)
-        self._eval_temperature.setSingleStep(0.1)
-        self._eval_temperature.setDecimals(1)
-        self._eval_temperature.setValue(DEFAULTS["evaluate_temperature"])
-        self._eval_temperature.setToolTip(
-            "Sampling temperature for the content review model\n"
-            "(0.0 = deterministic, higher = more creative)."
-        )
-        model_form.addRow("Temperature:", self._eval_temperature)
-        return model_group
-
-    def _update_same_model_tip(self) -> None:
-        """Show the same-model tip for cpu/8gb profiles with differing Ollama models."""
-        detection = self._hw_selector.resolved()
-        profile = detection.profile if detection is not None else None
-        other_provider = str(self._values.get("correction_provider", ""))
-        other_model = str(self._values.get("correction_model", ""))
-        show = (
-            profile in ("cpu", "8gb")
-            and self._evaluation_provider.currentText() == "ollama"
-            and other_provider == "ollama"
-            and self._evaluation_model.currentText().strip() != other_model
-        )
-        self._same_model_tip_lbl.setVisible(show)
-
-    def _on_provider_changed(self, provider: str) -> None:
-        info = self._app_service.get_provider_info(provider)
-        prev = self._evaluation_model.currentText()
-        self._evaluation_model.clear()
-        models = info.get("models", [])
-        if models:
-            self._evaluation_model.addItems(models)
-        idx = self._evaluation_model.findText(prev)
-        if idx >= 0:
-            self._evaluation_model.setCurrentIndex(idx)
-        elif prev:
-            self._evaluation_model.setCurrentText(prev)
-        else:
-            self._evaluation_model.setCurrentText(info.get("default_model", ""))
-        self._app_service.invalidate_model_cache(
-            provider, self._ollama_url if provider == "ollama" else ""
-        )
-        # Hint line and "Use best choice" button exist only for Ollama.
-        self._guidance.setVisible(provider == "ollama")
-
-        if provider in _PROVIDER_EXTRA:
-            _extra, _pkgs = _PROVIDER_EXTRA[provider]
-            warn = _install_hint(self._app_service, _extra, _pkgs)
-        else:
-            warn = ""
-        self._eval_extra_warn.setText(warn)
-        self._eval_extra_warn.setVisible(bool(warn))
-        self._update_where_hint()
-
-    def _update_where_hint(self) -> None:
-        """Say where the chosen AI service runs, so online use is never a surprise."""
-        location = self._app_service.describe_llm_location(
-            self._evaluation_provider.currentText(),
-            self._evaluation_model.currentText().strip(),
-            self._ollama_url,
-        )
-        self._where_hint.set_location(location, text_note(location))
-
-    def _refetch_models(self) -> None:
-        """Invalidate the model cache and fetch the list again."""
-        self._app_service.invalidate_model_cache(
-            "ollama",
-            self._ollama_url if self._evaluation_provider.currentText() == "ollama" else "",
-        )
-        self._auto_fetch()
-
-    def _auto_fetch(self) -> None:
-        provider = self._evaluation_provider.currentText()
-        info = self._app_service.get_provider_info(provider)
-        if info.get("needs_api_key") and not os.environ.get(info.get("env_key", "")):
-            self._eval_status_lbl.setText(_STATUS_KEY_MISSING)
-            return
-        url = self._ollama_url if provider == "ollama" else ""
-        # Ollama always goes through the thread (a cache hit there is instant):
-        # classifying custom models must not run on the GUI thread.
-        cached = (
-            None
-            if provider == "ollama"
-            else self._app_service.get_cached_models(provider, base_url=url)
-        )
-        if cached is not None:
-            self._on_models_fetched(cached)
-            return
-        self._eval_status_lbl.setText(_STATUS_LOADING)
-        _retire_thread(self._eval_fetch_thread)
-        if provider == "ollama":
-
-            def fetch() -> list[str]:
-                tags = self._app_service.list_provider_models(provider, base_url=url)
-                # Classify here so set_models() only needs cache lookups.
-                self._app_service.classify_ollama_models(tags, url)
-                return tags
-
-            self._eval_fetch_thread = _ModelFetchThread(fetch)
-        else:
-            self._eval_fetch_thread = _ModelFetchThread(
-                lambda p=provider, u=url: self._app_service.list_provider_models(p, base_url=u)
-            )
-        self._eval_fetch_thread.models_ready.connect(self._on_models_fetched)
-        self._eval_fetch_thread.start()
-
-    def _on_models_fetched(self, models: list) -> None:
-        if not models:
-            self._eval_status_lbl.setText(_STATUS_ERROR)
-            return
-        self._eval_status_lbl.setText(_status_ok(len(models)))
-        if self._evaluation_provider.currentText() == "ollama":
-            self._guidance.set_models(models)
-            self._update_same_model_tip()  # set_models() blocks the combo's signals
-            return
-        prev = self._evaluation_model.currentText()
-        self._evaluation_model.clear()
-        self._evaluation_model.addItems(models)
-        idx = self._evaluation_model.findText(prev)
-        if idx >= 0:
-            self._evaluation_model.setCurrentIndex(idx)
-        else:
-            self._evaluation_model.setCurrentText(prev)
-
-    def get_prompt(self) -> str:
-        """Return the edited system prompt text."""
-        return self._prompt_edit.toPlainText().strip()
-
-    def get_values(self) -> dict:
-        """Return evaluation-specific settings for ConfigPanel.update_settings()."""
-        model = self._evaluation_model.currentText().strip()
-        return {
-            "evaluate_provider": self._evaluation_provider.currentText(),
-            "evaluate_model": model,
-            "evaluate_temperature": self._eval_temperature.value(),
-        }
+    _TITLE = "Content Review Settings"
+    _PROMPT_TITLE = "Content Review Instructions"
+    _PROMPT_NOTE = "Leave empty to use the built-in default content review instructions."
+    _PROMPT_PLACEHOLDER = "Leave empty to use the built-in default content review instructions."
+    _PROVIDER_KEY = "evaluate_provider"
+    _MODEL_KEY = "evaluate_model"
+    _TEMPERATURE_KEY = "evaluate_temperature"
+    _OTHER_PROVIDER_KEY = "correction_provider"
+    _OTHER_MODEL_KEY = "correction_model"
+    _TEMPERATURE_TOOLTIP = (
+        "Sampling temperature for the content review model\n"
+        "(0.0 = deterministic, higher = more creative)."
+    )
 
 
 # ── Connections & Credentials dialog ──────────────────────────────────────────
@@ -1075,7 +1015,7 @@ class SettingsDialog(QDialog):
         return hw_group
 
     def _build_credentials_group(self) -> QGroupBox:
-        """Build the provider API-keys table group (rows are loaded separately)."""
+        """Build the provider API-keys group (rows are loaded separately)."""
         cred_group = QGroupBox("Provider API Keys")
         cred_vbox = QVBoxLayout(cred_group)
 
@@ -1088,124 +1028,96 @@ class SettingsDialog(QDialog):
         cred_note.setStyleSheet("color: #555; font-size: 11px;")
         cred_vbox.addWidget(cred_note)
 
-        self._cred_table = QTableWidget(0, 3)
-        self._cred_table.setHorizontalHeaderLabels(["Provider", "API Key", ""])
-        self._cred_table.horizontalHeader().setSectionResizeMode(
-            0, QHeaderView.ResizeMode.ResizeToContents
-        )
-        self._cred_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        self._cred_table.horizontalHeader().setSectionResizeMode(
-            2, QHeaderView.ResizeMode.ResizeToContents
-        )
-        self._cred_table.verticalHeader().setVisible(False)
-        self._cred_table.setSelectionMode(QTableWidget.SelectionMode.NoSelection)
-        self._cred_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        self._cred_table.setMinimumHeight(100)
-        self._cred_table.setMaximumHeight(200)
-        cred_vbox.addWidget(self._cred_table)
+        self._cred_rows: list[_CredentialRow] = []
+        self._cred_rows_layout = QVBoxLayout()
+        self._cred_rows_layout.setSpacing(2)
+        cred_vbox.addLayout(self._cred_rows_layout)
 
-        cred_btn_row = QWidget()
-        cred_btn_layout = QHBoxLayout(cred_btn_row)
-        cred_btn_layout.setContentsMargins(0, 0, 0, 0)
-        self._cred_add_btn = QPushButton("Add")
-        self._cred_add_btn.setFixedWidth(72)
+        self._cred_add_row = QWidget()
+        add_layout = QHBoxLayout(self._cred_add_row)
+        add_layout.setContentsMargins(0, 0, 0, 0)
+        self._cred_add_combo = QComboBox()
+        add_layout.addWidget(self._cred_add_combo, stretch=1)
+        self._cred_add_btn = QPushButton(ADD_KEY)
         self._cred_add_btn.clicked.connect(self._add_new_cred_row)
-        cred_btn_layout.addWidget(self._cred_add_btn)
-        cred_btn_layout.addStretch(1)
-        cred_vbox.addWidget(cred_btn_row)
+        add_layout.addWidget(self._cred_add_btn)
+        cred_vbox.addWidget(self._cred_add_row)
         return cred_group
 
-    # ── credentials table ──────────────────────────────────────────────────────
+    # ── credentials rows ───────────────────────────────────────────────────────
+
+    def _key_titles(self) -> dict[str, str]:
+        """Return ``{env_key: title}``: providers that share one key (Mistral, Mistral EU) share a row."""
+        names: dict[str, list[str]] = {}
+        for provider in self._app_service.list_providers():
+            info = self._app_service.get_provider_info(provider)
+            env_key: str = info.get("env_key", "")
+            if env_key:
+                names.setdefault(env_key, []).append(str(info.get("display_name", provider)))
+        return {env_key: " · ".join(titles) for env_key, titles in names.items()}
 
     def _load_credentials_rows(self) -> None:
         qs = QSettings("TeachersTeammate", "TeachersTeammate")
         qs.beginGroup("credentials")
         stored_keys = set(qs.childKeys())
         qs.endGroup()
-        shown: set[str] = set()
-        for p in self._app_service.list_providers():
-            info = self._app_service.get_provider_info(p)
-            env_key: str = info.get("env_key", "")
-            # Providers can share one key (Mistral global and EU): one row is enough.
-            if not env_key or env_key in shown:
-                continue
-            shown.add(env_key)
+        for env_key in self._key_titles():
             value = os.environ.get(env_key, "")
             if not value:
                 qs2 = QSettings("TeachersTeammate", "TeachersTeammate")
                 value = str(qs2.value(f"credentials/{env_key}", ""))
             if value or env_key in stored_keys:
-                self._add_cred_row(p, env_key, value)
+                self._add_cred_row(env_key, value)
+        self._refresh_add_combo()
 
     def _used_env_keys(self) -> set[str]:
-        keys: set[str] = set()
-        for row in range(self._cred_table.rowCount()):
-            combo = self._cred_table.cellWidget(row, 0)
-            if isinstance(combo, QComboBox):
-                data = combo.currentData()
-                if isinstance(data, tuple) and len(data) == 2:
-                    keys.add(data[1])
-        return keys
+        return {row.env_key for row in self._cred_rows}
 
-    def _add_cred_row(self, provider: str, env_key: str, value: str = "") -> None:
-        row = self._cred_table.rowCount()
-        self._cred_table.insertRow(row)
+    def _credential_field(self, env_key: str) -> QLineEdit | None:
+        """Return the input field of the row for *env_key*, or ``None`` when it has no row."""
+        for row in self._cred_rows:
+            if row.env_key == env_key:
+                return row.field
+        return None
 
-        combo = QComboBox()
-        combo.addItem(f"{provider}  ({env_key})", userData=(provider, env_key))
-        combo.setEnabled(False)
-        self._cred_table.setCellWidget(row, 0, combo)
-
-        field = QLineEdit(value)
-        field.setEchoMode(QLineEdit.EchoMode.Password)
-        field.setPlaceholderText("(not set)")
-        self._cred_table.setCellWidget(row, 1, field)
-
-        remove_btn = QPushButton("Remove")
-        remove_btn.clicked.connect(
-            lambda _=False, btn=remove_btn: self._remove_cred_row_by_widget(btn)
+    def _add_cred_row(
+        self, env_key: str, value: str = "", *, placeholder: str = KEY_NOT_SET
+    ) -> _CredentialRow:
+        row = _CredentialRow(
+            env_key,
+            self._key_titles().get(env_key, env_key),
+            value,
+            placeholder=placeholder,
         )
-        self._cred_table.setCellWidget(row, 2, remove_btn)
-        self._cred_table.setRowHeight(row, 32)
+        row.remove_requested.connect(self._remove_cred_row)
+        self._cred_rows.append(row)
+        self._cred_rows_layout.addWidget(row)
+        return row
+
+    def _refresh_add_combo(self) -> None:
+        """List the services that have no key row yet; hide the picker when all have one."""
+        used = self._used_env_keys()
+        self._cred_add_combo.clear()
+        for env_key, title in self._key_titles().items():
+            if env_key not in used:
+                self._cred_add_combo.addItem(title, userData=env_key)
+        self._cred_add_row.setVisible(self._cred_add_combo.count() > 0)
 
     def _add_new_cred_row(self) -> None:
-        used = self._used_env_keys()
-        available: list[tuple[str, str]] = []
-        for p in self._app_service.list_providers():
-            info = self._app_service.get_provider_info(p)
-            env_key: str = info.get("env_key", "")
-            if env_key and env_key not in used:
-                available.append((p, env_key))
-        if not available:
-            QMessageBox.information(self, "No more providers", "All providers already have keys.")
+        env_key = self._cred_add_combo.currentData()
+        if not env_key:
             return
+        row = self._add_cred_row(str(env_key), placeholder=KEY_PLACEHOLDER)
+        self._refresh_add_combo()
+        row.field.setFocus()
 
-        row = self._cred_table.rowCount()
-        self._cred_table.insertRow(row)
-
-        combo = QComboBox()
-        for p, env_key in available:
-            combo.addItem(f"{p}  ({env_key})", userData=(p, env_key))
-        self._cred_table.setCellWidget(row, 0, combo)
-
-        field = QLineEdit()
-        field.setEchoMode(QLineEdit.EchoMode.Password)
-        field.setPlaceholderText("Enter API key…")
-        self._cred_table.setCellWidget(row, 1, field)
-
-        remove_btn = QPushButton("Remove")
-        remove_btn.clicked.connect(
-            lambda _=False, btn=remove_btn: self._remove_cred_row_by_widget(btn)
-        )
-        self._cred_table.setCellWidget(row, 2, remove_btn)
-        self._cred_table.setRowHeight(row, 32)
-        field.setFocus()
-
-    def _remove_cred_row_by_widget(self, widget: QPushButton) -> None:
-        for row in range(self._cred_table.rowCount()):
-            if self._cred_table.cellWidget(row, 2) == widget:
-                self._cred_table.removeRow(row)
-                return
+    def _remove_cred_row(self, row: object) -> None:
+        if not isinstance(row, _CredentialRow) or row not in self._cred_rows:
+            return
+        self._cred_rows.remove(row)
+        self._cred_rows_layout.removeWidget(row)
+        row.deleteLater()
+        self._refresh_add_combo()
 
     def _apply_credentials(self) -> None:
         qs = QSettings("TeachersTeammate", "TeachersTeammate")
@@ -1214,19 +1126,10 @@ class SettingsDialog(QDialog):
         qs.endGroup()
 
         new_creds: dict[str, str] = {}
-        for row in range(self._cred_table.rowCount()):
-            combo = self._cred_table.cellWidget(row, 0)
-            if not isinstance(combo, QComboBox):
-                continue
-            data = combo.currentData()
-            if not isinstance(data, tuple) or len(data) != 2:
-                continue
-            _, env_key = data
-            field = self._cred_table.cellWidget(row, 1)
-            if isinstance(field, QLineEdit):
-                value = field.text().strip()
-                if value:
-                    new_creds[env_key] = value
+        for row in self._cred_rows:
+            value = row.field.text().strip()
+            if value:
+                new_creds[row.env_key] = value
 
         for env_key, value in new_creds.items():
             qs.setValue(f"credentials/{env_key}", value)

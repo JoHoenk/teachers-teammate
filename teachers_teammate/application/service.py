@@ -22,6 +22,7 @@ from ..domain.model_catalog import (
     ModelUses,
     OllamaModelSpec,
 )
+from ..domain.model_listing import ModelListing
 from ..domain.output_files import feeds_inputs, output_folder_refusal, output_path
 from ..infrastructure.addon_manager import ADDON_AMD as ADDON_AMD  # noqa: PLC0414
 from ..infrastructure.addon_manager import ADDON_NVIDIA as ADDON_NVIDIA  # noqa: PLC0414
@@ -42,8 +43,10 @@ from ..infrastructure.llm_factory import (
     check_provider_connection,
     default_model_for_task,
     get_provider_info,
-    list_provider_models,
+    list_provider_models_checked,
     list_providers,
+    provider_package,
+    provider_package_required,
 )
 from ..infrastructure.ocr_processor import (
     SUPPORTED_OCR_ENGINES,
@@ -91,6 +94,8 @@ class RequirementIssue:
 
     message: str
     fixable_via_downloads: bool
+    provider: str = ""
+    """Set when the fix is installing this provider's package (Downloads → LLM Providers)."""
 
 
 @dataclasses.dataclass(frozen=True)
@@ -142,7 +147,7 @@ class ProcessingApplicationService:
         # A spaCy pipeline is not safe to share between threads (a privacy preview and a
         # background text export may run at once), so building and running are serialized.
         self._anonymizer_lock = threading.RLock()
-        self._model_cache: dict[str, tuple[float, list[str]]] = {}
+        self._model_cache: dict[str, tuple[float, ModelListing]] = {}
         # Owns hardware detection and model classification (and their caches).
         self._recommendations = ModelRecommendationService(
             invalidate_model_list=self._evict_ollama_model_list
@@ -267,32 +272,46 @@ class ProcessingApplicationService:
 
     def list_provider_models(self, provider: str, *, base_url: str = "") -> list[str]:
         """Return available models for a provider (result is TTL-cached per instance)."""
-        cached = self.get_cached_models(provider, base_url=base_url)
+        return self.list_provider_models_checked(provider, base_url=base_url).models
+
+    def list_provider_models_checked(self, provider: str, *, base_url: str = "") -> ModelListing:
+        """Return the models of a provider and whether the list is live (TTL-cached).
+
+        Only a live or by-design built-in answer is remembered; a failed one (no key, key
+        refused, no connection) is asked again next time, so a key entered a moment later
+        is noticed.
+        """
+        cached = self.get_cached_listing(provider, base_url=base_url)
         if cached is not None:
             return cached
         kwargs: dict[str, str] = {"base_url": base_url} if base_url else {}
-        result = list_provider_models(provider, **kwargs)
-        self._store_models(provider, base_url, result)
-        return result
+        listing = list_provider_models_checked(provider, **kwargs)
+        self._store_listing(provider, base_url, listing)
+        return listing
 
-    def _store_models(self, provider: str, base_url: str, models: list[str]) -> None:
-        """Cache *models*, unless empty.
+    def _store_listing(self, provider: str, base_url: str, listing: ModelListing) -> None:
+        """Cache *listing* when it is :attr:`ModelListing.cacheable`.
 
         An empty list means "unreachable" (or nothing downloaded yet): never cache it,
         or a server that was started a moment later would keep being reported as down.
         """
-        if models:
+        if listing.cacheable:
             self._model_cache[self._model_cache_key(provider, base_url)] = (
                 time.monotonic(),
-                models,
+                listing,
             )
 
-    def get_cached_models(self, provider: str, *, base_url: str = "") -> list[str] | None:
-        """Return cached model list for *provider* if still within TTL, else ``None``."""
+    def get_cached_listing(self, provider: str, *, base_url: str = "") -> ModelListing | None:
+        """Return the cached listing for *provider* if still within TTL, else ``None``."""
         entry = self._model_cache.get(self._model_cache_key(provider, base_url))
         if entry and (time.monotonic() - entry[0]) < self._MODEL_CACHE_TTL_S:
             return entry[1]
         return None
+
+    def get_cached_models(self, provider: str, *, base_url: str = "") -> list[str] | None:
+        """Return cached model list for *provider* if still within TTL, else ``None``."""
+        listing = self.get_cached_listing(provider, base_url=base_url)
+        return listing.models if listing is not None else None
 
     def invalidate_model_cache(self, provider: str, base_url: str = "") -> None:
         """Evict the cached model list for *provider* (forces re-fetch on next call).
@@ -341,10 +360,16 @@ class ProcessingApplicationService:
         ollama_url: str,
         *,
         cached_only: bool = False,
+        system_memory_gb: float | None = None,
     ) -> list[ModelRating]:
         """Return a :class:`ModelRating` per tag for *task* on *profile*."""
         return self._recommendations.rate_ollama_models(
-            tags, task, profile, ollama_url, cached_only=cached_only
+            tags,
+            task,
+            profile,
+            ollama_url,
+            cached_only=cached_only,
+            system_memory_gb=system_memory_gb,
         )
 
     def first_run_model_settings(self, profile: HardwareProfile) -> dict[str, str]:
@@ -670,7 +695,7 @@ class ProcessingApplicationService:
         from ..infrastructure.ollama_utils import OllamaClient  # noqa: PLC0415
 
         installed, unreachable = OllamaClient(url).list_models_or_error()
-        self._store_models("ollama", url, installed)
+        self._store_listing("ollama", url, ModelListing(installed))
         return installed, unreachable
 
     def describe_data_flow(self, config: Config) -> DataFlow:
@@ -771,7 +796,16 @@ class ProcessingApplicationService:
                 if stage == "correction"
                 else (config.effective_evaluate_model or "")
             )
-            if provider == "ollama":
+            if self.missing_provider_package(provider):
+                name = get_provider_info(provider).get("display_name", provider)
+                issues.append(
+                    RequirementIssue(
+                        f"{name} support is not installed yet.",
+                        fixable_via_downloads=True,
+                        provider=provider,
+                    )
+                )
+            elif provider == "ollama":
                 from ..infrastructure.ollama_utils import models_include  # noqa: PLC0415
 
                 installed, unreachable = self._installed_ollama_models(config.ollama_url)
@@ -925,8 +959,38 @@ class ProcessingApplicationService:
         return is_addon_importable(addon)
 
     def is_module_importable(self, module: str) -> bool:
-        """Return True if *module* can be imported (the package is installed)."""
+        """Return True if *module* can be imported (the package is installed).
+
+        The import caches are refreshed first: a package installed while the app runs
+        (Downloads) is otherwise reported missing until the next start.
+        """
+        importlib.invalidate_caches()
         return importlib.util.find_spec(module) is not None
+
+    def list_provider_packages(self) -> dict[str, tuple[str, str]]:
+        """Return ``{provider: (importable module, pip name)}`` for every provider package.
+
+        Providers that share one package (Mistral global and EU) appear once, under the
+        first of them, so an install list does not offer the same package twice.
+        """
+        packages: dict[str, tuple[str, str]] = {}
+        seen: set[str] = set()
+        for provider in list_providers():
+            package = provider_package(provider)
+            if package is None or package[1] in seen:
+                continue
+            seen.add(package[1])
+            packages[provider] = package
+        return packages
+
+    def missing_provider_package(self, provider: str) -> str | None:
+        """Return the pip name of the package *provider* needs but is not installed, else ``None``."""
+        package = provider_package(provider)
+        if package is None or not provider_package_required(provider):
+            return None
+        if self.is_module_importable(package[0]):
+            return None
+        return package[1]
 
     # ── GPU / addon installer helpers ─────────────────────────────────────
 

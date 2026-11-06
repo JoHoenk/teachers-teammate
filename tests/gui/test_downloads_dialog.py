@@ -16,6 +16,7 @@ from teachers_teammate.domain.model_catalog import (
     HardwareDetection,
     ModelUses,
 )
+from teachers_teammate.domain.model_listing import ModelListing
 from teachers_teammate.gui._downloads_dialog import DownloadsDialog
 
 from ._service_stubs import RecommendationServiceStub
@@ -264,6 +265,141 @@ def test_preselect_ticks_given_tags(qtbot) -> None:
     dlg = _make_dialog(qtbot, preselect=["glm-ocr:q8_0"])
     dlg._on_detection_done(_detection_results(dlg, set()))
     assert dlg._model_items["glm-ocr:q8_0"].checkState(0) is Qt.CheckState.Checked
+
+
+class _ProviderPackagesService(_StubService):
+    """Stub that knows two LLM provider packages and which of them are installed."""
+
+    def __init__(self, installed_providers: frozenset[str] = frozenset()) -> None:
+        super().__init__()
+        self.installed_providers = installed_providers
+
+    def list_provider_packages(self) -> dict[str, tuple[str, str]]:
+        return {
+            "mistral": ("langchain_mistralai", "langchain-mistralai"),
+            "openai": ("langchain_openai", "langchain-openai"),
+        }
+
+    def get_provider_info(self, provider: str) -> dict:
+        info: dict = {"display_name": provider.title()}
+        if provider in ("mistral", "mistral_eu"):  # one package serves both
+            info["package"] = {"module": "langchain_mistralai", "pip": "langchain-mistralai"}
+        return info
+
+    def get_installation_status(self, *, ollama_models=None, **kwargs) -> dict[str, bool]:
+        status = super().get_installation_status(ollama_models=ollama_models, **kwargs)
+        for name in self.list_provider_packages():
+            status[f"provider:{name}"] = name in self.installed_providers
+        return status
+
+
+def test_provider_preselect_opens_the_providers_tab_and_ticks_the_package(qtbot) -> None:
+    """
+    Given  the dialog opened with preselect=["provider:mistral"] (the Install button of a
+           settings dialog), and Mistral not installed
+    When   install detection finishes
+    Then   the LLM Providers tab is shown, the Mistral box is ticked and the pip package
+           would be installed, while OpenAI stays unticked
+    """
+    from PySide6.QtWidgets import QTabWidget  # noqa: PLC0415
+
+    dlg = _make_dialog(qtbot, service=_ProviderPackagesService(), preselect=["provider:mistral"])
+    dlg._on_detection_done(_detection_results(dlg, set()))
+
+    assert dlg.findChild(QTabWidget).currentIndex() == DownloadsDialog.TAB_PROVIDERS
+    assert dlg._dl_checkboxes["provider:mistral"].isChecked() is True
+    assert dlg._dl_checkboxes["provider:openai"].isChecked() is False
+    assert dlg._collect_pip_packages() == ["langchain-mistralai"]
+
+
+def test_provider_preselect_for_a_provider_sharing_a_package_ticks_the_shared_box(qtbot) -> None:
+    """
+    Given  the dialog opened with preselect=["provider:mistral_eu"], while the list offers the
+           package shared by Mistral and Mistral (EU) once, under "mistral"
+    When   install detection finishes
+    Then   the shared Mistral box is ticked, so the Install button of the EU service works
+    """
+    dlg = _make_dialog(qtbot, service=_ProviderPackagesService(), preselect=["provider:mistral_eu"])
+    dlg._on_detection_done(_detection_results(dlg, set()))
+
+    assert dlg._dl_checkboxes["provider:mistral"].isChecked() is True
+    assert dlg._collect_pip_packages() == ["langchain-mistralai"]
+
+
+def test_provider_preselect_leaves_an_installed_package_alone(qtbot) -> None:
+    """
+    Given  a preselected provider whose package is already installed
+    When   install detection finishes
+    Then   its box shows "Installed" and is disabled, so nothing is installed again
+    """
+    service = _ProviderPackagesService(installed_providers=frozenset({"mistral"}))
+    dlg = _make_dialog(qtbot, service=service, preselect=["provider:mistral"])
+    results = {**_detection_results(dlg, set()), "provider:mistral": True, "provider:openai": False}
+
+    dlg._on_detection_done(results)
+
+    box = dlg._dl_checkboxes["provider:mistral"]
+    assert "Installed" in box.text()
+    assert not box.isEnabled()
+    assert dlg._collect_pip_packages() == []
+
+
+def test_provider_preselect_is_not_mistaken_for_an_ollama_model(qtbot) -> None:
+    """
+    Given  a provider key in preselect
+    When   the dialog opens
+    Then   no Ollama model row is added for it
+    """
+    dlg = _make_dialog(qtbot, service=_ProviderPackagesService(), preselect=["provider:mistral"])
+    dlg._on_detection_done(_detection_results(dlg, set()))
+
+    assert "provider:mistral" not in dlg._model_items
+    assert dlg._group_items["other"].childCount() == 0
+
+
+@pytest.mark.use_case("Model_Recommendation_By_Hardware")
+def test_slow_models_are_listed_as_slower_not_greyed_out_and_need_no_confirmation(
+    qtbot, monkeypatch
+) -> None:
+    """
+    Given  a computer with an 8 GB card and 32 GB of memory, where gpt-oss:20b does not fit the
+           card but fits with the computer's memory
+    When   the model list is rated and the model is ticked for download
+    Then   its row says "Slower" in the normal text colour with an explanatory tooltip (it is
+           not greyed out like a too-large model) and no "download anyway?" question is asked
+    """
+    from PySide6.QtCore import Qt  # noqa: PLC0415
+
+    service = _StubService()
+    service.system_memory_gb = 32.0
+    dlg = _make_dialog(qtbot, service=service)
+    dlg._on_detection_done(_detection_results(dlg, set()))
+    row = dlg._model_items["gpt-oss:20b"]
+
+    assert row.text(1) == "Slower"
+    assert "processor" in row.toolTip(1)
+    assert row.foreground(1).style() == Qt.BrushStyle.NoBrush
+
+    import teachers_teammate.gui._downloads_dialog as dd  # noqa: PLC0415
+
+    def no_question(*_a, **_k):
+        raise AssertionError("a slow model must not ask for confirmation")
+
+    monkeypatch.setattr(dd, "QMessageBox", no_question)
+    assert dlg._confirm_too_large(["gpt-oss:20b"]) is True
+
+
+@pytest.mark.use_case("Model_Recommendation_By_Hardware")
+def test_without_the_computers_memory_the_same_model_is_still_too_large(qtbot) -> None:
+    """
+    Given  the same 8 GB computer but its memory unknown (for example a remote server)
+    When   the model list is rated
+    Then   gpt-oss:20b is "Too large", as before
+    """
+    dlg = _make_dialog(qtbot)
+    dlg._on_detection_done(_detection_results(dlg, set()))
+
+    assert dlg._model_items["gpt-oss:20b"].text(1) == "Too large"
 
 
 # ── detection regression ────────────────────────────────────────────────────
@@ -658,7 +794,9 @@ def fake_ollama(monkeypatch):
             return frozenset(caps) if caps is not None else None
 
     monkeypatch.setattr(
-        service_module, "list_provider_models", lambda _provider, **_kw: list(server.installed)
+        service_module,
+        "list_provider_models_checked",
+        lambda _provider, **_kw: ModelListing(list(server.installed)),
     )
     monkeypatch.setattr(ollama_utils, "OllamaClient", _Client)
     return server

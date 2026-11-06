@@ -203,7 +203,6 @@ ignored-modules = [
     "langchain_mistralai",
     "langchain_cohere",
     "openai",
-    "google.generativeai",
     "paddle",
     "paddleocr",
     "pynvml",

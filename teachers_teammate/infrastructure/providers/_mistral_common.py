@@ -21,6 +21,7 @@ import urllib.request
 if TYPE_CHECKING:
     from langchain_core.language_models import BaseChatModel
 
+from teachers_teammate.domain.model_listing import ModelListing
 from teachers_teammate.infrastructure.providers._helpers import import_guard
 
 ENV_KEY = "MISTRAL_API_KEY"
@@ -57,15 +58,16 @@ def _is_chat_model(entry: dict[str, Any]) -> bool:
     return True
 
 
-def list_chat_models(base_url: str, fallback: list[str]) -> list[str]:
-    """Return chat-capable model IDs served at *base_url*, or *fallback* on any problem.
+def list_chat_models_checked(base_url: str, fallback: list[str]) -> ModelListing:
+    """Return the chat-capable model IDs served at *base_url*, saying whether they are live.
 
     Asking the endpoint the provider will use means the EU provider only lists models the
-    EU endpoint actually serves.
+    EU endpoint actually serves.  Any problem gives the *fallback* list with
+    ``source="failed"`` and the reason, never a list that looks like the service's answer.
     """
     api_key = os.environ.get(ENV_KEY, "").strip()
     if not api_key:
-        return list(fallback)
+        return ModelListing(list(fallback), "failed", "no Mistral key is set")
     request = urllib.request.Request(
         f"{base_url}/models",
         headers={"Authorization": f"Bearer {api_key}", "Accept": "application/json"},
@@ -74,11 +76,19 @@ def list_chat_models(base_url: str, fallback: list[str]) -> list[str]:
         with urllib.request.urlopen(request, timeout=_LIST_TIMEOUT_S) as response:
             entries = json.load(response).get("data", [])
         ids = sorted({str(e["id"]) for e in entries if "id" in e and _is_chat_model(e)})
-    except (OSError, ValueError, AttributeError, TypeError, KeyError):
-        # network/auth failure (urllib.error.URLError/HTTPError are OSErrors) or an
-        # unexpected response shape: the static list still works
-        return list(fallback)
-    return ids or list(fallback)
+    except urllib.error.HTTPError as exc:  # an OSError too, but its status says why
+        if exc.code in (401, 403):
+            problem = "Mistral did not accept the key"
+        else:
+            problem = f"Mistral answered with error {exc.code}"
+        return ModelListing(list(fallback), "failed", problem)
+    except OSError:  # URLError, timeout: no connection
+        return ModelListing(list(fallback), "failed", "no connection to Mistral")
+    except (ValueError, AttributeError, TypeError, KeyError):
+        return ModelListing(list(fallback), "failed", "Mistral answered unexpectedly")
+    if not ids:
+        return ModelListing(list(fallback), "failed", "Mistral returned no chat models")
+    return ModelListing(ids, "live")
 
 
 def create_chat_model(model: str, temperature: float, base_url: str) -> BaseChatModel:

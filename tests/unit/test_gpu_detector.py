@@ -182,6 +182,127 @@ def test_detect_nvidia_returns_empty_when_no_driver(monkeypatch) -> None:
     assert detect_nvidia() == []
 
 
+@pytest.mark.use_case("Model_Recommendation_By_Hardware")
+def test_nvidia_smi_is_also_looked_up_at_its_windows_install_paths(monkeypatch) -> None:
+    """
+    Given  Windows, where a packaged app's PATH lacks the driver folder so "nvidia-smi" is not
+           found, but the tool exists in System32
+    When   detect_nvidia is called
+    Then   the System32 copy is asked next and its answer is used
+    """
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setenv("SystemRoot", r"C:\Windows")
+    asked: list[str] = []
+
+    def fake_run(cmd, *_a, **_k):
+        asked.append(cmd[0])
+        if cmd[0].endswith("System32/nvidia-smi.exe") or cmd[0].endswith(
+            "System32\\nvidia-smi.exe"
+        ):
+            return "NVIDIA GeForce RTX 3080 Laptop GPU, 16384"
+        return None
+
+    monkeypatch.setattr(gpu_detector, "_run", fake_run)
+
+    assert detect_nvidia() == [GpuInfo("nvidia", "NVIDIA GeForce RTX 3080 Laptop GPU", 16384)]
+    assert asked[0] == "nvidia-smi"
+    assert len(asked) == 2
+
+
+def test_nvidia_smi_is_asked_by_name_only_off_windows(monkeypatch) -> None:
+    """
+    Given  Linux
+    When   the nvidia-smi programs to try are listed
+    Then   only the name on PATH is tried (no Windows paths)
+    """
+    monkeypatch.setattr(sys, "platform", "linux")
+
+    assert gpu_detector._nvidia_smi_commands() == ["nvidia-smi"]
+
+
+@pytest.mark.use_case("Model_Recommendation_By_Hardware")
+def test_nvml_answers_when_nvidia_smi_does_not(monkeypatch) -> None:
+    """
+    Given  no nvidia-smi anywhere but the pynvml package installed and a driver that answers
+    When   detect_nvidia is called
+    Then   the GPU's name and memory come from NVML
+    """
+    monkeypatch.setattr(gpu_detector, "_run", lambda *_a, **_k: None)
+    nvml = SimpleNamespace(
+        nvmlInit=lambda: None,
+        nvmlShutdown=lambda: None,
+        nvmlDeviceGetCount=lambda: 1,
+        nvmlDeviceGetHandleByIndex=lambda _i: "handle",
+        nvmlDeviceGetName=lambda _h: b"NVIDIA GeForce RTX 3080 Laptop GPU",
+        nvmlDeviceGetMemoryInfo=lambda _h: SimpleNamespace(total=16 * 2**30),
+    )
+    with patch.dict(sys.modules, {"pynvml": nvml}):
+        gpus = detect_nvidia()
+
+    assert gpus == [GpuInfo("nvidia", "NVIDIA GeForce RTX 3080 Laptop GPU", 16384)]
+
+
+def test_nvml_failing_leaves_the_result_empty(monkeypatch) -> None:
+    """
+    Given  no nvidia-smi and an NVML that raises (no driver)
+    When   detect_nvidia is called
+    Then   it returns an empty list instead of raising
+    """
+    monkeypatch.setattr(gpu_detector, "_run", lambda *_a, **_k: None)
+
+    def boom() -> None:
+        raise RuntimeError("NVML Shared Library Not Found")
+
+    with patch.dict(sys.modules, {"pynvml": SimpleNamespace(nvmlInit=boom)}):
+        assert detect_nvidia() == []
+
+
+# ── detect_system_memory_gb ────────────────────────────────────────────────
+
+
+def test_system_memory_is_read_through_psutil() -> None:
+    """
+    Given  psutil reporting 32 GiB of memory
+    When   detect_system_memory_gb is called
+    Then   32 GB is returned
+    """
+    fake = SimpleNamespace(virtual_memory=lambda: SimpleNamespace(total=32 * 2**30))
+    with patch.dict(sys.modules, {"psutil": fake}):
+        assert gpu_detector.detect_system_memory_gb() == pytest.approx(32.0)
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="uses os.sysconf")
+def test_system_memory_falls_back_to_the_operating_system_without_psutil(monkeypatch) -> None:
+    """
+    Given  psutil is not installed
+    When   detect_system_memory_gb is called
+    Then   the operating system is asked directly, so the answer does not depend on it
+    """
+    monkeypatch.setattr(
+        gpu_detector.os,
+        "sysconf",
+        lambda name: {"SC_PAGE_SIZE": 4096, "SC_PHYS_PAGES": 4 * 2**30 // 4096 * 8}[name],
+    )
+    with patch.dict(sys.modules, {"psutil": None}):
+        assert gpu_detector.detect_system_memory_gb() == pytest.approx(32.0)
+
+
+def test_system_memory_is_none_when_nothing_can_be_read(monkeypatch) -> None:
+    """
+    Given  no psutil and an operating system that cannot say
+    When   detect_system_memory_gb is called
+    Then   None is returned (the rating then works as before)
+    """
+
+    def refuse(_name: str) -> int:
+        raise ValueError("not supported")
+
+    monkeypatch.setattr(sys, "platform", "linux")
+    monkeypatch.setattr(gpu_detector.os, "sysconf", refuse)
+    with patch.dict(sys.modules, {"psutil": None}):
+        assert gpu_detector.detect_system_memory_gb() is None
+
+
 # ── detect_amd ─────────────────────────────────────────────────────────────
 
 

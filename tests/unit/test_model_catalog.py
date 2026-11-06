@@ -26,7 +26,9 @@ from teachers_teammate.domain.model_catalog import (
     find_spec,
     models_for,
     normalize_tag,
+    rate_model,
     suitability,
+    suitability_rank,
     uses_from_capabilities,
 )
 from teachers_teammate.infrastructure.providers.ollama import PROVIDER_INFO
@@ -147,6 +149,114 @@ def test_suitability_examples_per_profile(tag: str, profile: str, expected: Suit
     """
     category = find_spec(tag).category
     assert suitability(tag, category, cast(HardwareProfile, profile)) is expected
+
+
+@pytest.mark.use_case("Model_Recommendation_By_Hardware")
+@pytest.mark.parametrize(
+    ("profile", "system_memory_gb", "expected"),
+    [
+        ("8gb", 32.0, Suitability.SLOW),  # 7.5 + 16 GB: part of it runs on the processor
+        ("8gb", 16.0, Suitability.SLOW),  # 7.5 + 8 = 15.5: just enough for 14 GB
+        ("8gb", 8.0, Suitability.TOO_LARGE),  # 7.5 + 4 = 11.5 < 14
+        ("8gb", None, Suitability.TOO_LARGE),  # memory unknown (remote server): as before
+        ("cpu", 28.0, Suitability.SLOW),  # the 4 GB budget is main memory: half of 28 = 14
+        ("cpu", 27.0, Suitability.TOO_LARGE),  # 13.5 < 14; counting the budget twice said slow
+        ("cpu", 16.0, Suitability.TOO_LARGE),  # 8 < 14
+        ("16gb", 8.0, Suitability.BEST),  # fits the card: the computer's memory is irrelevant
+    ],
+)
+def test_a_model_too_big_for_the_card_is_slow_when_the_computers_memory_helps(
+    profile: str, system_memory_gb: float | None, expected: Suitability
+) -> None:
+    """
+    Given  gpt-oss:20b (about 14 GB) and a computer with a given graphics profile and memory
+    When   suitability is computed
+    Then   it is "slow" when the card plus half the computer's memory holds it (for a
+           computer without a card: half its memory alone), too large when even that does not,
+           unchanged without a memory figure, and not affected at all when it fits the card
+    """
+    rated = suitability(
+        "gpt-oss:20b", "general", cast(HardwareProfile, profile), system_memory_gb=system_memory_gb
+    )
+
+    assert rated is expected
+
+
+@pytest.mark.use_case("Model_Recommendation_By_Hardware")
+def test_a_model_that_fits_the_card_is_not_called_slow() -> None:
+    """
+    Given  a model within the card's budget
+    When   it is rated on a computer with plenty of memory
+    Then   it is still "works" (slow is only for what does not fit the card)
+    """
+    assert (
+        suitability("mistral:latest", "general", "16gb", system_memory_gb=64.0) is Suitability.WORKS
+    )
+
+
+@pytest.mark.use_case("Model_Recommendation_By_Hardware")
+def test_slow_models_sort_between_works_and_too_large() -> None:
+    """
+    Given  the suitability sort ranks
+    When   they are compared
+    Then   BEST < GOOD < WORKS < SLOW < TOO_LARGE, so a slow model is listed before one that
+           is too large and after every model that runs well
+    """
+    order = [
+        Suitability.BEST,
+        Suitability.GOOD,
+        Suitability.WORKS,
+        Suitability.SLOW,
+        Suitability.TOO_LARGE,
+    ]
+    ranks = [suitability_rank(value) for value in order]
+
+    assert ranks == sorted(ranks)
+    assert len(set(ranks)) == len(ranks)
+
+
+@pytest.mark.use_case("Model_Recommendation_By_Hardware")
+def test_rate_model_passes_the_computers_memory_on() -> None:
+    """
+    Given  a model too big for an 8 GB card
+    When   it is rated with and without the computer's memory
+    Then   the rating changes from too large to slow
+    """
+    assert rate_model("gpt-oss:20b", "general", "8gb").suitability is Suitability.TOO_LARGE
+    assert (
+        rate_model("gpt-oss:20b", "general", "8gb", system_memory_gb=32.0).suitability
+        is Suitability.SLOW
+    )
+
+
+@pytest.mark.use_case("Model_Recommendation_By_Hardware")
+def test_choose_profile_carries_the_computers_memory_but_not_for_a_remote_server() -> None:
+    """
+    Given  a local computer with a 16 GB card and 32 GB of memory, and a remote Ollama server
+    When   the profile is chosen
+    Then   the local detection reports the memory, the remote one does not (it is the memory
+           of another computer)
+    """
+    local = choose_profile(
+        gpus=[("RTX 3080 Laptop GPU", 16.0)],
+        apple_unified_memory_gb=None,
+        ollama_is_remote=False,
+        system_memory_gb=32.0,
+    )
+    remote = choose_profile(
+        gpus=[("RTX 3080 Laptop GPU", 16.0)],
+        apple_unified_memory_gb=None,
+        ollama_is_remote=True,
+        host="server",
+        system_memory_gb=32.0,
+    )
+    no_gpu = choose_profile(
+        gpus=[], apple_unified_memory_gb=None, ollama_is_remote=False, system_memory_gb=16.0
+    )
+
+    assert (local.profile, local.system_memory_gb) == ("16gb", 32.0)
+    assert remote.system_memory_gb is None
+    assert (no_gpu.profile, no_gpu.system_memory_gb) == ("cpu", 16.0)
 
 
 @pytest.mark.use_case("Model_Category_Guidance")
@@ -404,8 +514,6 @@ def test_rate_model_bundles_everything_a_widget_needs() -> None:
     When   rate_model is called for the reading task
     Then   the rating carries suitability, memory, note and what the model can be used for
     """
-    from teachers_teammate.domain.model_catalog import rate_model  # noqa: PLC0415
-
     best = rate_model(DEFAULT_OCR_MODEL, "ocr", "8gb")
     assert best.suitability is Suitability.BEST
     assert best.model_uses == frozenset({"ocr"})
@@ -435,3 +543,22 @@ def test_catalog_notes_do_not_claim_unverified_capabilities() -> None:
     for spec in OLLAMA_CATALOG:
         if spec.category == "general" and "ocr" not in spec.also_uses:
             assert "image" not in spec.note.lower(), spec.tag
+
+
+@pytest.mark.use_case("Model_Recommendation_By_Hardware")
+def test_apple_silicon_does_not_offload_into_memory_its_profile_already_counts() -> None:
+    """
+    Given  an Apple Silicon computer with 16 GB of shared memory (profile 8gb: 66% of it)
+    When   the profile is chosen and gpt-oss:20b (about 14 GB) is rated with the result
+    Then   no separate memory figure is carried and the model stays "too large", because the
+           graphics share is carved out of that same memory
+    """
+    detection = choose_profile(
+        gpus=[], apple_unified_memory_gb=16.0, ollama_is_remote=False, system_memory_gb=16.0
+    )
+
+    assert (detection.profile, detection.system_memory_gb) == ("8gb", None)
+    rated = suitability(
+        "gpt-oss:20b", "general", detection.profile, system_memory_gb=detection.system_memory_gb
+    )
+    assert rated is Suitability.TOO_LARGE

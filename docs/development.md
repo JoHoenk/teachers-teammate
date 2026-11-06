@@ -158,7 +158,12 @@ knows, recommends, and considers suitable for a computer type (hardware profile)
 - `RECOMMENDED` — the ordered best-model lists per category and profile (`cpu`, `8gb`,
   `16gb`); the first entry is the "best choice".
 - `suitability()` / `models_for()` — the rating used by the Downloads dialog and the
-  model-selection dialogs.
+  model-selection dialogs.  A model over the profile's graphics budget is `SLOW` when it
+  fits within that budget plus `RAM_OFFLOAD_SHARE` (half) of the computer's memory
+  (`system_memory_gb`) — for `cpu`, whose budget already *is* main memory, within that
+  share alone — otherwise `TOO_LARGE`.  Without the memory figure nothing is `SLOW`: a
+  remote server has none, and Apple Silicon carries none because its graphics share is
+  carved out of the same memory (counting it again would rate models the Mac cannot hold).
 - `choose_profile()` — the decision table mapping detected GPUs / Apple unified memory /
   remote Ollama URLs to a hardware profile.
 
@@ -194,10 +199,49 @@ Two details that are easy to get wrong:
 
 - **The local probe describes this computer, not the Ollama URL.** It runs at most once
   per process (`detect_hardware(refresh=True)` re-runs it); a remote URL never probes
-  at all.
+  at all.  It reads the graphics cards and the computer's memory; both are logged at
+  `INFO` with the resulting profile, and a failed check is logged at `WARNING` with its
+  traceback and shown as such in "My computer" (never as "no suggestion").
+- **A chosen profile still goes through the service** (`resolve_hardware_profile`): it
+  starts no graphics probe, but carries the memory of a local computer so `SLOW` works
+  there too.
 - **Ollama model lists are always fetched in a background task.** Classifying a custom
   model needs a server round trip, so the dialogs have no synchronous "cache hit"
   shortcut for Ollama.
+
+### AI services: providers, model lists and install hints
+
+The proofreading and content review dialogs share one base class
+(`_AiServiceDialog` in `gui/_settings_dialog.py`); the subclasses only name their settings
+keys and wording.  What it relies on:
+
+- **Each provider module declares its package** in `PROVIDER_INFO["package"]`
+  (`{"module": "langchain_mistralai", "pip": "langchain-mistralai"}`); Ollama's connector is
+  `package_optional` because the app talks to Ollama directly.  The service answers
+  `missing_provider_package()` and `list_provider_packages()` (providers sharing a package
+  appear once), so the dialogs, Downloads and the run preflight need no list of their own.
+  A missing package is a `RequirementIssue(provider=...)`; the app then opens Downloads on
+  the providers tab with `provider:<name>` in `preselect`.
+- **A model list says where it came from** (`domain/model_listing.py:ModelListing`):
+  `live`, `builtin` (the service cannot be asked, by design) or `failed` (with the reason:
+  no key, key refused, no connection).  Providers that can be asked implement
+  `list_models_checked()` (Google asks its REST endpoint like Mistral does, because the SDK
+  behind `langchain-google-genai` changes between versions); `list_provider_models_checked()` in `llm_factory.py` covers the
+  rest.  Only a live or by-design built-in answer is cached, so a key entered a moment
+  later is noticed.
+- **Choosing another provider asks that provider.** The change handler shows the built-in
+  names and starts a fetch tagged with the provider; an answer for any other provider is
+  dropped.  A model name from the previous provider is kept only if the new one offers it.
+
+### Remembered "don't ask again" answers
+
+`gui/_privacy_settings.py:FlowAcknowledgements` is the only code that reads or writes them
+(QSettings key `privacy/acknowledged_data_flows`, one line per answer:
+`<fingerprint>` or `<fingerprint>\t<readable summary>`).  The question before a run, the
+list in Privacy Settings and "Ask again" all use it.  Records from earlier versions hold the
+fingerprint only; `domain/data_location.py:describe_fingerprint()` turns it into words.
+`PrivacySettingsDialog` (`gui/_privacy_settings_dialog.py`) extends the anonymizer dialog
+with a first tab for these answers; its changes are applied on OK only.
 
 ### Background tasks in the GUI
 
@@ -580,7 +624,9 @@ remains the manual path.  Source checkouts are never touched (`can_install_addon
 
 GPU *detection* (`infrastructure/gpu_detector.py`) does not need that package: it reads the
 Windows display-adapter registry keys or Linux sysfs first and runs `nvidia-smi` /
-`rocm-smi` / `amd-smi` only to complete a name or memory size.  AMD integrated graphics
+`rocm-smi` / `amd-smi` only to complete a name or memory size.  `nvidia-smi` is tried on
+`PATH` first and then at its usual Windows locations (a packaged app's `PATH` can lack the
+driver folder); if it still gives no answer, the optional `pynvml` package is asked.  AMD integrated graphics
 (under 1 GB of dedicated memory) is never reported.
 
 ### spaCy library

@@ -13,7 +13,7 @@ The app is divided into two main areas:
 
 - **Menu bar** at the top — two settings menus plus Help:
   - **Settings** — Text Recognition…, Proofreading Settings…, Content Review Settings…, Output Settings…
-  - **Advanced Settings** — Connections & API Keys…, Downloads…, Anonymizer Settings…
+  - **Advanced Settings** — Connections & API Keys…, Downloads…, Privacy Settings…
   - **Help** — User Guide…, Third-Party Licenses…, About…
 
 You can also **drag a folder directly onto the window** to set it as the input folder.
@@ -65,7 +65,7 @@ Teacher's Teammate needs two AI models, and you do not need to know anything abo
 - a **reading model** turns your scans into text,
 - a **writing model** proofreads and reviews the text.
 
-The app looks at your computer — the **My computer** setting shows what it found — and suggests models that work well on it. It is usually right; you can change the choice yourself under **Advanced Settings → Connections & API Keys…** or in **Downloads**, and every window then uses your choice. If Ollama runs on a different computer, pick that computer's type in the list.
+The app looks at your computer — the **My computer** setting shows what it found: your graphics card and its memory, and the memory of the computer itself — and suggests models that work well on it. It is usually right; if it could not check your computer it says so there (the details are in the log) instead of staying silent; you can change the choice yourself under **Advanced Settings → Connections & API Keys…** or in **Downloads**, and every window then uses your choice. If Ollama runs on a different computer, pick that computer's type in the list.
 
 The best models per computer type:
 
@@ -77,7 +77,7 @@ The best models per computer type:
 
 To get a working setup in one step, open **Advanced Settings → Downloads…**, stay on the **Ollama Models** tab (it opens first), and click **Select the best models for my computer** — the app ticks the two models it recommends for your computer. Then click **Install / Download Selected**. On the very first start the app also pre-selects the best models for your computer, and the "model missing" message before a run takes you straight to the Downloads dialog with the missing models already ticked.
 
-Greyed-out models are too large for your computer. They still work — but reading or proofreading can become very slow, so the app asks before downloading one. Models you add yourself stay in the "Other models" group, where each one shows whether it reads scans and writes or only writes. Reading models are meant for turning scans into text; the app warns you when you pick one for proofreading or content review.
+Models marked **Slower** are bigger than your graphics card holds but fit with the help of your computer's memory: part of the model runs on the processor, so they work, only slower. Greyed-out models are too large for your computer. They still work — but reading or proofreading can become very slow, so the app asks before downloading one. Models you add yourself stay in the "Other models" group, where each one shows whether it reads scans and writes or only writes. Reading models are meant for turning scans into text; the app warns you when you pick one for proofreading or content review.
 
 ### Other recognition methods
 
@@ -133,7 +133,7 @@ The box at the top of the settings panel lists every step of the current setup a
 
 Below the list the box says either **Everything stays on this computer.** or **Some data leaves this computer.** — and, where it helps, what you can do about it (for example, turning on *Remove personal info*). The same one-line "runs on …" note appears next to the service pickers in **Settings**.
 
-Before a run that sends something away from your computer, the app asks you to confirm, listing the steps and whether names are replaced. "Replaced where detected" is deliberate wording: the replacement is automatic and can miss a name (see the warning under *Protecting privacy*). You can tick **Don't ask again for these settings**; the question comes back as soon as the setup changes (another service, or names no longer replaced). To bring every question back, use **Advanced Settings → Ask Before Sending Data Away Again**.
+Before a run that sends something away from your computer, the app asks you to confirm, listing the steps and whether names are replaced. "Replaced where detected" is deliberate wording: the replacement is automatic and can miss a name (see the warning under *Protecting privacy*). You can tick **Don't ask again for these settings**; the question comes back as soon as the setup changes (another service, or names no longer replaced). Open **Advanced Settings → Privacy Settings…** to see everything you chose not to be asked about, in words (for example *Proofreading: Online service (Mistral) — receives text, names sent as written*). There you can take back single answers or **Ask again for all**; the changes apply when you press OK. The same window holds the personal-info settings (detection and patterns).
 
 ---
 
@@ -143,7 +143,9 @@ When **Enable proofreading** is turned on, the text from each document is sent t
 
 ### Choosing an AI service
 
-Select a service in the **Proofreading service** dropdown. Ollama (AI running locally on your computer) requires no account or access code. Online services require an access code — provided by the service — which you enter in **Advanced Settings → Connections & API Keys…**.
+Select a service in the **Proofreading service** dropdown. Ollama (AI running locally on your computer) requires no account or access code. Online services require an access code — provided by the service — which you enter in **Advanced Settings → Connections & API Keys…**: pick the service, press **Add key**, paste the code (**Show** lets you check it). Services that share one code, such as Mistral and Mistral (EU), have one row.
+
+When you pick a service, the app asks it for its current list of models. The line under the model box says whether that worked (*5 models*), whether the list is the app's own built-in list because the service cannot be asked, or why asking failed (no key, the key was refused, no connection) with **Try again**. If the service's support is not installed yet, an **Install…** button opens **Downloads** on the right tab.
 
 **Recommended proofreading models:**
 
@@ -188,7 +190,7 @@ Right-click a row for more options:
 - **Export ▸** — save the selected rows (the **Export** button below the settings offers the same choices, for the selected rows or all rows when none is selected). A single row prompts you to choose a file name, multiple rows prompt for a destination folder.
   - **Word Document…** — a Word file with the extracted and proofread text.
   - **Text File…** — the extracted text as a plain text file (`<name>.txt`), without any Markdown markup.
-  - **Anonymized Text File…** — the extracted text with names and other personal data replaced by placeholders such as `[PERSON_1]` (`<name>_anonymized.txt`). It uses your **Anonymizer Settings…** and runs entirely on this computer. The list of replaced names is not saved, so the original names cannot be recovered from the file. This needs the privacy add-on and a language model for your document language; if one is missing you are told once.
+  - **Anonymized Text File…** — the extracted text with names and other personal data replaced by placeholders such as `[PERSON_1]` (`<name>_anonymized.txt`). It uses your **Privacy Settings…** and runs entirely on this computer. The list of replaced names is not saved, so the original names cannot be recovered from the file. This needs the privacy add-on and a language model for your document language; if one is missing you are told once.
 
   A text file is never written over any of the documents in your list, so an existing `essay.txt` you are processing stays untouched. When you export several files into one folder, files from sub-folders of your input folder keep those sub-folders (`class1/essay.png` → `<folder>/class1/essay.docx`), so documents with the same name do not replace each other. You are asked before existing files there are replaced, and a document whose name is already taken by another file of the same export is skipped and reported. If you work with a whole folder, you are also asked first before saving into it, because the next run would read the new file as another document.
 - **Personal Information Preview…** — compare the original extracted text and the anonymized version side by side.
@@ -213,7 +215,7 @@ Extra features can be installed from inside the app — no external downloads or
 | Feature | Where to start | What it enables |
 |---|---|---|
 | **Privacy add-on** | *Install Privacy Add-on* button (shown when the feature is missing) | Removes personal information before proofreading |
-| **Language model for anonymization** | **Advanced Settings → Anonymizer Settings…** → *Download Model* | Choose your document language; the multilingual model is a safe default |
+| **Language model for anonymization** | **Advanced Settings → Privacy Settings…** → *Personal info: detection* → *Download Model* | Choose your document language; the multilingual model is a safe default |
 | **PaddleOCR** | **Settings → Text Recognition…** when PaddleOCR is selected | An alternative recognition method (~400 MB download) |
 | **Graphics card monitoring** | Offered automatically when a compatible card is found (Stats tab) | NVIDIA or AMD/Linux graphics card stats |
 

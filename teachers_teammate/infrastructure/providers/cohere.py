@@ -26,6 +26,7 @@ PROVIDER_INFO: dict = {
     "env_key": "COHERE_API_KEY",
     "needs_base_url": False,
     "can_list_models": False,
+    "package": {"module": "langchain_cohere", "pip": "langchain-cohere"},
     "default_model": "command-r-plus",
     "models": [
         "command-r-plus",

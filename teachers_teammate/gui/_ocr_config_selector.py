@@ -43,7 +43,6 @@ from ._model_guidance import OllamaModelGuidance, OpenDownloads
 from ._settings_dialog import (
     _STATUS_ERROR,
     _STATUS_LOADING,
-    _install_hint,
     _ModelFetchThread,
     _retire_thread,
     _set_combo,
@@ -352,7 +351,7 @@ class OcrConfigSelector(QWidget):
         if paddle_missing and frozen:
             warn = "paddleocr is not installed."
         elif paddle_missing:
-            warn = _install_hint(self._app_service, "paddle", ["paddleocr"])
+            warn = '⚠ Not installed — run:  pip install "teachers-teammate[paddle]"'
         else:
             warn = ""
         self._extra_warn.setText(warn)

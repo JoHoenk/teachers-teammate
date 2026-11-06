@@ -2045,24 +2045,85 @@ def test_dont_ask_again_applies_only_to_the_same_data_flow(
 
 
 @pytest.mark.gui
-def test_forgetting_acknowledged_flows_asks_again(
-    qtbot, main_window, confirm_box, tmp_path: Path
+def test_taking_back_the_answer_in_privacy_settings_asks_again(
+    qtbot, main_window, confirm_box, tmp_path: Path, monkeypatch
 ) -> None:
     """
     Given  an online run confirmed with "don't ask again"
-    When   the confirmations are reset from the menu action
-    Then   the same run is asked about again
+    When   the user opens Privacy Settings from the menu, presses "Ask again for all" and OK
+    Then   the dialog opens on the sending tab, and the same run is asked about again
     """
+    from unittest.mock import MagicMock, patch  # noqa: PLC0415
+
+    from PySide6.QtWidgets import QDialog  # noqa: PLC0415
+
+    from teachers_teammate.gui._privacy_settings_dialog import PrivacySettingsDialog  # noqa: PLC0415
+
     confirm_box.remember = True
     cfg = _online_proofreading_config(tmp_path)
     main_window._confirm_data_flow_then(cfg, lambda: None)
     main_window._confirm_data_flow_then(cfg, lambda: None)
     assert len(confirm_box.texts) == 1
 
-    main_window._forget_acknowledged_flows()
+    opened_on: list[str] = []
+
+    def fake_exec(dialog: PrivacySettingsDialog) -> QDialog.DialogCode:
+        opened_on.append(dialog._tabs.tabText(dialog._tabs.currentIndex()))
+        dialog._spacy_fetch_thread.quit()
+        dialog._spacy_fetch_thread.wait(500)
+        dialog.sending_tab()._forget_all_btn.click()
+        dialog.accept()
+        return QDialog.DialogCode.Accepted
+
+    monkeypatch.setattr(PrivacySettingsDialog, "exec", fake_exec)
+    with patch(
+        "teachers_teammate.gui._anonymizer_config_dialog.ProcessingApplicationService",
+        MagicMock(),
+    ) as service:
+        service.return_value.list_installed_spacy_models.return_value = []
+        main_window._open_privacy_settings_from_menu()
     main_window._confirm_data_flow_then(cfg, lambda: None)
 
+    assert opened_on == ["Sending data away"]
     assert len(confirm_box.texts) == 2
+
+
+@pytest.mark.gui
+def test_a_remembered_answer_is_kept_with_a_readable_summary(
+    qtbot, main_window, confirm_box, tmp_path: Path
+) -> None:
+    """
+    Given  an online run confirmed with "don't ask again"
+    When   the remembered answers are read
+    Then   the answer carries a sentence naming the step and the service, which Privacy Settings
+           lists
+    """
+    confirm_box.remember = True
+
+    main_window._confirm_data_flow_then(_online_proofreading_config(tmp_path), lambda: None)
+
+    [entry] = main_window._acknowledgements().remembered()
+    assert entry.summary.startswith("Proofreading: Online service (OpenAI")
+    assert "names sent as written" in entry.summary
+
+
+@pytest.mark.gui
+def test_the_advanced_menu_has_one_privacy_entry_instead_of_two(qtbot, main_window) -> None:
+    """
+    Given  the main window
+    When   the Advanced Settings menu is read
+    Then   it has "Privacy Settings…" and neither the old "Anonymizer Settings…" nor the
+           separate "Ask Before Sending Data Away Again" entry
+    """
+    menu = next(
+        a.menu() for a in main_window.menuBar().actions() if a.text() == "Advanced Settings"
+    )
+
+    entries = [a.text() for a in menu.actions()]
+
+    assert "Privacy Settings\u2026" in entries
+    assert "Anonymizer Settings\u2026" not in entries
+    assert "Ask Before Sending Data Away Again" not in entries
 
 
 @pytest.mark.gui

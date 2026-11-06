@@ -15,7 +15,7 @@ from teachers_teammate.application.service import (
     RequirementIssue,
     RunPreflight,
 )
-from teachers_teammate.domain.model_catalog import DEFAULT_OCR_MODEL
+from teachers_teammate.domain.model_catalog import DEFAULT_OCR_MODEL, DEFAULT_WRITING_MODEL
 from teachers_teammate.gui import _main_window as main_window_module
 from teachers_teammate.gui._export_menu import ExportKind
 from teachers_teammate.gui._main_window import MainWindow
@@ -534,6 +534,38 @@ def test_main_window_correction_edit_persists_and_clears_evaluation(
     assert raw_txt == "raw text"
     assert corr_txt == "corr edited"
     assert eval_txt == ""
+
+
+@pytest.mark.gui
+def test_main_window_correction_edit_keeps_the_stored_warning_banner(
+    main_window,
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    """
+    Given  a file whose proofreading fell back to corrections only and stored a warning
+    When   the teacher edits the proofread text
+    Then   the warning banner above the changes view is still shown after the reload
+    """
+    from teachers_teammate.infrastructure.state_repository import StateRepository  # noqa: PLC0415
+
+    cfg = make_config(tmp_path)
+    source = cfg.input_dir / "page.png"
+    source.touch()
+    monkeypatch.setattr(main_window._config_panel, "to_config", lambda: cfg)
+    main_window._results_table.set_queue(["page.png"], source_ids=[str(source)])
+    main_window._results_table.set_row_artifacts(str(source), "", "raw text", "corr old", "")
+    main_window._results_table.selectRow(0)
+    main_window._on_correction_text_edited("corr first")  # creates the state record
+    repo = StateRepository(resolve_artifact_dir(cfg.output_dir) / "state")
+    state = repo.load(source)
+    assert state is not None
+    repo.save(source, dataclasses.replace(state, correction_warning="No explanations."))
+
+    main_window._on_correction_text_edited("corr edited")
+
+    assert not main_window._preview._review_banner.isHidden()
+    assert main_window._preview._review_banner.text() == "No explanations."
 
 
 # ── Additional coverage for _check_llm_status and related ─────────────────
@@ -1351,10 +1383,10 @@ def test_first_start_selects_best_models_for_profile(qtbot, monkeypatch, tmp_pat
 
     settings = win._config_panel.get_settings_dict()
     assert settings["ocr_model"] == DEFAULT_OCR_MODEL
-    assert settings["correction_model"] == "gpt-oss:20b"
-    assert settings["evaluate_model"] == "gpt-oss:20b"
+    assert settings["correction_model"] == DEFAULT_WRITING_MODEL
+    assert settings["evaluate_model"] == DEFAULT_WRITING_MODEL
     assert (
-        f"chose reading model {DEFAULT_OCR_MODEL} and writing model gpt-oss:20b"
+        f"chose reading model {DEFAULT_OCR_MODEL} and writing model {DEFAULT_WRITING_MODEL}"
         in win._log.toPlainText()
     )
     saved = (tmp_path / "ocr.toml").read_text(encoding="utf-8")
@@ -2935,3 +2967,40 @@ def test_export_anonymized_text_with_missing_spacy_also_lists_skipped_rows(
     assert len(warnings) == 1
     assert "spaCy" in warnings[0]
     assert "c.png" in warnings[0]
+
+
+@pytest.mark.gui
+@pytest.mark.parametrize(
+    ("explanation_language", "text_language", "expected"),
+    [("", "German", "German"), ("French", "German", "French")],
+)
+def test_exported_docx_labels_follow_the_explanation_language(
+    main_window,
+    monkeypatch,
+    tmp_path: Path,
+    explanation_language: str,
+    text_language: str,
+    expected: str,
+) -> None:
+    """
+    Given  a German text and an explanation language that is empty ("Same as the text") or French
+    When   the document is exported as a DOCX
+    Then   the headings language is the text's language respectively the explanation language
+    """
+    sid = str(tmp_path / "scans" / "a.png")
+    main_window._results_table.set_queue(["a.png"], source_ids=[sid])
+    main_window._results_table.set_row_artifacts(sid, "", "text", "corrected", "")
+    main_window._config_panel._language.setCurrentText(text_language)
+    main_window._config_panel.update_settings({"explanation_language": explanation_language})
+    _pick_file(monkeypatch, tmp_path / "out" / "a.docx")
+    seen: list[str] = []
+    monkeypatch.setattr(
+        main_window._app_service,
+        "export_docx",
+        lambda _s, _r, _c, _i, _path, options=None, **_k: seen.append(options.labels_language),
+    )
+
+    main_window._on_export_requested([sid], ExportKind.DOCX)
+    _wait_for(lambda: bool(seen))
+
+    assert seen == [expected]

@@ -13,11 +13,14 @@ from .domain.model_catalog import DEFAULT_WRITING_MODEL
 
 _OLLAMA_GENERAL_DEFAULT = DEFAULT_WRITING_MODEL
 
+#: The online correction defaults must answer the review JSON schema.  All of
+#: them support structured output; ``claude-3-haiku-20240307`` was retired by the provider
+#: and is replaced by its current small model.
 _DEFAULT_MODELS: dict[str, dict[str, str]] = {
     "correction": {
         "ollama": _OLLAMA_GENERAL_DEFAULT,
         "openai": "gpt-4o-mini",
-        "anthropic": "claude-3-haiku-20240307",
+        "anthropic": "claude-haiku-4-5",
         "google": "gemini-2.0-flash",
         "mistral": "mistral-small-latest",
         "mistral_eu": "mistral-small-latest",
@@ -26,7 +29,7 @@ _DEFAULT_MODELS: dict[str, dict[str, str]] = {
     "evaluation": {
         "ollama": _OLLAMA_GENERAL_DEFAULT,
         "openai": "gpt-4o-mini",
-        "anthropic": "claude-3-haiku-20240307",
+        "anthropic": "claude-haiku-4-5",
         "google": "gemini-2.0-flash",
         "mistral": "mistral-small-latest",
         "mistral_eu": "mistral-small-latest",

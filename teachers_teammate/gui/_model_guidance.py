@@ -30,6 +30,7 @@ from ..domain.model_catalog import (
     normalize_tag,
     suitability_rank,
 )
+from . import _user_text as txt
 from ._hardware_profile_selector import HardwareProfileSelector
 from ._model_wording import (
     HINT_NOT_DOWNLOADED,
@@ -201,6 +202,8 @@ class OllamaModelGuidance(QWidget):
         else:
             self._combo.setItemData(index, None, Qt.ItemDataRole.ForegroundRole)
         note = f"\n{rating.note}" if rating.note else ""
+        if rating.structured_output:
+            note = f"{note}\n{txt.EXPLANATIONS_SUPPORTED_TOOLTIP}"
         self._combo.setItemData(
             index,
             f"{suitability_text(rating.suitability, self.active_profile(), self._category)}{note}",

@@ -9,8 +9,14 @@ from typing import Any
 from docx import Document
 import pytest
 
+from teachers_teammate.domain.correction_review import (
+    ChangeNote,
+    CorrectionReview,
+    SentenceNote,
+    UnclearNote,
+)
 from teachers_teammate.domain.formatted_text import Span
-from teachers_teammate.infrastructure.docx_builder import DocxDocumentCreator
+from teachers_teammate.infrastructure.docx_builder import DocxDocumentCreator, _NoteSource
 
 # ── table format ───────────────────────────────────────────────────────────
 
@@ -210,6 +216,11 @@ def _plain_lines(text: str) -> list[tuple[Span, ...]]:
     return [(Span(line),) if line else () for line in text.split("\n")]
 
 
+def _no_notes() -> _NoteSource:
+    """Return a note source that explains nothing (no review available)."""
+    return _NoteSource(None, {})
+
+
 def test_fill_cell_with_diffs_equal_lines_no_comments(tmp_path: Path) -> None:
     """
     Given  identical raw and corrected multi-line text
@@ -221,7 +232,7 @@ def test_fill_cell_with_diffs_equal_lines_no_comments(tmp_path: Path) -> None:
     lines = _plain_lines("line one\nline two\nline three")
     pending: list = []
 
-    creator._fill_cell_with_styled_diffs(cell, lines, lines, pending)
+    creator._fill_cell_with_styled_diffs(cell, lines, lines, pending, _no_notes())
 
     assert pending == []
 
@@ -237,7 +248,11 @@ def test_fill_cell_with_diffs_replace_adds_comments(tmp_path: Path) -> None:
     pending: list = []
 
     creator._fill_cell_with_styled_diffs(
-        cell, _plain_lines("old line\nend"), _plain_lines("new line\nend"), pending
+        cell,
+        _plain_lines("old line\nend"),
+        _plain_lines("new line\nend"),
+        pending,
+        _no_notes(),
     )
 
     assert len(pending) > 0
@@ -254,7 +269,7 @@ def test_styled_word_diff_handles_insert_opcode(tmp_path: Path) -> None:
     comments: list = []
 
     creator._add_styled_line_with_word_diff(
-        para, (Span("hello"),), (Span("hello world here"),), comments
+        para, (Span("hello"),), (Span("hello world here"),), comments, _no_notes()
     )
 
     assert len(comments) > 0
@@ -271,7 +286,7 @@ def test_styled_word_diff_handles_delete_opcode(tmp_path: Path) -> None:
     comments: list = []
 
     creator._add_styled_line_with_word_diff(
-        para, (Span("hello extra words"),), (Span("hello"),), comments
+        para, (Span("hello extra words"),), (Span("hello"),), comments, _no_notes()
     )
 
     assert any("delete" in c[1].lower() for c in comments)
@@ -287,7 +302,7 @@ def test_styled_word_diff_both_empty_is_noop(tmp_path: Path) -> None:
     para = Document().add_paragraph()
     comments: list = []
 
-    creator._add_styled_line_with_word_diff(para, (), (), comments)
+    creator._add_styled_line_with_word_diff(para, (), (), comments, _no_notes())
 
     assert comments == []
 
@@ -570,3 +585,407 @@ def _comments_xml(path: Path) -> str:
     with zipfile.ZipFile(path) as archive:
         name = next(n for n in archive.namelist() if "comments" in n.lower())
         return archive.read(name).decode("utf-8")
+
+
+# ── Proofreading review: explanations and the unclear table ───────────────
+
+_RAW = "Yesterday she have gone to the cinema. It was very nice."
+_CORRECTED = "Yesterday she has gone to the cinema. It was very nice."
+
+_REVIEW = CorrectionReview(
+    sentences=(
+        SentenceNote(
+            original="Yesterday she have gone to the cinema.",
+            corrected="Yesterday she has gone to the cinema.",
+            changes=(ChangeNote("have", "has", "grammar", '"she" is 3rd person singular.'),),
+        ),
+    ),
+    unclear=(
+        UnclearNote(
+            expression="It was very nice",
+            why='"It" can mean the film or the visit.',
+            recommendation="The film was very nice",
+            is_suggestion=True,
+        ),
+        UnclearNote(
+            expression="to the cinema",
+            why="Which cinema is meant is not stated.",
+            recommendation="to the local cinema",
+        ),
+    ),
+)
+
+
+def _all_table_text(path: Path) -> str:
+    """Return the text of every cell of every table of the stored document."""
+    doc = Document(str(path))
+    return " | ".join(cell.text for table in doc.tables for row in table.rows for cell in row.cells)
+
+
+def _headings(path: Path) -> list[str]:
+    """Return the text of every heading-styled paragraph."""
+    return [para.text for para in Document(str(path)).paragraphs if para.style.name.startswith("H")]
+
+
+def test_comments_layout_puts_the_explanation_in_the_change_comment(tmp_path: Path) -> None:
+    """
+    Given  a review whose change "have" → "has" has a grammar explanation
+    When   the comments layout is written
+    Then   the comment above that correction names the category and the explanation
+    """
+    out = tmp_path / "review_comments.docx"
+
+    DocxDocumentCreator(fmt="comments").create(
+        raw_text=_RAW,
+        corrected_text=_CORRECTED,
+        out_path=out,
+        title="T",
+        review=_REVIEW,
+    )
+
+    comments_xml = _comments_xml(out)
+    assert '\u2192 "has"' in comments_xml
+    assert 'Grammar: "she" is 3rd person singular.' in comments_xml
+
+
+def test_comments_layout_comments_unclear_expressions(tmp_path: Path) -> None:
+    """
+    Given  a review with one unclear expression that can be recommended and one that is
+           only a suggestion
+    When   the comments layout is written
+    Then   each gets its own comment, the first naming why and recommending, the second
+           labelled as a suggestion
+    """
+    out = tmp_path / "unclear_comments.docx"
+
+    DocxDocumentCreator(fmt="comments").create(
+        raw_text=_RAW,
+        corrected_text=_CORRECTED,
+        out_path=out,
+        title="T",
+        review=_REVIEW,
+    )
+
+    comments_xml = _comments_xml(out)
+    assert "Suggestion (meaning not certain): The film was very nice" in comments_xml
+    assert (
+        "Unclear: Which cinema is meant is not stated. \u2014 Recommended: to the local cinema"
+        in comments_xml
+    )
+
+
+def test_unclear_table_is_appended_with_three_columns(tmp_path: Path) -> None:
+    """
+    Given  a review with two unclear expressions
+    When   either layout is written
+    Then   the *Unclear or ambiguous expressions* heading comes with a three-column table
+           holding the three column titles and one row per expression
+    """
+    for fmt in ("table", "comments"):
+        out = tmp_path / f"unclear_{fmt}.docx"
+
+        DocxDocumentCreator(fmt=fmt).create(
+            raw_text=_RAW,
+            corrected_text=_CORRECTED,
+            out_path=out,
+            title="T",
+            review=_REVIEW,
+        )
+
+        assert "Unclear or ambiguous expressions" in _headings(out)
+        doc = Document(str(out))
+        unclear = next(
+            table for table in doc.tables if len(table.columns) == 3 and len(table.rows) == 3
+        )
+        assert [cell.text for cell in unclear.rows[0].cells] == [
+            "Original expression",
+            "Why it is unclear",
+            "Recommended version",
+        ]
+        assert unclear.rows[1].cells[0].text == "It was very nice"
+        assert "Suggestion (meaning not certain)" in unclear.rows[1].cells[2].text
+        assert unclear.rows[2].cells[2].text == "Recommended: to the local cinema"
+
+
+def test_table_layout_lists_the_explanations_per_sentence(tmp_path: Path) -> None:
+    """
+    Given  a review with one changed sentence
+    When   the table layout is written
+    Then   an *Explanations* section shows the corrected sentence in italics followed by
+           one bullet per change
+    """
+    out = tmp_path / "explanations.docx"
+
+    DocxDocumentCreator(fmt="table").create(
+        raw_text=_RAW,
+        corrected_text=_CORRECTED,
+        out_path=out,
+        title="T",
+        review=_REVIEW,
+    )
+
+    assert "Explanations" in _headings(out)
+    doc = Document(str(out))
+    corrected = next(p for p in doc.paragraphs if p.text.startswith("1. "))
+    assert corrected.runs[1].text == "Yesterday she has gone to the cinema."
+    assert corrected.runs[1].italic
+    bullets = [p.text for p in doc.paragraphs if p.style.name == "List Bullet"]
+    assert any("Grammar: " in bullet and "3rd person singular" in bullet for bullet in bullets)
+
+
+def test_explanations_list_leaves_out_spelling_and_punctuation(tmp_path: Path) -> None:
+    """
+    Given  a review whose sentence has a grammar change and a spelling change
+    When   the table layout is written
+    Then   the *Explanations* section lists the grammar change only
+    """
+    from teachers_teammate.domain.correction_review import (  # noqa: PLC0415
+        ChangeNote,
+        CorrectionReview,
+        SentenceNote,
+    )
+
+    raw, corrected = "She have a dogs.", "She has a dog."
+    review = CorrectionReview(
+        sentences=(
+            SentenceNote(
+                raw,
+                corrected,
+                (
+                    ChangeNote("have", "has", "grammar", "Third person."),
+                    ChangeNote("dogs", "dog", "spelling", "Singular."),
+                ),
+            ),
+        )
+    )
+    out = tmp_path / "minor.docx"
+
+    DocxDocumentCreator(fmt="table").create(
+        raw_text=raw, corrected_text=corrected, out_path=out, title="T", review=review
+    )
+
+    bullets = [p.text for p in Document(str(out)).paragraphs if p.style.name == "List Bullet"]
+    assert any("Third person." in bullet for bullet in bullets)
+    assert not any("Singular." in bullet for bullet in bullets)
+
+
+def test_review_sections_use_the_explanation_language(tmp_path: Path) -> None:
+    """
+    Given  a creator whose explanation language is German
+    When   the review sections are written
+    Then   the headings, column titles and category names are German
+    """
+    out = tmp_path / "german.docx"
+
+    DocxDocumentCreator(fmt="table", labels_language="de").create(
+        raw_text=_RAW,
+        corrected_text=_CORRECTED,
+        out_path=out,
+        title="T",
+        review=_REVIEW,
+    )
+
+    headings = _headings(out)
+    assert "Erläuterungen" in headings
+    assert "Unklare oder mehrdeutige Formulierungen" in headings
+    table_text = _all_table_text(out)
+    assert "Ursprüngliche Formulierung" in table_text
+    assert "Empfohlene Version" in table_text
+    bullets = [p.text for p in Document(str(out)).paragraphs if p.style.name == "List Bullet"]
+    assert any("Grammatik: " in bullet for bullet in bullets)
+
+
+def test_without_review_the_document_keeps_todays_output(tmp_path: Path) -> None:
+    """
+    Given  no review (a file proofread in *Corrections only* mode)
+    When   either layout is written
+    Then   no review section appears, and the comments carry only the plain change text
+    """
+    table_out = tmp_path / "no_review_table.docx"
+    comments_out = tmp_path / "no_review_comments.docx"
+
+    DocxDocumentCreator(fmt="table").create(
+        raw_text=_RAW, corrected_text=_CORRECTED, out_path=table_out, title="T"
+    )
+    DocxDocumentCreator(fmt="comments").create(
+        raw_text=_RAW, corrected_text=_CORRECTED, out_path=comments_out, title="T"
+    )
+
+    assert _headings(table_out) == ["T"]
+    assert len(Document(str(table_out)).tables) == 1
+    comments_xml = _comments_xml(comments_out)
+    assert "Grammar:" not in comments_xml
+    assert "Unclear:" not in comments_xml
+    assert '\u2192 "has"' in comments_xml
+
+
+# ── Review: matching explanations to the diff, anchoring unclear comments ──
+
+
+def _comment_texts(path: Path) -> dict[int, str]:
+    """Return ``{comment id: text}`` of the stored comments part."""
+    from lxml import etree  # noqa: PLC0415
+
+    ns = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
+    root = etree.fromstring(_comments_xml(path).encode("utf-8"))
+    return {
+        int(comment.get(f"{{{ns['w']}}}id")): "".join(comment.itertext())
+        for comment in root.findall("w:comment", ns)
+    }
+
+
+def _text_under_comment(path: Path, comment_id: int) -> str:
+    """Return the document text between a comment's range start and range end."""
+    w = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+    inside = False
+    parts: list[str] = []
+    for element in Document(str(path)).element.body.iter():
+        if element.tag == f"{w}commentRangeStart" and element.get(f"{w}id") == str(comment_id):
+            inside = True
+        elif element.tag == f"{w}commentRangeEnd" and element.get(f"{w}id") == str(comment_id):
+            break
+        elif inside and element.tag == f"{w}t":
+            parts.append(element.text or "")
+    return "".join(parts)
+
+
+def test_comments_layout_explains_multi_word_and_punctuation_edits(tmp_path: Path) -> None:
+    """
+    Given  notes for a two-word edit, an inserted comma and an added full stop, edits which
+           the comments layout's whitespace word diff cuts differently than the token diff
+    When   the comments layout is written
+    Then   every one of those comments carries its explanation
+    """
+    raw = "Yesterday she have gone with his friend. We met Tom and left"
+    corrected = "Yesterday she has gone with her friends. We met Tom, and left."
+    review = CorrectionReview(
+        sentences=(
+            SentenceNote(
+                "Yesterday she have gone with his friend.",
+                "Yesterday she has gone with her friends.",
+                (
+                    ChangeNote("have", "has", "grammar", "EXPL-has"),
+                    ChangeNote("his friend", "her friends", "word_choice", "EXPL-friends"),
+                ),
+            ),
+            SentenceNote(
+                "We met Tom and left",
+                "We met Tom, and left.",
+                (
+                    ChangeNote("Tom", "Tom,", "punctuation", "EXPL-comma"),
+                    ChangeNote("left", "left.", "punctuation", "EXPL-period"),
+                ),
+            ),
+        )
+    )
+    out = tmp_path / "multi.docx"
+
+    DocxDocumentCreator(fmt="comments").create(
+        raw_text=raw, corrected_text=corrected, out_path=out, title="T", review=review
+    )
+
+    comments = _comments_xml(out)
+    for expected in ("EXPL-has", "EXPL-friends", "EXPL-comma", "EXPL-period"):
+        assert expected in comments
+
+
+def test_unclear_comment_covers_only_the_expression(tmp_path: Path) -> None:
+    """
+    Given  an unclear expression in the middle of a line
+    When   the comments layout is written
+    Then   the unclear comment's range wraps exactly those words, not the whole line
+    """
+    out = tmp_path / "anchored.docx"
+
+    DocxDocumentCreator(fmt="comments").create(
+        raw_text=_RAW, corrected_text=_CORRECTED, out_path=out, title="T", review=_REVIEW
+    )
+
+    comments = _comment_texts(out)
+    unclear_id = next(i for i, text in comments.items() if "Which cinema" in text)
+    assert _text_under_comment(out, unclear_id) == "to the cinema"
+    nice_id = next(i for i, text in comments.items() if "The film was very nice" in text)
+    assert _text_under_comment(out, nice_id) == "It was very nice"
+
+
+def test_unclear_comment_never_starts_inside_a_longer_word(tmp_path: Path) -> None:
+    """
+    Given  the unclear expression "he", which also occurs inside "Then"
+    When   the comments layout is written
+    Then   the comment's range wraps the pronoun "he", not the letters inside "Then"
+    """
+    text = "Then the boy said he left."
+    review = CorrectionReview(
+        unclear=(UnclearNote(expression="he", why="Which person?", recommendation="the boy"),)
+    )
+    out = tmp_path / "whole_word.docx"
+
+    DocxDocumentCreator(fmt="comments").create(
+        raw_text=text, corrected_text=text, out_path=out, title="T", review=review
+    )
+
+    comments = _comment_texts(out)
+    unclear_id = next(i for i, comment in comments.items() if "Which person?" in comment)
+    assert _text_under_comment(out, unclear_id) == "he"
+
+
+def test_suggestion_comment_keeps_the_reason(tmp_path: Path) -> None:
+    """
+    Given  an unclear expression whose meaning cannot be determined (a suggestion)
+    When   the comments layout is written
+    Then   its comment names why it is unclear as well as the labelled suggestion
+    """
+    out = tmp_path / "suggestion.docx"
+
+    DocxDocumentCreator(fmt="comments").create(
+        raw_text=_RAW, corrected_text=_CORRECTED, out_path=out, title="T", review=_REVIEW
+    )
+
+    assert any(
+        '"It" can mean the film or the visit.' in text
+        and "Suggestion (meaning not certain): The film was very nice" in text
+        for text in _comment_texts(out).values()
+    )
+
+
+def test_table_layout_lists_only_explanations_of_changes_in_the_text(tmp_path: Path) -> None:
+    """
+    Given  a review with a sentence that cannot be placed, a note for an edit that is not in
+           the corrected text, and a corrected text the teacher has since edited
+    When   the table layout is written
+    Then   the explanations list only the change that is in the text, quoting the sentence as
+           it now reads
+    """
+    review = CorrectionReview(
+        sentences=(
+            SentenceNote(
+                "She have gone.",
+                "She has gone.",
+                (
+                    ChangeNote("have", "has", "grammar", "EXPL-real"),
+                    ChangeNote("gone", "went", "grammar", "EXPL-phantom"),
+                ),
+            ),
+            SentenceNote(
+                "Missing one.", "Missing two.", (ChangeNote("one", "two", "other", "EXPL-lost"),)
+            ),
+        ),
+        unplaced=(1,),
+    )
+    out = tmp_path / "only_real.docx"
+
+    DocxDocumentCreator(fmt="table").create(
+        raw_text="She have gone.",
+        corrected_text="She has gone!",
+        out_path=out,
+        title="T",
+        review=review,
+    )
+
+    doc = Document(str(out))
+    bullets = " ".join(p.text for p in doc.paragraphs if p.style.name == "List Bullet")
+    assert "EXPL-real" in bullets
+    assert "EXPL-phantom" not in bullets
+    assert "EXPL-lost" not in bullets
+    quoted = next(p for p in doc.paragraphs if p.text.startswith("1. "))
+    assert quoted.runs[1].text == "She has gone!"

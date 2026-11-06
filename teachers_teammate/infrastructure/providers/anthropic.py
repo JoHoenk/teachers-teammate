@@ -16,13 +16,13 @@ PROVIDER_INFO: dict = {
     "needs_base_url": False,
     "can_list_models": False,
     "package": {"module": "langchain_anthropic", "pip": "langchain-anthropic"},
-    "default_model": "claude-3-haiku-20240307",
+    "default_model": "claude-haiku-4-5",
     "models": [
         "claude-opus-4-5",
         "claude-sonnet-4-5",
+        "claude-haiku-4-5",
         "claude-3-5-sonnet-20241022",
         "claude-3-opus-20240229",
-        "claude-3-haiku-20240307",
     ],
 }
 

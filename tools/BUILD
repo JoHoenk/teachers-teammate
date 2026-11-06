@@ -9,10 +9,15 @@ py_binary(
 
 # Developer tool (needs network; not run in CI) that verifies the Ollama model
 # catalog against the real registry. See docs/development.md → "Ollama model catalog".
+# pydantic is needed by teachers_teammate.infrastructure.correction_schema, which the
+# --structured-output check uses to build and validate the review schema.
 py_binary(
     name = "verify_model_catalog",
     srcs = ["verify_model_catalog.py"],
     main = "verify_model_catalog.py",
     visibility = ["//visibility:public"],
-    deps = ["//teachers_teammate:ocr_lib"],
+    deps = [
+        "//teachers_teammate:ocr_lib",
+        "@ocr_test_dependencies//pydantic:pkg",
+    ],
 )

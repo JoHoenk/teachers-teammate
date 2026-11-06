@@ -1107,3 +1107,52 @@ def test_reset_from_ocr_stage_returns_the_format_to_plain(tmp_path: Path) -> Non
 
     assert cleared.raw_text_format == "plain"
     assert (cleared.raw_text, cleared.correction_text) == ("", "")
+
+
+def test_manual_correction_edit_keeps_the_review(tmp_path: Path) -> None:
+    """
+    Given  a state holding a proofreading review
+    When   the teacher edits the proofread text and the edit is recorded
+    Then   the review is kept (its alignment is recomputed from the texts on every render)
+    """
+    source = _source_file(tmp_path)
+    repo = _repo(tmp_path)
+    review = {"version": 1, "sentences": [], "unclear": [], "unplaced": []}
+    state = dataclasses.replace(
+        repo.create(source, compute_file_hash(source)),
+        ocr_done=True,
+        raw_text="raw",
+        correction_done=True,
+        correction_text="old",
+        correction_review=review,
+    )
+
+    repo.record_manual_correction_edit(source, state, correction_text="edited")
+
+    loaded = repo.load(source)
+    assert loaded is not None
+    assert loaded.correction_text == "edited"
+    assert loaded.correction_review == review
+    assert loaded.review is not None
+
+
+def test_manual_correction_edit_to_empty_text_drops_the_review(tmp_path: Path) -> None:
+    """
+    Given  a state holding a proofreading review
+    When   the proofread text is emptied by hand
+    Then   the review is dropped together with the text it explained
+    """
+    source = _source_file(tmp_path)
+    repo = _repo(tmp_path)
+    state = dataclasses.replace(
+        repo.create(source, compute_file_hash(source)),
+        correction_done=True,
+        correction_text="old",
+        correction_review={"version": 1},
+    )
+
+    repo.record_manual_correction_edit(source, state, correction_text="")
+
+    loaded = repo.load(source)
+    assert loaded is not None
+    assert loaded.correction_review is None

@@ -18,7 +18,7 @@ Ollama runs AI vision models locally on your machine. Teacher's Teammate sends e
 
 **Ollama must be running** before you start a processing run. Download it from [ollama.com/download](https://ollama.com/download) and install it like any other program. By default Teacher's Teammate connects to `http://127.0.0.1:11434` (your own computer). If you run Ollama on a dedicated machine on your local network, change the address in **Advanced Settings → Connections & API Keys…** or set `ollama_url` in the settings file — for example `http://192.168.1.50:11434`.
 
-**Upgrading from an earlier version:** the built-in default models changed. Without explicit model settings the app (and the command line) now uses `hf.co/prithivMLmods/chandra-ocr-2-GGUF:Q8_0` for reading (before: `deepseek-ocr:latest`) and `gpt-oss:20b` for proofreading and content review. These defaults apply on every computer; the recommendations in the tables below still depend on your hardware profile. Download them in **Advanced Settings → Downloads…**, or keep your previous choice by setting `ocr_model`, `correction_model` and `evaluate_model` in the settings file. Settings you saved earlier are not changed.
+**Upgrading from an earlier version:** the built-in default models changed. Without explicit model settings the app (and the command line) now uses `hf.co/prithivMLmods/chandra-ocr-2-GGUF:Q8_0` for reading (before: `deepseek-ocr:latest`) and `qwen3.5:9b` for proofreading and content review (before: `gpt-oss:20b`, which has not been checked for the proofreading explanations). These defaults apply on every computer; the recommendations in the tables below still depend on your hardware profile. Download them in **Advanced Settings → Downloads…**, or keep your previous choice by setting `ocr_model`, `correction_model` and `evaluate_model` in the settings file. Settings you saved earlier are not changed.
 
 **Reading models and hardware requirements:**
 
@@ -40,12 +40,12 @@ Teacher's Teammate distinguishes three computer types ("hardware profiles"): a b
 | Model | Memory (running) | Download | cpu | 8 GB | 16 GB | Notes |
 |---|---|---|---|---|---|---|
 | `qwen3:4b` | ~3.5 GB | 2.5 GB | ★ best | works | works | Small model for computers without a graphics card |
-| `qwen3.5:9b` | ~7 GB | 6.6 GB | too slow | ★ best | good | Best writing model for 8 GB; can also read scanned pages |
+| `qwen3.5:9b` | ~7 GB | 6.6 GB | too slow | ★ best | ★ best | Default. Best writing model for 8 and 16 GB; can also read scanned pages |
 | `gemma4:latest` | ~7.5 GB | 6.6 GB | too slow | works | works | Compact writing model |
 | `mistral:latest` | ~5.5 GB | 4.4 GB | too slow | good | works | Reliable all-rounder |
 | `mistral-nemo:12b` | ~8.5 GB | 7.1 GB | too slow | too large | good | Good with long texts |
 | `gemma4:12b` | ~9.5 GB | 8.0 GB | too slow | too large | good | Larger writing model |
-| `gpt-oss:20b` | ~14 GB | 13.8 GB | too slow | too large | ★ best | Default. Best writing model for 16 GB |
+| `gpt-oss:20b` | ~14 GB | 13.8 GB | too slow | too large | good | Strongest writer, but not checked for proofreading explanations — corrections only |
 
 The `hardware_profile` setting in the settings file (TOML format) controls the profile. Allowed values are `auto` (detect — default), `cpu`, `8gb` and `16gb`; an invalid value falls back to `auto` with a warning. With `auto` the app picks the profile from the largest detected graphics card (≥ 15 GB → `16gb`, ≥ 7 GB → `8gb`, otherwise `cpu`; on Apple Silicon it uses two thirds of the shared memory with the same thresholds). When `ollama_url` points at another computer, local detection is skipped and `8gb` is assumed — change the profile yourself if you know what that machine has. An address that names *this* computer (its own host name or network address) counts as this computer. The setting affects only recommendations; it never changes which model is configured. The computer's own memory (RAM) is read as well: a model that is too big for the graphics card but fits within the card's budget plus half the computer's memory is rated **Slower** (it runs partly on the processor) instead of too large; without a graphics card, half the computer's memory is the limit. The memory figure belongs to this computer, so it is not used when Ollama runs on another one, nor on Apple Silicon, where the graphics share already comes out of that same memory. The check, its result and any error are written to the log (`INFO` level); when the check itself fails, the **My computer** line says so.
 
@@ -310,6 +310,17 @@ Enable anonymization via the **Remove personal information before proofreading**
 
 When proofreading is enabled (`correction_enabled = true`), each file's OCR text is sent to the configured AI model for correction. The corrected text is stored in a per-file result cache so it is not recomputed on subsequent runs unless the source file or relevant settings change.
 
+The answer is a *review*, not just a text: the corrected text plus a short explanation per change and a list of unclear or ambiguous expressions (see {doc}`using_the_app`, *Reading the proofreading notes*). Relevant settings:
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `correction_level` | `B2` | Target level (CEFR `A1`–`C2`) for every language. The prompt's `{level}` placeholder is filled with it; a custom prompt without `{level}` ignores the setting |
+| `explanation_language` | `""` | Language of the explanations and note tables; empty means the language of the document |
+| `correction_output` | `review` | `review` explains the changes; `text` is *Corrections only (faster)* and is also the automatic fallback when a model cannot answer in the explanation format |
+| `answer_format_review`, `answer_format_text` | `""` | Your own answer format for the two modes (empty = built-in). It tells the model how to fill in its reply; the app reads the reply in this format, so change it only if you know what you are doing. A custom format is tied to `answer_format_version` (written for you by the GUI; without it the current version is assumed). When an update changes the built-in format, an edit written for the older one is dropped with a warning. The Proofreading Settings dialog edits them under *Answer format (advanced)* |
+
+Review answers are bound to a JSON schema. When a model fails to answer the schema (models without the `explanations ✓` badge, such as `gpt-oss:20b`, are more likely to), proofreading falls back to corrections only for that file and says so. A file whose request failed (no connection, timeout) is not stored as corrected, so the next run tries it again. An unknown `correction_level` or `correction_output` in the config file counts as the default (`B2`, `review`); on the command line `--explanations` turns explanations back on when the config file turned them off. The same cache is reused as long as the level, the explanation language, the output mode, the instructions, the answer format and the answer-format version stay unchanged (the built-in texts count as they are, so a changed built-in prompt also re-runs proofreading) — changing any of them re-runs proofreading.
+
 The AI service and model are set in **Settings → Proofreading Settings…**. Local Ollama models require no internet access or account. Online services (OpenAI, Anthropic, Google) require an API access key entered in **Advanced Settings → Connections & API Keys…**.
 
 ### Content review
@@ -322,9 +333,9 @@ Lighter models are sufficient for content review because the task is analytical 
 
 | Provider | Example model |
 |---|---|
-| Ollama | `gemma3:12b`, `llama3.1:8b` |
+| Ollama | `qwen3.5:9b`, `mistral:latest` |
 | OpenAI | `gpt-4o-mini` |
-| Anthropic | `claude-3-haiku-20240307` |
+| Anthropic | `claude-haiku-4-5` |
 | Google | `gemini-2.0-flash` |
 
 ---
@@ -337,8 +348,8 @@ Runs all stages locally with the best available models. Requires a GPU with at l
 
 - OCR: `ocr_engine=ollama`, `ocr_model=qwen3-vl:8b`
 - Image preparation: `preprocess_method=grayscale`
-- Proofreading: `correction_provider=ollama`, `correction_model=gpt-oss:20b`
-- Content review: `evaluate_provider=ollama`, lightweight local model (e.g. `llama3.1:8b`)
+- Proofreading: `correction_provider=ollama`, `correction_model=qwen3.5:9b`, `correction_level=B2`
+- Content review: `evaluate_provider=ollama`, lightweight local model (e.g. `mistral:latest`)
 
 ### Fast offline setup
 

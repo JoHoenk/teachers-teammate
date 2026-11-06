@@ -24,6 +24,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar, Literal, Protocol, runtime_checkable
 
+from .domain.correction_review import CorrectionOutcome, CorrectionReview
 from .domain.formatted_text import FormattedDocument, TextFormat
 
 if TYPE_CHECKING:
@@ -204,12 +205,13 @@ class Corrector(ABC):
     @abstractmethod
     def correct(
         self, raw_text: str, language: str, *, text_format: TextFormat = "plain"
-    ) -> tuple[str, str | None]:
-        """Return ``(corrected_text, warning_or_none)``.
+    ) -> CorrectionOutcome:
+        """Return the proofreading result: corrected text, review and warning.
 
-        On success, return ``(corrected_text, None)``.
-        On recoverable failure (e.g. LLM error), return ``(raw_text, warning_message)``
-        so the caller can surface the warning without failing the file.
+        On success, :attr:`CorrectionOutcome.review` holds the per-change explanations and
+        the unclear expressions; it is ``None`` in corrections-only mode.  On recoverable
+        failure (e.g. LLM error), the outcome keeps *raw_text* and carries a warning, so the
+        caller can surface the warning without failing the file.
 
         Args:
             raw_text: Text to proofread.
@@ -219,7 +221,7 @@ class Corrector(ABC):
                 to the model and keep intact.
 
         Returns:
-            Tuple of corrected text and an optional warning string.
+            A :class:`~.domain.correction_review.CorrectionOutcome`.
         """
 
 
@@ -300,6 +302,7 @@ class DocumentCreator(ABC):
         *,
         source_image: str | Path | None = None,
         text_format: TextFormat = "plain",
+        review: CorrectionReview | None = None,
     ) -> None:
         """Write output document to *out_path*.
 
@@ -311,4 +314,6 @@ class DocumentCreator(ABC):
             source_image: Optional path to the source image for visual preview.
             text_format: Notation of *raw_text* and *corrected_text*; ``"markdown"`` text
                 should be written with its formatting (bold, strikethrough, ...).
+            review: Explanations and unclear expressions of the proofreading, or ``None``
+                when the file was corrected without a review.
         """

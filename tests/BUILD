@@ -127,8 +127,11 @@ _COMMON_SRCS = [
     "gui/_service_stubs.py",
 ]
 
+# infrastructure/correction_schema.py builds the review's JSON schema with pydantic, which
+# every stage that reads a proofreading result imports (directly or through cache_service).
 _COMMON_DEPS = [
     "//teachers_teammate:ocr_lib",
+    "@ocr_test_dependencies//pydantic:pkg",
     "@ocr_test_dependencies//pytest:pkg",
     "@ocr_test_dependencies//pytest_mock:pkg",
 ]
@@ -259,6 +262,24 @@ py_test(
     args = ["unit/test_correction.py"],
     main = "run_test.py",
     deps = _COMMON_DEPS + _FORMAT_DEPS + _LANGCHAIN_DEPS,
+)
+
+py_test(
+    name = "test_correction_review",
+    size = "small",
+    srcs = _COMMON_SRCS + ["unit/test_correction_review.py"],
+    args = ["unit/test_correction_review.py"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS,
+)
+
+py_test(
+    name = "test_correction_presets",
+    size = "small",
+    srcs = _COMMON_SRCS + ["unit/test_correction_presets.py"],
+    args = ["unit/test_correction_presets.py"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS + _PIPELINE_DEPS,
 )
 
 py_test(
@@ -559,7 +580,7 @@ py_test(
     srcs = _COMMON_SRCS + ["unit/test_coordinator.py"],
     args = ["unit/test_coordinator.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS + _REQUESTS_DEPS,
+    deps = _COMMON_DEPS + _FORMAT_DEPS + _REQUESTS_DEPS,
 )
 
 py_test(
@@ -612,6 +633,15 @@ py_test(
     size = "small",
     srcs = _COMMON_SRCS + ["gui/test_gui_formatted_text.py"],
     args = ["gui/test_gui_formatted_text.py"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_lib"],
+)
+
+py_test(
+    name = "test_gui_review_views",
+    size = "small",
+    srcs = _COMMON_SRCS + ["gui/test_gui_review_views.py"],
+    args = ["gui/test_gui_review_views.py"],
     main = "run_test.py",
     deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_lib"],
 )
@@ -802,6 +832,8 @@ test_suite(
         ":test_config",
         ":test_coordinator",
         ":test_correction",
+        ":test_correction_presets",
+        ":test_correction_review",
         ":test_data_location",
         ":test_docx_builder",
         ":test_domain_policy",
@@ -850,6 +882,7 @@ test_suite(
         ":test_gui_main_window",
         ":test_gui_privacy_settings",
         ":test_gui_results_table",
+        ":test_gui_review_views",
         ":test_gui_settings_dialog",
         ":test_gui_update_check",
         ":test_gui_widgets",

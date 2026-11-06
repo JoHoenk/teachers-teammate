@@ -19,6 +19,11 @@ What it does:
 * With ``--ollama``, additionally asks a local Ollama server (``ollama show``)
   for each model's capabilities and prints whether it can read images — this is
   how the gemma4:12b open question (plan §10) can be settled.
+* With ``--structured-output``, sends the proofreading answer format to every writing
+  model and checks that the answer is valid JSON-schema output and that at least
+  90 % of the returned sentences can be spliced back into the text.  The verdict
+  is what ``OllamaModelSpec.structured_output`` records; enter it in the catalog
+  by hand, as the download sizes are.  Needs a pulled model.
 """
 
 from __future__ import annotations
@@ -30,6 +35,7 @@ import urllib.request
 
 sys.path.insert(0, ".")
 
+from teachers_teammate.domain.correction_review import splice  # noqa: E402
 from teachers_teammate.domain.model_catalog import OLLAMA_CATALOG  # noqa: E402
 
 _REGISTRY = "https://registry.ollama.ai"
@@ -153,6 +159,115 @@ def _check_capabilities(tag: str, url: str) -> None:
     print(f"{tag}: capabilities={sorted(caps)} → {'READS images' if vision else 'text only'}")
 
 
+# ── Structured output (proofreading review) ───────────────────────────────────
+#
+# Three fixture texts cover the shapes the answer format has to handle: plain English, plain
+# German and Markdown with formatting marks.  A model passes when every answer is valid
+# JSON for the schema and at least 90 % of its sentences can be placed in the text.
+
+_PLACEMENT_THRESHOLD = 0.90
+_STRUCTURED_TIMEOUT = 300.0
+
+_FIXTURES: tuple[tuple[str, str, str, str], ...] = (
+    (
+        "plain EN",
+        "english",
+        "Yesterday she have gone to the cinema with his friend. "
+        "It was very nice because they was there for the first time.",
+        "plain",
+    ),
+    (
+        "plain DE",
+        "german",
+        "Gestern hat sie ins Kino gegangen mit sein Freundin. "
+        "Es war sehr schön weil sie war dort zum ersten Mal.",
+        "plain",
+    ),
+    (
+        "Markdown",
+        "english",
+        "Dear **diary**, my ~~backpack~~ passport and me went to school.\n\n"
+        "- it was *very* nice\n- we have see a film",
+        "markdown",
+    ),
+)
+
+
+def _review_prompt(language: str, text_format: str, text: str) -> tuple[str, str]:
+    """Return ``(system, user)`` of the request the corrector would send for *text*."""
+    from teachers_teammate.infrastructure.correction import (  # noqa: PLC0415
+        _human_message,
+        _instructions,
+    )
+
+    system = _instructions(
+        "",
+        language,
+        level="B2",
+        text_format=text_format,
+        mode="review",
+    )
+    return system, _human_message(text, language, language, "review")
+
+
+def _placeable(answer_json: str, source: str) -> tuple[int, int] | None:
+    """Return ``(placed, total)`` sentences of an answer for *source*; ``None`` if it is invalid."""
+    from teachers_teammate.infrastructure.correction_schema import (  # noqa: PLC0415
+        to_review,
+        validate_answer,
+    )
+
+    answer, _error = validate_answer(answer_json)
+    if answer is None:
+        return None
+    review = to_review(answer)
+    total = len(review.sentences)
+    if not total:
+        return 0, 0
+    _text, unplaced = splice(source, review.sentences)
+    return total - len(unplaced), total
+
+
+def _check_structured_output(tag: str, url: str) -> bool:
+    """Return whether *tag* answers the review answer format reliably."""
+    from teachers_teammate.infrastructure.correction_schema import schema_json  # noqa: PLC0415
+    from teachers_teammate.infrastructure.ollama_utils import OllamaClient  # noqa: PLC0415
+
+    client = OllamaClient(url)
+    ok = True
+    for name, language, text, text_format in _FIXTURES:
+        try:
+            system, user = _review_prompt(language, text_format, text)
+            raw = client.chat(
+                tag,
+                user,
+                options={"temperature": 0},
+                timeout=_STRUCTURED_TIMEOUT,
+                format=schema_json(),
+                system=system,
+            )
+        except Exception as exc:  # noqa: BLE001  # a missing or failing model must not stop the other models
+            print(f"{tag} {name}: request failed ({exc})")
+            ok = False
+            continue
+        counts = _placeable(raw, text)
+        if counts is None:
+            print(f"{tag} {name}: answer did not validate against the schema")
+            ok = False
+            continue
+        placed, total = counts
+        if not total:
+            # The fixtures are full of mistakes: an empty list is a useless answer.
+            print(f"{tag} {name}: valid answer, but it lists no sentences [NO SENTENCES]")
+            ok = False
+            continue
+        ratio = placed / total
+        verdict = "OK" if ratio >= _PLACEMENT_THRESHOLD else "TOO FEW PLACED"
+        print(f"{tag} {name}: {placed}/{total} sentences placed [{verdict}]")
+        ok = ok and ratio >= _PLACEMENT_THRESHOLD
+    return ok
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -160,6 +275,12 @@ def main() -> int:
         action="store_true",
         help="Also ask a local Ollama server (OLLAMA_URL, default "
         "http://127.0.0.1:11434) for each model's capabilities.",
+    )
+    parser.add_argument(
+        "--structured-output",
+        action="store_true",
+        help="Send the proofreading answer format to every writing model and report whether "
+        "it answers it reliably (sets OllamaModelSpec.structured_output).",
     )
     parser.add_argument("--ollama-url", default="http://127.0.0.1:11434")
     args = parser.parse_args()
@@ -172,6 +293,15 @@ def main() -> int:
         print("\n── capabilities via local Ollama server ──")
         for spec in OLLAMA_CATALOG:
             _check_capabilities(spec.tag, args.ollama_url)
+    if args.structured_output:
+        print("\n── structured output (proofreading review) ──")
+        for spec in OLLAMA_CATALOG:
+            if spec.category != "general":
+                continue
+            verdict = _check_structured_output(spec.tag, args.ollama_url)
+            print(f"  → catalog: structured_output={verdict} (currently {spec.structured_output})")
+            if verdict != spec.structured_output:
+                failures += 1
 
     print(f"\n{len(OLLAMA_CATALOG) - failures}/{len(OLLAMA_CATALOG)} tags verified")
     return 1 if failures else 0

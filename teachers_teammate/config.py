@@ -17,6 +17,9 @@ import tomllib
 from typing import Any
 
 from ._model_defaults import default_model_for_task
+from .domain.answer_format import ANSWER_FORMAT_VERSION, migrate_saved_formats
+from .domain.correction_policy import DEFAULT_LEVEL, normalize_level, normalize_output_mode
+from .domain.correction_prompts import migrate_saved_default, migrate_saved_prompt
 from .domain.data_location import LOCAL_OCR_ENGINES
 from .domain.model_catalog import DEFAULT_OCR_MODEL, DEFAULT_WRITING_MODEL, PROFILE_SETTINGS
 from .domain.pdf_text_layer import (
@@ -55,6 +58,17 @@ DEFAULTS: dict[str, Any] = {
     "correction_provider": "ollama",
     "correction_model": DEFAULT_WRITING_MODEL,
     "correction_prompt": "",
+    # CEFR level of the proofreading (A1-C2); language-neutral, so one setting for all languages.
+    "correction_level": DEFAULT_LEVEL,
+    # "" = same as the language of the text. Otherwise the language of the explanations.
+    "explanation_language": "",
+    # "review" = corrections + explanations + unclear list; "text" = corrections only.
+    "correction_output": "review",
+    # The teacher's own answer format for the two modes ("" = built-in), and the answer-format
+    # version they were written for; an edit written for another version is dropped on load.
+    "answer_format_review": "",
+    "answer_format_text": "",
+    "answer_format_version": ANSWER_FORMAT_VERSION,
     "correction_temperature": 0.7,
     # ── Evaluation ────────────────────────────────────────────────────────────
     "evaluation_enabled": False,
@@ -190,6 +204,11 @@ class Config:
     correction_provider: str
     correction_model: str
     correction_prompt: str = DEFAULTS["correction_prompt"]
+    correction_level: str = DEFAULTS["correction_level"]
+    explanation_language: str = DEFAULTS["explanation_language"]
+    correction_output: str = DEFAULTS["correction_output"]
+    answer_format_review: str = DEFAULTS["answer_format_review"]
+    answer_format_text: str = DEFAULTS["answer_format_text"]
     anonymization_enabled: bool = DEFAULTS["anonymization_enabled"]
 
     # ── Evaluation ────────────────────────────────────────────────────────────
@@ -268,6 +287,34 @@ def unavailable_ocr_engine(path: Path) -> str:
     return str(engine)
 
 
+def migrate_answer_formats(values: dict) -> bool:
+    """Reset edited answer formats in *values* that were written for another version.
+
+    Works in place on a settings dict (config file or GUI settings); returns whether a
+    teacher's edit was dropped, after saying so on stderr.  Without a stored version the
+    current one is assumed, so a hand-written config file works.
+    """
+    try:
+        version = int(values.get("answer_format_version", ANSWER_FORMAT_VERSION))
+    except (TypeError, ValueError):
+        version = -1
+    review, text, reset = migrate_saved_formats(
+        str(values.get("answer_format_review", "")),
+        str(values.get("answer_format_text", "")),
+        version,
+    )
+    values["answer_format_review"] = review
+    values["answer_format_text"] = text
+    values["answer_format_version"] = ANSWER_FORMAT_VERSION
+    if reset:
+        print(
+            "WARNING: your edited answer format was written for an older version of the app "
+            "and is not used. The built-in format is used instead.",
+            file=sys.stderr,
+        )
+    return reset
+
+
 def load_config_file(path: Path) -> dict:
     """Parse *path* as TOML and return a dict of recognised pipeline keys.
 
@@ -296,6 +343,12 @@ def load_config_file(path: Path) -> dict:
         "correction_provider",
         "correction_model",
         "correction_prompt",
+        "correction_level",
+        "explanation_language",
+        "correction_output",
+        "answer_format_review",
+        "answer_format_text",
+        "answer_format_version",
         "correction_temperature",
         "evaluation_enabled",
         "evaluate_provider",
@@ -363,6 +416,25 @@ def load_config_file(path: Path) -> dict:
             file=sys.stderr,
         )
         del result["hardware_profile"]
+
+    # A typo must not mean different things in different layers: unknown values fall back to
+    # the defaults (level B2, explanations on), as the GUI does.
+    if "correction_level" in result:
+        result["correction_level"] = normalize_level(str(result["correction_level"]))
+    if "correction_output" in result:
+        result["correction_output"] = normalize_output_mode(str(result["correction_output"]))
+
+    # Settings files from versions without the review window store the built-in prompt
+    # *text*.  Reset such copies to "" ("use the built-in prompt"); a copy would be sent
+    # as a custom policy next to answer-format rules that say the opposite.
+    if "correction_prompt" in result:
+        result["correction_prompt"] = migrate_saved_prompt(str(result["correction_prompt"]))
+    if "answer_format_review" in result or "answer_format_text" in result:
+        migrate_answer_formats(result)
+    if "evaluate_prompt" in result:
+        result["evaluate_prompt"] = migrate_saved_default(
+            str(result["evaluate_prompt"]), DEFAULTS["evaluate_prompt"]
+        )
 
     return result
 

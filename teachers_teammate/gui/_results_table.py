@@ -21,6 +21,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ..domain.correction_review import CorrectionReview
+from . import _user_text as txt
 from ._constants import (
     _COLOUR_CACHED,
     _COLOUR_CORRECTION_BAR,
@@ -103,6 +105,8 @@ class ResultsTable(QTableWidget):
     _ROLE_SOURCE = Qt.ItemDataRole.UserRole + 5
     _ROLE_PREPROCESS = Qt.ItemDataRole.UserRole + 6  # PreprocessInfo
     _ROLE_TEXT_FORMAT = Qt.ItemDataRole.UserRole + 7  # "plain" | "markdown"
+    _ROLE_REVIEW = Qt.ItemDataRole.UserRole + 8  # CorrectionReview
+    _ROLE_CORRECTION_WARNING = Qt.ItemDataRole.UserRole + 9  # str
 
     _STAGE_ACTIVE_COLORS: ClassVar[dict[int, str]] = {
         _COL_OCR: _COLOUR_OCR_BAR,
@@ -186,12 +190,14 @@ class ResultsTable(QTableWidget):
         item = self.item(row, col)
         if item is not None:
             item.setText(symbol)
+            item.setToolTip("")  # a new status drops the old ``?n`` badge's tooltip
             item.setForeground(QColor(color))
             item.setFont(_STAGE_FONT)
 
     def _stage_symbol(self, row: int, col: int) -> str:
+        """Return the status symbol of a stage cell, without a trailing ``?n`` badge."""
         item = self.item(row, col)
-        return item.text() if item is not None else ""
+        return item.text().split(maxsplit=1)[0] if item is not None and item.text() else ""
 
     def _add_preview_button(self, row: int, source_id: str) -> None:
         btn = QPushButton("Open Preview")
@@ -346,6 +352,21 @@ class ResultsTable(QTableWidget):
             file_item.setData(self._ROLE_CORR, corr_txt)
             file_item.setData(self._ROLE_EVAL, eval_txt)
 
+    def set_correction_review(
+        self,
+        source_id: str,
+        review: CorrectionReview | None,
+        warning: str = "",
+    ) -> None:
+        """Record *source_id*'s proofreading review (and why it has none) and badge it."""
+        row = self._row_for_source(source_id)
+        item = self.item(row, self._COL_FILE) if row is not None else None
+        if row is None or item is None:
+            return
+        item.setData(self._ROLE_REVIEW, review)
+        item.setData(self._ROLE_CORRECTION_WARNING, warning)
+        self._refresh_unclear_badge(row, review)
+
     def set_row_artifacts(
         self,
         source_id: str,
@@ -407,6 +428,40 @@ class ResultsTable(QTableWidget):
         text_format = item.data(self._ROLE_TEXT_FORMAT)
         return "markdown" if text_format == "markdown" else "plain"
 
+    def review_for_source(self, source_id: str) -> CorrectionReview | None:
+        """Return *source_id*'s proofreading review, or ``None`` when it has none."""
+        row = self._row_for_source(source_id)
+        item = self.item(row, self._COL_FILE) if row is not None else None
+        if item is None:
+            return None
+        review = item.data(self._ROLE_REVIEW)
+        return review if isinstance(review, CorrectionReview) else None
+
+    def correction_warning_for_source(self, source_id: str) -> str:
+        """Return why *source_id* has no review (empty when it has one or none is known)."""
+        row = self._row_for_source(source_id)
+        item = self.item(row, self._COL_FILE) if row is not None else None
+        if item is None:
+            return ""
+        return str(item.data(self._ROLE_CORRECTION_WARNING) or "")
+
+    def _refresh_unclear_badge(self, row: int, review: CorrectionReview | None) -> None:
+        """Append the ``?n`` unclear badge to the proofreading cell when there is a review."""
+        item = self.item(row, self._COL_CORRECTION)
+        if item is None or self.cellWidget(row, self._COL_CORRECTION) is not None:
+            # A cell widget carries the warning/error info; the badge would be hidden.
+            return
+        symbol = self._stage_symbol(row, self._COL_CORRECTION)
+        if not symbol.startswith(_DONE_SYMBOL):
+            return
+        count = review.unclear_count if review is not None else 0
+        if count:
+            item.setText(f"{symbol} {txt.unclear_badge(count)}")
+            item.setToolTip(txt.filter_unclear_label(count))
+        else:
+            item.setText(symbol)
+            item.setToolTip("")
+
     def source_id_for_row(self, row: int) -> str:
         item = self.item(row, self._COL_FILE)
         if item is None:
@@ -426,49 +481,13 @@ class ResultsTable(QTableWidget):
         source_id = event.source_id
         name = event.name
         ok = event.ok
-        message = event.message
         preview_img = event.preview_img
         raw_txt = event.raw_txt
         corr_txt = event.corr_txt
         eval_txt = event.eval_txt
 
-        row = self._row_for_source(source_id)
-        if row is None:
-            row = self.rowCount()
-            self.insertRow(row)
-            self._row_by_source[source_id] = row
-            self.setItem(row, self._COL_FILE, QTableWidgetItem(name))
-            for col in (self._COL_OCR, self._COL_CORRECTION, self._COL_EVALUATION):
-                cell = QTableWidgetItem(_PENDING_SYMBOL)
-                cell.setForeground(QColor(_PENDING_COLOR))
-                cell.setFont(_STAGE_FONT)
-                self.setItem(row, col, cell)
-            self.setItem(row, self._COL_DURATION, QTableWidgetItem(""))
-            self._add_preview_button(row, source_id)
-
-        # Finalize stage cells based on outcome and artifact presence
-        for col, artifact in (
-            (self._COL_OCR, raw_txt),
-            (self._COL_CORRECTION, corr_txt),
-            (self._COL_EVALUATION, eval_txt),
-        ):
-            sym = self._stage_symbol(row, col)
-            if ok:
-                if sym == _RUNNING_SYMBOL:
-                    if message:
-                        # Stage-level warning: overall ok but this stage had a non-fatal error.
-                        # (The coordinator passes "" when all stages succeeded, or the warning
-                        # text when a stage like correction fell back to the original text.)
-                        self._set_warning_info_widget(row, col, message)
-                    else:
-                        self._set_stage_cell(row, col, _DONE_SYMBOL, _COLOUR_OK)
-                elif sym == _PENDING_SYMBOL and artifact:
-                    self._set_stage_cell(row, col, _DONE_SYMBOL, _COLOUR_OK)
-            elif sym == _RUNNING_SYMBOL:
-                self._set_stage_cell(row, col, _FAIL_SYMBOL, _COLOUR_ERROR)
-                if message:
-                    self._set_error_info_widget(row, col, message)
-
+        row = self._ensure_row(source_id, name)
+        self._finalize_stage_cells(row, event, (raw_txt, corr_txt, eval_txt))
         self.setItem(row, self._COL_DURATION, QTableWidgetItem(f"{event.total_s:.1f} s"))
 
         # Tint entire row for at-a-glance overall status
@@ -486,9 +505,56 @@ class ResultsTable(QTableWidget):
             file_item.setData(self._ROLE_RAW, raw_txt)
             file_item.setData(self._ROLE_CORR, corr_txt)
             file_item.setData(self._ROLE_EVAL, eval_txt)
+            file_item.setData(self._ROLE_REVIEW, event.correction_review)
+            file_item.setData(self._ROLE_CORRECTION_WARNING, event.correction_warning)
+        self._refresh_unclear_badge(row, event.correction_review)
 
         self.resizeColumnToContents(self._COL_FILE)
         self.resizeColumnToContents(self._COL_DURATION)
+
+    def _ensure_row(self, source_id: str, name: str) -> int:
+        """Return *source_id*'s row, appending a fresh pending row when it has none."""
+        row = self._row_for_source(source_id)
+        if row is not None:
+            return row
+        row = self.rowCount()
+        self.insertRow(row)
+        self._row_by_source[source_id] = row
+        self.setItem(row, self._COL_FILE, QTableWidgetItem(name))
+        for col in (self._COL_OCR, self._COL_CORRECTION, self._COL_EVALUATION):
+            cell = QTableWidgetItem(_PENDING_SYMBOL)
+            cell.setForeground(QColor(_PENDING_COLOR))
+            cell.setFont(_STAGE_FONT)
+            self.setItem(row, col, cell)
+        self.setItem(row, self._COL_DURATION, QTableWidgetItem(""))
+        self._add_preview_button(row, source_id)
+        return row
+
+    def _finalize_stage_cells(
+        self, row: int, event: FileDoneEvent, artifacts: tuple[str, str, str]
+    ) -> None:
+        """Turn the running/pending stage cells into done, warning or error cells."""
+        ok = event.ok
+        message = event.message
+        for col, artifact in zip(
+            (self._COL_OCR, self._COL_CORRECTION, self._COL_EVALUATION), artifacts, strict=False
+        ):
+            sym = self._stage_symbol(row, col)
+            if ok:
+                if sym == _RUNNING_SYMBOL:
+                    if message:
+                        # Stage-level warning: overall ok but this stage had a non-fatal error.
+                        # (The coordinator passes "" when all stages succeeded, or the warning
+                        # text when a stage like correction fell back to the original text.)
+                        self._set_warning_info_widget(row, col, message)
+                    else:
+                        self._set_stage_cell(row, col, _DONE_SYMBOL, _COLOUR_OK)
+                elif sym == _PENDING_SYMBOL and artifact:
+                    self._set_stage_cell(row, col, _DONE_SYMBOL, _COLOUR_OK)
+            elif sym == _RUNNING_SYMBOL:
+                self._set_stage_cell(row, col, _FAIL_SYMBOL, _COLOUR_ERROR)
+                if message:
+                    self._set_error_info_widget(row, col, message)
 
     def clear_results(self) -> None:
         self.setRowCount(0)

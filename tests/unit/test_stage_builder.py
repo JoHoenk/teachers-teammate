@@ -252,3 +252,29 @@ def test_anonymizer_keeps_custom_and_empty_pattern_lists(tmp_path: Path) -> None
         config = make_config(tmp_path, text_anonymized_enabled=True, anonymizer_patterns=patterns)
         StageBuilder(config=config, factory=factory).build_text_anonymizer()
         assert factory.build_anonymizer.call_args.args[1].patterns == tuple(patterns)
+
+
+@pytest.mark.parametrize(
+    ("provider", "model", "chosen"),
+    [
+        ("ollama", "gpt-oss:20b", "review"),
+        ("ollama", "qwen3.5:9b", "review"),
+        ("openai", "gpt-4o-mini", "review"),
+        ("ollama", "gpt-oss:20b", "text"),
+    ],
+)
+def test_correction_settings_keep_the_chosen_output_mode_for_every_model(
+    tmp_path: Path, provider: str, model: str, chosen: str
+) -> None:
+    """
+    Given  a configuration with any model, including one not checked for the review schema
+    When   the stage builder collects the corrector settings
+    Then   the output mode is the one the teacher chose; an unusable answer falls back per file
+           inside the corrector, not here
+    """
+    config = make_config(
+        tmp_path, correction_provider=provider, correction_model=model, correction_output=chosen
+    )
+    builder = StageBuilder(config=config, factory=PipelineComponentFactory())
+
+    assert builder._correction_settings().output_mode == chosen

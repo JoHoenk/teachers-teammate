@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 import logging
 from pathlib import Path
 import threading
 from typing import TYPE_CHECKING
 
+from ...domain.correction_review import CorrectionReview
 from ...domain.formatted_text import TextFormat, join_labelled_pages, normalize_text_format
 from ...domain.output_files import (
     ANONYMIZED_TEXT_SUFFIX,
@@ -43,6 +44,19 @@ class ProcessingResult:
     warnings: tuple[str, ...] = ()
     text_format: TextFormat = "plain"
     """Notation of ``raw_text`` and ``correction_text`` (``"plain"`` or ``"markdown"``)."""
+    correction_review: CorrectionReview | None = None
+    """Explanations and unclear expressions of the proofreading, ``None`` without a review."""
+    correction_warning: str = ""
+    """Why this file has no review (e.g. the fallback to corrections-only); empty when none."""
+
+
+@dataclass(frozen=True)
+class _OutputTexts:
+    """The three texts one output pass writes: source, proofread and evaluation."""
+
+    raw: str
+    corrected: str
+    evaluation: str
 
 
 @dataclass(frozen=True)
@@ -135,7 +149,7 @@ class FileProcessor:
                     )
                 )
 
-            correction_text, ctx, correction_warnings = self._run_correction_or_cache(
+            correction_text, review, ctx, correction_warnings = self._run_correction_or_cache(
                 file, raw_text, preview_img, ctx
             )
             evaluation_text, eval_warnings = self._run_evaluation_or_cache(
@@ -145,16 +159,16 @@ class FileProcessor:
         except _StageAbort as abort:
             return abort.result
 
-        return self._write_outputs(
+        result = self._write_outputs(
             file,
-            raw_text,
-            correction_text,
-            evaluation_text,
+            _OutputTexts(raw_text, correction_text, evaluation_text),
             preview_img,
             source_image,
             all_warnings,
             text_format=text_format,
+            review=review,
         )
+        return replace(result, correction_warning="; ".join(correction_warnings))
 
     # ── Stage helpers ─────────────────────────────────────────────────────
 
@@ -388,36 +402,68 @@ class FileProcessor:
 
     def _run_correction_or_cache(
         self, file: Path, raw_text: str, preview_img: str, ctx: CacheContext
-    ) -> tuple[str, CacheContext, list[str]]:
+    ) -> tuple[str, CorrectionReview | None, CacheContext, list[str]]:
         if self._correction is None:
-            return "", ctx, []
+            return "", None, ctx, []
 
         cache_state = ctx.state
         if cache_state.correction_done and cache_state.correction_text:
             self._reporter.status("       → Using cached correction output")
-            return cache_state.correction_text, ctx, []
+            review = CorrectionReview.from_dict(cache_state.correction_review)
+            warnings = [cache_state.correction_warning] if cache_state.correction_warning else []
+            return cache_state.correction_text, review, ctx, warnings
 
         self._reporter.status("       → Running correction...")
         text_for_correction, anon_map = self._anonymize_for("correction", raw_text)
 
         text_format = self._text_format(ctx)
-        corrected_text, corr_warning = self._correction.correct(
+        outcome = self._correction.correct(
             text_for_correction, self._language, text_format=text_format
         )
         corrected_text = self._restore_pii(
-            corrected_text or "", anon_map, preview_img=preview_img, raw_text=raw_text
+            outcome.text or "", anon_map, preview_img=preview_img, raw_text=raw_text
         )
-        corr_warnings: list[str] = [corr_warning] if corr_warning else []
+        review = self._restore_review_pii(outcome.review, anon_map, file.name)
+        corr_warnings: list[str] = [outcome.warning] if outcome.warning else []
 
-        if corrected_text:
+        # A failed call returns the unchanged source; caching it would present that as a finished
+        # correction and the next run would never try again.  (A corrections-only fallback
+        # *is* stored: the model answered, and asking it for explanations again would repeat
+        # the failed requests.)
+        if corrected_text and not outcome.failed:
             try:
                 ctx = self._cache_service.record_correction(
-                    file, ctx, correction_text=corrected_text
+                    file,
+                    ctx,
+                    correction_text=corrected_text,
+                    correction_review=review.to_dict() if review is not None else None,
+                    correction_warning=outcome.warning or "",
                 )
             except OSError as exc:
                 _logger.warning("Could not save correction state for %s: %s", file.name, exc)
 
-        return corrected_text, ctx, corr_warnings
+        return corrected_text, review, ctx, corr_warnings
+
+    def _restore_review_pii(
+        self,
+        review: CorrectionReview | None,
+        anon_map: AnonymizationMap,
+        file_name: str,
+    ) -> CorrectionReview | None:
+        """Put the real personal data back into every text field of *review*.
+
+        The corrector answers about the anonymized text, so anchors and explanations quote
+        placeholders.  Failure is not fatal here: a review that cannot be restored is dropped,
+        which shows the plain diff and keeps the correction itself.
+        """
+        anonymizer = self._anonymizer
+        if review is None or not anon_map or anonymizer is None:
+            return review
+        try:
+            return review.map_text(lambda value: anonymizer.restore(value, anon_map))
+        except (ValueError, KeyError) as exc:
+            _logger.warning("Could not restore PII in the review of %s: %s", file_name, exc)
+            return None
 
     def _run_evaluation_or_cache(
         self,
@@ -511,24 +557,24 @@ class FileProcessor:
     def _write_outputs(
         self,
         file: Path,
-        raw_text: str,
-        corrected_text: str,
-        evaluation_text: str,
+        texts: _OutputTexts,
         preview_img: str,
         source_image: Path | None,
         warnings: tuple[str, ...] = (),
         *,
         text_format: TextFormat = "plain",
+        review: CorrectionReview | None = None,
     ) -> ProcessingResult:
         def failed(message: str) -> ProcessingResult:
             return ProcessingResult(
                 False,
                 message,
                 preview_img,
-                raw_text,
-                corrected_text,
-                evaluation_text,
+                texts.raw,
+                texts.corrected,
+                texts.evaluation,
                 text_format=text_format,
+                correction_review=review,
             )
 
         targets = self._planned_outputs(file)
@@ -543,18 +589,19 @@ class FileProcessor:
                 docx_file = targets[DOCX_SUFFIX]
                 docx_file.parent.mkdir(parents=True, exist_ok=True)
                 self._doc_creator.create(
-                    raw_text,
-                    corrected_text,
+                    texts.raw,
+                    texts.corrected,
                     docx_file,
                     docx_file.stem,
                     source_image=source_image,
                     text_format=text_format,
+                    review=review,
                 )
                 saved.append(self._shown(docx_file))
         except Exception as exc:  # noqa: BLE001  # python-docx / PIL errors vary widely; surface message without crashing
             return failed(f"DOCX creation failed: {exc}")
         try:
-            self._write_text_files(targets, raw_text, text_format, saved)
+            self._write_text_files(targets, texts.raw, text_format, saved)
         except Exception as exc:  # noqa: BLE001  # NER / file-system errors vary; surface message without crashing
             already = f" (already saved: {', '.join(saved)})" if saved else ""
             return failed(f"Text file creation failed: {exc}{already}")
@@ -562,11 +609,12 @@ class FileProcessor:
             True,
             ", ".join(saved) or "results cached (no output files)",
             preview_img,
-            raw_text,
-            corrected_text,
-            evaluation_text,
+            texts.raw,
+            texts.corrected,
+            texts.evaluation,
             warnings,
             text_format=text_format,
+            correction_review=review,
         )
 
     def _write_text_files(

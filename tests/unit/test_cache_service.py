@@ -193,6 +193,71 @@ def test_correction_config_hash_changes_with_anonymization(tmp_path: Path) -> No
     assert plain._correction_config_hash() != hidden._correction_config_hash()
 
 
+@pytest.mark.parametrize(
+    "override",
+    [
+        {"correction_level": "C1"},
+        {"explanation_language": "German"},
+        {"correction_output": "text"},
+        {"correction_prompt": "Fix the text at {level}."},
+        {"answer_format_review": "Answer in JSON."},
+        {"answer_format_text": "Return the text."},
+    ],
+)
+def test_correction_config_hash_changes_with_the_review_settings(
+    tmp_path: Path, override: dict[str, str]
+) -> None:
+    """
+    Given  two services differing only in the level, explanation language or output mode
+    When   _correction_config_hash() is called on each
+    Then   the hashes differ, so a changed review setting re-runs the proofreading
+    """
+    base, _, _ = _make_svc(tmp_path, correction_enabled=True)
+    changed, _, _ = _make_svc(tmp_path, correction_enabled=True, **override)
+
+    assert base._correction_config_hash() != changed._correction_config_hash()
+
+
+def test_correction_config_hash_changes_with_the_contract_version(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """
+    Given  a service and a bumped contract version
+    When   _correction_config_hash() is called before and after the bump
+    Then   the hashes differ, so changing the answer format re-runs the proofreading
+    """
+    from teachers_teammate.infrastructure.workflow import cache_service  # noqa: PLC0415
+
+    svc, _, _ = _make_svc(tmp_path, correction_enabled=True)
+    before = svc._correction_config_hash()
+
+    monkeypatch.setattr(cache_service, "CONTRACT_VERSION", cache_service.CONTRACT_VERSION + 1)
+
+    assert svc._correction_config_hash() != before
+
+
+def test_correction_config_hash_follows_the_built_in_prompt_text(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """
+    Given  a service that uses the built-in prompt (the setting is "")
+    When   the built-in preset text of its language changes
+    Then   the hash changes, so results made with the old text are not served as fresh
+    """
+    from teachers_teammate.infrastructure import correction  # noqa: PLC0415
+
+    svc, _, _ = _make_svc(tmp_path, correction_enabled=True, correction_prompt="")
+    before = svc._correction_config_hash()
+
+    monkeypatch.setattr(
+        correction,
+        "PROMPTS",
+        dict.fromkeys(correction.PROMPTS, "Changed preset at {level}."),
+    )
+
+    assert svc._correction_config_hash() != before
+
+
 def test_eval_config_hash_changes_with_anonymization(tmp_path: Path) -> None:
     """
     Given  two services differing only in whether personal info is removed
@@ -478,6 +543,8 @@ def test_record_correction_delegates_to_repo(tmp_path: Path) -> None:
         correction_text="corrected",
         correction_prompt="",  # make_config default
         correction_config_hash=ctx.correction_config_hash,
+        correction_review=None,
+        correction_warning="",
     )
     assert result.state is new_state
     assert result.correction_config_hash == ctx.correction_config_hash

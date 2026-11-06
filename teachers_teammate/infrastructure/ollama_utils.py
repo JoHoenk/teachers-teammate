@@ -372,6 +372,8 @@ class OllamaClient:
         options: dict | None = None,
         think: bool | None = False,
         timeout: float = 120.0,
+        format: dict | str | None = None,  # pylint: disable=redefined-builtin  # the ollama API's name
+        system: str = "",
     ) -> str:
         """Send a chat request and return the concatenated response text.
 
@@ -385,6 +387,10 @@ class OllamaClient:
                      Forwarded to Ollama; ignored (with a no-``think`` retry) on
                      older clients or models that don't support it.
             timeout: Overall request timeout in seconds.
+            system:  Optional system message sent before the user message.
+            format:  Optional response format.  A JSON schema (dict) makes Ollama
+                     constrain the decoding to that schema, which is how proofreading
+                     gets a machine-readable answer; ``None`` leaves it free-form.
 
         Raises:
             :exc:`~teachers_teammate.exceptions.OCRError`: on any failure.
@@ -396,16 +402,19 @@ class OllamaClient:
         message: dict = {"role": "user", "content": prompt}
         if images:
             message["images"] = images
+        messages = [{"role": "system", "content": system}, message] if system else [message]
 
+        structured: dict = {} if format is None else {"format": format}
         try:
             client = ollama.Client(host=self.base_url, timeout=timeout)
             try:
                 stream = client.chat(
                     model=model,
-                    messages=[message],
+                    messages=messages,
                     stream=True,
                     options=options,
                     think=think,
+                    **structured,
                 )
             except (TypeError, ollama.ResponseError):
                 # Older ollama clients lack the ``think`` kwarg (TypeError) and
@@ -413,12 +422,15 @@ class OllamaClient:
                 # it. The output cleaner strips any leaked reasoning regardless.
                 stream = client.chat(
                     model=model,
-                    messages=[message],
+                    messages=messages,
                     stream=True,
                     options=options,
+                    **structured,
                 )
         except ollama.ResponseError as exc:
-            raise OCRError(f"HTTP error from Ollama: {exc}") from exc
+            raise OCRError(
+                f"HTTP error from Ollama: {exc}", status_code=getattr(exc, "status_code", None)
+            ) from exc
         except Exception as exc:
             raise OCRError(f"cannot connect to Ollama at {self.base_url} — {exc}") from exc
 

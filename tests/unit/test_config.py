@@ -16,6 +16,7 @@ from teachers_teammate.config import (
     load_config_file,
     unavailable_ocr_engine,
 )
+from teachers_teammate.domain.model_catalog import DEFAULT_WRITING_MODEL
 from teachers_teammate.exceptions import ConfigFileNotFoundError, ConfigFileParseError
 from teachers_teammate.infrastructure.storage_root import (
     compute_cache_key,
@@ -77,9 +78,9 @@ def test_resolve_artifact_dir_is_under_output_dir() -> None:
 @pytest.mark.parametrize(
     ("provider", "expected_default"),
     [
-        ("ollama", "gpt-oss:20b"),
+        ("ollama", DEFAULT_WRITING_MODEL),
         ("openai", "gpt-4o-mini"),
-        ("anthropic", "claude-3-haiku-20240307"),
+        ("anthropic", "claude-haiku-4-5"),
         ("google", "gemini-2.0-flash"),
         ("mistral", "mistral-small-latest"),
         ("cohere", "command-r-plus"),
@@ -124,9 +125,9 @@ def test_effective_correction_model_unknown_provider_falls_back() -> None:
 @pytest.mark.parametrize(
     ("provider", "expected_default"),
     [
-        ("ollama", "gpt-oss:20b"),
+        ("ollama", DEFAULT_WRITING_MODEL),
         ("openai", "gpt-4o-mini"),
-        ("anthropic", "claude-3-haiku-20240307"),
+        ("anthropic", "claude-haiku-4-5"),
         ("google", "gemini-2.0-flash"),
         ("mistral", "mistral-small-latest"),
         ("cohere", "command-r-plus"),
@@ -571,3 +572,59 @@ def test_ocr_config_from_settings_maps_flat_keys_and_defaults() -> None:
     assert ocr.dewarp is False
     assert ocr.pdf_text_layer == "never"
     assert ocr.pdf_render_dpi == DEFAULTS["pdf_render_dpi"]
+
+
+def test_load_config_file_resets_saved_preset_prompt_copy(tmp_path: Path) -> None:
+    """
+    Given  a settings file from a released version, which stored the built-in preset text
+    When   load_config_file() is called
+    Then   the preset copy is reset to "" ("use the built-in prompt");
+           and a custom prompt is kept as it is
+    """
+    from teachers_teammate.infrastructure.correction import (  # noqa: PLC0415
+        LEGACY_PRESET_PROMPTS,
+    )
+
+    cfg_file = tmp_path / "ocr.toml"
+    cfg_file.write_text(
+        'correction_prompt = """\n' + LEGACY_PRESET_PROMPTS["german"] + '"""\n'
+        'evaluate_prompt = """\n' + DEFAULTS["evaluate_prompt"] + '"""\n'
+    )
+    result = load_config_file(cfg_file)
+    assert result["correction_prompt"] == ""
+    assert result["evaluate_prompt"] == ""
+
+
+def test_load_config_file_keeps_custom_prompts(tmp_path: Path) -> None:
+    """
+    Given  a settings file with a teacher's own proofreading instructions
+    When   load_config_file() is called
+    Then   both custom prompts are kept unchanged
+    """
+    cfg_file = tmp_path / "ocr.toml"
+    cfg_file.write_text(
+        'correction_prompt = "Fix my students\' homework at {level}."\n'
+        'evaluate_prompt = "Report in German."\n'
+    )
+    result = load_config_file(cfg_file)
+    assert result["correction_prompt"] == "Fix my students' homework at {level}."
+    assert result["evaluate_prompt"] == "Report in German."
+
+
+def test_load_config_file_gives_unknown_correction_settings_their_defaults(
+    tmp_path: Path,
+) -> None:
+    """
+    Given  a settings file with a mistyped level and output mode
+    When   load_config_file() is called
+    Then   both fall back to the defaults, and valid values (any case) are kept
+    """
+    bad = tmp_path / "bad.toml"
+    bad.write_text('correction_level = "D9"\ncorrection_output = "texxt"\n')
+    good = tmp_path / "good.toml"
+    good.write_text('correction_level = "c1"\ncorrection_output = "TEXT"\n')
+
+    assert load_config_file(bad)["correction_level"] == DEFAULTS["correction_level"]
+    assert load_config_file(bad)["correction_output"] == DEFAULTS["correction_output"]
+    assert load_config_file(good)["correction_level"] == "C1"
+    assert load_config_file(good)["correction_output"] == "text"

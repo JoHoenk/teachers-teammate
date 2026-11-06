@@ -556,3 +556,130 @@ def test_saved_online_ocr_engine_falls_back_to_the_local_default(qtbot) -> None:
 
     assert panel.get_settings_dict()["ocr_engine"] == "ollama"
     assert "ocr_provider" not in panel.to_dict()
+
+
+@pytest.mark.gui
+def test_config_panel_language_change_keeps_prompt_empty(qtbot) -> None:
+    """
+    Given  a ConfigPanel with no custom correction prompt ("" = built-in)
+    When   the language is changed
+    Then   the prompt stays empty — "" is a reference to the built-in prompt
+           of the new language, not a stored copy — and no custom note shows
+    """
+    panel = ConfigPanel()
+    qtbot.addWidget(panel)
+
+    panel._language.setCurrentText("German")
+    assert panel.get_correction_prompt() == ""
+    assert not panel._custom_prompt_note.isVisibleTo(panel)
+
+    panel._language.setCurrentText("French")
+    assert panel.get_correction_prompt() == ""
+
+
+@pytest.mark.gui
+def test_config_panel_language_change_notes_custom_prompt(qtbot) -> None:
+    """
+    Given  a ConfigPanel with a custom correction prompt
+    When   the language is changed
+    Then   the "used for every language" note is shown
+    """
+    panel = ConfigPanel()
+    qtbot.addWidget(panel)
+
+    panel.set_correction_prompt("Fix my students' homework at {level}.")
+    panel._language.setCurrentText("German")
+
+    assert panel._custom_prompt_note.isVisibleTo(panel)
+
+
+@pytest.mark.gui
+def test_config_panel_load_resets_saved_preset_copy(qtbot) -> None:
+    """
+    Given  settings values holding the preset text saved by an older version
+    When   load_from_dict() applies them
+    Then   the prompt is reset to "" (built-in), for correction and evaluation
+    """
+    from teachers_teammate.config import DEFAULTS  # noqa: PLC0415
+    from teachers_teammate.infrastructure.correction import LEGACY_PRESET_PROMPTS  # noqa: PLC0415
+
+    panel = ConfigPanel()
+    qtbot.addWidget(panel)
+
+    panel.load_from_dict(
+        {
+            "language": "German",
+            "correction_prompt": LEGACY_PRESET_PROMPTS["german"],
+            "evaluate_prompt": DEFAULTS["evaluate_prompt"],
+        }
+    )
+
+    assert panel.get_correction_prompt() == ""
+    assert panel.get_evaluation_prompt() == ""
+    assert not panel._custom_prompt_note.isVisibleTo(panel)
+
+
+@pytest.mark.gui
+def test_config_panel_load_keeps_custom_prompt(qtbot) -> None:
+    """
+    Given  settings values holding a custom correction prompt
+    When   load_from_dict() applies them
+    Then   the custom text is kept and the custom note is shown
+    """
+    panel = ConfigPanel()
+    qtbot.addWidget(panel)
+
+    panel.load_from_dict(
+        {"language": "German", "correction_prompt": "Fix my students' homework at {level}."}
+    )
+
+    assert panel.get_correction_prompt() == "Fix my students' homework at {level}."
+    assert panel._custom_prompt_note.isVisibleTo(panel)
+
+
+@pytest.mark.gui
+def test_config_panel_round_trips_the_answer_formats(qtbot) -> None:
+    """
+    Given  a teacher's own answer formats
+    When   they are applied to the panel, saved with to_dict() and loaded into a new panel
+    Then   the formats reach the Config the pipeline uses
+    """
+    from teachers_teammate.domain.answer_format import ANSWER_FORMAT_VERSION  # noqa: PLC0415
+
+    panel = ConfigPanel()
+    qtbot.addWidget(panel)
+    panel.update_settings(
+        {
+            "answer_format_review": "R",
+            "answer_format_text": "T",
+            "answer_format_version": ANSWER_FORMAT_VERSION,
+        }
+    )
+
+    saved = panel.to_dict()
+    other = ConfigPanel()
+    qtbot.addWidget(other)
+    other.load_from_dict(saved)
+    config = other.to_config()
+
+    assert (config.answer_format_review, config.answer_format_text) == ("R", "T")
+
+
+@pytest.mark.gui
+def test_config_panel_drops_answer_formats_of_another_version(qtbot, capsys) -> None:
+    """
+    Given  saved settings whose answer formats were written for an older version
+    When   load_from_dict() applies them
+    Then   the built-in formats are used and the reset is announced
+    """
+    panel = ConfigPanel()
+    qtbot.addWidget(panel)
+
+    panel.load_from_dict(
+        {"answer_format_review": "old", "answer_format_text": "old", "answer_format_version": 1}
+    )
+
+    settings = panel.get_settings_dict()
+    assert settings["answer_format_review"] == ""
+    assert settings["answer_format_text"] == ""
+    assert "answer format" in capsys.readouterr().err

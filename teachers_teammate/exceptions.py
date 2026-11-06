@@ -9,8 +9,13 @@ class OCRError(Exception):
 
     The ``args[0]`` message describes the failure (e.g. timeout, HTTP error,
     empty response).  Callers that want a human-readable string can use
-    ``str(exc)`` directly.
+    ``str(exc)`` directly.  ``status_code`` is the HTTP status when the server answered with
+    an error (``None`` for connection failures, timeouts and empty responses).
     """
+
+    def __init__(self, *args: object, status_code: int | None = None) -> None:
+        super().__init__(*args)
+        self.status_code = status_code
 
 
 class ConfigFileNotFoundError(FileNotFoundError):

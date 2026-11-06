@@ -24,6 +24,7 @@ from PySide6.QtWidgets import QWidget
 
 from teachers_teammate.application.service import ProcessingApplicationService
 from teachers_teammate.domain.benchmark import PairComparison, compare_pair
+from teachers_teammate.domain.formatted_text import TextFormat
 from teachers_teammate.domain.model_catalog import (
     OLLAMA_CATALOG,
     DetectionReason,
@@ -88,6 +89,40 @@ class FakeGuiService(LocalDataFlowStub):
     def missing_provider_package(self, provider: str) -> str | None:
         _ = provider
         return None
+
+    def list_correction_prompt_presets(self) -> dict[str, str]:
+        return {}
+
+    def default_correction_prompt(self) -> str:
+        return ""
+
+    def correction_instructions(
+        self,
+        *,
+        prompt: str,
+        language: str,
+        level: str = "B2",
+        output_mode: str = "review",
+        text_format: TextFormat = "plain",
+        answer_format: str = "",
+    ) -> tuple[str, str]:
+        _ = (prompt, language, level, output_mode, text_format, answer_format)
+        return "", ""
+
+    def default_answer_formats(self) -> tuple[str, str]:
+        from teachers_teammate.domain.answer_format import (  # noqa: PLC0415
+            REVIEW_FORMAT,
+            TEXT_FORMAT,
+        )
+
+        return REVIEW_FORMAT, TEXT_FORMAT
+
+    def correction_notation_hint(self) -> str:
+        return ""
+
+    def evaluation_fixed_instructions(self, text_format: TextFormat = "plain") -> str:
+        _ = text_format
+        return ""
 
     def default_model_for_task(self, provider: str, task: str) -> str:
         return f"{provider}-{task}"

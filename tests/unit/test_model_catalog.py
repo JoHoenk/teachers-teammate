@@ -16,6 +16,7 @@ from teachers_teammate.domain.model_catalog import (
     OLLAMA_CATALOG,
     PROFILE_SETTINGS,
     RECOMMENDED,
+    STRUCTURED_OUTPUT_UNVERIFIED_MODEL,
     DetectionReason,
     HardwareDetection,
     HardwareProfile,
@@ -126,7 +127,7 @@ def test_normalize_tag_leaves_tagged_names_unchanged() -> None:
         (DEFAULT_OCR_MODEL, "16gb", Suitability.BEST),
         ("glm-ocr:q8_0", "cpu", Suitability.BEST),
         ("qwen3.5:9b", "8gb", Suitability.BEST),
-        ("gpt-oss:20b", "16gb", Suitability.BEST),
+        (DEFAULT_WRITING_MODEL, "16gb", Suitability.BEST),
         # GOOD: further entries of the RECOMMENDED list
         ("qwen3-vl:8b", "8gb", Suitability.GOOD),
         ("deepseek-ocr:latest", "8gb", Suitability.GOOD),
@@ -137,7 +138,7 @@ def test_normalize_tag_leaves_tagged_names_unchanged() -> None:
         ("gemma4:latest", "8gb", Suitability.WORKS),
         # TOO_LARGE: memory need exceeds the profile budget
         ("qwen3-vl:8b", "cpu", Suitability.TOO_LARGE),
-        ("gpt-oss:20b", "8gb", Suitability.TOO_LARGE),
+        (STRUCTURED_OUTPUT_UNVERIFIED_MODEL, "8gb", Suitability.TOO_LARGE),
         ("mistral-nemo:12b", "8gb", Suitability.TOO_LARGE),
     ],
 )
@@ -162,7 +163,7 @@ def test_suitability_examples_per_profile(tag: str, profile: str, expected: Suit
         ("cpu", 28.0, Suitability.SLOW),  # the 4 GB budget is main memory: half of 28 = 14
         ("cpu", 27.0, Suitability.TOO_LARGE),  # 13.5 < 14; counting the budget twice said slow
         ("cpu", 16.0, Suitability.TOO_LARGE),  # 8 < 14
-        ("16gb", 8.0, Suitability.BEST),  # fits the card: the computer's memory is irrelevant
+        ("16gb", 8.0, Suitability.GOOD),  # fits the card: RAM is irrelevant; second choice
     ],
 )
 def test_a_model_too_big_for_the_card_is_slow_when_the_computers_memory_helps(
@@ -562,3 +563,22 @@ def test_apple_silicon_does_not_offload_into_memory_its_profile_already_counts()
         "gpt-oss:20b", "general", detection.profile, system_memory_gb=detection.system_memory_gb
     )
     assert rated is Suitability.TOO_LARGE
+
+
+@pytest.mark.use_case("Model_Category_Guidance")
+def test_writing_models_offered_first_pass_the_structured_output_check() -> None:
+    """
+    Given  the default writing model and the RECOMMENDED[general] lists
+    When   their catalog flags are inspected
+    Then   the model the app picks for proofreading and the first entry of every general
+           list are marked as answering the review schema — the plan's rule that an
+           unverified model must not be the one a teacher gets by default
+    """
+    default = find_spec(DEFAULT_WRITING_MODEL)
+    assert default is not None
+    assert default.structured_output, f"{DEFAULT_WRITING_MODEL} must support explanations"
+
+    for profile in HARDWARE_PROFILES:
+        first = find_spec(RECOMMENDED["general"][profile][0])
+        assert first is not None
+        assert first.structured_output, f"{first.tag} is the first choice for {profile}"

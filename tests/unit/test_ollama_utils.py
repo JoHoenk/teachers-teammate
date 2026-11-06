@@ -964,3 +964,35 @@ def test_list_models_or_error_tells_unreachable_from_empty(monkeypatch) -> None:
     assert models == []
     assert "Cannot connect to Ollama" in error
     assert client.list.call_count == 2
+
+
+# ── Structured output ──────────────────────────────────────────────────────
+
+
+def test_chat_forwards_the_format_schema(monkeypatch) -> None:
+    """
+    Given  a JSON schema passed as format to chat()
+    When   OllamaClient.chat() is called
+    Then   the underlying client.chat receives it as its format argument
+    """
+    mock_ollama = _make_chat_mock_ollama(["{}"])
+    monkeypatch.setitem(sys.modules, "ollama", mock_ollama)
+    schema = {"type": "object"}
+
+    OllamaClient("http://127.0.0.1:11434").chat("m", "hi", format=schema)
+
+    assert mock_ollama.Client.return_value.chat.call_args.kwargs["format"] == schema
+
+
+def test_chat_sends_no_format_by_default(monkeypatch) -> None:
+    """
+    Given  no format passed to chat()
+    When   OllamaClient.chat() is called
+    Then   the underlying client.chat receives no format argument at all
+    """
+    mock_ollama = _make_chat_mock_ollama(["ok"])
+    monkeypatch.setitem(sys.modules, "ollama", mock_ollama)
+
+    OllamaClient("http://127.0.0.1:11434").chat("m", "hi")
+
+    assert "format" not in mock_ollama.Client.return_value.chat.call_args.kwargs

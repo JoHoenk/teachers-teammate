@@ -454,10 +454,11 @@ def test_preview_panel_shows_steps_caption_and_original_toggle(qtbot, tmp_path: 
 def test_preview_panel_load_accepts_preprocessing_info(qtbot, tmp_path: Path) -> None:
     """
     Given  a PreviewPanel
-    When   load() is given original_path and preprocess_steps
+    When   load() is given a PreprocessInfo
     Then   the caption and Original toggle are set up without a separate set_preprocessing call
     """
     from teachers_teammate.gui._preview_panel import PreviewPanel  # noqa: PLC0415
+    from teachers_teammate.gui._types import PreprocessInfo  # noqa: PLC0415
 
     panel = PreviewPanel()
     qtbot.addWidget(panel)
@@ -468,8 +469,10 @@ def test_preview_panel_load_accepts_preprocessing_info(qtbot, tmp_path: Path) ->
         "raw",
         "",
         "",
-        original_path=_solid_png(tmp_path / "orig.png", 200, 300),
-        preprocess_steps=["deskew"],
+        preprocess=PreprocessInfo(
+            original_img=_solid_png(tmp_path / "orig.png", 200, 300),
+            steps=("deskew",),
+        ),
     )
 
     assert panel._prep_lbl.text() == "Preprocessed: deskew"

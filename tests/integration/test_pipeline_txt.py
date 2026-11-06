@@ -12,6 +12,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from teachers_teammate.domain.correction_review import CorrectionOutcome
 from teachers_teammate.infrastructure.pipeline import OCRPipeline, PipelineDependencies
 from teachers_teammate.infrastructure.reporting import FileDoneResult, ProgressCallbacks
 from teachers_teammate.infrastructure.state_repository import StateRepository
@@ -91,7 +92,7 @@ def test_pipeline_txt_input_enters_correction_pipeline(tmp_path: Path) -> None:
     source.write_text("Text to be corrected", encoding="utf-8")
 
     mock_corrector = MagicMock()
-    mock_corrector.correct.return_value = ("corrected text", None)
+    mock_corrector.correct.return_value = CorrectionOutcome("corrected text")
 
     with (
         patch("teachers_teammate.infrastructure.stage_builder.build_llm", return_value=MagicMock()),

@@ -4,7 +4,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import TypedDict
+from typing import TYPE_CHECKING, TypedDict
+
+if TYPE_CHECKING:
+    from ..domain.correction_review import CorrectionReview
 
 
 class StageStatus(StrEnum):
@@ -49,6 +52,10 @@ class FileDoneEvent:
     eval_txt: str = ""
     text_format: str = "plain"
     """Notation of ``raw_txt`` / ``corr_txt``: ``"plain"`` or ``"markdown"``."""
+    correction_review: CorrectionReview | None = None
+    """Explanations and unclear expressions, ``None`` when the file has no review."""
+    correction_warning: str = ""
+    """Why the file has no review (fallback to corrections-only); empty when there is one."""
 
     @property
     def total_s(self) -> float:
@@ -76,6 +83,12 @@ class SettingsDict(TypedDict, total=False):
     pdf_text_layer: str
     correction_provider: str
     correction_model: str
+    correction_level: str
+    explanation_language: str
+    correction_output: str
+    answer_format_review: str
+    answer_format_text: str
+    answer_format_version: int
     evaluate_provider: str
     evaluate_model: str
     output_dir: str

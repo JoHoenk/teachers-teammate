@@ -11,6 +11,12 @@ from unittest.mock import MagicMock, call
 
 import pytest
 
+from teachers_teammate.domain.correction_review import (
+    ChangeNote,
+    CorrectionOutcome,
+    CorrectionReview,
+    SentenceNote,
+)
 from teachers_teammate.infrastructure.state_repository import DocumentState
 from teachers_teammate.infrastructure.workflow.cache_service import CacheContext
 from teachers_teammate.infrastructure.workflow.preprocess_service import PreparedInput
@@ -523,7 +529,7 @@ def test_fresh_correction_calls_corrector_and_records(tmp_path: Path) -> None:
     Then   corrector.correct is called and the result appears as correction_text
     """
     corrector = MagicMock()
-    corrector.correct.return_value = ("freshly corrected", None)
+    corrector.correct.return_value = CorrectionOutcome("freshly corrected")
     file = tmp_path / "doc.png"
 
     fp, cache_svc, _, _ = _make_processor(tmp_path, corrector=corrector)
@@ -535,6 +541,53 @@ def test_fresh_correction_calls_corrector_and_records(tmp_path: Path) -> None:
     assert result.ok is True
     assert result.correction_text == "freshly corrected"
     corrector.correct.assert_called_once()
+
+
+def test_fallback_warning_is_stored_with_the_correction(tmp_path: Path) -> None:
+    """
+    Given  a corrector that fell back to corrections only and says why
+    When   process() is called
+    Then   the warning is shown now and handed to the cache with the correction
+    """
+    corrector = MagicMock()
+    corrector.correct.return_value = CorrectionOutcome("fixed", None, "no explanations")
+    fp, cache_svc, _, _ = _make_processor(tmp_path, corrector=corrector)
+    cache_svc.record_correction.return_value = _make_ctx(
+        _make_state(correction_done=True, correction_text="fixed")
+    )
+
+    result = fp.process(tmp_path / "doc.png")
+
+    assert result.correction_warning == "no explanations"
+    assert cache_svc.record_correction.call_args.kwargs["correction_warning"] == "no explanations"
+
+
+def test_cached_correction_replays_its_stored_warning(tmp_path: Path) -> None:
+    """
+    Given  a cached correction that was produced by the fallback and stored its warning
+    When   process() is called again
+    Then   the corrector is not asked again and the warning still reaches the result
+    """
+    state = dataclasses.replace(
+        _make_state(
+            ocr_done=True,
+            raw_text="raw",
+            correction_done=True,
+            correction_text="fixed",
+            preview_img="p.png",
+        ),
+        correction_warning="no explanations",
+    )
+    corrector = MagicMock()
+    fp, cache_svc, _, _ = _make_processor(
+        tmp_path, returns=_StubReturns(cache_ctx=_make_ctx(state)), corrector=corrector
+    )
+    cache_svc.record_ocr.return_value = _make_ctx(state)
+
+    result = fp.process(tmp_path / "doc.png")
+
+    corrector.correct.assert_not_called()
+    assert result.correction_warning == "no explanations"
 
 
 # ── Evaluation ─────────────────────────────────────────────────────────────
@@ -560,7 +613,7 @@ def test_evaluation_cache_hit_skips_evaluator(tmp_path: Path) -> None:
 
     evaluator = MagicMock()
     corrector = MagicMock()
-    corrector.correct.return_value = ("corrected", None)
+    corrector.correct.return_value = CorrectionOutcome("corrected")
     file = tmp_path / "doc.png"
 
     fp, _, _, _ = _make_processor(
@@ -583,7 +636,7 @@ def test_evaluation_never_sees_real_names_when_anonymizing(tmp_path: Path) -> No
            real name restored
     """
     corrector = MagicMock()
-    corrector.correct.return_value = ("Anna Weber wrote this.", None)
+    corrector.correct.return_value = CorrectionOutcome("Anna Weber wrote this.")
     evaluator = MagicMock()
     evaluator.evaluate.return_value = ("[PERSON_1] writes clearly.", None)
     anonymizer = MagicMock()
@@ -618,7 +671,7 @@ def test_failed_restore_after_evaluation_is_a_clean_failure(tmp_path: Path) -> N
            instead of an unhandled exception
     """
     corrector = MagicMock()
-    corrector.correct.return_value = ("Anna Weber wrote this.", None)
+    corrector.correct.return_value = CorrectionOutcome("Anna Weber wrote this.")
     evaluator = MagicMock()
     evaluator.evaluate.return_value = ("[PERSON_1] writes clearly.", None)
     anonymizer = MagicMock()
@@ -654,7 +707,7 @@ def test_evaluation_text_is_unchanged_without_anonymizer(tmp_path: Path) -> None
     Then   the evaluator receives the proofread text as it is
     """
     corrector = MagicMock()
-    corrector.correct.return_value = ("Anna Weber wrote this.", None)
+    corrector.correct.return_value = CorrectionOutcome("Anna Weber wrote this.")
     evaluator = MagicMock()
     evaluator.evaluate.return_value = ("fine", None)
     fp, _, _, _ = _make_processor(tmp_path, corrector=corrector, evaluator=evaluator)
@@ -672,7 +725,7 @@ def test_fresh_evaluation_calls_evaluator(tmp_path: Path) -> None:
     Then   evaluator.evaluate is called and its result appears in the tuple
     """
     corrector = MagicMock()
-    corrector.correct.return_value = ("corrected text", None)
+    corrector.correct.return_value = CorrectionOutcome("corrected text")
     evaluator = MagicMock()
     evaluator.evaluate.return_value = ("quality: high", None)
     file = tmp_path / "doc.png"
@@ -694,7 +747,7 @@ def test_evaluation_skipped_when_no_correction_text(tmp_path: Path) -> None:
     Then   evaluator.evaluate is NOT called
     """
     corrector = MagicMock()
-    corrector.correct.return_value = ("", None)  # empty → no correction_text
+    corrector.correct.return_value = CorrectionOutcome("")  # empty → no correction_text
     evaluator = MagicMock()
     file = tmp_path / "doc.png"
 
@@ -711,7 +764,7 @@ def test_evaluation_skipped_when_no_evaluator(tmp_path: Path) -> None:
     Then   no evaluation is performed and evaluation_text in result is empty
     """
     corrector = MagicMock()
-    corrector.correct.return_value = ("corrected", None)
+    corrector.correct.return_value = CorrectionOutcome("corrected")
     file = tmp_path / "doc.png"
 
     fp, _, _, _ = _make_processor(tmp_path, corrector=corrector, evaluator=None)
@@ -792,7 +845,7 @@ def test_correction_record_oserror_is_nonfatal(tmp_path: Path) -> None:
     Then   the file still succeeds (non-fatal) and the corrected text is returned
     """
     corrector = MagicMock()
-    corrector.correct.return_value = ("corrected", None)
+    corrector.correct.return_value = CorrectionOutcome("corrected")
     file = tmp_path / "doc.png"
     fp, cache_svc, _, _ = _make_processor(tmp_path, corrector=corrector)
     cache_svc.record_correction.side_effect = OSError("disk full")
@@ -810,7 +863,7 @@ def test_evaluation_record_oserror_is_nonfatal(tmp_path: Path) -> None:
     Then   the file still succeeds (non-fatal) and the evaluation text is returned
     """
     corrector = MagicMock()
-    corrector.correct.return_value = ("corrected", None)
+    corrector.correct.return_value = CorrectionOutcome("corrected")
     evaluator = MagicMock()
     evaluator.evaluate.return_value = ("quality: good", None)
     file = tmp_path / "doc.png"
@@ -1097,7 +1150,7 @@ def test_same_text_is_anonymized_once_for_correction_and_text_file(tmp_path: Pat
     Then   the text is analysed once and both uses get that result
     """
     corrector = MagicMock()
-    corrector.correct.return_value = ("fixed", None)
+    corrector.correct.return_value = CorrectionOutcome("fixed")
     anonymizer = MagicMock()
     anonymizer.anonymize.return_value = ("[PERSON_1] wrote", {"[PERSON_1]": "Anna"})
     anonymizer.restore.side_effect = lambda text, _mapping: text
@@ -1379,7 +1432,7 @@ def test_markdown_text_format_reaches_corrector_evaluator_and_docx(tmp_path: Pat
     """
     ctx = _markdown_ctx(ocr_done=True, raw_text="~~a~~ b", preview_img="p.png")
     corrector = MagicMock()
-    corrector.correct.return_value = ("~~a~~ b!", None)
+    corrector.correct.return_value = CorrectionOutcome("~~a~~ b!")
     evaluator = MagicMock()
     evaluator.evaluate.return_value = ("fine", None)
     doc_creator = MagicMock()
@@ -1397,7 +1450,11 @@ def test_markdown_text_format_reaches_corrector_evaluator_and_docx(tmp_path: Pat
     assert evaluator.evaluate.call_args.kwargs == {"text_format": "markdown"}
     assert doc_creator.create.call_args.kwargs["text_format"] == "markdown"
     assert result.text_format == "markdown"
-    assert cache_svc.record_correction.call_args.kwargs == {"correction_text": "~~a~~ b!"}
+    assert cache_svc.record_correction.call_args.kwargs == {
+        "correction_text": "~~a~~ b!",
+        "correction_review": None,
+        "correction_warning": "",
+    }
 
 
 def test_plain_text_is_corrected_with_plain_format(tmp_path: Path) -> None:
@@ -1407,9 +1464,99 @@ def test_plain_text_is_corrected_with_plain_format(tmp_path: Path) -> None:
     Then   the corrector is told text_format="plain" (so its prompt stays unchanged)
     """
     corrector = MagicMock()
-    corrector.correct.return_value = ("fixed", None)
+    corrector.correct.return_value = CorrectionOutcome("fixed")
     fp, _, _, _ = _make_processor(tmp_path, corrector=corrector)
 
     fp.process(tmp_path / "doc.png")
 
     assert corrector.correct.call_args.kwargs == {"text_format": "plain"}
+
+
+def _anonymizing_review_processor(tmp_path: Path, restore):
+    """Return a processor whose corrector answers with a review quoting a placeholder name."""
+    review = CorrectionReview(
+        sentences=(
+            SentenceNote(
+                "[PERSON_1] have gone.",
+                "[PERSON_1] has gone.",
+                (ChangeNote("have", "has", "grammar", "[PERSON_1] is third person."),),
+            ),
+        )
+    )
+    corrector = MagicMock()
+    corrector.correct.return_value = CorrectionOutcome("[PERSON_1] has gone.", review)
+    anonymizer = MagicMock()
+    anonymizer.anonymize.side_effect = lambda text: (
+        text.replace("Anna Weber", "[PERSON_1]"),
+        {"[PERSON_1]": "Anna Weber"},
+    )
+    anonymizer.restore.side_effect = restore
+    return _make_processor(tmp_path, corrector=corrector, anonymizer=anonymizer)
+
+
+def test_names_are_restored_in_every_text_field_of_the_review(tmp_path: Path) -> None:
+    """
+    Given  anonymization is on and the review quotes the placeholder in a sentence and a note
+    When   process() runs the proofreading
+    Then   the review stored in the cache and returned has the real name in all of them
+    """
+    fp, cache, _, _ = _anonymizing_review_processor(
+        tmp_path, lambda text, mapping: text.replace("[PERSON_1]", mapping["[PERSON_1]"])
+    )
+
+    result = fp.process(tmp_path / "doc.png")
+
+    assert result.correction_review is not None
+    sentence = result.correction_review.sentences[0]
+    assert sentence.original == "Anna Weber have gone."
+    assert sentence.changes[0].explanation == "Anna Weber is third person."
+    stored = cache.record_correction.call_args.kwargs["correction_review"]
+    assert stored["sentences"][0]["corrected"] == "Anna Weber has gone."
+
+
+def test_failed_review_restore_drops_the_review_and_never_logs_the_text(
+    tmp_path: Path, caplog
+) -> None:
+    """
+    Given  restoring names into the review fails after the proofread text was restored
+    When   process() runs the proofreading
+    Then   the file still succeeds without a review, and the log names the file but does not
+           contain the student's text
+    """
+    calls = {"count": 0}
+
+    def restore(text: str, mapping: dict) -> str:
+        calls["count"] += 1
+        if calls["count"] > 1:
+            raise ValueError("bad placeholder")
+        return text.replace("[PERSON_1]", mapping["[PERSON_1]"])
+
+    fp, _, _, _ = _anonymizing_review_processor(tmp_path, restore)
+
+    with caplog.at_level("WARNING"):
+        result = fp.process(tmp_path / "doc.png")
+
+    assert result.ok is True
+    assert result.correction_review is None
+    assert result.correction_text == "Anna Weber has gone."
+    assert "doc.png" in caplog.text
+    assert "Anna Weber" not in caplog.text
+
+
+def test_failed_correction_is_reported_but_not_stored_as_done(tmp_path: Path) -> None:
+    """
+    Given  a corrector whose provider call failed and returned the unchanged source
+    When   process() is called
+    Then   the warning is shown, but nothing is recorded as a finished correction, so the
+           next run asks the model again
+    """
+    corrector = MagicMock()
+    corrector.correct.return_value = CorrectionOutcome(
+        "raw", None, "Correction failed", failed=True
+    )
+    fp, cache_svc, _, _ = _make_processor(tmp_path, corrector=corrector)
+
+    result = fp.process(tmp_path / "doc.png")
+
+    assert result.correction_warning == "Correction failed"
+    cache_svc.record_correction.assert_not_called()

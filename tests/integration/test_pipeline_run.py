@@ -22,6 +22,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from teachers_teammate.domain.correction_review import CorrectionOutcome
 from teachers_teammate.exceptions import OCRError
 from teachers_teammate.infrastructure.pipeline import (
     OCRPipeline,
@@ -563,7 +564,7 @@ def test_pipeline_run_with_correction_persists_correction_state(tmp_path: Path) 
     mock_ocr.process_image.return_value = "raw text"
 
     mock_corrector = MagicMock()
-    mock_corrector.correct.return_value = ("corrected text", None)
+    mock_corrector.correct.return_value = CorrectionOutcome("corrected text")
 
     with (
         patch(
@@ -1446,7 +1447,7 @@ def test_pipeline_ocr_and_correction_not_rerun_when_only_evaluation_config_chang
     first_ocr = MagicMock()
     first_ocr.process_image.return_value = "raw text"
     first_corrector = MagicMock()
-    first_corrector.correct.return_value = ("corrected text", None)
+    first_corrector.correct.return_value = CorrectionOutcome("corrected text")
     first_evaluator = MagicMock()
     first_evaluator.evaluate.return_value = ("eval-v1", None)
 
@@ -1527,7 +1528,7 @@ def test_pipeline_run_with_different_providers_per_stage_produces_full_state(
     mock_ocr = MagicMock()
     mock_ocr.process_image.return_value = "raw text"
     mock_corrector = MagicMock()
-    mock_corrector.correct.return_value = ("corrected text", None)
+    mock_corrector.correct.return_value = CorrectionOutcome("corrected text")
     mock_evaluator = MagicMock()
     mock_evaluator.evaluate.return_value = ("quality: good", None)
 
@@ -1619,9 +1620,8 @@ def test_pipeline_tells_corrector_the_text_is_markdown_and_formats_the_docx(
         tmp_path, _CHANDRA_OUTPUT, correction_enabled=True, docx_enabled=True
     )
     mock_corrector = MagicMock()
-    mock_corrector.correct.return_value = (
-        "Dear **diary**, my ~~backpack~~ <sup>passport</sup> is here.",
-        None,
+    mock_corrector.correct.return_value = CorrectionOutcome(
+        "Dear **diary**, my ~~backpack~~ <sup>passport</sup> is here."
     )
 
     with (

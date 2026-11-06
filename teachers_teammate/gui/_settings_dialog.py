@@ -26,7 +26,6 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QMessageBox,
-    QPlainTextEdit,
     QPushButton,
     QScrollArea,
     QVBoxLayout,
@@ -36,6 +35,7 @@ from PySide6.QtWidgets import (
 from ..application.service import ProcessingApplicationService
 from ..config import DEFAULTS, OcrConfig
 from ..domain.data_location import StageLocation
+from ..domain.formatted_text import TextFormat
 from ..domain.model_catalog import (
     HardwareDetection,
     HardwareProfile,
@@ -44,9 +44,12 @@ from ..domain.model_catalog import (
     ModelUses,
 )
 from ..domain.model_listing import ModelListing
+from . import _user_text as txt
+from ._constants import _LANGUAGES
 from ._data_flow_summary import LocationHint, text_note
 from ._model_guidance import PROVIDER_PREFIX, OpenDownloads
 from ._model_wording import SAME_MODEL_TIP
+from ._prompt_editor import PromptEditor
 from ._worker import _ConnectionCheckThread  # noqa: F401  kept for external callers
 
 PACKAGE_MISSING = "{name} support is not installed yet."
@@ -134,6 +137,27 @@ class _SettingsAppService(Protocol):
     def is_module_importable(self, module: str) -> bool: ...
 
     def missing_provider_package(self, provider: str) -> str | None: ...
+
+    def list_correction_prompt_presets(self) -> dict[str, str]: ...
+
+    def default_correction_prompt(self) -> str: ...
+
+    def correction_instructions(
+        self,
+        *,
+        prompt: str,
+        language: str,
+        level: str = "B2",
+        output_mode: str = "review",
+        text_format: TextFormat = "plain",
+        answer_format: str = "",
+    ) -> tuple[str, str]: ...
+
+    def default_answer_formats(self) -> tuple[str, str]: ...
+
+    def correction_notation_hint(self) -> str: ...
+
+    def evaluation_fixed_instructions(self, text_format: TextFormat = "plain") -> str: ...
 
     def detect_hardware(self, ollama_url: str, *, refresh: bool = False) -> HardwareDetection: ...
 
@@ -516,6 +540,8 @@ class _AiServiceDialog(QDialog):
     _OTHER_PROVIDER_KEY = ""
     _OTHER_MODEL_KEY = ""
     _TEMPERATURE_TOOLTIP = ""
+    #: Whether the instructions use the ``{level}`` placeholder (proofreading only).
+    _LEVEL_AWARE = False
 
     def __init__(
         self,
@@ -553,6 +579,9 @@ class _AiServiceDialog(QDialog):
         layout.setSpacing(12)
 
         layout.addWidget(self._build_prompt_group(prompt))
+        group = self._build_output_group(values)
+        if group is not None:
+            layout.addWidget(group)
         layout.addWidget(self._build_model_group(hardware_profile))
         layout.addStretch(1)
         main.addWidget(scroll, stretch=1)
@@ -572,33 +601,65 @@ class _AiServiceDialog(QDialog):
         super().done(result)
 
     def _build_prompt_group(self, prompt: str) -> QGroupBox:
-        """Build the instructions (system prompt) group."""
+        """Build the instructions group: the editable instructions and what the app adds."""
         prompt_group = QGroupBox(self._PROMPT_TITLE)
         prompt_layout = QVBoxLayout(prompt_group)
-        prompt_note = QLabel(self._PROMPT_NOTE)
-        prompt_note.setWordWrap(True)
-        prompt_note.setStyleSheet("color: #888; font-size: 10px;")
-        prompt_layout.addWidget(prompt_note)
-        self._prompt_edit = QPlainTextEdit()
-        self._prompt_edit.setPlainText(prompt)
-        self._prompt_edit.setPlaceholderText(self._PROMPT_PLACEHOLDER)
-        self._prompt_edit.setMinimumHeight(120)
-        prompt_layout.addWidget(self._prompt_edit)
+        self._prompt_editor = PromptEditor(
+            prompt,
+            prompt_group,
+            builtin_text=self._builtin_prompt(),
+            fixed_text=self._fixed_instructions(),
+            answer_formats=self._answer_formats(),
+            saved_formats=self._saved_answer_formats(),
+            level_aware=self._LEVEL_AWARE,
+        )
+        prompt_layout.addWidget(self._prompt_editor)
         return prompt_group
 
-    def get_prompt(self) -> str:
-        """Return the edited system prompt text."""
-        return self._prompt_edit.toPlainText().strip()
+    def _builtin_prompt(self) -> str:
+        """The built-in policy of this step for the document language."""
+        return self._app_service.list_correction_prompt_presets().get(
+            str(self._values.get("language", DEFAULTS["language"])).lower(),
+            self._app_service.default_correction_prompt(),
+        )
 
-    def get_values(self) -> dict:
-        """Return this step's provider, model and temperature for ConfigPanel.update_settings()."""
-        return {
-            self._PROVIDER_KEY: self._provider.currentText(),
-            self._MODEL_KEY: self._model.currentText().strip(),
-            self._TEMPERATURE_KEY: self._temperature.value(),
-        }
+    def _fixed_instructions(self) -> str:
+        """The read-only note the app always adds to the instructions (``""`` = none)."""
+        return ""
 
-    # ── widgets ───────────────────────────────────────────────────────────────
+    def _answer_formats(self) -> tuple[str, str] | None:
+        """The built-in answer formats this step lets the teacher edit (``None`` = none)."""
+        return None
+
+    def _saved_answer_formats(self) -> tuple[str, str]:
+        """The teacher's own answer formats ``(with explanations, corrections only)``."""
+        return (
+            str(self._values.get("answer_format_review", "")),
+            str(self._values.get("answer_format_text", "")),
+        )
+
+    def _build_output_group(self, values: dict) -> QGroupBox | None:
+        """Build the group holding the explanation language and the output mode."""
+        output_group = QGroupBox("Explanations")
+        form = QFormLayout(output_group)
+        form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapAllRows)
+
+        self._explanation_language = QComboBox()
+        self._explanation_language.addItem(txt.SAME_AS_TEXT, "")
+        for language in _LANGUAGES:  # the item data is what get_values() reads back
+            self._explanation_language.addItem(language, language)
+        explanation = str(values.get("explanation_language", DEFAULTS["explanation_language"]))
+        _set_combo(self._explanation_language, explanation)
+        self._explanation_language.setToolTip(txt.EXPLANATION_LANGUAGE_TOOLTIP)
+        form.addRow("Explanation language:", self._explanation_language)
+
+        self._corrections_only = QCheckBox(txt.CORRECTIONS_ONLY)
+        self._corrections_only.setToolTip(txt.CORRECTIONS_ONLY_TOOLTIP)
+        self._corrections_only.setChecked(
+            str(values.get("correction_output", DEFAULTS["correction_output"])) == "text"
+        )
+        form.addRow("", self._corrections_only)
+        return output_group
 
     def _build_model_group(self, hardware_profile: str = "auto") -> QGroupBox:
         """Build the AI-service (provider + model) group."""
@@ -837,6 +898,18 @@ class _AiServiceDialog(QDialog):
         else:
             self._model.setCurrentText(previous)
 
+    def get_prompt(self) -> str:
+        """Return the edited policy text ("" means use the built-in prompt)."""
+        return self._prompt_editor.prompt()
+
+    def get_values(self) -> dict:
+        """Return this step's provider, model and temperature for ConfigPanel.update_settings()."""
+        return {
+            self._PROVIDER_KEY: self._provider.currentText(),
+            self._MODEL_KEY: self._model.currentText().strip(),
+            self._TEMPERATURE_KEY: self._temperature.value(),
+        }
+
 
 # ── Correction Settings dialog ────────────────────────────────────────────────
 
@@ -846,17 +919,31 @@ class CorrectionSettingsDialog(_AiServiceDialog):
 
     _TITLE = "Proofreading Settings"
     _PROMPT_TITLE = "Proofreading Instructions"
-    _PROMPT_NOTE = "Leave empty to use the built-in default instructions for the selected language."
-    _PROMPT_PLACEHOLDER = "Leave empty to use the built-in default proofreading instructions."
     _PROVIDER_KEY = "correction_provider"
     _MODEL_KEY = "correction_model"
     _TEMPERATURE_KEY = "correction_temperature"
     _OTHER_PROVIDER_KEY = "evaluate_provider"
     _OTHER_MODEL_KEY = "evaluate_model"
+    _LEVEL_AWARE = True
     _TEMPERATURE_TOOLTIP = (
         "Sampling temperature for the proofreading model\n"
         "(0.0 = deterministic, higher = more creative)."
     )
+
+    def get_values(self) -> dict:
+        """Correction adds the explanation language and the output mode."""
+        values = super().get_values()
+        values["explanation_language"] = str(self._explanation_language.currentData() or "")
+        values["correction_output"] = "text" if self._corrections_only.isChecked() else "review"
+        values.update(self._prompt_editor.answer_format_values())
+        return values
+
+    def _fixed_instructions(self) -> str:
+        """The note about formatted texts; the answer formats have their own editors."""
+        return txt.formatted_text_note(self._app_service.correction_notation_hint())
+
+    def _answer_formats(self) -> tuple[str, str] | None:
+        return self._app_service.default_answer_formats()
 
 
 # ── Evaluation Settings dialog ────────────────────────────────────────────────
@@ -867,8 +954,6 @@ class EvaluationSettingsDialog(_AiServiceDialog):
 
     _TITLE = "Content Review Settings"
     _PROMPT_TITLE = "Content Review Instructions"
-    _PROMPT_NOTE = "Leave empty to use the built-in default content review instructions."
-    _PROMPT_PLACEHOLDER = "Leave empty to use the built-in default content review instructions."
     _PROVIDER_KEY = "evaluate_provider"
     _MODEL_KEY = "evaluate_model"
     _TEMPERATURE_KEY = "evaluate_temperature"
@@ -878,6 +963,20 @@ class EvaluationSettingsDialog(_AiServiceDialog):
         "Sampling temperature for the content review model\n"
         "(0.0 = deterministic, higher = more creative)."
     )
+
+    def _builtin_prompt(self) -> str:
+        """Content Review has a fixed built-in policy."""
+        return str(DEFAULTS["evaluate_prompt"])
+
+    def _fixed_instructions(self) -> str:
+        """The fixed part of the review instructions."""
+        return txt.formatted_text_note(
+            str(self._app_service.evaluation_fixed_instructions("markdown"))
+        )
+
+    def _build_output_group(self, values: dict) -> QGroupBox | None:
+        _ = values  # Content Review has no explanation-language or output-mode settings
+        return None
 
 
 # ── Connections & Credentials dialog ──────────────────────────────────────────

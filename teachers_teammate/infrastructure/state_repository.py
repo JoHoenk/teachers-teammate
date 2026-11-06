@@ -31,6 +31,7 @@ import hashlib
 import json
 from pathlib import Path
 
+from ..domain.correction_review import CorrectionReview
 from ..domain.freshness import (
     StageHashes,
     first_stale_stage_for_hashes,
@@ -73,6 +74,12 @@ class DocumentState:
     preview_img: str = ""
     raw_text: str = ""
     correction_text: str = ""
+    # Explanations and unclear expressions of the proofreading (``CorrectionReview.to_dict``);
+    # empty/None when the file was corrected without a review (corrections-only mode).
+    correction_review: dict | None = None
+    # Why ``correction_review`` is missing or incomplete (e.g. the fallback to corrections only,
+    # or suggestions that could not be placed); replayed when the cached correction is reused.
+    correction_warning: str = ""
     evaluation_text: str = ""
     # Notation of ``raw_text`` and ``correction_text`` (the corrector answers in the notation
     # it was given): "plain" (verbatim) or "markdown".  The default keeps state written
@@ -97,6 +104,11 @@ class DocumentState:
     # (state written before this field existed); ``[]`` means none were applied.
     preprocess_steps: list[str] | None = None
 
+    @property
+    def review(self) -> CorrectionReview | None:
+        """Return the stored proofreading review, or ``None`` when there is none to show."""
+        return CorrectionReview.from_dict(self.correction_review)
+
 
 @dataclass(frozen=True)
 class DocumentStateView:
@@ -118,6 +130,10 @@ class DocumentStateView:
     raw_text_format: str = "plain"
     """Notation of ``raw_text`` and ``correction_text`` (the corrector answers in the
     notation it was given)."""
+    correction_review: CorrectionReview | None = None
+    """Explanations and unclear expressions; ``None`` when the file has no review."""
+    correction_warning: str = ""
+    """Why the file has no (or only a partial) review; empty when there is nothing to say."""
 
 
 @dataclass(frozen=True)
@@ -197,6 +213,8 @@ class StateRepository:
                 None if state.preprocess_steps is None else tuple(state.preprocess_steps)
             ),
             raw_text_format=state.raw_text_format,
+            correction_review=state.review,
+            correction_warning=state.correction_warning,
         )
 
     def load_view(self, input_file: Path) -> DocumentStateView | None:
@@ -311,6 +329,8 @@ class StateRepository:
             eval_config_hash="",
             preview_config_hash=record.preview_config_hash,
             correction_text="",
+            correction_review=None,
+            correction_warning="",
             evaluation_text="",
         )
         self.save(input_file, new_state)
@@ -324,17 +344,23 @@ class StateRepository:
         correction_text: str,
         correction_prompt: str,
         correction_config_hash: str,
+        correction_review: dict | None = None,
+        correction_warning: str = "",
     ) -> DocumentState:
         """Persist correction output and invalidate evaluation output.
 
         The corrector sees ``raw_text`` and answers in the same notation, so the correction
-        shares the state's ``raw_text_format``.
+        shares the state's ``raw_text_format``.  *correction_review* is the review payload of
+        a structured proofreading answer, or ``None`` in corrections-only mode;
+        *correction_warning* says why a file has no review or an incomplete one.
         """
         new_state = dataclasses.replace(
             state,
             correction_done=bool(correction_text),
             correction_invalidated=False,
             correction_text=correction_text,
+            correction_review=correction_review,
+            correction_warning=correction_warning,
             correction_prompt=correction_prompt,
             correction_config_hash=correction_config_hash,
             evaluation_done=False,
@@ -398,6 +424,8 @@ class StateRepository:
             correction_config_hash="",
             eval_config_hash="",
             correction_text="",
+            correction_review=None,
+            correction_warning="",
             evaluation_text="",
         )
         self.save(input_file, new_state)
@@ -422,6 +450,10 @@ class StateRepository:
             correction_done=bool(correction_text),
             correction_invalidated=False,
             correction_text=correction_text,
+            # The review is kept: its alignment with the text is recomputed on every render,
+            # so an edit only loses the explanations of the changes the teacher reverted.
+            correction_review=state.correction_review if correction_text else None,
+            correction_warning=state.correction_warning if correction_text else "",
             correction_config_hash=correction_config_hash,
             evaluation_done=False,
             evaluation_invalidated=state.evaluation_done,
@@ -521,6 +553,8 @@ class StateRepository:
                 correction_invalidated=False,
                 correction_config_hash="",
                 correction_text="",
+                correction_review=None,
+                correction_warning="",
             )
         if policy.clear_evaluation:
             updates.update(

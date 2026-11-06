@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Collection
 import dataclasses
+from dataclasses import dataclass
 import importlib.util
 from pathlib import Path
 import shutil
@@ -13,7 +14,10 @@ from typing import TYPE_CHECKING
 import uuid
 
 from ..config import Config, OcrConfig
+from ..domain.correction_policy import DEFAULT_LEVEL, normalize_output_mode
+from ..domain.correction_review import CorrectionReview
 from ..domain.data_location import DataFlow, StageLocation, is_ollama_cloud_model
+from ..domain.formatted_text import TextFormat
 from ..domain.model_catalog import (
     HardwareDetection,
     HardwareProfile,
@@ -98,7 +102,21 @@ class RequirementIssue:
     """Set when the fix is installing this provider's package (Downloads → LLM Providers)."""
 
 
-@dataclasses.dataclass(frozen=True)
+@dataclass(frozen=True)
+class DocxExport:
+    """Presentation options for :meth:`ProcessingApplicationService.export_docx`."""
+
+    docx_format: str = "table"
+    """``"table"`` (three columns) or ``"comments"`` (diff hunks as Word comments)."""
+    text_format: str = "plain"
+    """Notation of the exported texts (``"markdown"`` keeps bold, strikethrough, ...)."""
+    review: CorrectionReview | None = None
+    """Adds the explanations and the table of unclear expressions."""
+    labels_language: str = ""
+    """Language of the review headings and column titles (empty: English)."""
+
+
+@dataclass(frozen=True)
 class RunPreflight:
     """Outcome of the checks made before a run starts (first blocker wins)."""
 
@@ -408,6 +426,55 @@ class ProcessingApplicationService:
 
         return ENGLISH_PROMPT
 
+    def correction_instructions(
+        self,
+        *,
+        prompt: str,
+        language: str,
+        level: str = DEFAULT_LEVEL,
+        output_mode: str = "review",
+        text_format: TextFormat = "plain",
+        answer_format: str = "",
+    ) -> tuple[str, str]:
+        """Return ``(policy, fixed)``: the teacher's instructions and the answer format.
+
+        Built from the same code path the corrector uses, so what a dialog shows is exactly
+        what is sent.  *text_format* defaults to plain text; for Markdown texts the caller
+        passes ``"markdown"`` and the fixed part gains the notation hint.  *answer_format*
+        is the teacher's own text for *output_mode* (``""`` = the built-in one).
+        """
+        from ..infrastructure.correction import instruction_parts  # noqa: PLC0415
+
+        return instruction_parts(
+            prompt,
+            language,
+            level=level,
+            text_format=text_format,
+            mode=normalize_output_mode(output_mode),
+            answer_format=answer_format,
+        )
+
+    def default_answer_formats(self) -> tuple[str, str]:
+        """Return the built-in answer formats ``(with explanations, corrections only)``."""
+        from ..domain.answer_format import REVIEW_FORMAT, TEXT_FORMAT  # noqa: PLC0415
+
+        return REVIEW_FORMAT, TEXT_FORMAT
+
+    def correction_notation_hint(self) -> str:
+        """Return what the app adds to the proofreading instructions for Markdown texts."""
+        from ..domain.notation import with_notation_hint  # noqa: PLC0415
+
+        return with_notation_hint("", "markdown", task="correction").strip()
+
+    def evaluation_fixed_instructions(self, text_format: TextFormat = "plain") -> str:
+        """Return what the app appends to an evaluation prompt: the notation hint, if any.
+
+        Markdown is the only format with a hint, so for plain text this is ``""``.
+        """
+        from ..domain.notation import with_notation_hint  # noqa: PLC0415
+
+        return with_notation_hint("", text_format, task="evaluation").strip()
+
     def collect_input_files_from_dir(self, input_dir: Path, recursive: bool) -> list[Path]:
         """Collect supported input files without a full Config (for partial GUI state)."""
         return self._discovery.collect_input_files_from_dir(input_dir, recursive)
@@ -507,25 +574,28 @@ class ProcessingApplicationService:
         preview_img: str,
         out_path: Path,
         *,
-        docx_format: str = "table",
-        text_format: str = "plain",
+        options: DocxExport | None = None,
     ) -> None:
         """Generate a DOCX for *source* from cached text and write it to *out_path*.
 
-        *text_format* is the notation of *raw_text* / *correction_text* (``"markdown"`` keeps
-        bold, strikethrough, ... as Word formatting).
+        *options* selects the layout, the notation of the texts, the review to quote and the
+        language of its headings.
         """
         from ..infrastructure.docx_builder import DocxDocumentCreator  # noqa: PLC0415
 
+        chosen = options or DocxExport()
         out_path.parent.mkdir(parents=True, exist_ok=True)
-        creator = DocxDocumentCreator(fmt=docx_format)
+        creator = DocxDocumentCreator(
+            fmt=chosen.docx_format, labels_language=chosen.labels_language
+        )
         creator.create(
             raw_text,
             correction_text,
             out_path,
             source.stem,
             source_image=preview_img or None,
-            text_format=TextFormatter.normalize(text_format),
+            text_format=TextFormatter.normalize(chosen.text_format),
+            review=chosen.review,
         )
 
     def export_text(

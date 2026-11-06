@@ -11,8 +11,9 @@ from PySide6.QtCore import Qt
 import pytest
 
 from teachers_teammate.config import DEFAULTS
+from teachers_teammate.domain.formatted_text import TextFormat
 from teachers_teammate.domain.model_listing import ModelListing
-from teachers_teammate.gui import _settings_dialog
+from teachers_teammate.gui import _settings_dialog, _user_text as txt
 from teachers_teammate.gui._settings_dialog import (
     CorrectionSettingsDialog,
     EvaluationSettingsDialog,
@@ -70,6 +71,54 @@ class _DummyAppService(RecommendationServiceStub):
 
     def is_module_importable(self, module: str) -> bool:
         return True
+
+    def list_correction_prompt_presets(self) -> dict[str, str]:
+        from teachers_teammate.infrastructure.correction import PRESET_PROMPTS  # noqa: PLC0415
+
+        return dict(PRESET_PROMPTS)
+
+    def default_correction_prompt(self) -> str:
+        from teachers_teammate.infrastructure.correction import ENGLISH_PROMPT  # noqa: PLC0415
+
+        return ENGLISH_PROMPT
+
+    def correction_instructions(
+        self,
+        *,
+        prompt: str,
+        language: str,
+        level: str = "B2",
+        output_mode: str = "review",
+        text_format: TextFormat = "plain",
+        answer_format: str = "",
+    ) -> tuple[str, str]:
+        from teachers_teammate.infrastructure.correction import instruction_parts  # noqa: PLC0415
+
+        return instruction_parts(
+            prompt,
+            language,
+            level=level,
+            text_format=text_format,
+            mode="review" if output_mode != "text" else "text",
+            answer_format=answer_format,
+        )
+
+    def default_answer_formats(self) -> tuple[str, str]:
+        from teachers_teammate.domain.answer_format import (  # noqa: PLC0415
+            REVIEW_FORMAT,
+            TEXT_FORMAT,
+        )
+
+        return REVIEW_FORMAT, TEXT_FORMAT
+
+    def correction_notation_hint(self) -> str:
+        from teachers_teammate.domain.notation import with_notation_hint  # noqa: PLC0415
+
+        return with_notation_hint("", "markdown", task="correction").strip()
+
+    def evaluation_fixed_instructions(self, text_format: TextFormat = "plain") -> str:
+        _ = text_format
+        return ""
 
 
 class _CachingDummyAppService(_DummyAppService):
@@ -477,7 +526,83 @@ def test_correction_settings_dialog_shows_prompt(correction_dialog) -> None:
     When   it is created
     Then   the prompt text area contains the provided prompt
     """
-    assert correction_dialog._prompt_edit.toPlainText() == "Fix spelling."
+    assert correction_dialog._prompt_editor.prompt() == "Fix spelling."
+
+
+@pytest.mark.gui
+def test_correction_settings_dialog_saves_the_chosen_explanation_language(qtbot) -> None:
+    """
+    Given  a CorrectionSettingsDialog opened with "German" as the explanation language
+    When   get_values() is called, then another language is picked and it is called again
+    Then   the chosen language is returned each time ("Same as the text" returns "")
+    """
+    dlg = CorrectionSettingsDialog(
+        {"explanation_language": "German"}, prompt="", app_service=_DummyAppService()
+    )
+    qtbot.addWidget(dlg)
+
+    assert dlg.get_values()["explanation_language"] == "German"
+
+    dlg._explanation_language.setCurrentText("French")
+    assert dlg.get_values()["explanation_language"] == "French"
+
+    dlg._explanation_language.setCurrentIndex(0)
+    assert dlg.get_values()["explanation_language"] == ""
+
+
+@pytest.mark.gui
+def test_correction_settings_dialog_round_trips_corrections_only(qtbot) -> None:
+    """
+    Given  a CorrectionSettingsDialog opened with correction_output="text"
+    When   get_values() is called and the checkbox is cleared
+    Then   it returns "text" while checked and "review" once cleared
+    """
+    dlg = CorrectionSettingsDialog(
+        {"correction_output": "text"}, prompt="", app_service=_DummyAppService()
+    )
+    qtbot.addWidget(dlg)
+
+    assert dlg.get_values()["correction_output"] == "text"
+
+    dlg._corrections_only.setChecked(False)
+    assert dlg.get_values()["correction_output"] == "review"
+
+
+@pytest.mark.gui
+@pytest.mark.parametrize(
+    ("prompt", "hint_visible"),
+    [("", False), ("german", False), ("Use level {level}.", False), ("Fix spelling.", True)],
+)
+def test_correction_settings_dialog_hints_only_at_custom_prompts_without_level(
+    qtbot, prompt: str, hint_visible: bool
+) -> None:
+    """
+    Given  the prompt dialog opened with an empty prompt, a preset, or a custom prompt
+    When   it is shown
+    Then   the {level} hint is visible only for a custom prompt without the placeholder
+    """
+    dlg = CorrectionSettingsDialog({}, prompt=prompt, app_service=_DummyAppService())
+    qtbot.addWidget(dlg)
+    dlg.show()
+
+    assert dlg._prompt_editor._level_hint.isVisible() is hint_visible
+
+
+@pytest.mark.gui
+def test_correction_settings_dialog_hint_follows_the_edited_prompt(qtbot) -> None:
+    """
+    Given  the dialog showing a custom prompt without {level}
+    When   the teacher adds the placeholder
+    Then   the hint disappears
+    """
+    dlg = CorrectionSettingsDialog({}, prompt="Fix spelling.", app_service=_DummyAppService())
+    qtbot.addWidget(dlg)
+    dlg.show()
+    assert dlg._prompt_editor._level_hint.isVisible()
+
+    dlg._prompt_editor._edit.setPlainText("Fix spelling at {level}.")
+
+    assert not dlg._prompt_editor._level_hint.isVisible()
 
 
 @pytest.mark.gui
@@ -487,7 +612,7 @@ def test_correction_settings_dialog_get_prompt_returns_text(correction_dialog) -
     When   get_prompt() is called after editing the prompt
     Then   the updated prompt text is returned
     """
-    correction_dialog._prompt_edit.setPlainText("My custom prompt.")
+    correction_dialog._prompt_editor._edit.setPlainText("My custom prompt.")
     assert correction_dialog.get_prompt() == "My custom prompt."
 
 
@@ -935,7 +1060,7 @@ def test_evaluation_settings_dialog_shows_prompt(evaluation_dialog) -> None:
     When   it is created
     Then   the prompt text area contains the provided prompt
     """
-    assert evaluation_dialog._prompt_edit.toPlainText() == "Evaluate quality."
+    assert evaluation_dialog._prompt_editor.prompt() == "Evaluate quality."
 
 
 @pytest.mark.gui
@@ -1629,3 +1754,244 @@ def test_dialog_follows_profile_chosen_in_downloads(qtbot) -> None:
     qtbot.waitUntil(lambda: dlg._guidance.active_profile() == "16gb", timeout=5000)
     if dlg._fetch_thread is not None:
         dlg._fetch_thread.wait(5000)  # the refetch after Downloads closed
+
+
+@pytest.mark.gui
+def test_correction_settings_dialog_opens_with_the_editable_builtin_text(qtbot) -> None:
+    """
+    Given  a CorrectionSettingsDialog opened with an empty prompt for a German document
+    When   it is shown
+    Then   the one box holds the German built-in text and can be edited, the status line says
+           the text is the built-in one, and nothing counts as customised ("" is returned)
+    """
+    dlg = CorrectionSettingsDialog(
+        {"language": "German"}, prompt="", app_service=_DummyAppService()
+    )
+    qtbot.addWidget(dlg)
+    dlg.show()
+
+    editor = dlg._prompt_editor
+    assert (
+        editor._edit.toPlainText() == _DummyAppService().list_correction_prompt_presets()["german"]
+    )
+    assert not editor._edit.isReadOnly()
+    assert editor._status.text() == txt.BUILTIN_STATUS
+    assert editor.prompt() == ""
+    assert not editor._reset_btn.isEnabled()
+
+
+@pytest.mark.gui
+def test_correction_settings_dialog_edit_and_reset_to_default(qtbot) -> None:
+    """
+    Given  a CorrectionSettingsDialog showing the built-in text
+    When   the text is changed and then Reset to default is pressed
+    Then   the changed text is returned and marked as the teacher's own, and the reset puts
+           the built-in text back, so "" is returned again and the button is disabled
+    """
+    dlg = CorrectionSettingsDialog(
+        {"language": "German"}, prompt="", app_service=_DummyAppService()
+    )
+    qtbot.addWidget(dlg)
+    dlg.show()
+    editor = dlg._prompt_editor
+    builtin = editor._edit.toPlainText()
+
+    editor._edit.setPlainText("My own instructions at {level}.")
+    assert editor.prompt() == "My own instructions at {level}."
+    assert editor._status.text() == txt.CUSTOM_STATUS
+    assert editor._reset_btn.isEnabled()
+
+    editor._reset_btn.click()
+
+    assert editor._edit.toPlainText() == builtin
+    assert editor.prompt() == ""
+    assert editor._status.text() == txt.BUILTIN_STATUS
+    assert not editor._reset_btn.isEnabled()
+
+
+@pytest.mark.gui
+def test_correction_settings_dialog_opens_a_saved_custom_prompt_as_it_is(qtbot) -> None:
+    """
+    Given  a saved custom prompt
+    When   the dialog is shown
+    Then   the box holds exactly that text, the status line says it is the teacher's own,
+           and Reset to default is available
+    """
+    dlg = CorrectionSettingsDialog(
+        {"language": "German"}, prompt="Fix it at {level}.", app_service=_DummyAppService()
+    )
+    qtbot.addWidget(dlg)
+    dlg.show()
+
+    editor = dlg._prompt_editor
+    assert editor._edit.toPlainText() == "Fix it at {level}."
+    assert editor._status.text() == txt.CUSTOM_STATUS
+    assert editor._reset_btn.isEnabled()
+
+
+@pytest.mark.gui
+def test_answer_format_is_collapsed_editable_and_resettable(qtbot) -> None:
+    """
+    Given  a CorrectionSettingsDialog
+    When   it is shown, the advanced section is opened and the review format is edited
+    Then   the section starts collapsed, get_values() stores the edit (and a version), a
+           reset gives back the built-in format, and an unchanged format is stored as ""
+    """
+    from teachers_teammate.domain.answer_format import (  # noqa: PLC0415
+        ANSWER_FORMAT_VERSION,
+        REVIEW_FORMAT,
+        TEXT_FORMAT,
+    )
+
+    dlg = CorrectionSettingsDialog({}, prompt="", app_service=_DummyAppService())
+    qtbot.addWidget(dlg)
+    dlg.show()
+    editor = dlg._prompt_editor
+    assert editor._format_boxes is not None
+    review_box, text_box = editor._format_boxes
+    assert not editor._advanced.isVisibleTo(dlg)
+    assert dlg.get_values()["answer_format_review"] == ""
+
+    editor._advanced_toggle.click()
+    assert editor._advanced.isVisibleTo(dlg)
+    assert review_box.edit().toPlainText() == REVIEW_FORMAT
+    assert text_box.edit().toPlainText() == TEXT_FORMAT
+
+    review_box.edit().setPlainText("Answer in JSON, please.")
+    values = dlg.get_values()
+    assert values["answer_format_review"] == "Answer in JSON, please."
+    assert values["answer_format_text"] == ""
+    assert values["answer_format_version"] == ANSWER_FORMAT_VERSION
+
+    review_box._reset.click()
+    assert review_box.edit().toPlainText() == REVIEW_FORMAT
+    assert dlg.get_values()["answer_format_review"] == ""
+
+
+@pytest.mark.gui
+def test_answer_format_warns_when_a_field_name_is_missing(qtbot) -> None:
+    """
+    Given  the advanced answer-format editor
+    When   the review format loses the name of a field of the answer
+    Then   an orange hint names the missing field; it goes away when the format is complete
+    """
+    from teachers_teammate.domain.answer_format import REVIEW_FORMAT  # noqa: PLC0415
+
+    dlg = CorrectionSettingsDialog({}, prompt="", app_service=_DummyAppService())
+    qtbot.addWidget(dlg)
+    dlg.show()
+    dlg._prompt_editor._advanced_toggle.click()
+    assert dlg._prompt_editor._format_boxes is not None
+    review_box = dlg._prompt_editor._format_boxes[0]
+    assert not review_box._missing.isVisibleTo(dlg)
+
+    review_box.edit().setPlainText(REVIEW_FORMAT.replace("why_unclear", "reason"))
+
+    assert review_box._missing.isVisibleTo(dlg)
+    assert "why_unclear" in review_box._missing.text()
+
+    review_box.edit().setPlainText(REVIEW_FORMAT)
+    assert not review_box._missing.isVisibleTo(dlg)
+
+
+@pytest.mark.gui
+def test_a_saved_answer_format_opens_in_the_editor(qtbot) -> None:
+    """
+    Given  saved answer formats of the teacher
+    When   the dialog is shown
+    Then   the editors hold them, and they are returned unchanged
+    """
+    dlg = CorrectionSettingsDialog(
+        {"answer_format_review": "R format", "answer_format_text": "T format"},
+        prompt="",
+        app_service=_DummyAppService(),
+    )
+    qtbot.addWidget(dlg)
+
+    assert dlg._prompt_editor._format_boxes is not None
+    review_box, text_box = dlg._prompt_editor._format_boxes
+    assert review_box.edit().toPlainText() == "R format"
+    assert text_box.edit().toPlainText() == "T format"
+    values = dlg.get_values()
+    assert (values["answer_format_review"], values["answer_format_text"]) == (
+        "R format",
+        "T format",
+    )
+
+
+@pytest.mark.gui
+def test_prompt_dialogs_list_the_notation_hint_for_formatted_texts(qtbot) -> None:
+    """
+    Given  the Proofreading and the Content Review settings dialogs
+    When   they are shown
+    Then   the always-added part lists what the app adds for a text with formatting marks
+           under its own heading, so the dialog does not claim less than is sent
+    """
+    from teachers_teammate.domain.notation import with_notation_hint  # noqa: PLC0415
+
+    class _Service(_DummyAppService):
+        def evaluation_fixed_instructions(self, text_format: TextFormat = "plain") -> str:
+            return with_notation_hint("", text_format, task="evaluation").strip()
+
+    correction = CorrectionSettingsDialog({"language": "German"}, prompt="", app_service=_Service())
+    evaluation = EvaluationSettingsDialog({}, prompt="", app_service=_Service())
+    qtbot.addWidget(correction)
+    qtbot.addWidget(evaluation)
+
+    for dlg in (correction, evaluation):
+        fixed = dlg._prompt_editor._fixed_view.toPlainText()
+        assert txt.FORMATTED_TEXT_NOTE in fixed
+        assert fixed.index(txt.FORMATTED_TEXT_NOTE) < len(fixed) - len(txt.FORMATTED_TEXT_NOTE)
+
+
+@pytest.mark.gui
+def test_corrections_only_is_the_teachers_choice_for_every_model(qtbot) -> None:
+    """
+    Given  a model that has not been checked for explanations (gpt-oss:20b) and a teacher who
+           asked for explanations
+    When   the Proofreading Settings are shown, and another model is picked
+    Then   Corrections only stays an ordinary, enabled box that follows the saved choice, and
+           the model change neither ticks nor disables it
+    """
+    dlg = CorrectionSettingsDialog(
+        {
+            "correction_provider": "ollama",
+            "correction_model": "gpt-oss:20b",
+            "language": "German",
+            "correction_output": "review",
+        },
+        prompt="",
+        app_service=_DummyAppService(),
+    )
+    qtbot.addWidget(dlg)
+    dlg.show()
+
+    box = dlg._corrections_only
+    assert box.isEnabled() and not box.isChecked()
+    assert dlg.get_values()["correction_output"] == "review"
+
+    dlg._model.setCurrentText("qwen3.5:9b")
+    assert box.isEnabled() and not box.isChecked()
+
+    box.setChecked(True)
+    dlg._model.setCurrentText("gpt-oss:20b")
+    assert box.isChecked() and dlg.get_values()["correction_output"] == "text"
+
+
+@pytest.mark.gui
+def test_correction_settings_dialog_conflict_hint_for_format_instructions(qtbot) -> None:
+    """
+    Given  a custom prompt that sets the answer format
+    When   the dialog is shown
+    Then   the conflict hint is visible; it disappears for a prompt without such a line
+    """
+    dlg = CorrectionSettingsDialog(
+        {}, prompt="Return only the corrected text.", app_service=_DummyAppService()
+    )
+    qtbot.addWidget(dlg)
+    dlg.show()
+
+    assert dlg._prompt_editor._conflict_hint.isVisible()
+
+    dlg._prompt_editor._edit.setPlainText("Fix my students' homework at {level}.")
+    assert not dlg._prompt_editor._conflict_hint.isVisible()

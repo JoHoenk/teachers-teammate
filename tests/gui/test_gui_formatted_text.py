@@ -216,7 +216,7 @@ def test_panel_diff_ignores_markup(qtbot) -> None:
         text_format="markdown",
     )
 
-    diff_text = panel._diff_widget.toPlainText()
+    diff_text = panel._review_diff.toPlainText()
     assert "~~" not in diff_text
     assert "hate" in diff_text
 

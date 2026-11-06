@@ -27,7 +27,10 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ..application.correction_review import CorrectionReviewPresenter
 from ..application.formatting import TextFormatter
+from ..domain.correction_review import AlignedReview, CorrectionReview, review_summary
+from . import _user_text as txt
 from ._formatted_text import (
     FormattedTextEdit,
     document_from_qt,
@@ -35,7 +38,11 @@ from ._formatted_text import (
     render_html,
 )
 from ._image_utils import load_pixmap
-from ._types import StageStatus
+from ._review_views import ReviewDiffView, ReviewNotesView
+from ._types import PreprocessInfo, StageStatus
+
+#: Panel width below which the notes pane moves under the diff instead of beside it.
+_NARROW_PANEL_WIDTH = 700
 
 
 class _StageNavBar(QWidget):
@@ -46,6 +53,7 @@ class _StageNavBar(QWidget):
     def __init__(self, next_stage: str, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._next_stage = next_stage
+        self._last_status: tuple[bool, StageStatus, bool] | None = None
         layout = QHBoxLayout(self)
         layout.setContentsMargins(4, 2, 4, 2)
         self._status_lbl = QLabel()
@@ -68,8 +76,14 @@ class _StageNavBar(QWidget):
         next_enabled: bool,
         next_status: StageStatus,
         next_invalidated: bool = False,
+        review_text: str = "",
     ) -> None:
-        """Refresh the coloured status label and enable/disable the run button."""
+        """Refresh the coloured status label and enable/disable the run button.
+
+        *review_text* is the ``"7 changes · 2 unclear"`` count of the last proofreading; it
+        is appended to the status line when there is one.
+        """
+        self._last_status = (next_enabled, next_status, next_invalidated)
         stage = self._next_stage.capitalize()
         prev = "Extracted text" if stage in ("Proofreading", "Content review") else "Proofread text"
         if next_status == StageStatus.DONE:
@@ -82,11 +96,26 @@ class _StageNavBar(QWidget):
             text, color = f"{stage} not run yet", "#f39c12"
         if not next_enabled:
             text, color = f"{stage} is off — click ▶ to run once", "#888"
+        if review_text:
+            text = f"{text} · {review_text}"
         self._status_lbl.setText(text)
         self._status_lbl.setStyleSheet(f"color: {color}; font-size: 9pt;")
         can_run = next_status in (StageStatus.PENDING, StageStatus.ERROR)
         self._run_btn.setVisible(True)
         self._run_btn.setEnabled(can_run)
+
+    def set_review_text(self, review_text: str) -> None:
+        """Show a new change count next to the last status (an edit changed the diff)."""
+        if self._last_status is None:
+            return
+        next_enabled, next_status, next_invalidated = self._last_status
+        self.update_status(
+            StageStatus.PENDING,
+            next_enabled,
+            next_status,
+            next_invalidated,
+            review_text=review_text,
+        )
 
 
 class ZoomableImageView(QGraphicsView):
@@ -284,6 +313,8 @@ class _ZoomScrollFilter(QObject):
 # Pause after the last keystroke in a formatted view before the edit is converted back to
 # Markdown, stored and re-diffed (each of those passes covers the whole document).
 _EDIT_COMMIT_DELAY_MS = 400
+_CHANGES_REFRESH_DELAY_MS = 250
+"""Pause in typing after which the *Changes* tab is re-aligned."""
 
 
 class PreviewPanel(QWidget):
@@ -302,6 +333,10 @@ class PreviewPanel(QWidget):
         self._text_zoom = 0
         self._font_size_lbl: QLabel  # assigned in _build_text_zoom_bar
         self._source_btn: QPushButton  # assigned in _build_text_zoom_bar
+        self._review_diff: ReviewDiffView  # assigned in _build_changes_tab
+        self._review_notes: ReviewNotesView  # assigned in _build_changes_tab
+        self._review_splitter: QSplitter  # assigned in _build_changes_tab
+        self._review_banner: QLabel  # assigned in _build_changes_tab
         self._formatter = TextFormatter()
         # What each formatted view currently shows, as ``(source text, format)``: typing in one
         # view must not re-render the other, and a view that is not shown is not rendered.
@@ -328,7 +363,18 @@ class PreviewPanel(QWidget):
         self._edit_timer.setSingleShot(True)
         self._edit_timer.setInterval(_EDIT_COMMIT_DELAY_MS)
         self._edit_timer.timeout.connect(self.flush_pending_edit)
+        # Aligning the review with the texts is the costly part of an edit (fuzzy sentence
+        # search, two diffs), so a typed edit waits for a pause instead of running per key.
+        self._changes_timer = QTimer(self)
+        self._changes_timer.setSingleShot(True)
+        self._changes_timer.setInterval(_CHANGES_REFRESH_DELAY_MS)
+        self._changes_timer.timeout.connect(self._refresh_changes)
         self._current_source_id: str = ""
+        # Explanations and unclear expressions of the shown file (``None`` when the file
+        # was corrected in *Corrections only* mode, fell back, or came from an old cache).
+        self._review: CorrectionReview | None = None
+        # The review aligned with the texts as they stand now (recomputed on every edit).
+        self._aligned: AlignedReview | None = None
         self._processed_pixmap: QPixmap | None = None
         self._original_path: str = ""
         self._original_pixmap: QPixmap | None = None  # loaded lazily on first toggle
@@ -416,8 +462,6 @@ class PreviewPanel(QWidget):
         self._evaluation_text.setReadOnly(True)
         self._evaluation_text.setFont(font)
 
-        self._diff_widget = DiffWidget()
-
         self._ocr_nav = _StageNavBar("proofreading")
         self._ocr_nav.run_requested.connect(lambda: self._on_run_stage("correction"))
         self._correction_nav = _StageNavBar("content review")
@@ -427,7 +471,8 @@ class PreviewPanel(QWidget):
         self._text_tabs.addTab(
             self._make_nav_tab(self._correction_stack, self._correction_nav), "Proofread Text"
         )
-        self._text_tabs.addTab(self._diff_widget, "± Changes")
+        self._changes_tab = self._build_changes_tab()
+        self._text_tabs.addTab(self._changes_tab, txt.CHANGES_TAB)
         self._text_tabs.addTab(self._evaluation_text, "Content Review")
 
         container = QWidget()
@@ -444,10 +489,46 @@ class PreviewPanel(QWidget):
             self._ocr_view,
             self._correction_view,
             self._evaluation_text,
+            self._review_diff,
+            self._review_notes.browser(),
         ):
             _te.installEventFilter(scroll_filter)
 
         return container
+
+    def _build_changes_tab(self) -> QWidget:
+        """Build the *Changes* tab: optional banner, annotated diff, notes pane."""
+        self._review_diff = ReviewDiffView()
+        self._review_notes = ReviewNotesView()
+        self._review_diff.change_clicked.connect(
+            lambda number: self._review_notes.focus_note("note", number)
+        )
+        self._review_diff.unclear_clicked.connect(
+            lambda number: self._review_notes.focus_note("unclear", number)
+        )
+        self._review_notes.change_selected.connect(self._review_diff.focus_change)
+        self._review_notes.unclear_selected.connect(self._review_diff.focus_unclear)
+
+        self._review_splitter = QSplitter(Qt.Orientation.Horizontal)
+        self._review_splitter.addWidget(self._review_diff)
+        self._review_splitter.addWidget(self._review_notes)
+        self._review_splitter.setSizes([60, 40])
+        # The notes pane is hidden for the plain diff (no review); QSplitter handles that.
+
+        self._review_banner = QLabel()
+        self._review_banner.setWordWrap(True)
+        self._review_banner.setStyleSheet(
+            "background: #fdf3d0; color: #7a5c00; padding: 4px 6px; font-size: 9pt;"
+        )
+        self._review_banner.setVisible(False)
+
+        tab = QWidget()
+        tab_layout = QVBoxLayout(tab)
+        tab_layout.setContentsMargins(0, 0, 0, 0)
+        tab_layout.setSpacing(2)
+        tab_layout.addWidget(self._review_banner)
+        tab_layout.addWidget(self._review_splitter, stretch=1)
+        return tab
 
     def _build_text_zoom_bar(self) -> QWidget:
         bar = QWidget()
@@ -496,9 +577,10 @@ class PreviewPanel(QWidget):
             self._ocr_view,
             self._correction_view,
             self._evaluation_text,
-            self._diff_widget,
         ):
             widget.setFont(font)
+        self._review_diff.set_font_point_size(new_pt)
+        self._review_notes.set_font_point_size(new_pt)
         self._font_size_lbl.setText(f"{new_pt} pt")
 
     # ── formatted / source views ──────────────────────────────────────────────────
@@ -603,6 +685,44 @@ class PreviewPanel(QWidget):
             self._plain("correction", self._last_correction_text, self._text_format),
         )
 
+    def _refresh_changes(self) -> None:
+        """Re-align the review with the current texts and redraw both changes views.
+
+        Alignment is recomputed from the stored texts on every call, so a teacher edit in
+        *Proofread Text* needs no extra state: a reverted change loses its explanation and
+        an added change shows as the teacher's own.
+        """
+        self._changes_timer.stop()
+        raw, corrected = self._diff_texts()
+        aligned = CorrectionReviewPresenter.aligned_plain(raw, corrected, self._review)
+        self._aligned = aligned
+        self._review_diff.set_content(raw, corrected, aligned, font_pt=self._current_font_pt())
+        self._review_notes.set_content(aligned, font_pt=self._current_font_pt())
+        # Without a review there is nothing to explain: show the plain diff alone.
+        self._review_notes.setVisible(aligned is not None)
+        self._update_changes_tab_title()
+        self._correction_nav.set_review_text(review_summary(aligned, separator=" · "))
+
+    def flush_pending_changes(self) -> None:
+        """Re-align the review right now if an edit is still waiting for the typing pause."""
+        if self._changes_timer.isActive():
+            self._refresh_changes()
+
+    def _current_font_pt(self) -> int:
+        """Return the point size the text views are zoomed to."""
+        return self._base_font_pt + self._text_zoom
+
+    def _update_changes_tab_title(self) -> None:
+        """Refresh the *Changes* tab title with the current counts."""
+        index = self._text_tabs.indexOf(self._changes_tab)
+        if index >= 0:
+            self._text_tabs.setTabText(index, txt.changes_tab_title(self._aligned))
+
+    def _set_correction_warning(self, warning: str) -> None:
+        """Show *warning* as a one-line banner above the diff (hidden when empty)."""
+        self._review_banner.setText(warning)
+        self._review_banner.setVisible(bool(warning))
+
     def _plain(self, slot: str, text: str, text_format: str) -> str:
         """Return *text* without markup, re-parsing only when the slot's text changed."""
         cached = self._plain_cache.get(slot)
@@ -637,12 +757,17 @@ class PreviewPanel(QWidget):
         evaluation_invalidated: bool = False,
     ) -> None:
         """Refresh stage-status badges and run-button visibility."""
+        self.flush_pending_changes()  # the review summary below reads the aligned review
         self._current_source_id = source_id
         self._ocr_nav.update_status(
             ocr, correction_enabled, correction, next_invalidated=correction_invalidated
         )
         self._correction_nav.update_status(
-            correction, evaluation_enabled, evaluation, next_invalidated=evaluation_invalidated
+            correction,
+            evaluation_enabled,
+            evaluation,
+            next_invalidated=evaluation_invalidated,
+            review_text=review_summary(self._aligned, separator=" · "),
         )
         self._text_tabs.setTabText(0, f"Extracted Text  {ocr.value}")
         self._text_tabs.setTabText(1, f"Proofread Text  {correction.value}")
@@ -659,20 +784,27 @@ class PreviewPanel(QWidget):
         correction_text: str,
         evaluation_text: str,
         *,
-        original_path: str | None = None,
-        preprocess_steps: Sequence[str] | None = None,
+        preprocess: PreprocessInfo | None = None,
         text_format: str = "plain",
+        correction_review: CorrectionReview | None = None,
+        correction_warning: str = "",
     ) -> None:
         """Show the selected result's image and text payloads.
 
-        *original_path* and *preprocess_steps* describe how the image was produced (see
-        :meth:`set_preprocessing`); leaving them unset hides the original toggle and caption.
-        *text_format* says whether the OCR and correction texts are ``"plain"`` or
-        ``"markdown"``; Markdown is shown formatted (switch to the source with the toggle).
+        *preprocess* describes how the image was produced (see :meth:`set_preprocessing`);
+        leaving it unset hides the original toggle and caption.  *text_format* says whether
+        the OCR and correction texts are ``"plain"`` or ``"markdown"``; Markdown is shown
+        formatted (switch to the source with the toggle).  *correction_review* carries the
+        explanations and unclear expressions of the proofreading; without it the changes tab
+        shows the plain diff.  *correction_warning* is shown as a banner above that diff (for
+        example when the explanations had to be dropped).
         """
         self.flush_pending_edit()  # typed text must not be lost to the replaced content
+        self._review = correction_review
+        self._set_correction_warning(correction_warning)
         self._processed_pixmap = pixmap
-        self.set_preprocessing(original_path, preprocess_steps)
+        info = preprocess or PreprocessInfo()
+        self.set_preprocessing(info.original_img, info.steps)
         if not pixmap.isNull():
             self._image_view.set_pixmap(pixmap)
         else:
@@ -696,7 +828,7 @@ class PreviewPanel(QWidget):
         self._last_correction_text = self._correction_text.toPlainText()
         self._text_format = self._formatter.normalize(text_format)
         self._apply_view_modes()  # also renders the formatted views that are shown
-        self._diff_widget.set_texts(*self._diff_texts())
+        self._refresh_changes()
 
     def _on_ocr_text_changed(self) -> None:
         if self._loading:
@@ -706,7 +838,7 @@ class PreviewPanel(QWidget):
             return
         self._last_raw_text = text
         self._refresh_formatted_views()
-        self._diff_widget.set_texts(*self._diff_texts())
+        self._changes_timer.start()
         self.ocr_text_edited.emit(text)
 
     def _on_correction_text_changed(self) -> None:
@@ -717,7 +849,7 @@ class PreviewPanel(QWidget):
             return
         self._last_correction_text = text
         self._refresh_formatted_views()
-        self._diff_widget.set_texts(*self._diff_texts())
+        self._changes_timer.start()
         self.correction_text_edited.emit(text)
 
     def set_preprocessing(self, original_path: str | None, steps: Sequence[str] | None) -> None:
@@ -771,6 +903,17 @@ class PreviewPanel(QWidget):
         self._prep_lbl.setText(text)
         self._prep_lbl.setVisible(True)
 
+    def resizeEvent(self, event: Any) -> None:
+        """Turn the changes splitter vertical on a narrow panel and horizontal otherwise."""
+        super().resizeEvent(event)
+        orientation = (
+            Qt.Orientation.Vertical
+            if self.width() < _NARROW_PANEL_WIDTH
+            else Qt.Orientation.Horizontal
+        )
+        if self._review_splitter.orientation() != orientation:
+            self._review_splitter.setOrientation(orientation)
+
     def clear_preview(self) -> None:
         self.flush_pending_edit()
         self._image_view.clear()
@@ -786,5 +929,10 @@ class PreviewPanel(QWidget):
         self._last_raw_text = ""
         self._last_correction_text = ""
         self._text_format = "plain"
+        self._review = None
+        self._aligned = None
+        self._set_correction_warning("")
         self._apply_view_modes()
-        self._diff_widget.clear_diff()
+        self._review_diff.clear_content()
+        self._review_notes.clear_content()
+        self._update_changes_tab_title()

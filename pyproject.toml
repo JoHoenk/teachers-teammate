@@ -21,6 +21,7 @@ dependencies = [
     "Pillow>=10",
     "platformdirs>=4.0",
     "ollama>=0.4",
+    "pydantic>=2",
 ]
 
 [project.optional-dependencies]
@@ -191,6 +192,7 @@ ignored-modules = [
     "markdown_it",
     "ollama",
     "psutil",
+    "pydantic",
     "pypdfium2",
     "spacy",
     # Test-only imports not in pylint's binary env.

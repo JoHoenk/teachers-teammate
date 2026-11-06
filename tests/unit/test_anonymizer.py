@@ -12,37 +12,15 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from teachers_teammate.infrastructure.anonymizer import (
+    AnonymizationResultCache,
     AnonymizerConfig,
+    CachedAnonymizer,
     DEFAULT_PATTERNS,
     SpacyAnonymizer,
     _LEGACY_DEFAULT_PATTERNS,
-    _spacy_model_for,
     _trim_street,
     resolve_patterns,
 )
-
-
-# ── _spacy_model_for ───────────────────────────────────────────────────────
-
-
-def test_spacy_model_for_known_languages() -> None:
-    """
-    Given  known language names (English, german, French)
-    When   _spacy_model_for() is called
-    Then   each resolves to the correct spaCy model slug
-    """
-    assert _spacy_model_for("English") == "en_core_web_sm"
-    assert _spacy_model_for("german") == "de_core_news_sm"
-    assert _spacy_model_for("French") == "fr_core_news_sm"
-
-
-def test_spacy_model_for_unknown_falls_back() -> None:
-    """
-    Given  an unknown language name not in the mapping
-    When   _spacy_model_for() is called
-    Then   the multilingual fallback model 'xx_ent_wiki_sm' is returned
-    """
-    assert _spacy_model_for("Klingon") == "xx_ent_wiki_sm"
 
 
 # ── AnonymizerConfig ───────────────────────────────────────────────────────
@@ -725,3 +703,201 @@ def test_anonymize_leaves_text_without_markup_untouched_for_the_ner_model() -> N
     anon.anonymize("Alice went to the shop.")
 
     assert anon._nlp.call_args.args[0] == "Alice went to the shop."
+
+
+# ── AnonymizationResultCache ──────────────────────────────────────────────
+
+
+def test_result_cache_returns_a_stored_result() -> None:
+    """
+    Given  an empty result cache
+    When   a result is put and read back
+    Then   the stored text and mapping are returned and the size is one
+    """
+    cache = AnonymizationResultCache()
+    mapping = {"[PERSON_1]": "Anna"}
+
+    cache.put(("English", "hash"), ("[PERSON_1] wrote", mapping))
+
+    assert cache.get(("English", "hash")) == ("[PERSON_1] wrote", mapping)
+    assert len(cache) == 1
+
+
+def test_result_cache_returns_none_for_an_unknown_key() -> None:
+    """
+    Given  an empty result cache
+    When   an unknown key is looked up
+    Then   the answer is None
+    """
+    assert AnonymizationResultCache().get(("English", "hash")) is None
+
+
+def test_result_cache_drops_the_least_recently_used_entry() -> None:
+    """
+    Given  a cache holding two texts and a capacity of two
+    When   a third text is put
+    Then   the least recently read entry is gone and the other two are kept
+    """
+    cache = AnonymizationResultCache(capacity=2)
+    cache.put(("a",), ("A", {}))
+    cache.put(("b",), ("B", {}))
+    cache.get(("a",))  # reading "a" makes "b" the least recently used entry
+
+    cache.put(("c",), ("C", {}))
+
+    assert cache.get(("b",)) is None
+    assert cache.get(("a",)) is not None
+    assert cache.get(("c",)) is not None
+
+
+def test_result_cache_clear_forgets_every_text() -> None:
+    """
+    Given  a cache holding two texts
+    When   clear() is called
+    Then   the cache is empty
+    """
+    cache = AnonymizationResultCache()
+    cache.put(("a",), ("A", {}))
+    cache.put(("b",), ("B", {}))
+
+    cache.clear()
+
+    assert len(cache) == 0
+
+
+# ── CachedAnonymizer ──────────────────────────────────────────────────────
+
+
+def _cached(inner: MagicMock, *, prefix: tuple[object, ...] = ("English",)) -> CachedAnonymizer:
+    """Return a :class:`CachedAnonymizer` wrapping *inner* with a shared cache."""
+    return CachedAnonymizer(inner, AnonymizationResultCache(), prefix)
+
+
+def test_cached_anonymizer_analyses_the_same_text_once() -> None:
+    """
+    Given  a cached anonymizer and a text that was already anonymized
+    When   anonymize() is called again with that text
+    Then   the inner anonymizer is not asked a second time and both calls agree
+    """
+    inner = MagicMock()
+    inner.anonymize.return_value = ("[PERSON_1] wrote", {"[PERSON_1]": "Anna"})
+    anon = _cached(inner)
+
+    first = anon.anonymize("Anna wrote")
+    second = anon.anonymize("Anna wrote")
+
+    inner.anonymize.assert_called_once_with("Anna wrote")
+    assert first == second == ("[PERSON_1] wrote", {"[PERSON_1]": "Anna"})
+
+
+def test_cached_anonymizer_analyses_different_texts_separately() -> None:
+    """
+    Given  a cached anonymizer
+    When   two different texts are anonymized
+    Then   the inner anonymizer runs for each of them
+    """
+    inner = MagicMock()
+    inner.anonymize.side_effect = lambda text: (f"hidden {text}", {})
+    anon = _cached(inner)
+
+    anon.anonymize("one")
+    anon.anonymize("two")
+
+    assert inner.anonymize.call_count == 2
+
+
+def test_cached_anonymizer_keys_by_its_settings() -> None:
+    """
+    Given  two cached anonymizers with different settings over one shared cache
+    When   the same text is anonymized through each
+    Then   each has its own entry, because the sent text would differ
+    """
+    cache = AnonymizationResultCache()
+    first_inner, second_inner = MagicMock(), MagicMock()
+    first_inner.anonymize.return_value = ("hidden by first", {})
+    second_inner.anonymize.return_value = ("hidden by second", {})
+
+    first = CachedAnonymizer(first_inner, cache, ("English", "patterns-a"))
+    second = CachedAnonymizer(second_inner, cache, ("English", "patterns-b"))
+
+    assert first.anonymize("text")[0] == "hidden by first"
+    assert second.anonymize("text")[0] == "hidden by second"
+    assert len(cache) == 2
+
+
+def test_cached_anonymizer_returns_an_independent_mapping() -> None:
+    """
+    Given  a cached anonymizer whose result is already cached
+    When   the mapping of the cached result is changed by the caller
+    Then   the next call still returns the original mapping
+    """
+    inner = MagicMock()
+    inner.anonymize.return_value = ("[PERSON_1] wrote", {"[PERSON_1]": "Anna"})
+    anon = _cached(inner)
+    anon.anonymize("Anna wrote")
+
+    _text, mapping = anon.anonymize("Anna wrote")
+    mapping.clear()
+
+    assert anon.anonymize("Anna wrote")[1] == {"[PERSON_1]": "Anna"}
+
+
+def test_cached_anonymizer_delegates_restore() -> None:
+    """
+    Given  a cached anonymizer
+    When   restore() is called
+    Then   the wrapped anonymizer puts the names back
+    """
+    inner = MagicMock()
+    inner.restore.return_value = "Anna wrote"
+    anon = _cached(inner)
+
+    assert anon.restore("[PERSON_1] wrote", {"[PERSON_1]": "Anna"}) == "Anna wrote"
+    inner.restore.assert_called_once_with("[PERSON_1] wrote", {"[PERSON_1]": "Anna"})
+
+
+def test_cached_anonymizer_shares_one_entry_between_two_instances() -> None:
+    """
+    Given  two cached anonymizers with the same settings over one shared cache
+    When   both anonymize the same text
+    Then   the wrapped anonymizer runs once, so a preview and a run share the result
+    """
+    cache = AnonymizationResultCache()
+    inner = MagicMock()
+    inner.anonymize.return_value = ("[PERSON_1] wrote", {})
+    prefix = ("English", "settings")
+
+    CachedAnonymizer(inner, cache, prefix).anonymize("Anna wrote")
+    CachedAnonymizer(inner, cache, prefix).anonymize("Anna wrote")
+
+    inner.anonymize.assert_called_once_with("Anna wrote")
+
+
+def test_result_cache_survives_parallel_readers_and_writers() -> None:
+    """
+    Given  a small cache that several threads fill and read at once
+    When   lookups race with evictions
+    Then   nothing raises (a lookup of an entry evicted meanwhile is a miss, not a KeyError)
+    """
+    import threading  # noqa: PLC0415
+
+    cache = AnonymizationResultCache(capacity=4)
+    errors: list[BaseException] = []
+
+    def hammer(offset: int) -> None:
+        try:
+            for i in range(2000):
+                key = ("k", (i + offset) % 16)
+                cache.put(key, ("t", {}))
+                cache.get(("k", (i * 7 + offset) % 16))
+        except BaseException as exc:  # noqa: BLE001
+            errors.append(exc)
+
+    threads = [threading.Thread(target=hammer, args=(n,)) for n in range(6)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert errors == []
+    assert len(cache) <= 4

@@ -96,3 +96,20 @@ class FlowAcknowledgements:
             for fingerprint, summary in sorted(records.items())
         )
         settings.setValue(SETTINGS_KEY, "\n".join(lines))
+
+
+# ── The "hide personal information" view setting ──────────────────────────────
+
+DISPLAY_ANONYMIZED_KEY = "privacy/display_anonymized"
+"""``"yes"``/``"no"``: show placeholders instead of names in the preview panel."""
+
+
+def display_anonymized(settings_factory: Callable[[], Any]) -> bool:
+    """Return whether the previews should show placeholders instead of the names."""
+    value = str(settings_factory().value(DISPLAY_ANONYMIZED_KEY, "no") or "no")
+    return value.strip().lower() in {"yes", "true", "1"}
+
+
+def set_display_anonymized(settings_factory: Callable[[], Any], enabled: bool) -> None:
+    """Remember whether the previews should show placeholders instead of the names."""
+    settings_factory().setValue(DISPLAY_ANONYMIZED_KEY, "yes" if enabled else "no")

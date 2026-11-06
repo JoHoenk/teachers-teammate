@@ -31,7 +31,7 @@ from .config import (
     OcrConfig,
     load_config_file,
 )
-from .domain.data_location import LOCAL_OCR_ENGINES, DataFlow
+from .domain.data_location import LOCAL_OCR_ENGINES, DataFlow, PrivacyLevel
 from .domain.pdf_text_layer import PDF_TEXT_LAYER_MODES
 from .exceptions import ConfigFileNotFoundError, ConfigFileParseError
 
@@ -498,12 +498,24 @@ def _validate_providers(args: argparse.Namespace, valid: frozenset[str]) -> list
     return warnings
 
 
+#: What each privacy level means, in the console's own words.
+_LEVEL_TEXT = {
+    PrivacyLevel.LOCAL: "Everything stays on this computer.",
+    PrivacyLevel.OWN_SERVER: "Data goes to another computer you control.",
+    PrivacyLevel.ANON_EU: "Anonymized text is sent to a service in the EU.",
+    PrivacyLevel.ANON_NON_EU: "Anonymized text is sent to a service outside the EU.",
+    PrivacyLevel.NAMES_EU: "Text with names is sent to a service in the EU.",
+    PrivacyLevel.NAMES_NON_EU: "Text with names is sent to a service outside the EU.",
+}
+
+
 def _print_data_flow(flow: DataFlow) -> None:
     """Tell the user where their documents are processed before anything starts."""
     print("Where your documents are processed:", file=sys.stderr)
     for stage in flow.stages:
         marker = "!" if stage.leaves_computer else "-"
-        print(f"  {marker} {stage.summary}", file=sys.stderr)
+        print(f"  {marker} {stage.title}: {stage.badge}", file=sys.stderr)
+    print(f"  => {_LEVEL_TEXT[flow.level]}", file=sys.stderr)
     if flow.leaves_computer:
         print(
             "  ! Data leaves this computer. Check that this is allowed for your documents.",
@@ -589,6 +601,15 @@ def run_cli(
         ocr_timeout=args.ocr_timeout,
         correction_enabled=args.correction_enabled,
         anonymization_enabled=args.anonymization_enabled,
+        # No command-line flags for these: they come from the config file, like in the GUI, so a
+        # run from either gives the same placeholders (and the same cache key).
+        anonymizer_primary_model=getattr(
+            args, "anonymizer_primary_model", DEFAULTS["anonymizer_primary_model"]
+        ),
+        anonymizer_secondary_model=getattr(
+            args, "anonymizer_secondary_model", DEFAULTS["anonymizer_secondary_model"]
+        ),
+        anonymizer_patterns=getattr(args, "anonymizer_patterns", None),
         correction_provider=args.correction_provider,
         correction_model=args.correction_model,
         correction_prompt=args.correction_prompt,

@@ -25,11 +25,13 @@ from PySide6.QtWidgets import (
 )
 
 from ..application.service import ProcessingApplicationService
+from ..config import SECONDARY_MODEL_AUTO, SECONDARY_MODEL_NONE
 
 _INVALID_BG = QColor("#ffd0d0")
 _DETECTING = "Detecting…"
 _AUTO_PRIMARY = "Auto (language-specific)"
-_NO_SECONDARY = "(none — skip secondary pass)"
+_NO_SECONDARY = "(none — no extra pass)"
+_AUTO_SECONDARY = "Auto (system language)"
 
 
 class _SpacyModelFetchThread(QThread):
@@ -190,7 +192,9 @@ class AnonymizerConfigDialog(QDialog):
 
         secondary_hint = QLabel(
             "An extra spaCy model run after the primary one to catch names it misses "
-            "(e.g. German names in English text). Leave as <i>(none)</i> if not needed."
+            "(e.g. German names in English text). <i>Auto</i> uses the model for the "
+            "language this computer is set to, and nothing when that is the same model as "
+            "the primary one. Choose <i>(none)</i> to skip the second pass entirely."
         )
         secondary_hint.setWordWrap(True)
         secondary_hint.setTextFormat(Qt.TextFormat.RichText)
@@ -331,15 +335,40 @@ class AnonymizerConfigDialog(QDialog):
             self._primary_model.setCurrentIndex(idx)
         self._primary_model.setEnabled(True)
 
-        # Secondary combo: (none) + installed models
+        # Secondary combo: auto (system language), (none), then the installed models
         self._secondary_model.clear()
+        system_model = self._system_spacy_model()
+        if system_model == auto_model and system_model:
+            auto_secondary = f"{_AUTO_SECONDARY}: none, same as document language"
+        elif system_model:
+            auto_secondary = f"{_AUTO_SECONDARY}: {system_model}"
+        else:
+            auto_secondary = f"{_AUTO_SECONDARY}: none, the language is unknown"
+        self._secondary_model.addItem(auto_secondary, userData=SECONDARY_MODEL_AUTO)
+        # An explicit "(none)" is stored as no model at all, so an earlier choice is honoured.
         self._secondary_model.addItem(_NO_SECONDARY, userData=None)
         for m in models:
             self._secondary_model.addItem(m, userData=m)
-        if self._configured_secondary and self._configured_secondary in models:
-            idx = self._secondary_model.findData(self._configured_secondary)
-            self._secondary_model.setCurrentIndex(idx)
+        self._select_secondary(self._configured_secondary, models)
         self._secondary_model.setEnabled(True)
+
+    def _system_spacy_model(self) -> str | None:
+        """Return the spaCy model for the language this computer is set to (if it is known)."""
+        try:
+            return ProcessingApplicationService().system_spacy_model()
+        except Exception:  # noqa: BLE001  # a missing spaCy must not break the dialog
+            return None
+
+    def _select_secondary(self, configured: str | None, models: list[str]) -> None:
+        """Select the combo entry that *configured* stands for (auto, none or a model)."""
+        if configured == SECONDARY_MODEL_AUTO:
+            self._secondary_model.setCurrentIndex(0)  # "Auto (system language)"
+            return
+        if configured and configured != SECONDARY_MODEL_NONE and configured in models:
+            self._secondary_model.setCurrentIndex(self._secondary_model.findData(configured))
+            return
+        # None, "none", or a model that is no longer installed: no extra pass.
+        self._secondary_model.setCurrentIndex(self._secondary_model.findData(None))
 
     # ── Table helpers ──────────────────────────────────────────────────────────
 
@@ -532,12 +561,15 @@ class AnonymizerConfigDialog(QDialog):
         primary = (
             self._primary_model.currentData()
         )  # None for "Auto" item, "__loading__" during fetch
-        secondary = self._secondary_model.currentData()  # None for "(none)" item
-        # Treat the loading sentinel as "not yet set" → use None
+        # "auto:system", "none" or a model name; None/"" when nothing is selected
+        secondary = self._secondary_model.currentData()
+        # Treat the loading sentinel as "not yet set" → use the saved choice
         if primary == "__loading__":
             primary = self._configured_primary
         if secondary == "__loading__":
             secondary = self._configured_secondary
+        if secondary == "":
+            secondary = None
         return self._AnonymizerConfig(
             primary_model=primary,
             secondary_model=secondary,

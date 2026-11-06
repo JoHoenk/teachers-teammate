@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from teachers_teammate.gui._anonymizer_config_dialog import AnonymizerConfigDialog
+from teachers_teammate.config import SECONDARY_MODEL_AUTO
 from teachers_teammate.infrastructure.anonymizer import AnonymizerConfig, DEFAULT_PATTERNS
 from PySide6.QtWidgets import QDialogButtonBox
 
@@ -202,6 +203,53 @@ def test_dialog_secondary_model_falls_back_to_none_when_not_installed(qtbot) -> 
     assert dlg._secondary_model.currentData() is None
 
 
+@pytest.mark.gui
+def test_dialog_secondary_model_auto_entry_is_first(qtbot) -> None:
+    """
+    Given  a dialog whose saved choice follows the system language
+    When   the fetch completes
+    Then   the first entry is the automatic choice and it is selected
+    """
+    cfg = AnonymizerConfig(secondary_model=SECONDARY_MODEL_AUTO)
+    dlg = _make_dialog(qtbot, config=cfg)
+    dlg._on_spacy_models_fetched(["de_core_news_sm"])
+
+    assert dlg._secondary_model.itemData(0) == SECONDARY_MODEL_AUTO
+    assert dlg._secondary_model.currentData() == SECONDARY_MODEL_AUTO
+    assert dlg.anonymizer_config.secondary_model == SECONDARY_MODEL_AUTO
+
+
+@pytest.mark.gui
+def test_dialog_secondary_auto_entry_names_the_system_model(qtbot) -> None:
+    """
+    Given  the system language maps to a model other than the document language's
+    When   the fetch completes
+    Then   the automatic entry says which model it will use
+    """
+    dlg = _make_dialog(qtbot)
+    with patch.object(
+        AnonymizerConfigDialog, "_system_spacy_model", return_value="de_core_news_sm"
+    ):
+        dlg._on_spacy_models_fetched(["de_core_news_sm"])
+
+    assert "de_core_news_sm" in dlg._secondary_model.itemText(0)
+
+
+@pytest.mark.gui
+def test_dialog_secondary_auto_entry_says_none_for_the_same_language(qtbot) -> None:
+    """
+    Given  the system language is the document language
+    When   the fetch completes
+    Then   the automatic entry says no extra model is used
+    """
+    dlg = _make_dialog(qtbot)
+    # English document, English system: the primary model already covers it.
+    with patch.object(AnonymizerConfigDialog, "_system_spacy_model", return_value="en_core_web_sm"):
+        dlg._on_spacy_models_fetched(["en_core_web_sm"])
+
+    assert "same as document language" in dlg._secondary_model.itemText(0)
+
+
 # ── Primary model combo ────────────────────────────────────────────────────
 
 
@@ -297,7 +345,7 @@ def test_dialog_anonymizer_config_no_secondary_when_none_selected(qtbot) -> None
     """
     dlg = _make_dialog(qtbot)
     dlg._on_spacy_models_fetched([])
-    dlg._secondary_model.setCurrentIndex(0)  # "(none)" is always first after fetch
+    dlg._secondary_model.setCurrentIndex(dlg._secondary_model.findData(None))  # "(none)"
 
     result = dlg.anonymizer_config
     assert isinstance(result, AnonymizerConfig)

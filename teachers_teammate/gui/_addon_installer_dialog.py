@@ -29,6 +29,13 @@ from ..application.service import (
 )
 from ._constants import _SPACY_MODEL_CHOICES
 
+
+def _model_for_system_language() -> str:
+    """Return the spaCy model of the system language, or the multilingual fallback."""
+    service = ProcessingApplicationService()
+    return service.system_spacy_model() or service.spacy_model_for_language("")
+
+
 _ADDON_META: dict[str, dict] = {
     ADDON_PRIVACY: {
         "title": "Install Privacy Addon",
@@ -220,11 +227,11 @@ class SpacyModelDownloadDialog(QDialog):
 
     model_downloaded = Signal(str)
 
-    def __init__(
-        self, default_model: str = "xx_ent_wiki_sm", parent: QWidget | None = None
-    ) -> None:
+    def __init__(self, default_model: str = "", parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._thread: _ModelDownloadThread | None = None
+        # No model given: preselect the one for the language this computer is set to.
+        default_model = default_model or _model_for_system_language()
 
         self.setWindowTitle("Download spaCy Model")
         self.setMinimumWidth(520)

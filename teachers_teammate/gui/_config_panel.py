@@ -35,6 +35,7 @@ from ..application.correction_options import (
 from ..application.service import RequirementIssue
 from ..config import (
     DEFAULTS,
+    SECONDARY_MODEL_NONE,
     Config,
     OcrConfig,
     migrate_answer_formats,
@@ -42,6 +43,7 @@ from ..config import (
     normalize_ocr_model,
 )
 from ..domain.correction_policy import LEVELS, normalize_level, normalize_output_mode
+from ..domain.data_location import DataFlow
 from ..domain.pdf_text_layer import normalize_pdf_text_layer
 from . import _user_text as txt
 from ._background import LatestTask
@@ -102,6 +104,8 @@ class ConfigPanel(QScrollArea):
     anonymizer_configure_requested = Signal(str, object)  # language, AnonymizerConfig
     #: Bubbled from DependencyGuardDialog: tab index, model tags to preselect.
     open_downloads_requested = Signal(int, list)
+    #: The last rendered data flow, so cells elsewhere can say where a step's text goes.
+    data_flow_changed = Signal(object)
 
     def __init__(
         self,
@@ -158,7 +162,8 @@ class ConfigPanel(QScrollArea):
             "debug": DEFAULTS["debug"],
         }
         self._settings_dict["anonymizer_primary_model"] = None
-        self._settings_dict["anonymizer_secondary_model"] = None
+        # SECONDARY_MODEL_AUTO by default; SECONDARY_MODEL_NONE = the user chose "(none)".
+        self._settings_dict["anonymizer_secondary_model"] = DEFAULTS["anonymizer_secondary_model"]
         self._settings_dict["anonymizer_patterns"] = None
 
         # Input selection state: either a folder or an explicit file list.
@@ -177,6 +182,7 @@ class ConfigPanel(QScrollArea):
         self._layout.setContentsMargins(8, 8, 8, 8)
         self._layout.setSpacing(6)
 
+        self._data_flow: DataFlow | None = None
         self._data_flow_summary = DataFlowSummary()
         self._layout.addWidget(self._data_flow_summary)
         self._layout.addWidget(self._separator())
@@ -291,10 +297,11 @@ class ConfigPanel(QScrollArea):
             self._step_header(
                 "Step 3: Remove Personal Information",
                 "Automatically hides names, email addresses, and phone numbers\n"
-                "before text is sent to the AI service for proofreading and content review.\n"
-                "The original information is restored in the final document.\n"
-                "Not needed while everything runs on this computer.\n"
-                "Requires the Privacy add-on (see Downloads).",
+                "in the extracted text, before anything is sent for proofreading\n"
+                "or content review. The original information is restored in the\n"
+                "final document. Runs right after text recognition and does not\n"
+                "need proofreading. Not needed while everything runs on this\n"
+                "computer. Requires the Privacy add-on (see Downloads).",
             )
         )
         inner = QWidget()
@@ -511,6 +518,8 @@ class ConfigPanel(QScrollArea):
         language".  A custom prompt is used for every language, which the note says.
         """
         self._custom_prompt_note.setVisible(bool(self._correction_prompt_text.strip()))
+        # The language decides the detection models, so the box and the privacy setting change.
+        self.refresh_data_flow()
 
     # ── visibility updates ────────────────────────────────────────────────────────
 
@@ -526,7 +535,13 @@ class ConfigPanel(QScrollArea):
 
         # _service is injected as object; narrowed to the concrete service type
         service: ProcessingApplicationService = self._service  # ty: ignore[invalid-assignment]
-        self._data_flow_summary.set_flow(service.describe_data_flow(self.lookup_config()))
+        self._data_flow = service.describe_data_flow(self.lookup_config())
+        self._data_flow_summary.set_flow(self._data_flow)
+        self.data_flow_changed.emit(self._data_flow)
+
+    def data_flow(self) -> DataFlow | None:
+        """Return the flow last rendered in the box (``None`` before the first render)."""
+        return self._data_flow
 
     def _update_correction_visibility(self, checked: bool = True) -> None:
         self.refresh_data_flow()
@@ -572,7 +587,9 @@ class ConfigPanel(QScrollArea):
 
         return AnonymizerConfig(
             primary_model=self._settings_dict.get("anonymizer_primary_model") or None,
-            secondary_model=self._settings_dict.get("anonymizer_secondary_model") or None,
+            # "auto:system" and "none" are meaningful values, not "not set"
+            secondary_model=self._settings_dict.get("anonymizer_secondary_model")
+            or SECONDARY_MODEL_NONE,
             patterns=resolve_anonymizer_patterns(self._settings_dict.get("anonymizer_patterns")),
         )
 
@@ -906,7 +923,7 @@ class ConfigPanel(QScrollArea):
             )
         if "anonymizer_secondary_model" in values:
             self._settings_dict["anonymizer_secondary_model"] = (
-                values["anonymizer_secondary_model"] or None
+                values["anonymizer_secondary_model"] or SECONDARY_MODEL_NONE
             )
         if "anonymizer_patterns" in values:
             self._settings_dict["anonymizer_patterns"] = values["anonymizer_patterns"]
@@ -975,6 +992,23 @@ class ConfigPanel(QScrollArea):
             evaluate_model=str(settings.get("evaluate_model", config.evaluate_model or "")),
             ollama_url=str(settings.get("ollama_url", config.ollama_url)),
             language=self._language.currentText().strip(),
+            # What a run would send: "What is sent for this file" and the status box read the
+            # anonymizer rules and the instructions from here, so they must be the live ones.
+            anonymizer_primary_model=settings.get("anonymizer_primary_model") or None,
+            anonymizer_secondary_model=settings.get(
+                "anonymizer_secondary_model", DEFAULTS["anonymizer_secondary_model"]
+            )
+            or SECONDARY_MODEL_NONE,
+            anonymizer_patterns=settings.get("anonymizer_patterns"),
+            correction_prompt=self._correction_prompt_text,
+            correction_level=self._correction_level.currentText(),
+            explanation_language=str(
+                settings.get("explanation_language", DEFAULTS["explanation_language"])
+            ),
+            correction_output=str(settings.get("correction_output", DEFAULTS["correction_output"])),
+            answer_format_review=str(settings.get("answer_format_review", "")),
+            answer_format_text=str(settings.get("answer_format_text", "")),
+            evaluate_prompt=self._evaluation_prompt_text,
         )
 
     @staticmethod
@@ -1046,7 +1080,7 @@ class ConfigPanel(QScrollArea):
         so ``recursive`` is deliberately not persisted — writing it would imply a
         toggle the GUI does not expose.
         """
-        return {
+        values = {
             "input": self.get_input_dir(),
             "output": str(self._settings_dict.get("output_dir", "")).strip(),
             "language": self._language.currentText().strip(),
@@ -1057,3 +1091,7 @@ class ConfigPanel(QScrollArea):
             "evaluate_prompt": self._evaluation_prompt_text,
             **self._settings_dict,
         }
+        if values.get("anonymizer_secondary_model") is None:
+            # None is skipped when writing the file, so an explicit "(none)" would be lost.
+            values["anonymizer_secondary_model"] = SECONDARY_MODEL_NONE
+        return values

@@ -12,7 +12,11 @@ import pytest
 
 from teachers_teammate.application import service as service_module
 from teachers_teammate.application.commands import ApplicationCommands
-from teachers_teammate.application.service import DocxExport, ProcessingApplicationService
+from teachers_teammate.application.service import (
+    AnonymizerConfig,
+    DocxExport,
+    ProcessingApplicationService,
+)
 from teachers_teammate.domain.model_listing import ModelListing
 from teachers_teammate.infrastructure.state_repository import DocumentState
 
@@ -1485,6 +1489,72 @@ def test_describe_data_flow_uses_provider_metadata(tmp_path: Path) -> None:
 
 
 @pytest.mark.unit
+def test_describe_data_flow_reports_the_provider_region(tmp_path: Path) -> None:
+    """
+    Given  proofreading at an EU provider and content review at a provider outside the EU
+    When   the service describes the data flow
+    Then   each step carries the region the provider declares, and the worst step decides
+    """
+    from tests.conftest import make_config  # noqa: PLC0415
+
+    cfg = make_config(
+        tmp_path,
+        ocr_engine="tesseract",
+        correction_enabled=True,
+        correction_provider="mistral_eu",
+        evaluation_enabled=True,
+        evaluate_provider="openai",
+    )
+
+    flow = _make_svc().describe_data_flow(cfg)
+
+    assert flow.stage("correction").location.data_region.value == "eu"
+    assert flow.stage("evaluation").location.data_region.value == "non_eu"
+    assert flow.level.value == "names_non_eu"
+
+
+@pytest.mark.unit
+def test_describe_anonymizer_models_is_empty_without_personal_info_removal(
+    tmp_path: Path,
+) -> None:
+    """
+    Given  a config with personal-info removal off
+    When   the anonymizer models of the status box are asked for
+    Then   there are none, so no model is loaded just to draw the box
+    """
+    from tests.conftest import make_config  # noqa: PLC0415
+
+    assert _make_svc().describe_anonymizer_models(make_config(tmp_path)) == []
+
+
+@pytest.mark.unit
+def test_describe_anonymizer_models_names_the_resolved_models(
+    tmp_path: Path, monkeypatch, mocker
+) -> None:
+    """
+    Given  personal-info removal on, a German document and a system language of English
+    When   the anonymizer models of the status box are asked for
+    Then   the document model and the system model are named, as a run would load them
+    """
+    from tests.conftest import make_config  # noqa: PLC0415
+
+    mocker.patch(
+        "teachers_teammate.infrastructure.spacy_models.installed_spacy_models",
+        return_value=["de_core_news_sm", "en_core_web_sm"],
+    )
+    mocker.patch(
+        "teachers_teammate.infrastructure.system_locale.system_language",
+        return_value="English",
+    )
+    cfg = make_config(tmp_path, language="German", anonymization_enabled=True)
+
+    assert _make_svc().describe_anonymizer_models(cfg) == [
+        "de_core_news_sm",
+        "en_core_web_sm",
+    ]
+
+
+@pytest.mark.unit
 def test_preflight_reports_unreachable_ollama(tmp_path: Path) -> None:
     """
     Given  a config that needs Ollama and a server that cannot be reached
@@ -2277,3 +2347,261 @@ def test_correction_instructions_matches_what_the_corrector_sends(monkeypatch) -
     assert system == f"{policy}\n\n{fixed}"
     assert "Answer with a JSON object" in fixed
     assert fill_placeholders(GERMAN_PROMPT, level="B2") == policy
+
+
+# ── Shared anonymization cache (Phase 3) ─────────────────────────────────────
+
+
+@pytest.mark.unit
+def test_build_cached_anonymizer_shares_one_result_between_run_and_preview() -> None:
+    """
+    Given  a service whose anonymizer is built once
+    When   the cached anonymizer and anonymize_preview() are asked about the same text
+    Then   spaCy runs once, so a run and the "What is sent" view agree
+    """
+    anonymizer = MagicMock()
+    anonymizer.anonymize.return_value = ("[PERSON_1] wrote", {"[PERSON_1]": "Anna"})
+    svc = _make_svc()
+
+    with patch(
+        "teachers_teammate.infrastructure.anonymizer.SpacyAnonymizer", return_value=anonymizer
+    ):
+        from_run = svc.build_cached_anonymizer("English", service_module.AnonymizerConfig())
+        from_run.anonymize("Anna wrote")
+        from_view = svc.anonymize_preview("Anna wrote", "English")
+
+    anonymizer.anonymize.assert_called_once_with("Anna wrote")
+    assert from_view == ("[PERSON_1] wrote", {"[PERSON_1]": "Anna"})
+
+
+@pytest.mark.unit
+def test_run_then_view_analyses_the_text_once() -> None:
+    """
+    Given  a pipeline run that anonymized a text through the service cache
+    When   the privacy preview asks for the same text afterwards
+    Then   only one spaCy pass happened
+    """
+    anonymizer = MagicMock()
+    anonymizer.anonymize.return_value = ("hidden", {})
+    svc = _make_svc()
+
+    with patch(
+        "teachers_teammate.infrastructure.anonymizer.SpacyAnonymizer", return_value=anonymizer
+    ):
+        svc.build_cached_anonymizer("English", service_module.AnonymizerConfig()).anonymize("text")
+        svc.anonymize_preview("text", "English")
+
+    assert anonymizer.anonymize.call_count == 1
+
+
+@pytest.mark.unit
+def test_changed_anonymizer_settings_analyse_the_text_again() -> None:
+    """
+    Given  a text already anonymized with one set of patterns
+    When   the preview asks for it with different patterns
+    Then   the text is analysed again, because the sent text would differ
+    """
+    anonymizer = MagicMock()
+    anonymizer.anonymize.return_value = ("hidden", {})
+    svc = _make_svc()
+
+    with patch(
+        "teachers_teammate.infrastructure.anonymizer.SpacyAnonymizer", return_value=anonymizer
+    ):
+        svc.anonymize_preview("text", "English", service_module.AnonymizerConfig(patterns=()))
+        svc.anonymize_preview(
+            "text", "English", service_module.AnonymizerConfig(patterns=(("ID", r"\d+"),))
+        )
+
+    assert anonymizer.anonymize.call_count == 2
+
+
+@pytest.mark.unit
+def test_changed_language_analyses_the_text_again(tmp_path: Path) -> None:
+    """
+    Given  a text already anonymized for English
+    When   the same text is asked for in German
+    Then   the text is analysed again with the German model
+    """
+    anonymizer = MagicMock()
+    anonymizer.anonymize.return_value = ("hidden", {})
+    svc = _make_svc()
+
+    with patch(
+        "teachers_teammate.infrastructure.anonymizer.SpacyAnonymizer", return_value=anonymizer
+    ) as ctor:
+        svc.anonymize_preview("text", "English")
+        svc.anonymize_preview("text", "German")
+
+    assert ctor.call_count == 2
+    assert anonymizer.anonymize.call_count == 2
+
+
+@pytest.mark.unit
+def test_clear_anonymizer_cache_forgets_the_anonymized_texts() -> None:
+    """
+    Given  a service with a cached anonymized text
+    When   clear_anonymizer_cache() is called
+    Then   the result cache is empty as well, so no hidden text outlives the reset
+    """
+    anonymizer = MagicMock()
+    anonymizer.anonymize.return_value = ("hidden", {})
+    svc = _make_svc()
+
+    with patch(
+        "teachers_teammate.infrastructure.anonymizer.SpacyAnonymizer", return_value=anonymizer
+    ):
+        svc.anonymize_preview("text", "English")
+        assert len(svc._anonymization_cache) == 1
+
+        svc.clear_anonymizer_cache()
+
+    assert len(svc._anonymization_cache) == 0
+
+
+@pytest.mark.unit
+def test_run_selected_passes_a_component_factory_with_the_shared_anonymizer(tmp_path: Path) -> None:
+    """
+    Given  a service with its own component factory
+    When   run_selected() builds the pipeline
+    Then   the dependencies carry a factory whose build_anonymizer is the service's
+           cached builder, so the run fills the same cache a preview reads
+    """
+    from tests.conftest import make_config  # noqa: PLC0415
+
+    factory = MagicMock(return_value=MagicMock(run=lambda: 0))
+    svc = _make_svc(pipeline_factory=factory)
+
+    svc.run_selected(make_config(tmp_path))
+
+    dependencies = factory.call_args.kwargs["dependencies"]
+    assert dependencies is not None
+    anonymizer = MagicMock()
+    anonymizer.anonymize.return_value = ("hidden", {})
+
+    with patch(
+        "teachers_teammate.infrastructure.anonymizer.SpacyAnonymizer", return_value=anonymizer
+    ):
+        built = dependencies.component_factory.build_anonymizer(
+            "English", service_module.AnonymizerConfig()
+        )
+        built.anonymize("Anna wrote")
+
+    assert len(svc._anonymization_cache) == 1
+
+
+# ── What is sent for this file (Phase 4) ─────────────────────────────────────
+
+
+@pytest.mark.unit
+def test_describe_sent_texts_shows_the_cached_text_that_a_run_sends(tmp_path: Path) -> None:
+    """
+    Given  a run that anonymized a file's text through the shared cache
+    When   describe_sent_texts() is asked what that file's proofreading receives
+    Then   it reports the same anonymized text, with one spaCy pass in total
+    """
+    from tests.conftest import make_config  # noqa: PLC0415
+
+    anonymizer = MagicMock()
+    anonymizer.anonymize.return_value = ("[PERSON_1] wrote", {"[PERSON_1]": "Anna"})
+    svc = _make_svc()
+    config = dataclasses.replace(
+        make_config(tmp_path),
+        correction_enabled=True,
+        anonymization_enabled=True,
+    )
+    anon_config = service_module.AnonymizerConfig()
+
+    with patch(
+        "teachers_teammate.infrastructure.anonymizer.SpacyAnonymizer", return_value=anonymizer
+    ):
+        svc.build_cached_anonymizer("English", anon_config).anonymize("Anna wrote")
+        report = svc.describe_sent_texts(config, "Anna wrote")
+
+    sent = [section for section in report.sections if section.stage.stage == "correction"]
+    assert sent, "a correction step that hides names is part of the report"
+    assert sent[0].text == "[PERSON_1] wrote"
+    assert sent[0].placeholders == ("[PERSON_1]",)
+    anonymizer.anonymize.assert_called_once_with("Anna wrote")
+
+
+@pytest.mark.unit
+def test_describe_sent_texts_without_anonymization_sends_names_as_written(
+    tmp_path: Path,
+) -> None:
+    """
+    Given  a run with personal-info removal switched off
+    When   describe_sent_texts() is asked what is sent
+    Then   the text is the extracted text, and no spaCy model is loaded
+    """
+    from tests.conftest import make_config  # noqa: PLC0415
+
+    svc = _make_svc()
+    config = dataclasses.replace(
+        make_config(tmp_path), correction_enabled=True, anonymization_enabled=False
+    )
+
+    with patch("teachers_teammate.infrastructure.anonymizer.SpacyAnonymizer") as ctor:
+        report = svc.describe_sent_texts(config, "Anna wrote")
+
+    ctor.assert_not_called()
+    sent = [section for section in report.sections if section.stage.stage == "correction"]
+    assert sent and sent[0].text == "Anna wrote"
+    assert sent[0].names_hidden is False
+
+
+@pytest.mark.unit
+def test_describe_sent_texts_carries_the_prompt_the_stage_sends(tmp_path: Path) -> None:
+    """
+    Given  a correction step with the built-in German prompt
+    When   describe_sent_texts() builds the report
+    Then   each section carries the same instructions the stage sends
+    """
+    from tests.conftest import make_config  # noqa: PLC0415
+
+    svc = _make_svc()
+    config = dataclasses.replace(make_config(tmp_path, language="German"), correction_enabled=True)
+
+    report = svc.describe_sent_texts(config, "Anna schrieb das.")
+
+    sent = next(s for s in report.sections if s.stage.stage == "correction")
+    policy, fixed = svc.correction_instructions(
+        prompt=config.correction_prompt,
+        language=config.language,
+        level=config.correction_level,
+        output_mode=config.correction_output,
+    )
+    assert sent.prompt == f"{policy}\n\n{fixed}"
+
+
+@pytest.mark.unit
+def test_installed_models_are_listed_once_until_forgotten() -> None:
+    """
+    Given  a service that resolves anonymizer settings on every preview
+    When   the settings are resolved several times, then models are forgotten
+    Then   spaCy is asked for its models once per remembered state, and the missing-model
+           warning is printed once
+    """
+    svc = ProcessingApplicationService()
+    config = AnonymizerConfig(secondary_model="auto:system")
+    with (
+        patch.object(svc, "list_installed_spacy_models", return_value=[]) as listing,
+        patch(
+            "teachers_teammate.infrastructure.system_locale.system_language",
+            return_value="German",
+        ),
+        patch("sys.stderr") as stderr,
+    ):
+        for _ in range(3):
+            svc.resolve_anonymizer_config("English", config)
+        assert listing.call_count == 1
+        assert stderr.write.call_count > 0
+        first = stderr.write.call_count
+
+        svc.resolve_anonymizer_config("English", config)
+        assert stderr.write.call_count == first  # same warning is not repeated
+
+        svc.forget_installed_models()
+        svc.resolve_anonymizer_config("English", config)
+
+        assert listing.call_count == 2

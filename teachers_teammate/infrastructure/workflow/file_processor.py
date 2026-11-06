@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 import logging
 from pathlib import Path
@@ -95,6 +96,20 @@ class _StageAbort(Exception):
         self.result = result
 
 
+class _LazyAnonymization:
+    """The anonymized extracted text of one file: computed on the first call, then reused."""
+
+    def __init__(self, compute: Callable[[], tuple[str, AnonymizationMap]]) -> None:
+        self._compute = compute
+        #: ``(text, mapping)`` once it was computed, else ``None``.
+        self.result: tuple[str, AnonymizationMap] | None = None
+
+    def __call__(self) -> tuple[str, AnonymizationMap]:
+        if self.result is None:
+            self.result = self._compute()
+        return self.result
+
+
 class FileProcessor:
     """Executes all pipeline stages for a single input file.
 
@@ -111,9 +126,6 @@ class FileProcessor:
         # Output file -> the input document that owns it, for the whole run.
         self._claimed: dict[Path, Path] = {}
         self._claim_lock = threading.Lock()
-        # Anonymized text of the current file, so the correction stage and the text file
-        # do not run the same NER pass twice.
-        self._anon_memo: dict[str, tuple[str, AnonymizationMap]] = {}
         self._language = config.language
         self._cache_service = config.cache_service
         self._preprocess_service = config.preprocess_service
@@ -130,7 +142,6 @@ class FileProcessor:
 
     def process(self, file: Path) -> ProcessingResult:
         """Process *file* through all pipeline stages."""
-        self._anon_memo.clear()
         try:
             ctx = self._prepare_cache(file)
             raw_text, preview_img, source_image, ctx = self._run_preprocess_or_cache(file, ctx)
@@ -149,8 +160,15 @@ class FileProcessor:
                     )
                 )
 
+            # The extracted text is anonymized once, and only when something asks for it: a
+            # proofreading that is not served from the cache.  Without proofreading nothing
+            # else would ask, so it runs here to fill the session cache the previews read.
+            anonymized = self._lazy_personal_info_removal(raw_text, preview_img)
+            if self._correction is None and self._anonymizer is not None:
+                anonymized()
+
             correction_text, review, ctx, correction_warnings = self._run_correction_or_cache(
-                file, raw_text, preview_img, ctx
+                file, raw_text, preview_img, ctx, anonymized
             )
             evaluation_text, eval_warnings = self._run_evaluation_or_cache(
                 file, raw_text, correction_text, preview_img, ctx
@@ -159,6 +177,9 @@ class FileProcessor:
         except _StageAbort as abort:
             return abort.result
 
+        # Only an anonymizer that also writes the anonymized text file can reuse the pre-pass.
+        done = anonymized.result
+        reused = done[0] if done is not None and self._text_anonymizer is self._anonymizer else None
         result = self._write_outputs(
             file,
             _OutputTexts(raw_text, correction_text, evaluation_text),
@@ -167,6 +188,7 @@ class FileProcessor:
             all_warnings,
             text_format=text_format,
             review=review,
+            anonymized_raw=reused,
         )
         return replace(result, correction_warning="; ".join(correction_warnings))
 
@@ -358,21 +380,41 @@ class FileProcessor:
 
         return raw_text, ctx
 
+    def _lazy_personal_info_removal(self, text: str, preview_img: str) -> _LazyAnonymization:
+        """Return a callable that hides personal data in the extracted *text* once.
+
+        Nothing runs until it is called.  A failing anonymizer (spaCy missing, a text over its
+        length limit, …) ends this file with a message instead of the whole run.
+        """
+
+        def remove() -> tuple[str, AnonymizationMap]:
+            if self._anonymizer is None:
+                return text, {}
+            try:
+                anonymized, anon_map = self._anonymizer.anonymize(text)
+            except Exception as exc:  # spaCy errors vary; report them per file
+                raise _StageAbort(
+                    ProcessingResult(
+                        False,
+                        f"Personal info removal failed: {exc}",
+                        preview_img,
+                        text,
+                        "",
+                        "",
+                    )
+                ) from exc
+            self._reporter.status(f"       → Personal info removed ({len(anon_map)} items)")
+            return anonymized, anon_map
+
+        return _LazyAnonymization(remove)
+
     def _anonymize_for(self, stage: str, text: str) -> tuple[str, AnonymizationMap]:
         """Hide personal data in *text* before an LLM *stage* sees it (no-op without anonymiser)."""
         if self._anonymizer is None:
             return text, {}
-        anonymized, anon_map = self._anonymize_text(self._anonymizer, text)
+        anonymized, anon_map = self._anonymizer.anonymize(text)
         self._reporter.status(f"       → PII anonymized before {stage}")
         return anonymized, anon_map
-
-    def _anonymize_text(self, anonymizer: Anonymizer, text: str) -> tuple[str, AnonymizationMap]:
-        """Anonymize *text*; the stage anonymizer remembers results for the current file."""
-        if anonymizer is not self._anonymizer:
-            return anonymizer.anonymize(text)
-        if text not in self._anon_memo:
-            self._anon_memo[text] = anonymizer.anonymize(text)
-        return self._anon_memo[text]
 
     def _restore_pii(
         self,
@@ -401,7 +443,12 @@ class FileProcessor:
             ) from exc
 
     def _run_correction_or_cache(
-        self, file: Path, raw_text: str, preview_img: str, ctx: CacheContext
+        self,
+        file: Path,
+        raw_text: str,
+        preview_img: str,
+        ctx: CacheContext,
+        anonymized: _LazyAnonymization,
     ) -> tuple[str, CorrectionReview | None, CacheContext, list[str]]:
         if self._correction is None:
             return "", None, ctx, []
@@ -414,7 +461,7 @@ class FileProcessor:
             return cache_state.correction_text, review, ctx, warnings
 
         self._reporter.status("       → Running correction...")
-        text_for_correction, anon_map = self._anonymize_for("correction", raw_text)
+        text_for_correction, anon_map = anonymized()
 
         text_format = self._text_format(ctx)
         outcome = self._correction.correct(
@@ -564,6 +611,7 @@ class FileProcessor:
         *,
         text_format: TextFormat = "plain",
         review: CorrectionReview | None = None,
+        anonymized_raw: str | None = None,
     ) -> ProcessingResult:
         def failed(message: str) -> ProcessingResult:
             return ProcessingResult(
@@ -601,7 +649,7 @@ class FileProcessor:
         except Exception as exc:  # noqa: BLE001  # python-docx / PIL errors vary widely; surface message without crashing
             return failed(f"DOCX creation failed: {exc}")
         try:
-            self._write_text_files(targets, texts.raw, text_format, saved)
+            self._write_text_files(targets, texts.raw, text_format, saved, anonymized_raw)
         except Exception as exc:  # noqa: BLE001  # NER / file-system errors vary; surface message without crashing
             already = f" (already saved: {', '.join(saved)})" if saved else ""
             return failed(f"Text file creation failed: {exc}{already}")
@@ -618,20 +666,29 @@ class FileProcessor:
         )
 
     def _write_text_files(
-        self, targets: dict[str, Path], raw_text: str, text_format: TextFormat, saved: list[str]
+        self,
+        targets: dict[str, Path],
+        raw_text: str,
+        text_format: TextFormat,
+        saved: list[str],
+        anonymized_raw: str | None = None,
     ) -> None:
         """Save the extracted text (plain and/or anonymized) as UTF-8 text.
 
         Like the Export menu: the OCR text without markup; anonymizing runs on the text in
         its stored notation, and the placeholder mapping is dropped. Every file is appended
         to *saved* as soon as it is written, so a failure still reports what already exists.
+
+        *anonymized_raw* is the anonymized *raw_text* of the pre-pass, when the same anonymizer
+        produced it; otherwise the text file anonymizes on its own.
         """
         jobs: list[tuple[Path, str]] = []
         if TEXT_SUFFIX in targets:
             jobs.append((targets[TEXT_SUFFIX], raw_text))
         if ANONYMIZED_TEXT_SUFFIX in targets and self._text_anonymizer is not None:
-            anonymized, _mapping = self._anonymize_text(self._text_anonymizer, raw_text)
-            jobs.append((targets[ANONYMIZED_TEXT_SUFFIX], anonymized))
+            if anonymized_raw is None:
+                anonymized_raw, _mapping = self._text_anonymizer.anonymize(raw_text)
+            jobs.append((targets[ANONYMIZED_TEXT_SUFFIX], anonymized_raw))
         if jobs and text_format == "markdown":
             # Only Markdown needs the parser (and its dependencies); plain text is written as is.
             from ..ocr_formats import plain_text_of  # noqa: PLC0415

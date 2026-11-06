@@ -31,6 +31,12 @@ from .domain.pdf_text_layer import (
 from .exceptions import ConfigFileParseError
 from .interfaces import SUPPORTED_SUFFIXES as SUPPORTED_SUFFIXES  # noqa: PLC0414
 
+#: Value of ``anonymizer_secondary_model`` meaning "the model of the system language".
+SECONDARY_MODEL_AUTO = "auto:system"
+#: Value meaning "no extra detection model" (what an explicit "(none)" in the GUI stores).
+SECONDARY_MODEL_NONE = "none"
+
+
 DEFAULTS: dict[str, Any] = {
     # ── OCR ──────────────────────────────────────────────────────────────────
     "ocr_engine": "ollama",
@@ -92,7 +98,9 @@ DEFAULTS: dict[str, Any] = {
     "text_anonymized_enabled": False,
     # ── Anonymizer ────────────────────────────────────────────────────────────
     "anonymizer_primary_model": None,
-    "anonymizer_secondary_model": None,
+    # "auto:system" = the model for the language the operating system is set to;
+    # "none" / None = no extra model.
+    "anonymizer_secondary_model": SECONDARY_MODEL_AUTO,
     # ── Hardware recommendations ──────────────────────────────────────────────
     # "auto" | "cpu" | "8gb" | "16gb" — GUI-only; the pipeline never reads it.
     "hardware_profile": "auto",
@@ -226,7 +234,8 @@ class Config:
     # ── Anonymizer ───────────────────────────────────────────────────────────
     # None = derive the spaCy model from the document language ("Auto")
     anonymizer_primary_model: str | None = None
-    anonymizer_secondary_model: str | None = None
+    # SECONDARY_MODEL_AUTO (the default), SECONDARY_MODEL_NONE / None, or a model name
+    anonymizer_secondary_model: str | None = SECONDARY_MODEL_AUTO
     # None (or the earlier built-in list) = current DEFAULT_PATTERNS from the anonymizer module;
     # [] = no regex patterns
     anonymizer_patterns: list[tuple[str, str]] | None = None

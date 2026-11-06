@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 import difflib
 import html
 from pathlib import Path
@@ -10,7 +10,14 @@ import re
 from typing import Any
 
 from PySide6.QtCore import QEvent, QObject, Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QFont, QPainter, QPixmap
+from PySide6.QtGui import (
+    QColor,
+    QFont,
+    QPainter,
+    QPixmap,
+    QTextCharFormat,
+    QTextCursor,
+)
 from PySide6.QtWidgets import (
     QGraphicsPixmapItem,
     QGraphicsScene,
@@ -29,10 +36,12 @@ from PySide6.QtWidgets import (
 
 from ..application.correction_review import CorrectionReviewPresenter
 from ..application.formatting import TextFormatter
+from ..domain.anonymization import mask
 from ..domain.correction_review import AlignedReview, CorrectionReview, review_summary
 from . import _user_text as txt
 from ._formatted_text import (
     FormattedTextEdit,
+    chip_placeholders,
     document_from_qt,
     install_formatting_shortcuts,
     render_html,
@@ -43,6 +52,35 @@ from ._types import PreprocessInfo, StageStatus
 
 #: Panel width below which the notes pane moves under the diff instead of beside it.
 _NARROW_PANEL_WIDTH = 700
+
+
+def _placeholder_selections(
+    view: QTextEdit, placeholders: Sequence[str]
+) -> list[QTextEdit.ExtraSelection]:
+    """Return the placeholder occurrences of *view* marked like the chips of the markup.
+
+    Longest placeholder first, so ``[PERSON_1]`` is one chip even while ``[PERSON]`` is in
+    the list.  The selection carries no tooltip: the original name must not be readable.
+    """
+    tokens: list[str] = [token for token in dict.fromkeys(placeholders) if token]
+    if not tokens:
+        return []
+    tokens.sort(key=len, reverse=True)
+    pattern = re.compile("|".join(re.escape(token) for token in tokens))
+    text = view.toPlainText()
+    selects: list[QTextEdit.ExtraSelection] = []
+    for match in pattern.finditer(text):
+        selection = QTextEdit.ExtraSelection()
+        cursor = view.textCursor()
+        cursor.setPosition(match.start())
+        cursor.setPosition(match.end(), QTextCursor.MoveMode.KeepAnchor)
+        selection.cursor = cursor
+        fmt = QTextCharFormat()
+        fmt.setBackground(QColor("#fde68a"))
+        fmt.setFontWeight(QFont.Weight.Bold)
+        selection.format = fmt
+        selects.append(selection)
+    return selects
 
 
 class _StageNavBar(QWidget):
@@ -323,6 +361,10 @@ class PreviewPanel(QWidget):
     ocr_text_edited = Signal(str)
     correction_text_edited = Signal(str)
     run_stage_requested = Signal(str, str)  # source_id, stage_name
+    #: The eye button in the text toolbar was toggled: the window decides and stores it.
+    display_anonymized_changed = Signal(bool)
+    #: The view setting asks for placeholders and this file's text was not anonymized yet.
+    anonymization_needed = Signal(str)  # the extracted text to anonymize
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -333,6 +375,7 @@ class PreviewPanel(QWidget):
         self._text_zoom = 0
         self._font_size_lbl: QLabel  # assigned in _build_text_zoom_bar
         self._source_btn: QPushButton  # assigned in _build_text_zoom_bar
+        self._hide_btn: QToolButton  # assigned in _build_text_zoom_bar
         self._review_diff: ReviewDiffView  # assigned in _build_changes_tab
         self._review_notes: ReviewNotesView  # assigned in _build_changes_tab
         self._review_splitter: QSplitter  # assigned in _build_changes_tab
@@ -370,6 +413,7 @@ class PreviewPanel(QWidget):
         self._changes_timer.setInterval(_CHANGES_REFRESH_DELAY_MS)
         self._changes_timer.timeout.connect(self._refresh_changes)
         self._current_source_id: str = ""
+        self._init_privacy_state()
         # Explanations and unclear expressions of the shown file (``None`` when the file
         # was corrected in *Corrections only* mode, fell back, or came from an old cache).
         self._review: CorrectionReview | None = None
@@ -387,6 +431,25 @@ class PreviewPanel(QWidget):
         )
         self._ocr_view.focus_lost.connect(self.flush_pending_edit)
         self._correction_view.focus_lost.connect(self.flush_pending_edit)
+
+    def _init_privacy_state(self) -> None:
+        """Declare what showing placeholders instead of names depends on and remembers."""
+        #: Whether the window's view setting asks for placeholders instead of names.
+        self._display_anonymized = False
+        #: False while personal-info removal is not installed: the eye button is disabled.
+        self._display_available = True
+        #: The texts exactly as stored, so masking can be undone without a reload.
+        self._stored_raw = ""
+        self._stored_correction = ""
+        self._stored_evaluation = ""
+        self._stored_review: CorrectionReview | None = None
+        #: The extracted text with names replaced, and the placeholder map behind it.
+        self._anonymized_text = ""
+        self._anon_map: dict[str, str] = {}
+        self._anon_ready = False
+        self._privacy_error = ""
+        #: The text the window was already asked to hide, so a repeated toggle asks once.
+        self._anon_requested = ""
 
     def _build_image_panel(self) -> QWidget:
         self._image_view = ZoomableImageView()
@@ -480,6 +543,14 @@ class PreviewPanel(QWidget):
         vbox.setContentsMargins(0, 0, 0, 0)
         vbox.setSpacing(0)
         vbox.addWidget(self._build_text_zoom_bar())
+        # Says why the texts are read-only, or that placeholders are being worked out.
+        self._privacy_note = QLabel()
+        self._privacy_note.setWordWrap(True)
+        self._privacy_note.setStyleSheet(
+            "background: #eef4fb; color: #2c3e50; padding: 3px 6px; font-size: 9pt;"
+        )
+        self._privacy_note.setVisible(False)
+        vbox.addWidget(self._privacy_note)
         vbox.addWidget(self._text_tabs, stretch=1)
 
         scroll_filter = _ZoomScrollFilter(self._change_text_zoom, self)
@@ -545,6 +616,12 @@ class PreviewPanel(QWidget):
         self._source_btn.setVisible(False)
         layout.addWidget(self._source_btn)
         layout.addStretch()
+        self._hide_btn = QToolButton()
+        self._hide_btn.setText(txt.HIDE_PERSONAL_INFO_BUTTON)
+        self._hide_btn.setCheckable(True)
+        self._hide_btn.setToolTip(txt.HIDE_PERSONAL_INFO_BUTTON_TIP)
+        self._hide_btn.toggled.connect(self._on_hide_button_toggled)
+        layout.addWidget(self._hide_btn)
         zoom_out_btn = QPushButton("A-")
         zoom_out_btn.setFixedWidth(32)
         zoom_out_btn.setToolTip("Make text smaller (Ctrl + scroll down)")
@@ -625,7 +702,10 @@ class PreviewPanel(QWidget):
             if self._rendered.get(view) == (text, text_format):
                 continue
             self._rendered[view] = (text, text_format)
-            self._set_view_html(view, render_html(self._formatter.document(text, text_format)))
+            markup = render_html(self._formatter.document(text, text_format))
+            if self._display_anonymized:
+                markup = chip_placeholders(markup, tuple(self._anon_map))
+            self._set_view_html(view, markup)
 
     def _set_view_html(self, view: QTextEdit, html_text: str | None) -> None:
         """Fill *view* (or clear it for ``None``) without treating it as a user edit."""
@@ -648,9 +728,212 @@ class PreviewPanel(QWidget):
         self._source_btn.setVisible(is_markdown)
         self._refresh_formatted_views()
 
+    # ── hiding personal information in the view ──────────────────────────────────
+
+    def display_anonymized(self) -> bool:
+        """Return whether the texts are currently shown with placeholders."""
+        return self._display_anonymized
+
+    def set_display_anonymized_available(self, available: bool) -> None:
+        """Enable or disable the eye button, depending on the Privacy add-on."""
+        self._display_available = available
+        self._hide_btn.setEnabled(available)
+        self._hide_btn.setToolTip(
+            txt.HIDE_PERSONAL_INFO_BUTTON_TIP
+            if available
+            else txt.HIDE_PERSONAL_INFO_UNAVAILABLE_TIP
+        )
+        if not available and self._display_anonymized:
+            self.set_display_anonymized(False)
+
+    def set_display_anonymized(self, enabled: bool) -> None:
+        """Show the texts with placeholders instead of names, or show the names again.
+
+        Called by the window whenever the View setting changes, and by the eye button
+        through :attr:`display_anonymized_changed`.  While the setting is on, the extracted
+        and proofread texts cannot be edited: an edit would neither be hidden nor saved.
+        """
+        # Typed-but-uncommitted text belongs to the unmasked text, so it is stored before the
+        # views lock (once the flag is set, the flush would drop it).
+        self.flush_pending_edit()
+        self._display_anonymized = bool(enabled) and self._display_available
+        self._sync_hide_button()
+        self._refill_texts()
+        self._apply_view_modes()
+        self._refresh_changes()
+        if self._display_anonymized:
+            self._request_anonymization()
+
+    def _forget_anonymization(self) -> None:
+        """Drop the placeholders: they belong to a text that is no longer the shown one."""
+        self._anonymized_text = ""
+        self._anon_map = {}
+        self._anon_ready = False
+        self._privacy_error = ""
+        self._anon_requested = ""
+
+    def invalidate_anonymization(self) -> None:
+        """Forget the placeholders — the anonymizer settings changed — and ask again.
+
+        The result cache of the service is keyed by the settings, so the new request costs
+        a spaCy pass only if the settings really changed the text.
+        """
+        self._forget_anonymization()
+        if not self._display_anonymized:
+            return
+        self._refill_texts()
+        self._apply_view_modes()
+        self._refresh_changes()
+        self._request_anonymization()
+
+    def set_anonymization(
+        self,
+        anonymized_text: str,
+        mapping: Mapping[str, str],
+        *,
+        raw_text: str | None = None,
+        error: str = "",
+    ) -> None:
+        """Hand over the extracted text with names replaced, and its placeholder map.
+
+        The map masks the proofread text, the changes and the review notes, so every tab
+        shows the same placeholders.  *error* says why hiding was impossible; the texts
+        then stay hidden behind a note instead of showing the names.  *raw_text* is the
+        text this result belongs to: a result for a text that is no longer shown (the user
+        switched files while it was computed) is dropped.
+        """
+        if raw_text is not None and raw_text != self._stored_raw:
+            return
+        self._anonymized_text = anonymized_text
+        self._anon_map = dict(mapping)
+        self._anon_ready = True
+        self._privacy_error = error
+        if self._display_anonymized:
+            self.flush_pending_edit()
+            self._refill_texts()
+            self._apply_view_modes()
+            self._refresh_changes()
+
+    def _sync_hide_button(self) -> None:
+        """Mirror the setting in the eye button without emitting the toggle signal."""
+        self._hide_btn.blockSignals(True)
+        self._hide_btn.setChecked(self._display_anonymized)
+        self._hide_btn.blockSignals(False)
+        self._hide_btn.setToolTip(
+            txt.SHOW_PERSONAL_INFO_BUTTON_TIP
+            if self._display_anonymized
+            else txt.HIDE_PERSONAL_INFO_BUTTON_TIP
+        )
+
+    def _on_hide_button_toggled(self, checked: bool) -> None:
+        """Forward an eye-button click; the window stores the setting and calls back."""
+        self.display_anonymized_changed.emit(checked)
+
+    def _privacy_note_text(self) -> str:
+        """Return what the note above the tabs should say right now (empty: hide it)."""
+        if not self._display_anonymized:
+            return ""
+        if self._privacy_error:
+            return txt.HIDING_PERSONAL_INFO_FAILED.format(reason=self._privacy_error)
+        if not self._anon_ready:
+            return txt.HIDING_PERSONAL_INFO
+        return txt.TURN_OFF_HIDING_TO_EDIT
+
+    def _request_anonymization(self) -> None:
+        """Ask the window to hide the names of the shown text, once per text."""
+        if not self._stored_raw.strip():
+            if not self._anon_ready:
+                # Nothing to hide in an empty text: there is no result to wait for.
+                self._anon_ready = True
+                self._refill_texts()
+                self._apply_view_modes()
+                self._refresh_changes()
+            return
+        if self._anon_ready or self._anon_requested == self._stored_raw:
+            return
+        self._anon_requested = self._stored_raw
+        self._privacy_note.setText(txt.HIDING_PERSONAL_INFO)
+        self._privacy_note.setVisible(True)
+        self.anonymization_needed.emit(self._stored_raw)
+
+    def _masked(self, text: str) -> str:
+        """Replace the names of *text* with the placeholders of the current map."""
+        return mask(text, self._anon_map)
+
+    def _refill_texts(self) -> None:
+        """Fill the text views from the stored texts, masked when the setting asks for it."""
+        # Without a result — still running, or failed — the names must not show either.
+        pending = self._display_anonymized and (not self._anon_ready or bool(self._privacy_error))
+        if pending:
+            # Nothing readable yet, so show what is happening instead of the names.
+            raw = correction = evaluation = txt.HIDING_PERSONAL_INFO
+            review = None
+        else:
+            raw = self._stored_raw
+            correction = self._stored_correction
+            evaluation = self._stored_evaluation
+            review = self._stored_review
+            if self._display_anonymized and not self._privacy_error:
+                # The same rule for every tab, so a name the detector missed once is hidden
+                # everywhere and the Changes tab cannot show it as a change.
+                raw = self._masked(self._stored_raw)
+                correction = self._masked(self._stored_correction)
+                evaluation = self._masked(self._stored_evaluation)
+                if review is not None:
+                    review = review.map_text(self._masked)
+
+        self._loading = True
+        try:
+            if self._ocr_text.toPlainText() != raw:
+                self._ocr_text.setPlainText(raw)
+            if self._correction_text.toPlainText() != correction:
+                self._correction_text.setPlainText(correction)
+            if evaluation:
+                try:
+                    self._evaluation_text.setMarkdown(evaluation)
+                except Exception:  # noqa: BLE001  # malformed markdown can raise in Qt; fall back to plain text
+                    self._evaluation_text.setPlainText(evaluation)
+            else:
+                self._evaluation_text.setPlainText("")
+        finally:
+            self._loading = False
+
+        # The visible text is the truth for the diff and for detecting an edit.
+        self._last_raw_text = self._ocr_text.toPlainText()
+        self._last_correction_text = self._correction_text.toPlainText()
+        self._review = review
+        self._apply_read_only()
+        self._highlight_placeholders()
+        note = self._privacy_note_text()
+        self._privacy_note.setText(note)
+        self._privacy_note.setVisible(bool(note))
+
+    def _apply_read_only(self) -> None:
+        """Lock the editable texts while placeholders are shown."""
+        locked = self._display_anonymized
+        for widget in (
+            self._ocr_text,
+            self._correction_text,
+            self._ocr_view,
+            self._correction_view,
+        ):
+            widget.setReadOnly(locked)
+
+    def _highlight_placeholders(self) -> None:
+        """Mark the placeholders in the shown texts, so they read as replacements.
+
+        Only the plain-text views are marked here: the formatted views get chips from
+        their HTML.  Neither ever reveals the original name — not even in a tooltip.
+        """
+        placeholders = tuple(self._anon_map) if self._display_anonymized else ()
+        for view in (self._ocr_text, self._correction_text, self._evaluation_text):
+            view.setExtraSelections(_placeholder_selections(view, placeholders))
+
     def _on_view_edited(self, view: QTextEdit) -> None:
         """Note a keystroke in a formatted view; the conversion waits for a typing pause."""
-        if self._rendering or self._loading or self._editing_view is not None:
+        if self._rendering or self._loading or self._display_anonymized:
+            return
+        if self._editing_view is not None:
             return
         if self._pending_view is not None and self._pending_view is not view:
             self.flush_pending_edit()
@@ -661,7 +944,7 @@ class PreviewPanel(QWidget):
         """Store typed-but-uncommitted text of a formatted view as source text right now."""
         self._edit_timer.stop()
         view, self._pending_view = self._pending_view, None
-        if view is not None:
+        if view is not None and not self._display_anonymized:
             self._commit_view_edit(view)
 
     def _commit_view_edit(self, view: QTextEdit) -> None:
@@ -800,7 +1083,7 @@ class PreviewPanel(QWidget):
         example when the explanations had to be dropped).
         """
         self.flush_pending_edit()  # typed text must not be lost to the replaced content
-        self._review = correction_review
+        self._stored_review = correction_review
         self._set_correction_warning(correction_warning)
         self._processed_pixmap = pixmap
         info = preprocess or PreprocessInfo()
@@ -810,44 +1093,41 @@ class PreviewPanel(QWidget):
         else:
             self._image_view.show_message("Preprocessed image not found.")
 
-        self._loading = True
-        if self._ocr_text.toPlainText() != (raw_text or ""):
-            self._ocr_text.setPlainText(raw_text or "")
-        if self._correction_text.toPlainText() != (correction_text or ""):
-            self._correction_text.setPlainText(correction_text or "")
-        if evaluation_text:
-            try:
-                self._evaluation_text.setMarkdown(evaluation_text)
-            except Exception:  # noqa: BLE001  # malformed markdown can raise in Qt; fall back to plain text
-                self._evaluation_text.setPlainText(evaluation_text)
-        else:
-            self._evaluation_text.setPlainText("")
-        self._loading = False
-
-        self._last_raw_text = self._ocr_text.toPlainText()
-        self._last_correction_text = self._correction_text.toPlainText()
+        # Keep the texts as stored; the views get them masked when the view setting asks.
+        self._stored_raw = raw_text or ""
+        self._stored_correction = correction_text or ""
+        self._stored_evaluation = evaluation_text or ""
         self._text_format = self._formatter.normalize(text_format)
+        # A new file was anonymized under its own settings, or not at all: ask again.
+        self._forget_anonymization()
+        self._refill_texts()
         self._apply_view_modes()  # also renders the formatted views that are shown
         self._refresh_changes()
+        if self._display_anonymized:
+            self._request_anonymization()
 
     def _on_ocr_text_changed(self) -> None:
-        if self._loading:
-            return
+        if self._loading or self._display_anonymized:
+            return  # locked while placeholders are shown, so this cannot be a teacher's edit
         text = self._ocr_text.toPlainText()
         if text == self._last_raw_text:
             return
         self._last_raw_text = text
+        self._stored_raw = text
+        # The placeholders were worked out for the text before this edit.
+        self._forget_anonymization()
         self._refresh_formatted_views()
         self._changes_timer.start()
         self.ocr_text_edited.emit(text)
 
     def _on_correction_text_changed(self) -> None:
-        if self._loading:
-            return
+        if self._loading or self._display_anonymized:
+            return  # locked while placeholders are shown
         text = self._correction_text.toPlainText()
         if text == self._last_correction_text:
             return
         self._last_correction_text = text
+        self._stored_correction = text
         self._refresh_formatted_views()
         self._changes_timer.start()
         self.correction_text_edited.emit(text)
@@ -930,6 +1210,12 @@ class PreviewPanel(QWidget):
         self._last_correction_text = ""
         self._text_format = "plain"
         self._review = None
+        self._stored_raw = ""
+        self._stored_correction = ""
+        self._stored_evaluation = ""
+        self._stored_review = None
+        self._forget_anonymization()
+        self._privacy_note.setVisible(False)
         self._aligned = None
         self._set_correction_warning("")
         self._apply_view_modes()

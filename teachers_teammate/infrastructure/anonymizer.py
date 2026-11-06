@@ -14,12 +14,27 @@ Then download a spacy model for your language, e.g.::
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from collections import OrderedDict
+from collections.abc import Callable, Collection
+from dataclasses import dataclass, field, replace
+import hashlib
 import re
 import sys
+import threading
+from typing import TYPE_CHECKING
 
+from ..config import SECONDARY_MODEL_AUTO, SECONDARY_MODEL_NONE
+from ..domain.anonymization import restore
 from ..domain.formatted_text import INLINE_TAG_ALTERNATION
 from ..interfaces import AnonymizationMap, Anonymizer
+from . import system_locale
+from .spacy_models import spacy_model_for
+
+if TYPE_CHECKING:
+    from ..config import Config
+
+#: Identifies one cached result: language and settings of the anonymizer, then the text hash.
+CacheKey = tuple[object, ...]
 
 # ── Default regex patterns ─────────────────────────────────────────────────
 
@@ -195,22 +210,7 @@ def _split_at_markup(
 
 # ── Language → spacy model mapping ─────────────────────────────────────────
 
-_SPACY_MODELS: dict[str, str] = {
-    "english": "en_core_web_sm",
-    "german": "de_core_news_sm",
-    "french": "fr_core_news_sm",
-    "spanish": "es_core_news_sm",
-    "italian": "it_core_news_sm",
-    "portuguese": "pt_core_news_sm",
-    "dutch": "nl_core_news_sm",
-}
-_FALLBACK_MODEL = "xx_ent_wiki_sm"
-
 _NER_PERSON_LABELS = frozenset({"PER", "PERSON"})
-
-
-def _spacy_model_for(language: str) -> str:
-    return _SPACY_MODELS.get(language.lower(), _FALLBACK_MODEL)
 
 
 # ── AnonymizerConfig ────────────────────────────────────────────────────────
@@ -235,9 +235,185 @@ class AnonymizerConfig:
             postcode + city, dates, PHONE).
     """
 
+    #: SECONDARY_MODEL_AUTO ("the system language's model"), SECONDARY_MODEL_NONE / None
+    #: (no extra pass) or a model name.  Left unresolved here: :class:`SpacyAnonymizer`
+    #: and :func:`resolve_anonymizer_config` turn it into a model name or ``None``.
     secondary_model: str | None = None
     primary_model: str | None = None
     patterns: tuple[tuple[str, str], ...] = field(default_factory=lambda: tuple(DEFAULT_PATTERNS))
+
+
+#: Called with a warning sentence the user should see (e.g. the reporter's ``warn``).
+Warner = Callable[[str], None]
+
+
+def resolve_anonymizer_config(
+    config: AnonymizerConfig,
+    *,
+    document_language: str,
+    system_language: str | None = None,
+    installed_models: Collection[str] | None = None,
+    warn: Warner | None = None,
+) -> AnonymizerConfig:
+    """Return *config* with the models that will actually be loaded.
+
+    ``secondary_model`` of :data:`~teachers_teammate.config.SECONDARY_MODEL_AUTO` means "the
+    model of the language the operating system is set to".  It is resolved here, once, so a
+    run, a preview and an export all use the same models:
+
+    * no system language could be determined → no extra pass (:data:`SECONDARY_MODEL_NONE`);
+    * the system language has the same model as the primary pass → no extra pass (a second
+      pass with the same model would only repeat the first one);
+    * the model is missing while *installed_models* is known → warning, no extra pass
+      (an automatic default must never make a run fail);
+    * an explicitly chosen model is kept as it is, missing or not: the anonymizer then fails
+      with the same error as before, which is what the user asked for.
+    """
+    secondary = config.secondary_model
+    missing: str | None = None
+    if secondary is None or str(secondary).strip().lower() in ("", SECONDARY_MODEL_NONE):
+        return replace(config, secondary_model=None)
+    if str(secondary) != SECONDARY_MODEL_AUTO:
+        return config
+
+    primary = config.primary_model or spacy_model_for(document_language)
+    if not system_language:
+        if warn is not None:
+            warn(
+                "WARNING: the language of this computer could not be determined, so no "
+                f"extra detection model is used (the model for {document_language} is "
+                "enough). Choose a model in the personal-info settings."
+            )
+        return replace(config, secondary_model=None)
+    system_model = spacy_model_for(system_language)
+    if system_model == primary:
+        return replace(config, secondary_model=None)
+    if installed_models is not None and system_model not in installed_models:
+        missing = system_model
+    if missing is not None:
+        if warn is not None:
+            warn(
+                f"WARNING: the extra detection model '{missing}' for the language of this "
+                f"computer ({system_language}) is not downloaded, so only '{primary}' is "
+                "used. Download it in Advanced Settings → Downloads to catch names the "
+                f"{document_language} model misses."
+            )
+        return replace(config, secondary_model=None)
+    return replace(config, secondary_model=system_model)
+
+
+def anonymizer_config_from(config: Config) -> AnonymizerConfig:
+    """Return the :class:`AnonymizerConfig` that *config* asks for, models unresolved.
+
+    The single place that maps the stored settings onto the anonymizer, so a run, a
+    preview and the status box all start from the same settings.
+    """
+    return AnonymizerConfig(
+        primary_model=config.anonymizer_primary_model,
+        secondary_model=config.anonymizer_secondary_model,
+        patterns=resolve_patterns(config.anonymizer_patterns),
+    )
+
+
+# ── Result cache ───────────────────────────────────────────────────────────
+
+#: How many anonymized texts one cache keeps before the oldest one is dropped.
+DEFAULT_CACHE_CAPACITY = 256
+
+
+class AnonymizationResultCache:
+    """Remembers anonymized texts so spaCy runs once per text and settings.
+
+    Kept in memory only: the anonymized text is the very data the user wants hidden, so it
+    must not outlive the process.  Every access takes the cache's own lock: a run, a preview
+    and a dialog share one cache, and a lookup (which reorders the entries) must not meet an
+    eviction half-way.  The spaCy pass itself is serialized separately by the callers.
+    """
+
+    def __init__(self, capacity: int = DEFAULT_CACHE_CAPACITY) -> None:
+        self._capacity = max(1, capacity)
+        self._guard = threading.Lock()
+        self._entries: OrderedDict[CacheKey, tuple[str, AnonymizationMap]] = OrderedDict()
+
+    def get(self, key: CacheKey) -> tuple[str, AnonymizationMap] | None:
+        """Return the cached ``(text, mapping)`` of *key*, or ``None`` when it is not cached."""
+        with self._guard:
+            value = self._entries.get(key)
+            if value is None:
+                return None
+            self._entries.move_to_end(key)
+            return value
+
+    def put(self, key: CacheKey, value: tuple[str, AnonymizationMap]) -> None:
+        """Store *value* under *key*, dropping the least recently used entry when full."""
+        with self._guard:
+            self._entries[key] = value
+            self._entries.move_to_end(key)
+            while len(self._entries) > self._capacity:
+                self._entries.popitem(last=False)
+
+    def clear(self) -> None:
+        """Forget every cached text."""
+        with self._guard:
+            self._entries.clear()
+
+    def __len__(self) -> int:
+        with self._guard:
+            return len(self._entries)
+
+
+class CachedAnonymizer(Anonymizer):
+    """:class:`Anonymizer` that answers from :class:`AnonymizationResultCache` first.
+
+    The key combines the language and settings the wrapped anonymizer was built for with the
+    hash of the text, so the same text is analysed once per session — no matter whether a run,
+    a preview or an export asks for it.  ``restore`` is passed straight through: it does not
+    depend on the text.
+
+    Args:
+        inner: The anonymizer that actually runs spaCy.
+        cache: The shared result cache.
+        key_prefix: Language and resolved settings, identifying *inner*.
+        lock: Optional lock held while the wrapped anonymizer runs.
+    """
+
+    def __init__(
+        self,
+        inner: Anonymizer,
+        cache: AnonymizationResultCache,
+        key_prefix: tuple[object, ...],
+        lock: threading.RLock | None = None,
+    ) -> None:
+        self._inner = inner
+        self._cache = cache
+        self._key_prefix = key_prefix
+        self._lock = lock
+
+    def anonymize(self, text: str) -> tuple[str, AnonymizationMap]:
+        """Return ``(anonymized_text, mapping)``, from the cache when the text was seen."""
+        key = (*self._key_prefix, hashlib.sha256(text.encode("utf-8")).hexdigest())
+        result = self._cache.get(key)
+        if result is not None:
+            return result[0], dict(result[1])
+        if self._lock is None:
+            return self._store(key, self._inner.anonymize(text))
+        with self._lock:
+            # Another caller may have filled the entry while this one waited for the lock.
+            result = self._cache.get(key)
+            if result is None:
+                result = self._store(key, self._inner.anonymize(text))
+        return result[0], dict(result[1])
+
+    def _store(
+        self, key: CacheKey, result: tuple[str, AnonymizationMap]
+    ) -> tuple[str, AnonymizationMap]:
+        """Cache *result* under *key* and return it."""
+        self._cache.put(key, result)
+        return result
+
+    def restore(self, text: str, mapping: AnonymizationMap) -> str:
+        """Put the placeholders of *text* back; delegated, results are not cached."""
+        return self._inner.restore(text, mapping)
 
 
 # ── SpacyAnonymizer ────────────────────────────────────────────────────────
@@ -270,8 +446,12 @@ class SpacyAnonymizer(Anonymizer):
     """
 
     def __init__(self, language: str = "English", config: AnonymizerConfig | None = None) -> None:
-        self._config = config if config is not None else AnonymizerConfig()
-        primary_model = self._config.primary_model or _spacy_model_for(language)
+        self._config = resolve_anonymizer_config(
+            config if config is not None else AnonymizerConfig(),
+            document_language=language,
+            system_language=system_locale.system_language(),
+        )
+        primary_model = self._config.primary_model or spacy_model_for(language)
         try:
             import spacy  # noqa: PLC0415
         except ImportError as exc:
@@ -385,7 +565,4 @@ class SpacyAnonymizer(Anonymizer):
 
     def restore(self, text: str, mapping: AnonymizationMap) -> str:
         """Replace all placeholder tokens in *text* with their original values."""
-        result = text
-        for placeholder, original in mapping.items():
-            result = result.replace(placeholder, original)
-        return result
+        return restore(text, mapping)

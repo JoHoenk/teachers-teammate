@@ -27,6 +27,9 @@ from teachers_teammate.infrastructure.providers._helpers import api_key_check
 
 PROVIDER_INFO: dict = {
     "display_name": "Mistral",
+    # The global endpoint does not say where requests are processed; use "mistral_eu".
+    "data_region": "unknown",
+    "vendor_country": "France",
     "needs_api_key": True,
     "env_key": common.ENV_KEY,
     "needs_base_url": False,

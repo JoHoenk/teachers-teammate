@@ -767,3 +767,53 @@ def test_pdf_text_layer_mode_changes_hash_only_for_pdfs(tmp_path: Path, mode: st
     assert svc_auto._ocr_config_hash("p", _PDF) != svc_mode._ocr_config_hash("p", _PDF)
     assert svc_auto._ocr_config_hash("p", jpg) == svc_mode._ocr_config_hash("p", jpg)
     assert svc_auto._ocr_config_hash("p", txt) == svc_mode._ocr_config_hash("p", txt)
+
+
+@pytest.mark.parametrize(
+    ("first", "second"),
+    [
+        ([], [("ID", r"\d+")]),
+        ([("ID", r"\d+")], [("ID", r"\d{4,}")]),
+        ([("ID", r"\d+")], [("ID", r"\d+"), ("CODE", r"[A-Z]{3}")]),
+    ],
+)
+def test_correction_config_hash_changes_with_the_anonymizer_patterns(
+    tmp_path: Path, first: list, second: list
+) -> None:
+    """
+    Given  two services with anonymization on and different regex patterns
+    When   _correction_config_hash() is called on each
+    Then   the hashes differ, so a changed pattern no longer keeps an old proofreading
+    """
+    left, _, _ = _make_svc(
+        tmp_path, correction_enabled=True, anonymization_enabled=True, anonymizer_patterns=first
+    )
+    right, _, _ = _make_svc(
+        tmp_path, correction_enabled=True, anonymization_enabled=True, anonymizer_patterns=second
+    )
+
+    assert left._correction_config_hash() != right._correction_config_hash()
+
+
+def test_eval_config_hash_changes_with_the_anonymizer_patterns(tmp_path: Path) -> None:
+    """
+    Given  two services with anonymization on and different regex patterns
+    When   _eval_config_hash() is called on each
+    Then   the hashes differ, so a changed pattern re-runs the content review
+    """
+    left, _, _ = _make_svc(
+        tmp_path,
+        correction_enabled=True,
+        evaluation_enabled=True,
+        anonymization_enabled=True,
+        anonymizer_patterns=[],
+    )
+    right, _, _ = _make_svc(
+        tmp_path,
+        correction_enabled=True,
+        evaluation_enabled=True,
+        anonymization_enabled=True,
+        anonymizer_patterns=[("ID", r"\d+")],
+    )
+
+    assert left._eval_config_hash() != right._eval_config_hash()

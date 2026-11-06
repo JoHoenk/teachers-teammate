@@ -278,3 +278,89 @@ def test_correction_settings_keep_the_chosen_output_mode_for_every_model(
     builder = StageBuilder(config=config, factory=PipelineComponentFactory())
 
     assert builder._correction_settings().output_mode == chosen
+
+
+def test_anonymizer_is_built_when_only_anonymization_is_on(tmp_path: Path) -> None:
+    """
+    Given  a config with "Remove personal info" on and proofreading off
+    When   build_correction_and_anonymizer() is called
+    Then   the anonymizer is built anyway and no warning says it needs proofreading
+    """
+    anonymizer = MagicMock()
+    factory = PipelineComponentFactory(build_anonymizer=MagicMock(return_value=anonymizer))
+    config = make_config(
+        tmp_path,
+        correction_enabled=False,
+        anonymization_enabled=True,
+        text_anonymized_enabled=False,
+    )
+
+    correction, built = StageBuilder(
+        config=config, factory=factory
+    ).build_correction_and_anonymizer()
+
+    assert correction is None
+    assert built is anonymizer
+
+
+def test_anonymizer_is_not_built_without_anonymization(tmp_path: Path) -> None:
+    """
+    Given  a config with anonymization off
+    When   build_correction_and_anonymizer() is called
+    Then   no anonymizer is built at all
+    """
+    factory = PipelineComponentFactory(build_anonymizer=MagicMock())
+    config = make_config(tmp_path, correction_enabled=False, anonymization_enabled=False)
+
+    _, built = StageBuilder(config=config, factory=factory).build_correction_and_anonymizer()
+
+    assert built is None
+    factory.build_anonymizer.assert_not_called()
+
+
+def _failing_anonymizer_factory() -> PipelineComponentFactory:
+    """A factory whose anonymizer cannot start (spaCy or its model is missing)."""
+    return PipelineComponentFactory(
+        build_anonymizer=MagicMock(side_effect=ImportError("No module named 'spacy'")),
+        build_llm=MagicMock(),
+        build_corrector=MagicMock(),
+    )
+
+
+def test_missing_spacy_without_proofreading_warns_and_continues(tmp_path: Path) -> None:
+    """
+    Given  "Remove personal info" on, proofreading off and spaCy missing
+    When   build_correction_and_anonymizer() is called
+    Then   no error is raised (nothing is sent anywhere) and a warning says names stay
+    """
+    reporter = MagicMock()
+    config = make_config(tmp_path, correction_enabled=False, anonymization_enabled=True)
+
+    correction, built = StageBuilder(
+        config=config, factory=_failing_anonymizer_factory(), reporter=reporter
+    ).build_correction_and_anonymizer()
+
+    assert correction is None
+    assert built is None
+    assert "No module named 'spacy'" in reporter.warn.call_args.args[0]
+
+
+def test_missing_spacy_with_proofreading_stops_the_run(tmp_path: Path) -> None:
+    """
+    Given  "Remove personal info" on, proofreading on and spaCy missing
+    When   build_correction_and_anonymizer() is called
+    Then   it raises, because the text would be sent with its names
+    """
+    from teachers_teammate.exceptions import ProviderNotAvailableError  # noqa: PLC0415
+
+    config = make_config(
+        tmp_path,
+        correction_enabled=True,
+        correction_provider="openai",
+        anonymization_enabled=True,
+    )
+
+    with pytest.raises(ProviderNotAvailableError):
+        StageBuilder(
+            config=config, factory=_failing_anonymizer_factory()
+        ).build_correction_and_anonymizer()

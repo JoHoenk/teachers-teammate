@@ -202,6 +202,15 @@ py_test(
 )
 
 py_test(
+    name = "test_language",
+    size = "small",
+    srcs = _COMMON_SRCS + ["unit/test_language.py"],
+    args = ["unit/test_language.py"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS,
+)
+
+py_test(
     name = "test_benchmark_domain",
     size = "small",
     srcs = _COMMON_SRCS + ["unit/test_benchmark_domain.py"],
@@ -431,6 +440,15 @@ py_test(
 )
 
 py_test(
+    name = "test_sent_text",
+    size = "small",
+    srcs = _COMMON_SRCS + ["unit/test_sent_text.py"],
+    args = ["unit/test_sent_text.py"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS + _PIPELINE_DEPS,
+)
+
+py_test(
     name = "test_domain_policy",
     size = "small",
     srcs = _COMMON_SRCS + ["unit/test_domain_policy.py"],
@@ -602,6 +620,15 @@ py_test(
 )
 
 py_test(
+    name = "test_gui_what_is_sent",
+    size = "small",
+    srcs = _COMMON_SRCS + ["gui/test_gui_what_is_sent.py"],
+    args = ["gui/test_gui_what_is_sent.py"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_lib"],
+)
+
+py_test(
     name = "test_gui_main_window",
     size = "small",
     srcs = _COMMON_SRCS + ["gui/test_gui_main_window.py"],
@@ -678,6 +705,24 @@ py_test(
     size = "small",
     srcs = _COMMON_SRCS + ["gui/test_gui_privacy_settings.py"],
     args = ["gui/test_gui_privacy_settings.py"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_lib"],
+)
+
+py_test(
+    name = "test_anonymization_mask",
+    size = "small",
+    srcs = _COMMON_SRCS + ["unit/test_anonymization_mask.py"],
+    args = ["unit/test_anonymization_mask.py"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS,
+)
+
+py_test(
+    name = "test_gui_privacy_view",
+    size = "small",
+    srcs = _COMMON_SRCS + ["gui/test_gui_privacy_view.py"],
+    args = ["gui/test_gui_privacy_view.py"],
     main = "run_test.py",
     deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_lib"],
 )
@@ -820,6 +865,7 @@ test_suite(
     name = "unit_tests",
     tests = [
         ":test_addon_manager",
+        ":test_anonymization_mask",
         ":test_anonymizer",
         ":test_benchmark_domain",
         ":test_benchmark_run_store",
@@ -843,6 +889,7 @@ test_suite(
         ":test_input_provider_factory",
         ":test_input_providers",
         ":test_interfaces",
+        ":test_language",
         ":test_llm_factory",
         ":test_model_catalog",
         ":test_model_listing",
@@ -857,6 +904,7 @@ test_suite(
         ":test_preview_image_store",
         ":test_providers",
         ":test_release_stamp_versions",
+        ":test_sent_text",
         ":test_service",
         ":test_stage_builder",
         ":test_state_repository",
@@ -881,10 +929,12 @@ test_suite(
         ":test_gui_lifecycle",
         ":test_gui_main_window",
         ":test_gui_privacy_settings",
+        ":test_gui_privacy_view",
         ":test_gui_results_table",
         ":test_gui_review_views",
         ":test_gui_settings_dialog",
         ":test_gui_update_check",
+        ":test_gui_what_is_sent",
         ":test_gui_widgets",
         ":test_gui_worker",
         ":test_hardware_profile_selector",

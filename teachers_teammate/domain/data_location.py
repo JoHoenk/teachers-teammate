@@ -7,6 +7,7 @@ them in.  The GUI and CLI only render the result.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 from enum import StrEnum
 
@@ -23,10 +24,13 @@ LOCAL_OCR_ENGINES: tuple[str, ...] = tuple(OCR_ENGINE_NAMES)
 STAGE_OCR = "ocr"
 STAGE_CORRECTION = "correction"
 STAGE_EVALUATION = "evaluation"
+#: Not a pipeline stage: the box lists personal-info removal to show whether it is on.
+STAGE_ANONYMIZATION = "anonymization"
 
 
 _STAGE_TITLES = {
     STAGE_OCR: "Text recognition",
+    STAGE_ANONYMIZATION: "Personal info removal",
     STAGE_CORRECTION: "Proofreading",
     STAGE_EVALUATION: "Content review",
 }
@@ -38,6 +42,64 @@ class DataLocation(StrEnum):
     THIS_COMPUTER = "this_computer"
     OTHER_COMPUTER = "other_computer"
     ONLINE = "online"
+
+
+class DataRegion(StrEnum):
+    """Where an online service processes the data, as far as it can be told.
+
+    "EU" means a member state of the European Union.  The United Kingdom, Switzerland,
+    Norway and the other EEA countries count as outside it, and so does a provider that
+    does not say where it processes requests: a school can only rely on what is declared.
+    """
+
+    EU = "eu"
+    NON_EU = "non_eu"
+    UNKNOWN = "unknown"
+
+    @property
+    def label(self) -> str:
+        """How the region is written next to a service: ``EU`` or ``outside the EU``."""
+        return "EU" if self is DataRegion.EU else "outside the EU"
+
+
+class PrivacyLevel(StrEnum):
+    """The worst thing that happens to the documents, from most to least private.
+
+    Ordered: a run is as private as its least private step, so the levels are compared by
+    :attr:`severity` and the highest one wins.
+    """
+
+    LOCAL = "local"
+    OWN_SERVER = "own_server"
+    ANON_EU = "anon_eu"
+    ANON_NON_EU = "anon_non_eu"
+    NAMES_EU = "names_eu"
+    NAMES_NON_EU = "names_non_eu"
+
+    @property
+    def severity(self) -> int:
+        """Position on the private-to-exposed scale; the highest one of a run decides."""
+        return _PRIVACY_ORDER.index(self)
+
+    @property
+    def leaves_computer(self) -> bool:
+        """Whether data leaves this computer at this level."""
+        return self is not PrivacyLevel.LOCAL
+
+    @property
+    def sends_names(self) -> bool:
+        """Whether names are sent as written at this level."""
+        return self in (PrivacyLevel.NAMES_EU, PrivacyLevel.NAMES_NON_EU)
+
+
+_PRIVACY_ORDER: tuple[PrivacyLevel, ...] = (
+    PrivacyLevel.LOCAL,
+    PrivacyLevel.OWN_SERVER,
+    PrivacyLevel.ANON_EU,
+    PrivacyLevel.ANON_NON_EU,
+    PrivacyLevel.NAMES_EU,
+    PrivacyLevel.NAMES_NON_EU,
+)
 
 
 def is_ollama_cloud_model(model: str) -> bool:
@@ -69,6 +131,7 @@ class Advice(StrEnum):
     PAGES_TO_OTHER_COMPUTER = "pages_to_other_computer"
     NAMES_SENT_AS_WRITTEN = "names_sent_as_written"
     NAMES_MAY_BE_MISSED = "names_may_be_missed"
+    SERVICE_OUTSIDE_EU = "service_outside_eu"
 
 
 @dataclass(frozen=True)
@@ -80,15 +143,43 @@ class StageLocation:
     service: str
     #: Host name of the other computer (OTHER_COMPUTER only).
     host: str = ""
+    #: Where the data is processed (ONLINE only).  ``None`` means "not declared", which is
+    #: shown like :attr:`DataRegion.UNKNOWN`.
+    region: DataRegion | None = None
+    #: Home country of the vendor, for the tooltip only (e.g. ``"France"``, ``"USA"``).
+    vendor_country: str = ""
+
+    @property
+    def data_region(self) -> DataRegion:
+        """The region to show, treating "not declared" as :attr:`DataRegion.UNKNOWN`."""
+        return self.region if self.region is not None else DataRegion.UNKNOWN
 
     @property
     def label(self) -> str:
-        """Plain-language place, e.g. ``On this computer`` or ``Online service (OpenAI)``."""
+        """Plain-language place, e.g. ``On this computer`` or ``Online service (OpenAI) · EU``."""
         if self.location is DataLocation.THIS_COMPUTER:
             return "On this computer"
         if self.location is DataLocation.OTHER_COMPUTER:
             return f"On another computer ({self.host})" if self.host else "On another computer"
-        return f"Online service ({self.service})"
+        return f"Online service ({self.service}) · {self.data_region.label}"
+
+    @property
+    def details(self) -> str:
+        """The tooltip: where the data is processed, and where the vendor is at home."""
+        parts = [self.label]
+        if self.location is DataLocation.ONLINE and self.vendor_country:
+            parts.append(f"Vendor based in {self.vendor_country}")
+        return "\n".join(parts)
+
+
+def anonymization_badge(models: Iterable[str]) -> str:
+    """Return what the personal-info-removal row says, e.g. ``On (spaCy en + de)`` or ``Off``.
+
+    *models* are the spaCy models that will actually be loaded; each is shortened to its
+    language code so the row stays short (``de_core_news_sm`` → ``de``).
+    """
+    codes = [model.split("_")[0] for model in models if model]
+    return f"On (spaCy {' + '.join(codes)})" if codes else "On"
 
 
 def classify_ollama(
@@ -134,6 +225,9 @@ class DataFlowStage:
     #: Whether names and other personal data are replaced before the step sees them.  The
     #: replacement is automatic detection, so it can miss a name (see :attr:`DataFlow.advice`).
     personal_info_hidden: bool = False
+    #: What the row says instead of a place, for display-only rows (personal-info removal:
+    #: ``"On (spaCy en + de)"`` or ``"Off"``).
+    detail: str = ""
 
     @property
     def title(self) -> str:
@@ -146,8 +240,32 @@ class DataFlowStage:
         return self.location.location is not DataLocation.THIS_COMPUTER
 
     @property
+    def badge(self) -> str:
+        """Short line for the status box: where it runs and how names are handled."""
+        if self.detail:
+            return self.detail
+        parts = [self.location.label]
+        if self.leaves_computer:
+            parts.append("names hidden" if self.personal_info_hidden else "names as written")
+        return " · ".join(parts)
+
+    @property
+    def privacy_level(self) -> PrivacyLevel:
+        """What this step alone means for privacy; :attr:`DataFlow.level` takes the worst."""
+        if self.location.location is DataLocation.THIS_COMPUTER:
+            return PrivacyLevel.LOCAL
+        if self.location.location is DataLocation.OTHER_COMPUTER:
+            return PrivacyLevel.OWN_SERVER
+        european = self.location.data_region is DataRegion.EU
+        if self.personal_info_hidden:
+            return PrivacyLevel.ANON_EU if european else PrivacyLevel.ANON_NON_EU
+        return PrivacyLevel.NAMES_EU if european else PrivacyLevel.NAMES_NON_EU
+
+    @property
     def summary(self) -> str:
         """One line: the step, where it runs, and (when it leaves) what it receives."""
+        if self.detail:
+            return f"{self.title}: {self.detail}"
         line = f"{self.title}: {self.location.label}"
         if not self.leaves_computer:
             return line
@@ -175,13 +293,37 @@ class DataFlow:
         return bool(self.outbound)
 
     @property
-    def fingerprint(self) -> str:
-        """Stable key of everything that leaves this computer, for "don't ask again"."""
-        return "|".join(
-            f"{s.stage}:{s.location.location.value}:{s.location.service}:{s.location.host}"
-            f":{int(s.personal_info_hidden)}"
-            for s in self.outbound
+    def level(self) -> PrivacyLevel:
+        """The overall privacy level: the worst step of the run decides."""
+        return max(
+            (s.privacy_level for s in self.stages),
+            key=lambda level: level.severity,
+            default=PrivacyLevel.LOCAL,
         )
+
+    @property
+    def fingerprint(self) -> str:
+        """Stable key of everything that leaves this computer, for "don't ask again".
+
+        Versioned: ``v2`` adds the data region, so an answer given before the region was
+        shown no longer matches and the user is asked once more.  Parts are separated by
+        ``"|"`` and their fields by ``":"``; the host may itself contain a colon and is
+        always the field before the last one.
+        """
+        parts = [
+            ":".join(
+                (
+                    s.stage,
+                    s.location.location.value,
+                    s.location.data_region.value,
+                    s.location.service,
+                    s.location.host,
+                    str(int(s.personal_info_hidden)),
+                )
+            )
+            for s in self.outbound
+        ]
+        return f"{_FINGERPRINT_V2_PREFIX}|" + "|".join(parts) if parts else ""
 
     @property
     def outbound_summary(self) -> str:
@@ -201,11 +343,18 @@ class DataFlow:
         elif text_steps:
             # Every online text step has its names replaced — but detection is not perfect.
             tips.append(Advice.NAMES_MAY_BE_MISSED)
+        # Only a vendor has a region; a computer the user controls is not "outside the EU".
+        online_steps = [s for s in text_steps if s.location.location is DataLocation.ONLINE]
+        if any(s.location.data_region is not DataRegion.EU for s in online_steps):
+            tips.append(Advice.SERVICE_OUTSIDE_EU)
         return tuple(tips)
 
     def stage(self, name: str) -> DataFlowStage | None:
         """Return the step called *name*, or ``None`` when it is not part of the run."""
         return next((s for s in self.stages if s.stage == name), None)
+
+
+_FINGERPRINT_V2_PREFIX = "v2"
 
 
 def describe_fingerprint(fingerprint: str) -> str:
@@ -215,25 +364,39 @@ def describe_fingerprint(fingerprint: str) -> str:
     read (``correction:online:Mistral::0``).  The line says the same as
     :attr:`DataFlowStage.summary` for each step, minus what the fingerprint does not hold; a
     part that does not parse is kept as it is, so nothing is ever hidden from the list.
+
+    Both formats are understood: version 1 (``stage:where:service:host:hidden``) and
+    version 2, which starts with ``v2|`` and adds the data region.
     """
-    lines: list[str] = []
-    for part in fingerprint.split("|"):
-        fields = part.split(":")
-        if len(fields) < 5:
-            lines.append(part)
-            continue
-        stage, where, service, host, hidden = (
-            fields[0],
-            fields[1],
-            fields[2],
-            fields[3:-1],
-            fields[-1],
-        )
+    parts = fingerprint.split("|")
+    if parts and parts[0] == _FINGERPRINT_V2_PREFIX:
+        parts = parts[1:]
+        lines = [_describe_part(part, with_region=True) for part in parts]
+    else:
+        lines = [_describe_part(part, with_region=False) for part in parts]
+    return "; ".join(line for line in lines if line)
+
+
+def _describe_part(part: str, *, with_region: bool) -> str:
+    """Return one readable step of a stored fingerprint, or *part* when it does not parse."""
+    fields = part.split(":")
+    # stage, where, [region], service, host…, hidden: the host is everything before "hidden".
+    minimum = 6 if with_region else 5
+    if len(fields) < minimum:
+        return part
+    stage, where = fields[0], fields[1]
+    rest = fields[2:]
+    region: DataRegion | None = None
+    if with_region:
         try:
-            place = StageLocation(DataLocation(where), service, ":".join(host)).label
+            region = DataRegion(rest[0])
         except ValueError:
-            lines.append(part)
-            continue
-        names = "names replaced where detected" if hidden == "1" else "names sent as written"
-        lines.append(f"{_STAGE_TITLES.get(stage, stage)}: {place} — {names}")
-    return "; ".join(lines)
+            return part
+        rest = rest[1:]
+    service, host, hidden = rest[0], rest[1:-1], rest[-1]
+    try:
+        place = StageLocation(DataLocation(where), service, ":".join(host), region).label
+    except ValueError:
+        return part
+    names = "names replaced where detected" if hidden == "1" else "names sent as written"
+    return f"{_STAGE_TITLES.get(stage, stage)}: {place} — {names}"

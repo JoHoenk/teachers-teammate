@@ -37,7 +37,11 @@ from ..interfaces import (
     ImagePreprocessor,
     OCRProcessor,
 )
-from .anonymizer import AnonymizerConfig, resolve_patterns
+from .anonymizer import (
+    AnonymizerConfig,
+    anonymizer_config_from,
+    resolve_anonymizer_config,
+)
 from .correction import (
     CorrectionSettings,
     LangChainCorrector,
@@ -54,6 +58,8 @@ from .ocr_processor import (
 )
 from .ollama_utils import OllamaClient, ollama_host
 from .reporting import Reporter, StdoutReporter
+from .spacy_models import installed_spacy_models
+from .system_locale import system_language
 from .workflow.preprocess_service import PreprocessService
 
 # ── Default constructors ───────────────────────────────────────────────────
@@ -243,6 +249,12 @@ class StageBuilder:
     def build_correction_and_anonymizer(
         self, ollama_client: OllamaClient | None = None
     ) -> tuple[Corrector | None, Anonymizer | None]:
+        """Build the corrector and the anonymizer, each only when it is enabled.
+
+        Anonymization does not depend on proofreading: with "Remove personal info" ticked the
+        anonymizer is built even when nothing is sent anywhere, so the run can fill the
+        session cache and the anonymized text file has something to write.
+        """
         cfg = self.config
         factory = self.factory
         correction: Corrector | None = None
@@ -271,13 +283,13 @@ class StageBuilder:
                 correction = factory.build_corrector(llm, cfg.correction_prompt, settings)
 
         if cfg.anonymization_enabled:
-            if not cfg.correction_enabled:
-                self.reporter.warn(
-                    "WARNING: Anonymization requires correction to be enabled; "
-                    "disabling anonymization."
-                )
-            else:
+            try:
                 anonymizer = self._build_anonymizer()
+            except ProviderNotAvailableError as exc:
+                if cfg.correction_enabled:
+                    raise  # text would be sent unprotected: the run must not start
+                # Nothing is sent anywhere, so the missing add-on only costs the preview cache.
+                self.reporter.warn(f"WARNING: {exc}; personal info is not removed in this run.")
 
         return correction, anonymizer
 
@@ -297,10 +309,12 @@ class StageBuilder:
     def _build_anonymizer(self) -> Anonymizer:
         cfg = self.config
         try:
-            anon_config = AnonymizerConfig(
-                primary_model=cfg.anonymizer_primary_model,
-                secondary_model=cfg.anonymizer_secondary_model,
-                patterns=resolve_patterns(cfg.anonymizer_patterns),
+            anon_config = resolve_anonymizer_config(
+                anonymizer_config_from(cfg),
+                document_language=cfg.language,
+                system_language=system_language(),
+                installed_models=installed_spacy_models(),
+                warn=self.reporter.warn,
             )
             return self.factory.build_anonymizer(cfg.language, anon_config)
         except (ImportError, OSError) as exc:

@@ -16,6 +16,8 @@ from teachers_teammate.infrastructure.providers._helpers import (
 
 PROVIDER_INFO: dict = {
     "display_name": "OpenAI (ChatGPT)",
+    "data_region": "non_eu",
+    "vendor_country": "USA",
     "needs_api_key": True,
     "env_key": "OPENAI_API_KEY",
     "needs_base_url": False,

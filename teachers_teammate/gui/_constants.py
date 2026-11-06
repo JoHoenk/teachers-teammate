@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from ..domain.language import LANGUAGES
+
 _COLOUR_ERROR = "#c0392b"
 _COLOUR_WARNING = "#e67e22"
 _COLOUR_OK = "#27ae60"
@@ -11,16 +13,9 @@ _COLOUR_OCR_BAR = "#3498db"
 _COLOUR_CORRECTION_BAR = "#e67e22"
 _COLOUR_EVAL_BAR = "#8e44ad"
 
-# Common languages offered in the dropdown (user may type custom values)
-_LANGUAGES = [
-    "English",
-    "German",
-    "French",
-    "Spanish",
-    "Italian",
-    "Portuguese",
-    "Dutch",
-]
+# Common languages offered in the dropdown (user may type custom values).  The list itself
+# lives in the domain so the CLI and the system-locale mapping use exactly the same names.
+_LANGUAGES = LANGUAGES
 
 # spaCy NER models offered for download, as (display label, package name) pairs.
 # Shared by the addon installer and downloads dialogs.

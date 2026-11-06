@@ -38,6 +38,7 @@ from PySide6.QtWidgets import (
 import qdarkstyle
 
 from .. import __version__
+from ..application.sent_text import SentTexts
 from ..application.service import (
     ADDON_AMD,
     ADDON_NVIDIA,
@@ -55,21 +56,28 @@ from ..config import (
     load_config_file,
     unavailable_ocr_engine,
 )
-from ..domain.data_location import LOCAL_OCR_ENGINES, OCR_ENGINE_NAMES
+from ..domain.data_location import LOCAL_OCR_ENGINES, OCR_ENGINE_NAMES, DataFlow
 from ..domain.stages import PROGRESS_STAGE_OCR, PROGRESS_STAGE_PREPROCESSING
+from . import _user_text as txt
 from ._app_bootstrap import create_app
 from ._background import LatestTask, run_in_background, wait_for_background_tasks
 from ._chart_widget import ChartWidget
 from ._config_panel import ConfigPanel
-from ._data_flow_summary import advice_text
+from ._data_flow_summary import advice_text, level_text, stage_tooltip
 from ._export_menu import ExportKind, build_export_menu
 from ._help_dialog import AboutDialog, HelpDialog, ThirdPartyLicensesDialog
 from ._image_utils import load_icon, load_pixmap
 from ._log_widget import LogWidget
 from ._model_guidance import OpenDownloads
 from ._model_wording import profile_text
-from ._preview_panel import DiffWidget, PreviewPanel, ZoomableImageView
-from ._privacy_settings import SECTION_DETECTION, SECTION_SENDING, FlowAcknowledgements
+from ._preview_panel import PreviewPanel, ZoomableImageView
+from ._privacy_settings import (
+    SECTION_DETECTION,
+    SECTION_SENDING,
+    FlowAcknowledgements,
+    display_anonymized,
+    set_display_anonymized,
+)
 from ._results_table import ResultsTable
 from ._settings_dialog import (
     CorrectionSettingsDialog,
@@ -80,6 +88,7 @@ from ._settings_dialog import (
 from ._stats_widget import SystemStatsWidget
 from ._types import FileDoneEvent, PreprocessInfo
 from ._update_check import UpdateCheckThread
+from ._what_is_sent_dialog import WhatIsSentDialog
 from ._worker import OCRWorker
 
 
@@ -99,34 +108,6 @@ def _spacy_problem(exc: BaseException) -> str | None:
     if isinstance(exc, OSError):
         return f"spaCy model missing: {exc}\n\nRun: python -m spacy download <model>"
     return None
-
-
-class _AnonymizeThread(QThread):
-    """Run spaCy anonymization in a background thread for the privacy preview diff."""
-
-    done = Signal(str, str, str)  # original, anonymized, error_message
-
-    def __init__(
-        self,
-        app_service: ProcessingApplicationService,
-        text: str,
-        language: str,
-        config: object = None,
-    ) -> None:
-        super().__init__()
-        self._svc = app_service
-        self._text = text
-        self._language = language
-        self._config = config
-
-    def run(self) -> None:
-        try:
-            anonymized, _ = self._svc.anonymize_preview(self._text, self._language, self._config)
-            self.done.emit(self._text, anonymized, "")
-        except (ImportError, OSError) as exc:
-            self.done.emit("", "", _spacy_problem(exc) or str(exc))
-        except Exception as exc:  # noqa: BLE001  # anonymization may raise anything off-thread; report via the done signal
-            self.done.emit("", "", str(exc))
 
 
 class _PreprocessPreviewThread(QThread):
@@ -302,7 +283,18 @@ class MainWindow(QMainWindow):
         self._worker: _WorkerLike | None = None
         self._config_path: Path | None = None
         self._pull_manager = OllamaDownloadManager(self)
-        self._privacy_preview_thread: _AnonymizeThread | None = None
+        self._sent_texts_task = LatestTask(self)
+        self._last_sent_texts: SentTexts | None = None
+        self._anonymize_task = LatestTask(self)
+        self._anonymize_running = False
+        #: The "Hide personal information in texts" view setting (not part of Config).
+        self._display_anonymized = display_anonymized(self._settings_store)
+        #: Whether the texts can be hidden, per document language (spaCy model installed).
+        self._privacy_availability: dict[str, bool] = {}
+        #: Whether the texts can be hidden for the current document language.
+        self._privacy_available = True
+        #: The text and language of the running hiding job, to not start it twice.
+        self._anonymize_key: tuple[str, str] | None = None
         self._first_run_task = LatestTask(self)
         self._preprocess_preview_thread: _PreprocessPreviewThread | None = None
         self._result_names: list[str] = []
@@ -342,6 +334,7 @@ class MainWindow(QMainWindow):
         self._results_table: ResultsTable
         self._chart: ChartWidget
         self._preview: PreviewPanel
+        self._hide_personal_act: QAction  # assigned in _build_menu_bar
         self._main_splitter: QSplitter
 
     def _setup_tray(self) -> None:
@@ -395,7 +388,10 @@ class MainWindow(QMainWindow):
 
         self._results_table.preview_requested.connect(self._on_preview_requested)
         self._results_table.stage_run_requested.connect(self._on_stage_run_requested)
-        self._results_table.privacy_preview_requested.connect(self._on_privacy_preview_requested)
+        self._results_table.what_is_sent_requested.connect(self._on_what_is_sent_requested)
+        self._config_panel.data_flow_changed.connect(self._on_data_flow_changed)
+        # The box rendered once while the panels were built, before these connections.
+        self._on_data_flow_changed(self._config_panel.data_flow())
         self._results_table.export_requested.connect(self._on_export_requested)
         self._config_panel.paths_changed.connect(self._refresh_queue_from_inputs)
         self._config_panel.anonymizer_configure_requested.connect(
@@ -404,6 +400,10 @@ class MainWindow(QMainWindow):
         self._preview.ocr_text_edited.connect(self._on_ocr_text_edited)
         self._preview.correction_text_edited.connect(self._on_correction_text_edited)
         self._preview.run_stage_requested.connect(self._on_preview_stage_run_requested)
+        self._preview.display_anonymized_changed.connect(self._apply_display_anonymized)
+        self._preview.anonymization_needed.connect(self._on_anonymization_needed)
+        self._refresh_privacy_availability()
+        self._preview.set_display_anonymized(self._display_anonymized)
         # Kick off an initial LLM connectivity check once the window is laid out.
         # Pass self as the receiver so the callback is cancelled if the window is destroyed.
         QTimer.singleShot(500, self, self._check_llm_status)
@@ -432,6 +432,16 @@ class MainWindow(QMainWindow):
         doc_output_act = QAction("Output Settings\u2026", self)
         doc_output_act.triggered.connect(self._open_output_settings_dialog)
         settings_menu.addAction(doc_output_act)
+
+        # How the results are shown — a GUI preference, not part of the pipeline settings
+        view_menu = bar.addMenu("View")
+        assert view_menu is not None
+        self._hide_personal_act = QAction(txt.HIDE_PERSONAL_INFO_ACTION, self)
+        self._hide_personal_act.setCheckable(True)
+        self._hide_personal_act.setChecked(self._display_anonymized)
+        self._hide_personal_act.setToolTip(txt.HIDE_PERSONAL_INFO_TIP)
+        self._hide_personal_act.triggered.connect(self._on_hide_personal_triggered)
+        view_menu.addAction(self._hide_personal_act)
 
         # Advanced settings for power users
         advanced_menu = bar.addMenu("Advanced Settings")
@@ -825,6 +835,8 @@ class MainWindow(QMainWindow):
         # Let the window disappear before waiting: running background tasks are
         # given a moment to end, and the user should not see a frozen window.
         self.hide()
+        self._sent_texts_task.cancel()
+        self._anonymize_task.cancel()
         wait_for_background_tasks()
         event.accept()
 
@@ -1013,6 +1025,10 @@ class MainWindow(QMainWindow):
         )
         dlg.exec()
 
+    def _settings_store(self) -> QSettings:
+        """Return a QSettings for the window's GUI preferences (not pipeline settings)."""
+        return QSettings(self._QSETTINGS_ORG, self._QSETTINGS_APP)
+
     def _acknowledgements(self) -> FlowAcknowledgements:
         """Return the store of "don't ask again" answers (read and written through QSettings)."""
         return FlowAcknowledgements(lambda: QSettings(self._QSETTINGS_ORG, self._QSETTINGS_APP))
@@ -1023,13 +1039,14 @@ class MainWindow(QMainWindow):
         if not flow.leaves_computer or flow.fingerprint in self._acknowledgements().fingerprints():
             on_ready()
             return
-        lines = "\n".join(f"  • {stage.summary}" for stage in flow.outbound)
+        lines = "\n".join(f"  • {stage.title} — {stage.badge}" for stage in flow.outbound)
         advice = "".join(f"\n\n{advice_text(tip)}" for tip in flow.advice)
         box = QMessageBox(self)
         box.setIcon(QMessageBox.Icon.Warning)
         box.setWindowTitle("Your documents will leave this computer")
         box.setText(
-            f"These steps send content away from this computer:\n\n{lines}{advice}\n\n"
+            f"{level_text(flow.level)}\n\nThese steps send content away from this "
+            f"computer:\n\n{lines}{advice}\n\n"
             "Make sure your school's data protection rules allow this."
         )
         remember = QCheckBox("Don't ask again for these settings (change under Privacy Settings)")
@@ -1929,47 +1946,141 @@ class MainWindow(QMainWindow):
         self._update_preview_stage_statuses(source_id)
         self._tabs.setCurrentIndex(1)
 
-    def _on_privacy_preview_requested(self, _source_id: str, raw_txt: str) -> None:
+    def _on_what_is_sent_requested(self, source_id: str) -> None:
+        """Open "What is sent for this file…" for one row of the results table."""
+        _sid, name, _img, raw_txt, corr_txt, _eval = self._results_table.entry_for_source(source_id)
         if not raw_txt.strip():
-            QMessageBox.information(
-                self, "Privacy Preview", "No OCR text available for this file yet."
-            )
+            QMessageBox.information(self, txt.WHAT_IS_SENT_TITLE, txt.NO_TEXT_YET)
             return
 
-        language = str(self._config_panel.to_dict().get("language") or "English")
+        config = self._config_panel.lookup_config()
+        text_format = self._results_table.text_format_for_source(source_id) or "plain"
 
+        busy = QDialog(self)
+        busy.setWindowTitle(f"{txt.WHAT_IS_SENT_TITLE} — {name}")
+        busy_vbox = QVBoxLayout(busy)
+        busy_vbox.addWidget(QLabel(txt.WHAT_IS_SENT_WORKING))
+        service = self._app_service
+
+        def _describe() -> object:
+            return service.describe_sent_texts(config, raw_txt, corr_txt, text_format=text_format)  # ty: ignore[invalid-argument-type]
+
+        def _on_done(result: object, error: BaseException | None) -> None:
+            busy.accept()
+            if error is not None:
+                QMessageBox.warning(
+                    self, txt.WHAT_IS_SENT_TITLE, _spacy_problem(error) or str(error)
+                )
+                return
+            if not isinstance(result, SentTexts):
+                QMessageBox.warning(self, txt.WHAT_IS_SENT_TITLE, txt.NO_TEXT_YET)
+                return
+            self._show_what_is_sent(result, name)
+
+        self._sent_texts_task.submit(_describe, _on_done)
+        busy.exec()
+
+    # ── hiding personal information in the view ──────────────────────────────────
+
+    def _on_hide_personal_triggered(self, checked: bool) -> None:
+        """Apply the View menu setting to the preview."""
+        self._apply_display_anonymized(checked)
+
+    def _apply_display_anonymized(self, enabled: bool) -> None:
+        """Store the view setting and show the texts accordingly.
+
+        Called by the menu action and by the eye button in the preview panel, so both stay
+        in step and the preference survives a restart.
+        """
+        enabled = bool(enabled) and self._privacy_available
+        set_display_anonymized(self._settings_store, enabled)
+        self._display_anonymized = enabled
+        action = getattr(self, "_hide_personal_act", None)
+        if action is not None:
+            action.blockSignals(True)
+            action.setChecked(enabled)
+            action.blockSignals(False)
+        self._preview.set_display_anonymized(enabled)
+
+    def _refresh_privacy_availability(self) -> None:
+        """Enable the setting only while personal information can actually be hidden.
+
+        Needs the Privacy add-on and the spaCy model of the document language; without
+        them the menu entry stays greyed out and its tooltip points at the Downloads
+        dialog.  The answer is cached per language, because it is asked again whenever the
+        data flow changes (that is, on every settings toggle).
+        """
+        language = self._config_panel.lookup_language()
+        if language not in self._privacy_availability:
+            self._privacy_availability[language] = self._app_service.anonymizer_available(language)
+        available = self._privacy_availability[language]
+        changed = available != self._privacy_available
+        self._privacy_available = available
+        action = getattr(self, "_hide_personal_act", None)
+        if action is not None:
+            action.setEnabled(available)
+            action.setToolTip(
+                txt.HIDE_PERSONAL_INFO_TIP if available else txt.HIDE_PERSONAL_INFO_UNAVAILABLE_TIP
+            )
+        self._preview.set_display_anonymized_available(available)
+        if changed and available and self._display_anonymized:
+            # The setting was on but could not be applied; it can now.
+            self._preview.set_display_anonymized(True)
+
+    def _on_anonymization_needed(self, raw_text: str) -> None:
+        """Start hiding the personal information of the text the preview shows."""
+        if not raw_text.strip():
+            self._preview.set_anonymization("", {}, raw_text=raw_text)
+            return
+        language = self._config_panel.lookup_language()
+        if self._anonymize_running and self._anonymize_key == (raw_text, language):
+            return  # already being worked out
+        self._anonymize_key = (raw_text, language)
+        self._anonymize_running = True
+        service = self._app_service
         anon_config = self._config_panel.build_anonymizer_config()
 
-        dlg = QDialog(self)
-        dlg.setWindowTitle("Personal Information Preview — What Will Be Hidden")
-        dlg.resize(900, 600)
-        vbox = QVBoxLayout(dlg)
+        def _anonymize() -> object:
+            return service.anonymize_preview(raw_text, language, anon_config)
 
-        status_lbl = QLabel("Running anonymization…")
-        vbox.addWidget(status_lbl)
+        def _on_done(result: object, error: BaseException | None) -> None:
+            self._on_anonymization_done(raw_text, result, error)
 
-        diff = DiffWidget()
-        diff.setVisible(False)
-        vbox.addWidget(diff, stretch=1)
+        # Only the latest request counts: a slow result for a text the preview already left
+        # is dropped, and no thread object can be destroyed while it still runs.
+        self._anonymize_task.submit(_anonymize, _on_done)
 
-        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
-        buttons.rejected.connect(dlg.reject)
-        vbox.addWidget(buttons)
+    def _on_anonymization_done(
+        self, raw_text: str, payload: object, error: BaseException | None
+    ) -> None:
+        """Hand the placeholders to the preview (only the newest request gets here)."""
+        self._anonymize_key = None
+        self._anonymize_running = False
+        if error is not None or not isinstance(payload, tuple) or len(payload) != 2:
+            reason = (_spacy_problem(error) or str(error)) if error is not None else "unknown error"
+            self._preview.set_anonymization("", {}, raw_text=raw_text, error=reason)
+            return
+        anonymized, raw_mapping = payload
+        mapping = (
+            {str(key): str(value) for key, value in raw_mapping.items()}
+            if isinstance(raw_mapping, dict)
+            else {}
+        )
+        self._preview.set_anonymization(str(anonymized), mapping, raw_text=raw_text)
 
-        thread = _AnonymizeThread(self._app_service, raw_txt, language, anon_config)
-        self._privacy_preview_thread = thread
+    def _on_data_flow_changed(self, flow: object) -> None:
+        """Say under the proofreading and content-review cells where their text goes."""
+        if not isinstance(flow, DataFlow):
+            return
+        self._results_table.set_stage_tooltips(
+            {stage.stage: stage_tooltip(stage) for stage in flow.stages if not stage.detail}
+        )
+        self._refresh_privacy_availability()  # the document language may have changed
 
-        def _on_done(original: str, anonymized: str, error: str) -> None:
-            if error:
-                status_lbl.setText(error)
-            else:
-                status_lbl.setVisible(False)
-                diff.setVisible(True)
-                diff.set_texts(original, anonymized)
-
-        thread.done.connect(_on_done)
-        thread.start()
-        dlg.exec()
+    def _show_what_is_sent(self, report: SentTexts, name: str) -> None:
+        """Show the report for one file, remembering it so tests and callers can read it."""
+        self._last_sent_texts = report
+        WhatIsSentDialog(report, file_name=name, parent=self).exec()
 
     def _open_settings_dialog(self) -> None:
         """Open the Connections & Credentials dialog."""
@@ -2126,13 +2237,24 @@ class MainWindow(QMainWindow):
             app_service=self._app_service,
         )
         dialog.packages_changed.connect(self._check_llm_status)
+        dialog.packages_changed.connect(self._on_packages_changed)
         dialog.packages_changed.connect(self._stats.refresh_gpu_monitoring)
         dialog.hardware_profile_changed.connect(self._on_hardware_profile_changed)
         dialog.exec()
 
+    def _on_packages_changed(self) -> None:
+        """A download finished: a spaCy model may be available now, so look again."""
+        self._app_service.forget_installed_models()
+        self._privacy_availability.clear()
+        self._config_panel.refresh_data_flow()  # also refreshes the privacy availability
+        self._refresh_privacy_availability()
+
     def _on_addon_installed(self, addon: str) -> None:
         if addon == ADDON_PRIVACY:
             self._app_service.clear_anonymizer_cache()
+            self._privacy_availability.clear()  # spaCy may be available now
+            self._config_panel.refresh_data_flow()
+            self._refresh_privacy_availability()
             QMessageBox.information(
                 self,
                 "Privacy Addon Installed",
@@ -2182,6 +2304,8 @@ class MainWindow(QMainWindow):
         if dialog.exec() == QDialog.DialogCode.Accepted:
             self._config_panel.update_anonymizer_config(dialog.anonymizer_config)
             self._save_settings(notify=False)
+            # New models or patterns produce different placeholders for the shown text.
+            self._preview.invalidate_anonymization()
 
     def _on_preprocess_preview_requested(self, ocr_config: OcrConfig) -> None:
         thread = self._preprocess_preview_thread

@@ -1560,3 +1560,86 @@ def test_failed_correction_is_reported_but_not_stored_as_done(tmp_path: Path) ->
 
     assert result.correction_warning == "Correction failed"
     cache_svc.record_correction.assert_not_called()
+
+
+def test_anonymizer_runs_without_proofreading(tmp_path: Path) -> None:
+    """
+    Given  "Remove personal info" on and no corrector at all (recognition only)
+    When   process() runs
+    Then   the extracted text is still anonymized and the log names how many items were hidden
+    """
+    anonymizer = MagicMock()
+    anonymizer.anonymize.return_value = ("[PERSON_1] wrote", {"[PERSON_1]": "Anna"})
+    reporter = _ListReporter()
+    fp, *_ = _make_processor(tmp_path, anonymizer=anonymizer, reporter=reporter)
+
+    result = fp.process(tmp_path / "essay.png")
+
+    assert result.ok is True
+    anonymizer.anonymize.assert_called_once_with("extracted text")
+    assert "→ Personal info removed (1 items)" in reporter.lines
+    assert not any("requires" in line.lower() for line in reporter.lines)
+
+
+def test_anonymized_text_file_reuses_the_pre_pass_result(tmp_path: Path) -> None:
+    """
+    Given  recognition only, with the same anonymizer for the stage and the text file
+    When   process() runs
+    Then   the anonymized text file holds the pre-pass result and spaCy ran once
+    """
+    anonymizer = MagicMock()
+    anonymizer.anonymize.return_value = ("[PERSON_1] wrote", {"[PERSON_1]": "Anna"})
+    fp, *_ = _make_processor(
+        tmp_path, anonymizer=anonymizer, text_anonymizer=anonymizer, write_text=True
+    )
+
+    result = fp.process(tmp_path / "essay.png")
+
+    assert result.ok is True
+    anonymizer.anonymize.assert_called_once_with("extracted text")
+    assert (tmp_path / "output" / "essay_anonymized.txt").read_text(encoding="utf-8") == (
+        "[PERSON_1] wrote"
+    )
+
+
+def test_cached_proofreading_does_not_run_the_anonymizer(tmp_path: Path) -> None:
+    """
+    Given  a corrector and an anonymizer, and a proofreading that is already cached
+    When   process() runs
+    Then   no spaCy pass happens: nothing is sent, so nothing needs hiding
+    """
+    anonymizer = MagicMock()
+    corrector = MagicMock()
+    state = _make_state(ocr_done=True, raw_text="raw", correction_done=True, correction_text="ok")
+    fp, *_ = _make_processor(
+        tmp_path,
+        returns=_StubReturns(cache_ctx=_make_ctx(state)),
+        corrector=corrector,
+        anonymizer=anonymizer,
+    )
+
+    result = fp.process(tmp_path / "essay.png")
+
+    assert result.ok is True
+    anonymizer.anonymize.assert_not_called()
+    corrector.correct.assert_not_called()
+
+
+def test_anonymizer_failure_fails_only_this_file(tmp_path: Path) -> None:
+    """
+    Given  proofreading on and an anonymizer that raises (text over spaCy's length limit)
+    When   process() runs
+    Then   the file fails with a message instead of the exception ending the run, and
+           the corrector never saw the text
+    """
+    anonymizer = MagicMock()
+    anonymizer.anonymize.side_effect = ValueError("[E088] Text of length 2000000 exceeds")
+    corrector = MagicMock()
+    fp, *_ = _make_processor(tmp_path, corrector=corrector, anonymizer=anonymizer)
+
+    result = fp.process(tmp_path / "essay.png")
+
+    assert result.ok is False
+    assert "Personal info removal failed" in result.message
+    assert "E088" in result.message
+    corrector.correct.assert_not_called()

@@ -12,6 +12,7 @@ from teachers_teammate.application.data_flow import (
     ocr_location,
 )
 from teachers_teammate.domain.data_location import (
+    STAGE_ANONYMIZATION,
     STAGE_CORRECTION,
     STAGE_EVALUATION,
     STAGE_OCR,
@@ -19,8 +20,12 @@ from teachers_teammate.domain.data_location import (
     DataFlow,
     DataFlowStage,
     DataLocation,
+    DataRegion,
+    PrivacyLevel,
     StageLocation,
+    anonymization_badge,
     classify_ollama,
+    describe_fingerprint,
     is_ollama_cloud_host,
     is_ollama_cloud_model,
     online_ocr_reason,
@@ -29,7 +34,9 @@ from tests.conftest import make_config
 
 _PROVIDERS = {
     "ollama": {"display_name": "Ollama", "self_hosted": True},
-    "openai": {"display_name": "OpenAI (ChatGPT)"},
+    "openai": {"display_name": "OpenAI (ChatGPT)", "data_region": "non_eu"},
+    "mistral_eu": {"display_name": "Mistral (EU)", "data_region": "eu", "vendor_country": "France"},
+    "novendor": {"display_name": "Novendor"},
 }
 
 
@@ -118,7 +125,7 @@ def test_classify_ollama_cloud_is_online_even_via_local_server(
     """
     loc = classify_ollama(model, url_is_local=url_is_local, host=host)
     assert loc.location is DataLocation.ONLINE
-    assert loc.label == "Online service (Ollama cloud)"
+    assert loc.label == "Online service (Ollama cloud) · outside the EU"
 
 
 # ── online_ocr_reason ──────────────────────────────────────────────────────
@@ -168,7 +175,8 @@ def test_ollama_cloud_ocr_is_refused(model: str, host: str) -> None:
 # ── DataFlow ───────────────────────────────────────────────────────────────
 
 _HERE = StageLocation(DataLocation.THIS_COMPUTER, "Ollama")
-_CLOUD = StageLocation(DataLocation.ONLINE, "OpenAI")
+_CLOUD = StageLocation(DataLocation.ONLINE, "OpenAI", region=DataRegion.EU)
+_OUTSIDE = StageLocation(DataLocation.ONLINE, "OpenAI", region=DataRegion.NON_EU)
 
 
 def test_data_flow_reports_only_steps_that_leave() -> None:
@@ -185,7 +193,7 @@ def test_data_flow_reports_only_steps_that_leave() -> None:
     )
     assert flow.leaves_computer is True
     assert [s.stage for s in flow.outbound] == [STAGE_CORRECTION]
-    assert flow.fingerprint == "correction:online:OpenAI::1"
+    assert flow.fingerprint == "v2|correction:online:eu:OpenAI::1"
 
 
 def test_data_flow_fingerprint_changes_when_hiding_names_changes() -> None:
@@ -260,7 +268,7 @@ def test_stage_summary_for_leaving_step_says_what_is_received() -> None:
     """
     stage = DataFlowStage(STAGE_EVALUATION, _CLOUD, "text", False)
     assert stage.summary == (
-        "Content review: Online service (OpenAI) — receives text, names sent as written"
+        "Content review: Online service (OpenAI) · EU — receives text, names sent as written"
     )
 
 
@@ -297,7 +305,7 @@ def test_llm_location_unknown_provider_is_online() -> None:
     Then   it is an online service named after the provider (the safe default)
     """
     loc = llm_location("newvendor", "m", "http://127.0.0.1:11434", lambda _p: {})
-    assert loc == StageLocation(DataLocation.ONLINE, "Newvendor")
+    assert loc == StageLocation(DataLocation.ONLINE, "Newvendor", region=DataRegion.UNKNOWN)
 
 
 def test_llm_location_self_hosted_provider_follows_the_server() -> None:
@@ -328,7 +336,11 @@ def test_describe_data_flow_default_settings_stay_local(tmp_path: Path) -> None:
         correction_model="qwen3.5:9b",
     )
     flow = describe_data_flow(cfg, _info)
-    assert [s.stage for s in flow.stages] == [STAGE_OCR, STAGE_CORRECTION]
+    assert [s.stage for s in flow.stages] == [
+        STAGE_OCR,
+        STAGE_ANONYMIZATION,
+        STAGE_CORRECTION,
+    ]
     assert flow.leaves_computer is False
 
 
@@ -383,3 +395,358 @@ def test_describe_data_flow_remote_ollama_for_ocr(tmp_path: Path) -> None:
     assert ocr.location.location is DataLocation.OTHER_COMPUTER
     assert ocr.receives == "page images"
     assert Advice.PAGES_TO_OTHER_COMPUTER in flow.advice
+
+
+# ── Data region ────────────────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    ("region", "label"),
+    [
+        (DataRegion.EU, "EU"),
+        (DataRegion.NON_EU, "outside the EU"),
+        (DataRegion.UNKNOWN, "outside the EU"),
+    ],
+)
+def test_data_region_label(region: DataRegion, label: str) -> None:
+    """
+    Given  a data region
+    When   its label is read
+    Then   only the European Union reads "EU"; everything else, including an undeclared
+           region, reads "outside the EU"
+    """
+    assert region.label == label
+
+
+def test_stage_location_defaults_to_an_undeclared_region() -> None:
+    """
+    Given  an online step whose provider declares no region
+    When   the region and label are read
+    Then   it counts as unknown and is shown like a service outside the EU
+    """
+    location = StageLocation(DataLocation.ONLINE, "Mistral")
+    assert location.data_region is DataRegion.UNKNOWN
+    assert location.label == "Online service (Mistral) · outside the EU"
+
+
+def test_stage_location_details_name_the_vendor_country() -> None:
+    """
+    Given  an online step of a vendor based in France
+    When   the tooltip details are built
+    Then   they say where the data is processed and where the vendor is at home
+    """
+    location = StageLocation(
+        DataLocation.ONLINE, "Mistral (EU)", region=DataRegion.EU, vendor_country="France"
+    )
+    assert location.details == "Online service (Mistral (EU)) · EU\nVendor based in France"
+
+
+def test_llm_location_reads_the_region_from_provider_info() -> None:
+    """
+    Given  a provider that declares its data region and vendor country
+    When   llm_location() classifies it
+    Then   the region and the vendor country end up in the location
+    """
+    european = llm_location("mistral_eu", "m", "", _info)
+    assert european.region is DataRegion.EU
+    assert european.data_region is DataRegion.EU
+    assert european.vendor_country == "France"
+
+    outside = llm_location("openai", "m", "", _info)
+    assert outside.region is DataRegion.NON_EU
+
+
+def test_llm_location_prefers_a_region_that_depends_on_settings() -> None:
+    """
+    Given  a provider whose region depends on its settings and a provider_region callable
+    When   llm_location() classifies it
+    Then   the callable's answer wins over PROVIDER_INFO
+    """
+    location = llm_location(
+        "openai", "m", "", _info, provider_region=lambda _p: DataRegion.EU.value
+    )
+    assert location.region is DataRegion.EU
+
+
+def test_llm_location_treats_an_unparsable_region_as_unknown() -> None:
+    """
+    Given  a provider_region callable that returns something unexpected
+    When   llm_location() classifies it
+    Then   the region is unknown rather than a crash or a claim of privacy
+    """
+    location = llm_location("openai", "m", "", _info, provider_region=lambda _p: "mars")
+    assert location.region is DataRegion.UNKNOWN
+
+
+def test_ollama_cloud_keeps_its_name_and_gets_the_declared_region() -> None:
+    """
+    Given  an Ollama cloud model via a local server, with a vendor region declared
+    When   llm_location() classifies it
+    Then   the label keeps saying "Ollama cloud" and the region is filled in
+    """
+    providers = {
+        "ollama": {
+            "display_name": "Ollama",
+            "self_hosted": True,
+            "data_region": "non_eu",
+            "vendor_country": "USA",
+        }
+    }
+    location = llm_location(
+        "ollama", "gpt-oss:120b-cloud", "http://localhost:11434", lambda p: providers.get(p, {})
+    )
+    assert location.location is DataLocation.ONLINE
+    assert location.service == "Ollama cloud"
+    assert location.region is DataRegion.NON_EU
+    assert location.vendor_country == "USA"
+
+
+# ── PrivacyLevel ───────────────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    ("location", "hidden", "level"),
+    [
+        (StageLocation(DataLocation.THIS_COMPUTER, "Ollama"), False, PrivacyLevel.LOCAL),
+        (StageLocation(DataLocation.THIS_COMPUTER, "Ollama"), True, PrivacyLevel.LOCAL),
+        (
+            StageLocation(DataLocation.OTHER_COMPUTER, "Ollama", "srv"),
+            False,
+            PrivacyLevel.OWN_SERVER,
+        ),
+        (
+            StageLocation(DataLocation.OTHER_COMPUTER, "Ollama", "srv"),
+            True,
+            PrivacyLevel.OWN_SERVER,
+        ),
+        (_CLOUD, True, PrivacyLevel.ANON_EU),
+        (_CLOUD, False, PrivacyLevel.NAMES_EU),
+        (_OUTSIDE, True, PrivacyLevel.ANON_NON_EU),
+        (_OUTSIDE, False, PrivacyLevel.NAMES_NON_EU),
+        (
+            StageLocation(DataLocation.ONLINE, "Mistral"),
+            True,
+            PrivacyLevel.ANON_NON_EU,
+        ),
+        (
+            StageLocation(DataLocation.ONLINE, "Mistral"),
+            False,
+            PrivacyLevel.NAMES_NON_EU,
+        ),
+    ],
+)
+def test_privacy_level_of_one_step(
+    location: StageLocation, hidden: bool, level: PrivacyLevel
+) -> None:
+    """
+    Given  a step's place and whether its names are hidden
+    When   its privacy level is read
+    Then   the level matches the place, and an undeclared region counts as outside the EU
+    """
+    assert DataFlowStage(STAGE_CORRECTION, location, "text", hidden).privacy_level is level
+
+
+def test_privacy_level_severity_orders_the_levels() -> None:
+    """
+    Given  the privacy levels
+    When   they are sorted by severity
+    Then   nothing leaving the computer is mildest and names leaving it is worst
+    """
+    assert sorted(PrivacyLevel, key=lambda level: level.severity) == [
+        PrivacyLevel.LOCAL,
+        PrivacyLevel.OWN_SERVER,
+        PrivacyLevel.ANON_EU,
+        PrivacyLevel.ANON_NON_EU,
+        PrivacyLevel.NAMES_EU,
+        PrivacyLevel.NAMES_NON_EU,
+    ]
+
+
+@pytest.mark.parametrize(
+    ("level", "leaves", "names"),
+    [
+        (PrivacyLevel.LOCAL, False, False),
+        (PrivacyLevel.OWN_SERVER, True, False),
+        (PrivacyLevel.ANON_EU, True, False),
+        (PrivacyLevel.ANON_NON_EU, True, False),
+        (PrivacyLevel.NAMES_EU, True, True),
+        (PrivacyLevel.NAMES_NON_EU, True, True),
+    ],
+)
+def test_privacy_level_helpers(level: PrivacyLevel, leaves: bool, names: bool) -> None:
+    """
+    Given  a privacy level
+    When   its helpers are read
+    Then   only LOCAL stays on this computer and only the NAMES levels send names
+    """
+    assert level.leaves_computer is leaves
+    assert level.sends_names is names
+
+
+def test_data_flow_level_is_the_worst_step() -> None:
+    """
+    Given  local text recognition, anonymized proofreading into the EU and content review
+           outside the EU
+    When   the overall level is read
+    Then   the least private step decides
+    """
+    flow = DataFlow(
+        (
+            DataFlowStage(STAGE_OCR, _HERE, "page images"),
+            DataFlowStage(STAGE_CORRECTION, _CLOUD, "text", True),
+            DataFlowStage(STAGE_EVALUATION, _OUTSIDE, "text", True),
+        )
+    )
+    assert flow.level is PrivacyLevel.ANON_NON_EU
+
+
+def test_data_flow_level_is_local_without_steps() -> None:
+    """
+    Given  a data flow with no steps at all
+    When   the overall level is read
+    Then   it is LOCAL rather than an error
+    """
+    assert DataFlow(()).level is PrivacyLevel.LOCAL
+
+
+# ── Advice about the region ────────────────────────────────────────────────
+
+
+def test_data_flow_advises_an_eu_service_outside_the_eu() -> None:
+    """
+    Given  an online step outside the European Union
+    When   the advice is read
+    Then   it suggests a service in the EU instead
+    """
+    flow = DataFlow((DataFlowStage(STAGE_CORRECTION, _OUTSIDE, "text", True),))
+    assert flow.advice == (Advice.NAMES_MAY_BE_MISSED, Advice.SERVICE_OUTSIDE_EU)
+
+
+def test_data_flow_gives_no_region_advice_inside_the_eu() -> None:
+    """
+    Given  an online step in the European Union
+    When   the advice is read
+    Then   no service-outside-the-EU advice is given
+    """
+    flow = DataFlow((DataFlowStage(STAGE_CORRECTION, _CLOUD, "text", True),))
+    assert Advice.SERVICE_OUTSIDE_EU not in flow.advice
+
+
+# ── Anonymization row and badge ────────────────────────────────────────────
+
+
+def test_anonymization_badge_names_the_models() -> None:
+    """
+    Given  the spaCy models a run loads
+    When   the personal-info-removal badge is built
+    Then   each model is shortened to its language code, and no model reads "On"
+    """
+    assert anonymization_badge(["en_core_web_sm", "de_core_news_sm"]) == "On (spaCy en + de)"
+    assert anonymization_badge(["en_core_web_sm"]) == "On (spaCy en)"
+    assert anonymization_badge([]) == "On"
+
+
+def test_describe_data_flow_lists_anonymization_as_a_local_row(tmp_path: Path) -> None:
+    """
+    Given  text recognition only, with and without personal-info removal
+    When   describe_data_flow() runs
+    Then   the row is always listed, stays on this computer, and says whether it is on
+    """
+    off = describe_data_flow(make_config(tmp_path), _info)
+    row = off.stage(STAGE_ANONYMIZATION)
+    assert row is not None
+    assert row.location.location is DataLocation.THIS_COMPUTER
+    assert row.badge == "Off"
+    assert row.privacy_level is PrivacyLevel.LOCAL
+
+    on = describe_data_flow(
+        make_config(tmp_path, anonymization_enabled=True),
+        _info,
+        anonymizer_models=["en_core_web_sm", "de_core_news_sm"],
+    )
+    assert on.stage(STAGE_ANONYMIZATION).badge == "On (spaCy en + de)"
+
+
+def test_describe_data_flow_hides_names_without_proofreading(tmp_path: Path) -> None:
+    """
+    Given  personal-info removal ticked and proofreading off
+    When   describe_data_flow() runs
+    Then   names count as hidden (removal no longer depends on proofreading)
+    """
+    cfg = make_config(tmp_path, anonymization_enabled=True, correction_enabled=False)
+    flow = describe_data_flow(cfg, _info)
+    assert flow.stage(STAGE_ANONYMIZATION).personal_info_hidden is True
+    assert flow.leaves_computer is False
+
+
+def test_describe_data_flow_uses_the_region_callback(tmp_path: Path) -> None:
+    """
+    Given  a provider_region callable that reports an EU region
+    When   describe_data_flow() classifies online proofreading
+    Then   the region comes from the callable, not from PROVIDER_INFO
+    """
+    cfg = make_config(
+        tmp_path, correction_enabled=True, correction_provider="openai", correction_model="m"
+    )
+    flow = describe_data_flow(cfg, _info, provider_region=lambda _p: DataRegion.EU.value)
+    assert flow.stage(STAGE_CORRECTION).location.region is DataRegion.EU
+
+
+# ── Fingerprint formats ────────────────────────────────────────────────────
+
+
+def test_fingerprint_includes_the_region() -> None:
+    """
+    Given  the same online step in and outside the EU
+    When   the fingerprints are compared
+    Then   they differ, so an answer for an EU service does not carry over
+    """
+    european = DataFlow((DataFlowStage(STAGE_CORRECTION, _CLOUD, "text", True),))
+    outside = DataFlow((DataFlowStage(STAGE_CORRECTION, _OUTSIDE, "text", True),))
+    assert european.fingerprint != outside.fingerprint
+
+
+def test_describe_fingerprint_reads_a_v2_fingerprint() -> None:
+    """
+    Given  a stored v2 fingerprint with a region
+    When   it is turned into a readable line
+    Then   the line names the place, including the region
+    """
+    line = describe_fingerprint("v2|correction:online:eu:Mistral (EU)::1")
+    assert line == (
+        "Proofreading: Online service (Mistral (EU)) · EU — names replaced where detected"
+    )
+
+
+def test_describe_fingerprint_still_reads_a_v1_fingerprint() -> None:
+    """
+    Given  an answer stored before the region existed
+    When   it is turned into a readable line
+    Then   it is understood, without a region in the line
+    """
+    line = describe_fingerprint("correction:online:OpenAI::0")
+    assert line == "Proofreading: Online service (OpenAI) · outside the EU — names sent as written"
+
+
+def test_describe_fingerprint_keeps_a_part_it_cannot_parse() -> None:
+    """
+    Given  a stored part that does not parse (unknown region or place)
+    When   it is turned into a readable line
+    Then   the part is shown as it is instead of being dropped
+    """
+    assert describe_fingerprint("v2|correction:online:mars:OpenAI::1") == (
+        "correction:online:mars:OpenAI::1"
+    )
+    assert describe_fingerprint("garbage") == "garbage"
+
+
+def test_data_flow_gives_no_region_advice_for_an_own_server() -> None:
+    """
+    Given  a text step that runs on another computer the user controls
+    When   the advice is read
+    Then   it does not tell the user to leave for an EU service: only a vendor has a region
+    """
+    own_server = StageLocation(DataLocation.OTHER_COMPUTER, "Ollama", host="192.168.1.9")
+    flow = DataFlow((DataFlowStage(STAGE_CORRECTION, own_server, "text", False),))
+
+    assert Advice.SERVICE_OUTSIDE_EU not in flow.advice

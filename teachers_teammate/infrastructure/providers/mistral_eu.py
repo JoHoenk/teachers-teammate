@@ -27,6 +27,9 @@ from teachers_teammate.infrastructure.providers._helpers import api_key_check
 
 PROVIDER_INFO: dict = {
     "display_name": "Mistral (EU)",
+    # This endpoint processes requests in EU/EFTA data centres (see the module docstring).
+    "data_region": "eu",
+    "vendor_country": "France",
     "needs_api_key": True,
     "env_key": common.ENV_KEY,
     "needs_base_url": False,

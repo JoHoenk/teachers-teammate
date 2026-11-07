@@ -7,6 +7,7 @@ import pytest
 
 from teachers_teammate.infrastructure.llm_factory import (
     build_llm,
+    get_provider_data_region,
     get_provider_info,
     list_provider_models,
     list_provider_models_checked,
@@ -357,3 +358,114 @@ def test_the_ollama_connector_is_optional_and_the_others_are_required() -> None:
     assert provider_package_required("ollama") is False
     assert provider_package_required("mistral") is True
     assert provider_package_required("openai") is True
+
+
+# ── Data region per provider ───────────────────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    ("provider", "region"),
+    [
+        ("mistral_eu", "eu"),
+        ("mistral", "unknown"),
+        ("openai", "non_eu"),
+        ("anthropic", "non_eu"),
+        ("google", "non_eu"),
+        ("cohere", "non_eu"),
+        ("ollama", "unknown"),
+    ],
+)
+def test_every_shipped_provider_declares_its_data_region(provider: str, region: str) -> None:
+    """
+    Given  a provider that ships with the app
+    When   its data region is asked for
+    Then   it matches the vendor's declared processing location (unknown when undeclared)
+    """
+    assert get_provider_data_region(provider) == region
+
+
+def test_an_unknown_provider_has_no_declared_region() -> None:
+    """
+    Given  a provider name with no module
+    When   its data region is asked for
+    Then   it is "unknown", never "eu"
+    """
+    assert get_provider_data_region("completely_nonexistent_provider_xyz") == "unknown"
+
+
+def test_a_provider_without_the_key_counts_as_unknown(mocker) -> None:
+    """
+    Given  a provider module whose PROVIDER_INFO omits data_region
+    When   its data region is asked for
+    Then   it is "unknown"
+    """
+    module = mocker.Mock(spec=["PROVIDER_INFO"])
+    module.PROVIDER_INFO = {"display_name": "Old"}
+    mocker.patch(
+        "teachers_teammate.infrastructure.llm_factory._import_provider_module",
+        return_value=module,
+    )
+    assert get_provider_data_region("old") == "unknown"
+
+
+def test_a_provider_function_decides_the_region_from_the_settings(mocker) -> None:
+    """
+    Given  a provider that answers its region from a module-level data_region() function
+    When   the settings select a European endpoint
+    Then   the function's answer is used, and it is passed the settings
+    """
+    module = mocker.Mock(spec=["PROVIDER_INFO", "data_region"])
+    module.PROVIDER_INFO = {"data_region": "unknown"}
+    module.data_region = lambda **settings: "eu" if settings.get("eu") else "non_eu"
+    mocker.patch(
+        "teachers_teammate.infrastructure.llm_factory._import_provider_module",
+        return_value=module,
+    )
+
+    assert get_provider_data_region("custom", eu=True) == "eu"
+    assert get_provider_data_region("custom") == "non_eu"
+
+
+def test_a_region_function_that_raises_counts_as_unknown(mocker) -> None:
+    """
+    Given  a provider whose data_region() function raises
+    When   its data region is asked for
+    Then   it is "unknown" instead of an error reaching the user
+    """
+    module = mocker.Mock(spec=["PROVIDER_INFO", "data_region"])
+
+    def broken(**_settings: object) -> str:
+        raise RuntimeError("boom")
+
+    module.data_region = broken
+    mocker.patch(
+        "teachers_teammate.infrastructure.llm_factory._import_provider_module",
+        return_value=module,
+    )
+    assert get_provider_data_region("custom") == "unknown"
+
+
+def test_an_unrecognised_region_string_counts_as_unknown(mocker) -> None:
+    """
+    Given  a provider that declares a region the app does not know
+    When   its data region is asked for
+    Then   it is "unknown" rather than a claim of privacy
+    """
+    module = mocker.Mock(spec=["PROVIDER_INFO"])
+    module.PROVIDER_INFO = {"data_region": "europe-ish"}
+    mocker.patch(
+        "teachers_teammate.infrastructure.llm_factory._import_provider_module",
+        return_value=module,
+    )
+    assert get_provider_data_region("odd") == "unknown"
+
+
+def test_the_vendor_country_is_available_for_the_tooltip() -> None:
+    """
+    Given  providers that declare where the vendor is at home
+    When   their PROVIDER_INFO is read
+    Then   the country is there for the tooltip (and absent where it is not declared)
+    """
+    assert get_provider_info("mistral_eu").get("vendor_country") == "France"
+    assert get_provider_info("openai").get("vendor_country") == "USA"
+    assert not get_provider_info("ollama").get("vendor_country")

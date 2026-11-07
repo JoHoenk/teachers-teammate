@@ -18,6 +18,8 @@ PROVIDER_INFO: dict = {
     "display_name": "Ollama",
     # Runs on the server at base_url (usually this computer), not at a vendor.
     "self_hosted": True,
+    # Cloud models run at Ollama, which does not declare where; local ones never leave.
+    "data_region": "unknown",
     "needs_api_key": False,
     "env_key": "",
     "needs_base_url": True,

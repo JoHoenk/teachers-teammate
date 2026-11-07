@@ -88,7 +88,7 @@ class ResultsTable(QTableWidget):
 
     preview_requested = Signal(QPixmap, str, str, str)
     stage_run_requested = Signal(list, str)
-    privacy_preview_requested = Signal(str, str)  # source_id, raw_txt
+    what_is_sent_requested = Signal(str)  # source_id
     export_requested = Signal(list, object)  # list[str] source_ids, ExportKind
 
     _COL_FILE = 0
@@ -107,6 +107,7 @@ class ResultsTable(QTableWidget):
     _ROLE_TEXT_FORMAT = Qt.ItemDataRole.UserRole + 7  # "plain" | "markdown"
     _ROLE_REVIEW = Qt.ItemDataRole.UserRole + 8  # CorrectionReview
     _ROLE_CORRECTION_WARNING = Qt.ItemDataRole.UserRole + 9  # str
+    _ROLE_NOTE = Qt.ItemDataRole.UserRole + 10  # str: the cell's own tooltip text
 
     _STAGE_ACTIVE_COLORS: ClassVar[dict[int, str]] = {
         _COL_OCR: _COLOUR_OCR_BAR,
@@ -116,6 +117,8 @@ class ResultsTable(QTableWidget):
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(0, 6, parent)
+        #: Where the text of a stage goes, keyed by stage name; shown as a cell tooltip.
+        self._stage_tooltips: dict[str, str] = {}
         self.setHorizontalHeaderLabels(
             ["File", "OCR", "Correction", "Evaluation", "Duration", "Open"]
         )
@@ -190,7 +193,7 @@ class ResultsTable(QTableWidget):
         item = self.item(row, col)
         if item is not None:
             item.setText(symbol)
-            item.setToolTip("")  # a new status drops the old ``?n`` badge's tooltip
+            self._set_note(row, col, "")  # a new status drops the old ``?n`` badge's note
             item.setForeground(QColor(color))
             item.setFont(_STAGE_FONT)
 
@@ -198,6 +201,47 @@ class ResultsTable(QTableWidget):
         """Return the status symbol of a stage cell, without a trailing ``?n`` badge."""
         item = self.item(row, col)
         return item.text().split(maxsplit=1)[0] if item is not None and item.text() else ""
+
+    def set_stage_tooltips(self, tooltips: dict[str, str]) -> None:
+        """Say where each stage's text goes; *tooltips* is keyed by stage name.
+
+        The text of a cell keeps its own message (an unclear count, a warning or an error):
+        the stage line is put in front of it, so neither replaces the other.
+        """
+        self._stage_tooltips = dict(tooltips)
+        self._refresh_cell_tooltips()
+
+    def _stage_key(self, col: int) -> str:
+        """Return the pipeline stage a column stands for (empty for other columns)."""
+        return {self._COL_CORRECTION: "correction", self._COL_EVALUATION: "evaluation"}.get(col, "")
+
+    def _set_note(self, row: int, col: int, note: str) -> None:
+        """Replace the cell's own tooltip text with *note*, keeping the stage line."""
+        item = self.item(row, col)
+        if item is None:
+            return
+        item.setData(self._ROLE_NOTE, note)
+        self._compose_tooltip(item, col)
+
+    def _compose_tooltip(self, item: QTableWidgetItem, col: int) -> None:
+        """Set the item tooltip from the stage line and the cell's own note."""
+        parts = [
+            part
+            for part in (
+                self._stage_tooltips.get(self._stage_key(col), ""),
+                item.data(self._ROLE_NOTE),
+            )
+            if part
+        ]
+        item.setToolTip("\n\n".join(parts))
+
+    def _refresh_cell_tooltips(self) -> None:
+        """Recompose the tooltip of every proofreading and content-review cell."""
+        for row in range(self.rowCount()):
+            for col in (self._COL_CORRECTION, self._COL_EVALUATION):
+                item = self.item(row, col)
+                if item is not None:
+                    self._compose_tooltip(item, col)
 
     def _add_preview_button(self, row: int, source_id: str) -> None:
         btn = QPushButton("Open Preview")
@@ -239,9 +283,7 @@ class ResultsTable(QTableWidget):
         h.addWidget(info_btn)
         h.addStretch()
         self.setCellWidget(row, col, widget)
-        item = self.item(row, col)
-        if item is not None:
-            item.setToolTip(message)
+        self._set_note(row, col, message)
 
     def _set_error_info_widget(self, row: int, col: int, message: str) -> None:
         widget = QWidget()
@@ -265,9 +307,7 @@ class ResultsTable(QTableWidget):
         h.addWidget(info_btn)
         h.addStretch()
         self.setCellWidget(row, col, widget)
-        item = self.item(row, col)
-        if item is not None:
-            item.setToolTip(message)
+        self._set_note(row, col, message)
 
     def set_queue(self, names: list[str], source_ids: list[str] | None = None) -> None:
         """Pre-populate a row per file in 'Pending' state before processing begins."""
@@ -291,6 +331,7 @@ class ResultsTable(QTableWidget):
                 file_item.setData(self._ROLE_SOURCE, source_id)
             self._row_by_source[source_id] = row
             self._add_preview_button(row, source_id)
+        self._refresh_cell_tooltips()
         self.resizeColumnToContents(self._COL_FILE)
 
     def mark_processing(self, source_id: str) -> None:
@@ -457,10 +498,10 @@ class ResultsTable(QTableWidget):
         count = review.unclear_count if review is not None else 0
         if count:
             item.setText(f"{symbol} {txt.unclear_badge(count)}")
-            item.setToolTip(txt.filter_unclear_label(count))
+            self._set_note(row, self._COL_CORRECTION, txt.filter_unclear_label(count))
         else:
             item.setText(symbol)
-            item.setToolTip("")
+            self._set_note(row, self._COL_CORRECTION, "")
 
     def source_id_for_row(self, row: int) -> str:
         item = self.item(row, self._COL_FILE)
@@ -600,7 +641,7 @@ class ResultsTable(QTableWidget):
         export_menu, export_kinds = build_export_menu(menu)
         menu.addMenu(export_menu)
         menu.addSeparator()
-        privacy_preview = menu.addAction("Personal Information Preview…")
+        what_is_sent = menu.addAction("What is sent for this file…")
 
         action = menu.exec(self.viewport().mapToGlobal(pos))  # ty: ignore[invalid-argument-type]  # PySide6 stub lists a no-arg exec() overload first; exec(QPoint) is valid
         if action is None:
@@ -613,15 +654,8 @@ class ResultsTable(QTableWidget):
             self.stage_run_requested.emit(selected_source_ids, "evaluation")
         elif action in export_kinds:
             self.export_requested.emit(selected_source_ids, export_kinds[action])
-        elif action is privacy_preview:
-            first_id = selected_source_ids[0]
-            first_row = self._row_by_source.get(first_id)
-            raw_txt = ""
-            if first_row is not None:
-                item = self.item(first_row, self._COL_FILE)
-                if item is not None:
-                    raw_txt = item.data(self._ROLE_RAW) or ""
-            self.privacy_preview_requested.emit(first_id, raw_txt)
+        elif action is what_is_sent:
+            self.what_is_sent_requested.emit(selected_source_ids[0])
 
     def entry_for_source(self, source_id: str) -> tuple[str, str, str, str, str, str]:
         """Return (source_id, name, preview_img, raw_txt, corr_txt, eval_txt) for *source_id*."""

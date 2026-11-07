@@ -591,6 +591,7 @@ def test_run_cli_tells_where_documents_are_processed(tmp_path: Path, capsys) -> 
     from teachers_teammate.domain.data_location import (  # noqa: PLC0415
         DataFlowStage,
         DataLocation,
+        DataRegion,
         StageLocation,
     )
 
@@ -600,7 +601,10 @@ def test_run_cli_tells_where_documents_are_processed(tmp_path: Path, capsys) -> 
                 "ocr", StageLocation(DataLocation.THIS_COMPUTER, "Tesseract"), "page images"
             ),
             DataFlowStage(
-                "correction", StageLocation(DataLocation.ONLINE, "OpenAI"), "text", False
+                "correction",
+                StageLocation(DataLocation.ONLINE, "OpenAI", region=DataRegion.NON_EU),
+                "text",
+                False,
             ),
         )
     )
@@ -636,7 +640,8 @@ def test_run_cli_tells_where_documents_are_processed(tmp_path: Path, capsys) -> 
     assert rc == 0
     assert calls == ["describe", "run"]
     assert "- Text recognition: On this computer" in err
-    assert "! Proofreading: Online service (OpenAI) — receives text, names sent as written" in err
+    assert "! Proofreading: Online service (OpenAI) · outside the EU · names as written" in err
+    assert "=> Text with names is sent to a service outside the EU." in err
     assert "Data leaves this computer" in err
 
 
@@ -824,3 +829,56 @@ def test_parse_args_explanations_flag_overrides_a_config_file_that_turned_them_o
     assert _parse_args(argv=["--corrections-only"]).correction_output == "text"
     assert _parse_args(argv=[], extra_defaults=defaults).correction_output == "text"
     assert _parse_args(argv=[]).correction_output == "review"
+
+
+def test_run_cli_passes_anonymizer_settings_from_the_config_file(tmp_path: Path) -> None:
+    """
+    Given  a config file with an extra detection model, no extra model and custom patterns
+    When   run_cli() builds the Config
+    Then   the Config carries them, so a CLI run and a GUI run share placeholders and cache key
+    """
+    from teachers_teammate.cli import run_cli  # noqa: PLC0415
+
+    in_dir = tmp_path / "input"
+    in_dir.mkdir()
+    cfg_file = tmp_path / "test.toml"
+    cfg_file.write_text(
+        f'input = "{in_dir}"\n'
+        'anonymizer_primary_model = "de_core_news_sm"\n'
+        'anonymizer_secondary_model = "none"\n'
+        'anonymizer_patterns = [["EMAIL", "x@y"]]\n'
+    )
+    captured: list = []
+
+    class _FakeAppService:
+        def list_providers(self) -> list[str]:
+            return ["ollama", "openai"]
+
+        def resolve_config_path(self, explicit: str | None):
+            return Path(explicit) if explicit else None
+
+        def describe_data_flow(self, config):
+            return DataFlow(())
+
+        def ocr_refusal_for_run(self, config):
+            return ""
+
+        def output_refusal_for_run(self, config):
+            return ""
+
+        def run_selected(self, config, /, **kwargs):
+            captured.append(config)
+            return 0
+
+        def run_preview_only(self, _config):
+            raise AssertionError("preview-only path should not be used")
+
+    rc = run_cli(
+        argv=["--config", str(cfg_file), "-o", str(tmp_path / "out")],
+        app_service=_FakeAppService(),
+    )
+
+    assert rc == 0
+    assert captured[0].anonymizer_primary_model == "de_core_news_sm"
+    assert captured[0].anonymizer_secondary_model == "none"
+    assert captured[0].anonymizer_patterns == [("EMAIL", "x@y")]

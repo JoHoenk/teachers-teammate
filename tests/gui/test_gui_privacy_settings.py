@@ -17,10 +17,13 @@ from teachers_teammate.domain.data_location import (
     describe_fingerprint,
 )
 from teachers_teammate.gui._privacy_settings import (
+    DISPLAY_ANONYMIZED_KEY,
     SECTION_DETECTION,
     SECTION_SENDING,
     SETTINGS_KEY,
     FlowAcknowledgements,
+    display_anonymized,
+    set_display_anonymized,
 )
 from teachers_teammate.gui._privacy_settings_dialog import (
     NOTHING_REMEMBERED,
@@ -83,7 +86,7 @@ def test_a_fingerprint_without_summary_is_described_in_words() -> None:
     )
 
     assert describe_fingerprint(flow.fingerprint) == (
-        "Proofreading: Online service (Mistral) — names sent as written; "
+        "Proofreading: Online service (Mistral) · outside the EU — names sent as written; "
         "Content review: On another computer (school-server) — names replaced where detected"
     )
 
@@ -114,7 +117,8 @@ def test_a_remembered_answer_is_stored_with_a_readable_summary(acks, settings) -
     [entry] = acks.remembered()
     assert entry.fingerprint == flow.fingerprint
     assert entry.summary == (
-        "Proofreading: Online service (Mistral) — receives text, names sent as written"
+        "Proofreading: Online service (Mistral) · outside the EU — receives text, "
+        "names sent as written"
     )
     assert flow.fingerprint in acks.fingerprints()
     assert _flow("OpenAI").fingerprint not in acks.fingerprints()
@@ -132,8 +136,14 @@ def test_answers_stored_by_an_earlier_version_are_still_listed_and_honoured(acks
 
     assert acks.fingerprints() == {first.fingerprint, second.fingerprint}
     summaries = [entry.summary for entry in acks.remembered()]
-    assert "Proofreading: Online service (Mistral) — names sent as written" in summaries
-    assert "Proofreading: Online service (OpenAI) — names sent as written" in summaries
+    assert (
+        "Proofreading: Online service (Mistral) · outside the EU — names sent as written"
+        in summaries
+    )
+    assert (
+        "Proofreading: Online service (OpenAI) · outside the EU — names sent as written"
+        in summaries
+    )
 
 
 def test_keeping_only_some_answers_forgets_the_rest_and_the_last_removes_the_key(
@@ -243,7 +253,8 @@ def test_the_sending_tab_lists_remembered_answers_in_words(qtbot, acks) -> None:
     dlg = _make_dialog(qtbot, acks, section=SECTION_SENDING)
 
     assert _listed(dlg) == [
-        "Proofreading: Online service (Mistral) — receives text, names sent as written"
+        "Proofreading: Online service (Mistral) · outside the EU — receives text, "
+        "names sent as written"
     ]
     assert dlg.sending_tab()._empty.isHidden()
 
@@ -312,3 +323,36 @@ def test_ask_again_for_all_clears_the_list_and_is_applied_with_ok(qtbot, acks) -
     assert not tab._empty.isHidden()
     dlg._buttons.button(QDialogButtonBox.StandardButton.Ok).click()
     assert acks.remembered() == []
+
+
+# ── the "hide personal information" view setting ─────────────────────────────
+
+
+@pytest.mark.parametrize(
+    ("stored", "expected"),
+    [(None, True), ("", True), ("yes", True), ("true", True), ("no", False), ("off", False)],
+)
+def test_display_anonymized_defaults_to_hidden(stored, expected) -> None:
+    """
+    Given  a settings store with no answer, or with a stored answer
+    When   the view setting is read
+    Then   names are hidden unless the user stored an answer that shows them
+    """
+    settings = _MemorySettings()
+    if stored is not None:
+        settings.setValue(DISPLAY_ANONYMIZED_KEY, stored)
+
+    assert display_anonymized(lambda: settings) is expected
+
+
+def test_display_anonymized_remembers_showing_the_names() -> None:
+    """
+    Given  the default of hiding names
+    When   the user turns hiding off and the setting is read again
+    Then   the stored "no" wins over the default
+    """
+    settings = _MemorySettings()
+
+    set_display_anonymized(lambda: settings, False)
+
+    assert display_anonymized(lambda: settings) is False

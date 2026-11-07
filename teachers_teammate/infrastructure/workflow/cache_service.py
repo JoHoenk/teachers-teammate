@@ -94,11 +94,29 @@ def compute_ocr_config_hash(config: Config, ocr_prompt: str, source: Path) -> st
 def _anonymization_fingerprint(config: Config) -> tuple[str, ...]:
     """Return the hash parts for anonymisation: correction and evaluation both see its text.
 
-    Empty when off, so results cached before the flag was hashed stay valid.  The patterns and
-    models are left out on purpose: they only change what is replaced and put back again, and
-    the anonymized text files are rebuilt from the OCR text with the current settings every run.
+    Empty when off, so results cached before the flag was hashed stay valid.  The resolved
+    models and patterns are included: they decide which spans become placeholders, so a
+    changed rule sends a different text and an older proofread of it must not be reused.
     """
-    return ("anonymized",) if config.anonymization_enabled else ()
+    if not config.anonymization_enabled:
+        return ()
+    from ..anonymizer import anonymizer_config_from, resolve_anonymizer_config  # noqa: PLC0415
+    from ..system_locale import system_language  # noqa: PLC0415
+
+    # Deliberately without the installed models: hashing must not import spaCy.  So the key
+    # holds the model the settings ask for, whether or not it is downloaded; downloading a
+    # missing automatic model later does not change it.
+    resolved = resolve_anonymizer_config(
+        anonymizer_config_from(config),
+        document_language=config.language,
+        system_language=system_language(),
+    )
+    return (
+        "anonymized",
+        resolved.primary_model or "",
+        resolved.secondary_model or "",
+        *(f"{tag}={pattern}" for tag, pattern in resolved.patterns),
+    )
 
 
 def compute_correction_config_hash(config: Config) -> str:

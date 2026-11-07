@@ -38,6 +38,8 @@ _MAX_PAGES = 5  # 1000 models a page: far more than Google offers; bounds a misb
 
 PROVIDER_INFO: dict = {
     "display_name": "Google (Gemini)",
+    "data_region": "non_eu",
+    "vendor_country": "USA",
     "needs_api_key": True,  # key is read from $GOOGLE_API_KEY by LangChain
     "env_key": "GOOGLE_API_KEY",
     "needs_base_url": False,

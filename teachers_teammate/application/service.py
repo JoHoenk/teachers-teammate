@@ -8,6 +8,7 @@ from dataclasses import dataclass
 import importlib.util
 from pathlib import Path
 import shutil
+import sys
 import threading
 import time
 from typing import TYPE_CHECKING
@@ -35,6 +36,7 @@ from ..infrastructure.addon_manager import ADDON_PRIVACY as ADDON_PRIVACY  # noq
 from ..infrastructure.anonymizer import (
     DEFAULT_PATTERNS as DEFAULT_ANONYMIZER_PATTERNS,  # noqa: F401
 )
+from ..infrastructure.anonymizer import AnonymizationResultCache, CachedAnonymizer
 
 # ── Re-exports for GUI/CLI use — keeps infrastructure types out of adapter layers ──
 from ..infrastructure.anonymizer import AnonymizerConfig as AnonymizerConfig  # noqa: PLC0414
@@ -46,6 +48,7 @@ from ..infrastructure.gpu_detector import GpuInfo as GpuInfo  # noqa: PLC0414
 from ..infrastructure.llm_factory import (
     check_provider_connection,
     default_model_for_task,
+    get_provider_data_region,
     get_provider_info,
     list_provider_models_checked,
     list_providers,
@@ -87,9 +90,11 @@ from .commands import ApplicationCommands
 from .data_flow import describe_data_flow, llm_location, ocr_location, ocr_refusal
 from .formatting import TextFormatter
 from .model_recommendations import ModelRecommendationService
+from .sent_text import Anonymize, SentTexts, describe_sent_texts
 
 if TYPE_CHECKING:
     from ..infrastructure.anonymizer import SpacyAnonymizer
+    from ..interfaces import Anonymizer
 
 
 @dataclasses.dataclass(frozen=True)
@@ -162,9 +167,17 @@ class ProcessingApplicationService:
         # caller's OCRPipeline was built with; pipeline runs configure their own copy.
         self._component_factory = component_factory or PipelineComponentFactory()
         self._anonymizer_cache: dict[tuple, SpacyAnonymizer] = {}
+        # Anonymized texts of this session, so a run, a preview and an export analyse the same
+        # text once.  In memory only: nothing that was hidden is written to disk.
+        self._anonymization_cache = AnonymizationResultCache()
         # A spaCy pipeline is not safe to share between threads (a privacy preview and a
         # background text export may run at once), so building and running are serialized.
         self._anonymizer_lock = threading.RLock()
+        # Listing the installed spaCy models imports spaCy; the answer only changes when the
+        # user downloads one, so it is remembered until forget_installed_models().
+        self._installed_models: list[str] | None = None
+        # Warnings already shown: resolving the settings happens on every preview.
+        self._warned: set[str] = set()
         self._model_cache: dict[str, tuple[float, ModelListing]] = {}
         # Owns hardware detection and model classification (and their caches).
         self._recommendations = ModelRecommendationService(
@@ -197,10 +210,18 @@ class ProcessingApplicationService:
             stop_event=stop_event,
             config_file=config_file,
             selected_source_paths=selected_source_paths,
-            dependencies=PipelineDependencies(reporter=reporter) if reporter is not None else None,
+            dependencies=PipelineDependencies(
+                reporter=reporter, component_factory=self._run_component_factory()
+            ),
             progress=progress,
         )
         return pipeline.run()
+
+    def _run_component_factory(self) -> PipelineComponentFactory:
+        """Return the stage factory of a run: its anonymizer shares this service's caches."""
+        return dataclasses.replace(
+            self._component_factory, build_anonymizer=self.build_cached_anonymizer
+        )
 
     def run_preview_only(self, config: Config) -> int:
         return self._pipeline_factory(config).run_preview_only()
@@ -521,25 +542,51 @@ class ProcessingApplicationService:
         with self._anonymizer_lock:
             self._anonymizer(language, config)
 
-    def _anonymizer(self, language: str, config: object | None) -> SpacyAnonymizer:
-        """Return the cached anonymizer for *language*/*config*; callers hold the lock."""
+    def _anonymizer(
+        self, language: str, config: object | None
+    ) -> tuple[SpacyAnonymizer, AnonymizerConfig]:
+        """Return the cached anonymizer and its resolved settings; callers hold the lock."""
         from ..infrastructure.anonymizer import SpacyAnonymizer  # noqa: PLC0415
 
-        anon_config: AnonymizerConfig = (
-            config if isinstance(config, AnonymizerConfig) else AnonymizerConfig()
-        )
+        anon_config = self.resolve_anonymizer_config(language, config)
         cache_key = (language, anon_config)
         cached = self._anonymizer_cache.get(cache_key)
         if cached is None:
             cached = SpacyAnonymizer(language, anon_config)
             self._anonymizer_cache[cache_key] = cached
-        return cached
+        return cached, anon_config
+
+    def build_cached_anonymizer(self, language: str, config: AnonymizerConfig) -> Anonymizer:
+        """Return an anonymizer backed by this service's model and result caches.
+
+        Passed into a run as ``build_anonymizer``, so a pipeline, a privacy preview and a text
+        export share one result: the same text costs one spaCy pass per session and settings.
+
+        Args:
+            language: Document language — selects the primary spaCy model.
+            config: The anonymizer settings; ``"auto"`` models are resolved here.
+        """
+        with self._anonymizer_lock:
+            inner, anon_config = self._anonymizer(language, config)
+        return CachedAnonymizer(
+            inner,
+            self._anonymization_cache,
+            (language, anon_config),
+            self._anonymizer_lock,
+        )
 
     def _anonymize(
         self, text: str, language: str, config: object | None
     ) -> tuple[str, dict[str, str]]:
         with self._anonymizer_lock:
-            return self._anonymizer(language, config).anonymize(text)
+            inner, anon_config = self._anonymizer(language, config)
+            cached = CachedAnonymizer(
+                inner,
+                self._anonymization_cache,
+                (language, anon_config),
+                self._anonymizer_lock,
+            )
+            return cached.anonymize(text)
 
     def anonymize_preview(
         self,
@@ -562,9 +609,16 @@ class ProcessingApplicationService:
         return self._anonymize(text, language, config)
 
     def clear_anonymizer_cache(self) -> None:
-        """Evict all cached SpacyAnonymizer instances."""
+        """Evict the cached anonymizers and with them every anonymized text."""
         with self._anonymizer_lock:
             self._anonymizer_cache.clear()
+            self._anonymization_cache.clear()
+        self.forget_installed_models()
+
+    def forget_installed_models(self) -> None:
+        """Ask spaCy again which models are installed (after a download or an install)."""
+        self._installed_models = None
+        self._warned.clear()
 
     def export_docx(
         self,
@@ -770,7 +824,111 @@ class ProcessingApplicationService:
 
     def describe_data_flow(self, config: Config) -> DataFlow:
         """Return where each enabled step of *config* runs (this computer, another, online)."""
-        return describe_data_flow(config, self.get_provider_info)
+        return describe_data_flow(
+            config,
+            self.get_provider_info,
+            self.get_provider_data_region,
+            self.describe_anonymizer_models(config),
+        )
+
+    def get_provider_data_region(self, provider: str) -> str:
+        """Return where *provider* processes the data: ``"eu"``, ``"non_eu"`` or ``"unknown"``."""
+        return get_provider_data_region(provider)
+
+    def describe_anonymizer_models(self, config: Config) -> list[str]:
+        """Return the spaCy models personal-info removal loads for *config*, or ``[]`` when off.
+
+        Resolved the same way a run resolves them, so the status box names the models a run
+        would really use.  A missing automatic model is not reported here: the box only
+        says what runs, and the run itself warns.
+        """
+        if not config.anonymization_enabled:
+            return []
+        from ..infrastructure.anonymizer import (  # noqa: PLC0415
+            anonymizer_config_from,
+            resolve_anonymizer_config,
+        )
+        from ..infrastructure.spacy_models import spacy_model_for  # noqa: PLC0415
+        from ..infrastructure.system_locale import system_language  # noqa: PLC0415
+
+        resolved = resolve_anonymizer_config(
+            anonymizer_config_from(config),
+            document_language=config.language,
+            system_language=system_language(),
+            installed_models=self._remembered_installed_models(),
+        )
+        models = [resolved.primary_model or spacy_model_for(config.language)]
+        if resolved.secondary_model:
+            models.append(resolved.secondary_model)
+        return models
+
+    def describe_sent_texts(
+        self,
+        config: Config,
+        raw_text: str,
+        correction_text: str = "",
+        *,
+        text_format: TextFormat = "plain",
+    ) -> SentTexts:
+        """Return what every step that leaves this computer receives, exactly as sent.
+
+        Uses the shared anonymizer (and so its cache), so opening the dialog costs one spaCy
+        pass per text and settings for the whole session — the same result a run sends.  The
+        prompts are built with the code the stages use, so the dialog cannot drift from them.
+
+        Args:
+            config: The live settings; decides the steps and the prompts.
+            raw_text: The extracted text of the file.
+            correction_text: Its proofread text (empty when there is none yet).
+            text_format: Notation of the texts (``"plain"`` or ``"markdown"``).
+        """
+        flow = self.describe_data_flow(config)
+        return describe_sent_texts(
+            flow,
+            raw_text=raw_text,
+            correction_text=correction_text,
+            anonymize=self._sent_text_anonymizer(config),
+            preview_extracted=config.anonymization_enabled,
+            correction_prompt=self._sent_correction_prompt(config, text_format),
+            evaluation_prompt=self._sent_evaluation_prompt(config, text_format),
+        )
+
+    def _sent_text_anonymizer(self, config: Config) -> Anonymize | None:
+        """Return the anonymizer for this config — the shared, caching one — or ``None``.
+
+        ``None`` when personal-info removal is off: nothing is hidden then, so the dialog
+        must show the text as written.
+        """
+        from ..infrastructure.anonymizer import anonymizer_config_from  # noqa: PLC0415
+
+        if not config.anonymization_enabled:
+            return None
+        anon_config = anonymizer_config_from(config)
+        language = config.language
+        return lambda text: self.anonymize_preview(text, language, anon_config)
+
+    def _sent_correction_prompt(self, config: Config, text_format: TextFormat) -> str:
+        """Return the instructions the corrector sends, or ``""`` when it sends none."""
+        mode = normalize_output_mode(config.correction_output)
+        policy, fixed = self.correction_instructions(
+            prompt=config.correction_prompt,
+            language=config.language,
+            level=config.correction_level,
+            output_mode=mode,
+            text_format=text_format,
+            answer_format=(
+                config.answer_format_review if mode == "review" else config.answer_format_text
+            ),
+        )
+        return f"{policy}\n\n{fixed}"
+
+    def _sent_evaluation_prompt(self, config: Config, text_format: TextFormat) -> str:
+        """Return the instructions the evaluator sends, or ``""`` when it sends none."""
+        from ..config import DEFAULTS  # noqa: PLC0415
+        from ..domain.notation import with_notation_hint  # noqa: PLC0415
+
+        prompt = config.evaluate_prompt or DEFAULTS["evaluate_prompt"]
+        return with_notation_hint(prompt, text_format, task="evaluation")
 
     def describe_ocr_location(self, engine: str, model: str, ollama_url: str) -> StageLocation:
         """Return where text recognition with these settings runs."""
@@ -947,19 +1105,72 @@ class ProcessingApplicationService:
 
     def spacy_model_for_language(self, language: str) -> str:
         """Return the spaCy model name for *language*, falling back to the multilingual model."""
-        from ..infrastructure.anonymizer import _spacy_model_for  # noqa: PLC0415
+        from ..infrastructure.spacy_models import spacy_model_for  # noqa: PLC0415
 
-        return _spacy_model_for(language)
+        return spacy_model_for(language)
 
     def list_installed_spacy_models(self) -> list[str]:
         """Return sorted names of installed spaCy model packages, or ``[]`` if spaCy is absent."""
-        try:
-            import spacy.util  # noqa: PLC0415
+        from ..infrastructure.spacy_models import installed_spacy_models  # noqa: PLC0415
 
-            return sorted(spacy.util.get_installed_models())
-        except Exception:  # noqa: BLE001
-            # spaCy may be absent or its model registry may fail; degrade to an empty list
-            return []
+        return installed_spacy_models()
+
+    def _remembered_installed_models(self) -> list[str]:
+        """Return the installed spaCy models, asking spaCy only once until it is forgotten."""
+        if self._installed_models is None:
+            self._installed_models = self.list_installed_spacy_models()
+        return list(self._installed_models)
+
+    def _warn_once(self, message: str) -> None:
+        """Print *message* to stderr unless it was printed before for the same settings."""
+        if message not in self._warned:
+            self._warned.add(message)
+            print(message, file=sys.stderr)
+
+    def anonymizer_available(self, language: str) -> bool:
+        """Return whether personal information can be hidden for *language* right now.
+
+        Cheap enough for the GUI to ask when it builds a menu or a panel: spaCy must be
+        importable and the model of *language* must be downloaded.  The GUI uses this to
+        disable "Hide personal information in texts" instead of failing when it is used.
+        """
+        from importlib.util import find_spec  # noqa: PLC0415
+
+        if find_spec("spacy") is None:
+            return False
+        return self.spacy_model_for_language(language) in self.list_installed_spacy_models()
+
+    def system_spacy_model(self) -> str | None:
+        """Return the spaCy model for the language this computer is set to, if it is known."""
+        from ..infrastructure.spacy_models import spacy_model_for  # noqa: PLC0415
+        from ..infrastructure.system_locale import system_language  # noqa: PLC0415
+
+        language = system_language()
+        return spacy_model_for(language) if language else None
+
+    def resolve_anonymizer_config(
+        self, language: str, config: object | None = None
+    ) -> AnonymizerConfig:
+        """Return *config* with the spaCy models that will actually be loaded.
+
+        ``"auto:system"`` becomes the model of the system language — unless that is the same
+        model as the primary pass or the model is not downloaded (then a warning says so and
+        no extra pass runs).  An explicitly chosen model is kept as it is: if it is missing,
+        building the anonymizer fails as before.
+        """
+        anon_config: AnonymizerConfig = (
+            config if isinstance(config, AnonymizerConfig) else AnonymizerConfig()
+        )
+        from ..infrastructure.anonymizer import resolve_anonymizer_config  # noqa: PLC0415
+        from ..infrastructure.system_locale import system_language  # noqa: PLC0415
+
+        return resolve_anonymizer_config(
+            anon_config,
+            document_language=language,
+            system_language=system_language(),
+            installed_models=self._remembered_installed_models(),
+            warn=self._warn_once,
+        )
 
     def get_installation_status(
         self,

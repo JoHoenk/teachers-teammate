@@ -1080,13 +1080,25 @@ def _flow(*stages):
     return DataFlow(tuple(stages))
 
 
-def _stage(name: str, location, service: str, receives: str = "text", hidden: bool = False):
+def _stage(
+    name: str,
+    location,
+    service: str,
+    receives: str = "text",
+    hidden: bool = False,
+    region=None,
+):
     from teachers_teammate.domain.data_location import (  # noqa: PLC0415
         DataFlowStage,
         StageLocation,
     )
 
-    return DataFlowStage(name, StageLocation(location, service), receives, hidden)
+    return DataFlowStage(name, StageLocation(location, service, region=region), receives, hidden)
+
+
+def _rows(box) -> str:
+    """Return every step row of a status box as one string of rich text, for assertions."""
+    return "\n".join(box.row_texts())
 
 
 @pytest.mark.gui
@@ -1109,11 +1121,12 @@ def test_data_flow_summary_reassures_when_everything_is_local(qtbot) -> None:
         )
     )
 
-    text = box._body.text()
+    text = _rows(box)
     assert "Text recognition" in text
     assert "Proofreading" in text
-    assert "Everything stays on this computer." in text
-    assert "leaves this computer" not in text
+    assert "On this computer" in text
+    assert "Everything stays on this computer." in box._body.text()
+    assert "leaves this computer" not in box._body.text()
 
 
 @pytest.mark.gui
@@ -1136,10 +1149,11 @@ def test_data_flow_summary_warns_and_advises_for_online_steps(qtbot) -> None:
         )
     )
 
-    text = box._body.text()
-    assert "Online service (OpenAI (ChatGPT))" in text
-    assert "Some data leaves this computer." in text
-    assert "Remove personal info" in text
+    text = _rows(box)
+    assert "Online service (OpenAI (ChatGPT)) · outside the EU" in text
+    assert "names as written" in text
+    assert "Text with names is sent to a service outside the EU." in box._body.text()
+    assert "Remove personal info" in box._body.text()
 
 
 @pytest.mark.gui
@@ -1157,7 +1171,70 @@ def test_data_flow_summary_escapes_service_names(qtbot) -> None:
 
     box.set_flow(_flow(_stage("correction", DataLocation.ONLINE, "<b>x</b>")))
 
-    assert "&lt;b&gt;x&lt;/b&gt;" in box._body.text()
+    assert "&lt;b&gt;x&lt;/b&gt;" in _rows(box)
+
+
+@pytest.mark.gui
+def test_data_flow_summary_shows_an_anonymized_eu_service_in_yellow(qtbot) -> None:
+    """
+    Given  proofreading at a service in the EU with names hidden
+    When   the summary is rendered
+    Then   the row says where it runs and that names are hidden, and the verdict is the
+           milder "anonymized text in the EU" warning
+    """
+    from teachers_teammate.domain.data_location import (  # noqa: PLC0415
+        DataLocation,
+        DataRegion,
+    )
+    from teachers_teammate.gui._data_flow_summary import DataFlowSummary  # noqa: PLC0415
+
+    box = DataFlowSummary()
+    qtbot.addWidget(box)
+
+    box.set_flow(
+        _flow(
+            _stage(
+                "correction",
+                DataLocation.ONLINE,
+                "Mistral (EU)",
+                hidden=True,
+                region=DataRegion.EU,
+            )
+        )
+    )
+
+    assert "Online service (Mistral (EU)) · EU · names hidden" in _rows(box)
+    assert "Anonymized text is sent to a service in the EU." in box._body.text()
+
+
+@pytest.mark.gui
+def test_data_flow_summary_keeps_the_details_in_the_tooltip(qtbot) -> None:
+    """
+    Given  an online step of a vendor based in France
+    When   the summary is rendered
+    Then   the badge stays short and the tooltip names the vendor's country
+    """
+    from teachers_teammate.domain.data_location import (  # noqa: PLC0415
+        DataFlowStage,
+        DataLocation,
+        DataRegion,
+        StageLocation,
+    )
+    from teachers_teammate.gui._data_flow_summary import DataFlowSummary  # noqa: PLC0415
+
+    location = StageLocation(
+        DataLocation.ONLINE, "Mistral (EU)", region=DataRegion.EU, vendor_country="France"
+    )
+    stage = DataFlowStage("correction", location, "text")
+    box = DataFlowSummary()
+    qtbot.addWidget(box)
+
+    box.set_flow(_flow(stage))
+
+    row = box._row_labels[0]
+    assert isinstance(row, QLabel)
+    assert "France" not in row.text()
+    assert "Vendor based in France" in row.toolTip()
 
 
 @pytest.mark.gui

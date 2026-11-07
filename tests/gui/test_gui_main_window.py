@@ -45,6 +45,7 @@ class _DummyWorker:
         self.file_done = _DummySignal()
         self.finished_with_code = _DummySignal()
         self.selected_source_paths = selected_source_paths or []
+        self.app_service = app_service
         self.stop_event = threading.Event()
         self._running = False
 
@@ -198,6 +199,29 @@ def test_main_window_run_starts_worker_and_updates_ui(
     assert main_window._run_btn.isEnabled() is False
     assert main_window._stop_btn.isEnabled() is True
     assert main_window._progress.maximum() == 1
+
+
+@pytest.mark.gui
+def test_main_window_passes_its_service_to_the_worker(
+    qtbot, main_window, monkeypatch, tmp_path: Path
+) -> None:
+    """
+    Given  a MainWindow with its own application service
+    When   a run starts the worker
+    Then   the worker gets that service, so a run fills the anonymization cache the
+           window's previews and exports read
+    """
+    cfg = make_config(tmp_path)
+    monkeypatch.setattr(main_window._config_panel, "to_config", lambda: cfg)
+    monkeypatch.setattr(main_window, "_get_file_names", lambda _cfg: ["a.png"])
+
+    main_window._results_table.set_queue(["a.png"])
+    main_window._results_table.selectRow(0)
+
+    main_window._on_run()
+    qtbot.waitUntil(lambda: main_window._worker is not None, timeout=3000)
+
+    assert main_window._worker.app_service is main_window._app_service
 
 
 @pytest.mark.gui
@@ -2016,7 +2040,8 @@ def test_online_run_asks_first_and_cancel_stops_it(
     """
     Given  proofreading on an online service
     When   the user is asked and presses Cancel
-    Then   the question names the step and says names are sent as written, and the run does not start
+    Then   the question names the step and says names are as written, and the run does not
+           start
     """
     confirm_box.clicks = "Cancel"
     started: list[int] = []
@@ -2026,8 +2051,9 @@ def test_online_run_asks_first_and_cancel_stops_it(
     )
 
     assert started == []
-    assert "Proofreading: Online service (OpenAI" in confirm_box.texts[0]
-    assert "names sent as written" in confirm_box.texts[0]
+    assert "Proofreading" in confirm_box.texts[0]
+    assert "Online service (OpenAI (ChatGPT))" in confirm_box.texts[0]
+    assert "names as written" in confirm_box.texts[0]
     assert "Remove personal info" in confirm_box.texts[0]
 
 

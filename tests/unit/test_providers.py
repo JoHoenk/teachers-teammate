@@ -268,16 +268,17 @@ def test_mistral_list_models_queries_own_endpoint_and_keeps_chat_models(
     name: str, base_url: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """
-    Given  an API key and an endpoint answering with chat, embedding and archived models
+    Given  an API key and an endpoint answering with chat, embedding, archived and code models
     When   list_models() of the global or the EU provider is called
     Then   that provider's own /models URL is asked, with the key as bearer token, and only
-           the non-archived chat models are returned, sorted
+           the usable chat models are returned
     """
     monkeypatch.setenv("MISTRAL_API_KEY", "k-test")
     response = _models_response(
         {
             "data": [
-                {"id": "mistral-small-latest", "capabilities": {"completion_chat": True}},
+                {"id": "mistral-small-latest"},
+                {"id": "ministral-8b-2410", "capabilities": {"completion_chat": True}},
                 {"id": "mistral-embed", "capabilities": {"completion_chat": False}},
                 {"id": "old-model", "archived": True, "capabilities": {"completion_chat": True}},
                 {"id": "codestral-latest"},
@@ -288,7 +289,7 @@ def test_mistral_list_models_queries_own_endpoint_and_keeps_chat_models(
         result = _load(name).list_models()
 
     request = urlopen.call_args.args[0]
-    assert result == ["codestral-latest", "mistral-small-latest"]
+    assert result == ["mistral-small-latest", "ministral-8b-2410"]
     assert request.full_url == f"{base_url}/models"
     assert request.get_header("Authorization") == "Bearer k-test"
 

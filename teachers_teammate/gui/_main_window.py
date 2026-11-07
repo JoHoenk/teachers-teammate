@@ -334,7 +334,6 @@ class MainWindow(QMainWindow):
         self._results_table: ResultsTable
         self._chart: ChartWidget
         self._preview: PreviewPanel
-        self._hide_personal_act: QAction  # assigned in _build_menu_bar
         self._main_splitter: QSplitter
 
     def _setup_tray(self) -> None:
@@ -432,16 +431,6 @@ class MainWindow(QMainWindow):
         doc_output_act = QAction("Output Settings\u2026", self)
         doc_output_act.triggered.connect(self._open_output_settings_dialog)
         settings_menu.addAction(doc_output_act)
-
-        # How the results are shown — a GUI preference, not part of the pipeline settings
-        view_menu = bar.addMenu("View")
-        assert view_menu is not None
-        self._hide_personal_act = QAction(txt.HIDE_PERSONAL_INFO_ACTION, self)
-        self._hide_personal_act.setCheckable(True)
-        self._hide_personal_act.setChecked(self._display_anonymized)
-        self._hide_personal_act.setToolTip(txt.HIDE_PERSONAL_INFO_TIP)
-        self._hide_personal_act.triggered.connect(self._on_hide_personal_triggered)
-        view_menu.addAction(self._hide_personal_act)
 
         # Advanced settings for power users
         advanced_menu = bar.addMenu("Advanced Settings")
@@ -980,11 +969,38 @@ class MainWindow(QMainWindow):
         self._preflight_running = False
         self._run_btn.setEnabled(True)
         self._progress.setFormat("Idle")
-        if error is not None or not isinstance(result, RunPreflight) or result.ok:
-            # All met — or the check itself failed: do not block; the pipeline reports
-            # real problems.
+        if error is not None or not isinstance(result, RunPreflight):
+            # The check itself failed: do not block; the pipeline reports real problems.
             on_ready()
             return
+        if result.blocked:
+            self._show_blocking_preflight(result)
+            return
+        if result.memory_warning:
+            self._confirm_memory_warning(result.memory_warning, on_ready)
+            return
+        on_ready()
+
+    def _confirm_memory_warning(self, warning: str, on_ready: Callable[[], None]) -> None:
+        """Ask before a run whose models do not fit the memory that is free now.
+
+        A warning rather than a refusal, because free memory changes from run to run — so
+        there is no "don't ask again" here, and Cancel is the default button: Enter must not
+        start a run that could make the computer swap.
+        """
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Warning)
+        box.setWindowTitle("Not enough free memory")
+        box.setText(warning)
+        run_anyway = box.addButton("Run anyway", QMessageBox.ButtonRole.AcceptRole)
+        cancel = box.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
+        box.setDefaultButton(cancel)
+        box.exec()
+        if box.clickedButton() is run_anyway:
+            on_ready()
+
+    def _show_blocking_preflight(self, result: RunPreflight) -> None:
+        """Show the requirement that stops the run, with the way to fix it."""
         if result.ocr_not_allowed:
             QMessageBox.warning(
                 self,
@@ -1982,31 +1998,22 @@ class MainWindow(QMainWindow):
 
     # ── hiding personal information in the view ──────────────────────────────────
 
-    def _on_hide_personal_triggered(self, checked: bool) -> None:
-        """Apply the View menu setting to the preview."""
-        self._apply_display_anonymized(checked)
-
     def _apply_display_anonymized(self, enabled: bool) -> None:
         """Store the view setting and show the texts accordingly.
 
-        Called by the menu action and by the eye button in the preview panel, so both stay
-        in step and the preference survives a restart.
+        Called by the eye button in the preview panel and by the Privacy Settings dialog, so
+        both stay in step and the preference survives a restart.
         """
         enabled = bool(enabled) and self._privacy_available
         set_display_anonymized(self._settings_store, enabled)
         self._display_anonymized = enabled
-        action = getattr(self, "_hide_personal_act", None)
-        if action is not None:
-            action.blockSignals(True)
-            action.setChecked(enabled)
-            action.blockSignals(False)
         self._preview.set_display_anonymized(enabled)
 
     def _refresh_privacy_availability(self) -> None:
         """Enable the setting only while personal information can actually be hidden.
 
         Needs the Privacy add-on and the spaCy model of the document language; without
-        them the menu entry stays greyed out and its tooltip points at the Downloads
+        them the eye button stays disabled and its tooltip points at the Downloads
         dialog.  The answer is cached per language, because it is asked again whenever the
         data flow changes (that is, on every settings toggle).
         """
@@ -2016,12 +2023,6 @@ class MainWindow(QMainWindow):
         available = self._privacy_availability[language]
         changed = available != self._privacy_available
         self._privacy_available = available
-        action = getattr(self, "_hide_personal_act", None)
-        if action is not None:
-            action.setEnabled(available)
-            action.setToolTip(
-                txt.HIDE_PERSONAL_INFO_TIP if available else txt.HIDE_PERSONAL_INFO_UNAVAILABLE_TIP
-            )
         self._preview.set_display_anonymized_available(available)
         if changed and available and self._display_anonymized:
             # The setting was on but could not be applied; it can now.
@@ -2300,10 +2301,16 @@ class MainWindow(QMainWindow):
             self,
             acknowledgements=self._acknowledgements(),
             section=section,
+            display_anonymized=self._display_anonymized,
+            display_anonymized_available=self._privacy_available,
         )
         if dialog.exec() == QDialog.DialogCode.Accepted:
             self._config_panel.update_anonymizer_config(dialog.anonymizer_config)
             self._save_settings(notify=False)
+            if self._privacy_available:
+                # Without the add-on the checkbox is disabled and shows "off"; applying that
+                # would overwrite the saved preference.
+                self._apply_display_anonymized(dialog.display_anonymized())
             # New models or patterns produce different placeholders for the shown text.
             self._preview.invalidate_anonymization()
 

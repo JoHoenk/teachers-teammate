@@ -546,6 +546,11 @@ class DownloadsDialog(QDialog):
         detection = self._hardware_selector.resolved()
         return detection.system_memory_gb if detection is not None else None
 
+    def _active_card_gb(self) -> float | None:
+        """Return the graphics memory models can use when it is known, else ``None``."""
+        detection = self._hardware_selector.resolved()
+        return detection.card_gb if detection is not None else None
+
     # ── ticking ────────────────────────────────────────────────────────────
 
     def _set_checked(self, item: QTreeWidgetItem, checked: bool) -> None:
@@ -624,6 +629,7 @@ class DownloadsDialog(QDialog):
         """Re-compute suitability labels, sorting and colours for the active profile."""
         profile = self._active_profile()
         memory_gb = self._active_system_memory_gb()
+        card_gb = self._active_card_gb()
         for key, (_label, category) in _OLLAMA_GROUPS.items():
             group_item = self._group_items[key]
             children: list[QTreeWidgetItem] = []
@@ -644,34 +650,46 @@ class DownloadsDialog(QDialog):
                         self._ollama_url,
                         cached_only=True,
                         system_memory_gb=memory_gb,
+                        card_gb=card_gb,
                     )
                 }
             elif tags:
                 abilities = self._svc.classify_ollama_models(
                     tags, self._ollama_url, cached_only=True
                 )
-            decorated: list[tuple[int, str, QTreeWidgetItem, Suitability, float | None]] = []
+            decorated: list[tuple[int, str, QTreeWidgetItem, Suitability, float | None, bool]] = []
             for tag, child in zip(tags, children, strict=True):
                 rating = ratings.get(tag)
                 value = rating.suitability if rating is not None else Suitability.UNKNOWN
                 memory = rating.memory_gb if rating is not None else None
-                decorated.append((suitability_rank(value), tag, child, value, memory))
+                slowly = rating.very_slow if rating is not None else False
+                decorated.append((suitability_rank(value), tag, child, value, memory, slowly))
             decorated.sort(key=lambda entry: (entry[0], entry[1]))
-            for _rank, tag, child, value, memory in decorated:
+            for _rank, tag, child, value, memory, very_slow in decorated:
                 group_item.addChild(child)
                 if category is not None:
-                    child.setText(1, compact_suitability_text(value, profile, category))
+                    child.setText(
+                        1,
+                        compact_suitability_text(value, category, very_slow=very_slow),
+                    )
                 else:
                     # Models outside the catalog: say what they can do, not how good.
                     child.setText(1, abilities_text(abilities.get(tag)))
                 if value is Suitability.TOO_LARGE:
                     child.setForeground(0, _GREY)
                     child.setForeground(1, _GREY)
-                    child.setToolTip(1, too_large_tooltip(memory, profile))
+                    child.setToolTip(
+                        1,
+                        too_large_tooltip(
+                            memory, profile, system_memory_gb=memory_gb, card_gb=card_gb
+                        ),
+                    )
                 elif value is Suitability.SLOW:
                     child.setForeground(0, QBrush())
                     child.setForeground(1, QBrush())
-                    child.setToolTip(1, slow_text(memory, profile))
+                    child.setToolTip(
+                        1, slow_text(memory, profile, card_gb=card_gb, very_slow=very_slow)
+                    )
                 else:
                     # An empty QBrush (no brush) restores the theme's text colour.  A
                     # QColor() would be an *invalid* solid colour, painted black: unreadable
@@ -681,7 +699,9 @@ class DownloadsDialog(QDialog):
                     # The column shows a compact label; the tooltip has the full wording.
                     child.setToolTip(
                         1,
-                        suitability_text(value, profile, category) if category is not None else "",
+                        suitability_text(value, category, very_slow=very_slow)
+                        if category is not None
+                        else "",
                     )
 
     def _on_select_best_models(self) -> None:
@@ -1005,13 +1025,22 @@ class DownloadsDialog(QDialog):
                 self._ollama_url,
                 cached_only=True,
                 system_memory_gb=self._active_system_memory_gb(),
+                card_gb=self._active_card_gb(),
             )[0]
             if rating.suitability is Suitability.TOO_LARGE:
-                messages.append(too_large_confirmation(tag, rating.memory_gb, profile))
+                messages.append(
+                    too_large_confirmation(
+                        tag,
+                        rating.memory_gb,
+                        profile,
+                        system_memory_gb=self._active_system_memory_gb(),
+                        card_gb=self._active_card_gb(),
+                    )
+                )
         if not messages:
             return True
         box = QMessageBox(self)
-        box.setWindowTitle("Large model")
+        box.setWindowTitle("Model does not fit")
         box.setIcon(QMessageBox.Icon.Warning)
         box.setText("\n\n".join(messages) + "\n\nDownload anyway?")
         download_btn = box.addButton("Download anyway", QMessageBox.ButtonRole.AcceptRole)

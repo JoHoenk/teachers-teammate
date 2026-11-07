@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from ...config import Config, OcrConfig
+from ...domain.context_budget import window_from_setting
 from ..correction import instruction_parts
 from ..correction_schema import CONTRACT_VERSION
 from ..input_provider_factory import InputOptions, input_settings_fingerprint
@@ -119,6 +120,13 @@ def _anonymization_fingerprint(config: Config) -> tuple[str, ...]:
     )
 
 
+def _window_fingerprint(config: Config) -> tuple[str, ...]:
+    """Return the cache-key part for the context window of the proofreading requests."""
+    if config.correction_provider != "ollama":
+        return ()
+    return (f"num-ctx-{window_from_setting(config.proofreading_context)}",)
+
+
 def compute_correction_config_hash(config: Config) -> str:
     """Return the correction stage config hash for *config*, or '' when disabled."""
     if not config.correction_enabled:
@@ -155,6 +163,14 @@ def compute_correction_config_hash(config: Config) -> str:
         config.explanation_language,
         config.correction_output,
         f"contract-{CONTRACT_VERSION}",
+        # The window decides how a long text is split into requests, so a changed window must
+        # proofread again.  Only an Ollama corrector uses it (an online provider has its own),
+        # and only the window it really gets counts: a setting above the cap changes nothing.
+        # The settings alone give the pinned window; the card-derived one is not part of the
+        # key yet, because no catalog model has a measured context growth (and without one
+        # every computer gets the base step).  Thread the resolved window in here when the
+        # first measurement lands.
+        *_window_fingerprint(config),
         *_anonymization_fingerprint(config),
     )
 

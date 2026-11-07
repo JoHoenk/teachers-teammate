@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import logging
 import sys
 from unittest.mock import MagicMock
 
 import pytest
 
-from teachers_teammate.exceptions import OCRError, OllamaConnectionError
+from teachers_teammate.exceptions import OCRError, OllamaConnectionError, ResponseTruncatedError
 from teachers_teammate.infrastructure import ollama_utils
 from teachers_teammate.infrastructure.ollama_utils import (
     OllamaClient,
@@ -996,3 +997,219 @@ def test_chat_sends_no_format_by_default(monkeypatch) -> None:
     OllamaClient("http://127.0.0.1:11434").chat("m", "hi")
 
     assert "format" not in mock_ollama.Client.return_value.chat.call_args.kwargs
+
+
+# ── Cut-off answers (done_reason="length") ─────────────────────────────────
+
+
+def _make_chat_mock_with_done_reason(
+    content_chunks: list[str],
+    done_reason: str,
+    *,
+    prompt_eval_count: int = 1200,
+    eval_count: int = 400,
+) -> MagicMock:
+    """Return a mock ``ollama`` module whose stream ends with a chunk reporting *done_reason*."""
+    chunks = []
+    for text in content_chunks:
+        msg = MagicMock()
+        msg.content = text
+        chunk = MagicMock()
+        chunk.message = msg
+        chunk.done_reason = None
+        chunks.append(chunk)
+    last = MagicMock()
+    last.message = MagicMock()
+    last.message.content = ""
+    last.done_reason = done_reason
+    last.prompt_eval_count = prompt_eval_count
+    last.eval_count = eval_count
+    chunks.append(last)
+    mock_client = MagicMock()
+    mock_client.chat.return_value = iter(chunks)
+    mock_ollama = MagicMock()
+    mock_ollama.Client.return_value = mock_client
+    mock_ollama.ResponseError = Exception
+    return mock_ollama
+
+
+def test_chat_raises_when_the_answer_was_cut_off(monkeypatch) -> None:
+    """
+    Given  a stream whose last chunk reports done_reason="length"
+    When   OllamaClient.chat() is called
+    Then   ResponseTruncatedError explaining the working memory is raised, not the partial text
+    """
+    mock_ollama = _make_chat_mock_with_done_reason(["Der Text bricht hier ab"], "length")
+    monkeypatch.setitem(sys.modules, "ollama", mock_ollama)
+
+    with pytest.raises(ResponseTruncatedError, match="too long for the model's working memory"):
+        OllamaClient("http://127.0.0.1:11434").chat("m", "hi")
+
+
+def test_chat_with_stats_returns_the_cut_off_answer_and_its_marker(monkeypatch) -> None:
+    """
+    Given  a stream whose last chunk reports done_reason="length" and token counts
+    When   OllamaClient.chat_with_stats() is called
+    Then   the partial text and statistics are returned, with truncated True and the counts
+    """
+    mock_ollama = _make_chat_mock_with_done_reason(
+        ["Der Text"], "length", prompt_eval_count=8100, eval_count=92
+    )
+    monkeypatch.setitem(sys.modules, "ollama", mock_ollama)
+
+    content, stats = OllamaClient("http://127.0.0.1:11434").chat_with_stats("m", "hi")
+
+    assert content == "Der Text"
+    assert stats.done_reason == "length"
+    assert stats.truncated is True
+    assert stats.prompt_eval_count == 8100
+    assert stats.eval_count == 92
+
+
+def test_chat_keeps_a_complete_answer(monkeypatch) -> None:
+    """
+    Given  a stream whose last chunk reports done_reason="stop"
+    When   OllamaClient.chat() is called
+    Then   the complete answer is returned unchanged
+    """
+    mock_ollama = _make_chat_mock_with_done_reason(["Fertig."], "stop")
+    monkeypatch.setitem(sys.modules, "ollama", mock_ollama)
+
+    assert OllamaClient("http://127.0.0.1:11434").chat("m", "hi") == "Fertig."
+
+
+def test_chat_logs_the_token_counts_at_debug(monkeypatch, caplog) -> None:
+    """
+    Given  a stream that reports done_reason, prompt_eval_count and eval_count
+    When   OllamaClient.chat() is called with DEBUG logging on
+    Then   one debug record names the model, the reason and both token counts
+    """
+    mock_ollama = _make_chat_mock_with_done_reason(
+        ["Fertig."], "stop", prompt_eval_count=1024, eval_count=64
+    )
+    monkeypatch.setitem(sys.modules, "ollama", mock_ollama)
+
+    with caplog.at_level(logging.DEBUG, logger="teachers_teammate.infrastructure.ollama_utils"):
+        OllamaClient("http://127.0.0.1:11434").chat("qwen3.5:9b", "hi")
+
+    records = [r.getMessage() for r in caplog.records if "done_reason" in r.getMessage()]
+    assert records and "qwen3.5:9b" in records[0]
+    assert "1024" in records[0] and "64" in records[0]
+
+
+def test_proofreading_options_hold_one_fixed_context_size() -> None:
+    """
+    Given  the temperature of a proofreading request
+    When   proofreading_options() is called
+    Then   the options carry that temperature and the one shared context size
+    """
+    options = ollama_utils.proofreading_options(0.7)
+
+    assert options == {"temperature": 0.7, "num_ctx": ollama_utils.PROOFREADING_NUM_CTX}
+    assert ollama_utils.PROOFREADING_NUM_CTX == 8192
+
+
+def test_chat_can_return_a_cut_off_answer_when_the_caller_allows_it(monkeypatch) -> None:
+    """
+    Given  a stream whose last chunk reports done_reason="length"
+    When   OllamaClient.chat() is called with allow_truncated=True
+    Then   the partial text is returned instead of an error
+    """
+    mock_ollama = _make_chat_mock_with_done_reason(["Der Text bricht"], "length")
+    monkeypatch.setitem(sys.modules, "ollama", mock_ollama)
+
+    result = OllamaClient("http://127.0.0.1:11434").chat("m", "hi", allow_truncated=True)
+
+    assert result == "Der Text bricht"
+
+
+def test_chat_refuses_an_empty_cut_off_answer(monkeypatch) -> None:
+    """
+    Given  a stream whose last chunk reports done_reason="length" and carried no text at all
+    When   OllamaClient.chat() is called with allow_truncated=True
+    Then   OCRError is raised — an empty answer is no partial page, so it must not pass for one
+    """
+    mock_ollama = _make_chat_mock_with_done_reason([], "length")
+    monkeypatch.setitem(sys.modules, "ollama", mock_ollama)
+
+    with pytest.raises(OCRError, match="empty response"):
+        OllamaClient("http://127.0.0.1:11434").chat("m", "hi", allow_truncated=True)
+
+
+def test_chat_refuses_a_request_that_cannot_fit_the_context_window(monkeypatch) -> None:
+    """
+    Given  a prompt whose estimated size and an equally long answer exceed num_ctx
+    When   OllamaClient.chat() is called with that num_ctx
+    Then   ResponseTruncatedError is raised and no request is sent to Ollama
+    """
+    mock_ollama = _make_chat_mock_with_done_reason(["x"], "stop")
+    monkeypatch.setitem(sys.modules, "ollama", mock_ollama)
+    too_long = (
+        "Ein Satz mit vielen Wörtern. " * 500
+    )  # ~14.5k characters, ~4.8k tokens: twice that > 8192
+
+    with pytest.raises(ResponseTruncatedError, match="too long for the model's working memory"):
+        OllamaClient("http://127.0.0.1:11434").chat(
+            "m", too_long, options=ollama_utils.proofreading_options(0.7)
+        )
+
+    mock_ollama.Client.return_value.chat.assert_not_called()
+
+
+def test_chat_sends_a_request_that_fits_the_context_window(monkeypatch) -> None:
+    """
+    Given  a one-page prompt well inside num_ctx
+    When   OllamaClient.chat() is called with the proofreading options
+    Then   the request is sent and the answer returned
+    """
+    mock_ollama = _make_chat_mock_with_done_reason(["Fertig."], "stop")
+    monkeypatch.setitem(sys.modules, "ollama", mock_ollama)
+    page = "Ein Satz mit vielen Wörtern. " * 80  # ~2.3k characters
+
+    result = OllamaClient("http://127.0.0.1:11434").chat(
+        "m", page, options=ollama_utils.proofreading_options(0.7), system="Korrigiere."
+    )
+
+    assert result == "Fertig."
+
+
+def test_chat_does_not_estimate_the_size_of_a_request_without_num_ctx(monkeypatch) -> None:
+    """
+    Given  a very long prompt in a request that sets no num_ctx (like an OCR request)
+    When   OllamaClient.chat() is called
+    Then   the request is sent unchanged: only proofreading requests are size-checked
+    """
+    mock_ollama = _make_chat_mock_with_done_reason(["Fertig."], "stop")
+    monkeypatch.setitem(sys.modules, "ollama", mock_ollama)
+
+    result = OllamaClient("http://127.0.0.1:11434").chat(
+        "m", "Wort " * 20000, options={"temperature": 0}
+    )
+
+    assert result == "Fertig."
+
+
+def test_chat_reports_a_window_spent_on_thinking_as_cut_off_not_empty(monkeypatch) -> None:
+    """
+    Given  a reasoning model whose whole window went into thinking: no text, done_reason="length"
+    When   OllamaClient.chat() is called
+    Then   ResponseTruncatedError (working memory) is raised, not "model returned an empty response"
+    """
+    mock_ollama = _make_chat_mock_with_done_reason([""], "length")
+    monkeypatch.setitem(sys.modules, "ollama", mock_ollama)
+
+    with pytest.raises(ResponseTruncatedError, match="working memory"):
+        OllamaClient("http://127.0.0.1:11434").chat("m", "hi")
+
+
+def test_chat_still_reports_an_empty_answer_that_ended_normally(monkeypatch) -> None:
+    """
+    Given  a stream with no text that ended with done_reason="stop"
+    When   OllamaClient.chat() is called
+    Then   OCRError("model returned an empty response") is raised
+    """
+    mock_ollama = _make_chat_mock_with_done_reason([""], "stop")
+    monkeypatch.setitem(sys.modules, "ollama", mock_ollama)
+
+    with pytest.raises(OCRError, match="empty response"):
+        OllamaClient("http://127.0.0.1:11434").chat("m", "hi")

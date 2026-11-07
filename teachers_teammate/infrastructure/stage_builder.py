@@ -27,7 +27,13 @@ if TYPE_CHECKING:
     from .ocr_formats import OcrOutputPostprocessor
 
 from ..config import Config, OcrConfig
+from ..domain.context_budget import (
+    BASE_NUM_CTX,
+    RunWindows,
+    run_windows,
+)
 from ..domain.data_location import online_ocr_reason
+from ..domain.model_catalog import FULL_SPEED_SHARE, HardwareDetection, find_spec
 from ..exceptions import OnlineOcrNotAllowedError, ProviderNotAvailableError
 from ..interfaces import (
     Anonymizer,
@@ -43,6 +49,7 @@ from .anonymizer import (
     resolve_anonymizer_config,
 )
 from .correction import (
+    ChunkingCorrector,
     CorrectionSettings,
     LangChainCorrector,
     NativeOllamaCorrector,
@@ -132,10 +139,20 @@ def _default_build_native_ollama_corrector(
 
 
 def _default_build_native_ollama_evaluator(
-    model: str, client: OllamaClient, prompt: str, timeout: float, temperature: float
+    model: str,
+    client: OllamaClient,
+    prompt: str,
+    timeout: float,
+    temperature: float,
+    num_ctx: int,
 ) -> Evaluator:
     return NativeOllamaEvaluator(
-        model=model, client=client, prompt=prompt, timeout=timeout, temperature=temperature
+        model=model,
+        client=client,
+        prompt=prompt,
+        timeout=timeout,
+        temperature=temperature,
+        num_ctx=num_ctx,
     )
 
 
@@ -153,6 +170,68 @@ def _default_build_ocr_postprocessor() -> OcrOutputPostprocessor:
     from .ocr_formats import OcrOutputPostprocessor  # noqa: PLC0415
 
     return OcrOutputPostprocessor()
+
+
+def _chunked(corrector: Corrector, language: str) -> Corrector:
+    """Wrap *corrector* so a text longer than one request is proofread in pieces.
+
+    Only a corrector with a bounded request window is wrapped; an online provider reports
+    ``None`` and keeps handling any length in one request.  The wrapper asks for the budget
+    again on every call, because it depends on the text's notation.
+    """
+    if corrector.max_text_chars(language) is None:
+        return corrector
+    return ChunkingCorrector(corrector)
+
+
+def resolve_run_windows(config: Config, hardware: HardwareDetection | None) -> RunWindows:
+    """Return the context windows of a run, resolved once from the settings and the computer.
+
+    The window is a property of the computer and the models, not of the file, so it is
+    resolved once and passed down: a window that changed per file would make Ollama reload the
+    model for every file.  Each stage is sized from its own provider and model; an online
+    provider brings its own window, which the app does not set.  *hardware* is ``None`` when
+    the computer is not known, which keeps the base window.  The rules live in
+    :func:`~teachers_teammate.domain.context_budget.run_windows`.
+    """
+    local_proofreading = config.correction_provider == "ollama"
+    local_evaluation = config.evaluate_provider == "ollama"
+    windows = run_windows(
+        config.proofreading_context,
+        proofreading_spec=find_spec(config.effective_correction_model),
+        evaluation_spec=find_spec(config.effective_evaluate_model),
+        card_gb=hardware.card_gb if hardware is not None else None,
+        same_model=local_proofreading
+        and local_evaluation
+        and config.evaluation_enabled
+        and config.effective_correction_model == config.effective_evaluate_model,
+        full_speed_share=FULL_SPEED_SHARE,
+    )
+    return RunWindows(
+        proofreading=windows.proofreading if local_proofreading else BASE_NUM_CTX,
+        evaluation=windows.evaluation if local_evaluation else BASE_NUM_CTX,
+    )
+
+
+def window_of_model(config: Config, windows: RunWindows, tag: str) -> int:
+    """Return the largest window a run gives the Ollama model *tag*.
+
+    A model that only reads scans keeps the base window: OCR requests do not set one.
+    """
+    sizes = [BASE_NUM_CTX]
+    if (
+        config.correction_enabled
+        and config.correction_provider == "ollama"
+        and config.effective_correction_model == tag
+    ):
+        sizes.append(windows.proofreading)
+    if (
+        config.evaluation_enabled
+        and config.evaluate_provider == "ollama"
+        and config.effective_evaluate_model == tag
+    ):
+        sizes.append(windows.evaluation)
+    return max(sizes)
 
 
 # ── Factory ────────────────────────────────────────────────────────────────
@@ -183,9 +262,9 @@ class PipelineComponentFactory:
     build_native_ollama_corrector: Callable[
         [str, OllamaClient, str, float, float, CorrectionSettings], Corrector
     ] = _default_build_native_ollama_corrector
-    build_native_ollama_evaluator: Callable[[str, OllamaClient, str, float, float], Evaluator] = (
-        _default_build_native_ollama_evaluator
-    )
+    build_native_ollama_evaluator: Callable[
+        [str, OllamaClient, str, float, float, int], Evaluator
+    ] = _default_build_native_ollama_evaluator
     build_doc_creator: Callable[[str, str], DocumentCreator] = _default_build_doc_creator
     build_anonymizer: Callable[[str, AnonymizerConfig], Anonymizer] = _default_build_anonymizer
     build_ocr_postprocessor: Callable[[], OcrOutputPostprocessor] = _default_build_ocr_postprocessor
@@ -205,10 +284,18 @@ class StageBuilder:
     config: Config
     factory: PipelineComponentFactory
     reporter: Reporter = field(default_factory=StdoutReporter)
+    #: The hardware of the computer that runs Ollama, resolved by the application layer.  Only
+    #: needed to size the context window of the local models; ``None`` means "not known" and
+    #: keeps the base window.
+    hardware: HardwareDetection | None = None
 
     def _build_ollama_client(self) -> OllamaClient:
         """Create the shared OllamaClient for all Ollama-backed stages."""
         return OllamaClient(self.config.ollama_url)
+
+    def resolved_windows(self) -> RunWindows:
+        """Return the context windows of this run (see :func:`resolve_run_windows`)."""
+        return resolve_run_windows(self.config, self.hardware)
 
     def build_preprocessor(self, output_dir: Path) -> ImagePreprocessor:
         return self.factory.build_preprocessor(output_dir, self.config.debug, self.config.ocr)
@@ -272,6 +359,7 @@ class StageBuilder:
                     cfg.correction_temperature,
                     settings,
                 )
+                correction = _chunked(correction, cfg.language)
             else:
                 settings = self._correction_settings()
                 llm = factory.build_llm(
@@ -304,6 +392,7 @@ class StageBuilder:
             answer_format_review=cfg.answer_format_review,
             answer_format_text=cfg.answer_format_text,
             strict_schema=cfg.correction_provider == "openai",
+            num_ctx=self.resolved_windows().proofreading,
         )
 
     def _build_anonymizer(self) -> Anonymizer:
@@ -349,6 +438,7 @@ class StageBuilder:
                 cfg.evaluate_prompt,
                 float(cfg.ocr_timeout),
                 cfg.evaluate_temperature,
+                self.resolved_windows().evaluation,
             )
         llm = factory.build_llm(
             cfg.evaluate_provider,

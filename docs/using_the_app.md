@@ -72,12 +72,12 @@ The best models per computer type:
 | Your computer | Best reading model | Best writing model |
 |---|---|---|
 | Basic computer or small graphics card (under 8 GB) | `glm-ocr:q8_0` | `qwen3:4b` |
-| Graphics card with about 8 GB memory | `hf.co/prithivMLmods/chandra-ocr-2-GGUF:Q8_0` | `qwen3.5:9b` |
-| Graphics card with 16 GB memory or more | `hf.co/prithivMLmods/chandra-ocr-2-GGUF:Q8_0` | `qwen3.5:9b` |
+| Graphics card with about 8 GB memory | `hf.co/prithivMLmods/chandra-ocr-2-GGUF:Q8_0` | `gemma4:e4b` |
+| Graphics card with 16 GB memory or more | `hf.co/prithivMLmods/chandra-ocr-2-GGUF:Q8_0` | `gemma4:12b` |
 
 To get a working setup in one step, open **Advanced Settings → Downloads…**, stay on the **Ollama Models** tab (it opens first), and click **Select the best models for my computer** — the app ticks the two models it recommends for your computer. Then click **Install / Download Selected**. On the very first start the app also pre-selects the best models for your computer, and the "model missing" message before a run takes you straight to the Downloads dialog with the missing models already ticked.
 
-Models marked **Slower** are bigger than your graphics card holds but fit with the help of your computer's memory: part of the model runs on the processor, so they work, only slower. Greyed-out models are too large for your computer. They still work — but reading or proofreading can become very slow, so the app asks before downloading one. Models you add yourself stay in the "Other models" group, where each one shows whether it reads scans and writes or only writes. Reading models are meant for turning scans into text; the app warns you when you pick one for proofreading or content review.
+The app rates each model for your computer. Models marked **Slower** or **Very slow** are bigger than your graphics card holds but fit with the help of your computer's memory: part of the model runs on the processor, so they work, only more slowly (a page can take minutes when it is very slow). Greyed-out models (**Won't fit**) do not fit your computer: the memory left after the system's share (the larger of 8 GB and a fifth of your memory) cannot hold the rest, so the model would have to use the disk as memory and the computer would become unusable. The app tells you so and asks before downloading one. If the memory that is free at that moment is not enough it warns you before the run and offers **Run anyway** — the computer would then have to use its disk as memory and become extremely slow, so the safe answer is **Cancel** and closing other programs first. Models you add yourself stay in the "Other models" group, where each one shows whether it reads scans and writes or only writes. Reading models are meant for turning scans into text; the app warns you when you pick one for proofreading or content review.
 
 ### Other recognition methods
 
@@ -202,12 +202,14 @@ list to read where that file's text went and whether its names were hidden — f
 ## Hiding names while you read
 
 Hand the screen to a colleague, or show a proofread text to the class, without the names of
-the children in it: **View → Hide personal information in texts** replaces every name the
-anonymizer knows with its stand-in — `[PERSON_1]`, `[EMAIL_1]` and so on — in the
+the children in it: **Hide personal information in the texts shown in this app** replaces every
+name the anonymizer knows with its stand-in — `[PERSON_1]`, `[EMAIL_1]` and so on — in the
 **Extracted Text**, **Proofread Text**, **Changes**, **Content Review** and the review notes
 at once. The same stand-ins appear in every tab, so a note that talks about `[PERSON_1]` is
-about the same child as in the text. The eye button in the header above the texts does the
-same and follows the menu entry.
+about the same child as in the text. Turn it on under **Advanced Settings → Privacy
+Settings → Personal info: detection → Showing texts → Hide personal information in the texts
+shown in this app**; the eye button in the header above the texts does the same and follows
+that checkbox.
 
 This works like *Remove personal information* (see *Protecting privacy* above): the extracted
 text is anonymized with the current detection settings and models the first time you switch
@@ -220,13 +222,13 @@ start.
 While it is on, the **Extracted Text** and **Proofread Text** tabs cannot be edited — an edit
 would be saved with the stand-ins instead of the names. The note above the texts says
 **Personal information is hidden, so the texts can't be edited. Click here to show it and
-edit.** Clicking it switches the setting off (like the eye button or the View menu), so you can
+edit.** Clicking it switches the setting off (like the eye button), so you can
 work on the text; switch it on again afterwards. The choice is remembered, so the names stay
 visible at the next start until you hide them again. Word documents, text files and the anonymized text file are not affected: only the
 preview is masked, and the original names are never shown in a tooltip.
 
 Hiding needs the **Privacy add-on** and a detection model for the document language. Without
-them the menu entry stays greyed out; its tooltip points at **Advanced Settings → Downloads**.
+them the checkbox stays greyed out; its tooltip points at **Advanced Settings → Downloads**.
 
 One limitation: a name the proofreader spelled differently — *Meier* corrected to *Maier* —
 is not found in the proofread text or the changes, because the stand-ins are matched against
@@ -249,14 +251,47 @@ When you pick a service, the app asks it for its current list of models. The lin
 
 | Service | Model | Notes |
 |---|---|---|
-| Ollama | `qwen3.5:9b` | Default. Explains every change and also reads scans |
-| Ollama | `mistral-nemo:12b` | Good with long texts, explains changes |
-| Ollama | `gpt-oss:20b` | Strongest writer, but no explanations — corrections only |
+| Ollama | `gemma4:e4b` | Default. Fast, explains every change, fits an 8 GB graphics card |
+| Ollama | `gemma4:12b` | Best on a 16 GB graphics card; explains every change |
+| Ollama | `qwen3.5:9b` | A model from another family; explains every change and also reads scans |
 | OpenAI | `gpt-4o-mini` | High quality online option |
 | Anthropic | `claude-haiku-4-5` | Fast online option |
 | Google | `gemini-2.0-flash` | Fast online option |
 
 To use a local Ollama proofreading model, download it first in **Advanced Settings → Downloads…** → **Ollama Models** tab. Models the app has checked for explanations show a small `explanations ✓` note in the model list.
+
+### How we chose the proofreading models
+
+Most research on AI proofreading uses essays written by language learners, which is
+close to what students write. The main findings from 2025 and 2026:
+
+- **Models that run on your own computer can proofread German and English student
+  texts usefully**, but they still miss more errors and make more wrong changes than
+  specially trained correction systems or the largest online services.
+- **Their typical mistake is changing sentences that were already correct.** That is
+  why Teacher's Teammate tells the model to keep the student's wording and shows every
+  change, so you decide what stays.
+- **For French there is no public proofreading test yet.** For French we rely on our
+  own checks.
+- **No study has yet checked how good these models' explanations are.** Read an
+  explanation before you pass it on to a student.
+
+**How we check a model.** Before we recommend a writing model, we test it ourselves on
+German, English and French texts and on a full page. It must explain its changes in the
+format the app needs (shown as `explanations ✓`) and must not lose any of the text. We
+then compare the models that pass on texts written by language learners. We recommend at most two
+writing models per computer type, so you do not have to compare them yourself. Last checked: November 2026.
+
+Sources: [Wisniewski et al., 2025](https://arxiv.org/abs/2505.06004) (17 models up to 9B,
+German, English, Italian, Swedish), [Goto et al., 2026](https://arxiv.org/abs/2605.13624)
+(current small models on German and English learner texts),
+[MultiGEC-2025](https://aclanthology.org/2025.nlp4call-1.1.pdf) (learner essays in
+12 languages), [Song et al., 2024](https://aclanthology.org/2024.findings-naacl.49.pdf)
+(explaining grammar errors).
+
+### Long texts
+
+A model can only read a limited amount of text at once (about 10,000 characters with the default local model, roughly 1,600 German words or three to four handwritten pages). Longer texts are proofread in parts: the app splits them at paragraph and sentence boundaries, proofreads each part and joins the answers back together. You get one review as usual. The one thing it cannot do is change something across a part boundary — a sentence is never split, but a correction that only makes sense together with an earlier part is not possible. If a part comes back without explanations, the app says so and keeps the explanations it has.
 
 ### Reading the proofreading notes
 
@@ -308,8 +343,8 @@ If you switch on **Corrections only (faster)**, proofreading returns the correct
 without explanations and without the unclear list — faster, and it works with every model.
 Every model is asked for explanations unless you tick **Corrections only**; models the app
 has checked show `explanations ✓`. When a model fails to answer in the explanation format
-(`gpt-oss:20b`, for example, is not checked yet), that single file falls back to corrections
-only automatically; a short banner above the text then says so. With an older Ollama
+(models without the `explanations ✓` badge are more likely to), that single file falls back to
+corrections only automatically; a short banner above the text then says so. With an older Ollama
 (before version 0.5) the app also uses corrections only and tells you that updating Ollama
 gives you the explanations.
 

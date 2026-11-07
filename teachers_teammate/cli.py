@@ -49,6 +49,8 @@ class _CliAppService(Protocol):
 
     def output_refusal_for_run(self, config: Config, /) -> str: ...
 
+    def memory_warning_for_run(self, config: Config, /) -> str: ...
+
     def run_preview_only(self, config: Config, /) -> int: ...
 
 
@@ -437,6 +439,17 @@ def _parse_args(
         ),
     )
     out_grp.add_argument(
+        "--ignore-memory-check",
+        action="store_true",
+        default=False,
+        dest="ignore_memory_check",
+        help=(
+            "Run even when the models do not fit in the memory that is free now. "
+            "Without this flag such a run is refused, because the computer would have to "
+            "use its disk as memory and become extremely slow."
+        ),
+    )
+    out_grp.add_argument(
         "--docx",
         dest="docx_enabled",
         action="store_true",
@@ -598,6 +611,10 @@ def run_cli(
         ),
         language=args.language,
         ollama_url=args.ollama_url,
+        hardware_profile=getattr(args, "hardware_profile", DEFAULTS["hardware_profile"]),
+        proofreading_context=getattr(
+            args, "proofreading_context", DEFAULTS["proofreading_context"]
+        ),
         ocr_timeout=args.ocr_timeout,
         correction_enabled=args.correction_enabled,
         anonymization_enabled=args.anonymization_enabled,
@@ -634,6 +651,13 @@ def run_cli(
     if refusal:
         print(f"ERROR: {refusal}", file=sys.stderr)
         return 1
+    warning = service.memory_warning_for_run(config)
+    if warning:
+        if not args.ignore_memory_check:
+            print(f"ERROR: {warning}", file=sys.stderr)
+            print("Use --ignore-memory-check to run anyway.", file=sys.stderr)
+            return 1
+        print(f"WARNING: {warning}", file=sys.stderr)
     _print_data_flow(service.describe_data_flow(config))
     return service.run_selected(config, config_file=config_path)
 

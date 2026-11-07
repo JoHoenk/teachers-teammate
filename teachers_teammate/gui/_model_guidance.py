@@ -32,10 +32,20 @@ from ..domain.model_catalog import (
 )
 from . import _user_text as txt
 from ._hardware_profile_selector import HardwareProfileSelector
+from ._model_item_delegate import (
+    ITEM_LABEL_COLOR_ROLE,
+    ITEM_LABEL_ROLE,
+    ModelItem,
+    fill_grouped,
+    install,
+    widen,
+)
 from ._model_wording import (
     HINT_NOT_DOWNLOADED,
     HINT_NOT_DOWNLOADED_WITH_LINK,
+    compact_suitability_text,
     is_warning,
+    memory_text,
     model_hint,
     suitability_text,
 )
@@ -51,8 +61,22 @@ PROVIDER_PREFIX = "provider:"
 
 _GREY = QColor("#888888")
 _ORANGE = QColor("#e67e22")
+_GREEN = QColor("#1e8449")
 _HINT_STYLE = "color: #888; font-size: 11px;"
 _WARNING_STYLE = "color: #e67e22; font-size: 11px;"
+
+#: Suitability → which group of the model list the model belongs to: 0 = suggested,
+#: 1 = works anyway, 2 = not suitable.  Groups 0 and 1 are what a teacher picks from;
+#: group 2 stays one separator below, for the models they may already have chosen.
+_GROUP: dict[Suitability, int] = {
+    Suitability.BEST: 0,
+    Suitability.GOOD: 0,
+    Suitability.WORKS: 1,
+    Suitability.SLOW: 1,
+    Suitability.UNKNOWN: 1,
+    Suitability.TOO_LARGE: 2,
+    Suitability.WRONG_KIND: 2,
+}
 
 
 class _GuidanceService(Protocol):
@@ -65,6 +89,7 @@ class _GuidanceService(Protocol):
         *,
         cached_only: bool = False,
         system_memory_gb: float | None = None,
+        card_gb: float | None = None,
     ) -> list[ModelRating]: ...
 
 
@@ -108,6 +133,7 @@ class OllamaModelGuidance(QWidget):
         layout.addWidget(self._best_btn)
 
         self._combo.currentTextChanged.connect(lambda _txt: self._update_hint())
+        install(self._combo)
         self._selector.resolved_changed.connect(self._on_resolved)
         # Use the already-resolved profile when detection finished before wiring.
         resolved = self._selector.resolved()
@@ -121,7 +147,7 @@ class OllamaModelGuidance(QWidget):
         self._ollama_url = url
 
     def set_models(self, models: Sequence[str]) -> None:
-        """Show *models* sorted and decorated by suitability for the task.
+        """Show *models* sorted, grouped and labelled by suitability for the task.
 
         Classification must have happened in a background thread already;
         models that could not be classified are rated "no suggestion".
@@ -130,11 +156,15 @@ class OllamaModelGuidance(QWidget):
         self._installed = {normalize_tag(tag): tag for tag in self._models}
         self._rate(self._models)
         previous = self._combo.currentText()
+        ordered = sorted(self._models, key=self._sort_key)
+        groups: list[list[ModelItem]] = [[], [], []]
+        for tag in ordered:
+            groups[_GROUP[self._rating_for(tag).suitability]].append(ModelItem(tag))
         self._combo.blockSignals(True)
-        self._combo.clear()
-        for tag in sorted(self._models, key=self._sort_key):
-            self._combo.addItem(tag)
+        fill_grouped(self._combo, groups)
+        for tag in ordered:
             self._decorate(tag)
+        widen(self._combo)  # the labels were added after fill_grouped measured
         if previous:
             idx = self._combo.findText(previous)
             if idx >= 0:
@@ -157,6 +187,11 @@ class OllamaModelGuidance(QWidget):
         detection = self._selector.resolved()
         return detection.system_memory_gb if detection is not None else None
 
+    def active_card_gb(self) -> float | None:
+        """Return the graphics memory models can use when it is known, else ``None``."""
+        detection = self._selector.resolved()
+        return detection.card_gb if detection is not None else None
+
     # ── internal ───────────────────────────────────────────────────────────
 
     def _rate(self, tags: list[str]) -> None:
@@ -168,6 +203,7 @@ class OllamaModelGuidance(QWidget):
             self._ollama_url,
             cached_only=True,
             system_memory_gb=self.active_system_memory_gb(),
+            card_gb=self.active_card_gb(),
         )
         self._ratings = {rating.tag: rating for rating in ratings}
 
@@ -182,6 +218,7 @@ class OllamaModelGuidance(QWidget):
                 self._ollama_url,
                 cached_only=True,
                 system_memory_gb=self.active_system_memory_gb(),
+                card_gb=self.active_card_gb(),
             )[0]
             self._ratings[tag] = rating
         return rating
@@ -190,23 +227,34 @@ class OllamaModelGuidance(QWidget):
         return (suitability_rank(self._rating_for(tag).suitability), tag)
 
     def _decorate(self, tag: str) -> None:
-        """Set foreground/tooltip roles only — the item text stays the raw tag."""
+        """Set label, colour and tooltip roles only — the item text stays the raw tag."""
         index = self._combo.findText(tag)
         if index < 0:
             return
         rating = self._rating_for(tag)
         if rating.suitability is Suitability.TOO_LARGE:
             self._combo.setItemData(index, _GREY, Qt.ItemDataRole.ForegroundRole)
+            label_color: QColor | None = _GREY
         elif rating.suitability is Suitability.WRONG_KIND:
             self._combo.setItemData(index, _ORANGE, Qt.ItemDataRole.ForegroundRole)
+            label_color = _ORANGE
         else:
             self._combo.setItemData(index, None, Qt.ItemDataRole.ForegroundRole)
+            suggested = rating.suitability in (Suitability.BEST, Suitability.GOOD)
+            label_color = _GREEN if suggested else None
+        label = compact_suitability_text(
+            rating.suitability, self._category, very_slow=rating.very_slow
+        )
+        if rating.memory_gb is not None:
+            label = f"{label} · {memory_text(rating.memory_gb)}"
+        self._combo.setItemData(index, label, ITEM_LABEL_ROLE)
+        self._combo.setItemData(index, label_color, ITEM_LABEL_COLOR_ROLE)
         note = f"\n{rating.note}" if rating.note else ""
         if rating.structured_output:
             note = f"{note}\n{txt.EXPLANATIONS_SUPPORTED_TOOLTIP}"
         self._combo.setItemData(
             index,
-            f"{suitability_text(rating.suitability, self.active_profile(), self._category)}{note}",
+            f"{suitability_text(rating.suitability, self._category, very_slow=rating.very_slow)}{note}",
             Qt.ItemDataRole.ToolTipRole,
         )
 
@@ -232,6 +280,9 @@ class OllamaModelGuidance(QWidget):
                 task=self._category,
                 memory_gb=rating.memory_gb,
                 best_for_task=best_model(self._category, profile),
+                system_memory_gb=self.active_system_memory_gb(),
+                card_gb=self.active_card_gb(),
+                very_slow=rating.very_slow,
             )
         self._hint_lbl.setStyleSheet(_WARNING_STYLE if warning else _HINT_STYLE)
         self._hint_lbl.setText(hint)

@@ -96,6 +96,9 @@ class BenchmarkApplicationService:
     def get_provider_info(self, provider: str) -> dict:
         return self._processing.get_provider_info(provider)
 
+    def provider_key_missing(self, provider: str) -> bool:
+        return self._processing.provider_key_missing(provider)
+
     def list_provider_models(self, provider: str, *, base_url: str = "") -> list[str]:
         return self._processing.list_provider_models(provider, base_url=base_url)
 
@@ -181,6 +184,7 @@ class BenchmarkApplicationService:
         *,
         cached_only: bool = False,
         system_memory_gb: float | None = None,
+        card_gb: float | None = None,
     ) -> list[ModelRating]:
         """Rate Ollama models for a task on a hardware profile (delegated)."""
         return self._processing.rate_ollama_models(
@@ -190,6 +194,7 @@ class BenchmarkApplicationService:
             ollama_url,
             cached_only=cached_only,
             system_memory_gb=system_memory_gb,
+            card_gb=card_gb,
         )
 
     def default_model_for_task(self, provider: str, task: str) -> str:

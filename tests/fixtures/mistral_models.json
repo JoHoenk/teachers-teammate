@@ -1,0 +1,268 @@
+{
+  "object": "list",
+  "data": [
+    {
+      "id": "mistral-large-latest",
+      "name": "mistral-large-latest",
+      "description": "Our flagship model, for complex tasks that need deep reasoning.",
+      "aliases": ["mistral-large-2411"],
+      "max_context_length": 131072,
+      "type": "base",
+      "archived": false,
+      "capabilities": {
+        "completion_chat": true,
+        "completion_fim": false,
+        "function_calling": true,
+        "vision": false,
+        "classification": false
+      }
+    },
+    {
+      "id": "mistral-large-2411",
+      "name": "mistral-large-2411",
+      "description": "Our flagship model, for complex tasks that need deep reasoning.",
+      "aliases": [],
+      "max_context_length": 131072,
+      "type": "base",
+      "archived": false,
+      "capabilities": {
+        "completion_chat": true,
+        "completion_fim": false,
+        "function_calling": true,
+        "vision": false,
+        "classification": false
+      }
+    },
+    {
+      "id": "mistral-large-2407",
+      "name": "mistral-large-2407",
+      "description": "An earlier flagship model.",
+      "aliases": [],
+      "max_context_length": 131072,
+      "type": "base",
+      "archived": false,
+      "deprecation": "2023-05-01",
+      "deprecation_replacement_model": "mistral-large-latest",
+      "capabilities": {
+        "completion_chat": true,
+        "function_calling": true,
+        "vision": false,
+        "classification": false
+      }
+    },
+    {
+      "id": "mistral-medium-latest",
+      "name": "mistral-medium-latest",
+      "description": "A balanced model for everyday writing tasks.",
+      "aliases": ["mistral-medium-2508"],
+      "max_context_length": 131072,
+      "type": "base",
+      "archived": false,
+      "capabilities": {
+        "completion_chat": true,
+        "function_calling": true,
+        "vision": false,
+        "classification": false
+      }
+    },
+    {
+      "id": "mistral-small-latest",
+      "name": "mistral-small-latest",
+      "description": "A small, fast model that still writes well.",
+      "aliases": ["mistral-small-2506"],
+      "max_context_length": 131072,
+      "type": "base",
+      "archived": false,
+      "capabilities": {
+        "completion_chat": true,
+        "function_calling": true,
+        "vision": false,
+        "classification": false
+      }
+    },
+    {
+      "id": "mistral-small-2506",
+      "name": "mistral-small-2506",
+      "description": "A small, fast model that still writes well.",
+      "aliases": [],
+      "max_context_length": 131072,
+      "type": "base",
+      "archived": false,
+      "capabilities": {
+        "completion_chat": true,
+        "function_calling": true,
+        "vision": false,
+        "classification": false
+      }
+    },
+    {
+      "id": "open-mistral-nemo",
+      "name": "open-mistral-nemo",
+      "description": "An open-weights model that speaks many languages.",
+      "aliases": ["open-mistral-nemo-2407"],
+      "max_context_length": 131072,
+      "type": "base",
+      "archived": false,
+      "capabilities": {
+        "completion_chat": true,
+        "function_calling": true,
+        "vision": false,
+        "classification": false
+      }
+    },
+    {
+      "id": "ministral-3b-2410",
+      "name": "ministral-3b-2410",
+      "description": "A tiny model for simple, short texts.",
+      "aliases": [],
+      "max_context_length": 131072,
+      "type": "base",
+      "archived": false,
+      "capabilities": {
+        "completion_chat": true,
+        "function_calling": true,
+        "vision": false,
+        "classification": false
+      }
+    },
+    {
+      "id": "ministral-8b-2410",
+      "name": "ministral-8b-2410",
+      "description": "A small model for short texts on modest computers.",
+      "aliases": [],
+      "max_context_length": 131072,
+      "type": "base",
+      "archived": false,
+      "capabilities": {
+        "completion_chat": true,
+        "function_calling": true,
+        "vision": false,
+        "classification": false
+      }
+    },
+    {
+      "id": "pixtral-large-latest",
+      "name": "pixtral-large-latest",
+      "description": "A model that can also read images.",
+      "aliases": ["pixtral-large-2411"],
+      "max_context_length": 131072,
+      "type": "base",
+      "archived": false,
+      "deprecation": "2099-12-31",
+      "deprecation_replacement_model": "mistral-large-latest",
+      "capabilities": {
+        "completion_chat": true,
+        "function_calling": true,
+        "vision": true,
+        "classification": false
+      }
+    },
+    {
+      "id": "codestral-latest",
+      "name": "codestral-latest",
+      "description": "A model specialised in writing code.",
+      "aliases": ["codestral-2508"],
+      "max_context_length": 262144,
+      "type": "base",
+      "archived": false,
+      "capabilities": {
+        "completion_chat": true,
+        "completion_fim": true,
+        "function_calling": false,
+        "vision": false,
+        "classification": false
+      }
+    },
+    {
+      "id": "devstral-small-latest",
+      "name": "devstral-small-latest",
+      "description": "A model for agentic coding.",
+      "aliases": ["devstral-small-2507"],
+      "max_context_length": 131072,
+      "type": "base",
+      "archived": false,
+      "capabilities": {
+        "completion_chat": true,
+        "function_calling": true,
+        "vision": false,
+        "classification": false
+      }
+    },
+    {
+      "id": "mistral-ocr-latest",
+      "name": "mistral-ocr-latest",
+      "description": "Reads text out of documents and images.",
+      "aliases": ["mistral-ocr-2505"],
+      "max_context_length": 131072,
+      "type": "base",
+      "archived": false,
+      "capabilities": {
+        "completion_chat": false,
+        "function_calling": false,
+        "vision": true,
+        "classification": false
+      }
+    },
+    {
+      "id": "voxtral-mini-latest",
+      "name": "voxtral-mini-latest",
+      "description": "Listens to audio recordings and transcribes them.",
+      "aliases": ["voxtral-mini-2507"],
+      "max_context_length": 32000,
+      "type": "base",
+      "archived": false,
+      "audio_transcription_capabilities": {"transcription": true},
+      "capabilities": {
+        "completion_chat": true,
+        "function_calling": false,
+        "vision": false,
+        "classification": false
+      }
+    },
+    {
+      "id": "mistral-moderation-latest",
+      "name": "mistral-moderation-latest",
+      "description": "Flags harmful content in a text.",
+      "aliases": ["mistral-moderation-2411"],
+      "max_context_length": 131072,
+      "type": "base",
+      "archived": false,
+      "capabilities": {
+        "completion_chat": true,
+        "function_calling": false,
+        "vision": false,
+        "classification": true
+      }
+    },
+    {
+      "id": "mistral-tiny",
+      "name": "mistral-tiny",
+      "description": "An old, small model.",
+      "aliases": [],
+      "max_context_length": 32000,
+      "type": "base",
+      "archived": true,
+      "capabilities": {
+        "completion_chat": true,
+        "function_calling": false,
+        "vision": false,
+        "classification": false
+      }
+    },
+    {
+      "id": "ft:mistral-small-latest:5f1c2b9e",
+      "name": "ft:mistral-small-latest:5f1c2b9e",
+      "description": "A model trained on my own corrected essays.",
+      "aliases": [],
+      "max_context_length": 32000,
+      "type": "fine-tuned",
+      "archived": false,
+      "capabilities": {
+        "completion_chat": true,
+        "function_calling": false,
+        "vision": false,
+        "classification": false
+      }
+    }
+  ]
+}

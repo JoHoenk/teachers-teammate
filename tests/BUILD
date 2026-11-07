@@ -67,6 +67,13 @@ filegroup(
 
 # ── Shared library used by lint targets ───────────────────────────────────
 
+# Every test source, for //:py_pylint (one action over the whole first-party tree). Not a test.
+filegroup(
+    name = "all_sources",
+    srcs = glob(["**/*.py"]),
+    visibility = ["//visibility:public"],
+)
+
 # Full pip dep set for the lint aspects (ty/pylint) so test sources resolve
 # their third-party imports. tests_lib is consumed only by lint targets, never
 # the wheel, so depending on pip packages here is safe.
@@ -103,6 +110,7 @@ py_library(
             "unit/*.py",
             "integration/*.py",
             "gui/*.py",
+            "tools/*.py",
         ],
     ),
     visibility = ["//visibility:public"],
@@ -125,6 +133,7 @@ _COMMON_SRCS = [
     "integration/__init__.py",
     "gui/__init__.py",
     "gui/_service_stubs.py",
+    "tools/__init__.py",
 ]
 
 # infrastructure/correction_schema.py builds the review's JSON schema with pydantic, which
@@ -373,6 +382,16 @@ py_test(
 )
 
 py_test(
+    name = "test_providers_mistral_curation",
+    size = "small",
+    srcs = _COMMON_SRCS + ["unit/test_providers_mistral_curation.py"],
+    args = ["unit/test_providers_mistral_curation.py"],
+    data = ["//tests/fixtures:mistral_models.json"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS + _LANGCHAIN_DEPS,
+)
+
+py_test(
     name = "test_pipeline_txt_integration",
     size = "small",
     srcs = _COMMON_SRCS + ["integration/test_pipeline_txt.py"],
@@ -518,6 +537,83 @@ py_test(
     args = ["unit/test_model_catalog.py"],
     main = "run_test.py",
     deps = _COMMON_DEPS + _REQUESTS_DEPS,
+)
+
+py_test(
+    name = "test_proofreading_quality",
+    size = "small",
+    srcs = _COMMON_SRCS + ["unit/test_proofreading_quality.py"],
+    args = ["unit/test_proofreading_quality.py"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS,
+)
+
+py_test(
+    name = "test_chunking_corrector",
+    size = "small",
+    srcs = _COMMON_SRCS + ["unit/test_chunking_corrector.py"],
+    args = ["unit/test_chunking_corrector.py"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS,
+)
+
+py_test(
+    name = "test_text_chunks",
+    size = "small",
+    srcs = _COMMON_SRCS + ["unit/test_text_chunks.py"],
+    args = ["unit/test_text_chunks.py"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS,
+)
+
+# The developer tools' shared library. Its own suite, because `//tools:model_eval` pulls in the
+# whole OCR library: a tools test never runs quicker than the app tests, and it is not part of
+# the unit suite.
+_TOOL_DEPS = _COMMON_DEPS + ["//tools:model_eval"]
+
+py_test(
+    name = "test_model_eval_check_rule",
+    size = "small",
+    srcs = _COMMON_SRCS + ["tools/test_check_rule.py"],
+    args = ["tools/test_check_rule.py"],
+    main = "run_test.py",
+    deps = _TOOL_DEPS,
+)
+
+py_test(
+    name = "test_model_eval_results",
+    size = "small",
+    srcs = _COMMON_SRCS + ["tools/test_results.py"],
+    args = ["tools/test_results.py"],
+    main = "run_test.py",
+    deps = _TOOL_DEPS,
+)
+
+py_test(
+    name = "test_model_eval_comparison",
+    size = "small",
+    srcs = _COMMON_SRCS + ["tools/test_comparison.py"],
+    args = ["tools/test_comparison.py"],
+    main = "run_test.py",
+    deps = _TOOL_DEPS,
+)
+
+test_suite(
+    name = "tools_tests",
+    tests = [
+        ":test_model_eval_check_rule",
+        ":test_model_eval_comparison",
+        ":test_model_eval_results",
+    ],
+)
+
+py_test(
+    name = "test_context_budget",
+    size = "small",
+    srcs = _COMMON_SRCS + ["unit/test_context_budget.py"],
+    args = ["unit/test_context_budget.py"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS,
 )
 
 py_test(
@@ -773,6 +869,15 @@ py_test(
 )
 
 py_test(
+    name = "test_model_item_delegate",
+    size = "small",
+    srcs = _COMMON_SRCS + ["gui/test_model_item_delegate.py"],
+    args = ["gui/test_model_item_delegate.py"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_lib"],
+)
+
+py_test(
     name = "test_model_wording",
     size = "small",
     srcs = _COMMON_SRCS + ["gui/test_model_wording.py"],
@@ -872,10 +977,12 @@ test_suite(
         ":test_benchmark_runner",
         ":test_benchmark_service",
         ":test_cache_service",
+        ":test_chunking_corrector",
         ":test_cli",
         ":test_cli_composition",
         ":test_collect_files",
         ":test_config",
+        ":test_context_budget",
         ":test_coordinator",
         ":test_correction",
         ":test_correction_presets",
@@ -902,13 +1009,16 @@ test_suite(
         ":test_preprocess_service",
         ":test_preprocessor",
         ":test_preview_image_store",
+        ":test_proofreading_quality",
         ":test_providers",
+        ":test_providers_mistral_curation",
         ":test_release_stamp_versions",
         ":test_sent_text",
         ":test_service",
         ":test_stage_builder",
         ":test_state_repository",
         ":test_storage_policy",
+        ":test_text_chunks",
     ],
 )
 
@@ -938,6 +1048,7 @@ test_suite(
         ":test_gui_widgets",
         ":test_gui_worker",
         ":test_hardware_profile_selector",
+        ":test_model_item_delegate",
         ":test_model_wording",
         ":test_ocr_config_selector",
     ],

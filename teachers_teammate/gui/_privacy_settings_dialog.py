@@ -5,6 +5,10 @@ the user chose not to be asked about again ("Don't ask again" before a run that 
 away) and lets them be taken back; the other two tabs are the existing personal-info
 detection and pattern rules of :class:`~._anonymizer_config_dialog.AnonymizerConfigDialog`.
 
+The detection tab also carries the "hide personal information in the texts shown in this app"
+choice, which used to be a View menu entry.  It is a GUI preference, applied by the caller
+after OK.
+
 Changes in the first tab are only applied with OK, like the rest of the dialog.
 """
 
@@ -13,6 +17,8 @@ from __future__ import annotations
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QCheckBox,
+    QGroupBox,
     QHBoxLayout,
     QLabel,
     QListWidget,
@@ -22,6 +28,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from . import _user_text as txt
 from ._anonymizer_config_dialog import AnonymizerConfigDialog
 from ._privacy_settings import SECTION_DETECTION, SECTION_SENDING, FlowAcknowledgements
 
@@ -29,6 +36,7 @@ TITLE = "Privacy Settings"
 TAB_SENDING = "Sending data away"
 TAB_DETECTION = "Personal info: detection"
 TAB_PATTERNS = "Personal info: patterns"
+SHOWING_TEXTS_GROUP = "Showing texts"
 
 SENDING_INTRO = (
     "Before a run sends text or pages away from this computer, you are asked first. If you "
@@ -135,7 +143,7 @@ class SendingDataTab(QWidget):
 class PrivacySettingsDialog(AnonymizerConfigDialog):
     """Sending data away + personal-info detection + patterns, in one window."""
 
-    def __init__(
+    def __init__(  # noqa: PLR0913  # mirrors AnonymizerConfigDialog plus the privacy choices
         self,
         language: str,
         anonymizer_config: object,
@@ -145,6 +153,8 @@ class PrivacySettingsDialog(AnonymizerConfigDialog):
         acknowledgements: FlowAcknowledgements,
         section: str = SECTION_DETECTION,
         sample_text: str = "",
+        display_anonymized: bool = False,
+        display_anonymized_available: bool = True,
     ) -> None:
         super().__init__(language, anonymizer_config, app_service, parent, sample_text=sample_text)
         self.setWindowTitle(TITLE)
@@ -153,6 +163,32 @@ class PrivacySettingsDialog(AnonymizerConfigDialog):
         self._tabs.setTabText(1, TAB_PATTERNS)
         self._tabs.insertTab(0, self._sending_tab, TAB_SENDING)
         self._tabs.setCurrentIndex(0 if section == SECTION_SENDING else 1)
+        self._build_showing_texts_group(display_anonymized, display_anonymized_available)
+
+    def _build_showing_texts_group(self, checked: bool, available: bool) -> None:
+        """Add the "hide personal information" choice above the detection models.
+
+        It sits on the detection tab because hiding *uses* these detection settings, and the
+        preview below shows the effect straight away.
+        """
+        group = QGroupBox(SHOWING_TEXTS_GROUP)
+        layout = QVBoxLayout(group)
+        self._hide_personal_cb = QCheckBox(txt.HIDE_PERSONAL_INFO_CHECKBOX)
+        self._hide_personal_cb.setChecked(checked and available)
+        self._hide_personal_cb.setEnabled(available)
+        self._hide_personal_cb.setToolTip(
+            txt.HIDE_PERSONAL_INFO_TIP if available else txt.HIDE_PERSONAL_INFO_UNAVAILABLE_TIP
+        )
+        layout.addWidget(self._hide_personal_cb)
+        self._detection_layout.insertWidget(0, group)
+
+    def hide_personal_checkbox(self) -> QCheckBox:
+        """Return the "hide personal information in the texts shown" checkbox."""
+        return self._hide_personal_cb
+
+    def display_anonymized(self) -> bool:
+        """Whether the app should show placeholders instead of names (read after OK)."""
+        return self._hide_personal_cb.isChecked()
 
     def sending_tab(self) -> SendingDataTab:
         """Return the "Sending data away" tab."""

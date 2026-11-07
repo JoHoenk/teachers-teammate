@@ -4,9 +4,9 @@
 from __future__ import annotations
 
 import argparse
+from pathlib import Path
 import re
 import sys
-from pathlib import Path
 
 PEP440_PATTERN = r"[0-9][0-9]*(?:\.[0-9]+)*(?:(?:a|b|rc)[0-9]+|\.post[0-9]+|\.dev[0-9]+)?"
 

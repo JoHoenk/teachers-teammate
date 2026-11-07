@@ -12,24 +12,30 @@ from teachers_teammate.domain.model_catalog import (
     DEFAULT_OCR_MODEL,
     DEFAULT_WRITING_MODEL,
     HARDWARE_PROFILES,
-    MEMORY_BUDGET_GB,
+    CARD_USABLE_SHARE,
+    CPU_COMFORT_GB,
+    FULL_SPEED_SHARE,
     OLLAMA_CATALOG,
     PROFILE_SETTINGS,
     RECOMMENDED,
-    STRUCTURED_OUTPUT_UNVERIFIED_MODEL,
     DetectionReason,
     HardwareDetection,
     HardwareProfile,
     ModelUses,
     Suitability,
+    card_budget_gb,
     catalog_uses,
     choose_profile,
     find_spec,
+    is_very_slow,
+    memory_for_models_gb,
     models_for,
     normalize_tag,
+    ram_needed_gb,
     rate_model,
     suitability,
     suitability_rank,
+    system_reserve_gb,
     uses_from_capabilities,
 )
 from teachers_teammate.infrastructure.providers.ollama import PROVIDER_INFO
@@ -54,11 +60,12 @@ def test_catalog_memory_and_download_sizes_are_plausible() -> None:
     """
     Given  the Ollama model catalog
     When   memory_gb and download_gb are inspected
-    Then   memory_gb >= download_gb > 0 for every entry
+    Then   memory_gb is at least 70 % of download_gb for every entry: a download can hold parts
+           that are not loaded for text (gemma4's image-reading projector is about 1 GB)
     """
     for spec in OLLAMA_CATALOG:
         assert spec.download_gb > 0
-        assert spec.memory_gb >= spec.download_gb
+        assert spec.memory_gb >= 0.7 * spec.download_gb, spec.tag
 
 
 @pytest.mark.use_case("Model_Category_Guidance")
@@ -79,18 +86,22 @@ def test_recommended_lists_reference_existing_catalog_entries() -> None:
 
 
 @pytest.mark.use_case("Model_Recommendation_By_Hardware")
-def test_every_best_model_fits_its_profile_budget() -> None:
+def test_every_best_model_runs_at_full_speed_on_its_profile() -> None:
     """
     Given  the RECOMMENDED mapping
     When   the BEST model of each (category, profile) is inspected
-    Then   its memory_gb stays within the profile budget
+    Then   it fits the card's usable memory at full speed (for a computer without a card: it is
+           within the size that is comfortable on the processor)
     """
     for _category, per_profile in RECOMMENDED.items():
         for profile in HARDWARE_PROFILES:
             best_tag = per_profile[profile][0]
             spec = find_spec(best_tag)
             assert spec is not None
-            assert spec.memory_gb <= MEMORY_BUDGET_GB[profile]
+            if profile == "cpu":
+                assert spec.memory_gb <= CPU_COMFORT_GB, best_tag
+            else:
+                assert spec.memory_gb * FULL_SPEED_SHARE <= card_budget_gb(profile), best_tag
 
 
 # ── normalize_tag ────────────────────────────────────────────────────────────
@@ -126,27 +137,33 @@ def test_normalize_tag_leaves_tagged_names_unchanged() -> None:
         (DEFAULT_OCR_MODEL, "8gb", Suitability.BEST),
         (DEFAULT_OCR_MODEL, "16gb", Suitability.BEST),
         ("glm-ocr:q8_0", "cpu", Suitability.BEST),
-        ("qwen3.5:9b", "8gb", Suitability.BEST),
-        (DEFAULT_WRITING_MODEL, "16gb", Suitability.BEST),
+        ("qwen3:4b", "cpu", Suitability.BEST),
+        ("gemma4:e4b", "8gb", Suitability.BEST),
+        ("gemma4:12b", "16gb", Suitability.BEST),
+        (DEFAULT_WRITING_MODEL, "8gb", Suitability.BEST),
         # GOOD: further entries of the RECOMMENDED list
         ("qwen3-vl:8b", "8gb", Suitability.GOOD),
         ("deepseek-ocr:latest", "8gb", Suitability.GOOD),
-        ("mistral:latest", "8gb", Suitability.GOOD),
-        # WORKS: catalogued and within the budget but not recommended
+        ("qwen3.5:9b", "8gb", Suitability.GOOD),
+        ("qwen3.5:9b", "16gb", Suitability.GOOD),
+        # WORKS: catalogued and within the card, but not recommended
         ("qwen2.5vl:7b", "8gb", Suitability.WORKS),
+        ("mistral:latest", "8gb", Suitability.WORKS),
         ("mistral:latest", "16gb", Suitability.WORKS),
-        ("gemma4:latest", "8gb", Suitability.WORKS),
-        # TOO_LARGE: memory need exceeds the profile budget
+        ("gemma4:e4b", "16gb", Suitability.WORKS),
+        # TOO_LARGE: more than the card holds, and no figure for the computer's memory
         ("qwen3-vl:8b", "cpu", Suitability.TOO_LARGE),
-        (STRUCTURED_OUTPUT_UNVERIFIED_MODEL, "8gb", Suitability.TOO_LARGE),
+        ("gpt-oss:20b", "8gb", Suitability.TOO_LARGE),
         ("mistral-nemo:12b", "8gb", Suitability.TOO_LARGE),
+        ("gemma4:12b", "8gb", Suitability.TOO_LARGE),
     ],
 )
 def test_suitability_examples_per_profile(tag: str, profile: str, expected: Suitability) -> None:
     """
     Given  a catalogued model and a hardware profile
     When   suitability is computed for the model's own category
-    Then   the rating matches the recommendation table (BEST/GOOD/WORKS/TOO_LARGE)
+    Then   the rating matches the recommendation table (BEST/GOOD/WORKS/TOO_LARGE); without a
+           figure for the computer's memory nothing is slow
     """
     category = find_spec(tag).category
     assert suitability(tag, category, cast(HardwareProfile, profile)) is expected
@@ -156,25 +173,26 @@ def test_suitability_examples_per_profile(tag: str, profile: str, expected: Suit
 @pytest.mark.parametrize(
     ("profile", "system_memory_gb", "expected"),
     [
-        ("8gb", 32.0, Suitability.SLOW),  # 7.5 + 16 GB: part of it runs on the processor
-        ("8gb", 16.0, Suitability.SLOW),  # 7.5 + 8 = 15.5: just enough for 14 GB
-        ("8gb", 8.0, Suitability.TOO_LARGE),  # 7.5 + 4 = 11.5 < 14
+        ("8gb", 32.0, Suitability.SLOW),  # 7.2 GB of 14 run on the processor; 24 GB are free
+        ("8gb", 16.0, Suitability.SLOW),  # 8 GB stay free for the system, 8 GB remain >= 7.2
+        ("8gb", 15.0, Suitability.TOO_LARGE),  # 7 GB remain < 7.2: it would have to swap
+        ("8gb", 8.0, Suitability.TOO_LARGE),  # nothing remains after the reserve
         ("8gb", None, Suitability.TOO_LARGE),  # memory unknown (remote server): as before
-        ("cpu", 28.0, Suitability.SLOW),  # the 4 GB budget is main memory: half of 28 = 14
-        ("cpu", 27.0, Suitability.TOO_LARGE),  # 13.5 < 14; counting the budget twice said slow
-        ("cpu", 16.0, Suitability.TOO_LARGE),  # 8 < 14
-        ("16gb", 8.0, Suitability.GOOD),  # fits the card: RAM is irrelevant; second choice
+        ("cpu", 22.0, Suitability.SLOW),  # all 14 GB on the processor: 22 - 8 = 14 remain
+        ("cpu", 21.0, Suitability.TOO_LARGE),  # 13 remain < 14
+        ("cpu", 16.0, Suitability.TOO_LARGE),  # 8 remain < 14
+        ("16gb", 8.0, Suitability.WORKS),  # fits the card: main memory is irrelevant
     ],
 )
-def test_a_model_too_big_for_the_card_is_slow_when_the_computers_memory_helps(
+def test_a_model_too_big_for_the_card_is_slow_only_when_main_memory_holds_the_rest(
     profile: str, system_memory_gb: float | None, expected: Suitability
 ) -> None:
     """
     Given  gpt-oss:20b (about 14 GB) and a computer with a given graphics profile and memory
     When   suitability is computed
-    Then   it is "slow" when the card plus half the computer's memory holds it (for a
-           computer without a card: half its memory alone), too large when even that does not,
-           unchanged without a memory figure, and not affected at all when it fits the card
+    Then   it is "slow" when what does not fit on the card fits into the main memory left after
+           the system's reserve (never counting swap), too large when it does not, unchanged
+           without a memory figure, and "works" when it fits the card
     """
     rated = suitability(
         "gpt-oss:20b", "general", cast(HardwareProfile, profile), system_memory_gb=system_memory_gb
@@ -268,21 +286,21 @@ def test_suitability_general_model_for_ocr_task_is_wrong_kind() -> None:
     Then   the result is WRONG_KIND
     """
     assert suitability("mistral:latest", "ocr", "8gb") is Suitability.WRONG_KIND
-    assert suitability("gemma4:latest", "ocr", "8gb") is Suitability.WRONG_KIND
+    assert suitability("gemma4:e4b", "ocr", "8gb") is Suitability.WRONG_KIND
 
 
 @pytest.mark.use_case("Model_Category_Guidance")
-def test_qwen35_is_a_good_reading_alternative_and_still_the_best_writing_model() -> None:
+def test_qwen35_is_a_good_reading_alternative_and_a_good_writing_model() -> None:
     """
     Given  qwen3.5:9b, a writing model that can also read scanned pages
     When   it is rated for reading and for writing on the 8gb profile
-    Then   it is GOOD for reading and BEST for writing
+    Then   it is GOOD for both: the first choice for neither
     """
     spec = find_spec("qwen3.5:9b")
     assert spec is not None
     assert catalog_uses(spec) == frozenset({"ocr", "general"})
     assert suitability("qwen3.5:9b", "ocr", "8gb") is Suitability.GOOD
-    assert suitability("qwen3.5:9b", "general", "8gb") is Suitability.BEST
+    assert suitability("qwen3.5:9b", "general", "8gb") is Suitability.GOOD
 
 
 @pytest.mark.use_case("Model_Category_Guidance")
@@ -582,3 +600,169 @@ def test_writing_models_offered_first_pass_the_structured_output_check() -> None
         first = find_spec(RECOMMENDED["general"][profile][0])
         assert first is not None
         assert first.structured_output, f"{first.tag} is the first choice for {profile}"
+
+
+# ── memory-aware rating (the computer's own memory, never swap) ─────────────
+
+
+@pytest.mark.use_case("Model_Recommendation_By_Hardware")
+@pytest.mark.parametrize(
+    ("system_memory_gb", "expected_reserve"),
+    [(8.0, 8.0), (16.0, 8.0), (40.0, 8.0), (48.0, 9.6), (64.0, 12.8)],
+)
+def test_the_system_reserve_is_the_larger_of_8_gb_and_20_percent(
+    system_memory_gb: float, expected_reserve: float
+) -> None:
+    """
+    Given  computers with different amounts of main memory
+    When   the reserve for the system is computed
+    Then   it is 8 GB up to 40 GB of memory and 20 % above
+    """
+    assert system_reserve_gb(system_memory_gb) == pytest.approx(expected_reserve)
+
+
+@pytest.mark.use_case("Model_Recommendation_By_Hardware")
+def test_the_card_budget_is_the_usable_share_of_the_nominal_card() -> None:
+    """
+    Given  the three hardware profiles
+    When   the card budget is computed without a known card size
+    Then   it is 85 % of the profile's nominal size, and 0 for a computer typed "cpu"
+           (a real card arrives as a known size instead)
+    """
+    assert card_budget_gb("8gb") == pytest.approx(8.0 * CARD_USABLE_SHARE)
+    assert card_budget_gb("16gb") == pytest.approx(16.0 * CARD_USABLE_SHARE)
+    assert card_budget_gb("cpu") == 0.0
+
+
+@pytest.mark.use_case("Model_Recommendation_By_Hardware")
+def test_a_recommended_model_is_not_best_where_it_cannot_work() -> None:
+    """
+    Given  the recommended model for computers without a card (4 GB) and 8 GB of main memory,
+           of which 8 GB are reserved for the system
+    When   it is rated with the computer's memory known, and without it
+    Then   it is too large with the memory known (nothing is left; swapping does not count)
+           and keeps its recommendation when the memory is unknown (a remote server)
+    """
+    assert rate_model("qwen3:4b", "general", "cpu", system_memory_gb=8.0).suitability is (
+        Suitability.TOO_LARGE
+    )
+    assert rate_model("qwen3:4b", "general", "cpu", system_memory_gb=12.0).suitability is (
+        Suitability.BEST
+    )
+    assert rate_model("qwen3:4b", "general", "cpu").suitability is Suitability.BEST
+
+
+@pytest.mark.use_case("Model_Recommendation_By_Hardware")
+def test_the_rating_uses_the_real_card_not_the_nominal_one() -> None:
+    """
+    Given  gemma4:12b (9.5 GB) on a computer in the 8gb profile with 47 GB of memory
+    When   it is rated with a 12 GB card (10.2 GB usable) and with the nominal 8 GB card
+    Then   it works on the larger card and is "slower" (a share of 0.72 of it fits) on the
+           nominal one
+    """
+    big = rate_model("gemma4:12b", "general", "8gb", system_memory_gb=47.0, card_gb=10.2)
+    nominal = rate_model("gemma4:12b", "general", "8gb", system_memory_gb=47.0)
+
+    assert big.suitability is Suitability.WORKS
+    assert nominal.suitability is Suitability.SLOW
+    assert nominal.very_slow is False
+
+
+@pytest.mark.use_case("Model_Recommendation_By_Hardware")
+def test_a_model_of_which_little_fits_the_card_is_very_slow() -> None:
+    """
+    Given  gpt-oss:20b (14 GB) on the 8gb profile and gemma4:12b (9.5 GB)
+    When   they are rated with plenty of main memory
+    Then   both are slow, gpt-oss:20b very slowly (under 70 % of it fits the card), gemma4:12b
+           only slower (72 % fits; measured: 13 tokens per second against 77 for the small one)
+    """
+    huge = rate_model("gpt-oss:20b", "general", "8gb", system_memory_gb=47.0)
+    large = rate_model("gemma4:12b", "general", "8gb", system_memory_gb=47.0)
+
+    assert (huge.suitability, huge.very_slow) == (Suitability.SLOW, True)
+    assert (large.suitability, large.very_slow) == (Suitability.SLOW, False)
+    assert is_very_slow(14.0, card_budget_gb("8gb")) and not is_very_slow(
+        9.5, card_budget_gb("8gb")
+    )
+
+
+@pytest.mark.use_case("Model_Recommendation_By_Hardware")
+def test_a_computer_without_a_card_runs_small_models_comfortably_and_others_very_slowly() -> None:
+    """
+    Given  a computer without a graphics card and 32 GB of main memory
+    When   a 4 GB model and a 9.5 GB model are rated
+    Then   the first works, the second is slow, very slowly (all of it runs on the processor)
+    """
+    small = rate_model("qwen3:4b", "general", "cpu", system_memory_gb=32.0)
+    large = rate_model("gemma4:12b", "general", "cpu", system_memory_gb=32.0)
+
+    assert small.suitability is Suitability.BEST  # also the recommendation
+    assert (large.suitability, large.very_slow) == (Suitability.SLOW, True)
+
+
+@pytest.mark.use_case("Model_Recommendation_By_Hardware")
+def test_memory_for_models_is_the_card_plus_what_the_reserve_leaves() -> None:
+    """
+    Given  an 8gb computer with 16 GB of main memory, and one without a card with 12 GB
+    When   the memory a model may use is computed
+    Then   it is the usable card plus the main memory beyond the 8 GB reserve; unknown memory
+           gives no figure
+    """
+    assert memory_for_models_gb("8gb", 16.0) == pytest.approx(6.8 + 8.0)
+    assert memory_for_models_gb("cpu", 12.0) == pytest.approx(4.0)
+    assert memory_for_models_gb("8gb", None) is None
+
+
+@pytest.mark.use_case("Model_Recommendation_By_Hardware")
+def test_the_detection_reports_the_graphics_memory_models_can_use() -> None:
+    """
+    Given  detections of a 16 GB card, Apple Silicon with 16 GB, a hand-chosen profile and a
+           computer without a card
+    When   card_gb is read
+    Then   a card gives 85 % of its size, Apple 66 % of its unified memory, and the others no
+           figure (the rating assumes the profile's nominal size, or none without a card)
+    """
+    card = choose_profile(
+        gpus=[("RTX", 16.0)], apple_unified_memory_gb=None, ollama_is_remote=False
+    )
+    apple = choose_profile(gpus=[], apple_unified_memory_gb=16.0, ollama_is_remote=False)
+    manual = HardwareDetection(profile="8gb", reason=DetectionReason.MANUAL)
+    plain = choose_profile(gpus=[], apple_unified_memory_gb=None, ollama_is_remote=False)
+
+    assert card.card_gb == pytest.approx(16.0 * 0.85)
+    assert apple.card_gb == pytest.approx(16.0 * 0.66)
+    assert manual.card_gb is None
+    assert plain.card_gb is None
+
+
+@pytest.mark.use_case("Model_Recommendation_By_Hardware")
+def test_a_small_card_decides_the_rating_even_though_the_profile_is_cpu() -> None:
+    """
+    Given  a 6 GB graphics card (5.1 GB usable) with 16 GB of main memory
+    When   the writing models are rated — the card is under 7 GB, so the profile is "cpu"
+    Then   the 5.0 GB model works (it fits the card entirely) and the 7.2 GB model is slow but
+           not very slow (71 % of it fits), and only the spill needs main memory
+    """
+    card = 6.0 * CARD_USABLE_SHARE
+    small = rate_model("gemma4:e4b", "general", "cpu", system_memory_gb=16.0, card_gb=card)
+    large = rate_model("qwen3.5:9b", "general", "cpu", system_memory_gb=16.0, card_gb=card)
+
+    assert card == pytest.approx(5.1)
+    assert small.suitability is Suitability.WORKS
+    assert (large.suitability, large.very_slow) == (Suitability.SLOW, False)
+    assert ram_needed_gb(7.2, "cpu", card) == pytest.approx(2.1)
+
+
+@pytest.mark.use_case("Model_Recommendation_By_Hardware")
+def test_a_card_under_seven_gigabytes_is_reported_although_the_profile_is_cpu() -> None:
+    """
+    Given  a detected 6 GB card, which gives the "cpu" profile
+    When   the detection's card size is read
+    Then   it reports the usable card size (the card is there, it only is not a profile tier)
+    """
+    detection = choose_profile(
+        gpus=[("GTX 1660", 6.0)], apple_unified_memory_gb=None, ollama_is_remote=False
+    )
+
+    assert detection.profile == "cpu"
+    assert detection.card_gb == pytest.approx(6.0 * CARD_USABLE_SHARE)

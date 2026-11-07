@@ -161,38 +161,79 @@ knows, recommends, and considers suitable for a computer type (hardware profile)
 - `RECOMMENDED` — the ordered best-model lists per category and profile (`cpu`, `8gb`,
   `16gb`); the first entry is the "best choice".
 - `suitability()` / `models_for()` — the rating used by the Downloads dialog and the
-  model-selection dialogs.  A model over the profile's graphics budget is `SLOW` when it
-  fits within that budget plus `RAM_OFFLOAD_SHARE` (half) of the computer's memory
-  (`system_memory_gb`) — for `cpu`, whose budget already *is* main memory, within that
-  share alone — otherwise `TOO_LARGE`.  Without the memory figure nothing is `SLOW`: a
-  remote server has none, and Apple Silicon carries none because its graphics share is
-  carved out of the same memory (counting it again would rate models the Mac cannot hold).
+  model-selection dialogs, computed from the computer's own memory (see *Rating a model against
+  the computer's memory* below).
 - `choose_profile()` — the decision table mapping detected GPUs / Apple unified memory /
   remote Ollama URLs to a hardware profile.
 
 To add a model: add one `OllamaModelSpec` to `OLLAMA_CATALOG` and (when it should be
 recommended) its tag to the matching `RECOMMENDED` entries. Consistency tests in
 `tests/unit/test_model_catalog.py` check that every recommended tag exists with the
-right category and that every best pick fits its profile budget — new entries must keep
-them green.
+right category and that every best pick runs at full speed on its profile — new entries must
+keep them green.
 
 The static defaults (`DEFAULTS["ocr_model"]` / `correction_model` / `evaluate_model`,
 the per-task provider defaults, and the Ollama provider's `default_model`) all come from
 `DEFAULT_OCR_MODEL` / `DEFAULT_WRITING_MODEL` in the catalog module. They are independent
 of the hardware profile — the per-profile `RECOMMENDED` lists only drive the GUI
-recommendations — so a default may be "too large" for a small profile.
+recommendations — so a default may not fit a small computer.
 
 A writing model needs `structured_output=True` to be offered for proofreading with
 explanations: the review is bound to a JSON schema, and a model that cannot
 answer it would fall back to *Corrections only* on every file. `DEFAULT_WRITING_MODEL` and
 the first entry of every `RECOMMENDED["general"]` list must carry the flag — a test enforces
 it. The flag is not guessed: `tools/verify_model_catalog.py --structured-output` runs the
-real review prompt against three fixture texts (plain English, plain German, Markdown) on
-every `general` model that is reachable through a local Ollama server and reports the value
-to enter in the catalog by hand, like the download sizes. A
-mismatch against the catalog counts as a failure. `STRUCTURED_OUTPUT_UNVERIFIED_MODEL`
-names the writing model not yet checked (`gpt-oss:20b`): it is offered and used like any other
-model, but has no badge.
+real review prompt against every `general` model that is reachable through a local Ollama
+server and reports the value to enter in the catalog by hand, like the download sizes. A
+mismatch against the catalog counts as a failure. A model without the flag (`gpt-oss:20b`) is
+offered and used like any other model, but has no badge and is not recommended.
+
+The check sends exactly what the app sends: `DEFAULTS["correction_temperature"]` and
+`proofreading_options()` (see *Soft failures and per-file warnings*). It covers five fixture
+texts — plain English, plain German, plain French, Markdown with formatting marks, and one
+invented full page of dense German prose (~350 words, the worst case for the context size
+because German tokenises longest). A run passes when the answer is valid JSON for the schema,
+not empty, changes something (an untouched text on an error-dense fixture was not proofread),
+at least 90 % of its sentences can be placed in the text, at least `_EXPLAINED_FLOOR` (0.40) of the
+changes that need an explanation carry one with non-blank text, and `done_reason` is not
+`length`. At a temperature above 0 every fixture runs three times. A model passes when at most
+`_ALLOWED_FAILED_RUNS` (1) of its runs fail, none of them was cut off, crashed or too long for the
+window, and the explained share over all of its runs together reaches `_EXPLAINED_OVERALL` (0.75):
+one stray miss in 15 (the empty answer the Qwen models give about once in 15 runs) does not take
+the `explanations ✓` badge away, a pattern does.
+Each run prints placed / explained / orphans / prompt and answer tokens / `done_reason` /
+seconds.
+
+**How the explanation rule was set.** The short fixtures have only 3 to 7 changes, so one change
+moves a run's ratio by about 0.2, and a single threshold "just below the default" (the plan's first
+idea, about 0.70) would have failed every candidate. The first full check (2026-11-07, seven models,
+15 runs each, `evaluations/writing-models-2026-11/model-check-results-2026-11-07.md`) gave the
+numbers: the then-default `qwen3.5:9b` reaches 0.86 over all runs, the weakest accepted candidate
+(`ministral-3:8b`) 0.82 with a weakest run of 2 of 5 (0.40), while the unsloth build of Qwen3.5
+had runs with 0 of 5 (it wrote no notes at all). So the floor sits at 0.40 and catches "wrote no
+explanations"; the overall share, 0.75, does not depend on one unlucky run. Revisit both if a
+model change moves them.
+
+A verdict belongs to the **exact tag** it was measured on. The app sends only the temperature and
+`num_ctx`; `top_k`, `top_p`, penalties and the chat template come from how the tag was packaged
+(the official `qwen3.5:9b` ships `top_k 20`, `top_p 0.95`, `presence_penalty 1.5`; the same model
+imported from a `hf.co/unsloth/…` GGUF ships none of them). The check prints the settings a tag
+brings along, so a result can be traced. Check a Hugging Face build as its own tag; do not
+transfer a verdict between packagings.
+
+The check talks to `$OLLAMA_HOST` (else `127.0.0.1`); `--ollama-url` overrides it. From WSL in
+its default NAT mode `127.0.0.1` is WSL itself, so point it at the Windows host
+(`ip route show default`), or set `networkingMode=mirrored` in `%USERPROFILE%\.wslconfig` and run
+`wsl --shutdown` so `127.0.0.1` reaches Windows. Ollama on Windows must listen on the network
+(`OLLAMA_HOST=0.0.0.0`) for the first option.
+
+To check a candidate **before** adding it to the catalog, pass its tag; `--tag` implies
+`--structured-output` and skips the catalog tally:
+
+```bash
+bazel run //tools:verify_model_catalog -- --tag ministral-3:8b --tag gemma4:e4b
+bazel run //tools:verify_model_catalog -- --tag qwen3.5:9b --temperature 0.2
+```
 
 A writing model that can also read scanned pages lists `also_uses=frozenset({"ocr"})`;
 `catalog_uses()`, `suitability()` and `models_for()` then treat it as a reading model as
@@ -200,6 +241,51 @@ well (the Downloads dialog still lists it once, under its primary category). Ent
 whose tag starts with `hf.co/` are pulled from Hugging Face, so
 `tools/verify_model_catalog.py` checks them against the Hugging Face file list instead
 of the Ollama registry.
+
+### Rating a model against the computer's memory
+
+`suitability()` / `rate_model()` rate a catalogued model for a task on a computer, from what
+the app detected there (graphics memory, total main memory) or, when the profile was chosen by
+hand, from the size the profile stands for.  `memory_gb` of a catalog entry is the total memory
+the model needs at the proofreading window of 8192 tokens (card and main memory together),
+measured where possible (`docs/development.md`, *Choosing writing models*).
+
+| Quantity | Rule (constants in `domain/model_catalog.py`) |
+| --- | --- |
+| Card budget | `CARD_USABLE_SHARE` (85 %) of the card's memory; Apple Silicon 66 % of the unified memory (`HardwareDetection.card_gb`); none without a card |
+| Reserve | the larger of `SYSTEM_RESERVE_MIN_GB` (8 GB) and `SYSTEM_RESERVE_SHARE` (20 %) of the total main memory; swapping to disk is never counted as memory |
+| Works (`WORKS`) | at least `FULL_SPEED_SHARE` (0.9) of the model fits the card; without a card, up to `CPU_COMFORT_GB` (4 GB) |
+| Slow (`SLOW`) | the part that does not fit (the *spill*) fits in main memory beyond the reserve; `ModelRating.very_slow` when under `SLOWER_SHARE` (0.7) of the model fits the card, or there is no card |
+| Does not fit (`TOO_LARGE`) | the spill does not fit; also whenever the main memory is unknown (a remote server) and the model is not within the card |
+| Recommended (`BEST` / `GOOD`) | the tier's list, but never for a model that does not fit the computer's known memory |
+
+The two share thresholds come from speeds measured on an 8 GB card (a share of 0.97 gave 43
+tokens per second, 0.73 gave 13, 0.66 gave 6.6); they are ratios, so they scale with the
+computer, but they come from one card and one processor.
+
+`ProcessingApplicationService.memory_warning_for_run()` is the run-time counterpart, used by
+`check_run_preflight()` (GUI) and the command line before a run: for an Ollama on this computer,
+the part of every catalogued model that does not fit the card (all of it on Apple Silicon) has to
+fit the main memory that is free *right now*, minus `RUN_MEMORY_MARGIN_GB` (2 GB).  It reads
+`gpu_detector.detect_available_memory_gb()` (`psutil`'s `available`, never swap).  It is a
+**warning**, not a refusal: free memory changes from run to run, so the GUI offers "Run anyway" and
+the command line needs `--ignore-memory-check`.  `check_run_preflight()` therefore runs the memory
+check last, after the stage requirements (reading, anonymizing, correcting, evaluating), and reports
+a memory warning and a blocking issue separately.  A model that is not catalogued, a remote server
+and an unreadable memory give `""`.  It rates the models through
+`resolve_hardware_profile()`, so a hand-picked profile counts as it will at run time, and at the
+window the run really gives the model (`memory_at_context_gb`).  The wording of all this is in
+`gui/_model_wording.py`.
+
+Two measurements are still open here.  (1) **Memory of a model Ollama already has loaded**: whether
+the processor-side part of a loaded model is taken out of `available` (anonymous memory) or counts
+as reclaimable (memory-mapped weights) has not been measured.  The check therefore behaves as it
+would after Ollama unloaded everything, which is the case it has to warn about anyway, since Ollama
+unloads idle models to make room.  Measure it with a correction running, comparing
+`psutil.virtual_memory().available` with `ollama ps` (`size`, `size_vram`), on Linux/WSL and on
+Windows; if the memory is taken out, count the RAM part of other loaded models as free.
+(2) **Apple Silicon**: the unified memory may make the spill look larger than it is.  No code change
+for now — "Run anyway" takes the sting out of a false warning.
 
 ### Who owns what (hardware detection and recommendations)
 
@@ -346,7 +432,130 @@ against the real registry manifests:
 ```bash
 bazel run //tools:verify_model_catalog            # check tags exist and sizes match
 bazel run //tools:verify_model_catalog -- --ollama  # also inspect capabilities via a local server
+bazel run //tools:verify_model_catalog -- --structured-output  # run the review check (see above)
+bazel run //tools:verify_model_catalog -- --tag ministral-3:8b  # check a candidate before adding it
+bazel run //tools:verify_model_catalog -- --structured-output --temperature 0.2  # compare a temperature
 ```
+
+### Choosing writing models: the quality comparison
+
+A writing model must pass two gates before it is recommended.  **Gate 1** is the
+structured-output check above (`verify_model_catalog.py`): can it fill in the review format
+reliably?  **Gate 2** (`compare_writing_models.py`) asks how good its corrections are.  Both
+tools send what the app sends (gate 2 goes through `NativeOllamaCorrector` itself, with the
+app's own tokeniser and word diff), so a result describes the real request.
+
+```bash
+# 1. Build the test set from the public corpora (kept outside the repository)
+python3 -I tools/prepare_gec_testset.py --falko-merlin ~/gec-corpora/fm/data \
+    --wi-locness ~/gec-corpora/bea/wi+locness --out ~/gec-testset/set
+# 2. Send every text to the models (results are appended; an interrupted run resumes)
+bazel run //tools:compare_writing_models -- run --testset ~/gec-testset/set \
+    --out ~/gec-testset/results --model gemma4:e4b --temperature 0.2
+# 3. Print the table / write the list of explanations a teacher marks
+bazel run //tools:compare_writing_models -- report --out ~/gec-testset/results
+bazel run //tools:compare_writing_models -- sheet --out ~/gec-testset/results \
+    --model gemma4:e4b --temperature 0.2 > spotcheck.md
+```
+
+**Test set.** Per language eight texts of 60 to 155 words with reference corrections, plus ten
+sentences that need no correction (given to the model as one text).  German: Falko-MERLIN GEC
+corpus (test split; Falko CC BY 3.0, MERLIN CC BY-SA 4.0), MERLIN letters whole and Falko essays as
+excerpts of consecutive sentences.  English: W&I+LOCNESS v2.1 (BEA-2019 dev split, levels A, B, C;
+sentences without edits from the native-speaker essays; non-commercial use only).  French: **no
+public learner corpus with corrections exists**, so `tools/gec_fr_invented.jsonl` holds eight
+invented texts and ten correct sentences written by an AI model, not a teacher: French results
+are indicative only.  The corpora are real learner text and licensed for research, so neither they
+nor the built set belong in the repository.  Limits to keep in mind: the reference is one annotator's
+version; a few "correct" sentences contain errors the annotators missed; British spelling in the
+English references makes American spelling count as an error; eight texts per language show only
+large differences.
+
+**Metrics** (per language, summed over the texts).  *Precision / recall / F0.5*: a change counts
+when the model's word diff against the source has a hunk covering the same words with the same
+replacement as the reference's (exact match, so absolute values are low for every model and only
+the comparison counts; F0.5 weighs precision twice as much as recall because a wrong change costs
+a teacher more than a missed one).  *Left alone*: how many of the ten correct sentences come back
+unchanged.  *Added marks*: texts whose proofread text contains Markdown marks (`**`, `__`, `~~`)
+the source did not have; **these marks are ignored when scoring** (`report --count-marks` counts
+them), the column only shows how often they occur.  *Failed / fallback*: reviews that failed or fell back to corrections only.
+*Explained*: changes that need an explanation and carry one.
+
+**Results, 2026-11-07** (Ollama 0.40.13 on an RTX 3070 Laptop with 8 GB, official Ollama tags;
+mean F0.5 over German, English, French; numbers only):
+
+| Model | T | F0.5 de | F0.5 en | F0.5 fr | Mean | Left alone de / en / fr (of 10) | Texts with added marks | Failed or fallback | Seconds per German text |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `gemma4:12b` | 0.7 | 0.47 | 0.46 | 0.97 | **0.635** | 5 / 4 / 10 | 0/27 | 0/27 | 54 |
+| `gemma4:12b` | 0.2 | 0.46 | 0.45 | 0.97 | **0.628** | 5 / 5 / 10 | 0/27 | 0/27 | 54 |
+| `gemma4:e4b` | 0.2 | 0.46 | 0.40 | 0.98 | **0.612** | 4 / 4 / 10 | 0/27 | 0/27 | 19 |
+| `gemma4:e4b` | 0.7 | 0.49 | 0.40 | 0.94 | **0.611** | 3 / 5 / 10 | 0/27 | 0/27 | 17 |
+| `qwen3.5:9b` | 0.2 | 0.33 | 0.37 | 0.87 | **0.527** | 0 / 4 / 10 | 0/27 | 0/27 | 42 |
+| `qwen3:4b` | 0.7 | 0.42 | 0.37 | 0.67 | **0.486** | 6 / 5 / 8 | 0/27 | 0/27 | 13 |
+| `ministral-3:14b` | 0.7 | 0.37 | 0.36 | 0.69 | **0.476** | 0 / 5 / 8 | 17/27 | 0/27 | 219 |
+| `qwen3.5:9b` | 0.7 | 0.28 | 0.27 | 0.77 | **0.440** | 0 / 0 / 10 | 0/27 | 0/27 | 45 |
+| `ministral-3:14b` | 0.2 | 0.39 | 0.36 | 0.56 | **0.434** | 3 / 3 / 4 | 17/27 | 0/27 | 212 |
+| `ministral-3:8b` | 0.2 | 0.31 | 0.26 | 0.67 | **0.411** | 2 / 2 / 7 | 1/27 | 0/27 | 46 |
+| `ministral-3:8b` | 0.7 | 0.23 | 0.20 | 0.65 | **0.358** | 2 / 2 / 9 | 7/27 | 0/27 | 48 |
+
+Seconds are for this 8 GB card; the 14B model runs partly on the processor.  Gate 1 for the same
+models: see `evaluations/writing-models-2026-11/model-check-results-2026-11-07.md`.
+
+What the numbers say:
+
+* Every model changes sentences that were already correct (the typical weakness of small
+  models); only `gemma4` and `qwen3:4b` leave a useful share alone in German and English.
+* **`gemma4:e4b` and `gemma4:12b` beat `qwen3.5:9b`, the default at the time of the check, in
+  all three languages** at both temperatures, and are barely affected by the temperature.
+  `gemma4:e4b` takes about 40 % of the time per text.
+* **`qwen3.5:9b` is better at 0.2** than at the app's 0.7 (mean 0.527 against 0.440, better F0.5
+  in all three languages); its gate-1 result is 14 of 15 runs at both temperatures.
+* **Both Ministral models mark their changes** with `**bold**` inside the proofread text (17 of 27
+  texts for the 14B model), which the format does not ask for.  It is ignored in the scores above;
+  with the marks counted as errors the means fall to 0.240 / 0.222 (`ministral-3:14b`) and 0.275
+  (`ministral-3:8b` at 0.7).  Scored by words only they are mid-field: in German and English
+  `ministral-3:14b` (0.37 and 0.36) beats `qwen3.5:9b` at 0.7 and matches it at 0.2, in French
+  (0.56 to 0.69) it is clearly behind, and in all three languages it trails both `gemma4` models.
+  The vendor ships temperature 0.15; 0.2 helps the 8B model (0.358 to 0.411), not the 14B one.
+* `qwen3:4b`, the no-graphics-card model, scores 0.486 at 0.7 and 13 s per text.
+
+**Decision rules of the plan, applied** (the writing-model plan, no longer in the tree; the
+catalog, the recommended lists and the defaults follow them).  R1: the 8 GB alternative is
+`gemma4:e4b` (mean F0.5 0.611 against at most 0.411 for `ministral-3:8b`); the 16 GB alternative
+is `gemma4:12b` (0.635 against at most 0.476 for `ministral-3:14b`, which also needs about four
+times as long per text on this card).  R2 is met: lowering `qwen3.5:9b` from 0.7 to 0.2 improves
+F0.5 in all three languages and gate 1 gives the same result as at 0.7 (14 of 15 runs; no
+repetition loops), and the temperature is neutral for `gemma4`, so the app's default can become
+0.2.  R3 is met for 16 GB: `gemma4:12b` wins F0.5 over `qwen3.5:9b` in all three languages.  The
+same holds for `gemma4:e4b` on 8 GB, which the plan's target state did not provide for.  The
+teacher spot-check of explanations is still missing; a provisional reading by an AI model of ten
+explanations per language and model found at least 8 of 10 correct for both `gemma4` models in
+German and English and 10 of 10 in French, against 6 of 10 for `qwen3.5:9b` in French (two wrong:
+`rester` called pronominal, `au jardin` explained as "outside the garden").
+
+**Does a model fit the graphics card at the base window (`PROOFREADING_NUM_CTX`, 8192), and how
+fast is it?**  Measured with `nvidia-smi`, `ollama ps` and Windows' own memory counters on one
+computer (RTX 3070 Laptop with 8 GB, 47 GB of main memory), window 8192 tokens, 250 generated
+tokens, nothing else on the card:
+
+| Model | Tokens per second | Video memory used | Free main memory used | On the card at 4096 → 8192 (Ollama's report) |
+| --- | --- | --- | --- | --- |
+| `qwen3:4b` | 98 | 3.8 GB | 0.8 GB | 100 % → 100 % |
+| `gemma4:e4b` | 77 | 4.4 GB | 1.1 GB | 100 % → 100 % |
+| `qwen3.5:9b` | 43 | 6.4 GB | 1.3 GB | 100 % → 88 % |
+| `ministral-3:8b` | 32 | 6.2 GB | 1.5 GB | 92 % → 84 % |
+| `gemma4:12b` | 13 | 6.9 GB | 3.6 GB | not reliable |
+| `ministral-3:14b` | 6.6 | 6.3 GB | 4.5 GB | 61 % → 56 % |
+
+*Free main memory used* is the drop of free memory while the model is loaded; about 1 GB of it is
+loading overhead that every model has, even those that sit entirely on the card, so the share that
+really runs on the processor is roughly the value minus 1 GB (`gemma4:12b` about 2.6 GB,
+`ministral-3:14b` about 3.5 GB).  Two consequences: `gemma4:12b` does **not** run natively on an 8 GB
+card (it needs about 9.5 GB in total, which is the catalog's `memory_gb`, and generates at a sixth of
+the speed of `gemma4:e4b`), and Ollama's size report is wrong for it (about 1 GB), so speed is the
+reliable signal.  On this card Ollama keeps at most about 5.6 GB of weights on the GPU; the fixed window
+of 8192 tokens moves part of `qwen3.5:9b` and `ministral-3:8b` to the processor.  `memory_gb` in the
+catalog is the total a model needs at that window (card plus main memory).
 
 ## Storage, hashing & caching
 
@@ -437,7 +646,7 @@ The panel (`gui/_preview_panel.py`) keeps the texts *unmasked* in `_stored_raw`,
 `_refill_texts()` — masked when the setting is on, and read-only while it is (an edit would be
 saved with the stand-ins).  The note above the texts (`_PrivacyNote`) is clickable only in that
 locked state: a click emits `display_anonymized_changed(False)`, the eye button's route, so the
-window stores the choice and the menu entry follows.  `_on_ocr_text_changed` / `_on_correction_text_changed` also keep
+window stores the choice and the Privacy Settings checkbox follows.  `_on_ocr_text_changed` / `_on_correction_text_changed` also keep
 the stored text current, so switching the setting off shows the teacher's edits.  Placeholders
 are marked as chips: `gui/_formatted_text.py:chip_placeholders()` wraps them in the rendered
 Markdown HTML (markup is skipped, so a stand-in that reads like a tag cannot break the
@@ -452,13 +661,14 @@ belongs to a text the panel no longer shows is dropped (`set_anonymization(..., 
 and a failure keeps the names hidden behind a note instead of showing them.  Changing the
 anonymizer settings in the dialog calls `invalidate_anonymization()`.
 
-The setting itself is a GUI preference, not part of `Config`: `View → Hide personal
-information in texts` and the eye button both end in `MainWindow._apply_display_anonymized`,
+The setting itself is a GUI preference, not part of `Config`: the checkbox under
+*Advanced Settings → Privacy Settings → Personal info: detection* and the eye button both end in
+`MainWindow._apply_display_anonymized`,
 which stores `privacy/display_anonymized` (`gui/_privacy_settings.py`,
 `display_anonymized()` / `set_display_anonymized()`) and calls
 `PreviewPanel.set_display_anonymized()`.  It defaults to **on** (`DISPLAY_ANONYMIZED_DEFAULT`):
-only a stored answer shows the names, and without the add-on the entry is greyed out and the
-setting takes effect once it is installed.  The menu entry is enabled only while
+only a stored answer shows the names, and without the add-on the checkbox is greyed out and the
+setting takes effect once it is installed.  The checkbox is enabled only while
 `ProcessingApplicationService.anonymizer_available(language)` holds — spaCy importable and the
 model of the document language installed — so a missing add-on greys it out with a tooltip
 pointing at the Downloads dialog instead of failing later.  The answer is cached per document
@@ -658,6 +868,8 @@ Ollama's `format=` is enforced by the engine and works with all local models (a 
 still fails falls back to corrections only per file). `structured_output` in the catalog only
 decides the `explanations ✓` badge; to earn it, run
 `tools/verify_model_catalog.py --structured-output` against the model and enter the result.
+The same run decides whether a model's answers are cut off at the context size, so a badge
+never sits next to a model that truncates (see *Soft failures and per-file warnings*).
 
 **Splice** (`domain/correction_review.py:splice`). The model answers only the sentences it
 changed, so the full text is rebuilt by walking the anonymized source with a cursor and
@@ -762,6 +974,7 @@ re-exported from the package root for convenience.
 | `StorageResolutionError` | `RuntimeError` | `storage_root.resolve_storage_root` |
 | `ProviderNotAvailableError` | `RuntimeError` | provider modules, `ocr_processor`, `stage_builder` |
 | `OllamaConnectionError` | `RuntimeError` | `ollama_utils.check_model` |
+| `ResponseTruncatedError` | `OCRError` | `ollama_utils.OllamaClient.chat` |
 | `PipelineInputError` | `ValueError` | `input_provider_factory`, `preprocess_service` |
 
 Inheriting from the appropriate built-in (`ValueError` for bad input,
@@ -791,6 +1004,162 @@ class Evaluator(ABC):
         """Return (evaluation_text, warning_or_None)."""
         ...
 ```
+
+**A truncated answer is never used.** Ollama has two ways of running out of context, and only
+one of them is visible afterwards:
+
+- *The answer is too long.* The last stream chunk reports `done_reason == "length"`.
+  `OllamaClient.chat_with_stats()` returns that chunk's `ChatStats`, and `chat()` — the entry
+  point every caller uses — raises `ResponseTruncatedError` instead of handing the fragment
+  on. (Prompt and answer then add up to exactly `num_ctx`; verified on Ollama 0.40.)
+- *The prompt is too long.* Ollama silently drops part of the prompt and still reports
+  `done_reason == "stop"`, with a `prompt_eval_count` below the real prompt size. Nothing in
+  the answer shows it, and the `ollama` client library (0.6) cannot send `truncate=false`,
+  which would make the server refuse instead. So `chat()` estimates the request size before
+  sending (`ensure_prompt_fits()`) and raises the same error. It applies only to requests that
+  set `num_ctx` and carry no image; the estimate errs towards refusing.
+
+`_llm_invoke.py` turns the error into the failure kind `"truncated"`, with the warning
+`TRUNCATED_MESSAGE` (*"The text was too long for the model's working memory."*). In text mode
+the original text is kept. In review mode a cut-off answer — the first one, or a **repair**
+request that is cut off or that `_ReviewCorrector._repair_fits()` already knows will not fit —
+only gives up on the structured answer: `_correct_review()` returns `None` and the caller falls
+back to text mode, which needs less room (shorter system prompt, and an answer about as long as
+the text, where a review answer is longer). The file fails only if text mode is cut off too. The
+fit of a repair is checked *before* sending, so the doomed round trip is skipped. A provider
+error (`"transport"`) still fails the file at once: text mode would meet the same server.
+
+#### The context-budget rule
+
+One pure module, `domain/context_budget.py`, owns both decisions:
+
+```python
+@dataclass(frozen=True)
+class ContextBudget:
+    num_ctx: int
+    chars_per_token: float = 3.0
+    def request_fits(self, request_chars: int, *, answer_tokens: int) -> bool: ...
+    def max_text_chars(self, overhead_chars: int, *, answer_factor: float = 0.0,
+                       answer_tokens: int = 0) -> int: ...
+```
+
+- `chars_per_token` is 3.0, a cautious estimate (German clean prose is about 4, misspelt words
+  fewer), so the check refuses a little early rather than too late.
+- **Proofreading in text mode** answers with the text again, so the request may take half of the
+  window (`answer_factor=1.0`, `answers_with_the_same_text()`); that is the check
+  `ensure_prompt_fits()` makes before every request.
+- **Proofreading in review mode** answers with more than the text: per changed sentence the
+  original, the corrected wording and a list of changes with explanations, plus the JSON keys.
+  `NativeOllamaCorrector.max_text_chars()` therefore sizes the pieces with
+  `answer_factor=REVIEW_ANSWER_FACTOR` (2.0, an estimate): the request may take a third of the
+  window, so the answer is not cut off on an error-dense text.
+- **Content review** answers short and of a known length, so it passes
+  `answer_tokens=EVALUATION_ANSWER_TOKENS` (1536, an estimate, measured not yet). That removes
+  the artificial half — a review can use about (8192 − 1536) × 3 ≈ 19 900 characters minus its
+  prompt.
+
+`ensure_prompt_fits()` delegates here, and `OllamaClient.chat()` takes the allowance from the
+caller (`answer_tokens`, `None` means "as large as the request"). Over the limit a proofreading
+request warns `TRUNCATED_MESSAGE`; a content review warns its own sentence,
+`TOO_LONG_FOR_REVIEW_WARNING` (*"The text is too long for a content review with a local model."*).
+Both stages use the same `num_ctx` (see below), so no reload happens between them.
+
+#### How large the window is
+
+`domain/context_budget.py` also decides the window, from a fixed ladder
+`CONTEXT_STEPS = (8192, 16384, 32768)` — a ladder rather than an arbitrary size, because a
+window that changes between files makes Ollama reload the model for every file.
+
+- `automatic_num_ctx(spec, card_gb, cap=…)` returns the largest step at which
+  `memory_at_context_gb(spec, step)` still reaches `FULL_SPEED_SHARE` of the graphics card, so a
+  larger window can never turn "Works" into "Slower". Caps: 16384 for proofreading (a review
+  answer repeats the text and small models drift on long answers), 32768 for content review.
+- `memory_at_context_gb()` needs the measured `context_gb_per_8k` of the catalog entry. A model
+  without that figure, a custom model, a computer without a card, a remote server and a manual
+  profile with an unknown card size keep 8192.
+- The `proofreading_context` setting (`"auto"` by default, or a fixed step) overrides the rule —
+  for advanced users and remote servers. An unknown value falls back to `"auto"` with a warning,
+  as `hardware_profile` does.
+- `run_windows()` resolves both stages once per run, each from **its own** model
+  (`proofreading_spec`, `evaluation_spec`), so a larger review model is not sized from the
+  smaller proofreading model; `stage_builder.resolve_run_windows()` applies it to a `Config`, and
+  a stage whose provider is online reports the base window (the app does not set one). When
+  proofreading and content review use the same Ollama model, both get the smaller window (Q4): one reload per file between the stages would cost
+  seconds on every run, and content review still gains from its own answer allowance.
+
+The resolved window is passed down (`CorrectionSettings.num_ctx`, `StageBuilder.resolved_windows()`)
+and used by `proofreading_options()`, `ContextBudget`, the chunk budget below, the correction
+cache fingerprint and the memory rating and run-start warning (`memory_at_context_gb`, per
+model via `stage_builder.window_of_model()`). It is not a module constant any more. The
+fingerprint part `num-ctx-{…}` exists only for an Ollama corrector and holds
+`window_from_setting()` — the pinned window up to the proofreading cap, so `16384` and `32768`
+share a key — until the card-derived window is threaded in (see below).
+
+#### Long texts are proofread in pieces
+
+`ChunkingCorrector` (`infrastructure/correction.py`) decorates the native Ollama corrector in
+`stage_builder.py`; LangChain providers (online, large windows) are not wrapped. On **every call**
+it asks its inner corrector for `max_text_chars(language, text_format=…)` — computed from that
+corrector's own system prompt and the fixed part of the human message, so the figure cannot drift
+from what is really sent, and per call because the Markdown notation hint makes the system prompt
+longer — and:
+
+- a text within that budget goes to the inner corrector unchanged, one request, as before;
+- a longer text is split by `domain/text_chunks.py` and each piece corrected on its own. The
+  pieces are joined with their original separators, the reviews are concatenated, and the
+  `unplaced` indices are shifted by the number of sentences before them.
+
+`split_for_budget(text, max_chars, text_format)` keeps the invariant
+`"".join(c.text + c.separator for c in chunks) == text`: every character is in exactly one chunk,
+in its `text` or in the `separator` that follows it. It cuts at paragraph boundaries (blank lines),
+packing paragraphs greedily; a paragraph that is still too long is cut at sentence ends (`.`, `!`,
+`?`, `…` followed by whitespace), because a model can only fix a sentence it sees whole. A single
+sentence longer than `max_chars` is cut at line breaks, and as the last resort between two
+words (unpunctuated handwriting, a list or table with one entry per line). Only a single word
+longer than `max_chars` cannot be split; it becomes its own chunk and its request reports "too
+long". In Markdown a closed fenced code block is never split, however long: a fence opened in one
+piece and closed in the next would be a different document, so an over-long fence is its own chunk
+and reports "too long". A fence that is never closed is no code block (stray OCR noise) and is
+cut like any other text. A table or list without blank lines is one paragraph, so it stays whole
+as long as it fits, and is cut at line breaks when it does not.
+
+Failure is all-or-nothing: **any piece failed → the whole file fails** and keeps the original text
+(`CHUNK_FAILURE`), because a half-corrected file must never be cached. The pieces after the failed
+one are not sent (their answers would be discarded, and each would wait out the timeout on an
+unreachable server). A piece that fell back to
+text mode does not fail the file; it costs the explanations of that piece and the merged result
+says `MISSING_REVIEW_WARNING` (*"Explanations are missing for part of the text."*). Chunking is
+deterministic for a text and a window, so the cache fingerprint carries the window and a later
+change of it proofreads the file again.
+
+Known costs: there is no context across a cut (a change that spans a boundary cannot be made,
+which cutting at sentence ends keeps rare), and one request per piece is slower in total than one
+big request would have been — if one could fit.
+
+#### Not yet measured
+
+Two tables are still empty; both need Ollama, so neither was run during the review:
+
+| Measurement | How |
+|---|---|
+| Memory of an already loaded model (WP2.2) | `psutil.virtual_memory().available` against `ollama ps` (`size`, `size_vram`) after a correction, on Linux/WSL and on Windows |
+| Context-cache growth (WP4.5) | `ollama ps` after one request at `num_ctx` 8192, 16384 and 32768, for `qwen3:4b`, `gemma4:e4b`, `gemma4:12b` and `qwen3.5:9b` |
+
+The first decides whether the run-start check counts a loaded model twice (see above). The second
+fills `OllamaModelSpec.context_gb_per_8k`; until a model has a figure, it stays at 8192. How fast a
+context cache grows depends on the attention design (sliding-window or linear-attention layers grow
+much more slowly), so it cannot be derived from the model size. `EVALUATION_ANSWER_TOKENS = 1536`
+is an estimate until one real review's `eval_count` has been read.
+
+OCR is the exception on purpose: it limits a page with `num_predict`, which also ends with
+`done_reason == "length"`, but a partial page is still the best result. `OllamaOCRProcessor`
+passes `allow_truncated=True` and keeps the text read so far; an answer that is empty *and* was
+stopped at its output limit raises `OCRError` instead, because there is nothing to keep. OCR requests
+keep Ollama's own window. Costs of a fixed window: a server started with a larger
+`OLLAMA_CONTEXT_LENGTH` is overridden downwards, and a model that both reads scans and proofreads
+is reloaded on each switch between the two stages. `prompt_eval_count` counts only tokens Ollama
+had to evaluate, so it can be lower than the prompt when a prefix is cached; read it as a lower
+bound.
 
 ### Logging
 

@@ -767,6 +767,12 @@ class ConfigPanel(QScrollArea):
             docx_enabled=docx_enabled,
             text_enabled=text_enabled,
             text_anonymized_enabled=text_anonymized_enabled,
+            hardware_profile=str(
+                self._settings_dict.get("hardware_profile", DEFAULTS["hardware_profile"])
+            ),
+            proofreading_context=str(
+                self._settings_dict.get("proofreading_context", DEFAULTS["proofreading_context"])
+            ),
         )
 
     @staticmethod

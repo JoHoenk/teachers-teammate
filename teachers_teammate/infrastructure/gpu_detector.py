@@ -287,6 +287,20 @@ def detect_system_memory_gb() -> float | None:
         return None
 
 
+def detect_available_memory_gb() -> float | None:
+    """Return the main memory (RAM) free right now in GB, or ``None`` when unreadable.
+
+    The memory a program could use without the system swapping to disk (psutil's
+    ``available``: free memory plus what the system can reclaim at once).  Swap is not counted.
+    """
+    try:
+        import psutil  # noqa: PLC0415
+
+        return psutil.virtual_memory().available / 2**30
+    except Exception:  # noqa: BLE001  # psutil may be missing in stripped environments; the check is advisory
+        return None
+
+
 def _windows_total_memory_bytes() -> int:
     """Return the physical memory in bytes through ``GlobalMemoryStatusEx``."""
     import ctypes  # noqa: PLC0415

@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QMessageBox,
+    QProgressBar,
     QPushButton,
     QScrollArea,
     QVBoxLayout,
@@ -43,12 +44,23 @@ from ..domain.model_catalog import (
     ModelRating,
     ModelUses,
 )
-from ..domain.model_listing import ModelListing
+from ..domain.model_listing import ListedModel, ModelGroup, ModelListing
 from . import _user_text as txt
+from ._collapsible_section import CollapsibleSection
 from ._constants import _LANGUAGES
 from ._data_flow_summary import LocationHint, text_note
 from ._model_guidance import PROVIDER_PREFIX, OpenDownloads
-from ._model_wording import SAME_MODEL_TIP
+from ._model_item_delegate import ModelItem, fill_grouped
+from ._model_wording import (
+    EXPERT_SETTINGS,
+    SAME_MODEL_TIP,
+    USE_SUGGESTION,
+    asking_for_models_text,
+    checking_models_text,
+    models_from_text,
+    retiring_model_text,
+    saved_model_not_offered_text,
+)
 from ._prompt_editor import PromptEditor
 from ._worker import _ConnectionCheckThread  # noqa: F401  kept for external callers
 
@@ -108,6 +120,17 @@ class _PackageHint(QWidget):
         self.downloads_closed.emit()
 
 
+class _BusyIndicator(QProgressBar):
+    """Small indeterminate bar shown next to a model combo while its list is being fetched."""
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setRange(0, 0)
+        self.setFixedWidth(64)
+        self.setTextVisible(False)
+        self.setVisible(False)
+
+
 # ── background threads ────────────────────────────────────────────────────────
 
 
@@ -119,6 +142,8 @@ class _SettingsAppService(Protocol):
     def default_preprocess_for_engine(self, engine: str) -> str: ...
 
     def get_provider_info(self, provider: str) -> dict: ...
+
+    def provider_key_missing(self, provider: str) -> bool: ...
 
     def list_provider_models(self, provider: str, *, base_url: str = "") -> list[str]: ...
 
@@ -176,6 +201,7 @@ class _SettingsAppService(Protocol):
         *,
         cached_only: bool = False,
         system_memory_gb: float | None = None,
+        card_gb: float | None = None,
     ) -> list[ModelRating]: ...
 
     def detect_gpus(self, *, refresh: bool = False) -> list: ...
@@ -193,22 +219,33 @@ class _ModelFetchThread(QThread):
     """Fetches model names in a background thread via a caller-supplied callable.
 
     The callable returns the names, or a :class:`ModelListing` that also says whether they
-    are live.  *tag* (the provider the fetch is for) comes back with the answer, so a late
-    answer for a provider the user has already left can be told apart and dropped.
+    are live.  It is handed a ``report(text)`` callback for saying what it is doing, since a
+    slow fetch (one HTTP request per model) otherwise looks like a hung window.  *tag* (the
+    provider the fetch is for) comes back with the answer and with each progress text, so a
+    late answer for a provider the user has already left can be told apart and dropped.
     """
 
     models_ready = Signal(list)
     listing_ready = Signal(str, object)  # (tag, ModelListing)
+    progress = Signal(str, str)  # (tag, text)
     error = Signal(str)
 
-    def __init__(self, fetch_fn: Callable[[], list[str] | ModelListing], tag: str = "") -> None:
+    def __init__(
+        self,
+        fetch_fn: Callable[[Callable[[str], None]], list[str] | ModelListing],
+        tag: str = "",
+    ) -> None:
         super().__init__()
         self._fetch_fn = fetch_fn
         self._tag = tag
 
+    def _report(self, text: str) -> None:
+        """Say what the fetch is doing (called from the worker thread)."""
+        self.progress.emit(self._tag, text)
+
     def run(self) -> None:
         try:
-            result = self._fetch_fn()
+            result = self._fetch_fn(self._report)
         except Exception as exc:  # noqa: BLE001  # provider model fetch may raise any network/auth error; report via signals
             self.error.emit(str(exc))
             self.models_ready.emit([])
@@ -241,11 +278,30 @@ _STATUS_KEY_MISSING = '<span style="color:#e67e22;">● key not set</span>'
 _STATUS_ERROR = '<span style="color:#c0392b;">● -</span>'
 
 
-def _status_ok(n: int) -> str:
-    return f'<span style="color:#27ae60;">● {n} model{"s" if n != 1 else ""}</span>'
+def _status_ok(n: int, service: str = "") -> str:
+    """Return the finished status line: a green "✓ N models" (from *service* when given)."""
+    what = models_from_text(n, service) if service else f"{n} model{'' if n == 1 else 's'}"
+    return f'<span style="color:#27ae60;">✓ {html.escape(what)}</span>'
 
 
-def _listing_status(listing: ModelListing) -> str:
+def _status_busy(text: str) -> str:
+    """Return the grey line shown while the model list is still on its way."""
+    return f'<span style="color:#888;">● {html.escape(text)}</span>'
+
+
+def _status_note(text: str) -> str:
+    """Return an orange note to append to a status line."""
+    return f'<span style="color:#e67e22;">{html.escape(text)}</span>'
+
+
+#: Status-link prefix that carries the model to take instead of the chosen one.
+_USE_PREFIX = "use:"
+
+#: The groups of a curated model list, in the order they are shown.
+_MODEL_GROUPS: tuple[ModelGroup, ...] = ("current", "pinned", "own", "other")
+
+
+def _listing_status(listing: ModelListing, service: str = "") -> str:
     """Return the status line for *listing*: live, built-in by design, or built-in after a failure.
 
     A failed query must not look like a successful one, so it says why and offers to retry.
@@ -261,7 +317,7 @@ def _listing_status(listing: ModelListing) -> str:
         )
     if listing.source == "builtin":
         return f'<span style="color:#888;">● {count} {noun} · built-in list</span>'
-    return _status_ok(count)
+    return _status_ok(count, service)
 
 
 # ── module-level helpers ──────────────────────────────────────────────────────
@@ -288,7 +344,14 @@ def _available_providers(app_service: _SettingsAppService) -> list[str]:
 #: (that aborts the whole process) and these run a plain function with no event
 #: loop, so they cannot be interrupted either: they are parked here until they end.
 _RETIRED_THREADS: set[QThread] = set()
-_THREAD_RESULT_SIGNALS = ("models_ready", "listing_ready", "error", "detect_done", "finished")
+_THREAD_RESULT_SIGNALS = (
+    "models_ready",
+    "listing_ready",
+    "progress",
+    "error",
+    "detect_done",
+    "finished",
+)
 _RETIRED_WAIT_MS = 3000
 
 
@@ -562,6 +625,13 @@ class _AiServiceDialog(QDialog):
 
         self._app_service: _SettingsAppService = app_service or ProcessingApplicationService()
         self._fetch_thread: _ModelFetchThread | None = None
+        #: The model the teacher saved for this step, and the provider it was saved for, so a
+        #: list that no longer offers it can say so instead of silently dropping it — and a
+        #: later list of another provider cannot mistake a name carried over for it.
+        self._saved_model = ""
+        self._saved_model_provider = ""
+        #: The list the field was last filled from, so a status link can restore its status line.
+        self._shown_listing: ModelListing | None = None
         self._ollama_url = str(values.get("ollama_url", DEFAULTS["ollama_url"]))
         self._values = values
         self._open_downloads = open_downloads
@@ -583,6 +653,7 @@ class _AiServiceDialog(QDialog):
         if group is not None:
             layout.addWidget(group)
         layout.addWidget(self._build_model_group(hardware_profile))
+        layout.addWidget(self._build_expert_section())
         layout.addStretch(1)
         main.addWidget(scroll, stretch=1)
 
@@ -693,12 +764,19 @@ class _AiServiceDialog(QDialog):
 
         self._model = QComboBox()
         self._model.setEditable(True)
-        model_form.addRow("AI model:", self._model)
+        model_row = QWidget()
+        model_layout = QHBoxLayout(model_row)
+        model_layout.setContentsMargins(0, 0, 0, 0)
+        model_layout.addWidget(self._model, stretch=1)
+        # Says a fetch is running, so a list that stays put for a moment is not a hang.
+        self._busy = _BusyIndicator()
+        model_layout.addWidget(self._busy)
+        model_form.addRow("AI model:", model_row)
 
         self._status_lbl = QLabel(_STATUS_LOADING)
         self._status_lbl.setTextFormat(Qt.TextFormat.RichText)
         self._status_lbl.setWordWrap(True)
-        self._status_lbl.linkActivated.connect(lambda _link: self._refetch_models())
+        self._status_lbl.linkActivated.connect(self._on_status_link)
         model_form.addRow("", self._status_lbl)
 
         self._guidance = OllamaModelGuidance(
@@ -722,6 +800,13 @@ class _AiServiceDialog(QDialog):
         self._model.currentTextChanged.connect(lambda _txt: self._update_same_model_tip())
         self._model.currentTextChanged.connect(lambda _txt: self._update_where_hint())
         self._hw_selector.resolved_changed.connect(lambda _d: self._update_same_model_tip())
+        return model_group
+
+    def _build_expert_section(self) -> CollapsibleSection:
+        """Build the collapsed section holding the temperature."""
+        self._expert_section = CollapsibleSection(EXPERT_SETTINGS, collapsed=True)
+        inner = QFormLayout(self._expert_section.content_widget)
+        inner.setContentsMargins(0, 0, 0, 0)
 
         self._temperature = QDoubleSpinBox()
         self._temperature.setRange(0.0, 2.0)
@@ -729,8 +814,8 @@ class _AiServiceDialog(QDialog):
         self._temperature.setDecimals(1)
         self._temperature.setValue(DEFAULTS[self._TEMPERATURE_KEY])
         self._temperature.setToolTip(self._TEMPERATURE_TOOLTIP)
-        model_form.addRow("Temperature:", self._temperature)
-        return model_group
+        inner.addRow("Temperature:", self._temperature)
+        return self._expert_section
 
     def _load_service_values(self, values: dict) -> None:
         """Apply the saved provider, model and temperature, then ask the service for models.
@@ -742,11 +827,17 @@ class _AiServiceDialog(QDialog):
             self._provider.blockSignals(True)
             _set_combo(self._provider, str(values[self._PROVIDER_KEY]))
             self._provider.blockSignals(False)
+        self._saved_model = str(values.get(self._MODEL_KEY, "") or "").strip()
+        self._saved_model_provider = self._provider.currentText()
         self._on_provider_changed(self._provider.currentText())
         if self._MODEL_KEY in values:
             self._model.setCurrentText(str(values[self._MODEL_KEY]))
         if self._TEMPERATURE_KEY in values:
             self._temperature.setValue(float(values[self._TEMPERATURE_KEY]))
+            # A temperature the user chose is the reason to open "Expert settings" at all.
+            self._expert_section.set_expanded(
+                self._temperature.value() != DEFAULTS[self._TEMPERATURE_KEY]
+            )
         self._auto_fetch()
 
     # ── provider change ───────────────────────────────────────────────────────
@@ -757,21 +848,26 @@ class _AiServiceDialog(QDialog):
         self._auto_fetch()
 
     def _on_provider_changed(self, provider: str) -> None:
-        """Show *provider*'s built-in models and any warning; the live list follows separately.
+        """Show *provider*'s models and clear the field to the one model to keep.
 
-        A model name from the previous service is kept only if this one offers it: an Ollama
-        tag in the Mistral field would be sent to Mistral as it stands.
+        A service that can be asked for its list fills the field with the live answer a moment
+        later; until then the field holds only the model to keep, because its built-in names are
+        not installed or offered and would read like the answer.  A model name from the previous
+        service is kept only if this one offers it: an Ollama tag in the Mistral field would be
+        sent to Mistral as it stands.
         """
         info = self._app_service.get_provider_info(provider)
         previous = self._model.currentText().strip()
         models = list(info.get("models", []))
+        default = str(info.get("default_model", ""))
+        keep = previous if previous and previous in models else default
         self._model.clear()
-        if models:
+        if not self._will_be_asked(provider, info):
             self._model.addItems(models)
-        if previous and previous in models:
-            self._model.setCurrentText(previous)
-        else:
-            self._model.setCurrentText(info.get("default_model", ""))
+        if keep and self._model.findText(keep) < 0:
+            # A kept model that is already in the built-in list must not be added twice.
+            self._model.addItem(keep)
+        self._model.setCurrentText(keep)
         if provider == "ollama":
             # The local list changes whenever a model is pulled or removed, and is cheap to
             # ask for.  An online service's list fetched a moment ago is still good (a failed
@@ -781,6 +877,12 @@ class _AiServiceDialog(QDialog):
         self._guidance.setVisible(provider == "ollama")
         self._update_package_hint(provider)
         self._update_where_hint()
+
+    def _will_be_asked(self, provider: str, info: dict) -> bool:
+        """Return whether *provider* will be asked for its model list right now."""
+        return bool(info.get("can_list_models")) and not self._app_service.provider_key_missing(
+            provider
+        )
 
     def _update_package_hint(self, provider: str) -> None:
         """Show the install hint when *provider*'s package is missing, else hide it."""
@@ -829,12 +931,38 @@ class _AiServiceDialog(QDialog):
         )
         self._auto_fetch()
 
+    def _set_busy(self, busy: bool, text: str = "") -> None:
+        """Show or hide the busy bar; while a list is on its way, no stale hints.
+
+        *text* names what is happening and is shown in the status line, so the wait has a
+        reason ("Asking Ollama which models are installed…") instead of a bare spinner.
+        """
+        self._busy.setVisible(busy)
+        if not busy:
+            return
+        self._status_lbl.setText(_status_busy(text))
+        self._guidance.setVisible(False)
+
+    def _service_name(self, provider: str) -> str:
+        """Return the name of *provider* to show the user (never its key)."""
+        name = self._app_service.get_provider_info(provider).get("display_name", "")
+        return str(name or provider)
+
+    def _is_saved_model(self, model: str) -> bool:
+        """Return whether *model* is the choice saved for the provider currently shown."""
+        return (
+            bool(model)
+            and model == self._saved_model
+            and self._provider.currentText() == self._saved_model_provider
+        )
+
     def _auto_fetch(self) -> None:
         # A fetch still running belongs to a service that may no longer be the chosen one.
         _retire_thread(self._fetch_thread)
         provider = self._provider.currentText()
-        info = self._app_service.get_provider_info(provider)
-        if info.get("needs_api_key") and not os.environ.get(info.get("env_key", "")):
+        service = self._service_name(provider)
+        if self._app_service.provider_key_missing(provider):
+            self._set_busy(False)
             self._status_lbl.setText(_STATUS_KEY_MISSING)
             return
         url = self._ollama_url if provider == "ollama" else ""
@@ -848,23 +976,33 @@ class _AiServiceDialog(QDialog):
         if cached is not None:
             self._show_listing(cached)
             return
-        self._status_lbl.setText(_STATUS_LOADING)
+        self._set_busy(True, asking_for_models_text(service))
         if provider == "ollama":
 
-            def fetch() -> ModelListing:
+            def fetch(report: Callable[[str], None]) -> ModelListing:
                 tags = self._app_service.list_provider_models(provider, base_url=url)
-                # Classify here so set_models() only needs cache lookups.
+                # Classify here so set_models() only needs cache lookups.  It costs one
+                # request per model, so say how many there are before it starts.
+                report(checking_models_text(len(tags)))
                 self._app_service.classify_ollama_models(tags, url)
                 return ModelListing(tags)
 
         else:
 
-            def fetch() -> ModelListing:
+            def fetch(report: Callable[[str], None]) -> ModelListing:
+                _ = report  # a single request; nothing to report between start and answer
                 return self._app_service.list_provider_models_checked(provider, base_url=url)
 
         self._fetch_thread = _ModelFetchThread(fetch, tag=provider)
         self._fetch_thread.listing_ready.connect(self._on_listing_ready)
+        self._fetch_thread.progress.connect(self._on_fetch_progress)
         self._fetch_thread.start()
+
+    def _on_fetch_progress(self, provider: str, text: str) -> None:
+        """Say what the running fetch is doing, unless the user has left that service."""
+        if provider != self._provider.currentText():
+            return
+        self._set_busy(True, text)
 
     def _on_listing_ready(self, provider: str, listing: object) -> None:
         """Show a fetched list, unless it is for a service the user has already left."""
@@ -877,26 +1015,115 @@ class _AiServiceDialog(QDialog):
 
     def _show_listing(self, listing: ModelListing) -> None:
         """Fill the model field and the status line from *listing*."""
+        self._set_busy(False)
+        self._shown_listing = listing
+        provider = self._provider.currentText()
+        service = self._service_name(provider)
         models = listing.models
         if not models:
             # A failed answer says why (and offers a retry); only a silent empty one is a dash.
             self._status_lbl.setText(
-                _listing_status(listing) if listing.source == "failed" else _STATUS_ERROR
+                _listing_status(listing, service) if listing.source == "failed" else _STATUS_ERROR
             )
+            if provider == "ollama":
+                # Waiting hid the hint; with Ollama not answering it still has something to say
+                # (that a tag is not installed, and the button to download the best choice).
+                self._guidance.setVisible(True)
+                self._guidance.set_models([])
+                self._update_same_model_tip()
             return
-        self._status_lbl.setText(_listing_status(listing))
-        if self._provider.currentText() == "ollama":
+        self._status_lbl.setText(_listing_status(listing, service))
+        if provider == "ollama":
+            self._guidance.setVisible(True)
             self._guidance.set_models(models)
             self._update_same_model_tip()  # set_models() blocks the combo's signals
             return
         previous = self._model.currentText()
+        if listing.details:
+            self._show_curated(listing, service, previous)
+            return
         self._model.clear()
         self._model.addItems(models)
         idx = self._model.findText(previous)
         if idx >= 0:
             self._model.setCurrentIndex(idx)
-        else:
-            self._model.setCurrentText(previous)
+            return
+        # A saved model the service no longer offers stays in the field (the teacher may have
+        # good reasons), but is called out: silently swapping it would be worse.
+        self._model.setCurrentText(previous)
+        if previous and self._is_saved_model(previous) and listing.source == "live":
+            self._status_lbl.setText(
+                f"{_listing_status(listing, service)} "
+                f"{_status_note(saved_model_not_offered_text(previous, service))}"
+            )
+
+    def _show_curated(self, listing: ModelListing, service: str, previous: str) -> None:
+        """Fill the model field from a curated list: labelled groups, kept selection.
+
+        The names stay the raw model IDs, so what the settings keep is unchanged; the labels
+        only say what an entry is.  A model the service is about to retire is never swapped
+        silently: it stays chosen, and the note offers the suggested one instead.
+        """
+        groups: list[list[ModelItem]] = [
+            [
+                ModelItem(text=model.id, label=model.label, tooltip=model.description)
+                for model in listing.details
+                if model.group == group
+            ]
+            for group in _MODEL_GROUPS
+        ]
+        # Clearing a combo tells its change handlers about an empty name; nothing to say yet.
+        self._model.blockSignals(True)
+        fill_grouped(self._model, groups)
+        self._model.blockSignals(False)
+        if previous:
+            idx = self._model.findText(previous)
+            if idx >= 0:
+                self._model.setCurrentIndex(idx)
+            else:
+                self._model.setCurrentText(previous)
+        # With no model chosen the field moved to the first entry without telling anyone.
+        self._update_where_hint()
+        self._update_same_model_tip()
+        retiring = next((m for m in listing.retiring if m.id == previous), None)
+        if retiring is not None:
+            self._status_lbl.setText(
+                f"{_listing_status(listing, service)} {self._retiring_note(retiring, service)}"
+            )
+        elif (
+            previous
+            and previous not in listing.also_served
+            and self._is_saved_model(previous)
+            and listing.source == "live"
+        ):
+            self._status_lbl.setText(
+                f"{_listing_status(listing, service)} "
+                f"{_status_note(saved_model_not_offered_text(previous, service))}"
+            )
+
+    def _retiring_note(self, model: ListedModel, service: str) -> str:
+        """Return the orange note for a chosen model that is about to leave *service*."""
+        text = retiring_model_text(model.id, model.retires_on, service, model.replacement)
+        note = _status_note(text)
+        if not model.replacement:
+            return note
+        href = html.escape(f"{_USE_PREFIX}{model.replacement}", quote=True)
+        link = f'<a href="{href}">{html.escape(USE_SUGGESTION)}</a>'
+        return f"{note} {link}"
+
+    def _on_status_link(self, link: str) -> None:
+        """Follow a link in the status line: take the suggested model, or ask the service again."""
+        if not link.startswith(_USE_PREFIX):
+            self._refetch_models()
+            return
+        self._model.setCurrentText(link[len(_USE_PREFIX) :])
+        # The warning was about the model just replaced, so back to the plain count.
+        if self._shown_listing is not None:
+            self._status_lbl.setText(
+                _listing_status(
+                    self._shown_listing, self._service_name(self._provider.currentText())
+                )
+            )
 
     def get_prompt(self) -> str:
         """Return the edited policy text ("" means use the built-in prompt)."""

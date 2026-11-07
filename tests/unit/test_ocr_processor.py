@@ -447,3 +447,28 @@ def test_ollama_process_image_passes_prompt_with_language(
 
     prompt_arg = mock_chat.call_args.args[1]
     assert "English" in prompt_arg
+
+
+def test_ollama_ocr_keeps_the_text_read_when_a_page_hits_the_output_limit(
+    monkeypatch, sample_png: Path
+) -> None:
+    """
+    Given  a vision model whose answer stops at the num_predict page limit (done_reason="length")
+    When   OllamaOCRProcessor.process_image() is called
+    Then   the text read so far is returned, not an error about the model's working memory
+    """
+    import sys  # noqa: PLC0415
+
+    chunk = MagicMock()
+    chunk.message.content = "Seite eins, bis zum Limit"
+    chunk.done_reason = "length"
+    chunk.prompt_eval_count = 900
+    chunk.eval_count = 2048
+    mock_ollama = MagicMock()
+    mock_ollama.Client.return_value.chat.return_value = iter([chunk])
+    mock_ollama.ResponseError = Exception
+    monkeypatch.setitem(sys.modules, "ollama", mock_ollama)
+
+    text = _make_ollama_proc().process_image(sample_png, language="German")
+
+    assert text == "Seite eins, bis zum Limit"

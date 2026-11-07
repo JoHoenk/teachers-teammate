@@ -175,11 +175,15 @@ class FakeGuiService(LocalDataFlowStub):
         *,
         cached_only: bool = False,
         system_memory_gb: float | None = None,
+        card_gb: float | None = None,
     ) -> list:
         _ = ollama_url, cached_only
         from teachers_teammate.domain.model_catalog import rate_model  # noqa: PLC0415
 
-        return [rate_model(tag, task, profile, system_memory_gb=system_memory_gb) for tag in tags]
+        return [
+            rate_model(tag, task, profile, system_memory_gb=system_memory_gb, card_gb=card_gb)
+            for tag in tags
+        ]
 
     def on_ollama_models_changed(self, ollama_url: str) -> None:
         _ = ollama_url

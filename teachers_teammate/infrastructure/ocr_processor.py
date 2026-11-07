@@ -69,6 +69,8 @@ class OllamaOCRProcessor(OCRProcessor):
             images=[b64],
             options={"temperature": self._temperature, "num_predict": 2048},
             timeout=self._timeout,
+            # The page limit is deliberate: a page that runs into it keeps the text read so far.
+            allow_truncated=True,
         )
 
 

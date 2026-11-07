@@ -148,9 +148,9 @@ def test_suitability_column_and_sort_order_follow_profile(qtbot) -> None:
     assert reading.child(0).text(0) == DEFAULT_OCR_MODEL
     assert reading.child(0).text(1) == "★ Best"
     writing = dlg._group_items["general"]
-    assert writing.child(0).text(0) == "qwen3.5:9b"
+    assert writing.child(0).text(0) == DEFAULT_WRITING_MODEL
     gpt_oss = dlg._model_items["gpt-oss:20b"]
-    assert gpt_oss.text(1) == "Too large"
+    assert gpt_oss.text(1) == "Won't fit"
 
 
 @pytest.mark.use_case("Model_Recommendation_By_Hardware")
@@ -165,8 +165,8 @@ def test_switching_profile_updates_suitability(qtbot) -> None:
     with qtbot.waitSignal(dlg._hardware_selector.resolved_changed, timeout=5000):
         dlg._hardware_selector._combo.setCurrentText("Graphics card with 16 GB memory or more")
     writing = dlg._group_items["general"]
-    # The first entry of every profile is the writing model that supports explanations.
-    assert writing.child(0).text(0) == DEFAULT_WRITING_MODEL
+    # The first entry of every profile is a writing model that supports explanations.
+    assert writing.child(0).text(0) == "gemma4:12b"
     assert writing.child(0).text(1) == "★ Best"
 
 
@@ -207,7 +207,7 @@ def test_select_best_ticks_undownloaded_best_models(qtbot) -> None:
     deepseek.setCheckState(0, Qt.CheckState.Checked)
     dlg._on_select_best_models()
     assert dlg._model_items[DEFAULT_OCR_MODEL].checkState(0) is Qt.CheckState.Checked
-    assert dlg._model_items["qwen3.5:9b"].checkState(0) is Qt.CheckState.Checked
+    assert dlg._model_items[DEFAULT_WRITING_MODEL].checkState(0) is Qt.CheckState.Checked
     assert deepseek.checkState(0) is Qt.CheckState.Checked
 
 
@@ -219,7 +219,7 @@ def test_select_best_reports_when_already_downloaded(qtbot) -> None:
     Then   the status line says the best models are already downloaded
     """
     dlg = _make_dialog(qtbot)
-    dlg._on_detection_done(_detection_results(dlg, {DEFAULT_OCR_MODEL, "qwen3.5:9b"}))
+    dlg._on_detection_done(_detection_results(dlg, {DEFAULT_OCR_MODEL, DEFAULT_WRITING_MODEL}))
     dlg._on_select_best_models()
     assert dlg._ollama_hint_lbl.text() == (
         "The best models for your computer are already downloaded."
@@ -238,7 +238,7 @@ def test_pre_ticking_when_no_model_of_category_downloaded(qtbot) -> None:
     dlg = _make_dialog(qtbot)
     dlg._on_detection_done(_detection_results(dlg, set()))
     assert dlg._model_items[DEFAULT_OCR_MODEL].checkState(0) is Qt.CheckState.Checked
-    assert dlg._model_items["qwen3.5:9b"].checkState(0) is Qt.CheckState.Checked
+    assert dlg._model_items[DEFAULT_WRITING_MODEL].checkState(0) is Qt.CheckState.Checked
 
 
 @pytest.mark.use_case("Recommended_Models_On_First_Start")
@@ -367,7 +367,7 @@ def test_slow_models_are_listed_as_slower_not_greyed_out_and_need_no_confirmatio
     Given  a computer with an 8 GB card and 32 GB of memory, where gpt-oss:20b does not fit the
            card but fits with the computer's memory
     When   the model list is rated and the model is ticked for download
-    Then   its row says "Slower" in the normal text colour with an explanatory tooltip (it is
+    Then   its row says "Very slow" in the normal text colour with an explanatory tooltip (it is
            not greyed out like a too-large model) and no "download anyway?" question is asked
     """
     from PySide6.QtCore import Qt  # noqa: PLC0415
@@ -378,7 +378,7 @@ def test_slow_models_are_listed_as_slower_not_greyed_out_and_need_no_confirmatio
     dlg._on_detection_done(_detection_results(dlg, set()))
     row = dlg._model_items["gpt-oss:20b"]
 
-    assert row.text(1) == "Slower"
+    assert row.text(1) == "Very slow"  # under 70 % of the model fits the card
     assert "processor" in row.toolTip(1)
     assert row.foreground(1).style() == Qt.BrushStyle.NoBrush
 
@@ -396,12 +396,12 @@ def test_without_the_computers_memory_the_same_model_is_still_too_large(qtbot) -
     """
     Given  the same 8 GB computer but its memory unknown (for example a remote server)
     When   the model list is rated
-    Then   gpt-oss:20b is "Too large", as before
+    Then   gpt-oss:20b does not fit, as before
     """
     dlg = _make_dialog(qtbot)
     dlg._on_detection_done(_detection_results(dlg, set()))
 
-    assert dlg._model_items["gpt-oss:20b"].text(1) == "Too large"
+    assert dlg._model_items["gpt-oss:20b"].text(1) == "Won't fit"
 
 
 # ── detection regression ────────────────────────────────────────────────────
@@ -605,7 +605,7 @@ def test_failed_installed_check_still_ticks_best_models_and_preselect(qtbot) -> 
     dlg = _make_dialog(qtbot, service=service, preselect=["llama3.2:latest"])
     dlg.show()
     qtbot.waitUntil(lambda: "Detection failed" in dlg._dl_detect_lbl.text(), timeout=5000)
-    assert _ticked(dlg) == {DEFAULT_OCR_MODEL, "qwen3.5:9b", "llama3.2:latest"}
+    assert _ticked(dlg) == {DEFAULT_OCR_MODEL, DEFAULT_WRITING_MODEL, "llama3.2:latest"}
 
 
 # ── profile change signal ────────────────────────────────────────────────────
@@ -684,7 +684,7 @@ def test_profile_change_replaces_untouched_auto_ticks_and_keeps_user_ticks(qtbot
 
     dlg = _make_dialog(qtbot)
     dlg._on_detection_done(_detection_results(dlg, set()))
-    assert _ticked(dlg) == {DEFAULT_OCR_MODEL, "qwen3.5:9b"}
+    assert _ticked(dlg) == {DEFAULT_OCR_MODEL, DEFAULT_WRITING_MODEL}
     dlg._model_items["mistral:latest"].setCheckState(0, Qt.CheckState.Checked)
 
     _choose_computer(qtbot, dlg, _CPU_TEXT)
@@ -708,7 +708,7 @@ def test_user_unticking_an_auto_tick_is_respected_after_profile_change(qtbot) ->
     _choose_computer(qtbot, dlg, _16GB_TEXT)
 
     assert DEFAULT_OCR_MODEL not in _ticked(dlg)  # 16 GB recommends it as well
-    assert DEFAULT_WRITING_MODEL in _ticked(dlg)
+    assert "gemma4:12b" in _ticked(dlg)  # the 16 GB best writing model
 
 
 @pytest.mark.use_case("Model_Recommendation_By_Hardware")
@@ -716,7 +716,7 @@ def test_too_large_tooltip_is_cleared_when_model_fits_again(qtbot) -> None:
     """
     Given  gpt-oss shown as too large on 8 GB (with an explanatory tooltip)
     When   the profile changes to 16 GB, where it fits
-    Then   the tooltip of the suitability column is gone and the row is rated "Good"
+    Then   the tooltip of the suitability column is gone and the row is rated "Works"
     """
     dlg = _make_dialog(qtbot)
     dlg._on_detection_done(_detection_results(dlg, set()))
@@ -726,8 +726,7 @@ def test_too_large_tooltip_is_cleared_when_model_fits_again(qtbot) -> None:
     _choose_computer(qtbot, dlg, _16GB_TEXT)
 
     assert "14 GB" not in row.toolTip(1)  # the "too large" explanation is gone
-    # qwen3.5:9b is the 16 GB best choice: the default writing model explains its changes.
-    assert row.text(1) == "Good"
+    assert row.text(1) == "Works"  # 14 GB are within the 16 GB card
 
 
 @pytest.mark.use_case("Model_Category_Guidance")
@@ -921,7 +920,7 @@ def test_rated_rows_use_the_theme_text_colour(qtbot) -> None:
     for _tag, item in dlg._iter_model_items():
         for column in (0, 1):
             brush = item.foreground(column)
-            if item.text(1).startswith("Too "):
+            if item.text(1) == "Won't fit":
                 continue
             # An empty QBrush has no style; a QColor() brush would be a solid black.
             assert brush.style() == Qt.BrushStyle.NoBrush

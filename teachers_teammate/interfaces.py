@@ -224,6 +224,27 @@ class Corrector(ABC):
             A :class:`~.domain.correction_review.CorrectionOutcome`.
         """
 
+    def max_text_chars(
+        self,
+        language: str,  # noqa: ARG002  # interface parameter; unbounded by default
+        *,
+        text_format: TextFormat = "plain",  # noqa: ARG002  # interface parameter
+    ) -> int | None:
+        """Return how many characters one request can carry, or ``None`` when unbounded.
+
+        Callers wrap a bounded corrector in a chunking decorator that proofreads a long text
+        in pieces.  ``None`` means the provider's window is large enough for any text
+        (online providers), so no splitting happens.
+
+        Args:
+            language: Language of the text.
+            text_format: Notation of the text.
+
+        Returns:
+            The character budget of one request, or ``None``.
+        """
+        return None
+
 
 class Evaluator(ABC):
     """Assesses the quality of corrected OCR text.

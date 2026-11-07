@@ -63,6 +63,15 @@ class CollapsibleSection(QWidget):
         """The inner widget; attach a layout here to add rows."""
         return self._content
 
+    @property
+    def expanded(self) -> bool:
+        """Whether the content is currently shown."""
+        return self._toggle.isChecked()
+
+    def set_expanded(self, expanded: bool) -> None:
+        """Open or close the section, exactly as clicking its header would."""
+        self._toggle.setChecked(expanded)
+
     def _on_toggled(self, checked: bool) -> None:
         self._toggle.setArrowType(Qt.ArrowType.DownArrow if checked else Qt.ArrowType.RightArrow)
         if checked:

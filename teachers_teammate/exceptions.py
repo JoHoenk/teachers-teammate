@@ -18,6 +18,23 @@ class OCRError(Exception):
         self.status_code = status_code
 
 
+#: The one user-facing sentence for an answer the context window cut off, so the warning a
+#: teacher reads and the exception that carries it cannot drift apart.
+TRUNCATED_MESSAGE = "The text was too long for the model's working memory."
+
+
+class ResponseTruncatedError(OCRError):
+    """Raised when a model stopped because its context was full (``done_reason == "length"``).
+
+    The answer that arrived is only the beginning of one: the model never reached the end of
+    the text it was asked about, so the tail of the text is missing.  Callers must not use such
+    an answer — ``str(exc)`` is the user-facing reason, :data:`TRUNCATED_MESSAGE`.
+    """
+
+    def __init__(self, message: str = TRUNCATED_MESSAGE) -> None:
+        super().__init__(message)
+
+
 class ConfigFileNotFoundError(FileNotFoundError):
     """Raised by :func:`~teachers_teammate.infrastructure.storage_root.resolve_config_path`
     when an explicit ``--config`` path does not point to an existing file."""

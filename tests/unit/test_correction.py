@@ -8,8 +8,10 @@ import pytest
 from langchain_core.language_models.fake_chat_models import FakeListChatModel
 
 from teachers_teammate.domain.answer_format import REVIEW_FORMAT, TEXT_FORMAT
+from teachers_teammate.exceptions import TRUNCATED_MESSAGE
 from teachers_teammate.infrastructure import correction as correction_module
 from teachers_teammate.infrastructure._llm_invoke import StructuredResult
+from teachers_teammate.domain.formatted_text import TextFormat
 from teachers_teammate.infrastructure.correction import (
     ENGLISH_PROMPT,
     FALLBACK_WARNING,
@@ -876,3 +878,156 @@ def test_ollama_server_rejecting_the_format_falls_back_to_text_mode(mocker) -> N
     assert outcome.text == "Fixed."
     assert outcome.warning == FALLBACK_WARNING
     assert outcome.failed is False
+
+
+# ── Cut-off answers (done_reason="length") ─────────────────────────────────
+
+
+def _truncated_client(mocker, calls: list[str]):
+    """Return an OllamaClient whose chat() records each call and is cut off every time."""
+    from teachers_teammate.exceptions import ResponseTruncatedError  # noqa: PLC0415
+    from teachers_teammate.infrastructure.ollama_utils import OllamaClient  # noqa: PLC0415
+
+    def _cut_off(_self, _model, prompt, **_kwargs):
+        calls.append(prompt)
+        raise ResponseTruncatedError("The text was too long for the model's working memory.")
+
+    mocker.patch.object(OllamaClient, "chat", autospec=True, side_effect=_cut_off)
+    return _ollama_client()
+
+
+def test_ollama_review_mode_falls_back_to_text_mode_when_the_answer_is_cut_off(mocker) -> None:
+    """
+    Given  an Ollama model whose review answer is cut off by the context window, and text mode
+           that is cut off as well
+    When   correct() runs in review mode
+    Then   the source text is kept, the working-memory warning is shown, the file is marked
+           failed
+    And    no repair request is sent: one review request, then one text-mode request
+    """
+    calls: list[str] = []
+    corrector = NativeOllamaCorrector(model="m", client=_truncated_client(mocker, calls))
+
+    outcome = corrector.correct("Ein langer Text.", "German")
+
+    assert len(calls) == 2
+    assert "Explanation language" in calls[0]
+    assert "Explanation language" not in calls[1]
+    assert outcome.text == "Ein langer Text."
+    assert outcome.review is None
+    assert outcome.warning is not None
+    assert TRUNCATED_MESSAGE in outcome.warning
+    assert outcome.failed is True
+
+
+def test_ollama_review_cut_off_is_rescued_by_the_shorter_text_mode_answer(mocker) -> None:
+    """
+    Given  an Ollama model whose review answer is cut off but whose corrections-only answer fits
+    When   correct() runs in review mode
+    Then   the corrected text is used, without explanations, with the fallback warning
+    And    the file is not marked failed
+    """
+    from teachers_teammate.exceptions import ResponseTruncatedError  # noqa: PLC0415
+    from teachers_teammate.infrastructure.ollama_utils import OllamaClient  # noqa: PLC0415
+
+    calls: list[str] = []
+
+    def _first_cut_off(_self, _model, prompt, **_kwargs):
+        calls.append(prompt)
+        if len(calls) == 1:
+            raise ResponseTruncatedError("The text was too long for the model's working memory.")
+        return "Ein korrigierter Text."
+
+    mocker.patch.object(OllamaClient, "chat", autospec=True, side_effect=_first_cut_off)
+    corrector = NativeOllamaCorrector(model="m", client=_ollama_client())
+
+    outcome = corrector.correct("Ein langer Text.", "German")
+
+    assert len(calls) == 2
+    assert outcome.text == "Ein korrigierter Text."
+    assert outcome.review is None
+    assert outcome.failed is False
+    assert outcome.warning is not None
+    assert FALLBACK_WARNING in outcome.warning
+
+
+def test_ollama_text_mode_keeps_the_original_text_when_the_answer_is_cut_off(mocker) -> None:
+    """
+    Given  an Ollama model in corrections-only mode whose answer is cut off
+    When   correct() is called
+    Then   the original text is returned (not the truncated answer), with the warning, failed
+    """
+    calls: list[str] = []
+    corrector = NativeOllamaCorrector(
+        model="m", client=_truncated_client(mocker, calls), settings=_TEXT_ONLY
+    )
+
+    outcome = corrector.correct("Ein langer Text.", "German")
+
+    assert len(calls) == 1
+    assert outcome.text == "Ein langer Text."
+    assert outcome.warning == TRUNCATED_MESSAGE
+    assert outcome.failed is True
+
+
+def test_ollama_requests_carry_the_fixed_proofreading_context_size(mocker) -> None:
+    """
+    Given  a NativeOllamaCorrector in review and in text mode
+    When   correct() is called
+    Then   both requests send the shared num_ctx of the proofreading options
+    """
+    from teachers_teammate.infrastructure.ollama_utils import (  # noqa: PLC0415
+        PROOFREADING_NUM_CTX,
+        OllamaClient,
+    )
+
+    mock_chat = mocker.patch.object(OllamaClient, "chat", return_value=_answer_json())
+    NativeOllamaCorrector(model="m", client=_ollama_client()).correct("Helo wrold.", "English")
+    review_options = mock_chat.call_args.kwargs["options"]
+
+    mock_chat = mocker.patch.object(OllamaClient, "chat", return_value="ok")
+    NativeOllamaCorrector(model="m", client=_ollama_client(), settings=_TEXT_ONLY).correct(
+        "Helo wrold.", "English"
+    )
+    text_options = mock_chat.call_args.kwargs["options"]
+
+    assert review_options["num_ctx"] == PROOFREADING_NUM_CTX
+    assert text_options["num_ctx"] == PROOFREADING_NUM_CTX
+
+
+def test_ollama_text_budget_is_smaller_for_markdown_than_for_plain_text() -> None:
+    """
+    Given  an Ollama corrector in review mode
+    When   its text budget is asked for plain text and for Markdown
+    Then   the Markdown budget is smaller, because its system prompt carries a notation hint
+    """
+    corrector = NativeOllamaCorrector(model="m", client=_ollama_client())
+
+    plain = corrector.max_text_chars("German")
+    markdown = corrector.max_text_chars("German", text_format="markdown")
+
+    assert 0 < markdown < plain
+
+
+@pytest.mark.parametrize("text_format", ["plain", "markdown"])
+def test_a_text_at_the_budget_leaves_room_for_a_longer_review_answer(
+    text_format: TextFormat,
+) -> None:
+    """
+    Given  an Ollama corrector and a text exactly as long as its budget
+    When   the room left in the window is worked out
+    Then   the request and an answer twice as long as the text fit the window
+    """
+    from teachers_teammate.domain.context_budget import (  # noqa: PLC0415
+        REVIEW_ANSWER_FACTOR,
+        ContextBudget,
+    )
+
+    corrector = NativeOllamaCorrector(model="m", client=_ollama_client())
+    limit = corrector.max_text_chars("German", text_format=text_format)
+    system, prompt = corrector._messages("x" * limit, "German", text_format, mode="review")
+    request_tokens = -(-(len(system) + len(prompt)) // 3)
+
+    assert ContextBudget(corrector._num_ctx).request_fits(
+        len(system) + len(prompt), answer_tokens=int(request_tokens * REVIEW_ANSWER_FACTOR)
+    )

@@ -8,6 +8,8 @@ a stub class instead of re-implementing them.
 
 from __future__ import annotations
 
+import os
+
 from typing import cast
 
 from teachers_teammate.domain.data_location import (
@@ -51,6 +53,16 @@ class LocalDataFlowStub:
     def describe_llm_location(self, provider: str, model: str, ollama_url: str) -> StageLocation:
         _ = model, ollama_url
         return StageLocation(DataLocation.THIS_COMPUTER, provider)
+
+    def get_provider_info(self, provider: str) -> dict:
+        """Provider metadata; the fakes that are asked about providers override this."""
+        _ = provider
+        return {}
+
+    def provider_key_missing(self, provider: str) -> bool:
+        """Mirror the real service: a key is missing when the provider needs one and none is set."""
+        info = self.get_provider_info(provider)
+        return bool(info.get("needs_api_key")) and not os.environ.get(str(info.get("env_key", "")))
 
 
 class RecommendationServiceStub(LocalDataFlowStub):
@@ -141,6 +153,7 @@ class RecommendationServiceStub(LocalDataFlowStub):
         *,
         cached_only: bool = False,
         system_memory_gb: float | None = None,
+        card_gb: float | None = None,
     ) -> list[ModelRating]:
         classification = self.classify_ollama_models(tags, ollama_url, cached_only=cached_only)
         return [
@@ -150,6 +163,7 @@ class RecommendationServiceStub(LocalDataFlowStub):
                 profile,
                 detected_uses=classification.get(tag),
                 system_memory_gb=system_memory_gb,
+                card_gb=card_gb,
             )
             for tag in tags
         ]

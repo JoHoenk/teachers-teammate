@@ -11,6 +11,7 @@ from teachers_teammate.config import OcrConfig
 from teachers_teammate.domain.data_location import DataLocation, StageLocation
 from teachers_teammate.domain.formatted_text import TextFormat
 from teachers_teammate.domain.model_catalog import DEFAULT_OCR_MODEL
+from teachers_teammate.gui._model_item_delegate import ITEM_LABEL_ROLE
 from teachers_teammate.gui._ocr_config_selector import OcrConfigSelector
 
 from ._service_stubs import RecommendationServiceStub
@@ -288,16 +289,47 @@ def test_ollama_models_sorted_best_first_with_raw_tags(qtbot) -> None:
     selector = _ollama_selector(qtbot)
     combo = selector._ocr_model
     assert combo.itemText(0) == DEFAULT_OCR_MODEL
-    # No decoration anywhere: raw tags only; GOOD models follow, sorted by name.
+    # No decoration in the item text: raw tags only; GOOD models follow, sorted by name,
+    # and a separator line sets off the models that are not suitable for reading.
     assert [combo.itemText(i) for i in range(combo.count())] == [
         DEFAULT_OCR_MODEL,
         "glm-ocr:q8_0",
         "qwen3-vl:8b",
         "qwen3.5:9b",  # writing model that also reads scans → GOOD
+        "",  # separator between "suggested" and "not suitable"
         "mistral:latest",  # general model → WRONG_KIND, sorted last
     ]
     combo.setCurrentText("qwen3-vl:8b")
     assert selector.get_ocr_config().model == "qwen3-vl:8b"
+
+
+@pytest.mark.use_case("Model_Recommendation_By_Hardware")
+def test_every_model_shows_its_rating_next_to_the_name(qtbot) -> None:
+    """
+    Given  the selector with a mixed set of installed Ollama models
+    When   the model list is populated
+    Then   each row carries a short rating label while its text stays the raw tag
+    """
+    selector = _ollama_selector(qtbot)
+    combo = selector._ocr_model
+    labels = {combo.itemText(i): combo.itemData(i, ITEM_LABEL_ROLE) for i in range(combo.count())}
+    assert labels[DEFAULT_OCR_MODEL].startswith("★ Best")
+    assert labels["qwen3-vl:8b"].startswith("Good")
+    assert labels["mistral:latest"].startswith("Can't read scans")
+    assert labels[""] in (None, "")  # the separator row stays unlabelled
+
+
+@pytest.mark.use_case("Model_Recommendation_By_Hardware")
+def test_picking_a_model_from_the_last_group_saves_its_raw_tag(qtbot) -> None:
+    """
+    Given  a grouped list whose last group holds the models that cannot read scans
+    When   one of them is picked by index
+    Then   the saved setting is the raw tag, without the rating label
+    """
+    selector = _ollama_selector(qtbot)
+    combo = selector._ocr_model
+    combo.setCurrentIndex(combo.findText("mistral:latest"))
+    assert selector.get_ocr_config().model == "mistral:latest"
 
 
 @pytest.mark.use_case("Model_Category_Guidance")
@@ -353,7 +385,8 @@ def test_non_ollama_engines_have_no_hint_and_button(qtbot) -> None:
     """
     Given  the selector set to tesseract or paddleocr
     When   the engine is switched
-    Then   no hint line and no "Use best choice" button are shown
+    Then   no hint line and no "Use best choice" button are shown, and they stay hidden for
+           Ollama until its freshly fetched list is in (a stale hint is never shown)
     """
     selector = _ollama_selector(qtbot)
     selector._ocr_engine.setCurrentText("tesseract")
@@ -361,7 +394,8 @@ def test_non_ollama_engines_have_no_hint_and_button(qtbot) -> None:
     selector._ocr_engine.setCurrentText("paddleocr")
     assert selector._guidance.isHidden() is True
     selector._ocr_engine.setCurrentText("ollama")
-    assert selector._guidance.isHidden() is False
+    assert selector._guidance.isHidden() is True  # still asking, so no stale hint
+    qtbot.waitUntil(lambda: selector._guidance.isHidden() is False, timeout=5000)
 
 
 @pytest.mark.use_case("Model_Category_Guidance")
@@ -466,3 +500,63 @@ def test_selector_warns_when_a_cloud_model_is_typed_in(qtbot) -> None:
 
     assert "not allowed" in html.unescape(widget._where_hint.text())
     assert "Ollama's servers" in widget._where_hint.toolTip()
+
+
+@pytest.mark.gui
+def test_switching_the_engine_retires_a_running_model_fetch(qtbot, monkeypatch) -> None:
+    """
+    Given  a selector whose Ollama model fetch is still running
+    When   the engine is switched to Tesseract
+    Then   the running fetch is retired, so its late answer cannot reach the widgets
+    """
+    from teachers_teammate.gui import _ocr_config_selector  # noqa: PLC0415
+
+    widget = OcrConfigSelector(app_service=_DummyAppService())
+    qtbot.addWidget(widget)
+    widget._ocr_engine.setCurrentText("ollama")
+    retired: list[object] = []
+    monkeypatch.setattr(_ocr_config_selector, "_retire_thread", retired.append)
+    running = object()
+    monkeypatch.setattr(widget, "_fetch_thread", running)
+
+    widget._ocr_engine.setCurrentText("tesseract")
+
+    assert running in retired
+
+
+@pytest.mark.gui
+def test_a_late_ollama_answer_does_not_touch_another_engines_widgets(qtbot) -> None:
+    """
+    Given  a selector switched from Ollama to Tesseract
+    When   an Ollama model list arrives afterwards
+    Then   the Ollama hint line stays hidden and the model field is not refilled
+    """
+    widget = OcrConfigSelector(app_service=_DummyAppService())
+    qtbot.addWidget(widget)
+    widget._ocr_engine.setCurrentText("tesseract")
+    before = widget._ocr_model.currentText()
+
+    widget._on_models_fetched(["llama3.2-vision:11b"])
+
+    assert widget._guidance.isHidden()
+    assert widget._ocr_model.currentText() == before
+    assert widget._ocr_model.findText("llama3.2-vision:11b") < 0
+
+
+@pytest.mark.gui
+def test_the_ollama_hint_comes_back_when_ollama_does_not_answer(qtbot) -> None:
+    """
+    Given  an Ollama selector that hid its hint line while it waited
+    When   the answer is an empty list
+    Then   the hint line is shown again and the status shows the error
+    """
+    widget = OcrConfigSelector(app_service=_DummyAppService())
+    qtbot.addWidget(widget)
+    widget._ocr_engine.setCurrentText("ollama")
+    widget._set_busy(True, "Asking Ollama…")
+    assert widget._guidance.isHidden()
+
+    widget._on_models_fetched([])
+
+    assert not widget._guidance.isHidden()
+    assert "#c0392b" in widget._status_lbl.text()

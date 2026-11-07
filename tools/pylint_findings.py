@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 
-import re
-import sys
-import subprocess
-from pathlib import Path
 from collections import defaultdict
+from pathlib import Path
+import re
+import subprocess
+import sys
 
 try:
     from pylint.lint import PyLinter
@@ -69,6 +69,7 @@ def resolve_ruff_rule(rule):
             capture_output=True,
             text=True,
             timeout=5,
+            check=False,  # a non-zero exit is the expected "unknown rule" answer, read below
         )
 
         if result.returncode != 0:

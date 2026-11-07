@@ -62,17 +62,17 @@ Usage:
 from __future__ import annotations
 
 import argparse
+from collections import Counter
+from collections.abc import Callable
 import csv
+from importlib import metadata
 import json
+from pathlib import Path
 import re
 import shutil
 import subprocess
 import sys
 import tomllib
-from collections import Counter
-from collections.abc import Callable
-from importlib import metadata
-from pathlib import Path
 
 TextSource = Callable[[str], list[tuple[str, str]]]
 

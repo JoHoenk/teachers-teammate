@@ -15,6 +15,7 @@ has a single source.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 import sys
 
 from PySide6.QtCore import Qt, Signal
@@ -37,16 +38,25 @@ from ..domain.pdf_text_layer import (
     PdfTextLayerMode,
     normalize_pdf_text_layer,
 )
+from ._collapsible_section import CollapsibleSection
 from ._data_flow_summary import LocationHint
 from ._hardware_profile_selector import HardwareProfileSelector
 from ._model_guidance import OllamaModelGuidance, OpenDownloads
+from ._model_wording import (
+    EXPERT_SETTINGS,
+    TEMPERATURE_TOOLTIP,
+    asking_for_models_text,
+    checking_models_text,
+)
 from ._settings_dialog import (
     _STATUS_ERROR,
     _STATUS_LOADING,
+    _BusyIndicator,
     _ModelFetchThread,
     _retire_thread,
     _set_combo,
     _SettingsAppService,
+    _status_busy,
     _status_ok,
 )
 
@@ -65,6 +75,7 @@ class OcrConfigSelector(QWidget):
         show_preview_button: bool = True,
         show_pdf_text_layer: bool = True,
         hardware_profile: str = "auto",
+        expert_collapsed: bool = True,
         open_downloads: OpenDownloads | None = None,
         parent: QWidget | None = None,
     ) -> None:
@@ -90,7 +101,7 @@ class OcrConfigSelector(QWidget):
         self._build_engine_row(form)
         self._build_model_row(form, open_downloads)
         self._build_preprocess_row(form, show_preview_button)
-        self._build_temperature_row(form)
+        self._build_temperature_row(form, collapsed=expert_collapsed)
         if show_pdf_text_layer:
             self._build_pdf_text_layer_row(form)
         self._update_where_hint()
@@ -133,6 +144,9 @@ class OcrConfigSelector(QWidget):
         self._status_lbl.setTextFormat(Qt.TextFormat.RichText)
         ml.addWidget(self._ocr_model, stretch=1)
         ml.addWidget(self._status_lbl)
+        # Says the list is still coming, so a field that stays put for a moment is not a hang.
+        self._busy = _BusyIndicator()
+        ml.addWidget(self._busy)
         form.addRow(self._ocr_model_label, self._ocr_model_row)
 
         # Suitability hint + "Use best choice" button (Ollama engine only).
@@ -236,13 +250,19 @@ class OcrConfigSelector(QWidget):
         # original file unchanged), so the checkboxes above have no effect under it.
         self._on_preprocess_method_changed(self._preprocess.currentText())
 
-    def _build_temperature_row(self, form: QFormLayout) -> None:
+    def _build_temperature_row(self, form: QFormLayout, *, collapsed: bool = True) -> None:
         self._ocr_temperature = QDoubleSpinBox()
         self._ocr_temperature.setRange(0.0, 2.0)
         self._ocr_temperature.setSingleStep(0.1)
         self._ocr_temperature.setDecimals(1)
         self._ocr_temperature.setValue(DEFAULTS["ocr_temperature"])
-        form.addRow("Temperature:", self._ocr_temperature)
+        self._ocr_temperature.setToolTip(TEMPERATURE_TOOLTIP)
+
+        self._expert_section = CollapsibleSection(EXPERT_SETTINGS, collapsed=collapsed)
+        inner = QFormLayout(self._expert_section.content_widget)
+        inner.setContentsMargins(0, 0, 0, 0)
+        inner.addRow("Temperature:", self._ocr_temperature)
+        form.addRow(self._expert_section)
 
     def _build_pdf_text_layer_row(self, form: QFormLayout) -> None:
         self._pdf_text_layer = QComboBox()
@@ -277,6 +297,8 @@ class OcrConfigSelector(QWidget):
             self._ocr_model.setCurrentText(ocr.model)
         _set_combo(self._preprocess, ocr.preprocess_method)
         self._ocr_temperature.setValue(ocr.temperature)
+        # A temperature the user chose is the reason to open "Expert settings" at all.
+        self._expert_section.set_expanded(ocr.temperature != DEFAULTS["ocr_temperature"])
         self._dewarp.setChecked(ocr.dewarp)
         self._deskew.setChecked(ocr.deskew)
         self._border_crop.setChecked(ocr.border_crop)
@@ -379,24 +401,41 @@ class OcrConfigSelector(QWidget):
 
     def _auto_fetch(self) -> None:
         engine = self._ocr_engine.currentText()
+        # A fetch still running belongs to an engine that may no longer be the chosen one.
+        _retire_thread(self._fetch_thread)
         if engine == "ollama":
             # Always fetch in the thread (a cache hit there is instant): the
             # classification of custom models must not run on the GUI thread.
-            self._status_lbl.setText(_STATUS_LOADING)
-            _retire_thread(self._fetch_thread)
             url = self._ollama_url
+            self._set_busy(True, asking_for_models_text("Ollama"))
 
-            def fetch() -> list[str]:
+            def fetch(report: Callable[[str], None]) -> list[str]:
                 tags = self._app_service.list_ocr_models(url)
-                # Classify here so set_models() only needs cache lookups.
+                # Classify here so set_models() only needs cache lookups.  It costs one
+                # request per model, so say how many there are before it starts.
+                report(checking_models_text(len(tags)))
                 self._app_service.classify_ollama_models(tags, url)
                 return tags
 
             self._fetch_thread = _ModelFetchThread(fetch)
             self._fetch_thread.models_ready.connect(self._on_models_fetched)
+            self._fetch_thread.progress.connect(self._on_fetch_progress)
             self._fetch_thread.start()
         else:
+            self._set_busy(False)
             self._status_lbl.setText("")
+
+    def _set_busy(self, busy: bool, text: str = "") -> None:
+        """Show or hide the busy bar; while the list is on its way, no stale hints."""
+        self._busy.setVisible(busy)
+        if not busy:
+            return
+        self._status_lbl.setText(_status_busy(text))
+        self._guidance.setVisible(False)
+
+    def _on_fetch_progress(self, _tag: str, text: str) -> None:
+        """Say what the running fetch is doing."""
+        self._set_busy(True, text)
 
     def _refetch_ollama_models(self) -> None:
         """Invalidate the Ollama model cache and fetch the list again."""
@@ -404,10 +443,17 @@ class OcrConfigSelector(QWidget):
         self._auto_fetch()
 
     def _on_models_fetched(self, models: list) -> None:
+        if self._ocr_engine.currentText() != "ollama":
+            return  # an answer for an engine the user has already left
+        self._set_busy(False)
+        # Waiting hid the hint; show it again even when Ollama did not answer, so the
+        # button to download the best choice is still there.
+        self._guidance.setVisible(True)
         if not models:
             self._status_lbl.setText(_STATUS_ERROR)
+            self._guidance.set_models([])
             return
-        self._status_lbl.setText(_status_ok(len(models)))
+        self._status_lbl.setText(_status_ok(len(models), "Ollama"))
         # Guidance sorts by suitability and decorates via roles; the combo text stays the
         # raw tag.
         self._guidance.set_models(models)

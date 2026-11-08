@@ -6,7 +6,7 @@ from __future__ import annotations
 import dataclasses
 from pathlib import Path
 import threading
-from typing import ClassVar
+from typing import Any, ClassVar
 
 import pytest
 
@@ -24,8 +24,17 @@ from teachers_teammate.gui import _main_window as main_window_module
 from teachers_teammate.gui._export_menu import ExportKind
 from teachers_teammate.gui._main_window import MainWindow
 from teachers_teammate.gui._types import FileDoneEvent
+from teachers_teammate.gui.settings import SettingsPage, SettingsResult
+from teachers_teammate.gui.settings._page import (
+    FOCUS_GPU,
+    FOCUS_LOCAL_MODELS,
+    FOCUS_NAME_DETECTION,
+    FOCUS_ONLINE_SERVICES,
+)
 from teachers_teammate.infrastructure.storage_root import resolve_artifact_dir
 from tests.conftest import make_config
+
+from ._gui_harness import install_scripted_settings_window
 
 
 class _DummySignal:
@@ -834,30 +843,470 @@ def test_main_window_on_ocr_done_updates_progress_in_two_step(main_window) -> No
 
 
 @pytest.mark.gui
-def test_main_window_open_settings_dialog_accepted(main_window, qtbot) -> None:
+def test_ok_in_settings_applies_saves_and_rechecks(main_window, monkeypatch) -> None:
     """
-    Given  settings dialog returns Accepted
-    When   _open_settings_dialog is called
-    Then   config panel update_settings is called and LLM check re-triggered
+    Given  the Settings window closes with OK and new values from the pages it showed
+    When   open_settings() returns
+    Then   the config panel holds the new values, the settings are saved once, the services
+           are checked again and the queue is refreshed
     """
-    from unittest.mock import patch, MagicMock  # noqa: PLC0415
-    from PySide6.QtWidgets import QDialog  # noqa: PLC0415
+    install_scripted_settings_window(
+        monkeypatch,
+        result=SettingsResult(settings={"ocr_model": "my-reader:1b", "hardware_profile": "16gb"}),
+    )
+    calls: list[str] = []
+    monkeypatch.setattr(main_window, "_check_llm_status", lambda: calls.append("check"))
+    monkeypatch.setattr(main_window, "_save_settings", lambda **_kw: calls.append("save"))
+    monkeypatch.setattr(main_window, "_refresh_queue_from_inputs", lambda: calls.append("queue"))
 
-    mock_dialog = MagicMock()
-    mock_dialog.exec.return_value = QDialog.DialogCode.Accepted
-    mock_dialog.get_values.return_value = {}
-    mock_dialog.preprocess_preview_requested = _DummySignal()
+    main_window.open_settings(SettingsPage.AI_MODELS)
 
-    check_called = []
+    settings = main_window._config_panel.get_settings_dict()
+    assert settings["ocr_model"] == "my-reader:1b"
+    assert settings["hardware_profile"] == "16gb"
+    assert calls == ["save", "check", "queue"]
 
-    with (
-        patch("teachers_teammate.gui._main_window.SettingsDialog", return_value=mock_dialog),
-        patch.object(main_window, "_check_llm_status", lambda: check_called.append(1)),
-        patch.object(main_window, "_save_settings"),
-    ):
-        main_window._open_settings_dialog()
 
-    assert check_called
+@pytest.mark.gui
+def test_cancel_in_settings_changes_nothing(main_window, monkeypatch) -> None:
+    """
+    Given  the Settings window closes with Cancel although its pages hold other values
+    When   open_settings() returns
+    Then   the config panel is unchanged and nothing is saved or re-checked
+    """
+    install_scripted_settings_window(
+        monkeypatch, accepted=False, result=SettingsResult(settings={"ocr_model": "other"})
+    )
+    before = main_window._config_panel.get_settings_dict()
+    calls: list[str] = []
+    monkeypatch.setattr(main_window, "_check_llm_status", lambda: calls.append("check"))
+    monkeypatch.setattr(main_window, "_save_settings", lambda **_kw: calls.append("save"))
+
+    main_window.open_settings(SettingsPage.AI_MODELS)
+
+    assert main_window._config_panel.get_settings_dict() == before
+    assert calls == []
+
+
+@pytest.mark.gui
+def test_ok_in_settings_persists_a_profile_change_to_ocr_toml(
+    main_window, monkeypatch, tmp_path: Path
+) -> None:
+    """
+    Given  the Settings window closes with OK after "Where the AI runs" was set to 16 GB
+    When   open_settings() returns
+    Then   the value is stored in the config panel and saved to ocr.toml
+    """
+    monkeypatch.setattr(
+        ProcessingApplicationService,
+        "default_config_path",
+        lambda self: tmp_path / "ocr.toml",
+    )
+    install_scripted_settings_window(
+        monkeypatch, result=SettingsResult(settings={"hardware_profile": "16gb"})
+    )
+
+    main_window.open_settings(SettingsPage.AI_SETUP)
+
+    assert main_window._config_panel.get_settings_dict()["hardware_profile"] == "16gb"
+    assert 'hardware_profile = "16gb"' in (tmp_path / "ocr.toml").read_text(encoding="utf-8")
+
+
+@pytest.mark.gui
+def test_restore_all_resets_the_panel_and_saves(main_window, monkeypatch) -> None:
+    """
+    Given  a changed panel and a Settings window that closed with "Restore defaults → All"
+    When   open_settings() returns
+    Then   every setting is back to its default, saved, with no further question
+    """
+    main_window._config_panel.update_settings(
+        {
+            "ocr_model": "my-reader:1b",
+            "docx_enabled": not main_window_module.DEFAULTS["docx_enabled"],
+        }
+    )
+    install_scripted_settings_window(
+        monkeypatch,
+        accepted=False,
+        result=SettingsResult(settings={"ocr_model": "ignored"}, restore_all=True),
+    )
+    saved: list[bool] = []
+    monkeypatch.setattr(main_window, "_save_settings", lambda **_kw: saved.append(True))
+    monkeypatch.setattr(main_window_module.QMessageBox, "question", lambda *a, **k: 1 / 0)
+
+    main_window.open_settings(SettingsPage.PRIVACY)
+
+    settings = main_window._config_panel.get_settings_dict()
+    assert settings["ocr_model"] == main_window_module.DEFAULTS["ocr_model"]
+    assert settings["docx_enabled"] is main_window_module.DEFAULTS["docx_enabled"]
+    assert saved == [True]
+
+
+@pytest.mark.gui
+def test_restore_all_also_forgets_the_remembered_answers_and_the_hide_choice(
+    main_window, monkeypatch
+) -> None:
+    """
+    Given  remembered "Don't ask again" answers and "hide personal information" switched off
+    When   the Settings window closes with "Restore defaults → All settings"
+    Then   the remembered answers are forgotten and the hide choice is back to its default,
+           so "Reset everything" really resets what it says
+    """
+    from teachers_teammate.gui._privacy_settings import (  # noqa: PLC0415
+        SETTINGS_KEY,
+        FlowAcknowledgements,
+    )
+
+    from ._gui_harness import MemorySettings  # noqa: PLC0415
+
+    store = MemorySettings()
+    acknowledgements = FlowAcknowledgements(lambda: store)
+    store.setValue(SETTINGS_KEY, "abc123\tProofreading: online")
+    assert acknowledgements.fingerprints() == {"abc123"}
+    monkeypatch.setattr(main_window, "_acknowledgements", lambda: acknowledgements)
+    shown: list[bool] = []
+    monkeypatch.setattr(main_window, "_apply_display_anonymized", shown.append)
+    monkeypatch.setattr(main_window, "_save_settings", lambda **_kw: None)
+    install_scripted_settings_window(
+        monkeypatch, accepted=False, result=SettingsResult(settings={}, restore_all=True)
+    )
+
+    main_window.open_settings(SettingsPage.PRIVACY)
+
+    assert acknowledgements.fingerprints() == set()
+    assert shown == [main_window_module.DISPLAY_ANONYMIZED_DEFAULT]
+
+
+@pytest.mark.gui
+def test_confirming_instructions_saves_the_settings_at_once(main_window, monkeypatch) -> None:
+    """
+    Given  the main window
+    When   an Instructions dialog of the workflow panel is confirmed
+    Then   the settings are saved right away, as they were when confirming Proofreading
+           Settings (not only when the app closes or a run starts)
+    """
+    saved: list[bool] = []
+    monkeypatch.setattr(main_window, "_save_settings", lambda **_kw: saved.append(True))
+
+    main_window._config_panel.instructions_changed.emit()
+
+    assert saved == [True]
+
+
+@pytest.mark.gui
+def test_the_pull_manager_pulls_the_whole_queue_on_its_own(qtbot, monkeypatch) -> None:
+    """
+    Given  a pull of three models started through the manager (nothing else is listening,
+           as after the Settings window was closed)
+    When   each pull finishes in turn
+    Then   the next model starts by itself, subscribers see the queue as it was when a pull
+           ended, and a failed pull drops the rest
+    """
+    from PySide6.QtCore import QObject, Signal  # noqa: PLC0415
+
+    from teachers_teammate.gui import _addon_installer_dialog  # noqa: PLC0415
+
+    threads: list[Any] = []
+
+    class _FakePull(QObject):
+        progress = Signal(str, float, float)
+        finished_ok = Signal(str)
+        finished_err = Signal(str)
+
+        def __init__(self, url: str, model: str) -> None:
+            super().__init__()
+            self.url, self.model = url, model
+            threads.append(self)
+
+        def start(self) -> None:
+            pass
+
+        def isRunning(self) -> bool:
+            return True
+
+        def request_abort(self) -> None:
+            pass
+
+    monkeypatch.setattr(_addon_installer_dialog, "_OllamaPullThread", _FakePull)
+    manager = main_window_module.OllamaDownloadManager()
+    started: list[str] = []
+    queue_seen: list[list[str]] = []
+    manager.started.connect(started.append)
+    manager.finished.connect(lambda _name: queue_seen.append(manager.queued))
+
+    manager.start("http://host:11434", "a:1b", ["b:1b", "c:1b"])
+    threads[0].finished_ok.emit("a:1b")
+    threads[1].finished_ok.emit("b:1b")
+
+    assert started == ["a:1b", "b:1b", "c:1b"]
+    assert [t.url for t in threads] == ["http://host:11434"] * 3
+    assert queue_seen == [["b:1b", "c:1b"], ["c:1b"]]
+
+    errors: list[str] = []
+    manager.error.connect(errors.append)
+    threads[2].finished_err.emit("boom")
+    assert errors == ["boom"]
+    assert manager.queued == []
+
+
+@pytest.mark.gui
+def test_aborting_a_pull_drops_the_queue(qtbot, monkeypatch) -> None:
+    """
+    Given  a running pull with two more models queued
+    When   it is aborted
+    Then   nothing else is queued, so the aborted round does not go on with the next model
+    """
+    from PySide6.QtCore import QObject, Signal  # noqa: PLC0415
+
+    from teachers_teammate.gui import _addon_installer_dialog  # noqa: PLC0415
+
+    class _FakePull(QObject):
+        progress = Signal(str, float, float)
+        finished_ok = Signal(str)
+        finished_err = Signal(str)
+
+        def __init__(self, url: str, model: str) -> None:
+            super().__init__()
+
+        def start(self) -> None:
+            pass
+
+        def isRunning(self) -> bool:
+            return True
+
+        def request_abort(self) -> None:
+            pass
+
+    monkeypatch.setattr(_addon_installer_dialog, "_OllamaPullThread", _FakePull)
+    manager = main_window_module.OllamaDownloadManager()
+    manager.start("http://host:11434", "a:1b", ["b:1b", "c:1b"])
+
+    manager.abort()
+
+    assert manager.queued == []
+
+
+@pytest.mark.gui
+def test_opening_settings_while_it_is_open_only_switches_the_page(main_window, monkeypatch) -> None:
+    """
+    Given  a Settings window that is open (a dialog on top of it asks for Add-ons)
+    When   open_settings() is called again
+    Then   no second window is created; the open one shows the page with the focus
+    """
+    scripted = install_scripted_settings_window(monkeypatch)
+    scripted.isVisible = lambda self: True  # ty: ignore[invalid-assignment]
+    first = scripted(main_window._settings_context(), main_window, page=SettingsPage.AI_MODELS)
+    main_window._settings_window = first
+    created_before = len(scripted.instances)
+
+    main_window.open_settings(SettingsPage.ADDONS, focus=FOCUS_GPU, preselect=["x"])
+
+    assert len(scripted.instances) == created_before
+    assert first.shown == [(SettingsPage.ADDONS, FOCUS_GPU, ["x"])]
+
+
+@pytest.mark.gui
+def test_the_settings_window_gets_the_current_state(main_window, monkeypatch) -> None:
+    """
+    Given  a main window with its own pull manager and a changed output folder
+    When   Settings is opened
+    Then   the window is built from a copy of the panel's settings, the language, the anonymizer
+           rules, the acknowledgements and the window's pull manager
+    """
+    scripted = install_scripted_settings_window(monkeypatch, accepted=False)
+    main_window._config_panel.update_settings({"output_dir": "/tmp/out"})
+
+    main_window.open_settings(SettingsPage.PRIVACY)
+
+    assert len(scripted.instances) == 1
+    window = scripted.instances[0]
+    context = window.context
+    assert context.settings["output_dir"] == "/tmp/out"
+    assert context.language == main_window._config_panel.lookup_language()
+    assert context.pull_manager is main_window._pull_manager
+    assert context.app_service is main_window._app_service
+    assert context.anonymizer_config == main_window._config_panel.build_anonymizer_config()
+
+
+# ── menu bar ───────────────────────────────────────────────────────────────────
+
+
+def _menu(window: MainWindow, title: str):
+    return next(a.menu() for a in window.menuBar().actions() if a.text() == title)
+
+
+@pytest.mark.gui
+def test_menu_bar_has_file_settings_and_help(main_window) -> None:
+    """
+    Given  the main window
+    When   its menu bar is read
+    Then   it has File, Settings and Help, and no Advanced Settings menu
+    """
+    titles = [a.text() for a in main_window.menuBar().actions()]
+
+    assert titles == ["File", "Settings", "Help"]
+
+
+@pytest.mark.gui
+def test_settings_menu_lists_the_pages_then_all_settings(main_window) -> None:
+    """
+    Given  the main window
+    When   the Settings menu is read
+    Then   it lists the five pages by name, a separator and "All settings…" on Ctrl+,
+    """
+    menu = _menu(main_window, "Settings")
+
+    entries = [a.text() for a in menu.actions() if not a.isSeparator()]
+
+    assert entries == [
+        "AI models\u2026",
+        "Where the AI runs\u2026",
+        "Scan quality\u2026",
+        "Privacy\u2026",
+        "Add-ons\u2026",
+        "All settings\u2026",
+    ]
+    all_settings = menu.actions()[-1]
+    assert all_settings.shortcut().toString() == "Ctrl+,"
+
+
+@pytest.mark.gui
+@pytest.mark.parametrize("page", list(SettingsPage))
+def test_each_settings_menu_entry_opens_its_page(main_window, monkeypatch, page) -> None:
+    """
+    Given  the Settings menu
+    When   the entry of a page is triggered
+    Then   the Settings window opens on exactly that page
+    """
+    scripted = install_scripted_settings_window(monkeypatch, accepted=False)
+
+    main_window._settings_actions[page].trigger()
+
+    assert [w.page for w in scripted.instances] == [page]
+
+
+@pytest.mark.gui
+def test_all_settings_opens_the_page_used_last(main_window, monkeypatch) -> None:
+    """
+    Given  the page used last was Privacy
+    When   "All settings…" is triggered
+    Then   the Settings window opens on Privacy
+    """
+    scripted = install_scripted_settings_window(monkeypatch, accepted=False)
+    monkeypatch.setattr(main_window_module, "last_page", lambda: SettingsPage.PRIVACY)
+
+    main_window._all_settings_action.trigger()
+
+    assert [w.page for w in scripted.instances] == [SettingsPage.PRIVACY]
+
+
+@pytest.mark.gui
+def test_file_menu_opens_documents_and_exports(main_window, monkeypatch) -> None:
+    """
+    Given  the File menu
+    When   "Open Folder…" and "Open Files…" are triggered
+    Then   the panel's folder and file selection are started, and Export ▸ lists the export kinds
+    """
+    calls: list[str] = []
+    monkeypatch.setattr(
+        main_window._config_panel, "_on_select_folder", lambda: calls.append("folder")
+    )
+    monkeypatch.setattr(
+        main_window._config_panel, "_on_select_files", lambda: calls.append("files")
+    )
+    menu = _menu(main_window, "File")
+    by_text = {a.text(): a for a in menu.actions()}
+
+    by_text["Open Folder\u2026"].trigger()
+    by_text["Open Files\u2026"].trigger()
+
+    assert calls == ["folder", "files"]
+    export = by_text["Export"].menu()
+    assert [a.text() for a in export.actions()] == [
+        a.text() for a in main_window._export_btn.menu().actions()
+    ]
+    assert "Quit" in by_text
+
+
+@pytest.mark.gui
+def test_file_export_entries_follow_the_export_button(main_window) -> None:
+    """
+    Given  a window with nothing to export
+    When   a result arrives
+    Then   the Export button and the File → Export entries are enabled together
+    """
+    entries = _menu(main_window, "File")
+    export = next(a for a in entries.actions() if a.text() == "Export").menu()
+    assert not main_window._export_btn.isEnabled()
+    assert not any(a.isEnabled() for a in export.actions())
+
+    main_window._set_export_enabled(True)
+
+    assert main_window._export_btn.isEnabled()
+    assert all(a.isEnabled() for a in export.actions())
+
+
+@pytest.mark.gui
+def test_the_main_panel_has_no_restore_defaults_button(main_window) -> None:
+    """
+    Given  the main window
+    When   its buttons are listed
+    Then   Restore Defaults is gone from the left panel (it lives in the Settings window)
+    """
+    from PySide6.QtWidgets import QPushButton  # noqa: PLC0415
+
+    texts = [b.text() for b in main_window.findChildren(QPushButton)]
+
+    assert "Restore Defaults" not in texts
+
+
+@pytest.mark.gui
+def test_results_step_change_saves_and_refreshes_the_queue(main_window, monkeypatch) -> None:
+    """
+    Given  the Results step in the main panel
+    When   the user ticks text files
+    Then   the settings are saved and the queue is refreshed (as the old Output dialog's OK did)
+    """
+    calls: list[str] = []
+    monkeypatch.setattr(main_window, "_save_settings", lambda **_kw: calls.append("save"))
+    monkeypatch.setattr(main_window, "_refresh_queue_from_inputs", lambda: calls.append("queue"))
+
+    main_window._config_panel._text_enabled.setChecked(True)
+
+    assert calls == ["save", "queue"]
+
+
+@pytest.mark.gui
+def test_the_preview_opens_on_top_of_the_settings_window(main_window, monkeypatch) -> None:
+    """
+    Given  the Settings window asks for a preview of the image preparation
+    When   the main window shows its result
+    Then   the dialogs belong to the Settings window, so they cannot open behind it
+    """
+    from PySide6.QtWidgets import QDialog, QWidget  # noqa: PLC0415
+
+    from teachers_teammate.config import OcrConfig  # noqa: PLC0415
+
+    owner = QWidget()
+    created: list[object] = []
+
+    class _FakeDialog(QDialog):
+        def __init__(self, parent=None) -> None:
+            super().__init__(parent)
+            created.append(parent)
+
+        def exec(self) -> int:
+            return 0
+
+    monkeypatch.setattr(main_window_module, "QDialog", _FakeDialog)
+    monkeypatch.setattr(main_window_module, "load_pixmap", lambda _p: main_window_module.QPixmap())
+    owner.show()
+
+    main_window._on_preprocess_preview_done(
+        Path("a.png"), Path("b.png"), ["deskew"], "", OcrConfig(), Path("/tmp/none"), parent=owner
+    )
+
+    assert created == [owner]
 
 
 @pytest.mark.gui
@@ -1369,54 +1818,46 @@ def test_stage_run_starts_worker_on_success(main_window, monkeypatch) -> None:
 
 
 @pytest.mark.gui
-def test_main_window_loads_credentials_on_startup(qtbot, monkeypatch) -> None:
+def test_main_window_loads_credentials_on_startup(qtbot, monkeypatch, credential_file) -> None:
     """
-    Given  QSettings contains a stored API key under credentials/
+    Given  a stored API key for a service (saved by an earlier session)
     When   MainWindow is created
     Then   the key is injected into os.environ (when not already set)
     """
     import os  # noqa: PLC0415
-    from unittest.mock import MagicMock  # noqa: PLC0415
 
-    mock_qs = MagicMock()
-    mock_qs.childKeys.return_value = ["TEST_CRED_KEY_INIT"]
-    mock_qs.value.return_value = "test-value-from-settings"
-
+    credential_file["credentials/OPENAI_API_KEY"] = "test-value-from-settings"
     monkeypatch.setattr(MainWindow, "_load_toml_if_present", lambda self: None)
     monkeypatch.setattr(MainWindow, "_check_llm_status", lambda self: None)
-    monkeypatch.setattr(main_window_module, "QSettings", lambda *_: mock_qs)
-    monkeypatch.delenv("TEST_CRED_KEY_INIT", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
 
     win = MainWindow(worker_factory=_DummyWorker)
     qtbot.addWidget(win)
 
-    assert os.environ.get("TEST_CRED_KEY_INIT") == "test-value-from-settings"
-    os.environ.pop("TEST_CRED_KEY_INIT", None)
+    assert os.environ.get("OPENAI_API_KEY") == "test-value-from-settings"
+    os.environ.pop("OPENAI_API_KEY", None)
 
 
 @pytest.mark.gui
-def test_main_window_env_var_takes_priority_over_stored_credential(qtbot, monkeypatch) -> None:
+def test_main_window_env_var_takes_priority_over_stored_credential(
+    qtbot, monkeypatch, credential_file
+) -> None:
     """
     Given  an env var is already set AND QSettings has a different value for the same key
     When   MainWindow is created
     Then   the existing env var is NOT overwritten by the stored value
     """
     import os  # noqa: PLC0415
-    from unittest.mock import MagicMock  # noqa: PLC0415
 
-    mock_qs = MagicMock()
-    mock_qs.childKeys.return_value = ["TEST_CRED_KEY_PRIO"]
-    mock_qs.value.return_value = "stored-value"
-
+    credential_file["credentials/OPENAI_API_KEY"] = "stored-value"
     monkeypatch.setattr(MainWindow, "_load_toml_if_present", lambda self: None)
     monkeypatch.setattr(MainWindow, "_check_llm_status", lambda self: None)
-    monkeypatch.setattr(main_window_module, "QSettings", lambda *_: mock_qs)
-    monkeypatch.setenv("TEST_CRED_KEY_PRIO", "env-value")
+    monkeypatch.setenv("OPENAI_API_KEY", "env-value")
 
     win = MainWindow(worker_factory=_DummyWorker)
     qtbot.addWidget(win)
 
-    assert os.environ["TEST_CRED_KEY_PRIO"] == "env-value"
+    assert os.environ["OPENAI_API_KEY"] == "env-value"
 
 
 # ── first-start model choice (AC12/AC13) ──────────────────────────────────
@@ -1539,33 +1980,13 @@ def test_first_start_non_ollama_correction_provider_untouched(
     assert settings["ocr_model"] == DEFAULT_OCR_MODEL  # ocr provider still updated
 
 
-@pytest.mark.use_case("Hardware_Profile_Override")
-def test_hardware_profile_changed_persists_to_settings(
-    main_window, monkeypatch, tmp_path: Path
-) -> None:
-    """
-    Given  a MainWindow
-    When   the Downloads dialog reports a hardware_profile change
-    Then   the value is stored in the config panel and saved to ocr.toml
-    """
-    monkeypatch.setattr(
-        ProcessingApplicationService,
-        "default_config_path",
-        lambda self: tmp_path / "ocr.toml",
-    )
-    main_window._on_hardware_profile_changed("16gb")
-    assert main_window._config_panel.get_settings_dict()["hardware_profile"] == "16gb"
-    saved = (tmp_path / "ocr.toml").read_text(encoding="utf-8")
-    assert 'hardware_profile = "16gb"' in saved
-
-
-# ── downloads wiring (review findings #1, #9, #10 and the GPU tab) ─────────
+# ── add-ons wiring (review findings #1, #9, #10 and the GPU tab) ───────────
 
 
 @pytest.mark.use_case("Model_Category_Guidance")
 def test_finished_pull_evicts_cached_model_list(main_window, monkeypatch) -> None:
     """
-    Given  a pull that finished (possibly after the Downloads dialog was closed)
+    Given  a pull that finished (possibly after the Settings window was closed)
     When   the pull manager reports it
     Then   the main window evicts the model list of the server it pulled from, so
            the pre-run "model missing" check does not use a stale cache
@@ -1582,13 +2003,14 @@ def test_finished_pull_evicts_cached_model_list(main_window, monkeypatch) -> Non
 
 
 @pytest.mark.use_case("Recommended_Models_On_First_Start")
-def test_missing_model_box_opens_downloads_with_models_preselected(
+def test_missing_model_box_opens_addons_with_models_preselected(
     qtbot, main_window, monkeypatch
 ) -> None:
     """
     Given  a run whose configured models are not installed
-    When   the user chooses "Open Downloads →" in the warning
-    Then   Downloads opens with exactly the missing models preselected
+    When   the user chooses "Open Add-ons…" in the warning
+    Then   Settings opens on Add-ons, on the local models, with exactly the missing models
+           preselected
     """
     from unittest.mock import MagicMock  # noqa: PLC0415
 
@@ -1616,7 +2038,7 @@ def test_missing_model_box_opens_downloads_with_models_preselected(
             return 0
 
         def clickedButton(self) -> object:
-            return self._buttons[-1]  # "Open Downloads →"
+            return self._buttons[-1]  # "Open Add-ons…"
 
     monkeypatch.setattr(main_window._config_panel, "to_config", lambda: MagicMock())
     monkeypatch.setattr(
@@ -1625,58 +2047,72 @@ def test_missing_model_box_opens_downloads_with_models_preselected(
         lambda self, config: RunPreflight(missing_models=("qwen3-vl:8b", "qwen3.5:9b")),
     )
     monkeypatch.setattr(main_window_module, "QMessageBox", _Box)
-    opened: list[dict] = []
-    monkeypatch.setattr(
-        main_window, "_open_downloads_dialog_ollama_tab", lambda **kw: opened.append(kw)
-    )
+    scripted = install_scripted_settings_window(monkeypatch, accepted=False)
 
     main_window._on_run()
-    qtbot.waitUntil(lambda: bool(opened), timeout=3000)
+    qtbot.waitUntil(lambda: bool(scripted.instances), timeout=3000)
 
-    assert opened == [{"preselect": ["qwen3-vl:8b", "qwen3.5:9b"]}]
-
-
-@pytest.mark.use_case("Hardware_Profile_Override")
-def test_downloads_callback_uses_given_parent_and_returns_profile(main_window, monkeypatch) -> None:
-    """
-    Given  the callback task dialogs use to open Downloads
-    When   a dialog calls it with itself as parent
-    Then   Downloads opens on top of that dialog with the models preselected and
-           the callback returns the saved "My computer" setting
-    """
-    from PySide6.QtWidgets import QWidget  # noqa: PLC0415
-
-    main_window._config_panel.update_settings({"hardware_profile": "16gb"})
-    recorded: list[dict] = []
-    monkeypatch.setattr(
-        main_window, "_open_downloads_dialog_ollama_tab", lambda **kw: recorded.append(kw)
-    )
-    parent = QWidget()
-    qtbot_parent = parent  # keep a reference for the assertion below
-
-    result = main_window._make_downloads_callback()(["gpt-oss:20b"], parent)
-
-    assert result == "16gb"
-    assert recorded == [
-        {"start_tab": 0, "preselect": ["gpt-oss:20b"], "dialog_parent": qtbot_parent}
-    ]
+    assert len(scripted.instances) == 1
+    window = scripted.instances[0]
+    assert window.page is SettingsPage.ADDONS
+    assert window.focus == FOCUS_LOCAL_MODELS
+    assert window.preselect == ["qwen3-vl:8b", "qwen3.5:9b"]
 
 
 @pytest.mark.use_case("Runtime_Addon_Installation")
 def test_stats_gpu_button_opens_the_gpu_addons_tab(main_window, monkeypatch) -> None:
     """
     Given  the GPU button of the system-stats widget
-    When   it requests the Downloads dialog
-    Then   the GPU add-ons tab is opened (it used to open the first tab)
+    When   it requests Add-ons
+    Then   Settings opens on Add-ons, on the performance-monitoring tab
     """
-    from teachers_teammate.gui._downloads_dialog import DownloadsDialog  # noqa: PLC0415
+    scripted = install_scripted_settings_window(monkeypatch, accepted=False)
 
-    recorded: list[dict] = []
-    monkeypatch.setattr(
-        main_window, "_open_downloads_dialog_ollama_tab", lambda **kw: recorded.append(kw)
-    )
     main_window._stats.open_downloads_requested.emit()
-    assert recorded == [{"start_tab": DownloadsDialog.TAB_GPU}]
+
+    assert len(scripted.instances) == 1
+    window = scripted.instances[0]
+    assert (window.page, window.focus) == (SettingsPage.ADDONS, FOCUS_GPU)
+
+
+@pytest.mark.gui
+def test_the_panels_dependency_guard_opens_addons_with_its_focus(main_window, monkeypatch) -> None:
+    """
+    Given  the config panel's dependency guard asking for the name-detection add-on
+    When   the panel emits open_downloads_requested
+    Then   Settings opens on Add-ons with that focus and entries
+    """
+    scripted = install_scripted_settings_window(monkeypatch, accepted=False)
+
+    main_window._config_panel.open_downloads_requested.emit(
+        FOCUS_ONLINE_SERVICES, ["provider:mistral"]
+    )
+
+    assert len(scripted.instances) == 1
+    window = scripted.instances[0]
+    assert window.page is SettingsPage.ADDONS
+    assert window.focus == FOCUS_ONLINE_SERVICES
+    assert window.preselect == ["provider:mistral"]
+
+
+@pytest.mark.gui
+def test_the_privacy_rules_button_opens_settings_on_the_detection_tab(
+    main_window, monkeypatch
+) -> None:
+    """
+    Given  anonymization switched on in the main panel
+    When   "Privacy rules…" is clicked
+    Then   Settings opens on Privacy, focused on detection
+    """
+    from teachers_teammate.gui.settings._page import FOCUS_DETECTION  # noqa: PLC0415
+
+    scripted = install_scripted_settings_window(monkeypatch, accepted=False)
+
+    main_window._config_panel._anon_configure_btn.click()
+
+    assert len(scripted.instances) == 1
+    window = scripted.instances[0]
+    assert (window.page, window.focus) == (SettingsPage.PRIVACY, FOCUS_DETECTION)
 
 
 def test_close_waits_for_background_tasks(main_window, monkeypatch, tmp_path: Path) -> None:
@@ -2137,7 +2573,7 @@ def test_run_with_text_files_in_the_input_folder_is_refused(
 
     assert shown[0][0] == "Choose another output folder"
     assert "next run would read them as new documents" in shown[0][1]
-    assert "Output Settings" in shown[0][1]
+    assert "Results" in shown[0][1]
     assert preflight == []
     assert main_window._worker is None
     assert main_window._run_btn.isEnabled() is True
@@ -2235,14 +2671,15 @@ def test_taking_back_the_answer_in_privacy_settings_asks_again(
 ) -> None:
     """
     Given  an online run confirmed with "don't ask again"
-    When   the user opens Privacy Settings from the menu, presses "Ask again for all" and OK
-    Then   the dialog opens on the sending tab, and the same run is asked about again
+    When   the user opens Settings → Privacy, presses "Ask again for all" and OK
+    Then   the page opens on the sending tab, and the same run is asked about again
     """
     from unittest.mock import MagicMock, patch  # noqa: PLC0415
 
     from PySide6.QtWidgets import QDialog  # noqa: PLC0415
 
-    from teachers_teammate.gui._privacy_settings_dialog import PrivacySettingsDialog  # noqa: PLC0415
+    from teachers_teammate.gui.settings import SettingsWindow  # noqa: PLC0415
+    from teachers_teammate.gui.settings._page import FOCUS_SENDING  # noqa: PLC0415
 
     confirm_box.remember = True
     cfg = _online_proofreading_config(tmp_path)
@@ -2252,21 +2689,22 @@ def test_taking_back_the_answer_in_privacy_settings_asks_again(
 
     opened_on: list[str] = []
 
-    def fake_exec(dialog: PrivacySettingsDialog) -> QDialog.DialogCode:
-        opened_on.append(dialog._tabs.tabText(dialog._tabs.currentIndex()))
-        dialog._spacy_fetch_thread.quit()
-        dialog._spacy_fetch_thread.wait(500)
-        dialog.sending_tab()._forget_all_btn.click()
-        dialog.accept()
+    def fake_exec(window: SettingsWindow) -> QDialog.DialogCode:
+        page = window.page(SettingsPage.PRIVACY)
+        tabs = page.rules().tabs()
+        opened_on.append(tabs.tabText(tabs.currentIndex()))
+        page.sending_tab()._forget_all_btn.click()
+        window.accept()
         return QDialog.DialogCode.Accepted
 
-    monkeypatch.setattr(PrivacySettingsDialog, "exec", fake_exec)
+    monkeypatch.setattr(SettingsWindow, "exec", fake_exec)
+    monkeypatch.setattr(main_window, "_save_settings", lambda **_kw: None)
     with patch(
-        "teachers_teammate.gui._anonymizer_config_dialog.ProcessingApplicationService",
+        "teachers_teammate.gui._anonymizer_config_widget.ProcessingApplicationService",
         MagicMock(),
     ) as service:
         service.return_value.list_installed_spacy_models.return_value = []
-        main_window._open_privacy_settings_from_menu()
+        main_window.open_settings(SettingsPage.PRIVACY, focus=FOCUS_SENDING)
     main_window._confirm_data_flow_then(cfg, lambda: None)
 
     assert opened_on == ["Sending data away"]
@@ -2293,20 +2731,16 @@ def test_a_remembered_answer_is_kept_with_a_readable_summary(
 
 
 @pytest.mark.gui
-def test_the_advanced_menu_has_one_privacy_entry_instead_of_two(qtbot, main_window) -> None:
+def test_the_settings_menu_has_one_privacy_entry(qtbot, main_window) -> None:
     """
     Given  the main window
-    When   the Advanced Settings menu is read
-    Then   it has "Privacy Settings…" and neither the old "Anonymizer Settings…" nor the
-           separate "Ask Before Sending Data Away Again" entry
+    When   the Settings menu is read
+    Then   it has "Privacy…" and neither the old "Anonymizer Settings…" nor the separate
+           "Ask Before Sending Data Away Again" entry
     """
-    menu = next(
-        a.menu() for a in main_window.menuBar().actions() if a.text() == "Advanced Settings"
-    )
+    entries = [a.text() for a in _menu(main_window, "Settings").actions()]
 
-    entries = [a.text() for a in menu.actions()]
-
-    assert "Privacy Settings\u2026" in entries
+    assert "Privacy\u2026" in entries
     assert "Anonymizer Settings\u2026" not in entries
     assert "Ask Before Sending Data Away Again" not in entries
 
@@ -2642,7 +3076,7 @@ def test_gpu_monitoring_failure_is_remembered_and_not_retried(main_window, monke
 
     log = main_window._log.toPlainText()
     assert "could not be installed" in log
-    assert "Downloads" in log
+    assert "Add-ons" in log
     assert refreshed == []
     assert store[main_window._GPU_MONITORING_FAILED_KEY] == main_window_module.__version__
 
@@ -3157,3 +3591,49 @@ def test_exported_docx_labels_follow_the_explanation_language(
     _wait_for(lambda: bool(seen))
 
     assert seen == [expected]
+
+
+@pytest.mark.gui
+def test_a_pull_requested_while_one_runs_is_queued_not_dropped(qtbot, monkeypatch) -> None:
+    """
+    Given  a pull that is still running (for example one that outlived the Settings window)
+    When   more models are requested, one of them twice and one being the running model
+    Then   they wait in the queue once each and are pulled after the running one, instead of
+           the request being ignored
+    """
+    from PySide6.QtCore import QObject, Signal  # noqa: PLC0415
+
+    from teachers_teammate.gui import _addon_installer_dialog  # noqa: PLC0415
+
+    threads: list[Any] = []
+
+    class _FakePull(QObject):
+        progress = Signal(str, float, float)
+        finished_ok = Signal(str)
+        finished_err = Signal(str)
+
+        def __init__(self, url: str, model: str) -> None:
+            super().__init__()
+            self.model = model
+            threads.append(self)
+
+        def start(self) -> None:
+            pass
+
+        def isRunning(self) -> bool:
+            return True
+
+        def request_abort(self) -> None:
+            pass
+
+    monkeypatch.setattr(_addon_installer_dialog, "_OllamaPullThread", _FakePull)
+    manager = main_window_module.OllamaDownloadManager()
+    manager.start("http://host:11434", "a:1b")
+
+    manager.start("http://host:11434", "a:1b", ["b:1b"])
+    manager.start("http://host:11434", "b:1b", ["c:1b"])
+
+    assert [t.model for t in threads] == ["a:1b"]
+    assert manager.queued == ["b:1b", "c:1b"]
+    threads[0].finished_ok.emit("a:1b")
+    assert [t.model for t in threads] == ["a:1b", "b:1b"]

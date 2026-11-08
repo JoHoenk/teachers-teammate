@@ -1,5 +1,5 @@
 # -*- mode: python ; coding: utf-8 -*-
-from PyInstaller.utils.hooks import collect_all
+from PyInstaller.utils.hooks import collect_all, collect_submodules, copy_metadata
 
 datas = [
     ("teachers_teammate/assets", "teachers_teammate/assets"),
@@ -17,6 +17,8 @@ hiddenimports = [
     "teachers_teammate.infrastructure.providers.anthropic",
     "teachers_teammate.infrastructure.providers.google",
     "teachers_teammate.infrastructure.providers.mistral",
+    "teachers_teammate.infrastructure.providers.mistral_eu",
+    "teachers_teammate.infrastructure.providers._mistral_common",
     "teachers_teammate.infrastructure.providers.cohere",
     "timeit",
     "cProfile",
@@ -33,6 +35,11 @@ tmp_ret = collect_all("pip")
 datas += tmp_ret[0]
 binaries += tmp_ret[1]
 hiddenimports += tmp_ret[2]
+# keyring finds its platform backends (macOS Keychain, Windows Credential Manager, Linux
+# Secret Service) through package metadata, which PyInstaller does not follow; without them
+# API keys silently stay in the plain-text settings file.  Same as build_standalone.py.
+hiddenimports += collect_submodules("keyring")
+datas += copy_metadata("keyring")
 tmp_ret = collect_all("PySide6")
 datas += tmp_ret[0]
 binaries += tmp_ret[1]

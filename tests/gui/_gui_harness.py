@@ -17,9 +17,9 @@ Provides:
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, ClassVar, cast
 
-from PySide6.QtCore import QThread
+from PySide6.QtCore import QObject, QThread, Signal
 from PySide6.QtWidgets import QWidget
 
 from teachers_teammate.application.service import ProcessingApplicationService
@@ -33,11 +33,14 @@ from teachers_teammate.domain.model_catalog import (
     ModelUses,
 )
 from teachers_teammate.domain.model_listing import ModelListing
-from teachers_teammate.gui import _anonymizer_config_dialog, _downloads_dialog, _settings_dialog
+from teachers_teammate.gui import _anonymizer_config_widget, _model_fetch
 from teachers_teammate.gui._background import LatestTask
+from teachers_teammate.gui._privacy_settings import FlowAcknowledgements
 from teachers_teammate.gui._main_window import MainWindow
 from teachers_teammate.gui._update_check import UpdateCheckThread
 from teachers_teammate.gui._worker import _ConnectionCheckThread
+from teachers_teammate.gui.settings import SettingsContext, SettingsResult
+from teachers_teammate.gui.settings import _addons_page
 
 from ._service_stubs import LocalDataFlowStub
 
@@ -89,6 +92,9 @@ class FakeGuiService(LocalDataFlowStub):
     def missing_provider_package(self, provider: str) -> str | None:
         _ = provider
         return None
+
+    def list_provider_packages(self) -> dict[str, tuple[str, str]]:
+        return {}
 
     def list_correction_prompt_presets(self) -> dict[str, str]:
         return {}
@@ -229,10 +235,10 @@ def neutralize_gui_threads(monkeypatch: Any) -> None:
     for thread_cls in (
         UpdateCheckThread,
         _ConnectionCheckThread,
-        _settings_dialog._GpuDetectThread,
-        _settings_dialog._ModelFetchThread,
-        _downloads_dialog._PipInstallThread,
-        _anonymizer_config_dialog._SpacyModelFetchThread,
+        _model_fetch._GpuDetectThread,
+        _model_fetch._ModelFetchThread,
+        _addons_page._PipInstallThread,
+        _anonymizer_config_widget._SpacyModelFetchThread,
     ):
         monkeypatch.setattr(thread_cls, "start", lambda self: None)
 
@@ -264,3 +270,88 @@ def exercise_lifecycle(qtbot: Any, widget: QWidget) -> None:
     widget.close()
     qtbot.wait(20)
     assert_no_running_threads(widget)
+
+
+class MemorySettings:
+    """In-memory ``QSettings`` stand-in (``value`` / ``setValue`` / ``remove``)."""
+
+    def __init__(self) -> None:
+        self.data: dict[str, object] = {}
+
+    def value(self, key: str, default: object = None) -> object:
+        return self.data.get(key, default)
+
+    def setValue(self, key: str, value: object) -> None:
+        self.data[key] = value
+
+    def remove(self, key: str) -> None:
+        self.data.pop(key, None)
+
+
+def settings_context(service: Any = None, **overrides: Any) -> SettingsContext:
+    """Return a :class:`SettingsContext` for tests: fake service, in-memory acknowledgements."""
+    store = MemorySettings()
+    values: dict[str, Any] = {
+        "settings": {},
+        "app_service": service if service is not None else FakeGuiService(),
+        "language": "English",
+        "acknowledgements": FlowAcknowledgements(lambda: store),
+    }
+    values.update(overrides)
+    return SettingsContext(**values)
+
+
+class ScriptedSettingsWindow(QObject):
+    """Stands in for ``SettingsWindow`` in the main window: no UI, a scripted outcome.
+
+    ``exec()`` returns ``code`` and ``values()`` returns ``result``.  Every instance the
+    main window creates is kept in :attr:`instances`, with the arguments it was built from.
+    """
+
+    preprocess_preview_requested = Signal(object)
+    packages_changed = Signal()
+    addon_installed = Signal(str)
+
+    code: ClassVar[int] = 0
+    result: ClassVar[SettingsResult] = SettingsResult(settings={})
+    instances: ClassVar[list[ScriptedSettingsWindow]] = []
+
+    def __init__(self, context, parent=None, *, page, focus="", preselect=()) -> None:
+        super().__init__(parent)
+        self.context = context
+        self.page = page
+        self.focus = focus
+        self.preselect = list(preselect)
+        self.shown: list[tuple[object, str, list[str]]] = []
+        type(self).instances.append(self)
+
+    def exec(self) -> int:
+        return type(self).code
+
+    def values(self) -> SettingsResult:
+        return type(self).result
+
+    def isVisible(self) -> bool:
+        return False
+
+    def show_page(self, page, focus="", preselect=()) -> None:
+        self.shown.append((page, focus, list(preselect)))
+
+
+def install_scripted_settings_window(
+    monkeypatch: Any, *, accepted: bool = True, result: SettingsResult | None = None
+) -> type[ScriptedSettingsWindow]:
+    """Make the main window open a :class:`ScriptedSettingsWindow` that closes with *accepted*."""
+    from teachers_teammate.gui import _main_window  # noqa: PLC0415
+
+    scripted = type(
+        "_Scripted",
+        (ScriptedSettingsWindow,),
+        {
+            "code": 1 if accepted else 0,
+            "result": result or SettingsResult(settings={}),
+            "instances": [],
+        },
+    )
+    monkeypatch.setattr(_main_window, "SettingsWindow", scripted)
+    return scripted

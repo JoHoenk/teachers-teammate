@@ -89,7 +89,7 @@ class OllamaModelSpec:
 
     #: Normalised model tag, always including the ``:tag`` suffix.
     tag: str
-    #: "ocr" (reading model) or "general" (writing model).  The Downloads dialog
+    #: "ocr" (reading model) or "general" (writing model).  Settings → Add-ons
     #: lists the model in this group.
     category: ModelCategory
     #: Memory (GB) the model needs in total while running at the app's proofreading window of

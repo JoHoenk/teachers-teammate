@@ -272,6 +272,37 @@ def _no_background_network_threads(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(_ConnectionCheckThread, "start", lambda self, *_a: None)
 
 
+@pytest.fixture(autouse=True)
+def credential_file(monkeypatch: pytest.MonkeyPatch) -> dict[str, object]:
+    """Keep API keys off the real machine: no system keychain, an in-memory settings file.
+
+    Returns the stored ``{"credentials/<ENV_KEY>": value}`` entries, so a test can read what
+    was saved or plant a key as if an earlier session had saved it.
+    """
+    stored: dict[str, object] = {}
+    try:
+        from teachers_teammate.gui import _credential_store  # noqa: PLC0415
+    except ImportError:  # pure-unit targets without PySide6
+        return stored
+
+    class MemorySettings:
+        def __init__(self, *_args: object) -> None:
+            pass
+
+        def value(self, key: str, default: object = None) -> object:
+            return stored.get(key, default)
+
+        def setValue(self, key: str, value: object) -> None:
+            stored[key] = value
+
+        def remove(self, key: str) -> None:
+            stored.pop(key, None)
+
+    monkeypatch.setattr(_credential_store, "QSettings", MemorySettings)
+    monkeypatch.setattr(_credential_store, "_keyring", lambda: None)
+    return stored
+
+
 # ── Pytest markers ─────────────────────────────────────────────────────────
 
 

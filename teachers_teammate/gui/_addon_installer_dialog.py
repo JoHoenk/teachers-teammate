@@ -27,6 +27,7 @@ from ..application.service import (
     GpuInfo,
     ProcessingApplicationService,
 )
+from . import _user_text as txt
 from ._constants import _SPACY_MODEL_CHOICES
 
 
@@ -41,8 +42,8 @@ _ADDON_META: dict[str, dict] = {
         "title": "Install Privacy Addon",
         "description": (
             "This installs <b>spaCy</b>, the NLP library used for PII anonymization.<br><br>"
-            "After installation, open <i>Privacy Settings</i> to download a language "
-            "model for your language before using anonymization."
+            "After installation, download a name detection model for your language under "
+            f"<i>{txt.WHERE_ADDONS}</i> before using anonymization."
         ),
         "size_warning": "",
     },
@@ -51,7 +52,8 @@ _ADDON_META: dict[str, dict] = {
         "description": (
             "This installs <b>paddlepaddle</b> and <b>paddleocr</b> for fully local "
             "OCR inference without a network connection.<br><br>"
-            'After installation, select <i>"paddleocr"</i> as the OCR engine in Settings.'
+            f'After installation, select <i>"paddleocr"</i> as the recognition method under '
+            f"<i>{txt.WHERE_AI_MODELS}</i>."
         ),
         "size_warning": "⚠  Download is approximately 400 MB. Make sure you have a stable "
         "internet connection and sufficient disk space.",

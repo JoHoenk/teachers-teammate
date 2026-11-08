@@ -1,18 +1,20 @@
-"""Privacy Settings: what leaves this computer, and how personal info is found and replaced.
+"""Settings → Privacy: what leaves this computer, and how personal info is found and replaced.
 
-One window for everything a teacher decides about privacy.  The first tab lists the answers
-the user chose not to be asked about again ("Don't ask again" before a run that sends content
-away) and lets them be taken back; the other two tabs are the existing personal-info
-detection and pattern rules of :class:`~._anonymizer_config_dialog.AnonymizerConfigDialog`.
+The first tab lists the answers the user chose not to be asked about again ("Don't ask
+again" before a run that sends content away) and lets them be taken back; the other two tabs
+are the personal-info detection and pattern rules of
+:class:`~.._anonymizer_config_widget.AnonymizerConfigWidget`.
 
 The detection tab also carries the "hide personal information in the texts shown in this app"
-choice, which used to be a View menu entry.  It is a GUI preference, applied by the caller
-after OK.
+choice.  It is a GUI preference, applied by the main window after OK.
 
-Changes in the first tab are only applied with OK, like the rest of the dialog.
+Every change on this page is applied with OK, like the rest of the window.
 """
 
 from __future__ import annotations
+
+from collections.abc import Sequence
+from typing import Any
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
@@ -28,11 +30,24 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from . import _user_text as txt
-from ._anonymizer_config_dialog import AnonymizerConfigDialog
-from ._privacy_settings import SECTION_DETECTION, SECTION_SENDING, FlowAcknowledgements
+from ...config import DEFAULTS
+from .. import _user_text as txt
+from .._anonymizer_config_widget import AnonymizerConfigWidget
+from .._privacy_settings import DISPLAY_ANONYMIZED_DEFAULT, FlowAcknowledgements
+from ._page import (
+    FOCUS_DETECTION,
+    FOCUS_PATTERNS,
+    FOCUS_SENDING,
+    SettingsContext,
+    SettingsPage,
+    SettingsPageBase,
+)
 
-TITLE = "Privacy Settings"
+TITLE = "Privacy"
+DESCRIPTION = (
+    "What may leave this computer, and how names and other personal information are found "
+    "and replaced."
+)
 TAB_SENDING = "Sending data away"
 TAB_DETECTION = "Personal info: detection"
 TAB_PATTERNS = "Personal info: patterns"
@@ -51,6 +66,11 @@ NOTHING_REMEMBERED = (
 ASK_AGAIN_SELECTED = "Ask again for selected"
 ASK_AGAIN_ALL = "Ask again for all"
 CHANGES_ON_OK = "Changes are saved when you press OK."
+
+_TAB_INDEX = {FOCUS_SENDING: 0, FOCUS_DETECTION: 1, FOCUS_PATTERNS: 2}
+
+#: The settings keys behind the anonymizer rules (written through ``AnonymizerConfig``).
+ANONYMIZER_KEYS = ("anonymizer_primary_model", "anonymizer_secondary_model", "anonymizer_patterns")
 
 
 class SendingDataTab(QWidget):
@@ -140,30 +160,33 @@ class SendingDataTab(QWidget):
         self._refresh()
 
 
-class PrivacySettingsDialog(AnonymizerConfigDialog):
-    """Sending data away + personal-info detection + patterns, in one window."""
+class PrivacyPage(SettingsPageBase):
+    """Sending data away + personal-info detection + patterns."""
 
-    def __init__(  # noqa: PLR0913  # mirrors AnonymizerConfigDialog plus the privacy choices
-        self,
-        language: str,
-        anonymizer_config: object,
-        app_service,
-        parent: QWidget | None = None,
-        *,
-        acknowledgements: FlowAcknowledgements,
-        section: str = SECTION_DETECTION,
-        sample_text: str = "",
-        display_anonymized: bool = False,
-        display_anonymized_available: bool = True,
-    ) -> None:
-        super().__init__(language, anonymizer_config, app_service, parent, sample_text=sample_text)
-        self.setWindowTitle(TITLE)
-        self._sending_tab = SendingDataTab(acknowledgements)
-        self._tabs.setTabText(0, TAB_DETECTION)
-        self._tabs.setTabText(1, TAB_PATTERNS)
-        self._tabs.insertTab(0, self._sending_tab, TAB_SENDING)
-        self._tabs.setCurrentIndex(0 if section == SECTION_SENDING else 1)
-        self._build_showing_texts_group(display_anonymized, display_anonymized_available)
+    page = SettingsPage.PRIVACY
+    title = TITLE
+    description = DESCRIPTION
+
+    def __init__(self, context: SettingsContext, parent: QWidget | None = None) -> None:
+        super().__init__(context, parent)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+
+        self._rules = AnonymizerConfigWidget(
+            context.language, context.anonymizer_config, context.app_service, self
+        )
+        self._rules.validity_changed.connect(self.validity_changed.emit)
+        self._rules.setMinimumHeight(560)
+        layout.addWidget(self._rules)
+
+        self._sending_tab = SendingDataTab(context.acknowledgements)
+        tabs = self._rules.tabs()
+        tabs.setTabText(0, TAB_DETECTION)
+        tabs.setTabText(1, TAB_PATTERNS)
+        tabs.insertTab(0, self._sending_tab, TAB_SENDING)
+        tabs.setCurrentIndex(0)
+        self._available = context.privacy_available
+        self._build_showing_texts_group(context.display_anonymized, context.privacy_available)
 
     def _build_showing_texts_group(self, checked: bool, available: bool) -> None:
         """Add the "hide personal information" choice above the detection models.
@@ -180,21 +203,74 @@ class PrivacySettingsDialog(AnonymizerConfigDialog):
             txt.HIDE_PERSONAL_INFO_TIP if available else txt.HIDE_PERSONAL_INFO_UNAVAILABLE_TIP
         )
         layout.addWidget(self._hide_personal_cb)
-        self._detection_layout.insertWidget(0, group)
+        self._rules.detection_layout().insertWidget(0, group)
 
-    def hide_personal_checkbox(self) -> QCheckBox:
-        """Return the "hide personal information in the texts shown" checkbox."""
-        return self._hide_personal_cb
+    # ── public API ────────────────────────────────────────────────────────────
+
+    def anonymizer_config(self) -> object:
+        """Return the ``AnonymizerConfig`` as currently shown."""
+        return self._rules.anonymizer_config
 
     def display_anonymized(self) -> bool:
         """Whether the app should show placeholders instead of names (read after OK)."""
         return self._hide_personal_cb.isChecked()
 
+    def hide_personal_checkbox(self) -> QCheckBox:
+        """Return the "hide personal information in the texts shown" checkbox."""
+        return self._hide_personal_cb
+
     def sending_tab(self) -> SendingDataTab:
         """Return the "Sending data away" tab."""
         return self._sending_tab
 
-    def accept(self) -> None:
-        """Apply the remembered-answer changes, then close with the anonymizer settings."""
+    def rules(self) -> AnonymizerConfigWidget:
+        """Return the detection and pattern rules widget."""
+        return self._rules
+
+    # ── page protocol ─────────────────────────────────────────────────────────
+
+    def owned_keys(self) -> frozenset[str]:
+        return frozenset(ANONYMIZER_KEYS)
+
+    def restore_defaults(self) -> None:
+        """Reset the detection models, the patterns and the "hide names" choice.
+
+        The remembered answers are kept: they have their own "Ask again" buttons.
+        """
+        from ...application.service import (  # noqa: PLC0415
+            DEFAULT_ANONYMIZER_PATTERNS,
+            AnonymizerConfig,
+        )
+
+        self._rules.set_config(
+            AnonymizerConfig(
+                primary_model=DEFAULTS["anonymizer_primary_model"] or None,
+                secondary_model=DEFAULTS["anonymizer_secondary_model"],
+                patterns=tuple(DEFAULT_ANONYMIZER_PATTERNS),
+            )
+        )
+        if self._available:
+            self._hide_personal_cb.setChecked(DISPLAY_ANONYMIZED_DEFAULT)
+
+    def apply(self) -> None:
+        """Write back the remembered answers taken back on the first tab."""
         self._sending_tab.apply()
-        super().accept()
+
+    def is_valid(self) -> bool:
+        return self._rules.is_valid()
+
+    def focus(self, focus: str, preselect: Sequence[str] = ()) -> None:
+        _ = preselect
+        index = _TAB_INDEX.get(focus)
+        if index is not None:
+            self._rules.tabs().setCurrentIndex(index)
+
+    def on_packages_changed(self) -> None:
+        self._rules.reload_models()
+
+    def shutdown(self) -> None:
+        self._rules.shutdown()
+
+    def values(self) -> dict[str, Any]:
+        """The rules are handed back through :meth:`anonymizer_config`, not the dict."""
+        return {}

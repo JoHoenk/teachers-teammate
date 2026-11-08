@@ -1,24 +1,25 @@
-"""Downloads & packages dialog — install OCR engines, providers, and models.
+"""Settings → Add-ons: install AI models for this computer, engines, services and language models.
 
-Extracted from the Settings dialog so it can be reached from its own menu entry.
 Each downloadable category lives on its own tab; a shared log and a single
-"Install / Download Selected" button act across all tabs.  The Ollama Models
-tab is first: it groups the curated catalog into reading and writing models
-and ticks the best models for the user's computer (see
-:mod:`teachers_teammate.domain.model_catalog`).
+"Install / Download Selected" button act across all tabs.  The "AI models for this computer"
+tab is first: it groups the curated catalog into reading and writing models and ticks the
+best models for the user's computer (see :mod:`teachers_teammate.domain.model_catalog`).
+
+What happens here happens at once: Cancel does not undo an install.  Ollama pulls belong to
+the main window's download manager and keep running when the window closes; a pip install or
+a language-model download keeps the window open until it finished (it must make the new
+package importable before anything else uses it).
 """
 
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import TYPE_CHECKING, cast
+from typing import ClassVar, cast
 
 from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtGui import QBrush, QColor
 from PySide6.QtWidgets import (
     QCheckBox,
-    QDialog,
-    QDialogButtonBox,
     QGroupBox,
     QHBoxLayout,
     QHeaderView,
@@ -36,9 +37,9 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ..application.service import ProcessingApplicationService
-from ..config import DEFAULTS
-from ..domain.model_catalog import (
+from ...application.service import ProcessingApplicationService
+from ...config import DEFAULTS
+from ...domain.model_catalog import (
     HardwareProfile,
     ModelCategory,
     ModelRating,
@@ -49,11 +50,11 @@ from ..domain.model_catalog import (
     normalize_tag,
     suitability_rank,
 )
-from ._background import LatestTask
-from ._constants import _SPACY_MODEL_CHOICES as _SPACY_MODEL_DOWNLOAD_CHOICES
-from ._hardware_profile_selector import HardwareProfileSelector
-from ._model_guidance import PROVIDER_PREFIX
-from ._model_wording import (
+from .._background import LatestTask
+from .._constants import _SPACY_MODEL_CHOICES as _SPACY_MODEL_DOWNLOAD_CHOICES
+from .._hardware_profile_selector import HardwareProfileSelector
+from .._model_guidance import PROVIDER_PREFIX
+from .._model_wording import (
     ADD_MODEL_NOTE,
     BEST_ALREADY_DOWNLOADED,
     DOWNLOADS_INTRO,
@@ -69,11 +70,32 @@ from ._model_wording import (
     too_large_confirmation,
     too_large_tooltip,
 )
+from ._page import (
+    FOCUS_GPU,
+    FOCUS_LOCAL_MODELS,
+    FOCUS_NAME_DETECTION,
+    FOCUS_OCR_ENGINES,
+    FOCUS_ONLINE_SERVICES,
+    SettingsContext,
+    SettingsPage,
+    SettingsPageBase,
+)
 
-if TYPE_CHECKING:
-    # Real type of the injected pull manager. Imported under TYPE_CHECKING only:
-    # _main_window lazily imports this dialog, so a runtime import would be circular.
-    from ._main_window import OllamaDownloadManager
+TITLE = "Add-ons"
+DESCRIPTION = (
+    "Download AI models for this computer and install optional parts. Installs start right "
+    "away and take effect immediately."
+)
+TAB_LOCAL_MODELS = "AI models for this computer"
+TAB_OCR_ENGINES = "Handwriting engines"
+TAB_ONLINE_SERVICES = "Online AI services"
+TAB_NAME_DETECTION = "Name detection"
+TAB_GPU = "Performance monitoring"
+CHANGE_PROFILE_LINK = '<a href="change">change…</a>'
+CLOSE_BLOCKED = (
+    "An installation is still running. Please wait until it has finished — the new package "
+    "must be set up before the app can use it."
+)
 
 # Tree group rows: group key → (label, catalog category or None for user models).
 _OLLAMA_GROUPS: dict[str, tuple[str, ModelCategory | None]] = {
@@ -163,51 +185,48 @@ class _PipInstallThread(QThread):
             self.finished_err.emit(str(exc))
 
 
-class DownloadsDialog(QDialog):
-    """Modal dialog to install OCR engines, LLM providers, and models.
+class AddonsPage(SettingsPageBase):
+    """Install AI models for this computer, handwriting engines, online services and more.
 
-    Items are grouped onto one tab per category; a shared log and a single
-    install button operate across every tab. Pass the configured Ollama server
-    *ollama_url* so model detection and pulls target the right host.
+    Items are grouped onto one tab per category; a shared log and a single install button
+    operate across every tab.  Model detection and pulls target the configured Ollama server
+    (it follows *Where the AI runs*).
     """
+
+    page = SettingsPage.ADDONS
+    title = TITLE
+    description = DESCRIPTION
+    applies_immediately = True
 
     #: Emitted after a successful install round so callers can refresh model lists.
     packages_changed = Signal()
-    #: Emitted when the user changes the "My computer" choice.
-    hardware_profile_changed = Signal(str)
 
-    #: Tab indexes within the tab widget (the Ollama tab is first — what new users need most).
-    TAB_OLLAMA = 0
-    TAB_OCR_ENGINES = 1
-    TAB_PROVIDERS = 2
-    TAB_SPACY = 3
+    #: Tab indexes within the tab widget (the local-models tab is first — what new users need).
+    TAB_LOCAL_MODELS = 0
+    TAB_ONLINE_SERVICES = 1
+    TAB_NAME_DETECTION = 2
+    TAB_OCR_ENGINES = 3
     TAB_GPU = 4
 
-    def __init__(
-        self,
-        ollama_url: str = "",
-        start_tab: int = 0,
-        parent: QWidget | None = None,
-        pull_manager: OllamaDownloadManager | None = None,
-        hardware_profile: str = "auto",
-        preselect: Sequence[str] = (),
-        app_service: ProcessingApplicationService | None = None,
-    ) -> None:
-        super().__init__(parent)
-        self.setWindowTitle("Downloads & Packages")
-        self.setMinimumWidth(760)
-        self.setMinimumHeight(560)
-        self._ollama_url = ollama_url.strip() or DEFAULTS["ollama_url"]
-        self._svc = app_service or ProcessingApplicationService()
-        self._hardware_profile = hardware_profile
-        self._preselect = [tag for tag in preselect if tag and not tag.startswith(PROVIDER_PREFIX)]
+    _FOCUS_TABS: ClassVar[dict[str, int]] = {
+        FOCUS_LOCAL_MODELS: TAB_LOCAL_MODELS,
+        FOCUS_OCR_ENGINES: TAB_OCR_ENGINES,
+        FOCUS_ONLINE_SERVICES: TAB_ONLINE_SERVICES,
+        FOCUS_NAME_DETECTION: TAB_NAME_DETECTION,
+        FOCUS_GPU: TAB_GPU,
+    }
+
+    def __init__(self, context: SettingsContext, parent: QWidget | None = None) -> None:
+        super().__init__(context, parent)
+        settings = context.settings
+        self._ollama_url = str(settings.get("ollama_url") or "").strip() or DEFAULTS["ollama_url"]
+        self._svc = context.app_service or ProcessingApplicationService()
+        self._hardware_profile = str(settings.get("hardware_profile", DEFAULTS["hardware_profile"]))
+        self._preselect: list[str] = []
         self._provider_packages = self._svc.list_provider_packages()
         # "provider:<name>" asks for an LLM provider package, not an Ollama model.
-        self._preselect_providers = [
-            self._package_key(tag.removeprefix(PROVIDER_PREFIX))
-            for tag in preselect
-            if tag.startswith(PROVIDER_PREFIX)
-        ]
+        self._preselect_providers: list[str] = []
+        self._pull_connected = False  # subscribed to the pull manager's signals
         self._detect_task = LatestTask(self)
         self._detect_running = False
         self._detect_again = False  # a pull finished while a detection was running
@@ -215,8 +234,7 @@ class DownloadsDialog(QDialog):
         self._detection_started = False
         self._dl_checkboxes: dict[str, QCheckBox] = {}
         self._tesseract_status_lbl: QLabel | None = None
-        self._pull_manager = pull_manager  # owned by MainWindow; outlives this dialog
-        self._pull_remaining: list[str] = []  # queued models waiting for the current pull
+        self._pull_manager = context.pull_manager  # owned by MainWindow; outlives this page
         self._pulled_any = False  # a model of the current install round arrived
         # Pre-ticking waits for BOTH the installed check and the hardware detection.
         self._installed_ready = False
@@ -233,32 +251,30 @@ class DownloadsDialog(QDialog):
         self._model_items: dict[str, QTreeWidgetItem] = {}  # tag → child row
 
         main = QVBoxLayout(self)
+        main.setContentsMargins(0, 0, 0, 0)
         main.setSpacing(8)
 
-        tabs = QTabWidget()
-        main.addWidget(tabs, stretch=1)
+        self._tabs = QTabWidget()
+        self._tabs.setMinimumHeight(460)
+        main.addWidget(self._tabs, stretch=1)
 
-        tabs.addTab(self._build_ollama_models_tab(), "Ollama Models")
-        tabs.addTab(self._build_ocr_engines_tab(), "OCR Engines")
-        tabs.addTab(self._build_providers_tab(), "LLM Providers")
-        tabs.addTab(self._build_spacy_tab(), "spaCy")
-        tabs.addTab(self._build_gpu_tab(), "GPU Add-ons")
-
-        if self._preselect_providers:
-            start_tab = self.TAB_PROVIDERS
-        if start_tab:
-            tabs.setCurrentIndex(start_tab)
+        self._tabs.addTab(self._build_ollama_models_tab(), TAB_LOCAL_MODELS)
+        self._tabs.addTab(self._build_providers_tab(), TAB_ONLINE_SERVICES)
+        self._tabs.addTab(self._build_spacy_tab(), TAB_NAME_DETECTION)
+        self._tabs.addTab(self._build_ocr_engines_tab(), TAB_OCR_ENGINES)
+        self._tabs.addTab(self._build_gpu_tab(), TAB_GPU)
 
         self._build_status_and_actions(main)
 
-        # Enter in a text field must only do what that field does.  QDialog would also
-        # "press" its default button (the first push button, e.g. Install Selected).
+        # Enter in a text field must only do what that field does.  A dialog would also
+        # "press" its default button (the first push button, e.g. Install Selected).  The
+        # window turns its own OK into a non-default button while this page is shown.
         for button in self.findChildren(QPushButton):
             button.setAutoDefault(False)
             button.setDefault(False)
 
     def _build_status_and_actions(self, main: QVBoxLayout) -> None:
-        """Build the detection label, progress bar, log, action row, and close button."""
+        """Build the detection label, progress bar, log and the action row."""
         self._dl_detect_lbl = QLabel("Detecting installed packages…")
         self._dl_detect_lbl.setStyleSheet("color: #888; font-size: 11px;")
         main.addWidget(self._dl_detect_lbl)
@@ -289,10 +305,6 @@ class DownloadsDialog(QDialog):
         action_layout.addWidget(self._dl_abort_btn)
         action_layout.addWidget(self._dl_install_btn)
         main.addWidget(action_row)
-
-        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
-        buttons.rejected.connect(self.reject)
-        main.addWidget(buttons)
 
     # ── tab builders ────────────────────────────────────────────────────────────
 
@@ -352,7 +364,7 @@ class DownloadsDialog(QDialog):
     def _build_ocr_engines_tab(self) -> QScrollArea:
         content = QWidget()
         layout = QVBoxLayout(content)
-        group = QGroupBox("OCR Engines")
+        group = QGroupBox("Handwriting engines")
         group_layout = QVBoxLayout(group)
 
         group_layout.addWidget(self._build_tesseract_binary_note())
@@ -373,7 +385,7 @@ class DownloadsDialog(QDialog):
     def _build_providers_tab(self) -> QScrollArea:
         content = QWidget()
         layout = QVBoxLayout(content)
-        group = QGroupBox("LLM Provider Packages")
+        group = QGroupBox("Online AI services")
         group_layout = QVBoxLayout(group)
         for prov, (_, pip_pkg) in self._provider_packages.items():
             lbl = _PROVIDER_LABELS.get(prov) or f"{self._provider_name(prov)}  ({pip_pkg})"
@@ -406,19 +418,12 @@ class DownloadsDialog(QDialog):
     def _build_ollama_models_tab(self) -> QScrollArea:
         content = QWidget()
         layout = QVBoxLayout(content)
-        group = QGroupBox("Ollama Models")
+        group = QGroupBox("AI models for this computer (Ollama)")
         group_layout = QVBoxLayout(group)
         group_layout.setSpacing(6)
 
-        # "My computer" selector — the shared hardware-profile setting.
-        self._hardware_selector = HardwareProfileSelector(
-            app_service=self._svc,
-            setting=self._hardware_profile,
-            ollama_url=self._ollama_url,
-        )
-        self._hardware_selector.setting_changed.connect(self.hardware_profile_changed.emit)
-        self._hardware_selector.resolved_changed.connect(self._on_profile_resolved)
-        group_layout.addWidget(self._hardware_selector)
+        profile_row, self._hardware_selector, self._change_profile_lbl = self._build_profile_row()
+        group_layout.addWidget(profile_row)
 
         intro = QLabel(DOWNLOADS_INTRO)
         intro.setWordWrap(True)
@@ -461,6 +466,24 @@ class DownloadsDialog(QDialog):
         layout.addWidget(group)
         layout.addStretch(1)
         return self._scrolled(content)
+
+    def _build_profile_row(self) -> tuple[QWidget, HardwareProfileSelector, QLabel]:
+        """Build the read-only "My computer" line; it is changed on the Where the AI runs page."""
+        row = QWidget()
+        layout = QHBoxLayout(row)
+        layout.setContentsMargins(0, 0, 0, 0)
+        selector = HardwareProfileSelector(
+            app_service=self._svc,
+            setting=self._hardware_profile,
+            ollama_url=self._ollama_url,
+            read_only=True,
+        )
+        selector.resolved_changed.connect(self._on_profile_resolved)
+        layout.addWidget(selector, stretch=1)
+        change = QLabel(CHANGE_PROFILE_LINK)
+        change.linkActivated.connect(lambda _link: self._navigate(SettingsPage.AI_SETUP))
+        layout.addWidget(change)
+        return row, selector, change
 
     def _build_ollama_model_tree(self) -> QTreeWidget:
         """Build the grouped model tree and populate it from the catalog."""
@@ -720,11 +743,11 @@ class DownloadsDialog(QDialog):
         content = QWidget()
         layout = QVBoxLayout(content)
 
-        install_group = QGroupBox("spaCy Installation")
+        install_group = QGroupBox("Name detection")
         install_layout = QVBoxLayout(install_group)
         intro = QLabel(
-            "spaCy is the NLP library used for anonymization. "
-            "Install it first, then download a language model below."
+            "spaCy is the library that finds names and other personal information. "
+            "Install it first, then download a name detection model below."
         )
         intro.setWordWrap(True)
         intro.setStyleSheet("color: #aaa; font-size: 9pt;")
@@ -734,7 +757,7 @@ class DownloadsDialog(QDialog):
         install_layout.addWidget(cb_spacy)
         layout.addWidget(install_group)
 
-        model_group = QGroupBox("spaCy Language Models  (for anonymization)")
+        model_group = QGroupBox("Name detection models")
         model_layout = QVBoxLayout(model_group)
         for lbl, model_id in _SPACY_MODEL_DOWNLOAD_CHOICES:
             cb = QCheckBox(lbl)
@@ -747,7 +770,7 @@ class DownloadsDialog(QDialog):
     def _build_gpu_tab(self) -> QScrollArea:
         content = QWidget()
         layout = QVBoxLayout(content)
-        group = QGroupBox("GPU Monitoring Add-ons")
+        group = QGroupBox("Performance monitoring")
         group_layout = QVBoxLayout(group)
         for key, lbl in [
             ("gpu:nvidia", "NVIDIA monitoring  (nvidia-ml-py)"),
@@ -762,20 +785,93 @@ class DownloadsDialog(QDialog):
 
     # ── detection ────────────────────────────────────────────────────────────────
 
-    def showEvent(self, event) -> None:
-        super().showEvent(event)
+    # ── page protocol ────────────────────────────────────────────────────────────
+
+    def on_shown(self) -> None:
+        """Detect what is installed (first time), and follow a pull that is already running."""
         if not self._detection_started:
             self._detection_started = True
             self._start_detection()
         # If a pull is already running in the manager, subscribe to show current progress
-        if self._pull_manager is not None and self._pull_manager.is_active:
+        if (
+            self._pull_manager is not None
+            and self._pull_manager.is_active
+            and not self._pull_connected
+        ):
             model = self._pull_manager.current_model
             self._dl_log.appendPlainText(f"(pull of {model!r} already in progress…)")
             self._dl_progress.setValue(0)
             self._dl_progress.show()
-            self._pull_manager.progress.connect(self._on_ollama_pull_progress)
-            self._pull_manager.finished.connect(self._on_manager_pull_done)
-            self._pull_manager.error.connect(self._on_manager_pull_error)
+            self._dl_abort_btn.setEnabled(True)
+            self._dl_abort_btn.show()
+            self._connect_pull_manager()
+
+    def focus(self, focus: str, preselect: Sequence[str] = ()) -> None:
+        """Show the tab named *focus*; tick *preselect* (model tags, ``provider:<name>``)."""
+        tags = [tag for tag in preselect if tag and not tag.startswith(PROVIDER_PREFIX)]
+        providers = [
+            self._package_key(tag.removeprefix(PROVIDER_PREFIX))
+            for tag in preselect
+            if tag.startswith(PROVIDER_PREFIX)
+        ]
+        tab = self._FOCUS_TABS.get(focus)
+        if providers:
+            tab = self.TAB_ONLINE_SERVICES
+        elif tags and tab is None:
+            tab = self.TAB_LOCAL_MODELS
+        if tab is not None:
+            self._tabs.setCurrentIndex(tab)
+        self._preselect.extend(tags)
+        self._preselect_providers.extend(providers)
+        if self._installed_ready and (tags or providers):
+            # Detection is done: tick now (otherwise it ticks once detection finished).
+            self._tick_preselect_tags()
+
+    def set_hardware_setting(self, setting: str) -> None:
+        self._hardware_selector.set_setting(setting)
+
+    def set_ollama_url(self, url: str) -> None:
+        new_url = url.strip() or DEFAULTS["ollama_url"]
+        if new_url == self._ollama_url:
+            return
+        self._ollama_url = new_url
+        self._hardware_selector.set_ollama_url(new_url)
+        if self._detection_started:
+            self._start_detection()
+
+    def close_blocker(self) -> str:
+        """A pip install or language-model download must finish before the window closes."""
+        if self._dl_active_thread is not None and self._dl_active_thread.isRunning():
+            return CLOSE_BLOCKED
+        return ""
+
+    def shutdown(self) -> None:
+        """Stop following the pull manager; a running pull keeps going in the main window."""
+        self._disconnect_pull_manager()
+
+    # ── pull manager subscription ────────────────────────────────────────────────
+
+    def _connect_pull_manager(self) -> None:
+        if self._pull_manager is None or self._pull_connected:
+            return
+        self._pull_manager.progress.connect(self._on_ollama_pull_progress)
+        self._pull_manager.finished.connect(self._on_manager_pull_done)
+        self._pull_manager.error.connect(self._on_manager_pull_error)
+        self._pull_connected = True
+
+    def _disconnect_pull_manager(self) -> None:
+        if self._pull_manager is None or not self._pull_connected:
+            return
+        for signal, slot in (
+            (self._pull_manager.progress, self._on_ollama_pull_progress),
+            (self._pull_manager.finished, self._on_manager_pull_done),
+            (self._pull_manager.error, self._on_manager_pull_error),
+        ):
+            try:
+                signal.disconnect(slot)
+            except (RuntimeError, TypeError):
+                pass  # already disconnected
+        self._pull_connected = False
 
     def _start_detection(self) -> None:
         if self._detect_running:
@@ -979,7 +1075,7 @@ class DownloadsDialog(QDialog):
             self._start_detection()
 
     def _run_spacy_downloads(self, spacy_models: list, ollama_models: list) -> None:
-        from ._addon_installer_dialog import _ModelDownloadThread  # noqa: PLC0415
+        from .._addon_installer_dialog import _ModelDownloadThread  # noqa: PLC0415
 
         model = spacy_models[0]
         remaining = spacy_models[1:]
@@ -1039,7 +1135,7 @@ class DownloadsDialog(QDialog):
                 )
         if not messages:
             return True
-        box = QMessageBox(self)
+        box = QMessageBox(self.window())
         box.setWindowTitle("Model does not fit")
         box.setIcon(QMessageBox.Icon.Warning)
         box.setText("\n\n".join(messages) + "\n\nDownload anyway?")
@@ -1052,21 +1148,24 @@ class DownloadsDialog(QDialog):
     def _run_ollama_pulls(self, ollama_models: list) -> None:
         model = ollama_models[0]
         remaining = ollama_models[1:]
-        self._dl_log.appendPlainText(f"Pulling Ollama model: {model}")
+        queued_behind = self._pull_manager is not None and self._pull_manager.is_active
+        self._dl_log.appendPlainText(
+            f"Queued behind the running download: {', '.join(ollama_models)}"
+            if queued_behind
+            else f"Pulling Ollama model: {model}"
+        )
         self._dl_progress.setValue(0)
         self._dl_progress.show()
         self._dl_abort_btn.setEnabled(True)
         self._dl_abort_btn.show()
 
         if self._pull_manager is not None:
-            # Delegate to the main-window-owned manager so pull survives dialog close
-            self._pull_remaining = remaining
-            self._pull_manager.progress.connect(self._on_ollama_pull_progress)
-            self._pull_manager.finished.connect(self._on_manager_pull_done)
-            self._pull_manager.error.connect(self._on_manager_pull_error)
-            self._pull_manager.start(self._ollama_url, model)
+            # Delegate to the main-window-owned manager: it pulls the whole queue, also
+            # after this window was closed.
+            self._connect_pull_manager()
+            self._pull_manager.start(self._ollama_url, model, remaining)
         else:
-            from ._addon_installer_dialog import _OllamaPullThread  # noqa: PLC0415
+            from .._addon_installer_dialog import _OllamaPullThread  # noqa: PLC0415
 
             thread = _OllamaPullThread(self._ollama_url, model)
             thread.progress.connect(self._on_ollama_pull_progress)
@@ -1079,20 +1178,23 @@ class DownloadsDialog(QDialog):
         # Only connected while a manager pull is active, so _pull_manager is set.
         if self._pull_manager is None:
             return
-        self._pull_manager.progress.disconnect(self._on_ollama_pull_progress)
-        self._pull_manager.finished.disconnect(self._on_manager_pull_done)
-        self._pull_manager.error.disconnect(self._on_manager_pull_error)
-        self._on_ollama_pull_done(self._pull_remaining)
-        self._pull_remaining = []
+        queued = self._pull_manager.queued
+        if queued:
+            # The manager goes on with the next model by itself.
+            self._dl_log.appendPlainText("✓ Ollama model pulled.")
+            self._pulled_any = True
+            self._svc.on_ollama_models_changed(self._ollama_url)
+            self._dl_log.appendPlainText(f"Pulling Ollama model: {queued[0]}")
+            self._dl_progress.setValue(0)
+            return
+        self._disconnect_pull_manager()
+        self._on_ollama_pull_done([])
 
     def _on_manager_pull_error(self, msg: str) -> None:
         # Only connected while a manager pull is active, so _pull_manager is set.
         if self._pull_manager is None:
             return
-        self._pull_manager.progress.disconnect(self._on_ollama_pull_progress)
-        self._pull_manager.finished.disconnect(self._on_manager_pull_done)
-        self._pull_manager.error.disconnect(self._on_manager_pull_error)
-        self._pull_remaining = []
+        self._disconnect_pull_manager()
         self._on_download_err(msg)
 
     def _on_ollama_pull_progress(self, status: str, completed: int, total: int) -> None:
@@ -1135,7 +1237,7 @@ class DownloadsDialog(QDialog):
             self._start_detection()
 
     def _on_abort(self) -> None:
-        from ._addon_installer_dialog import _OllamaPullThread  # noqa: PLC0415
+        from .._addon_installer_dialog import _OllamaPullThread  # noqa: PLC0415
 
         self._dl_abort_btn.setEnabled(False)
         if self._pull_manager is not None:

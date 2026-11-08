@@ -160,7 +160,7 @@ knows, recommends, and considers suitable for a computer type (hardware profile)
   plain-language note shown as a tooltip.
 - `RECOMMENDED` — the ordered best-model lists per category and profile (`cpu`, `8gb`,
   `16gb`); the first entry is the "best choice".
-- `suitability()` / `models_for()` — the rating used by the Downloads dialog and the
+- `suitability()` / `models_for()` — the rating used by Settings → Add-ons and the
   model-selection dialogs, computed from the computer's own memory (see *Rating a model against
   the computer's memory* below).
 - `choose_profile()` — the decision table mapping detected GPUs / Apple unified memory /
@@ -237,7 +237,7 @@ bazel run //tools:verify_model_catalog -- --tag qwen3.5:9b --temperature 0.2
 
 A writing model that can also read scanned pages lists `also_uses=frozenset({"ocr"})`;
 `catalog_uses()`, `suitability()` and `models_for()` then treat it as a reading model as
-well (the Downloads dialog still lists it once, under its primary category). Entries
+well (Settings → Add-ons still lists it once, under its primary category). Entries
 whose tag starts with `hf.co/` are pulled from Hugging Face, so
 `tools/verify_model_catalog.py` checks them against the Hugging Face file list instead
 of the Ollama registry.
@@ -294,7 +294,7 @@ for now — "Run anyway" takes the sting out of a false warning.
 | Decisions (best model, suitability, hardware profile, `rate_model`) | `domain/model_catalog.py` | Pure functions, no I/O — table-test them. |
 | Caches (local hardware probe, model classification) | `application/model_recommendations.py` | One owner. Call `on_ollama_models_changed(url)` after every pull; it evicts the model list *and* the classifications. Only definite classifications are cached. |
 | Texts a teacher reads | `gui/_model_wording.py` | Qt-free; widgets never build these sentences themselves. |
-| Widgets | `gui/_hardware_profile_selector.py`, `gui/_model_guidance.py`, `gui/_downloads_dialog.py` | Presentation only. They rate models through `rate_ollama_models(..., cached_only=True)` — never contacting Ollama on the GUI thread. |
+| Widgets | `gui/_hardware_profile_selector.py`, `gui/_model_guidance.py`, `gui/settings/_addons_page.py` | Presentation only. They rate models through `rate_ollama_models(..., cached_only=True)` — never contacting Ollama on the GUI thread. |
 
 Two details that are easy to get wrong:
 
@@ -312,17 +312,17 @@ Two details that are easy to get wrong:
 
 ### AI services: providers, model lists and install hints
 
-The proofreading and content review dialogs share one base class
-(`_AiServiceDialog` in `gui/_settings_dialog.py`); the subclasses only name their settings
-keys and wording.  What it relies on:
+Proofreading and content review share one widget, `AiServiceSection`
+(`gui/settings/_ai_service_section.py`); an `AiServiceSpec` only names the settings keys of
+the step.  What it relies on:
 
 - **Each provider module declares its package** in `PROVIDER_INFO["package"]`
   (`{"module": "langchain_mistralai", "pip": "langchain-mistralai"}`); Ollama's connector is
   `package_optional` because the app talks to Ollama directly.  The service answers
   `missing_provider_package()` and `list_provider_packages()` (providers sharing a package
-  appear once), so the dialogs, Downloads and the run preflight need no list of their own.
-  A missing package is a `RequirementIssue(provider=...)`; the app then opens Downloads on
-  the providers tab with `provider:<name>` in `preselect`.
+  appear once), so the pages, Add-ons and the run preflight need no list of their own.
+  A missing package is a `RequirementIssue(provider=...)`; the app then opens Settings →
+  Add-ons on the online-services tab with `provider:<name>` in `preselect`.
 - **A model list says where it came from** (`domain/model_listing.py:ModelListing`):
   `live`, `builtin` (the service cannot be asked, by design) or `failed` (with the reason:
   no key, key refused, no connection).  Providers that can be asked implement
@@ -350,7 +350,7 @@ keys and wording.  What it relies on:
 `gui/_privacy_settings.py:FlowAcknowledgements` is the only code that reads or writes them
 (QSettings key `privacy/acknowledged_data_flows`, one line per answer:
 `<fingerprint>` or `<fingerprint>\t<readable summary>`).  The question before a run, the
-list in Privacy Settings and "Ask again" all use it.  Records from earlier versions hold the
+list in Settings → Privacy and "Ask again" all use it.  Records from earlier versions hold the
 fingerprint only; `domain/data_location.py:describe_fingerprint()` turns it into words.
 
 The fingerprint is versioned.  Version 2 starts with `v2|` and adds the data region, so an
@@ -359,8 +359,9 @@ answer given before the region was shown no longer matches and the user is asked
 fields by `:` — the host may itself contain a colon and is always the field before the
 last one, which is why the age of a record is a prefix rather than another field.
 `describe_fingerprint()` reads both formats.
-`PrivacySettingsDialog` (`gui/_privacy_settings_dialog.py`) extends the anonymizer dialog
-with a first tab for these answers; its changes are applied on OK only.
+`PrivacyPage` (`gui/settings/_privacy_page.py`) puts a first tab for these answers
+(`SendingDataTab`) in front of the anonymizer rules; its changes are applied by the Settings
+window's OK only (`apply()`).
 
 ### "What is sent for this file": who builds it and who shows it
 
@@ -646,7 +647,7 @@ The panel (`gui/_preview_panel.py`) keeps the texts *unmasked* in `_stored_raw`,
 `_refill_texts()` — masked when the setting is on, and read-only while it is (an edit would be
 saved with the stand-ins).  The note above the texts (`_PrivacyNote`) is clickable only in that
 locked state: a click emits `display_anonymized_changed(False)`, the eye button's route, so the
-window stores the choice and the Privacy Settings checkbox follows.  `_on_ocr_text_changed` / `_on_correction_text_changed` also keep
+window stores the choice and the Settings → Privacy checkbox follows.  `_on_ocr_text_changed` / `_on_correction_text_changed` also keep
 the stored text current, so switching the setting off shows the teacher's edits.  Placeholders
 are marked as chips: `gui/_formatted_text.py:chip_placeholders()` wraps them in the rendered
 Markdown HTML (markup is skipped, so a stand-in that reads like a tag cannot break the
@@ -662,7 +663,7 @@ and a failure keeps the names hidden behind a note instead of showing them.  Cha
 anonymizer settings in the dialog calls `invalidate_anonymization()`.
 
 The setting itself is a GUI preference, not part of `Config`: the checkbox under
-*Advanced Settings → Privacy Settings → Personal info: detection* and the eye button both end in
+*Settings → Privacy → Personal info: detection* and the eye button both end in
 `MainWindow._apply_display_anonymized`,
 which stores `privacy/display_anonymized` (`gui/_privacy_settings.py`,
 `display_anonymized()` / `set_display_anonymized()`) and calls
@@ -671,9 +672,68 @@ only a stored answer shows the names, and without the add-on the checkbox is gre
 setting takes effect once it is installed.  The checkbox is enabled only while
 `ProcessingApplicationService.anonymizer_available(language)` holds — spaCy importable and the
 model of the document language installed — so a missing add-on greys it out with a tooltip
-pointing at the Downloads dialog instead of failing later.  The answer is cached per document
+pointing at Settings → Add-ons instead of failing later.  The answer is cached per document
 language and refreshed on `data_flow_changed` (the language may have changed) and after the
 privacy add-on is installed.
+
+### Settings window
+
+One modal window (`gui/settings/_window.py:SettingsWindow`) holds everything set up once;
+the main window only holds what changes per batch.  The sidebar lists five pages
+(`SettingsPage`): AI models, Where the AI runs (`AI_SETUP`: local server, computer profile, API keys), Scan quality, Privacy and Add-ons.  The main window
+opens it through the single entry point `MainWindow.open_settings(page, focus=..., preselect=...)`
+and, on OK, applies the result once (`_apply_settings_result`: update the panel, the
+anonymizer rules and the "hide names" view setting, save, check the services, refresh the
+queue); on "Restore defaults › All settings" it resets and saves (`_restore_all_settings`, which also resets the hide-names view and forgets the remembered "don't ask again" answers).
+
+**Page protocol** (`gui/settings/_page.py:SettingsPageBase`).  A page is a widget that shows
+a set of settings and never talks to another page:
+
+| Method | Meaning |
+|---|---|
+| `load(values)` / `values()` | show / return **only the keys the page owns** |
+| `owned_keys()` | those keys; "Restore defaults › This page" resets exactly them (`restore_defaults()`) |
+| `apply()` | save what lives outside the settings dict (API keys, remembered answers), called by OK |
+| `is_valid()` / `validity_changed` | OK is disabled while a page cannot be saved (an invalid regex) |
+| `focus(focus, preselect)` | deep link: bring a part into view (`FOCUS_*` constants), tick entries |
+| `on_shown()` / `on_packages_changed()` | refresh when shown / after an install finished |
+| `set_hardware_setting()` / `set_ollama_url()` | follow what *Where the AI runs* changed |
+| `close_blocker()` / `shutdown()` | why the window cannot close now / stop background work |
+
+A new setting is added to the page that shows it: put the widget there and its key in
+`load()`, `values()` and `owned_keys()` (a test checks that no key is owned twice and that every
+page returns exactly its own keys).  Keys of the main window (languages, which steps run,
+Results) stay in `ConfigPanel`.
+
+**Pages are built lazily.**  Each page starts background work (model lists, hardware
+detection, installed-package detection), so a page is built the first time it is shown, and
+`SettingsWindow.values()` merges only the pages that were built.  An unvisited page changes
+nothing.  Settings that other pages change meanwhile (computer profile, server address, an
+engine's image preparation) are kept in the window's working copy, so a page built later
+starts from them.
+
+**Shared state is wired by the window**, not by the pages: the editable profile on *This
+computer* feeds the read-only profile lines of AI models and Add-ons; its server address
+(announced on `editingFinished`, never while typing) feeds the model lists; a finished
+install on Add-ons calls `on_packages_changed()` on every built page and is re-emitted as
+`SettingsWindow.packages_changed`; choosing a recognition method applies its default image
+preparation on Scan quality.  **Deep links** between pages (a package hint's "Install…", "Download
+a model…", "change…" next to the profile) are `navigate_requested` signals that the window turns
+into `show_page(page, focus, preselect)`; `OpenDownloads` callbacks therefore return at once.
+
+**Closing.**  `done()` calls `shutdown()` on every built page (a running model fetch is parked in
+`_model_fetch._RETIRED_THREADS`, never destroyed while running).  A pip install or
+language-model download on Add-ons blocks closing (`close_blocker()`), because the new package
+must be made importable first; an Ollama pull belongs to the main window's
+`OllamaDownloadManager` and keeps going.  Dialogs opened from inside the window (the
+preprocessing preview, the add-on installers, message boxes) take the window — or its page — as
+parent, so they cannot open behind it.
+
+Tests: `tests/gui/test_gui_settings_pages.py` (pages and sections),
+`tests/gui/test_gui_settings_window.py` (lazy pages, shared state, deep links, restore,
+closing), `tests/gui/test_gui_addons_page.py`; the main window's side is tested with
+`ScriptedSettingsWindow` (`tests/gui/_gui_harness.py`), a stand-in that returns a scripted
+result.
 
 ### Cache vs benchmark store
 
@@ -1189,9 +1249,9 @@ The convention is:
 Long-running background fetches (model lists, spaCy model availability) use Qt
 signals to report failures to the UI thread without blocking:
 
-- `_ModelFetchThread` (in `_settings_dialog.py`) emits `error = Signal(str)` if
+- `_ModelFetchThread` (in `_model_fetch.py`) emits `error = Signal(str)` if
   the network call fails; the receiving slot sets a tooltip on the status label.
-- `_SpacyModelFetchThread` (in `_anonymizer_config_dialog.py`) emits the same
+- `_SpacyModelFetchThread` (in `_anonymizer_config_widget.py`) emits the same
   `error` signal; the slot makes a red status label visible and sets its text.
 
 This prevents silent failures where the combobox simply stays empty and the user
@@ -1203,7 +1263,7 @@ has no indication of what went wrong.
 This section is only relevant if you are working on the in-app download or addon-installation feature. For day-to-day development you can skip it.
 :::
 
-This section explains how the in-app "Downloads & Packages" dialog installs packages and
+This section explains how the in-app Settings → Add-ons page installs packages and
 models, and how those installations survive application restarts.
 
 ### Addon packages directory
@@ -1252,7 +1312,7 @@ if "--_pip_install_mode" in sys.argv:
 ```
 
 `addon_manager.install_addon_subprocess()` uses this mechanism for the addon packages
-(spaCy, PaddleOCR, GPU monitoring).  `_PipInstallThread` in `_downloads_dialog.py` also
+(spaCy, PaddleOCR, GPU monitoring).  `_PipInstallThread` in `settings/_addons_page.py` also
 uses it when `sys.frozen` is `True`.
 
 In development (non-frozen) builds, both code paths fall back to the standard
@@ -1260,7 +1320,7 @@ In development (non-frozen) builds, both code paths fall back to the standard
 land in the active venv as usual.
 
 All pip installs run one at a time (`_PIP_LOCK` in `addon_manager.py`), so the automatic
-install below and the Downloads dialog never write to the packages directory together.
+install below and Settings → Add-ons never write to the packages directory together.
 
 ### GPU monitoring package (automatic, with consent)
 
@@ -1270,7 +1330,7 @@ thread) whether this computer has a GPU whose package is missing.  If so, it ask
 **once** before downloading it (answer kept in QSettings under `gpu_monitoring/download`),
 then installs it with a short network timeout (`install_gpu_monitoring`) and refreshes the
 panel without a restart.  A failed install is remembered per app version
-(`gpu_monitoring/failed_in_version`) and is not retried automatically; the Downloads dialog
+(`gpu_monitoring/failed_in_version`) and is not retried automatically; Settings → Add-ons
 remains the manual path.  Source checkouts are never touched (`can_install_addons`).
 
 GPU *detection* (`infrastructure/gpu_detector.py`) does not need that package: it reads the
@@ -1283,7 +1343,7 @@ driver folder); if it still gives no answer, the optional `pynvml` package is as
 ### spaCy library
 
 spaCy is an optional dependency (the privacy/anonymization feature).  It is installed from
-pip like any other package — via the Downloads dialog's spaCy tab or, for frozen builds, via
+pip like any other package — via the Add-ons page's name-detection tab or, for frozen builds, via
 the dedicated "Install Privacy Addon" flow in `AddonInstallerDialog`.
 
 ### spaCy language models
@@ -1315,8 +1375,8 @@ After a model download, `inject_packages_dir()` ensures the model is immediately
 
 ### Ollama models
 
-Ollama models are pulled via the **Ollama HTTP API**, not pip.  The Downloads dialog's
-"Ollama Models" tab calls `ProcessingApplicationService.pull_ollama_model()`, which uses
+Ollama models are pulled via the **Ollama HTTP API**, not pip.  The Add-ons page's
+"AI models for this computer" tab calls `ProcessingApplicationService.pull_ollama_model()`, which uses
 the `ollama` Python client to stream a `POST /api/pull` request to the configured Ollama
 server (default `http://127.0.0.1:11434`).
 

@@ -16,7 +16,11 @@ from teachers_teammate.gui._formatted_text import PLACEHOLDER_BACKGROUND, PLACEH
 from teachers_teammate.gui._main_window import MainWindow
 from teachers_teammate.gui._preview_panel import PreviewPanel
 from teachers_teammate.gui._privacy_settings import DISPLAY_ANONYMIZED_KEY
-from teachers_teammate.gui._privacy_settings_dialog import PrivacySettingsDialog
+from teachers_teammate.gui.settings import SettingsPage, SettingsResult
+from teachers_teammate.gui.settings._page import FOCUS_DETECTION
+from teachers_teammate.gui.settings._privacy_page import PrivacyPage
+
+from ._gui_harness import install_scripted_settings_window
 
 RAW = "Anna Müller schreibt an Bernd."
 CORRECTED = "Anna Müller schreibt einen Brief an Bernd."
@@ -521,83 +525,53 @@ def test_the_eye_button_switches_the_setting(main_window, settings) -> None:
     assert settings.value(DISPLAY_ANONYMIZED_KEY) == "no"
 
 
-class _ScriptedDialog:
-    """Stands in for PrivacySettingsDialog: answers exec() and returns one choice."""
-
-    def __init__(self, result, choice: bool) -> None:
-        self.result = result
-        self.choice = choice
-        self.kwargs: dict = {}
-        self.anonymizer_config = None
-
-    def __call__(self, *_args, **kwargs) -> _ScriptedDialog:
-        self.kwargs = kwargs
-        return self
-
-    def exec(self) -> object:
-        return self.result
-
-    def display_anonymized(self) -> bool:
-        return self.choice
-
-
 @pytest.fixture
-def privacy_dialog_spy(monkeypatch):
-    """Replace the dialog the window opens, and stop it from saving to disk."""
-    from PySide6.QtWidgets import QDialog  # noqa: PLC0415
-
-    from teachers_teammate.gui import _privacy_settings_dialog  # noqa: PLC0415
-
+def open_privacy(main_window, monkeypatch):
+    """Open Settings → Privacy with a scripted window; return the scripted class."""
     monkeypatch.setattr(MainWindow, "_save_settings", lambda self, **_kw: None)
 
-    def _install(result, choice: bool) -> _ScriptedDialog:
-        spy = _ScriptedDialog(result, choice)
-        monkeypatch.setattr(_privacy_settings_dialog, "PrivacySettingsDialog", spy)
-        return spy
+    def _open(*, accepted: bool, choice: bool | None):
+        scripted = install_scripted_settings_window(
+            monkeypatch,
+            accepted=accepted,
+            result=SettingsResult(settings={}, display_anonymized=choice),
+        )
+        main_window.open_settings(SettingsPage.PRIVACY, focus=FOCUS_DETECTION)
+        return scripted
 
-    return _install, QDialog
+    return _open
 
 
 @pytest.mark.gui
-def test_ok_in_privacy_settings_applies_the_checkbox(
-    main_window, settings, privacy_dialog_spy
-) -> None:
+def test_ok_in_privacy_settings_applies_the_checkbox(main_window, settings, open_privacy) -> None:
     """
-    Given  a window whose names are hidden and whose dialog opens with that state
-    When   the dialog closes with OK and an unticked checkbox
+    Given  a window whose names are hidden and whose Settings window opens with that state
+    When   the window closes with OK and an unticked checkbox
     Then   the preview shows the names and the choice is stored
     """
-    install, QDialog = privacy_dialog_spy
-    spy = install(QDialog.DialogCode.Accepted, False)
+    scripted = open_privacy(accepted=True, choice=False)
 
-    main_window._open_anonymizer_config_dialog(
-        main_window._config_panel.lookup_language(),
-        main_window._config_panel.build_anonymizer_config(),
-    )
-
-    assert spy.kwargs["display_anonymized"] is True
-    assert spy.kwargs["display_anonymized_available"] is True
+    [window] = scripted.instances
+    assert window.page is SettingsPage.PRIVACY
+    assert window.focus == FOCUS_DETECTION
+    assert window.context.display_anonymized is True
+    assert window.context.privacy_available is True
     assert not main_window._preview.display_anonymized()
     assert settings.value(DISPLAY_ANONYMIZED_KEY) == "no"
 
 
 @pytest.mark.gui
 def test_ok_in_privacy_settings_keeps_the_saved_choice_while_hiding_is_unavailable(
-    main_window, settings, privacy_dialog_spy
+    main_window, settings, open_privacy
 ) -> None:
     """
     Given  a window whose names are hidden, but whose spaCy model has gone missing
-    When   the dialog closes with OK (its disabled checkbox reads "off")
+    When   the Settings window closes with OK (its disabled checkbox reads "off")
     Then   the saved choice is not overwritten, so hiding comes back once the model does
     """
-    install, QDialog = privacy_dialog_spy
-    install(QDialog.DialogCode.Accepted, False)
     main_window._privacy_available = False
 
-    main_window._open_anonymizer_config_dialog(
-        main_window._config_panel.lookup_language(),
-        main_window._config_panel.build_anonymizer_config(),
-    )
+    open_privacy(accepted=True, choice=False)
 
     assert main_window._display_anonymized is True
     assert settings.value(DISPLAY_ANONYMIZED_KEY) is None
@@ -605,22 +579,31 @@ def test_ok_in_privacy_settings_keeps_the_saved_choice_while_hiding_is_unavailab
 
 @pytest.mark.gui
 def test_cancel_in_privacy_settings_leaves_the_setting_alone(
-    main_window, settings, privacy_dialog_spy
+    main_window, settings, open_privacy
 ) -> None:
     """
     Given  a window whose names are hidden
-    When   the dialog is cancelled although its checkbox was unticked
+    When   the Settings window is cancelled although its checkbox was unticked
     Then   the preview still shows placeholders and the stored choice is unchanged
     """
-    install, QDialog = privacy_dialog_spy
-    install(QDialog.DialogCode.Rejected, False)
-
-    main_window._open_anonymizer_config_dialog(
-        main_window._config_panel.lookup_language(),
-        main_window._config_panel.build_anonymizer_config(),
-    )
+    open_privacy(accepted=False, choice=False)
 
     assert main_window._preview.display_anonymized()
+    assert settings.value(DISPLAY_ANONYMIZED_KEY) is None
+
+
+@pytest.mark.gui
+def test_settings_without_the_privacy_page_leave_the_setting_alone(
+    main_window, settings, open_privacy
+) -> None:
+    """
+    Given  a window whose names are hidden
+    When   Settings closes with OK without the Privacy page ever having been opened
+    Then   the hiding choice is not touched (the page contributes nothing)
+    """
+    open_privacy(accepted=True, choice=None)
+
+    assert main_window._display_anonymized is True
     assert settings.value(DISPLAY_ANONYMIZED_KEY) is None
 
 
@@ -628,7 +611,7 @@ def test_cancel_in_privacy_settings_leaves_the_setting_alone(
 def test_the_privacy_checkbox_reflects_a_stored_choice(qtbot, monkeypatch, settings) -> None:
     """
     Given  a stored choice to show the names
-    When   the Privacy Settings dialog is opened
+    When   Settings → Privacy is opened
     Then   its checkbox is cleared
     """
     settings.setValue(DISPLAY_ANONYMIZED_KEY, "no")
@@ -639,36 +622,37 @@ def test_the_privacy_checkbox_reflects_a_stored_choice(qtbot, monkeypatch, setti
     win = MainWindow(worker_factory=_DummyWorker)
     qtbot.addWidget(win)
 
-    dialog = _privacy_dialog(win)
+    page = _privacy_page(qtbot, win)
 
-    assert not dialog.hide_personal_checkbox().isChecked()
+    assert not page.hide_personal_checkbox().isChecked()
 
 
 @pytest.mark.gui
-def test_the_eye_button_and_the_privacy_dialog_stay_in_step(main_window) -> None:
+def test_the_eye_button_and_the_privacy_page_stay_in_step(qtbot, main_window) -> None:
     """
     Given  a window whose names are hidden
     When   the eye button shows them
-    Then   the Privacy Settings dialog opened afterwards shows a cleared checkbox
+    Then   the Privacy page opened afterwards shows a cleared checkbox
     """
     main_window._preview._hide_btn.click()
 
-    dialog = _privacy_dialog(main_window)
+    page = _privacy_page(qtbot, main_window)
 
-    assert not dialog.hide_personal_checkbox().isChecked()
+    assert not page.hide_personal_checkbox().isChecked()
 
 
-def _privacy_dialog(win: MainWindow) -> PrivacySettingsDialog:
-    """Return a Privacy Settings dialog for *win*'s current state (not shown)."""
-    return PrivacySettingsDialog(
-        win._config_panel.lookup_language(),
-        win._config_panel.build_anonymizer_config(),
-        win._app_service,
-        win,
-        acknowledgements=win._acknowledgements(),
-        display_anonymized=win._display_anonymized,
-        display_anonymized_available=win._privacy_available,
-    )
+def _privacy_page(qtbot, win: MainWindow) -> PrivacyPage:
+    """Return the Privacy page for *win*'s current state (not shown, no spaCy discovery)."""
+    from unittest.mock import patch  # noqa: PLC0415
+
+    with patch(
+        "teachers_teammate.gui._anonymizer_config_widget.ProcessingApplicationService"
+    ) as service:
+        service.return_value.list_installed_spacy_models.return_value = []
+        page = PrivacyPage(win._settings_context())
+    qtbot.addWidget(page)
+    page.shutdown()
+    return page
 
 
 @pytest.mark.gui
@@ -760,8 +744,8 @@ def test_the_string_language_without_spacy_disables_the_choice(
 ) -> None:
     """
     Given  a document language whose spaCy model is not installed
-    When   the window is built and Privacy Settings is opened
-    Then   the checkbox is disabled and its tooltip points at the Downloads dialog
+    When   the window is built and Settings → Privacy is opened
+    Then   the checkbox is disabled and its tooltip points at Settings → Add-ons
     """
     monkeypatch.setattr(MainWindow, "_settings_store", lambda self: settings)
     monkeypatch.setattr(
@@ -772,11 +756,11 @@ def test_the_string_language_without_spacy_disables_the_choice(
     qtbot.addWidget(win)
 
     assert not win._preview._hide_btn.isEnabled()
-    dialog = _privacy_dialog(win)
-    checkbox = dialog.hide_personal_checkbox()
+    page = _privacy_page(qtbot, win)
+    checkbox = page.hide_personal_checkbox()
     assert not checkbox.isEnabled()
     assert not checkbox.isChecked()
-    assert "Downloads" in checkbox.toolTip()
+    assert txt.WHERE_ADDONS in checkbox.toolTip()
     assert win._preview.display_anonymized() is False
 
 

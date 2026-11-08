@@ -26,12 +26,13 @@ filegroup(
         "gui/test_benchmark_widgets.py",
         "gui/test_benchmark_window.py",
         "gui/test_benchmark_worker.py",
-        "gui/test_downloads_dialog.py",
         "gui/test_gui_addon_installer_dialog.py",
-        "gui/test_gui_anonymizer_dialog.py",
+        "gui/test_gui_addons_page.py",
+        "gui/test_gui_anonymizer_widget.py",
         "gui/test_gui_main_window.py",
         "gui/test_gui_privacy_settings.py",
-        "gui/test_gui_settings_dialog.py",
+        "gui/test_gui_settings_pages.py",
+        "gui/test_gui_settings_window.py",
         "gui/test_gui_widgets.py",
         "gui/test_hardware_profile_selector.py",
         "gui/test_model_wording.py",
@@ -700,7 +701,9 @@ py_test(
 py_test(
     name = "test_gui_config_panel",
     size = "small",
-    srcs = _COMMON_SRCS + ["gui/test_gui_config_panel.py"],
+    srcs = _COMMON_SRCS + [
+        "gui/test_gui_config_panel.py",
+    ],
     args = ["gui/test_gui_config_panel.py"],
     main = "run_test.py",
     deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_lib"],
@@ -727,7 +730,10 @@ py_test(
 py_test(
     name = "test_gui_main_window",
     size = "small",
-    srcs = _COMMON_SRCS + ["gui/test_gui_main_window.py"],
+    srcs = _COMMON_SRCS + [
+        "gui/_gui_harness.py",
+        "gui/test_gui_main_window.py",
+    ],
     args = ["gui/test_gui_main_window.py"],
     main = "run_test.py",
     deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_lib"],
@@ -743,10 +749,51 @@ py_test(
 )
 
 py_test(
-    name = "test_gui_settings_dialog",
+    name = "test_gui_prompt_dialog",
     size = "small",
-    srcs = _COMMON_SRCS + ["gui/test_gui_settings_dialog.py"],
-    args = ["gui/test_gui_settings_dialog.py"],
+    srcs = _COMMON_SRCS + [
+        "gui/_settings_stubs.py",
+        "gui/test_gui_prompt_dialog.py",
+    ],
+    args = ["gui/test_gui_prompt_dialog.py"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_lib"],
+)
+
+py_test(
+    name = "test_credential_store",
+    size = "small",
+    srcs = _COMMON_SRCS + [
+        "gui/_settings_stubs.py",
+        "gui/test_credential_store.py",
+    ],
+    args = ["gui/test_credential_store.py"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_lib"],
+)
+
+py_test(
+    name = "test_gui_settings_pages",
+    size = "small",
+    srcs = _COMMON_SRCS + [
+        "gui/_gui_harness.py",
+        "gui/_settings_stubs.py",
+        "gui/test_gui_settings_pages.py",
+    ],
+    args = ["gui/test_gui_settings_pages.py"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_lib"],
+)
+
+py_test(
+    name = "test_gui_settings_window",
+    size = "small",
+    srcs = _COMMON_SRCS + [
+        "gui/_gui_harness.py",
+        "gui/_settings_stubs.py",
+        "gui/test_gui_settings_window.py",
+    ],
+    args = ["gui/test_gui_settings_window.py"],
     main = "run_test.py",
     deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_lib"],
 )
@@ -788,10 +835,12 @@ py_test(
 )
 
 py_test(
-    name = "test_gui_anonymizer_dialog",
+    name = "test_gui_anonymizer_widget",
     size = "small",
-    srcs = _COMMON_SRCS + ["gui/test_gui_anonymizer_dialog.py"],
-    args = ["gui/test_gui_anonymizer_dialog.py"],
+    srcs = _COMMON_SRCS + [
+        "gui/test_gui_anonymizer_widget.py",
+    ],
+    args = ["gui/test_gui_anonymizer_widget.py"],
     main = "run_test.py",
     deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_lib"],
 )
@@ -799,7 +848,10 @@ py_test(
 py_test(
     name = "test_gui_privacy_settings",
     size = "small",
-    srcs = _COMMON_SRCS + ["gui/test_gui_privacy_settings.py"],
+    srcs = _COMMON_SRCS + [
+        "gui/_gui_harness.py",
+        "gui/test_gui_privacy_settings.py",
+    ],
     args = ["gui/test_gui_privacy_settings.py"],
     main = "run_test.py",
     deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_lib"],
@@ -817,7 +869,10 @@ py_test(
 py_test(
     name = "test_gui_privacy_view",
     size = "small",
-    srcs = _COMMON_SRCS + ["gui/test_gui_privacy_view.py"],
+    srcs = _COMMON_SRCS + [
+        "gui/_gui_harness.py",
+        "gui/test_gui_privacy_view.py",
+    ],
     args = ["gui/test_gui_privacy_view.py"],
     main = "run_test.py",
     deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_lib"],
@@ -887,10 +942,13 @@ py_test(
 )
 
 py_test(
-    name = "test_downloads_dialog",
+    name = "test_gui_addons_page",
     size = "small",
-    srcs = _COMMON_SRCS + ["gui/test_downloads_dialog.py"],
-    args = ["gui/test_downloads_dialog.py"],
+    srcs = _COMMON_SRCS + [
+        "gui/_gui_harness.py",
+        "gui/test_gui_addons_page.py",
+    ],
+    args = ["gui/test_gui_addons_page.py"],
     main = "run_test.py",
     deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_lib"],
 )
@@ -1030,9 +1088,10 @@ test_suite(
         ":test_benchmark_widgets",
         ":test_benchmark_window",
         ":test_benchmark_worker",
-        ":test_downloads_dialog",
+        ":test_credential_store",
         ":test_gui_addon_installer_dialog",
-        ":test_gui_anonymizer_dialog",
+        ":test_gui_addons_page",
+        ":test_gui_anonymizer_widget",
         ":test_gui_bootstrap",
         ":test_gui_config_panel",
         ":test_gui_formatted_text",
@@ -1040,9 +1099,11 @@ test_suite(
         ":test_gui_main_window",
         ":test_gui_privacy_settings",
         ":test_gui_privacy_view",
+        ":test_gui_prompt_dialog",
         ":test_gui_results_table",
         ":test_gui_review_views",
-        ":test_gui_settings_dialog",
+        ":test_gui_settings_pages",
+        ":test_gui_settings_window",
         ":test_gui_update_check",
         ":test_gui_what_is_sent",
         ":test_gui_widgets",

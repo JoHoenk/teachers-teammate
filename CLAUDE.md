@@ -45,6 +45,7 @@ infrastructure/  — concrete implementations (OCR engines, LLM providers, DOCX 
 infrastructure/workflow/ — FileProcessor (per-file stage orchestrator), run_files() coordinator
 application/     — ProcessingApplicationService (queries) + ApplicationCommands (writes); the only entry point for GUI and CLI
 gui/ / cli.py    — adapters; must not contain discovery or availability logic
+                   (gui/settings/ = the Settings window, one page per topic)
 ```
 
 ### Pipeline flow
@@ -82,6 +83,7 @@ Config
 | PDF embedded-text rules | Thresholds/modes in `domain/pdf_text_layer.py`; measurement in `PdfInputProvider` (`infrastructure/input_providers.py`); setting is `OcrConfig.pdf_text_layer` (default `auto`), passed to providers via `InputOptions` in `input_provider_factory.py`; benchmark always OCRs |
 | New OCR output notation (HTML/Markdown/…) | Add an `OcrOutputParser` to `infrastructure/ocr_formats/` and list it in `default_parsers()`; model in `domain/formatted_text.py`, adapters use `application/formatting.py:TextFormatter` (see `docs/development.md` → "OCR output formats") |
 | New GUI capability/check | Implement in `ProcessingApplicationService`, call it from the GUI — never duplicate discovery logic in widgets |
+| New GUI setting | Per-batch choices (documents, language, which steps run, Results) belong in `ConfigPanel`; anything set once belongs on a page of the Settings window (`gui/settings/`). Add the widget to the owning page and its key to that page's `load` / `values` / `owned_keys` — never to two pages. Say where to change it with the `WHERE_*` constants in `gui/_user_text.py`, not a hard-coded menu path. See `docs/development.md` → "Settings window" |
 | Benchmark app changes | Domain metrics in `domain/benchmark.py`; run persistence in `infrastructure/benchmark/run_store.py`; OCR-only run in `infrastructure/benchmark/runner.py`; orchestration in `application/benchmark_service.py`; GUI in `gui/benchmark/` (reuse `gui/_ocr_config_selector.py`). The OCR config slice is `Config.ocr` (`config.py:OcrConfig`). |
 
 ### Apps & storage

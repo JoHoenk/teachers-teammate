@@ -2,19 +2,33 @@
 
 ## The app window
 
-The app is divided into two main areas:
+The app is divided into two main areas, plus a separate **Settings** window:
 
-- **Settings panel (left side)** — everything you need to set up a run: which folders to use, which reading method to apply, whether to use AI proofreading, and so on. At the top, a box called **Where your documents are processed** shows, for each step, whether it runs on this computer (green dot), on another computer (orange) or on an online service (red) — see *Where your documents are processed* below. Below the settings you will find coloured status indicators (one per feature the current setup uses) and the action buttons — **Run Selected**, **Stop**, **Export**, **Restore Defaults** — with a progress bar.
+- **Workflow panel (left side)** — everything that changes from batch to batch, in numbered steps: your documents, their language, whether to remove personal information, proofread or review, and where the results go (**Step 6: Results**). At the top, a box called **Where your documents are processed** shows, for each step, whether it runs on this computer (green dot), on another computer (orange) or on an online service (red) — see *Where your documents are processed* below. Below the settings you will find coloured status indicators (one per feature the current setup uses) and the action buttons — **Run Selected**, **Stop**, **Export** — with a progress bar.
 
 - **Work area (right side)** — three tabs:
   - **Processing** — a list of your files (one row per document) with status indicators and a live activity log below it.
   - **Preview** — the original document image next to the extracted and corrected text for the selected file.
   - **Stats** — a chart showing how long each file took to process, plus live system resource usage (CPU, memory, and GPU if available).
 
-- **Menu bar** at the top — two settings menus plus Help:
-  - **Settings** — Text Recognition…, Proofreading Settings…, Content Review Settings…, Output Settings…
-  - **Advanced Settings** — Connections & API Keys…, Downloads…, Privacy Settings…
+- **Menu bar** at the top:
+  - **File** — Open Folder…, Open Files…, Export ▸ (the same choices as the **Export** button), Quit
+  - **Settings** — AI models…, Scan quality…, Privacy…, Add-ons…, and **All settings…** (`Ctrl+,`). Every entry opens the same **Settings window** on that page.
   - **Help** — User Guide…, Third-Party Licenses…, About…
+
+### The Settings window
+
+What you set up once lives in the Settings window, grouped by topic. Pick a page in the list on the left:
+
+| Page | What it holds |
+|---|---|
+| **AI models** | Which method reads the handwriting (always on this computer), which AI service and model proofreads and reviews, and — under **Expert settings** — the temperatures |
+| **Scan quality** | How scans and photos are cleaned up before they are read: image preparation and its **Preview…**, corrections and enhancements; under **Expert settings** the PDF resolution and the PDF text layer |
+| **Privacy** | What may leave this computer (the answers you chose not to be asked about again), and how names and other personal information are found and replaced |
+| **Where the AI runs** | Everything the AI choices depend on: on this computer the address of the local AI server and what kind of computer you have (the model suggestions follow it); at an online service its access key. Keys are kept in your system's keychain (macOS Keychain, Windows Credential Manager, or the Linux desktop keyring); where there is none, the page says that the key is kept in the app's settings file, not encrypted |
+| **Add-ons** | Downloads of AI models for this computer and of optional parts: handwriting engines, online AI services, name detection models, performance monitoring |
+
+Changes on the pages are saved when you press **OK** and dropped when you press **Cancel** — except on **Add-ons**, where a download or installation starts right away and is not undone by Cancel. **Restore defaults…** at the bottom resets either the page you are on or all settings (the second choice asks again; it also forgets the answers you asked not to be asked about again, and keeps downloaded models and saved API keys). Which instructions the AI gets and how a step behaves stay in the main window, under each step's **Instructions…** button.
 
 You can also **drag a folder directly onto the window** to set it as the input folder.
 
@@ -50,13 +64,13 @@ The app stores the result for every file it has processed. If you change only th
 
 ## Text recognition methods
 
-The app recognises the text in your documents using the method you choose in **Settings → Text Recognition…**.
+The app recognises the text in your documents using the method you choose in **Settings → AI models…**.
 
 ### Ollama (recommended)
 
 Ollama is a free program that runs AI reading models on your own computer. Teacher's Teammate sends each prepared image to Ollama, which reads the text and returns it. This gives the best results for handwriting and difficult scans.
 
-**Ollama must be running** before you click Run. Download it from [ollama.com/download](https://ollama.com/download) and install it like any other program. The default connection is set to your own computer. If you have Ollama running on a different computer on your home network, enter its address in **Advanced Settings → Connections & API Keys…**.
+**Ollama must be running** before you click Run. Download it from [ollama.com/download](https://ollama.com/download) and install it like any other program. The default connection is set to your own computer. If you have Ollama running on a different computer on your home network, enter its address in **Settings → Where the AI runs…**.
 
 ### Choosing AI models
 
@@ -65,7 +79,7 @@ Teacher's Teammate needs two AI models, and you do not need to know anything abo
 - a **reading model** turns your scans into text,
 - a **writing model** proofreads and reviews the text.
 
-The app looks at your computer — the **My computer** setting shows what it found: your graphics card and its memory, and the memory of the computer itself — and suggests models that work well on it. It is usually right; if it could not check your computer it says so there (the details are in the log) instead of staying silent; you can change the choice yourself under **Advanced Settings → Connections & API Keys…** or in **Downloads**, and every window then uses your choice. If Ollama runs on a different computer, pick that computer's type in the list.
+The app looks at your computer — the **My computer** setting shows what it found: your graphics card and its memory, and the memory of the computer itself — and suggests models that work well on it. It is usually right; if it could not check your computer it says so there (the details are in the log) instead of staying silent; you can change the choice yourself under **Settings → Where the AI runs…**, and every page then uses your choice. If Ollama runs on a different computer, pick that computer's type in the list.
 
 The best models per computer type:
 
@@ -75,7 +89,7 @@ The best models per computer type:
 | Graphics card with about 8 GB memory | `hf.co/prithivMLmods/chandra-ocr-2-GGUF:Q8_0` | `gemma4:e4b` |
 | Graphics card with 16 GB memory or more | `hf.co/prithivMLmods/chandra-ocr-2-GGUF:Q8_0` | `gemma4:12b` |
 
-To get a working setup in one step, open **Advanced Settings → Downloads…**, stay on the **Ollama Models** tab (it opens first), and click **Select the best models for my computer** — the app ticks the two models it recommends for your computer. Then click **Install / Download Selected**. On the very first start the app also pre-selects the best models for your computer, and the "model missing" message before a run takes you straight to the Downloads dialog with the missing models already ticked.
+To get a working setup in one step, open **Settings → Add-ons…**, stay on the **AI models for this computer** tab (it opens first), and click **Select the best models for my computer** — the app ticks the two models it recommends for your computer. Then click **Install / Download Selected**. On the very first start the app also pre-selects the best models for your computer, and the "model missing" message before a run takes you straight to **Settings → Add-ons…** with the missing models already ticked.
 
 The app rates each model for your computer. Models marked **Slower** or **Very slow** are bigger than your graphics card holds but fit with the help of your computer's memory: part of the model runs on the processor, so they work, only more slowly (a page can take minutes when it is very slow). Greyed-out models (**Won't fit**) do not fit your computer: the memory left after the system's share (the larger of 8 GB and a fifth of your memory) cannot hold the rest, so the model would have to use the disk as memory and the computer would become unusable. The app tells you so and asks before downloading one. If the memory that is free at that moment is not enough it warns you before the run and offers **Run anyway** — the computer would then have to use its disk as memory and become extremely slow, so the safe answer is **Cancel** and closing other programs first. Models you add yourself stay in the "Other models" group, where each one shows whether it reads scans and writes or only writes. Reading models are meant for turning scans into text; the app warns you when you pick one for proofreading or content review.
 
@@ -89,7 +103,7 @@ Reading a page needs the whole page — the handwriting, the student's name at t
 
 If your saved settings from an older version used an online service for text recognition, the app tells you at start-up that it now uses Ollama on your computer instead.
 
-Ollama on another computer that you or your school run (see *Connections & API Keys*) is allowed; the box described below then shows it as "On another computer" with its name.
+Ollama on another computer that you or your school run (see **Settings → Where the AI runs…**) is allowed; the box described below then shows it as "On another computer" with its name.
 
 ---
 
@@ -97,7 +111,7 @@ Ollama on another computer that you or your school run (see *Connections & API K
 
 Before reading the text, the app can adjust each image to improve accuracy. **Grayscale** is the recommended starting point when using Ollama and works well in most situations.
 
-To compare settings before processing a large folder, open **Settings → Text Recognition…** and use the **Preview** — it shows the original and prepared image side by side. Use Ctrl + mouse wheel to zoom.
+To compare settings before processing a large folder, open **Settings → Scan quality…** and use the **Preview…** — it shows the original and prepared image side by side. Use Ctrl + mouse wheel to zoom.
 
 For a full description of all image preparation options and when to use each one, see the {doc}`Advanced User Guide <advanced_user_guide>`.
 
@@ -156,8 +170,7 @@ the same wording: the overall level, then one line per step with its place and w
 are replaced. "Replaced where detected" is deliberate wording: the replacement is automatic
 and can miss a name (see the warning under *Protecting privacy*). You can tick **Don't ask
 again for these settings**; the question comes back as soon as the setup changes (another
-service, another region, or names no longer replaced). Open **Advanced Settings → Privacy
-Settings…** to see everything you chose not to be asked about, in words (for example
+service, another region, or names no longer replaced). Open **Settings → Privacy…** to see everything you chose not to be asked about, in words (for example
 *Proofreading: Online service (Mistral (EU)) · EU — names sent as written*). There you can
 take back single answers or **Ask again for all**; the changes apply when you press OK. The
 same window holds the personal-info settings (detection and patterns). Answers saved by an
@@ -206,9 +219,8 @@ the children in it: **Hide personal information in the texts shown in this app**
 name the anonymizer knows with its stand-in — `[PERSON_1]`, `[EMAIL_1]` and so on — in the
 **Extracted Text**, **Proofread Text**, **Changes**, **Content Review** and the review notes
 at once. The same stand-ins appear in every tab, so a note that talks about `[PERSON_1]` is
-about the same child as in the text. Turn it on under **Advanced Settings → Privacy
-Settings → Personal info: detection → Showing texts → Hide personal information in the texts
-shown in this app**; the eye button in the header above the texts does the same and follows
+about the same child as in the text. Turn it on under **Settings → Privacy… → Personal info: detection → Showing texts → Hide
+personal information in the texts shown in this app**; the eye button in the header above the texts does the same and follows
 that checkbox.
 
 This works like *Remove personal information* (see *Protecting privacy* above): the extracted
@@ -228,7 +240,7 @@ visible at the next start until you hide them again. Word documents, text files 
 preview is masked, and the original names are never shown in a tooltip.
 
 Hiding needs the **Privacy add-on** and a detection model for the document language. Without
-them the checkbox stays greyed out; its tooltip points at **Advanced Settings → Downloads**.
+them the checkbox stays greyed out; its tooltip points at **Settings → Add-ons**.
 
 One limitation: a name the proofreader spelled differently — *Meier* corrected to *Maier* —
 is not found in the proofread text or the changes, because the stand-ins are matched against
@@ -243,9 +255,9 @@ When **Enable proofreading** is turned on, the text from each document is sent t
 
 ### Choosing an AI service
 
-Select a service in the **Proofreading service** dropdown. Ollama (AI running locally on your computer) requires no account or access code. Online services require an access code — provided by the service — which you enter in **Advanced Settings → Connections & API Keys…**: pick the service, press **Add key**, paste the code (**Show** lets you check it). Services that share one code, such as Mistral and Mistral (EU), have one row.
+Select a service in the **Proofreading service** dropdown. Ollama (AI running locally on your computer) requires no account or access code. Online services require an access code — provided by the service — which you enter in **Settings → Where the AI runs…**: pick the service, press **Add key**, paste the code (**Show** lets you check it). Services that share one code, such as Mistral and Mistral (EU), have one row.
 
-When you pick a service, the app asks it for its current list of models. The line under the model box says whether that worked (*5 models*), whether the list is the app's own built-in list because the service cannot be asked, or why asking failed (no key, the key was refused, no connection) with **Try again**. If the service's support is not installed yet, an **Install…** button opens **Downloads** on the right tab.
+When you pick a service, the app asks it for its current list of models. The line under the model box says whether that worked (*5 models*), whether the list is the app's own built-in list because the service cannot be asked, or why asking failed (no key, the key was refused, no connection) with **Try again**. If the service's support is not installed yet, an **Install…** button switches to **Add-ons** with the right package ticked.
 
 **Recommended proofreading models:**
 
@@ -258,7 +270,7 @@ When you pick a service, the app asks it for its current list of models. The lin
 | Anthropic | `claude-haiku-4-5` | Fast online option |
 | Google | `gemini-2.0-flash` | Fast online option |
 
-To use a local Ollama proofreading model, download it first in **Advanced Settings → Downloads…** → **Ollama Models** tab. Models the app has checked for explanations show a small `explanations ✓` note in the model list.
+To use a local Ollama proofreading model, download it first in **Settings → Add-ons…** → **AI models for this computer** tab. Models the app has checked for explanations show a small `explanations ✓` note in the model list.
 
 ### How we chose the proofreading models
 
@@ -334,8 +346,8 @@ that contain unclear expressions.
 
 Two settings belong to the review. The **Level** dropdown in the proofreading step (A1–C2,
 default B2) tells the AI how strictly to correct: at B2 it fixes real errors and leaves a
-correct though simple wording alone. **Explanation language**, in **Settings →
-Proofreading Settings…**, sets the language of the explanations and of the note tables;
+correct though simple wording alone. **Explanation language**, in the proofreading
+step's **Instructions…** dialog, sets the language of the explanations and of the note tables;
 *Same as the text* keeps them in the language of the document. The same dialog holds
 **Corrections only (faster)**.
 
@@ -350,8 +362,7 @@ gives you the explanations.
 
 ### Your own instructions
 
-**Settings → Proofreading Settings… → Proofreading Instructions** (and the panel's
-**Instructions…** button) shows what the AI is told. The **Instructions** box always holds the
+The **Instructions…** button of a step shows what the AI is told. The **Instructions** box always holds the
 text that is really used: the built-in instructions of the document language, matched to the
 **Level** setting (`{level}` is replaced by it). You can change them right in the box.
 **Reset to default** puts the built-in text back. As long as the box holds the built-in text,
@@ -402,7 +413,7 @@ Right-click a row for more options:
 - **Export ▸** — save the selected rows (the **Export** button below the settings offers the same choices, for the selected rows or all rows when none is selected). A single row prompts you to choose a file name, multiple rows prompt for a destination folder.
   - **Word Document…** — a Word file with the extracted and proofread text.
   - **Text File…** — the extracted text as a plain text file (`<name>.txt`), without any Markdown markup.
-  - **Anonymized Text File…** — the extracted text with names and other personal data replaced by placeholders such as `[PERSON_1]` (`<name>_anonymized.txt`). It uses your **Privacy Settings…** and runs entirely on this computer. The list of replaced names is not saved, so the original names cannot be recovered from the file. This needs the privacy add-on and a language model for your document language; if one is missing you are told once.
+  - **Anonymized Text File…** — the extracted text with names and other personal data replaced by placeholders such as `[PERSON_1]` (`<name>_anonymized.txt`). It uses your **Settings → Privacy…** rules and runs entirely on this computer. The list of replaced names is not saved, so the original names cannot be recovered from the file. This needs the privacy add-on and a language model for your document language; if one is missing you are told once.
 
   A text file is never written over any of the documents in your list, so an existing `essay.txt` you are processing stays untouched. When you export several files into one folder, files from sub-folders of your input folder keep those sub-folders (`class1/essay.png` → `<folder>/class1/essay.docx`), so documents with the same name do not replace each other. You are asked before existing files there are replaced, and a document whose name is already taken by another file of the same export is skipped and reported. If you work with a whole folder, you are also asked first before saving into it, because the next run would read the new file as another document.
 - **What is sent for this file…** — show, step by step, exactly which text leaves your computer and what the service is told to do with it (see *What is sent for this file* above).
@@ -427,15 +438,15 @@ Extra features can be installed from inside the app — no external downloads or
 | Feature | Where to start | What it enables |
 |---|---|---|
 | **Privacy add-on** | *Install Privacy Add-on* button (shown when the feature is missing) | Removes personal information before proofreading |
-| **Language model for anonymization** | **Advanced Settings → Privacy Settings…** → *Personal info: detection* → *Download Model* | Choose your document language; the multilingual model is a safe default |
-| **PaddleOCR** | **Settings → Text Recognition…** when PaddleOCR is selected | An alternative recognition method (~400 MB download) |
+| **Language model for anonymization** | **Settings → Add-ons…** → *Name detection* | Choose your document language; the multilingual model is a safe default |
+| **PaddleOCR** | **Settings → AI models…** when PaddleOCR is selected | An alternative recognition method (~400 MB download) |
 | **Graphics card monitoring** | Offered automatically when a compatible card is found (Stats tab) | NVIDIA or AMD/Linux graphics card stats |
 
 ---
 
 ## Tips
 
-- **Output files are opt-in** — a run saves results internally and fills the list by default. In **Output Settings…** choose which files a run writes automatically: **Word documents**, **text files** (`<name>.txt`) and **anonymized text files** (`<name>_anonymized.txt`, same rules as the export above). Or export on demand from the results list. Text files need an output folder outside the input folder; otherwise the next run would read them as new documents, so a run with text files going there does not start. (The Export menu only asks first, because it is a one-off save you may want in that folder.) If two documents would write the same output file — for example `essay.png` and `essay.pdf` in one folder — the second one is reported as failed instead of replacing the first.
+- **Output files are opt-in** — a run saves results internally and fills the list by default. In **Step 6: Results** choose which files a run writes automatically: **Word documents**, **text files** (`<name>.txt`) and **anonymized text files** (`<name>_anonymized.txt`, same rules as the export above). Or export on demand from the results list. Text files need an output folder outside the input folder; otherwise the next run would read them as new documents, so a run with text files going there does not start. (The Export menu only asks first, because it is a one-off save you may want in that folder.) If two documents would write the same output file — for example `essay.png` and `essay.pdf` in one folder — the second one is reported as failed instead of replacing the first.
 - **Sub-folders** — files inside sub-folders of the input folder are always included, and their output files go into the same sub-folders below the output folder (`class1/essay.png` → `<output>/class1/essay.docx`).
 - **Output formats** — the **table** format puts the original image, extracted text, and corrected text in three columns; the **comments** format attaches the corrections as Word comments next to the original text.
 - **Check what a service sees** — select a row in the results list and choose **What is sent for this file…** to read the exact text and instructions each service receives, with the hidden names marked.

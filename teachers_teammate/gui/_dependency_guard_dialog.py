@@ -13,10 +13,11 @@ from PySide6.QtWidgets import (
 )
 
 from ..application.service import RequirementIssue
+from . import _user_text as txt
 
 
 class DependencyGuardDialog(QDialog):
-    """Show unmet requirements for a pipeline stage and optionally open Downloads."""
+    """Show unmet requirements for a pipeline stage and optionally open Settings → Add-ons."""
 
     open_downloads = Signal()
 
@@ -46,7 +47,7 @@ class DependencyGuardDialog(QDialog):
 
         buttons = QDialogButtonBox()
         if has_fixable:
-            _dl_btn = QPushButton("Open Downloads…")
+            _dl_btn = QPushButton(txt.OPEN_ADDONS)
             buttons.addButton(_dl_btn, QDialogButtonBox.ButtonRole.AcceptRole)
             _dl_btn.clicked.connect(self._on_open_downloads)
         buttons.addButton(QDialogButtonBox.StandardButton.Close)

@@ -24,6 +24,7 @@ from ..domain.model_catalog import (
     memory_for_models_gb,
     system_reserve_gb,
 )
+from ._user_text import WHERE_AI_SETUP
 
 # ── "My computer" ─────────────────────────────────────────────────────────────
 
@@ -44,9 +45,7 @@ CHECK_COMPUTER_FAILED = (
     "Your computer could not be checked (details are in the log), so suggestions assume "
     "a graphics card with about 8 GB. If you know what your computer has, choose it in the list."
 )
-READ_ONLY_PROFILE_TOOLTIP = (
-    "You can change this under Advanced Settings → Connections & API Keys, or in Downloads."
-)
+READ_ONLY_PROFILE_TOOLTIP = f"You can change this under {WHERE_AI_SETUP}."
 
 
 def profile_text(value: str) -> str:
@@ -417,7 +416,7 @@ def is_warning(value: Suitability) -> bool:
     return value in (Suitability.TOO_LARGE, Suitability.WRONG_KIND)
 
 
-# ── Downloads dialog ──────────────────────────────────────────────────────────
+# ── Add-ons page ──────────────────────────────────────────────────────────
 
 DOWNLOADS_INTRO = (
     "Teacher's Teammate needs two AI models: a reading model that turns your "

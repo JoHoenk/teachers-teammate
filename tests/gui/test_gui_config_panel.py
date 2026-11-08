@@ -172,31 +172,31 @@ class _GuardService(LocalDataFlowStub):
 
 
 @pytest.mark.gui
-def test_guard_dialog_opens_downloads_on_ollama_tab_with_missing_model_ticked(
+def test_guard_dialog_opens_addons_on_local_models_with_missing_model_ticked(
     qtbot, monkeypatch
 ) -> None:
     """
     Given  proofreading with an Ollama model that is not downloaded
-    When   the user answers the dependency guard with "Open Downloads…"
-    Then   Downloads is requested on the Ollama tab with that model preselected
+    When   the user answers the dependency guard with "Open Add-ons…"
+    Then   Add-ons is requested on its local-models tab with that model preselected
            (the same result as the "model missing" message before a run)
     """
     from teachers_teammate.gui._dependency_guard_dialog import DependencyGuardDialog  # noqa: PLC0415
-    from teachers_teammate.gui._downloads_dialog import DownloadsDialog  # noqa: PLC0415
+    from teachers_teammate.gui.settings._page import FOCUS_LOCAL_MODELS  # noqa: PLC0415
 
     monkeypatch.setattr(DependencyGuardDialog, "exec", lambda self: self.open_downloads.emit())
     panel = ConfigPanel()
     qtbot.addWidget(panel)
     panel.set_service(_GuardService())
     panel.update_settings({"correction_provider": "ollama", "correction_model": "qwen3.5:9b"})
-    requests: list[tuple[int, list[str]]] = []
-    panel.open_downloads_requested.connect(lambda tab, tags: requests.append((tab, tags)))
+    requests: list[tuple[str, list[str]]] = []
+    panel.open_downloads_requested.connect(lambda focus, tags: requests.append((focus, tags)))
 
     panel._correction_enabled.setChecked(False)
     panel._correction_enabled.setChecked(True)
     qtbot.waitUntil(lambda: bool(requests), timeout=3000)
 
-    assert requests == [(DownloadsDialog.TAB_OLLAMA, ["qwen3.5:9b"])]
+    assert requests == [(FOCUS_LOCAL_MODELS, ["qwen3.5:9b"])]
     assert panel._correction_enabled.isChecked() is False  # unticked: requirement unmet
 
 
@@ -733,3 +733,252 @@ def test_changing_the_document_language_refreshes_the_data_flow(qtbot) -> None:
     panel._language.setCurrentText("German")
 
     assert announced
+
+
+# ── Step 6: Results ───────────────────────────────────────────────────────────
+
+
+@pytest.mark.gui
+def test_results_step_shows_and_saves_the_output_choices(qtbot, tmp_path: Path) -> None:
+    """
+    Given  saved settings with an output folder, Word in "comments" layout and text files
+    When   they are loaded into the panel, then the user unticks Word and ticks anonymized text
+    Then   the Results step shows them, and to_dict() / load_from_dict() round-trip the change
+           with the same keys as the old Output Settings dialog
+    """
+    panel = ConfigPanel()
+    qtbot.addWidget(panel)
+    panel.load_from_dict(
+        {
+            "output": str(tmp_path),
+            "docx_enabled": True,
+            "docx_format": "comments",
+            "text_enabled": True,
+            "text_anonymized_enabled": False,
+        }
+    )
+
+    assert panel._output_dir.text() == str(tmp_path)
+    assert panel._docx_enabled.isChecked()
+    assert panel._docx_format.currentText() == "comments"
+    assert panel._text_enabled.isChecked()
+    assert not panel._text_anonymized_enabled.isChecked()
+
+    panel._docx_enabled.setChecked(False)
+    panel._text_anonymized_enabled.setChecked(True)
+    saved = panel.to_dict()
+
+    assert saved["output"] == str(tmp_path)
+    assert saved["docx_enabled"] is False
+    assert saved["docx_format"] == "comments"
+    assert saved["text_enabled"] is True
+    assert saved["text_anonymized_enabled"] is True
+
+    reloaded = ConfigPanel()
+    qtbot.addWidget(reloaded)
+    reloaded.load_from_dict(saved)
+    assert not reloaded._docx_enabled.isChecked()
+    assert reloaded._text_anonymized_enabled.isChecked()
+    assert reloaded.get_output_dir() == str(tmp_path)
+
+
+@pytest.mark.gui
+def test_word_layout_is_only_enabled_while_word_is_ticked(qtbot) -> None:
+    """
+    Given  the Results step with Word documents ticked
+    When   Word is unticked and ticked again
+    Then   the layout choice is disabled while Word is off and enabled again with it
+    """
+    panel = ConfigPanel()
+    qtbot.addWidget(panel)
+    panel._docx_enabled.setChecked(True)
+    assert panel._docx_format.isEnabled()
+
+    panel._docx_enabled.setChecked(False)
+    assert not panel._docx_format.isEnabled()
+
+    panel._docx_enabled.setChecked(True)
+    assert panel._docx_format.isEnabled()
+
+
+@pytest.mark.gui
+def test_changing_the_results_step_tells_the_main_window(qtbot, tmp_path: Path) -> None:
+    """
+    Given  the Results step
+    When   the user types another folder (and leaves the field) or ticks text files
+    Then   results_changed is emitted each time and the settings hold the new values;
+           loading saved settings emits nothing
+    """
+    panel = ConfigPanel()
+    qtbot.addWidget(panel)
+    changes: list[bool] = []
+    panel.results_changed.connect(lambda: changes.append(True))
+
+    panel.load_from_dict({"output": str(tmp_path / "loaded"), "text_enabled": False})
+    assert changes == []
+
+    panel._output_dir.setText(str(tmp_path / "typed"))
+    panel._output_dir.editingFinished.emit()
+    assert changes == [True]
+    assert panel.get_output_dir() == str(tmp_path / "typed")
+
+    panel._output_dir.editingFinished.emit()  # focus left again without a change
+    assert changes == [True]
+
+    panel._text_enabled.setChecked(True)
+    assert changes == [True, True]
+    assert panel.get_settings_dict()["text_enabled"] is True
+
+
+@pytest.mark.gui
+def test_text_files_without_a_folder_turn_the_hint_orange(qtbot) -> None:
+    """
+    Given  the Results step without an output folder
+    When   text files are ticked
+    Then   the hint that text files need a folder is shown as a warning
+    """
+    panel = ConfigPanel()
+    qtbot.addWidget(panel)
+    panel.update_settings({"output_dir": ""})
+    assert "#888" in panel._text_hint.styleSheet()
+
+    panel._text_enabled.setChecked(True)
+
+    assert "#e67e22" in panel._text_hint.styleSheet()
+
+
+@pytest.mark.gui
+def test_settings_from_the_settings_window_reach_the_results_step(qtbot, tmp_path: Path) -> None:
+    """
+    Given  the panel
+    When   update_settings() brings another output folder and Word layout (e.g. Restore defaults)
+    Then   the Results step shows them without reporting a user change
+    """
+    panel = ConfigPanel()
+    qtbot.addWidget(panel)
+    changes: list[bool] = []
+    panel.results_changed.connect(lambda: changes.append(True))
+
+    panel.update_settings({"output_dir": str(tmp_path), "docx_format": "comments"})
+
+    assert panel._output_dir.text() == str(tmp_path)
+    assert panel._docx_format.currentText() == "comments"
+    assert changes == []
+
+
+# ── Explanations in the proofreading instructions dialog ──────────────────────
+
+
+@pytest.mark.gui
+def test_prompt_dialog_returns_the_explanation_options_with_the_old_keys(qtbot) -> None:
+    """
+    Given  the proofreading instructions dialog opened with German explanations and reviews
+    When   the user picks "Same as the text" and ticks "Corrections only"
+    Then   explanation_values() returns explanation_language "" and correction_output "text"
+    """
+    from teachers_teammate.gui import _user_text as txt  # noqa: PLC0415
+    from teachers_teammate.gui._config_panel import _PromptDialog  # noqa: PLC0415
+
+    dlg = _PromptDialog("Proofreading", "", explanations=("German", "review"))
+    qtbot.addWidget(dlg)
+    assert dlg._explanation_language is not None
+    assert dlg._corrections_only is not None
+    assert dlg._explanation_language.currentText() == "German"
+    assert not dlg._corrections_only.isChecked()
+    assert dlg.explanation_values() == {
+        "explanation_language": "German",
+        "correction_output": "review",
+    }
+
+    dlg._explanation_language.setCurrentIndex(dlg._explanation_language.findText(txt.SAME_AS_TEXT))
+    dlg._corrections_only.setChecked(True)
+
+    assert dlg.explanation_values() == {"explanation_language": "", "correction_output": "text"}
+
+
+@pytest.mark.gui
+def test_review_instructions_have_no_explanation_options(qtbot) -> None:
+    """
+    Given  the content review instructions dialog (no explanation options)
+    When   its values are read
+    Then   there is no Explanations group and explanation_values() is empty
+    """
+    from teachers_teammate.gui._config_panel import _PromptDialog  # noqa: PLC0415
+
+    dlg = _PromptDialog("Content Review", "")
+    qtbot.addWidget(dlg)
+
+    assert dlg._explanation_language is None
+    assert dlg.explanation_values() == {}
+
+
+@pytest.mark.gui
+@pytest.mark.parametrize("button", ["_correction_prompt_btn", "_evaluation_prompt_btn"])
+def test_confirming_an_instructions_dialog_tells_the_main_window(
+    qtbot, monkeypatch, button
+) -> None:
+    """
+    Given  the panel, so the main window can save what an Instructions dialog changed
+    When   the proofreading or the content review instructions dialog is accepted, or cancelled
+    Then   instructions_changed is emitted only for the accepted one
+    """
+    from PySide6.QtWidgets import QDialog  # noqa: PLC0415
+
+    from teachers_teammate.gui._config_panel import _PromptDialog  # noqa: PLC0415
+
+    answers = [QDialog.DialogCode.Rejected, QDialog.DialogCode.Accepted]
+    monkeypatch.setattr(_PromptDialog, "exec", lambda self: answers.pop(0))
+    panel = ConfigPanel()
+    qtbot.addWidget(panel)
+    emitted: list[bool] = []
+    panel.instructions_changed.connect(lambda: emitted.append(True))
+
+    getattr(panel, button).click()
+    assert emitted == []
+    getattr(panel, button).click()
+
+    assert emitted == [True]
+
+
+@pytest.mark.gui
+def test_accepting_the_proofreading_instructions_saves_the_explanation_options(
+    qtbot, monkeypatch
+) -> None:
+    """
+    Given  the panel with explanations in French
+    When   the proofreading instructions dialog is accepted with "Corrections only" ticked
+    Then   the panel's settings hold correction_output "text" and the French language
+    """
+    from PySide6.QtWidgets import QDialog  # noqa: PLC0415
+
+    from teachers_teammate.gui._config_panel import _PromptDialog  # noqa: PLC0415
+
+    def accept_with_corrections_only(dlg: _PromptDialog) -> QDialog.DialogCode:
+        assert dlg._corrections_only is not None
+        dlg._corrections_only.setChecked(True)
+        return QDialog.DialogCode.Accepted
+
+    monkeypatch.setattr(_PromptDialog, "exec", accept_with_corrections_only)
+    panel = ConfigPanel()
+    qtbot.addWidget(panel)
+    panel.update_settings({"explanation_language": "French", "correction_output": "review"})
+
+    panel._correction_prompt_btn.click()
+
+    settings = panel.get_settings_dict()
+    assert settings["correction_output"] == "text"
+    assert settings["explanation_language"] == "French"
+
+
+@pytest.mark.gui
+def test_the_output_folder_field_does_not_promise_a_blank_folder_works(qtbot) -> None:
+    """
+    Given  the Results step (a run with outputs but without a folder is refused)
+    When   its folder field is empty
+    Then   the placeholder asks for a folder instead of promising "save next to your documents"
+    """
+    panel = ConfigPanel()
+    qtbot.addWidget(panel)
+
+    assert panel._output_dir.placeholderText() == "Choose a folder for the results"
+    assert "next to your documents" not in panel._output_dir.placeholderText()

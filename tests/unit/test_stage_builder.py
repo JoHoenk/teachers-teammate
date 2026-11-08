@@ -8,6 +8,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from teachers_teammate.config import OcrConfig
+from teachers_teammate.domain.model_catalog import DetectionReason, HardwareDetection
 from teachers_teammate.exceptions import OnlineOcrNotAllowedError
 from teachers_teammate.infrastructure.image_preprocessor import HandwritingPreprocessor
 from teachers_teammate.infrastructure.stage_builder import (
@@ -364,3 +365,198 @@ def test_missing_spacy_with_proofreading_stops_the_run(tmp_path: Path) -> None:
         StageBuilder(
             config=config, factory=_failing_anonymizer_factory()
         ).build_correction_and_anonymizer()
+
+
+def _hardware() -> HardwareDetection:
+    """A computer with a 16 GB graphics card (13.6 GB usable) and 32 GB of main memory."""
+    return HardwareDetection(
+        profile="16gb",
+        reason=DetectionReason.GPU_DETECTED,
+        memory_gb=12.0,
+        system_memory_gb=32.0,
+    )
+
+
+def test_the_resolved_window_reaches_the_correction_request(tmp_path: Path) -> None:
+    """
+    Given  a computer whose graphics card is known and an Ollama writing model
+    When   the correction stage is built
+    Then   the correction settings carry the resolved proofreading window
+    """
+    config = make_config(tmp_path, correction_provider="ollama", correction_model="qwen3:4b")
+    builder = StageBuilder(config=config, factory=PipelineComponentFactory(), hardware=_hardware())
+
+    windows = builder.resolved_windows()
+    settings = builder._correction_settings()
+
+    assert settings.num_ctx == windows.proofreading
+    assert settings.num_ctx >= 8192
+
+
+def test_the_resolved_window_reaches_the_evaluator(tmp_path: Path) -> None:
+    """
+    Given  the same computer and an enabled content review that uses another model
+    When   the evaluation stage is built
+    Then   the evaluator is built with the resolved evaluation window
+    """
+    build_evaluator = MagicMock()
+    factory = PipelineComponentFactory(build_native_ollama_evaluator=build_evaluator)
+    config = make_config(
+        tmp_path,
+        correction_provider="ollama",
+        correction_model="qwen3:4b",
+        correction_enabled=True,
+        evaluation_enabled=True,
+        evaluate_provider="ollama",
+        evaluate_model="gemma4:12b",
+    )
+    builder = StageBuilder(config=config, factory=factory, hardware=_hardware())
+
+    builder.build_evaluation(MagicMock(), MagicMock())
+
+    windows = builder.resolved_windows()
+    assert build_evaluator.call_args.args[-1] == windows.evaluation
+
+
+def test_without_hardware_the_window_stays_at_the_base_step(tmp_path: Path) -> None:
+    """
+    Given  a builder that was given no hardware (a preview run, or a test double)
+    When   the run windows are resolved
+    Then   both stages keep the base window instead of guessing one
+    """
+    config = make_config(tmp_path, correction_provider="ollama")
+
+    windows = StageBuilder(config=config, factory=PipelineComponentFactory()).resolved_windows()
+
+    assert windows.proofreading == windows.evaluation == 8192
+
+
+def test_an_online_provider_keeps_the_base_window(tmp_path: Path) -> None:
+    """
+    Given  a correction provider that brings its own window
+    When   the run windows are resolved with hardware at hand
+    Then   the app still reports the base window and never pretends to set one
+    """
+    config = make_config(tmp_path, correction_provider="openai", correction_model="gpt-4o")
+
+    windows = StageBuilder(
+        config=config,
+        factory=PipelineComponentFactory(),
+        hardware=_hardware(),
+    ).resolved_windows()
+
+    assert windows.proofreading == windows.evaluation == 8192
+
+
+def _measured_specs(monkeypatch) -> None:
+    """Make the catalog know a small unmeasured and a larger measured model."""
+    from teachers_teammate.domain.model_catalog import OllamaModelSpec  # noqa: PLC0415
+
+    specs = {
+        "small:1b": OllamaModelSpec(
+            tag="small:1b", category="general", memory_gb=1.0, download_gb=1.0, note=""
+        ),
+        "large:9b": OllamaModelSpec(
+            tag="large:9b",
+            category="general",
+            memory_gb=2.0,
+            download_gb=2.0,
+            note="",
+            context_gb_per_8k=0.1,
+        ),
+    }
+    monkeypatch.setattr(
+        "teachers_teammate.infrastructure.stage_builder.find_spec", lambda tag: specs.get(tag)
+    )
+
+
+def test_content_review_is_sized_from_its_own_model(tmp_path: Path, monkeypatch) -> None:
+    """
+    Given  proofreading on a model with unmeasured context growth and a content review on a
+           larger model with measured growth, both on Ollama, on a big card
+    When   the run windows are resolved
+    Then   proofreading keeps the base window and content review gets its own larger window
+    """
+    _measured_specs(monkeypatch)
+    config = make_config(
+        tmp_path,
+        correction_enabled=True,
+        correction_provider="ollama",
+        correction_model="small:1b",
+        evaluation_enabled=True,
+        evaluate_provider="ollama",
+        evaluate_model="large:9b",
+    )
+
+    windows = StageBuilder(
+        config=config, factory=PipelineComponentFactory(), hardware=_hardware()
+    ).resolved_windows()
+
+    assert windows.proofreading == 8192
+    assert windows.evaluation > windows.proofreading
+
+
+def test_the_window_setting_reaches_a_local_review_behind_an_online_proofreader(
+    tmp_path: Path,
+) -> None:
+    """
+    Given  proofreading with an online provider, a content review on Ollama and a pinned window
+    When   the run windows are resolved
+    Then   the review gets the pinned window, and the online proofreader reports the base one
+    """
+    config = make_config(
+        tmp_path,
+        correction_enabled=True,
+        correction_provider="openai",
+        correction_model="gpt-4o",
+        evaluation_enabled=True,
+        evaluate_provider="ollama",
+        evaluate_model="qwen3:4b",
+        proofreading_context="32768",
+    )
+
+    windows = StageBuilder(config=config, factory=PipelineComponentFactory()).resolved_windows()
+
+    assert windows.proofreading == 8192
+    assert windows.evaluation == 32768
+
+
+def test_a_local_corrector_is_wrapped_to_proofread_long_texts_in_pieces(tmp_path: Path) -> None:
+    """
+    Given  a config with an Ollama proofreading provider
+    When   the correction stage is built
+    Then   the corrector is wrapped in the chunking decorator
+    """
+    from teachers_teammate.infrastructure.correction import (  # noqa: PLC0415
+        ChunkingCorrector,
+        NativeOllamaCorrector,
+    )
+
+    config = make_config(tmp_path, correction_enabled=True, correction_provider="ollama")
+    builder = StageBuilder(config=config, factory=PipelineComponentFactory())
+
+    correction, _ = builder.build_correction_and_anonymizer(MagicMock())
+
+    assert isinstance(correction, ChunkingCorrector)
+    assert isinstance(correction.inner, NativeOllamaCorrector)
+
+
+def test_an_online_corrector_is_not_wrapped(tmp_path: Path) -> None:
+    """
+    Given  a config with an online proofreading provider, whose window fits any text
+    When   the correction stage is built
+    Then   the corrector is used as it is
+    """
+    from teachers_teammate.infrastructure.correction import ChunkingCorrector  # noqa: PLC0415
+
+    llm_corrector = MagicMock()
+    llm_corrector.max_text_chars.return_value = None
+    factory = PipelineComponentFactory(
+        build_llm=MagicMock(), build_corrector=MagicMock(return_value=llm_corrector)
+    )
+    config = make_config(tmp_path, correction_enabled=True, correction_provider="openai")
+
+    correction, _ = StageBuilder(config=config, factory=factory).build_correction_and_anonymizer()
+
+    assert correction is llm_corrector
+    assert not isinstance(correction, ChunkingCorrector)

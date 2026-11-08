@@ -155,7 +155,11 @@ max-returns = 9
 max-args = 8
 
 [tool.ruff.lint.isort]
-known-first-party = ["teachers_teammate"]
+# `tools/` is a namespace directory, so ruff would classify it as third-party from
+# src detection alone — and the lint sandbox for a `//tools:*` target holds neither
+# directory, which made the classification differ between targets. Listing both keeps
+# it stable.
+known-first-party = ["teachers_teammate", "tools"]
 force-sort-within-sections = true
 
 [tool.ruff.format]

@@ -7,28 +7,87 @@ connection-check threads use the same code path.
 from __future__ import annotations
 
 from collections.abc import Callable, Iterator
+from dataclasses import dataclass
 import functools
 import ipaddress
+import logging
 import queue
 import socket
 import threading
 from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 
+from ..domain.context_budget import (
+    ContextBudget,
+    answers_with_the_same_text,
+)
 from ..exceptions import OllamaConnectionError
 from .reporting import Reporter, StdoutReporter
 
 if TYPE_CHECKING:
     import ollama
 
+logger = logging.getLogger(__name__)
+
 _DEFAULT_OLLAMA_URL = "http://127.0.0.1:11434"
 
 # How long to wait for the TCP connection to be established.
 _CONNECT_TIMEOUT = 10
 
-# Model families that indicate a model can read images (used as a fallback on
-# older Ollama servers that do not report capabilities).
+#: Context window (tokens) requested for proofreading and content-review answers.
+#:
+#: Ollama otherwise applies its own default of 4k on graphics cards under 24 GiB, which a
+#: one-page, error-dense essay in review mode overruns.  One fixed value for every text on
+#: purpose: a changed ``num_ctx`` makes Ollama reload the model, so sizing it per text would
+#: reload before every file.  8k fits a full page in the longest-tokenising language (German);
+#: ``tools/verify_model_catalog.py`` shows when it does not.
+#:
+#: Two accepted costs.  A server started with a larger ``OLLAMA_CONTEXT_LENGTH`` is overridden
+#: downwards for these requests.  And when one model both reads scans (OCR keeps Ollama's own
+#: window) and proofreads, Ollama reloads it on every switch between the two stages, because the
+#: window differs; that setup is rare, and with a separate OCR model on a small graphics card the
+#: models swap anyway.
+PROOFREADING_NUM_CTX = 8192
+
+#: Model families that indicate a model can read images (used as a fallback on
+#: older Ollama servers that do not report capabilities).
 _KNOWN_VISION_FAMILIES = frozenset({"clip", "vision", "deepseekocr"})
+
+
+def ensure_prompt_fits(
+    system: str,
+    prompt: str,
+    num_ctx: int,
+    *,
+    answer_tokens: int | None = None,
+) -> None:
+    """Raise :exc:`~teachers_teammate.exceptions.ResponseTruncatedError` if a request is too long.
+
+    Ollama silently drops the middle of a prompt that is longer than ``num_ctx`` and still reports
+    ``done_reason="stop"``, so a prompt overflow cannot be seen in the answer.  (A *long answer*
+    can: it ends with ``done_reason="length"``.)  The client library cannot send
+    ``truncate=false`` either, so the size is checked here, by estimate, before the request goes
+    out.  The rule itself lives in :class:`~teachers_teammate.domain.context_budget.ContextBudget`.
+
+    Args:
+        answer_tokens: Tokens reserved for the answer.  ``None`` — the answer repeats (part of)
+            the text it was given, so the request may take at most half of the window.
+    """
+    from ..exceptions import ResponseTruncatedError  # noqa: PLC0415
+
+    budget = ContextBudget(num_ctx)
+    allowance = answers_with_the_same_text(num_ctx) if answer_tokens is None else answer_tokens
+    if not budget.request_fits(len(system) + len(prompt), answer_tokens=allowance):
+        raise ResponseTruncatedError()
+
+
+def proofreading_options(temperature: float, num_ctx: int = PROOFREADING_NUM_CTX) -> dict:
+    """Return the Ollama options of a proofreading or content-review request.
+
+    The one place that decides what such a request sends, so the model check
+    (``tools/verify_model_catalog.py``) exercises the same options as the app.
+    """
+    return {"temperature": temperature, "num_ctx": num_ctx}
 
 
 def normalize_ollama_url(url: str) -> str:
@@ -153,6 +212,39 @@ def _consume_iterator_with_first_token_timeout[T](
 
     t.join()
     return results
+
+
+@dataclass(frozen=True)
+class ChatStats:
+    """What Ollama reported about the answer it just finished (defaults when it said nothing).
+
+    Kept so a caller can tell a complete answer from one the context window cut off, and so
+    the token counts of a real run are visible in the log and in the model check.
+    """
+
+    done_reason: str = ""
+    """``"stop"`` for a complete answer, ``"length"`` when the context window was full."""
+    prompt_eval_count: int = 0
+    """Tokens of the request (system instructions, answer format and text)."""
+    eval_count: int = 0
+    """Tokens of the answer."""
+
+    @property
+    def truncated(self) -> bool:
+        """Whether the model stopped because it ran out of context, not because it was done."""
+        return self.done_reason == "length"
+
+
+def _chunk_stats(chunk: object) -> ChatStats:
+    """Return the statistics of one stream chunk (empty ones for a chunk that reports none)."""
+    done_reason = getattr(chunk, "done_reason", "")
+    prompt_eval_count = getattr(chunk, "prompt_eval_count", 0)
+    eval_count = getattr(chunk, "eval_count", 0)
+    return ChatStats(
+        done_reason=done_reason if isinstance(done_reason, str) else "",
+        prompt_eval_count=prompt_eval_count if isinstance(prompt_eval_count, int) else 0,
+        eval_count=eval_count if isinstance(eval_count, int) else 0,
+    )
 
 
 def _is_transport_error(exc: BaseException) -> bool:
@@ -363,7 +455,7 @@ class OllamaClient:
 
     # ── Generation ─────────────────────────────────────────────────────────
 
-    def chat(
+    def chat(  # noqa: PLR0913  # one keyword shape, shared with chat_with_stats()
         self,
         model: str,
         prompt: str,
@@ -374,8 +466,72 @@ class OllamaClient:
         timeout: float = 120.0,
         format: dict | str | None = None,  # pylint: disable=redefined-builtin  # the ollama API's name
         system: str = "",
+        allow_truncated: bool = False,
+        answer_tokens: int | None = None,
     ) -> str:
-        """Send a chat request and return the concatenated response text.
+        """Send a chat request and return the response text, refusing a cut-off one.
+
+        See :meth:`chat_with_stats` for the arguments.  An answer Ollama stopped at a limit
+        (``done_reason="length"``: the context window was full, or ``num_predict`` was reached)
+        would be a beginning only, so this raises instead of returning it — the text it was asked
+        about goes on past the end of such an answer.  A request that sets ``num_ctx`` and is too
+        long for it is refused up front (see :func:`ensure_prompt_fits`).
+
+        Args:
+            allow_truncated: Return a cut-off answer instead of raising (logging a warning).
+                For callers whose output limit is deliberate, like the OCR page limit, where a
+                partial page is still the best available result.
+            answer_tokens: How many tokens the answer may take.  ``None`` — as many as the
+                request, which is the proofreading shape (the answer repeats the text).
+
+        Raises:
+            :exc:`~teachers_teammate.exceptions.ResponseTruncatedError`: the request did not fit
+                the context window, or the answer was cut off.
+            :exc:`~teachers_teammate.exceptions.OCRError`: on any other failure.
+        """
+        from ..exceptions import ResponseTruncatedError  # noqa: PLC0415
+
+        num_ctx = (options or {}).get("num_ctx")
+        if num_ctx and not images:
+            ensure_prompt_fits(system, prompt, int(num_ctx), answer_tokens=answer_tokens)
+        content, stats = self.chat_with_stats(
+            model,
+            prompt,
+            images=images,
+            options=options,
+            think=think,
+            timeout=timeout,
+            format=format,
+            system=system,
+        )
+        if stats.truncated:
+            if not allow_truncated:
+                raise ResponseTruncatedError()
+            logger.warning("ollama chat %s: answer cut off at its output limit", model)
+            if not content.strip():
+                # A cut-off answer without any text is no partial page: it is nothing, and
+                # returning "" would silently drop the page from the document.
+                from ..exceptions import OCRError  # noqa: PLC0415
+
+                raise OCRError("model returned an empty response (stopped at its output limit)")
+        return content
+
+    def chat_with_stats(
+        self,
+        model: str,
+        prompt: str,
+        *,
+        images: list[str] | None = None,
+        options: dict | None = None,
+        think: bool | None = False,
+        timeout: float = 120.0,
+        format: dict | str | None = None,  # pylint: disable=redefined-builtin  # the ollama API's name
+        system: str = "",
+    ) -> tuple[str, ChatStats]:
+        """Send a chat request and return ``(text, stats)``.
+
+        Unlike :meth:`chat` this returns a cut-off answer too, together with the statistics that
+        mark it as cut off, so a caller can report what happened instead of guessing.
 
         Args:
             model:   Ollama model tag.
@@ -437,9 +593,20 @@ class OllamaClient:
         chunks = _consume_iterator_with_first_token_timeout(stream, timeout)
         parts = [(chunk.message.content or "") for chunk in chunks if chunk.message]
         content = "".join(parts)
-        if not content.strip():
+        # The last chunk carries the summary of the whole answer; earlier ones leave these unset.
+        stats = _chunk_stats(chunks[-1]) if chunks else ChatStats()
+        # A reasoning model can spend the whole window on thinking it does not return: no text,
+        # but a stop at the limit.  That is a cut-off answer, not an empty one -- say so.
+        if not content.strip() and not stats.truncated:
             raise OCRError("model returned an empty response")
-        return content
+        logger.debug(
+            "ollama chat %s: done_reason=%r prompt_eval_count=%d eval_count=%d",
+            model,
+            stats.done_reason,
+            stats.prompt_eval_count,
+            stats.eval_count,
+        )
+        return content, stats
 
     # ── Model management ───────────────────────────────────────────────────
 

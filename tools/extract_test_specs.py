@@ -15,12 +15,11 @@ from __future__ import annotations
 
 import argparse
 import ast
+from collections import defaultdict
+from pathlib import Path
 import re
 import sys
 import textwrap
-from collections import defaultdict
-from pathlib import Path
-
 
 # ---------------------------------------------------------------------------
 # TRLC description parser

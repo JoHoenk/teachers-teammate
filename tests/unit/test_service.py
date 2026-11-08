@@ -1349,6 +1349,174 @@ def _server_answers(models: list[str], error: str = ""):
     )
 
 
+@pytest.fixture(autouse=True)
+def _no_real_memory_reading(monkeypatch) -> None:
+    """Keep the run-start memory check off the real computer: its memory cannot be read.
+
+    Tests of the check itself set the figures they need.
+    """
+    from teachers_teammate.infrastructure import gpu_detector  # noqa: PLC0415
+
+    monkeypatch.setattr(gpu_detector, "detect_available_memory_gb", lambda: None)
+    # Not an Apple computer: that decides whether the whole model counts against the memory.
+    monkeypatch.setattr(gpu_detector, "detect_apple_unified_memory_gb", lambda: None)
+
+
+def _computer(svc, monkeypatch, *, profile, free_gb, card_gb=None, reason=None) -> None:
+    """Make *svc* believe it runs on a computer of *profile* with *free_gb* of free memory."""
+    from teachers_teammate.domain.model_catalog import (  # noqa: PLC0415
+        DetectionReason,
+        HardwareDetection,
+    )
+    from teachers_teammate.infrastructure import gpu_detector  # noqa: PLC0415
+
+    monkeypatch.setattr(gpu_detector, "detect_available_memory_gb", lambda: free_gb)
+    detection = HardwareDetection(
+        profile=profile,
+        reason=reason or DetectionReason.GPU_DETECTED,
+        memory_gb=card_gb,
+        system_memory_gb=64.0,
+    )
+    monkeypatch.setattr(svc, "resolve_hardware_profile", lambda _setting, _url: detection)
+
+
+@pytest.mark.unit
+def test_a_run_is_refused_when_the_model_would_have_to_swap(tmp_path: Path, monkeypatch) -> None:
+    """
+    Given  a computer without a graphics card and 6 GB of free memory, and qwen3.5:9b (7.2 GB)
+    When   the run is checked
+    Then   the problem names the model and the memory, so the run does not start and swap
+    """
+    svc = _make_svc()
+    cfg = _ollama_config(tmp_path, ocr_engine="tesseract")
+    _computer(svc, monkeypatch, profile="cpu", free_gb=6.0)
+
+    problem = svc.memory_warning_for_run(cfg)
+
+    assert "qwen3.5:9b" in problem and "7 GB of free memory" in problem
+    assert "6 GB are free" in problem and "smaller model" in problem
+
+
+@pytest.mark.unit
+def test_a_run_is_allowed_when_enough_memory_is_free(tmp_path: Path, monkeypatch) -> None:
+    """
+    Given  the same model and 12 GB of free memory (7.2 + the 2 GB margin fit)
+    When   the run is checked
+    Then   there is no problem
+    """
+    svc = _make_svc()
+    cfg = _ollama_config(tmp_path, ocr_engine="tesseract")
+    _computer(svc, monkeypatch, profile="cpu", free_gb=12.0)
+
+    assert svc.memory_warning_for_run(cfg) == ""
+
+
+@pytest.mark.unit
+def test_only_what_does_not_fit_the_card_has_to_fit_the_free_memory(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """
+    Given  gemma4:12b (9.5 GB) on an 8 GB card (6.8 GB usable): 2.7 GB run on the processor
+    When   4 GB and 6 GB of memory are free
+    Then   4 GB is not enough (2.7 + 2 margin), 6 GB is
+    """
+    svc = _make_svc()
+    cfg = _ollama_config(tmp_path, ocr_engine="tesseract", correction_model="gemma4:12b")
+
+    _computer(svc, monkeypatch, profile="8gb", free_gb=4.0, card_gb=8.0 * 0.85)
+    assert "gemma4:12b" in svc.memory_warning_for_run(cfg)
+    _computer(svc, monkeypatch, profile="8gb", free_gb=6.0, card_gb=8.0 * 0.85)
+    assert svc.memory_warning_for_run(cfg) == ""
+
+
+@pytest.mark.unit
+def test_apple_silicon_needs_the_whole_model_from_the_shared_memory(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """
+    Given  Apple Silicon (the graphics share is carved out of the same memory), 6 GB free
+    When   a 7.2 GB model is checked
+    Then   all of it counts against the free memory, so it does not fit
+    """
+    from teachers_teammate.domain.model_catalog import DetectionReason  # noqa: PLC0415
+
+    svc = _make_svc()
+    cfg = _ollama_config(tmp_path, ocr_engine="tesseract")
+    _computer(
+        svc,
+        monkeypatch,
+        profile="8gb",
+        free_gb=6.0,
+        card_gb=16.0,
+        reason=DetectionReason.APPLE_UNIFIED_MEMORY,
+    )
+
+    assert "qwen3.5:9b" in svc.memory_warning_for_run(cfg)
+
+
+@pytest.mark.unit
+def test_the_memory_check_leaves_other_cases_alone(tmp_path: Path, monkeypatch) -> None:
+    """
+    Given  a model that is not in the catalog, an Ollama on another computer, and a run
+           without Ollama
+    When   the memory is checked with almost nothing free
+    Then   none of them is refused: the size is unknown, the memory is another computer's, or
+           no model is loaded
+    """
+    svc = _make_svc()
+    _computer(svc, monkeypatch, profile="cpu", free_gb=0.5)
+
+    unknown = _ollama_config(tmp_path, ocr_engine="tesseract", correction_model="my-own:latest")
+    remote = _ollama_config(tmp_path, ocr_engine="tesseract", ollama_url="http://gpu-box.lan:11434")
+    no_ollama = _ollama_config(tmp_path, ocr_engine="tesseract", correction_enabled=False)
+
+    assert svc.memory_warning_for_run(unknown) == ""
+    assert svc.memory_warning_for_run(remote) == ""
+    assert svc.memory_warning_for_run(no_ollama) == ""
+
+
+@pytest.mark.unit
+def test_preflight_reports_missing_memory_as_a_warning_the_user_may_accept(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """
+    Given  all models downloaded but too little free memory
+    When   the run preflight is computed
+    Then   nothing blocks the run, but it needs the user's confirmation (the memory warning)
+    """
+    svc = _make_svc()
+    cfg = _ollama_config(tmp_path)
+    _computer(svc, monkeypatch, profile="cpu", free_gb=6.0)
+
+    with _server_answers(["qwen3-vl:8b", "qwen3.5:9b"]):
+        result = svc.check_run_preflight(cfg)
+
+    assert result.blocked is False
+    assert "free memory" in result.memory_warning
+
+
+@pytest.mark.unit
+def test_a_stage_issue_wins_over_the_memory_warning(tmp_path: Path, monkeypatch) -> None:
+    """
+    Given  a computer with too little free memory and a proofreading provider package that is
+           not installed
+    When   the run preflight is computed
+    Then   the stage issue is reported (and blocks the run); the memory is not looked at all,
+           so a "Run anyway" could not start a run whose stages were never checked
+    """
+    svc = _make_svc()
+    cfg = _ollama_config(tmp_path, correction_provider="mistral")
+    _computer(svc, monkeypatch, profile="cpu", free_gb=6.0)
+    monkeypatch.setattr(svc, "missing_provider_package", lambda _provider: True)
+
+    with _server_answers(["qwen3-vl:8b", "qwen3.5:9b"]):
+        result = svc.check_run_preflight(cfg)
+
+    assert result.blocked is True
+    assert result.stage == "correction"
+    assert result.memory_warning == ""
+
+
 @pytest.mark.unit
 def test_empty_model_list_is_not_cached(tmp_path: Path) -> None:
     """
@@ -1386,7 +1554,7 @@ def test_preflight_blocks_ollama_cloud_ocr_model_without_contacting_the_server(
         result = svc.check_run_preflight(cfg)
 
     request.assert_not_called()
-    assert result.ok is False
+    assert result.blocked is True
     assert "Ollama's servers" in result.ocr_not_allowed
 
 
@@ -1403,7 +1571,7 @@ def test_preflight_blocks_online_ocr_engine(tmp_path: Path) -> None:
 
     result = _make_svc(discovery=_discovery_of("page.png")).check_run_preflight(cfg)
 
-    assert result.ok is False
+    assert result.blocked is True
     assert "whole page" in result.ocr_not_allowed
 
 
@@ -1568,7 +1736,7 @@ def test_preflight_reports_unreachable_ollama(tmp_path: Path) -> None:
         result = svc.check_run_preflight(cfg)
 
     request.assert_called_once()  # one timeout, not one per question
-    assert result.ok is False
+    assert result.blocked is True
     assert result.ollama_unreachable == "✗ Cannot connect to Ollama"
     assert result.missing_models == ()
 
@@ -1620,7 +1788,7 @@ def test_preflight_ok_when_everything_is_available(tmp_path: Path) -> None:
     with _server_answers(["qwen3-vl:8b", "qwen3.5:9b"]):
         result = svc.check_run_preflight(cfg)
 
-    assert result.ok is True
+    assert result.blocked is False
 
 
 @pytest.mark.unit
@@ -1641,7 +1809,7 @@ def test_preflight_needs_no_ollama_for_other_engines(tmp_path: Path) -> None:
     ):
         result = svc.check_run_preflight(cfg)
 
-    assert result.ok is True
+    assert result.blocked is False
 
 
 @pytest.mark.unit
@@ -1679,7 +1847,7 @@ def test_preflight_asks_an_installed_models_server_only_once(tmp_path: Path) -> 
     cfg = _ollama_config(tmp_path)
 
     with _server_answers(["qwen3-vl:8b", "qwen3.5:9b"]) as request:
-        assert svc.check_run_preflight(cfg).ok is True
+        assert svc.check_run_preflight(cfg).blocked is False
         assert svc.check_stage_requirements(cfg, "correction") == []
 
     request.assert_called_once()
@@ -1698,7 +1866,7 @@ def test_unreachable_server_is_asked_again_on_the_next_check(tmp_path: Path) -> 
     with _server_answers([], "✗ Cannot connect to Ollama"):
         assert svc.check_run_preflight(cfg).ollama_unreachable
     with _server_answers(["qwen3-vl:8b", "qwen3.5:9b"]):
-        assert svc.check_run_preflight(cfg).ok is True
+        assert svc.check_run_preflight(cfg).blocked is False
 
 
 # ── GPU monitoring add-on ─────────────────────────────────────────────────────
@@ -2605,3 +2773,28 @@ def test_installed_models_are_listed_once_until_forgotten() -> None:
         svc.resolve_anonymizer_config("English", config)
 
         assert listing.call_count == 2
+
+
+@pytest.mark.parametrize(
+    ("info", "key_set", "missing"),
+    [
+        ({"needs_api_key": True, "env_key": "TT_TEST_KEY"}, False, True),
+        ({"needs_api_key": True, "env_key": "TT_TEST_KEY"}, True, False),
+        ({"needs_api_key": False, "env_key": ""}, False, False),
+        ({}, False, False),
+    ],
+)
+def test_provider_key_missing_follows_the_provider_info_and_environment(
+    monkeypatch, info: dict, key_set: bool, missing: bool
+) -> None:
+    """
+    Given  a provider that does or does not need an API key, with the key set or not
+    When   the service is asked whether the key is missing
+    Then   it is missing only for a provider that needs a key while none is set
+    """
+    monkeypatch.delenv("TT_TEST_KEY", raising=False)
+    if key_set:
+        monkeypatch.setenv("TT_TEST_KEY", "k")
+    monkeypatch.setattr(service_module, "get_provider_info", lambda _provider: info)
+
+    assert _make_svc().provider_key_missing("any") is missing

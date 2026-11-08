@@ -16,6 +16,7 @@ from teachers_teammate.gui._formatted_text import PLACEHOLDER_BACKGROUND, PLACEH
 from teachers_teammate.gui._main_window import MainWindow
 from teachers_teammate.gui._preview_panel import PreviewPanel
 from teachers_teammate.gui._privacy_settings import DISPLAY_ANONYMIZED_KEY
+from teachers_teammate.gui._privacy_settings_dialog import PrivacySettingsDialog
 
 RAW = "Anna Müller schreibt an Bernd."
 CORRECTED = "Anna Müller schreibt einen Brief an Bernd."
@@ -407,7 +408,7 @@ def test_changed_settings_produce_new_placeholders(qtbot) -> None:
     assert panel._anon_ready is False
 
 
-# ── the View menu ─────────────────────────────────────────────────────────
+# ── where the setting is chosen: Privacy Settings and the eye button ─────
 
 
 class _DummySignal:
@@ -496,37 +497,178 @@ def main_window(qtbot, monkeypatch, settings) -> MainWindow:
 
 
 @pytest.mark.gui
-def test_the_view_menu_switches_the_setting(main_window, settings) -> None:
+def test_the_menu_bar_has_no_view_menu(main_window) -> None:
     """
-    Given  a window with the "Hide personal information in texts" entry, on by default
-    When   the entry is unchecked and checked again
-    Then   the preview shows the names, then placeholders, and each choice is stored
+    Given  a main window
+    When   its menu bar is read
+    Then   there is no "View" menu: the setting lives in Privacy Settings
     """
-    assert main_window._hide_personal_act.isCheckable()
-    assert main_window._hide_personal_act.isEnabled()
-
-    main_window._hide_personal_act.trigger()
-
-    assert not main_window._preview.display_anonymized()
-    assert settings.value(DISPLAY_ANONYMIZED_KEY) == "no"
-
-    main_window._hide_personal_act.trigger()
-
-    assert main_window._preview.display_anonymized()
-    assert settings.value(DISPLAY_ANONYMIZED_KEY) == "yes"
+    titles = [action.text() for action in main_window.menuBar().actions()]
+    assert "View" not in titles
 
 
 @pytest.mark.gui
-def test_the_eye_button_checks_the_menu_entry(main_window, settings) -> None:
+def test_the_eye_button_switches_the_setting(main_window, settings) -> None:
     """
     Given  a window whose preview panel shows an eye button, with the names hidden
     When   the button is clicked
-    Then   the menu entry follows and the choice is stored
+    Then   the preview shows the names and the choice is stored
     """
     main_window._preview._hide_btn.click()
 
-    assert not main_window._hide_personal_act.isChecked()
+    assert not main_window._preview.display_anonymized()
+    assert not main_window._display_anonymized
     assert settings.value(DISPLAY_ANONYMIZED_KEY) == "no"
+
+
+class _ScriptedDialog:
+    """Stands in for PrivacySettingsDialog: answers exec() and returns one choice."""
+
+    def __init__(self, result, choice: bool) -> None:
+        self.result = result
+        self.choice = choice
+        self.kwargs: dict = {}
+        self.anonymizer_config = None
+
+    def __call__(self, *_args, **kwargs) -> _ScriptedDialog:
+        self.kwargs = kwargs
+        return self
+
+    def exec(self) -> object:
+        return self.result
+
+    def display_anonymized(self) -> bool:
+        return self.choice
+
+
+@pytest.fixture
+def privacy_dialog_spy(monkeypatch):
+    """Replace the dialog the window opens, and stop it from saving to disk."""
+    from PySide6.QtWidgets import QDialog  # noqa: PLC0415
+
+    from teachers_teammate.gui import _privacy_settings_dialog  # noqa: PLC0415
+
+    monkeypatch.setattr(MainWindow, "_save_settings", lambda self, **_kw: None)
+
+    def _install(result, choice: bool) -> _ScriptedDialog:
+        spy = _ScriptedDialog(result, choice)
+        monkeypatch.setattr(_privacy_settings_dialog, "PrivacySettingsDialog", spy)
+        return spy
+
+    return _install, QDialog
+
+
+@pytest.mark.gui
+def test_ok_in_privacy_settings_applies_the_checkbox(
+    main_window, settings, privacy_dialog_spy
+) -> None:
+    """
+    Given  a window whose names are hidden and whose dialog opens with that state
+    When   the dialog closes with OK and an unticked checkbox
+    Then   the preview shows the names and the choice is stored
+    """
+    install, QDialog = privacy_dialog_spy
+    spy = install(QDialog.DialogCode.Accepted, False)
+
+    main_window._open_anonymizer_config_dialog(
+        main_window._config_panel.lookup_language(),
+        main_window._config_panel.build_anonymizer_config(),
+    )
+
+    assert spy.kwargs["display_anonymized"] is True
+    assert spy.kwargs["display_anonymized_available"] is True
+    assert not main_window._preview.display_anonymized()
+    assert settings.value(DISPLAY_ANONYMIZED_KEY) == "no"
+
+
+@pytest.mark.gui
+def test_ok_in_privacy_settings_keeps_the_saved_choice_while_hiding_is_unavailable(
+    main_window, settings, privacy_dialog_spy
+) -> None:
+    """
+    Given  a window whose names are hidden, but whose spaCy model has gone missing
+    When   the dialog closes with OK (its disabled checkbox reads "off")
+    Then   the saved choice is not overwritten, so hiding comes back once the model does
+    """
+    install, QDialog = privacy_dialog_spy
+    install(QDialog.DialogCode.Accepted, False)
+    main_window._privacy_available = False
+
+    main_window._open_anonymizer_config_dialog(
+        main_window._config_panel.lookup_language(),
+        main_window._config_panel.build_anonymizer_config(),
+    )
+
+    assert main_window._display_anonymized is True
+    assert settings.value(DISPLAY_ANONYMIZED_KEY) is None
+
+
+@pytest.mark.gui
+def test_cancel_in_privacy_settings_leaves_the_setting_alone(
+    main_window, settings, privacy_dialog_spy
+) -> None:
+    """
+    Given  a window whose names are hidden
+    When   the dialog is cancelled although its checkbox was unticked
+    Then   the preview still shows placeholders and the stored choice is unchanged
+    """
+    install, QDialog = privacy_dialog_spy
+    install(QDialog.DialogCode.Rejected, False)
+
+    main_window._open_anonymizer_config_dialog(
+        main_window._config_panel.lookup_language(),
+        main_window._config_panel.build_anonymizer_config(),
+    )
+
+    assert main_window._preview.display_anonymized()
+    assert settings.value(DISPLAY_ANONYMIZED_KEY) is None
+
+
+@pytest.mark.gui
+def test_the_privacy_checkbox_reflects_a_stored_choice(qtbot, monkeypatch, settings) -> None:
+    """
+    Given  a stored choice to show the names
+    When   the Privacy Settings dialog is opened
+    Then   its checkbox is cleared
+    """
+    settings.setValue(DISPLAY_ANONYMIZED_KEY, "no")
+    monkeypatch.setattr(MainWindow, "_settings_store", lambda self: settings)
+    monkeypatch.setattr(
+        ProcessingApplicationService, "anonymizer_available", lambda self, _lang: True
+    )
+    win = MainWindow(worker_factory=_DummyWorker)
+    qtbot.addWidget(win)
+
+    dialog = _privacy_dialog(win)
+
+    assert not dialog.hide_personal_checkbox().isChecked()
+
+
+@pytest.mark.gui
+def test_the_eye_button_and_the_privacy_dialog_stay_in_step(main_window) -> None:
+    """
+    Given  a window whose names are hidden
+    When   the eye button shows them
+    Then   the Privacy Settings dialog opened afterwards shows a cleared checkbox
+    """
+    main_window._preview._hide_btn.click()
+
+    dialog = _privacy_dialog(main_window)
+
+    assert not dialog.hide_personal_checkbox().isChecked()
+
+
+def _privacy_dialog(win: MainWindow) -> PrivacySettingsDialog:
+    """Return a Privacy Settings dialog for *win*'s current state (not shown)."""
+    return PrivacySettingsDialog(
+        win._config_panel.lookup_language(),
+        win._config_panel.build_anonymizer_config(),
+        win._app_service,
+        win,
+        acknowledgements=win._acknowledgements(),
+        display_anonymized=win._display_anonymized,
+        display_anonymized_available=win._privacy_available,
+    )
 
 
 @pytest.mark.gui
@@ -556,7 +698,7 @@ def test_clicking_the_lock_note_makes_the_texts_editable(
     assert not preview.display_anonymized()
     assert not preview._ocr_text.isReadOnly()
     assert preview._ocr_text.toPlainText() == RAW
-    assert not main_window._hide_personal_act.isChecked()
+    assert not main_window._display_anonymized
     assert settings.value(DISPLAY_ANONYMIZED_KEY) == "no"
 
 
@@ -565,10 +707,10 @@ def test_personal_information_is_hidden_on_the_first_start(main_window, settings
     """
     Given  a window started without any stored choice
     When   it is built
-    Then   the names are hidden, in the menu entry and in the preview
+    Then   the names are hidden, in the window state and in the preview
     """
     assert settings.value(DISPLAY_ANONYMIZED_KEY) is None
-    assert main_window._hide_personal_act.isChecked()
+    assert main_window._display_anonymized
     assert main_window._preview.display_anonymized()
 
 
@@ -588,7 +730,7 @@ def test_a_stored_choice_to_show_the_names_is_kept(qtbot, monkeypatch, settings)
     win = MainWindow(worker_factory=_DummyWorker)
     qtbot.addWidget(win)
 
-    assert not win._hide_personal_act.isChecked()
+    assert not win._display_anonymized
     assert not win._preview.display_anonymized()
 
 
@@ -608,16 +750,18 @@ def test_the_setting_is_restored_from_the_last_session(qtbot, monkeypatch, setti
     win = MainWindow(worker_factory=_DummyWorker)
     qtbot.addWidget(win)
 
-    assert win._hide_personal_act.isChecked()
+    assert win._display_anonymized
     assert win._preview.display_anonymized()
 
 
 @pytest.mark.gui
-def test_the_string_language_without_spacy_disables_the_entry(qtbot, monkeypatch, settings) -> None:
+def test_the_string_language_without_spacy_disables_the_choice(
+    qtbot, monkeypatch, settings
+) -> None:
     """
     Given  a document language whose spaCy model is not installed
-    When   the window is built
-    Then   the menu entry is disabled and its tooltip points at the Downloads dialog
+    When   the window is built and Privacy Settings is opened
+    Then   the checkbox is disabled and its tooltip points at the Downloads dialog
     """
     monkeypatch.setattr(MainWindow, "_settings_store", lambda self: settings)
     monkeypatch.setattr(
@@ -627,8 +771,12 @@ def test_the_string_language_without_spacy_disables_the_entry(qtbot, monkeypatch
     win = MainWindow(worker_factory=_DummyWorker)
     qtbot.addWidget(win)
 
-    assert not win._hide_personal_act.isEnabled()
-    assert "Downloads" in win._hide_personal_act.toolTip()
+    assert not win._preview._hide_btn.isEnabled()
+    dialog = _privacy_dialog(win)
+    checkbox = dialog.hide_personal_checkbox()
+    assert not checkbox.isEnabled()
+    assert not checkbox.isChecked()
+    assert "Downloads" in checkbox.toolTip()
     assert win._preview.display_anonymized() is False
 
 
@@ -671,7 +819,7 @@ def test_changing_the_language_updates_the_privacy_availability(main_window, mon
     """
     Given  a window whose English model is installed and whose German model is not
     When   the document language is switched to German
-    Then   the menu entry is disabled for it, and enabled again for English
+    Then   the choice is disabled for it, and enabled again for English
     """
     monkeypatch.setattr(
         ProcessingApplicationService,
@@ -681,15 +829,18 @@ def test_changing_the_language_updates_the_privacy_availability(main_window, mon
     main_window._privacy_availability.clear()
     main_window._config_panel._language.setCurrentText("English")
     main_window._refresh_privacy_availability()
-    assert main_window._hide_personal_act.isEnabled()
+    assert main_window._privacy_available
+    assert main_window._preview._hide_btn.isEnabled()
 
     main_window._config_panel._language.setCurrentText("German")
 
-    assert not main_window._hide_personal_act.isEnabled()
+    assert not main_window._privacy_available
+    assert not main_window._preview._hide_btn.isEnabled()
 
     main_window._config_panel._language.setCurrentText("English")
 
-    assert main_window._hide_personal_act.isEnabled()
+    assert main_window._privacy_available
+    assert main_window._preview._hide_btn.isEnabled()
 
 
 @pytest.mark.gui
@@ -705,12 +856,12 @@ def test_a_finished_download_enables_the_setting(main_window, monkeypatch) -> No
     )
     main_window._privacy_availability.clear()
     main_window._refresh_privacy_availability()
-    assert not main_window._hide_personal_act.isEnabled()
+    assert not main_window._preview._hide_btn.isEnabled()
 
     installed["yes"] = True
     main_window._on_packages_changed()
 
-    assert main_window._hide_personal_act.isEnabled()
+    assert main_window._preview._hide_btn.isEnabled()
 
 
 @pytest.mark.gui

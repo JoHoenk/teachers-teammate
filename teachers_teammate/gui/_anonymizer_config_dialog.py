@@ -122,6 +122,8 @@ class AnonymizerConfigDialog(QDialog):
         top_layout = QVBoxLayout(detection_tab)
         top_layout.setContentsMargins(6, 6, 6, 6)
         top_layout.setSpacing(6)
+        # Subclasses (PrivacySettingsDialog) put their own rows above the detection models.
+        self._detection_layout = top_layout
 
         self._build_detection_models(top_layout)
 

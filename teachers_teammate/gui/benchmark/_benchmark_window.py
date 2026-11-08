@@ -83,6 +83,7 @@ class BenchmarkWindow(QMainWindow):
             hardware_profile=self._hardware_profile,
             show_preview_button=False,
             show_pdf_text_layer=False,
+            expert_collapsed=False,
         )
         self._selector.refresh()  # apply default engine's preprocess/model on open
         cfg_layout.addWidget(self._selector)

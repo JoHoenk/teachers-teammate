@@ -217,7 +217,7 @@ NO_TEXT_YET = "No text recognized for this file yet."
 
 # ── Hiding personal information in the previews ───────────────────────────────
 
-HIDE_PERSONAL_INFO_ACTION = "Hide personal information in texts"
+HIDE_PERSONAL_INFO_CHECKBOX = "Hide personal information in the texts shown in this app"
 HIDE_PERSONAL_INFO_TIP = (
     "Show placeholder tokens such as [PERSON_1] instead of names and other personal\n"
     "information in the extracted text, the proofread text, the changes and the content\n"

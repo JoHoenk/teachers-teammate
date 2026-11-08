@@ -37,14 +37,33 @@ HARDWARE_PROFILES: tuple[HardwareProfile, ...] = ("cpu", "8gb", "16gb")
 #: Values accepted for the ``hardware_profile`` setting (auto-detect plus the tiers).
 PROFILE_SETTINGS: tuple[HardwareProfileSetting, ...] = ("auto", *HARDWARE_PROFILES)
 
-# Memory (GB) a model may need to count as "fits". For cpu this is a speed limit,
-# not a hard limit: larger models still run, just slowly.
-MEMORY_BUDGET_GB: dict[HardwareProfile, float] = {"cpu": 4.0, "8gb": 7.5, "16gb": 15.5}
+#: Share of a graphics card's memory that models can use: the rest holds the operating
+#: system's own windows and the driver's buffers (measured on an 8 GB card, where a model, its
+#: context and the driver's buffers used 6.9 of 8.2 GB).
+CARD_USABLE_SHARE = 0.85
 
-#: Share of the computer's own memory (RAM) a model may use when it does not fit on the
-#: graphics card: Ollama then runs the rest on the processor, which works but is slower.
-#: The other half is left for the operating system and the app.
-RAM_OFFLOAD_SHARE = 0.5
+#: Memory (GB) of the graphics card a hardware profile stands for when the real size is unknown
+#: (a profile chosen by hand, a graphics card whose memory could not be read, a remote server).
+NOMINAL_CARD_GB: dict[HardwareProfile, float] = {"cpu": 0.0, "8gb": 8.0, "16gb": 16.0}
+
+#: Largest model (GB) that is comfortable on the processor alone, without a graphics card.
+CPU_COMFORT_GB = 4.0
+
+#: Main memory kept free for the operating system and the app: the larger of this many GB and
+#: ``SYSTEM_RESERVE_SHARE`` of the total.  Swapping to disk is never counted as memory.
+SYSTEM_RESERVE_MIN_GB = 8.0
+SYSTEM_RESERVE_SHARE = 0.20
+
+#: Share of a model that sits on the graphics card, from which on it runs at full speed, and
+#: below which it is "very slow" (measured on an 8 GB card: a share of 0.97 gave 43 tokens per
+#: second, 0.73 gave 13, 0.66 gave 6.6; a page takes under a minute at the top and about seven
+#: minutes at the bottom).  Between the two it is "slower".
+FULL_SPEED_SHARE = 0.9
+SLOWER_SHARE = 0.7
+
+#: Free main memory (GB) a run keeps beyond what the model needs from it, so the computer stays
+#: responsive.  Checked against the memory that is free *now*, not the total.
+RUN_MEMORY_MARGIN_GB = 2.0
 
 #: Static default models (config DEFAULTS, CLI, provider metadata).  They apply
 #: regardless of hardware; the per-profile picks in :data:`RECOMMENDED` only drive
@@ -52,14 +71,7 @@ RAM_OFFLOAD_SHARE = 0.5
 DEFAULT_OCR_MODEL = "hf.co/prithivMLmods/chandra-ocr-2-GGUF:Q8_0"
 #: The default writing model must be one that passes the structured-output check:
 #: proofreading explains every change, which needs an answer the model can be constrained to.
-DEFAULT_WRITING_MODEL = "qwen3.5:9b"
-#: A writing model not (yet) checked for explanations.  Reasoning models such as
-#: ``gpt-oss:20b`` have been reported to combine Ollama's schema-constrained decoding badly
-#: with their own output format.  It is still asked for explanations like any other model (an
-#: unusable answer falls back to corrections only for that file); it just carries no
-#: ``explanations ✓`` badge until ``tools/verify_model_catalog.py --structured-output`` has
-#: been run on it.
-STRUCTURED_OUTPUT_UNVERIFIED_MODEL = "gpt-oss:20b"
+DEFAULT_WRITING_MODEL = "gemma4:e4b"
 
 # ── hardware detection thresholds ─────────────────────────────────────────────
 
@@ -80,7 +92,9 @@ class OllamaModelSpec:
     #: "ocr" (reading model) or "general" (writing model).  The Downloads dialog
     #: lists the model in this group.
     category: ModelCategory
-    #: Approximate memory (GB) while running (weights + ~8k context).
+    #: Memory (GB) the model needs in total while running at the app's proofreading window of
+    #: 8192 tokens: weights, context and working buffers, on the card and in main memory
+    #: together.  Measured where a model was run (see ``docs/development.md``), otherwise estimated.
     memory_gb: float
     #: Approximate download size (GB), shown before the model is pulled.
     download_gb: float
@@ -93,12 +107,17 @@ class OllamaModelSpec:
     #: (``tools/verify_model_catalog.py --structured-output``).  It only decides the
     #: ``explanations ✓`` badge; it never switches the proofreading mode.
     structured_output: bool = False
+    #: Extra memory (GB) per additional 8192 tokens of context window, measured with
+    #: ``ollama ps`` at 8192 and 16384 tokens (see ``docs/development.md``).  ``None`` — not
+    #: measured, or a model the user added — means the window stays at 8192 tokens.  It cannot
+    #: be derived from ``memory_gb``: how fast a context cache grows depends on the model's
+    #: attention design (sliding-window or linear-attention layers grow much more slowly).
+    context_gb_per_8k: float | None = None
 
 
 # Download sizes (decimal GB) were checked against the Ollama registry manifests
 # with ``tools/verify_model_catalog.py`` on 2026-10-12 (the Hugging Face entry
-# against the repository file list).  ``memory_gb`` is an estimate (weights + ~8k
-# context) that cannot be read from a manifest.
+# against the repository file list).  ``memory_gb`` cannot be read from a manifest.
 OLLAMA_CATALOG: tuple[OllamaModelSpec, ...] = (
     OllamaModelSpec(
         tag=DEFAULT_OCR_MODEL,
@@ -138,7 +157,7 @@ OLLAMA_CATALOG: tuple[OllamaModelSpec, ...] = (
     OllamaModelSpec(
         tag="qwen3:4b",
         category="general",
-        memory_gb=3.5,
+        memory_gb=4.0,
         download_gb=2.5,
         note="Small writing model for computers without a graphics card.",
         structured_output=True,
@@ -146,34 +165,18 @@ OLLAMA_CATALOG: tuple[OllamaModelSpec, ...] = (
     OllamaModelSpec(
         tag="qwen3.5:9b",
         category="general",
-        memory_gb=7.0,
+        memory_gb=7.2,
         download_gb=6.6,
-        note="Best writing model for 8 GB. Can also read scanned pages.",
+        note="Writing model for 8 GB and 16 GB graphics cards. Can also read scanned pages.",
         also_uses=frozenset({"ocr"}),
         structured_output=True,
     ),
     OllamaModelSpec(
-        tag="mistral:latest",
+        tag="gemma4:e4b",
         category="general",
-        memory_gb=5.5,
-        download_gb=4.4,
-        note="Reliable all-rounder.",
-        structured_output=True,
-    ),
-    OllamaModelSpec(
-        tag="mistral-nemo:12b",
-        category="general",
-        memory_gb=8.5,
-        download_gb=7.1,
-        note="Good with long texts.",
-        structured_output=True,
-    ),
-    OllamaModelSpec(
-        tag="gemma4:latest",
-        category="general",
-        memory_gb=7.5,
+        memory_gb=5.0,
         download_gb=6.6,
-        note="Compact writing model.",
+        note="Fast writing model that fits an 8 GB graphics card.",
         structured_output=True,
     ),
     OllamaModelSpec(
@@ -181,15 +184,31 @@ OLLAMA_CATALOG: tuple[OllamaModelSpec, ...] = (
         category="general",
         memory_gb=9.5,
         download_gb=8.0,
-        note="Larger writing model.",
+        note="Best writing model for a 16 GB graphics card.",
         structured_output=True,
     ),
     OllamaModelSpec(
-        tag=STRUCTURED_OUTPUT_UNVERIFIED_MODEL,
+        tag="mistral:latest",
+        category="general",
+        memory_gb=5.5,
+        download_gb=4.4,
+        note="General-purpose writing model.",
+        structured_output=True,
+    ),
+    OllamaModelSpec(
+        tag="mistral-nemo:12b",
+        category="general",
+        memory_gb=8.5,
+        download_gb=7.1,
+        note="General-purpose writing model.",
+        structured_output=True,
+    ),
+    OllamaModelSpec(
+        tag="gpt-oss:20b",
         category="general",
         memory_gb=14.0,
         download_gb=13.8,
-        note="Strongest writing model for 16 GB, but not checked for explanations.",
+        note="Large reasoning model; its answers do not fit the proofreading format.",
     ),
 )
 
@@ -218,15 +237,8 @@ RECOMMENDED: dict[ModelCategory, dict[HardwareProfile, tuple[str, ...]]] = {
     },
     "general": {
         "cpu": ("qwen3:4b",),
-        "8gb": ("qwen3.5:9b", "mistral:latest"),
-        # The first entry of every list must be checked for structured output (the default
-        # writing model is); the reasoning model follows, not yet checked.
-        "16gb": (
-            DEFAULT_WRITING_MODEL,
-            STRUCTURED_OUTPUT_UNVERIFIED_MODEL,
-            "mistral-nemo:12b",
-            "gemma4:12b",
-        ),
+        "8gb": ("gemma4:e4b", "qwen3.5:9b"),
+        "16gb": ("gemma4:12b", "qwen3.5:9b"),
     },
 }
 
@@ -289,6 +301,87 @@ def best_model(category: ModelCategory, profile: HardwareProfile) -> str:
     return RECOMMENDED[category][profile][0]
 
 
+def system_reserve_gb(system_memory_gb: float) -> float:
+    """Return the main memory (GB) kept free for the system: the larger of 8 GB and 20 %."""
+    return max(SYSTEM_RESERVE_MIN_GB, SYSTEM_RESERVE_SHARE * system_memory_gb)
+
+
+def card_budget_gb(profile: HardwareProfile) -> float:
+    """Return the graphics memory (GB) models can use when the real size is not known.
+
+    The size the profile stands for (:data:`NOMINAL_CARD_GB`), times
+    :data:`CARD_USABLE_SHARE`.  A computer typed ``"cpu"`` has no card this figure could
+    stand for, so it is 0 — a real card of such a computer arrives as a known ``card_gb``.
+    """
+    return CARD_USABLE_SHARE * NOMINAL_CARD_GB[profile]
+
+
+def memory_for_models_gb(
+    profile: HardwareProfile,
+    system_memory_gb: float | None,
+    card_gb: float | None = None,
+) -> float | None:
+    """Return the memory (GB) a model may need in total on this computer, or ``None``.
+
+    The usable graphics memory plus the main memory that stays after the system's reserve.
+    ``None`` when the main memory is unknown (a server on another computer).
+    """
+    if system_memory_gb is None:
+        return None
+    card = card_gb if card_gb is not None else card_budget_gb(profile)
+    return card + max(0.0, system_memory_gb - system_reserve_gb(system_memory_gb))
+
+
+def ram_needed_gb(
+    memory_gb: float,
+    profile: HardwareProfile,
+    card_gb: float | None = None,
+    *,
+    unified: bool = False,
+) -> float:
+    """Return the main memory (GB) a model of *memory_gb* takes on this computer.
+
+    What does not fit on the graphics card; all of it when there is no card, and on Apple
+    Silicon, where the graphics share is carved out of the same memory.
+    """
+    if unified:
+        return memory_gb
+    card = card_gb if card_gb is not None else card_budget_gb(profile)
+    return max(0.0, memory_gb - card)
+
+
+def card_share(memory_gb: float, card_gb: float) -> float:
+    """Return the share (0 to 1) of a model of *memory_gb* that fits on a card of *card_gb*."""
+    return min(1.0, card_gb / memory_gb) if memory_gb > 0 else 1.0
+
+
+def is_very_slow(memory_gb: float, card_gb: float) -> bool:
+    """Return whether a model that does not fit the card runs very slowly (see below 0.7)."""
+    return card_share(memory_gb, card_gb) < SLOWER_SHARE
+
+
+def _memory_fit(
+    spec: OllamaModelSpec,
+    card: float,
+    system_memory_gb: float | None,
+) -> Suitability:
+    """Return ``WORKS``, ``SLOW`` or ``TOO_LARGE`` for *spec* by the computer's memory alone."""
+    spill = spec.memory_gb - card
+    # What the processor must hold has to fit in the main memory left after the reserve.
+    holds = system_memory_gb is not None and spill <= system_memory_gb - system_reserve_gb(
+        system_memory_gb
+    )
+    # The card decides how fast a model is, not the profile: a computer typed "cpu" whose
+    # card is known runs a model on that card just like an "8gb" computer does.
+    if card > 0:
+        comfortable = card_share(spec.memory_gb, card) >= FULL_SPEED_SHARE
+    else:
+        comfortable = spec.memory_gb <= CPU_COMFORT_GB
+    if comfortable and (holds or system_memory_gb is None or card > 0):
+        return Suitability.WORKS
+    return Suitability.SLOW if holds else Suitability.TOO_LARGE
+
+
 def suitability(
     tag: str,
     category: ModelCategory,
@@ -296,6 +389,7 @@ def suitability(
     *,
     detected_uses: ModelUses | None = None,
     system_memory_gb: float | None = None,
+    card_gb: float | None = None,
 ) -> Suitability:
     """Rate how well *tag* suits *category* on *profile*.
 
@@ -312,12 +406,13 @@ def suitability(
        list → ``GOOD``.
     4. Not catalogued (custom model) → ``WORKS`` (its size is unknown, so it is
        never called too large).
-    5. ``memory_gb`` within the profile budget → ``WORKS``.
-    6. Above it, but within reach of the computer's memory (*system_memory_gb*, when known)
-       → :attr:`Suitability.SLOW`: part of the model runs on the processor.  With a
-       graphics card that reach is the card's budget plus :data:`RAM_OFFLOAD_SHARE` of the
-       memory; for ``cpu`` the budget *is* main memory, so it is that share alone.
-       Otherwise ``TOO_LARGE``.
+    5. At least :data:`FULL_SPEED_SHARE` of the model fits on the graphics card (for a
+       computer without a card: the model is at most :data:`CPU_COMFORT_GB`) → ``WORKS``.
+    6. The part that does not fit (the *spill*) runs on the processor in main memory.  When it
+       fits into the main memory that remains after the system's reserve
+       (:func:`system_reserve_gb`) → :attr:`Suitability.SLOW`; swapping to disk is never counted.
+       Otherwise, and whenever the main memory is unknown (a server on another computer),
+       ``TOO_LARGE``: the model does not work on this computer.
 
     Args:
         tag: Model tag (normalisation is applied internally).
@@ -326,10 +421,12 @@ def suitability(
         detected_uses: Uses reported by the Ollama server for models that are not
             in the catalog (see :func:`uses_from_capabilities`).  ``None`` means
             "unknown".
-        system_memory_gb: Memory (RAM) the model may spill into, or ``None`` when unknown
-            (a server on another computer) or already part of the budget (Apple Silicon,
+        system_memory_gb: Total main memory (RAM) of the computer, or ``None`` when unknown
+            (a server on another computer) or already part of the card's memory (Apple Silicon,
             where the graphics share is carved out of the same memory); without it nothing
             is ``SLOW``.
+        card_gb: Graphics memory the models can use, when it is known (the real card size times
+            :data:`CARD_USABLE_SHARE`); ``None`` takes the profile's nominal size.
     """
     spec = find_spec(tag)
     uses = catalog_uses(spec) if spec is not None else detected_uses
@@ -339,26 +436,23 @@ def suitability(
         return Suitability.WRONG_KIND
 
     normalized = normalize_tag(tag)
-    recommended = RECOMMENDED[category][profile]
-    if normalized == recommended[0]:
-        return Suitability.BEST
-    if normalized in recommended:
-        return Suitability.GOOD
-
     if spec is None:
-        # Custom model: size unknown — never called too large.
-        return Suitability.WORKS
+        # Custom model: its size is unknown, so it is never called too large.
+        recommended = RECOMMENDED[category][profile]
+        if normalized == recommended[0]:
+            return Suitability.BEST
+        return Suitability.GOOD if normalized in recommended else Suitability.WORKS
 
-    budget = MEMORY_BUDGET_GB[profile]
-    if spec.memory_gb <= budget:
-        return Suitability.WORKS
-    if system_memory_gb is not None:
-        offload = RAM_OFFLOAD_SHARE * system_memory_gb
-        # The cpu budget is already main memory: adding the share again would count it twice.
-        reach = offload if profile == "cpu" else budget + offload
-        if spec.memory_gb <= reach:
-            return Suitability.SLOW
-    return Suitability.TOO_LARGE
+    card = card_gb if card_gb is not None else card_budget_gb(profile)
+    fit = _memory_fit(spec, card, system_memory_gb)
+    recommended = RECOMMENDED[category][profile]
+    if normalized in recommended:
+        # A recommendation holds for the computer type; it does not hold where the model
+        # cannot work.  Without a figure for the main memory the type's list is all there is.
+        if fit is Suitability.TOO_LARGE and system_memory_gb is not None:
+            return Suitability.TOO_LARGE
+        return Suitability.BEST if normalized == recommended[0] else Suitability.GOOD
+    return fit
 
 
 #: Sort rank of suitability values (BEST first, WRONG_KIND last).
@@ -395,6 +489,9 @@ class ModelRating:
     #: ``True`` when the model is verified to answer the review's JSON schema,
     #: ``False`` when it is known not to, ``None`` when the model is not catalogued.
     structured_output: bool | None = None
+    #: For a ``SLOW`` model: whether so little of it fits on the graphics card that it runs very
+    #: slowly (rather than somewhat slower).
+    very_slow: bool = False
 
 
 def rate_model(
@@ -404,20 +501,32 @@ def rate_model(
     *,
     detected_uses: ModelUses | None = None,
     system_memory_gb: float | None = None,
+    card_gb: float | None = None,
 ) -> ModelRating:
     """Rate *tag* for *task* on *profile* — the single rating path for all callers."""
     spec = find_spec(tag)
     model_uses = catalog_uses(spec) if spec is not None else detected_uses
+    rated = suitability(
+        tag,
+        task,
+        profile,
+        detected_uses=detected_uses,
+        system_memory_gb=system_memory_gb,
+        card_gb=card_gb,
+    )
+    very_slow = False
+    if rated is Suitability.SLOW and spec is not None:
+        card = card_gb if card_gb is not None else card_budget_gb(profile)
+        very_slow = is_very_slow(spec.memory_gb, card)
     return ModelRating(
         tag=tag,
         task=task,
         model_uses=model_uses,
-        suitability=suitability(
-            tag, task, profile, detected_uses=detected_uses, system_memory_gb=system_memory_gb
-        ),
+        suitability=rated,
         memory_gb=spec.memory_gb if spec is not None else None,
         note=spec.note if spec is not None else "",
         structured_output=spec.structured_output if spec is not None else None,
+        very_slow=very_slow,
     )
 
 
@@ -470,6 +579,24 @@ class HardwareDetection:
     #: (a server on another computer) or already counted in the profile (Apple Silicon).  Lets
     #: models too big for the graphics card be rated "slower" instead of "too large".
     system_memory_gb: float | None = None
+
+    @property
+    def card_gb(self) -> float | None:
+        """Graphics memory (GB) models can use on this computer, or ``None`` when not known.
+
+        ``None`` (a profile chosen by hand, a card whose memory could not be read, a remote
+        server) makes the rating assume the size the profile stands for.  Apple Silicon uses
+        the share of the unified memory macOS gives the graphics side.  A card smaller than
+        7 GB gives the profile ``"cpu"``, but the card is still there and still decides how
+        fast a model runs, so its size is reported whatever the profile.
+        """
+        if self.memory_gb is None:
+            return None
+        if self.reason is DetectionReason.APPLE_UNIFIED_MEMORY:
+            return self.memory_gb * APPLE_GPU_MEMORY_SHARE
+        if self.reason is DetectionReason.GPU_DETECTED:
+            return self.memory_gb * CARD_USABLE_SHARE
+        return None
 
 
 @dataclass(frozen=True)

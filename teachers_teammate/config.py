@@ -75,7 +75,7 @@ DEFAULTS: dict[str, Any] = {
     "answer_format_review": "",
     "answer_format_text": "",
     "answer_format_version": ANSWER_FORMAT_VERSION,
-    "correction_temperature": 0.7,
+    "correction_temperature": 0.2,
     # ── Evaluation ────────────────────────────────────────────────────────────
     "evaluation_enabled": False,
     "evaluate_provider": "ollama",
@@ -102,9 +102,18 @@ DEFAULTS: dict[str, Any] = {
     # "none" / None = no extra model.
     "anonymizer_secondary_model": SECONDARY_MODEL_AUTO,
     # ── Hardware recommendations ──────────────────────────────────────────────
-    # "auto" | "cpu" | "8gb" | "16gb" — GUI-only; the pipeline never reads it.
+    # "auto" | "cpu" | "8gb" | "16gb".  The pipeline never reads it, but the run-start memory
+    # warning does: a hand-picked profile decides how much of a model has to fit where.
     "hardware_profile": "auto",
+    # ── Context window ────────────────────────────────────────────────────────
+    # "auto" = as large as the graphics card still holds at full speed (8192 / 16384 / 32768,
+    # never smaller than 8192).  A fixed value from CONTEXT_STEPS pins it — for advanced users,
+    # and for a remote server whose card the app cannot see.
+    "proofreading_context": "auto",
 }
+
+#: Values accepted for ``proofreading_context``: ``"auto"`` or a window from this ladder.
+CONTEXT_SETTINGS: tuple[str, ...] = ("auto", "8192", "16384", "32768")
 
 
 def normalize_ocr_engine(value: object) -> str:
@@ -230,6 +239,16 @@ class Config:
     docx_enabled: bool = DEFAULTS["docx_enabled"]
     text_enabled: bool = DEFAULTS["text_enabled"]
     text_anonymized_enabled: bool = DEFAULTS["text_anonymized_enabled"]
+
+    # ── Hardware ─────────────────────────────────────────────────────────────
+    # "auto" (detect) or a profile chosen by hand ("cpu" / "8gb" / "16gb").  Only the
+    # recommendations and the run-start memory warning read it.
+    hardware_profile: str = DEFAULTS["hardware_profile"]
+
+    # ── Context window ───────────────────────────────────────────────────────
+    # "auto" (as large as the graphics card holds at full speed) or a fixed window in tokens.
+    # An unknown value falls back to "auto" with a warning, as hardware_profile does.
+    proofreading_context: str = DEFAULTS["proofreading_context"]
 
     # ── Anonymizer ───────────────────────────────────────────────────────────
     # None = derive the spaCy model from the document language ("Auto")
@@ -380,6 +399,7 @@ def load_config_file(path: Path) -> dict:
         "preprocess_denoise",
         "preprocess_gamma",
         "hardware_profile",
+        "proofreading_context",
     }
     raw = _read_toml(path)
     result = {k: v for k, v in raw.items() if k in known_keys}
@@ -425,6 +445,17 @@ def load_config_file(path: Path) -> dict:
             file=sys.stderr,
         )
         del result["hardware_profile"]
+
+    if (
+        "proofreading_context" in result
+        and str(result["proofreading_context"]) not in CONTEXT_SETTINGS
+    ):
+        print(
+            f"WARNING: proofreading_context '{result['proofreading_context']}' is not one of "
+            f"{', '.join(CONTEXT_SETTINGS)} — falling back to 'auto'.",
+            file=sys.stderr,
+        )
+        del result["proofreading_context"]
 
     # A typo must not mean different things in different layers: unknown values fall back to
     # the defaults (level B2, explanations on), as the GUI does.

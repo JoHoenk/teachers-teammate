@@ -10,18 +10,29 @@ exports_files(
     visibility = ["//visibility:public"],
 )
 
-# pylint resolves imports by importing modules in its own (dev-hub) environment;
-# the rules_lint pylint aspect passes only source files, not target deps. So unlike
-# py_ty there's no benefit to the *_typed libs here — PySide6/qdarkstyle simply
-# aren't importable by pylint and are carved out via [tool.pylint.typecheck]
-# ignored-modules in pyproject.toml.
+# pylint resolves imports by importing modules from the action's sandbox; the rules_lint pylint
+# aspect passes only the visited target's own source files, not its deps. So unlike py_ty there's
+# no benefit to the *_typed libs here — PySide6/qdarkstyle simply aren't importable by pylint and
+# are carved out via [tool.pylint.typecheck] ignored-modules in pyproject.toml.
+# Because only its own sources are in the sandbox, a per-package pylint target would report
+# import-error (E0401) for every correct first-party import from //tools and //tests. One target
+# holding the whole first-party tree puts it all in a single action's sandbox, which keeps E0401
+# meaningful everywhere (a typo still fails) — and the developer tools get the same gate as the
+# app, which they need: they decide product facts (the catalog's `explanations ✓` flag, the gate-1
+# pass rule).
+py_library(
+    name = "first_party_sources",
+    srcs = [
+        "//teachers_teammate:all_sources",
+        "//tests:all_sources",
+        "//tools:all_sources",
+    ],
+    tags = ["manual"],
+)
+
 pylint_test(
     name = "py_pylint",
-    srcs = [
-        "//teachers_teammate:gui_lib",
-        "//teachers_teammate:ocr_lib",
-        "//tests:tests_lib",
-    ],
+    srcs = [":first_party_sources"],
 )
 
 ruff_test(
@@ -30,6 +41,10 @@ ruff_test(
         "//teachers_teammate:gui_lib",
         "//teachers_teammate:ocr_lib",
         "//tests:tests_lib",
+        "//tools:compare_writing_models",
+        "//tools:model_eval",
+        "//tools:prepare_gec_testset",
+        "//tools:verify_model_catalog",
     ],
 )
 
@@ -39,6 +54,10 @@ ty_test(
         "//teachers_teammate:gui_lib_typed",
         "//teachers_teammate:ocr_lib_typed",
         "//tests:tests_lib",
+        "//tools:compare_writing_models",
+        "//tools:model_eval",
+        "//tools:prepare_gec_testset",
+        "//tools:verify_model_catalog",
     ],
 )
 

@@ -69,13 +69,14 @@ if "--_spacy_download_mode" in sys.argv:
     _model = sys.argv[_idx + 1]
     _pip_args = list(sys.argv[_idx + 2 :])
 
+    from urllib.parse import urljoin  # noqa: PLC0415, E402
+
+    from spacy import about as _spacy_about  # noqa: PLC0415, E402
     from spacy.cli.download import (  # noqa: PLC0415, E402
         get_compatibility,
         get_model_filename,
         get_version,
     )
-    from spacy import about as _spacy_about  # noqa: PLC0415, E402
-    from urllib.parse import urljoin  # noqa: PLC0415, E402
 
     _compat = get_compatibility()
     _ver = get_version(_model, _compat)

@@ -47,6 +47,7 @@ from pathlib import Path
 import threading
 
 from ..config import Config, OcrConfig
+from ..domain.model_catalog import HardwareDetection
 from ..domain.output_files import output_folder_refusal
 from ..exceptions import OllamaConnectionError, ProviderNotAvailableError
 from ..interfaces import ImagePreprocessor
@@ -81,6 +82,8 @@ class PipelineDependencies:
     component_factory: PipelineComponentFactory | None = None
     # Sink for the run narrative/warnings; defaults to stdout (CLI behaviour).
     reporter: Reporter | None = None
+    # Hardware of the computer that runs Ollama; sizes the context window of the local models.
+    hardware: HardwareDetection | None = None
 
 
 # ── Public helpers ─────────────────────────────────────────────────────────
@@ -195,6 +198,7 @@ class OCRPipeline:
         deps = dependencies or PipelineDependencies()
         self._reporter: Reporter = deps.reporter or StdoutReporter()
         self._component_factory = deps.component_factory or PipelineComponentFactory()
+        self._hardware: HardwareDetection | None = deps.hardware
         self._artifact_store: PreviewImageStore | None = deps.artifact_store
         self._state_repo: StateRepository | None = deps.state_repo
         self._cache_service: CacheReconciliationService | None = deps.cache_service
@@ -307,7 +311,7 @@ class OCRPipeline:
         reporter.status(f"  Preview dir   : {tmp_dir.resolve()}")
         reporter.status(_LINE)
 
-        builder = StageBuilder(cfg, self._component_factory, self._reporter)
+        builder = StageBuilder(cfg, self._component_factory, self._reporter, self._hardware)
         preprocess_service = builder.build_preprocessor_service(tmp_dir)
         files = collect_files(cfg)
         return cfg, preprocess_service, files, tmp_dir
@@ -450,7 +454,7 @@ class OCRPipeline:
         """Build all pipeline services and return a ready-to-use FileProcessor."""
         cfg = self._config
         reporter = self._reporter
-        builder = StageBuilder(cfg, self._component_factory, self._reporter)
+        builder = StageBuilder(cfg, self._component_factory, self._reporter, self._hardware)
 
         # Build one shared OllamaClient for all Ollama-backed stages so URL
         # normalisation happens once and injection is explicit.

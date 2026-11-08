@@ -15,7 +15,11 @@ from teachers_teammate.application.service import (
     RequirementIssue,
     RunPreflight,
 )
-from teachers_teammate.domain.model_catalog import DEFAULT_OCR_MODEL, DEFAULT_WRITING_MODEL
+from teachers_teammate.domain.model_catalog import (
+    DEFAULT_OCR_MODEL,
+    DEFAULT_WRITING_MODEL,
+    RECOMMENDED,
+)
 from teachers_teammate.gui import _main_window as main_window_module
 from teachers_teammate.gui._export_menu import ExportKind
 from teachers_teammate.gui._main_window import MainWindow
@@ -54,6 +58,55 @@ class _DummyWorker:
 
     def isRunning(self) -> bool:
         return self._running
+
+
+class _RecordingMessageBox:
+    """Stand-in for ``QMessageBox`` that records the buttons and answers with one.
+
+    ``clickedButton()`` returns the very object ``addButton`` returned, because the window
+    compares the two by identity.
+    """
+
+    class Icon:
+        Warning = "warning"
+        Information = "information"
+
+    class ButtonRole:
+        AcceptRole = "accept"
+        RejectRole = "reject"
+        ActionRole = "action"
+
+    last: ClassVar[_RecordingMessageBox | None] = None
+
+    def __init__(self, _parent=None) -> None:
+        self.buttons: list[str] = []
+        self.default: str | None = None
+        self.title = ""
+        self.text = ""
+        self.answer_index = 0
+        _RecordingMessageBox.last = self
+
+    def setIcon(self, _icon) -> None: ...
+    def setCheckBox(self, _box) -> None: ...
+
+    def setWindowTitle(self, title) -> None:
+        self.title = title
+
+    def setText(self, text) -> None:
+        self.text = text
+
+    def addButton(self, text, _role):
+        self.buttons.append(text)
+        return text
+
+    def setDefaultButton(self, button) -> None:
+        self.default = button
+
+    def exec(self) -> int:
+        return 0
+
+    def clickedButton(self):
+        return self.buttons[self.answer_index]
 
 
 @pytest.fixture(autouse=True)
@@ -1406,11 +1459,12 @@ def test_first_start_selects_best_models_for_profile(qtbot, monkeypatch, tmp_pat
     qtbot.waitUntil(lambda: "First start" in win._log.toPlainText(), timeout=5000)
 
     settings = win._config_panel.get_settings_dict()
+    best_16gb = RECOMMENDED["general"]["16gb"][0]  # not the default: that is the 8 GB pick
     assert settings["ocr_model"] == DEFAULT_OCR_MODEL
-    assert settings["correction_model"] == DEFAULT_WRITING_MODEL
-    assert settings["evaluate_model"] == DEFAULT_WRITING_MODEL
+    assert settings["correction_model"] == best_16gb
+    assert settings["evaluate_model"] == best_16gb
     assert (
-        f"chose reading model {DEFAULT_OCR_MODEL} and writing model {DEFAULT_WRITING_MODEL}"
+        f"chose reading model {DEFAULT_OCR_MODEL} and writing model {best_16gb}"
         in win._log.toPlainText()
     )
     saved = (tmp_path / "ocr.toml").read_text(encoding="utf-8")
@@ -1859,6 +1913,79 @@ def test_run_shows_unmet_stage_requirement_dialog(
 
     assert shown == ["Correction — Missing Requirements"]
     assert main_window._worker is None
+
+
+@pytest.mark.gui
+def test_insufficient_memory_runs_anyway_only_when_the_user_says_so(
+    qtbot, main_window, monkeypatch, tmp_path: Path
+) -> None:
+    """
+    Given  a run whose models do not fit the memory that is free now
+    When   the user presses "Run anyway" in the warning
+    Then   the run continues (a worker starts) — the warning is not a refusal
+    """
+    cfg = make_config(tmp_path)
+    monkeypatch.setattr(main_window._config_panel, "to_config", lambda: cfg)
+    monkeypatch.setattr(
+        ProcessingApplicationService,
+        "check_run_preflight",
+        lambda self, config: RunPreflight(memory_warning="qwen3.5:9b needs about 7 GB."),
+    )
+    monkeypatch.setattr(main_window_module, "QMessageBox", _RecordingMessageBox)
+    main_window._results_table.set_queue(["a.png"], [str(tmp_path / "a.png")])
+    main_window._results_table.selectRow(0)
+
+    _RecordingMessageBox.last = None
+    main_window._on_run()
+    qtbot.waitUntil(lambda: main_window._worker is not None, timeout=3000)
+
+    box = _RecordingMessageBox.last
+    assert box is not None
+    assert box.title == "Not enough free memory"
+    assert box.text == "qwen3.5:9b needs about 7 GB."
+    assert box.buttons == ["Run anyway", "Cancel"]
+    assert box.default == "Cancel"  # Enter must not start a run that could swap
+
+
+@pytest.mark.gui
+def test_cancelling_the_memory_warning_does_not_start_the_run(
+    qtbot, main_window, monkeypatch, tmp_path: Path
+) -> None:
+    """
+    Given  the same memory warning
+    When   the user presses "Cancel" (the default button)
+    Then   no run starts and the Run button is usable again
+    """
+    cfg = make_config(tmp_path)
+    monkeypatch.setattr(main_window._config_panel, "to_config", lambda: cfg)
+    monkeypatch.setattr(
+        ProcessingApplicationService,
+        "check_run_preflight",
+        lambda self, config: RunPreflight(memory_warning="qwen3.5:9b needs about 7 GB."),
+    )
+    monkeypatch.setattr(main_window_module, "QMessageBox", _RecordingMessageBox)
+    main_window._results_table.set_queue(["a.png"], [str(tmp_path / "a.png")])
+    main_window._results_table.selectRow(0)
+
+    _RecordingMessageBox.last = None
+
+    class _CancellingBox(_RecordingMessageBox):
+        """Answers the question with its second button, "Cancel"."""
+
+        def __init__(self, _parent=None) -> None:
+            super().__init__(_parent)
+            self.answer_index = 1
+
+    monkeypatch.setattr(main_window_module, "QMessageBox", _CancellingBox)
+
+    def _cancel_shown() -> bool:
+        box = _RecordingMessageBox.last
+        return box is not None and box.buttons == ["Run anyway", "Cancel"]
+
+    main_window._on_run()
+    qtbot.waitUntil(_cancel_shown, timeout=3000)
+    assert main_window._worker is None
+    assert main_window._run_btn.isEnabled() is True
 
 
 # ── Where the documents are processed ────────────────────────────────────────

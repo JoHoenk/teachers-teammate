@@ -6,6 +6,7 @@ from collections.abc import Callable, Collection
 import dataclasses
 from dataclasses import dataclass
 import importlib.util
+import os
 from pathlib import Path
 import shutil
 import sys
@@ -15,17 +16,22 @@ from typing import TYPE_CHECKING
 import uuid
 
 from ..config import Config, OcrConfig
+from ..domain.context_budget import memory_at_context_gb
 from ..domain.correction_policy import DEFAULT_LEVEL, normalize_output_mode
 from ..domain.correction_review import CorrectionReview
 from ..domain.data_location import DataFlow, StageLocation, is_ollama_cloud_model
 from ..domain.formatted_text import TextFormat
 from ..domain.model_catalog import (
+    RUN_MEMORY_MARGIN_GB,
+    DetectionReason,
     HardwareDetection,
     HardwareProfile,
     ModelCategory,
     ModelRating,
     ModelUses,
     OllamaModelSpec,
+    find_spec,
+    ram_needed_gb,
 )
 from ..domain.model_listing import ModelListing
 from ..domain.output_files import feeds_inputs, output_folder_refusal, output_path
@@ -64,7 +70,11 @@ from ..infrastructure.ocr_processor import (
 from ..infrastructure.ollama_utils import warm_up_own_host_names
 from ..infrastructure.pipeline import OCRPipeline, preprocess_preview
 from ..infrastructure.reporting import ProgressCallbacks as ProgressCallbacks  # noqa: PLC0414
-from ..infrastructure.stage_builder import PipelineComponentFactory
+from ..infrastructure.stage_builder import (
+    PipelineComponentFactory,
+    resolve_run_windows,
+    window_of_model,
+)
 from ..infrastructure.state_repository import (
     DocumentState,
     DocumentStateView,
@@ -135,11 +145,18 @@ class RunPreflight:
     #: Stage whose requirements are unmet ("" when all are met) and the unmet issues.
     stage: str = ""
     stage_issues: tuple[RequirementIssue, ...] = ()
+    #: Why the configured Ollama models do not fit in the memory that is free now ("" when they
+    #: do, or when Ollama runs on another computer).  A warning, not a refusal: free memory
+    #: changes from run to run, so the user decides ("Run anyway" in the GUI, a flag in the CLI).
+    memory_warning: str = ""
 
     @property
-    def ok(self) -> bool:
-        """Whether the run may start."""
-        return not (
+    def blocked(self) -> bool:
+        """Whether a requirement of the run is unmet, so it must not start at all.
+
+        The memory warning does not block: the user decides whether to run anyway.
+        """
+        return bool(
             self.ocr_not_allowed
             or self.ollama_unreachable
             or self.missing_models
@@ -211,7 +228,9 @@ class ProcessingApplicationService:
             config_file=config_file,
             selected_source_paths=selected_source_paths,
             dependencies=PipelineDependencies(
-                reporter=reporter, component_factory=self._run_component_factory()
+                reporter=reporter,
+                component_factory=self._run_component_factory(),
+                hardware=self.resolve_hardware_profile(config.hardware_profile, config.ollama_url),
             ),
             progress=progress,
         )
@@ -293,6 +312,15 @@ class ProcessingApplicationService:
     def get_provider_info(self, provider: str) -> dict:
         """Return provider metadata used for model picker defaults."""
         return get_provider_info(provider)
+
+    def provider_key_missing(self, provider: str) -> bool:
+        """Return whether *provider* needs an API key that is not set in the environment.
+
+        Without it the service cannot be asked for its models, so the GUI says "no key"
+        instead of starting a request that is certain to fail.
+        """
+        info = self.get_provider_info(provider)
+        return bool(info.get("needs_api_key")) and not os.environ.get(str(info.get("env_key", "")))
 
     @staticmethod
     def _model_cache_key(provider: str, base_url: str = "") -> str:
@@ -400,6 +428,7 @@ class ProcessingApplicationService:
         *,
         cached_only: bool = False,
         system_memory_gb: float | None = None,
+        card_gb: float | None = None,
     ) -> list[ModelRating]:
         """Return a :class:`ModelRating` per tag for *task* on *profile*."""
         return self._recommendations.rate_ollama_models(
@@ -409,6 +438,7 @@ class ProcessingApplicationService:
             ollama_url,
             cached_only=cached_only,
             system_memory_gb=system_memory_gb,
+            card_gb=card_gb,
         )
 
     def first_run_model_settings(self, profile: HardwareProfile) -> dict[str, str]:
@@ -975,11 +1005,12 @@ class ProcessingApplicationService:
         )
 
     def check_run_preflight(self, config: Config) -> RunPreflight:
-        """Return the first unmet requirement before a run, or an all-clear result.
+        """Return the unmet requirements before a run, or an all-clear result.
 
         Makes blocking network calls: call it from a background thread, never from
         the GUI thread.  Order: text recognition allowed → Ollama reachable → models
-        downloaded → stage requirements (anonymizer, correction, evaluation).
+        downloaded → stage requirements (anonymizer, correction, evaluation) → memory
+        (a warning, so a blocked run still reports its stage issues first).
         """
         ocr_reason = self.ocr_refusal_for_run(config)
         if ocr_reason:
@@ -1006,7 +1037,85 @@ class ProcessingApplicationService:
             issues = self.check_stage_requirements(config, stage)
             if issues:
                 return RunPreflight(stage=stage, stage_issues=tuple(issues))
-        return RunPreflight()
+        return RunPreflight(memory_warning=self.memory_warning_for_run(config))
+
+    def memory_warning_for_run(self, config: Config) -> str:
+        """Return why the configured Ollama models do not fit in memory now, or ``""``.
+
+        A warning for the user, not a refusal: free memory changes from run to run, so the
+        caller offers to run anyway.  For an Ollama on this computer: the part of each catalogued
+        model that does not fit on the graphics card has to fit in the main memory that is free
+        *right now* (keeping
+        :data:`~teachers_teammate.domain.model_catalog.RUN_MEMORY_MARGIN_GB`), because a model
+        that spills over would make the computer swap to disk and become unusable.  A model that
+        is not catalogued, a server on another computer and an unreadable memory give ``""``.
+
+        A model Ollama already has loaded is not credited as already counted: whether the
+        processor-side part of a loaded model leaves the "available" figure depends on the kernel
+        (anonymous memory vs. reclaimable memory-mapped weights) and has not been measured.  So
+        the check behaves as it would after Ollama unloaded everything — which is the case it has
+        to warn about anyway, since Ollama unloads idle models to make room.  If a measurement
+        ever shows the memory is taken out of "available", the fix is to count the RAM part of
+        other loaded models as free; see docs/development.md.
+        """
+        if not self._ollama_needed(config):
+            return ""
+        from ..infrastructure import gpu_detector  # noqa: PLC0415
+        from ..infrastructure.ollama_utils import (  # noqa: PLC0415
+            is_local_ollama_url,
+            normalize_ollama_url,
+        )
+
+        if not is_local_ollama_url(normalize_ollama_url(config.ollama_url)):
+            return ""
+        available = gpu_detector.detect_available_memory_gb()
+        if available is None:
+            return ""
+        detection = self.resolve_hardware_profile(config.hardware_profile, config.ollama_url)
+        unified = self._runs_on_apple_silicon(detection)
+        for tag in self.configured_ollama_models(config):
+            spec = find_spec(tag)
+            if spec is None:
+                continue
+            memory = self._memory_gb_at_resolved_window(config, tag, spec, detection)
+            needed = ram_needed_gb(memory, detection.profile, detection.card_gb, unified=unified)
+            if needed > available - RUN_MEMORY_MARGIN_GB:
+                return (
+                    f"{tag} needs about {needed:.0f} GB of free memory, but only "
+                    f"{available:.0f} GB are free on this computer right now. Close other "
+                    "programs or choose a smaller model; otherwise the computer would have to "
+                    "use its disk as memory and become extremely slow."
+                )
+        return ""
+
+    @staticmethod
+    def _memory_gb_at_resolved_window(
+        config: Config, tag: str, spec: OllamaModelSpec, detection: HardwareDetection
+    ) -> float:
+        """Return the memory (GB) the model *tag* needs at the window this run will give it.
+
+        A model rated "Works" at the base window must be checked at the window it really
+        gets: the larger window costs memory, and the run would swap to disk.  The window is
+        the one of the stage that uses the model (the same resolution the run itself uses), and
+        the base window for a model that only reads scans.
+        """
+        windows = resolve_run_windows(config, detection)
+        window = window_of_model(config, windows, tag)
+        return memory_at_context_gb(spec, window) or spec.memory_gb
+
+    @staticmethod
+    def _runs_on_apple_silicon(detection: HardwareDetection) -> bool:
+        """Whether the models share one pool of memory with the graphics side (Apple Silicon).
+
+        Read from the computer, not from the detection reason: a profile chosen by hand is a
+        MANUAL detection, but on Apple Silicon the whole model still comes out of that memory.
+        """
+        from ..infrastructure import gpu_detector  # noqa: PLC0415
+
+        return (
+            detection.reason is DetectionReason.APPLE_UNIFIED_MEMORY
+            or gpu_detector.detect_apple_unified_memory_gb() is not None
+        )
 
     def check_stage_requirements(self, config: Config, stage: str) -> list[RequirementIssue]:
         """Return unmet requirements for enabling *stage*.
@@ -1134,9 +1243,9 @@ class ProcessingApplicationService:
         importable and the model of *language* must be downloaded.  The GUI uses this to
         disable "Hide personal information in texts" instead of failing when it is used.
         """
-        from importlib.util import find_spec  # noqa: PLC0415
+        from importlib.util import find_spec as find_module_spec  # noqa: PLC0415
 
-        if find_spec("spacy") is None:
+        if find_module_spec("spacy") is None:
             return False
         return self.spacy_model_for_language(language) in self.list_installed_spacy_models()
 

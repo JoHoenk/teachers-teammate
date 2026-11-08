@@ -11,6 +11,8 @@ parameter counts.
 
 from __future__ import annotations
 
+from datetime import date
+
 from ..domain.model_catalog import (
     DetectionReason,
     HardwareDetection,
@@ -18,6 +20,9 @@ from ..domain.model_catalog import (
     ModelCategory,
     ModelUses,
     Suitability,
+    card_budget_gb,
+    memory_for_models_gb,
+    system_reserve_gb,
 )
 
 # ── "My computer" ─────────────────────────────────────────────────────────────
@@ -59,6 +64,13 @@ def auto_profile_text(profile: str) -> str:
     return f"{PROFILE_TEXT['auto']} — {profile_text(profile)}"
 
 
+#: Shown once under "My computer" when the computer cannot run a local model at all.
+TOO_LITTLE_MEMORY = (
+    "This computer has too little memory for AI models on this computer. Use Tesseract for "
+    "reading, or Ollama on another computer."
+)
+
+
 def _computer_memory_sentence(detection: HardwareDetection) -> str:
     """Return `` Computer memory: N GB.`` when the memory is known (it rates big models)."""
     if detection.system_memory_gb is None:
@@ -66,8 +78,25 @@ def _computer_memory_sentence(detection: HardwareDetection) -> str:
     return f" Computer memory: {detection.system_memory_gb:.0f} GB."
 
 
+def _too_little_memory(detection: HardwareDetection) -> bool:
+    """Return whether this computer cannot hold a model next to its system's reserve.
+
+    Without a graphics card, the reserve alone (the larger of 8 GB and 20 %) is all the main
+    memory there is, so *every* local model is "Won't fit".  Said once, in plain words.
+    """
+    memory = detection.system_memory_gb
+    if memory is None:
+        return False
+    card = detection.card_gb
+    if card is not None and card > 0:
+        return False
+    return memory <= system_reserve_gb(memory)
+
+
 def detection_status_text(detection: HardwareDetection) -> str:
     """Return the status line shown below the "My computer" choice."""
+    if _too_little_memory(detection):
+        return f"{_detection_summary(detection)} {TOO_LITTLE_MEMORY}"
     return _detection_summary(detection) + _computer_memory_sentence(detection)
 
 
@@ -105,6 +134,7 @@ _SUITABILITY_LABELS: dict[Suitability, str] = {
     Suitability.SLOW: "Works, but slower",
     Suitability.UNKNOWN: "No suggestion available",
 }
+_VERY_SLOW_LABEL = "Works, but very slowly"
 
 #: WRONG_KIND depends on the task: a writing model cannot read scans, and a
 #: reading model is not meant for proofreading or review.
@@ -123,31 +153,42 @@ _COMPACT_LABELS: dict[Suitability, str] = {
     Suitability.SLOW: "Slower",
     Suitability.UNKNOWN: "No suggestion",
 }
+_COMPACT_VERY_SLOW_LABEL = "Very slow"
 _COMPACT_WRONG_KIND_LABELS: dict[ModelCategory, str] = {
     "ocr": "Can't read scans",
     "general": "Reading only",
 }
 
 
-def suitability_text(value: Suitability, profile: HardwareProfile, task: ModelCategory) -> str:
-    """Return the short label for a suitability value of a *task* model on *profile*."""
+def suitability_text(
+    value: Suitability,
+    task: ModelCategory,
+    *,
+    very_slow: bool = False,
+) -> str:
+    """Return the short label for a suitability value of a *task* model."""
     if value is Suitability.TOO_LARGE:
-        if profile == "cpu":
-            return "Too slow for this computer"
-        return "Too large for this computer"
+        return "Does not fit this computer"
     if value is Suitability.WRONG_KIND:
         return _WRONG_KIND_LABELS[task]
+    if value is Suitability.SLOW and very_slow:
+        return _VERY_SLOW_LABEL
     return _SUITABILITY_LABELS[value]
 
 
 def compact_suitability_text(
-    value: Suitability, profile: HardwareProfile, task: ModelCategory
+    value: Suitability,
+    task: ModelCategory,
+    *,
+    very_slow: bool = False,
 ) -> str:
     """Return the compact label for the downloads list (the tooltip has the details)."""
     if value is Suitability.TOO_LARGE:
-        return "Too slow" if profile == "cpu" else "Too large"
+        return "Won't fit"
     if value is Suitability.WRONG_KIND:
         return _COMPACT_WRONG_KIND_LABELS[task]
+    if value is Suitability.SLOW and very_slow:
+        return _COMPACT_VERY_SLOW_LABEL
     return _COMPACT_LABELS[value]
 
 
@@ -165,9 +206,37 @@ def memory_text(memory_gb: float) -> str:
     return f"~{memory_gb:g} GB"
 
 
-def too_large_text(memory_gb: float | None, profile: HardwareProfile) -> str:
-    """Explain why a model is too large for *profile* (tooltip and hint)."""
-    if profile == "cpu":
+def _gb(value: float) -> str:
+    """Return *value* in whole or half gigabytes, rounded down so a claim never overstates."""
+    return f"{int(value * 2) / 2:g} GB"
+
+
+def too_large_text(
+    memory_gb: float | None,
+    profile: HardwareProfile,
+    *,
+    system_memory_gb: float | None = None,
+    card_gb: float | None = None,
+) -> str:
+    """Explain why a model does not fit this computer (tooltip, hint and confirmation).
+
+    With the computer's memory known, the numbers are given: what the model needs, what the
+    computer can offer it (graphics memory plus main memory) and what stays free for the system.
+    A model that does not fit would only run by swapping to disk, which makes it unusable.
+    """
+    need = f"This model needs about {memory_gb:g} GB of memory" if memory_gb is not None else ""
+    card = card_gb if card_gb is not None else card_budget_gb(profile)
+    if system_memory_gb is not None and memory_gb is not None:
+        offer = memory_for_models_gb(profile, system_memory_gb, card_gb=card)
+        assert offer is not None  # the main memory is known here
+        parts = "main memory" if card <= 0 else "graphics memory and main memory"
+        return (
+            f"{need}. This computer can offer about {_gb(offer)} ({parts}); "
+            f"{_gb(system_reserve_gb(system_memory_gb))} of its {system_memory_gb:.0f} GB main "
+            "memory stay free for the system. The model does not fit, so it would not run "
+            "properly."
+        )
+    if card <= 0:
         return "This model is too large to run quickly without a graphics card."
     tier = _TIER_MEMORY_GB[profile]
     if memory_gb is None:
@@ -178,30 +247,58 @@ def too_large_text(memory_gb: float | None, profile: HardwareProfile) -> str:
     )
 
 
-def slow_text(memory_gb: float | None, profile: HardwareProfile) -> str:
-    """Explain why a model runs slower: part of it uses the computer's memory (tooltip, hint)."""
+def slow_text(
+    memory_gb: float | None,
+    profile: HardwareProfile,
+    *,
+    card_gb: float | None = None,
+    very_slow: bool = False,
+) -> str:
+    """Explain why a model runs slower: part of it uses the computer's memory (tooltip, hint).
+
+    Whether the text says "without a graphics card" is decided by *card_gb*, not by the
+    profile: a computer typed "cpu" whose small card is known still has one.
+    """
     need = f"This model needs about {memory_gb:g} GB" if memory_gb is not None else "This model"
-    if profile == "cpu":
+    how = (
+        "it works, but very slowly: a page can take several minutes"
+        if very_slow
+        else "it works, but slower"
+    )
+    if (card_gb if card_gb is not None else card_budget_gb(profile)) <= 0:
         return (
             f"{need}. Without a large graphics card it runs on the processor using your "
-            "computer's memory: it works, but slower."
+            f"computer's memory: {how}."
         )
     return (
         f"{need}, more than the graphics card holds. Part of it runs on the processor using "
-        "your computer's memory: it works, but slower."
+        f"your computer's memory: {how}."
     )
 
 
-def too_large_tooltip(memory_gb: float | None, profile: HardwareProfile) -> str:
+def too_large_tooltip(
+    memory_gb: float | None,
+    profile: HardwareProfile,
+    *,
+    system_memory_gb: float | None = None,
+    card_gb: float | None = None,
+) -> str:
     """Return the tooltip for a TOO_LARGE model row."""
-    return f"{too_large_text(memory_gb, profile)} It will still work, but it can be very slow."
+    return too_large_text(memory_gb, profile, system_memory_gb=system_memory_gb, card_gb=card_gb)
 
 
-def too_large_confirmation(tag: str, memory_gb: float | None, profile: HardwareProfile) -> str:
+def too_large_confirmation(
+    tag: str,
+    memory_gb: float | None,
+    profile: HardwareProfile,
+    *,
+    system_memory_gb: float | None = None,
+    card_gb: float | None = None,
+) -> str:
     """Return one paragraph of the "download anyway?" confirmation."""
     return (
-        f"{tag}: {too_large_text(memory_gb, profile)} "
-        "It will still work, but reading or proofreading can become very slow."
+        f"{tag}: "
+        f"{too_large_text(memory_gb, profile, system_memory_gb=system_memory_gb, card_gb=card_gb)}"
     )
 
 
@@ -216,6 +313,63 @@ SAME_MODEL_TIP = (
     "because the model does not have to be reloaded for every document."
 )
 
+#: Title of the collapsible section holding settings a teacher rarely needs.
+EXPERT_SETTINGS = "Expert settings"
+TEMPERATURE_TOOLTIP = (
+    "How much the model varies its wording from one run to the next.\n"
+    "0.0 gives the same result for the same text; higher values allow more variation."
+)
+
+# ── while the model list is being fetched ─────────────────────────────────────
+
+ASKING_FOR_MODELS = "Asking {service} which models are installed…"
+CHECKING_MODELS = "Checking {count} models for your computer…"
+SAVED_MODEL_NOT_OFFERED = "Your saved model {model} is not offered by {service}."
+
+# ── a chosen model the service stops serving ──────────────────────────────────
+
+RETIRING_MODEL = "{model} will be retired on {when} — {service} suggests {replacement}."
+RETIRING_MODEL_NO_REPLACEMENT = "{model} will be retired on {when} — {service} names no successor."
+#: The link that takes the suggested model instead of the retiring one.
+USE_SUGGESTION = "Use it"
+
+
+def asking_for_models_text(service: str) -> str:
+    """Return the status line shown while *service* is being asked for its models."""
+    return ASKING_FOR_MODELS.format(service=service)
+
+
+def checking_models_text(count: int) -> str:
+    """Return the status line shown while the fetched models are rated for this computer."""
+    return CHECKING_MODELS.format(count=count)
+
+
+def models_from_text(count: int, service: str) -> str:
+    """Return the finished status line: how many models *service* offered."""
+    noun = "model" if count == 1 else "models"
+    return f"{count} {noun} from {service}"
+
+
+def saved_model_not_offered_text(model: str, service: str) -> str:
+    """Return the note shown when the saved model is missing from *service*'s live list."""
+    return SAVED_MODEL_NOT_OFFERED.format(model=model, service=service)
+
+
+def retiring_model_text(
+    model: str, retires_on: date | None, service: str, replacement: str = ""
+) -> str:
+    """Return the note shown when the chosen model is about to be taken out of service.
+
+    The date is said in full (2026-11-30) because *when* is what a teacher acts on; a model
+    with no known end says "soon" rather than a date that would be a lie.
+    """
+    when = retires_on.isoformat() if retires_on is not None else "soon"
+    if replacement:
+        return RETIRING_MODEL.format(
+            model=model, when=when, service=service, replacement=replacement
+        )
+    return RETIRING_MODEL_NO_REPLACEMENT.format(model=model, when=when, service=service)
+
 
 def model_hint(
     value: Suitability,
@@ -224,6 +378,9 @@ def model_hint(
     task: ModelCategory,
     memory_gb: float | None,
     best_for_task: str,
+    system_memory_gb: float | None = None,
+    card_gb: float | None = None,
+    very_slow: bool = False,
 ) -> str:
     """Return the hint line for a *task* model rated *value* on *profile*.
 
@@ -237,9 +394,12 @@ def model_hint(
     if value is Suitability.WORKS:
         return "Works on your computer."
     if value is Suitability.SLOW:
-        return slow_text(memory_gb, profile)
+        return slow_text(memory_gb, profile, card_gb=card_gb, very_slow=very_slow)
     if value is Suitability.TOO_LARGE:
-        return f"⚠ {too_large_text(memory_gb, profile)} It may be very slow."
+        text = too_large_text(
+            memory_gb, profile, system_memory_gb=system_memory_gb, card_gb=card_gb
+        )
+        return f"⚠ {text}"
     if value is Suitability.WRONG_KIND:
         if task == "general":
             return (

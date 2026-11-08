@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+from datetime import date
 import os
 import threading
 from unittest.mock import MagicMock
@@ -12,8 +13,10 @@ import pytest
 
 from teachers_teammate.config import DEFAULTS
 from teachers_teammate.domain.formatted_text import TextFormat
-from teachers_teammate.domain.model_listing import ModelListing
+from teachers_teammate.domain.model_catalog import DEFAULT_WRITING_MODEL
+from teachers_teammate.domain.model_listing import ListedModel, ModelListing
 from teachers_teammate.gui import _settings_dialog, _user_text as txt
+from teachers_teammate.gui._model_item_delegate import ITEM_LABEL_ROLE
 from teachers_teammate.gui._settings_dialog import (
     CorrectionSettingsDialog,
     EvaluationSettingsDialog,
@@ -796,9 +799,8 @@ def _wait_for_fetch(qtbot, dlg, svc: _ProviderAppService, calls: int) -> None:
     thread = dlg._fetch_thread
     if thread is not None:
         thread.wait(5000)
-    qtbot.waitUntil(
-        lambda: "●" in dlg._status_lbl.text() and "loading" not in dlg._status_lbl.text()
-    )
+    # The busy bar is hidden again once the answer is in.
+    qtbot.waitUntil(lambda: dlg._busy.isHidden(), timeout=5000)
 
 
 @pytest.mark.gui
@@ -981,6 +983,332 @@ def test_live_and_by_design_built_in_lists_are_told_apart(
     dlg._show_listing(listing)
 
     assert expected in dlg._status_lbl.text()
+
+
+class _SlowMistralService(_ProviderAppService):
+    """Mistral that can be asked for its list, but answers only when released."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.release = threading.Event()
+
+    def get_provider_info(self, provider: str) -> dict:
+        info = dict(super().get_provider_info(provider))
+        if provider in ("mistral", "mistral_eu"):
+            info["can_list_models"] = True
+        return info
+
+    def list_provider_models_checked(self, provider: str, *, base_url: str = "") -> ModelListing:
+        self.release.wait(10)
+        return super().list_provider_models_checked(provider, base_url=base_url)
+
+
+@pytest.mark.gui
+def test_switching_provider_shows_a_busy_bar_and_names_the_service(qtbot, monkeypatch) -> None:
+    """
+    Given  a Proofreading dialog on Ollama and a Mistral whose answer is held back
+    When   the user picks Mistral
+    Then   a busy bar appears, the status names Mistral, the Ollama hints are hidden, and the
+           field holds only the model to keep (the built-in names are not passed off as the
+           service's answer)
+    """
+    monkeypatch.setenv("MISTRAL_API_KEY", "k-test")
+    svc = _SlowMistralService()
+    dlg = CorrectionSettingsDialog(
+        {"correction_provider": "ollama", "correction_model": "qwen3.5:9b"},
+        prompt="",
+        app_service=svc,
+    )
+    qtbot.addWidget(dlg)
+
+    dlg._provider.setCurrentText("mistral")
+
+    assert dlg._busy.isHidden() is False
+    assert "Asking Mistral which models are installed…" in dlg._status_lbl.text()
+    assert dlg._guidance.isHidden() is True
+    assert [dlg._model.itemText(i) for i in range(dlg._model.count())] == ["mistral-small-latest"]
+
+    svc.release.set()
+    qtbot.waitUntil(lambda: dlg._busy.isHidden(), timeout=5000)
+
+    assert "✓ 2 models from Mistral" in dlg._status_lbl.text()
+
+
+@pytest.mark.gui
+def test_a_saved_model_the_service_no_longer_offers_is_called_out(qtbot, monkeypatch) -> None:
+    """
+    Given  a saved Mistral model that Mistral no longer offers
+    When   the live list arrives
+    Then   the saved name stays in the field (not silently swapped) and the status says why
+    """
+    monkeypatch.setenv("MISTRAL_API_KEY", "k-test")
+    svc = _ProviderAppService()
+    dlg = CorrectionSettingsDialog(
+        {"correction_provider": "mistral", "correction_model": "mistral-old-model"},
+        prompt="",
+        app_service=svc,
+    )
+    qtbot.addWidget(dlg)
+    _wait_for_fetch(qtbot, dlg, svc, calls=1)
+
+    assert dlg._model.currentText() == "mistral-old-model"
+    status = dlg._status_lbl.text()
+    assert "Your saved model mistral-old-model is not offered by Mistral." in status
+    assert "#e67e22" in status  # called out in orange, not as a plain green count
+
+
+class _NonListableService(_DummyAppService):
+    """A provider whose models cannot be listed: only its built-in list exists."""
+
+    def list_providers(self) -> list[str]:
+        return ["anthropic"]
+
+    def get_provider_info(self, provider: str) -> dict:
+        return {
+            "display_name": "Anthropic",
+            "models": ["claude-opus-4-5", "claude-haiku-4-5", "claude-3-5-sonnet-20241022"],
+            "default_model": "claude-haiku-4-5",
+            "needs_api_key": True,
+            "env_key": "ANTHROPIC_API_KEY",
+        }
+
+
+@pytest.mark.gui
+def test_a_built_in_model_is_never_listed_twice(qtbot, monkeypatch) -> None:
+    """
+    Given  a provider that cannot be asked for its models and whose default is in its
+           built-in list
+    When   the dialog is opened with that default saved
+    Then   the model combo lists each model exactly once
+    """
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    dlg = CorrectionSettingsDialog(
+        {"correction_provider": "anthropic", "correction_model": "claude-haiku-4-5"},
+        prompt="",
+        app_service=_NonListableService(),
+    )
+    qtbot.addWidget(dlg)
+
+    items = [dlg._model.itemText(i) for i in range(dlg._model.count())]
+    assert len(items) == len(set(items)), items
+    assert dlg._model.currentText() == "claude-haiku-4-5"
+
+
+@pytest.mark.gui
+def test_switching_provider_does_not_call_the_old_saved_model_out(qtbot, monkeypatch) -> None:
+    """
+    Given  a dialog opened on Mistral with a saved model the live list still offers, and
+           Mistral (EU) whose live list no longer offers it
+    When   the user switches to Mistral (EU) and its live list arrives
+    Then   the name stays in the field, but no "saved model not offered" note appears: the
+           saved choice belonged to Mistral, not to the service just switched to
+    """
+    monkeypatch.setenv("MISTRAL_API_KEY", "k-test")
+    svc = _ProviderAppService()
+    svc.listing = ModelListing(["glm-live", "open-mistral-nemo"], "live")
+    dlg = CorrectionSettingsDialog(
+        {"correction_provider": "mistral", "correction_model": "open-mistral-nemo"},
+        prompt="",
+        app_service=svc,
+    )
+    qtbot.addWidget(dlg)
+    _wait_for_fetch(qtbot, dlg, svc, calls=1)
+    assert "not offered" not in dlg._status_lbl.text()
+
+    svc.listing = ModelListing(["glm-live"], "live")
+    dlg._provider.setCurrentText("mistral_eu")
+    _wait_for_fetch(qtbot, dlg, svc, calls=2)
+
+    assert dlg._model.currentText() == "open-mistral-nemo"
+    assert "not offered" not in dlg._status_lbl.text()
+
+
+def _curated_listing() -> ModelListing:
+    """Return a curated Mistral answer: two current models, a pinned one, a fine-tuned one."""
+    details = (
+        ListedModel("mistral-small-latest", "current", "★ suggested", "Small and fast."),
+        ListedModel("mistral-large-latest", "current"),
+        ListedModel("mistral-small-2506", "pinned", "pinned version"),
+        ListedModel("ft:mistral-small-latest:5f1c", "own", "your model"),
+    )
+    return ModelListing(
+        [model.id for model in details],
+        "live",
+        details=details,
+        retiring=(
+            ListedModel(
+                "mistral-large-2407",
+                retires_on=date(2026, 11, 30),
+                replacement="mistral-large-latest",
+            ),
+        ),
+    )
+
+
+@pytest.mark.gui
+def test_a_curated_list_shows_labels_groups_and_raw_ids(qtbot, monkeypatch) -> None:
+    """
+    Given  a Mistral answer curated into current, pinned and fine-tuned models, with labels
+    When   the dialog shows it
+    Then   the field holds the raw model IDs in that order, a separator stands between the
+           groups, and each entry carries its label and the service's description as tooltip
+    """
+    monkeypatch.setenv("MISTRAL_API_KEY", "k-test")
+    svc = _ProviderAppService()
+    dlg = CorrectionSettingsDialog(
+        {"correction_provider": "mistral", "correction_model": ""}, prompt="", app_service=svc
+    )
+    qtbot.addWidget(dlg)
+    _wait_for_fetch(qtbot, dlg, svc, calls=1)
+
+    dlg._show_listing(_curated_listing())
+
+    combo = dlg._model
+    items = [
+        (combo.itemText(i), combo.itemData(i, ITEM_LABEL_ROLE) or "") for i in range(combo.count())
+    ]
+    assert items == [
+        ("mistral-small-latest", "★ suggested"),
+        ("mistral-large-latest", ""),
+        ("", ""),  # separator between current and pinned
+        ("mistral-small-2506", "pinned version"),
+        ("", ""),  # separator between pinned and the fine-tuned model
+        ("ft:mistral-small-latest:5f1c", "your model"),
+    ]
+    assert combo.itemData(0, Qt.ItemDataRole.ToolTipRole) == "Small and fast."
+    assert "✓ 4 models from Mistral" in dlg._status_lbl.text()
+
+
+@pytest.mark.gui
+def test_a_saved_model_that_is_being_retired_is_warned_about_and_use_it_switches(
+    qtbot, monkeypatch
+) -> None:
+    """
+    Given  a saved Mistral model that Mistral still serves but will retire, and a suggestion
+    When   the live list arrives
+    Then   the model stays chosen, the status names the date and the suggested model in
+           orange, and its "Use it" link switches the field to the suggestion
+    """
+    monkeypatch.setenv("MISTRAL_API_KEY", "k-test")
+    svc = _ProviderAppService()
+    svc.listing = _curated_listing()
+    dlg = CorrectionSettingsDialog(
+        {"correction_provider": "mistral", "correction_model": "mistral-large-2407"},
+        prompt="",
+        app_service=svc,
+    )
+    qtbot.addWidget(dlg)
+    _wait_for_fetch(qtbot, dlg, svc, calls=1)
+
+    assert dlg._model.currentText() == "mistral-large-2407"  # never swapped silently
+    status = dlg._status_lbl.text()
+    assert "mistral-large-2407 will be retired on 2026-11-30" in status
+    assert "Mistral suggests mistral-large-latest." in status
+    assert "Use it" in status
+    assert "#e67e22" in status
+
+    dlg._status_lbl.linkActivated.emit("use:mistral-large-latest")
+
+    assert dlg._model.currentText() == "mistral-large-latest"
+    assert "retired on" not in dlg._status_lbl.text()
+    assert "#27ae60" in dlg._status_lbl.text()
+
+
+@pytest.mark.gui
+def test_a_saved_alias_the_service_still_serves_is_not_called_out(qtbot, monkeypatch) -> None:
+    """
+    Given  a saved Mistral model that is only an alias of a listed model, which Mistral still
+           answers to
+    When   the curated live list arrives
+    Then   the name stays in the field and no "not offered" note appears
+    """
+    monkeypatch.setenv("MISTRAL_API_KEY", "k-test")
+    svc = _ProviderAppService()
+    curated = _curated_listing()
+    svc.listing = ModelListing(
+        curated.models,
+        "live",
+        details=curated.details,
+        also_served=("mistral-medium-2508",),
+    )
+    dlg = CorrectionSettingsDialog(
+        {"correction_provider": "mistral", "correction_model": "mistral-medium-2508"},
+        prompt="",
+        app_service=svc,
+    )
+    qtbot.addWidget(dlg)
+    _wait_for_fetch(qtbot, dlg, svc, calls=1)
+
+    assert dlg._model.currentText() == "mistral-medium-2508"
+    assert "not offered" not in dlg._status_lbl.text()
+
+
+@pytest.mark.gui
+def test_a_saved_model_that_is_really_gone_is_still_called_out(qtbot, monkeypatch) -> None:
+    """
+    Given  a saved Mistral model that is neither listed, retiring nor an alias of a listed one
+    When   the curated live list arrives
+    Then   the status says the model is not offered by Mistral
+    """
+    monkeypatch.setenv("MISTRAL_API_KEY", "k-test")
+    svc = _ProviderAppService()
+    svc.listing = _curated_listing()
+    dlg = CorrectionSettingsDialog(
+        {"correction_provider": "mistral", "correction_model": "mistral-vanished"},
+        prompt="",
+        app_service=svc,
+    )
+    qtbot.addWidget(dlg)
+    _wait_for_fetch(qtbot, dlg, svc, calls=1)
+
+    assert "not offered" in dlg._status_lbl.text()
+
+
+@pytest.mark.gui
+def test_a_curated_list_refreshes_the_location_hint_for_an_empty_field(qtbot, monkeypatch) -> None:
+    """
+    Given  a Mistral dialog whose model field is empty
+    When   a curated list arrives and the field moves to its first entry
+    Then   the location hint and the same-model tip are refreshed for that model
+    """
+    monkeypatch.setenv("MISTRAL_API_KEY", "k-test")
+    svc = _ProviderAppService()
+    dlg = CorrectionSettingsDialog(
+        {"correction_provider": "mistral", "correction_model": ""}, prompt="", app_service=svc
+    )
+    qtbot.addWidget(dlg)
+    _wait_for_fetch(qtbot, dlg, svc, calls=1)
+    dlg._model.setCurrentText("")
+    refreshed: list[str] = []
+    monkeypatch.setattr(
+        dlg, "_update_where_hint", lambda: refreshed.append(dlg._model.currentText())
+    )
+
+    dlg._show_listing(_curated_listing())
+
+    assert refreshed
+    assert refreshed[-1] == dlg._model.currentText() == "mistral-small-latest"
+
+
+@pytest.mark.gui
+def test_the_ollama_hint_comes_back_when_ollama_does_not_answer(qtbot) -> None:
+    """
+    Given  an Ollama dialog that hid its hint line while it waited for the model list
+    When   the answer is an empty list (Ollama is not running)
+    Then   the hint line is shown again, so its download button is still there
+    """
+    dlg = CorrectionSettingsDialog(
+        {"correction_provider": "ollama", "ollama_url": DEFAULTS["ollama_url"]},
+        prompt="",
+        app_service=_CachingDummyAppService(),
+    )
+    qtbot.addWidget(dlg)
+    dlg._set_busy(True, "Asking Ollama…")
+    assert dlg._guidance.isHidden()
+
+    dlg._show_listing(ModelListing([], "failed", "no connection to Ollama"))
+
+    assert not dlg._guidance.isHidden()
 
 
 @pytest.mark.gui
@@ -1417,6 +1745,73 @@ def test_evaluation_settings_dialog_get_values_includes_temperature(evaluation_d
     assert values["evaluate_temperature"] == pytest.approx(1.0)
 
 
+# ── temperature behind "Expert settings" ──────────────────────────────────
+
+
+@pytest.mark.gui
+def test_temperature_sits_in_a_collapsed_expert_section(correction_dialog) -> None:
+    """
+    Given  a CorrectionSettingsDialog with the default temperature
+    When   it is created
+    Then   the temperature is inside "Expert settings", which is collapsed
+    """
+    section = correction_dialog._expert_section
+    assert section._toggle.text() == "Expert settings"
+    assert not section.expanded
+    assert correction_dialog._temperature.parent() is section.content_widget
+
+
+@pytest.mark.gui
+def test_expert_section_opens_when_the_saved_temperature_is_not_the_default(qtbot) -> None:
+    """
+    Given  saved settings with a temperature other than the default
+    When   the Proofreading Settings dialog is created
+    Then   "Expert settings" is open, so the chosen value is visible
+    """
+    dlg = CorrectionSettingsDialog(
+        {
+            "correction_provider": "ollama",
+            "correction_model": "",
+            "correction_temperature": 0.9,
+        },
+        prompt="Fix spelling.",
+        app_service=_DummyAppService(),
+    )
+    qtbot.addWidget(dlg)
+    assert dlg._expert_section.expanded
+    assert dlg._temperature.value() == pytest.approx(0.9)
+
+
+@pytest.mark.gui
+def test_ocr_selector_temperature_is_collapsed_but_still_saved(qtbot) -> None:
+    """
+    Given  the shared OCR selector
+    When   a temperature is set while the section is collapsed
+    Then   it is returned by get_ocr_config()
+    """
+    from teachers_teammate.gui._ocr_config_selector import OcrConfigSelector  # noqa: PLC0415
+
+    selector = OcrConfigSelector(app_service=_DummyAppService())
+    qtbot.addWidget(selector)
+    assert not selector._expert_section.expanded
+    selector._ocr_temperature.setValue(0.4)
+    assert selector.get_ocr_config().temperature == pytest.approx(0.4)
+
+
+@pytest.mark.gui
+def test_benchmark_selector_shows_the_temperature_without_expanding(qtbot) -> None:
+    """
+    Given  the OCR selector as the Benchmark window builds it
+    When   it is created
+    Then   "Expert settings" is open, so a benchmark run can set the temperature directly
+    """
+    from teachers_teammate.gui._ocr_config_selector import OcrConfigSelector  # noqa: PLC0415
+
+    selector = OcrConfigSelector(app_service=_DummyAppService(), expert_collapsed=False)
+    qtbot.addWidget(selector)
+    assert selector._expert_section.expanded
+
+
 # ── hardware profile & model guidance ──────────────────────────────────────
 
 
@@ -1436,8 +1831,8 @@ class _CatalogAppService(_CachingDummyAppService):
 @pytest.mark.parametrize(
     ("memory_gb", "fragment", "warning"),
     [
-        (32.0, "slower", False),  # fits with the computer's memory: informative, not an alarm
-        (None, "very slow", True),  # memory unknown: the warning as before
+        (32.0, "very slowly", False),  # fits with the computer's memory: informative, no alarm
+        (None, "14 gb of graphics memory", True),  # memory unknown: the warning as before
     ],
 )
 def test_hint_for_a_model_too_big_for_the_card_depends_on_the_computers_memory(
@@ -1446,8 +1841,9 @@ def test_hint_for_a_model_too_big_for_the_card_depends_on_the_computers_memory(
     """
     Given  an 8 GB graphics profile and an installed gpt-oss:20b (about 14 GB)
     When   the model is selected in the Proofreading dialog
-    Then   with 32 GB of computer memory the hint explains it runs slower (no warning); without
-           that figure it still warns that the model may be very slow
+    Then   with 32 GB of computer memory the hint explains that it works but very slowly (no
+           warning, under 70 % of the model fits the card); without that figure it warns that
+           the model is larger than the card
     """
     service = _CatalogAppService(["gpt-oss:20b", "qwen3.5:9b"])
     service.system_memory_gb = memory_gb
@@ -1501,7 +1897,7 @@ def test_correction_dialog_reading_model_shows_warning_hint(qtbot) -> None:
     hint = dlg._guidance._hint_lbl.text()
     assert hint.startswith("⚠")
     assert "reading model" in hint
-    assert "qwen3.5:9b" in hint  # the BEST writing model on 8 GB
+    assert DEFAULT_WRITING_MODEL in hint  # the BEST writing model on 8 GB
     assert "cannot read scans" not in hint
     index = dlg._model.findText("qwen3-vl:8b")
     assert "Reading model only" in dlg._model.itemData(index, Qt.ItemDataRole.ToolTipRole)
@@ -1749,7 +2145,7 @@ def test_dialog_follows_profile_chosen_in_downloads(qtbot) -> None:
 
     dlg._guidance._best_btn.click()
 
-    assert received == [(["qwen3.5:9b"], dlg)]
+    assert received == [([DEFAULT_WRITING_MODEL], dlg)]  # the best writing model on 8 GB
     assert dlg._hw_selector.setting() == "16gb"
     qtbot.waitUntil(lambda: dlg._guidance.active_profile() == "16gb", timeout=5000)
     if dlg._fetch_thread is not None:

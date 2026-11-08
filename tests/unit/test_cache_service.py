@@ -817,3 +817,73 @@ def test_eval_config_hash_changes_with_the_anonymizer_patterns(tmp_path: Path) -
     )
 
     assert left._eval_config_hash() != right._eval_config_hash()
+
+
+def test_the_fingerprint_changes_when_the_context_window_is_pinned(tmp_path: Path) -> None:
+    """
+    Given  two Ollama configs that differ only in the proofreading window setting
+    When   the correction fingerprint is computed
+    Then   a pinned window gives another key, so the files are proofread again
+    """
+    from teachers_teammate.infrastructure.workflow.cache_service import (  # noqa: PLC0415
+        compute_correction_config_hash,
+    )
+
+    auto = make_config(tmp_path, correction_enabled=True, correction_provider="ollama")
+    pinned = make_config(
+        tmp_path,
+        correction_enabled=True,
+        correction_provider="ollama",
+        proofreading_context="16384",
+    )
+
+    assert compute_correction_config_hash(auto) != compute_correction_config_hash(pinned)
+
+
+def test_settings_that_give_the_same_window_give_the_same_fingerprint(tmp_path: Path) -> None:
+    """
+    Given  two Ollama configs whose pinned windows are both above the proofreading cap
+    When   the correction fingerprint is computed
+    Then   the keys are equal, because the run uses the same window for both
+    """
+    from teachers_teammate.infrastructure.workflow.cache_service import (  # noqa: PLC0415
+        compute_correction_config_hash,
+    )
+
+    first = make_config(
+        tmp_path,
+        correction_enabled=True,
+        correction_provider="ollama",
+        proofreading_context="16384",
+    )
+    second = make_config(
+        tmp_path,
+        correction_enabled=True,
+        correction_provider="ollama",
+        proofreading_context="32768",
+    )
+
+    assert compute_correction_config_hash(first) == compute_correction_config_hash(second)
+
+
+def test_the_window_setting_does_not_change_the_fingerprint_of_an_online_provider(
+    tmp_path: Path,
+) -> None:
+    """
+    Given  two configs with an online proofreading provider that differ only in the window
+    When   the correction fingerprint is computed
+    Then   the keys are equal, because an online provider never receives the window
+    """
+    from teachers_teammate.infrastructure.workflow.cache_service import (  # noqa: PLC0415
+        compute_correction_config_hash,
+    )
+
+    auto = make_config(tmp_path, correction_enabled=True, correction_provider="openai")
+    pinned = make_config(
+        tmp_path,
+        correction_enabled=True,
+        correction_provider="openai",
+        proofreading_context="16384",
+    )
+
+    assert compute_correction_config_hash(auto) == compute_correction_config_hash(pinned)

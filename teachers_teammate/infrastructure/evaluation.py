@@ -16,10 +16,18 @@ if TYPE_CHECKING:
     from .ollama_utils import OllamaClient
 
 from ..config import DEFAULTS
+from ..domain.context_budget import (
+    EVALUATION_ANSWER_TOKENS,
+    EVALUATION_NUM_CTX_CAP,
+)
 from ..domain.formatted_text import TextFormat
 from ..domain.notation import with_notation_hint
 from ..interfaces import Evaluator
 from ._llm_invoke import invoke_langchain_chain, invoke_ollama_chat, tidy_answer
+
+TOO_LONG_FOR_REVIEW_WARNING = "The text is too long for a content review with a local model."
+"""Warning of a content review whose text does not fit the window (its own sentence: the
+proofreading warning is about a partly corrected text, which a review does not produce)."""
 
 
 def _tidy_review(answer: str) -> str:
@@ -65,12 +73,14 @@ class NativeOllamaEvaluator(Evaluator):
         prompt: str = "",
         timeout: float = 120.0,
         temperature: float = 0.7,
+        num_ctx: int = EVALUATION_NUM_CTX_CAP,
     ) -> None:
         self._model = model
         self._client = client
         self._prompt = prompt or DEFAULTS["evaluate_prompt"]
         self._timeout = timeout
         self._temperature = temperature
+        self._num_ctx = num_ctx
 
     def evaluate(
         self, corrected_text: str, language: str, *, text_format: TextFormat = "plain"
@@ -84,5 +94,10 @@ class NativeOllamaEvaluator(Evaluator):
             temperature=self._temperature,
             fallback="",
             failure="Evaluation failed ({exc}).",
+            num_ctx=self._num_ctx,
+            # A review's answer is short and fixed, so the text gets the rest of the window:
+            # a content review cannot be split into pieces the way proofreading can.
+            answer_tokens=EVALUATION_ANSWER_TOKENS,
+            truncated_warning=TOO_LONG_FOR_REVIEW_WARNING,
         )
         return tidy_answer(result, _tidy_review)

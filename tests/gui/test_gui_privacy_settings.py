@@ -16,6 +16,7 @@ from teachers_teammate.domain.data_location import (
     StageLocation,
     describe_fingerprint,
 )
+from teachers_teammate.gui import _user_text as txt
 from teachers_teammate.gui._privacy_settings import (
     DISPLAY_ANONYMIZED_KEY,
     SECTION_DETECTION,
@@ -183,14 +184,27 @@ def test_forgetting_all_asks_again_for_everything(acks, settings) -> None:
 # ── the dialog ──────────────────────────────────────────────────────────────
 
 
-def _make_dialog(qtbot, acks, *, section: str = SECTION_DETECTION) -> PrivacySettingsDialog:
+def _make_dialog(
+    qtbot,
+    acks,
+    *,
+    section: str = SECTION_DETECTION,
+    display_anonymized: bool = False,
+    display_anonymized_available: bool = True,
+) -> PrivacySettingsDialog:
     """Build the dialog with spaCy model fetching suppressed (as the anonymizer tests do)."""
     with patch(
         "teachers_teammate.gui._anonymizer_config_dialog.ProcessingApplicationService"
     ) as service:
         service.return_value.list_installed_spacy_models.return_value = []
         dlg = PrivacySettingsDialog(
-            "English", AnonymizerConfig(), MagicMock(), acknowledgements=acks, section=section
+            "English",
+            AnonymizerConfig(),
+            MagicMock(),
+            acknowledgements=acks,
+            section=section,
+            display_anonymized=display_anonymized,
+            display_anonymized_available=display_anonymized_available,
         )
     dlg._spacy_fetch_thread.quit()
     dlg._spacy_fetch_thread.wait(500)
@@ -239,6 +253,57 @@ def test_the_dialog_opens_on_the_requested_section(
     dlg = _make_dialog(qtbot, acks, section=section)
 
     assert dlg._tabs.tabText(dlg._tabs.currentIndex()) == expected_tab
+
+
+@pytest.mark.gui
+def test_the_detection_tab_offers_hiding_personal_information(qtbot, acks) -> None:
+    """
+    Given  the Privacy Settings dialog opened with the hiding switched on
+    When   the detection tab is shown
+    Then   its first group holds a ticked checkbox with the window's own wording
+    """
+    dlg = _make_dialog(qtbot, acks, display_anonymized=True)
+
+    checkbox = dlg.hide_personal_checkbox()
+    group = dlg._detection_layout.itemAt(0).widget()
+    assert group.title() == "Showing texts"
+    assert checkbox.text() == txt.HIDE_PERSONAL_INFO_CHECKBOX
+    assert checkbox.isChecked()
+    assert checkbox.isEnabled()
+    assert checkbox.toolTip() == txt.HIDE_PERSONAL_INFO_TIP
+    assert dlg.display_anonymized()
+
+
+@pytest.mark.gui
+def test_the_checkbox_follows_the_window_state(qtbot, acks) -> None:
+    """
+    Given  the hiding switched off
+    When   the dialog is opened
+    Then   the checkbox is unticked, and what it returns follows a click
+    """
+    dlg = _make_dialog(qtbot, acks, display_anonymized=False)
+    checkbox = dlg.hide_personal_checkbox()
+    assert not checkbox.isChecked()
+    assert not dlg.display_anonymized()
+
+    checkbox.setChecked(True)
+
+    assert dlg.display_anonymized()
+
+
+@pytest.mark.gui
+def test_the_checkbox_is_disabled_without_the_privacy_addon(qtbot, acks) -> None:
+    """
+    Given  a computer where personal information cannot be hidden
+    When   the dialog is opened with the hiding switched on
+    Then   the checkbox is unticked and disabled, and its tooltip points at Downloads
+    """
+    dlg = _make_dialog(qtbot, acks, display_anonymized=True, display_anonymized_available=False)
+
+    checkbox = dlg.hide_personal_checkbox()
+    assert not checkbox.isEnabled()
+    assert not checkbox.isChecked()
+    assert "Downloads" in checkbox.toolTip()
 
 
 @pytest.mark.gui

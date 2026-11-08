@@ -26,6 +26,7 @@ _OCR_SRCS = [
     "domain/benchmark.py",
     "domain/answer_format.py",
     "domain/correction_policy.py",
+    "domain/context_budget.py",
     "domain/correction_prompts.py",
     "domain/correction_review.py",
     "domain/data_location.py",
@@ -37,7 +38,9 @@ _OCR_SRCS = [
     "domain/notation.py",
     "domain/output_files.py",
     "domain/pdf_text_layer.py",
+    "domain/proofreading_quality.py",
     "domain/stages.py",
+    "domain/text_chunks.py",
     "exceptions.py",
     "infrastructure/__init__.py",
     "infrastructure/_llm_invoke.py",
@@ -115,6 +118,7 @@ _GUI_SRCS = [
     "gui/_log_widget.py",
     "gui/_main_window.py",
     "gui/_model_guidance.py",
+    "gui/_model_item_delegate.py",
     "gui/_model_wording.py",
     "gui/_ocr_config_selector.py",
     "gui/_preview_panel.py",
@@ -183,6 +187,14 @@ py_library(
     srcs = _GUI_SRCS,
     visibility = ["//visibility:public"],
     deps = [":ocr_lib"],
+)
+
+# Every Python file of the package, for //:py_pylint (which lints the whole first-party tree in
+# one action so pylint can resolve cross-package imports). Never part of the wheel or of a test.
+filegroup(
+    name = "all_sources",
+    srcs = glob(["**/*.py"]),
+    visibility = ["//visibility:public"],
 )
 
 # Lint-only mirrors of ocr_lib/gui_lib that additionally depend on the runtime

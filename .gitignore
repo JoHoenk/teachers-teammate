@@ -40,3 +40,6 @@ input/
 output*/
 previews/
 pdfs/
+
+# Working notes and research plans (not part of the source tree)
+plans/

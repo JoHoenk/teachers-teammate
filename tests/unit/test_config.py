@@ -426,14 +426,14 @@ def test_ocr_temperature_default_is_zero() -> None:
     assert cfg.ocr.temperature == 0.0
 
 
-def test_correction_temperature_default_is_0_7() -> None:
+def test_correction_temperature_default_is_0_2() -> None:
     """
     Given  a Config created without an explicit correction_temperature
     When   correction_temperature is read
-    Then   it defaults to 0.7
+    Then   it defaults to 0.2 (proofreading changes less of what was right at a low temperature)
     """
     cfg = _cfg()
-    assert cfg.correction_temperature == 0.7
+    assert cfg.correction_temperature == 0.2
 
 
 def test_evaluate_temperature_default_is_0_7() -> None:

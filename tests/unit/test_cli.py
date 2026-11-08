@@ -8,6 +8,39 @@ import pytest
 
 from teachers_teammate.domain.data_location import DataFlow
 
+
+class _AppServiceStub:
+    """Application-service stub with harmless defaults for every method the CLI calls.
+
+    The CLI calls a growing set of service methods, so each test overrides only the ones it
+    cares about: a new method then breaks this class once instead of every fake in this file.
+    """
+
+    def list_providers(self) -> list[str]:
+        return ["ollama", "openai"]
+
+    def resolve_config_path(self, explicit: str | None) -> Path | None:
+        return None
+
+    def describe_data_flow(self, config) -> DataFlow:
+        return DataFlow(())
+
+    def ocr_refusal_for_run(self, config) -> str:
+        return ""
+
+    def output_refusal_for_run(self, config) -> str:
+        return ""
+
+    def memory_warning_for_run(self, config) -> str:
+        return ""
+
+    def run_selected(self, config, /, **kwargs) -> int:
+        raise AssertionError("the run must not start")
+
+    def run_preview_only(self, config) -> int:
+        raise AssertionError("preview-only path should not be used")
+
+
 # ── _parse_args ────────────────────────────────────────────────────────────
 
 
@@ -146,27 +179,8 @@ def test_main_exits_when_no_output_and_docx_enabled(tmp_path: Path, monkeypatch)
     import teachers_teammate.infrastructure.storage_root as storage_module  # noqa: PLC0415
     from teachers_teammate.cli import run_cli  # noqa: PLC0415
 
-    class _FakeAppService:
-        def list_providers(self) -> list[str]:
-            return ["ollama", "openai"]
-
-        def resolve_config_path(self, explicit: str | None) -> None:
-            return None
-
-        def describe_data_flow(self, config):
-            return DataFlow(())
-
-        def ocr_refusal_for_run(self, config):
-            return ""
-
-        def output_refusal_for_run(self, config):
-            return ""
-
-        def run_selected(self, config, /, **kwargs):
-            raise AssertionError("should not reach pipeline — guard must exit before run")
-
-        def run_preview_only(self, config):
-            raise AssertionError("should not reach pipeline — guard must exit before run")
+    class _FakeAppService(_AppServiceStub):
+        """No override: every CLI answer is harmless, so a run must not start."""
 
     monkeypatch.setattr(storage_module, "default_config_path", lambda: tmp_path / "ocr.toml")
     original_cwd = os.getcwd()
@@ -192,28 +206,10 @@ def test_main_allows_missing_output_when_no_docx(tmp_path: Path, monkeypatch) ->
 
     captured: list = []
 
-    class _FakeAppService:
-        def list_providers(self) -> list[str]:
-            return ["ollama", "openai"]
-
-        def resolve_config_path(self, explicit: str | None) -> None:
-            return None
-
-        def describe_data_flow(self, config):
-            return DataFlow(())
-
-        def ocr_refusal_for_run(self, config):
-            return ""
-
-        def output_refusal_for_run(self, config):
-            return ""
-
-        def run_selected(self, config, /, **kwargs):
+    class _FakeAppService(_AppServiceStub):
+        def run_selected(self, config, /, **kwargs) -> int:
             captured.append(config)
             return 0
-
-        def run_preview_only(self, _config):
-            raise AssertionError("preview-only path should not be used")
 
     monkeypatch.setattr(storage_module, "default_config_path", lambda: tmp_path / "ocr.toml")
     original_cwd = os.getcwd()
@@ -258,28 +254,13 @@ def test_main_loads_config_file_defaults(tmp_path: Path) -> None:
 
     captured: list = []
 
-    class _FakeAppService:
-        def list_providers(self) -> list[str]:
-            return ["ollama", "openai"]
-
-        def resolve_config_path(self, explicit: str | None):
+    class _FakeAppService(_AppServiceStub):
+        def resolve_config_path(self, explicit: str | None) -> Path | None:
             return Path(explicit) if explicit else None
 
-        def describe_data_flow(self, config):
-            return DataFlow(())
-
-        def ocr_refusal_for_run(self, config):
-            return ""
-
-        def output_refusal_for_run(self, config):
-            return ""
-
-        def run_selected(self, config, /, **kwargs):
+        def run_selected(self, config, /, **kwargs) -> int:
             captured.append(config)
             return 0
-
-        def run_preview_only(self, _config):
-            raise AssertionError("preview-only path should not be used")
 
     rc = run_cli(
         argv=["--config", str(cfg_file), "-i", str(in_dir), "-o", str(out_dir)],
@@ -302,27 +283,9 @@ def test_main_uses_exit_fn_with_run_cli_result(tmp_path: Path) -> None:
     out_dir = tmp_path / "out"
     captured_codes: list[int] = []
 
-    class _FakeAppService:
-        def list_providers(self) -> list[str]:
-            return ["ollama", "openai"]
-
-        def resolve_config_path(self, explicit: str | None) -> None:
-            return None
-
-        def describe_data_flow(self, config):
-            return DataFlow(())
-
-        def ocr_refusal_for_run(self, config):
-            return ""
-
-        def output_refusal_for_run(self, config):
-            return ""
-
-        def run_selected(self, _config, /, **kwargs):
+    class _FakeAppService(_AppServiceStub):
+        def run_selected(self, config, /, **kwargs) -> int:
             return 7
-
-        def run_preview_only(self, _config):
-            raise AssertionError("preview-only path should not be used")
 
     main(
         app_service=_FakeAppService(),
@@ -482,28 +445,10 @@ def test_run_cli_propagates_preprocessing_to_config(tmp_path: Path, monkeypatch)
 
     captured: list = []
 
-    class _FakeAppService:
-        def list_providers(self) -> list[str]:
-            return ["ollama", "openai"]
-
-        def resolve_config_path(self, explicit: str | None) -> None:
-            return None
-
-        def describe_data_flow(self, config):
-            return DataFlow(())
-
-        def ocr_refusal_for_run(self, config):
-            return ""
-
-        def output_refusal_for_run(self, config):
-            return ""
-
-        def run_selected(self, config, /, **kwargs):
+    class _FakeAppService(_AppServiceStub):
+        def run_selected(self, config, /, **kwargs) -> int:
             captured.append(config)
             return 0
-
-        def run_preview_only(self, _config):
-            raise AssertionError("preview-only path should not be used")
 
     monkeypatch.setattr(storage_module, "default_config_path", lambda: tmp_path / "ocr.toml")
     original_cwd = os.getcwd()
@@ -610,29 +555,14 @@ def test_run_cli_tells_where_documents_are_processed(tmp_path: Path, capsys) -> 
     )
     calls: list[str] = []
 
-    class _FakeAppService:
-        def list_providers(self) -> list[str]:
-            return ["ollama", "openai"]
-
-        def resolve_config_path(self, explicit):
-            return None
-
-        def describe_data_flow(self, config):
+    class _FakeAppService(_AppServiceStub):
+        def describe_data_flow(self, config) -> DataFlow:
             calls.append("describe")
             return flow
 
-        def ocr_refusal_for_run(self, config):
-            return ""
-
-        def output_refusal_for_run(self, config):
-            return ""
-
-        def run_selected(self, config, /, **kwargs):
+        def run_selected(self, config, /, **kwargs) -> int:
             calls.append("run")
             return 0
-
-        def run_preview_only(self, config):
-            raise AssertionError("preview-only path should not be used")
 
     rc = run_cli(argv=["-i", str(tmp_path), "--no-docx"], app_service=_FakeAppService())
 
@@ -656,27 +586,15 @@ def test_run_cli_refuses_online_text_recognition_before_anything_starts(
     """
     from teachers_teammate.cli import run_cli  # noqa: PLC0415
 
-    class _FakeAppService:
-        def list_providers(self) -> list[str]:
-            return ["ollama", "openai"]
-
-        def resolve_config_path(self, explicit):
-            return None
-
-        def ocr_refusal_for_run(self, config):
+    class _FakeAppService(_AppServiceStub):
+        def ocr_refusal_for_run(self, config) -> str:
             return "Text recognition must stay on your computer."
 
-        def output_refusal_for_run(self, config):
-            return ""
-
-        def describe_data_flow(self, config):
+        def describe_data_flow(self, config) -> DataFlow:
             raise AssertionError("no data flow may be announced for a refused run")
 
-        def run_selected(self, config, /, **kwargs):
+        def run_selected(self, config, /, **kwargs) -> int:
             raise AssertionError("a refused run must not start")
-
-        def run_preview_only(self, config):
-            raise AssertionError("preview-only path should not be used")
 
     rc = run_cli(
         argv=["-i", str(tmp_path), "--no-docx", "--ocr-model", "gpt-oss:120b-cloud"],
@@ -687,34 +605,23 @@ def test_run_cli_refuses_online_text_recognition_before_anything_starts(
     assert "ERROR: Text recognition must stay on your computer." in capsys.readouterr().err
 
 
-class _TextFlagsAppService:
+class _TextFlagsAppService(_AppServiceStub):
     """Application service stub for the text-file flags; records configs, refuses on demand."""
 
-    def __init__(self, output_refusal: str = "") -> None:
+    def __init__(self, output_refusal: str = "", memory_warning: str = "") -> None:
         self.configs: list = []
         self._output_refusal = output_refusal
+        self._memory_warning = memory_warning
 
-    def list_providers(self) -> list[str]:
-        return ["ollama", "openai"]
+    def memory_warning_for_run(self, config) -> str:
+        return self._memory_warning
 
-    def resolve_config_path(self, explicit):
-        return None
-
-    def describe_data_flow(self, config):
-        return DataFlow(())
-
-    def ocr_refusal_for_run(self, config):
-        return ""
-
-    def output_refusal_for_run(self, config):
+    def output_refusal_for_run(self, config) -> str:
         return self._output_refusal
 
-    def run_selected(self, config, /, **kwargs):
+    def run_selected(self, config, /, **kwargs) -> int:
         self.configs.append(config)
         return 0
-
-    def run_preview_only(self, config):
-        raise AssertionError("preview-only path should not be used")
 
 
 @pytest.mark.use_case("Headless_CLI_Batch")
@@ -812,6 +719,57 @@ def test_run_cli_refuses_an_output_folder_the_service_rejects(tmp_path: Path, ca
     assert service.configs == []
 
 
+def test_run_cli_refuses_a_run_that_would_make_the_computer_swap(tmp_path: Path, capsys) -> None:
+    """
+    Given  an application service that reports too little free memory for the model
+    When   run_cli() is called without --ignore-memory-check
+    Then   it prints the reason with the way to override it, exits with 1 and does not run
+    """
+    from teachers_teammate.cli import run_cli  # noqa: PLC0415
+
+    service = _TextFlagsAppService(memory_warning="qwen3.5:9b needs about 7 GB of free memory.")
+
+    rc = run_cli(
+        argv=["-i", str(tmp_path), "-o", str(tmp_path), "--no-docx", "--text"], app_service=service
+    )
+
+    err = capsys.readouterr().err
+    assert rc == 1
+    assert "ERROR: qwen3.5:9b needs about 7 GB of free memory." in err
+    assert "Use --ignore-memory-check to run anyway." in err
+    assert service.configs == []
+
+
+def test_run_cli_runs_anyway_when_the_memory_check_is_ignored(tmp_path: Path, capsys) -> None:
+    """
+    Given  the same memory warning
+    When   run_cli() is called with --ignore-memory-check
+    Then   the run starts and the warning is still printed (as a WARNING, not an ERROR)
+    """
+    from teachers_teammate.cli import run_cli  # noqa: PLC0415
+
+    service = _TextFlagsAppService(memory_warning="qwen3.5:9b needs about 7 GB of free memory.")
+
+    rc = run_cli(
+        argv=[
+            "-i",
+            str(tmp_path),
+            "-o",
+            str(tmp_path),
+            "--no-docx",
+            "--text",
+            "--ignore-memory-check",
+        ],
+        app_service=service,
+    )
+
+    err = capsys.readouterr().err
+    assert rc == 0
+    assert "WARNING: qwen3.5:9b needs about 7 GB of free memory." in err
+    assert "ERROR:" not in err
+    assert len(service.configs) == 1
+
+
 @pytest.mark.use_case("Headless_CLI_Batch")
 def test_parse_args_explanations_flag_overrides_a_config_file_that_turned_them_off() -> None:
     """
@@ -850,28 +808,13 @@ def test_run_cli_passes_anonymizer_settings_from_the_config_file(tmp_path: Path)
     )
     captured: list = []
 
-    class _FakeAppService:
-        def list_providers(self) -> list[str]:
-            return ["ollama", "openai"]
-
-        def resolve_config_path(self, explicit: str | None):
+    class _FakeAppService(_AppServiceStub):
+        def resolve_config_path(self, explicit: str | None) -> Path | None:
             return Path(explicit) if explicit else None
 
-        def describe_data_flow(self, config):
-            return DataFlow(())
-
-        def ocr_refusal_for_run(self, config):
-            return ""
-
-        def output_refusal_for_run(self, config):
-            return ""
-
-        def run_selected(self, config, /, **kwargs):
+        def run_selected(self, config, /, **kwargs) -> int:
             captured.append(config)
             return 0
-
-        def run_preview_only(self, _config):
-            raise AssertionError("preview-only path should not be used")
 
     rc = run_cli(
         argv=["--config", str(cfg_file), "-o", str(tmp_path / "out")],

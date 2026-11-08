@@ -123,14 +123,47 @@ def test_too_large_text_without_known_size() -> None:
 @pytest.mark.use_case("Model_Recommendation_By_Hardware")
 def test_confirmation_paragraph_names_the_model_and_the_consequence() -> None:
     """
-    Given  a too-large model
+    Given  a too-large model on a computer whose memory is known
     When   the confirmation paragraph is built
-    Then   it names the model and says it will still work but be slow
+    Then   it names the model, what it needs and what the computer can offer, and says it would
+           not run properly
     """
-    text = wording.too_large_confirmation("gpt-oss:20b", 14.0, "8gb")
+    text = wording.too_large_confirmation(
+        "gpt-oss:20b", 14.0, "8gb", system_memory_gb=8.0, card_gb=6.8
+    )
     assert text.startswith("gpt-oss:20b: ")
-    assert "still work" in text
-    assert "very slow" in text
+    assert "about 14 GB" in text and "about 6.5 GB" in text
+    assert "not run properly" in text
+
+
+@pytest.mark.use_case("Model_Recommendation_By_Hardware")
+def test_too_large_text_gives_the_numbers_when_the_computers_memory_is_known() -> None:
+    """
+    Given  a 14 GB model, an 8 GB card (6.8 GB usable) and 16 GB of main memory
+    When   the explanation is rendered
+    Then   it says what the computer can offer, how much main memory stays free for the system
+           and that the model does not fit
+    """
+    text = wording.too_large_text(14.0, "8gb", system_memory_gb=8.0, card_gb=6.8)
+
+    assert text == (
+        "This model needs about 14 GB of memory. This computer can offer about 6.5 GB "
+        "(graphics memory and main memory); 8 GB of its 8 GB main memory stay free for the "
+        "system. The model does not fit, so it would not run properly."
+    )
+
+
+@pytest.mark.use_case("Model_Recommendation_By_Hardware")
+def test_too_large_text_without_a_card_talks_about_main_memory_only() -> None:
+    """
+    Given  a computer without a graphics card and 12 GB of main memory
+    When   the explanation is rendered
+    Then   it names main memory only, with 8 GB kept free for the system
+    """
+    text = wording.too_large_text(9.5, "cpu", system_memory_gb=12.0)
+
+    assert "(main memory)" in text
+    assert "about 4 GB" in text and "8 GB of its 12 GB main memory" in text
 
 
 # ── suitability labels & hint lines ─────────────────────────────────────────
@@ -138,51 +171,49 @@ def test_confirmation_paragraph_names_the_model_and_the_consequence() -> None:
 
 @pytest.mark.use_case("Model_Category_Guidance")
 @pytest.mark.parametrize(
-    ("value", "profile", "task", "label"),
+    ("value", "task", "label"),
     [
-        (Suitability.BEST, "8gb", "ocr", "★ Best choice"),
-        (Suitability.GOOD, "8gb", "general", "Good choice"),
-        (Suitability.WORKS, "8gb", "ocr", "Works"),
-        (Suitability.TOO_LARGE, "8gb", "general", "Too large for this computer"),
-        (Suitability.TOO_LARGE, "cpu", "ocr", "Too slow for this computer"),
-        (Suitability.WRONG_KIND, "16gb", "ocr", "Cannot read scans"),
-        (Suitability.WRONG_KIND, "16gb", "general", "Reading model only"),
-        (Suitability.UNKNOWN, "16gb", "ocr", "No suggestion available"),
+        (Suitability.BEST, "ocr", "★ Best choice"),
+        (Suitability.GOOD, "general", "Good choice"),
+        (Suitability.WORKS, "ocr", "Works"),
+        (Suitability.TOO_LARGE, "general", "Does not fit this computer"),
+        (Suitability.TOO_LARGE, "ocr", "Does not fit this computer"),
+        (Suitability.WRONG_KIND, "ocr", "Cannot read scans"),
+        (Suitability.WRONG_KIND, "general", "Reading model only"),
+        (Suitability.UNKNOWN, "ocr", "No suggestion available"),
     ],
 )
-def test_suitability_labels(value: Suitability, profile: str, task: str, label: str) -> None:
+def test_suitability_labels(value: Suitability, task: str, label: str) -> None:
     """
-    Given  a suitability value, a profile and the task the model is chosen for
+    Given  a suitability value and the task the model is chosen for
     When   the short label is requested
     Then   the plain-language label of the wording table is returned (a wrong kind of
            model is described differently for reading and for writing)
     """
-    assert wording.suitability_text(value, profile, task) == label  # ty: ignore[invalid-argument-type]  # literals
+    assert wording.suitability_text(value, task) == label  # ty: ignore[invalid-argument-type]  # literals
 
 
 @pytest.mark.use_case("Model_Category_Guidance")
 @pytest.mark.parametrize(
-    ("value", "profile", "task", "label"),
+    ("value", "task", "label"),
     [
-        (Suitability.BEST, "8gb", "ocr", "★ Best"),
-        (Suitability.GOOD, "8gb", "general", "Good"),
-        (Suitability.WORKS, "8gb", "ocr", "Works"),
-        (Suitability.TOO_LARGE, "8gb", "general", "Too large"),
-        (Suitability.TOO_LARGE, "cpu", "ocr", "Too slow"),
-        (Suitability.WRONG_KIND, "16gb", "ocr", "Can't read scans"),
-        (Suitability.WRONG_KIND, "16gb", "general", "Reading only"),
-        (Suitability.UNKNOWN, "16gb", "ocr", "No suggestion"),
+        (Suitability.BEST, "ocr", "★ Best"),
+        (Suitability.GOOD, "general", "Good"),
+        (Suitability.WORKS, "ocr", "Works"),
+        (Suitability.TOO_LARGE, "general", "Won't fit"),
+        (Suitability.TOO_LARGE, "ocr", "Won't fit"),
+        (Suitability.WRONG_KIND, "ocr", "Can't read scans"),
+        (Suitability.WRONG_KIND, "general", "Reading only"),
+        (Suitability.UNKNOWN, "ocr", "No suggestion"),
     ],
 )
-def test_compact_suitability_labels(
-    value: Suitability, profile: str, task: str, label: str
-) -> None:
+def test_compact_suitability_labels(value: Suitability, task: str, label: str) -> None:
     """
-    Given  a suitability value, a profile and the task the model is chosen for
+    Given  a suitability value and the task the model is chosen for
     When   the compact label for the narrow downloads column is requested
     Then   a short label is returned (the full wording stays in the tooltip)
     """
-    assert wording.compact_suitability_text(value, profile, task) == label  # ty: ignore[invalid-argument-type]  # literals
+    assert wording.compact_suitability_text(value, task) == label  # ty: ignore[invalid-argument-type]  # literals
 
 
 @pytest.mark.use_case("Model_Category_Guidance")
@@ -277,6 +308,42 @@ def test_status_line_names_the_computers_memory_when_known() -> None:
 
 
 @pytest.mark.use_case("Model_Recommendation_By_Hardware")
+def test_a_computer_below_the_reserve_is_told_once_that_no_model_fits_it() -> None:
+    """
+    Given  a 7.7 GB computer without a graphics card (the system reserve alone is 8 GB)
+    When   the "My computer" status line is built
+    Then   it says once that the computer is too small for local models and names the way out,
+           instead of naming a memory figure every model is measured against in vain
+    """
+    detection = HardwareDetection(
+        profile="cpu", reason=DetectionReason.NO_GPU_FOUND, system_memory_gb=7.7
+    )
+
+    text = wording.detection_status_text(detection)
+
+    assert text.endswith(wording.TOO_LITTLE_MEMORY)
+    assert "Computer memory" not in text
+    assert "Tesseract" in text and "another computer" in text
+
+
+@pytest.mark.use_case("Model_Recommendation_By_Hardware")
+def test_a_computer_with_enough_memory_names_its_memory_instead() -> None:
+    """
+    Given  a 16 GB computer without a graphics card
+    When   the "My computer" status line is built
+    Then   it names the memory and does not claim that no model fits
+    """
+    detection = HardwareDetection(
+        profile="cpu", reason=DetectionReason.NO_GPU_FOUND, system_memory_gb=16.0
+    )
+
+    text = wording.detection_status_text(detection)
+
+    assert "Computer memory: 16 GB." in text
+    assert wording.TOO_LITTLE_MEMORY not in text
+
+
+@pytest.mark.use_case("Model_Recommendation_By_Hardware")
 def test_slow_models_are_labelled_and_explained_without_alarm() -> None:
     """
     Given  a model rated "slow" for a computer with an 8 GB card
@@ -284,8 +351,8 @@ def test_slow_models_are_labelled_and_explained_without_alarm() -> None:
     Then   it says it works but slower and explains that part runs on the processor, and the
            hint is not a warning (no "too large", no warning sign)
     """
-    label = wording.suitability_text(Suitability.SLOW, "8gb", "general")
-    compact = wording.compact_suitability_text(Suitability.SLOW, "8gb", "general")
+    label = wording.suitability_text(Suitability.SLOW, "general")
+    compact = wording.compact_suitability_text(Suitability.SLOW, "general")
     hint = wording.model_hint(
         Suitability.SLOW, "8gb", task="general", memory_gb=14.0, best_for_task="qwen3.5:9b"
     )
@@ -307,3 +374,19 @@ def test_slow_text_without_a_graphics_card_says_it_runs_on_the_processor() -> No
     text = wording.slow_text(14.0, "cpu")
 
     assert "processor" in text and "memory" in text and "slower" in text
+
+
+@pytest.mark.use_case("Model_Recommendation_By_Hardware")
+def test_a_very_slow_model_is_labelled_very_slow_and_says_a_page_takes_minutes() -> None:
+    """
+    Given  a slow model of which very little fits on the graphics card
+    When   its labels and texts are built with very_slow set
+    Then   they say "very slowly" and that a page can take several minutes, still without alarm
+    """
+    label = wording.suitability_text(Suitability.SLOW, "general", very_slow=True)
+    compact = wording.compact_suitability_text(Suitability.SLOW, "general", very_slow=True)
+    text = wording.slow_text(14.0, "8gb", very_slow=True)
+
+    assert label == "Works, but very slowly"
+    assert compact == "Very slow"
+    assert "very slowly" in text and "several minutes" in text

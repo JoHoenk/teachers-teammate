@@ -37,7 +37,7 @@ Teacher's Teammate uses [Ollama](https://ollama.com) for OCR by default — a lo
 that keeps your documents on your machine. Install it from
 [ollama.com/download](https://ollama.com/download) if it isn't running yet.
 
-Then open **Advanced Settings → Downloads…** in the app, click **Select the best models for my
+Then open **Settings → Add-ons…** in the app, click **Select the best models for my
 computer**, and **Install / Download Selected**. Alternatively, pull a model yourself:
 
 ```bash
@@ -157,5 +157,5 @@ Teacher's Teammate is released under the
 [Apache License 2.0](https://github.com/JoHoenk/teachers-teammate/blob/main/LICENSE). It bundles
 third-party components, including the Qt toolkit (via PySide6) under the LGPL v3 — see
 [NOTICE](https://github.com/JoHoenk/teachers-teammate/blob/main/NOTICE) for details. The full
-license texts are also available in the app under **Advanced Settings → About → Third-Party
+license texts are also available in the app under **Help → Third-Party
 Licenses**.

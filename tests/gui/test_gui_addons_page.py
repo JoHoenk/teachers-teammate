@@ -1,10 +1,10 @@
-"""GUI tests for the reworked Downloads dialog (Ollama model groups & suitability)."""
+"""GUI tests for Settings → Add-ons (AI models for this computer: groups & suitability)."""
 # pylint: disable=W0621  # redefined-outer-name — pytest fixtures shadow module-scope names by design
 
 from __future__ import annotations
 
 import threading
-from typing import Any
+from typing import Any, ClassVar
 from unittest.mock import MagicMock
 
 import pytest
@@ -18,15 +18,18 @@ from teachers_teammate.domain.model_catalog import (
     ModelUses,
 )
 from teachers_teammate.domain.model_listing import ModelListing
-from teachers_teammate.gui._downloads_dialog import DownloadsDialog
+from teachers_teammate.gui.settings import _addons_page
+from teachers_teammate.gui.settings._addons_page import AddonsPage
+from teachers_teammate.gui.settings._page import FOCUS_LOCAL_MODELS, SettingsPage
 
+from ._gui_harness import settings_context
 from ._service_stubs import RecommendationServiceStub
 
 _USER_ROLE = 0x0100  # Qt.ItemDataRole.UserRole
 
 
 class _StubService(RecommendationServiceStub):
-    """Stub application service for DownloadsDialog tests."""
+    """Stub application service for Add-ons page tests."""
 
     def __init__(self, installed: set[str] | None = None) -> None:
         super().__init__()
@@ -84,27 +87,35 @@ def _make_dialog(
     preselect=(),
     service: Any = None,
     wait_for_profile: bool = True,
-) -> DownloadsDialog:
-    dlg = DownloadsDialog(
-        ollama_url="http://127.0.0.1:11434",
-        hardware_profile=hardware_profile,
-        preselect=preselect,
-        app_service=service or _StubService(installed),  # ty: ignore[invalid-argument-type]  # test stub for the concrete service
+    pull_manager: Any = None,
+) -> AddonsPage:
+    """Build the page; *preselect* arrives as a deep link (``focus``) would bring it."""
+    dlg = AddonsPage(
+        settings_context(
+            service or _StubService(installed),
+            settings={
+                "ollama_url": "http://127.0.0.1:11434",
+                "hardware_profile": hardware_profile,
+            },
+            pull_manager=pull_manager,
+        )
     )
     qtbot.addWidget(dlg)
+    if preselect:
+        dlg.focus(FOCUS_LOCAL_MODELS, preselect)
     if wait_for_profile:
         with qtbot.waitSignal(dlg._hardware_selector.resolved_changed, timeout=5000):
             pass
     return dlg
 
 
-def _detection_results(dlg: DownloadsDialog, installed: set[str]) -> dict:
+def _detection_results(dlg: AddonsPage, installed: set[str]) -> dict:
     """Build the results dict ``_detect_installed`` would produce."""
     tags = [tag for tag, _item in dlg._iter_model_items()]
     return {f"ollama:{t}": (t in installed) for t in tags}
 
 
-def _group_tags(dlg: DownloadsDialog, key: str) -> list[str]:
+def _group_tags(dlg: AddonsPage, key: str) -> list[str]:
     group = dlg._group_items[key]
     return [
         str(group.child(i).data(0, _USER_ROLE) or group.child(i).text(0))
@@ -118,8 +129,8 @@ def _group_tags(dlg: DownloadsDialog, key: str) -> list[str]:
 @pytest.mark.use_case("Model_Category_Guidance")
 def test_groups_contain_catalog_models_and_other_is_hidden(qtbot) -> None:
     """
-    Given  the reworked Downloads dialog
-    When   the Ollama tab is built
+    Given  the Add-ons page
+    When   the local-models tab is built
     Then   reading/writing groups hold exactly their catalog models and
            "Other models" is hidden while empty
     """
@@ -156,14 +167,14 @@ def test_suitability_column_and_sort_order_follow_profile(qtbot) -> None:
 @pytest.mark.use_case("Model_Recommendation_By_Hardware")
 def test_switching_profile_updates_suitability(qtbot) -> None:
     """
-    Given  the dialog resolved to 8gb
-    When   the user switches to "16 GB or more"
+    Given  the page resolved to 8gb
+    When   the window passes on that "Where the AI runs" was switched to "16 GB or more"
     Then   suitability labels and sorting update for the new profile
     """
     dlg = _make_dialog(qtbot)
     dlg._on_detection_done(_detection_results(dlg, set()))
     with qtbot.waitSignal(dlg._hardware_selector.resolved_changed, timeout=5000):
-        dlg._hardware_selector._combo.setCurrentText("Graphics card with 16 GB memory or more")
+        dlg.set_hardware_setting("16gb")
     writing = dlg._group_items["general"]
     # The first entry of every profile is a writing model that supports explanations.
     assert writing.child(0).text(0) == "gemma4:12b"
@@ -297,10 +308,10 @@ class _ProviderPackagesService(_StubService):
 
 def test_provider_preselect_opens_the_providers_tab_and_ticks_the_package(qtbot) -> None:
     """
-    Given  the dialog opened with preselect=["provider:mistral"] (the Install button of a
-           settings dialog), and Mistral not installed
+    Given  the page focused with preselect=["provider:mistral"] (the Install button of an AI
+           service hint), and Mistral not installed
     When   install detection finishes
-    Then   the LLM Providers tab is shown, the Mistral box is ticked and the pip package
+    Then   the Online AI services tab is shown, the Mistral box is ticked and the pip package
            would be installed, while OpenAI stays unticked
     """
     from PySide6.QtWidgets import QTabWidget  # noqa: PLC0415
@@ -308,7 +319,7 @@ def test_provider_preselect_opens_the_providers_tab_and_ticks_the_package(qtbot)
     dlg = _make_dialog(qtbot, service=_ProviderPackagesService(), preselect=["provider:mistral"])
     dlg._on_detection_done(_detection_results(dlg, set()))
 
-    assert dlg.findChild(QTabWidget).currentIndex() == DownloadsDialog.TAB_PROVIDERS
+    assert dlg.findChild(QTabWidget).currentIndex() == AddonsPage.TAB_ONLINE_SERVICES
     assert dlg._dl_checkboxes["provider:mistral"].isChecked() is True
     assert dlg._dl_checkboxes["provider:openai"].isChecked() is False
     assert dlg._collect_pip_packages() == ["langchain-mistralai"]
@@ -382,12 +393,10 @@ def test_slow_models_are_listed_as_slower_not_greyed_out_and_need_no_confirmatio
     assert "processor" in row.toolTip(1)
     assert row.foreground(1).style() == Qt.BrushStyle.NoBrush
 
-    import teachers_teammate.gui._downloads_dialog as dd  # noqa: PLC0415
-
     def no_question(*_a, **_k):
         raise AssertionError("a slow model must not ask for confirmation")
 
-    monkeypatch.setattr(dd, "QMessageBox", no_question)
+    monkeypatch.setattr(_addons_page, "QMessageBox", no_question)
     assert dlg._confirm_too_large(["gpt-oss:20b"]) is True
 
 
@@ -503,9 +512,7 @@ def test_too_large_selection_cancel_aborts(qtbot, monkeypatch) -> None:
     pulls = MagicMock()
     dlg._run_ollama_pulls = pulls  # ty: ignore[invalid-assignment]  # test patches the pull pipeline
     _FakeMessageBox.clicked = "Cancel"
-    import teachers_teammate.gui._downloads_dialog as dd  # noqa: PLC0415
-
-    monkeypatch.setattr(dd, "QMessageBox", _FakeMessageBox)
+    monkeypatch.setattr(_addons_page, "QMessageBox", _FakeMessageBox)
     dlg._on_download_install()
     pulls.assert_not_called()
     assert "needs about 14 GB of graphics memory" in _FakeMessageBox.last_text
@@ -530,9 +537,7 @@ def test_too_large_selection_download_anyway_proceeds(qtbot, monkeypatch) -> Non
     pulls = MagicMock()
     dlg._run_ollama_pulls = pulls  # ty: ignore[invalid-assignment]  # test patches the pull pipeline
     _FakeMessageBox.clicked = "Download anyway"
-    import teachers_teammate.gui._downloads_dialog as dd  # noqa: PLC0415
-
-    monkeypatch.setattr(dd, "QMessageBox", _FakeMessageBox)
+    monkeypatch.setattr(_addons_page, "QMessageBox", _FakeMessageBox)
     dlg._on_download_install()
     pulls.assert_called_once_with(["gpt-oss:20b"])
 
@@ -603,33 +608,229 @@ def test_failed_installed_check_still_ticks_best_models_and_preselect(qtbot) -> 
     service = _StubService()
     service.status_error = RuntimeError("Ollama is unreachable")
     dlg = _make_dialog(qtbot, service=service, preselect=["llama3.2:latest"])
-    dlg.show()
+    dlg.on_shown()
     qtbot.waitUntil(lambda: "Detection failed" in dlg._dl_detect_lbl.text(), timeout=5000)
     assert _ticked(dlg) == {DEFAULT_OCR_MODEL, DEFAULT_WRITING_MODEL, "llama3.2:latest"}
 
 
-# ── profile change signal ────────────────────────────────────────────────────
+# ── the profile is read-only here ──────────────────────────────────────────
 
 
 @pytest.mark.use_case("Hardware_Profile_Override")
-def test_changing_my_computer_emits_hardware_profile_changed(qtbot) -> None:
+def test_the_computer_profile_is_shown_read_only_with_a_change_link(qtbot) -> None:
     """
-    Given  the Downloads dialog
-    When   the "My computer" combo is changed
-    Then   hardware_profile_changed emits the internal setting value
+    Given  the Add-ons page
+    When   it is built
+    Then   "My computer" is a read-only line (no combo), with a "change…" link that asks the
+           window for the Where the AI runs page
     """
     dlg = _make_dialog(qtbot)
-    with qtbot.waitSignal(dlg.hardware_profile_changed, timeout=5000) as blocker:
-        dlg._hardware_selector._combo.setCurrentText(
-            "Basic computer or small graphics card (under 8 GB)"
-        )
-    assert blocker.args == ["cpu"]
+    assert dlg._hardware_selector._combo is None
+
+    with qtbot.waitSignal(dlg.navigate_requested, timeout=2000) as blocker:
+        dlg._change_profile_lbl.linkActivated.emit("change")
+
+    assert blocker.args == [SettingsPage.AI_SETUP, "", []]
+
+
+@pytest.mark.use_case("Hardware_Profile_Override")
+def test_the_page_follows_a_profile_chosen_on_this_computer(qtbot) -> None:
+    """
+    Given  the Add-ons page on the 8 GB profile
+    When   the window passes on a change to a basic computer
+    Then   the page re-rates its rows for that profile and moves the automatic ticks
+    """
+    dlg = _make_dialog(qtbot)
+    dlg._on_detection_done(_detection_results(dlg, set()))
+    assert _ticked(dlg) == {DEFAULT_OCR_MODEL, DEFAULT_WRITING_MODEL}
+
+    with qtbot.waitSignal(dlg._hardware_selector.resolved_changed, timeout=5000):
+        dlg.set_hardware_setting("cpu")
+
+    assert _ticked(dlg) == {"glm-ocr:q8_0", "qwen3:4b"}
+
+
+@pytest.mark.use_case("Hardware_Profile_Override")
+def test_a_new_server_address_starts_a_new_detection(qtbot) -> None:
+    """
+    Given  an Add-ons page that already detected what is installed
+    When   the window passes on another server address
+    Then   what is installed is asked again for the new server; the same address does nothing
+    """
+    service = _StubService()
+    dlg = _make_dialog(qtbot, service=service)
+    dlg.on_shown()
+    qtbot.waitUntil(lambda: dlg._installed_ready, timeout=5000)
+    calls = service.status_calls
+
+    dlg.set_ollama_url("http://127.0.0.1:11434")
+    qtbot.wait(50)
+    assert service.status_calls == calls
+
+    dlg.set_ollama_url("http://192.168.1.50:11434")
+    qtbot.waitUntil(lambda: service.status_calls == calls + 1, timeout=5000)
+
+
+# ── deep links and closing ───────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    ("focus", "tab"),
+    [
+        ("local_models", AddonsPage.TAB_LOCAL_MODELS),
+        ("ocr_engines", AddonsPage.TAB_OCR_ENGINES),
+        ("online_services", AddonsPage.TAB_ONLINE_SERVICES),
+        ("name_detection", AddonsPage.TAB_NAME_DETECTION),
+        ("gpu", AddonsPage.TAB_GPU),
+    ],
+)
+def test_focus_shows_the_matching_tab(qtbot, focus: str, tab: int) -> None:
+    """
+    Given  the Add-ons page
+    When   a deep link names one of its sections
+    Then   that tab is shown
+    """
+    dlg = _make_dialog(qtbot)
+
+    dlg.focus(focus)
+
+    assert dlg._tabs.currentIndex() == tab
+
+
+def test_a_preselect_after_detection_ticks_at_once(qtbot) -> None:
+    """
+    Given  an Add-ons page that finished detecting what is installed
+    When   a deep link brings a model to tick (the window was already open)
+    Then   it is ticked straight away, not only after the next detection
+    """
+    from PySide6.QtCore import Qt  # noqa: PLC0415
+
+    dlg = _make_dialog(qtbot)
+    dlg._on_detection_done(_detection_results(dlg, set()))
+    assert dlg._model_items["mistral:latest"].checkState(0) is Qt.CheckState.Unchecked
+
+    dlg.focus(FOCUS_LOCAL_MODELS, ["mistral:latest"])
+
+    assert dlg._model_items["mistral:latest"].checkState(0) is Qt.CheckState.Checked
+
+
+def test_the_page_applies_immediately_and_blocks_closing_only_while_installing(qtbot) -> None:
+    """
+    Given  the Add-ons page
+    When   a pip install or language-model download is running, and when it is not
+    Then   the page says it applies immediately, and close_blocker() explains why the window
+           cannot close only while the install runs
+    """
+    from PySide6.QtCore import QThread  # noqa: PLC0415
+
+    class _Busy(QThread):
+        def __init__(self) -> None:
+            super().__init__()
+            self.release = threading.Event()
+
+        def run(self) -> None:
+            self.release.wait(5)
+
+    dlg = _make_dialog(qtbot)
+    assert dlg.applies_immediately is True
+    assert dlg.close_blocker() == ""
+
+    busy = _Busy()
+    dlg._dl_active_thread = busy
+    busy.start()
+    try:
+        assert "installation is still running" in dlg.close_blocker()
+    finally:
+        busy.release.set()
+        busy.wait(5000)
+
+    assert dlg.close_blocker() == ""
+
+
+def test_a_running_pull_keeps_going_when_the_page_shuts_down(qtbot) -> None:
+    """
+    Given  a pull started through the main window's pull manager
+    When   the page shuts down (the window closed)
+    Then   the page no longer follows the manager, and the manager is not asked to abort
+    """
+    from PySide6.QtCore import QObject, Signal  # noqa: PLC0415
+
+    class _Manager(QObject):
+        progress = Signal(str, int, int)
+        finished = Signal(str)
+        error = Signal(str)
+        is_active = False
+        aborted = False
+        started: ClassVar[list[tuple[str, str]]] = []
+        queued: ClassVar[list[str]] = []
+
+        def start(self, url: str, model: str, queue=()) -> None:
+            self.started.append((url, model))
+
+        def abort(self) -> None:
+            self.aborted = True
+
+    manager = _Manager()
+    dlg = _make_dialog(qtbot, pull_manager=manager)
+    dlg._run_ollama_pulls([DEFAULT_OCR_MODEL])
+    assert manager.started == [("http://127.0.0.1:11434", DEFAULT_OCR_MODEL)]
+    assert dlg._pull_connected
+
+    dlg.shutdown()
+
+    assert not dlg._pull_connected
+    assert manager.aborted is False
+    manager.finished.emit(DEFAULT_OCR_MODEL)  # a late answer must not reach the closed page
+    assert dlg._dl_detect_lbl.text() != "Done."
+
+
+def test_the_queue_of_models_is_handed_to_the_manager(qtbot) -> None:
+    """
+    Given  an install round of two models through the main window's pull manager
+    When   the page starts it
+    Then   the manager gets the whole queue, so the models after the first are still pulled
+           when the window is closed; the page keeps following until the queue is empty
+    """
+    from PySide6.QtCore import QObject, Signal  # noqa: PLC0415
+
+    class _Manager(QObject):
+        progress = Signal(str, int, int)
+        finished = Signal(str)
+        error = Signal(str)
+        is_active = False
+        queued: ClassVar[list[str]] = []
+        calls: ClassVar[list[tuple[str, str, list[str]]]] = []
+
+        def start(self, url: str, model: str, queue=()) -> None:
+            self.calls.append((url, model, list(queue)))
+            type(self).queued = list(queue)
+
+        def abort(self) -> None:
+            pass
+
+    manager = _Manager()
+    dlg = _make_dialog(qtbot, pull_manager=manager)
+
+    dlg._run_ollama_pulls(["a:1b", "b:1b"])
+    assert manager.calls == [("http://127.0.0.1:11434", "a:1b", ["b:1b"])]
+
+    changed: list[bool] = []
+    dlg.packages_changed.connect(lambda: changed.append(True))
+
+    manager.finished.emit("a:1b")  # the manager goes on with b:1b by itself
+    assert dlg._pull_connected
+    assert changed == []
+
+    type(manager).queued = []
+    manager.finished.emit("b:1b")
+    assert not dlg._pull_connected
+    assert changed == [True]
 
 
 # ── pre-ticking waits for BOTH detections (review finding #4) ───────────────
 
 
-def _ticked(dlg: DownloadsDialog) -> set[str]:
+def _ticked(dlg: AddonsPage) -> set[str]:
     """Return the tags of all enabled rows that are currently ticked."""
     from PySide6.QtCore import Qt  # noqa: PLC0415
 
@@ -641,13 +842,15 @@ def _ticked(dlg: DownloadsDialog) -> set[str]:
     }
 
 
-def _choose_computer(qtbot, dlg: DownloadsDialog, text: str) -> None:
+def _choose_computer(qtbot, dlg: AddonsPage, text: str) -> None:
     with qtbot.waitSignal(dlg._hardware_selector.resolved_changed, timeout=5000):
-        dlg._hardware_selector._combo.setCurrentText(text)
+        dlg.set_hardware_setting(_SETTING_OF_TEXT[text])
 
 
 _CPU_TEXT = "Basic computer or small graphics card (under 8 GB)"
 _16GB_TEXT = "Graphics card with 16 GB memory or more"
+#: The page follows the profile chosen on Where the AI runs, passed on as the setting value.
+_SETTING_OF_TEXT = {_CPU_TEXT: "cpu", _16GB_TEXT: "16gb"}
 
 
 @pytest.mark.use_case("Recommended_Models_On_First_Start")
@@ -888,7 +1091,7 @@ def test_pulled_custom_models_stay_in_other_with_their_abilities(
 @pytest.mark.use_case("Runtime_Addon_Installation")
 def test_tab_constants_point_at_the_matching_tabs(qtbot) -> None:
     """
-    Given  the Downloads dialog (the Ollama tab was moved to the front)
+    Given  the Add-ons page (the local-models tab is in front)
     When   the tab constants are used to look up tab titles
     Then   each constant names the tab it claims (callers open tabs by constant)
     """
@@ -897,11 +1100,11 @@ def test_tab_constants_point_at_the_matching_tabs(qtbot) -> None:
     dlg = _make_dialog(qtbot)
     tabs = dlg.findChild(QTabWidget)
     assert tabs is not None
-    assert tabs.tabText(DownloadsDialog.TAB_OLLAMA) == "Ollama Models"
-    assert tabs.tabText(DownloadsDialog.TAB_OCR_ENGINES) == "OCR Engines"
-    assert tabs.tabText(DownloadsDialog.TAB_PROVIDERS) == "LLM Providers"
-    assert tabs.tabText(DownloadsDialog.TAB_SPACY) == "spaCy"
-    assert tabs.tabText(DownloadsDialog.TAB_GPU) == "GPU Add-ons"
+    assert tabs.tabText(AddonsPage.TAB_LOCAL_MODELS) == "AI models for this computer"
+    assert tabs.tabText(AddonsPage.TAB_ONLINE_SERVICES) == "Online AI services"
+    assert tabs.tabText(AddonsPage.TAB_NAME_DETECTION) == "Name detection"
+    assert tabs.tabText(AddonsPage.TAB_OCR_ENGINES) == "Handwriting engines"
+    assert tabs.tabText(AddonsPage.TAB_GPU) == "Performance monitoring"
 
 
 @pytest.mark.use_case("Model_Category_Guidance")
@@ -967,11 +1170,12 @@ def test_enter_in_the_name_field_adds_the_model(qtbot) -> None:
     assert dlg._model_items["llama3.2:latest"].checkState(0) is Qt.CheckState.Checked
 
 
-def test_enter_in_the_name_field_does_not_press_a_dialog_button(qtbot, monkeypatch) -> None:
+def test_enter_in_the_name_field_does_not_press_a_button(qtbot, monkeypatch) -> None:
     """
-    Given  a model name typed into the "Add a model by name" field of the shown dialog
+    Given  a model name typed into the "Add a model by name" field of the shown page
     When   the user presses the real Enter key
-    Then   only the model is added: no dialog button (Install, Close, …) is activated
+    Then   only the model is added: no button (Install, Add, …) is activated, and none of the
+           page's buttons is an auto-default button that a window's Enter handling could press
     """
     from PySide6.QtCore import Qt  # noqa: PLC0415
     from PySide6.QtTest import QTest  # noqa: PLC0415
@@ -990,4 +1194,5 @@ def test_enter_in_the_name_field_does_not_press_a_dialog_button(qtbot, monkeypat
 
     assert "llama3.2:latest" in dlg._model_items
     assert pressed == []
+    assert not any(button.autoDefault() for button in dlg.findChildren(QPushButton))
     assert dlg.isVisible() is True

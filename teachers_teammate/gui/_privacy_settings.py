@@ -2,8 +2,8 @@
 
 A run that would send content away from this computer asks first.  Ticking "Don't ask again"
 remembers the answer for exactly those settings, keyed by the data flow's fingerprint.  This
-module is the one place that reads and writes those answers, so the question, the Privacy
-Settings list and the reset all agree.
+module is the one place that reads and writes those answers, so the question, the list in
+Settings → Privacy and the reset all agree.
 
 Each answer is stored with a readable summary, so the list can say *what* was agreed to
 ("Proofreading: Online service (Mistral) -- receives text, names sent as written") instead of
@@ -18,10 +18,6 @@ from dataclasses import dataclass
 from typing import Any
 
 from ..domain.data_location import DataFlow, describe_fingerprint
-
-#: Sections of the Privacy Settings window a caller can ask to open on.
-SECTION_SENDING = "sending"
-SECTION_DETECTION = "detection"
 
 SETTINGS_KEY = "privacy/acknowledged_data_flows"
 """One line per remembered answer: ``<fingerprint>`` or ``<fingerprint>\\t<summary>``."""

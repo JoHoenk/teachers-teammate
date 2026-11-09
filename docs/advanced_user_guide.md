@@ -8,7 +8,7 @@ This guide is for technically-minded users who want to configure the processing 
 
 Text recognition — also called OCR (Optical Character Recognition) — is the process of converting an image of a document into machine-readable text. From this point the abbreviation **OCR** is used throughout.
 
-The OCR engine can be switched in **Settings → Text Recognition…** or by changing the `ocr_engine` key in the settings file (TOML format). On the command line use `--ocr-engine`.
+The OCR engine can be switched in **Settings → AI models…** or by changing the `ocr_engine` key in the settings file (TOML format). On the command line use `--ocr-engine`.
 
 Only engines that read pages on a computer you control are available: `ollama`, `tesseract` and `paddleocr`. Online vision models (the former `langchain` engine and `--ocr-provider`) were removed because a page cannot be anonymised before it is read. A settings file that still names one falls back to `ollama` with a warning, and Ollama cloud models (tags ending in `cloud`) are refused for OCR.
 
@@ -16,9 +16,9 @@ Only engines that read pages on a computer you control are available: `ollama`, 
 
 Ollama runs AI vision models locally on your machine. Teacher's Teammate sends each prepared image to the Ollama service along with a reading prompt, and the model returns the extracted text. This approach delivers the highest accuracy for handwriting and low-quality scans.
 
-**Ollama must be running** before you start a processing run. Download it from [ollama.com/download](https://ollama.com/download) and install it like any other program. By default Teacher's Teammate connects to `http://127.0.0.1:11434` (your own computer). If you run Ollama on a dedicated machine on your local network, change the address in **Advanced Settings → Connections & API Keys…** or set `ollama_url` in the settings file — for example `http://192.168.1.50:11434`.
+**Ollama must be running** before you start a processing run. Download it from [ollama.com/download](https://ollama.com/download) and install it like any other program. By default Teacher's Teammate connects to `http://127.0.0.1:11434` (your own computer). If you run Ollama on a dedicated machine on your local network, change the address in **Settings → Where the AI runs…** or set `ollama_url` in the settings file — for example `http://192.168.1.50:11434`.
 
-**Default models.** Without explicit model settings the app (and the command line) uses `hf.co/prithivMLmods/chandra-ocr-2-GGUF:Q8_0` for reading and `gemma4:e4b` for proofreading and content review. These defaults apply on every computer; the recommendations in the tables below depend on your hardware profile. Download them in **Advanced Settings → Downloads…**, or choose other models with `ocr_model`, `correction_model` and `evaluate_model` in the settings file.
+**Default models.** Without explicit model settings the app (and the command line) uses `hf.co/prithivMLmods/chandra-ocr-2-GGUF:Q8_0` for reading and `gemma4:e4b` for proofreading and content review. These defaults apply on every computer; the recommendations in the tables below depend on your hardware profile. Download them in **Settings → Add-ons…**, or choose other models with `ocr_model`, `correction_model` and `evaluate_model` in the settings file.
 
 **Reading models and hardware requirements:**
 
@@ -55,13 +55,13 @@ The `hardware_profile` setting in the settings file (TOML format) controls the p
 
 - **Works** (or *good* / *best*): the model fits on the graphics card (about 85 % of the card's memory can be used for models; the rest belongs to the operating system) — or, on a computer without a graphics card, it is small (up to 4 GB) and fits in main memory.
 - **Slower** or **very slow**: less than 90 % of the model fits on the card, so part of it runs on the processor in main memory. This works, but a page takes longer — minutes, when less than 70 % fits. It is rated this way only if the part that does not fit is held by your main memory **after** keeping the larger of 8 GB and 20 % of it free for the system.
-- **Does not fit** ("too large"): the rest would not fit in main memory. The model could only run by using the disk as memory, which makes the computer unusable; the app never counts that as memory. The Downloads dialog warns you before you download such a model.
+- **Does not fit** ("too large"): the rest would not fit in main memory. The model could only run by using the disk as memory, which makes the computer unusable; the app never counts that as memory. **Settings → Add-ons…** warns you before you download such a model.
 
 Before a run the app also checks the memory that is free at that moment (keeping 2 GB spare) for the models it will use. If it is not enough it warns you and explains what would happen — the computer would have to use its disk as memory and become extremely slow — and you can still start the run if you know better (other programs may close meanwhile). On the command line the run stops with an error unless you pass `--ignore-memory-check`. This check is skipped when Ollama runs on another computer, whose memory the app cannot see.
 
 **Downloading reading models:**
 
-Open **Advanced Settings → Downloads…** inside Teacher's Teammate, go to the **Ollama Models** tab, tick the model you want, and click **Install / Download Selected** (the **OCR Engines** tab is for the Tesseract and PaddleOCR engines instead). The download runs in the background and the model is available immediately when finished. You can also pull models directly from the command line:
+Open **Settings → Add-ons…** inside Teacher's Teammate, go to the **AI models for this computer** tab, tick the model you want, and click **Install / Download Selected** (the **Handwriting engines** tab is for the Tesseract and PaddleOCR engines instead). The download runs in the background and the model is available immediately when finished. You can also pull models directly from the command line:
 
 ```bash
 ollama pull qwen3-vl:8b
@@ -103,7 +103,7 @@ PaddleOCR is an optional add-on that can be installed from within Teacher's Team
 
 ## Image preprocessing
 
-Image preprocessing improves OCR accuracy by cleaning and normalising each document image before it is sent to the text recognition engine. All settings described here are available in **Settings → Text Recognition…** and on the command line via `--preprocess-*` flags.
+Image preprocessing improves OCR accuracy by cleaning and normalising each document image before it is sent to the text recognition engine. All settings described here are available in **Settings → Scan quality…** and on the command line via `--preprocess-*` flags.
 
 ### How the pipeline works
 
@@ -217,7 +217,7 @@ want the best quality, choose a higher quant level.
 
 **Temperature** controls how predictable a model's output is. It ranges from `0.0` to
 `2.0` and can be set separately for reading, proofreading, and content review in
-**Settings → Text Recognition… / Proofreading Settings… / Content Review Settings…**.
+**Settings → AI models…**.
 The setting is tucked away under **Expert settings**, which is collapsed unless you
 already chose a value other than the default — you rarely need to change it.
 
@@ -233,7 +233,7 @@ When in doubt, leave temperature at `0.0`.
 ### Models from Hugging Face
 
 Most models are available directly from the [Ollama library](https://ollama.com/library)
-and can be downloaded from **Advanced Settings → Downloads…** inside the app. Some newer
+and can be downloaded from **Settings → Add-ons…** inside the app. Some newer
 or specialised models are published on [Hugging Face](https://huggingface.co/) instead.
 Ollama can pull these directly using an `hf.co/` prefix — for example:
 
@@ -250,7 +250,7 @@ lists just like any Ollama-library model — no further setup is required.
 
 ## Image preparation (preprocessing)
 
-Image preparation — referred to as *preprocessing* in the settings file — is applied to each image before it is passed to the OCR engine. The chosen method has a significant impact on recognition accuracy. Set it in **Settings → Text Recognition…**.
+Image preparation — referred to as *preprocessing* in the settings file — is applied to each image before it is passed to the OCR engine. The chosen method has a significant impact on recognition accuracy. Set it in **Settings → Scan quality…**.
 
 **`grayscale`** converts the image to greyscale without any further adjustments. It preserves tonal detail and is the recommended starting point for Ollama vision models, which handle contrast internally.
 
@@ -260,7 +260,7 @@ Image preparation — referred to as *preprocessing* in the settings file — is
 
 **`none`** passes the image through without modification. Use this when the input is already clean, or when colour information is important — for example, PaddleOCR sometimes performs better on colour input.
 
-Use the preview tool in **Settings → Text Recognition…** to compare methods side by side before committing to a large batch. Ctrl + mouse wheel zooms the preview image.
+Use the preview tool in **Settings → Scan quality…** to compare methods side by side before committing to a large batch. Ctrl + mouse wheel zooms the preview image.
 
 ---
 
@@ -287,7 +287,7 @@ After OCR, the anonymizer scans the text for PII and replaces each detected item
 
 The street and postcode patterns only know German formats. A street needs a house number and a street word (`…straße`, `…weg`, `…platz`, `Straße`, `Weg`, …, optionally after `St.` or `Sankt`); a postcode is only recognised at the start of a line or after a comma, `in` or `D-`. Dates are recognised as numbers (`01.02.2010`, `1/2/10`, `2010-02-01`) and with a German or English month name (`5. März 2024`, `March 5, 2024`, `5th March 2024`); a month and year without a day (`März 2024`) is left alone.
 
-Because the proofreading and the content review both receive the anonymized text, every replaced date is hidden from them. In a history essay a year such as `9.11.1989` is replaced too. A section number such as `Aufgabe 1.2.10` can also be read as a date. If that gets in the way, remove the `DATE` patterns in **Advanced Settings → Privacy Settings… → Personal info: patterns**.
+Because the proofreading and the content review both receive the anonymized text, every replaced date is hidden from them. In a history essay a year such as `9.11.1989` is replaced too. A section number such as `Aufgabe 1.2.10` can also be read as a date. If that gets in the way, remove the `DATE` patterns in **Settings → Privacy… → Personal info: patterns**.
 
 Your pattern list is only stored once you change it. Settings saved while the built-in list was still IBAN, email and phone switch to the current built-in list automatically. Proofread text that already exists is kept; the *anonymized text* files and exports always use the patterns that are current when you create them.
 
@@ -298,7 +298,7 @@ Person-name detection is powered by [spaCy](https://spacy.io/), an open-source n
 The Privacy add-on (which includes spaCy) and the language models are both installed from inside the app:
 
 - **Privacy add-on**: click the *Install Privacy Add-on* button (shown automatically when the feature is missing).
-- **Language models**: open **Advanced Settings → Privacy Settings…** → **Personal info: detection** → **Download Model** and choose a model from the list.
+- **Language models**: open **Settings → Add-ons…** → **Name detection**, tick a model and install it.
 
 **Available language models:**
 
@@ -308,7 +308,7 @@ The Privacy add-on (which includes spaCy) and the language models are both insta
 | `de_core_news_sm` | German | ~15 MB | Higher accuracy for German-only documents |
 | `en_core_web_sm` | English | ~15 MB | Higher accuracy for English-only documents |
 
-Teacher's Teammate supports a **primary** and an optional **secondary** language model simultaneously. Using two models — for example, multilingual + German — increases recall for names that the first model misses. Configure this in **Advanced Settings → Privacy Settings… → Personal info: detection**.
+Teacher's Teammate supports a **primary** and an optional **secondary** language model simultaneously. Using two models — for example, multilingual + German — increases recall for names that the first model misses. Configure this in **Settings → Privacy… → Personal info: detection**.
 
 Enable anonymization via the **Remove personal information before proofreading** checkbox, or set `anonymization_enabled = true` in the settings file. Anonymization only runs when proofreading is also enabled.
 
@@ -327,7 +327,7 @@ The answer is a *review*, not just a text: the corrected text plus a short expla
 | `correction_level` | `B2` | Target level (CEFR `A1`–`C2`) for every language. The prompt's `{level}` placeholder is filled with it; a custom prompt without `{level}` ignores the setting |
 | `explanation_language` | `""` | Language of the explanations and note tables; empty means the language of the document |
 | `correction_output` | `review` | `review` explains the changes; `text` is *Corrections only (faster)* and is also the automatic fallback when a model cannot answer in the explanation format |
-| `answer_format_review`, `answer_format_text` | `""` | Your own answer format for the two modes (empty = built-in). It tells the model how to fill in its reply; the app reads the reply in this format, so change it only if you know what you are doing. A custom format is tied to `answer_format_version` (written for you by the GUI; without it the current version is assumed). When an update changes the built-in format, an edit written for the older one is dropped with a warning. The Proofreading Settings dialog edits them under *Answer format (advanced)* |
+| `answer_format_review`, `answer_format_text` | `""` | Your own answer format for the two modes (empty = built-in). It tells the model how to fill in its reply; the app reads the reply in this format, so change it only if you know what you are doing. A custom format is tied to `answer_format_version` (written for you by the GUI; without it the current version is assumed). When an update changes the built-in format, an edit written for the older one is dropped with a warning. The proofreading **Instructions…** dialog edits them under *Answer format (advanced)* |
 | `proofreading_context` | `auto` | The context window (in tokens) the model gets for proofreading. `auto` grows the window with the free memory of a large graphics card — 8192, 16384 or 32768, whichever still fits the card entirely — and stays at 8192 when there is no card, the card size is unknown or Ollama runs on another computer. A fixed value from `8192`, `16384`, `32768` overrides `auto`; useful for a remote server whose card the app cannot see. A larger window lets longer texts through, but it also needs more memory |
 
 **Upgrading from an earlier version.** The default proofreading model is now `gemma4:e4b` and the
@@ -341,7 +341,7 @@ Long texts are proofread in pieces: the text is split at paragraph, then sentenc
 
 Review answers are bound to a JSON schema. When a model fails to answer the schema (models without the `explanations ✓` badge are more likely to), proofreading falls back to corrections only for that file and says so. A file whose request failed (no connection, timeout) is not stored as corrected, so the next run tries it again. An unknown `correction_level` or `correction_output` in the config file counts as the default (`B2`, `review`); on the command line `--explanations` turns explanations back on when the config file turned them off. The same cache is reused as long as the level, the explanation language, the output mode, the instructions, the answer format and the answer-format version stay unchanged (the built-in texts count as they are, so a changed built-in prompt also re-runs proofreading) — changing any of them re-runs proofreading.
 
-The AI service and model are set in **Settings → Proofreading Settings…**. Local Ollama models require no internet access or account. Online services (OpenAI, Anthropic, Google) require an API access key entered in **Advanced Settings → Connections & API Keys…**.
+The AI service and model are set in **Settings → AI models…**. Local Ollama models require no internet access or account. Online services (OpenAI, Anthropic, Google) require an API access key entered in **Settings → Where the AI runs…**. The key is stored in the system keychain (macOS Keychain, Windows Credential Manager, Linux Secret Service such as GNOME Keyring or KWallet). Without a keychain (a minimal Linux install, WSL) it is stored unencrypted in the app's settings file (on Linux `~/.config/TeachersTeammate/TeachersTeammate.conf`), and the page says so. Keys from an older version are moved into the keychain at the next start. A key set in the environment (e.g. `OPENAI_API_KEY`) before starting the app takes priority and is never stored.
 
 ### Content review
 

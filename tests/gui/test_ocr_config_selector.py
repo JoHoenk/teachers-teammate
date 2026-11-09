@@ -103,7 +103,7 @@ def test_get_ocr_config_for_native_engine(selector) -> None:
     When   get_ocr_config() is called
     Then   it returns an OcrConfig with that engine
     """
-    selector._ocr_engine.setCurrentText("tesseract")
+    selector._picker._ocr_engine.setCurrentText("tesseract")
     ocr = selector.get_ocr_config()
     assert ocr.engine == "tesseract"
 
@@ -115,7 +115,10 @@ def test_online_providers_are_not_offered_as_recognition_methods(selector) -> No
     When   the recognition-method choices are read
     Then   only engines that run on the user's computer are offered
     """
-    engines = [selector._ocr_engine.itemText(i) for i in range(selector._ocr_engine.count())]
+    engines = [
+        selector._picker._ocr_engine.itemText(i)
+        for i in range(selector._picker._ocr_engine.count())
+    ]
     assert engines == ["ollama", "tesseract", "paddleocr"]
 
 
@@ -176,8 +179,8 @@ def test_preview_button_emits_full_ocr_config(selector, qtbot) -> None:
     """
     from PySide6.QtWidgets import QPushButton  # noqa: PLC0415
 
-    selector._deskew.setChecked(True)
-    selector._border_crop.setChecked(True)
+    selector._scan._deskew.setChecked(True)
+    selector._scan._border_crop.setChecked(True)
 
     preview_btn = next(
         w for w in selector.findChildren(QPushButton) if w.text().startswith("Preview")
@@ -199,10 +202,10 @@ def test_native_non_ollama_engine_hides_model_row(selector) -> None:
     When   a non-ollama native engine is selected
     Then   the model row is hidden (tesseract/paddle take no model name)
     """
-    selector._ocr_engine.setCurrentText("tesseract")
-    assert selector._ocr_model_row.isHidden() is True
-    selector._ocr_engine.setCurrentText("ollama")
-    assert selector._ocr_model_row.isHidden() is False
+    selector._picker._ocr_engine.setCurrentText("tesseract")
+    assert selector._picker._ocr_model_row.isHidden() is True
+    selector._picker._ocr_engine.setCurrentText("ollama")
+    assert selector._picker._ocr_model_row.isHidden() is False
 
 
 @pytest.mark.gui
@@ -216,16 +219,16 @@ def test_prestep_checkboxes_disabled_under_preprocess_method_none(selector) -> N
     original file unchanged), so a checked box under it would silently have no effect.
     """
     checkboxes = [
-        selector._dewarp,
-        selector._deskew,
-        selector._border_crop,
-        selector._denoise,
-        selector._gamma,
+        selector._scan._dewarp,
+        selector._scan._deskew,
+        selector._scan._border_crop,
+        selector._scan._denoise,
+        selector._scan._gamma,
     ]
-    selector._preprocess.setCurrentText("none")
+    selector._scan._preprocess.setCurrentText("none")
     assert all(not cb.isEnabled() for cb in checkboxes)
 
-    selector._preprocess.setCurrentText("grayscale")
+    selector._scan._preprocess.setCurrentText("grayscale")
     assert all(cb.isEnabled() for cb in checkboxes)
 
 
@@ -237,8 +240,8 @@ def test_load_ocr_config_disables_prestep_checkboxes_for_method_none(selector) -
     Then   the pre-step checkboxes are disabled
     """
     selector.load_ocr_config(OcrConfig(engine="tesseract", preprocess_method="none"))
-    assert selector._preprocess.currentText() == "none"
-    assert selector._deskew.isEnabled() is False
+    assert selector._scan._preprocess.currentText() == "none"
+    assert selector._scan._deskew.isEnabled() is False
 
 
 # ── Ollama model guidance (sorting, hints, use-best button) ────────────────
@@ -268,12 +271,12 @@ def _ollama_selector(
         open_downloads=open_downloads,
     )
     qtbot.addWidget(widget)
-    with qtbot.waitSignal(widget._hw_selector.resolved_changed, timeout=5000):
+    with qtbot.waitSignal(widget._picker._hw_selector.resolved_changed, timeout=5000):
         pass
     widget.refresh()  # starts the (always threaded) Ollama model fetch
     installed = models if models is not None else _INSTALLED
-    qtbot.waitUntil(lambda: widget._guidance._models == list(installed), timeout=5000)
-    thread = widget._fetch_thread
+    qtbot.waitUntil(lambda: widget._picker._guidance._models == list(installed), timeout=5000)
+    thread = widget._picker._fetch_thread
     assert thread is not None
     thread.wait(5000)
     return widget
@@ -287,7 +290,7 @@ def test_ollama_models_sorted_best_first_with_raw_tags(qtbot) -> None:
     Then   the BEST reading model comes first and the combo text stays the raw tag (AC8)
     """
     selector = _ollama_selector(qtbot)
-    combo = selector._ocr_model
+    combo = selector._picker._ocr_model
     assert combo.itemText(0) == DEFAULT_OCR_MODEL
     # No decoration in the item text: raw tags only; GOOD models follow, sorted by name,
     # and a separator line sets off the models that are not suitable for reading.
@@ -311,7 +314,7 @@ def test_every_model_shows_its_rating_next_to_the_name(qtbot) -> None:
     Then   each row carries a short rating label while its text stays the raw tag
     """
     selector = _ollama_selector(qtbot)
-    combo = selector._ocr_model
+    combo = selector._picker._ocr_model
     labels = {combo.itemText(i): combo.itemData(i, ITEM_LABEL_ROLE) for i in range(combo.count())}
     assert labels[DEFAULT_OCR_MODEL].startswith("★ Best")
     assert labels["qwen3-vl:8b"].startswith("Good")
@@ -327,7 +330,7 @@ def test_picking_a_model_from_the_last_group_saves_its_raw_tag(qtbot) -> None:
     Then   the saved setting is the raw tag, without the rating label
     """
     selector = _ollama_selector(qtbot)
-    combo = selector._ocr_model
+    combo = selector._picker._ocr_model
     combo.setCurrentIndex(combo.findText("mistral:latest"))
     assert selector.get_ocr_config().model == "mistral:latest"
 
@@ -340,8 +343,8 @@ def test_selecting_general_model_shows_wrong_kind_hint(qtbot) -> None:
     Then   the hint warns that the model cannot read scans (AC6)
     """
     selector = _ollama_selector(qtbot)
-    selector._ocr_model.setCurrentText("mistral:latest")
-    hint = selector._guidance._hint_lbl.text()
+    selector._picker._ocr_model.setCurrentText("mistral:latest")
+    hint = selector._picker._guidance._hint_lbl.text()
     assert "cannot read scans" in hint
     assert DEFAULT_OCR_MODEL in hint  # suggests a reading model example
 
@@ -354,9 +357,9 @@ def test_use_best_choice_selects_installed_best_model(qtbot) -> None:
     Then   the combo selects that model
     """
     selector = _ollama_selector(qtbot)
-    selector._ocr_model.setCurrentText("glm-ocr:q8_0")
-    selector._guidance._best_btn.click()
-    assert selector._ocr_model.currentText() == DEFAULT_OCR_MODEL
+    selector._picker._ocr_model.setCurrentText("glm-ocr:q8_0")
+    selector._picker._guidance._best_btn.click()
+    assert selector._picker._ocr_model.currentText() == DEFAULT_OCR_MODEL
 
 
 @pytest.mark.use_case("Recommended_Models_On_First_Start")
@@ -376,7 +379,7 @@ def test_download_best_choice_calls_open_downloads(qtbot) -> None:
     selector = _ollama_selector(
         qtbot, models=["glm-ocr:q8_0", "qwen3.5:9b"], open_downloads=open_downloads
     )
-    selector._guidance._best_btn.click()
+    selector._picker._guidance._best_btn.click()
     assert received == [[DEFAULT_OCR_MODEL]]
 
 
@@ -389,13 +392,13 @@ def test_non_ollama_engines_have_no_hint_and_button(qtbot) -> None:
            Ollama until its freshly fetched list is in (a stale hint is never shown)
     """
     selector = _ollama_selector(qtbot)
-    selector._ocr_engine.setCurrentText("tesseract")
-    assert selector._guidance.isHidden() is True
-    selector._ocr_engine.setCurrentText("paddleocr")
-    assert selector._guidance.isHidden() is True
-    selector._ocr_engine.setCurrentText("ollama")
-    assert selector._guidance.isHidden() is True  # still asking, so no stale hint
-    qtbot.waitUntil(lambda: selector._guidance.isHidden() is False, timeout=5000)
+    selector._picker._ocr_engine.setCurrentText("tesseract")
+    assert selector._picker._guidance.isHidden() is True
+    selector._picker._ocr_engine.setCurrentText("paddleocr")
+    assert selector._picker._guidance.isHidden() is True
+    selector._picker._ocr_engine.setCurrentText("ollama")
+    assert selector._picker._guidance.isHidden() is True  # still asking, so no stale hint
+    qtbot.waitUntil(lambda: selector._picker._guidance.isHidden() is False, timeout=5000)
 
 
 @pytest.mark.use_case("Model_Category_Guidance")
@@ -410,15 +413,15 @@ def test_ollama_cloud_models_are_not_offered_for_reading_pages(qtbot) -> None:
         app_service=_OllamaCatalogAppService(models), hardware_profile="8gb"
     )
     qtbot.addWidget(selector)
-    with qtbot.waitSignal(selector._hw_selector.resolved_changed, timeout=5000):
+    with qtbot.waitSignal(selector._picker._hw_selector.resolved_changed, timeout=5000):
         pass
     selector.refresh()
-    qtbot.waitUntil(lambda: selector._guidance._models == ["qwen3-vl:8b"], timeout=5000)
-    thread = selector._fetch_thread
+    qtbot.waitUntil(lambda: selector._picker._guidance._models == ["qwen3-vl:8b"], timeout=5000)
+    thread = selector._picker._fetch_thread
     assert thread is not None
     thread.wait(5000)
 
-    combo = selector._ocr_model
+    combo = selector._picker._ocr_model
     assert [combo.itemText(i) for i in range(combo.count())] == ["qwen3-vl:8b"]
 
 
@@ -460,7 +463,7 @@ def test_selector_says_where_pages_are_read(qtbot, location, expected) -> None:
     widget = OcrConfigSelector(app_service=_LocationAppService(location))
     qtbot.addWidget(widget)
 
-    text = widget._where_hint.text()
+    text = widget._picker._where_hint.text()
 
     assert location.label in text
     assert expected in text
@@ -478,9 +481,9 @@ def test_selector_refuses_a_hosted_ollama_server_even_for_a_plain_model(qtbot) -
     )
     qtbot.addWidget(widget)
 
-    widget._ocr_model.setCurrentText("qwen3-vl:8b")
+    widget._picker._ocr_model.setCurrentText("qwen3-vl:8b")
 
-    assert "not allowed" in html.unescape(widget._where_hint.text())
+    assert "not allowed" in html.unescape(widget._picker._where_hint.text())
 
 
 @pytest.mark.gui
@@ -496,10 +499,10 @@ def test_selector_warns_when_a_cloud_model_is_typed_in(qtbot) -> None:
     )
     qtbot.addWidget(widget)
 
-    widget._ocr_model.setCurrentText("qwen3-vl:235b-cloud")
+    widget._picker._ocr_model.setCurrentText("qwen3-vl:235b-cloud")
 
-    assert "not allowed" in html.unescape(widget._where_hint.text())
-    assert "Ollama's servers" in widget._where_hint.toolTip()
+    assert "not allowed" in html.unescape(widget._picker._where_hint.text())
+    assert "Ollama's servers" in widget._picker._where_hint.toolTip()
 
 
 @pytest.mark.gui
@@ -513,13 +516,13 @@ def test_switching_the_engine_retires_a_running_model_fetch(qtbot, monkeypatch) 
 
     widget = OcrConfigSelector(app_service=_DummyAppService())
     qtbot.addWidget(widget)
-    widget._ocr_engine.setCurrentText("ollama")
+    widget._picker._ocr_engine.setCurrentText("ollama")
     retired: list[object] = []
     monkeypatch.setattr(_ocr_config_selector, "_retire_thread", retired.append)
     running = object()
-    monkeypatch.setattr(widget, "_fetch_thread", running)
+    monkeypatch.setattr(widget._picker, "_fetch_thread", running)
 
-    widget._ocr_engine.setCurrentText("tesseract")
+    widget._picker._ocr_engine.setCurrentText("tesseract")
 
     assert running in retired
 
@@ -533,14 +536,14 @@ def test_a_late_ollama_answer_does_not_touch_another_engines_widgets(qtbot) -> N
     """
     widget = OcrConfigSelector(app_service=_DummyAppService())
     qtbot.addWidget(widget)
-    widget._ocr_engine.setCurrentText("tesseract")
-    before = widget._ocr_model.currentText()
+    widget._picker._ocr_engine.setCurrentText("tesseract")
+    before = widget._picker._ocr_model.currentText()
 
-    widget._on_models_fetched(["llama3.2-vision:11b"])
+    widget._picker._on_models_fetched(["llama3.2-vision:11b"])
 
-    assert widget._guidance.isHidden()
-    assert widget._ocr_model.currentText() == before
-    assert widget._ocr_model.findText("llama3.2-vision:11b") < 0
+    assert widget._picker._guidance.isHidden()
+    assert widget._picker._ocr_model.currentText() == before
+    assert widget._picker._ocr_model.findText("llama3.2-vision:11b") < 0
 
 
 @pytest.mark.gui
@@ -552,11 +555,11 @@ def test_the_ollama_hint_comes_back_when_ollama_does_not_answer(qtbot) -> None:
     """
     widget = OcrConfigSelector(app_service=_DummyAppService())
     qtbot.addWidget(widget)
-    widget._ocr_engine.setCurrentText("ollama")
-    widget._set_busy(True, "Asking Ollama…")
-    assert widget._guidance.isHidden()
+    widget._picker._ocr_engine.setCurrentText("ollama")
+    widget._picker._set_busy(True, "Asking Ollama…")
+    assert widget._picker._guidance.isHidden()
 
-    widget._on_models_fetched([])
+    widget._picker._on_models_fetched([])
 
-    assert not widget._guidance.isHidden()
-    assert "#c0392b" in widget._status_lbl.text()
+    assert not widget._picker._guidance.isHidden()
+    assert "#c0392b" in widget._picker._status_lbl.text()

@@ -295,8 +295,8 @@ def resolve_anonymizer_config(
             warn(
                 f"WARNING: the extra detection model '{missing}' for the language of this "
                 f"computer ({system_language}) is not downloaded, so only '{primary}' is "
-                "used. Download it in Advanced Settings → Downloads to catch names the "
-                f"{document_language} model misses."
+                f"used. Download it under Add-ons in the app, or with `python -m spacy "
+                f"download {missing}`, to catch names the {document_language} model misses."
             )
         return replace(config, secondary_model=None)
     return replace(config, secondary_model=system_model)

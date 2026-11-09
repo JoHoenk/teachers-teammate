@@ -186,7 +186,7 @@ def test_benchmark_follows_the_saved_hardware_profile_and_ollama_url(qtbot) -> N
     qtbot.addWidget(win)
     win._source = Path("/docs/sample.pdf")
 
-    selector = win._selector._hw_selector
+    selector = win._selector._picker._hw_selector
     qtbot.waitUntil(lambda: selector.resolved() is not None, timeout=5000)
     assert selector.setting() == "16gb"
     assert selector.resolved().profile == "16gb"

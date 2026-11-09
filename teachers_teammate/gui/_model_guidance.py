@@ -1,11 +1,11 @@
 """Hint line and "Use best choice" button guiding Ollama model selection.
 
-Shared by the Text Recognition, Proofreading, and Content Review dialogs.  The
-widget decorates an editable model combo purely through item roles (text stays
-the raw model tag, so nothing leaks into the settings file), sorts the model
-list by suitability for the task, shows a plain-language hint below the model
-box, and offers the best model via one button — selecting it when it is
-installed, or forwarding to the Downloads dialog when it is not.
+Shared by the text recognition picker and the proofreading / content review sections of
+Settings → AI models.  The widget decorates an editable model combo purely through item
+roles (text stays the raw model tag, so nothing leaks into the settings file), sorts the
+model list by suitability for the task, shows a plain-language hint below the model box,
+and offers the best model via one button — selecting it when it is installed, or switching
+to Settings → Add-ons when it is not.
 
 The widget never talks to the Ollama server: ratings come from
 ``rate_ollama_models(..., cached_only=True)`` after a background thread
@@ -50,12 +50,13 @@ from ._model_wording import (
     suitability_text,
 )
 
-#: Opens the Downloads dialog for the given model tags with the given parent
-#: widget and returns the ``hardware_profile`` setting the user left behind
-#: (``None`` when unknown).  Supplied by the main window.
-OpenDownloads = Callable[[list[str], "QWidget | None"], "str | None"]
+#: Shows Settings → Add-ons with the given model tags (or ``provider:<name>`` entries)
+#: preselected; the second argument is the widget asking.  Supplied by the Settings window,
+#: it returns at once: the list is fetched again when an install finished
+#: (``on_packages_changed``), and a profile change arrives through the window's wiring.
+OpenDownloads = Callable[[list[str], "QWidget | None"], None]
 
-#: Prefix of the Downloads checkbox keys, and of the ``preselect`` entries, that name an AI
+#: Prefix of the Add-ons checkbox keys, and of the ``preselect`` entries, that name an AI
 #: service's package (``provider:mistral``) rather than an Ollama model.
 PROVIDER_PREFIX = "provider:"
 
@@ -103,7 +104,6 @@ class OllamaModelGuidance(QWidget):
         app_service: _GuidanceService,
         category: ModelCategory,
         profile_selector: HardwareProfileSelector,
-        refetch: Callable[[], None],
         ollama_url: str = "",
         open_downloads: OpenDownloads | None = None,
         parent: QWidget | None = None,
@@ -115,7 +115,6 @@ class OllamaModelGuidance(QWidget):
         self._selector = profile_selector
         self._ollama_url = ollama_url
         self._open_downloads = open_downloads
-        self._refetch = refetch
         self._models: list[str] = []
         self._installed: dict[str, str] = {}  # normalised tag -> spelling as listed
         self._ratings: dict[str, ModelRating] = {}
@@ -317,14 +316,10 @@ class OllamaModelGuidance(QWidget):
             self._request_download([tag])
 
     def _request_download(self, tags: list[str]) -> None:
-        """Open Downloads on top of this dialog, then follow up on what changed."""
+        """Show Add-ons with *tags* ticked; the list is fetched again once they arrived."""
         if self._open_downloads is None:
             return
-        new_setting = self._open_downloads(tags, self.window())
-        if new_setting is not None and new_setting != self._selector.setting():
-            # The user changed "My computer" in Downloads: hints follow it here.
-            self._selector.set_setting(new_setting)
-        self._refetch()
+        self._open_downloads(tags, self.window())
 
     def _on_resolved(self, detection: object) -> None:
         if detection is None:

@@ -66,6 +66,12 @@ _COMMON: list[str] = [
     # for the in-app addon installer.
     "--collect-all",
     "pip",
+    # keyring finds its platform backends (macOS Keychain, Windows Credential Manager,
+    # Linux Secret Service) through package metadata, which PyInstaller does not follow.
+    "--collect-submodules",
+    "keyring",
+    "--copy-metadata",
+    "keyring",
     # timeit and cProfile are stdlib but some pip/spaCy code paths import them;
     # ensure they are bundled. cProfile depends on the C extension _lsprof.
     "--hidden-import",

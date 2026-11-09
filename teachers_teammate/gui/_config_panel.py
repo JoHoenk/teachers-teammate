@@ -1,9 +1,9 @@
-"""Configuration panel — main pipeline settings.
+"""Configuration panel — the workflow of one batch, as numbered steps.
 
-Advanced model/provider settings (OCR engine, model, Ollama URL, correction
-provider/model, evaluation provider/model, preprocessing method, and output
-options) are managed via the Settings dialog (accessible from the menu bar) and
-stored in ``_settings_dict``.
+What changes per batch lives here: the documents, the language, which steps run, their
+instructions, and where the results go.  What is set up once (which AI models, scan
+quality, privacy rules, this computer, add-ons) is edited in the Settings window and stored
+in ``_settings_dict`` alongside.
 """
 
 from __future__ import annotations
@@ -19,9 +19,12 @@ from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
     QFileDialog,
+    QFormLayout,
     QFrame,
+    QGroupBox,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QPushButton,
     QScrollArea,
     QVBoxLayout,
@@ -54,9 +57,14 @@ from ._types import SettingsDict
 
 
 class _PromptDialog(QDialog):
-    """Modal dialog for the machine instructions, built around :class:`PromptEditor`."""
+    """Modal dialog for the machine instructions, built around :class:`PromptEditor`.
 
-    def __init__(
+    For proofreading it also holds the "Explanations" options (*explanations* =
+    ``(explanation_language, correction_output)``): how the task behaves is set here, never
+    in the Settings window.
+    """
+
+    def __init__(  # noqa: PLR0913  # PromptEditor's options plus the explanations
         self,
         title: str,
         prompt: str,
@@ -67,11 +75,16 @@ class _PromptDialog(QDialog):
         answer_formats: tuple[str, str] | None = None,
         saved_formats: tuple[str, str] = ("", ""),
         level_aware: bool = False,
+        explanations: tuple[str, str] | None = None,
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle(title)
         self.setMinimumSize(560, 420)
         vbox = QVBoxLayout(self)
+        self._explanation_language: QComboBox | None = None
+        self._corrections_only: QCheckBox | None = None
+        if explanations is not None:
+            vbox.addWidget(self._build_explanations_group(*explanations))
         self._editor = PromptEditor(
             prompt,
             self,
@@ -81,7 +94,7 @@ class _PromptDialog(QDialog):
             saved_formats=saved_formats,
             level_aware=level_aware,
         )
-        vbox.addWidget(self._editor)
+        vbox.addWidget(self._editor, stretch=1)
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
         )
@@ -96,14 +109,48 @@ class _PromptDialog(QDialog):
         """Return the answer-format settings the dialog edits (empty without editors)."""
         return self._editor.answer_format_values()
 
+    def _build_explanations_group(self, language: str, output_mode: str) -> QGroupBox:
+        """Build the explanation language and the "corrections only" choice."""
+        group = QGroupBox(txt.EXPLANATIONS_GROUP)
+        form = QFormLayout(group)
+        form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapAllRows)
+
+        self._explanation_language = QComboBox()
+        self._explanation_language.addItem(txt.SAME_AS_TEXT, "")
+        for name in _LANGUAGES:  # the item data is what explanation_values() reads back
+            self._explanation_language.addItem(name, name)
+        index = self._explanation_language.findData(language)
+        self._explanation_language.setCurrentIndex(max(index, 0))
+        self._explanation_language.setToolTip(txt.EXPLANATION_LANGUAGE_TOOLTIP)
+        form.addRow("Explanation language:", self._explanation_language)
+
+        self._corrections_only = QCheckBox(txt.CORRECTIONS_ONLY)
+        self._corrections_only.setToolTip(txt.CORRECTIONS_ONLY_TOOLTIP)
+        self._corrections_only.setChecked(output_mode == "text")
+        form.addRow("", self._corrections_only)
+        return group
+
+    def explanation_values(self) -> dict[str, object]:
+        """Return ``explanation_language`` and ``correction_output`` (empty without the group)."""
+        if self._explanation_language is None or self._corrections_only is None:
+            return {}
+        return {
+            "explanation_language": str(self._explanation_language.currentData() or ""),
+            "correction_output": "text" if self._corrections_only.isChecked() else "review",
+        }
+
 
 class ConfigPanel(QScrollArea):
     """Left-hand panel: main pipeline configuration as a numbered workflow."""
 
     paths_changed = Signal()
     anonymizer_configure_requested = Signal(str, object)  # language, AnonymizerConfig
-    #: Bubbled from DependencyGuardDialog: tab index, model tags to preselect.
-    open_downloads_requested = Signal(int, list)
+    #: Bubbled from DependencyGuardDialog: Add-ons focus value, entries to preselect.
+    open_downloads_requested = Signal(str, list)
+    #: The user changed the Results step (folder, which files); the main window saves.
+    results_changed = Signal()
+    #: The user confirmed an Instructions dialog (prompt, answer formats, explanations).
+    instructions_changed = Signal()
     #: The last rendered data flow, so cells elsewhere can say where a step's text goes.
     data_flow_changed = Signal(object)
 
@@ -195,6 +242,8 @@ class ConfigPanel(QScrollArea):
         self._build_step4_correct()
         self._layout.addWidget(self._separator())
         self._build_step5_evaluate()
+        self._layout.addWidget(self._separator())
+        self._build_step6_results()
         self._layout.addStretch()
 
         self.setWidget(inner)
@@ -301,7 +350,7 @@ class ConfigPanel(QScrollArea):
                 "or content review. The original information is restored in the\n"
                 "final document. Runs right after text recognition and does not\n"
                 "need proofreading. Not needed while everything runs on this\n"
-                "computer. Requires the Privacy add-on (see Downloads).",
+                f"computer. Requires the Privacy add-on (see {txt.WHERE_ADDONS}).",
             )
         )
         inner = QWidget()
@@ -329,7 +378,7 @@ class ConfigPanel(QScrollArea):
             self._step_header(
                 "Step 4: Proofread",
                 "Use an AI service to fix spelling and grammar in the extracted text.\n"
-                "Requires a connected AI service (see Settings → Proofreading Settings).",
+                f"Requires a connected AI service (see {txt.WHERE_AI_MODELS}).",
             )
         )
         inner = QWidget()
@@ -344,7 +393,8 @@ class ConfigPanel(QScrollArea):
 
         self._correction_prompt_btn = QPushButton("Instructions…")
         self._correction_prompt_btn.setToolTip(
-            "Change the instructions sent to the AI service for proofreading.\n"
+            "Change the instructions sent to the AI service for proofreading, the language\n"
+            "of the explanations, and whether you get explanations at all.\n"
             "Until you change them, the built-in instructions of the document language are used."
         )
         self._correction_prompt_btn.clicked.connect(self._on_configure_correction_prompt)
@@ -398,6 +448,158 @@ class ConfigPanel(QScrollArea):
 
         self._layout.addWidget(inner)
 
+    def _build_step6_results(self) -> None:
+        self._layout.addWidget(
+            self._step_header(
+                "Step 6: Results",
+                "Where the results are saved, and which files a run creates there.",
+            )
+        )
+        inner = QWidget()
+        form = QFormLayout(inner)
+        form.setContentsMargins(0, 2, 0, 4)
+        form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapAllRows)
+
+        output_row = QWidget()
+        orl = QHBoxLayout(output_row)
+        orl.setContentsMargins(0, 0, 0, 0)
+        self._output_dir = QLineEdit()
+        self._output_dir.setPlaceholderText("Choose a folder for the results")
+        self._output_dir.setToolTip(
+            "Folder where Word documents and text files will be saved.\n"
+            "Required as soon as a Word document or a text file is switched on."
+        )
+        self._output_dir.editingFinished.connect(self._on_output_dir_edited)
+        self._output_browse = QPushButton("…")
+        self._output_browse.setFixedWidth(32)
+        self._output_browse.setToolTip("Choose the folder.")
+        self._output_browse.clicked.connect(self._on_browse_output_dir)
+        orl.addWidget(self._output_dir, stretch=1)
+        orl.addWidget(self._output_browse)
+        form.addRow("Save to:", output_row)
+
+        docx_row = QWidget()
+        drl = QHBoxLayout(docx_row)
+        drl.setContentsMargins(0, 0, 0, 0)
+        self._docx_enabled = QCheckBox("Word document")
+        self._docx_enabled.setToolTip(
+            "Generate a Word document for each input file containing the image,\n"
+            "extracted text, and (if enabled) the proofread text."
+        )
+        self._docx_format = QComboBox()
+        self._docx_format.addItems(["table", "comments"])
+        self._docx_format.setToolTip(
+            "Table — side-by-side columns: Image | Extracted text | Proofread text.\n"
+            "Comments — two columns with tracked changes shown as Word comments."
+        )
+        drl.addWidget(self._docx_enabled)
+        drl.addWidget(self._docx_format)
+        drl.addStretch(1)
+        form.addRow(docx_row)
+
+        self._text_enabled = QCheckBox("Text file")
+        self._text_enabled.setToolTip(
+            "Save the extracted text of each input file as a text file (name.txt)."
+        )
+        form.addRow(self._text_enabled)
+
+        self._text_anonymized_enabled = QCheckBox("Text file, anonymized")
+        self._text_anonymized_enabled.setToolTip(
+            "Save the extracted text with names and other personal data replaced by\n"
+            "placeholders (name_anonymized.txt). Runs on this computer and needs the\n"
+            "privacy add-on (spaCy)."
+        )
+        form.addRow(self._text_anonymized_enabled)
+
+        self._text_hint = QLabel(
+            "Text files need an output folder outside the input folder; otherwise the next "
+            "run would read them as new documents."
+        )
+        self._text_hint.setWordWrap(True)
+        form.addRow(self._text_hint)
+
+        self._docx_enabled.toggled.connect(lambda _on: self._on_results_widget_changed())
+        self._docx_format.currentTextChanged.connect(lambda _t: self._on_results_widget_changed())
+        self._text_enabled.toggled.connect(lambda _on: self._on_results_widget_changed())
+        self._text_anonymized_enabled.toggled.connect(lambda _on: self._on_results_widget_changed())
+        self._layout.addWidget(inner)
+        self._sync_results_widgets()
+
+    # ── results step ──────────────────────────────────────────────────────────────
+
+    def _results_widgets(self) -> tuple[QWidget, ...]:
+        return (
+            self._output_dir,
+            self._docx_enabled,
+            self._docx_format,
+            self._text_enabled,
+            self._text_anonymized_enabled,
+        )
+
+    def _sync_results_widgets(self) -> None:
+        """Show the Results keys of ``_settings_dict`` without reporting a change."""
+        settings = self._settings_dict
+        for widget in self._results_widgets():
+            widget.blockSignals(True)
+        try:
+            self._output_dir.setText(str(settings.get("output_dir", "") or ""))
+            self._docx_enabled.setChecked(
+                bool(settings.get("docx_enabled", DEFAULTS["docx_enabled"]))
+            )
+            index = self._docx_format.findText(
+                str(settings.get("docx_format", DEFAULTS["docx_format"]))
+            )
+            if index >= 0:
+                self._docx_format.setCurrentIndex(index)
+            self._text_enabled.setChecked(
+                bool(settings.get("text_enabled", DEFAULTS["text_enabled"]))
+            )
+            self._text_anonymized_enabled.setChecked(
+                bool(settings.get("text_anonymized_enabled", DEFAULTS["text_anonymized_enabled"]))
+            )
+        finally:
+            for widget in self._results_widgets():
+                widget.blockSignals(False)
+        self._update_results_state()
+
+    def _update_results_state(self) -> None:
+        """Enable the Word layout only for Word; warn when text files have no folder."""
+        self._docx_format.setEnabled(self._docx_enabled.isChecked())
+        wants_text = self._text_enabled.isChecked() or self._text_anonymized_enabled.isChecked()
+        missing_folder = wants_text and not self._output_dir.text().strip()
+        color = "#e67e22" if missing_folder else "#888"
+        self._text_hint.setStyleSheet(f"color: {color}; font-size: 8pt;")
+
+    def _on_results_widget_changed(self) -> None:
+        """Write the Results step into the settings dict and tell the main window."""
+        self._settings_dict["docx_enabled"] = self._docx_enabled.isChecked()
+        self._settings_dict["docx_format"] = self._docx_format.currentText()
+        self._settings_dict["text_enabled"] = self._text_enabled.isChecked()
+        self._settings_dict["text_anonymized_enabled"] = self._text_anonymized_enabled.isChecked()
+        self._update_results_state()
+        if not self._loading:
+            self.results_changed.emit()
+
+    def _on_output_dir_edited(self) -> None:
+        folder = self._output_dir.text().strip()
+        if folder == str(self._settings_dict.get("output_dir", "") or "").strip():
+            return  # focus left the field without a change
+        self._settings_dict["output_dir"] = folder
+        self._update_results_state()
+        self.refresh_data_flow()
+        if not self._loading:
+            self.results_changed.emit()
+
+    def _on_browse_output_dir(self) -> None:
+        start = self._output_dir.text().strip() or str(Path.home())
+        options = QFileDialog.Option(0)
+        if sys.platform == "win32":
+            options |= QFileDialog.Option.DontUseNativeDialog
+        chosen = QFileDialog.getExistingDirectory(self, "Select output folder", start, options)
+        if chosen:
+            self._output_dir.setText(chosen)
+            self._on_output_dir_edited()
+
     # ── static helpers ────────────────────────────────────────────────────────────
 
     @staticmethod
@@ -413,6 +615,14 @@ class ConfigPanel(QScrollArea):
         return container
 
     # ── input selection ───────────────────────────────────────────────────────────
+
+    def select_folder(self) -> None:
+        """Ask for an input folder (the "Select Folder…" button and File → Open Folder…)."""
+        self._on_select_folder()
+
+    def select_files(self) -> None:
+        """Ask for input files (the "Select Files…" button and File → Open Files…)."""
+        self._on_select_files()
 
     def _on_select_folder(self) -> None:
         start = str(self._selected_folder or Path.home())
@@ -494,10 +704,24 @@ class ConfigPanel(QScrollArea):
                 str(settings.get("answer_format_text", "")),
             ),
             level_aware=True,
+            explanations=(
+                str(settings.get("explanation_language", DEFAULTS["explanation_language"])),
+                str(settings.get("correction_output", DEFAULTS["correction_output"])),
+            ),
         )
         if dlg.exec() == QDialog.DialogCode.Accepted:
             self.set_correction_prompt(dlg.prompt())
-            self.update_settings(dlg.answer_format_values())
+            self.update_settings({**dlg.answer_format_values(), **dlg.explanation_values()})
+            self.instructions_changed.emit()
+
+    def _evaluation_fixed_text(self) -> str:
+        """Return the read-only note the app always adds to the review instructions."""
+        if self._service is None:
+            return ""
+        from ..application.service import ProcessingApplicationService  # noqa: PLC0415
+
+        service: ProcessingApplicationService = self._service  # ty: ignore[invalid-assignment]
+        return txt.formatted_text_note(str(service.evaluation_fixed_instructions("markdown")))
 
     def _on_configure_evaluation_prompt(self) -> None:
         dlg = _PromptDialog(
@@ -505,9 +729,11 @@ class ConfigPanel(QScrollArea):
             self._evaluation_prompt_text,
             self,
             builtin_text=str(DEFAULTS["evaluate_prompt"]),
+            fixed_text=self._evaluation_fixed_text(),
         )
         if dlg.exec() == QDialog.DialogCode.Accepted:
             self._evaluation_prompt_text = dlg.prompt()
+            self.instructions_changed.emit()
 
     # ── language change ───────────────────────────────────────────────────────────
 
@@ -661,7 +887,7 @@ class ConfigPanel(QScrollArea):
         return self._correction_prompt_text
 
     def set_correction_prompt(self, text: str) -> None:
-        """Update the correction system prompt (e.g. from a focused settings dialog)."""
+        """Update the correction system prompt (as the instructions dialog does on OK)."""
         self._correction_prompt_text = text
         self._custom_prompt_note.setVisible(bool(text.strip()))
 
@@ -670,15 +896,15 @@ class ConfigPanel(QScrollArea):
         return self._evaluation_prompt_text
 
     def set_evaluation_prompt(self, text: str) -> None:
-        """Update the evaluation system prompt (e.g. from a focused settings dialog)."""
+        """Update the evaluation system prompt (as the instructions dialog does on OK)."""
         self._evaluation_prompt_text = text
 
     def get_output_dir(self) -> str:
-        """Return the configured output directory (set via the Output Settings dialog)."""
+        """Return the configured output directory (set in the Results step)."""
         return str(self._settings_dict.get("output_dir", "")).strip()
 
     def get_settings_dict(self) -> dict:
-        """Return advanced runtime settings used by the settings dialog."""
+        """Return a copy of the settings (what the Settings window shows and edits)."""
         return dict(self._settings_dict)
 
     def lookup_language(self) -> str:
@@ -686,8 +912,9 @@ class ConfigPanel(QScrollArea):
         return self._language.currentText().strip()
 
     def update_settings(self, settings: dict) -> None:
-        """Apply values returned by :class:`SettingsDialog`."""
+        """Apply values returned by the Settings window (or another source of settings)."""
         self._settings_dict.update(settings)
+        self._sync_results_widgets()
         self.refresh_data_flow()
 
     def _ocr_config_from_settings(self) -> OcrConfig:
@@ -814,6 +1041,7 @@ class ConfigPanel(QScrollArea):
             self._evaluation_enabled.setChecked(bool(values["evaluation_enabled"]))
 
         self._apply_settings_dict_values(values)
+        self._sync_results_widgets()
 
         self._update_correction_visibility(self._correction_enabled.isChecked())
 
@@ -1054,11 +1282,15 @@ class ConfigPanel(QScrollArea):
             self._settings_dict["anonymization_enabled"] = False
 
         from ._dependency_guard_dialog import DependencyGuardDialog  # noqa: PLC0415
-        from ._downloads_dialog import DownloadsDialog  # noqa: PLC0415
         from ._model_guidance import PROVIDER_PREFIX  # noqa: PLC0415
+        from .settings._page import (  # noqa: PLC0415
+            FOCUS_LOCAL_MODELS,
+            FOCUS_NAME_DETECTION,
+            FOCUS_ONLINE_SERVICES,
+        )
 
-        tab = DownloadsDialog.TAB_SPACY if stage == "anonymizer" else DownloadsDialog.TAB_OLLAMA
-        # A missing Ollama model is ticked in Downloads, as on the "model missing" path of Run.
+        focus = FOCUS_NAME_DETECTION if stage == "anonymizer" else FOCUS_LOCAL_MODELS
+        # A missing Ollama model is ticked in Add-ons, as on the "model missing" path of Run.
         preselect: list[str] = []
         if stage in ("correction", "evaluation"):
             provider, model = (
@@ -1068,12 +1300,12 @@ class ConfigPanel(QScrollArea):
             )
             if provider == "ollama" and model:
                 preselect.append(model)
-        # A missing provider package is installed on the providers tab.
+        # A missing provider package is installed on the online-services tab.
         packages = [f"{PROVIDER_PREFIX}{issue.provider}" for issue in issues if issue.provider]
         if packages:
-            tab, preselect = DownloadsDialog.TAB_PROVIDERS, packages
+            focus, preselect = FOCUS_ONLINE_SERVICES, packages
         dlg = DependencyGuardDialog(stage, issues, self)
-        dlg.open_downloads.connect(lambda: self.open_downloads_requested.emit(tab, preselect))
+        dlg.open_downloads.connect(lambda: self.open_downloads_requested.emit(focus, preselect))
         dlg.exec()
 
     def restore_defaults(self) -> None:

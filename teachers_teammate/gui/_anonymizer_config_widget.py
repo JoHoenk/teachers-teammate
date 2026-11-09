@@ -1,4 +1,4 @@
-"""Dialog for configuring the anonymizer's NER passes and regex patterns."""
+"""The anonymizer's NER passes and regex patterns, as a widget for the Privacy settings page."""
 
 from __future__ import annotations
 
@@ -8,8 +8,6 @@ from PySide6.QtCore import Qt, QThread, QTimer, Signal
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QComboBox,
-    QDialog,
-    QDialogButtonBox,
     QFrame,
     QHBoxLayout,
     QHeaderView,
@@ -26,6 +24,8 @@ from PySide6.QtWidgets import (
 
 from ..application.service import ProcessingApplicationService
 from ..config import SECONDARY_MODEL_AUTO, SECONDARY_MODEL_NONE
+from . import _user_text as txt
+from ._model_fetch import _retire_thread
 
 _INVALID_BG = QColor("#ffd0d0")
 _DETECTING = "Detecting…"
@@ -49,7 +49,7 @@ class _SpacyModelFetchThread(QThread):
             self.models_ready.emit([])
 
 
-class AnonymizerConfigDialog(QDialog):
+class AnonymizerConfigWidget(QWidget):
     """Configure the anonymizer's NER passes and regex patterns.
 
     * **Primary model** — the spaCy model used for the first NER pass.  Defaults
@@ -57,8 +57,11 @@ class AnonymizerConfigDialog(QDialog):
       overridden with any installed model (e.g. ``xx_ent_wiki_sm``).
     * **Secondary model** — an optional additional pass to catch names the
       primary model misses.  Leave as ``(none)`` to skip.
-    * **Regex patterns** — applied after NER (collapsed by default; expand to
-      customise the built-in patterns or add your own).
+    * **Regex patterns** — applied after NER (customise the built-in patterns or add
+      your own).
+
+    Invalid patterns cannot be saved: :attr:`validity_changed` tells the owner (the
+    Settings window disables its OK button meanwhile).
 
     Args:
         language: Document language — used to derive the primary NER model label
@@ -69,6 +72,9 @@ class AnonymizerConfigDialog(QDialog):
         parent: Parent widget.
         sample_text: Optional text to pre-fill the preview input.
     """
+
+    #: ``True`` when every pattern is a valid regex (the settings can be saved).
+    validity_changed = Signal(bool)
 
     def __init__(
         self,
@@ -85,8 +91,8 @@ class AnonymizerConfigDialog(QDialog):
         self._language = language
         self._app_service = app_service
         self._AnonymizerConfig = AnonymizerConfig
-        self.setWindowTitle("Anonymizer Settings")
-        self.setMinimumSize(700, 680)
+        self._valid = True
+        self._spacy_fetch_thread: _SpacyModelFetchThread | None = None
 
         config: AnonymizerConfig = (
             anonymizer_config
@@ -98,6 +104,7 @@ class AnonymizerConfigDialog(QDialog):
         self._configured_secondary = config.secondary_model
 
         root = QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(8)
 
         accuracy_warning = QLabel(
@@ -122,7 +129,7 @@ class AnonymizerConfigDialog(QDialog):
         top_layout = QVBoxLayout(detection_tab)
         top_layout.setContentsMargins(6, 6, 6, 6)
         top_layout.setSpacing(6)
-        # Subclasses (PrivacySettingsDialog) put their own rows above the detection models.
+        # The Privacy page puts its own rows above the detection models.
         self._detection_layout = top_layout
 
         self._build_detection_models(top_layout)
@@ -133,29 +140,14 @@ class AnonymizerConfigDialog(QDialog):
         self._tabs.addTab(detection_tab, "Detection")
         self._tabs.addTab(self._build_regex_tab(), "Regex Patterns")
 
-        # ── Dialog buttons ─────────────────────────────────────────────────────
-        self._buttons = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
-        )
-        self._buttons.accepted.connect(self.accept)
-        self._buttons.rejected.connect(self.reject)
-        root.addWidget(self._buttons)
-
         # Populate patterns table from config
-        self._loading = True
-        for tag, pattern in config.patterns:
-            self._append_row(tag, pattern)
-        self._loading = False
-        self._revalidate_all()
+        self._set_patterns(config.patterns)
 
         if sample_text:
             self._sample_input.setPlainText(sample_text)
 
         # Start async spaCy model discovery — populates both combos off the main thread
-        self._spacy_fetch_thread = _SpacyModelFetchThread(self)
-        self._spacy_fetch_thread.models_ready.connect(self._on_spacy_models_fetched)
-        self._spacy_fetch_thread.error.connect(self._on_spacy_fetch_error)
-        self._spacy_fetch_thread.start()
+        self._start_spacy_fetch()
 
     def _build_detection_models(self, layout: QVBoxLayout) -> None:
         """Build the primary/secondary spaCy model rows on the Detection tab's *layout*."""
@@ -395,9 +387,13 @@ class AnonymizerConfigDialog(QDialog):
     def _restore_default_patterns(self) -> None:
         from ..application.service import DEFAULT_ANONYMIZER_PATTERNS  # noqa: PLC0415
 
+        self._set_patterns(DEFAULT_ANONYMIZER_PATTERNS)
+
+    def _set_patterns(self, patterns) -> None:
+        """Replace the table rows with *patterns* (``(tag, regex)`` pairs) and validate them."""
         self._loading = True
         self._table.setRowCount(0)
-        for tag, pattern in DEFAULT_ANONYMIZER_PATTERNS:
+        for tag, pattern in patterns:
             self._append_row(tag, pattern)
         self._loading = False
         self._revalidate_all()
@@ -459,9 +455,11 @@ class AnonymizerConfigDialog(QDialog):
             self._error_label.setVisible(False)
 
     def _update_ok_button(self) -> None:
-        ok = self._buttons.button(QDialogButtonBox.StandardButton.Ok)
-        if ok:
-            ok.setEnabled(self._invalid_count() == 0)
+        """Tell the owner whether the patterns can be saved (no invalid regex)."""
+        valid = self._invalid_count() == 0
+        if valid != self._valid:
+            self._valid = valid
+            self.validity_changed.emit(valid)
 
     # ── Preview ────────────────────────────────────────────────────────────────
 
@@ -527,32 +525,83 @@ class AnonymizerConfigDialog(QDialog):
             from PySide6.QtWidgets import QMessageBox  # noqa: PLC0415
 
             QMessageBox.information(
-                self,
+                self.window(),
                 "spaCy not installed",
                 "spaCy must be installed before you can download a model.\n\n"
-                "Use the Add-on Installer (Settings → Add-ons) to install the "
-                "Privacy Add-on first.",
+                f"Install it under {txt.WHERE_ADDONS} (Name detection) first.",
             )
             return
 
-        dlg = SpacyModelDownloadDialog(needed_model, self)
+        dlg = SpacyModelDownloadDialog(needed_model, self.window())
         dlg.model_downloaded.connect(self._on_model_downloaded)
         dlg.exec()
 
     def _on_model_downloaded(self, _model: str) -> None:
         """Refresh model combos after a successful download and re-run the preview."""
-        # Refresh combos from a fresh background fetch
-        self._primary_model.setEnabled(False)
-        self._secondary_model.setEnabled(False)
-        self._configured_secondary = self._secondary_model.currentData()
-        self._configured_primary = self._primary_model.currentData()
-        refresh = _SpacyModelFetchThread(self)
-        refresh.models_ready.connect(self._on_spacy_models_fetched)
-        refresh.error.connect(self._on_spacy_fetch_error)
-        self._spacy_fetch_thread = refresh
-        refresh.start()
+        self.reload_models()
         # Re-run the preview once the fetch completes (deferred so exec() has returned)
         QTimer.singleShot(50, self._run_preview)
+
+    def _start_spacy_fetch(self) -> None:
+        """Ask for the installed spaCy models off the GUI thread (a running ask is retired)."""
+        _retire_thread(self._spacy_fetch_thread)
+        # No parent: a retired thread must outlive this widget until it ends on its own.
+        thread = _SpacyModelFetchThread()
+        thread.models_ready.connect(self._on_spacy_models_fetched)
+        thread.error.connect(self._on_spacy_fetch_error)
+        self._spacy_fetch_thread = thread
+        thread.start()
+
+    # ── Public API ─────────────────────────────────────────────────────────────
+
+    def reload_models(self) -> None:
+        """Look for installed spaCy models again, keeping the current choices."""
+        self._primary_model.setEnabled(False)
+        self._secondary_model.setEnabled(False)
+        self._configured_secondary = self._loaded_choice(
+            self._secondary_model.currentData(), self._configured_secondary
+        )
+        self._configured_primary = self._loaded_choice(
+            self._primary_model.currentData(), self._configured_primary
+        )
+        self._start_spacy_fetch()
+
+    @staticmethod
+    def _loaded_choice(data: object, configured: str | None) -> str | None:
+        """Return the combo's choice, or the configured one while the combo is still loading."""
+        if data == "__loading__":
+            return configured
+        return data if isinstance(data, str) else None
+
+    def set_config(self, config: object) -> None:
+        """Show *config* (an ``AnonymizerConfig``): models and patterns."""
+        if not isinstance(config, self._AnonymizerConfig):
+            return
+        self._configured_primary = config.primary_model
+        self._configured_secondary = config.secondary_model
+        self._set_patterns(config.patterns)
+        if self._primary_model.isEnabled():
+            # The models are known already: select the new choices among them.
+            models = [
+                str(self._primary_model.itemData(i)) for i in range(1, self._primary_model.count())
+            ]
+            self._on_spacy_models_fetched(models)
+
+    def is_valid(self) -> bool:
+        """Return whether every pattern is a valid regex."""
+        return self._valid
+
+    def tabs(self) -> QTabWidget:
+        """Return the tab widget (Detection, Patterns), so the owner can add or rename tabs."""
+        return self._tabs
+
+    def detection_layout(self) -> QVBoxLayout:
+        """Return the Detection tab's layout, so the owner can add rows above the models."""
+        return self._detection_layout
+
+    def shutdown(self) -> None:
+        """Detach a running spaCy discovery before the widget is destroyed."""
+        _retire_thread(self._spacy_fetch_thread)
 
     # ── Public properties ──────────────────────────────────────────────────────
 

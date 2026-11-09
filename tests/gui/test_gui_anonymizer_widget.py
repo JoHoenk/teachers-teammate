@@ -1,4 +1,4 @@
-"""GUI tests for AnonymizerConfigDialog using pytest-qt."""
+"""GUI tests for AnonymizerConfigWidget (the rules of Settings → Privacy) using pytest-qt."""
 
 from __future__ import annotations
 
@@ -6,14 +6,13 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from teachers_teammate.gui._anonymizer_config_dialog import AnonymizerConfigDialog
+from teachers_teammate.gui._anonymizer_config_widget import AnonymizerConfigWidget
 from teachers_teammate.config import SECONDARY_MODEL_AUTO
 from teachers_teammate.infrastructure.anonymizer import AnonymizerConfig, DEFAULT_PATTERNS
-from PySide6.QtWidgets import QDialogButtonBox
 
 
 def _make_dialog(qtbot, config=None, app_service=None, sample_text=""):
-    """Create an AnonymizerConfigDialog with spaCy model fetching suppressed.
+    """Create an AnonymizerConfigWidget with spaCy model fetching suppressed.
 
     Patches ``ProcessingApplicationService`` to return ``[]`` from
     ``list_installed_spacy_models`` and immediately quits the background thread
@@ -22,10 +21,10 @@ def _make_dialog(qtbot, config=None, app_service=None, sample_text=""):
     svc = app_service or MagicMock()
     cfg = config if config is not None else AnonymizerConfig()
     with patch(
-        "teachers_teammate.gui._anonymizer_config_dialog.ProcessingApplicationService"
+        "teachers_teammate.gui._anonymizer_config_widget.ProcessingApplicationService"
     ) as MockSvc:
         MockSvc.return_value.list_installed_spacy_models.return_value = []
-        dlg = AnonymizerConfigDialog("English", cfg, svc, sample_text=sample_text)
+        dlg = AnonymizerConfigWidget("English", cfg, svc, sample_text=sample_text)
     # Stop the thread to avoid teardown races
     dlg._spacy_fetch_thread.quit()
     dlg._spacy_fetch_thread.wait(500)
@@ -33,7 +32,7 @@ def _make_dialog(qtbot, config=None, app_service=None, sample_text=""):
     return dlg
 
 
-# ── OK button state ────────────────────────────────────────────────────────
+# ── Patterns can be saved ────────────────────────────────────────────────────────
 
 
 @pytest.mark.gui
@@ -41,14 +40,12 @@ def test_dialog_ok_disabled_when_regex_invalid(qtbot) -> None:
     """
     Given  a dialog constructed with a config containing an invalid regex pattern
     When   the dialog is shown
-    Then   the OK button is disabled
+    Then   the rules report that they cannot be saved (is_valid() is False)
     """
     cfg = AnonymizerConfig(patterns=(("BAD", "[unclosed"),))
     dlg = _make_dialog(qtbot, config=cfg)
 
-    ok = dlg._buttons.button(QDialogButtonBox.StandardButton.Ok)
-    assert ok is not None
-    assert not ok.isEnabled()
+    assert not dlg.is_valid()
 
 
 @pytest.mark.gui
@@ -56,14 +53,12 @@ def test_dialog_ok_enabled_when_all_regex_valid(qtbot) -> None:
     """
     Given  a dialog constructed with a valid regex pattern
     When   the dialog is shown
-    Then   the OK button is enabled
+    Then   the rules report that they can be saved
     """
     cfg = AnonymizerConfig(patterns=(("ID", r"\d+"),))
     dlg = _make_dialog(qtbot, config=cfg)
 
-    ok = dlg._buttons.button(QDialogButtonBox.StandardButton.Ok)
-    assert ok is not None
-    assert ok.isEnabled()
+    assert dlg.is_valid()
 
 
 @pytest.mark.gui
@@ -71,14 +66,12 @@ def test_dialog_ok_enabled_when_no_patterns(qtbot) -> None:
     """
     Given  a dialog with no patterns at all
     When   the dialog is shown
-    Then   the OK button is enabled (nothing invalid)
+    Then   the rules can be saved (nothing invalid)
     """
     cfg = AnonymizerConfig(patterns=())
     dlg = _make_dialog(qtbot, config=cfg)
 
-    ok = dlg._buttons.button(QDialogButtonBox.StandardButton.Ok)
-    assert ok is not None
-    assert ok.isEnabled()
+    assert dlg.is_valid()
 
 
 # ── patterns property ─────────────────────────────────────────────────────
@@ -168,10 +161,10 @@ def test_dialog_secondary_model_combo_selects_installed_model(qtbot) -> None:
     cfg = AnonymizerConfig(secondary_model="xx_ent_wiki_sm")
 
     with patch(
-        "teachers_teammate.gui._anonymizer_config_dialog.ProcessingApplicationService"
+        "teachers_teammate.gui._anonymizer_config_widget.ProcessingApplicationService"
     ) as MockSvc:
         MockSvc.return_value.list_installed_spacy_models.return_value = installed
-        dlg = AnonymizerConfigDialog("English", cfg, MagicMock())
+        dlg = AnonymizerConfigWidget("English", cfg, MagicMock())
     dlg._spacy_fetch_thread.quit()
     dlg._spacy_fetch_thread.wait(500)
     qtbot.addWidget(dlg)
@@ -191,10 +184,10 @@ def test_dialog_secondary_model_falls_back_to_none_when_not_installed(qtbot) -> 
     cfg = AnonymizerConfig(secondary_model="missing_model_sm")
 
     with patch(
-        "teachers_teammate.gui._anonymizer_config_dialog.ProcessingApplicationService"
+        "teachers_teammate.gui._anonymizer_config_widget.ProcessingApplicationService"
     ) as MockSvc:
         MockSvc.return_value.list_installed_spacy_models.return_value = []
-        dlg = AnonymizerConfigDialog("English", cfg, MagicMock())
+        dlg = AnonymizerConfigWidget("English", cfg, MagicMock())
     dlg._spacy_fetch_thread.quit()
     dlg._spacy_fetch_thread.wait(500)
     qtbot.addWidget(dlg)
@@ -228,7 +221,7 @@ def test_dialog_secondary_auto_entry_names_the_system_model(qtbot) -> None:
     """
     dlg = _make_dialog(qtbot)
     with patch.object(
-        AnonymizerConfigDialog, "_system_spacy_model", return_value="de_core_news_sm"
+        AnonymizerConfigWidget, "_system_spacy_model", return_value="de_core_news_sm"
     ):
         dlg._on_spacy_models_fetched(["de_core_news_sm"])
 
@@ -244,7 +237,7 @@ def test_dialog_secondary_auto_entry_says_none_for_the_same_language(qtbot) -> N
     """
     dlg = _make_dialog(qtbot)
     # English document, English system: the primary model already covers it.
-    with patch.object(AnonymizerConfigDialog, "_system_spacy_model", return_value="en_core_web_sm"):
+    with patch.object(AnonymizerConfigWidget, "_system_spacy_model", return_value="en_core_web_sm"):
         dlg._on_spacy_models_fetched(["en_core_web_sm"])
 
     assert "same as document language" in dlg._secondary_model.itemText(0)
@@ -320,10 +313,10 @@ def test_dialog_anonymizer_config_property(qtbot) -> None:
     cfg = AnonymizerConfig(secondary_model="xx_ent_wiki_sm", patterns=(("ID", r"\d+"),))
 
     with patch(
-        "teachers_teammate.gui._anonymizer_config_dialog.ProcessingApplicationService"
+        "teachers_teammate.gui._anonymizer_config_widget.ProcessingApplicationService"
     ) as MockSvc:
         MockSvc.return_value.list_installed_spacy_models.return_value = installed
-        dlg = AnonymizerConfigDialog("English", cfg, MagicMock())
+        dlg = AnonymizerConfigWidget("English", cfg, MagicMock())
     dlg._spacy_fetch_thread.quit()
     dlg._spacy_fetch_thread.wait(500)
     qtbot.addWidget(dlg)
@@ -397,10 +390,10 @@ def test_dialog_combos_disabled_while_loading(qtbot) -> None:
     cfg = AnonymizerConfig()
     # Do NOT call _on_spacy_models_fetched — simulate thread still running
     with patch(
-        "teachers_teammate.gui._anonymizer_config_dialog.ProcessingApplicationService"
+        "teachers_teammate.gui._anonymizer_config_widget.ProcessingApplicationService"
     ) as MockSvc:
         MockSvc.return_value.list_installed_spacy_models.return_value = []
-        dlg = AnonymizerConfigDialog("English", cfg, svc)
+        dlg = AnonymizerConfigWidget("English", cfg, svc)
     dlg._spacy_fetch_thread.quit()
     dlg._spacy_fetch_thread.wait(500)
     qtbot.addWidget(dlg)
@@ -487,14 +480,12 @@ def test_dialog_ok_disabled_with_invalid_pattern_when_collapsed(qtbot) -> None:
     """
     Given  a dialog with an invalid regex pattern in the collapsed section
     When   the dialog is shown (section collapsed by default)
-    Then   the OK button is still disabled regardless of collapse state
+    Then   the rules still cannot be saved regardless of collapse state
     """
     cfg = AnonymizerConfig(patterns=(("BAD", "[unclosed"),))
     dlg = _make_dialog(qtbot, config=cfg)
 
-    ok = dlg._buttons.button(QDialogButtonBox.StandardButton.Ok)
-    assert ok is not None
-    assert not ok.isEnabled()
+    assert not dlg.is_valid()
 
 
 @pytest.mark.gui
@@ -644,7 +635,7 @@ def test_dialog_on_model_downloaded_refreshes_combos(qtbot) -> None:
     dlg = _make_dialog(qtbot)
 
     with patch(
-        "teachers_teammate.gui._anonymizer_config_dialog.ProcessingApplicationService"
+        "teachers_teammate.gui._anonymizer_config_widget.ProcessingApplicationService"
     ) as MockSvc:
         MockSvc.return_value.list_installed_spacy_models.return_value = ["xx_ent_wiki_sm"]
         dlg._on_model_downloaded("xx_ent_wiki_sm")
@@ -657,111 +648,113 @@ def test_dialog_on_model_downloaded_refreshes_combos(qtbot) -> None:
     assert dlg._primary_model.findData("xx_ent_wiki_sm") >= 0
 
 
-# ── ConfigPanel → dialog → close integration ─────────────────────────────────
+# ── ConfigPanel → Settings → Privacy → ConfigPanel ───────────────────────────
 
 
 @pytest.mark.gui
-def test_configure_dialog_open_close_flow(qtbot) -> None:
+def test_privacy_rules_button_asks_for_the_privacy_page(qtbot) -> None:
     """
     Given  anonymization is enabled on the config panel
-    When   the Configure button is clicked and the dialog is immediately rejected
-    Then   the flow completes within timeout (regression guard for main-thread freeze)
+    When   the "Privacy rules…" button is clicked
+    Then   the panel asks for the rules of its document language and current anonymizer config
+           (the main window opens Settings → Privacy on the detection tab for it)
     """
     from teachers_teammate.gui._config_panel import ConfigPanel  # noqa: PLC0415
-    from PySide6.QtCore import QTimer  # noqa: PLC0415
 
     panel = ConfigPanel()
     qtbot.addWidget(panel)
     panel._anonymization_enabled.setChecked(True)
 
-    opened = []
-
-    def fake_handler(language: str, config: object) -> None:
-        with patch(
-            "teachers_teammate.gui._anonymizer_config_dialog.ProcessingApplicationService"
-        ) as MockSvc:
-            MockSvc.return_value.list_installed_spacy_models.return_value = []
-            dlg = AnonymizerConfigDialog(language, config, MagicMock(), panel)
-        dlg._spacy_fetch_thread.quit()
-        dlg._spacy_fetch_thread.wait(500)
-        qtbot.addWidget(dlg)
-        opened.append(dlg)
-        QTimer.singleShot(0, dlg.reject)
-        dlg.exec()
-
-    panel.anonymizer_configure_requested.connect(fake_handler)
-
-    with qtbot.waitSignal(panel.anonymizer_configure_requested, timeout=3000):
+    with qtbot.waitSignal(panel.anonymizer_configure_requested, timeout=3000) as blocker:
         panel._anon_configure_btn.click()
 
-    assert len(opened) == 1
+    language, config = blocker.args
+    assert language == panel.lookup_language()
+    assert isinstance(config, AnonymizerConfig)
 
 
 @pytest.mark.gui
-def test_configure_dialog_accept_updates_config_panel(qtbot) -> None:
+def test_changed_rules_update_the_config_panel(qtbot) -> None:
     """
-    Given  a dialog with a specific regex pattern
-    When   the dialog is accepted
-    Then   the config panel's anonymizer config is updated with the new patterns
+    Given  a rules widget with a specific regex pattern
+    When   its anonymizer_config is handed to the config panel
+    Then   the panel's anonymizer config holds the new patterns
     """
     from teachers_teammate.gui._config_panel import ConfigPanel  # noqa: PLC0415
 
     panel = ConfigPanel()
     qtbot.addWidget(panel)
-    panel._anonymization_enabled.setChecked(True)
+    widget = _make_dialog(qtbot, config=AnonymizerConfig(patterns=(("TEST", r"\d+"),)))
 
-    accepted_config = []
+    panel.update_anonymizer_config(widget.anonymizer_config)
 
-    def fake_handler(language: str, config: object) -> None:
-        cfg = AnonymizerConfig(patterns=(("TEST", r"\d+"),))
-        with patch(
-            "teachers_teammate.gui._anonymizer_config_dialog.ProcessingApplicationService"
-        ) as MockSvc:
-            MockSvc.return_value.list_installed_spacy_models.return_value = []
-            dlg = AnonymizerConfigDialog(language, cfg, MagicMock(), panel)
-        dlg._spacy_fetch_thread.quit()
-        dlg._spacy_fetch_thread.wait(500)
-        qtbot.addWidget(dlg)
-        dlg.accept()
-        accepted_config.append(dlg.anonymizer_config)
-
-    panel.anonymizer_configure_requested.connect(fake_handler)
-    panel._anon_configure_btn.click()
-
-    assert len(accepted_config) == 1
-    assert ("TEST", r"\d+") in accepted_config[0].patterns
+    assert ("TEST", r"\d+") in panel.build_anonymizer_config().patterns
 
 
 @pytest.mark.gui
-def test_configure_dialog_reject_leaves_config_unchanged(qtbot) -> None:
+def test_set_config_shows_another_config_in_the_rules(qtbot) -> None:
     """
-    Given  the config panel has anonymizer_patterns set
-    When   the configure dialog is opened and rejected
-    Then   the stored patterns are not changed
+    Given  a rules widget showing one pattern
+    When   set_config() is called with another config (as "Restore defaults → This page" does)
+    Then   the table shows the new patterns and validity is re-evaluated
     """
-    from teachers_teammate.gui._config_panel import ConfigPanel  # noqa: PLC0415
+    dlg = _make_dialog(qtbot, config=AnonymizerConfig(patterns=(("BAD", "[unclosed"),)))
+    assert not dlg.is_valid()
+    validity: list[bool] = []
+    dlg.validity_changed.connect(validity.append)
 
-    panel = ConfigPanel()
-    qtbot.addWidget(panel)
-    panel._anonymization_enabled.setChecked(True)
-    panel._settings_dict["anonymizer_patterns"] = [("ORIG", r"\w+")]
+    dlg.set_config(AnonymizerConfig(patterns=(("ID", r"\d+"),)))
 
-    def fake_handler(language: str, config: object) -> None:
-        with patch(
-            "teachers_teammate.gui._anonymizer_config_dialog.ProcessingApplicationService"
-        ) as MockSvc:
-            MockSvc.return_value.list_installed_spacy_models.return_value = []
-            dlg = AnonymizerConfigDialog(language, config, MagicMock(), panel)
-        dlg._spacy_fetch_thread.quit()
-        dlg._spacy_fetch_thread.wait(500)
+    assert dlg.patterns == [("ID", r"\d+")]
+    assert dlg.is_valid()
+    assert validity == [True]
+
+
+@pytest.mark.gui
+def test_validity_changed_is_emitted_only_when_validity_flips(qtbot) -> None:
+    """
+    Given  a rules widget with one valid pattern
+    When   the pattern is broken, edited while still broken, and then fixed
+    Then   validity_changed reports False once and True once
+    """
+    dlg = _make_dialog(qtbot, config=AnonymizerConfig(patterns=(("ID", r"\d+"),)))
+    validity: list[bool] = []
+    dlg.validity_changed.connect(validity.append)
+
+    dlg._table.item(0, 1).setText("[open")
+    dlg._table.item(0, 1).setText("[open2")
+    dlg._table.item(0, 1).setText(r"\d+")
+
+    assert validity == [False, True]
+
+
+@pytest.mark.gui
+def test_shutdown_parks_a_running_model_discovery(qtbot) -> None:
+    """
+    Given  a rules widget whose spaCy model discovery is still running
+    When   shutdown() is called
+    Then   the thread is not waited for and its late answer no longer reaches the widget
+    """
+    import threading  # noqa: PLC0415
+
+    release = threading.Event()
+    svc = MagicMock()
+    with patch(
+        "teachers_teammate.gui._anonymizer_config_widget.ProcessingApplicationService"
+    ) as MockSvc:
+        MockSvc.return_value.list_installed_spacy_models.side_effect = lambda: (
+            release.wait(10) and []
+        )
+        dlg = AnonymizerConfigWidget("English", AnonymizerConfig(), svc)
         qtbot.addWidget(dlg)
-        dlg.reject()
+        thread = dlg._spacy_fetch_thread
+        assert thread is not None and thread.isRunning()
 
-    panel.anonymizer_configure_requested.connect(fake_handler)
-    panel._anon_configure_btn.click()
+        dlg.shutdown()
+        release.set()
+        qtbot.waitUntil(thread.isFinished, timeout=5000)
 
-    # Config panel's stored patterns unchanged because dialog was rejected
-    assert panel._settings_dict["anonymizer_patterns"] == [("ORIG", r"\w+")]
+    assert not dlg._primary_model.isEnabled()  # the late answer was not applied
 
 
 @pytest.mark.gui

@@ -72,7 +72,7 @@ Your settings are saved automatically and restored every time you start the app.
 
 By default, Teacher's Teammate recognises text using a local AI program called **Ollama**, which runs on your computer and never sends data anywhere without your permission. If Ollama is not yet installed, download it from [ollama.com/download](https://ollama.com/download) and run its installer like any other program.
 
-Once Ollama is running, open **Advanced Settings → Downloads…** inside Teacher's Teammate, click **Select the best models for my computer**, then **Install / Download Selected** — the app downloads the right reading and writing models for your computer. After that, set your input and output folders and click **Run Selected** — that's it.
+Once Ollama is running, open **Settings → Add-ons…** inside Teacher's Teammate, click **Select the best models for my computer**, then **Install / Download Selected** — the app downloads the right reading and writing models for your computer. After that, set your input and output folders and click **Run Selected** — that's it.
 
 ## License
 
@@ -80,7 +80,7 @@ Teacher's Teammate is open-source software, released under the **Apache License 
 The app bundles the Qt user-interface toolkit (via **PySide6**) under the **GNU LGPL v3**;
 Qt is dynamically linked and the complete source code is publicly available, so the
 toolkit can be replaced with a compatible build. You can read the full license and notice
-texts for every bundled component inside the app under **Advanced Settings → About →
+texts for every bundled component inside the app under **Help →
 Third-Party Licenses**.
 
 ```{toctree}

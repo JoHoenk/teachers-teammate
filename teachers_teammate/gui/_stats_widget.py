@@ -15,6 +15,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from . import _user_text as txt
+
 try:
     import psutil as _psutil
 
@@ -65,7 +67,7 @@ class SystemStatsWidget(QGroupBox):
 
     GPU and VRAM rows are shown when pynvml (NVIDIA) or pyamdgpuinfo (AMD)
     is installed and a supported GPU is detected.  A button to open the
-    Downloads dialog is shown otherwise.
+    Settings → Add-ons is shown otherwise.
     """
 
     open_downloads_requested = Signal()
@@ -121,12 +123,12 @@ class SystemStatsWidget(QGroupBox):
         return progress_bar, val
 
     def _show_gpu_rows_or_button(self) -> None:
-        """Show the GPU/VRAM rows when a monitoring package works, else the Downloads button."""
+        """Show the GPU/VRAM rows when a monitoring package works, else the Add-ons button."""
         if _NVML_AVAILABLE or _AMDGPU_AVAILABLE:
             self._gpu_bar, self._gpu_val = self._make_row("GPU")
             self._vram_bar, self._vram_val = self._make_row("VRAM")
         else:
-            self._gpu_button = QPushButton("GPU monitoring unavailable — Open Downloads…")
+            self._gpu_button = QPushButton(f"GPU monitoring unavailable — {txt.OPEN_ADDONS}")
             self._gpu_button.clicked.connect(self.open_downloads_requested)
             self._layout.addWidget(self._gpu_button)
 

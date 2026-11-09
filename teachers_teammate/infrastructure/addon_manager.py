@@ -31,7 +31,7 @@ ADDON_AMD = "amd"
 ADDON_TESSERACT = "tesseract_py"
 
 #: pip runs one at a time: two installs into the same ``--target`` directory (the
-#: automatic GPU-monitoring install and the Downloads dialog) would corrupt each other.
+#: automatic GPU-monitoring install and Settings → Add-ons) would corrupt each other.
 _PIP_LOCK = threading.Lock()
 
 #: Per-connection network timeout (seconds) for installs nobody is watching, so a
@@ -56,7 +56,7 @@ _ADDON_PACKAGES: dict[str, list[str]] = {
     # pyamdgpuinfo provides AMD GPU monitoring via the sysfs/DRM interface (Linux only).
     ADDON_AMD: ["pyamdgpuinfo"],
     ADDON_TESSERACT: ["pytesseract>=0.3"],
-    # LangChain packages — not bundled by PyInstaller; installed at runtime via Downloads.
+    # LangChain packages — not bundled by PyInstaller; installed at runtime via Add-ons.
     ADDON_LLM_CORE: ["langchain-core>=1.4.7"],
     ADDON_LLM_OLLAMA: ["langchain-ollama>=0.2"],
     ADDON_LLM_OPENAI: ["langchain-openai>=0.2"],

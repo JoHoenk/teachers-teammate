@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 import dataclasses
 import logging
 import os
@@ -12,7 +12,7 @@ import sys
 from typing import Any, ClassVar, NamedTuple, Protocol
 
 from PySide6.QtCore import QEvent, QObject, QSettings, Qt, QThread, QTimer, Signal
-from PySide6.QtGui import QAction, QDragEnterEvent, QDropEvent, QIcon, QPixmap
+from PySide6.QtGui import QAction, QDragEnterEvent, QDropEvent, QIcon, QKeySequence, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -63,33 +63,41 @@ from ._app_bootstrap import create_app
 from ._background import LatestTask, run_in_background, wait_for_background_tasks
 from ._chart_widget import ChartWidget
 from ._config_panel import ConfigPanel
+from ._credential_store import CredentialStore
 from ._data_flow_summary import advice_text, level_text, stage_tooltip
 from ._export_menu import ExportKind, build_export_menu
 from ._help_dialog import AboutDialog, HelpDialog, ThirdPartyLicensesDialog
 from ._image_utils import load_icon, load_pixmap
 from ._log_widget import LogWidget
-from ._model_guidance import OpenDownloads
 from ._model_wording import profile_text
 from ._preview_panel import PreviewPanel, ZoomableImageView
 from ._privacy_settings import (
-    SECTION_DETECTION,
-    SECTION_SENDING,
+    DISPLAY_ANONYMIZED_DEFAULT,
     FlowAcknowledgements,
     display_anonymized,
     set_display_anonymized,
 )
 from ._results_table import ResultsTable
-from ._settings_dialog import (
-    CorrectionSettingsDialog,
-    EvaluationSettingsDialog,
-    OCRSettingsDialog,
-    SettingsDialog,
-)
 from ._stats_widget import SystemStatsWidget
 from ._types import FileDoneEvent, PreprocessInfo
 from ._update_check import UpdateCheckThread
 from ._what_is_sent_dialog import WhatIsSentDialog
 from ._worker import OCRWorker
+from .settings import (
+    PAGE_TITLES,
+    SettingsContext,
+    SettingsPage,
+    SettingsResult,
+    SettingsWindow,
+    last_page,
+)
+from .settings._page import (
+    FOCUS_DETECTION,
+    FOCUS_GPU,
+    FOCUS_LOCAL_MODELS,
+    FOCUS_NAME_DETECTION,
+    FOCUS_ONLINE_SERVICES,
+)
 
 
 class _TextExportOutcome(NamedTuple):
@@ -103,7 +111,9 @@ def _spacy_problem(exc: BaseException) -> str | None:
     """Explain a missing spaCy install / model (``None`` for any other error)."""
     if isinstance(exc, ImportError):
         if getattr(sys, "frozen", False):
-            return "spaCy is not installed.\n\nUse the Install Privacy Addon button in Settings."
+            return (
+                f"spaCy is not installed.\n\nInstall it under {txt.WHERE_ADDONS} (Name detection)."
+            )
         return f'spaCy not installed: {exc}\n\nInstall: pip install "teachers-teammate[privacy]"'
     if isinstance(exc, OSError):
         return f"spaCy model missing: {exc}\n\nRun: python -m spacy download <model>"
@@ -156,6 +166,14 @@ class _WorkerLike(Protocol):
     def isRunning(self) -> bool: ...
 
 
+def _is_shown(widget: QWidget) -> bool:
+    """Return whether *widget* still exists and is visible (a closed window is not)."""
+    try:
+        return widget.isVisible()
+    except RuntimeError:  # its C++ object was deleted
+        return False
+
+
 def _app_icon() -> QIcon | None:
     """Return the best available icon for the current platform."""
     assets = Path(__file__).parent.parent / "assets"
@@ -188,8 +206,8 @@ def _app_icon() -> QIcon | None:
 class OllamaDownloadManager(QObject):
     """Manages a single active Ollama model pull thread, outliving any dialog.
 
-    MainWindow owns this object; the DownloadsDialog subscribes when open and
-    unsubscribes on close, so pulls continue in the background.
+    MainWindow owns this object; Settings → Add-ons subscribes while it is open and
+    unsubscribes when the window closes, so pulls continue in the background.
     """
 
     progress = Signal(str, float, float)  # (status, completed_bytes, total_bytes)
@@ -202,6 +220,9 @@ class OllamaDownloadManager(QObject):
         self._thread: QThread | None = None
         self._current_model: str = ""
         self._current_url: str = ""
+        #: Models waiting for the running pull; pulled one after the other, also after the
+        #: Settings window that asked for them was closed.
+        self._queue: list[str] = []
 
     @property
     def is_active(self) -> bool:
@@ -216,10 +237,28 @@ class OllamaDownloadManager(QObject):
         """Ollama server of the latest (or running) pull."""
         return self._current_url
 
-    def start(self, url: str, model_name: str) -> None:
-        """Start pulling *model_name* from *url*. No-op if a pull is already running."""
+    @property
+    def queued(self) -> list[str]:
+        """Return the models still waiting for the running pull (a copy)."""
+        return list(self._queue)
+
+    def start(self, url: str, model_name: str, queue: Sequence[str] = ()) -> None:
+        """Pull *model_name* from *url*, then each model of *queue*.
+
+        While a pull is running (also one that outlived the Settings window) the models are
+        added to its queue instead, so a request is never dropped silently; a model that is
+        already pulling or waiting is not added twice.  A failed or aborted pull drops the
+        queue.
+        """
         if self.is_active:
+            for model in (model_name, *queue):
+                if model != self._current_model and model not in self._queue:
+                    self._queue.append(model)
             return
+        self._queue = list(queue)
+        self._begin(url, model_name)
+
+    def _begin(self, url: str, model_name: str) -> None:
         from ._addon_installer_dialog import _OllamaPullThread  # noqa: PLC0415
 
         self._current_model = model_name
@@ -233,16 +272,22 @@ class OllamaDownloadManager(QObject):
         self.started.emit(model_name)
 
     def abort(self) -> None:
-        """Request the active pull to stop after the current chunk."""
+        """Request the active pull to stop after the current chunk (and drop the queue)."""
+        self._queue.clear()
         if self._thread is not None:
             self._thread.request_abort()  # ty: ignore[unresolved-attribute]  # _thread holds an abortable _OllamaPullThread; base QThread lacks request_abort
 
     def _on_finished_ok(self, model_name: str) -> None:
         self._thread = None
+        # Subscribers see the queue as it was when this pull ended: a non-empty one means
+        # the round goes on.
         self.finished.emit(model_name)
+        if self._queue:
+            self._begin(self._current_url, self._queue.pop(0))
 
     def _on_finished_err(self, msg: str) -> None:
         self._thread = None
+        self._queue.clear()
         self.error.emit(msg)
 
 
@@ -297,6 +342,11 @@ class MainWindow(QMainWindow):
         self._anonymize_key: tuple[str, str] | None = None
         self._first_run_task = LatestTask(self)
         self._preprocess_preview_thread: _PreprocessPreviewThread | None = None
+        #: The Settings window while it is open (dialogs started from it use it as parent).
+        self._settings_window: SettingsWindow | None = None
+        self._export_actions: list[QAction] = []
+        self._settings_actions: dict[SettingsPage, QAction] = {}
+        self._all_settings_action: QAction
         self._result_names: list[str] = []
         self._result_ocr_times: list[float] = []
         self._result_correction_times: list[float] = []
@@ -354,14 +404,11 @@ class MainWindow(QMainWindow):
 
     def _load_credentials_from_settings(self) -> None:
         """Inject stored provider API keys into os.environ (env var takes priority)."""
-        qs = QSettings(self._QSETTINGS_ORG, self._QSETTINGS_APP)
-        qs.beginGroup("credentials")
-        for key in qs.childKeys():
-            if not os.environ.get(key):
-                value = qs.value(key)
-                if isinstance(value, str) and value:
-                    os.environ[key] = value
-        qs.endGroup()
+        env_keys = {
+            str(self._app_service.get_provider_info(provider).get("env_key", ""))
+            for provider in self._app_service.list_providers()
+        }
+        CredentialStore().load_into_environment(sorted(key for key in env_keys if key))
 
     def _build_ui(self) -> None:
         self._build_menu_bar()
@@ -394,8 +441,12 @@ class MainWindow(QMainWindow):
         self._results_table.export_requested.connect(self._on_export_requested)
         self._config_panel.paths_changed.connect(self._refresh_queue_from_inputs)
         self._config_panel.anonymizer_configure_requested.connect(
-            self._open_anonymizer_config_dialog
+            lambda _language, _config: self.open_settings(
+                SettingsPage.PRIVACY, focus=FOCUS_DETECTION
+            )
         )
+        self._config_panel.results_changed.connect(self._on_results_changed)
+        self._config_panel.instructions_changed.connect(lambda: self._save_settings(notify=False))
         self._preview.ocr_text_edited.connect(self._on_ocr_text_edited)
         self._preview.correction_text_edited.connect(self._on_correction_text_edited)
         self._preview.run_stage_requested.connect(self._on_preview_stage_run_requested)
@@ -415,39 +466,8 @@ class MainWindow(QMainWindow):
     def _build_menu_bar(self) -> None:
         bar = self.menuBar()
         assert bar is not None
-
-        # Simple settings for everyday use
-        settings_menu = bar.addMenu("Settings")
-        assert settings_menu is not None
-        ocr_act = QAction("Text Recognition\u2026", self)
-        ocr_act.triggered.connect(self._open_ocr_settings)
-        settings_menu.addAction(ocr_act)
-        correction_act = QAction("Proofreading Settings\u2026", self)
-        correction_act.triggered.connect(self._open_correction_settings)
-        settings_menu.addAction(correction_act)
-        evaluation_act = QAction("Content Review Settings\u2026", self)
-        evaluation_act.triggered.connect(self._open_evaluation_settings)
-        settings_menu.addAction(evaluation_act)
-        doc_output_act = QAction("Output Settings\u2026", self)
-        doc_output_act.triggered.connect(self._open_output_settings_dialog)
-        settings_menu.addAction(doc_output_act)
-
-        # Advanced settings for power users
-        advanced_menu = bar.addMenu("Advanced Settings")
-        assert advanced_menu is not None
-        conn_act = QAction("Connections & Credentials\u2026", self)
-        conn_act.triggered.connect(self._open_settings_dialog)
-        advanced_menu.addAction(conn_act)
-        downloads_act = QAction("Downloads\u2026", self)
-        downloads_act.triggered.connect(self._open_downloads_dialog)
-        advanced_menu.addAction(downloads_act)
-        privacy_act = QAction("Privacy Settings\u2026", self)
-        privacy_act.setToolTip(
-            "What may leave this computer, and how names and other personal information "
-            "are found and replaced."
-        )
-        privacy_act.triggered.connect(self._open_privacy_settings_from_menu)
-        advanced_menu.addAction(privacy_act)
+        self._build_file_menu(bar)
+        self._build_settings_menu(bar)
 
         help_menu = bar.addMenu("Help")
         assert help_menu is not None
@@ -462,6 +482,66 @@ class MainWindow(QMainWindow):
         about_act = QAction("About Teacher\u2019s Teammate\u2026", self)
         about_act.triggered.connect(self._open_about_dialog)
         help_menu.addAction(about_act)
+
+    def _build_file_menu(self, bar: Any) -> None:
+        """File: open documents, export results, quit."""
+        file_menu = bar.addMenu("File")
+        assert file_menu is not None
+        open_folder_act = QAction("Open Folder\u2026", self)
+        # The panel does not exist yet when the menu bar is built, hence the lambdas.
+        open_folder_act.triggered.connect(
+            lambda: self._config_panel.select_folder()  # noqa: PLW0108
+        )
+        file_menu.addAction(open_folder_act)
+        open_files_act = QAction("Open Files\u2026", self)
+        open_files_act.triggered.connect(
+            lambda: self._config_panel.select_files()  # noqa: PLW0108
+        )
+        file_menu.addAction(open_files_act)
+        export_menu, kinds = build_export_menu(file_menu)
+        export_menu.triggered.connect(lambda action: self._on_export_toolbar(kinds[action]))
+        file_menu.addMenu(export_menu)
+        # Enabled together with the Export button: there is nothing to export before a run.
+        self._export_actions = list(kinds)
+        for action in self._export_actions:
+            action.setEnabled(False)
+        file_menu.addSeparator()
+        quit_act = QAction("Quit", self)
+        quit_act.setShortcut(QKeySequence(QKeySequence.StandardKey.Quit))
+        quit_act.setMenuRole(QAction.MenuRole.QuitRole)
+        quit_act.triggered.connect(self.close)
+        file_menu.addAction(quit_act)
+
+    def _build_settings_menu(self, bar: Any) -> None:
+        """Settings: one entry per page of the Settings window, and "All settings…"."""
+        settings_menu = bar.addMenu("Settings")
+        assert settings_menu is not None
+        tooltips = {
+            SettingsPage.AI_MODELS: "Which AI reads the handwriting, proofreads and reviews.",
+            SettingsPage.AI_SETUP: (
+                "The local AI server and what this computer can run, and the access keys "
+                "for online AI services."
+            ),
+            SettingsPage.SCAN_QUALITY: "How scans are cleaned up before the text is read.",
+            SettingsPage.PRIVACY: (
+                "What may leave this computer, and how names and other personal information "
+                "are found and replaced."
+            ),
+            SettingsPage.ADDONS: "Download AI models and install optional parts.",
+        }
+        for page in SettingsPage:
+            action = QAction(f"{PAGE_TITLES[page]}\u2026", self)
+            action.setToolTip(tooltips[page])
+            action.triggered.connect(lambda _checked=False, p=page: self.open_settings(p))
+            settings_menu.addAction(action)
+            self._settings_actions[page] = action
+        settings_menu.addSeparator()
+        all_act = QAction("All settings\u2026", self)
+        all_act.setShortcut(QKeySequence("Ctrl+,"))
+        all_act.setMenuRole(QAction.MenuRole.PreferencesRole)
+        all_act.triggered.connect(lambda: self.open_settings(last_page()))
+        settings_menu.addAction(all_act)
+        self._all_settings_action = all_act
 
     def _open_help_dialog(self) -> None:
         HelpDialog(self).exec()
@@ -506,8 +586,8 @@ class MainWindow(QMainWindow):
         )
         self._config_panel.set_service(self._app_service)
         self._config_panel.open_downloads_requested.connect(
-            lambda tab, preselect: self._open_downloads_dialog_ollama_tab(
-                start_tab=tab, preselect=list(preselect)
+            lambda focus, preselect: self.open_settings(
+                SettingsPage.ADDONS, focus=str(focus), preselect=list(preselect)
             )
         )
         layout.addWidget(self._config_panel)
@@ -558,11 +638,6 @@ class MainWindow(QMainWindow):
         btn_layout.addWidget(self._export_btn)
         layout.addWidget(btn_row)
 
-        restore_btn = QPushButton("Restore Defaults")
-        restore_btn.setToolTip("Reset all settings back to built-in defaults.")
-        restore_btn.clicked.connect(self._on_restore_defaults)
-        layout.addWidget(restore_btn)
-
         self._progress = QProgressBar()
         self._progress.setRange(0, 100)
         self._progress.setValue(0)
@@ -595,7 +670,9 @@ class MainWindow(QMainWindow):
         chart_splitter = QSplitter(Qt.Orientation.Vertical)
         self._chart = ChartWidget()
         self._stats = SystemStatsWidget()
-        self._stats.open_downloads_requested.connect(self._open_downloads_gpu_tab)
+        self._stats.open_downloads_requested.connect(
+            lambda: self.open_settings(SettingsPage.ADDONS, focus=FOCUS_GPU)
+        )
         chart_splitter.addWidget(self._chart)
         chart_splitter.addWidget(self._stats)
         chart_splitter.setStretchFactor(0, 3)
@@ -700,7 +777,7 @@ class MainWindow(QMainWindow):
         if choice == "no":
             return
         if str(qs.value(self._GPU_MONITORING_FAILED_KEY, "") or "") == __version__:
-            return  # it failed before; Downloads installs it on request
+            return  # it failed before; Add-ons installs it on request
         if choice != "yes":
             answer = QMessageBox.question(
                 self,
@@ -709,7 +786,7 @@ class MainWindow(QMainWindow):
                 "System Stats panel.\n\n"
                 "This downloads one small package from the Python Package Index "
                 "(PyPI); no documents or personal data are sent.\n\n"
-                "Download it now? You can also do this later under Downloads.",
+                f"Download it now? You can also do this later under {txt.WHERE_ADDONS}.",
             )
             choice = "yes" if answer == QMessageBox.StandardButton.Yes else "no"
             qs.setValue(self._GPU_MONITORING_CHOICE_KEY, choice)
@@ -730,7 +807,7 @@ class MainWindow(QMainWindow):
             )
             self._log.append_text(
                 f"NOTICE: GPU monitoring could not be installed: {error}\n"
-                "It can be installed later under Downloads.\n"
+                f"It can be installed later under {txt.WHERE_ADDONS}.\n"
             )
             return
         if addon is None:
@@ -787,7 +864,7 @@ class MainWindow(QMainWindow):
         self._log.append_text(
             f"First start: chose reading model {ocr_model} and writing model "
             f"{general_model} for your computer ({profile_text(detection.profile)}). "
-            "You can download them under Advanced Settings → Downloads.\n"
+            f"You can download them under {txt.WHERE_ADDONS}.\n"
         )
         self._save_settings(notify=False)
         self._check_llm_status()
@@ -902,7 +979,7 @@ class MainWindow(QMainWindow):
             if view.ocr_done:
                 any_ocr_cached = True
         if any_ocr_cached:
-            self._export_btn.setEnabled(True)
+            self._set_export_enabled(True)
         if file_names:
             self._progress.setRange(0, 1)
             self._progress.setValue(0)
@@ -945,7 +1022,7 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(
                 self,
                 "Choose another output folder",
-                f"{refusal}\n\nChange it under Settings → Output Settings.",
+                f"{refusal}\n\nChange it under {txt.WHERE_RESULTS}.",
             )
             return
         self._preflight_running = True
@@ -1005,8 +1082,7 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(
                 self,
                 "Text recognition must stay on your computer",
-                f"{result.ocr_not_allowed}\n\nChange it under Advanced Settings → Text "
-                "Recognition Method.",
+                f"{result.ocr_not_allowed}\n\nChange it under {txt.WHERE_AI_MODELS}.",
             )
             return
         if result.ollama_unreachable:
@@ -1023,20 +1099,17 @@ class MainWindow(QMainWindow):
             self._show_missing_models(result.missing_models)
             return
         from ._dependency_guard_dialog import DependencyGuardDialog  # noqa: PLC0415
-        from ._downloads_dialog import DownloadsDialog  # noqa: PLC0415
         from ._model_guidance import PROVIDER_PREFIX  # noqa: PLC0415
 
-        tab = (
-            DownloadsDialog.TAB_SPACY
-            if result.stage == "anonymizer"
-            else DownloadsDialog.TAB_OLLAMA
-        )
-        # A missing provider package is installed on the providers tab.
+        focus = FOCUS_NAME_DETECTION if result.stage == "anonymizer" else FOCUS_LOCAL_MODELS
+        # A missing provider package is installed on the online-services tab.
         packages = [f"{PROVIDER_PREFIX}{i.provider}" for i in result.stage_issues if i.provider]
+        if packages:
+            focus = FOCUS_ONLINE_SERVICES
         dlg = DependencyGuardDialog(result.stage, list(result.stage_issues), self)
         dlg.open_downloads.connect(
-            lambda t=tab, ps=packages: self._open_downloads_dialog_ollama_tab(
-                start_tab=t, preselect=ps
+            lambda f=focus, ps=packages: self.open_settings(
+                SettingsPage.ADDONS, focus=f, preselect=ps
             )
         )
         dlg.exec()
@@ -1065,7 +1138,9 @@ class MainWindow(QMainWindow):
             f"computer:\n\n{lines}{advice}\n\n"
             "Make sure your school's data protection rules allow this."
         )
-        remember = QCheckBox("Don't ask again for these settings (change under Privacy Settings)")
+        remember = QCheckBox(
+            f"Don't ask again for these settings (change under {txt.WHERE_PRIVACY})"
+        )
         box.setCheckBox(remember)
         go = box.addButton("Continue", QMessageBox.ButtonRole.AcceptRole)
         cancel = box.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
@@ -1084,14 +1159,16 @@ class MainWindow(QMainWindow):
         box.setWindowTitle("AI model not yet downloaded")
         box.setText(
             f"The following model(s) are not installed in Ollama:{model_list}\n\n"
-            "Please download them first using Advanced Settings → Downloads."
+            f"Please download them first under {txt.WHERE_ADDONS}."
         )
         box.setIcon(QMessageBox.Icon.Warning)
         box.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
-        downloads_btn = box.addButton("Open Downloads →", QMessageBox.ButtonRole.ActionRole)
+        downloads_btn = box.addButton(txt.OPEN_ADDONS, QMessageBox.ButtonRole.ActionRole)
         box.exec()
         if box.clickedButton() is downloads_btn:
-            self._open_downloads_dialog_ollama_tab(preselect=list(missing_models))
+            self.open_settings(
+                SettingsPage.ADDONS, focus=FOCUS_LOCAL_MODELS, preselect=list(missing_models)
+            )
 
     def _continue_run(self, config: Config) -> None:
         """Queue the files and start the worker once all requirements are met."""
@@ -1463,16 +1540,28 @@ class MainWindow(QMainWindow):
                 "Could not export the following file(s):\n\n" + "\n".join(errors),
             )
 
-    def _on_restore_defaults(self) -> None:
-        reply = QMessageBox.question(
-            self,
-            "Restore Defaults",
-            "Reset all settings to their built-in default values?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
-        )
-        if reply == QMessageBox.StandardButton.Yes:
-            self._config_panel.restore_defaults()
+    def _set_export_enabled(self, enabled: bool) -> None:
+        """Enable the Export button and the File → Export entries together."""
+        self._export_btn.setEnabled(enabled)
+        for action in self._export_actions:
+            action.setEnabled(enabled)
+
+    def _restore_all_settings(self) -> None:
+        """Reset every setting to its default and save (Settings already asked twice)."""
+        self._config_panel.restore_defaults()
+        # Not part of the settings file: the "hide personal information" view and the
+        # remembered "Don't ask again" answers (so the next run asks before sending).
+        self._apply_display_anonymized(DISPLAY_ANONYMIZED_DEFAULT)
+        self._acknowledgements().forget_all()
+        self._preview.invalidate_anonymization()
+        self._save_settings(notify=False)
+        self._check_llm_status()
+        self._refresh_queue_from_inputs()
+
+    def _on_results_changed(self) -> None:
+        """Step "Results" changed: save it, and show what is cached for the new folder."""
+        self._save_settings(notify=False)
+        self._refresh_queue_from_inputs()
 
     def _on_stop(self) -> None:
         if self._worker and self._worker.isRunning():
@@ -1517,7 +1606,7 @@ class MainWindow(QMainWindow):
         self._results_table.add_result(event)
         # Refresh from the persisted state even on failure/stop, when on_ocr_done never fired.
         self._refresh_preprocessing_info(source_id, text_format=event.text_format)
-        self._export_btn.setEnabled(True)
+        self._set_export_enabled(True)
         if not ok and message:
             QMessageBox.warning(self, "Processing error", f"{name}:\n\n{message}")
         self._result_names.append(name)
@@ -1699,7 +1788,7 @@ class MainWindow(QMainWindow):
             self._pull_progress_bar.setToolTip(f"{mb_done:.1f} / {mb_total:.1f} MB")
 
     def _on_pull_finished(self, _model_name: str) -> None:
-        # Also covers pulls that finish after the Downloads dialog was closed:
+        # Also covers pulls that finish after the Settings window was closed:
         # without this the cached model list stays stale for minutes.
         self._app_service.on_ollama_models_changed(
             self._pull_manager.current_url or self._current_ollama_url()
@@ -2001,8 +2090,8 @@ class MainWindow(QMainWindow):
     def _apply_display_anonymized(self, enabled: bool) -> None:
         """Store the view setting and show the texts accordingly.
 
-        Called by the eye button in the preview panel and by the Privacy Settings dialog, so
-        both stay in step and the preference survives a restart.
+        Called by the eye button in the preview panel and by Settings → Privacy, so both
+        stay in step and the preference survives a restart.
         """
         enabled = bool(enabled) and self._privacy_available
         set_display_anonymized(self._settings_store, enabled)
@@ -2013,9 +2102,9 @@ class MainWindow(QMainWindow):
         """Enable the setting only while personal information can actually be hidden.
 
         Needs the Privacy add-on and the spaCy model of the document language; without
-        them the eye button stays disabled and its tooltip points at the Downloads
-        dialog.  The answer is cached per language, because it is asked again whenever the
-        data flow changes (that is, on every settings toggle).
+        them the eye button stays disabled and its tooltip points at Settings → Add-ons.
+        The answer is cached per language, because it is asked again whenever the data flow
+        changes (that is, on every settings toggle).
         """
         language = self._config_panel.lookup_language()
         if language not in self._privacy_availability:
@@ -2083,75 +2172,6 @@ class MainWindow(QMainWindow):
         self._last_sent_texts = report
         WhatIsSentDialog(report, file_name=name, parent=self).exec()
 
-    def _open_settings_dialog(self) -> None:
-        """Open the Connections & Credentials dialog."""
-        dialog = SettingsDialog(
-            self._config_panel.get_settings_dict(),
-            self,
-            input_dir=self._config_panel.get_input_dir(),
-            app_service=self._app_service,
-        )
-        dialog.addon_installed.connect(self._on_addon_installed)
-        dialog.open_downloads_requested.connect(self._open_downloads_dialog_ollama_tab)
-        if dialog.exec() == QDialog.DialogCode.Accepted:
-            self._config_panel.update_settings(dialog.get_values())
-            self._save_settings(notify=False)
-            self._check_llm_status()
-            self._refresh_queue_from_inputs()
-
-    def _open_ocr_settings(self) -> None:
-        """Open the focused OCR Settings dialog."""
-        settings = self._config_panel.get_settings_dict()
-        dialog = OCRSettingsDialog(
-            settings,
-            self,
-            app_service=self._app_service,
-            hardware_profile=self._current_hardware_profile(),
-            open_downloads=self._make_downloads_callback(),
-        )
-        dialog.preprocess_preview_requested.connect(self._on_preprocess_preview_requested)
-        dialog.addon_installed.connect(self._on_addon_installed)
-        if dialog.exec() == QDialog.DialogCode.Accepted:
-            self._config_panel.update_settings(dialog.get_values())
-            self._save_settings(notify=False)
-            self._check_llm_status()
-            self._refresh_queue_from_inputs()
-
-    def _open_correction_settings(self) -> None:
-        """Open the focused Correction Settings dialog (provider, model, system prompt)."""
-        settings = self._config_panel.get_settings_dict()
-        settings["language"] = self._config_panel.lookup_language()
-        dialog = CorrectionSettingsDialog(
-            settings,
-            self._config_panel.get_correction_prompt(),
-            self,
-            app_service=self._app_service,
-            hardware_profile=self._current_hardware_profile(),
-            open_downloads=self._make_downloads_callback(),
-        )
-        if dialog.exec() == QDialog.DialogCode.Accepted:
-            self._config_panel.update_settings(dialog.get_values())
-            self._config_panel.set_correction_prompt(dialog.get_prompt())
-            self._save_settings(notify=False)
-            self._check_llm_status()
-
-    def _open_evaluation_settings(self) -> None:
-        """Open the focused Evaluation Settings dialog (provider, model, system prompt)."""
-        settings = self._config_panel.get_settings_dict()
-        dialog = EvaluationSettingsDialog(
-            settings,
-            self._config_panel.get_evaluation_prompt(),
-            self,
-            app_service=self._app_service,
-            hardware_profile=self._current_hardware_profile(),
-            open_downloads=self._make_downloads_callback(),
-        )
-        if dialog.exec() == QDialog.DialogCode.Accepted:
-            self._config_panel.update_settings(dialog.get_values())
-            self._config_panel.set_evaluation_prompt(dialog.get_prompt())
-            self._save_settings(notify=False)
-            self._check_llm_status()
-
     def _build_update_banner(self) -> QFrame:
         banner = QFrame()
         banner.setObjectName("UpdateBanner")
@@ -2183,65 +2203,92 @@ class MainWindow(QMainWindow):
             )
         self._update_banner.show()
 
-    def _open_downloads_dialog(self) -> None:
-        self._open_downloads_dialog_ollama_tab(start_tab=0)
-
-    def _open_downloads_gpu_tab(self) -> None:
-        """Open Downloads on the GPU add-ons tab (used by the stats widget's GPU button)."""
-        from ._downloads_dialog import DownloadsDialog  # noqa: PLC0415
-
-        self._open_downloads_dialog_ollama_tab(start_tab=DownloadsDialog.TAB_GPU)
-
-    def _current_hardware_profile(self) -> str:
-        """Return the saved hardware-profile setting shared by every dialog."""
-        return str(self._config_panel.get_settings_dict().get("hardware_profile", "auto"))
-
     def _current_ollama_url(self) -> str:
         return str(self._config_panel.get_settings_dict().get("ollama_url", DEFAULTS["ollama_url"]))
 
-    def _make_downloads_callback(self) -> OpenDownloads:
-        """Return the callback task dialogs use to open Downloads on top of themselves.
+    # ── Settings window ───────────────────────────────────────────────────
 
-        The callback returns the ``hardware_profile`` setting after the dialog
-        closed so the calling dialog can follow a "My computer" change.
-        """
+    def _dialog_parent(self) -> QWidget:
+        """Return the window a new dialog belongs to: the open Settings window, else this one."""
+        window = self._settings_window
+        if window is not None and window.isVisible():
+            return window
+        return self
 
-        def open_downloads(preselect: list[str], parent: QWidget | None) -> str | None:
-            self._open_downloads_dialog_ollama_tab(
-                start_tab=0, preselect=list(preselect), dialog_parent=parent
-            )
-            return self._current_hardware_profile()
-
-        return open_downloads
-
-    def _on_hardware_profile_changed(self, setting: str) -> None:
-        """Persist a "My computer" change made in the Downloads dialog."""
-        self._config_panel.update_settings({"hardware_profile": setting})
-        self._save_settings(notify=False)
-
-    def _open_downloads_dialog_ollama_tab(
-        self,
-        *,
-        start_tab: int = 0,
-        preselect: list[str] | None = None,
-        dialog_parent: QWidget | None = None,
-    ) -> None:
-        from ._downloads_dialog import DownloadsDialog  # noqa: PLC0415
-
-        dialog = DownloadsDialog(
-            ollama_url=self._current_ollama_url(),
-            start_tab=start_tab,
-            parent=dialog_parent or self,
-            pull_manager=self._pull_manager,
-            hardware_profile=self._current_hardware_profile(),
-            preselect=preselect or (),
+    def _settings_context(self) -> SettingsContext:
+        language, anonymizer_config = self._config_panel.anonymizer_context()
+        return SettingsContext(
+            settings=self._config_panel.get_settings_dict(),
             app_service=self._app_service,
+            language=language,
+            anonymizer_config=anonymizer_config,
+            acknowledgements=self._acknowledgements(),
+            display_anonymized=self._display_anonymized,
+            privacy_available=self._privacy_available,
+            pull_manager=self._pull_manager,
         )
-        dialog.packages_changed.connect(self._check_llm_status)
-        dialog.packages_changed.connect(self._on_packages_changed)
-        dialog.packages_changed.connect(self._stats.refresh_gpu_monitoring)
-        dialog.hardware_profile_changed.connect(self._on_hardware_profile_changed)
-        dialog.exec()
+
+    def open_settings(
+        self,
+        page: SettingsPage,
+        *,
+        focus: str = "",
+        preselect: Sequence[str] = (),
+        parent: QWidget | None = None,
+    ) -> None:
+        """Open the Settings window on *page* (focused on *focus*) and apply it on OK.
+
+        If the window is already open (a deep link from a dialog opened on top of it), it
+        only switches to *page*.
+        """
+        if self._settings_window is not None and self._settings_window.isVisible():
+            self._settings_window.show_page(page, focus, preselect)
+            return
+        window = SettingsWindow(
+            self._settings_context(),
+            parent or self,
+            page=page,
+            focus=focus,
+            preselect=preselect,
+        )
+        window.preprocess_preview_requested.connect(
+            lambda ocr_config: self._on_preprocess_preview_requested(ocr_config, parent=window)
+        )
+        window.packages_changed.connect(self._check_llm_status)
+        window.packages_changed.connect(self._on_packages_changed)
+        window.packages_changed.connect(self._stats.refresh_gpu_monitoring)
+        window.addon_installed.connect(self._on_addon_installed)
+        # What the Privacy page showed: its checkbox was usable only if hiding was possible
+        # when the window opened (later changes to the panel must not decide that).
+        hiding_was_possible = self._privacy_available
+        self._settings_window = window
+        try:
+            code = window.exec()
+            result = window.values()
+        finally:
+            self._settings_window = None
+        if result.restore_all:
+            self._restore_all_settings()
+        elif code == QDialog.DialogCode.Accepted:
+            self._apply_settings_result(result, hiding_was_possible=hiding_was_possible)
+        window.deleteLater()
+
+    def _apply_settings_result(self, result: SettingsResult, *, hiding_was_possible: bool) -> None:
+        """Take over what the Settings window changed, then save once."""
+        self._config_panel.update_settings(result.settings)
+        if result.anonymizer_config is not None:
+            before = self._config_panel.build_anonymizer_config()
+            self._config_panel.update_anonymizer_config(result.anonymizer_config)
+            if self._config_panel.build_anonymizer_config() != before:
+                # New models or patterns produce different placeholders for the shown text.
+                self._preview.invalidate_anonymization()
+        if result.display_anonymized is not None and hiding_was_possible:
+            # Without the add-on the checkbox is disabled and shows "off"; applying that
+            # would overwrite the saved preference.
+            self._apply_display_anonymized(result.display_anonymized)
+        self._save_settings(notify=False)
+        self._check_llm_status()
+        self._refresh_queue_from_inputs()
 
     def _on_packages_changed(self) -> None:
         """A download finished: a spaCy model may be available now, so look again."""
@@ -2257,64 +2304,28 @@ class MainWindow(QMainWindow):
             self._config_panel.refresh_data_flow()
             self._refresh_privacy_availability()
             QMessageBox.information(
-                self,
+                self._dialog_parent(),
                 "Privacy Addon Installed",
                 "The Privacy add-on has been installed.\n\n"
-                "Open Advanced Settings → Privacy Settings to download a language model\n"
+                f"Download a name detection model under {txt.WHERE_ADDONS}\n"
                 "before using personal information removal.",
             )
         elif addon == ADDON_PADDLE:
             QMessageBox.information(
-                self,
+                self._dialog_parent(),
                 "PaddleOCR Addon Installed",
                 "PaddleOCR has been installed.\n\n"
-                "Go to Settings → Text Recognition and select 'paddleocr' as the recognition method.",
+                f"Select 'paddleocr' as the recognition method under {txt.WHERE_AI_MODELS}.",
             )
         elif addon in (ADDON_NVIDIA, ADDON_AMD):
             self._stats.refresh_gpu_monitoring()
         self._check_llm_status()
 
-    def _open_privacy_settings_from_menu(self) -> None:
-        """Open Privacy Settings on its first tab (what may leave this computer)."""
-        language, config = self._config_panel.anonymizer_context()
-        self._open_anonymizer_config_dialog(language, config, section=SECTION_SENDING)
-
-    def _open_output_settings_dialog(self) -> None:
-        from ._settings_dialog import OutputSettingsDialog  # noqa: PLC0415
-
-        dialog = OutputSettingsDialog(self._config_panel.get_settings_dict(), self)
-        if dialog.exec() == QDialog.DialogCode.Accepted:
-            self._config_panel.update_settings(dialog.get_values())
-            self._save_settings(notify=False)
-            self._refresh_queue_from_inputs()
-
-    def _open_anonymizer_config_dialog(
-        self, language: str, config: object, *, section: str = SECTION_DETECTION
+    def _on_preprocess_preview_requested(
+        self, ocr_config: OcrConfig, *, parent: QWidget | None = None
     ) -> None:
-        """Open Privacy Settings; the panel's "personal info" button lands on its detection tab."""
-        from ._privacy_settings_dialog import PrivacySettingsDialog  # noqa: PLC0415
-
-        dialog = PrivacySettingsDialog(
-            language,
-            config,
-            self._app_service,
-            self,
-            acknowledgements=self._acknowledgements(),
-            section=section,
-            display_anonymized=self._display_anonymized,
-            display_anonymized_available=self._privacy_available,
-        )
-        if dialog.exec() == QDialog.DialogCode.Accepted:
-            self._config_panel.update_anonymizer_config(dialog.anonymizer_config)
-            self._save_settings(notify=False)
-            if self._privacy_available:
-                # Without the add-on the checkbox is disabled and shows "off"; applying that
-                # would overwrite the saved preference.
-                self._apply_display_anonymized(dialog.display_anonymized())
-            # New models or patterns produce different placeholders for the shown text.
-            self._preview.invalidate_anonymization()
-
-    def _on_preprocess_preview_requested(self, ocr_config: OcrConfig) -> None:
+        """Preview *ocr_config*'s image preparation; dialogs open on top of *parent*."""
+        owner = parent or self
         thread = self._preprocess_preview_thread
         if thread is not None and thread.isRunning():
             return  # a preview is already in flight; ignore the extra click
@@ -2347,7 +2358,7 @@ class MainWindow(QMainWindow):
                 f"*{s}" for s in sorted(self._app_service.list_supported_suffixes() - {".txt"})
             )
             path, _ = QFileDialog.getOpenFileName(
-                self, "Select image or PDF", "", f"Images & PDFs ({supported_glob})"
+                owner, "Select image or PDF", "", f"Images & PDFs ({supported_glob})"
             )
             if not path:
                 return
@@ -2362,7 +2373,7 @@ class MainWindow(QMainWindow):
         # logic can use to infer that.
         thread.done.connect(
             lambda orig, proc, steps, error: self._on_preprocess_preview_done(
-                orig, proc, steps, error, ocr_config, tmp_dir
+                orig, proc, steps, error, ocr_config, tmp_dir, parent=owner
             ),
             Qt.ConnectionType.QueuedConnection,
         )
@@ -2377,11 +2388,15 @@ class MainWindow(QMainWindow):
         error: str,
         ocr_config: OcrConfig,
         tmp_dir: Path,
+        *,
+        parent: QWidget | None = None,
     ) -> None:
         QApplication.restoreOverrideCursor()
+        # The Settings window may have been closed while the preview was being made.
+        owner = parent if parent is not None and _is_shown(parent) else self
         if error:
             shutil.rmtree(tmp_dir, ignore_errors=True)
-            QMessageBox.warning(self, "Preview failed", error)
+            QMessageBox.warning(owner, "Preview failed", error)
             return
         assert orig_path is not None
         assert proc_path is not None
@@ -2390,7 +2405,7 @@ class MainWindow(QMainWindow):
         orig_pix = load_pixmap(orig_path)
         proc_pix = load_pixmap(proc_path)
 
-        dlg = QDialog(self)
+        dlg = QDialog(owner)
         dlg.setWindowTitle(f"Preprocessing Preview — {ocr_config.preprocess_method}")
         dlg.resize(1000, 620)
 

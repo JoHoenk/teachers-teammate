@@ -116,8 +116,26 @@ EXPLANATIONS_SUPPORTED_TOOLTIP = (
     "works with it."
 )
 
+# ── Settings window: page names and "where to change it" ──────────────────────
+
+PAGE_AI_MODELS = "AI models"
+PAGE_SCAN_QUALITY = "Scan quality"
+PAGE_PRIVACY = "Privacy"
+PAGE_AI_SETUP = "Where the AI runs"
+PAGE_ADDONS = "Add-ons"
+
+#: The one place every message names when it says where a setting is changed.
+WHERE_AI_MODELS = f"Settings → {PAGE_AI_MODELS}"
+WHERE_SCAN_QUALITY = f"Settings → {PAGE_SCAN_QUALITY}"
+WHERE_PRIVACY = f"Settings → {PAGE_PRIVACY}"
+WHERE_AI_SETUP = f"Settings → {PAGE_AI_SETUP}"
+WHERE_ADDONS = f"Settings → {PAGE_ADDONS}"
+WHERE_RESULTS = "Results, in the main window"
+OPEN_ADDONS = "Open Add-ons…"
+
 # ── Settings wording ──────────────────────────────────────────────────────────
 
+EXPLANATIONS_GROUP = "Explanations"
 SAME_AS_TEXT = "Same as the text"
 EXPLANATION_LANGUAGE_TOOLTIP = (
     "Language of the explanations and of the unclear-expression notes. The corrections "
@@ -225,7 +243,7 @@ HIDE_PERSONAL_INFO_TIP = (
 )
 HIDE_PERSONAL_INFO_UNAVAILABLE_TIP = (
     "Hiding personal information needs the Privacy add-on and a spaCy model for the\n"
-    "document language. Open Advanced Settings → Downloads to install them."
+    f"document language. Install them under {WHERE_ADDONS} (Name detection)."
 )
 HIDING_PERSONAL_INFO = "Hiding personal information…"
 HIDING_PERSONAL_INFO_FAILED = "Personal information could not be hidden: {reason}"

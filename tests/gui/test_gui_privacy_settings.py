@@ -1,4 +1,4 @@
-"""GUI tests for Privacy Settings: remembered "don't ask again" answers and the combined dialog."""
+"""GUI tests for Settings → Privacy: remembered "don't ask again" answers and the combined page."""
 
 # pylint: disable=W0212,W0621  # protected-access — the tests drive the tab's buttons directly / redefined-outer-name — pytest fixtures shadow module-scope names by design
 
@@ -7,7 +7,6 @@ from __future__ import annotations
 from unittest.mock import MagicMock, patch
 
 import pytest
-from PySide6.QtWidgets import QDialogButtonBox
 
 from teachers_teammate.domain.data_location import (
     DataFlow,
@@ -19,18 +18,20 @@ from teachers_teammate.domain.data_location import (
 from teachers_teammate.gui import _user_text as txt
 from teachers_teammate.gui._privacy_settings import (
     DISPLAY_ANONYMIZED_KEY,
-    SECTION_DETECTION,
-    SECTION_SENDING,
     SETTINGS_KEY,
     FlowAcknowledgements,
     display_anonymized,
     set_display_anonymized,
 )
-from teachers_teammate.gui._privacy_settings_dialog import (
-    NOTHING_REMEMBERED,
-    PrivacySettingsDialog,
+from teachers_teammate.gui.settings._page import (
+    FOCUS_DETECTION,
+    FOCUS_PATTERNS,
+    FOCUS_SENDING,
 )
-from teachers_teammate.infrastructure.anonymizer import AnonymizerConfig
+from teachers_teammate.gui.settings._privacy_page import NOTHING_REMEMBERED, PrivacyPage
+from teachers_teammate.infrastructure.anonymizer import DEFAULT_PATTERNS, AnonymizerConfig
+
+from ._gui_harness import settings_context
 
 
 class _MemorySettings:
@@ -181,55 +182,60 @@ def test_forgetting_all_asks_again_for_everything(acks, settings) -> None:
     assert SETTINGS_KEY not in settings.store
 
 
-# ── the dialog ──────────────────────────────────────────────────────────────
+# ── the page ───────────────────────────────────────────────────────────────
 
 
-def _make_dialog(
+def _make_page(
     qtbot,
     acks,
     *,
-    section: str = SECTION_DETECTION,
+    focus: str = "",
+    config: AnonymizerConfig | None = None,
     display_anonymized: bool = False,
-    display_anonymized_available: bool = True,
-) -> PrivacySettingsDialog:
-    """Build the dialog with spaCy model fetching suppressed (as the anonymizer tests do)."""
+    privacy_available: bool = True,
+) -> PrivacyPage:
+    """Build the page with spaCy model fetching suppressed (as the anonymizer tests do)."""
+    context = settings_context(
+        MagicMock(),
+        acknowledgements=acks,
+        anonymizer_config=config if config is not None else AnonymizerConfig(),
+        display_anonymized=display_anonymized,
+        privacy_available=privacy_available,
+    )
     with patch(
-        "teachers_teammate.gui._anonymizer_config_dialog.ProcessingApplicationService"
+        "teachers_teammate.gui._anonymizer_config_widget.ProcessingApplicationService"
     ) as service:
         service.return_value.list_installed_spacy_models.return_value = []
-        dlg = PrivacySettingsDialog(
-            "English",
-            AnonymizerConfig(),
-            MagicMock(),
-            acknowledgements=acks,
-            section=section,
-            display_anonymized=display_anonymized,
-            display_anonymized_available=display_anonymized_available,
-        )
-    dlg._spacy_fetch_thread.quit()
-    dlg._spacy_fetch_thread.wait(500)
-    qtbot.addWidget(dlg)
-    dlg.show()
-    return dlg
+        page = PrivacyPage(context)
+    thread = page.rules()._spacy_fetch_thread
+    assert thread is not None
+    thread.quit()
+    thread.wait(500)
+    qtbot.addWidget(page)
+    if focus:
+        page.focus(focus)
+    page.show()
+    return page
 
 
-def _listed(dlg: PrivacySettingsDialog) -> list[str]:
-    tab = dlg.sending_tab()
+def _listed(page: PrivacyPage) -> list[str]:
+    tab = page.sending_tab()
     return [tab._list.item(i).text() for i in range(tab._list.count())]
 
 
 @pytest.mark.gui
-def test_privacy_settings_combines_sending_and_personal_info_in_one_window(qtbot, acks) -> None:
+def test_privacy_page_combines_sending_and_personal_info(qtbot, acks) -> None:
     """
-    Given  the Privacy Settings dialog
+    Given  the Privacy page
     When   it is opened
-    Then   it is titled Privacy Settings and has the sending tab first, followed by the two
-           personal-info tabs of the anonymizer dialog
+    Then   it has the sending tab first, followed by the two personal-info tabs of the
+           anonymizer rules
     """
-    dlg = _make_dialog(qtbot, acks)
+    page = _make_page(qtbot, acks)
 
-    titles = [dlg._tabs.tabText(i) for i in range(dlg._tabs.count())]
-    assert dlg.windowTitle() == "Privacy Settings"
+    tabs = page.rules().tabs()
+    titles = [tabs.tabText(i) for i in range(tabs.count())]
+    assert page.title == "Privacy"
     assert titles == [
         "Sending data away",
         "Personal info: detection",
@@ -239,89 +245,94 @@ def test_privacy_settings_combines_sending_and_personal_info_in_one_window(qtbot
 
 @pytest.mark.gui
 @pytest.mark.parametrize(
-    ("section", "expected_tab"),
-    [(SECTION_SENDING, "Sending data away"), (SECTION_DETECTION, "Personal info: detection")],
+    ("focus", "expected_tab"),
+    [
+        (FOCUS_SENDING, "Sending data away"),
+        (FOCUS_DETECTION, "Personal info: detection"),
+        (FOCUS_PATTERNS, "Personal info: patterns"),
+    ],
 )
-def test_the_dialog_opens_on_the_requested_section(
-    qtbot, acks, section: str, expected_tab: str
+def test_the_page_opens_on_the_requested_section(
+    qtbot, acks, focus: str, expected_tab: str
 ) -> None:
     """
-    Given  the menu asks for the sending section and the personal-info button for detection
-    When   the dialog opens
+    Given  a deep link asking for the sending, detection or pattern section
+    When   the page is focused
     Then   each lands on its own tab
     """
-    dlg = _make_dialog(qtbot, acks, section=section)
+    page = _make_page(qtbot, acks, focus=focus)
 
-    assert dlg._tabs.tabText(dlg._tabs.currentIndex()) == expected_tab
+    tabs = page.rules().tabs()
+    assert tabs.tabText(tabs.currentIndex()) == expected_tab
 
 
 @pytest.mark.gui
 def test_the_detection_tab_offers_hiding_personal_information(qtbot, acks) -> None:
     """
-    Given  the Privacy Settings dialog opened with the hiding switched on
+    Given  the Privacy page opened with the hiding switched on
     When   the detection tab is shown
-    Then   its first group holds a ticked checkbox with the window's own wording
+    Then   its first group holds a ticked checkbox with the page's own wording
     """
-    dlg = _make_dialog(qtbot, acks, display_anonymized=True)
+    page = _make_page(qtbot, acks, display_anonymized=True)
 
-    checkbox = dlg.hide_personal_checkbox()
-    group = dlg._detection_layout.itemAt(0).widget()
+    checkbox = page.hide_personal_checkbox()
+    group = page.rules().detection_layout().itemAt(0).widget()
     assert group.title() == "Showing texts"
     assert checkbox.text() == txt.HIDE_PERSONAL_INFO_CHECKBOX
     assert checkbox.isChecked()
     assert checkbox.isEnabled()
     assert checkbox.toolTip() == txt.HIDE_PERSONAL_INFO_TIP
-    assert dlg.display_anonymized()
+    assert page.display_anonymized()
 
 
 @pytest.mark.gui
 def test_the_checkbox_follows_the_window_state(qtbot, acks) -> None:
     """
     Given  the hiding switched off
-    When   the dialog is opened
+    When   the page is opened
     Then   the checkbox is unticked, and what it returns follows a click
     """
-    dlg = _make_dialog(qtbot, acks, display_anonymized=False)
-    checkbox = dlg.hide_personal_checkbox()
+    page = _make_page(qtbot, acks, display_anonymized=False)
+    checkbox = page.hide_personal_checkbox()
     assert not checkbox.isChecked()
-    assert not dlg.display_anonymized()
+    assert not page.display_anonymized()
 
     checkbox.setChecked(True)
 
-    assert dlg.display_anonymized()
+    assert page.display_anonymized()
 
 
 @pytest.mark.gui
 def test_the_checkbox_is_disabled_without_the_privacy_addon(qtbot, acks) -> None:
     """
     Given  a computer where personal information cannot be hidden
-    When   the dialog is opened with the hiding switched on
-    Then   the checkbox is unticked and disabled, and its tooltip points at Downloads
+    When   the page is opened with the hiding switched on
+    Then   the checkbox is unticked and disabled, and its tooltip points at Add-ons
     """
-    dlg = _make_dialog(qtbot, acks, display_anonymized=True, display_anonymized_available=False)
+    page = _make_page(qtbot, acks, display_anonymized=True, privacy_available=False)
 
-    checkbox = dlg.hide_personal_checkbox()
+    checkbox = page.hide_personal_checkbox()
     assert not checkbox.isEnabled()
     assert not checkbox.isChecked()
-    assert "Downloads" in checkbox.toolTip()
+    assert txt.WHERE_ADDONS in checkbox.toolTip()
 
 
 @pytest.mark.gui
 def test_the_sending_tab_lists_remembered_answers_in_words(qtbot, acks) -> None:
     """
     Given  one remembered answer
-    When   the dialog is shown
+    When   the page is shown
     Then   the list names the step, the service and what is sent, not a fingerprint
     """
     acks.remember(_flow("Mistral"))
 
-    dlg = _make_dialog(qtbot, acks, section=SECTION_SENDING)
+    page = _make_page(qtbot, acks, focus=FOCUS_SENDING)
 
-    assert _listed(dlg) == [
+    assert _listed(page) == [
         "Proofreading: Online service (Mistral) · outside the EU — receives text, "
         "names sent as written"
     ]
-    assert dlg.sending_tab()._empty.isHidden()
+    assert page.sending_tab()._empty.isHidden()
 
 
 @pytest.mark.gui
@@ -331,8 +342,8 @@ def test_with_nothing_remembered_the_tab_says_you_are_always_asked(qtbot, acks) 
     When   the sending tab is shown
     Then   it says so (no empty list), and nothing can be taken back
     """
-    dlg = _make_dialog(qtbot, acks, section=SECTION_SENDING)
-    tab = dlg.sending_tab()
+    page = _make_page(qtbot, acks, focus=FOCUS_SENDING)
+    tab = page.sending_tab()
 
     assert not tab._empty.isHidden()
     assert tab._empty.text() == NOTHING_REMEMBERED
@@ -345,27 +356,27 @@ def test_with_nothing_remembered_the_tab_says_you_are_always_asked(qtbot, acks) 
 def test_taking_back_an_answer_is_applied_only_with_ok(qtbot, acks) -> None:
     """
     Given  two remembered answers
-    When   one is selected and taken back, first cancelling, then again and pressing OK
-    Then   cancelling changes nothing; OK forgets exactly the selected answer
+    When   one is selected and taken back, first without the window's OK, then again with it
+           (the window calls apply() on OK)
+    Then   nothing changes without OK; OK forgets exactly the selected answer
     """
     mistral, openai = _flow("Mistral"), _flow("OpenAI")
     acks.remember(mistral)
     acks.remember(openai)
 
-    dlg = _make_dialog(qtbot, acks, section=SECTION_SENDING)
-    tab = dlg.sending_tab()
+    page = _make_page(qtbot, acks, focus=FOCUS_SENDING)
+    tab = page.sending_tab()
     tab._list.setCurrentRow(0)  # sorted by summary: Mistral first
     assert tab._forget_selected_btn.isEnabled()
     tab._forget_selected_btn.click()
-    assert len(_listed(dlg)) == 1
-    dlg.reject()
-    assert acks.fingerprints() == {mistral.fingerprint, openai.fingerprint}
+    assert len(_listed(page)) == 1
+    assert acks.fingerprints() == {mistral.fingerprint, openai.fingerprint}  # Cancel: no apply()
 
-    dlg = _make_dialog(qtbot, acks, section=SECTION_SENDING)
-    tab = dlg.sending_tab()
+    page = _make_page(qtbot, acks, focus=FOCUS_SENDING)
+    tab = page.sending_tab()
     tab._list.setCurrentRow(0)
     tab._forget_selected_btn.click()
-    dlg._buttons.button(QDialogButtonBox.StandardButton.Ok).click()
+    page.apply()
 
     assert acks.fingerprints() == {openai.fingerprint}
 
@@ -379,15 +390,60 @@ def test_ask_again_for_all_clears_the_list_and_is_applied_with_ok(qtbot, acks) -
     """
     acks.remember(_flow("Mistral"))
     acks.remember(_flow("OpenAI"))
-    dlg = _make_dialog(qtbot, acks, section=SECTION_SENDING)
-    tab = dlg.sending_tab()
+    page = _make_page(qtbot, acks, focus=FOCUS_SENDING)
+    tab = page.sending_tab()
 
     tab._forget_all_btn.click()
 
-    assert _listed(dlg) == []
+    assert _listed(page) == []
     assert not tab._empty.isHidden()
-    dlg._buttons.button(QDialogButtonBox.StandardButton.Ok).click()
+    assert len(acks.remembered()) == 2  # not yet
+    page.apply()
     assert acks.remembered() == []
+
+
+@pytest.mark.gui
+def test_restore_defaults_resets_the_rules_but_not_the_remembered_answers(qtbot, acks) -> None:
+    """
+    Given  a page with a remembered answer, a custom pattern and the hiding switched off
+    When   "Restore defaults → This page" resets it
+    Then   the patterns and the hiding choice are back to their defaults while the remembered
+           answer stays (it has its own "Ask again" buttons)
+    """
+    acks.remember(_flow("Mistral"))
+    page = _make_page(
+        qtbot,
+        acks,
+        config=AnonymizerConfig(patterns=(("MINE", r"\d+"),)),
+        display_anonymized=False,
+    )
+    assert page.anonymizer_config().patterns == (("MINE", r"\d+"),)
+
+    page.restore_defaults()
+
+    assert page.anonymizer_config().patterns == tuple(DEFAULT_PATTERNS)
+    assert page.display_anonymized()
+    assert len(_listed(page)) == 1
+
+
+@pytest.mark.gui
+def test_an_invalid_pattern_makes_the_page_unsaveable(qtbot, acks) -> None:
+    """
+    Given  a page with a valid pattern
+    When   the pattern is broken, then fixed
+    Then   the page reports itself invalid (so the window disables OK) and valid again
+    """
+    page = _make_page(qtbot, acks, config=AnonymizerConfig(patterns=(("ID", r"\d+"),)))
+    changes: list[bool] = []
+    page.validity_changed.connect(changes.append)
+    assert page.is_valid()
+
+    page.rules()._table.item(0, 1).setText("[open")
+    assert not page.is_valid()
+    page.rules()._table.item(0, 1).setText(r"\d+")
+
+    assert page.is_valid()
+    assert changes == [False, True]
 
 
 # ── the "hide personal information" view setting ─────────────────────────────

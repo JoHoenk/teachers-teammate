@@ -114,7 +114,7 @@ class RequirementIssue:
     message: str
     fixable_via_downloads: bool
     provider: str = ""
-    """Set when the fix is installing this provider's package (Downloads → LLM Providers)."""
+    """Set when the fix is installing this provider's package (Add-ons → Online AI services)."""
 
 
 @dataclass(frozen=True)
@@ -1183,7 +1183,7 @@ class ProcessingApplicationService:
                 except ImportError:
                     issues.append(
                         RequirementIssue(
-                            "spaCy is not installed. Use the Downloads dialog to install it.",
+                            "spaCy is not installed. Install it under Add-ons in the app.",
                             fixable_via_downloads=True,
                         )
                     )
@@ -1352,7 +1352,7 @@ class ProcessingApplicationService:
         """Return True if *module* can be imported (the package is installed).
 
         The import caches are refreshed first: a package installed while the app runs
-        (Downloads) is otherwise reported missing until the next start.
+        (Add-ons) is otherwise reported missing until the next start.
         """
         importlib.invalidate_caches()
         return importlib.util.find_spec(module) is not None

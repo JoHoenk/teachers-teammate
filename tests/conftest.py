@@ -300,6 +300,9 @@ def credential_file(monkeypatch: pytest.MonkeyPatch) -> dict[str, object]:
 
     monkeypatch.setattr(_credential_store, "QSettings", MemorySettings)
     monkeypatch.setattr(_credential_store, "_keyring", lambda: None)
+    # What start-up found in the environment is process-wide state; no test inherits it.
+    monkeypatch.setattr(_credential_store, "_SET_OUTSIDE_APP", set())
+    monkeypatch.setattr(_credential_store, "_LOADED_BY_APP", set())
     return stored
 
 

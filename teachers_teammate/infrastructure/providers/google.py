@@ -41,6 +41,8 @@ PROVIDER_INFO: dict = {
     "data_region": "non_eu",
     "vendor_country": "USA",
     "needs_api_key": True,  # key is read from $GOOGLE_API_KEY by LangChain
+    # The vendor's page where a key is created; the Settings window links to it.
+    "key_url": "https://aistudio.google.com/apikey",
     "env_key": "GOOGLE_API_KEY",
     "needs_base_url": False,
     "can_list_models": True,

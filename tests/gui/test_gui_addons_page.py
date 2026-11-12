@@ -168,7 +168,7 @@ def test_suitability_column_and_sort_order_follow_profile(qtbot) -> None:
 def test_switching_profile_updates_suitability(qtbot) -> None:
     """
     Given  the page resolved to 8gb
-    When   the window passes on that "Where the AI runs" was switched to "16 GB or more"
+    When   the window passes on that "This computer" was switched to "16 GB or more"
     Then   suitability labels and sorting update for the new profile
     """
     dlg = _make_dialog(qtbot)
@@ -622,13 +622,13 @@ def test_the_computer_profile_is_shown_read_only_with_a_change_link(qtbot) -> No
     Given  the Add-ons page
     When   it is built
     Then   "My computer" is a read-only line (no combo), with a "change…" link that asks the
-           window for the Where the AI runs page
+           window for the This computer page
     """
     dlg = _make_dialog(qtbot)
     assert dlg._hardware_selector._combo is None
 
     with qtbot.waitSignal(dlg.navigate_requested, timeout=2000) as blocker:
-        dlg._change_profile_lbl.linkActivated.emit("change")
+        dlg._profile_line.change_link.linkActivated.emit("change")
 
     assert blocker.args == [SettingsPage.AI_SETUP, "", []]
 
@@ -849,7 +849,7 @@ def _choose_computer(qtbot, dlg: AddonsPage, text: str) -> None:
 
 _CPU_TEXT = "Basic computer or small graphics card (under 8 GB)"
 _16GB_TEXT = "Graphics card with 16 GB memory or more"
-#: The page follows the profile chosen on Where the AI runs, passed on as the setting value.
+#: The page follows the profile chosen on This computer, passed on as the setting value.
 _SETTING_OF_TEXT = {_CPU_TEXT: "cpu", _16GB_TEXT: "16gb"}
 
 

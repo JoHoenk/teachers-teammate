@@ -870,6 +870,35 @@ def test_ok_in_settings_applies_saves_and_rechecks(main_window, monkeypatch) -> 
 
 
 @pytest.mark.gui
+def test_ok_in_settings_can_turn_on_removal_of_personal_info(main_window, monkeypatch) -> None:
+    """
+    Given  the Settings window closes with OK and asks to turn "Remove personal info" on
+    When   open_settings() returns
+    Then   the box is ticked through its normal path (the stage guard runs for it), and the
+           setting is saved
+    """
+    install_scripted_settings_window(
+        monkeypatch, result=SettingsResult(settings={}, turn_on_anonymization=True)
+    )
+    panel = main_window._config_panel
+    guarded: list[str] = []
+    monkeypatch.setattr(panel, "_guard_stage", lambda stage: guarded.append(stage))
+    saved: list[bool] = []
+    monkeypatch.setattr(
+        main_window,
+        "_save_settings",
+        lambda **_kw: saved.append(panel.get_settings_dict()["anonymization_enabled"]),
+    )
+    assert not panel.get_settings_dict()["anonymization_enabled"]
+
+    main_window.open_settings(SettingsPage.AI_MODELS)
+
+    assert panel._anonymization_enabled.isChecked()
+    assert guarded == ["anonymizer"]
+    assert saved == [True]
+
+
+@pytest.mark.gui
 def test_cancel_in_settings_changes_nothing(main_window, monkeypatch) -> None:
     """
     Given  the Settings window closes with Cancel although its pages hold other values
@@ -895,7 +924,7 @@ def test_ok_in_settings_persists_a_profile_change_to_ocr_toml(
     main_window, monkeypatch, tmp_path: Path
 ) -> None:
     """
-    Given  the Settings window closes with OK after "Where the AI runs" was set to 16 GB
+    Given  the Settings window closes with OK after "This computer" was set to 16 GB
     When   open_settings() returns
     Then   the value is stored in the config panel and saved to ocr.toml
     """
@@ -1154,7 +1183,7 @@ def test_settings_menu_lists_the_pages_then_all_settings(main_window) -> None:
     """
     Given  the main window
     When   the Settings menu is read
-    Then   it lists the five pages by name, a separator and "All settings…" on Ctrl+,
+    Then   it lists the six pages by name, a separator and "All settings…" on Ctrl+,
     """
     menu = _menu(main_window, "Settings")
 
@@ -1162,7 +1191,8 @@ def test_settings_menu_lists_the_pages_then_all_settings(main_window) -> None:
 
     assert entries == [
         "AI models\u2026",
-        "Where the AI runs\u2026",
+        "This computer\u2026",
+        "Online services\u2026",
         "Scan quality\u2026",
         "Privacy\u2026",
         "Add-ons\u2026",

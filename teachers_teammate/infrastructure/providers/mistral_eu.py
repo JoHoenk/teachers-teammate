@@ -31,6 +31,8 @@ PROVIDER_INFO: dict = {
     "data_region": "eu",
     "vendor_country": "France",
     "needs_api_key": True,
+    # The vendor's page where a key is created; the Settings window links to it.
+    "key_url": "https://console.mistral.ai/api-keys",
     "env_key": common.ENV_KEY,
     "needs_base_url": False,
     "can_list_models": True,

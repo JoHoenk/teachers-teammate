@@ -25,6 +25,8 @@ PROVIDER_INFO: dict = {
     "data_region": "non_eu",
     "vendor_country": "Canada",
     "needs_api_key": True,
+    # The vendor's page where a key is created; the Settings window links to it.
+    "key_url": "https://dashboard.cohere.com/api-keys",
     "env_key": "COHERE_API_KEY",
     "needs_base_url": False,
     "can_list_models": False,

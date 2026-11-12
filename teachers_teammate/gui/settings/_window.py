@@ -6,10 +6,13 @@ result, so a page that was never opened changes nothing.
 
 The window owns the wiring between pages, so the pages never know about each other:
 
-- **Computer profile:** edited on *Where the AI runs*, followed read-only by AI models and Add-ons.
-- **Local AI server address:** edited on *Where the AI runs*, followed by AI models and Add-ons.
+- **Computer profile:** edited on *This computer*, followed read-only by AI models and Add-ons.
+- **Local AI server address:** edited on *This computer*, followed by AI models and Add-ons.
 - **Packages changed:** a finished install on Add-ons makes every built page look again, and
   is passed on to the main window.
+- **API keys:** one :class:`~._credentials.ApiKeyDrafts` for the whole window, shared by every
+  page that shows a key.  A key is used right away, stored on OK, and put back out of the
+  environment by any other way out of the window.
 - **Recognition method → image preparation:** choosing another method on AI models applies
   that method's default image preparation on Scan quality (as the old dialog did), also when
   Scan quality was not opened yet.
@@ -20,8 +23,8 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Any
 
-from PySide6.QtCore import QSettings, Qt, Signal
-from PySide6.QtGui import QShowEvent
+from PySide6.QtCore import QModelIndex, QSettings, QSignalBlocker, Qt, Signal
+from PySide6.QtGui import QPainter, QShowEvent
 from PySide6.QtWidgets import (
     QApplication,
     QDialog,
@@ -33,6 +36,8 @@ from PySide6.QtWidgets import (
     QPushButton,
     QScrollArea,
     QStackedWidget,
+    QStyledItemDelegate,
+    QStyleOptionViewItem,
     QVBoxLayout,
     QWidget,
 )
@@ -41,6 +46,8 @@ from ...config import OcrConfig
 from ._addons_page import AddonsPage
 from ._ai_models_page import AiModelsPage
 from ._ai_setup_page import AiSetupPage
+from ._credentials import FILE_FALLBACK_TEXT, FILE_FALLBACK_TITLE, ApiKeyDrafts
+from ._online_services_page import OnlineServicesPage
 from ._page import (
     PAGE_TITLES,
     SettingsContext,
@@ -88,11 +95,30 @@ PAGE_MARGINS = (2, 12, 10, 4)
 _PAGE_CLASSES: dict[SettingsPage, type[SettingsPageBase]] = {
     SettingsPage.AI_MODELS: AiModelsPage,
     SettingsPage.AI_SETUP: AiSetupPage,
+    SettingsPage.ONLINE_SERVICES: OnlineServicesPage,
     SettingsPage.SCAN_QUALITY: ScanQualityPage,
     SettingsPage.PRIVACY: PrivacyPage,
     SettingsPage.ADDONS: AddonsPage,
 }
 _ORDER: tuple[SettingsPage, ...] = tuple(SettingsPage)
+#: Pages that only hold what the page above them needs, drawn indented under it in the
+#: sidebar: *This computer* and *Online services* are no choice of their own, they serve
+#: *AI models*.
+SUB_PAGES: frozenset[SettingsPage] = frozenset(
+    {SettingsPage.AI_SETUP, SettingsPage.ONLINE_SERVICES}
+)
+#: How far a sub-page is indented in the sidebar (pixels).
+SUB_PAGE_INDENT = 18
+
+
+class _SidebarDelegate(QStyledItemDelegate):
+    """Draws the rows of :data:`SUB_PAGES` indented, highlight included."""
+
+    def paint(self, painter: QPainter, option: QStyleOptionViewItem, index: QModelIndex) -> None:
+        if 0 <= index.row() < len(_ORDER) and _ORDER[index.row()] in SUB_PAGES:
+            option = QStyleOptionViewItem(option)
+            option.rect.setLeft(option.rect.left() + SUB_PAGE_INDENT)
+        super().paint(painter, option, index)
 
 
 def last_page() -> SettingsPage:
@@ -138,6 +164,8 @@ class SettingsWindow(QDialog):
         self._containers: dict[SettingsPage, QWidget] = {}
         self._container_layouts: dict[SettingsPage, QVBoxLayout] = {}
         self._restore_all = False
+        #: The API keys as edited here: used right away, stored on OK, undone otherwise.
+        self._key_drafts = ApiKeyDrafts(context.app_service, parent=self)
 
         self._build()
         self._restore_geometry()
@@ -160,6 +188,7 @@ class SettingsWindow(QDialog):
         self._sidebar.setStyleSheet(SIDEBAR_STYLE)
         for page in _ORDER:
             self._sidebar.addItem(PAGE_TITLES[page])
+        self._sidebar.setItemDelegate(_SidebarDelegate(self._sidebar))
         self._sidebar.currentRowChanged.connect(self._on_sidebar_row)
         body.addWidget(self._sidebar)
 
@@ -289,6 +318,7 @@ class SettingsWindow(QDialog):
             display_anonymized=context.display_anonymized,
             privacy_available=context.privacy_available,
             pull_manager=context.pull_manager,
+            key_drafts=self._key_drafts,
         )
 
     def _wire(self, page: SettingsPageBase) -> None:
@@ -302,8 +332,6 @@ class SettingsWindow(QDialog):
             page.packages_changed.connect(self._on_packages_changed)
         elif isinstance(page, AiModelsPage):
             page.ocr_engine_changed.connect(self._on_ocr_engine_changed)
-            page.proofreading_choice_changed.connect(self._on_proofreading_choice_changed)
-            page.review_choice_changed.connect(self._on_review_choice_changed)
             page.addon_installed.connect(self.addon_installed.emit)
         elif isinstance(page, ScanQualityPage):
             page.preview_requested.connect(self._on_preview_requested)
@@ -325,22 +353,6 @@ class SettingsWindow(QDialog):
         for built in self._pages.values():
             if not isinstance(built, AiSetupPage):
                 built.set_ollama_url(url)
-
-    def _on_proofreading_choice_changed(self, provider: str, model: str) -> None:
-        """Keep the working settings and the context label in step with the chosen service."""
-        self._working["correction_provider"] = provider
-        self._working["correction_model"] = model
-        setup = self._pages.get(SettingsPage.AI_SETUP)
-        if isinstance(setup, AiSetupPage):
-            setup.set_proofreading_choice(provider, model)
-
-    def _on_review_choice_changed(self, provider: str, model: str) -> None:
-        """Keep the working settings and the context label in step with the chosen review."""
-        self._working["evaluate_provider"] = provider
-        self._working["evaluate_model"] = model
-        setup = self._pages.get(SettingsPage.AI_SETUP)
-        if isinstance(setup, AiSetupPage):
-            setup.set_review_choice(provider, model)
 
     def _on_packages_changed(self) -> None:
         for built in self._pages.values():
@@ -466,22 +478,45 @@ class SettingsWindow(QDialog):
             return
         if not all(built.is_valid() for built in self._pages.values()):
             return
-        for built in self._pages.values():
-            built.apply()
+        # Committing a key rings the pages' key listeners (new model lists, new marks); the
+        # window is closing, so they would only start work that is thrown away at once.
+        with QSignalBlocker(self._key_drafts):
+            for built in self._pages.values():
+                built.apply()
+        in_file = self._key_drafts.apply()
+        if in_file:
+            # The note on the keys promised the keychain, so say where they went instead.
+            titles = self._key_drafts.titles()
+            services = ", ".join(titles.get(env_key, env_key) for env_key in in_file)
+            QMessageBox.warning(
+                self, FILE_FALLBACK_TITLE, FILE_FALLBACK_TEXT.format(services=services)
+            )
         super().accept()
 
     def done(self, result: int) -> None:
-        """Refuse while an install runs; otherwise stop every page's background work."""
+        """Refuse while an install runs; otherwise stop every page's background work.
+
+        Any way out but OK puts the API keys typed here back out of the environment.  The pages
+        stop first, so a key waiting for its pause cannot be written after it.
+        """
         reason = self._close_blocker()
         if reason:
             QMessageBox.information(self, CANNOT_CLOSE_TITLE, reason)
             return
         for built in self._pages.values():
             built.shutdown()
+        if result != QDialog.DialogCode.Accepted:
+            self._forget_models_of(self._key_drafts.discard())
         qs = QSettings(_QSETTINGS_ORG, _QSETTINGS_APP)
         qs.setValue(GEOMETRY_KEY, self.saveGeometry())
         qs.setValue(LAST_PAGE_KEY, self.current_page().value)
         super().done(result)
+
+    def _forget_models_of(self, env_keys: list[str]) -> None:
+        """Drop the cached model lists fetched with keys that were just taken back."""
+        for env_key in env_keys:
+            for provider in self._key_drafts.providers_of(env_key):
+                self._context.app_service.invalidate_model_cache(provider, "")
 
     # ── result ────────────────────────────────────────────────────────────────
 
@@ -498,9 +533,13 @@ class SettingsWindow(QDialog):
         if isinstance(privacy, PrivacyPage):
             anonymizer_config = privacy.anonymizer_config()
             display_anonymized = privacy.display_anonymized()
+        ai_models = self._pages.get(SettingsPage.AI_MODELS)
         return SettingsResult(
             settings=settings,
             anonymizer_config=anonymizer_config,
             display_anonymized=display_anonymized,
             restore_all=self._restore_all,
+            turn_on_anonymization=(
+                isinstance(ai_models, AiModelsPage) and ai_models.turn_on_anonymization()
+            ),
         )

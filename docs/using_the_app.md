@@ -22,13 +22,14 @@ What you set up once lives in the Settings window, grouped by topic. Pick a page
 
 | Page | What it holds |
 |---|---|
-| **AI models** | Which method reads the handwriting (always on this computer), which AI service and model proofreads and reviews |
+| **AI models** | Which method reads the handwriting (always on this computer), and which AI service and model proofreads and reviews. One model serves both steps unless you tick **Use a different model for content review**. Every service is listed, grouped by where it runs, and marked *key needed* while it has no key; choose an online service and its **key row appears right below it**: paste the key and the model list loads, which also checks that the key works. If text then goes to an online service with names in it, the page says **"Remove personal info" will be turned on** when you press OK (you can keep it off). The context window setting appears here only when it changes something |
+| **This computer** | Shown under AI models in the sidebar: what the AI models need from this computer. First how powerful it is (**My computer**; the model suggestions follow it) and its graphics card, then the address of the local AI server (usually this computer, or your school's own server) |
+| **Online services** | Also under AI models: the access keys (API keys) of the online AI services. The same keys you enter under the service on AI models, all in one list where you can remove one or add one for another service. Not needed while everything runs on this computer. Keys are kept in your system's keychain (macOS Keychain, Windows Credential Manager, or the Linux desktop keyring); where there is none, the page says that the key is kept in the app's settings file, not encrypted |
 | **Scan quality** | How scans and photos are cleaned up before they are read: image preparation and its **Preview…**, corrections and enhancements; under **Expert settings** the PDF resolution and the PDF text layer |
 | **Privacy** | What may leave this computer (the answers you chose not to be asked about again), and how names and other personal information are found and replaced |
-| **Where the AI runs** | Everything the AI choices depend on: on this computer the address of the local AI server and what kind of computer you have (the model suggestions follow it); at an online service its access key. Keys are kept in your system's keychain (macOS Keychain, Windows Credential Manager, or the Linux desktop keyring); where there is none, the page says that the key is kept in the app's settings file, not encrypted |
 | **Add-ons** | Downloads of AI models for this computer and of optional parts: handwriting engines, online AI services, name detection models, performance monitoring |
 
-Changes on the pages are saved when you press **OK** and dropped when you press **Cancel** — except on **Add-ons**, where a download or installation starts right away and is not undone by Cancel. **Restore defaults…** at the bottom resets either the page you are on or all settings (the second choice asks again; it also forgets the answers you asked not to be asked about again, and keeps downloaded models and saved API keys). Which instructions the AI gets and how a step behaves stay in the main window, under each step's **Instructions…** button.
+Changes on the pages are saved when you press **OK** and dropped when you press **Cancel**. A key you enter is used right away, so the model list can load, and saved on OK; Cancel forgets it. The exception is on **Add-ons**, where a download or installation starts right away and is not undone by Cancel. **Restore defaults…** at the bottom resets either the page you are on or all settings (the second choice asks again; it also forgets the answers you asked not to be asked about again, and keeps downloaded models and saved API keys). Which instructions the AI gets and how a step behaves stay in the main window, under each step's **Instructions…** button.
 
 You can also **drag a folder directly onto the window** to set it as the input folder.
 
@@ -70,7 +71,7 @@ The app recognises the text in your documents using the method you choose in **S
 
 Ollama is a free program that runs AI reading models on your own computer. Teacher's Teammate sends each prepared image to Ollama, which reads the text and returns it. This gives the best results for handwriting and difficult scans.
 
-**Ollama must be running** before you click Run. Download it from [ollama.com/download](https://ollama.com/download) and install it like any other program. The default connection is set to your own computer. If you have Ollama running on a different computer on your home network, enter its address in **Settings → Where the AI runs…**.
+**Ollama must be running** before you click Run. Download it from [ollama.com/download](https://ollama.com/download) and install it like any other program. The default connection is set to your own computer. If you have Ollama running on a different computer on your home network, enter its address in **Settings → This computer…**.
 
 ### Choosing AI models
 
@@ -79,7 +80,7 @@ Teacher's Teammate needs two AI models, and you do not need to know anything abo
 - a **reading model** turns your scans into text,
 - a **writing model** proofreads and reviews the text.
 
-The app looks at your computer — the **My computer** setting shows what it found: your graphics card and its memory, and the memory of the computer itself — and suggests models that work well on it. It is usually right; if it could not check your computer it says so there (the details are in the log) instead of staying silent; you can change the choice yourself under **Settings → Where the AI runs…**, and every page then uses your choice. If Ollama runs on a different computer, pick that computer's type in the list.
+The app looks at your computer — the **My computer** setting shows what it found: your graphics card and its memory, and the memory of the computer itself — and suggests models that work well on it. It is usually right; if it could not check your computer it says so there (the details are in the log) instead of staying silent; you can change the choice yourself under **Settings → This computer…**, and every page then uses your choice. If Ollama runs on a different computer, pick that computer's type in the list.
 
 The best models per computer type:
 
@@ -103,7 +104,7 @@ Reading a page needs the whole page — the handwriting, the student's name at t
 
 If your saved settings from an older version used an online service for text recognition, the app tells you at start-up that it now uses Ollama on your computer instead.
 
-Ollama on another computer that you or your school run (see **Settings → Where the AI runs…**) is allowed; the box described below then shows it as "On another computer" with its name.
+Ollama on another computer that you or your school run (see **Settings → This computer…**) is allowed; the box described below then shows it as "On another computer" with its name.
 
 ---
 
@@ -255,7 +256,7 @@ When **Enable proofreading** is turned on, the text from each document is sent t
 
 ### Choosing an AI service
 
-Select a service in the **Proofreading service** dropdown. Ollama (AI running locally on your computer) requires no account or access code. Online services require an access code — provided by the service — which you enter in **Settings → Where the AI runs…**: pick the service, press **Add key**, paste the code (**Show** lets you check it). Services that share one code, such as Mistral and Mistral (EU), have one row.
+Select a service in the **Proofreading service** dropdown. Ollama (AI running locally on your computer) requires no account or access code. Online services require an access code — provided by the service — which you enter in **Settings → Online services…**: pick the service, press **Add key**, paste the code (**Show** lets you check it). Services that share one code, such as Mistral and Mistral (EU), have one row.
 
 When you pick a service, the app asks it for its current list of models. The line under the model box says whether that worked (*5 models*), whether the list is the app's own built-in list because the service cannot be asked, or why asking failed (no key, the key was refused, no connection) with **Try again**. If the service's support is not installed yet, an **Install…** button switches to **Add-ons** with the right package ticked.
 

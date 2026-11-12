@@ -1,4 +1,4 @@
-"""GUI tests for the Settings pages: AI models, Scan quality, Where the AI runs, API keys."""
+"""GUI tests for the Settings pages: AI models, Scan quality, This computer, API keys."""
 # pylint: disable=W0212,W0621,W0613  # protected-access — the tests drive the pages' widgets directly / redefined-outer-name, unused-argument — pytest fixtures are injected by parameter name
 
 from __future__ import annotations
@@ -6,9 +6,10 @@ from __future__ import annotations
 import os
 import threading
 from unittest.mock import MagicMock
+from urllib.parse import urlparse
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QLabel, QPushButton
+from PySide6.QtWidgets import QGroupBox, QLabel, QPushButton
 import pytest
 
 from teachers_teammate.config import DEFAULTS
@@ -17,22 +18,31 @@ from teachers_teammate.domain.model_listing import ModelListing
 from teachers_teammate.gui import _model_fetch
 from teachers_teammate.gui._model_item_delegate import ITEM_LABEL_ROLE
 from teachers_teammate.gui._ocr_config_selector import OcrConfigSelector
-from teachers_teammate.gui.settings._ai_models_page import AiModelsPage
+from teachers_teammate.gui.settings._ai_models_page import (
+    AiModelsPage,
+    PrivacyLineState,
+    privacy_line_state,
+    review_has_own_model,
+)
 from teachers_teammate.gui.settings._ai_service_section import (
     CONTENT_REVIEW,
     PROOFREADING,
     AiServiceSection,
     AiServiceSpec,
+    service_groups,
 )
-from teachers_teammate.gui.settings._credentials import CredentialsGroup
+from teachers_teammate.gui.settings._credentials import ApiKeyDrafts, CredentialsGroup
 from teachers_teammate.gui.settings._page import (
     FOCUS_LOCAL_MODELS,
+    FOCUS_NAME_DETECTION,
+    FOCUS_REVIEW,
     SettingsPage,
     SettingsPageBase,
 )
 from teachers_teammate.gui.settings._privacy_page import PrivacyPage
 from teachers_teammate.gui.settings._scan_quality_page import ScanQualityPage
 from teachers_teammate.gui.settings._ai_setup_page import AiSetupPage
+from teachers_teammate.gui.settings._online_services_page import OnlineServicesPage
 
 from ._gui_harness import settings_context
 from ._settings_stubs import (
@@ -43,6 +53,8 @@ from ._settings_stubs import (
     NonListableService,
     ProviderAppService,
     SlowMistralService,
+    commit_key,
+    select_provider,
     curated_listing,
 )
 
@@ -105,7 +117,7 @@ def _no_spacy_discovery(monkeypatch) -> None:
 
 def _all_pages(qtbot) -> list[SettingsPageBase]:
     pages: list[SettingsPageBase] = []
-    for cls in (AiModelsPage, ScanQualityPage, PrivacyPage, AiSetupPage):
+    for cls in (AiModelsPage, ScanQualityPage, PrivacyPage, AiSetupPage, OnlineServicesPage):
         page = cls(settings_context(DummyAppService(), anonymizer_config=None))
         qtbot.addWidget(page)
         pages.append(page)
@@ -200,12 +212,15 @@ def test_the_page_says_which_computer_the_suggestions_are_for_only_once(models_p
     """
     Given  the AI models page with the recognition picker and two AI sections
     When   it is shown
-    Then   the "Suggestions are for …" line appears once (under Reading handwriting); the
-           sections keep their selectors hidden, so the model hints still follow the profile
+    Then   the "Suggestions are for …" line appears once, at the top of the page; the picker
+           and both sections follow that one selector instead of resolving this computer
+           again, so the model hints still follow the profile
     """
-    assert not models_page._ocr_picker._hw_selector.isHidden()
-    assert models_page._proofreading._hw_selector.isHidden()
-    assert models_page._review._hw_selector.isHidden()
+    selector = models_page._profile_line.selector
+    assert not selector.isHidden()
+    assert models_page._ocr_picker._hw_selector is selector
+    assert models_page._shared._hw_selector is selector
+    assert models_page._review._hw_selector is selector
 
 
 @pytest.mark.gui
@@ -279,12 +294,12 @@ def test_the_pages_values_round_trip(qtbot) -> None:
 
 
 @pytest.mark.gui
-def test_the_same_model_tip_follows_the_other_step_live(qtbot) -> None:
+def test_the_same_model_tip_follows_the_other_step_live(qtbot, monkeypatch) -> None:
     """
-    Given  an 8 GB computer with proofreading and review both on the same Ollama model
-    When   the teacher picks another model for review (not saved yet)
-    Then   the same-model tip appears on proofreading at once, and disappears when the models
-           are the same again — it reads the other step's current choice, not a snapshot
+    Given  an 8 GB computer with proofreading and review on different Ollama models
+    When   the teacher changes the proofreading model (not saved yet)
+    Then   the tip shows in the review section only, and goes when the models are the same
+           again; the shared section never shows it — it reads the other choice live
     """
     page = AiModelsPage(
         settings_context(
@@ -294,21 +309,24 @@ def test_the_same_model_tip_follows_the_other_step_live(qtbot) -> None:
                 "correction_provider": "ollama",
                 "correction_model": "qwen3.5:9b",
                 "evaluate_provider": "ollama",
-                "evaluate_model": "qwen3.5:9b",
+                "evaluate_model": "mistral:latest",
             },
         )
     )
     qtbot.addWidget(page)
     page.load(page._context.settings)
-    with qtbot.waitSignal(page._proofreading._hw_selector.resolved_changed, timeout=5000):
+    with qtbot.waitSignal(page._review._hw_selector.resolved_changed, timeout=5000):
         pass
-    assert page._proofreading._same_model_tip_lbl.isHidden()
+    assert page._override.isChecked()
+    assert not page._review._same_model_tip_lbl.isHidden()
+    assert page._shared._same_model_tip_lbl.isHidden()
 
-    page._review._model.setCurrentText("mistral:latest")
-    assert not page._proofreading._same_model_tip_lbl.isHidden()
+    page._shared._model.setCurrentText("mistral:latest")
+    assert page._review._same_model_tip_lbl.isHidden()
+    assert page._shared._same_model_tip_lbl.isHidden()
 
-    page._review._model.setCurrentText("qwen3.5:9b")
-    assert page._proofreading._same_model_tip_lbl.isHidden()
+    page._shared._model.setCurrentText("qwen3.5:9b")
+    assert not page._review._same_model_tip_lbl.isHidden()
 
 
 @pytest.mark.gui
@@ -326,7 +344,7 @@ def test_a_missing_package_sends_the_install_to_add_ons(qtbot, monkeypatch) -> N
     qtbot.addWidget(page)
     page.load({"correction_provider": "mistral"})
     page.show()
-    hint = page._proofreading._package_hint
+    hint = page._shared._package_hint
     assert "Mistral support is not installed yet." in hint.message()
     requests: list[tuple] = []
     page.navigate_requested.connect(lambda *args: requests.append(args))
@@ -345,14 +363,14 @@ def test_the_api_keys_are_saved_only_when_the_window_applies(
     qtbot, monkeypatch, credential_file
 ) -> None:
     """
-    Given  a key typed on the Where the AI runs page
-    When   the window has not applied the page yet, and then applies it (OK)
+    Given  a key typed on the Online services page
+    When   the page commits its fields (OK), and then the drafts are applied (the window's job)
     Then   nothing is stored before, and the key is stored afterwards
     """
     monkeypatch.setattr(
         os, "environ", {k: v for k, v in os.environ.items() if k != "OPENAI_API_KEY"}
     )
-    page = AiSetupPage(settings_context(ProviderAppService()))
+    page = OnlineServicesPage(settings_context(ProviderAppService()))
     qtbot.addWidget(page)
     page._credentials._add_combo.setCurrentIndex(
         page._credentials._add_combo.findData("OPENAI_API_KEY")
@@ -362,37 +380,10 @@ def test_the_api_keys_are_saved_only_when_the_window_applies(
     assert credential_file == {}
 
     page.apply()
+    assert credential_file == {}
+    page._credentials.drafts.apply()
 
     assert credential_file == {"credentials/OPENAI_API_KEY": "sk-typed"}
-
-
-@pytest.mark.gui
-def test_ai_models_points_to_online_services_while_a_key_is_missing(qtbot, monkeypatch) -> None:
-    """
-    Given  an online AI service without a key (OpenAI) and the AI models page
-    When   the page is created, and the hint's link is followed
-    Then   a hint explains why the service is not offered, and the link opens Where the AI runs
-           on its API keys; with every key set the hint is not there
-    """
-    monkeypatch.setattr(
-        os, "environ", {k: v for k, v in os.environ.items() if k != "OPENAI_API_KEY"}
-    )
-    page = AiModelsPage(settings_context(ProviderAppService()))
-    qtbot.addWidget(page)
-    requested: list[tuple] = []
-    page.navigate_requested.connect(lambda *args: requested.append(args))
-
-    hint = next(label for label in page.findChildren(QLabel) if "Where the AI runs" in label.text())
-    hint.linkActivated.emit("keys")
-
-    assert requested == [(SettingsPage.AI_SETUP, "api_keys", [])]
-    assert not hasattr(page, "_credentials")
-
-    monkeypatch.setenv("OPENAI_API_KEY", "sk-x")
-    monkeypatch.setenv("MISTRAL_API_KEY", "m-x")
-    complete = AiModelsPage(settings_context(ProviderAppService()))
-    qtbot.addWidget(complete)
-    assert not any("Where the AI runs" in label.text() for label in complete.findChildren(QLabel))
 
 
 # ── AI models: no temperature to set ───────────────────────────────────────────
@@ -585,7 +576,7 @@ def test_the_default_preparation_follows_the_engine(scan_page) -> None:
     assert scan_page.values()["preprocess_method"] == "clahe"
 
 
-# ── Where the AI runs ──────────────────────────────────────────────────────────────
+# ── This computer ──────────────────────────────────────────────────────────────
 
 
 class _ThreadRecordingService(DummyAppService):
@@ -615,38 +606,41 @@ def computer_page(qtbot) -> AiSetupPage:
 @pytest.mark.gui
 def test_this_computer_owns_only_the_server_and_the_profile(computer_page) -> None:
     """
-    Given  the Where the AI runs page
+    Given  the This computer page
     When   it is created
-    Then   it has a server field, a "Download a model…" button, the editable profile and the
-           proofreading context; it owns exactly those three keys
+    Then   it has a server field, a "Download a model…" button and the editable profile; it owns
+           exactly those two keys (the context window moved to AI models)
     """
     assert computer_page._ollama_url is not None
     assert computer_page._download_model_btn is not None
     assert computer_page._hardware_selector._combo is not None
-    assert computer_page._context_combo is not None
-    assert computer_page.owned_keys() == {
-        "ollama_url",
-        "hardware_profile",
-        "proofreading_context",
-    }
+    assert computer_page.owned_keys() == {"ollama_url", "hardware_profile"}
 
 
 @pytest.mark.gui
-def test_the_proofreading_context_round_trips_through_load_and_values(computer_page) -> None:
+def test_this_computer_shows_the_computer_first_then_the_server(computer_page) -> None:
     """
-    Given  the Where the AI runs page
-    When   it is loaded with a pinned window and its values are read back
-    Then   the combo shows that window and hands it back unchanged
+    Given  the This computer page
+    When   it is created
+    Then   its groups read top to bottom: how powerful this computer is, the local AI server --
+           and no API keys, those are on Online services
     """
-    computer_page.load({"proofreading_context": "16384"})
+    from teachers_teammate.gui.settings import _ai_setup_page  # noqa: PLC0415
 
-    assert computer_page._context_combo.currentData() == "16384"
-    assert computer_page.values()["proofreading_context"] == "16384"
+    layout = computer_page.layout()
+    items = (layout.itemAt(i).widget() for i in range(layout.count()))
+    groups = [widget.title() for widget in items if isinstance(widget, QGroupBox)]
+
+    assert groups == [_ai_setup_page.PERFORMANCE_GROUP, _ai_setup_page.SERVER_GROUP]
+    assert not hasattr(computer_page, "_credentials")
 
 
-def _wait_for_detection(qtbot, page: AiSetupPage) -> None:
-    """Wait until the page's selector has resolved this computer."""
-    qtbot.waitUntil(lambda: page._hardware_selector.resolved() is not None, timeout=5000)
+def _wait_for_detection(qtbot, page) -> None:
+    """Wait until the page's profile selector has resolved this computer."""
+    selector = (
+        page._profile_line.selector if isinstance(page, AiModelsPage) else page._hardware_selector
+    )
+    qtbot.waitUntil(lambda: selector.resolved() is not None, timeout=5000)
 
 
 def _own_model_settings() -> dict:
@@ -659,95 +653,118 @@ def _own_model_settings() -> dict:
     }
 
 
+def _same_model_settings() -> dict:
+    return {
+        "correction_provider": "ollama",
+        "correction_model": "qwen3:4b",
+        "evaluate_provider": "ollama",
+        "evaluate_model": "qwen3:4b",
+    }
+
+
+def _models_page(qtbot, service=None, settings=None, **context) -> AiModelsPage:
+    """Build the AI models page, show it and load *settings*, as the window does."""
+    settings = settings or {}
+    page = AiModelsPage(
+        settings_context(service or DummyAppService(), settings=settings, **context)
+    )
+    qtbot.addWidget(page)
+    page.show()
+    page.load(settings)
+    return page
+
+
 @pytest.mark.gui
-def test_the_automatic_context_says_what_the_review_gets(computer_page, qtbot) -> None:
+def test_the_proofreading_context_round_trips_through_load_and_values(qtbot) -> None:
+    """
+    Given  the AI models page
+    When   it is loaded with a pinned window and its values are read back
+    Then   the combo shows that window and hands it back unchanged, also while the row is hidden
+    """
+    page = _models_page(qtbot, settings={**_same_model_settings(), "proofreading_context": "16384"})
+
+    assert page._context_combo.currentData() == "16384"
+    assert page.values()["proofreading_context"] == "16384"
+    assert page._context_row.isHidden()
+
+
+@pytest.mark.gui
+def test_the_automatic_context_says_what_the_review_gets(qtbot) -> None:
     """
     Given  a local proofreading model and a content review on another Ollama model
     When   the page is loaded and this computer has been checked
-    Then   the automatic entry names the window the content review gets, and the combo is usable
+    Then   the context row is shown and its automatic entry names the window the review gets
     """
-    computer_page.load(_own_model_settings())
-    _wait_for_detection(qtbot, computer_page)
+    page = _models_page(qtbot, settings=_own_model_settings())
+    _wait_for_detection(qtbot, page)
 
-    index = computer_page._context_combo.findData("auto")
-    assert computer_page._context_combo.itemText(index) == (
+    index = page._context_combo.findData("auto")
+    qtbot.waitUntil(lambda: not page._context_row.isHidden(), timeout=5000)
+    assert page._context_combo.itemText(index) == (
         "Automatic (now: 8,192 tokens for the content review)"
     )
-    assert computer_page._context_combo.isEnabled()
 
 
 @pytest.mark.gui
-def test_the_context_choice_is_disabled_where_it_changes_no_window(computer_page, qtbot) -> None:
+def test_the_context_row_is_hidden_where_it_changes_no_window(qtbot) -> None:
     """
     Given  proofreading and the content review on the same Ollama model
     When   the page is loaded and this computer has been checked
-    Then   the choice is disabled and the tooltip says what the setting would size
+    Then   the row is hidden, and the setting is still handed back by values()
     """
-    computer_page.load(
-        {
-            "correction_provider": "ollama",
-            "correction_model": "qwen3:4b",
-            "evaluate_provider": "ollama",
-            "evaluate_model": "qwen3:4b",
-        }
-    )
-    _wait_for_detection(qtbot, computer_page)
+    page = _models_page(qtbot, settings=_same_model_settings())
+    _wait_for_detection(qtbot, page)
 
-    index = computer_page._context_combo.findData("auto")
-    assert computer_page._context_combo.itemText(index) == "Automatic"
-    assert not computer_page._context_combo.isEnabled()
-    assert "8,192 tokens" in computer_page._context_combo.toolTip()
+    assert page._context_row.isHidden()
+    assert page.values()["proofreading_context"] == DEFAULTS["proofreading_context"]
 
 
 @pytest.mark.gui
-def test_an_online_review_disables_the_context_choice(computer_page, qtbot) -> None:
+def test_an_online_review_hides_the_context_row(qtbot, monkeypatch) -> None:
     """
     Given  an online content review, which brings its own window, and capped proofreading
     When   the page is loaded and this computer has been checked
-    Then   the choice is disabled, because no window of the run depends on it
+    Then   the row is hidden, because no window of the run depends on it
     """
-    computer_page.load(
-        {
-            "correction_provider": "ollama",
-            "correction_model": "qwen3:4b",
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-x")
+    page = _models_page(
+        qtbot,
+        settings={
+            **_same_model_settings(),
             "evaluate_provider": "openai",
             "evaluate_model": "gpt-4o-mini",
-        }
+        },
     )
-    _wait_for_detection(qtbot, computer_page)
+    _wait_for_detection(qtbot, page)
 
-    assert not computer_page._context_combo.isEnabled()
+    assert page._override.isChecked()
+    assert page._context_row.isHidden()
 
 
 @pytest.mark.gui
-def test_the_automatic_context_says_it_is_still_checking_this_computer(qtbot, monkeypatch) -> None:
+def test_the_context_row_stays_hidden_while_this_computer_is_unknown(qtbot, monkeypatch) -> None:
     """
     Given  a page whose hardware check has not answered yet
-    When   it is loaded
-    Then   the automatic entry says the computer is being checked and the choice is disabled
+    When   it is loaded with a review on its own model
+    Then   the row is hidden: it is not drawn on a guess
     """
     from teachers_teammate.gui._hardware_profile_selector import (  # noqa: PLC0415
         HardwareProfileSelector,
     )
 
     monkeypatch.setattr(HardwareProfileSelector, "_start_resolve", lambda self, *, refresh: None)
-    page = AiSetupPage(settings_context(DummyAppService()))
-    qtbot.addWidget(page)
-    page.show()
 
-    page.load(_own_model_settings())
+    page = _models_page(qtbot, settings=_own_model_settings())
 
-    index = page._context_combo.findData("auto")
-    assert page._context_combo.itemText(index) == "Automatic (checking this computer…)"
-    assert not page._context_combo.isEnabled()
+    assert page._context_row.isHidden()
 
 
 @pytest.mark.gui
-def test_a_failed_check_of_this_computer_does_not_leave_the_choice_waiting(qtbot) -> None:
+def test_a_failed_check_of_this_computer_does_not_leave_the_context_row_waiting(qtbot) -> None:
     """
     Given  a page whose hardware check fails
-    When   it is loaded
-    Then   the automatic entry stops saying it is checking, and is worked out without a card
+    When   it is loaded with a review on its own model
+    Then   the row is worked out without a card instead of waiting for a check that will not come
     """
 
     class _Failing(DummyAppService):
@@ -757,16 +774,12 @@ def test_a_failed_check_of_this_computer_does_not_leave_the_choice_waiting(qtbot
         def resolve_hardware_profile(self, setting: str, ollama_url: str):
             raise RuntimeError("nvidia-smi crashed")
 
-    page = AiSetupPage(settings_context(_Failing()))
-    qtbot.addWidget(page)
-    page.show()
+    page = _models_page(qtbot, _Failing(), _own_model_settings())
 
-    page.load(_own_model_settings())
-
+    qtbot.waitUntil(lambda: not page._context_row.isHidden(), timeout=5000)
     index = page._context_combo.findData("auto")
-    qtbot.waitUntil(
-        lambda: page._context_combo.itemText(index) != "Automatic (checking this computer…)",
-        timeout=5000,
+    assert page._context_combo.itemText(index) == (
+        "Automatic (now: 8,192 tokens for the content review)"
     )
 
 
@@ -782,8 +795,7 @@ def test_the_page_never_checks_this_computer_on_the_gui_thread(qtbot) -> None:
     qtbot.addWidget(page)
     page.show()
 
-    page.load(_own_model_settings())
-    page.on_shown()
+    page.load({})
     _wait_for_detection(qtbot, page)
 
     assert service.threads
@@ -791,11 +803,11 @@ def test_the_page_never_checks_this_computer_on_the_gui_thread(qtbot) -> None:
 
 
 @pytest.mark.gui
-def test_the_automatic_context_follows_the_detected_card(qtbot, monkeypatch) -> None:
+def test_the_context_row_follows_the_detected_card(qtbot, monkeypatch) -> None:
     """
     Given  a review model whose memory grows with the window, on a computer without a card
-    When   the selector resolves a 16 GB card
-    Then   the automatic entry names the larger window that card gives
+    When   the profile line resolves a 16 GB card
+    Then   the automatic entry of the row names the larger window that card gives
     """
     from teachers_teammate.domain import context_budget as choice_module  # noqa: PLC0415
     from teachers_teammate.domain.model_catalog import (  # noqa: PLC0415
@@ -817,12 +829,9 @@ def test_the_automatic_context_follows_the_detected_card(qtbot, monkeypatch) -> 
     )
     service = DummyAppService()
     service.detection = HardwareDetection(profile="cpu", reason=DetectionReason.NO_GPU_FOUND)
-    page = AiSetupPage(settings_context(service))
-    qtbot.addWidget(page)
-    page.show()
-    page.load(_own_model_settings())
+    page = _models_page(qtbot, service, _own_model_settings())
     _wait_for_detection(qtbot, page)
-
+    qtbot.waitUntil(lambda: not page._context_row.isHidden(), timeout=5000)
     index = page._context_combo.findData("auto")
     assert page._context_combo.itemText(index) == (
         "Automatic (now: 8,192 tokens for the content review)"
@@ -831,24 +840,21 @@ def test_the_automatic_context_follows_the_detected_card(qtbot, monkeypatch) -> 
     service.detection = HardwareDetection(
         profile="16gb", reason=DetectionReason.GPU_DETECTED, gpu_name="Test GPU", memory_gb=16.0
     )
-    page._hardware_selector.refresh_status()
+    page._profile_line.selector.refresh_status()
+
     qtbot.waitUntil(
         lambda: (
-            page._hardware_selector.resolved() is not None
-            and page._hardware_selector.resolved().profile == "16gb"
+            page._context_combo.itemText(index)
+            == "Automatic (now: 32,768 tokens for the content review)"
         ),
         timeout=5000,
-    )
-
-    assert page._context_combo.itemText(index) == (
-        "Automatic (now: 32,768 tokens for the content review)"
     )
 
 
 @pytest.mark.gui
 def test_download_a_model_goes_to_add_ons(computer_page) -> None:
     """
-    Given  the Where the AI runs page
+    Given  the This computer page
     When   "Download a model…" is pressed
     Then   the page asks the window for Add-ons on the local models, without a dialog
     """
@@ -865,7 +871,7 @@ def test_this_computer_returns_the_server_address(computer_page) -> None:
     """
     Given  a custom server address typed in
     When   values() is called
-    Then   it returns that address, the profile and the context, and nothing else
+    Then   it returns that address and the profile, and nothing else
     """
     computer_page._ollama_url.setText("http://custom:11434")
 
@@ -874,7 +880,6 @@ def test_this_computer_returns_the_server_address(computer_page) -> None:
     assert values == {
         "ollama_url": "http://custom:11434",
         "hardware_profile": "auto",
-        "proofreading_context": "auto",
     }
 
 
@@ -893,7 +898,7 @@ def test_a_blank_server_address_means_the_default(computer_page) -> None:
 @pytest.mark.use_case("Hardware_Profile_Override")
 def test_this_computer_returns_the_profile(computer_page) -> None:
     """
-    Given  the Where the AI runs page with its "My computer" selector
+    Given  the This computer page with its "My computer" selector
     When   values() is called
     Then   hardware_profile is one of the four profile settings
     """
@@ -903,7 +908,7 @@ def test_this_computer_returns_the_profile(computer_page) -> None:
 @pytest.mark.use_case("Hardware_Profile_Override")
 def test_typing_the_ollama_url_does_not_redetect_until_editing_finished(qtbot) -> None:
     """
-    Given  the Where the AI runs page in automatic hardware mode
+    Given  the This computer page in automatic hardware mode
     When   the user types a new server address character by character
     Then   no detection runs per keystroke, and the address is announced once when editing
            finished (a half-typed address used to re-probe the GPU)
@@ -940,7 +945,7 @@ def test_typing_the_ollama_url_does_not_redetect_until_editing_finished(qtbot) -
 @pytest.mark.use_case("Hardware_Profile_Override")
 def test_changing_the_profile_is_announced(computer_page, qtbot) -> None:
     """
-    Given  the Where the AI runs page
+    Given  the This computer page
     When   the user picks another "My computer" choice
     Then   hardware_setting_changed carries the internal value
     """
@@ -954,7 +959,7 @@ def test_changing_the_profile_is_announced(computer_page, qtbot) -> None:
 @pytest.mark.use_case("Hardware_Profile_Override")
 def test_detect_gpu_button_uses_the_shared_service(qtbot) -> None:
     """
-    Given  the Where the AI runs page with an injected service
+    Given  the This computer page with an injected service
     When   the "Detect GPU" button runs
     Then   the injected service answers (so its cached probe is reused) instead of a freshly
            constructed one probing the machine again
@@ -981,7 +986,7 @@ def test_detect_gpu_button_uses_the_shared_service(qtbot) -> None:
 @pytest.mark.use_case("Hardware_Profile_Override")
 def test_detect_gpu_button_probes_again_and_refreshes_my_computer(qtbot) -> None:
     """
-    Given  the Where the AI runs page whose first probe already ran
+    Given  the This computer page whose first probe already ran
     When   the user clicks "Detect GPU"
     Then   the service is asked to probe again (refresh=True — a driver may have been
            installed since) and "My computer" resolves again from that fresh probe
@@ -1010,7 +1015,7 @@ def test_detect_gpu_button_probes_again_and_refreshes_my_computer(qtbot) -> None
 def test_this_computer_detects_hardware_for_the_configured_url(qtbot) -> None:
     """
     Given  saved settings with Ollama on another computer
-    When   the Where the AI runs page opens
+    When   the This computer page opens
     Then   the first "My computer" detection already uses that URL (not the default), so the
            status text describes the right machine
     """
@@ -1085,6 +1090,12 @@ def _credentials(qtbot, monkeypatch, service=None) -> CredentialsGroup:
     return group
 
 
+def _apply(group: CredentialsGroup) -> list[str]:
+    """Do what the Settings window does on OK: the fields go to the drafts, which store them."""
+    group.commit()
+    return group.drafts.apply()
+
+
 @pytest.mark.gui
 def test_credentials_group_has_a_row_for_a_key_that_is_already_set(qtbot, monkeypatch) -> None:
     """
@@ -1113,7 +1124,7 @@ def test_applying_saves_the_key_to_environment_and_store(
     qtbot.addWidget(group)
     group.field("OPENAI_API_KEY").setText("sk-test-key")
 
-    group.apply()
+    _apply(group)
 
     assert credential_file == {"credentials/OPENAI_API_KEY": "sk-test-key"}
     assert os.environ.get("OPENAI_API_KEY") == "sk-test-key"
@@ -1131,7 +1142,7 @@ def test_applying_leaves_a_key_nobody_touched_alone(qtbot, monkeypatch, credenti
     group = CredentialsGroup(DummyAppService())
     qtbot.addWidget(group)
 
-    group.apply()
+    _apply(group)
 
     assert credential_file == {}
     assert os.environ.get("OPENAI_API_KEY") == "sk-session-only"
@@ -1152,7 +1163,7 @@ def test_applying_keeps_a_stored_key_that_was_not_edited(
     qtbot.addWidget(group)
     assert group.field("OPENAI_API_KEY").text() == "sk-stored"
 
-    group.apply()
+    _apply(group)
 
     assert credential_file == {"credentials/OPENAI_API_KEY": "sk-stored"}
 
@@ -1170,7 +1181,7 @@ def test_applying_an_emptied_key_removes_it(qtbot, monkeypatch, credential_file)
     qtbot.addWidget(group)
     group.field("OPENAI_API_KEY").setText("")
 
-    group.apply()
+    _apply(group)
 
     assert "OPENAI_API_KEY" not in os.environ
     assert credential_file == {}
@@ -1534,7 +1545,7 @@ def test_switching_provider_asks_the_new_service_and_drops_the_old_model_name(
     )
     assert section._model.currentText() == "qwen3.5:9b"
 
-    section._provider.setCurrentText("mistral")
+    select_provider(section, "mistral")
     _wait_for_fetch(qtbot, section, svc, calls=1)
 
     assert svc.checked_calls == ["mistral"]
@@ -1576,7 +1587,7 @@ def test_picking_an_online_provider_does_not_throw_away_its_remembered_model_lis
     svc = ProviderAppService()
     section = _proofreading(qtbot, svc, {"correction_provider": "ollama"})
 
-    section._provider.setCurrentText("mistral")
+    select_provider(section, "mistral")
     _wait_for_fetch(qtbot, section, svc, calls=1)
 
     assert "mistral" not in svc.invalidated
@@ -1692,7 +1703,7 @@ def test_switching_provider_shows_a_busy_bar_and_names_the_service(qtbot, monkey
         qtbot, svc, {"correction_provider": "ollama", "correction_model": "qwen3.5:9b"}
     )
 
-    section._provider.setCurrentText("mistral")
+    select_provider(section, "mistral")
 
     assert section._busy.isHidden() is False
     assert "Asking Mistral which models are installed…" in section._status_lbl.text()
@@ -1766,7 +1777,7 @@ def test_switching_provider_does_not_call_the_old_saved_model_out(qtbot, monkeyp
     assert "not offered" not in section._status_lbl.text()
 
     svc.listing = ModelListing(["glm-live"], "live")
-    section._provider.setCurrentText("mistral_eu")
+    select_provider(section, "mistral_eu")
     _wait_for_fetch(qtbot, section, svc, calls=2)
 
     assert section._model.currentText() == "open-mistral-nemo"
@@ -2166,7 +2177,7 @@ def test_download_best_choice_asks_for_add_ons_and_hints_follow_the_profile(qtbo
     """
     Given  a proofreading section whose best model is not installed
     When   "Download best choice…" is pressed, and afterwards the window passes on that the
-           teacher changed "Where the AI runs" to 16 GB
+           teacher changed "This computer" to 16 GB
     Then   Add-ons was asked for the best model on top of the section (no modal round trip),
            and the section's hints now follow the 16 GB profile
     """
@@ -2190,7 +2201,7 @@ def test_download_best_choice_asks_for_add_ons_and_hints_follow_the_profile(qtbo
     section._guidance._best_btn.click()
 
     assert received == [([DEFAULT_WRITING_MODEL], section.window())]  # best writing model, 8 GB
-    section.set_hardware_setting("16gb")
+    section._hw_selector.set_setting("16gb")
     assert section._hw_selector.setting() == "16gb"
     qtbot.waitUntil(lambda: section._guidance.active_profile() == "16gb", timeout=5000)
 
@@ -2240,7 +2251,7 @@ def test_the_two_steps_have_their_own_keys() -> None:
 def test_keys_the_keychain_refused_are_reported_by_apply(qtbot, monkeypatch) -> None:
     """
     Given  a working-looking keychain that refuses writes, and a key typed for OpenAI
-    When   the credentials group is applied
+    When   the credentials group is committed and its drafts applied
     Then   it reports that key as kept in the settings file (the note promised the keychain)
     """
     from teachers_teammate.gui import _credential_store  # noqa: PLC0415
@@ -2251,7 +2262,7 @@ def test_keys_the_keychain_refused_are_reported_by_apply(qtbot, monkeypatch) -> 
     group._add_btn.click()
     group.field("OPENAI_API_KEY").setText("sk-typed")
 
-    assert group.apply() == ["OPENAI_API_KEY"]
+    assert _apply(group) == ["OPENAI_API_KEY"]
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
 
 
@@ -2271,46 +2282,1010 @@ def test_keys_in_a_working_keychain_and_plain_file_setups_are_not_reported(
     safe._add_combo.setCurrentIndex(safe._add_combo.findData("OPENAI_API_KEY"))
     safe._add_btn.click()
     safe.field("OPENAI_API_KEY").setText("sk-1")
-    assert safe.apply() == []
+    assert _apply(safe) == []
 
     monkeypatch.setattr(_credential_store, "_keyring", lambda: None)
     plain = _credentials(qtbot, monkeypatch)
     plain._add_combo.setCurrentIndex(plain._add_combo.findData("OPENAI_API_KEY"))
     plain._add_btn.click()
     plain.field("OPENAI_API_KEY").setText("sk-2")
-    assert plain.apply() == []
+    assert _apply(plain) == []
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+
+
+# ── API key drafts (no widgets) ────────────────────────────────────────────────
+
+
+@pytest.fixture(name="drafts")
+def _drafts(monkeypatch) -> ApiKeyDrafts:
+    for name in ("OPENAI_API_KEY", "MISTRAL_API_KEY"):
+        # setenv first: delenv(raising=False) on an absent variable records nothing to undo,
+        # and the drafts write straight into os.environ.
+        monkeypatch.setenv(name, "")
+        monkeypatch.delenv(name)
+    return ApiKeyDrafts(ProviderAppService())
 
 
 @pytest.mark.gui
-def test_the_setup_page_tells_the_user_when_a_key_fell_back_to_the_file(qtbot, monkeypatch) -> None:
+def test_drafts_use_a_key_right_away_and_store_only_what_changed(
+    drafts, monkeypatch, credential_file
+) -> None:
     """
-    Given  the Where the AI runs page with a key typed while the keychain refuses writes
-    When   the window applies the page (OK)
-    Then   a warning names the service and says the key was kept in the settings file
+    Given  one key set only in the environment, and one typed in the window
+    When   the drafts are applied
+    Then   the typed key is in the environment at once but in the store only after apply(), and
+           the untouched environment key is never stored
+    """
+    monkeypatch.setenv("MISTRAL_API_KEY", "m-session")
+    seen: list[str] = []
+    drafts.changed.connect(seen.append)
+
+    drafts.set("OPENAI_API_KEY", "  sk-typed ")
+
+    assert os.environ["OPENAI_API_KEY"] == "sk-typed"
+    assert credential_file == {}
+    assert seen == ["OPENAI_API_KEY"]
+
+    assert drafts.apply() == []
+
+    assert credential_file == {"credentials/OPENAI_API_KEY": "sk-typed"}
+
+
+@pytest.mark.gui
+def test_setting_the_value_a_key_already_has_changes_nothing(drafts, monkeypatch) -> None:
+    """
+    Given  a key already in the environment
+    When   the same value is set again
+    Then   nothing is snapshotted and no signal is sent (the two views of a key do not echo)
+    """
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-same")
+    seen: list[str] = []
+    drafts.changed.connect(seen.append)
+
+    drafts.set("OPENAI_API_KEY", "sk-same")
+
+    assert seen == []
+    assert drafts.discard() == []  # nothing was snapshotted, so nothing is put back
+
+
+@pytest.mark.gui
+def test_committing_an_environment_key_with_spaces_stores_nothing(
+    drafts, monkeypatch, credential_file
+) -> None:
+    """
+    Given  a key set outside the app with a space after it
+    When   the same key is committed untouched, and the drafts are applied (OK)
+    Then   nothing changed: no signal, and nothing is stored just because OK was pressed
+    """
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-abc ")
+    seen: list[str] = []
+    drafts.changed.connect(seen.append)
+
+    drafts.set("OPENAI_API_KEY", "sk-abc ")
+
+    assert seen == []
+    assert drafts.apply() == []
+    assert credential_file == {}
+
+
+@pytest.mark.gui
+def test_a_stored_key_the_environment_lacks_can_be_put_into_it(drafts, credential_file) -> None:
+    """
+    Given  a key in the store that never reached the environment (the keychain was locked)
+    When   the key shown in the field is committed, and the drafts are applied
+    Then   it is in the environment now, announced once, and not stored a second time
+    """
+    credential_file["credentials/OPENAI_API_KEY"] = "sk-stored"
+    seen: list[str] = []
+    drafts.changed.connect(seen.append)
+    assert drafts.value("OPENAI_API_KEY") == "sk-stored"
+    assert "OPENAI_API_KEY" not in os.environ
+
+    drafts.set("OPENAI_API_KEY", "sk-stored")
+
+    assert os.environ["OPENAI_API_KEY"] == "sk-stored"
+    assert seen == ["OPENAI_API_KEY"]
+    assert drafts.apply() == []
+    assert credential_file == {"credentials/OPENAI_API_KEY": "sk-stored"}
+
+
+@pytest.mark.gui
+def test_discard_puts_back_a_present_and_an_absent_value(drafts, monkeypatch) -> None:
+    """
+    Given  one key that had a value and one that had none, both changed in the window
+    When   the drafts are discarded
+    Then   the first has its old value again and the second is gone from the environment
+    """
+    monkeypatch.setenv("MISTRAL_API_KEY", "m-old")
+    drafts.set("MISTRAL_API_KEY", "m-new")
+    drafts.set("OPENAI_API_KEY", "sk-new")
+
+    drafts.discard()
+
+    assert os.environ["MISTRAL_API_KEY"] == "m-old"
+    assert "OPENAI_API_KEY" not in os.environ
+
+
+@pytest.mark.gui
+def test_a_key_only_the_environment_had_leaves_the_session_when_removed(
+    drafts, monkeypatch, credential_file
+) -> None:
+    """
+    Given  a key set only in the environment (never stored)
+    When   it is removed and the drafts are applied; and in another window removed and discarded
+    Then   it is gone from the environment after OK, and back after a discard
+    """
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-env")
+    drafts.remove("OPENAI_API_KEY")
+    assert drafts.value("OPENAI_API_KEY") == ""
+    drafts.apply()
+    assert "OPENAI_API_KEY" not in os.environ
+
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-env")
+    again = ApiKeyDrafts(ProviderAppService())
+    again.remove("OPENAI_API_KEY")
+    again.discard()
+    assert os.environ["OPENAI_API_KEY"] == "sk-env"
+
+
+@pytest.mark.gui
+def test_removing_a_stored_key_forgets_it(drafts, credential_file) -> None:
+    """
+    Given  a key stored by an earlier session and not in the environment
+    When   it is removed in the window and OK applies the drafts
+    Then   the store forgets it
+    """
+    credential_file["credentials/OPENAI_API_KEY"] = "sk-stored"
+    assert drafts.value("OPENAI_API_KEY") == "sk-stored"
+
+    drafts.remove("OPENAI_API_KEY")
+    drafts.apply()
+
+    assert credential_file == {}
+
+
+@pytest.mark.gui
+def test_a_key_the_keychain_refuses_is_reported_as_kept_in_the_file(
+    monkeypatch, credential_file
+) -> None:
+    """
+    Given  a system keychain that refuses writes
+    When   a typed key is applied
+    Then   it lands in the settings file and apply() names it
     """
     from teachers_teammate.gui import _credential_store  # noqa: PLC0415
-    from teachers_teammate.gui.settings import _ai_setup_page  # noqa: PLC0415
 
     monkeypatch.setattr(_credential_store, "_keyring", lambda: FakeKeyring(refuses_writes=True))
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-    warnings: list[tuple[str, str]] = []
-    monkeypatch.setattr(
-        _ai_setup_page.QMessageBox,
-        "warning",
-        lambda _parent, title, text: warnings.append((title, text)),
+    drafts = ApiKeyDrafts(ProviderAppService())
+
+    drafts.set("OPENAI_API_KEY", "sk-typed")
+
+    assert drafts.apply() == ["OPENAI_API_KEY"]
+    assert credential_file == {"credentials/OPENAI_API_KEY": "sk-typed"}
+
+
+# ── AI service list: every service, grouped by where it runs ──────────────────
+
+
+@pytest.fixture(name="no_keys")
+def _no_keys(monkeypatch) -> None:
+    """No API key in the environment, and the environment restored afterwards."""
+    for name in ("OPENAI_API_KEY", "MISTRAL_API_KEY"):
+        monkeypatch.setenv(name, "")
+        monkeypatch.delenv(name)
+
+
+def _service_texts(groups) -> list[list[tuple[str, str]]]:
+    return [[(item.text, item.label) for item in group] for group in groups]
+
+
+@pytest.mark.gui
+def test_the_service_list_shows_every_service_grouped_by_where_it_runs(no_keys) -> None:
+    """
+    Given  four services: Ollama, Mistral (EU), Mistral (declares no region) and OpenAI
+    When   the grouped list is built without any key
+    Then   all four are listed, in the order own computer · EU · everything else, sorted by name
+           inside a group, "outside the EU" also for the service that declares no region, and
+           the services that need a key say so
+    """
+    groups = service_groups(ProviderAppService(), DEFAULTS["ollama_url"])
+
+    assert _service_texts(groups) == [
+        [("Ollama", "this computer")],
+        [("Mistral (EU)", "EU · key needed")],
+        [
+            ("Mistral", "outside the EU · key needed"),
+            ("OpenAI (ChatGPT)", "outside the EU · key needed"),
+        ],
+    ]
+    assert [item.data for group in groups for item in group] == [
+        "ollama",
+        "mistral_eu",
+        "mistral",
+        "openai",
+    ]
+
+
+@pytest.mark.gui
+def test_the_service_list_marks_a_missing_package_before_a_missing_key(no_keys) -> None:
+    """
+    Given  Mistral with its package missing and no key, and a key set for OpenAI
+    When   the grouped list is built
+    Then   Mistral says "not installed · key needed" in that order, OpenAI has no mark, and
+           another server address turns "this computer" into "own server"
+    """
+    service = ProviderAppService()
+    service.missing = {"mistral": "langchain-mistralai"}
+    os.environ["OPENAI_API_KEY"] = "sk-x"
+
+    groups = service_groups(service, "http://192.168.1.50:11434")
+
+    texts = dict(item for group in _service_texts(groups) for item in group)
+    assert texts["Mistral"] == "outside the EU · not installed · key needed"
+    assert texts["OpenAI (ChatGPT)"] == "outside the EU"
+    assert texts["Ollama"] == "own server"
+
+
+@pytest.mark.gui
+def test_the_saved_service_is_selected_by_its_id(qtbot, no_keys) -> None:
+    """
+    Given  a saved service that needs a key which is not set
+    When   the section is loaded
+    Then   that service is shown (not replaced by the first one), and an id nobody lists falls
+           back to the first entry without carrying the saved model over
+    """
+    section = _proofreading(
+        qtbot,
+        ProviderAppService(),
+        {"correction_provider": "mistral_eu", "correction_model": "open-mistral-nemo"},
     )
-    page = AiSetupPage(settings_context(DummyAppService()))
-    qtbot.addWidget(page)
-    group = page._credentials
-    group._add_combo.setCurrentIndex(group._add_combo.findData("OPENAI_API_KEY"))
-    group._add_btn.click()
-    group.field("OPENAI_API_KEY").setText("sk-typed")
+    assert section.provider() == "mistral_eu"
+    assert section.values()["correction_model"] == "open-mistral-nemo"
+
+    gone = _proofreading(
+        qtbot,
+        ProviderAppService(),
+        {"correction_provider": "removed_provider", "correction_model": "some-model"},
+    )
+    assert gone.provider() == "ollama"
+    assert gone.values()["correction_model"] != "some-model"
+
+
+@pytest.mark.gui
+def test_the_service_marks_follow_a_key_a_package_and_the_server(qtbot, no_keys) -> None:
+    """
+    Given  a section with Mistral (EU) chosen, without a key and without its package
+    When   a key is committed, the package gets installed, and another server is entered
+    Then   "key needed" goes, "not installed" goes, and "this computer" becomes "own server"
+    """
+    service = ProviderAppService()
+    service.missing = {"mistral_eu": "langchain-mistralai"}
+    section = _proofreading(qtbot, service, {"correction_provider": "mistral_eu"})
+
+    def label(provider_id: str) -> str:
+        return str(
+            section._provider.itemData(section._provider.findData(provider_id), ITEM_LABEL_ROLE)
+        )
+
+    assert label("mistral_eu") == "EU · not installed · key needed"
+
+    commit_key(section.key_row(), "k-test")
+    assert label("mistral_eu") == "EU · not installed"
+
+    service.missing = {}
+    section.on_packages_changed()
+    assert label("mistral_eu") == "EU"
+
+    section.set_ollama_url("http://192.168.1.50:11434")
+    assert label("ollama") == "own server"
+    assert section.provider() == "mistral_eu"
+
+
+# ── the key row under the service ─────────────────────────────────────────────
+
+
+@pytest.mark.gui
+def test_the_key_row_is_shown_for_an_online_service_only(qtbot, no_keys) -> None:
+    """
+    Given  a section on Ollama
+    When   Mistral (EU) is chosen without a key, and then Ollama again
+    Then   the key row appears for Mistral only; its status says "key not set" and the
+           built-in models are offered meanwhile
+    """
+    section = _proofreading(qtbot, ProviderAppService(), {"correction_provider": "ollama"})
+    section.show()
+    assert section.key_row().isHidden()
+
+    select_provider(section, "mistral_eu")
+
+    assert not section.key_row().isHidden()
+    assert section.key_row().env_key == "MISTRAL_API_KEY"
+    assert "key not set" in section._status_lbl.text()
+    assert "mistral-small-latest" in _items(section)
+
+    select_provider(section, "ollama")
+    assert section.key_row().isHidden()
+
+
+@pytest.mark.gui
+def test_a_committed_key_is_used_right_away_and_checks_the_model_list(qtbot, no_keys) -> None:
+    """
+    Given  Mistral (EU) chosen without a key
+    When   a key is typed and the field is left
+    Then   the key is in the environment, the service is asked for its models, and the status
+           shows how many arrived
+    """
+    svc = ProviderAppService()
+    section = _proofreading(qtbot, svc, {"correction_provider": "mistral_eu"})
+    assert svc.checked_calls == []
+
+    commit_key(section.key_row(), "  k-typed ")
+
+    assert os.environ["MISTRAL_API_KEY"] == "k-typed"
+    _wait_for_fetch(qtbot, section, svc, 1)
+    assert "2 models" in section._status_lbl.text()
+    assert "Mistral (EU)" in section._status_lbl.text()
+
+
+@pytest.mark.gui
+def test_a_key_is_committed_after_a_pause_in_typing(qtbot, no_keys) -> None:
+    """
+    Given  a key row of Mistral (EU)
+    When   a key is pasted and the field is not left
+    Then   the key is committed once typing paused, and the list is fetched
+    """
+    svc = ProviderAppService()
+    section = _proofreading(qtbot, svc, {"correction_provider": "mistral_eu"})
+    row = section.key_row()
+
+    row.field.setText("k-pasted")
+    row.field.textEdited.emit("k-pasted")
+    assert "MISTRAL_API_KEY" not in os.environ
+
+    qtbot.waitUntil(lambda: os.environ.get("MISTRAL_API_KEY") == "k-pasted", timeout=3000)
+    _wait_for_fetch(qtbot, section, svc, 1)
+
+
+@pytest.mark.gui
+def test_a_key_the_service_refuses_says_why_and_offers_a_retry(qtbot, no_keys) -> None:
+    """
+    Given  a service that answers the key check with a failure
+    When   a key is committed
+    Then   the status says the built-in list is shown and why, with "Try again"
+    """
+    svc = ProviderAppService()
+    svc.listing = ModelListing(["m1"], "failed", "Mistral did not accept the key")
+    section = _proofreading(qtbot, svc, {"correction_provider": "mistral_eu"})
+
+    commit_key(section.key_row(), "k-wrong")
+
+    _wait_for_fetch(qtbot, section, svc, 1)
+    assert "did not accept the key" in section._status_lbl.text()
+    assert "Try again" in section._status_lbl.text()
+
+
+class _KeyUrlService(ProviderAppService):
+    def get_provider_info(self, provider: str) -> dict:
+        info = dict(super().get_provider_info(provider))
+        if provider == "mistral_eu":
+            info["key_url"] = "https://console.example.org/keys"
+        return info
+
+
+@pytest.mark.gui
+def test_the_key_row_says_where_the_key_is_kept(qtbot, monkeypatch, no_keys) -> None:
+    """
+    Given  a computer without keychain, one with a keychain, and a key set outside the app
+    When   the key row of a service with and without a key page is built
+    Then   the grey line names the settings file, the keychain or the environment, and links
+           the vendor's page only when the provider declares one
+    """
+    from teachers_teammate.gui import _credential_store  # noqa: PLC0415
+
+    plain = _proofreading(qtbot, _KeyUrlService(), {"correction_provider": "mistral_eu"})
+    text = plain.key_row().line.text()
+    assert "settings file" in text and "not encrypted" in text
+    key_url = "https://console.example.org/keys"
+    parsed = urlparse(key_url)
+    assert "Get a key at" in text
+    assert parsed.hostname == "console.example.org"
+    assert key_url in text
+
+    no_url = _proofreading(qtbot, ProviderAppService(), {"correction_provider": "mistral_eu"})
+    assert "Get a key at" not in no_url.key_row().line.text()
+
+    monkeypatch.setattr(_credential_store, "_keyring", lambda: FakeKeyring())
+    safe = _proofreading(qtbot, ProviderAppService(), {"correction_provider": "mistral_eu"})
+    assert "keychain" in safe.key_row().line.text()
+
+    _credential_store._SET_OUTSIDE_APP.add("MISTRAL_API_KEY")
+    outside = _proofreading(qtbot, ProviderAppService(), {"correction_provider": "mistral_eu"})
+    assert "Set outside the app" in outside.key_row().line.text()
+
+
+@pytest.mark.gui
+def test_a_key_has_one_draft_shown_on_both_pages(qtbot, no_keys) -> None:
+    """
+    Given  AI models and Online services sharing one set of key drafts
+    When   a key is typed under the service, and later removed in the key list
+    Then   the list shows a row for it at once, then the inline field is empty again, and the
+           key change was announced once per edit
+    """
+    service = ProviderAppService()
+    drafts = ApiKeyDrafts(service)
+    announced: list[str] = []
+    drafts.changed.connect(announced.append)
+    models = AiModelsPage(settings_context(service, key_drafts=drafts))
+    setup = OnlineServicesPage(settings_context(service, key_drafts=drafts))
+    qtbot.addWidget(models)
+    qtbot.addWidget(setup)
+    models.load({"correction_provider": "mistral_eu"})
+    assert setup._credentials.field("MISTRAL_API_KEY") is None
+
+    commit_key(models._shared.key_row(), "k-typed")
+
+    assert setup._credentials.field("MISTRAL_API_KEY").text() == "k-typed"
+    assert announced == ["MISTRAL_API_KEY"]
+
+    setup._credentials.rows()[0].remove_button.click()
+
+    assert models._shared.key_row().field.text() == ""
+    assert setup._credentials.field("MISTRAL_API_KEY") is None
+    assert announced == ["MISTRAL_API_KEY", "MISTRAL_API_KEY"]
+
+    commit_key(models._shared.key_row(), "k-again")
+    assert setup._credentials.field("MISTRAL_API_KEY").text() == "k-again"
+
+    setup._credentials.field("MISTRAL_API_KEY").setText("k-from-list")
+    setup._credentials.commit()
+    assert models._shared.key_row().field.text() == "k-from-list"
+
+
+# ── one model, with an override for the content review ────────────────────────
+
+
+class _ListingService(DummyAppService):
+    """Records every model list that was asked for."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.asked: list[tuple[str, str]] = []
+
+    def list_provider_models(self, provider: str, *, base_url: str = "") -> list[str]:
+        self.asked.append((provider, base_url))
+        return super().list_provider_models(provider, base_url=base_url)
+
+
+@pytest.mark.gui
+def test_the_override_starts_ticked_only_for_different_effective_models() -> None:
+    """
+    Given  saved pairs that are equal, different, and one where an empty model meets the default
+    When   review_has_own_model() looks at them
+    Then   only the different pair says the review has its own model; "no model" and the task
+           default count as the same model
+    """
+    service = DummyAppService()
+    default = service.default_model_for_task
+    effective = service.effective_model
+    same = {
+        "correction_provider": "ollama",
+        "correction_model": "a:1",
+        "evaluate_provider": "ollama",
+        "evaluate_model": "a:1",
+    }
+    assert not review_has_own_model(same, effective)
+    assert review_has_own_model({**same, "evaluate_model": "b:2"}, effective)
+    assert review_has_own_model({**same, "evaluate_provider": "openai"}, effective)
+    empty = {
+        "correction_provider": "openai",
+        "correction_model": "",
+        "evaluate_provider": "openai",
+        "evaluate_model": default("openai", "evaluation"),
+    }
+    assert not review_has_own_model(empty, effective)
+
+
+@pytest.mark.gui
+def test_unticked_the_review_settings_are_a_copy_of_the_proofreading_ones(qtbot) -> None:
+    """
+    Given  the AI models page with the override unticked and an empty proofreading model
+    When   its values are read and loaded again
+    Then   the review gets the proofreading service, and the correction default as its model
+           (proofreading keeps the empty one); loading that result leaves the box unticked
+    """
+    page = _models_page(qtbot, settings=_same_model_settings())
+    page._shared._model.setCurrentText("")
+
+    values = page.values()
+
+    default = DummyAppService().default_model_for_task("ollama", "correction")
+    assert values["correction_model"] == ""
+    assert values["evaluate_provider"] == "ollama"
+    assert values["evaluate_model"] == default
+    page.load(values)
+    assert not page._override.isChecked()
+
+
+@pytest.mark.gui
+def test_the_values_round_trip_with_equal_and_with_different_pairs(qtbot) -> None:
+    """
+    Given  one saved pair of equal models and one of different models
+    When   the page loads each and hands its values back
+    Then   equal pairs come back equal with the box unticked; different pairs come back as
+           saved with the box ticked
+    """
+    equal = _models_page(qtbot, settings=_same_model_settings())
+    values = equal.values()
+    assert not equal._override.isChecked()
+    assert values["evaluate_model"] == values["correction_model"] == "qwen3:4b"
+
+    different = _models_page(qtbot, settings=_own_model_settings())
+    values = different.values()
+    assert different._override.isChecked()
+    assert (values["correction_model"], values["evaluate_model"]) == ("qwen3:4b", "gemma4:e4b")
+
+
+@pytest.mark.gui
+def test_ticking_the_override_starts_from_the_shared_choice_and_unticking_drops_it(qtbot) -> None:
+    """
+    Given  the page with one shared model and a review that is not loaded
+    When   the override is ticked, the review model changed, the box unticked and ticked again
+    Then   ticking loads the review from the shared choice and only then asks for its models;
+           unticking drops the review choice; ticking again starts from the shared choice
+    """
+    service = _ListingService()
+    page = _models_page(qtbot, service, _same_model_settings())
+    qtbot.waitUntil(lambda: bool(service.asked), timeout=5000)
+    assert not page._review._loaded
+    service.asked.clear()
+
+    page._override.setChecked(True)
+
+    assert page._review._loaded
+    assert page._review.choice() == ("ollama", "qwen3:4b")
+    assert not page._review_box.isHidden()
+    qtbot.waitUntil(lambda: bool(service.asked), timeout=5000)
+    page._review._model.setCurrentText("gemma4:e4b")
+    assert page.values()["evaluate_model"] == "gemma4:e4b"
+
+    page._override.setChecked(False)
+    assert not page._review._loaded
+    assert page._review_box.isHidden()
+    assert page.values()["evaluate_model"] == "qwen3:4b"
+
+    page._override.setChecked(True)
+    assert page._review.choice() == ("ollama", "qwen3:4b")
+
+
+@pytest.mark.gui
+def test_a_review_that_is_not_loaded_asks_no_service(qtbot) -> None:
+    """
+    Given  the page with one shared model
+    When   another server address is set and a package install finishes
+    Then   the review section starts no model fetch
+    """
+    page = _models_page(qtbot, _ListingService(), _same_model_settings())
+
+    page.set_ollama_url("http://192.168.1.50:11434")
+    page.on_packages_changed()
+
+    assert page._review._fetch_thread is None
+    assert not page._review._loaded
+
+
+# ── the page's one profile line ───────────────────────────────────────────────
+
+
+@pytest.mark.gui
+def test_the_profile_line_is_shown_once_and_change_opens_where_the_ai_runs(qtbot) -> None:
+    """
+    Given  the AI models page
+    When   "change…" is clicked
+    Then   there is one visible profile line, and the page asks for This computer
+    """
+    page = _models_page(qtbot)
+    requests: list[tuple] = []
+    page.navigate_requested.connect(lambda *args: requests.append(args))
+
+    page._profile_line.change_link.linkActivated.emit("change")
+
+    visible = [
+        selector
+        for selector in page.findChildren(type(page._profile_line.selector))
+        if not selector.isHidden()
+    ]
+    assert visible == [page._profile_line.selector]
+    assert requests == [(SettingsPage.AI_SETUP, "", [])]
+
+
+# ── online → "Remove personal info" ───────────────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    ("online", "removal_on", "available", "turn_on", "expected"),
+    [
+        (False, False, True, True, PrivacyLineState.HIDDEN),
+        (True, False, False, False, PrivacyLineState.NEEDS_DETECTION),
+        (True, True, True, False, PrivacyLineState.PROTECTED),
+        (True, False, True, True, PrivacyLineState.WILL_TURN_ON),
+        (True, False, True, False, PrivacyLineState.NAMES_SENT),
+    ],
+)
+def test_the_privacy_line_state_follows_its_table(
+    online, removal_on, available, turn_on, expected
+) -> None:
+    """
+    Given  one combination of online / box ticked / name detection available / turn-on planned
+    When   the state of the privacy line is worked out
+    Then   it is the state the table of the privacy line names
+    """
+    state = privacy_line_state(
+        online=online, removal_on=removal_on, available=available, turn_on=turn_on
+    )
+    assert state is expected
+
+
+def _online_page(
+    qtbot, monkeypatch, settings: dict | None = None, **context
+) -> tuple[AiModelsPage, ProviderAppService]:
+    monkeypatch.setenv("MISTRAL_API_KEY", "k-test")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    service = ProviderAppService()
+    page = _models_page(
+        qtbot,
+        service,
+        {"correction_provider": "ollama", "anonymization_enabled": False, **(settings or {})},
+        **context,
+    )
+    return page, service
+
+
+@pytest.mark.gui
+def test_choosing_an_online_service_plans_to_turn_removal_on(qtbot, monkeypatch) -> None:
+    """
+    Given  local proofreading and "Remove personal info" off
+    When   Mistral (EU) is chosen
+    Then   the line says it will be turned on when OK is pressed, and the page asks for it
+    """
+    page, _ = _online_page(qtbot, monkeypatch)
+    assert page._privacy_state is PrivacyLineState.HIDDEN
+    assert not page.turn_on_anonymization()
+
+    select_provider(page._shared, "mistral_eu")
+
+    assert page._privacy_state is PrivacyLineState.WILL_TURN_ON
+    assert page.turn_on_anonymization()
+    assert "will be turned on" in page._privacy_label.text()
+    assert page._privacy_button.text() == "Keep it off"
+
+
+@pytest.mark.gui
+def test_keeping_it_off_holds_for_the_rest_of_the_window(qtbot, monkeypatch) -> None:
+    """
+    Given  Mistral (EU) chosen, so turning removal on is pending
+    When   "Keep it off" is pressed, another online service is chosen, and "Turn on …" is pressed
+    Then   the page stops asking, keeps not asking after the switch, and asks again on request
+    """
+    page, _ = _online_page(qtbot, monkeypatch)
+    select_provider(page._shared, "mistral_eu")
+
+    page._privacy_button.click()
+    assert not page.turn_on_anonymization()
+    assert page._privacy_state is PrivacyLineState.NAMES_SENT
+
+    select_provider(page._shared, "ollama")
+    select_provider(page._shared, "openai")
+    assert page._privacy_state is PrivacyLineState.NAMES_SENT
+    assert not page.turn_on_anonymization()
+
+    page._privacy_button.click()
+    assert page.turn_on_anonymization()
+
+
+@pytest.mark.gui
+def test_a_page_that_starts_online_does_not_turn_anything_on(qtbot, monkeypatch) -> None:
+    """
+    Given  saved settings that already use an online service with removal off
+    When   the page is loaded
+    Then   the line warns that names are sent, but no turn-on is planned (that was no choice
+           made in this window)
+    """
+    monkeypatch.setenv("MISTRAL_API_KEY", "k-test")
+    page = _models_page(
+        qtbot,
+        ProviderAppService(),
+        {"correction_provider": "mistral_eu", "anonymization_enabled": False},
+    )
+
+    assert page._privacy_state is PrivacyLineState.NAMES_SENT
+    assert not page.turn_on_anonymization()
+
+
+@pytest.mark.gui
+def test_another_computer_is_not_online_but_an_ollama_cloud_address_is(qtbot, monkeypatch) -> None:
+    """
+    Given  proofreading on a server inside the school
+    When   the address becomes ollama.com's hosted service
+    Then   the line is hidden for the school server and plans the turn-on for the hosted one
+    """
+    page, _ = _online_page(qtbot, monkeypatch)
+
+    page.set_ollama_url("http://192.168.1.50:11434")
+    assert page._privacy_state is PrivacyLineState.HIDDEN
+
+    page.set_ollama_url("https://ollama.com")
+    assert page._privacy_state is PrivacyLineState.WILL_TURN_ON
+
+
+@pytest.mark.gui
+def test_a_review_that_goes_online_counts_too(qtbot, monkeypatch) -> None:
+    """
+    Given  local proofreading, the content review switched on, and the override ticked
+    When   the review is switched to an online service
+    Then   the line plans the turn-on
+    """
+    page, _ = _online_page(qtbot, monkeypatch, {"evaluation_enabled": True})
+    page._override.setChecked(True)
+    assert page._privacy_state is PrivacyLineState.HIDDEN
+
+    select_provider(page._review, "mistral_eu")
+
+    assert page._privacy_state is PrivacyLineState.WILL_TURN_ON
+
+
+@pytest.mark.gui
+@pytest.mark.parametrize(
+    "settings",
+    [
+        {"correction_enabled": False},
+        {"correction_enabled": False, "evaluation_enabled": True},
+    ],
+    ids=["proofreading off", "review needs proofreading"],
+)
+def test_an_online_service_that_no_step_uses_plans_no_turn_on(qtbot, monkeypatch, settings) -> None:
+    """
+    Given  proofreading switched off in the main window (so the review cannot run either)
+    When   an online service is chosen
+    Then   no text leaves the computer, so the line stays hidden and OK does not tick the box
+    """
+    page, _ = _online_page(qtbot, monkeypatch, settings)
+
+    select_provider(page._shared, "mistral_eu")
+
+    assert page._privacy_state is PrivacyLineState.HIDDEN
+    assert not page.turn_on_anonymization()
+
+
+@pytest.mark.gui
+def test_an_online_review_that_is_switched_off_plans_no_turn_on(qtbot, monkeypatch) -> None:
+    """
+    Given  local proofreading, the content review switched off, and the override ticked
+    When   the review is switched to an online service
+    Then   the review never runs, so nothing is planned
+    """
+    page, _ = _online_page(qtbot, monkeypatch)
+    page._override.setChecked(True)
+
+    select_provider(page._review, "mistral_eu")
+
+    assert page._privacy_state is PrivacyLineState.HIDDEN
+    assert not page.turn_on_anonymization()
+
+
+@pytest.mark.gui
+def test_without_name_detection_the_line_offers_the_install(qtbot, monkeypatch) -> None:
+    """
+    Given  an online service chosen while name detection is missing for the language
+    When   "Install…" is pressed, and the detection is installed meanwhile
+    Then   the page opens Add-ons on Name detection; after the install the planned turn-on
+           shows
+    """
+    service = ProviderAppService()
+    monkeypatch.setenv("MISTRAL_API_KEY", "k-test")
+    service.anonymizer_ready = False
+    page = _models_page(
+        qtbot,
+        service,
+        {"correction_provider": "ollama", "anonymization_enabled": False},
+        privacy_available=False,
+    )
+    select_provider(page._shared, "mistral_eu")
+    assert page._privacy_state is PrivacyLineState.NEEDS_DETECTION
+    assert not page.turn_on_anonymization()
+    requests: list[tuple] = []
+    page.navigate_requested.connect(lambda *args: requests.append(args))
+
+    page._privacy_button.click()
+    assert requests == [(SettingsPage.ADDONS, FOCUS_NAME_DETECTION, [])]
+
+    service.anonymizer_ready = True
+    page.on_packages_changed()
+    qtbot.waitUntil(lambda: page._privacy_state is PrivacyLineState.WILL_TURN_ON, timeout=5000)
+    assert page.turn_on_anonymization()
+
+
+@pytest.mark.gui
+def test_with_removal_already_on_the_line_says_names_are_replaced(qtbot, monkeypatch) -> None:
+    """
+    Given  "Remove personal info" ticked in the main window
+    When   an online service is chosen
+    Then   the line says names are replaced, with no button and no turn-on
+    """
+    monkeypatch.setenv("MISTRAL_API_KEY", "k-test")
+    page = _models_page(
+        qtbot,
+        ProviderAppService(),
+        {"correction_provider": "ollama", "anonymization_enabled": True},
+    )
+
+    select_provider(page._shared, "mistral_eu")
+
+    assert page._privacy_state is PrivacyLineState.PROTECTED
+    assert page._privacy_button.isHidden()
+    assert not page.turn_on_anonymization()
+
+
+# ── deep links ────────────────────────────────────────────────────────────────
+
+
+def _recorded_scrolls(page, monkeypatch) -> list:
+    calls: list = []
+    monkeypatch.setattr(page, "_scroll_to", calls.append)
+    return calls
+
+
+@pytest.mark.gui
+def test_the_review_deep_link_goes_to_the_override_or_to_the_review(
+    qtbot, monkeypatch, no_keys
+) -> None:
+    """
+    Given  the page with one shared model, and then with a review on its own model
+    When   the review link is followed
+    Then   it scrolls to the override checkbox first, to the review box second
+    """
+    page = _models_page(
+        qtbot,
+        ProviderAppService(),
+        {"correction_provider": "mistral_eu", "evaluate_provider": "mistral_eu"},
+    )
+    calls = _recorded_scrolls(page, monkeypatch)
+    page.focus(FOCUS_REVIEW)
+
+    page._override.setChecked(True)
+    page.focus(FOCUS_REVIEW)
+
+    assert calls == [page._override, page._review_box]
+
+
+# ── keys typed a moment before the page goes away ─────────────────────────────
+
+
+def _paste_key(row, value: str) -> None:
+    """Paste *value* into a key row and do not leave the field (the commit is still waiting)."""
+    row.field.setText(value)
+    row.field.textEdited.emit(value)
+
+
+@pytest.mark.gui
+def test_ok_keeps_a_key_pasted_a_moment_ago(qtbot, no_keys) -> None:
+    """
+    Given  the AI models page on Mistral (EU) with a key pasted into its row, not committed yet
+    When   OK is pressed (apply(), then the shutdown that stops waiting commits)
+    Then   the key is in the environment for the drafts to save
+    """
+    page = _models_page(qtbot, ProviderAppService(), {"correction_provider": "mistral_eu"})
+    _paste_key(page._shared.key_row(), "k-pasted")
+    assert "MISTRAL_API_KEY" not in os.environ
 
     page.apply()
+    page.shutdown()
 
-    assert len(warnings) == 1
-    title, text = warnings[0]
-    assert "keychain" in title.lower()
-    assert "settings file" in text
-    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    assert os.environ["MISTRAL_API_KEY"] == "k-pasted"
+
+
+@pytest.mark.gui
+def test_unticking_the_override_keeps_a_key_pasted_into_the_review(qtbot, no_keys) -> None:
+    """
+    Given  a review on its own online service, with a key pasted into its row
+    When   "Use a different model for content review" is unticked before the key is committed
+    Then   the key is not dropped: it is in the environment
+    """
+    page = _models_page(qtbot, ProviderAppService(), {"correction_provider": "ollama"})
+    page._override.setChecked(True)
+    select_provider(page._review, "mistral_eu")
+    _paste_key(page._review.key_row(), "k-review")
+
+    page._override.setChecked(False)
+
+    assert os.environ["MISTRAL_API_KEY"] == "k-review"
+
+
+@pytest.mark.gui
+def test_ticking_the_override_changes_nothing_when_no_model_is_chosen(qtbot) -> None:
+    """
+    Given  a shared model that is empty (the run then uses the proofreading default)
+    When   the override is ticked
+    Then   the review starts on the model it was running, so the saved values do not change
+    """
+    page = _models_page(qtbot, settings=_same_model_settings())
+    page._shared._model.setCurrentText("")
+    before = page.values()
+
+    page._override.setChecked(True)
+
+    assert page.values() == before
+    assert before["evaluate_model"] == DummyAppService().default_model_for_task(
+        before["correction_provider"], "correction"
+    )
+
+
+class _CountingService(ProviderAppService):
+    """Counts how often a package is looked for (each look scans the import path)."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.package_looks = 0
+
+    def missing_provider_package(self, provider: str) -> str | None:
+        self.package_looks += 1
+        return super().missing_provider_package(provider)
+
+
+@pytest.mark.gui
+def test_a_key_change_does_not_look_for_packages_again(qtbot, no_keys) -> None:
+    """
+    Given  a loaded section
+    When   a key is committed, and then a package install finishes
+    Then   only the install looks for the packages again
+    """
+    service = _CountingService()
+    section = _proofreading(qtbot, service, {"correction_provider": "mistral_eu"})
+    looks = service.package_looks
+
+    commit_key(section.key_row(), "k-test")
+    assert section.provider() == "mistral_eu"
+    assert "key needed" not in str(
+        section._provider.itemData(section._provider.findData("mistral_eu"), ITEM_LABEL_ROLE)
+    )
+    after_key = service.package_looks
+    section.on_packages_changed()
+
+    assert after_key - looks <= 2  # the one provider asked about when the key row retargets
+    assert service.package_looks - after_key >= len(service.list_providers())
+
+
+@pytest.mark.gui
+def test_a_changed_key_forgets_the_lists_of_every_service_that_shares_it(qtbot, no_keys) -> None:
+    """
+    Given  Mistral (EU) chosen, and lists cached for Mistral and Mistral (EU), which share a key
+    When   a new key is committed
+    Then   both lists are forgotten, so the other service cannot show a list as proof of the key
+    """
+    service = ProviderAppService()
+    section = _proofreading(qtbot, service, {"correction_provider": "mistral_eu"})
+    service.seed_cache("mistral", ["old"])
+    service.seed_cache("mistral_eu", ["old"])
+
+    commit_key(section.key_row(), "k-wrong")
+
+    assert service.get_cached_models("mistral") is None
+    assert service.get_cached_models("mistral_eu") is None
+
+
+@pytest.mark.gui
+def test_a_section_that_was_never_loaded_asks_no_service_for_a_key(qtbot, no_keys) -> None:
+    """
+    Given  a section that was never loaded and a key changed elsewhere
+    When   the drafts announce the change
+    Then   it starts no fetch
+    """
+    service = ProviderAppService()
+    drafts = ApiKeyDrafts(service)
+    section = AiServiceSection(PROOFREADING, app_service=service, key_drafts=drafts)
+    qtbot.addWidget(section)
+
+    drafts.set("MISTRAL_API_KEY", "k-elsewhere")
+
+    assert section._fetch_thread is None
+    assert service.checked_calls == []

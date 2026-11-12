@@ -5,8 +5,12 @@ settings keys.  :class:`AiServiceSpec` holds those keys, so a fix (such as askin
 again after the provider changed) exists once.
 
 The instructions (prompt, answer formats, explanation options) are not here: they describe
-*how a task behaves* and live in the main window's instructions dialog.  The temperature sits
-in the Expert section of the AI models page.
+*how a task behaves* and live in the main window's instructions dialog.  There is no
+temperature to set: the app sends the value each model's maker recommends.
+
+The service list shows every service, grouped by where it runs, and marks those that still
+need a key or a package; an online service shows its API key row right below it.  The model
+list that loads once the key is committed is the check that it works.
 """
 
 from __future__ import annotations
@@ -20,6 +24,7 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QComboBox, QFormLayout, QHBoxLayout, QLabel, QWidget
 
 from ...config import DEFAULTS
+from ...domain.data_location import DataLocation, DataRegion
 from ...domain.model_listing import ListedModel, ModelListing
 from .._data_flow_summary import LocationHint, text_note
 from .._hardware_profile_selector import HardwareProfileSelector
@@ -29,18 +34,16 @@ from .._model_fetch import (
     _STATUS_KEY_MISSING,
     _STATUS_LOADING,
     _USE_PREFIX,
-    _available_providers,
     _BusyIndicator,
     _listing_status,
     _ModelFetchThread,
     _retire_thread,
-    _set_combo,
     _SettingsAppService,
     _status_busy,
     _status_note,
 )
 from .._model_guidance import OllamaModelGuidance, OpenDownloads
-from .._model_item_delegate import ModelItem, fill_grouped
+from .._model_item_delegate import ModelItem, fill_grouped, install
 from .._model_wording import (
     SAME_MODEL_TIP,
     USE_SUGGESTION,
@@ -50,6 +53,7 @@ from .._model_wording import (
     saved_model_not_offered_text,
 )
 from .._package_hint import PackageHint
+from ._credentials import ApiKeyDrafts, ApiKeyRow
 
 
 @dataclass(frozen=True)
@@ -77,17 +81,83 @@ CONTENT_REVIEW = AiServiceSpec(
 )
 
 
+#: Where a self-hosted service runs, as the service list says it.
+_PLACE_OF_SELF_HOSTED = {
+    DataLocation.THIS_COMPUTER: "this computer",
+    DataLocation.OTHER_COMPUTER: "own server",
+    DataLocation.ONLINE: "online",
+}
+MARK_NOT_INSTALLED = "not installed"
+MARK_KEY_NEEDED = "key needed"
+
+
+def missing_packages(app_service: _SettingsAppService) -> dict[str, str | None]:
+    """Return ``{provider: pip name of its missing package, or None}`` for every service.
+
+    Looking for a package refreshes the import caches and scans the import path, so this is
+    asked when a package may have changed, not on every key that is typed.
+    """
+    return {
+        provider: app_service.missing_provider_package(provider)
+        for provider in app_service.list_providers()
+    }
+
+
+def service_groups(
+    app_service: _SettingsAppService,
+    ollama_url: str,
+    packages: Mapping[str, str | None] | None = None,
+) -> list[list[ModelItem]]:
+    """Return every AI service, grouped by where it runs, each labelled with what is missing.
+
+    Order: services on this computer or the school's own server, then online services in the
+    EU, then every other online service ("outside the EU" also for a service that does not say
+    where it processes data: a school can only rely on what is declared).  Inside a group the
+    services are sorted by name.  A service that needs a package or a key says so after its
+    place, the package first because installing comes first.  *packages* is the answer of
+    :func:`missing_packages`; without it the packages are looked for now.
+
+    The place and region come from ``describe_llm_location`` -- the call the location hint
+    under the list uses -- so the label and the hint never disagree.
+    """
+    if packages is None:
+        packages = missing_packages(app_service)
+    own: list[ModelItem] = []
+    eu: list[ModelItem] = []
+    other: list[ModelItem] = []
+    for provider in app_service.list_providers():
+        info = app_service.get_provider_info(provider)
+        name = str(info.get("display_name") or provider)
+        location = app_service.describe_llm_location(provider, "", ollama_url)
+        if info.get("self_hosted"):
+            bucket, place = own, _PLACE_OF_SELF_HOSTED[location.location]
+        elif location.data_region is DataRegion.EU:
+            bucket, place = eu, DataRegion.EU.label
+        else:
+            bucket, place = other, DataRegion.NON_EU.label
+        marks = [place]
+        if packages.get(provider):
+            marks.append(MARK_NOT_INSTALLED)
+        if app_service.provider_key_missing(provider):
+            marks.append(MARK_KEY_NEEDED)
+        bucket.append(ModelItem(text=name, label=" · ".join(marks), data=provider))
+    return [sorted(group, key=lambda item: item.text.lower()) for group in (own, eu, other)]
+
+
 class AiServiceSection(QWidget):
     """AI service + model of one step, with the hints that explain both.
 
     Emits :attr:`choice_changed` whenever the service or the model changes, so the page can
-    hand the choice to the other step's section (the same-model tip compares both live).
+    hand the choice to the other section (the same-model tip compares both live).
+
+    A section that was never :meth:`load`-ed (the content review while it shares the
+    proofreading model) asks no service for anything.
     """
 
     #: ``(provider, model)`` of this section changed.
     choice_changed = Signal(str, str)
 
-    def __init__(
+    def __init__(  # noqa: PLR0913  # independent keyword-only options, like OcrModelPicker's
         self,
         spec: AiServiceSpec,
         *,
@@ -95,10 +165,22 @@ class AiServiceSection(QWidget):
         hardware_profile: str = "auto",
         ollama_url: str = DEFAULTS["ollama_url"],
         open_downloads: OpenDownloads | None = None,
+        key_drafts: ApiKeyDrafts | None = None,
+        profile_selector: HardwareProfileSelector | None = None,
+        same_model_tip: bool = True,
         parent: QWidget | None = None,
     ) -> None:
+        """Build the section.
+
+        *profile_selector* is the page's own "Suggestions are for …" selector: with it the
+        section follows that one (the page keeps it up to date) instead of resolving this
+        computer again for itself, and shows no line of its own.
+        """
         super().__init__(parent)
         self._spec = spec
+        self._drafts = key_drafts or ApiKeyDrafts(app_service, parent=self)
+        self._show_same_model_tip = same_model_tip
+        self._loaded = False
         self._app_service = app_service
         self._fetch_thread: _ModelFetchThread | None = None
         #: The model the teacher saved for this step, and the provider it was saved for, so a
@@ -110,6 +192,9 @@ class AiServiceSection(QWidget):
         self._shown_listing: ModelListing | None = None
         self._ollama_url = ollama_url or DEFAULTS["ollama_url"]
         self._open_downloads = open_downloads
+        self._shared_selector = profile_selector
+        #: Which services miss their package (asked again only when a package may have changed).
+        self._missing_packages: dict[str, str | None] = {}
         #: The other step's current choice, for the same-model tip.
         self._other_provider = ""
         self._other_model = ""
@@ -122,18 +207,26 @@ class AiServiceSection(QWidget):
         form.setContentsMargins(0, 0, 0, 0)
         form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapAllRows)
 
-        self._hw_selector = HardwareProfileSelector(
-            app_service=self._app_service,
-            setting=hardware_profile,
-            ollama_url=self._ollama_url,
-            read_only=True,
-            parent=self,
-        )
-        form.addRow(self._hw_selector)
+        if self._shared_selector is not None:
+            self._hw_selector = self._shared_selector
+        else:
+            self._hw_selector = HardwareProfileSelector(
+                app_service=self._app_service,
+                setting=hardware_profile,
+                ollama_url=self._ollama_url,
+                read_only=True,
+                parent=self,
+            )
+            form.addRow(self._hw_selector)
 
         self._provider = QComboBox()
-        self._provider.addItems(_available_providers(self._app_service))
-        self._provider.currentTextChanged.connect(self._on_provider_selected)
+        install(self._provider)
+        self._missing_packages = missing_packages(self._app_service)
+        fill_grouped(
+            self._provider,
+            service_groups(self._app_service, self._ollama_url, self._missing_packages),
+        )
+        self._provider.currentIndexChanged.connect(self._on_provider_selected)
         form.addRow("AI service:", self._provider)
 
         self._where_hint = LocationHint()
@@ -141,6 +234,14 @@ class AiServiceSection(QWidget):
 
         self._package_hint = PackageHint(self._open_downloads)
         form.addRow("", self._package_hint)
+
+        # One row for whichever service is chosen; the key is entered right where the
+        # service is picked.  Shown only for a service that needs a key.
+        self._key_row = ApiKeyRow(self._drafts, "", "", inline=True)
+        self._key_row.setVisible(False)
+        self._key_row.remove_requested.connect(self._on_key_remove_requested)
+        form.addRow("", self._key_row)
+        self._drafts.changed.connect(self._on_key_changed)
 
         self._model = QComboBox()
         self._model.setEditable(True)
@@ -190,25 +291,26 @@ class AiServiceSection(QWidget):
         and here exactly one is wanted, after the saved model is in place.
         """
         spec = self._spec
+        self._loaded = True
         self._other_provider = str(values.get(spec.other_provider_key, ""))
         self._other_model = str(values.get(spec.other_model_key, ""))
         saved_provider = str(values.get(spec.provider_key, ""))
         provider_found = spec.provider_key not in values
+        self._refresh_service_labels(rescan_packages=True)
         if spec.provider_key in values:
             self._provider.blockSignals(True)
-            # A service whose API key is not set is not offered for a new choice, but a saved
-            # one stays shown (its status says the key is missing): replacing it by the first
-            # service would save a model name that belongs to another one.
-            if self._provider.findText(saved_provider) < 0 and (
-                saved_provider in self._app_service.list_providers()
-            ):
-                self._provider.addItem(saved_provider)
-            _set_combo(self._provider, saved_provider)
-            provider_found = self._provider.currentText() == saved_provider
+            # Every service is listed, so the saved one is found whether or not its key is set
+            # (its status says the key is missing).  One that is not listed at all (its
+            # module was removed) leaves the first entry shown and its model is not carried
+            # over: that name belongs to a service that is no longer there.
+            index = self._provider.findData(saved_provider)
+            if index >= 0:
+                self._provider.setCurrentIndex(index)
+            provider_found = self.provider() == saved_provider
             self._provider.blockSignals(False)
         self._saved_model = str(values.get(spec.model_key, "") or "").strip()
-        self._saved_model_provider = self._provider.currentText()
-        self._on_provider_changed(self._provider.currentText())
+        self._saved_model_provider = self.provider()
+        self._on_provider_changed(self.provider())
         if spec.model_key in values and provider_found:
             self._model.setCurrentText(str(values[spec.model_key]))
         self._auto_fetch()
@@ -217,13 +319,26 @@ class AiServiceSection(QWidget):
     def values(self) -> dict[str, Any]:
         """Return this step's provider and model."""
         return {
-            self._spec.provider_key: self._provider.currentText(),
+            self._spec.provider_key: self.provider(),
             self._spec.model_key: self._model.currentText().strip(),
         }
 
+    def provider(self) -> str:
+        """Return the id of the chosen AI service (the list shows display names)."""
+        return str(self._provider.currentData() or "")
+
     def choice(self) -> tuple[str, str]:
         """Return ``(provider, model)`` as currently shown."""
-        return self._provider.currentText(), self._model.currentText().strip()
+        return self.provider(), self._model.currentText().strip()
+
+    def key_row(self) -> ApiKeyRow:
+        """Return the API key row under the service (hidden for a service without a key)."""
+        return self._key_row
+
+    def commit_key(self) -> None:
+        """Hand a key typed in this section's row to the drafts now (it may still be waiting)."""
+        if self._key_row.env_key:
+            self._key_row.commit()
 
     def set_other_choice(self, provider: str, model: str) -> None:
         """Follow the other step's choice live (it decides the same-model tip)."""
@@ -231,45 +346,63 @@ class AiServiceSection(QWidget):
         self._other_model = model
         self._update_same_model_tip()
 
-    def set_hardware_setting(self, setting: str) -> None:
-        """Follow the computer profile chosen on *Where the AI runs*."""
-        self._hw_selector.set_setting(setting)
-
-    def hide_profile_line(self) -> None:
-        """Hide the read-only "Suggestions are for …" line (another one on the page says it).
-
-        The selector keeps resolving: the model hints below depend on it.
-        """
-        self._hw_selector.setVisible(False)
-
     def set_ollama_url(self, url: str) -> None:
         """Use another local AI server: re-resolve, re-hint, and ask it for its models."""
         new_url = url or DEFAULTS["ollama_url"]
         if new_url == self._ollama_url:
             return
         self._ollama_url = new_url
-        self._hw_selector.set_ollama_url(new_url)
+        if self._shared_selector is None:
+            self._hw_selector.set_ollama_url(new_url)
         self._guidance.set_ollama_url(new_url)
+        self._refresh_service_labels()
         self._update_where_hint()
-        if self._provider.currentText() == "ollama":
+        if self.provider() == "ollama" and self._loaded:
             self._refetch_models()
 
     def on_packages_changed(self) -> None:
         """An install finished: look for the package again, and ask the service."""
-        self._update_package_hint(self._provider.currentText())
-        self._refetch_models()
+        self._refresh_service_labels(rescan_packages=True)
+        self._update_package_hint(self.provider())
+        if self._loaded:
+            self._refetch_models()
 
     def shutdown(self) -> None:
-        """Detach a running model fetch (it cannot be interrupted, so it is parked)."""
+        """Detach a running model fetch (it cannot be interrupted, so it is parked).
+
+        The section counts as not loaded afterwards: it asks nothing until it is loaded again.
+        """
+        self._loaded = False
+        self._key_row.stop()
         _retire_thread(self._fetch_thread)
 
     # ── provider change ───────────────────────────────────────────────────────
 
     def _emit_choice(self) -> None:
-        self.choice_changed.emit(self._provider.currentText(), self._model.currentText().strip())
+        self.choice_changed.emit(self.provider(), self._model.currentText().strip())
 
-    def _on_provider_selected(self, provider: str) -> None:
+    def _refresh_service_labels(self, *, rescan_packages: bool = False) -> None:
+        """Rebuild the service list so its marks are true again (a key, a package, the server).
+
+        The packages are looked for again only when asked to: a key or a server address does
+        not install anything, and the look scans the import path.
+        """
+        if rescan_packages:
+            self._missing_packages = missing_packages(self._app_service)
+        current = self.provider()
+        self._provider.blockSignals(True)
+        fill_grouped(
+            self._provider,
+            service_groups(self._app_service, self._ollama_url, self._missing_packages),
+        )
+        index = self._provider.findData(current)
+        if index >= 0:
+            self._provider.setCurrentIndex(index)
+        self._provider.blockSignals(False)
+
+    def _on_provider_selected(self, _index: int) -> None:
         """The user picked another AI service: show its models, then ask it for the live list."""
+        provider = self.provider()
         self._on_provider_changed(provider)
         self._auto_fetch()
         self._emit_choice()
@@ -303,6 +436,7 @@ class AiServiceSection(QWidget):
         # Hint line and "Use best choice" button exist only for Ollama.
         self._guidance.setVisible(provider == "ollama")
         self._update_package_hint(provider)
+        self._update_key_row(provider)
         self._update_where_hint()
 
     def _will_be_asked(self, provider: str, info: dict) -> bool:
@@ -320,10 +454,45 @@ class AiServiceSection(QWidget):
         name = self._app_service.get_provider_info(provider).get("display_name", provider)
         self._package_hint.show_missing(provider, str(name), pip_name)
 
+    def _update_key_row(self, provider: str) -> None:
+        """Show the key row of *provider*, or hide it when the service needs no key."""
+        env_key = self._drafts.env_key_of(provider)
+        if not env_key:
+            self._key_row.retarget("", "")
+            self._key_row.setVisible(False)
+            return
+        self._key_row.retarget(
+            env_key, self._drafts.titles().get(env_key, env_key), self._drafts.key_url_of(env_key)
+        )
+        self._key_row.setVisible(True)
+
+    def _on_key_remove_requested(self, _row: object) -> None:
+        self._drafts.remove(self._key_row.env_key)
+
+    def _on_key_changed(self, env_key: str) -> None:
+        """A key was entered or removed (here or on This computer): check it, relabel.
+
+        Every service that reads this key forgets its cached model list, the chosen one or
+        not: a list fetched with the old key says nothing about the new one (Mistral and
+        Mistral EU share a key).
+        """
+        for provider in self._drafts.providers_of(env_key):
+            self._app_service.invalidate_model_cache(
+                provider, self._ollama_url if provider == "ollama" else ""
+            )
+        if env_key == self._key_row.env_key:
+            self._key_row.show_value(self._drafts.value(env_key))
+            self._key_row.refresh_line()
+        if not self._loaded:
+            return  # load() draws the list when the section is first shown
+        self._refresh_service_labels()
+        if env_key == self._key_row.env_key:
+            self._auto_fetch()
+
     def _update_where_hint(self) -> None:
         """Say where the chosen AI service runs, so online use is never a surprise."""
         location = self._app_service.describe_llm_location(
-            self._provider.currentText(),
+            self.provider(),
             self._model.currentText().strip(),
             self._ollama_url,
         )
@@ -334,8 +503,9 @@ class AiServiceSection(QWidget):
         detection = self._hw_selector.resolved()
         profile = detection.profile if detection is not None else None
         show = (
-            profile in ("cpu", "8gb")
-            and self._provider.currentText() == "ollama"
+            self._show_same_model_tip
+            and profile in ("cpu", "8gb")
+            and self.provider() == "ollama"
             and self._other_provider == "ollama"
             and self._model.currentText().strip() != self._other_model
         )
@@ -345,7 +515,7 @@ class AiServiceSection(QWidget):
 
     def _refetch_models(self) -> None:
         """Invalidate the model cache of the current service and fetch the list again."""
-        provider = self._provider.currentText()
+        provider = self.provider()
         self._app_service.invalidate_model_cache(
             provider, self._ollama_url if provider == "ollama" else ""
         )
@@ -373,13 +543,13 @@ class AiServiceSection(QWidget):
         return (
             bool(model)
             and model == self._saved_model
-            and self._provider.currentText() == self._saved_model_provider
+            and self.provider() == self._saved_model_provider
         )
 
     def _auto_fetch(self) -> None:
         # A fetch still running belongs to a service that may no longer be the chosen one.
         _retire_thread(self._fetch_thread)
-        provider = self._provider.currentText()
+        provider = self.provider()
         service = self._service_name(provider)
         if self._app_service.provider_key_missing(provider):
             self._set_busy(False)
@@ -420,13 +590,13 @@ class AiServiceSection(QWidget):
 
     def _on_fetch_progress(self, provider: str, text: str) -> None:
         """Say what the running fetch is doing, unless the user has left that service."""
-        if provider != self._provider.currentText():
+        if provider != self.provider():
             return
         self._set_busy(True, text)
 
     def _on_listing_ready(self, provider: str, listing: object) -> None:
         """Show a fetched list, unless it is for a service the user has already left."""
-        if provider != self._provider.currentText() or not isinstance(listing, ModelListing):
+        if provider != self.provider() or not isinstance(listing, ModelListing):
             return
         self._show_listing(listing)
 
@@ -434,7 +604,7 @@ class AiServiceSection(QWidget):
         """Fill the model field and the status line from *listing*."""
         self._set_busy(False)
         self._shown_listing = listing
-        provider = self._provider.currentText()
+        provider = self.provider()
         service = self._service_name(provider)
         models = listing.models
         if not models:
@@ -539,7 +709,5 @@ class AiServiceSection(QWidget):
         # The warning was about the model just replaced, so back to the plain count.
         if self._shown_listing is not None:
             self._status_lbl.setText(
-                _listing_status(
-                    self._shown_listing, self._service_name(self._provider.currentText())
-                )
+                _listing_status(self._shown_listing, self._service_name(self.provider()))
             )

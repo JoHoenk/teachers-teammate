@@ -10,6 +10,8 @@ from collections.abc import Mapping
 from datetime import date
 import threading
 
+from teachers_teammate.application.data_flow import llm_location
+from teachers_teammate.domain.data_location import StageLocation
 from teachers_teammate.domain.formatted_text import TextFormat
 from teachers_teammate.domain.model_listing import ListedModel, ModelListing
 
@@ -39,17 +41,25 @@ class DummyAppService(RecommendationServiceStub):
     def get_provider_info(self, provider: str) -> dict:
         if provider == "openai":
             return {
+                "display_name": "OpenAI (ChatGPT)",
+                "data_region": "non_eu",
                 "models": ["gpt-4o", "gpt-4o-mini"],
                 "default_model": "gpt-4o-mini",
                 "needs_api_key": True,
                 "env_key": "OPENAI_API_KEY",
             }
         return {
+            "display_name": "Ollama" if provider == "ollama" else provider,
+            "self_hosted": provider == "ollama",
             "models": [f"{provider}-model"],
             "default_model": f"{provider}-model",
             "needs_api_key": False,
             "env_key": "",
         }
+
+    def describe_llm_location(self, provider: str, model: str, ollama_url: str) -> StageLocation:
+        """Answer with the real rule, so the pages' labels and hints follow the provider info."""
+        return llm_location(provider, model, ollama_url, self.get_provider_info)
 
     def list_provider_models(self, provider: str, *, base_url: str = "") -> list[str]:
         _ = base_url
@@ -127,6 +137,7 @@ class ProviderAppService(CachingDummyAppService):
         if provider in ("mistral", "mistral_eu"):
             return {
                 "display_name": "Mistral" if provider == "mistral" else "Mistral (EU)",
+                "data_region": "unknown" if provider == "mistral" else "eu",
                 "models": ["mistral-small-latest", "open-mistral-nemo"],
                 "default_model": "mistral-small-latest",
                 "needs_api_key": True,
@@ -178,6 +189,19 @@ class NonListableService(DummyAppService):
             "needs_api_key": True,
             "env_key": "ANTHROPIC_API_KEY",
         }
+
+
+def select_provider(section, provider_id: str) -> None:
+    """Choose the AI service with id *provider_id* in *section*, as the user would."""
+    index = section._provider.findData(provider_id)
+    assert index >= 0, f"{provider_id} is not offered"
+    section._provider.setCurrentIndex(index)
+
+
+def commit_key(row, value: str) -> None:
+    """Type *value* into a key row and leave the field, so it is committed."""
+    row.field.setText(value)
+    row.field.editingFinished.emit()
 
 
 def curated_listing() -> ModelListing:

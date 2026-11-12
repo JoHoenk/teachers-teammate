@@ -52,7 +52,6 @@ from ...domain.model_catalog import (
 )
 from .._background import LatestTask
 from .._constants import _SPACY_MODEL_CHOICES as _SPACY_MODEL_DOWNLOAD_CHOICES
-from .._hardware_profile_selector import HardwareProfileSelector
 from .._model_guidance import PROVIDER_PREFIX
 from .._model_wording import (
     ADD_MODEL_NOTE,
@@ -80,6 +79,7 @@ from ._page import (
     SettingsPage,
     SettingsPageBase,
 )
+from ._profile_line import ProfileLine
 
 TITLE = "Add-ons"
 DESCRIPTION = (
@@ -91,7 +91,6 @@ TAB_OCR_ENGINES = "Handwriting engines"
 TAB_ONLINE_SERVICES = "Online AI services"
 TAB_NAME_DETECTION = "Name detection"
 TAB_GPU = "Performance monitoring"
-CHANGE_PROFILE_LINK = '<a href="change">change…</a>'
 CLOSE_BLOCKED = (
     "An installation is still running. Please wait until it has finished — the new package "
     "must be set up before the app can use it."
@@ -190,7 +189,7 @@ class AddonsPage(SettingsPageBase):
 
     Items are grouped onto one tab per category; a shared log and a single install button
     operate across every tab.  Model detection and pulls target the configured Ollama server
-    (it follows *Where the AI runs*).
+    (it follows *This computer*).
     """
 
     page = SettingsPage.ADDONS
@@ -422,8 +421,14 @@ class AddonsPage(SettingsPageBase):
         group_layout = QVBoxLayout(group)
         group_layout.setSpacing(6)
 
-        profile_row, self._hardware_selector, self._change_profile_lbl = self._build_profile_row()
-        group_layout.addWidget(profile_row)
+        # The read-only "My computer" line; it is changed on the This computer page.
+        self._profile_line = ProfileLine(
+            app_service=self._svc, setting=self._hardware_profile, ollama_url=self._ollama_url
+        )
+        self._profile_line.change_requested.connect(lambda: self._navigate(SettingsPage.AI_SETUP))
+        self._hardware_selector = self._profile_line.selector
+        self._hardware_selector.resolved_changed.connect(self._on_profile_resolved)
+        group_layout.addWidget(self._profile_line)
 
         intro = QLabel(DOWNLOADS_INTRO)
         intro.setWordWrap(True)
@@ -466,24 +471,6 @@ class AddonsPage(SettingsPageBase):
         layout.addWidget(group)
         layout.addStretch(1)
         return self._scrolled(content)
-
-    def _build_profile_row(self) -> tuple[QWidget, HardwareProfileSelector, QLabel]:
-        """Build the read-only "My computer" line; it is changed on the Where the AI runs page."""
-        row = QWidget()
-        layout = QHBoxLayout(row)
-        layout.setContentsMargins(0, 0, 0, 0)
-        selector = HardwareProfileSelector(
-            app_service=self._svc,
-            setting=self._hardware_profile,
-            ollama_url=self._ollama_url,
-            read_only=True,
-        )
-        selector.resolved_changed.connect(self._on_profile_resolved)
-        layout.addWidget(selector, stretch=1)
-        change = QLabel(CHANGE_PROFILE_LINK)
-        change.linkActivated.connect(lambda _link: self._navigate(SettingsPage.AI_SETUP))
-        layout.addWidget(change)
-        return row, selector, change
 
     def _build_ollama_model_tree(self) -> QTreeWidget:
         """Build the grouped model tree and populate it from the catalog."""

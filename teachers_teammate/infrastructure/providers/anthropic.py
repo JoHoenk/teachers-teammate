@@ -14,6 +14,8 @@ PROVIDER_INFO: dict = {
     "data_region": "non_eu",
     "vendor_country": "USA",
     "needs_api_key": True,
+    # The vendor's page where a key is created; the Settings window links to it.
+    "key_url": "https://console.anthropic.com/settings/keys",
     "env_key": "ANTHROPIC_API_KEY",
     "needs_base_url": False,
     "can_list_models": False,

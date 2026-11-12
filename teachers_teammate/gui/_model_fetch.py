@@ -16,7 +16,6 @@ from __future__ import annotations
 import atexit
 from collections.abc import Callable
 import html
-import os
 from typing import Protocol
 
 from PySide6.QtCore import QThread, Signal
@@ -119,6 +118,8 @@ class _SettingsAppService(Protocol):
     def describe_llm_location(
         self, provider: str, model: str, ollama_url: str
     ) -> StageLocation: ...
+
+    def default_model_for_task(self, provider: str, task: str) -> str: ...
 
 
 # ── background threads ────────────────────────────────────────────────────────
@@ -237,17 +238,6 @@ def _set_combo(combo: QComboBox, value: str) -> None:
     idx = combo.findText(value)
     if idx >= 0:
         combo.setCurrentIndex(idx)
-
-
-def _available_providers(app_service: _SettingsAppService) -> list[str]:
-    """Return providers that need no API key or already have one configured."""
-    result = []
-    for p in app_service.list_providers():
-        info = app_service.get_provider_info(p)
-        env_key: str = info.get("env_key", "")
-        if not env_key or os.environ.get(env_key):
-            result.append(p)
-    return result
 
 
 # ── retired threads ───────────────────────────────────────────────────────────

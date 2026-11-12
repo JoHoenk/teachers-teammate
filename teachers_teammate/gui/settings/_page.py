@@ -28,6 +28,7 @@ class SettingsPage(StrEnum):
 
     AI_MODELS = "ai_models"
     AI_SETUP = "ai_setup"
+    ONLINE_SERVICES = "online_services"
     SCAN_QUALITY = "scan_quality"
     PRIVACY = "privacy"
     ADDONS = "addons"
@@ -66,6 +67,9 @@ class SettingsContext:
     display_anonymized: bool = True
     privacy_available: bool = True
     pull_manager: Any = None
+    #: The API keys as edited in the open window, shared by every page that shows a key
+    #: (``ApiKeyDrafts``).  A page built without a window makes its own.
+    key_drafts: Any = None
 
 
 @dataclass(frozen=True)
@@ -75,12 +79,16 @@ class SettingsResult:
     ``settings`` holds only the keys of the pages that were opened; ``anonymizer_config`` and
     ``display_anonymized`` are ``None`` when the Privacy page was never opened.
     ``restore_all`` asks the main window to reset every setting (the window already asked).
+    ``turn_on_anonymization`` asks it to tick "Remove personal info": the teacher chose an
+    online service while names would be sent as written, and the AI models page said it
+    would be turned on.
     """
 
     settings: dict[str, Any]
     anonymizer_config: object | None = None
     display_anonymized: bool | None = None
     restore_all: bool = False
+    turn_on_anonymization: bool = False
 
 
 #: Opens another page from inside a page: ``(page, focus, preselect)``.
@@ -146,11 +154,11 @@ class SettingsPageBase(QWidget):
         """An add-on, AI model or language model was installed: look again."""
 
     def set_hardware_setting(self, setting: str) -> None:
-        """Follow the computer profile chosen on *Where the AI runs* (read-only elsewhere)."""
+        """Follow the computer profile chosen on *This computer* (read-only elsewhere)."""
         _ = setting
 
     def set_ollama_url(self, url: str) -> None:
-        """Follow the local AI server address chosen on *Where the AI runs*."""
+        """Follow the local AI server address chosen on *This computer*."""
         _ = url
 
     def close_blocker(self) -> str:
@@ -200,6 +208,7 @@ class SettingsPageBase(QWidget):
 PAGE_TITLES: dict[SettingsPage, str] = {
     SettingsPage.AI_MODELS: txt.PAGE_AI_MODELS,
     SettingsPage.AI_SETUP: txt.PAGE_AI_SETUP,
+    SettingsPage.ONLINE_SERVICES: txt.PAGE_ONLINE_SERVICES,
     SettingsPage.SCAN_QUALITY: txt.PAGE_SCAN_QUALITY,
     SettingsPage.PRIVACY: txt.PAGE_PRIVACY,
     SettingsPage.ADDONS: txt.PAGE_ADDONS,

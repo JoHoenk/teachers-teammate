@@ -98,7 +98,13 @@ from ..infrastructure.workflow.cache_service import (
 from ..interfaces import SUPPORTED_SUFFIXES
 from .commands import ApplicationCommands
 from .context_choice import ContextChoice, context_choice
-from .data_flow import describe_data_flow, llm_location, ocr_location, ocr_refusal
+from .data_flow import (
+    describe_data_flow,
+    llm_location,
+    ocr_location,
+    ocr_refusal,
+    text_goes_online,
+)
 from .formatting import TextFormatter
 from .model_recommendations import ModelRecommendationService
 from .sent_text import Anonymize, SentTexts, describe_sent_texts
@@ -446,18 +452,29 @@ class ProcessingApplicationService:
         review_provider = str(settings.get("evaluate_provider") or DEFAULTS["evaluate_provider"])
         return context_choice(
             proofreading_provider=proofreading_provider,
-            # An empty model means the provider's default, as it does for a run.
-            proofreading_model=str(
-                settings.get("correction_model")
-                or self.default_model_for_task(proofreading_provider, "correction")
+            proofreading_model=self.effective_model(
+                proofreading_provider, str(settings.get("correction_model") or ""), "correction"
             ),
             review_provider=review_provider,
-            review_model=str(
-                settings.get("evaluate_model")
-                or self.default_model_for_task(review_provider, "evaluation")
+            review_model=self.effective_model(
+                review_provider, str(settings.get("evaluate_model") or ""), "evaluation"
             ),
             card_gb=card_gb,
         )
+
+    def effective_model(self, provider: str, model: str, task: str) -> str:
+        """Return the model a run uses for *task*: an empty *model* means the provider's default."""
+        return model.strip() or self.default_model_for_task(provider, task)
+
+    def sends_text_online(self, settings: Mapping[str, object]) -> bool:
+        """Return whether a run with *settings* sends text to an online service.
+
+        Only the steps that run count (proofreading on, and the content review on top of it),
+        each with the model it really uses; the same steps and the same classification as the
+        data-flow box (:meth:`describe_data_flow`), but from settings, so a page can ask
+        before anything is saved.
+        """
+        return text_goes_online(settings, self.describe_llm_location, self.effective_model)
 
     def ollama_catalog(self) -> tuple[OllamaModelSpec, ...]:
         """Return the curated Ollama model catalog."""

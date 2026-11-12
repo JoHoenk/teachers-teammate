@@ -102,7 +102,7 @@ def test_detection_status_text_per_reason(
     """
     Given  a hardware detection with a given reason
     When   detection_status_text is called
-    Then   the §2 wording for that situation is produced
+    Then   the wording for that situation is produced
     """
     assert expected_fragment in detection_status_text(detection)
 

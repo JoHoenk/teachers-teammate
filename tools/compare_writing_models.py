@@ -1,14 +1,18 @@
-"""Compare writing models on learner texts (gate 2 of the writing-model plan).
+"""Run writing models over a test set (gate 2 of the writing-model evaluation).
 
 Developer tool, needs a running Ollama server, not run in CI.  Every text goes through the app's
-own corrector (review mode), so the request is the one a teacher's run sends; the comparison uses
-the app's tokeniser and word diff.  The test set comes from ``tools/prepare_gec_testset.py`` and
-stays outside the repository (real learner text, licences).
+own corrector (review mode), so the request is the one a teacher's run sends — including the
+app's long-text path: a text longer than one request is proofread in pieces, and the row records
+how many.  The comparison uses the app's tokeniser and word diff.  The test set comes from
+``tools/prepare_gec_testset.py`` and stays outside the repository (real learner text, licences).
 
-Per language and model it reports
+This command only *runs*.  What happens to the results afterwards — the table, the explanation
+sheet, the export into the repository, the gate and the comparison — is ``proofreading_store``.
 
-* edit precision / recall / F0.5: the word-diff changes source → model against source →
-  reference (a change counts when it covers the same words and has the same replacement);
+Per language and model a run records
+
+* the edits of the model against the reference, for edit precision / recall / F0.5 (a change
+  counts when it covers the same words and has the same replacement);
 * how many already-correct sentences came back unchanged;
 * how often the review failed or fell back to corrections only;
 * the changes that carry an explanation, notes that explain no change (orphans), and seconds.
@@ -16,71 +20,202 @@ Per language and model it reports
 Run (results are appended, so an interrupted run resumes)::
 
     bazel run //tools:compare_writing_models -- run --testset ~/gec-testset/set \\
-        --out ~/gec-testset/results --model qwen3.5:9b --model gemma4:e4b --temperature 0.2
-    bazel run //tools:compare_writing_models -- report --out ~/gec-testset/results
-    bazel run //tools:compare_writing_models -- sheet --out ~/gec-testset/results \\
-        --model qwen3.5:9b --model gemma4:e4b --per-language 10 > spotcheck.md
+        --out ~/gec-testset/results --model qwen3.5:9b --model gemma4:e4b
+    bazel run //tools:proofreading_store -- report --cache ~/gec-testset/results
 
-``sheet`` writes the teacher's spot-check list: explanations to mark correct / wrong / vague.
-The work itself lives in :mod:`tools.model_eval`; this file only parses arguments and prints.
+Each model starts at the temperature its maker recommends (``--temperature`` overrides it).
+``run --mode text`` asks for the corrected text only (no JSON, no explanations) instead of the
+app's review answer, so the same texts show what the JSON format costs in correction quality;
+results of a mode other than ``review`` go to files of their own.  ``run`` refuses to start when
+the prompts, the answer format or the window changed since the current ``eval_version``
+(``tools/model_eval/protocol.json``), and refuses to resume a run whose sessions would not be one
+run.  The work itself lives in :mod:`tools.model_eval`; this file only parses arguments and prints.
 """
 
 from __future__ import annotations
 
 import argparse
+from datetime import UTC, datetime
 from pathlib import Path
+import shlex
 import sys
+from typing import cast
 
-from tools.model_eval import defaults, results
-from tools.model_eval import report as reporting
-from tools.model_eval.comparison import LANGUAGE_NAMES, WritingModelComparison
-from tools.model_eval.results import TestRecord
+from teachers_teammate.domain.model_catalog import RequestProfile
+from teachers_teammate.infrastructure.ollama_utils import OllamaClient
+from tools.model_eval import defaults, protocol, results, runner
+from tools.model_eval.answer_mode import CORRECTOR_MODES, DEFAULT_MODE, AnswerMode, parse_mode
+from tools.model_eval.app_corrector import CorrectorFactory, app_corrector_factory
+from tools.model_eval.cli_paths import workspace_path
+from tools.model_eval.languages import LANGUAGE_NAMES
+from tools.model_eval.ports import OllamaChatPort, RecordingPort
+from tools.model_eval.progress import STYLES, Progress
+from tools.model_eval.smoke import (
+    SMOKE_DEADLINE,
+    SMOKE_TIMEOUT,
+    Smoke,
+    SmokeCheck,
+    TextSmokeCheck,
+    setup_label,
+)
+from tools.model_eval.structured_check import StructuredOutputCheck
 
 
-def _corrector_factory(url: str, timeout: float):
-    """Return a factory building the app's own Ollama corrector."""
-    from teachers_teammate.infrastructure.correction import (  # noqa: PLC0415
-        NativeOllamaCorrector,
+def _refuse(message: str) -> int:
+    """Print why the run may not start and return the exit code of a refused run."""
+    print(message, file=sys.stderr)
+    return 2
+
+
+def _matrix(args: argparse.Namespace) -> runner.Matrix:
+    """Return what the parsed command line asks a run for."""
+    return runner.Matrix(
+        out=args.out,
+        testset=args.testset,
+        languages=tuple(args.language),
+        models=tuple(args.model),
+        temperatures=tuple(args.temperature),
+        modes=tuple(args.mode),
+        repeats=args.repeat,
+        base_seed=None if args.no_seed else args.seed,
+        timeout=args.timeout,
+        isolate=args.isolate,
+        gpu_sampler=args.gpu_sampler,
+        machine=args.machine,
+        compact_json=args.compact_json,
     )
-    from teachers_teammate.infrastructure.ollama_utils import OllamaClient  # noqa: PLC0415
-
-    client = OllamaClient(url)
-
-    def build(model: str, temperature: float):
-        return NativeOllamaCorrector(model, client, timeout=timeout, temperature=temperature)
-
-    return build
 
 
-def _read_testset(testset: Path, languages: list[str]) -> list[TestRecord]:
-    """Return the test records of *languages*, in file order."""
-    records: list[TestRecord] = []
-    for language in languages:
-        records.extend(results.read_records(testset / f"{language}.jsonl"))
-    return records
+def _seams(args: argparse.Namespace) -> runner.Seams:
+    """Return everything of a run that reaches a server, a card or the clock."""
+    from tools.model_eval import measure  # noqa: PLC0415
+
+    def new_sampler() -> measure.VramSampler | None:
+        if not args.gpu_sampler:
+            return None
+        return measure.GpuSampler(args.gpu_sampler, shlex.split(args.gpu_ssh))
+
+    def new_factory(
+        client: RecordingPort, mode: AnswerMode, profile: RequestProfile
+    ) -> CorrectorFactory:
+        # The seam promises a recording client; the app's factory wants the app's client type,
+        # which is what the recording client is.
+        return app_corrector_factory(
+            cast(OllamaClient, client),
+            timeout=args.timeout,
+            mode=mode,
+            num_ctx=protocol.NUM_CTX,
+            profile=profile,
+        )
+
+    def smoke(model: str, mode: AnswerMode, temperature: float) -> Smoke:
+        # The setup, not the session: one pass covers every repeat and every language of it.
+        port = OllamaChatPort(args.ollama_url, num_ctx=protocol.NUM_CTX)
+        if mode is AnswerMode.REVIEW:
+            check = StructuredOutputCheck(
+                port, timeout=SMOKE_TIMEOUT, compact_json=args.compact_json, deadline=SMOKE_DEADLINE
+            )
+            return SmokeCheck(check, probe=measure.ServerProbe(args.ollama_url)).run(
+                model, temperature
+            )
+        return TextSmokeCheck(port, timeout=SMOKE_TIMEOUT).run(model, temperature)
+
+    return runner.Seams(
+        probe=measure.ServerProbe(args.ollama_url),
+        new_client=lambda seed: measure.RecordingClient(args.ollama_url, seed=seed),
+        new_factory=new_factory,
+        new_sampler=new_sampler,
+        smoke=None if args.no_smoke else smoke,
+        now=lambda: datetime.now(UTC).isoformat(timespec="seconds"),
+        revision=measure.tool_revision(),
+    )
+
+
+def _announce_complete(path: Path) -> None:
+    """Say that a results file already holds every text, so the run skips it."""
+    print(f"{path.name}: already complete", flush=True)
+
+
+def _announce(item: runner.Session) -> None:
+    """Say which session starts."""
+    print(f"== {item.model} @ {item.temperature:g} ({item.mode}), repeat {item.repeat}", flush=True)
+
+
+def _announce_smoke(item: runner.Session, smoke: Smoke, compact_json: str) -> None:
+    """Say what the smoke check found for the setup of *item*, before its first session."""
+    profile = defaults.request_profile_for(
+        item.model, compact_json=compact_json, temperature=item.temperature
+    )
+    print(
+        f"  {smoke.line(setup_label(item.model, profile, protocol.NUM_CTX))}",
+        flush=True,
+    )
+    for warning in smoke.warnings:
+        print(f"  WARNING: {warning}", flush=True)
+    if not smoke.passed:
+        print(f"  → {item.mode} sessions of {item.model} are skipped", flush=True)
+
+
+def _print_row(_item: runner.Session, row: results.ResultRow) -> None:
+    """Print one row as it is written."""
+    print(f"  {row.id:<12} {row.seconds:5.0f}s  {_detail(row)}", flush=True)
+
+
+def _languages(args: argparse.Namespace) -> list[str] | None:
+    """Return the languages to run, or ``None`` after saying why they cannot be run.
+
+    The set's own files decide what it holds, so a set without ``fr.jsonl`` runs German and
+    English instead of failing on a missing file.  A language the tool cannot ask in is refused
+    here, before the first request, because its prompt would silently be the English one.
+    """
+    available = results.testset_languages(args.testset)
+    if not available:
+        _refuse(f"{args.testset}: no <language>.jsonl in the set")
+        return None
+    chosen = args.language or available
+    if unknown := [code for code in chosen if code not in available]:
+        _refuse(f"{args.testset}: the set has {', '.join(available)}, not {', '.join(unknown)}")
+        return None
+    if unnamed := [code for code in chosen if code not in LANGUAGE_NAMES]:
+        _refuse(
+            f"no prompt language for {', '.join(repr(code) for code in unnamed)}: add it to "
+            "languages.LANGUAGE_NAMES, which needs a new eval version"
+        )
+        return None
+    return chosen
 
 
 def _run(args: argparse.Namespace) -> int:
-    args.out.mkdir(parents=True, exist_ok=True)
-    comparison = WritingModelComparison(_corrector_factory(args.ollama_url, args.timeout))
-    records = _read_testset(args.testset, args.language)
-    for model in args.model:
-        for temperature in args.temperature:
-            path = args.out / f"{model.replace('/', '_').replace(':', '_')}__T{temperature:g}.jsonl"
-            print(f"== {model} @ {temperature:g}", flush=True)
-            rows = comparison.run(
-                records,
-                model=model,
-                temperature=temperature,
-                done=results.read_done_ids(path),
-            )
-            for row in rows:
-                results.write_rows(path, [row])
-                print(f"  {row.id:<12} {row.seconds:5.0f}s  {_detail(row)}", flush=True)
+    """Run the matrix *args* describes, or say why it does not start."""
+    # The request side is checked before anything is sent: a prompt, answer format or window that
+    # changed since the current version needs a new version in protocol.json, not a new run.
+    try:
+        stamp = protocol.current_stamp()
+    except protocol.ProtocolError as error:
+        return _refuse(str(error))
+
+    languages = _languages(args)
+    if languages is None:
+        return 2
+    args.language = languages
+    records = results.read_testset(args.testset, languages)
+    result = runner.run_matrix(
+        _matrix(args),
+        records,
+        stamp,
+        _seams(args),
+        on_complete=_announce_complete,
+        on_session=_announce,
+        on_row=_print_row,
+        on_smoke=lambda item, smoke: _announce_smoke(item, smoke, args.compact_json),
+        new_progress=lambda total: Progress(total, style=args.progress),
+    )
+    if result.refused:
+        return _refuse("\n\n".join(result.refused))
     return 0
 
 
-def _detail(row) -> str:
+def _detail(row: results.ResultRow) -> str:
     """Return the one-line detail of a row: its score or its unchanged sentences."""
     if row.kind == "errors":
         detail = f"tp/fp/fn {row.true_positives}/{row.false_positives}/{row.false_negatives}"
@@ -90,27 +225,15 @@ def _detail(row) -> str:
         detail += "  FAILED"
     if row.fallback:
         detail += "  FALLBACK"
+    perf = row.performance
+    if perf is not None:
+        if perf.generation_s:
+            detail += f"  {perf.answer_tokens / perf.generation_s:.0f} tok/s"
+        if perf.vram_used_mb is not None:
+            detail += f"  +{perf.vram_used_mb} MB"
+        if perf.shared:
+            detail += "  SHARED"
     return detail
-
-
-def _report(args: argparse.Namespace) -> int:
-    rows = [
-        results.rescore(row, count_marks=args.count_marks) for row in results.read_all(args.out)
-    ]
-    print(reporting.table(reporting.summarise(rows)))
-    return 0
-
-
-def _sheet(args: argparse.Namespace) -> int:
-    print(
-        reporting.spot_check_sheet(
-            results.read_all(args.out),
-            models=args.model,
-            temperature=args.temperature,
-            per_language=args.per_language,
-        )
-    )
-    return 0
 
 
 def main() -> int:
@@ -118,40 +241,102 @@ def main() -> int:
     sub = parser.add_subparsers(dest="command", required=True)
 
     run = sub.add_parser("run", help="send every test text to the models")
-    run.add_argument("--testset", type=Path, required=True)
-    run.add_argument("--out", type=Path, required=True)
+    run.add_argument("--testset", type=workspace_path, required=True)
+    run.add_argument("--out", type=workspace_path, required=True)
     run.add_argument("--model", action="append", required=True)
-    run.add_argument("--temperature", type=float, action="append", default=None)
-    run.add_argument("--language", action="append", choices=list(LANGUAGE_NAMES), default=None)
-    run.add_argument("--timeout", type=float, default=900.0)
-    run.add_argument("--ollama-url", default=defaults.default_ollama_url())
-
-    report = sub.add_parser("report", help="print the results table")
-    report.add_argument("--out", type=Path, required=True)
-    report.add_argument(
-        "--count-marks",
-        action="store_true",
-        help="count Markdown marks a model added (such as **bold**) as errors; by default they "
-        "are ignored",
+    run.add_argument(
+        "--temperature",
+        type=float,
+        action="append",
+        default=None,
+        help="Run at temperature X (repeatable; default: each model's request profile, which is "
+        "the temperature its vendor recommends, else the app's 0.2).",
     )
-
-    sheet = sub.add_parser("sheet", help="print the teacher's spot-check list")
-    sheet.add_argument("--out", type=Path, required=True)
-    sheet.add_argument("--model", action="append", required=True)
-    sheet.add_argument("--temperature", type=float, default=None)
-    sheet.add_argument("--per-language", type=int, default=10)
+    run.add_argument(
+        "--compact-json",
+        choices=defaults.COMPACT_JSON_CHOICES,
+        default="catalog",
+        help="Ask with the compact-answer rule: 'catalog' (each model's profile, default), 'on' "
+        "or 'off' for every model.  Runs with different settings never pool.",
+    )
+    run.add_argument(
+        "--language",
+        action="append",
+        default=None,
+        help="a language of the set to run, repeatable (default: every language the set holds)",
+    )
+    run.add_argument(
+        "--mode",
+        action="append",
+        choices=[mode.value for mode in CORRECTOR_MODES],
+        default=None,
+        help="how to ask: 'review' (the app's JSON answer with explanations, default) or 'text' "
+        "(corrected text only).  Repeatable.",
+    )
+    run.add_argument("--timeout", type=float, default=900.0)
+    run.add_argument(
+        "--repeat",
+        type=int,
+        default=1,
+        metavar="N",
+        help="run every text N times, each repeat with the next seed and a file of its own",
+    )
+    run.add_argument(
+        "--seed",
+        type=int,
+        default=20261109,
+        help="seed of the first repeat (default %(default)s); repeat k uses seed + k - 1",
+    )
+    run.add_argument(
+        "--no-seed",
+        action="store_true",
+        help="send no seed, as the app does (the run cannot be repeated exactly)",
+    )
+    run.add_argument(
+        "--isolate",
+        action="store_true",
+        help="unload every model first and refuse a server that will not become idle; unload "
+        "the model afterwards.  Use it for speed runs, and only on a server you own.",
+    )
+    run.add_argument(
+        "--gpu-sampler",
+        choices=["amd", "nvidia"],
+        default=None,
+        help="sample the graphics memory in use during the run (needs amd-smi or nvidia-smi on "
+        "the machine with the card)",
+    )
+    run.add_argument(
+        "--gpu-ssh",
+        default="",
+        metavar="COMMAND",
+        help="reach the machine with the card through this command, e.g. 'ssh.exe user@host' "
+        "(from WSL the Windows client holds the key); empty: this machine",
+    )
+    run.add_argument(
+        "--machine",
+        default="",
+        help="a name for the machine the server runs on, written into the run header",
+    )
+    run.add_argument(
+        "--progress",
+        choices=STYLES,
+        default="auto",
+        help="How to show how far the run is, on stderr: 'auto' (a bar on a terminal, one line "
+        "per text otherwise, default), 'lines' or 'off'.  The per-text lines stay on stdout.",
+    )
+    run.add_argument(
+        "--no-smoke",
+        action="store_true",
+        help="Skip the smoke check that screens each setup before its first session.",
+    )
+    run.add_argument("--ollama-url", default=defaults.default_ollama_url())
 
     args = parser.parse_args()
     if args.command == "run":
-        args.temperature = args.temperature or [defaults.default_temperature()]
-        args.language = args.language or list(LANGUAGE_NAMES)
+        args.temperature = args.temperature or [None]
+        args.mode = [parse_mode(mode) for mode in (args.mode or [DEFAULT_MODE])]
         return _run(args)
-    if args.command == "report":
-        return _report(args)
-    args.temperature = (
-        defaults.default_temperature() if args.temperature is None else args.temperature
-    )
-    return _sheet(args)
+    return 0
 
 
 if __name__ == "__main__":

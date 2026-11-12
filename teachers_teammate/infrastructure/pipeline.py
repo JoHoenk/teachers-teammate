@@ -483,6 +483,7 @@ class OCRPipeline:
             state_repo=state_repo,
             artifact_store=artifact_store,
             config=cfg,
+            windows=builder.resolved_windows(),
         )
         preprocess_service = self._preprocess_service or builder.build_preprocessor_service(tmp_dir)
         ocr_stage_service = self._ocr_stage_service or OCRStageService(

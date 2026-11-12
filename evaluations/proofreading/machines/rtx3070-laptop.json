@@ -1,0 +1,10 @@
+{
+  "schema": 1,
+  "id": "rtx3070-laptop",
+  "gpu": {"vendor": "nvidia", "name": "GeForce RTX 3070 Laptop", "vram_mb": 8192},
+  "cpu": "AMD Ryzen 7 5800H, 8 cores / 16 threads",
+  "ram_gib": 47,
+  "os": "Windows 11, the evaluation tool runs in WSL 2",
+  "accelerator_stack": "CUDA 13.0, nvidia-smi",
+  "notes": "The 2026-11-07 runs were made here."
+}

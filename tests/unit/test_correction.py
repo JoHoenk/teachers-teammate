@@ -13,6 +13,7 @@ from teachers_teammate.infrastructure import correction as correction_module
 from teachers_teammate.infrastructure._llm_invoke import StructuredResult
 from teachers_teammate.domain.formatted_text import TextFormat
 from teachers_teammate.infrastructure.correction import (
+    COMPACT_ANSWER_RULE,
     ENGLISH_PROMPT,
     FALLBACK_WARNING,
     GERMAN_PROMPT,
@@ -366,8 +367,10 @@ def test_text_mode_prompt_asks_for_the_corrected_text_only(mocker) -> None:
     assert REVIEW_FORMAT not in prompt
 
 
-def _review_request(monkeypatch, **settings: object) -> dict:
+def _review_request(monkeypatch, profile=None, **settings: object) -> dict:
     """Return the keyword arguments of the single review request the corrector sends."""
+    from teachers_teammate.domain.model_catalog import DEFAULT_REQUEST_PROFILE  # noqa: PLC0415
+
     captured: list[dict] = []
 
     def fake(_llm, **kwargs):
@@ -378,6 +381,7 @@ def _review_request(monkeypatch, **settings: object) -> dict:
     LangChainCorrector(
         FakeListChatModel(responses=[]),
         settings=CorrectionSettings(**settings),  # ty: ignore[invalid-argument-type]  # parametrised settings
+        profile=profile or DEFAULT_REQUEST_PROFILE,
     ).correct("x", "German")
     return captured[0]
 
@@ -389,15 +393,31 @@ def _review_system(monkeypatch, **settings: object) -> str:
 
 def test_review_prompt_contains_the_answer_format(monkeypatch) -> None:
     """
-    Given  a corrector in review mode
+    Given  a corrector in review mode whose model's profile does not ask for compact JSON
     When   a request is built
-    Then   the system message is the policy followed by the review answer format, and not
-           the corrections-only format
+    Then   the system message is the policy followed by the review answer format, without the
+           compact-JSON rule, and not the corrections-only format
     """
     system = _review_system(monkeypatch)
 
-    assert system == (f"{fill_placeholders(GERMAN_PROMPT, level='B2')}\n\n{REVIEW_FORMAT}")
+    assert system == f"{fill_placeholders(GERMAN_PROMPT, level='B2')}\n\n{REVIEW_FORMAT}"
+    assert COMPACT_ANSWER_RULE not in system
     assert TEXT_FORMAT not in system
+
+
+def test_the_compact_rule_follows_the_models_profile(monkeypatch) -> None:
+    """
+    Given  two correctors that differ only in their model's request profile
+    When   each builds its review request
+    Then   the rule ends the fixed part when the profile asks for it, and is absent otherwise
+    """
+    from teachers_teammate.domain.model_catalog import RequestProfile  # noqa: PLC0415
+
+    on = _review_system(monkeypatch, profile=RequestProfile(compact_json=True))
+    off = _review_system(monkeypatch, profile=RequestProfile(compact_json=False))
+
+    assert on.endswith(f"{REVIEW_FORMAT}\n{COMPACT_ANSWER_RULE}")
+    assert COMPACT_ANSWER_RULE not in off
 
 
 def test_review_message_names_both_languages(monkeypatch) -> None:
@@ -440,13 +460,20 @@ def test_review_prompt_never_translates_the_text(monkeypatch) -> None:
 
 def test_custom_answer_format_replaces_the_built_in_one(monkeypatch) -> None:
     """
-    Given  a teacher's own review answer format
+    Given  a teacher's own review answer format and a model whose profile asks for compact JSON
     When   the review request is built
-    Then   it is sent instead of the built-in format, and the corrections-only one is unaffected
+    Then   it is sent instead of the built-in format, the compact-JSON rule follows it, and the
+           corrections-only format is unaffected
     """
-    system = _review_system(monkeypatch, answer_format_review="MY FORMAT")
+    from teachers_teammate.domain.model_catalog import RequestProfile  # noqa: PLC0415
 
-    assert system.endswith("MY FORMAT")
+    system = _review_system(
+        monkeypatch,
+        answer_format_review="MY FORMAT",
+        profile=RequestProfile(compact_json=True),
+    )
+
+    assert system.endswith(f"MY FORMAT\n{COMPACT_ANSWER_RULE}")
     assert REVIEW_FORMAT not in system
 
 
@@ -896,23 +923,24 @@ def _truncated_client(mocker, calls: list[str]):
     return _ollama_client()
 
 
-def test_ollama_review_mode_falls_back_to_text_mode_when_the_answer_is_cut_off(mocker) -> None:
+def test_two_cut_offs_fall_back_to_text_mode(mocker) -> None:
     """
-    Given  an Ollama model whose review answer is cut off by the context window, and text mode
-           that is cut off as well
+    Given  an Ollama model whose review answer is cut off by the context window twice, and text
+           mode that is cut off as well
     When   correct() runs in review mode
     Then   the source text is kept, the working-memory warning is shown, the file is marked
            failed
-    And    no repair request is sent: one review request, then one text-mode request
+    And    no repair request is sent: the review request twice, then one text-mode request
     """
     calls: list[str] = []
     corrector = NativeOllamaCorrector(model="m", client=_truncated_client(mocker, calls))
 
     outcome = corrector.correct("Ein langer Text.", "German")
 
-    assert len(calls) == 2
+    assert len(calls) == 3
     assert "Explanation language" in calls[0]
-    assert "Explanation language" not in calls[1]
+    assert "Explanation language" in calls[1]
+    assert "Explanation language" not in calls[2]
     assert outcome.text == "Ein langer Text."
     assert outcome.review is None
     assert outcome.warning is not None
@@ -920,23 +948,42 @@ def test_ollama_review_mode_falls_back_to_text_mode_when_the_answer_is_cut_off(m
     assert outcome.failed is True
 
 
-def test_ollama_review_cut_off_is_rescued_by_the_shorter_text_mode_answer(mocker) -> None:
+def test_a_cut_off_review_is_asked_once_more(mocker) -> None:
     """
-    Given  an Ollama model whose review answer is cut off but whose corrections-only answer fits
+    Given  an Ollama model whose first review answer is cut off and whose second one is valid
     When   correct() runs in review mode
-    Then   the corrected text is used, without explanations, with the fallback warning
-    And    the file is not marked failed
+    Then   the review of the second answer is kept, with no fallback and no warning
+    And    the same review request was sent twice, and text mode was never asked
     """
     from teachers_teammate.exceptions import ResponseTruncatedError  # noqa: PLC0415
     from teachers_teammate.infrastructure.ollama_utils import OllamaClient  # noqa: PLC0415
 
     calls: list[str] = []
+    answer = json.dumps(
+        {
+            "sentences": [
+                {
+                    "original": "Ein langer Text.",
+                    "corrected": "Ein langer Text!",
+                    "changes": [
+                        {
+                            "original": ".",
+                            "corrected": "!",
+                            "category": "punctuation",
+                            "explanation": "Ein Ausrufezeichen passt hier.",
+                        }
+                    ],
+                }
+            ],
+            "unclear": [],
+        }
+    )
 
     def _first_cut_off(_self, _model, prompt, **_kwargs):
         calls.append(prompt)
         if len(calls) == 1:
             raise ResponseTruncatedError("The text was too long for the model's working memory.")
-        return "Ein korrigierter Text."
+        return answer
 
     mocker.patch.object(OllamaClient, "chat", autospec=True, side_effect=_first_cut_off)
     corrector = NativeOllamaCorrector(model="m", client=_ollama_client())
@@ -944,9 +991,45 @@ def test_ollama_review_cut_off_is_rescued_by_the_shorter_text_mode_answer(mocker
     outcome = corrector.correct("Ein langer Text.", "German")
 
     assert len(calls) == 2
-    assert outcome.text == "Ein korrigierter Text."
-    assert outcome.review is None
+    assert calls[0] == calls[1]
+    assert outcome.review is not None
+    assert outcome.text == "Ein langer Text!"
     assert outcome.failed is False
+    assert outcome.warning is None
+
+
+def test_a_cut_off_repair_is_not_retried(mocker) -> None:
+    """
+    Given  an Ollama model whose first review answer does not validate and whose repair answer
+           is cut off
+    When   correct() runs in review mode
+    Then   the file falls back to text mode without a third review request: the repair request
+           is the longest of all, so a second try would not make it shorter
+    """
+    from teachers_teammate.exceptions import ResponseTruncatedError  # noqa: PLC0415
+    from teachers_teammate.infrastructure.ollama_utils import OllamaClient  # noqa: PLC0415
+
+    calls: list[str] = []
+
+    def _invalid_then_cut_off(_self, _model, prompt, **_kwargs):
+        calls.append(prompt)
+        if len(calls) == 1:
+            return "not JSON at all"
+        if len(calls) == 2:
+            raise ResponseTruncatedError("The text was too long for the model's working memory.")
+        return "Ein korrigierter Text."
+
+    mocker.patch.object(OllamaClient, "chat", autospec=True, side_effect=_invalid_then_cut_off)
+    corrector = NativeOllamaCorrector(model="m", client=_ollama_client())
+
+    outcome = corrector.correct("Ein langer Text.", "German")
+
+    assert len(calls) == 3
+    assert "Explanation language" in calls[0]
+    assert "Explanation language" in calls[1]
+    assert "Explanation language" not in calls[2]
+    assert outcome.review is None
+    assert outcome.text == "Ein korrigierter Text."
     assert outcome.warning is not None
     assert FALLBACK_WARNING in outcome.warning
 
@@ -1016,7 +1099,8 @@ def test_a_text_at_the_budget_leaves_room_for_a_longer_review_answer(
     """
     Given  an Ollama corrector and a text exactly as long as its budget
     When   the room left in the window is worked out
-    Then   the request and an answer twice as long as the text fit the window
+    Then   the request and an answer REVIEW_ANSWER_FACTOR times the text fit the window: the
+           answer grows with the text, not with the prompt
     """
     from teachers_teammate.domain.context_budget import (  # noqa: PLC0415
         REVIEW_ANSWER_FACTOR,
@@ -1026,8 +1110,79 @@ def test_a_text_at_the_budget_leaves_room_for_a_longer_review_answer(
     corrector = NativeOllamaCorrector(model="m", client=_ollama_client())
     limit = corrector.max_text_chars("German", text_format=text_format)
     system, prompt = corrector._messages("x" * limit, "German", text_format, mode="review")
-    request_tokens = -(-(len(system) + len(prompt)) // 3)
+    text_tokens = -(-limit // 3)
 
     assert ContextBudget(corrector._num_ctx).request_fits(
-        len(system) + len(prompt), answer_tokens=int(request_tokens * REVIEW_ANSWER_FACTOR)
+        len(system) + len(prompt), answer_tokens=int(text_tokens * REVIEW_ANSWER_FACTOR)
     )
+
+
+def test_one_cut_off_try_goes_straight_to_text_mode(mocker) -> None:
+    """
+    Given  an Ollama corrector set to a single try (an online model, or temperature 0)
+    When   its review answer is cut off and text mode is cut off as well
+    Then   the review request was sent once, then one text-mode request
+    """
+    calls: list[str] = []
+    corrector = NativeOllamaCorrector(
+        model="m",
+        client=_truncated_client(mocker, calls),
+        settings=CorrectionSettings(cut_off_tries=1),
+    )
+
+    corrector.correct("Ein langer Text.", "German")
+
+    assert len(calls) == 2
+    assert "Explanation language" in calls[0]
+    assert "Explanation language" not in calls[1]
+
+
+def test_request_messages_are_what_the_native_corrector_sends(mocker) -> None:
+    """
+    Given  a native Ollama corrector with a profile that asks for the compact rule
+    When   it proofreads a text, and request_messages() builds the request for the same text
+    Then   the system and user messages it sent are exactly request_messages()'
+    """
+    from teachers_teammate.domain.model_catalog import RequestProfile  # noqa: PLC0415
+    from teachers_teammate.exceptions import ResponseTruncatedError  # noqa: PLC0415
+    from teachers_teammate.infrastructure.correction import request_messages  # noqa: PLC0415
+    from teachers_teammate.infrastructure.ollama_utils import OllamaClient  # noqa: PLC0415
+
+    sent: list[tuple[str, str]] = []
+
+    def _record(_self, _model, prompt, *, system="", **_kwargs):
+        sent.append((system, prompt))
+        raise ResponseTruncatedError("cut off")
+
+    mocker.patch.object(OllamaClient, "chat", autospec=True, side_effect=_record)
+    corrector = NativeOllamaCorrector(
+        model="m",
+        client=_ollama_client(),
+        settings=CorrectionSettings(cut_off_tries=1),
+        profile=RequestProfile(compact_json=True),
+    )
+
+    corrector.correct("Ein Text.", "German")
+
+    assert sent[0] == request_messages("Ein Text.", "German", compact_json=True)
+    assert sent[1] == request_messages("Ein Text.", "German", mode="text")
+
+
+def test_a_short_text_goes_out_whole_and_a_long_one_in_pieces() -> None:
+    """
+    Given  a chunking corrector around a corrector with a small text budget
+    When   split() is asked about a text that fits and one that does not
+    Then   the first is None (whole) and the second the pieces correct() would send
+    """
+    from unittest.mock import MagicMock  # noqa: PLC0415
+
+    from teachers_teammate.infrastructure.correction import ChunkingCorrector  # noqa: PLC0415
+
+    inner = MagicMock()
+    inner.max_text_chars.return_value = 40
+    chunking = ChunkingCorrector(inner)
+
+    assert chunking.split("Short text.", "German") is None
+    pieces = chunking.split("First sentence here. Second sentence here. Third one.", "German")
+    assert pieces is not None and len(pieces) >= 2
+    assert "".join(piece.text for piece in pieces).replace(" ", "") != ""

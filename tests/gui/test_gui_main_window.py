@@ -19,6 +19,8 @@ from teachers_teammate.domain.model_catalog import (
     DEFAULT_OCR_MODEL,
     DEFAULT_WRITING_MODEL,
     RECOMMENDED,
+    DetectionReason,
+    HardwareDetection,
 )
 from teachers_teammate.gui import _main_window as main_window_module
 from teachers_teammate.gui._export_menu import ExportKind
@@ -1891,8 +1893,6 @@ def test_first_start_selects_best_models_for_profile(qtbot, monkeypatch, tmp_pat
     Then   the models are set to the 16 GB BEST picks, the choice is logged,
            and settings are saved (AC12)
     """
-    from teachers_teammate.domain.model_catalog import DetectionReason, HardwareDetection  # noqa: PLC0415
-
     detection = HardwareDetection(
         profile="16gb", reason=DetectionReason.GPU_DETECTED, gpu_name="RTX 4090", memory_gb=24.0
     )
@@ -1919,7 +1919,6 @@ def test_existing_config_models_untouched(qtbot, monkeypatch, tmp_path: Path) ->
     When   the window starts
     Then   no detection-based model change happens (AC13)
     """
-    from teachers_teammate.domain.model_catalog import DetectionReason, HardwareDetection  # noqa: PLC0415
 
     config_path = tmp_path / "ocr.toml"
     config_path.write_text(
@@ -1967,7 +1966,6 @@ def test_first_start_non_ollama_correction_provider_untouched(
     Then   correction_model is not replaced
     """
     from teachers_teammate.config import DEFAULTS  # noqa: PLC0415
-    from teachers_teammate.domain.model_catalog import DetectionReason, HardwareDetection  # noqa: PLC0415
 
     monkeypatch.setitem(DEFAULTS, "correction_provider", "openai")
     detection = HardwareDetection(
@@ -3637,3 +3635,273 @@ def test_a_pull_requested_while_one_runs_is_queued_not_dropped(qtbot, monkeypatc
     assert manager.queued == ["b:1b", "c:1b"]
     threads[0].finished_ok.emit("a:1b")
     assert [t.model for t in threads] == ["a:1b", "b:1b"]
+
+
+# ── Pieces counter after OCR ──────────────────────────────────────────────
+
+
+def _three_parts() -> Any:
+    """Return the estimate of a text that is proofread in three parts."""
+    from teachers_teammate.application.text_size import TextSizeEstimate  # noqa: PLC0415
+
+    return TextSizeEstimate(words=12_000, pieces=3, words_per_piece=4_000, content_review_fits=True)
+
+
+def _one_part() -> Any:
+    """Return the estimate of a text that goes out in one proofreading request."""
+    from teachers_teammate.application.text_size import TextSizeEstimate  # noqa: PLC0415
+
+    return TextSizeEstimate(words=900, pieces=1, words_per_piece=4_000, content_review_fits=True)
+
+
+def _detection() -> HardwareDetection:
+    """Return a detection of an 8 GB card, as a finished probe would."""
+    return HardwareDetection(
+        profile="8gb", reason=DetectionReason.GPU_DETECTED, gpu_name="Test GPU", memory_gb=8.0
+    )
+
+
+def _already_checked(monkeypatch, window) -> None:
+    """Answer the hardware question at once: these tests are about the counter, not the probe."""
+    monkeypatch.setattr(
+        window._app_service, "cached_hardware_profile", lambda *_args, **_kwargs: _detection()
+    )
+
+
+@pytest.mark.gui
+def test_main_window_preview_shows_the_pieces_counter(
+    main_window, monkeypatch, tmp_path: Path
+) -> None:
+    """
+    Given  a row whose OCR text is proofread in three parts
+    When   the preview is requested
+    Then   the nav bar shows the parts counter
+    """
+    from PySide6.QtGui import QPixmap  # noqa: PLC0415
+
+    cfg = make_config(tmp_path)
+    source = cfg.input_dir / "page.png"
+    source.touch()
+    monkeypatch.setattr(main_window._config_panel, "to_config", lambda: cfg)
+    monkeypatch.setattr(
+        main_window._app_service, "estimate_text_size", lambda *_args, **_kwargs: _three_parts()
+    )
+    _already_checked(monkeypatch, main_window)
+    main_window._results_table.set_queue(["page.png"], source_ids=[str(source)])
+    main_window._results_table.set_row_artifacts(str(source), "", "raw text", "", "")
+    main_window._results_table.selectRow(0)
+
+    main_window._on_preview_requested(QPixmap(), "raw text", "", "")
+
+    label = main_window._preview._ocr_nav._size_lbl
+    assert not label.isHidden()
+    assert "proofread in 3 parts" in label.text()
+
+
+@pytest.mark.gui
+def test_main_window_preview_hides_the_counter_for_one_part(
+    main_window, monkeypatch, tmp_path: Path
+) -> None:
+    """
+    Given  a row whose OCR text goes out in one proofreading request
+    When   the preview is requested
+    Then   the counter stays hidden
+    """
+    from PySide6.QtGui import QPixmap  # noqa: PLC0415
+
+    cfg = make_config(tmp_path)
+    source = cfg.input_dir / "page.png"
+    source.touch()
+    monkeypatch.setattr(main_window._config_panel, "to_config", lambda: cfg)
+    monkeypatch.setattr(
+        main_window._app_service, "estimate_text_size", lambda *_args, **_kwargs: _one_part()
+    )
+    _already_checked(monkeypatch, main_window)
+    main_window._results_table.set_queue(["page.png"], source_ids=[str(source)])
+    main_window._results_table.set_row_artifacts(str(source), "", "raw text", "", "")
+    main_window._results_table.selectRow(0)
+
+    main_window._on_preview_requested(QPixmap(), "raw text", "", "")
+
+    assert main_window._preview._ocr_nav._size_lbl.isHidden()
+
+
+@pytest.mark.gui
+def test_main_window_hides_the_counter_until_this_computer_is_checked(
+    qtbot, main_window, monkeypatch, tmp_path: Path
+) -> None:
+    """
+    Given  a main window whose hardware has not been probed yet
+    When   a preview with text is shown
+    Then   the counter stays hidden, and it appears once the detection arrives
+    """
+    from PySide6.QtGui import QPixmap  # noqa: PLC0415
+
+    cfg = make_config(tmp_path)
+    source = cfg.input_dir / "page.png"
+    source.touch()
+    monkeypatch.setattr(main_window._config_panel, "to_config", lambda: cfg)
+    monkeypatch.setattr(
+        main_window._app_service, "estimate_text_size", lambda *_args, **_kwargs: _three_parts()
+    )
+    # The first question is answered "not probed yet", the second one with the detection.
+    answers: list[HardwareDetection | None] = [None]
+    monkeypatch.setattr(
+        main_window._app_service,
+        "cached_hardware_profile",
+        lambda *_args, **_kwargs: answers.pop(0) if answers else _detection(),
+    )
+    monkeypatch.setattr(
+        main_window._app_service, "detect_hardware", lambda *_args, **_kwargs: _detection()
+    )
+    main_window._results_table.set_queue(["page.png"], source_ids=[str(source)])
+    main_window._results_table.set_row_artifacts(str(source), "", "raw text", "", "")
+    main_window._results_table.selectRow(0)
+
+    main_window._on_preview_requested(QPixmap(), "raw text", "", "")
+
+    label = main_window._preview._ocr_nav._size_lbl
+    assert label.isHidden()
+
+    qtbot.waitUntil(lambda: not label.isHidden(), timeout=3000)
+    assert "proofread in 3 parts" in label.text()
+
+
+@pytest.mark.gui
+def test_main_window_ocr_edit_recounts_the_parts_after_the_debounce(
+    qtbot, main_window, monkeypatch, tmp_path: Path
+) -> None:
+    """
+    Given  a preview showing a text that is proofread in three parts
+    When   the OCR text is edited down to one part
+    Then   the counter disappears once the debounce has passed
+    """
+    from PySide6.QtGui import QPixmap  # noqa: PLC0415
+
+    cfg = make_config(tmp_path)
+    source = cfg.input_dir / "page.png"
+    source.touch()
+    monkeypatch.setattr(main_window._config_panel, "to_config", lambda: cfg)
+    monkeypatch.setattr(
+        main_window._app_service, "estimate_text_size", lambda *_args, **_kwargs: _three_parts()
+    )
+    _already_checked(monkeypatch, main_window)
+    main_window._results_table.set_queue(["page.png"], source_ids=[str(source)])
+    main_window._results_table.set_row_artifacts(str(source), "", "raw text", "", "")
+    main_window._results_table.selectRow(0)
+    main_window._on_preview_requested(QPixmap(), "raw text", "", "")
+    label = main_window._preview._ocr_nav._size_lbl
+    assert not label.isHidden()
+
+    monkeypatch.setattr(
+        main_window._app_service, "estimate_text_size", lambda *_args, **_kwargs: _one_part()
+    )
+    main_window._on_ocr_text_edited("short text")
+
+    qtbot.waitUntil(label.isHidden, timeout=3000)
+
+
+@pytest.mark.gui
+def test_main_window_hides_the_counter_when_the_settings_are_incomplete(
+    main_window, monkeypatch, tmp_path: Path
+) -> None:
+    """
+    Given  a row with OCR text and a config panel that cannot produce a config
+    When   the preview is requested
+    Then   the counter is hidden instead of the preview failing
+    """
+    from PySide6.QtGui import QPixmap  # noqa: PLC0415
+
+    cfg = make_config(tmp_path)
+    source = cfg.input_dir / "page.png"
+    source.touch()
+    monkeypatch.setattr(
+        main_window._config_panel,
+        "to_config",
+        lambda: (_ for _ in ()).throw(ValueError("bad config")),
+    )
+    main_window._results_table.set_queue(["page.png"], source_ids=[str(source)])
+    main_window._results_table.set_row_artifacts(str(source), "", "raw text", "", "")
+    main_window._results_table.selectRow(0)
+
+    main_window._on_preview_requested(QPixmap(), "raw text", "", "")
+
+    assert main_window._preview._ocr_nav._size_lbl.isHidden()
+
+
+@pytest.mark.gui
+def test_main_window_probes_this_computer_in_the_background_for_the_cache_keys(
+    qtbot, main_window, monkeypatch, tmp_path: Path
+) -> None:
+    """
+    Given  a main window whose hardware has not been probed yet
+    When   the queue is refreshed
+    Then   the probe runs on a background thread, never the GUI thread, and the queue is
+           shown again with the keys of the detected computer once it has finished
+    """
+    cfg = make_config(tmp_path)
+    monkeypatch.setattr(main_window._config_panel, "to_config", lambda: cfg)
+    service = main_window._app_service
+    loads: list[int] = []
+    monkeypatch.setattr(
+        service, "load_views_reconciled", lambda *_a, **_k: loads.append(1) or {}, raising=False
+    )
+    probed = False
+    detect_threads: list[threading.Thread] = []
+
+    def cached(*_args: object, **_kwargs: object) -> HardwareDetection | None:
+        return _detection() if probed else None
+
+    def detect(*_args: object, **_kwargs: object) -> HardwareDetection:
+        nonlocal probed
+        detect_threads.append(threading.current_thread())
+        probed = True
+        return _detection()
+
+    monkeypatch.setattr(service, "cached_hardware_profile", cached)
+    monkeypatch.setattr(service, "detect_hardware", detect)
+    before = len(loads)
+
+    main_window._refresh_queue_from_inputs()
+
+    qtbot.waitUntil(lambda: len(loads) >= before + 2, timeout=3000)
+    assert len(detect_threads) == 1
+    assert detect_threads[0] is not threading.main_thread()
+
+
+@pytest.mark.gui
+def test_main_window_does_not_probe_again_and_again_when_the_probe_fails(
+    qtbot, main_window, monkeypatch, tmp_path: Path
+) -> None:
+    """
+    Given  a computer whose probe fails every time
+    When   the queue is refreshed and a preview with text is shown
+    Then   a failed probe is not retried by itself, so the calls stop instead of looping
+    """
+    from PySide6.QtGui import QPixmap  # noqa: PLC0415
+
+    cfg = make_config(tmp_path)
+    source = cfg.input_dir / "page.png"
+    source.touch()
+    monkeypatch.setattr(main_window._config_panel, "to_config", lambda: cfg)
+    service = main_window._app_service
+    calls: list[int] = []
+
+    def failing(*_args: object, **_kwargs: object) -> HardwareDetection:
+        calls.append(1)
+        raise RuntimeError("nvidia-smi crashed")
+
+    monkeypatch.setattr(service, "cached_hardware_profile", lambda *_a, **_k: None)
+    monkeypatch.setattr(service, "detect_hardware", failing)
+
+    main_window._refresh_queue_from_inputs()
+    main_window._results_table.set_queue(["page.png"], source_ids=[str(source)])
+    main_window._results_table.set_row_artifacts(str(source), "", "raw text", "", "")
+    main_window._results_table.selectRow(0)
+    main_window._on_preview_requested(QPixmap(), "raw text", "", "")
+    qtbot.wait(600)
+    settled = len(calls)
+    qtbot.wait(600)
+
+    assert 2 <= settled <= 4
+    assert len(calls) == settled

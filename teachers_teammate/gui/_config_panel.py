@@ -982,14 +982,6 @@ class ConfigPanel(QScrollArea):
             ),
             evaluate_model=self._settings_dict.get("evaluate_model", DEFAULTS["evaluate_model"]),
             evaluate_prompt=self._evaluation_prompt_text,
-            evaluate_temperature=float(
-                self._settings_dict.get("evaluate_temperature", DEFAULTS["evaluate_temperature"])
-            ),
-            correction_temperature=float(
-                self._settings_dict.get(
-                    "correction_temperature", DEFAULTS["correction_temperature"]
-                )
-            ),
             docx_format=self._settings_dict.get("docx_format", DEFAULTS["docx_format"]),
             docx_enabled=docx_enabled,
             text_enabled=text_enabled,
@@ -1131,9 +1123,6 @@ class ConfigPanel(QScrollArea):
         for key in ("ocr_timeout", "pdf_render_dpi"):
             if key in values:
                 self._settings_dict[key] = int(values[key])
-
-        if "ocr_temperature" in values:
-            self._settings_dict["ocr_temperature"] = float(values["ocr_temperature"])
 
         for key in (
             "preprocess_dewarp",

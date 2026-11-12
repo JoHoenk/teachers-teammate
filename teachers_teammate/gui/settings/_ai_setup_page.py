@@ -14,6 +14,7 @@ from typing import Any
 
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
+    QComboBox,
     QFormLayout,
     QGroupBox,
     QHBoxLayout,
@@ -25,7 +26,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ...config import DEFAULTS
+from ...config import CONTEXT_SETTINGS, DEFAULTS
+from .. import _user_text as txt
 from .._hardware_profile_selector import HardwareProfileSelector
 from .._model_fetch import _GpuDetectThread, _retire_thread
 from ._credentials import FILE_FALLBACK_TEXT, FILE_FALLBACK_TITLE, CredentialsGroup
@@ -58,6 +60,12 @@ DETECT_GPU_TOOLTIP = (
     "this can significantly speed up text recognition."
 )
 INSTALL_GPU_ADDON = "Install GPU Addon…"
+CONTEXT_LABEL = "Context window for the content review:"
+CONTEXT_TOOLTIP = (
+    "How much text the content review may read in one request.\n"
+    "Automatic grows the window with the size of the graphics card;\n"
+    "a larger window lets longer texts through but needs more memory."
+)
 DETECTING = "Detecting…"
 NO_GPU = "No NVIDIA or AMD GPU detected."
 
@@ -85,6 +93,12 @@ class AiSetupPage(SettingsPageBase):
         # Known before any widget is built: "My computer" must detect for the
         # configured server, not for the default one.
         self._url = str(settings.get("ollama_url") or DEFAULTS["ollama_url"])
+        # The proofreading model and provider are set on another page; the context label
+        # follows them, so they are kept here.
+        self._settings = dict(settings)
+        # True when the last check of this computer failed, so the choice is not left waiting
+        # for a detection that will not come.
+        self._detection_failed = False
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -132,7 +146,16 @@ class AiSetupPage(SettingsPageBase):
             ollama_url=self._url,
         )
         self._hardware_selector.setting_changed.connect(self.hardware_setting_changed.emit)
+        # The label follows the detection, which the selector resolves in the background: a
+        # profile change and a URL edit both start a new one.
+        self._hardware_selector.resolved_changed.connect(self._on_hardware_resolved)
         form.addRow(self._hardware_selector)
+
+        self._context_combo = QComboBox()
+        for setting in CONTEXT_SETTINGS:
+            self._context_combo.addItem(setting, setting)
+        self._context_combo.setToolTip(CONTEXT_TOOLTIP)
+        form.addRow(CONTEXT_LABEL, self._context_combo)
 
         self._gpu_detect_btn = QPushButton(DETECT_GPU)
         self._gpu_detect_btn.setFixedWidth(120)
@@ -162,15 +185,73 @@ class AiSetupPage(SettingsPageBase):
             self._hardware_selector.set_ollama_url(self._url)
         if "hardware_profile" in values:
             self._hardware_selector.set_setting(str(values["hardware_profile"]))
+        if "proofreading_context" in values:
+            setting = str(values["proofreading_context"])
+            index = self._context_combo.findData(setting)
+            self._context_combo.setCurrentIndex(index if index >= 0 else 0)
+        self._settings.update(values)
+        self._refresh_context_labels()
 
     def values(self) -> dict[str, Any]:
         return {
             "ollama_url": self._ollama_url.text().strip() or DEFAULTS["ollama_url"],
             "hardware_profile": self._hardware_selector.setting(),
+            "proofreading_context": str(self._context_combo.currentData()),
         }
 
     def owned_keys(self) -> frozenset[str]:
-        return frozenset(("ollama_url", "hardware_profile"))
+        return frozenset(("ollama_url", "hardware_profile", "proofreading_context"))
+
+    def on_shown(self) -> None:
+        """Say what "Automatic" means now: the model may have been changed on another page."""
+        self._refresh_context_labels()
+
+    def set_proofreading_choice(self, provider: str, model: str) -> None:
+        """Follow the proofreading service chosen on the AI models page, before it is saved."""
+        self._settings["correction_provider"] = provider
+        self._settings["correction_model"] = model
+        self._refresh_context_labels()
+
+    def set_review_choice(self, provider: str, model: str) -> None:
+        """Follow the content-review service chosen on the AI models page, before it is saved."""
+        self._settings["evaluate_provider"] = provider
+        self._settings["evaluate_model"] = model
+        self._refresh_context_labels()
+
+    def _on_hardware_resolved(self, detection: object) -> None:
+        """Redraw the context label once the selector knows this computer (or failed to)."""
+        self._detection_failed = detection is None
+        self._refresh_context_labels()
+
+    def _refresh_context_labels(self) -> None:
+        """Label the automatic entry with the window the content review gets on this computer.
+
+        The detection comes from the selector, which resolves it in a background task; asking
+        for it here would run the graphics probe on the GUI thread.  While it is unresolved the
+        entry says so, and ``resolved_changed`` calls this again.
+
+        With proofreading capped at the base window the setting only sizes the content review,
+        and only when that runs on its own Ollama model: where it changes nothing the choice is
+        disabled and the tooltip says why.
+        """
+        index = self._context_combo.findData("auto")
+        detection = self._hardware_selector.resolved()
+        if detection is None and not self._detection_failed:
+            self._context_combo.setItemText(index, txt.CONTEXT_AUTO_CHECKING)
+            self._context_combo.setEnabled(False)
+            self._context_combo.setToolTip(CONTEXT_TOOLTIP)
+            return
+        # A failed check leaves no card to grow into, as for a computer without one.
+        card_gb = detection.card_gb if detection is not None else None
+        choice = self._app_service.context_choice(self._settings, card_gb)
+        if not choice.applies:
+            self._context_combo.setItemText(index, txt.CONTEXT_AUTO)
+            self._context_combo.setEnabled(False)
+            self._context_combo.setToolTip(txt.CONTEXT_NOT_APPLICABLE_TOOLTIP)
+            return
+        self._context_combo.setItemText(index, txt.context_auto_review(choice.auto_review))
+        self._context_combo.setEnabled(True)
+        self._context_combo.setToolTip(CONTEXT_TOOLTIP)
 
     def restore_defaults(self) -> None:
         """Show the defaults and let the other pages follow them, as after an edit here."""

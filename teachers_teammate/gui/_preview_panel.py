@@ -7,7 +7,7 @@ import difflib
 import html
 from pathlib import Path
 import re
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from PySide6.QtCore import QEvent, QObject, Qt, QTimer, Signal
 from PySide6.QtGui import (
@@ -53,8 +53,14 @@ from ._image_utils import load_pixmap
 from ._review_views import ReviewDiffView, ReviewNotesView
 from ._types import PreprocessInfo, StageStatus
 
+if TYPE_CHECKING:
+    from ..application.text_size import TextSizeEstimate
+
 #: Panel width below which the notes pane moves under the diff instead of beside it.
 _NARROW_PANEL_WIDTH = 700
+
+#: Colour of a warning that is not a failure: the text is longer than the model can read.
+_AMBER = "#e67e22"
 
 
 def _placeholder_selections(
@@ -137,6 +143,11 @@ class _StageNavBar(QWidget):
         layout.setContentsMargins(4, 2, 4, 2)
         self._status_lbl = QLabel()
         self._status_lbl.setStyleSheet("color: #888; font-size: 9pt;")
+        # How many proofreading requests the shown text takes; hidden when it goes out whole.
+        self._size_lbl = QLabel()
+        self._size_lbl.setTextFormat(Qt.TextFormat.RichText)
+        self._size_lbl.setStyleSheet("color: #888; font-size: 9pt;")
+        self._size_lbl.setVisible(False)
         self._run_btn = QPushButton(f"▶ Run {next_stage.capitalize()}")
         self._run_btn.setMinimumHeight(28)
         _btn_font = self._run_btn.font()
@@ -146,8 +157,27 @@ class _StageNavBar(QWidget):
         self._run_btn.setToolTip(f"Run {next_stage} on this document again.")
         self._run_btn.clicked.connect(self.run_requested)
         layout.addWidget(self._status_lbl)
+        layout.addWidget(self._size_lbl)
         layout.addStretch()
         layout.addWidget(self._run_btn)
+
+    def set_text_size(self, estimate: TextSizeEstimate | None) -> None:
+        """Show how many proofreading requests the shown text takes, or hide the counter.
+
+        Nothing is shown for a text that goes out in one request: the counter is only worth
+        the space when a change across a part boundary cannot be made.
+        """
+        line, warning, tooltip = txt.text_size_line(estimate)
+        if not line:
+            self._size_lbl.clear()
+            self._size_lbl.setVisible(False)
+            return
+        markup = html.escape(line)
+        if warning:
+            markup = f'{markup} · <span style="color: {_AMBER};">{html.escape(warning)}</span>'
+        self._size_lbl.setText(markup)
+        self._size_lbl.setToolTip(tooltip)
+        self._size_lbl.setVisible(True)
 
     def update_status(
         self,
@@ -1109,6 +1139,14 @@ class PreviewPanel(QWidget):
         if self._current_source_id:
             self.run_stage_requested.emit(self._current_source_id, stage)
 
+    def set_text_size(self, estimate: TextSizeEstimate | None) -> None:
+        """Show how many proofreading requests the shown text takes (nothing for one).
+
+        The window works the estimate out and pushes it here: a widget never decides how a
+        text is split.
+        """
+        self._ocr_nav.set_text_size(estimate)
+
     def load(
         self,
         pixmap: QPixmap,
@@ -1271,3 +1309,4 @@ class PreviewPanel(QWidget):
         self._review_diff.clear_content()
         self._review_notes.clear_content()
         self._update_changes_tab_title()
+        self._ocr_nav.set_text_size(None)

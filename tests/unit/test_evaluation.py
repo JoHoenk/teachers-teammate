@@ -175,3 +175,44 @@ def test_evaluator_strips_reasoning_and_a_code_fence_from_the_review(mocker) -> 
     evaluator = NativeOllamaEvaluator(model="m", client=OllamaClient("http://localhost:11434"))
 
     assert evaluator.evaluate("text", "English") == ("**Good** work", None)
+
+
+# ── fits(): the same limit evaluate() enforces ─────────────────────────────
+
+
+def test_fits_agrees_with_the_too_long_warning_of_evaluate(mocker) -> None:
+    """
+    Given  a NativeOllamaEvaluator with a small window and the longest text that still fits
+    When   fits() and evaluate() are asked about that text and one character more
+    Then   fits() is False exactly when evaluate() reports the text as too long
+    """
+    from teachers_teammate.infrastructure.evaluation import (  # noqa: PLC0415
+        TOO_LONG_FOR_REVIEW_WARNING,
+        NativeOllamaEvaluator,
+    )
+    from teachers_teammate.infrastructure.ollama_utils import ChatStats, OllamaClient  # noqa: PLC0415
+
+    # The real chat() runs its size check; only the server round trip is stubbed.
+    mocker.patch.object(
+        OllamaClient, "chat_with_stats", return_value=("ok", ChatStats(done_reason="stop"))
+    )
+    evaluator = NativeOllamaEvaluator(
+        model="m",
+        client=OllamaClient("http://localhost:11434"),
+        prompt="Grade it.",
+        num_ctx=8192,
+    )
+
+    low, high = 0, 100_000
+    while low < high:
+        middle = (low + high + 1) // 2
+        if evaluator.fits("a" * middle, "English"):
+            low = middle
+        else:
+            high = middle - 1
+    inside, outside = "a" * low, "a" * (low + 1)
+
+    assert evaluator.fits(inside, "English")
+    assert not evaluator.fits(outside, "English")
+    assert evaluator.evaluate(inside, "English")[1] is None
+    assert evaluator.evaluate(outside, "English")[1] == TOO_LONG_FOR_REVIEW_WARNING

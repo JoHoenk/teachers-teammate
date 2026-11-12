@@ -466,7 +466,7 @@ def _measured_specs(monkeypatch) -> None:
         ),
     }
     monkeypatch.setattr(
-        "teachers_teammate.infrastructure.stage_builder.find_spec", lambda tag: specs.get(tag)
+        "teachers_teammate.domain.context_budget.find_spec", lambda tag: specs.get(tag)
     )
 
 
@@ -560,3 +560,116 @@ def test_an_online_corrector_is_not_wrapped(tmp_path: Path) -> None:
 
     assert correction is llm_corrector
     assert not isinstance(correction, ChunkingCorrector)
+
+
+@pytest.mark.parametrize(
+    ("provider", "model", "url", "tries"),
+    [
+        ("ollama", "gemma4:e4b", "http://127.0.0.1:11434", 2),
+        ("ollama", "gemma4:e4b", "http://school-server:11434", 2),
+        ("ollama", "gpt-oss:120b-cloud", "http://127.0.0.1:11434", 1),
+        ("ollama", "gemma4:e4b", "https://ollama.com", 1),
+        ("openai", "gpt-4o", "http://127.0.0.1:11434", 1),
+    ],
+)
+def test_only_a_model_that_is_not_billed_is_asked_again_after_a_cut_off(
+    tmp_path: Path, provider: str, model: str, url: str, tries: int
+) -> None:
+    """
+    Given  proofreading on a local model, the school's server, an Ollama cloud model, Ollama's
+           hosted API and an online provider
+    When   the stage builder collects the corrector settings
+    Then   only the first two are asked again after a cut-off answer; the others are billed
+    """
+    config = make_config(
+        tmp_path, correction_provider=provider, correction_model=model, ollama_url=url
+    )
+
+    settings = StageBuilder(
+        config=config, factory=PipelineComponentFactory()
+    )._correction_settings()
+
+    assert settings.cut_off_tries == tries
+
+
+def test_the_request_profile_reaches_every_kind_of_corrector(tmp_path: Path) -> None:
+    """
+    Given  a catalog model at its recommended temperature, proofread locally and through LangChain
+    When   the correction stage is built for each path
+    Then   both builders receive the model's profile and its temperature
+    """
+    from teachers_teammate.domain.model_catalog import request_profile  # noqa: PLC0415
+
+    native = MagicMock()
+    langchain = MagicMock()
+    llm = MagicMock()
+    factory = PipelineComponentFactory(
+        build_native_ollama_corrector=native,
+        build_corrector=langchain,
+        build_llm=llm,
+    )
+    local = make_config(
+        tmp_path,
+        correction_enabled=True,
+        correction_provider="ollama",
+        correction_model="gemma4:e4b",
+    )
+    online = make_config(
+        tmp_path, correction_enabled=True, correction_provider="openai", correction_model="gpt-4o"
+    )
+
+    StageBuilder(config=local, factory=factory).build_correction_and_anonymizer(MagicMock())
+    StageBuilder(config=online, factory=factory).build_correction_and_anonymizer()
+
+    assert native.call_args.args[4] == 1.0
+    assert native.call_args.args[6] == request_profile("gemma4:e4b")
+    assert llm.call_args.args[3] == 0.2
+    assert langchain.call_args.args[3] == request_profile("gpt-4o", "openai")
+
+
+# ── one rule for "this step runs online" ──────────────────────────────────────
+
+
+def _fake_provider(monkeypatch: pytest.MonkeyPatch, name: str, info: dict) -> None:
+    """Register a provider module whose ``PROVIDER_INFO`` is *info*."""
+    import sys  # noqa: PLC0415
+    import types  # noqa: PLC0415
+
+    module_name = f"teachers_teammate.infrastructure.providers.{name}"
+    module = types.ModuleType(module_name)
+    module.PROVIDER_INFO = info
+    monkeypatch.setitem(sys.modules, module_name, module)
+
+
+@pytest.mark.parametrize(
+    ("info", "expected_online"),
+    [
+        ({"self_hosted": True, "display_name": "Own server"}, False),
+        ({"display_name": "Vendor"}, True),
+    ],
+)
+def test_the_privacy_badge_and_the_number_of_tries_agree(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, info: dict, expected_online: bool
+) -> None:
+    """
+    Given  a provider module that declares itself self-hosted, and one that does not, both
+           pointed at a local Ollama URL
+    When   the privacy badge and the number of tries are worked out
+    Then   both say the same thing: a self-hosted provider is local and gets the local tries, a
+           provider that does not declare it is online and gets one
+    """
+    from teachers_teammate.application.data_flow import llm_location  # noqa: PLC0415
+    from teachers_teammate.domain.data_location import DataLocation  # noqa: PLC0415
+    from teachers_teammate.infrastructure.llm_factory import get_provider_info  # noqa: PLC0415
+
+    _fake_provider(monkeypatch, "ownserver", info)
+    url = "http://127.0.0.1:11434"
+    config = make_config(
+        tmp_path, correction_provider="ownserver", correction_model="m", ollama_url=url
+    )
+
+    where = llm_location("ownserver", "m", url, get_provider_info)
+    online = StageBuilder(config=config, factory=PipelineComponentFactory())._correction_is_online()
+
+    assert (where.location is DataLocation.ONLINE) is expected_online
+    assert online is expected_online

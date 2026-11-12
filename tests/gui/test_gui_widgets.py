@@ -672,6 +672,29 @@ def test_preview_panel_clear_preview_empties_all(qtbot) -> None:
 
 
 @pytest.mark.gui
+def test_clearing_the_preview_hides_the_size_counter(qtbot) -> None:
+    """
+    Given  a preview showing "… in 3 parts"
+    When   clear_preview() is called
+    Then   the counter is hidden, so it does not describe a text that is no longer shown
+    """
+    from teachers_teammate.application.text_size import TextSizeEstimate  # noqa: PLC0415
+    from teachers_teammate.gui._preview_panel import PreviewPanel  # noqa: PLC0415
+
+    panel = PreviewPanel()
+    qtbot.addWidget(panel)
+    panel.set_text_size(
+        TextSizeEstimate(words=900, pieces=3, words_per_piece=300, content_review_fits=None)
+    )
+    assert panel._ocr_nav._size_lbl.isVisible() or panel._ocr_nav._size_lbl.text()
+
+    panel.clear_preview()
+
+    assert panel._ocr_nav._size_lbl.text() == ""
+    assert not panel._ocr_nav._size_lbl.isVisible()
+
+
+@pytest.mark.gui
 def test_preview_panel_emits_edit_signals_for_user_changes(qtbot) -> None:
     """
     Given  a PreviewPanel with loaded OCR/correction text
@@ -1271,3 +1294,73 @@ def test_every_advice_code_has_wording_for_the_teacher() -> None:
 
     for advice in Advice:
         assert advice_text(advice).strip()
+
+
+# ── Pieces counter ────────────────────────────────────────────────────────
+
+
+@pytest.mark.gui
+def test_preview_panel_shows_how_many_parts_the_text_takes(qtbot) -> None:
+    """
+    Given  a text that is proofread in three parts
+    When   the panel is told the size
+    Then   the nav bar shows the parts and a tooltip about the part boundary
+    """
+    from teachers_teammate.application.text_size import TextSizeEstimate  # noqa: PLC0415
+    from teachers_teammate.gui._preview_panel import PreviewPanel  # noqa: PLC0415
+
+    panel = PreviewPanel()
+    qtbot.addWidget(panel)
+
+    panel.set_text_size(
+        TextSizeEstimate(words=12_000, pieces=3, words_per_piece=4_000, content_review_fits=True)
+    )
+
+    label = panel._ocr_nav._size_lbl
+    assert not label.isHidden()
+    assert "12,000 words" in label.text()
+    assert "proofread in 3 parts" in label.text()
+    assert "4,000 words at once" in label.toolTip()
+
+
+@pytest.mark.gui
+def test_preview_panel_hides_the_counter_for_a_text_that_goes_out_whole(qtbot) -> None:
+    """
+    Given  a text that fits into one proofreading request
+    When   the panel is told the size
+    Then   the counter stays hidden: there is no part boundary to warn about
+    """
+    from teachers_teammate.application.text_size import TextSizeEstimate  # noqa: PLC0415
+    from teachers_teammate.gui._preview_panel import PreviewPanel  # noqa: PLC0415
+
+    panel = PreviewPanel()
+    qtbot.addWidget(panel)
+
+    panel.set_text_size(
+        TextSizeEstimate(words=900, pieces=1, words_per_piece=4_000, content_review_fits=True)
+    )
+
+    assert panel._ocr_nav._size_lbl.isHidden()
+
+
+@pytest.mark.gui
+def test_preview_panel_warns_when_the_content_review_cannot_read_the_text(qtbot) -> None:
+    """
+    Given  a text that is proofread in parts but too long for the content review
+    When   the panel is told the size
+    Then   the warning is shown in amber next to the parts, and explained in the tooltip
+    """
+    from teachers_teammate.application.text_size import TextSizeEstimate  # noqa: PLC0415
+    from teachers_teammate.gui._preview_panel import PreviewPanel  # noqa: PLC0415
+
+    panel = PreviewPanel()
+    qtbot.addWidget(panel)
+
+    panel.set_text_size(
+        TextSizeEstimate(words=40_000, pieces=10, words_per_piece=4_000, content_review_fits=False)
+    )
+
+    label = panel._ocr_nav._size_lbl
+    assert "too long for content review" in label.text()
+    assert "#e67e22" in label.text()  # the amber span, not a failure colour
+    assert "cannot be split" in label.toolTip()

@@ -321,6 +321,26 @@ def test_llm_location_self_hosted_provider_follows_the_server() -> None:
     assert there.host == "school-server"
 
 
+def test_llm_location_online_provider_keeps_its_own_name_whatever_the_ollama_settings_say() -> None:
+    """
+    Given  an online provider, while the Ollama settings point at ollama.com or at a cloud tag
+    When   llm_location() classifies it
+    Then   it is named after the provider, not after "Ollama cloud", with the provider's region
+    """
+
+    def info(_provider: str) -> dict[str, str]:
+        return {"display_name": "OpenAI", "data_region": "non_eu", "vendor_country": "USA"}
+
+    by_host = llm_location("openai", "gpt-5", "https://ollama.com", info)
+    by_tag = llm_location("openai", "gpt-oss:120b-cloud", "http://127.0.0.1:11434", info)
+
+    for loc in (by_host, by_tag):
+        assert loc.location is DataLocation.ONLINE
+        assert loc.service == "OpenAI"
+        assert loc.data_region is DataRegion.NON_EU
+        assert loc.vendor_country == "USA"
+
+
 def test_describe_data_flow_default_settings_stay_local(tmp_path: Path) -> None:
     """
     Given  Ollama for text recognition and proofreading on this computer

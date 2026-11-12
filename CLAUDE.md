@@ -85,6 +85,8 @@ Config
 | New GUI capability/check | Implement in `ProcessingApplicationService`, call it from the GUI — never duplicate discovery logic in widgets |
 | New GUI setting | Per-batch choices (documents, language, which steps run, Results) belong in `ConfigPanel`; anything set once belongs on a page of the Settings window (`gui/settings/`). Add the widget to the owning page and its key to that page's `load` / `values` / `owned_keys` — never to two pages. Say where to change it with the `WHERE_*` constants in `gui/_user_text.py`, not a hard-coded menu path. See `docs/development.md` → "Settings window" |
 | Benchmark app changes | Domain metrics in `domain/benchmark.py`; run persistence in `infrastructure/benchmark/run_store.py`; OCR-only run in `infrastructure/benchmark/runner.py`; orchestration in `application/benchmark_service.py`; GUI in `gui/benchmark/` (reuse `gui/_ocr_config_selector.py`). The OCR config slice is `Config.ocr` (`config.py:OcrConfig`). |
+| Model temperatures | Teachers set none. `RECOMMENDED_TEMPERATURES` in `domain/model_catalog.py` holds what each model's maker recommends; `request_profile(tag, provider)` and `review_temperature()` read it (0.2 and 0.7 where a maker states none, and for every online provider), `Config.correction_temperature` / `evaluate_temperature` expose it, and the cache key and the evaluation tools use the same functions. |
+| New evaluation corpus | Add `<name>.py` to `tools/model_eval/corpora/` (an `ADAPTER` class); a new test set is a module in `tools/model_eval/recipes/` that sets `RECIPE`. Nothing lists either: both packages find their modules. An adapter reads only the files it pins. |
 
 ### Apps & storage
 

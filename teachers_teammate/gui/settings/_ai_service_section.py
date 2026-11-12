@@ -58,34 +58,22 @@ class AiServiceSpec:
 
     provider_key: str
     model_key: str
-    temperature_key: str
     other_provider_key: str
     other_model_key: str
-    temperature_tooltip: str
 
 
 PROOFREADING = AiServiceSpec(
     provider_key="correction_provider",
     model_key="correction_model",
-    temperature_key="correction_temperature",
     other_provider_key="evaluate_provider",
     other_model_key="evaluate_model",
-    temperature_tooltip=(
-        "Sampling temperature for the proofreading model\n"
-        "(0.0 = deterministic, higher = more creative)."
-    ),
 )
 
 CONTENT_REVIEW = AiServiceSpec(
     provider_key="evaluate_provider",
     model_key="evaluate_model",
-    temperature_key="evaluate_temperature",
     other_provider_key="correction_provider",
     other_model_key="correction_model",
-    temperature_tooltip=(
-        "Sampling temperature for the content review model\n"
-        "(0.0 = deterministic, higher = more creative)."
-    ),
 )
 
 

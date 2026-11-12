@@ -21,6 +21,7 @@ from ...domain.output_files import (
 from ...domain.stages import PROGRESS_STAGE_OCR, PROGRESS_STAGE_PREPROCESSING
 from ...exceptions import PipelineInputError
 from ...interfaces import AnonymizationMap, Anonymizer, Corrector, DocumentCreator, Evaluator
+from ..correction import proofreading_pieces
 from ..reporting import OnOcrDoneFn, OnStageStartedFn, Reporter, StdoutReporter
 from .cache_service import CacheContext, CacheReconciliationService
 from .ocr_service import OCRStageService
@@ -464,6 +465,13 @@ class FileProcessor:
         text_for_correction, anon_map = anonymized()
 
         text_format = self._text_format(ctx)
+        # A text that goes out in several pieces cannot be changed across a piece boundary;
+        # say so before the requests start, so the teacher knows what to expect.
+        pieces, _max_chars = proofreading_pieces(
+            self._correction, text_for_correction, self._language, text_format=text_format
+        )
+        if pieces is not None and pieces > 1:
+            self._reporter.status(f"       → Proofreading {file.name} in {pieces} parts...")
         outcome = self._correction.correct(
             text_for_correction, self._language, text_format=text_format
         )

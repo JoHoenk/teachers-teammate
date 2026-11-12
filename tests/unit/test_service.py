@@ -1381,6 +1381,30 @@ def _computer(svc, monkeypatch, *, profile, free_gb, card_gb=None, reason=None) 
 
 
 @pytest.mark.unit
+def test_expected_cache_keys_never_probe_this_computer(tmp_path: Path, monkeypatch) -> None:
+    """
+    Given  a service that has not probed this computer, and a local Ollama with "auto" hardware
+    When   the GUI asks for the context windows and the reconciled views
+    Then   no graphics tool is run (that would freeze the window), and the base windows are used
+    """
+    from teachers_teammate.domain.context_budget import BASE_NUM_CTX  # noqa: PLC0415
+    from teachers_teammate.infrastructure import gpu_detector  # noqa: PLC0415
+
+    probes: list[str] = []
+    monkeypatch.setattr(gpu_detector, "detect_gpus", lambda: probes.append("gpu") or [])
+    monkeypatch.setattr(gpu_detector, "detect_apple_unified_memory_gb", lambda: None)
+    svc = _make_svc()
+    cfg = _ollama_config(tmp_path, ocr_engine="tesseract", hardware_profile="auto")
+
+    windows = svc.resolved_windows(cfg)
+    svc.load_views_reconciled(cfg, [])
+
+    assert probes == []
+    assert (windows.proofreading, windows.evaluation) == (BASE_NUM_CTX, BASE_NUM_CTX)
+    assert svc.cached_hardware_profile("auto", cfg.ollama_url) is None
+
+
+@pytest.mark.unit
 def test_a_run_is_refused_when_the_model_would_have_to_swap(tmp_path: Path, monkeypatch) -> None:
     """
     Given  a computer without a graphics card and 6 GB of free memory, and qwen3.5:9b (7.2 GB)
@@ -2798,3 +2822,190 @@ def test_provider_key_missing_follows_the_provider_info_and_environment(
     monkeypatch.setattr(service_module, "get_provider_info", lambda _provider: info)
 
     assert _make_svc().provider_key_missing("any") is missing
+
+
+@pytest.mark.unit
+def test_the_dialog_shows_the_request_of_the_chosen_model() -> None:
+    """
+    Given  a request profile that asks for compact JSON, and one that does not
+    When   the dialog's instructions are built for each
+    Then   only the first one ends with the compact-answer rule, so the dialog shows what is sent
+    """
+    from teachers_teammate.infrastructure.correction import COMPACT_ANSWER_RULE  # noqa: PLC0415
+
+    svc = ProcessingApplicationService()
+
+    def fixed_of(compact_json: bool) -> str:
+        return svc.correction_instructions(
+            prompt="",
+            language="German",
+            level="B2",
+            output_mode="review",
+            compact_json=compact_json,
+        )[1]
+
+    assert fixed_of(True).endswith(COMPACT_ANSWER_RULE)
+    assert COMPACT_ANSWER_RULE not in fixed_of(False)
+
+
+# ── estimate_text_size: the pieces counter after OCR (CW2) ─────────────────
+
+
+def _long_german_text(repeats: int = 400) -> str:
+    """Return a German text of about *repeats* sentences, long enough for several pieces."""
+    return "Dies ist ein Satz mit ein paar Wörtern. " * repeats
+
+
+@pytest.mark.unit
+def test_a_short_text_is_proofread_in_one_piece(tmp_path: Path, monkeypatch) -> None:
+    """
+    Given  a short text and a local model at the base window
+    When   the size is estimated
+    Then   it is one piece, so the GUI shows nothing
+    """
+    svc = _make_svc()
+    cfg = _ollama_config(tmp_path)
+    _computer(svc, monkeypatch, profile="cpu", free_gb=32.0)
+
+    estimate = svc.estimate_text_size(cfg, "Ein kurzer Satz.")
+
+    assert estimate.pieces == 1
+    assert estimate.words == 3
+
+
+@pytest.mark.unit
+def test_the_pieces_count_matches_the_requests_correct_really_makes(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """
+    Given  a long German text and a local model at the base window
+    When   the size is estimated and the same corrector proofreads the text
+    Then   the estimate equals the number of requests correct() really sends
+    """
+    from teachers_teammate.domain.correction_review import CorrectionOutcome  # noqa: PLC0415
+    from teachers_teammate.infrastructure.correction import NativeOllamaCorrector  # noqa: PLC0415
+    from teachers_teammate.infrastructure.stage_builder import (  # noqa: PLC0415
+        PipelineComponentFactory,
+        StageBuilder,
+    )
+
+    svc = _make_svc()
+    cfg = _ollama_config(tmp_path)
+    _computer(svc, monkeypatch, profile="cpu", free_gb=32.0)
+    text = _long_german_text()
+
+    estimate = svc.estimate_text_size(cfg, text)
+
+    sent: list[str] = []
+
+    def fake_correct(self, raw_text, language, *, text_format="plain"):
+        sent.append(raw_text)
+        return CorrectionOutcome(text=raw_text)
+
+    monkeypatch.setattr(NativeOllamaCorrector, "correct", fake_correct)
+    corrector = StageBuilder(cfg, PipelineComponentFactory()).build_corrector()
+    assert corrector is not None
+    corrector.correct(text, cfg.language)
+
+    assert estimate.pieces is not None and estimate.pieces > 1
+    assert estimate.pieces == len(sent)
+
+
+@pytest.mark.unit
+def test_an_online_provider_has_no_piece_count(tmp_path: Path, monkeypatch) -> None:
+    """
+    Given  an online proofreading provider, which handles any length in one request
+    When   the size is estimated
+    Then   there is no piece count, because nothing is split
+    """
+    import sys  # noqa: PLC0415
+
+    svc = _make_svc()
+    cfg = _ollama_config(tmp_path, correction_provider="openai", correction_model="gpt-4o-mini")
+    _computer(svc, monkeypatch, profile="cpu", free_gb=32.0)
+    fake_mod = MagicMock()
+    fake_mod.ChatOpenAI = MagicMock(return_value=MagicMock())
+
+    with patch.dict(sys.modules, {"langchain_openai": fake_mod}):
+        estimate = svc.estimate_text_size(cfg, _long_german_text())
+
+    assert estimate.pieces is None
+    assert estimate.words_per_piece is None
+
+
+@pytest.mark.unit
+def test_proofreading_off_has_no_piece_count(tmp_path: Path, monkeypatch) -> None:
+    """
+    Given  a config with proofreading switched off
+    When   the size is estimated
+    Then   there is no piece count, because nothing is proofread
+    """
+    svc = _make_svc()
+    cfg = _ollama_config(tmp_path, correction_enabled=False)
+    _computer(svc, monkeypatch, profile="cpu", free_gb=32.0)
+
+    estimate = svc.estimate_text_size(cfg, _long_german_text())
+
+    assert estimate.pieces is None
+    assert estimate.content_review_fits is None
+
+
+@pytest.mark.unit
+def test_markdown_words_are_counted_without_the_markup(tmp_path: Path, monkeypatch) -> None:
+    """
+    Given  a Markdown text with headings and emphasis
+    When   the size is estimated
+    Then   the word count is the words of the text, not of its markup
+    """
+    svc = _make_svc()
+    cfg = _ollama_config(tmp_path)
+    _computer(svc, monkeypatch, profile="cpu", free_gb=32.0)
+
+    estimate = svc.estimate_text_size(cfg, "# Titel\n\nEin **wichtiger** Satz.", "markdown")
+
+    assert estimate.words == 4
+
+
+@pytest.mark.unit
+def test_a_text_longer_than_the_review_window_does_not_fit_the_review(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """
+    Given  a text longer than one content review can read, and a review switched on
+    When   the size is estimated
+    Then   the review is reported as not fitting, because it cannot be split
+    """
+    svc = _make_svc()
+    cfg = _ollama_config(tmp_path, evaluation_enabled=True, evaluate_provider="ollama")
+    _computer(svc, monkeypatch, profile="cpu", free_gb=32.0)
+
+    estimate = svc.estimate_text_size(cfg, "Ein Satz. " * 20_000)
+
+    assert estimate.content_review_fits is False
+
+
+@pytest.mark.unit
+def test_an_online_provider_is_not_built_to_estimate_the_size(tmp_path: Path, monkeypatch) -> None:
+    """
+    Given  an OpenAI proofreading config and a factory whose build_llm fails the test if called
+    When   the size is estimated
+    Then   the estimate has no piece count and no client was built: an online provider brings
+           its own request limit, and the GUI thread must not import LangChain for it
+    """
+    from teachers_teammate.infrastructure import stage_builder  # noqa: PLC0415
+
+    svc = _make_svc()
+    cfg = _ollama_config(tmp_path, correction_provider="openai", correction_model="gpt-4o-mini")
+    _computer(svc, monkeypatch, profile="cpu", free_gb=32.0)
+
+    def refuse(*_args, **_kwargs):
+        raise AssertionError("build_llm must not be called for an online provider")
+
+    monkeypatch.setattr(stage_builder, "build_llm", refuse)
+
+    estimate = svc.estimate_text_size(cfg, _long_german_text())
+
+    assert estimate.pieces is None
+    assert estimate.words_per_piece is None
+    assert estimate.content_review_fits is None
+    assert estimate.words > 0

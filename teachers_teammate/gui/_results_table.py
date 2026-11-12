@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..domain.correction_review import CorrectionReview
+from ..domain.formatted_text import TextFormat
 from . import _user_text as txt
 from ._constants import (
     _COLOUR_CACHED,
@@ -460,7 +461,7 @@ class ResultsTable(QTableWidget):
         if item is not None:
             item.setData(self._ROLE_TEXT_FORMAT, text_format)
 
-    def text_format_for_source(self, source_id: str) -> str:
+    def text_format_for_source(self, source_id: str) -> TextFormat:
         """Return the notation of *source_id*'s texts (plain when not recorded)."""
         row = self._row_for_source(source_id)
         item = self.item(row, self._COL_FILE) if row is not None else None

@@ -4,18 +4,25 @@ from __future__ import annotations
 
 import pytest
 
+from tools.model_eval import quality
 from teachers_teammate.domain.correction_review import (
     ChangeNote,
     CorrectionReview,
     SentenceNote,
+    align,
+    tokenize,
 )
-from teachers_teammate.domain.proofreading_quality import (
+from tools.model_eval.quality import (
     EditScore,
     ExplainedCount,
     count_explained,
     edits,
+    match_edits,
     score_edits,
+    spans_touch,
     unchanged_sentences,
+    untouched_spans,
+    word_positions,
 )
 
 _SOURCE = "Gestern hat sie ins Kino gegangen mit sein Freundin."
@@ -252,3 +259,210 @@ def test_unchanged_sentences_counts_what_survived_word_for_word() -> None:
     output = "Das Wetter war schön. Wir sind heute gewandert."
 
     assert unchanged_sentences(sentences, output) == 1
+
+
+@pytest.mark.use_case("Proofreading_Quality")
+def test_a_space_is_not_counted_as_a_position() -> None:
+    """
+    Given  the tokens of "a b ," with their whitespace
+    When   the word positions are computed
+    Then   a boundary before and after a space has the same position, and marks are counted
+    """
+    assert word_positions(["a", " ", "b", " ", ","]) == [0, 1, 1, 2, 2, 3]
+
+
+@pytest.mark.use_case("Proofreading_Quality")
+@pytest.mark.parametrize(
+    ("one", "other", "touch"),
+    [
+        ((2, 4), (3, 5), True),
+        ((2, 4), (4, 6), False),
+        ((3, 3), (3, 3), True),
+        ((3, 3), (4, 4), False),
+        ((3, 3), (2, 5), True),
+        ((2, 5), (3, 3), True),
+        ((3, 3), (3, 5), False),
+        ((3, 3), (1, 3), False),
+    ],
+)
+def test_two_spans_touch_where_they_share_words(
+    one: tuple[int, int], other: tuple[int, int], touch: bool
+) -> None:
+    """
+    Given  two stretches of words, or points between words
+    When   they are compared
+    Then   they touch when they share a word or a point lies strictly inside the other, and an
+           insertion at the edge of a replaced word does not touch it
+    """
+    assert spans_touch(one, other) is touch
+    assert spans_touch(other, one) is touch
+
+
+_THREE_SENTENCES = "Der Hund läuft schnell. Das ist ein Test. Ich habe einen Hund."
+
+
+def _sentence_spans(source: str) -> tuple[tuple[int, int], ...]:
+    """Return the token span of every sentence of *source*, split after its full stop."""
+    spans: list[tuple[int, int]] = []
+    start = 0
+    for index, token in enumerate(tokenize(source)):
+        if token in ".!?":
+            spans.append((start, index + 1))
+            start = index + 1
+    return tuple(spans)
+
+
+@pytest.mark.use_case("Proofreading_Quality")
+def test_a_replacement_inside_a_sentence_touches_it_and_not_its_neighbours() -> None:
+    """
+    Given  three sentences of which the reference replaces one word in the second
+    When   the spans are compared with the word diff
+    Then   only the second sentence is touched, so the other two count as left alone
+    """
+    other = _THREE_SENTENCES.replace("ist", "war")
+
+    assert untouched_spans(_THREE_SENTENCES, other, _sentence_spans(_THREE_SENTENCES)) == (
+        True,
+        False,
+        True,
+    )
+
+
+@pytest.mark.use_case("Proofreading_Quality")
+def test_an_insertion_between_two_sentences_touches_both() -> None:
+    """
+    Given  a word inserted at the boundary between the first and the second sentence
+    When   the spans are compared with the word diff
+    Then   both neighbours are touched, because the word may belong to either of them
+    """
+    other = _THREE_SENTENCES.replace("schnell. Das", "schnell. Heute Das")
+
+    assert untouched_spans(_THREE_SENTENCES, other, _sentence_spans(_THREE_SENTENCES)) == (
+        False,
+        False,
+        True,
+    )
+
+
+@pytest.mark.use_case("Proofreading_Quality")
+def test_a_whitespace_only_change_touches_nothing() -> None:
+    """
+    Given  a text whose line break became a space
+    When   the spans are compared with the word diff
+    Then   every sentence is left alone, because a teacher cannot see the difference
+    """
+    source = "Der Hund läuft schnell.\nDas ist ein Test.\nIch habe einen Hund."
+
+    assert untouched_spans(source, source.replace("\n", " "), _sentence_spans(source)) == (
+        True,
+        True,
+        True,
+    )
+
+
+@pytest.mark.use_case("Proofreading_Quality")
+def test_a_deletion_of_a_whole_sentence_touches_it() -> None:
+    """
+    Given  a reference that deletes the last sentence
+    When   the spans are compared with the word diff
+    Then   the deleted sentence is touched and the two that stay are left alone
+    """
+    other = "Der Hund läuft schnell. Das ist ein Test."
+
+    assert untouched_spans(_THREE_SENTENCES, other, _sentence_spans(_THREE_SENTENCES)) == (
+        True,
+        True,
+        False,
+    )
+
+
+_REFERENCE = "Gestern ist sie mit ihrer Freundin ins Kino gegangen."
+
+
+@pytest.mark.use_case("Proofreading_Quality")
+def test_the_reference_answer_matches_every_reference_edit_exactly() -> None:
+    """
+    Given  a model text that equals the reference correction
+    When   the edits are matched
+    Then   every reference edit is exact and located
+    """
+    matches = match_edits(_SOURCE, _REFERENCE, _REFERENCE)
+
+    assert matches
+    assert all(match.exact and match.located for match in matches)
+
+
+@pytest.mark.use_case("Proofreading_Quality")
+def test_an_untouched_text_matches_no_reference_edit() -> None:
+    """
+    Given  a model text that is the source unchanged
+    When   the edits are matched
+    Then   no reference edit is exact and none is located
+    """
+    matches = match_edits(_SOURCE, _SOURCE, _REFERENCE)
+
+    assert matches
+    assert not any(match.exact or match.located for match in matches)
+
+
+@pytest.mark.use_case("Proofreading_Quality")
+def test_another_fix_of_the_same_word_is_located_but_not_exact() -> None:
+    """
+    Given  a model that changes a word to a different form than the reference does
+    When   the edits are matched
+    Then   the reference edit is located (the model saw the error) but not exact
+    """
+    matched = match_edits("Er gehen nach Hause.", "Er ging nach Hause.", "Er geht nach Hause.")[0]
+
+    assert matched.located
+    assert not matched.exact
+
+
+@pytest.mark.use_case("Proofreading_Quality")
+def test_an_edit_next_to_a_reference_edit_does_not_locate_it() -> None:
+    """
+    Given  a model that changes the word right before the mark the reference changes
+    When   the edits are matched
+    Then   the reference edit stays not located, because the model changed other words
+    """
+    matched = match_edits(
+        "Er hat ein Haus gekauft.", "Er hat ein Haus gekaufte.", "Er hat ein Haus gekauft!"
+    )[0]
+
+    assert not matched.located
+
+
+@pytest.mark.use_case("Proofreading_Quality")
+def test_an_aligned_review_the_caller_has_is_not_aligned_again(monkeypatch) -> None:
+    """
+    Given  a review the caller has already aligned against the corrected text
+    When   the explained changes are counted with that alignment
+    Then   the counts are the same as without it and the text is not aligned a second time
+    """
+    source = "Er kam mit dem Rad und sie zu Fuss."
+    corrected = "Er kam mit dem Rad, und sie zu Fuß."
+    review = CorrectionReview(
+        sentences=(
+            SentenceNote(
+                original=source,
+                corrected=corrected,
+                changes=(
+                    ChangeNote(
+                        original="Fuss",
+                        corrected="Fuß",
+                        category="spelling",
+                        explanation="Nach der Rechtschreibung mit ß.",
+                    ),
+                ),
+            ),
+        )
+    )
+    aligned = align(source, corrected, review)
+    expected = count_explained(source, corrected, review)
+
+    def refuse(*_args, **_kwargs):
+        raise AssertionError("the review was aligned a second time")
+
+    monkeypatch.setattr(quality, "align", refuse)
+
+    assert count_explained(source, corrected, review, aligned=aligned) == expected

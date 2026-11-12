@@ -350,7 +350,7 @@ def test_config_file_with_an_outdated_answer_format_falls_back(tmp_path, capsys)
     from teachers_teammate.config import load_config_file  # noqa: PLC0415
 
     path = tmp_path / "ocr.toml"
-    path.write_text('answer_format_review = "mine"\nanswer_format_version = 1\n', encoding="utf-8")
+    path.write_text('answer_format_review = "mine"\nanswer_format_version = 0\n', encoding="utf-8")
 
     loaded = load_config_file(path)
 

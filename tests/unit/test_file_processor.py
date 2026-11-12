@@ -17,6 +17,8 @@ from teachers_teammate.domain.correction_review import (
     CorrectionReview,
     SentenceNote,
 )
+from teachers_teammate.domain.formatted_text import TextFormat
+from teachers_teammate.infrastructure.correction import ChunkingCorrector
 from teachers_teammate.infrastructure.state_repository import DocumentState
 from teachers_teammate.infrastructure.workflow.cache_service import CacheContext
 from teachers_teammate.infrastructure.workflow.preprocess_service import PreparedInput
@@ -24,6 +26,7 @@ from teachers_teammate.infrastructure.workflow.file_processor import (
     FileProcessor,
     FileProcessorConfig,
 )
+from teachers_teammate.interfaces import Corrector
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────
@@ -97,7 +100,7 @@ def _make_processor(
     tmp_path: Path,
     *,
     returns: _StubReturns | None = None,
-    corrector: MagicMock | None = None,
+    corrector: Corrector | MagicMock | None = None,
     evaluator: MagicMock | None = None,
     doc_creator: MagicMock | None = None,
     stop_event: threading.Event | None = None,
@@ -1643,3 +1646,76 @@ def test_anonymizer_failure_fails_only_this_file(tmp_path: Path) -> None:
     assert "Personal info removal failed" in result.message
     assert "E088" in result.message
     corrector.correct.assert_not_called()
+
+
+# ── The pieces counter on the console ─────────────────────────────────────
+
+
+class _BudgetCorrector(Corrector):
+    """Corrector with a fixed request budget, so a text can be made to need several parts."""
+
+    def __init__(self, max_chars: int) -> None:
+        self._max_chars = max_chars
+
+    def max_text_chars(self, language: str, *, text_format: TextFormat = "plain") -> int | None:
+        """Return the fixed budget."""
+        del language, text_format
+        return self._max_chars
+
+    def correct(
+        self, raw_text: str, language: str, *, text_format: TextFormat = "plain"
+    ) -> CorrectionOutcome:
+        """Return the text unchanged."""
+        del language, text_format
+        return CorrectionOutcome(text=raw_text)
+
+
+def test_a_text_in_several_parts_is_announced_before_proofreading(tmp_path: Path) -> None:
+    """
+    Given  a text that needs more than one proofreading request
+    When   process() proofreads it
+    Then   the console says how many parts, and the count matches the requests made
+    """
+    reporter = _ListReporter()
+    corrector = ChunkingCorrector(_BudgetCorrector(max_chars=100))
+    state = _make_state(ocr_done=True, raw_text="Ein Satz. " * 60, preview_img="p.png")
+    fp, cache_svc, _, _ = _make_processor(
+        tmp_path,
+        returns=_StubReturns(cache_ctx=_make_ctx(state)),
+        corrector=corrector,
+        reporter=reporter,
+    )
+    cache_svc.record_correction.return_value = _make_ctx(
+        _make_state(correction_done=True, correction_text="x")
+    )
+
+    fp.process(tmp_path / "doc.png")
+
+    announced = [line for line in reporter.lines if line.startswith("→ Proofreading doc.png in")]
+    assert len(announced) == 1
+    assert announced[0].endswith("parts...")
+    assert announced[0] != "→ Proofreading doc.png in 1 parts..."
+
+
+def test_a_text_that_goes_out_whole_is_not_announced(tmp_path: Path) -> None:
+    """
+    Given  a text that fits into one proofreading request
+    When   process() proofreads it
+    Then   the console says nothing about parts: there is no boundary to warn about
+    """
+    reporter = _ListReporter()
+    corrector = ChunkingCorrector(_BudgetCorrector(max_chars=100_000))
+    state = _make_state(ocr_done=True, raw_text="Ein Satz. " * 60, preview_img="p.png")
+    fp, cache_svc, _, _ = _make_processor(
+        tmp_path,
+        returns=_StubReturns(cache_ctx=_make_ctx(state)),
+        corrector=corrector,
+        reporter=reporter,
+    )
+    cache_svc.record_correction.return_value = _make_ctx(
+        _make_state(correction_done=True, correction_text="x")
+    )
+
+    fp.process(tmp_path / "doc.png")
+
+    assert not [line for line in reporter.lines if "Proofreading" in line]

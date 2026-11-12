@@ -26,6 +26,7 @@ from ..domain.data_location import (
     StageLocation,
     anonymization_badge,
     classify_ollama,
+    llm_stage_location,
     online_ocr_reason,
 )
 from ..infrastructure.ollama_utils import is_local_ollama_url, ollama_host
@@ -95,13 +96,21 @@ def llm_location(
     name = str(info.get("display_name") or provider.capitalize())
     region = data_region_of(provider, info, provider_region)
     country = str(info.get("vendor_country") or "")
-    if info.get("self_hosted"):
-        location = _ollama_location(model, ollama_url)
-        # An online result (an Ollama cloud model) keeps its own, more telling name.
-        if location.location is DataLocation.ONLINE:
-            return replace(location, region=region, vendor_country=country)
-        return replace(location, service=name)
-    return StageLocation(DataLocation.ONLINE, name, region=region, vendor_country=country)
+    self_hosted = bool(info.get("self_hosted"))
+    where = llm_stage_location(
+        self_hosted=self_hosted,
+        model=model,
+        url_is_local=is_local_ollama_url(ollama_url),
+        host=ollama_host(ollama_url),
+    )
+    if not self_hosted:
+        # The Ollama server settings say nothing about a vendor's own service.
+        return StageLocation(DataLocation.ONLINE, name, region=region, vendor_country=country)
+    location = _ollama_location(model, ollama_url)
+    if where is DataLocation.ONLINE:
+        # An Ollama cloud model keeps its own, more telling name.
+        return replace(location, region=region, vendor_country=country)
+    return replace(location, service=name)
 
 
 def describe_data_flow(

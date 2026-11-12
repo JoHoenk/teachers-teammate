@@ -7,7 +7,12 @@ widgets import these names; they never build such sentences themselves.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from ..domain.correction_review import CHANGE_CATEGORIES, AlignedReview
+
+if TYPE_CHECKING:
+    from ..application.text_size import TextSizeEstimate
 
 # ── Tab title and filters ─────────────────────────────────────────────────────
 
@@ -151,6 +156,22 @@ LEVEL_TOOLTIP = (
     "student's wording and only changes what is wrong at this level."
 )
 
+#: The "Automatic" entry of the context choice while this computer is still being checked.
+CONTEXT_AUTO_CHECKING = "Automatic (checking this computer…)"
+#: The "Automatic" entry when the setting changes no window at all.
+CONTEXT_AUTO = "Automatic"
+#: Why the context choice is disabled: with proofreading capped at the base window it only
+#: sizes the content review, and only when that runs on its own Ollama model.
+CONTEXT_NOT_APPLICABLE_TOOLTIP = (
+    "Proofreading always uses 8,192 tokens. This setting sizes the content review when it "
+    "runs on its own Ollama model."
+)
+
+
+def context_auto_review(tokens: int) -> str:
+    """Return the "Automatic" entry for a content review that gets *tokens* tokens."""
+    return f"Automatic (now: {tokens:,} tokens for the content review)"
+
 
 FORMATTED_TEXT_NOTE = (
     "If the text has formatting marks (bold, crossed out, ...), this is added as well:"
@@ -231,6 +252,39 @@ def suggestion_note(is_suggestion: bool) -> str:
 WHAT_IS_SENT_TITLE = "What is sent for this file"
 WHAT_IS_SENT_WORKING = "Working out what is sent…"
 NO_TEXT_YET = "No text recognized for this file yet."
+
+
+# ── Pieces counter after OCR ──────────────────────────────────────────────────
+
+TEXT_SIZE_PARTS = "{words} words · proofread in {pieces} parts"
+TEXT_SIZE_TOO_LONG = "too long for content review"
+TEXT_SIZE_TOOLTIP = (
+    "Your model can read about {words_per_piece} words at once, so this text is proofread "
+    "in {pieces} parts. A change that spans two parts cannot be made."
+)
+TEXT_SIZE_TOO_LONG_TOOLTIP = (
+    "The content review cannot be split and needs the whole text at once; this text is "
+    "longer than the model can read."
+)
+
+
+def text_size_line(estimate: TextSizeEstimate | None) -> tuple[str, str, str]:
+    """Return ``(line, warning, tooltip)`` for the footer of the Extracted Text tab.
+
+    All three are empty when nothing is shown: the counter is only worth showing when the
+    text is proofread in several parts, because a change across a part boundary cannot be
+    made.  *warning* is the amber part, shown only together with the parts: a content review
+    reserves a fixed answer allowance, so a text that goes out whole for proofreading always
+    fits the review.
+    """
+    if estimate is None or estimate.pieces is None or estimate.pieces <= 1:
+        return "", "", ""
+    line = TEXT_SIZE_PARTS.format(words=f"{estimate.words:,}", pieces=estimate.pieces)
+    per_piece = f"{estimate.words_per_piece:,}" if estimate.words_per_piece else "?"
+    tooltip = TEXT_SIZE_TOOLTIP.format(words_per_piece=per_piece, pieces=estimate.pieces)
+    if estimate.content_review_fits is False:
+        return line, TEXT_SIZE_TOO_LONG, f"{tooltip}\n\n{TEXT_SIZE_TOO_LONG_TOOLTIP}"
+    return line, "", tooltip
 
 
 # ── Hiding personal information in the previews ───────────────────────────────

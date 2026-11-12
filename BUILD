@@ -4,6 +4,7 @@ load("//third_party/lint:linters.bzl", "pylint_test", "ruff_test", "ty_test")
 # pyproject.toml is needed by pylint/ty via rules_lint.
 exports_files(
     [
+        "CLAUDE.md",
         "pyproject.toml",
         "README.md",
     ],
@@ -44,6 +45,7 @@ ruff_test(
         "//tools:compare_writing_models",
         "//tools:model_eval",
         "//tools:prepare_gec_testset",
+        "//tools:proofreading_store",
         "//tools:verify_model_catalog",
     ],
 )
@@ -57,6 +59,7 @@ ty_test(
         "//tools:compare_writing_models",
         "//tools:model_eval",
         "//tools:prepare_gec_testset",
+        "//tools:proofreading_store",
         "//tools:verify_model_catalog",
     ],
 )

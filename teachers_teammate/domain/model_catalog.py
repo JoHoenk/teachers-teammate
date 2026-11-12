@@ -20,7 +20,7 @@ widgets only render the results.
 from __future__ import annotations
 
 from collections.abc import Collection, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import StrEnum
 from typing import Literal
 
@@ -83,6 +83,63 @@ GPU_8GB_THRESHOLD_GB = 7.0
 APPLE_GPU_MEMORY_SHARE = 0.66
 
 
+DEFAULT_CORRECTION_TEMPERATURE = 0.2
+"""The proofreading temperature of a model whose maker states none: the app's long-time value."""
+
+DEFAULT_REVIEW_TEMPERATURE = 0.7
+"""The content-review temperature of a model whose maker states none."""
+
+OCR_TEMPERATURE = 0.0
+"""Text recognition is deterministic: reading a page has one right answer."""
+
+RECOMMENDED_TEMPERATURES: dict[str, float] = {
+    "gemma4:e4b": 1.0,
+    "gemma4:12b": 1.0,
+    "gemma4:e2b": 1.0,
+    "qwen3:4b": 0.7,
+    "qwen3.5:9b": 0.7,
+    "qwen3.5:4b": 0.7,
+    "ministral-3:14b": 0.05,
+    "ministral-3:8b": 0.05,
+    "ministral-3:3b": 0.05,
+    "mistral-nemo:12b": 0.3,
+    "nemotron-3.5-bolt:e4b": 1.0,
+    "lfm2.5:8b": 0.2,
+    "lfm2.5:24b": 0.1,
+}
+"""The temperature each model's maker recommends (model cards read on 2026-11-11).
+
+Teachers cannot set a temperature: the app sends this value, so a model is used the way its
+maker tuned it and the evaluation tools measure exactly what a teacher's run sends.  Qwen's value
+is the card's *non-thinking* row, because the app sends ``think=False``; the tags ship the
+thinking value.  Ministral's card says "below 0.1", so 0.05.  Liquid's cards say 0.2 for
+``lfm2.5:8b`` and 0.1 for ``lfm2.5:24b`` (with a top-k and a repetition penalty the tags carry);
+the 8B entry equals the default and is listed so the table says the card states it.  A model whose
+maker states nothing, or states 0.2, is absent and gets the default: ``gpt-oss:20b``,
+``mistral:latest``, the Granite, Apertus and EuroLLM builds.  The table also covers models the
+catalog does not list, because the evaluation tools check candidates before they are catalogued.
+"""
+
+
+@dataclass(frozen=True)
+class RequestProfile:
+    """How the app asks one model to proofread; the default is what every model gets.
+
+    A knob enters only with a measured reason, and each one is a new evaluation protocol version:
+    the request the app sends is what a run measures.
+    """
+
+    #: Add the compact-JSON rule to the fixed part of a review request.  Off by default: a model
+    #: a teacher adds themselves gets the request that broke nobody.
+    compact_json: bool = False
+    #: The proofreading temperature the request is sent at.
+    temperature: float = DEFAULT_CORRECTION_TEMPERATURE
+
+
+DEFAULT_REQUEST_PROFILE = RequestProfile()
+"""What a model the catalog does not know gets: the request that broke nobody."""
+
+
 @dataclass(frozen=True)
 class OllamaModelSpec:
     """One catalogued Ollama model with approximate resource needs."""
@@ -113,6 +170,9 @@ class OllamaModelSpec:
     #: be derived from ``memory_gb``: how fast a context cache grows depends on the model's
     #: attention design (sliding-window or linear-attention layers grow much more slowly).
     context_gb_per_8k: float | None = None
+    #: How the app asks this model to proofread (see :class:`RequestProfile`).  Every catalog
+    #: model starts on the default; a gate-1 run decides a value per model.
+    request_profile: RequestProfile = DEFAULT_REQUEST_PROFILE
 
 
 # Download sizes (decimal GB) were checked against the Ollama registry manifests
@@ -192,16 +252,14 @@ OLLAMA_CATALOG: tuple[OllamaModelSpec, ...] = (
         category="general",
         memory_gb=5.5,
         download_gb=4.4,
-        note="General-purpose writing model.",
-        structured_output=True,
+        note="General-purpose writing model. It does not reliably follow the review format.",
     ),
     OllamaModelSpec(
         tag="mistral-nemo:12b",
         category="general",
         memory_gb=8.5,
         download_gb=7.1,
-        note="General-purpose writing model.",
-        structured_output=True,
+        note="General-purpose writing model. It does not reliably follow the review format.",
     ),
     OllamaModelSpec(
         tag="gpt-oss:20b",
@@ -219,7 +277,7 @@ RECOMMENDED: dict[ModelCategory, dict[HardwareProfile, tuple[str, ...]]] = {
     "ocr": {
         "cpu": ("glm-ocr:q8_0",),
         # 16 GB reading list intentionally equals the 8 GB list until a larger
-        # vision model has been validated with the Benchmark app (plan §10).
+        # vision model has been validated with the Benchmark app.
         "8gb": (
             DEFAULT_OCR_MODEL,
             "qwen3-vl:8b",
@@ -277,6 +335,47 @@ def find_spec(tag: str) -> OllamaModelSpec | None:
         if spec.tag == wanted:
             return spec
     return None
+
+
+def recommended_temperature(tag: str) -> float | None:
+    """Return the temperature the maker of *tag* recommends, or ``None`` when it states none.
+
+    A tag written with ``:latest`` names the same model, so both spellings are looked up.
+    """
+    normalized = normalize_tag(tag)
+    for candidate in (normalized, normalized.removesuffix(":latest")):
+        if candidate in RECOMMENDED_TEMPERATURES:
+            return RECOMMENDED_TEMPERATURES[candidate]
+    return None
+
+
+def _temperature(tag: str, provider: str, default: float) -> float:
+    """Return the maker's recommendation for a local model, else *default*.
+
+    Only the table of Ollama tags applies to Ollama: another provider's model of the same name is
+    a different service with its own defaults.
+    """
+    if provider != "ollama":
+        return default
+    recommended = recommended_temperature(tag)
+    return default if recommended is None else recommended
+
+
+def request_profile(tag: str, provider: str = "ollama") -> RequestProfile:
+    """Return how the app asks *tag* to proofread: the compact rule and the temperature.
+
+    The one place the app, the instructions dialog, the cache key and the evaluation tools ask,
+    so a profile change reaches all of them and no two can disagree about the request that is
+    sent.  A model the catalog does not know gets the default request.
+    """
+    spec = find_spec(tag) if provider == "ollama" else None
+    base = DEFAULT_REQUEST_PROFILE if spec is None else spec.request_profile
+    return replace(base, temperature=_temperature(tag, provider, DEFAULT_CORRECTION_TEMPERATURE))
+
+
+def review_temperature(tag: str, provider: str = "ollama") -> float:
+    """Return the temperature the content review is sent at for *tag*."""
+    return _temperature(tag, provider, DEFAULT_REVIEW_TEMPERATURE)
 
 
 def catalog_uses(spec: OllamaModelSpec) -> ModelUses:
@@ -353,6 +452,17 @@ def ram_needed_gb(
 def card_share(memory_gb: float, card_gb: float) -> float:
     """Return the share (0 to 1) of a model of *memory_gb* that fits on a card of *card_gb*."""
     return min(1.0, card_gb / memory_gb) if memory_gb > 0 else 1.0
+
+
+def runs_at_full_speed(
+    memory_gb: float, card_gb: float, *, share: float = FULL_SPEED_SHARE
+) -> bool:
+    """Return whether a model of *memory_gb* still runs at full speed on a card of *card_gb*.
+
+    The one rule the app and the evaluation tools share: at least *share* of the model has to sit
+    on the card.  A share of exactly *share* counts as full speed.
+    """
+    return card_share(memory_gb, card_gb) >= share
 
 
 def is_very_slow(memory_gb: float, card_gb: float) -> bool:
@@ -612,7 +722,7 @@ class LocalHardware:
 
 
 def _profile_for_memory_gb(memory_gb: float) -> HardwareProfile:
-    """Map a known GPU memory size to a profile using the plan thresholds."""
+    """Map a known GPU memory size to a profile using the documented thresholds."""
     if memory_gb >= GPU_16GB_THRESHOLD_GB:
         return "16gb"
     if memory_gb >= GPU_8GB_THRESHOLD_GB:

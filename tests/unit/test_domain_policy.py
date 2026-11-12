@@ -318,3 +318,30 @@ def test_output_folder_refusal(
     )
 
     assert reason == (TEXT_IN_INPUT_FOLDER if refused else "")
+
+
+# ── how often a cut-off review request is sent ──────────────────────────────
+
+
+@pytest.mark.parametrize(
+    ("online", "temperature", "tries"),
+    [
+        (False, 0.2, 2),
+        (False, 1.0, 2),
+        (True, 0.2, 1),
+        (False, 0.0, 1),
+        (True, 0.0, 1),
+    ],
+)
+def test_a_cut_off_review_is_sent_again_only_where_it_is_free_and_can_differ(
+    online: bool, temperature: float, tries: int
+) -> None:
+    """
+    Given  a proofreading model that is online or not, at a temperature above or at 0
+    When   the number of tries for a cut-off review answer is asked for
+    Then   it is 2 for a model on this computer or the school's server with randomness, else 1,
+           because a second try is billed online and is the same answer again at temperature 0
+    """
+    from teachers_teammate.domain.correction_policy import cut_off_tries  # noqa: PLC0415
+
+    assert cut_off_tries(online=online, temperature=temperature) == tries

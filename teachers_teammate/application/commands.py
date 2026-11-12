@@ -7,9 +7,11 @@ import dataclasses
 from pathlib import Path
 
 from ..config import Config
+from ..domain.context_budget import RunWindows
 from ..domain.stages import normalize_stage
 from ..infrastructure.file_discovery import FileDiscovery
 from ..infrastructure.ocr_processor import get_ocr_prompt
+from ..infrastructure.stage_builder import resolve_run_windows
 from ..infrastructure.state_repository import (
     DocumentState,
     StateRepository,
@@ -29,9 +31,13 @@ class ApplicationCommands:
         *,
         discovery: FileDiscovery,
         state_store_factory: Callable[[Config], StateRepository],
+        windows_for: Callable[[Config], RunWindows] | None = None,
     ) -> None:
         self._discovery = discovery
         self._state_store_factory = state_store_factory
+        #: The context windows a run with a config uses on this computer, so a hash written
+        #: here matches the one the run writes.  Without it only the settings are known.
+        self._windows_for = windows_for or (lambda config: resolve_run_windows(config, None))
 
     def invalidate_from_stage(
         self,
@@ -89,7 +95,7 @@ class ApplicationCommands:
         synthesise the OCR text because the state has none yet.
         """
         ocr_config_hash = compute_ocr_config_hash(config, get_ocr_prompt(config.language), source)
-        correction_config_hash = compute_correction_config_hash(config)
+        correction_config_hash = compute_correction_config_hash(config, self._windows_for(config))
         return self._record_manual_correction_edit(
             self._state_store_factory(config),
             source=source,

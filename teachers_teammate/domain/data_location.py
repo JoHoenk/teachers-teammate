@@ -193,6 +193,22 @@ def classify_ollama(
     return StageLocation(DataLocation.OTHER_COMPUTER, service, host)
 
 
+def llm_stage_location(
+    *, self_hosted: bool, model: str, url_is_local: bool, host: str
+) -> DataLocation:
+    """Return where a step that runs on an LLM provider processes its data.
+
+    The one rule for "this step runs online", so the badge a teacher sees and the number of
+    tries a request gets cannot disagree: a self-hosted provider follows its server
+    (:func:`classify_ollama`), anything else is online.  A provider that does not declare
+    ``"self_hosted": True`` is treated as a vendor-hosted online service — the safe default for
+    a new provider.
+    """
+    if self_hosted:
+        return classify_ollama(model, url_is_local=url_is_local, host=host).location
+    return DataLocation.ONLINE
+
+
 def online_ocr_reason(engine: str, model: str, host: str) -> str:
     """Return why OCR with these settings is not allowed, or ``""`` when it is.
 

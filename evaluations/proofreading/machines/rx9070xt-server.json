@@ -1,0 +1,10 @@
+{
+  "schema": 1,
+  "id": "rx9070xt-server",
+  "gpu": {"vendor": "amd", "name": "AMD Radeon RX 9070 XT", "vram_mb": 16304},
+  "cpu": "Intel Core i5-13600KF, 14 cores (6 P + 8 E) / 20 threads",
+  "ram_gib": 31,
+  "os": "Ubuntu 24, Linux 7, bare metal",
+  "accelerator_stack": "ROCm 10.1.0, amd-smi 27.1.0",
+  "notes": "Ollama on the same machine; the evaluation tool runs on another one."
+}

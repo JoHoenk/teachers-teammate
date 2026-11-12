@@ -15,265 +15,222 @@ Sources (write them into the results you publish):
   next to this script holds eight invented texts and ten correct sentences, written by the
   tool's author (an AI model, *not* a teacher): treat French results as indicative only.
 
+Which set uses what: ``gec-2026-12`` draws on the Falko-MERLIN test split, the W&I dev split
+(levels A to C) and the invented French set, and needs no LOCNESS, because its German and English
+items are whole texts with their own sentences left alone inside them instead of a glued group of
+correct sentences.  ``gec-2026-11``, the retired set, took those correct sentences from the
+LOCNESS essays.
+
 Output, one file per language (``de.jsonl``, ``en.jsonl``, ``fr.jsonl``), one ``TestRecord`` per
 line (``tools.model_eval.results``, ``schema_version: 1``), so ``tools/compare_writing_models.py``
-reads it as it reads any other file.  ``kind`` is ``"errors"`` (``source`` has errors,
-``reference`` is the corrected text) or ``"correct"`` (``sentences`` are already correct and
-``source`` is their join).
+reads it as it reads any other file.  Every reference change of a German or English text also
+carries the error label the annotators gave it (``tools.model_eval.error_labels``): the codes only
+(``R:DET:FORM``), found again in the corpora's M2 files; the French texts have none.  ``kind`` is
+``"errors"`` (``source`` has errors, ``reference`` is the corrected text) or ``"correct"``
+(``sentences`` are already correct and ``source`` is their join).
+
+The set is *selected* by the recipe of its id (``tools/model_eval/recipes/``) and *built* by
+``tools.model_eval.testset.resolve``: the recipe only chooses pointers (which text, which
+sentences) and hands them to the resolver, so a rebuild calls exactly the code that built the
+texts.  ``--manifest`` writes the pointers and the hashes of what they resolve to, for a run to be
+checked against later; ``--built`` pins the day, so two builds of one day are byte-identical.  The
+manifest is then checked against the corpora, and the build exits 1 when a corpus file or an item
+no longer matches what was pinned.
 
 Usage::
 
-    python3 -I tools/prepare_gec_testset.py --falko-merlin DIR/data --wi-locness DIR/wi+locness \\
-        --out ~/gec-testset/set
+    PYTHONPATH=. python3 tools/prepare_gec_testset.py --testset gec-2026-12 \\
+        --corpora ~/gec-testset/corpora.json --out ~/gec-testset/set-2026-12 \\
+        --manifest ~/gec-testset/manifest.json
 """
 
 from __future__ import annotations
 
 import argparse
-from collections import defaultdict
-import json
+from collections.abc import Sequence
+from datetime import date
 from pathlib import Path
-import random
-import re
+import sys
 
-from tools.model_eval.results import TestRecord, write_records
+from tools.model_eval import recipes, testset
+from tools.model_eval.cli_paths import workspace_path
+from tools.model_eval.results import TestRecord, is_language_code, write_records
 
-_SEED = 20261107
-_ERROR_TEXTS = 8
-_CORRECT_SENTENCES = 10
-
-
-def _detokenize(text: str) -> str:
-    """Undo the space-separated tokenisation of the Falko-MERLIN files."""
-    text = re.sub(r"\s+([.,;:!?%)\]])", r"\1", text)
-    text = re.sub(r"([(\[])\s+", r"\1", text)
-    return re.sub(r"\s{2,}", " ", text).strip()
+_words = testset.words
 
 
-def _words(text: str) -> int:
-    return len(text.split())
+def _day(text: str) -> str:
+    """Return *text* as a ``YYYY-MM-DD`` date, refusing anything else."""
+    try:
+        return date.fromisoformat(text).isoformat()
+    except ValueError as error:
+        raise argparse.ArgumentTypeError(f"{text!r} is not a date (YYYY-MM-DD)") from error
 
 
-# ── German: Falko-MERLIN ──────────────────────────────────────────────────────
-
-
-def _german_groups(directory: Path) -> dict[str, list[tuple[str, str, str]]]:
-    """Return ``{origin: [(text id, source, reference) per sentence group]}`` of the test split."""
-    groups: dict[str, list[tuple[str, str, str]]] = {}
-    for origin in ("falko", "merlin"):
-        path = directory / "source" / f"{origin}-id-ctok-zh1.txt.test"
-        rows: list[tuple[str, str, str]] = []
-        for line in path.read_text(encoding="utf-8").splitlines():
-            parts = line.split("\t")
-            if len(parts) == 3:
-                rows.append((parts[0], _detokenize(parts[1]), _detokenize(parts[2])))
-        groups[origin] = rows
-    return groups
-
-
-def _german(directory: Path, rng: random.Random) -> list[dict]:
-    texts: dict[str, list[tuple[str, str]]] = {}
-    for origin, rows in _german_groups(directory).items():
-        by_id: dict[str, list[tuple[str, str]]] = defaultdict(list)
-        for text_id, source, reference in rows:
-            by_id[f"{origin}:{text_id}"].append((source, reference))
-        texts.update(by_id)
-
-    # MERLIN texts are short letters and used whole; Falko texts are long essays (10 to 73
-    # sentences), so an excerpt of consecutive sentences stands in for the text.
-    excerpts: dict[str, list[tuple[str, str]]] = {}
-    for key, pairs in texts.items():
-        windows = [
-            pairs[start : start + size]
-            for size in (4, 5, 6, 7, 8, 9)
-            for start in range(0, len(pairs) - size + 1)
-            if len(pairs) > 9 or (start == 0 and size == len(pairs))
-        ]
-        windows = [
-            w
-            for w in windows
-            if 50 <= _words(" ".join(a for a, _ in w)) <= 130 and sum(a != b for a, b in w) >= 3
-        ]
-        if windows:
-            excerpts[key] = rng.choice(windows)
-    keys = list(excerpts)
-    rng.shuffle(keys)
-    per_origin = {"falko": [], "merlin": []}
-    for key in keys:
-        per_origin[key.split(":", 1)[0]].append(key)
-    chosen = per_origin["merlin"][: _ERROR_TEXTS // 2] + per_origin["falko"][: _ERROR_TEXTS // 2]
-
-    records = []
-    for key in chosen:
-        pairs = excerpts[key]
-        records.append(
-            {
-                "id": f"de-{len(records) + 1:02d}",
-                "kind": "errors",
-                "origin": f"Falko-MERLIN test, {key}"
-                + (" (excerpt)" if len(pairs) < len(texts[key]) else ""),
-                "source": " ".join(s for s, _ in pairs),
-                "reference": " ".join(r for _, r in pairs),
-            }
-        )
-
-    # Sentences the annotators left alone, one per text.
-    sentences = []
-    keys = sorted(texts, key=lambda k: (k.startswith("merlin"), rng.random()))  # Falko first
-    for key in keys:
-        if key in chosen:
-            continue
-        ok = [
-            s
-            for s, r in texts[key]
-            if s == r
-            and 8 <= _words(s) <= 22
-            and s[0].isupper()
-            and s[-1] in ".?!"
-            and not re.search(r"\d|\bX\b|[A-Z]{3}|[„“\"]", s)
-        ]
-        if ok:
-            sentences.append(rng.choice(ok))
-        if len(sentences) == _CORRECT_SENTENCES:
-            break
-    records.append(
-        _correct_record("de-correct", "Falko-MERLIN test (unchanged sentences)", sentences)
+def _corpus_help() -> str:
+    """Return the ``--corpus`` help: every registered corpus with what its path expects."""
+    return "a corpus and where it is, repeatable: " + ", ".join(
+        f"{name}={testset.adapter_class(name).HINT}" for name in testset.names()
     )
-    return records
 
 
-# ── English: W&I+LOCNESS ──────────────────────────────────────────────────────
+def _bands(records: Sequence[TestRecord]) -> str:
+    """Return the item count per band, for the line the builder prints; ``""`` without bands."""
+    counts: dict[str, int] = {}
+    for record in records:
+        if record.kind == "errors" and record.band:
+            counts[record.band] = counts.get(record.band, 0) + 1
+    if not counts:
+        return ""
+    return "; " + testset.band_summary(counts)
 
 
-def _apply_edits(text: str, edits: list) -> str:
-    """Apply the first annotator's ``[start, end, replacement]`` edits (None = no correction).
+def _left_alone(records: Sequence[TestRecord]) -> str:
+    """Return how many sentences the reference leaves alone, for the line the builder prints."""
+    sentences = sum(len(record.sentence_spans) for record in records)
+    alone = sum(len(record.unchanged_sentences) for record in records)
+    return f"{alone} of {sentences} sentences left alone by the reference"
 
-    Sorted by span only: the tail is applied first, so the earlier spans keep their offsets.  The
-    replacement cannot be part of the key, because it may be ``None``.
+
+def _remove_stale(out: Path, *, keep: set[str]) -> None:
+    """Delete the ``<language>.jsonl`` files of an earlier build that this one does not write.
+
+    A later run reads every language file of the set, so a leftover ``fr.jsonl`` would be run on
+    texts that are no longer part of it.
     """
-    for start, end, replacement in sorted(edits, key=lambda e: (e[0], e[1]), reverse=True):
-        if replacement is not None:
-            text = text[:start] + replacement + text[end:]
-    return text
-
-
-def _english(directory: Path, rng: random.Random) -> list[dict]:
-    records = []
-    quota = {"A": 2, "B": 3, "C": 3}
-    for level, count in quota.items():
-        rows = [
-            json.loads(line)
-            for line in (directory / "json" / f"{level}.dev.json").open(encoding="utf-8")
-        ]
-        candidates = [
-            row
-            for row in rows
-            if 60 <= _words(row["text"]) <= 160
-            and row["edits"]
-            and len([e for e in row["edits"][0][1] if e[2] is not None]) >= 3
-        ]
-        rng.shuffle(candidates)
-        for row in candidates[:count]:
-            records.append(
-                {
-                    "id": f"en-{len(records) + 1:02d}",
-                    "kind": "errors",
-                    "origin": f"W&I+LOCNESS dev, level {level} ({row['cefr']}), id {row['id']}",
-                    "source": row["text"],
-                    "reference": re.sub(
-                        r"[ \t]{2,}", " ", _apply_edits(row["text"], row["edits"][0][1])
-                    ),
-                }
-            )
-
-    # Native-speaker essays: sentences without any annotator edit.
-    sentences = []
-    rows = [json.loads(line) for line in (directory / "json" / "N.dev.json").open(encoding="utf-8")]
-    rng.shuffle(rows)
-    for row in rows:
-        spans = [(e[0], e[1]) for ann in row["edits"] for e in ann[1]]
-        text = row["text"]
-        ok = []
-        for match in re.finditer(
-            r"(?:^|(?<=[.!?]\s)|(?<=\n))[A-Z][a-z][^.!?\n\"()]{35,170}[.!?](?=\s|$)", text
-        ):
-            if not any(s < match.end() and match.start() < e for s, e in spans):
-                ok.append(match.group(0))
-        if ok:
-            sentences.append(rng.choice(ok))
-        if len(sentences) == _CORRECT_SENTENCES:
-            break
-    records.append(
-        _correct_record("en-correct", "W&I+LOCNESS dev, N (unedited sentences)", sentences)
-    )
-    return records
-
-
-def _correct_record(record_id: str, origin: str, sentences: list[str]) -> dict:
-    return {
-        "id": record_id,
-        "kind": "correct",
-        "origin": origin,
-        "sentences": sentences,
-        "source": " ".join(sentences),
-        "reference": " ".join(sentences),
-    }
-
-
-def _french(path: Path) -> list[dict]:
-    records = []
-    for line in path.read_text(encoding="utf-8").splitlines():
-        record = json.loads(line)
-        if record["kind"] == "correct":
-            record = _correct_record(record["id"], record["origin"], record["sentences"])
-        records.append(record)
-    return records
-
-
-def _as_record(language: str, record: dict) -> TestRecord:
-    """Return *record* (as the readers of the corpora build it) as a typed test record."""
-    return TestRecord(
-        id=record["id"],
-        language=language,
-        kind=record["kind"],
-        origin=record["origin"],
-        source=record["source"],
-        reference=record.get("reference", ""),
-        sentences=tuple(record.get("sentences", ())),
-    )
+    for path in sorted(out.glob("*.jsonl")):
+        if is_language_code(path.stem) and path.stem not in keep:
+            path.unlink()
+            print(f"{path}: removed, it is not part of this build")
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=(__doc__ or "").split("\n\n")[0])
-    parser.add_argument("--falko-merlin", type=Path, required=True, help="the extracted data/ dir")
-    parser.add_argument("--wi-locness", type=Path, required=True, help="the extracted wi+locness/")
     parser.add_argument(
-        "--french",
-        type=Path,
-        default=Path(__file__).with_name("gec_fr_invented.jsonl"),
-        help="the invented French set (default: next to this script)",
+        "--testset",
+        required=True,
+        help=f"the test-set id, whose recipe selects the texts: {', '.join(recipes.names())}",
     )
     parser.add_argument(
-        "--out", type=Path, required=True, help="output directory (outside the repo)"
+        "--corpus", action="append", default=[], metavar="NAME=PATH", help=_corpus_help()
+    )
+    parser.add_argument(
+        "--corpora",
+        type=workspace_path,
+        help="a JSON object {name: path}; a relative path in it is relative to the file",
+    )
+    parser.add_argument(
+        "--out", type=workspace_path, required=True, help="output directory (outside the repo)"
+    )
+    parser.add_argument(
+        "--manifest",
+        type=workspace_path,
+        help="write the manifest of the set here (pointers and hashes, no corpus text)",
+    )
+    parser.add_argument(
+        "--built",
+        type=_day,
+        default=date.today().isoformat(),
+        help="the day the set is built, YYYY-MM-DD (default: today); two builds of one day are "
+        "byte-identical",
     )
     args = parser.parse_args()
 
-    args.out.mkdir(parents=True, exist_ok=True)
-    sets = {
-        "de": _german(args.falko_merlin, random.Random(_SEED)),
-        "en": _english(args.wi_locness, random.Random(_SEED)),
-        "fr": _french(args.french),
-    }
-    for language, records in sets.items():
-        path = args.out / f"{language}.jsonl"
-        write_records(path, [_as_record(language, record) for record in records])
-        errors = sum(1 for r in records if r["kind"] == "errors")
-        words = sum(_words(r["source"]) for r in records if r["kind"] == "errors")
+    try:
+        recipe = recipes.recipe(args.testset)
+    except ValueError as error:
+        print(f"refused: {error}", file=sys.stderr)
+        return 2
+    try:
+        corpora = testset.Corpora(testset.corpus_paths(args.corpus, args.corpora))
+    except ValueError as error:
+        print(f"refused: {error}", file=sys.stderr)
+        return 2
+    if missing := corpora.missing(recipe.corpora):
         print(
-            f"{path}: {errors} texts with errors ({words} words), "
-            f"{len(records) - errors} group of correct sentences"
+            f"refused: the test set {recipe.testset!r} needs {testset.corpus_flags(missing)}",
+            file=sys.stderr,
         )
-    return 0
+        return 2
+
+    try:
+        items = recipe.select(corpora)
+        by_language: dict[str, list[dict]] = {}
+        for item in items:
+            by_language.setdefault(item["language"], []).append(item)
+        built = {
+            language: [
+                testset.to_record(testset.resolve(item, corpora), band=item.get("band", ""))
+                for item in language_items
+            ]
+            for language, language_items in by_language.items()
+        }
+    except testset.RESOLVE_ERRORS as error:
+        print(
+            f"refused: the corpora do not fit the test set {recipe.testset!r}: {error}",
+            file=sys.stderr,
+        )
+        return 2
+
+    args.out.mkdir(parents=True, exist_ok=True)
+    _remove_stale(args.out, keep=set(built))
+    for language, records in built.items():
+        path = args.out / f"{language}.jsonl"
+        write_records(path, records)
+        errors = sum(1 for record in records if record.kind == "errors")
+        words = sum(_words(record.source) for record in records if record.kind == "errors")
+        labels = [label for record in records for label in record.labels]
+        print(
+            f"{path}: {errors} texts with errors ({words} words{_bands(records)}), "
+            f"{len(records) - errors} group of correct sentences; "
+            f"{_left_alone(records)}; "
+            f"{sum(1 for label in labels if label.code)} of {len(labels)} reference changes labelled"
+        )
+
+    if not args.manifest:
+        return 0
+    return _write_manifest(args, items, corpora, seed=recipe.seed)
+
+
+def _write_manifest(args, items: Sequence[dict], corpora: testset.Corpora, *, seed: int) -> int:
+    """Write the manifest of *items* and check it against the corpora; return the exit code.
+
+    The manifest is written first, so a build that disagrees with its corpora still leaves the file
+    a reader can look at.  Both checks then run: the corpus files must still be the ones the
+    manifest pinned, and every item must rebuild to the hashes it recorded.  A dirty tree is a
+    warning, not a refusal — a trial build is allowed, a set that is committed is not.
+    """
+    revision = _revision()
+    manifest = testset.build_manifest(
+        items,
+        corpora,
+        testset=args.testset,
+        built=args.built,
+        selection_seed=seed,
+        builder_revision=revision,
+    )
+    testset.write_manifest(args.manifest, manifest)
+    corpus = testset.corpus_problems(manifest, corpora)
+    rebuilt = testset.check_items(manifest, corpora)
+    print(
+        f"{args.manifest}: {len(manifest['items'])} items, built {manifest['built']} at "
+        f"{revision}, {len(corpus)} corpus problems, {len(rebuilt)} item problems"
+    )
+    for problem in corpus + rebuilt:
+        print(f"  {problem}")
+    if revision.endswith("+dirty"):
+        print(
+            "built from a dirty tree: fine for a trial, not for a set that is committed",
+            file=sys.stderr,
+        )
+    return 1 if corpus or rebuilt else 0
+
+
+def _revision() -> str:
+    """Return the commit this script was run at (``"unknown"`` outside git)."""
+    from tools.model_eval.measure import tool_revision  # noqa: PLC0415  # not needed for the set
+
+    return tool_revision()
 
 
 if __name__ == "__main__":

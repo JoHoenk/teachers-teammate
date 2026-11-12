@@ -43,8 +43,8 @@ Teacher's Teammate distinguishes three computer types ("hardware profiles"): a b
 | `gemma4:e4b` | ~5 GB | 6.6 GB | too large | ★ best | works | Default. Fast, and fits an 8 GB graphics card entirely |
 | `gemma4:12b` | ~9.5 GB | 8 GB | too large | too large | ★ best | Best for 16 GB graphics cards; on an 8 GB card it runs partly on the processor, so slower |
 | `qwen3.5:9b` | ~7.2 GB | 6.6 GB | too large | good | good | Alternative from another model family; can also read scanned pages |
-| `mistral:latest` | ~5.5 GB | 4.4 GB | too large | works | works | General-purpose writing model |
-| `mistral-nemo:12b` | ~8.5 GB | 7.1 GB | too large | too large | works | General-purpose writing model |
+| `mistral:latest` | ~5.5 GB | 4.4 GB | too large | works | works | General-purpose writing model. It does not reliably follow the review format. |
+| `mistral-nemo:12b` | ~8.5 GB | 7.1 GB | too large | too large | works | General-purpose writing model. It does not reliably follow the review format. |
 | `gpt-oss:20b` | ~14 GB | 13.8 GB | too large | too large | works | Large reasoning model; its answers do not fit the proofreading format, so it gives corrections only |
 
 The ratings in these tables are for a computer whose main memory is not taken into account. With the main memory known (always, for Ollama on your own computer), "too large" becomes "slower" where the rest of the model fits there; see below.
@@ -187,7 +187,7 @@ The pre-steps column lists steps to enable *in addition to* the defaults (Dewarp
 ## Understanding AI models
 
 Both the reading (OCR) models and the proofreading and content-review models are AI
-language models. Two settings change how they behave and how much hardware they need:
+language models. Two things change how they behave and how much hardware they need:
 their **quantisation** (which affects size and memory) and their **temperature**
 (which affects how predictable their output is). This section explains both in plain
 terms, plus where the models come from.
@@ -215,20 +215,13 @@ want the best quality, choose a higher quant level.
 
 ### Temperature
 
-**Temperature** controls how predictable a model's output is. It ranges from `0.0` to
-`2.0` and can be set separately for reading, proofreading, and content review in
-**Settings → AI models…**.
-The setting is tucked away under **Expert settings**, which is collapsed unless you
-already chose a value other than the default — you rarely need to change it.
-
-- **`0.0` (recommended for reading and proofreading)** makes the model as consistent
-  and literal as possible. The same input gives the same output, which is what you want
-  when transcribing or correcting text — you do not want the model inventing wording.
-- **Higher values (0.5–1.0)** allow more variation. This is occasionally useful for
-  content review, where a little more freedom can produce a more natural-sounding
-  report, but it also raises the risk of the model straying from the source.
-
-When in doubt, leave temperature at `0.0`.
+**Temperature** controls how predictable a model's output is: low values make it
+consistent and literal, high values allow more variation. There is nothing to set. The
+app sends each model the temperature its maker recommends on the model's card (for
+example `1.0` for the Gemma models and `0.7` for Qwen), because a model works best the
+way it was tuned. A model whose maker names no value, and every online service, gets
+`0.2` for proofreading and `0.7` for the content review. Reading handwriting always uses
+`0.0`: a page has one right transcription, so the model should not invent wording.
 
 ### Models from Hugging Face
 
@@ -328,14 +321,15 @@ The answer is a *review*, not just a text: the corrected text plus a short expla
 | `explanation_language` | `""` | Language of the explanations and note tables; empty means the language of the document |
 | `correction_output` | `review` | `review` explains the changes; `text` is *Corrections only (faster)* and is also the automatic fallback when a model cannot answer in the explanation format |
 | `answer_format_review`, `answer_format_text` | `""` | Your own answer format for the two modes (empty = built-in). It tells the model how to fill in its reply; the app reads the reply in this format, so change it only if you know what you are doing. A custom format is tied to `answer_format_version` (written for you by the GUI; without it the current version is assumed). When an update changes the built-in format, an edit written for the older one is dropped with a warning. The proofreading **Instructions…** dialog edits them under *Answer format (advanced)* |
-| `proofreading_context` | `auto` | The context window (in tokens) the model gets for proofreading. `auto` grows the window with the free memory of a large graphics card — 8192, 16384 or 32768, whichever still fits the card entirely — and stays at 8192 when there is no card, the card size is unknown or Ollama runs on another computer. A fixed value from `8192`, `16384`, `32768` overrides `auto`; useful for a remote server whose card the app cannot see. A larger window lets longer texts through, but it also needs more memory |
+| `proofreading_context` | `auto` | The context window (in tokens) the model gets. Proofreading itself stays at 8192: a larger window doubles the length of the answer, and no check measures whether the longer answers are still as good. The setting therefore only sizes the **content review**, and only when that runs on its own Ollama model — with the same model for both stages, or with an online service, it changes nothing. `auto` grows the window with the size of the graphics card — 8192, 16384 or 32768, whichever still fits the card entirely — and stays at 8192 when there is no card, the card size is unknown or Ollama runs on another computer. It uses the card's total size, not the memory free at the moment: free memory changes between runs, and a window that changed with it would make Ollama reload the model and would invalidate the result cache. A fixed value from `8192`, `16384`, `32768` overrides `auto`; useful for a remote server whose card the app cannot see. A larger window lets longer texts through, but it also needs more memory |
 
-**Upgrading from an earlier version.** The default proofreading model is now `gemma4:e4b` and the
-default proofreading temperature `0.2` (it was `qwen3.5:9b` and `0.7`). Saved settings are not
-changed, so an installation that never touched the model or the temperature keeps what the file
-says; an installation that used the defaults gets the new ones. Files that were proofread with the
-default settings are proofread again once, because the model and the temperature are part of what
-the result cache compares.
+**Upgrading from an earlier version.** The default proofreading model is now `gemma4:e4b`
+(it was `qwen3.5:9b`). Saved settings are not changed, so an installation that never touched the
+model keeps what the file says; an installation that used the defaults gets the new one. The
+temperature keys of an older `ocr.toml` (`ocr_temperature`, `correction_temperature`,
+`evaluate_temperature`) are ignored: the app now sends the temperature each model's maker
+recommends. Files that were proofread with the default settings are proofread again once, because
+the model and the temperature are part of what the result cache compares.
 
 Long texts are proofread in pieces: the text is split at paragraph, then sentence boundaries, each piece is proofread on its own and the answers are joined back into one review. A correction that would need to see two pieces at once — a sentence split across the boundary, or a change that only makes sense together with an earlier one — cannot be made. If one piece falls back to corrections only, the file keeps the explanations it has and a warning says that explanations are missing for part of the text. If a piece fails outright the whole file counts as failed and is retried on the next run.
 

@@ -157,7 +157,7 @@ def test_restore_defaults_resets_only_the_pages_own_keys(qtbot) -> None:
         "preprocess_method": "none",
         "pdf_render_dpi": 600,
         "debug": True,
-        "correction_temperature": 0.9,
+        "correction_model": "my-writer:7b",
     }
     scan.load(changed)
     models.load(changed)
@@ -168,7 +168,7 @@ def test_restore_defaults_resets_only_the_pages_own_keys(qtbot) -> None:
     assert values["preprocess_method"] == DEFAULTS["preprocess_method"]
     assert values["pdf_render_dpi"] == DEFAULTS["pdf_render_dpi"]
     assert values["debug"] == DEFAULTS["debug"]
-    assert models.values()["correction_temperature"] == pytest.approx(0.9)
+    assert models.values()["correction_model"] == "my-writer:7b"
 
 
 # ── AI models: reading handwriting ─────────────────────────────────────────────
@@ -254,19 +254,16 @@ def test_the_pages_values_round_trip(qtbot) -> None:
     """
     Given  saved AI settings for all three steps
     When   they are loaded and read back
-    Then   the page returns the same engine, services, models and temperatures
+    Then   the page returns the same engine, services and models
     """
     page = AiModelsPage(settings_context(CachingDummyAppService()))
     qtbot.addWidget(page)
     saved = {
         "ocr_engine": "tesseract",
-        "ocr_temperature": 0.4,
         "correction_provider": "ollama",
         "correction_model": "my-writer:7b",
-        "correction_temperature": 0.3,
         "evaluate_provider": "ollama",
         "evaluate_model": "my-reviewer:7b",
-        "evaluate_temperature": 1.0,
     }
 
     page.load(saved)
@@ -398,68 +395,23 @@ def test_ai_models_points_to_online_services_while_a_key_is_missing(qtbot, monke
     assert not any("Where the AI runs" in label.text() for label in complete.findChildren(QLabel))
 
 
-# ── AI models: temperatures behind "Expert settings" ──────────────────────────
+# ── AI models: no temperature to set ───────────────────────────────────────────
 
 
 @pytest.mark.gui
-def test_the_temperatures_sit_in_one_collapsed_expert_section(qtbot) -> None:
+def test_the_ai_models_page_has_no_temperature(qtbot) -> None:
     """
-    Given  the AI models page with default temperatures
-    When   it is created
-    Then   all three temperatures are inside one "Expert settings" section, which is collapsed
+    Given  the AI models page
+    When   it is created and its values are read
+    Then   it has no Expert settings section and returns no temperature key
     """
     page = AiModelsPage(settings_context(DummyAppService()))
     qtbot.addWidget(page)
     page.load({})
 
-    section = page._expert_section
-    assert section._toggle.text() == "Expert settings"
-    assert not section.expanded
-    for box in (page._ocr_temperature, page._correction_temperature, page._evaluate_temperature):
-        assert box.parent() is section.content_widget
-    values = page.values()
-    assert values["ocr_temperature"] == DEFAULTS["ocr_temperature"]
-    assert values["correction_temperature"] == DEFAULTS["correction_temperature"]
-    assert values["evaluate_temperature"] == DEFAULTS["evaluate_temperature"]
-
-
-@pytest.mark.gui
-@pytest.mark.parametrize(
-    "key", ["ocr_temperature", "correction_temperature", "evaluate_temperature"]
-)
-def test_expert_settings_open_when_a_saved_temperature_is_not_the_default(qtbot, key) -> None:
-    """
-    Given  a saved temperature other than the default (any of the three)
-    When   the page is created
-    Then   "Expert settings" is open, so the chosen value is visible, and it is returned
-    """
-    page = AiModelsPage(settings_context(DummyAppService()))
-    qtbot.addWidget(page)
-
-    page.load({key: 0.9})
-
-    assert page._expert_section.expanded
-    assert page.values()[key] == pytest.approx(0.9)
-
-
-@pytest.mark.gui
-def test_changed_temperatures_are_returned(qtbot) -> None:
-    """
-    Given  the AI models page
-    When   the three temperatures are changed
-    Then   values() returns each under its own key
-    """
-    page = AiModelsPage(settings_context(DummyAppService()))
-    qtbot.addWidget(page)
-    page._ocr_temperature.setValue(0.5)
-    page._correction_temperature.setValue(0.3)
-    page._evaluate_temperature.setValue(1.0)
-
-    values = page.values()
-
-    assert values["ocr_temperature"] == pytest.approx(0.5)
-    assert values["correction_temperature"] == pytest.approx(0.3)
-    assert values["evaluate_temperature"] == pytest.approx(1.0)
+    assert not hasattr(page, "_expert_section")
+    assert not [key for key in page.values() if key.endswith("temperature")]
+    assert not [key for key in page.owned_keys() if key.endswith("temperature")]
 
 
 @pytest.mark.gui
@@ -505,7 +457,7 @@ def test_scan_quality_has_the_preparation_options(scan_page) -> None:
     Given  the Scan quality page
     When   it is created
     Then   it has the corrections, enhancements and PDF options, and no temperature of its own
-           (that sits in the Expert section of AI models); the PDF options are in its own
+          ; the PDF options are in its own
            collapsed Expert section, not among the everyday options
     """
     scan = scan_page._controls
@@ -608,15 +560,15 @@ def test_preview_is_requested_through_the_window(scan_page) -> None:
 def test_ocr_config_combines_the_recognition_choice_with_the_scan_choices(scan_page) -> None:
     """
     Given  the Scan quality page with another preset and DPI
-    When   an OcrConfig is built for a method, a model and a temperature from AI models
+    When   an OcrConfig is built for a method and a model from AI models
     Then   it holds all of them
     """
     scan_page.load({"preprocess_method": "none", "pdf_render_dpi": 144})
 
-    config = scan_page.ocr_config("tesseract", "some-model", 0.7)
+    config = scan_page.ocr_config("tesseract", "some-model")
 
     assert (config.engine, config.model) == ("tesseract", "some-model")
-    assert config.temperature == pytest.approx(0.7)
+    assert config.temperature == 0.0
     assert config.preprocess_method == "none"
     assert config.pdf_render_dpi == 144
 
@@ -636,6 +588,22 @@ def test_the_default_preparation_follows_the_engine(scan_page) -> None:
 # ── Where the AI runs ──────────────────────────────────────────────────────────────
 
 
+class _ThreadRecordingService(DummyAppService):
+    """Records the thread of every hardware call, so a GUI-thread probe cannot hide."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.threads: list[threading.Thread] = []
+
+    def detect_hardware(self, ollama_url: str, *, refresh: bool = False):
+        self.threads.append(threading.current_thread())
+        return super().detect_hardware(ollama_url, refresh=refresh)
+
+    def resolve_hardware_profile(self, setting: str, ollama_url: str):
+        self.threads.append(threading.current_thread())
+        return super().resolve_hardware_profile(setting, ollama_url)
+
+
 @pytest.fixture
 def computer_page(qtbot) -> AiSetupPage:
     page = AiSetupPage(settings_context(DummyAppService()))
@@ -649,13 +617,232 @@ def test_this_computer_owns_only_the_server_and_the_profile(computer_page) -> No
     """
     Given  the Where the AI runs page
     When   it is created
-    Then   it has a server field, a "Download a model…" button and the editable profile; it
-           owns exactly ollama_url and hardware_profile
+    Then   it has a server field, a "Download a model…" button, the editable profile and the
+           proofreading context; it owns exactly those three keys
     """
     assert computer_page._ollama_url is not None
     assert computer_page._download_model_btn is not None
     assert computer_page._hardware_selector._combo is not None
-    assert computer_page.owned_keys() == {"ollama_url", "hardware_profile"}
+    assert computer_page._context_combo is not None
+    assert computer_page.owned_keys() == {
+        "ollama_url",
+        "hardware_profile",
+        "proofreading_context",
+    }
+
+
+@pytest.mark.gui
+def test_the_proofreading_context_round_trips_through_load_and_values(computer_page) -> None:
+    """
+    Given  the Where the AI runs page
+    When   it is loaded with a pinned window and its values are read back
+    Then   the combo shows that window and hands it back unchanged
+    """
+    computer_page.load({"proofreading_context": "16384"})
+
+    assert computer_page._context_combo.currentData() == "16384"
+    assert computer_page.values()["proofreading_context"] == "16384"
+
+
+def _wait_for_detection(qtbot, page: AiSetupPage) -> None:
+    """Wait until the page's selector has resolved this computer."""
+    qtbot.waitUntil(lambda: page._hardware_selector.resolved() is not None, timeout=5000)
+
+
+def _own_model_settings() -> dict:
+    """Return settings whose content review runs on another Ollama model than proofreading."""
+    return {
+        "correction_provider": "ollama",
+        "correction_model": "qwen3:4b",
+        "evaluate_provider": "ollama",
+        "evaluate_model": "gemma4:e4b",
+    }
+
+
+@pytest.mark.gui
+def test_the_automatic_context_says_what_the_review_gets(computer_page, qtbot) -> None:
+    """
+    Given  a local proofreading model and a content review on another Ollama model
+    When   the page is loaded and this computer has been checked
+    Then   the automatic entry names the window the content review gets, and the combo is usable
+    """
+    computer_page.load(_own_model_settings())
+    _wait_for_detection(qtbot, computer_page)
+
+    index = computer_page._context_combo.findData("auto")
+    assert computer_page._context_combo.itemText(index) == (
+        "Automatic (now: 8,192 tokens for the content review)"
+    )
+    assert computer_page._context_combo.isEnabled()
+
+
+@pytest.mark.gui
+def test_the_context_choice_is_disabled_where_it_changes_no_window(computer_page, qtbot) -> None:
+    """
+    Given  proofreading and the content review on the same Ollama model
+    When   the page is loaded and this computer has been checked
+    Then   the choice is disabled and the tooltip says what the setting would size
+    """
+    computer_page.load(
+        {
+            "correction_provider": "ollama",
+            "correction_model": "qwen3:4b",
+            "evaluate_provider": "ollama",
+            "evaluate_model": "qwen3:4b",
+        }
+    )
+    _wait_for_detection(qtbot, computer_page)
+
+    index = computer_page._context_combo.findData("auto")
+    assert computer_page._context_combo.itemText(index) == "Automatic"
+    assert not computer_page._context_combo.isEnabled()
+    assert "8,192 tokens" in computer_page._context_combo.toolTip()
+
+
+@pytest.mark.gui
+def test_an_online_review_disables_the_context_choice(computer_page, qtbot) -> None:
+    """
+    Given  an online content review, which brings its own window, and capped proofreading
+    When   the page is loaded and this computer has been checked
+    Then   the choice is disabled, because no window of the run depends on it
+    """
+    computer_page.load(
+        {
+            "correction_provider": "ollama",
+            "correction_model": "qwen3:4b",
+            "evaluate_provider": "openai",
+            "evaluate_model": "gpt-4o-mini",
+        }
+    )
+    _wait_for_detection(qtbot, computer_page)
+
+    assert not computer_page._context_combo.isEnabled()
+
+
+@pytest.mark.gui
+def test_the_automatic_context_says_it_is_still_checking_this_computer(qtbot, monkeypatch) -> None:
+    """
+    Given  a page whose hardware check has not answered yet
+    When   it is loaded
+    Then   the automatic entry says the computer is being checked and the choice is disabled
+    """
+    from teachers_teammate.gui._hardware_profile_selector import (  # noqa: PLC0415
+        HardwareProfileSelector,
+    )
+
+    monkeypatch.setattr(HardwareProfileSelector, "_start_resolve", lambda self, *, refresh: None)
+    page = AiSetupPage(settings_context(DummyAppService()))
+    qtbot.addWidget(page)
+    page.show()
+
+    page.load(_own_model_settings())
+
+    index = page._context_combo.findData("auto")
+    assert page._context_combo.itemText(index) == "Automatic (checking this computer…)"
+    assert not page._context_combo.isEnabled()
+
+
+@pytest.mark.gui
+def test_a_failed_check_of_this_computer_does_not_leave_the_choice_waiting(qtbot) -> None:
+    """
+    Given  a page whose hardware check fails
+    When   it is loaded
+    Then   the automatic entry stops saying it is checking, and is worked out without a card
+    """
+
+    class _Failing(DummyAppService):
+        def detect_hardware(self, ollama_url: str, *, refresh: bool = False):
+            raise RuntimeError("nvidia-smi crashed")
+
+        def resolve_hardware_profile(self, setting: str, ollama_url: str):
+            raise RuntimeError("nvidia-smi crashed")
+
+    page = AiSetupPage(settings_context(_Failing()))
+    qtbot.addWidget(page)
+    page.show()
+
+    page.load(_own_model_settings())
+
+    index = page._context_combo.findData("auto")
+    qtbot.waitUntil(
+        lambda: page._context_combo.itemText(index) != "Automatic (checking this computer…)",
+        timeout=5000,
+    )
+
+
+@pytest.mark.gui
+def test_the_page_never_checks_this_computer_on_the_gui_thread(qtbot) -> None:
+    """
+    Given  a page whose service records the thread of every hardware call
+    When   the page is loaded and shown
+    Then   neither the profile nor the detection was resolved on the GUI thread
+    """
+    service = _ThreadRecordingService()
+    page = AiSetupPage(settings_context(service))
+    qtbot.addWidget(page)
+    page.show()
+
+    page.load(_own_model_settings())
+    page.on_shown()
+    _wait_for_detection(qtbot, page)
+
+    assert service.threads
+    assert threading.current_thread() not in service.threads
+
+
+@pytest.mark.gui
+def test_the_automatic_context_follows_the_detected_card(qtbot, monkeypatch) -> None:
+    """
+    Given  a review model whose memory grows with the window, on a computer without a card
+    When   the selector resolves a 16 GB card
+    Then   the automatic entry names the larger window that card gives
+    """
+    from teachers_teammate.domain import context_budget as choice_module  # noqa: PLC0415
+    from teachers_teammate.domain.model_catalog import (  # noqa: PLC0415
+        DetectionReason,
+        HardwareDetection,
+        OllamaModelSpec,
+    )
+
+    spec = OllamaModelSpec(
+        tag="gemma4:e4b",
+        category="general",
+        memory_gb=5.0,
+        download_gb=3.0,
+        note="",
+        context_gb_per_8k=1.0,
+    )
+    monkeypatch.setattr(
+        choice_module, "find_spec", lambda tag: spec if tag == "gemma4:e4b" else None
+    )
+    service = DummyAppService()
+    service.detection = HardwareDetection(profile="cpu", reason=DetectionReason.NO_GPU_FOUND)
+    page = AiSetupPage(settings_context(service))
+    qtbot.addWidget(page)
+    page.show()
+    page.load(_own_model_settings())
+    _wait_for_detection(qtbot, page)
+
+    index = page._context_combo.findData("auto")
+    assert page._context_combo.itemText(index) == (
+        "Automatic (now: 8,192 tokens for the content review)"
+    )
+
+    service.detection = HardwareDetection(
+        profile="16gb", reason=DetectionReason.GPU_DETECTED, gpu_name="Test GPU", memory_gb=16.0
+    )
+    page._hardware_selector.refresh_status()
+    qtbot.waitUntil(
+        lambda: (
+            page._hardware_selector.resolved() is not None
+            and page._hardware_selector.resolved().profile == "16gb"
+        ),
+        timeout=5000,
+    )
+
+    assert page._context_combo.itemText(index) == (
+        "Automatic (now: 32,768 tokens for the content review)"
+    )
 
 
 @pytest.mark.gui
@@ -678,13 +865,17 @@ def test_this_computer_returns_the_server_address(computer_page) -> None:
     """
     Given  a custom server address typed in
     When   values() is called
-    Then   it returns that address and the profile, and nothing else
+    Then   it returns that address, the profile and the context, and nothing else
     """
     computer_page._ollama_url.setText("http://custom:11434")
 
     values = computer_page.values()
 
-    assert values == {"ollama_url": "http://custom:11434", "hardware_profile": "auto"}
+    assert values == {
+        "ollama_url": "http://custom:11434",
+        "hardware_profile": "auto",
+        "proofreading_context": "auto",
+    }
 
 
 @pytest.mark.gui

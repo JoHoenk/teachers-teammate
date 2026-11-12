@@ -426,40 +426,59 @@ def test_ocr_temperature_default_is_zero() -> None:
     assert cfg.ocr.temperature == 0.0
 
 
-def test_correction_temperature_default_is_0_2() -> None:
+def test_the_correction_temperature_is_the_makers_recommendation() -> None:
     """
-    Given  a Config created without an explicit correction_temperature
-    When   correction_temperature is read
-    Then   it defaults to 0.2 (proofreading changes less of what was right at a low temperature)
+    Given  Configs for a model whose maker recommends a temperature and for one that does not
+    When   the proofreading temperature is read
+    Then   the first gets the recommended value and the second the app's 0.2
     """
-    cfg = _cfg()
+    local = {"correction_provider": "ollama"}
+    assert _cfg(correction_model="gemma4:e4b", **local).correction_temperature == 1.0
+    assert _cfg(correction_model="gpt-oss:20b", **local).correction_temperature == 0.2
+
+
+def test_an_online_provider_gets_the_default_temperature() -> None:
+    """
+    Given  an online provider with a model name that is also a recommended Ollama tag
+    When   the proofreading and review temperatures are read
+    Then   the Ollama table does not apply: 0.2 and 0.7
+    """
+    cfg = _cfg(
+        correction_provider="openai",
+        correction_model="gemma4:e4b",
+        evaluate_provider="openai",
+        evaluate_model="gemma4:e4b",
+    )
+
     assert cfg.correction_temperature == 0.2
-
-
-def test_evaluate_temperature_default_is_0_7() -> None:
-    """
-    Given  a Config created without an explicit evaluate_temperature
-    When   evaluate_temperature is read
-    Then   it defaults to 0.7
-    """
-    cfg = _cfg()
     assert cfg.evaluate_temperature == 0.7
 
 
-def test_load_config_file_parses_temperature_keys(tmp_path: Path) -> None:
+def test_the_review_temperature_defaults_to_0_7() -> None:
     """
-    Given  a TOML file with all three temperature keys
-    When   load_config_file() is called
-    Then   all three temperature values are present in the result dict
+    Given  a Config whose review model has no recommended temperature
+    When   evaluate_temperature is read
+    Then   it is 0.7
+    """
+    cfg = _cfg(evaluate_provider="ollama", evaluate_model="gpt-oss:20b")
+
+    assert cfg.evaluate_temperature == 0.7
+
+
+def test_temperature_keys_of_an_old_settings_file_are_ignored(tmp_path: Path) -> None:
+    """
+    Given  a settings file of an older version that still holds the three temperature keys
+    When   load_config_file() reads it
+    Then   none of them is passed on: teachers no longer set a temperature
     """
     cfg_file = tmp_path / "ocr.toml"
     cfg_file.write_text(
-        "ocr_temperature = 0.0\ncorrection_temperature = 0.5\nevaluate_temperature = 0.9\n"
+        "ocr_temperature = 0.3\ncorrection_temperature = 0.5\nevaluate_temperature = 0.9\n"
     )
+
     result = load_config_file(cfg_file)
-    assert result.get("ocr_temperature") == 0.0
-    assert result.get("correction_temperature") == 0.5
-    assert result.get("evaluate_temperature") == 0.9
+
+    assert not {"ocr_temperature", "correction_temperature", "evaluate_temperature"} & set(result)
 
 
 # ── hardware_profile setting ───────────────────────────────────────────────

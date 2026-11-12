@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Collection
+from collections.abc import Callable, Collection, Mapping
 import dataclasses
 from dataclasses import dataclass
 import importlib.util
@@ -15,8 +15,8 @@ import time
 from typing import TYPE_CHECKING
 import uuid
 
-from ..config import Config, OcrConfig
-from ..domain.context_budget import memory_at_context_gb
+from ..config import DEFAULTS, Config, OcrConfig
+from ..domain.context_budget import RunWindows, memory_at_context_gb
 from ..domain.correction_policy import DEFAULT_LEVEL, normalize_output_mode
 from ..domain.correction_review import CorrectionReview
 from ..domain.data_location import DataFlow, StageLocation, is_ollama_cloud_model
@@ -97,10 +97,12 @@ from ..infrastructure.workflow.cache_service import (
 )
 from ..interfaces import SUPPORTED_SUFFIXES
 from .commands import ApplicationCommands
+from .context_choice import ContextChoice, context_choice
 from .data_flow import describe_data_flow, llm_location, ocr_location, ocr_refusal
 from .formatting import TextFormatter
 from .model_recommendations import ModelRecommendationService
 from .sent_text import Anonymize, SentTexts, describe_sent_texts
+from .text_size import TextSizeEstimate, proofreading_pieces
 
 if TYPE_CHECKING:
     from ..infrastructure.anonymizer import SpacyAnonymizer
@@ -203,6 +205,7 @@ class ProcessingApplicationService:
         self._commands = ApplicationCommands(
             discovery=self._discovery,
             state_store_factory=self._state_store,
+            windows_for=self.resolved_windows,
         )
 
     def _state_store(self, config: Config) -> StateRepository:
@@ -267,8 +270,9 @@ class ProcessingApplicationService:
         store = self._state_store(config)
 
         ocr_prompt = get_ocr_prompt(config.language)
-        expected_corr_hash = compute_correction_config_hash(config)
-        expected_eval_hash = compute_eval_config_hash(config)
+        windows = self.resolved_windows(config)
+        expected_corr_hash = compute_correction_config_hash(config, windows)
+        expected_eval_hash = compute_eval_config_hash(config, windows)
 
         from ..domain.freshness import StageHashes, first_stale_stage_for_hashes  # noqa: PLC0415
 
@@ -403,6 +407,58 @@ class ProcessingApplicationService:
         """Resolve the ``hardware_profile`` *setting* into a concrete detection."""
         return self._recommendations.resolve_hardware_profile(setting, ollama_url)
 
+    def cached_hardware_profile(self, setting: str, ollama_url: str) -> HardwareDetection | None:
+        """Resolve *setting* without probing this computer; ``None`` while it is unknown.
+
+        The graphics probe runs ``nvidia-smi`` and the ROCm tools, so it must never happen on
+        the GUI thread: a caller that gets ``None`` asks a background task for
+        :meth:`detect_hardware` and asks again.
+        """
+        return self._recommendations.cached_hardware_profile(setting, ollama_url)
+
+    def resolved_windows(self, config: Config) -> RunWindows:
+        """Return the context windows a run with *config* uses on this computer.
+
+        The same resolution the run itself uses, so a cache key computed here matches the
+        one the run writes — once this computer has been probed.  It never probes itself:
+        the GUI asks for the expected cache keys on its own thread, and the probe runs
+        ``nvidia-smi`` and the ROCm tools.  While the computer is still unknown the base
+        window is returned; a caller that needs the card-derived window calls
+        :meth:`detect_hardware` in the background first and asks again
+        (:meth:`cached_hardware_profile` says whether that is needed).
+        """
+        return resolve_run_windows(
+            config, self.cached_hardware_profile(config.hardware_profile, config.ollama_url)
+        )
+
+    def context_choice(
+        self, settings: Mapping[str, object], card_gb: float | None
+    ) -> ContextChoice:
+        """Return what the context setting changes on this computer, and what ``"auto"`` gives.
+
+        The same rule the run uses (:func:`~teachers_teammate.domain.context_budget.run_windows`),
+        so the Settings page cannot promise a window the run does not use.  *card_gb* comes from
+        a detection the caller already has: this does no I/O, so it is safe on the GUI thread.
+        """
+        proofreading_provider = str(
+            settings.get("correction_provider") or DEFAULTS["correction_provider"]
+        )
+        review_provider = str(settings.get("evaluate_provider") or DEFAULTS["evaluate_provider"])
+        return context_choice(
+            proofreading_provider=proofreading_provider,
+            # An empty model means the provider's default, as it does for a run.
+            proofreading_model=str(
+                settings.get("correction_model")
+                or self.default_model_for_task(proofreading_provider, "correction")
+            ),
+            review_provider=review_provider,
+            review_model=str(
+                settings.get("evaluate_model")
+                or self.default_model_for_task(review_provider, "evaluation")
+            ),
+            card_gb=card_gb,
+        )
+
     def ollama_catalog(self) -> tuple[OllamaModelSpec, ...]:
         """Return the curated Ollama model catalog."""
         return self._recommendations.ollama_catalog()
@@ -486,6 +542,7 @@ class ProcessingApplicationService:
         output_mode: str = "review",
         text_format: TextFormat = "plain",
         answer_format: str = "",
+        compact_json: bool = False,
     ) -> tuple[str, str]:
         """Return ``(policy, fixed)``: the teacher's instructions and the answer format.
 
@@ -493,6 +550,8 @@ class ProcessingApplicationService:
         what is sent.  *text_format* defaults to plain text; for Markdown texts the caller
         passes ``"markdown"`` and the fixed part gains the notation hint.  *answer_format*
         is the teacher's own text for *output_mode* (``""`` = the built-in one).
+        *compact_json* is the chosen model's request-profile choice, so the dialog shows the
+        request of that model and not another one's.
         """
         from ..infrastructure.correction import instruction_parts  # noqa: PLC0415
 
@@ -503,6 +562,7 @@ class ProcessingApplicationService:
             text_format=text_format,
             mode=normalize_output_mode(output_mode),
             answer_format=answer_format,
+            compact_json=compact_json,
         )
 
     def default_answer_formats(self) -> tuple[str, str]:
@@ -532,8 +592,6 @@ class ProcessingApplicationService:
 
     def build_lookup_config(self, input_dir: Path, output_dir: Path) -> Config:
         """Return a minimal Config for reading cached state before output_dir is confirmed."""
-        from ..config import DEFAULTS  # noqa: PLC0415
-
         return Config(
             input_dir=input_dir,
             output_dir=output_dir,
@@ -861,6 +919,74 @@ class ProcessingApplicationService:
             self.describe_anonymizer_models(config),
         )
 
+    def estimate_text_size(
+        self,
+        config: Config,
+        raw_text: str,
+        text_format: TextFormat = "plain",
+        hardware: HardwareDetection | None = None,
+    ) -> TextSizeEstimate:
+        """Return how long *raw_text* is and how many proofreading requests it takes.
+
+        The count comes from the corrector the run builds and from
+        :meth:`~teachers_teammate.infrastructure.correction.ChunkingCorrector.split`, so the
+        estimate and the run cannot disagree.  Building the corrector is cheap: neither the
+        Ollama client nor the corrector contacts the server.
+
+        It is an estimate: the text really sent is anonymized when personal-info removal is
+        on, and the content review reads the proofread text, not the OCR text.
+
+        An online proofreading provider brings its own request limit, which the app does not
+        set, so there is nothing to count: the answer is the word count alone.  That also keeps
+        the GUI thread from importing LangChain, reading the keychain and building a client
+        every few hundred milliseconds.
+
+        Args:
+            hardware: The detection the caller already has.  ``None`` keeps the base window.
+                The caller resolves it, because resolving it here would run the graphics probe
+                on the GUI thread.
+        """
+        from ..infrastructure.evaluation import NativeOllamaEvaluator  # noqa: PLC0415
+        from ..infrastructure.reporting import CallbackReporter  # noqa: PLC0415
+        from ..infrastructure.stage_builder import StageBuilder  # noqa: PLC0415
+
+        words = len(TextFormatter.plain_text(raw_text, text_format).split())
+        if config.correction_provider != "ollama":
+            return TextSizeEstimate(
+                words=words, pieces=None, words_per_piece=None, content_review_fits=None
+            )
+        builder = StageBuilder(
+            config,
+            self._component_factory,
+            CallbackReporter(lambda _line: None),  # an estimate says nothing on the console
+            hardware,
+        )
+        corrector = builder.build_corrector()
+        pieces: int | None = None
+        words_per_piece: int | None = None
+        if corrector is not None:
+            pieces, words_per_piece = proofreading_pieces(
+                corrector, raw_text, config.language, text_format=text_format
+            )
+        content_review_fits: bool | None = None
+        if (
+            corrector is not None
+            and config.evaluation_enabled
+            and config.evaluate_provider == "ollama"
+        ):
+            # Only a NativeOllamaEvaluator answers ``fits``; an online one brings its own limit.
+            evaluator = builder.build_evaluation(corrector)
+            if isinstance(evaluator, NativeOllamaEvaluator):
+                content_review_fits = evaluator.fits(
+                    raw_text, config.language, text_format=text_format
+                )
+        return TextSizeEstimate(
+            words=words,
+            pieces=pieces,
+            words_per_piece=words_per_piece,
+            content_review_fits=content_review_fits,
+        )
+
     def get_provider_data_region(self, provider: str) -> str:
         """Return where *provider* processes the data: ``"eu"``, ``"non_eu"`` or ``"unknown"``."""
         return get_provider_data_region(provider)
@@ -949,12 +1075,12 @@ class ProcessingApplicationService:
             answer_format=(
                 config.answer_format_review if mode == "review" else config.answer_format_text
             ),
+            compact_json=config.correction_profile.compact_json,
         )
         return f"{policy}\n\n{fixed}"
 
     def _sent_evaluation_prompt(self, config: Config, text_format: TextFormat) -> str:
         """Return the instructions the evaluator sends, or ``""`` when it sends none."""
-        from ..config import DEFAULTS  # noqa: PLC0415
         from ..domain.notation import with_notation_hint  # noqa: PLC0415
 
         prompt = config.evaluate_prompt or DEFAULTS["evaluate_prompt"]

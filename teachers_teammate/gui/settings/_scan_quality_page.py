@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-import dataclasses
 from typing import Any
 
 from PySide6.QtCore import Signal
@@ -116,8 +115,6 @@ class ScanQualityPage(SettingsPageBase):
         """Apply the image preparation the newly chosen recognition method works best with."""
         self._controls.set_engine_default(engine)
 
-    def ocr_config(self, engine: str, model: str, temperature: float) -> OcrConfig:
+    def ocr_config(self, engine: str, model: str) -> OcrConfig:
         """Return the full :class:`OcrConfig` for *engine*/*model* with this page's choices."""
-        return dataclasses.replace(
-            self._controls.ocr_config(engine, model), temperature=temperature
-        )
+        return self._controls.ocr_config(engine, model)

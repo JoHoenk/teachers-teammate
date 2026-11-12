@@ -16,6 +16,7 @@ Provides:
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, ClassVar, cast
 
@@ -42,7 +43,7 @@ from teachers_teammate.gui._worker import _ConnectionCheckThread
 from teachers_teammate.gui.settings import SettingsContext, SettingsResult
 from teachers_teammate.gui.settings import _addons_page
 
-from ._service_stubs import LocalDataFlowStub
+from ._service_stubs import LocalDataFlowStub, context_choice_from
 
 
 class FakeGuiService(LocalDataFlowStub):
@@ -102,19 +103,6 @@ class FakeGuiService(LocalDataFlowStub):
     def default_correction_prompt(self) -> str:
         return ""
 
-    def correction_instructions(
-        self,
-        *,
-        prompt: str,
-        language: str,
-        level: str = "B2",
-        output_mode: str = "review",
-        text_format: TextFormat = "plain",
-        answer_format: str = "",
-    ) -> tuple[str, str]:
-        _ = (prompt, language, level, output_mode, text_format, answer_format)
-        return "", ""
-
     def default_answer_formats(self) -> tuple[str, str]:
         from teachers_teammate.domain.answer_format import (  # noqa: PLC0415
             REVIEW_FORMAT,
@@ -162,9 +150,17 @@ class FakeGuiService(LocalDataFlowStub):
             memory_gb=8.0,
         )
 
+    def context_choice(self, settings: Mapping[str, object], card_gb: float | None):
+        """Answer with the real rule: the page must not promise a window the run does not use."""
+        return context_choice_from(settings, card_gb)
+
     def detect_hardware(self, ollama_url: str, *, refresh: bool = False) -> HardwareDetection:
         _ = refresh
         return self.resolve_hardware_profile("auto", ollama_url)
+
+    def cached_hardware_profile(self, setting: str, ollama_url: str) -> HardwareDetection | None:
+        """Answer as the real service does once it has probed: this stub never probes."""
+        return self.resolve_hardware_profile(setting, ollama_url)
 
     def classify_ollama_models(
         self, tags: list[str], ollama_url: str, *, cached_only: bool = False

@@ -11,6 +11,7 @@ _OCR_SRCS = [
     "application/__init__.py",
     "application/benchmark_service.py",
     "application/commands.py",
+    "application/context_choice.py",
     "application/correction_options.py",
     "application/correction_review.py",
     "application/data_flow.py",
@@ -18,6 +19,7 @@ _OCR_SRCS = [
     "application/model_recommendations.py",
     "application/sent_text.py",
     "application/service.py",
+    "application/text_size.py",
     "cli.py",
     "cli_composition.py",
     "config.py",
@@ -38,7 +40,6 @@ _OCR_SRCS = [
     "domain/notation.py",
     "domain/output_files.py",
     "domain/pdf_text_layer.py",
-    "domain/proofreading_quality.py",
     "domain/stages.py",
     "domain/text_chunks.py",
     "exceptions.py",
@@ -160,6 +161,7 @@ _GUI_SRCS = [
 # gui_lib: those feed py_package/py_wheel, which would then bundle the packages
 # into the wheel. The *_typed targets below exist purely for the lint targets.
 _TYPED_DEPS_OCR = [
+    "@ocr_test_dependencies//httpx:pkg",
     "@ocr_test_dependencies//langchain_core:pkg",
     "@ocr_test_dependencies//lxml:pkg",
     "@ocr_test_dependencies//markdown_it_py:pkg",

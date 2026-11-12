@@ -7,6 +7,13 @@ Build and serve:
 
 load("@rules_python//sphinxdocs:sphinx.bzl", "sphinx_build_binary", "sphinx_docs")
 
+# The Markdown pages, for tests/tools/test_no_plan_references.py. Not built or shipped.
+filegroup(
+    name = "markdown",
+    srcs = glob(["*.md"]),
+    visibility = ["//visibility:public"],
+)
+
 sphinx_build_binary(
     name = "sphinx-build",
     data = [

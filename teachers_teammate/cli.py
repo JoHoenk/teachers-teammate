@@ -26,6 +26,7 @@ from typing import Protocol
 from ._model_defaults import default_model_for_task
 from .application.service import ProcessingApplicationService
 from .config import (
+    CONTEXT_SETTINGS,
     DEFAULTS,
     Config,
     OcrConfig,
@@ -172,6 +173,18 @@ def _add_correction_args(parser: argparse.ArgumentParser, providers: list[str] |
         const="review",
         help="Explain the changes and list unclear expressions (default; overrides a config "
         'file that sets correction_output = "text").',
+    )
+    corr_grp.add_argument(
+        "--proofreading-context",
+        default=DEFAULTS["proofreading_context"],
+        choices=CONTEXT_SETTINGS,
+        metavar="TOKENS",
+        help=(
+            "Context window for the content review when it runs on another Ollama model than "
+            "proofreading (proofreading uses 8192): 'auto' grows it with the size of the "
+            "graphics card (8192, 16384 or 32768, whichever still fits), a fixed value pins it "
+            "— useful for a remote server whose card the app cannot see."
+        ),
     )
 
 

@@ -165,6 +165,29 @@ class ModelRecommendationService:
             )
         return self.detect_hardware(ollama_url)
 
+    def cached_hardware_profile(self, setting: str, ollama_url: str) -> HardwareDetection | None:
+        """Resolve *setting* without ever probing this computer.
+
+        A concrete profile resolves as :meth:`resolve_hardware_profile` does (it reads only the
+        system memory, which is quick).  ``"auto"`` with a remote URL resolves as usual (no
+        probe).  ``"auto"`` with a local URL returns ``None`` while this process has not probed
+        yet: the probe runs ``nvidia-smi`` and the ROCm tools, which must never happen on the GUI
+        thread, so the caller asks a background task instead.
+        """
+        from ..infrastructure.ollama_utils import (  # noqa: PLC0415
+            is_local_ollama_url,
+            normalize_ollama_url,
+        )
+
+        if setting in HARDWARE_PROFILES:
+            return self.resolve_hardware_profile(setting, ollama_url)
+        url = normalize_ollama_url(ollama_url)
+        if not is_local_ollama_url(url):
+            return self.detect_hardware(url)
+        if self._probe is None:
+            return None
+        return self.detect_hardware(url)
+
     def _local_system_memory_gb(self, ollama_url: str) -> float | None:
         """Return this computer's memory when Ollama runs here, else ``None`` (it is unknown).
 

@@ -14,6 +14,7 @@ import logging
 import queue
 import socket
 import threading
+import time
 from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 
@@ -26,6 +27,8 @@ from .reporting import Reporter, StdoutReporter
 
 if TYPE_CHECKING:
     import ollama
+
+    from ..exceptions import OCRError
 
 logger = logging.getLogger(__name__)
 
@@ -169,35 +172,103 @@ def models_include(model_name: str, available: list[str]) -> bool:
     return any(m == model_name or m.split(":", maxsplit=1)[0] == model_base for m in available)
 
 
+def _mapped_stream[T](stream: Iterator[T], base_url: str) -> Iterator[T]:
+    """Translate the errors a streaming Ollama request raises into this module's errors.
+
+    A streaming call only *creates* a generator; the HTTP request is made when the generator is
+    first read.  So a refused connection and an HTTP error both arrive from the stream, not from
+    the call, and the ``ollama`` client leaves them untranslated (``httpx.ConnectError``,
+    ``ollama.ResponseError``).  Mapping them here is what lets a caller tell an unreachable
+    server from a model that failed.
+
+    A connection that breaks *after* the first chunk is a plain
+    :exc:`~teachers_teammate.exceptions.OCRError`: a server that dies in the middle of an answer
+    can be the model's doing (a CUDA crash), and the evaluation tools ask the server afterwards
+    and decide there.
+    """
+    import httpx  # noqa: PLC0415  # comes with ollama, a core dependency
+    import ollama  # noqa: PLC0415
+
+    from ..exceptions import OCRError, OllamaUnreachableError  # noqa: PLC0415
+
+    started = False
+    try:
+        for item in stream:
+            started = True
+            yield item
+    except ollama.ResponseError as exc:
+        raise OCRError(
+            f"HTTP error from Ollama: {exc}", status_code=getattr(exc, "status_code", None)
+        ) from exc
+    except (httpx.ConnectError, httpx.ConnectTimeout, ConnectionError) as exc:
+        if started:
+            raise OCRError(str(exc)) from exc
+        raise OllamaUnreachableError(f"cannot connect to Ollama at {base_url} — {exc}") from exc
+    finally:
+        # The reader thread closes the outer generator to stop the server generating; without
+        # this the inner HTTP response would stay open until garbage collection.
+        close = getattr(stream, "close", None)
+        if close is not None:
+            try:
+                close()
+            except Exception:  # noqa: BLE001  # a stream that cannot be closed is already gone
+                pass
+
+
+def _rejects_think(exc: OCRError) -> bool:
+    """Return whether *exc* is Ollama refusing the ``think`` flag (a 400 that names it)."""
+    return exc.status_code == 400 and "think" in str(exc).lower()
+
+
 def _consume_iterator_with_first_token_timeout[T](
     it: Iterator[T],
     first_token_timeout: float,
+    total_timeout: float | None = None,
 ) -> list[T]:
-    """Consume *it* in a background thread, enforcing a timeout only on the first item.
+    """Consume *it* in a background thread, enforcing a timeout on the first item.
 
     Returns the full list of items, or raises :exc:`~teachers_teammate.exceptions.OCRError`
-    when the first item does not arrive within *first_token_timeout* seconds.
+    when the first item does not arrive within *first_token_timeout* seconds.  Once the answer
+    has begun it may take as long as it takes, unless *total_timeout* is given: then the whole
+    answer has that many seconds, :exc:`~teachers_teammate.exceptions.OCRDeadlineError` is
+    raised when it is still running, and the stream is closed so the server stops generating.
     """
-    from ..exceptions import OCRError  # noqa: PLC0415  # avoid circular import at module level
+    from ..exceptions import (  # noqa: PLC0415  # avoid circular import at module level
+        OCRDeadlineError,
+        OCRError,
+        OCRTimeoutError,
+    )
 
     item_queue: queue.Queue[T | BaseException | None] = queue.Queue()
+    abandoned = threading.Event()
 
     def _reader() -> None:
         try:
             for item in it:
+                if abandoned.is_set():
+                    break
                 item_queue.put(item)
         except Exception as exc:  # noqa: BLE001  # forward any iterator/transport error to the consumer thread via the queue
             item_queue.put(exc)
         finally:
+            # Closing a generator closes its HTTP response, which tells the server to stop.
+            close = getattr(it, "close", None)
+            if close is not None:
+                try:
+                    close()
+                except Exception:  # noqa: BLE001  # a stream that cannot be closed is already gone
+                    pass
             item_queue.put(None)  # sentinel: stream finished
 
     t = threading.Thread(target=_reader, daemon=True)
     t.start()
+    deadline = None if total_timeout is None else time.monotonic() + total_timeout
 
     try:
         first = item_queue.get(timeout=first_token_timeout)
     except queue.Empty:
-        raise OCRError(
+        abandoned.set()
+        raise OCRTimeoutError(
             f"No output within {first_token_timeout}s — the model may still be loading into "
             "memory. Try again in a moment, or check that Ollama is running."
         ) from None
@@ -206,9 +277,23 @@ def _consume_iterator_with_first_token_timeout[T](
     item: T | BaseException | None = first
     while item is not None:
         if isinstance(item, BaseException):
+            # An error the stream already mapped (see _mapped_stream) keeps its type: a caller
+            # must be able to tell an unreachable server from a model that failed.
+            if isinstance(item, OCRError):
+                raise item
             raise OCRError(str(item)) from item
         results.append(item)
-        item = item_queue.get()
+        if deadline is None:
+            item = item_queue.get()
+            continue
+        try:
+            item = item_queue.get(timeout=max(deadline - time.monotonic(), 0.0))
+        except queue.Empty:
+            abandoned.set()
+            raise OCRDeadlineError(
+                f"the answer was still being written after {total_timeout:g}s; "
+                "the request was abandoned"
+            ) from None
 
     t.join()
     return results
@@ -228,6 +313,14 @@ class ChatStats:
     """Tokens of the request (system instructions, answer format and text)."""
     eval_count: int = 0
     """Tokens of the answer."""
+    total_duration: int = 0
+    """Nanoseconds the server spent on the whole request (loading the model included)."""
+    load_duration: int = 0
+    """Nanoseconds spent loading the model; near zero when it was already in memory."""
+    prompt_eval_duration: int = 0
+    """Nanoseconds spent reading the request."""
+    eval_duration: int = 0
+    """Nanoseconds spent writing the answer: ``eval_count`` tokens over this is the speed."""
 
     @property
     def truncated(self) -> bool:
@@ -238,12 +331,19 @@ class ChatStats:
 def _chunk_stats(chunk: object) -> ChatStats:
     """Return the statistics of one stream chunk (empty ones for a chunk that reports none)."""
     done_reason = getattr(chunk, "done_reason", "")
-    prompt_eval_count = getattr(chunk, "prompt_eval_count", 0)
-    eval_count = getattr(chunk, "eval_count", 0)
+
+    def count(name: str) -> int:
+        value = getattr(chunk, name, 0)
+        return value if isinstance(value, int) else 0
+
     return ChatStats(
         done_reason=done_reason if isinstance(done_reason, str) else "",
-        prompt_eval_count=prompt_eval_count if isinstance(prompt_eval_count, int) else 0,
-        eval_count=eval_count if isinstance(eval_count, int) else 0,
+        prompt_eval_count=count("prompt_eval_count"),
+        eval_count=count("eval_count"),
+        total_duration=count("total_duration"),
+        load_duration=count("load_duration"),
+        prompt_eval_duration=count("prompt_eval_duration"),
+        eval_duration=count("eval_duration"),
     )
 
 
@@ -516,7 +616,7 @@ class OllamaClient:
                 raise OCRError("model returned an empty response (stopped at its output limit)")
         return content
 
-    def chat_with_stats(
+    def chat_with_stats(  # noqa: PLR0913  # one keyword shape, shared with chat()
         self,
         model: str,
         prompt: str,
@@ -527,6 +627,7 @@ class OllamaClient:
         timeout: float = 120.0,
         format: dict | str | None = None,  # pylint: disable=redefined-builtin  # the ollama API's name
         system: str = "",
+        total_timeout: float | None = None,
     ) -> tuple[str, ChatStats]:
         """Send a chat request and return ``(text, stats)``.
 
@@ -542,8 +643,11 @@ class OllamaClient:
                      Defaults to ``False`` to keep reasoning out of OCR output.
                      Forwarded to Ollama; ignored (with a no-``think`` retry) on
                      older clients or models that don't support it.
-            timeout: Overall request timeout in seconds.
+            timeout: Seconds to wait for the first token of the answer.
             system:  Optional system message sent before the user message.
+            total_timeout: Seconds the whole answer may take; ``None`` (the app's choice) sets no
+                     limit once the answer has begun.  Evaluation tools set it so a model that
+                     loops cannot hold a run for a quarter of an hour.
             format:  Optional response format.  A JSON schema (dict) makes Ollama
                      constrain the decoding to that schema, which is how proofreading
                      gets a machine-readable answer; ``None`` leaves it free-form.
@@ -553,7 +657,7 @@ class OllamaClient:
         """
         import ollama  # noqa: PLC0415
 
-        from ..exceptions import OCRError  # noqa: PLC0415
+        from ..exceptions import OCRError, OllamaUnreachableError  # noqa: PLC0415
 
         message: dict = {"role": "user", "content": prompt}
         if images:
@@ -561,36 +665,45 @@ class OllamaClient:
         messages = [{"role": "system", "content": system}, message] if system else [message]
 
         structured: dict = {} if format is None else {"format": format}
+
+        def open_stream(think_flag: bool | None) -> Iterator:
+            kwargs: dict = {
+                "model": model,
+                "messages": messages,
+                "stream": True,
+                "options": options,
+                **structured,
+            }
+            if think_flag is not None:
+                kwargs["think"] = think_flag
+            return client.chat(**kwargs)
+
         try:
             client = ollama.Client(host=self.base_url, timeout=timeout)
             try:
-                stream = client.chat(
-                    model=model,
-                    messages=messages,
-                    stream=True,
-                    options=options,
-                    think=think,
-                    **structured,
-                )
-            except (TypeError, ollama.ResponseError):
-                # Older ollama clients lack the ``think`` kwarg (TypeError) and
-                # non-thinking models reject it (ResponseError) — retry without
-                # it. The output cleaner strips any leaked reasoning regardless.
-                stream = client.chat(
-                    model=model,
-                    messages=messages,
-                    stream=True,
-                    options=options,
-                    **structured,
-                )
-        except ollama.ResponseError as exc:
-            raise OCRError(
-                f"HTTP error from Ollama: {exc}", status_code=getattr(exc, "status_code", None)
-            ) from exc
+                stream = open_stream(think)
+            except TypeError:
+                # Older ollama clients lack the ``think`` kwarg. The output cleaner strips any
+                # leaked reasoning regardless.
+                stream = open_stream(None)
         except Exception as exc:
-            raise OCRError(f"cannot connect to Ollama at {self.base_url} — {exc}") from exc
+            raise OllamaUnreachableError(
+                f"cannot connect to Ollama at {self.base_url} — {exc}"
+            ) from exc
 
-        chunks = _consume_iterator_with_first_token_timeout(stream, timeout)
+        try:
+            chunks = _consume_iterator_with_first_token_timeout(
+                _mapped_stream(stream, self.base_url), timeout, total_timeout
+            )
+        except OCRError as exc:
+            # A model that does not support ``think`` rejects it with a 400 that names it.  Any
+            # other error (a model that is not pulled, an outage) is not retried: retrying would
+            # only double the wait.
+            if think is None or not _rejects_think(exc):
+                raise
+            chunks = _consume_iterator_with_first_token_timeout(
+                _mapped_stream(open_stream(None), self.base_url), timeout, total_timeout
+            )
         parts = [(chunk.message.content or "") for chunk in chunks if chunk.message]
         content = "".join(parts)
         # The last chunk carries the summary of the whole answer; earlier ones leave these unset.

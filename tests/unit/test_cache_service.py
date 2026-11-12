@@ -445,26 +445,42 @@ def test_preview_hash_changes_with_preprocessing_field(tmp_path: Path) -> None:
     assert h_off != h_on
 
 
-def test_correction_config_hash_changes_with_temperature(tmp_path: Path) -> None:
+def test_correction_config_hash_changes_with_the_recommended_temperature(tmp_path: Path) -> None:
     """
-    Given  two services differing only in correction_temperature
-    When   _correction_config_hash() is called on each
-    Then   the two hashes differ (temperature affects correction cache invalidation)
+    Given  a model whose recommended temperature changes between two app versions
+    When   _correction_config_hash() is called before and after
+    Then   the two hashes differ (the temperature is part of what is sent)
     """
-    svc_a, _, _ = _make_svc(tmp_path, correction_enabled=True, correction_temperature=0.0)
-    svc_b, _, _ = _make_svc(tmp_path, correction_enabled=True, correction_temperature=0.5)
-    assert svc_a._correction_config_hash() != svc_b._correction_config_hash()
+    from teachers_teammate.domain import model_catalog  # noqa: PLC0415
+
+    svc, _, _ = _make_svc(
+        tmp_path,
+        correction_enabled=True,
+        correction_provider="ollama",
+        correction_model="gemma4:e4b",
+    )
+    before = svc._correction_config_hash()
+    with patch.dict(model_catalog.RECOMMENDED_TEMPERATURES, {"gemma4:e4b": 0.5}):
+        assert svc._correction_config_hash() != before
 
 
-def test_eval_config_hash_changes_with_temperature(tmp_path: Path) -> None:
+def test_eval_config_hash_changes_with_the_recommended_temperature(tmp_path: Path) -> None:
     """
-    Given  two services differing only in evaluate_temperature
-    When   _eval_config_hash() is called on each
-    Then   the two hashes differ (temperature affects evaluation cache invalidation)
+    Given  a review model whose recommended temperature changes between two app versions
+    When   _eval_config_hash() is called before and after
+    Then   the two hashes differ (the temperature affects evaluation cache invalidation)
     """
-    svc_a, _, _ = _make_svc(tmp_path, evaluation_enabled=True, evaluate_temperature=0.0)
-    svc_b, _, _ = _make_svc(tmp_path, evaluation_enabled=True, evaluate_temperature=0.5)
-    assert svc_a._eval_config_hash() != svc_b._eval_config_hash()
+    from teachers_teammate.domain import model_catalog  # noqa: PLC0415
+
+    svc, _, _ = _make_svc(
+        tmp_path,
+        evaluation_enabled=True,
+        evaluate_provider="ollama",
+        evaluate_model="gemma4:e4b",
+    )
+    before = svc._eval_config_hash()
+    with patch.dict(model_catalog.RECOMMENDED_TEMPERATURES, {"gemma4:e4b": 0.5}):
+        assert svc._eval_config_hash() != before
 
 
 def test_correction_config_hash_changes_with_model(tmp_path: Path) -> None:
@@ -819,16 +835,23 @@ def test_eval_config_hash_changes_with_the_anonymizer_patterns(tmp_path: Path) -
     assert left._eval_config_hash() != right._eval_config_hash()
 
 
-def test_the_fingerprint_changes_when_the_context_window_is_pinned(tmp_path: Path) -> None:
+def test_the_fingerprint_changes_when_the_context_window_is_pinned(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """
     Given  two Ollama configs that differ only in the proofreading window setting
     When   the correction fingerprint is computed
     Then   a pinned window gives another key, so the files are proofread again
+
+    The proofreading cap is raised to 16384 for this test: the shipped one is the base window
+    (CW7), so every setting gives the same window, and this test is about the key.
     """
+    from teachers_teammate.domain import context_budget  # noqa: PLC0415
     from teachers_teammate.infrastructure.workflow.cache_service import (  # noqa: PLC0415
         compute_correction_config_hash,
     )
 
+    monkeypatch.setattr(context_budget, "PROOFREADING_NUM_CTX_CAP", 16384)
     auto = make_config(tmp_path, correction_enabled=True, correction_provider="ollama")
     pinned = make_config(
         tmp_path,
@@ -840,16 +863,23 @@ def test_the_fingerprint_changes_when_the_context_window_is_pinned(tmp_path: Pat
     assert compute_correction_config_hash(auto) != compute_correction_config_hash(pinned)
 
 
-def test_settings_that_give_the_same_window_give_the_same_fingerprint(tmp_path: Path) -> None:
+def test_settings_that_give_the_same_window_give_the_same_fingerprint(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """
     Given  two Ollama configs whose pinned windows are both above the proofreading cap
     When   the correction fingerprint is computed
     Then   the keys are equal, because the run uses the same window for both
+
+    The proofreading cap is raised to 16384 for this test: the shipped one is the base window
+    (CW7), so every setting gives the same window, and this test is about the key.
     """
+    from teachers_teammate.domain import context_budget  # noqa: PLC0415
     from teachers_teammate.infrastructure.workflow.cache_service import (  # noqa: PLC0415
         compute_correction_config_hash,
     )
 
+    monkeypatch.setattr(context_budget, "PROOFREADING_NUM_CTX_CAP", 16384)
     first = make_config(
         tmp_path,
         correction_enabled=True,
@@ -887,3 +917,237 @@ def test_the_window_setting_does_not_change_the_fingerprint_of_an_online_provide
     )
 
     assert compute_correction_config_hash(auto) == compute_correction_config_hash(pinned)
+
+
+def test_a_profile_change_changes_the_cache_key_of_that_model_only(tmp_path: Path) -> None:
+    """
+    Given  two catalog models, one of which gets a compact-JSON profile
+    When   the correction fingerprint is computed for each model, before and after
+    Then   only the changed model's key moves, because the profile is resolved per model
+    """
+    from teachers_teammate.domain import model_catalog  # noqa: PLC0415
+    from teachers_teammate.domain.model_catalog import (  # noqa: PLC0415
+        OLLAMA_CATALOG,
+        RequestProfile,
+    )
+    from teachers_teammate.infrastructure.workflow.cache_service import (  # noqa: PLC0415
+        compute_correction_config_hash,
+    )
+
+    changed = "gemma4:e4b"
+    untouched = "qwen3:4b"
+    catalog = tuple(
+        replace(spec, request_profile=RequestProfile(compact_json=True))
+        if spec.tag == changed
+        else spec
+        for spec in OLLAMA_CATALOG
+    )
+    configs = {
+        tag: make_config(
+            tmp_path, correction_enabled=True, correction_provider="ollama", correction_model=tag
+        )
+        for tag in (changed, untouched)
+    }
+    before = {tag: compute_correction_config_hash(cfg) for tag, cfg in configs.items()}
+
+    with patch.object(model_catalog, "OLLAMA_CATALOG", catalog):
+        after = {tag: compute_correction_config_hash(cfg) for tag, cfg in configs.items()}
+
+    assert after[changed] != before[changed]
+    assert after[untouched] == before[untouched]
+
+
+# ── The window the run really uses (CW1) ───────────────────────────────────
+
+
+def test_the_resolved_window_changes_the_correction_key(tmp_path: Path) -> None:
+    """
+    Given  one Ollama proofreading config and two windows the run could resolve
+    When   the correction fingerprint is computed for each window
+    Then   the keys differ, so results made at 8192 are not reused at 16384
+    """
+    from teachers_teammate.domain.context_budget import RunWindows  # noqa: PLC0415
+    from teachers_teammate.infrastructure.workflow.cache_service import (  # noqa: PLC0415
+        compute_correction_config_hash,
+    )
+
+    config = make_config(tmp_path, correction_enabled=True, correction_provider="ollama")
+
+    base = compute_correction_config_hash(config, RunWindows(proofreading=8192, evaluation=8192))
+    larger = compute_correction_config_hash(
+        config, RunWindows(proofreading=16384, evaluation=16384)
+    )
+
+    assert base != larger
+
+
+def test_a_pinned_window_without_resolved_windows_keeps_todays_key(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """
+    Given  a config that pins 16384 and no resolved windows
+    When   the correction fingerprint is computed
+    Then   it equals the key of the same window passed in, so nothing is invalidated
+
+    The proofreading cap is raised to 16384 for this test: the shipped one is the base window
+    (CW7), so the setting alone gives 8192, and this test is about the key.
+    """
+    from teachers_teammate.domain import context_budget  # noqa: PLC0415
+    from teachers_teammate.domain.context_budget import RunWindows  # noqa: PLC0415
+    from teachers_teammate.infrastructure.workflow.cache_service import (  # noqa: PLC0415
+        compute_correction_config_hash,
+    )
+
+    monkeypatch.setattr(context_budget, "PROOFREADING_NUM_CTX_CAP", 16384)
+    config = make_config(
+        tmp_path,
+        correction_enabled=True,
+        correction_provider="ollama",
+        proofreading_context="16384",
+    )
+
+    assert compute_correction_config_hash(config) == compute_correction_config_hash(
+        config, RunWindows(proofreading=16384, evaluation=16384)
+    )
+
+
+def test_an_online_provider_has_no_window_part_even_with_resolved_windows(
+    tmp_path: Path,
+) -> None:
+    """
+    Given  an online proofreading provider and two different resolved windows
+    When   the correction fingerprint is computed for each
+    Then   the keys are equal, because an online provider never receives the window
+    """
+    from teachers_teammate.domain.context_budget import RunWindows  # noqa: PLC0415
+    from teachers_teammate.infrastructure.workflow.cache_service import (  # noqa: PLC0415
+        compute_correction_config_hash,
+    )
+
+    config = make_config(tmp_path, correction_enabled=True, correction_provider="openai")
+
+    base = compute_correction_config_hash(config, RunWindows(proofreading=8192, evaluation=8192))
+    larger = compute_correction_config_hash(
+        config, RunWindows(proofreading=16384, evaluation=16384)
+    )
+
+    assert base == larger
+
+
+def test_the_evaluation_key_follows_the_review_window(tmp_path: Path) -> None:
+    """
+    Given  an Ollama content review and two windows the run could resolve
+    When   the evaluation fingerprint is computed for each window
+    Then   the keys differ, so a review that failed as "too long" is tried again
+    """
+    from teachers_teammate.domain.context_budget import RunWindows  # noqa: PLC0415
+    from teachers_teammate.infrastructure.workflow.cache_service import (  # noqa: PLC0415
+        compute_eval_config_hash,
+    )
+
+    config = make_config(
+        tmp_path,
+        correction_enabled=True,
+        correction_provider="ollama",
+        evaluation_enabled=True,
+        evaluate_provider="ollama",
+    )
+
+    base = compute_eval_config_hash(config, RunWindows(proofreading=8192, evaluation=8192))
+    larger = compute_eval_config_hash(config, RunWindows(proofreading=8192, evaluation=32768))
+
+    assert base != larger
+
+
+def test_an_online_content_review_has_no_window_part(tmp_path: Path) -> None:
+    """
+    Given  an online content review and two different resolved windows
+    When   the evaluation fingerprint is computed for each
+    Then   the keys are equal, because the app does not set an online provider's window
+    """
+    from teachers_teammate.domain.context_budget import RunWindows  # noqa: PLC0415
+    from teachers_teammate.infrastructure.workflow.cache_service import (  # noqa: PLC0415
+        compute_eval_config_hash,
+    )
+
+    config = make_config(
+        tmp_path,
+        correction_enabled=True,
+        correction_provider="ollama",
+        evaluation_enabled=True,
+        evaluate_provider="openai",
+    )
+
+    base = compute_eval_config_hash(config, RunWindows(proofreading=8192, evaluation=8192))
+    larger = compute_eval_config_hash(config, RunWindows(proofreading=8192, evaluation=32768))
+
+    assert base == larger
+
+
+def test_todays_catalog_keeps_the_cache_key_of_a_pinned_base_window(tmp_path: Path) -> None:
+    """
+    Given  today's catalog (no measured context growth) and a 16 GB card
+    When   the automatic window is resolved and the correction key is computed
+    Then   the key equals the key of a pinned "8192", so an upgrade invalidates nothing
+    """
+    from teachers_teammate.domain.context_budget import run_windows  # noqa: PLC0415
+    from teachers_teammate.domain.model_catalog import (  # noqa: PLC0415
+        FULL_SPEED_SHARE,
+        DetectionReason,
+        HardwareDetection,
+        find_spec,
+    )
+    from teachers_teammate.infrastructure.workflow.cache_service import (  # noqa: PLC0415
+        compute_correction_config_hash,
+    )
+
+    tag = "gemma4:e4b"
+    auto = make_config(
+        tmp_path, correction_enabled=True, correction_provider="ollama", correction_model=tag
+    )
+    pinned = make_config(
+        tmp_path,
+        correction_enabled=True,
+        correction_provider="ollama",
+        correction_model=tag,
+        proofreading_context="8192",
+    )
+    detection = HardwareDetection(
+        profile="16gb", reason=DetectionReason.GPU_DETECTED, memory_gb=16.0
+    )
+    windows = run_windows(
+        auto.proofreading_context,
+        proofreading_spec=find_spec(tag),
+        evaluation_spec=None,
+        card_gb=detection.card_gb,
+        same_model=False,
+        full_speed_share=FULL_SPEED_SHARE,
+    )
+
+    assert windows.proofreading == 8192
+    assert compute_correction_config_hash(auto, windows) == compute_correction_config_hash(pinned)
+
+
+def test_the_cache_service_keys_the_window_it_was_given(tmp_path: Path) -> None:
+    """
+    Given  two cache services over the same config but different resolved windows
+    When   each computes its correction hash
+    Then   the hashes differ, because the service keys the window it uses
+    """
+    from teachers_teammate.domain.context_budget import RunWindows  # noqa: PLC0415
+
+    cfg = make_config(tmp_path, correction_enabled=True, correction_provider="ollama")
+    base = CacheReconciliationService(
+        state_repo=MagicMock(),
+        artifact_store=MagicMock(),
+        config=cfg,
+        windows=RunWindows(proofreading=8192, evaluation=8192),
+    )
+    larger = CacheReconciliationService(
+        state_repo=MagicMock(),
+        artifact_store=MagicMock(),
+        config=cfg,
+        windows=RunWindows(proofreading=16384, evaluation=16384),
+    )
+
+    assert base._correction_config_hash() != larger._correction_config_hash()

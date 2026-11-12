@@ -67,7 +67,10 @@ class CorrectionAnswer(BaseModel):
         description="Only sentences that were changed or contain an unclear expression."
     )
     unclear: list[UnclearExpression] = Field(
-        description="Every unclear or ambiguous expression in the text."
+        description=(
+            "Only expressions whose meaning is unclear or ambiguous, never an error that was "
+            "already corrected; often empty."
+        )
     )
 
 

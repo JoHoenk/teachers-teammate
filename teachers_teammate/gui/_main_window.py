@@ -57,6 +57,7 @@ from ..config import (
     unavailable_ocr_engine,
 )
 from ..domain.data_location import LOCAL_OCR_ENGINES, OCR_ENGINE_NAMES, DataFlow
+from ..domain.model_catalog import HardwareDetection
 from ..domain.stages import PROGRESS_STAGE_OCR, PROGRESS_STAGE_PREPROCESSING
 from . import _user_text as txt
 from ._app_bootstrap import create_app
@@ -105,6 +106,15 @@ class _TextExportOutcome(NamedTuple):
 
     written: list[Path]
     failed: list[str]
+
+
+def _debounce_timer(parent: QWidget, interval_ms: int, slot: Callable[[], None]) -> QTimer:
+    """Return a single-shot timer that calls *slot* once *interval_ms* have passed."""
+    timer = QTimer(parent)
+    timer.setSingleShot(True)
+    timer.setInterval(interval_ms)
+    timer.timeout.connect(slot)
+    return timer
 
 
 def _spacy_problem(exc: BaseException) -> str | None:
@@ -367,10 +377,18 @@ class MainWindow(QMainWindow):
         # True while the requirement check of a Run / stage re-run is in flight.
         self._preflight_running = False
         self._text_export_running = False
-        self._ollama_retry_timer = QTimer(self)
-        self._ollama_retry_timer.setSingleShot(True)
-        self._ollama_retry_timer.setInterval(self._OLLAMA_RETRY_MS)
-        self._ollama_retry_timer.timeout.connect(self._recheck_ollama_status)
+        self._ollama_retry_timer = _debounce_timer(
+            self, self._OLLAMA_RETRY_MS, self._recheck_ollama_status
+        )
+        # The pieces counter follows the shown text and the settings, debounced: it builds
+        # the corrector, which is cheap but not free.
+        self._text_size_timer = _debounce_timer(
+            self, self._TEXT_SIZE_DELAY_MS, self._refresh_text_size_estimate
+        )
+        # The graphics probe must never run on the GUI thread, so the counter waits for it.
+        self._text_size_task = LatestTask(self)
+        # The same for the expected cache keys of the queue: they depend on the card.
+        self._cache_state_task = LatestTask(self)
         self._update_thread: UpdateCheckThread | None = None
         self._update_banner: QFrame
         self._stats: SystemStatsWidget
@@ -446,7 +464,7 @@ class MainWindow(QMainWindow):
             )
         )
         self._config_panel.results_changed.connect(self._on_results_changed)
-        self._config_panel.instructions_changed.connect(lambda: self._save_settings(notify=False))
+        self._config_panel.instructions_changed.connect(self._on_instructions_changed)
         self._preview.ocr_text_edited.connect(self._on_ocr_text_edited)
         self._preview.correction_text_edited.connect(self._on_correction_text_edited)
         self._preview.run_stage_requested.connect(self._on_preview_stage_run_requested)
@@ -685,6 +703,8 @@ class MainWindow(QMainWindow):
 
     #: How often a red Ollama status is re-checked (the server may start after the app).
     _OLLAMA_RETRY_MS = 10_000
+    #: How long the pieces counter waits after an edit or a settings change.
+    _TEXT_SIZE_DELAY_MS = 400
     _QSETTINGS_ORG = "TeachersTeammate"
     _QSETTINGS_APP = "TeachersTeammate"
 
@@ -832,8 +852,6 @@ class MainWindow(QMainWindow):
 
     def _on_first_start_detection(self, detection: object, error: BaseException | None) -> None:
         """Replace untouched static defaults with the BEST models for the profile."""
-        from ..domain.model_catalog import HardwareDetection  # noqa: PLC0415
-
         if error is not None or not isinstance(detection, HardwareDetection):
             return
         settings = self._config_panel.get_settings_dict()
@@ -937,6 +955,7 @@ class MainWindow(QMainWindow):
         try:
             config = self._config_panel.to_config()
             views = self._app_service.load_views_reconciled(config, files)
+            self._ensure_hardware_known_for_cache_state(config)
         except ValueError:
             # to_config() fails when output dir isn't set yet (DOCX requires it).
             # Build a minimal lookup-only Config so cached state is still shown.
@@ -1557,11 +1576,17 @@ class MainWindow(QMainWindow):
         self._save_settings(notify=False)
         self._check_llm_status()
         self._refresh_queue_from_inputs()
+        self._text_size_timer.start()  # the context setting changes how the text is split
 
     def _on_results_changed(self) -> None:
         """Step "Results" changed: save it, and show what is cached for the new folder."""
         self._save_settings(notify=False)
         self._refresh_queue_from_inputs()
+
+    def _on_instructions_changed(self) -> None:
+        """The proofreading instructions changed: save them, and re-count the parts."""
+        self._save_settings(notify=False)
+        self._text_size_timer.start()  # longer instructions leave less room for the text
 
     def _on_stop(self) -> None:
         if self._worker and self._worker.isRunning():
@@ -1896,6 +1921,7 @@ class MainWindow(QMainWindow):
         self._tabs.setCurrentIndex(1)
         self._current_preview_source_id = source_id
         self._update_preview_stage_statuses(source_id)
+        self._refresh_text_size_estimate(source_id)
 
     def _on_preview_stage_run_requested(self, source_id: str, stage: str) -> None:
         """Forward a per-stage run request from the preview panel to the normal handler."""
@@ -1927,6 +1953,91 @@ class MainWindow(QMainWindow):
             correction_invalidated=corr_inv,
             evaluation_invalidated=eval_inv,
         )
+
+    def _refresh_text_size_estimate(self, source_id: str | None = None) -> None:
+        """Show how many proofreading requests the text of *source_id* takes.
+
+        The estimate comes from the application service, which builds the same corrector the
+        run builds, so the counter and the run cannot disagree.  Nothing is shown when there
+        is no text yet or the settings are incomplete: the counter is a hint, never a gate.
+
+        The hardware detection is asked for, never resolved here: with "My computer" on a local
+        server the first resolution runs the graphics probe, which would freeze the window.
+        While it is unknown the counter stays hidden and the estimate runs again when the
+        detection arrives.
+        """
+        sid = source_id or self._current_preview_source_id
+        _sid, _name, _img, raw_txt, _corr, _eval = self._results_table.entry_for_source(sid)
+        if not raw_txt:
+            self._preview.set_text_size(None)
+            return
+        try:
+            config = self._config_panel.to_config()
+        except Exception:  # noqa: BLE001  # an incomplete setup must not break the preview
+            self._preview.set_text_size(None)
+            return
+        hardware = self._app_service.cached_hardware_profile(
+            config.hardware_profile, config.ollama_url
+        )
+        if hardware is None:
+            self._preview.set_text_size(None)
+            self._detect_hardware_for_text_size(config.ollama_url, sid)
+            return
+        self._show_text_size_estimate(config, sid, raw_txt, hardware)
+
+    def _ensure_hardware_known_for_cache_state(self, config: Config) -> None:
+        """Probe this computer in the background when the cache keys need to know the card.
+
+        With "My computer" on a local server, the context window a run uses — and so the cache
+        key of its results — depends on the card.  Until this computer has been probed the keys
+        are worked out for the base window; once it has, the queue is shown again with the
+        real ones.  The probe never runs on the GUI thread.
+        """
+        if (
+            self._app_service.cached_hardware_profile(config.hardware_profile, config.ollama_url)
+            is not None
+        ):
+            return
+
+        def detect() -> object:
+            return self._app_service.detect_hardware(config.ollama_url)
+
+        def done(_result: object, error: BaseException | None) -> None:
+            # A failed probe keeps the base window; asking again would only fail again.
+            if error is None:
+                self._refresh_queue_from_inputs()
+
+        self._cache_state_task.submit(detect, done)
+
+    def _detect_hardware_for_text_size(self, ollama_url: str, source_id: str) -> None:
+        """Probe this computer in the background, then estimate the size again."""
+
+        def detect() -> object:
+            return self._app_service.detect_hardware(ollama_url)
+
+        def done(_result: object, error: BaseException | None) -> None:
+            # A failed probe leaves the counter hidden; the estimate is a hint, not a gate.
+            # Asking again would submit the same failing probe in a loop.
+            if error is None:
+                self._refresh_text_size_estimate(source_id)
+
+        self._text_size_task.submit(detect, done)
+
+    def _show_text_size_estimate(
+        self, config: Config, source_id: str, raw_text: str, hardware: HardwareDetection
+    ) -> None:
+        """Show the estimate for *raw_text*, sized for the *hardware* already detected."""
+        try:
+            estimate = self._app_service.estimate_text_size(
+                config,
+                raw_text,
+                self._results_table.text_format_for_source(source_id),
+                hardware,
+            )
+        except Exception:  # noqa: BLE001  # an incomplete setup must not break the preview
+            self._preview.set_text_size(None)
+            return
+        self._preview.set_text_size(estimate)
 
     def _selected_source_for_edit(self) -> tuple[Path, str, str, str, str] | None:
         """Resolve selected source row to its input path and current payloads."""
@@ -1992,6 +2103,7 @@ class MainWindow(QMainWindow):
             correction_warning=state.correction_warning,
         )
         self._update_preview_stage_statuses(source_id)
+        self._text_size_timer.start()  # the edited text may need other parts
         self._tabs.setCurrentIndex(1)
 
     def _on_correction_text_edited(self, edited_text: str) -> None:
@@ -2166,6 +2278,7 @@ class MainWindow(QMainWindow):
             {stage.stage: stage_tooltip(stage) for stage in flow.stages if not stage.detail}
         )
         self._refresh_privacy_availability()  # the document language may have changed
+        self._text_size_timer.start()  # language, provider, model or an enabled stage changed
 
     def _show_what_is_sent(self, report: SentTexts, name: str) -> None:
         """Show the report for one file, remembering it so tests and callers can read it."""
@@ -2289,6 +2402,7 @@ class MainWindow(QMainWindow):
         self._save_settings(notify=False)
         self._check_llm_status()
         self._refresh_queue_from_inputs()
+        self._text_size_timer.start()  # the context setting changes how the text is split
 
     def _on_packages_changed(self) -> None:
         """A download finished: a spaCy model may be available now, so look again."""

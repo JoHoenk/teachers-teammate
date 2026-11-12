@@ -41,6 +41,7 @@ from PySide6.QtWidgets import (
 
 from ..config import DEFAULTS, OcrConfig
 from ..domain.data_location import DataLocation
+from ..domain.model_catalog import OCR_TEMPERATURE
 from ..domain.pdf_text_layer import (
     PDF_TEXT_LAYER_MODES,
     PdfTextLayerMode,
@@ -474,7 +475,7 @@ class ScanQualityControls(QWidget):
         self._ocr_temperature.setRange(0.0, 2.0)
         self._ocr_temperature.setSingleStep(0.1)
         self._ocr_temperature.setDecimals(1)
-        self._ocr_temperature.setValue(DEFAULTS["ocr_temperature"])
+        self._ocr_temperature.setValue(OCR_TEMPERATURE)
         self._ocr_temperature.setToolTip(TEMPERATURE_TOOLTIP)
         if not shown:
             self._ocr_temperature.setVisible(False)
@@ -542,7 +543,7 @@ class ScanQualityControls(QWidget):
         self._ocr_temperature.setValue(value)
         if self._expert_section is not None:
             # A temperature the user chose is the reason to open "Expert settings" at all.
-            self._expert_section.set_expanded(value != DEFAULTS["ocr_temperature"])
+            self._expert_section.set_expanded(value != OCR_TEMPERATURE)
 
     def load(self, ocr: OcrConfig) -> None:
         """Populate the controls from an :class:`OcrConfig` value object."""

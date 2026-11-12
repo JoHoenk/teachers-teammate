@@ -30,10 +30,11 @@ from ..config import Config, OcrConfig
 from ..domain.context_budget import (
     BASE_NUM_CTX,
     RunWindows,
-    run_windows,
+    stage_windows,
 )
-from ..domain.data_location import online_ocr_reason
-from ..domain.model_catalog import FULL_SPEED_SHARE, HardwareDetection, find_spec
+from ..domain.correction_policy import cut_off_tries
+from ..domain.data_location import DataLocation, llm_stage_location, online_ocr_reason
+from ..domain.model_catalog import HardwareDetection, RequestProfile
 from ..exceptions import OnlineOcrNotAllowedError, ProviderNotAvailableError
 from ..interfaces import (
     Anonymizer,
@@ -57,13 +58,13 @@ from .correction import (
 from .docx_builder import DocxDocumentCreator
 from .evaluation import LangChainEvaluator, NativeOllamaEvaluator
 from .image_preprocessor import HandwritingPreprocessor
-from .llm_factory import build_llm
+from .llm_factory import build_llm, get_provider_info
 from .ocr_processor import (
     OllamaOCRProcessor,
     PaddleOCRProcessor,
     TesseractOCRProcessor,
 )
-from .ollama_utils import OllamaClient, ollama_host
+from .ollama_utils import OllamaClient, is_local_ollama_url, ollama_host
 from .reporting import Reporter, StdoutReporter
 from .spacy_models import installed_spacy_models
 from .system_locale import system_language
@@ -111,9 +112,9 @@ def _default_build_llm(
 
 
 def _default_build_corrector(
-    llm: BaseChatModel, prompt: str, settings: CorrectionSettings
+    llm: BaseChatModel, prompt: str, settings: CorrectionSettings, profile: RequestProfile
 ) -> Corrector:
-    return LangChainCorrector(llm, prompt, settings=settings)
+    return LangChainCorrector(llm, prompt, settings=settings, profile=profile)
 
 
 def _default_build_evaluator(llm: BaseChatModel, prompt: str) -> Evaluator:
@@ -127,6 +128,7 @@ def _default_build_native_ollama_corrector(
     timeout: float,
     temperature: float,
     settings: CorrectionSettings,
+    profile: RequestProfile,
 ) -> Corrector:
     return NativeOllamaCorrector(
         model=model,
@@ -135,6 +137,7 @@ def _default_build_native_ollama_corrector(
         timeout=timeout,
         temperature=temperature,
         settings=settings,
+        profile=profile,
     )
 
 
@@ -192,24 +195,16 @@ def resolve_run_windows(config: Config, hardware: HardwareDetection | None) -> R
     model for every file.  Each stage is sized from its own provider and model; an online
     provider brings its own window, which the app does not set.  *hardware* is ``None`` when
     the computer is not known, which keeps the base window.  The rules live in
-    :func:`~teachers_teammate.domain.context_budget.run_windows`.
+    :func:`~teachers_teammate.domain.context_budget.stage_windows`.
     """
-    local_proofreading = config.correction_provider == "ollama"
-    local_evaluation = config.evaluate_provider == "ollama"
-    windows = run_windows(
+    return stage_windows(
         config.proofreading_context,
-        proofreading_spec=find_spec(config.effective_correction_model),
-        evaluation_spec=find_spec(config.effective_evaluate_model),
+        proofreading_model=config.effective_correction_model,
+        evaluation_model=config.effective_evaluate_model,
+        proofreading_local=config.correction_provider == "ollama",
+        evaluation_local=config.evaluate_provider == "ollama",
+        evaluation_runs=config.evaluation_enabled,
         card_gb=hardware.card_gb if hardware is not None else None,
-        same_model=local_proofreading
-        and local_evaluation
-        and config.evaluation_enabled
-        and config.effective_correction_model == config.effective_evaluate_model,
-        full_speed_share=FULL_SPEED_SHARE,
-    )
-    return RunWindows(
-        proofreading=windows.proofreading if local_proofreading else BASE_NUM_CTX,
-        evaluation=windows.evaluation if local_evaluation else BASE_NUM_CTX,
     )
 
 
@@ -255,12 +250,12 @@ class PipelineComponentFactory:
         _default_build_ollama_ocr
     )
     build_llm: Callable[[str, str, str, float], BaseChatModel] = _default_build_llm
-    build_corrector: Callable[[BaseChatModel, str, CorrectionSettings], Corrector] = (
-        _default_build_corrector
-    )
+    build_corrector: Callable[
+        [BaseChatModel, str, CorrectionSettings, RequestProfile], Corrector
+    ] = _default_build_corrector
     build_evaluator: Callable[[BaseChatModel, str], Evaluator] = _default_build_evaluator
     build_native_ollama_corrector: Callable[
-        [str, OllamaClient, str, float, float, CorrectionSettings], Corrector
+        [str, OllamaClient, str, float, float, CorrectionSettings, RequestProfile], Corrector
     ] = _default_build_native_ollama_corrector
     build_native_ollama_evaluator: Callable[
         [str, OllamaClient, str, float, float, int], Evaluator
@@ -333,6 +328,39 @@ class StageBuilder:
         client = ollama_client or self._build_ollama_client()
         return factory.build_ollama_ocr(ocr.model, client, cfg.ocr_timeout, ocr.temperature)
 
+    def build_corrector(self, ollama_client: OllamaClient | None = None) -> Corrector | None:
+        """Build the corrector of this run, or ``None`` when proofreading is off.
+
+        The one place that decides which corrector a run uses, so a run and the pieces
+        estimate of the GUI build the same one.  Building is cheap: neither the Ollama client
+        nor the corrector contacts the server, and no anonymizer is built here.
+        """
+        cfg = self.config
+        factory = self.factory
+        if not cfg.correction_enabled:
+            return None
+        profile = cfg.correction_profile
+        settings = self._correction_settings()
+        if cfg.correction_provider == "ollama":
+            client = ollama_client or self._build_ollama_client()
+            corrector = factory.build_native_ollama_corrector(
+                cfg.effective_correction_model,
+                client,
+                cfg.correction_prompt,
+                float(cfg.ocr_timeout),
+                profile.temperature,
+                settings,
+                profile,
+            )
+            return _chunked(corrector, cfg.language)
+        llm = factory.build_llm(
+            cfg.correction_provider,
+            cfg.effective_correction_model,
+            cfg.ollama_url,
+            profile.temperature,
+        )
+        return factory.build_corrector(llm, cfg.correction_prompt, settings, profile)
+
     def build_correction_and_anonymizer(
         self, ollama_client: OllamaClient | None = None
     ) -> tuple[Corrector | None, Anonymizer | None]:
@@ -343,32 +371,8 @@ class StageBuilder:
         session cache and the anonymized text file has something to write.
         """
         cfg = self.config
-        factory = self.factory
-        correction: Corrector | None = None
+        correction = self.build_corrector(ollama_client)
         anonymizer: Anonymizer | None = None
-
-        if cfg.correction_enabled:
-            if cfg.correction_provider == "ollama":
-                client = ollama_client or self._build_ollama_client()
-                settings = self._correction_settings()
-                correction = factory.build_native_ollama_corrector(
-                    cfg.effective_correction_model,
-                    client,
-                    cfg.correction_prompt,
-                    float(cfg.ocr_timeout),
-                    cfg.correction_temperature,
-                    settings,
-                )
-                correction = _chunked(correction, cfg.language)
-            else:
-                settings = self._correction_settings()
-                llm = factory.build_llm(
-                    cfg.correction_provider,
-                    cfg.effective_correction_model,
-                    cfg.ollama_url,
-                    cfg.correction_temperature,
-                )
-                correction = factory.build_corrector(llm, cfg.correction_prompt, settings)
 
         if cfg.anonymization_enabled:
             try:
@@ -393,7 +397,25 @@ class StageBuilder:
             answer_format_text=cfg.answer_format_text,
             strict_schema=cfg.correction_provider == "openai",
             num_ctx=self.resolved_windows().proofreading,
+            cut_off_tries=cut_off_tries(
+                online=self._correction_is_online(), temperature=cfg.correction_temperature
+            ),
         )
+
+    def _correction_is_online(self) -> bool:
+        """Return whether proofreading is processed by an online service (and billed by it).
+
+        The same rule the privacy badge uses (:func:`llm_stage_location`), so a self-hosted
+        provider is shown as local and also gets the local number of tries.
+        """
+        cfg = self.config
+        where = llm_stage_location(
+            self_hosted=bool(get_provider_info(cfg.correction_provider).get("self_hosted")),
+            model=cfg.effective_correction_model,
+            url_is_local=is_local_ollama_url(cfg.ollama_url),
+            host=ollama_host(cfg.ollama_url),
+        )
+        return where is DataLocation.ONLINE
 
     def _build_anonymizer(self) -> Anonymizer:
         cfg = self.config

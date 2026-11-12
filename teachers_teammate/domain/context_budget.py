@@ -20,6 +20,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from .model_catalog import FULL_SPEED_SHARE, find_spec, runs_at_full_speed
+
 if TYPE_CHECKING:
     from .model_catalog import OllamaModelSpec
 
@@ -33,7 +35,12 @@ BASE_NUM_CTX = CONTEXT_STEPS[0]
 
 #: Largest window used for proofreading.  A review answer repeats the text it was given, and
 #: small models drift or start to loop on long answers, so the window stops growing early.
-PROOFREADING_NUM_CTX_CAP = 16384
+#:
+#: Held at :data:`BASE_NUM_CTX` (2026-11-12): a window of 16384 sends a long text in one request
+#: instead of two, and the answer is then about twice as long — the case small models drift on,
+#: and the reason this cap exists.  No gate measures that case yet, so the app does not use a
+#: larger window for proofreading until one does.  Raise it together with a gate run at 16384.
+PROOFREADING_NUM_CTX_CAP = BASE_NUM_CTX
 
 #: Largest window used for a content review.  Its answer is short and it cannot be split into
 #: pieces, so it is the stage that gains the most from a larger window.
@@ -47,9 +54,21 @@ EVALUATION_ANSWER_TOKENS = 1536
 
 #: How long a structured review answer is compared with the text it was given.  For every
 #: changed sentence it carries the original wording, the corrected wording and a list of
-#: changes with explanations, plus the JSON keys, so on an error-dense text it is well over
-#: twice as long.  An estimate, deliberately cautious; text mode answers with about the text.
-REVIEW_ANSWER_FACTOR = 2.0
+#: changes with explanations, plus the JSON keys, so on an error-dense text it is several times
+#: as long.  Text mode answers with about the text.
+#:
+#: Calibrated on 2026-11-11 on the server (RX 9070 XT, Ollama 0.40.15) with one review-mode run
+#: each of ``gemma4:e4b`` and ``qwen3:4b`` at 0.2 over ``gec-2026-12``, window 8192: no request
+#: ended with ``done_reason: "length"``, and the largest request was 6,838 tokens of 8,192
+#: (``qwen3:4b``, ``de-10`` piece 1: 1,197 prompt and 5,641 answer tokens for about 730 text
+#: tokens, 7.8 times).  At page length the answers were 7.2 to 7.8 times the text's tokens; the
+#: largest ratio of all was 19.4 on a 114-token text, where the fixed JSON skeleton dominates.
+#: Neither model reliably follows the compact rule (``gemma4:e4b`` pretty-printed ``de-09`` in
+#: 378 lines), so the factor has to cover a pretty answer, and the margin comes from the request
+#: side's 3 characters per token against the 4.3 to 5 of real German at page length.  A wordier
+#: model can still overflow; it then falls back to text mode, which the comparison's fallback
+#: floor catches.
+REVIEW_ANSWER_FACTOR = 7.0
 
 
 def answers_with_the_same_text(num_ctx: int) -> int:
@@ -68,8 +87,9 @@ class ContextBudget:
     Two shapes of answer are supported:
 
     * it is as long as, or longer than, the text it was given (proofreading) — pass
-      ``answer_factor``: ``1.0`` lets the request take half of the window (text mode), and
-      :data:`REVIEW_ANSWER_FACTOR` a third (a review answer is longer than the text);
+      ``answer_factor``: ``1.0`` shares the window between the text and an answer of the same
+      length, :data:`REVIEW_ANSWER_FACTOR` leaves the answer most of it (a review answer is
+      several times as long as the text);
     * it is short and of a known length (a content review) — pass ``answer_tokens``.
 
     The estimate is deliberately cautious: :data:`DEFAULT_CHARS_PER_TOKEN` characters per
@@ -95,17 +115,24 @@ class ContextBudget:
     ) -> int:
         """Return how many characters of text fit next to *overhead_chars*.
 
+        The answer grows with the text, not with the request: a review answer repeats the
+        sentences it changed, so the fixed part of the request (system prompt and the message
+        that carries the text) is taken out of the window first, and only what is left is shared
+        between the text and its answer.
+
         Args:
             overhead_chars: Characters that go out with every request (system prompt plus the
                 fixed part of the question).
-            answer_factor: How long the answer is compared to the request; ``1.0`` means "as
-                long as the text it was given" (proofreading).
+            answer_factor: How long the answer is compared to the text it was given; ``1.0``
+                means "as long as the text" (text mode), :data:`REVIEW_ANSWER_FACTOR` a review.
             answer_tokens: Tokens reserved for a short answer of a known length; used when
                 *answer_factor* is 0 (a content review).
         """
-        available_tokens = self.num_ctx - answer_tokens
         if answer_factor > 0:
-            available_tokens = int(self.num_ctx / (1.0 + answer_factor))
+            overhead_tokens = -(-overhead_chars // int(self.chars_per_token))
+            text_tokens = int((self.num_ctx - overhead_tokens) / (1.0 + answer_factor))
+            return max(0, int(text_tokens * self.chars_per_token))
+        available_tokens = self.num_ctx - answer_tokens
         available_chars = available_tokens * self.chars_per_token
         return max(0, int(available_chars - overhead_chars))
 
@@ -147,7 +174,7 @@ def _largest_step_within(
             break
         need = memory_at_context_gb(spec, step)
         assert need is not None  # the measurement exists (checked above)
-        if card_gb / need < full_speed_share:
+        if not runs_at_full_speed(need, card_gb, share=full_speed_share):
             break
         chosen = step
     return chosen
@@ -225,6 +252,11 @@ class RunWindows:
     same model, Ollama would reload it between the two stages for every file, which costs
     seconds per file; there both use the smaller window, and content review still gains from its
     own answer allowance.
+
+    A stage whose provider is online reports the base window although it sends none: the
+    provider brings its own, and the app does not set one.  The figure is what the cache key and
+    the memory check compare, so it has to be a number; ``int | None`` would ripple through
+    ``window_of_model()`` and the cache key for no gain.
     """
 
     proofreading: int
@@ -273,3 +305,39 @@ def run_windows(
         # No reload between the stages: the smaller window serves both.
         evaluation = min(proofreading, evaluation)
     return RunWindows(proofreading=proofreading, evaluation=evaluation)
+
+
+def stage_windows(
+    setting: str,
+    *,
+    proofreading_model: str,
+    evaluation_model: str,
+    proofreading_local: bool,
+    evaluation_local: bool,
+    evaluation_runs: bool,
+    card_gb: float | None,
+) -> RunWindows:
+    """Return the windows of the two stages from their models and where each one runs.
+
+    The one place that turns the settings into :class:`RunWindows`, so a run and the Settings
+    page cannot disagree.  A stage whose provider is online reports the base window although it
+    sends none (see :class:`RunWindows`).  The two stages share a window only when both run on
+    the same *local* model and the content review runs at all (*evaluation_runs*).
+    """
+    resolved = run_windows(
+        setting,
+        proofreading_spec=find_spec(proofreading_model),
+        evaluation_spec=find_spec(evaluation_model),
+        card_gb=card_gb,
+        same_model=(
+            proofreading_local
+            and evaluation_local
+            and evaluation_runs
+            and proofreading_model == evaluation_model
+        ),
+        full_speed_share=FULL_SPEED_SHARE,
+    )
+    return RunWindows(
+        proofreading=resolved.proofreading if proofreading_local else BASE_NUM_CTX,
+        evaluation=resolved.evaluation if evaluation_local else BASE_NUM_CTX,
+    )

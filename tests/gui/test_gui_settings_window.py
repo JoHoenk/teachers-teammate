@@ -263,7 +263,7 @@ def test_ok_merges_the_values_of_the_pages_that_were_visited(qtbot) -> None:
     Then   it holds each page's changes under their keys, and no key of an unvisited page
     """
     window = _window(qtbot, SettingsPage.AI_MODELS)
-    window.page(SettingsPage.AI_MODELS)._ocr_temperature.setValue(0.5)
+    window.page(SettingsPage.AI_MODELS)._ocr_picker._ocr_engine.setCurrentText("tesseract")
     window.show_page(SettingsPage.SCAN_QUALITY)
     window.page(SettingsPage.SCAN_QUALITY)._controls._pdf_dpi.setValue(144)
     window.show_page(SettingsPage.AI_SETUP)
@@ -271,7 +271,7 @@ def test_ok_merges_the_values_of_the_pages_that_were_visited(qtbot) -> None:
 
     settings = window.values().settings
 
-    assert settings["ocr_temperature"] == pytest.approx(0.5)
+    assert settings["ocr_engine"] == "tesseract"
     assert settings["pdf_render_dpi"] == 144
     assert settings["ollama_url"] == "http://box:11434"
     assert "output_dir" not in settings
@@ -450,6 +450,68 @@ def test_the_server_address_reaches_the_ai_model_sections(qtbot) -> None:
 
 
 @pytest.mark.gui
+def test_the_proofreading_service_chosen_on_ai_models_reaches_the_context_choice(
+    qtbot, monkeypatch
+) -> None:
+    """
+    Given  Where the AI runs built with one model for both stages, so the choice changes nothing
+    When   the proofreading service is switched to an online one on AI models
+    Then   the choice becomes usable at once, because the review now runs on its own model, and
+           the working settings carry the choice
+    """
+    monkeypatch.setenv("OPENAI_API_KEY", "k-test")
+    window = _window(
+        qtbot,
+        SettingsPage.AI_SETUP,
+        settings={
+            "correction_provider": "ollama",
+            "correction_model": "qwen3:4b",
+            "evaluate_provider": "ollama",
+            "evaluate_model": "qwen3:4b",
+        },
+    )
+    computer = window.page(SettingsPage.AI_SETUP)
+    qtbot.waitUntil(lambda: computer._hardware_selector.resolved() is not None, timeout=5000)
+    assert not computer._context_combo.isEnabled()
+
+    window.show_page(SettingsPage.AI_MODELS)
+    models = window.page(SettingsPage.AI_MODELS)
+    models._proofreading._provider.setCurrentText("openai")
+
+    assert computer._context_combo.isEnabled()
+    assert window._working["correction_provider"] == "openai"
+
+
+@pytest.mark.gui
+def test_the_review_service_chosen_on_ai_models_reaches_the_context_choice(qtbot) -> None:
+    """
+    Given  Where the AI runs built with one model for both stages, so the choice changes nothing
+    When   the content review is given another Ollama model on AI models
+    Then   the choice becomes usable at once, and the working settings carry the review model
+    """
+    window = _window(
+        qtbot,
+        SettingsPage.AI_SETUP,
+        settings={
+            "correction_provider": "ollama",
+            "correction_model": "qwen3:4b",
+            "evaluate_provider": "ollama",
+            "evaluate_model": "qwen3:4b",
+        },
+    )
+    computer = window.page(SettingsPage.AI_SETUP)
+    qtbot.waitUntil(lambda: computer._hardware_selector.resolved() is not None, timeout=5000)
+    assert not computer._context_combo.isEnabled()
+
+    window.show_page(SettingsPage.AI_MODELS)
+    models = window.page(SettingsPage.AI_MODELS)
+    models._review._model.setCurrentText("gemma4:e4b")
+
+    assert computer._context_combo.isEnabled()
+    assert window._working["evaluate_model"] == "gemma4:e4b"
+
+
+@pytest.mark.gui
 def test_choosing_a_method_applies_its_image_preparation_on_scan_quality(qtbot) -> None:
     """
     Given  AI models and Scan quality built
@@ -487,15 +549,14 @@ def test_the_image_preparation_follows_the_method_even_if_scan_quality_is_unbuil
 @pytest.mark.gui
 def test_the_preview_builds_the_whole_config_from_both_ocr_parts(qtbot) -> None:
     """
-    Given  AI models and Scan quality built, with another method, model, temperature and preset
+    Given  AI models and Scan quality built, with another method, model and preset
     When   Preview… is pressed on Scan quality
-    Then   the window emits an OcrConfig holding the method, model and temperature from AI
+    Then   the window emits an OcrConfig holding the method and model from AI
            models and the preparation from Scan quality
     """
     window = _window(qtbot, SettingsPage.AI_MODELS)
     models = window.page(SettingsPage.AI_MODELS)
     models._ocr_picker._ocr_engine.setCurrentText("tesseract")
-    models._ocr_temperature.setValue(0.6)
     window.show_page(SettingsPage.SCAN_QUALITY)
     scan = window.page(SettingsPage.SCAN_QUALITY)
     scan._controls._pdf_dpi.setValue(144)
@@ -506,7 +567,7 @@ def test_the_preview_builds_the_whole_config_from_both_ocr_parts(qtbot) -> None:
     config = blocker.args[0]
     assert isinstance(config, OcrConfig)
     assert config.engine == "tesseract"
-    assert config.temperature == pytest.approx(0.6)
+    assert config.temperature == 0.0  # fixed in the app
     assert config.preprocess_method == "clahe"  # tesseract's default, applied on the change
     assert config.pdf_render_dpi == 144
 
@@ -516,12 +577,12 @@ def test_the_preview_uses_the_saved_recognition_choice_when_ai_models_is_unbuilt
     """
     Given  Scan quality opened first and AI models never opened, with a saved method
     When   Preview… is pressed
-    Then   the OcrConfig uses the saved method and temperature
+    Then   the OcrConfig uses the saved method
     """
     window = _window(
         qtbot,
         SettingsPage.SCAN_QUALITY,
-        settings={"ocr_engine": "tesseract", "ocr_temperature": 0.7},
+        settings={"ocr_engine": "tesseract"},
     )
     scan = window.page(SettingsPage.SCAN_QUALITY)
 
@@ -530,7 +591,6 @@ def test_the_preview_uses_the_saved_recognition_choice_when_ai_models_is_unbuilt
 
     config = blocker.args[0]
     assert config.engine == "tesseract"
-    assert config.temperature == pytest.approx(0.7)
 
 
 # ── deep links ─────────────────────────────────────────────────────────────────
@@ -681,7 +741,7 @@ def test_restore_this_page_resets_only_that_page(qtbot, scripted_box) -> None:
     Then   Scan quality shows the defaults, AI models keeps its values, and the window stays open
     """
     window = _window(qtbot, SettingsPage.AI_MODELS)
-    window.page(SettingsPage.AI_MODELS)._correction_temperature.setValue(0.9)
+    window.page(SettingsPage.AI_MODELS)._ocr_picker._ocr_engine.setCurrentText("tesseract")
     window.show_page(SettingsPage.SCAN_QUALITY)
     scan = window.page(SettingsPage.SCAN_QUALITY)
     scan._controls._pdf_dpi.setValue(600)
@@ -690,7 +750,7 @@ def test_restore_this_page_resets_only_that_page(qtbot, scripted_box) -> None:
     window._restore_btn.click()
 
     assert scan.values()["pdf_render_dpi"] == DEFAULTS["pdf_render_dpi"]
-    assert window.page(SettingsPage.AI_MODELS)._correction_temperature.value() == pytest.approx(0.9)
+    assert window.page(SettingsPage.AI_MODELS).values()["ocr_engine"] == "tesseract"
     assert window.values().restore_all is False
     assert window.result() == 0
 
@@ -803,8 +863,8 @@ def test_restore_all_needs_a_second_confirmation_and_closes_with_a_special_resul
     Given  the window open on any page
     When   "Restore defaults…" is answered with "All settings" and the second question with
            "Reset everything"
-    Then   the window closes with the restore-all result, asks the second question with the
-           plan's wording, and the result says restore_all
+    Then   the window closes with the restore-all result, asks the second question,
+           and the result says restore_all
     """
     window = _window(qtbot, SettingsPage.AI_MODELS)
     scripted_box.answers = ["All settings", "Reset everything"]

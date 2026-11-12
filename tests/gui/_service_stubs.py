@@ -8,10 +8,13 @@ a stub class instead of re-implementing them.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 import os
 
 from typing import cast
 
+from teachers_teammate.application.context_choice import ContextChoice, context_choice
+from teachers_teammate.config import DEFAULTS
 from teachers_teammate.domain.data_location import (
     STAGE_OCR,
     DataFlow,
@@ -32,6 +35,22 @@ from teachers_teammate.domain.model_catalog import (
     rate_model,
 )
 from teachers_teammate.domain.model_listing import ModelListing
+
+
+def context_choice_from(settings: Mapping[str, object], card_gb: float | None) -> ContextChoice:
+    """Answer the context question with the real rule, as the application service does.
+
+    The page must not promise a window the run does not use, so the stubs do not invent one.
+    """
+    return context_choice(
+        proofreading_provider=str(
+            settings.get("correction_provider") or DEFAULTS["correction_provider"]
+        ),
+        proofreading_model=str(settings.get("correction_model") or DEFAULTS["correction_model"]),
+        review_provider=str(settings.get("evaluate_provider") or DEFAULTS["evaluate_provider"]),
+        review_model=str(settings.get("evaluate_model") or DEFAULTS["evaluate_model"]),
+        card_gb=card_gb,
+    )
 
 
 class LocalDataFlowStub:
@@ -125,6 +144,10 @@ class RecommendationServiceStub(LocalDataFlowStub):
                 system_memory_gb=self.system_memory_gb,
             )
         return self.detect_hardware(ollama_url)
+
+    def cached_hardware_profile(self, setting: str, ollama_url: str) -> HardwareDetection | None:
+        """Answer as the real service does once it has probed: this stub never probes."""
+        return self.resolve_hardware_profile(setting, ollama_url)
 
     def detect_gpus(self, *, refresh: bool = False) -> list:
         self.gpu_calls.append(refresh)

@@ -18,6 +18,36 @@ class OCRError(Exception):
         self.status_code = status_code
 
 
+class OCRTimeoutError(OCRError):
+    """Raised when no output arrives within the first-token timeout.
+
+    Only the wait for the first token is bounded: once the model has begun to answer, the answer
+    may take as long as it takes.  A subclass of :exc:`OCRError`, so every caller that handles the
+    failure keeps working, and a caller that cares (the evaluation tools) can tell a model that
+    did not start from one that failed.
+    """
+
+
+class OllamaUnreachableError(OCRError):
+    """Raised by a chat request when the Ollama server cannot be reached at all.
+
+    A subclass of :exc:`OCRError`, so every caller that handles a failed request keeps working,
+    and a caller that must tell an unreachable server from a model that failed (the evaluation
+    tools: an outage says nothing about a model) can.
+    """
+
+
+class OCRDeadlineError(OCRError):
+    """Raised when an answer is still being written after the overall deadline a caller set.
+
+    The first-token timeout only bounds the wait for the answer to begin.  A model that loops —
+    one that writes without end, or past its window by shifting the context — would otherwise
+    keep a caller waiting for as long as it takes (``mistral:latest`` wrote 81,920 tokens in 937
+    s).  A caller that sets ``total_timeout`` gets this error instead, and the request is
+    abandoned so the server stops generating.
+    """
+
+
 #: The one user-facing sentence for an answer the context window cut off, so the warning a
 #: teacher reads and the exception that carries it cannot drift apart.
 TRUNCATED_MESSAGE = "The text was too long for the model's working memory."

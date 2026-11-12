@@ -386,7 +386,7 @@ def test_config_panel_to_config_applies_preprocess_and_pdf_settings(qtbot, tmp_p
 def test_load_from_dict_restores_advanced_ocr_settings(qtbot, tmp_path: Path) -> None:
     """
     Given  a settings dict (as read from ocr.toml) with the PDF text layer, render DPI,
-           temperature, provider and pre-step flags set
+           provider and pre-step flags set
     When   load_from_dict() and then to_config() are called
     Then   the OcrConfig carries those values instead of falling back to the defaults
     """
@@ -400,7 +400,6 @@ def test_load_from_dict_restores_advanced_ocr_settings(qtbot, tmp_path: Path) ->
         {
             "pdf_text_layer": "Never",
             "pdf_render_dpi": 150,
-            "ocr_temperature": 0.4,
             "preprocess_dewarp": False,
             "preprocess_gamma": True,
         }
@@ -409,7 +408,6 @@ def test_load_from_dict_restores_advanced_ocr_settings(qtbot, tmp_path: Path) ->
     ocr = panel.to_config().ocr
     assert ocr.pdf_text_layer == "never"
     assert ocr.pdf_render_dpi == 150
-    assert ocr.temperature == pytest.approx(0.4)
     assert ocr.dewarp is False
     assert ocr.gamma is True
     assert panel.to_dict()["pdf_text_layer"] == "never"
@@ -679,7 +677,7 @@ def test_config_panel_drops_answer_formats_of_another_version(qtbot, capsys) -> 
     qtbot.addWidget(panel)
 
     panel.load_from_dict(
-        {"answer_format_review": "old", "answer_format_text": "old", "answer_format_version": 1}
+        {"answer_format_review": "old", "answer_format_text": "old", "answer_format_version": 0}
     )
 
     settings = panel.get_settings_dict()

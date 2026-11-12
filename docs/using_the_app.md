@@ -22,7 +22,7 @@ What you set up once lives in the Settings window, grouped by topic. Pick a page
 
 | Page | What it holds |
 |---|---|
-| **AI models** | Which method reads the handwriting (always on this computer), which AI service and model proofreads and reviews, and — under **Expert settings** — the temperatures |
+| **AI models** | Which method reads the handwriting (always on this computer), which AI service and model proofreads and reviews |
 | **Scan quality** | How scans and photos are cleaned up before they are read: image preparation and its **Preview…**, corrections and enhancements; under **Expert settings** the PDF resolution and the PDF text layer |
 | **Privacy** | What may leave this computer (the answers you chose not to be asked about again), and how names and other personal information are found and replaced |
 | **Where the AI runs** | Everything the AI choices depend on: on this computer the address of the local AI server and what kind of computer you have (the model suggestions follow it); at an online service its access key. Keys are kept in your system's keychain (macOS Keychain, Windows Credential Manager, or the Linux desktop keyring); where there is none, the page says that the key is kept in the app's settings file, not encrypted |

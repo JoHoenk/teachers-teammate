@@ -2,14 +2,18 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import cast
+from unittest.mock import patch
 
 import pytest
 
 from teachers_teammate._model_defaults import _DEFAULT_MODELS
 from teachers_teammate.config import DEFAULTS
+from teachers_teammate.domain import model_catalog
 from teachers_teammate.domain.model_catalog import (
     DEFAULT_OCR_MODEL,
+    DEFAULT_REQUEST_PROFILE,
     DEFAULT_WRITING_MODEL,
     HARDWARE_PROFILES,
     CARD_USABLE_SHARE,
@@ -18,6 +22,7 @@ from teachers_teammate.domain.model_catalog import (
     OLLAMA_CATALOG,
     PROFILE_SETTINGS,
     RECOMMENDED,
+    RequestProfile,
     DetectionReason,
     HardwareDetection,
     HardwareProfile,
@@ -33,6 +38,7 @@ from teachers_teammate.domain.model_catalog import (
     normalize_tag,
     ram_needed_gb,
     rate_model,
+    request_profile,
     suitability,
     suitability_rank,
     system_reserve_gb,
@@ -589,7 +595,7 @@ def test_writing_models_offered_first_pass_the_structured_output_check() -> None
     Given  the default writing model and the RECOMMENDED[general] lists
     When   their catalog flags are inspected
     Then   the model the app picks for proofreading and the first entry of every general
-           list are marked as answering the review schema — the plan's rule that an
+           list are marked as answering the review schema — the rule that an
            unverified model must not be the one a teacher gets by default
     """
     default = find_spec(DEFAULT_WRITING_MODEL)
@@ -766,3 +772,74 @@ def test_a_card_under_seven_gigabytes_is_reported_although_the_profile_is_cpu() 
 
     assert detection.profile == "cpu"
     assert detection.card_gb == pytest.approx(6.0 * CARD_USABLE_SHARE)
+
+
+# ── the request profile ────────────────────────────────────────────────────
+
+
+def test_unknown_models_get_the_default_profile() -> None:
+    """
+    Given  a tag the catalog does not know
+    When   its request profile is asked for
+    Then   it is the default: no compact-JSON rule, and the app's own temperature 0.2
+    """
+    profile = request_profile("some-model:7b")
+
+    assert profile == DEFAULT_REQUEST_PROFILE
+    assert profile.compact_json is False
+    assert profile.temperature == 0.2
+
+
+def test_every_catalog_model_starts_on_the_default_profile() -> None:
+    """
+    Given  the catalog
+    When   each model's request profile is read
+    Then   all of them are the default, so no request changes until a gate-1 run decides
+    """
+    assert {spec.request_profile for spec in OLLAMA_CATALOG} == {DEFAULT_REQUEST_PROFILE}
+
+
+def test_a_catalog_profile_is_found_by_its_tag() -> None:
+    """
+    Given  a catalog model whose profile asks for compact JSON
+    When   the profile is asked for by tag, with and without the ``:latest`` suffix
+    Then   the catalog's profile comes back, not the default
+    """
+    spec = replace(
+        find_spec("gemma4:e4b"),  # ty: ignore[invalid-argument-type]  # the tag is in the catalog
+        request_profile=RequestProfile(compact_json=True, temperature=1.0),
+    )
+    catalog = tuple(spec if other.tag == spec.tag else other for other in OLLAMA_CATALOG)
+    with patch.object(model_catalog, "OLLAMA_CATALOG", catalog):
+        assert request_profile("gemma4:e4b") == spec.request_profile
+        assert request_profile("gemma4").compact_json is False
+
+
+def test_a_model_gets_the_temperature_its_maker_recommends() -> None:
+    """
+    Given  models with and without a recommended temperature, with and without ``:latest``
+    When   their request profile and review temperature are asked for
+    Then   a recommended model gets it, the rest the defaults 0.2 and 0.7
+    """
+    from teachers_teammate.domain.model_catalog import review_temperature  # noqa: PLC0415
+
+    assert request_profile("gemma4:e4b").temperature == 1.0
+    assert request_profile("qwen3:4b").temperature == 0.7
+    assert request_profile("ministral-3:8b").temperature == 0.05
+    assert request_profile("gemma4:e4b:latest").temperature == 1.0
+    assert request_profile("gpt-oss:20b").temperature == 0.2
+    assert request_profile("hf.co/some/candidate:Q4").temperature == 0.2
+    assert review_temperature("gemma4:e4b") == 1.0
+    assert review_temperature("gpt-oss:20b") == 0.7
+
+
+def test_the_recommended_temperatures_apply_to_ollama_only() -> None:
+    """
+    Given  an online provider asked about a name that is also a recommended Ollama tag
+    When   the request profile and review temperature are asked for
+    Then   the table does not apply
+    """
+    from teachers_teammate.domain.model_catalog import review_temperature  # noqa: PLC0415
+
+    assert request_profile("gemma4:e4b", "google").temperature == 0.2
+    assert review_temperature("gemma4:e4b", "google") == 0.7

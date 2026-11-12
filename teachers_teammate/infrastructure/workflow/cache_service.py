@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from ...config import Config, OcrConfig
-from ...domain.context_budget import window_from_setting
+from ...domain.context_budget import RunWindows, window_from_setting
 from ..correction import instruction_parts
 from ..correction_schema import CONTRACT_VERSION
 from ..input_provider_factory import InputOptions, input_settings_fingerprint
@@ -120,19 +120,46 @@ def _anonymization_fingerprint(config: Config) -> tuple[str, ...]:
     )
 
 
-def _window_fingerprint(config: Config) -> tuple[str, ...]:
-    """Return the cache-key part for the context window of the proofreading requests."""
+def _window_fingerprint(config: Config, windows: RunWindows | None = None) -> tuple[str, ...]:
+    """Return the cache-key part for the context window of the proofreading requests.
+
+    *windows* are the windows the run really uses, resolved from the settings and the
+    computer.  Without them only the settings are known, which gives the pinned window and
+    the base step for ``"auto"`` — the same key a run at the base window produces.
+    """
     if config.correction_provider != "ollama":
         return ()
-    return (f"num-ctx-{window_from_setting(config.proofreading_context)}",)
+    window = (
+        windows.proofreading
+        if windows is not None
+        else window_from_setting(config.proofreading_context)
+    )
+    return (f"num-ctx-{window}",)
 
 
-def compute_correction_config_hash(config: Config) -> str:
+def _evaluation_window_fingerprint(
+    config: Config, windows: RunWindows | None = None
+) -> tuple[str, ...]:
+    """Return the cache-key part for the context window of the content review.
+
+    A larger window can make a review succeed that failed with "too long", so the cached
+    failure of a smaller window must not be reused.  An online provider brings its own
+    window, which the app does not set.
+    """
+    if config.evaluate_provider != "ollama" or windows is None:
+        return ()
+    return (f"num-ctx-{windows.evaluation}",)
+
+
+def compute_correction_config_hash(config: Config, windows: RunWindows | None = None) -> str:
     """Return the correction stage config hash for *config*, or '' when disabled."""
     if not config.correction_enabled:
         return ""
     # What is sent, not the setting: "" means "the built-in text", which can change with the
-    # app, so the resolved instructions and answer formats are what must key the cache.
+    # app, so the resolved instructions and answer formats are what must key the cache.  The
+    # model's request profile is resolved here too, so a profile change invalidates the cached
+    # corrections of that model and no other.
+    profile = config.correction_profile
     policy, review_format = instruction_parts(
         config.correction_prompt,
         config.language,
@@ -140,6 +167,7 @@ def compute_correction_config_hash(config: Config) -> str:
         text_format="plain",
         mode="review",
         answer_format=config.answer_format_review,
+        compact_json=profile.compact_json,
     )
     _, text_format = instruction_parts(
         config.correction_prompt,
@@ -157,7 +185,7 @@ def compute_correction_config_hash(config: Config) -> str:
         policy,
         review_format,
         text_format,
-        format(config.correction_temperature, ".1f"),
+        format(profile.temperature, "g"),
         # Review settings change the answer itself, so they belong in the key.
         config.correction_level,
         config.explanation_language,
@@ -166,16 +194,14 @@ def compute_correction_config_hash(config: Config) -> str:
         # The window decides how a long text is split into requests, so a changed window must
         # proofread again.  Only an Ollama corrector uses it (an online provider has its own),
         # and only the window it really gets counts: a setting above the cap changes nothing.
-        # The settings alone give the pinned window; the card-derived one is not part of the
-        # key yet, because no catalog model has a measured context growth (and without one
-        # every computer gets the base step).  Thread the resolved window in here when the
-        # first measurement lands.
-        *_window_fingerprint(config),
+        # *windows* is the window the run resolved from the settings and the computer; without
+        # it the settings alone decide, which is the base step for "auto".
+        *_window_fingerprint(config, windows),
         *_anonymization_fingerprint(config),
     )
 
 
-def compute_eval_config_hash(config: Config) -> str:
+def compute_eval_config_hash(config: Config, windows: RunWindows | None = None) -> str:
     """Return the evaluation stage config hash for *config*, or '' when disabled."""
     if not config.evaluation_enabled:
         return ""
@@ -185,7 +211,8 @@ def compute_eval_config_hash(config: Config) -> str:
         config.effective_evaluate_model,
         config.language,
         config.evaluate_prompt,
-        format(config.evaluate_temperature, ".1f"),
+        format(config.evaluate_temperature, "g"),
+        *_evaluation_window_fingerprint(config, windows),
         *_anonymization_fingerprint(config),
     )
 
@@ -218,10 +245,15 @@ class CacheReconciliationService:
         state_repo: StateRepository,
         artifact_store: PreviewImageStore,
         config: Config,
+        windows: RunWindows | None = None,
     ) -> None:
         self._repo = state_repo
         self._artifacts = artifact_store
         self._config = config
+        #: The context windows this run resolved from the settings and the computer, so the
+        #: cache key follows the window the run really uses.  ``None`` — not resolved, which
+        #: keys the settings alone (the base step for ``"auto"``).
+        self._windows = windows
 
     # ── Config hash helpers (delegate to module-level functions) ──────────────
 
@@ -229,10 +261,10 @@ class CacheReconciliationService:
         return compute_ocr_config_hash(self._config, ocr_prompt, source)
 
     def _correction_config_hash(self) -> str:
-        return compute_correction_config_hash(self._config)
+        return compute_correction_config_hash(self._config, self._windows)
 
     def _eval_config_hash(self) -> str:
-        return compute_eval_config_hash(self._config)
+        return compute_eval_config_hash(self._config, self._windows)
 
     # ── Public API ────────────────────────────────────────────────────────────
 

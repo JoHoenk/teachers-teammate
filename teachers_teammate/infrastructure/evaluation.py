@@ -19,6 +19,7 @@ from ..config import DEFAULTS
 from ..domain.context_budget import (
     EVALUATION_ANSWER_TOKENS,
     EVALUATION_NUM_CTX_CAP,
+    ContextBudget,
 )
 from ..domain.formatted_text import TextFormat
 from ..domain.notation import with_notation_hint
@@ -82,14 +83,31 @@ class NativeOllamaEvaluator(Evaluator):
         self._temperature = temperature
         self._num_ctx = num_ctx
 
+    def _message(self, corrected_text: str, language: str, text_format: TextFormat) -> str:
+        """Return the review request for this text."""
+        system = with_notation_hint(self._prompt, text_format, task="evaluation")
+        return f"{system}\n\nLanguage: {language}\n\nCorrected text:\n\n{corrected_text}"
+
+    def fits(self, text: str, language: str, *, text_format: TextFormat = "plain") -> bool:
+        """Return whether *text* fits one review request in this window.
+
+        The same message and the same allowance :meth:`evaluate` sends, so a text this says
+        fits is not refused with :exc:`~teachers_teammate.exceptions.ResponseTruncatedError`.
+        A content review cannot be split into pieces, so a text that does not fit is not
+        reviewed at all.
+        """
+        message = self._message(text, language, text_format)
+        return ContextBudget(self._num_ctx).request_fits(
+            len(message), answer_tokens=EVALUATION_ANSWER_TOKENS
+        )
+
     def evaluate(
         self, corrected_text: str, language: str, *, text_format: TextFormat = "plain"
     ) -> tuple[str, str | None]:
-        system = with_notation_hint(self._prompt, text_format, task="evaluation")
         result = invoke_ollama_chat(
             self._client,
             model=self._model,
-            prompt=f"{system}\n\nLanguage: {language}\n\nCorrected text:\n\n{corrected_text}",
+            prompt=self._message(corrected_text, language, text_format),
             timeout=self._timeout,
             temperature=self._temperature,
             fallback="",

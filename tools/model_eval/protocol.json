@@ -1,0 +1,12 @@
+{
+  "schema": 1,
+  "current": 1,
+  "versions": [
+    {
+      "version": 1,
+      "date": "2026-11-12",
+      "fingerprint": "e15a6a030db6e02da24b53ea37c28db6ea20d18ec24bb1a7ceb849c3b31a8c1e",
+      "why": "First version, restarted on 2026-11-12 when the early measurements were deleted: review and text mode, per-model request profile, a second try after a cut-off review answer, scores over the text without added Markdown marks, num_ctx 8192, long texts in pieces as in the app, answer format 1."
+    }
+  ]
+}

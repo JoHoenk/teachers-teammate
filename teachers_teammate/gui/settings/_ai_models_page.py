@@ -1,8 +1,8 @@
 """Settings → AI models: which AI reads the handwriting, proofreads and reviews.
 
-The widgets stacked one above the other -- text recognition, proofreading, content review --
-and one collapsed Expert section with the three temperatures.  The API keys the online
-services need are on *Where the AI runs*.
+The widgets stacked one above the other -- text recognition, proofreading, content review.
+There is no temperature to set: the app sends the value each model's maker recommends.  The API
+keys the online services need are on *Where the AI runs*.
 """
 
 from __future__ import annotations
@@ -11,12 +11,10 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtWidgets import QDoubleSpinBox, QFormLayout, QGroupBox, QLabel, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QGroupBox, QLabel, QVBoxLayout, QWidget
 
 from ...config import DEFAULTS, OcrConfig
-from .._collapsible_section import CollapsibleSection
 from .._model_fetch import _available_providers
-from .._model_wording import EXPERT_SETTINGS, TEMPERATURE_TOOLTIP
 from .._ocr_config_selector import OcrModelPicker
 from . import _page
 from ._ai_service_section import CONTENT_REVIEW, PROOFREADING, AiServiceSection, AiServiceSpec
@@ -36,21 +34,7 @@ KEY_HINT = (
     "Online AI services such as OpenAI or Anthropic are offered in the lists above once "
     "their key is saved under <a href='keys'>{page}</a>."
 )
-OCR_TEMPERATURE_LABEL = "Text recognition temperature:"
-PROOFREADING_TEMPERATURE_LABEL = "Proofreading temperature:"
-REVIEW_TEMPERATURE_LABEL = "Review temperature:"
-
-_OCR_KEYS = ("ocr_engine", "ocr_model", "ocr_temperature")
-
-
-def _temperature_box(value: float, tooltip: str) -> QDoubleSpinBox:
-    box = QDoubleSpinBox()
-    box.setRange(0.0, 2.0)
-    box.setSingleStep(0.1)
-    box.setDecimals(1)
-    box.setValue(value)
-    box.setToolTip(tooltip)
-    return box
+_OCR_KEYS = ("ocr_engine", "ocr_model")
 
 
 class AiModelsPage(SettingsPageBase):
@@ -64,6 +48,10 @@ class AiModelsPage(SettingsPageBase):
     ocr_engine_changed = Signal(str)
     #: An add-on (PaddleOCR) was installed from this page.
     addon_installed = Signal(str)
+    #: ``(provider, model)`` of the proofreading step changed (not emitted while loading).
+    proofreading_choice_changed = Signal(str, str)
+    #: ``(provider, model)`` of the content review changed (not emitted while loading).
+    review_choice_changed = Signal(str, str)
 
     def __init__(self, context: SettingsContext, parent: QWidget | None = None) -> None:
         super().__init__(context, parent)
@@ -108,13 +96,14 @@ class AiModelsPage(SettingsPageBase):
         self._review.hide_profile_line()
         # The same-model tip compares both steps' choices as they are now, not as saved.
         self._proofreading.choice_changed.connect(self._review.set_other_choice)
+        self._proofreading.choice_changed.connect(self.proofreading_choice_changed.emit)
         self._review.choice_changed.connect(self._proofreading.set_other_choice)
+        self._review.choice_changed.connect(self.review_choice_changed.emit)
 
         key_hint = self._build_key_hint()
         if key_hint is not None:
             layout.addWidget(key_hint)
 
-        layout.addWidget(self._build_expert_section())
         layout.addStretch(1)
 
     def _build_key_hint(self) -> QLabel | None:
@@ -150,29 +139,6 @@ class AiModelsPage(SettingsPageBase):
         group_layout.addWidget(section)
         return section, group
 
-    def _build_expert_section(self) -> CollapsibleSection:
-        self._expert_section = CollapsibleSection(EXPERT_SETTINGS, collapsed=True)
-        form = QFormLayout(self._expert_section.content_widget)
-        form.setContentsMargins(0, 0, 0, 0)
-        self._ocr_temperature = _temperature_box(DEFAULTS["ocr_temperature"], TEMPERATURE_TOOLTIP)
-        form.addRow(OCR_TEMPERATURE_LABEL, self._ocr_temperature)
-        self._correction_temperature = _temperature_box(
-            DEFAULTS["correction_temperature"], PROOFREADING.temperature_tooltip
-        )
-        form.addRow(PROOFREADING_TEMPERATURE_LABEL, self._correction_temperature)
-        self._evaluate_temperature = _temperature_box(
-            DEFAULTS["evaluate_temperature"], CONTENT_REVIEW.temperature_tooltip
-        )
-        form.addRow(REVIEW_TEMPERATURE_LABEL, self._evaluate_temperature)
-        return self._expert_section
-
-    def _temperatures(self) -> dict[str, QDoubleSpinBox]:
-        return {
-            "ocr_temperature": self._ocr_temperature,
-            PROOFREADING.temperature_key: self._correction_temperature,
-            CONTENT_REVIEW.temperature_key: self._evaluate_temperature,
-        }
-
     # ── settings ──────────────────────────────────────────────────────────────
 
     def load(self, values: Mapping[str, Any]) -> None:
@@ -181,18 +147,11 @@ class AiModelsPage(SettingsPageBase):
             self._load_ocr(values)
             self._proofreading.load(values)
             self._review.load(values)
-            for key, box in self._temperatures().items():
-                if key in values:
-                    box.setValue(float(values[key]))
         finally:
             self._loading = False
         # Hand each step the other's choice as it is now shown (the load read the saved one).
         self._review.set_other_choice(*self._proofreading.choice())
         self._proofreading.set_other_choice(*self._review.choice())
-        # A temperature the user chose is the reason to open "Expert settings" at all.
-        self._expert_section.set_expanded(
-            any(box.value() != DEFAULTS[key] for key, box in self._temperatures().items())
-        )
 
     def _load_ocr(self, values: Mapping[str, Any]) -> None:
         if "ocr_engine" not in values and "ocr_model" not in values:
@@ -210,7 +169,6 @@ class AiModelsPage(SettingsPageBase):
         }
         result.update(self._proofreading.values())
         result.update(self._review.values())
-        result.update({key: box.value() for key, box in self._temperatures().items()})
         return result
 
     def owned_keys(self) -> frozenset[str]:
@@ -219,10 +177,8 @@ class AiModelsPage(SettingsPageBase):
                 *_OCR_KEYS,
                 PROOFREADING.provider_key,
                 PROOFREADING.model_key,
-                PROOFREADING.temperature_key,
                 CONTENT_REVIEW.provider_key,
                 CONTENT_REVIEW.model_key,
-                CONTENT_REVIEW.temperature_key,
             )
         )
 
@@ -266,9 +222,9 @@ class AiModelsPage(SettingsPageBase):
 
     # ── internal ──────────────────────────────────────────────────────────────
 
-    def ocr_choice(self) -> tuple[str, str, float]:
-        """Return ``(engine, model, temperature)`` of text recognition as shown."""
-        return self._ocr_picker.engine(), self._ocr_picker.model(), self._ocr_temperature.value()
+    def ocr_choice(self) -> tuple[str, str]:
+        """Return ``(engine, model)`` of text recognition as shown."""
+        return self._ocr_picker.engine(), self._ocr_picker.model()
 
     def _on_engine_changed(self, engine: str) -> None:
         if not self._loading:

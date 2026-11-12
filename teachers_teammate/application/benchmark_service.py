@@ -129,25 +129,6 @@ class BenchmarkApplicationService:
     def default_correction_prompt(self) -> str:
         return self._processing.default_correction_prompt()
 
-    def correction_instructions(
-        self,
-        *,
-        prompt: str,
-        language: str,
-        level: str = "B2",
-        output_mode: str = "review",
-        text_format: TextFormat = "plain",
-        answer_format: str = "",
-    ) -> tuple[str, str]:
-        return self._processing.correction_instructions(
-            prompt=prompt,
-            language=language,
-            level=level,
-            output_mode=output_mode,
-            text_format=text_format,
-            answer_format=answer_format,
-        )
-
     def default_answer_formats(self) -> tuple[str, str]:
         return self._processing.default_answer_formats()
 

@@ -6,13 +6,14 @@ queries, hardware profiles and ratings, and (for the Add-ons page) what is insta
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from datetime import date
 import threading
 
 from teachers_teammate.domain.formatted_text import TextFormat
 from teachers_teammate.domain.model_listing import ListedModel, ModelListing
 
-from ._service_stubs import RecommendationServiceStub
+from ._service_stubs import RecommendationServiceStub, context_choice_from
 
 
 class DummyAppService(RecommendationServiceStub):
@@ -20,6 +21,10 @@ class DummyAppService(RecommendationServiceStub):
 
     def list_providers(self) -> list[str]:
         return ["ollama", "openai"]
+
+    def context_choice(self, settings: Mapping[str, object], card_gb: float | None):
+        """Answer with the real rule: the page must not promise a window the run does not use."""
+        return context_choice_from(settings, card_gb)
 
     def list_ocr_engines(self) -> list[str]:
         return ["ollama", "tesseract", "paddleocr"]
@@ -71,27 +76,6 @@ class DummyAppService(RecommendationServiceStub):
         from teachers_teammate.infrastructure.correction import ENGLISH_PROMPT  # noqa: PLC0415
 
         return ENGLISH_PROMPT
-
-    def correction_instructions(
-        self,
-        *,
-        prompt: str,
-        language: str,
-        level: str = "B2",
-        output_mode: str = "review",
-        text_format: TextFormat = "plain",
-        answer_format: str = "",
-    ) -> tuple[str, str]:
-        from teachers_teammate.infrastructure.correction import instruction_parts  # noqa: PLC0415
-
-        return instruction_parts(
-            prompt,
-            language,
-            level=level,
-            text_format=text_format,
-            mode="review" if output_mode != "text" else "text",
-            answer_format=answer_format,
-        )
 
     def default_answer_formats(self) -> tuple[str, str]:
         from teachers_teammate.domain.answer_format import (  # noqa: PLC0415

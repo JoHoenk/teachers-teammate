@@ -225,6 +225,59 @@ def test_main_allows_missing_output_when_no_docx(tmp_path: Path, monkeypatch) ->
 
 
 @pytest.mark.use_case("Headless_CLI_Batch")
+def test_the_proofreading_context_flag_reaches_the_config(tmp_path: Path, monkeypatch) -> None:
+    """
+    Given  --proofreading-context 16384
+    When   run_cli() is called
+    Then   the config the run gets carries that window
+    """
+    import os  # noqa: PLC0415
+
+    import teachers_teammate.infrastructure.storage_root as storage_module  # noqa: PLC0415
+    from teachers_teammate.cli import run_cli  # noqa: PLC0415
+
+    captured: list = []
+
+    class _FakeAppService(_AppServiceStub):
+        def run_selected(self, config, /, **kwargs) -> int:
+            captured.append(config)
+            return 0
+
+    monkeypatch.setattr(storage_module, "default_config_path", lambda: tmp_path / "ocr.toml")
+    original_cwd = os.getcwd()
+    try:
+        os.chdir(tmp_path)
+        rc = run_cli(
+            argv=[
+                "-i",
+                str(tmp_path),
+                "--no-docx",
+                "--proofreading-context",
+                "16384",
+            ],
+            app_service=_FakeAppService(),
+        )
+    finally:
+        os.chdir(original_cwd)
+
+    assert rc == 0
+    assert captured[0].proofreading_context == "16384"
+
+
+@pytest.mark.use_case("Headless_CLI_Batch")
+def test_the_proofreading_context_flag_rejects_an_unknown_window() -> None:
+    """
+    Given  --proofreading-context 4096, which is not on the ladder
+    When   the arguments are parsed
+    Then   argparse refuses it instead of passing it on
+    """
+    from teachers_teammate.cli import _parse_args  # noqa: PLC0415
+
+    with pytest.raises(SystemExit):
+        _parse_args(argv=["--proofreading-context", "4096"])
+
+
+@pytest.mark.use_case("Headless_CLI_Batch")
 def test_main_exits_when_input_dir_does_not_exist(tmp_path: Path) -> None:
     """
     Given  -i <non-existent path> -o <valid dir>

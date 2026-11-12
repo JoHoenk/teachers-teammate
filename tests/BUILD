@@ -166,7 +166,10 @@ _FORMAT_DEPS = [
 
 # ── Individual py_test targets ────────────────────────────────────────────
 
-_REQUESTS_DEPS = ["@ocr_test_dependencies//requests:pkg"]
+_REQUESTS_DEPS = [
+    "@ocr_test_dependencies//httpx:pkg",
+    "@ocr_test_dependencies//requests:pkg",
+]
 
 _GUI_DEPS = [
     "@ocr_test_dependencies//psutil:pkg",
@@ -541,15 +544,6 @@ py_test(
 )
 
 py_test(
-    name = "test_proofreading_quality",
-    size = "small",
-    srcs = _COMMON_SRCS + ["unit/test_proofreading_quality.py"],
-    args = ["unit/test_proofreading_quality.py"],
-    main = "run_test.py",
-    deps = _COMMON_DEPS,
-)
-
-py_test(
     name = "test_chunking_corrector",
     size = "small",
     srcs = _COMMON_SRCS + ["unit/test_chunking_corrector.py"],
@@ -570,13 +564,133 @@ py_test(
 # The developer tools' shared library. Its own suite, because `//tools:model_eval` pulls in the
 # whole OCR library: a tools test never runs quicker than the app tests, and it is not part of
 # the unit suite.
-_TOOL_DEPS = _COMMON_DEPS + ["//tools:model_eval"]
+# lxml and markdown_it: text mode tidies the answer through ocr_formats, and the protocol fingerprint
+# asks the app's corrector in both modes.
+_TOOL_DEPS = _COMMON_DEPS + _FORMAT_DEPS + ["//tools:model_eval"]
+
+# The metrics of a proofreading answer against a reference correction: edit agreement,
+# explanations, sentences left alone.  Pure, so no server and no corpus.
+py_test(
+    name = "test_model_eval_quality",
+    size = "small",
+    srcs = _COMMON_SRCS + ["tools/test_quality.py"],
+    args = ["tools/test_quality.py"],
+    main = "run_test.py",
+    deps = _TOOL_DEPS,
+)
 
 py_test(
     name = "test_model_eval_check_rule",
     size = "small",
     srcs = _COMMON_SRCS + ["tools/test_check_rule.py"],
     args = ["tools/test_check_rule.py"],
+    main = "run_test.py",
+    deps = _TOOL_DEPS,
+)
+
+# The structured-output check itself: the fixtures as data, the size the app really sends, the
+# request it really builds, and how one answer is judged.  The server is scripted.
+py_test(
+    name = "test_model_eval_structured_check",
+    size = "small",
+    srcs = _COMMON_SRCS + ["tools/test_structured_check.py"],
+    args = ["tools/test_structured_check.py"],
+    main = "run_test.py",
+    deps = _TOOL_DEPS,
+)
+
+# The memory agent that runs on the machine with the graphics card: the readers, the ring buffer,
+# the windows and the HTTP API, all offline.
+py_test(
+    name = "test_gpu_agent",
+    size = "small",
+    srcs = _COMMON_SRCS + ["tools/test_gpu_agent.py"],
+    args = ["tools/test_gpu_agent.py"],
+    main = "run_test.py",
+    deps = _TOOL_DEPS,
+)
+
+# The tool's side of that agent: the four requests, the answers as types, and the wait for the
+# card to settle.
+py_test(
+    name = "test_agent_client",
+    size = "small",
+    srcs = _COMMON_SRCS + ["tools/test_agent_client.py"],
+    args = ["tools/test_agent_client.py"],
+    main = "run_test.py",
+    deps = _TOOL_DEPS,
+)
+
+# What a model really needs: the stored records, the need, the size limit and the growth with the
+# window, plus the flags that say when a figure cannot be entered as it is.
+py_test(
+    name = "test_model_eval_model_fit",
+    size = "small",
+    srcs = _COMMON_SRCS + ["tools/test_model_fit.py"],
+    args = ["tools/test_model_fit.py"],
+    main = "run_test.py",
+    deps = _TOOL_DEPS,
+)
+
+# The command line of the structured-output check: the header, the default window, the saved
+# answers and the re-run that judges them again, mixed --tag lists, the margin warning.
+py_test(
+    name = "test_verify_model_catalog_cli",
+    size = "small",
+    srcs = _COMMON_SRCS + ["tools/test_verify_model_catalog.py"],
+    args = ["tools/test_verify_model_catalog.py"],
+    main = "run_test.py",
+    deps = _TOOL_DEPS + ["//tools:verify_model_catalog"],
+)
+
+# The per-setup smoke check: the two-in-a-row rule, the retry, the collapse signature, the
+# text-mode rule, and the two commands that run it (``smoke`` and ``--continue``).
+py_test(
+    name = "test_model_eval_smoke",
+    size = "small",
+    srcs = _COMMON_SRCS + ["tools/test_smoke.py"],
+    args = ["tools/test_smoke.py"],
+    main = "run_test.py",
+    deps = _TOOL_DEPS + ["//tools:verify_model_catalog"],
+)
+
+# The answer modes: the values, the parser and the row that carries one.
+py_test(
+    name = "test_model_eval_answer_mode",
+    size = "small",
+    srcs = _COMMON_SRCS + ["tools/test_answer_mode.py"],
+    args = ["tools/test_answer_mode.py"],
+    main = "run_test.py",
+    deps = _TOOL_DEPS,
+)
+
+# GLEU: the counts of one text, their sum over texts, and the score, cross-checked against the
+# official script of gec-ranking.
+py_test(
+    name = "test_model_eval_gleu",
+    size = "small",
+    srcs = _COMMON_SRCS + ["tools/test_gleu.py"],
+    args = ["tools/test_gleu.py"],
+    main = "run_test.py",
+    deps = _TOOL_DEPS,
+)
+
+# The numbers of one item: GLEU, recall by half, left alone and coverage.
+py_test(
+    name = "test_model_eval_item_scores",
+    size = "small",
+    srcs = _COMMON_SRCS + ["tools/test_item_scores.py"],
+    args = ["tools/test_item_scores.py"],
+    main = "run_test.py",
+    deps = _TOOL_DEPS,
+)
+
+# The arithmetic the reports share: pooling, the F-beta and its mean.
+py_test(
+    name = "test_model_eval_scoring",
+    size = "small",
+    srcs = _COMMON_SRCS + ["tools/test_scoring.py"],
+    args = ["tools/test_scoring.py"],
     main = "run_test.py",
     deps = _TOOL_DEPS,
 )
@@ -591,6 +705,59 @@ py_test(
 )
 
 py_test(
+    name = "test_model_eval_error_labels",
+    size = "small",
+    srcs = _COMMON_SRCS + ["tools/test_error_labels.py"],
+    args = ["tools/test_error_labels.py"],
+    main = "run_test.py",
+    deps = _TOOL_DEPS,
+)
+
+py_test(
+    name = "test_model_eval_measure",
+    size = "small",
+    srcs = _COMMON_SRCS + ["tools/test_measure.py"],
+    args = ["tools/test_measure.py"],
+    main = "run_test.py",
+    deps = _TOOL_DEPS,
+)
+
+# The version file of the request side: the fingerprint, the moved instructions hash and the
+# validity of protocol.json itself.
+py_test(
+    name = "test_model_eval_protocol",
+    size = "small",
+    srcs = _COMMON_SRCS + ["tools/test_protocol.py"],
+    args = ["tools/test_protocol.py"],
+    main = "run_test.py",
+    deps = _TOOL_DEPS,
+)
+
+# The sessions of one run (the header file and the resume check) and the layering of the offline
+# modules.
+py_test(
+    name = "test_model_eval_session",
+    size = "small",
+    srcs = _COMMON_SRCS + ["tools/test_session.py"],
+    args = ["tools/test_session.py"],
+    main = "run_test.py",
+    deps = _TOOL_DEPS,
+)
+
+# The app's own corrector as the tools build it, and the guard that it stays the app's: the test
+# also builds the app's corrector through the stage builder, which needs the pipeline libraries.
+py_test(
+    name = "test_model_eval_app_corrector",
+    size = "small",
+    srcs = _COMMON_SRCS + ["tools/test_app_corrector.py"],
+    args = ["tools/test_app_corrector.py"],
+    main = "run_test.py",
+    deps = _TOOL_DEPS + _LANGCHAIN_DEPS + _IMAGE_DEPS + _PDF_DEPS + _CV_DEPS + _REQUESTS_DEPS + [
+        "@ocr_test_dependencies//python_docx:pkg",
+    ],
+)
+
+py_test(
     name = "test_model_eval_comparison",
     size = "small",
     srcs = _COMMON_SRCS + ["tools/test_comparison.py"],
@@ -599,12 +766,359 @@ py_test(
     deps = _TOOL_DEPS,
 )
 
+py_test(
+    name = "test_model_eval_redaction",
+    size = "small",
+    srcs = _COMMON_SRCS + ["tools/test_redaction.py"],
+    args = ["tools/test_redaction.py"],
+    main = "run_test.py",
+    deps = _TOOL_DEPS,
+)
+
+# test_testset and test_store build their corpus from tests/tools/invented_corpus.py, which is a
+# source of those two targets only.
+py_test(
+    name = "test_model_eval_testset",
+    size = "small",
+    srcs = _COMMON_SRCS + [
+        "tools/invented_corpus.py",
+        "tools/test_testset.py",
+    ],
+    args = ["tools/test_testset.py"],
+    main = "run_test.py",
+    deps = _TOOL_DEPS,
+)
+
+# The corpus registry, the four adapters and the recipes: what a manifest needs from a corpus, how
+# a pointer becomes a text, and which texts a test set chooses.
+py_test(
+    name = "test_model_eval_corpora",
+    size = "small",
+    srcs = _COMMON_SRCS + [
+        "tools/invented_corpus.py",
+        "tools/test_corpora.py",
+    ],
+    args = ["tools/test_corpora.py"],
+    main = "run_test.py",
+    deps = _TOOL_DEPS,
+)
+
+# The recipe of gec-2026-12: the bands, the slots and the filters, on a corpus built for the
+# bands (tests/tools/band_corpus.py), and the committed manifest of the set. The builder is a
+# dependency so that the test runs the very module `bazel run //tools:prepare_gec_testset` runs.
+py_test(
+    name = "test_model_eval_recipe_gec_2026_12",
+    size = "medium",
+    srcs = _COMMON_SRCS + [
+        "tools/band_corpus.py",
+        "tools/test_recipe_gec_2026_12.py",
+    ],
+    args = ["tools/test_recipe_gec_2026_12.py"],
+    data = ["//evaluations/proofreading:all"],
+    main = "run_test.py",
+    deps = _TOOL_DEPS + ["//tools:prepare_gec_testset_lib"],
+)
+
+# A corpus whose adapter is defined in the test file itself goes through build,
+# check, export and both validation modes, and is named on the command line. Nothing else changes.
+py_test(
+    name = "test_model_eval_corpus_extension",
+    size = "small",
+    srcs = _COMMON_SRCS + [
+        "tools/invented_corpus.py",
+        "tools/store_workspace.py",
+        "tools/test_corpus_extension.py",
+    ],
+    args = ["tools/test_corpus_extension.py"],
+    main = "run_test.py",
+    deps = _TOOL_DEPS + [
+        "//tools:prepare_gec_testset_lib",
+        "//tools:proofreading_store",
+    ],
+)
+
+# The committed set still rebuilds from the local corpora. Skipped unless
+# GEC_CORPORA names a {corpus: path} file, which is never the case in CI: the corpora are licensed
+# and stay outside the repository.
+py_test(
+    name = "test_model_eval_corpus_regression",
+    size = "small",
+    srcs = _COMMON_SRCS + [
+        "tools/invented_corpus.py",
+        "tools/store_workspace.py",
+        "tools/test_corpus_regression.py",
+    ],
+    args = ["tools/test_corpus_regression.py"],
+    data = ["//evaluations/proofreading:all"],
+    main = "run_test.py",
+    deps = _TOOL_DEPS,
+)
+
+# The export, the validator, the index and the layout of a run file, each with its own target.
+# The tests that read the committed tree below evaluations/proofreading take the filegroup as data,
+# so that the check of the committed runs is not skipped under Bazel.
+py_test(
+    name = "test_model_eval_export",
+    size = "small",
+    srcs = _COMMON_SRCS + [
+        "tools/invented_corpus.py",
+        "tools/store_workspace.py",
+        "tools/test_export.py",
+    ],
+    args = ["tools/test_export.py"],
+    main = "run_test.py",
+    deps = _TOOL_DEPS,
+)
+
+py_test(
+    name = "test_model_eval_validation",
+    size = "small",
+    srcs = _COMMON_SRCS + [
+        "tools/invented_corpus.py",
+        "tools/store_workspace.py",
+        "tools/test_validation.py",
+    ],
+    args = ["tools/test_validation.py"],
+    data = ["//evaluations/proofreading:all"],
+    main = "run_test.py",
+    deps = _TOOL_DEPS,
+)
+
+py_test(
+    name = "test_model_eval_index",
+    size = "small",
+    srcs = _COMMON_SRCS + [
+        "tools/invented_corpus.py",
+        "tools/store_workspace.py",
+        "tools/test_index.py",
+    ],
+    args = ["tools/test_index.py"],
+    data = ["//evaluations/proofreading:all"],
+    main = "run_test.py",
+    deps = _TOOL_DEPS,
+)
+
+py_test(
+    name = "test_model_eval_layout",
+    size = "small",
+    srcs = _COMMON_SRCS + [
+        "tools/invented_corpus.py",
+        "tools/store_workspace.py",
+        "tools/test_layout.py",
+    ],
+    args = ["tools/test_layout.py"],
+    data = ["//evaluations/proofreading:all"],
+    main = "run_test.py",
+    deps = _TOOL_DEPS,
+)
+
+py_test(
+    name = "test_model_eval_report_sources",
+    size = "small",
+    srcs = _COMMON_SRCS + [
+        "tools/invented_corpus.py",
+        "tools/store_workspace.py",
+        "tools/test_report_sources.py",
+    ],
+    args = ["tools/test_report_sources.py"],
+    main = "run_test.py",
+    deps = _TOOL_DEPS,
+)
+
+py_test(
+    name = "test_model_eval_run_format",
+    size = "small",
+    srcs = _COMMON_SRCS + [
+        "tools/invented_corpus.py",
+        "tools/store_workspace.py",
+        "tools/test_run_format.py",
+    ],
+    args = ["tools/test_run_format.py"],
+    main = "run_test.py",
+    deps = _TOOL_DEPS,
+)
+
+# The command line of the proofreading store; the binary is a dependency so that the test imports
+# the very module `bazel run //tools:proofreading_store` runs, with the dependencies it declares.
+py_test(
+    name = "test_model_eval_store_cli",
+    size = "small",
+    srcs = _COMMON_SRCS + [
+        "tools/gate_fixtures.py",
+        "tools/invented_corpus.py",
+        "tools/store_workspace.py",
+        "tools/test_proofreading_store_cli.py",
+    ],
+    args = ["tools/test_proofreading_store_cli.py"],
+    main = "run_test.py",
+    deps = _TOOL_DEPS + ["//tools:proofreading_store"],
+)
+
+# The repository explains itself: no source, document or record points into git-ignored notes.
+py_test(
+    name = "test_no_plan_references",
+    size = "small",
+    srcs = _COMMON_SRCS + ["tools/test_no_plan_references.py"],
+    args = ["tools/test_no_plan_references.py"],
+    data = [
+        ":all_sources",
+        "//:CLAUDE.md",
+        "//docs:markdown",
+        "//evaluations:records",
+        "//evaluations/proofreading:all",
+        "//teachers_teammate:all_sources",
+        "//tools:all_sources",
+    ],
+    main = "run_test.py",
+    deps = _COMMON_DEPS,
+)
+
+# Gate 1 beyond the single request: the saved-answers file and continuing a run.
+py_test(
+    name = "test_model_eval_gate_one",
+    size = "small",
+    srcs = _COMMON_SRCS + ["tools/test_gate_one.py"],
+    args = ["tools/test_gate_one.py"],
+    main = "run_test.py",
+    deps = _TOOL_DEPS,
+)
+
+# Gate 2's groups: the key that separates runs, the ranges of the repeats and the order of a
+# group.  The fixtures build the runs in memory, so no corpus and no export is needed.
+py_test(
+    name = "test_model_eval_grouping",
+    size = "small",
+    srcs = _COMMON_SRCS + [
+        "tools/gate_fixtures.py",
+        "tools/test_grouping.py",
+    ],
+    args = ["tools/test_grouping.py"],
+    main = "run_test.py",
+    deps = _TOOL_DEPS,
+)
+
+# Gate 2's floors and its comparison: one number moved per test, so each check is seen alone.
+py_test(
+    name = "test_model_eval_gate_two",
+    size = "small",
+    srcs = _COMMON_SRCS + [
+        "tools/gate_fixtures.py",
+        "tools/test_gate_two.py",
+    ],
+    args = ["tools/test_gate_two.py"],
+    main = "run_test.py",
+    deps = _TOOL_DEPS,
+)
+
+# The explanation check: the sample of a run, the marks without text, and the sheet whose source
+# sentences come from a local cache.
+py_test(
+    name = "test_model_eval_spot_check",
+    size = "small",
+    srcs = _COMMON_SRCS + [
+        "tools/gate_fixtures.py",
+        "tools/test_spot_check.py",
+    ],
+    args = ["tools/test_spot_check.py"],
+    main = "run_test.py",
+    deps = _TOOL_DEPS,
+)
+
+# The progress display: the line, the estimate, the waiting thread, and the two commands that
+# report every request through it.
+py_test(
+    name = "test_model_eval_progress",
+    size = "small",
+    srcs = _COMMON_SRCS + [
+        "tools/test_progress.py",
+        "tools/test_runner.py",
+    ],
+    args = ["tools/test_progress.py"],
+    main = "run_test.py",
+    deps = _TOOL_DEPS + ["//tools:verify_model_catalog"],
+)
+
+# The run loop of `compare_writing_models run`, driven without a server: the planning, the resume
+# check, the seed per repeat, the warm-up, the header and the sampler.
+py_test(
+    name = "test_model_eval_runner",
+    size = "small",
+    srcs = _COMMON_SRCS + ["tools/test_runner.py"],
+    args = ["tools/test_runner.py"],
+    main = "run_test.py",
+    deps = _TOOL_DEPS,
+)
+
+# The test-set builder: the day it records, the checks it runs on its own manifest, and the
+# warning a dirty tree gets. The library is a dependency so that the test imports the very module
+# `bazel run //tools:prepare_gec_testset` runs, with the dependencies it declares.
+py_test(
+    name = "test_prepare_gec_testset",
+    size = "small",
+    srcs = _COMMON_SRCS + [
+        "tools/invented_corpus.py",
+        "tools/test_prepare_gec_testset.py",
+    ],
+    args = ["tools/test_prepare_gec_testset.py"],
+    main = "run_test.py",
+    deps = _TOOL_DEPS + ["//tools:prepare_gec_testset_lib"],
+)
+
+# The command line of the comparison; the binary is a dependency so that the test imports the very
+# module `bazel run //tools:compare_writing_models` runs, with the dependencies it declares.
+py_test(
+    name = "test_model_eval_compare_cli",
+    size = "small",
+    srcs = _COMMON_SRCS + [
+        "tools/test_compare_cli.py",
+    ],
+    args = ["tools/test_compare_cli.py"],
+    main = "run_test.py",
+    deps = _TOOL_DEPS + ["//tools:compare_writing_models"],
+)
+
 test_suite(
     name = "tools_tests",
     tests = [
+        ":test_model_eval_answer_mode",
+        ":test_model_eval_app_corrector",
         ":test_model_eval_check_rule",
+        ":test_model_eval_compare_cli",
         ":test_model_eval_comparison",
+        ":test_model_eval_corpora",
+        ":test_model_eval_corpus_extension",
+        ":test_model_eval_corpus_regression",
+        ":test_model_eval_error_labels",
+        ":test_model_eval_export",
+        ":test_model_eval_gate_one",
+        ":test_model_eval_gate_two",
+        ":test_model_eval_gleu",
+        ":test_model_eval_grouping",
+        ":test_model_eval_index",
+        ":test_model_eval_item_scores",
+        ":test_model_eval_layout",
+        ":test_model_eval_measure",
+        ":test_model_eval_model_fit",
+        ":test_model_eval_progress",
+        ":test_model_eval_protocol",
+        ":test_model_eval_quality",
+        ":test_model_eval_recipe_gec_2026_12",
+        ":test_model_eval_redaction",
+        ":test_model_eval_report_sources",
         ":test_model_eval_results",
+        ":test_model_eval_run_format",
+        ":test_model_eval_runner",
+        ":test_model_eval_scoring",
+        ":test_model_eval_session",
+        ":test_model_eval_smoke",
+        ":test_model_eval_spot_check",
+        ":test_model_eval_store_cli",
+        ":test_model_eval_structured_check",
+        ":test_model_eval_testset",
+        ":test_model_eval_validation",
+        ":test_no_plan_references",
+        ":test_prepare_gec_testset",
+        ":test_verify_model_catalog_cli",
     ],
 )
 
@@ -1067,7 +1581,6 @@ test_suite(
         ":test_preprocess_service",
         ":test_preprocessor",
         ":test_preview_image_store",
-        ":test_proofreading_quality",
         ":test_providers",
         ":test_providers_mistral_curation",
         ":test_release_stamp_versions",

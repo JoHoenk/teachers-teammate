@@ -21,7 +21,15 @@ from .domain.answer_format import ANSWER_FORMAT_VERSION, migrate_saved_formats
 from .domain.correction_policy import DEFAULT_LEVEL, normalize_level, normalize_output_mode
 from .domain.correction_prompts import migrate_saved_default, migrate_saved_prompt
 from .domain.data_location import LOCAL_OCR_ENGINES
-from .domain.model_catalog import DEFAULT_OCR_MODEL, DEFAULT_WRITING_MODEL, PROFILE_SETTINGS
+from .domain.model_catalog import (
+    DEFAULT_OCR_MODEL,
+    DEFAULT_WRITING_MODEL,
+    OCR_TEMPERATURE,
+    PROFILE_SETTINGS,
+    RequestProfile,
+    request_profile,
+    review_temperature,
+)
 from .domain.pdf_text_layer import (
     PDF_TEXT_LAYER_MODES,
     PdfTextLayerMode,
@@ -45,7 +53,6 @@ DEFAULTS: dict[str, Any] = {
     "preprocess_method": "grayscale",
     "ollama_url": "http://127.0.0.1:11434",
     "ocr_timeout": 180,
-    "ocr_temperature": 0.0,
     # ── Preprocessing (pre-steps and PDF rendering) ───────────────────────────
     "pdf_render_dpi": 300,
     # "auto" | "always" | "never" — use a PDF's embedded text instead of OCR.
@@ -75,7 +82,6 @@ DEFAULTS: dict[str, Any] = {
     "answer_format_review": "",
     "answer_format_text": "",
     "answer_format_version": ANSWER_FORMAT_VERSION,
-    "correction_temperature": 0.2,
     # ── Evaluation ────────────────────────────────────────────────────────────
     "evaluation_enabled": False,
     "evaluate_provider": "ollama",
@@ -89,7 +95,6 @@ DEFAULTS: dict[str, Any] = {
         "4) short recommendation. "
         "Keep the response compact and actionable."
     ),
-    "evaluate_temperature": 0.7,
     # ── Output ────────────────────────────────────────────────────────────────
     "docx_format": "table",
     "docx_enabled": False,
@@ -107,8 +112,11 @@ DEFAULTS: dict[str, Any] = {
     "hardware_profile": "auto",
     # ── Context window ────────────────────────────────────────────────────────
     # "auto" = as large as the graphics card still holds at full speed (8192 / 16384 / 32768,
-    # never smaller than 8192).  A fixed value from CONTEXT_STEPS pins it — for advanced users,
-    # and for a remote server whose card the app cannot see.
+    # never smaller than 8192).  Sized from the card's total memory, not from the memory free
+    # right now: free memory changes between runs, and a window that changed with it would make
+    # Ollama reload the model and would invalidate the result cache.  A fixed value from
+    # CONTEXT_SETTINGS pins it — for advanced users, and for a remote server whose card the app
+    # cannot see.
     "proofreading_context": "auto",
 }
 
@@ -160,7 +168,8 @@ class OcrConfig:
     engine: str = DEFAULTS["ocr_engine"]
     model: str = DEFAULTS["ocr_model"]
     preprocess_method: str = DEFAULTS["preprocess_method"]
-    temperature: float = DEFAULTS["ocr_temperature"]
+    temperature: float = OCR_TEMPERATURE
+    """Fixed for the app; only the Benchmark varies it to compare readings."""
     pdf_render_dpi: int = DEFAULTS["pdf_render_dpi"]
     pdf_text_layer: PdfTextLayerMode = DEFAULTS["pdf_text_layer"]
     """Whether a PDF's embedded text may replace OCR (``auto``/``always``/``never``)."""
@@ -190,7 +199,6 @@ class OcrConfig:
             engine=normalize_ocr_engine(get("ocr_engine")),
             model=normalize_ocr_model(get("ocr_engine"), get("ocr_model")),
             preprocess_method=str(get("preprocess_method")),
-            temperature=float(get("ocr_temperature")),
             pdf_render_dpi=int(get("pdf_render_dpi")),
             pdf_text_layer=get("pdf_text_layer"),
             dewarp=bool(get("preprocess_dewarp")),
@@ -259,10 +267,6 @@ class Config:
     # [] = no regex patterns
     anonymizer_patterns: list[tuple[str, str]] | None = None
 
-    # ── Temperature ──────────────────────────────────────────────────────────
-    correction_temperature: float = DEFAULTS["correction_temperature"]
-    evaluate_temperature: float = DEFAULTS["evaluate_temperature"]
-
     # ── Internal ─────────────────────────────────────────────────────────────
     ocr_timeout: int = DEFAULTS["ocr_timeout"]
 
@@ -287,6 +291,26 @@ class Config:
         if self.evaluate_model:
             return self.evaluate_model
         return default_model_for_task(self.evaluate_provider, "evaluation")
+
+    @property
+    def correction_profile(self) -> RequestProfile:
+        """Return how the proofreading requests are built: the compact rule and the temperature.
+
+        The model's own profile, resolved for the provider.  Teachers set no temperature; the
+        value is the one the model's maker recommends (see
+        :data:`~.domain.model_catalog.RECOMMENDED_TEMPERATURES`).
+        """
+        return request_profile(self.effective_correction_model, self.correction_provider)
+
+    @property
+    def correction_temperature(self) -> float:
+        """Return the temperature the proofreading requests are sent at."""
+        return self.correction_profile.temperature
+
+    @property
+    def evaluate_temperature(self) -> float:
+        """Return the temperature the content review is sent at."""
+        return review_temperature(self.effective_evaluate_model, self.evaluate_provider)
 
 
 def _read_toml(path: Path) -> dict[str, Any]:
@@ -377,12 +401,10 @@ def load_config_file(path: Path) -> dict:
         "answer_format_review",
         "answer_format_text",
         "answer_format_version",
-        "correction_temperature",
         "evaluation_enabled",
         "evaluate_provider",
         "evaluate_model",
         "evaluate_prompt",
-        "evaluate_temperature",
         "docx_format",
         "docx_enabled",
         "text_enabled",
@@ -390,7 +412,6 @@ def load_config_file(path: Path) -> dict:
         "anonymizer_primary_model",
         "anonymizer_secondary_model",
         "anonymizer_patterns",
-        "ocr_temperature",
         "pdf_render_dpi",
         "pdf_text_layer",
         "preprocess_dewarp",

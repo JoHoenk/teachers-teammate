@@ -84,17 +84,6 @@ class _SettingsAppService(Protocol):
 
     def default_correction_prompt(self) -> str: ...
 
-    def correction_instructions(
-        self,
-        *,
-        prompt: str,
-        language: str,
-        level: str = "B2",
-        output_mode: str = "review",
-        text_format: TextFormat = "plain",
-        answer_format: str = "",
-    ) -> tuple[str, str]: ...
-
     def default_answer_formats(self) -> tuple[str, str]: ...
 
     def correction_notation_hint(self) -> str: ...

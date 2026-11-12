@@ -116,6 +116,9 @@ version = { attr = "teachers_teammate.__version__" }
 [tool.ruff]
 line-length = 100
 target-version = "py312"
+# The memory agent is copied alone to other machines, which may run Python 3.9, so ruff flags
+# newer syntax in that one file.
+per-file-target-version = { "tools/model_eval/gpu_agent.py" = "py39" }
 
 [tool.ruff.lint]
 select = [
@@ -194,6 +197,7 @@ ignored-modules = [
     "PIL",
     "cv2",
     "docx",
+    "httpx",
     "langchain_core",
     "lxml",
     "markdown_it",

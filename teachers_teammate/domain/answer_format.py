@@ -13,7 +13,7 @@ schema in step.
 
 from __future__ import annotations
 
-ANSWER_FORMAT_VERSION = 3
+ANSWER_FORMAT_VERSION = 1
 """Bumped whenever the built-in formats or the schema change: it is part of the cache key, and
 an edited format written for another version is not used (see :func:`migrate_saved_formats`)."""
 
@@ -54,8 +54,8 @@ REVIEW_FORMAT = (
     "or a deletion\n"
     '  - "category": one of ' + ", ".join(CATEGORY_NAMES) + "\n"
     '  - "explanation": one short sentence saying why the edit was made\n'
-    '"unclear": every unclear or ambiguous expression in the text, even a grammatically '
-    "correct one. Each entry has:\n"
+    '"unclear": only expressions whose meaning is unclear or ambiguous, never an error you '
+    "already corrected; this list is often empty. Each entry has:\n"
     '- "original_expression": the exact words from the text\n'
     '- "why_unclear": what makes it unclear or ambiguous\n'
     '- "recommended_version": a possible clearer version, in the language of the text\n'

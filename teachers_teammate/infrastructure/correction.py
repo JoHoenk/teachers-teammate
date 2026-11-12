@@ -36,7 +36,7 @@ from ..domain.context_budget import (
     ContextBudget,
     answers_with_the_same_text,
 )
-from ..domain.correction_policy import normalize_output_mode
+from ..domain.correction_policy import CUT_OFF_TRIES, normalize_output_mode
 from ..domain.correction_prompts import (  # noqa: F401  # re-exported for callers and tests
     DUTCH_PROMPT,
     ENGLISH_PROMPT,
@@ -60,6 +60,7 @@ from ..domain.correction_review import (
     splice,
 )
 from ..domain.formatted_text import TextFormat
+from ..domain.model_catalog import DEFAULT_REQUEST_PROFILE, RequestProfile
 from ..domain.notation import with_notation_hint
 from ..domain.text_chunks import Chunk, split_for_budget
 from ..interfaces import Corrector
@@ -138,6 +139,9 @@ class CorrectionSettings:
     """OpenAI's strict JSON-schema mode; the other providers pick their own mechanism."""
     num_ctx: int = PROOFREADING_NUM_CTX
     """Context window this corrector asks Ollama for, resolved once per run from the hardware."""
+    cut_off_tries: int = CUT_OFF_TRIES
+    """How often a review request is sent when its answer is cut off (see
+    :func:`~teachers_teammate.domain.correction_policy.cut_off_tries`)."""
 
 
 def _tidy_answer(raw_text: str, text_format: TextFormat) -> Callable[[str], str]:
@@ -182,6 +186,22 @@ def prompt_ignores_level(prompt: str) -> bool:
 # ── Request building ──────────────────────────────────────────────────────────
 
 
+COMPACT_ANSWER_RULE = (
+    "Write the JSON compactly on a single line: no indentation and no line breaks."
+)
+"""What a review request carries when the model's profile asks for it.
+
+A pretty-printed review answer spent 29 % of its tokens on indentation and line breaks, and the
+window then cut the answer off for texts of about 3,000 characters.  The rule sits in the fixed
+part of the instructions, not in the editable :data:`~.answer_format.REVIEW_FORMAT`, so a
+teacher's own format gets it too.
+
+It is **not** sent to every model: the families react differently (some collapse to a single
+sentence with it, others ignore it), so
+:class:`~teachers_teammate.domain.model_catalog.RequestProfile` decides per model.
+"""
+
+
 def instruction_parts(
     prompt: str,
     language: str,
@@ -190,16 +210,24 @@ def instruction_parts(
     text_format: TextFormat,
     mode: str,
     answer_format: str = "",
+    compact_json: bool = False,
 ) -> tuple[str, str]:
     """Return ``(policy, fixed)``: the teacher's instructions and the answer format.
 
     *policy* is the resolved preset or the custom prompt with ``{level}`` filled in.
     *fixed* is the answer format of *mode* (the teacher's *answer_format*, else the built-in
-    one) plus the notation hint for Markdown texts.  The dialog shows these parts;
-    :func:`_instructions` sends their join.
+    one) plus the notation hint for Markdown texts and, in review mode with *compact_json*, the
+    compact-JSON rule.  The dialog shows these parts; :func:`_instructions` sends their join.
+
+    *compact_json* is the model's profile knob
+    (:class:`~teachers_teammate.domain.model_catalog.RequestProfile`), so the caller resolves it
+    from the model tag: the corrector, the dialog and the cache key all ask
+    :func:`~teachers_teammate.domain.model_catalog.request_profile`.
     """
     policy = fill_placeholders(_resolve_prompt(prompt, language), level=level)
     fixed = with_notation_hint(resolve_format(mode, answer_format), text_format, task="correction")
+    if mode == "review" and compact_json:
+        fixed = f"{fixed}\n{COMPACT_ANSWER_RULE}"
     return policy, fixed
 
 
@@ -211,6 +239,7 @@ def _instructions(
     text_format: TextFormat,
     mode: str,
     answer_format: str = "",
+    compact_json: bool = False,
 ) -> str:
     """Return the system instructions: policy + answer format + notation hint, unescaped.
 
@@ -224,8 +253,49 @@ def _instructions(
         text_format=text_format,
         mode=mode,
         answer_format=answer_format,
+        compact_json=compact_json,
     )
     return f"{policy}\n\n{fixed}"
+
+
+def request_messages(  # noqa: PLR0913  # a request is many independent facts, all keyword-only
+    text: str,
+    language: str,
+    *,
+    prompt: str = "",
+    level: str = DEFAULT_LEVEL,
+    text_format: TextFormat = "plain",
+    mode: str = "review",
+    answer_format: str = "",
+    compact_json: bool = False,
+    explanation_language: str = "",
+) -> tuple[str, str]:
+    """Return ``(system, user)``: the messages a corrector sends for *text*.
+
+    The one public way to build a request, so a tool that measures the app's request (the
+    evaluation tools) asks here and cannot drift from what the corrector sends.
+
+    Args:
+        text: The text the user message carries.
+        language: The language *name* the text is in, as the corrector is asked for it.
+        prompt: The teacher's instructions; empty takes the built-in ones for *language*.
+        level: The CEFR level the instructions are filled in for.
+        text_format: The notation of the text (Markdown adds a hint to the system message).
+        mode: ``review`` or ``text``.
+        answer_format: The teacher's own answer format for *mode*; empty takes the built-in one.
+        compact_json: Whether the model's request profile adds the compact-JSON rule.
+        explanation_language: The language of the explanations; empty takes *language*.
+    """
+    system = _instructions(
+        prompt,
+        language,
+        level=level,
+        text_format=text_format,
+        mode=mode,
+        answer_format=answer_format,
+        compact_json=compact_json,
+    )
+    return system, _human_message(text, language, explanation_language, mode)
 
 
 def _review_outcome(answer: CorrectionAnswer, source: str) -> CorrectionOutcome | None:
@@ -261,6 +331,8 @@ class _ReviewCorrector(Corrector):
     _prompt: str
     _answer_formats: dict[str, str]
     _num_ctx: int
+    _profile: RequestProfile
+    _cut_off_tries: int
 
     def _configure(self, prompt: str, settings: CorrectionSettings | None) -> None:
         """Store the prompt and apply *settings* (the defaults when none are given)."""
@@ -274,12 +346,19 @@ class _ReviewCorrector(Corrector):
             "text": cfg.answer_format_text,
         }
         self._num_ctx = cfg.num_ctx
+        self._cut_off_tries = max(1, cfg.cut_off_tries)
+        self._profile = DEFAULT_REQUEST_PROFILE
 
     #: Mode actually used: ``review`` unless corrections-only was chosen or is unsupported.
     @property
     def output_mode(self) -> str:
         """Return the mode this corrector uses for its requests."""
         return self._output_mode
+
+    @property
+    def profile(self) -> RequestProfile:
+        """Return how this corrector asks its model to proofread."""
+        return self._profile
 
     def _system(self, language: str, text_format: TextFormat, *, mode: str) -> str:
         """Return the unescaped system instructions for *mode*."""
@@ -290,6 +369,7 @@ class _ReviewCorrector(Corrector):
             text_format=text_format,
             mode=mode,
             answer_format=self._answer_formats.get(mode, ""),
+            compact_json=self._profile.compact_json,
         )
 
     def _message_values(self, raw_text: str, language: str, mode: str) -> dict[str, str]:
@@ -334,15 +414,25 @@ class _ReviewCorrector(Corrector):
           sentence), whereas text mode answers with about the text's length and has the shorter
           system prompt.  So text mode often fits where the review did not, and the caller
           falls back to it.  If text mode is cut off as well, that call reports the failure.
-        * The *repair* answer being cut off is handled the same way.  The repair request repeats
-          the text and adds the previous answer, so it is the longest request of the three.  A
-          repair that cannot fit the window is skipped before it is sent, which saves a round
-          trip.
+          Before falling back, the same review request is asked again, up to the corrector's
+          ``cut_off_tries``: a cut-off is usually a runaway (a model that starts listing correct
+          fragments with an empty change), not a text that is too long, and a second try very
+          likely answers.  Only a model on this computer or the school's server is asked again
+          (see :func:`~teachers_teammate.domain.correction_policy.cut_off_tries`).  A last
+          cut-off falls back as before.
+        * The *repair* answer being cut off is handled the same way, without a second try: the
+          repair request repeats the text and adds the previous answer, so it is the longest
+          request of the three and a retry would not make it shorter.  A repair that cannot fit
+          the window is skipped before it is sent, which saves a round trip.
 
         A provider error (``transport``) keeps the source text and reports the error: text mode
         would meet the same unreachable server.
         """
         result = self._ask(raw_text, language, text_format, repair=None)
+        for _ in range(self._cut_off_tries - 1):
+            if result.failure != "truncated":
+                break
+            result = self._ask(raw_text, language, text_format, repair=None)
         if result.failure == "truncated":
             return None
         if result.failure == "invalid" and result.raw.strip():
@@ -401,9 +491,11 @@ class LangChainCorrector(_ReviewCorrector):
         prompt: str = "",
         *,
         settings: CorrectionSettings | None = None,
+        profile: RequestProfile = DEFAULT_REQUEST_PROFILE,
     ) -> None:
         self._llm = llm
         self._configure(prompt, settings)
+        self._profile = profile
         self._strict_schema = (settings or CorrectionSettings()).strict_schema
 
     def _correct_text(
@@ -458,20 +550,29 @@ class NativeOllamaCorrector(_ReviewCorrector):
         temperature: float = 0.7,
         *,
         settings: CorrectionSettings | None = None,
+        profile: RequestProfile = DEFAULT_REQUEST_PROFILE,
     ) -> None:
         self._model = model
         self._client = client
         self._timeout = timeout
         self._temperature = temperature
         self._configure(prompt, settings)
+        self._profile = profile
 
     def _messages(
         self, raw_text: str, language: str, text_format: TextFormat, *, mode: str
     ) -> tuple[str, str]:
         """Return ``(system, user)`` for the native API (no template, no escaping)."""
-        return (
-            self._system(language, text_format, mode=mode),
-            _human_message(raw_text, language, self._explanation_language, mode),
+        return request_messages(
+            raw_text,
+            language,
+            prompt=self._prompt,
+            level=self._level,
+            text_format=text_format,
+            mode=mode,
+            answer_format=self._answer_formats.get(mode, ""),
+            compact_json=self._profile.compact_json,
+            explanation_language=self._explanation_language,
         )
 
     def _correct_text(
@@ -500,9 +601,8 @@ class NativeOllamaCorrector(_ReviewCorrector):
         the text (:data:`~teachers_teammate.domain.context_budget.REVIEW_ANSWER_FACTOR`), so the
         text takes a smaller share of the window than it would in text mode.
         """
-        overhead = len(self._messages("", language, text_format, mode="review")[0]) + len(
-            _human_message("", language, self._explanation_language, "review")
-        )
+        system, user = self._messages("", language, text_format, mode="review")
+        overhead = len(system) + len(user)
         return ContextBudget(self._num_ctx).max_text_chars(
             overhead, answer_factor=REVIEW_ANSWER_FACTOR
         )
@@ -586,14 +686,27 @@ class ChunkingCorrector(Corrector):
         """Return the corrector that handles one piece."""
         return self._inner
 
+    def split(
+        self, raw_text: str, language: str, *, text_format: TextFormat = "plain"
+    ) -> tuple[Chunk, ...] | None:
+        """Return the pieces *raw_text* is proofread in, or ``None`` when it goes out whole.
+
+        A text goes out whole when the wrapped corrector has no budget, or the text fits it.
+        The one place that decides, so :meth:`correct` and a tool that counts the requests of a
+        text cannot disagree.
+        """
+        max_chars = self._inner.max_text_chars(language, text_format=text_format)
+        if max_chars is None or max_chars <= 0 or len(raw_text) <= max_chars:
+            return None
+        return tuple(split_for_budget(raw_text, max_chars, text_format))
+
     def correct(
         self, raw_text: str, language: str, *, text_format: TextFormat = "plain"
     ) -> CorrectionOutcome:
         """Return the proofread text, merging the reviews of all the pieces."""
-        max_chars = self._inner.max_text_chars(language, text_format=text_format)
-        if max_chars is None or max_chars <= 0 or len(raw_text) <= max_chars:
+        chunks = self.split(raw_text, language, text_format=text_format)
+        if chunks is None:
             return self._inner.correct(raw_text, language, text_format=text_format)
-        chunks = split_for_budget(raw_text, max_chars, text_format)
         outcomes: list[CorrectionOutcome] = []
         for chunk in chunks:
             if not chunk.text.strip():
@@ -623,6 +736,28 @@ class ChunkingCorrector(Corrector):
             review=_merged_review(reviews) if reviews else None,
             warning=warning,
         )
+
+
+def proofreading_pieces(
+    corrector: Corrector, text: str, language: str, *, text_format: TextFormat = "plain"
+) -> tuple[int | None, int | None]:
+    """Return how many requests proofreading *text* takes, and the characters one carries.
+
+    ``(None, None)`` for a corrector that sends any length in one request (an online
+    provider).  The count is the number of non-blank pieces, because
+    :meth:`ChunkingCorrector.correct` sends no request for a whitespace-only piece, and 1 when
+    the text goes out whole.  The one place that counts, so the GUI counter, the console line
+    and the run cannot disagree.
+    """
+    if not isinstance(corrector, ChunkingCorrector):
+        return None, None
+    max_chars = corrector.inner.max_text_chars(language, text_format=text_format)
+    if max_chars is None:
+        return None, None
+    chunks = corrector.split(text, language, text_format=text_format)
+    if chunks is None:
+        return 1, max_chars
+    return max(1, sum(1 for chunk in chunks if chunk.text.strip())), max_chars
 
 
 def _join_warnings(*warnings: str | None) -> str | None:

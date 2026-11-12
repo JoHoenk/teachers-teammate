@@ -302,6 +302,8 @@ class SettingsWindow(QDialog):
             page.packages_changed.connect(self._on_packages_changed)
         elif isinstance(page, AiModelsPage):
             page.ocr_engine_changed.connect(self._on_ocr_engine_changed)
+            page.proofreading_choice_changed.connect(self._on_proofreading_choice_changed)
+            page.review_choice_changed.connect(self._on_review_choice_changed)
             page.addon_installed.connect(self.addon_installed.emit)
         elif isinstance(page, ScanQualityPage):
             page.preview_requested.connect(self._on_preview_requested)
@@ -323,6 +325,22 @@ class SettingsWindow(QDialog):
         for built in self._pages.values():
             if not isinstance(built, AiSetupPage):
                 built.set_ollama_url(url)
+
+    def _on_proofreading_choice_changed(self, provider: str, model: str) -> None:
+        """Keep the working settings and the context label in step with the chosen service."""
+        self._working["correction_provider"] = provider
+        self._working["correction_model"] = model
+        setup = self._pages.get(SettingsPage.AI_SETUP)
+        if isinstance(setup, AiSetupPage):
+            setup.set_proofreading_choice(provider, model)
+
+    def _on_review_choice_changed(self, provider: str, model: str) -> None:
+        """Keep the working settings and the context label in step with the chosen review."""
+        self._working["evaluate_provider"] = provider
+        self._working["evaluate_model"] = model
+        setup = self._pages.get(SettingsPage.AI_SETUP)
+        if isinstance(setup, AiSetupPage):
+            setup.set_review_choice(provider, model)
 
     def _on_packages_changed(self) -> None:
         for built in self._pages.values():
@@ -347,11 +365,11 @@ class SettingsWindow(QDialog):
             return
         ai_models = self._pages.get(SettingsPage.AI_MODELS)
         if isinstance(ai_models, AiModelsPage):
-            engine, model, temperature = ai_models.ocr_choice()
+            engine, model = ai_models.ocr_choice()
         else:
             saved = OcrConfig.from_settings(self._working)
-            engine, model, temperature = saved.engine, saved.model, saved.temperature
-        self.preprocess_preview_requested.emit(scan.ocr_config(engine, model, temperature))
+            engine, model = saved.engine, saved.model
+        self.preprocess_preview_requested.emit(scan.ocr_config(engine, model))
 
     # ── footer ────────────────────────────────────────────────────────────────
 

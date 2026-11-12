@@ -8,7 +8,14 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from teachers_teammate.exceptions import OCRError, OllamaConnectionError, ResponseTruncatedError
+from teachers_teammate.exceptions import (
+    OCRDeadlineError,
+    OCRError,
+    OCRTimeoutError,
+    OllamaConnectionError,
+    OllamaUnreachableError,
+    ResponseTruncatedError,
+)
 from teachers_teammate.infrastructure import ollama_utils
 from teachers_teammate.infrastructure.ollama_utils import (
     OllamaClient,
@@ -339,6 +346,39 @@ def _make_chat_mock_ollama(content_chunks: list[str]) -> MagicMock:
     return mock_ollama
 
 
+class _ResponseError(Exception):
+    """A stand-in for ``ollama.ResponseError``, which carries the HTTP status code."""
+
+    def __init__(self, message: str, status_code: int = 500) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+
+
+def _chunk(text: str) -> MagicMock:
+    """Return one stream chunk carrying *text*."""
+    msg = MagicMock()
+    msg.content = text
+    chunk = MagicMock()
+    chunk.message = msg
+    return chunk
+
+
+def _stream_raising(exc: BaseException):
+    """Return a generator that raises *exc* on its first read, as a real stream does."""
+    raise exc
+    yield  # pragma: no cover  # makes this a generator
+
+
+def _mock_ollama_with_streams(*streams) -> MagicMock:
+    """Return a mock ``ollama`` module whose Client().chat() returns *streams* in turn."""
+    mock_client = MagicMock()
+    mock_client.chat.side_effect = list(streams)
+    mock_ollama = MagicMock()
+    mock_ollama.Client.return_value = mock_client
+    mock_ollama.ResponseError = _ResponseError
+    return mock_ollama
+
+
 def test_chat_returns_concatenated_content(monkeypatch) -> None:
     """
     Given  ollama.Client.chat() streams two content chunks
@@ -421,7 +461,8 @@ def test_chat_raises_ocr_error_when_first_token_times_out(monkeypatch) -> None:
     """
     Given  ollama.Client.chat() returns a stream whose first chunk never arrives
     When   OllamaClient.chat() is called with a short timeout
-    Then   OCRError mentioning the first-token timeout is raised
+    Then   OCRTimeoutError (an OCRError) mentioning the first-token timeout is raised, so a
+           caller can tell a model that did not start from one that failed
     """
     import time  # noqa: PLC0415
 
@@ -436,8 +477,52 @@ def test_chat_raises_ocr_error_when_first_token_times_out(monkeypatch) -> None:
     mock_ollama.ResponseError = Exception
     monkeypatch.setitem(sys.modules, "ollama", mock_ollama)
 
-    with pytest.raises(OCRError, match="No output within"):
+    with pytest.raises(OCRTimeoutError, match="No output within") as raised:
         OllamaClient("http://127.0.0.1:11434").chat("llama3", "hi", timeout=0.05)
+    assert isinstance(raised.value, OCRError)
+
+
+def test_an_answer_that_never_ends_is_abandoned_at_the_total_timeout() -> None:
+    """
+    Given  a stream that keeps producing chunks and never finishes
+    When   it is consumed with a total timeout
+    Then   OCRDeadlineError is raised after about that time, and the stream is closed so the
+           server stops generating
+    """
+    import time  # noqa: PLC0415
+
+    closed = []
+
+    def _forever():
+        try:
+            while True:
+                time.sleep(0.01)
+                yield 1
+        finally:
+            closed.append(True)
+
+    started = time.monotonic()
+    with pytest.raises(OCRDeadlineError, match="still being written"):
+        _consume_iterator_with_first_token_timeout(_forever(), 1.0, total_timeout=0.2)
+
+    assert time.monotonic() - started < 1.0
+    deadline = time.monotonic() + 2.0
+    while not closed and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert closed == [True]
+
+
+def test_a_total_timeout_does_not_cut_a_stream_that_finishes_in_time() -> None:
+    """
+    Given  a short stream
+    When   it is consumed with a generous total timeout
+    Then   every item is returned, as without one
+    """
+    assert _consume_iterator_with_first_token_timeout(iter([1, 2, 3]), 1.0, total_timeout=5.0) == [
+        1,
+        2,
+        3,
+    ]
 
 
 def test_chat_propagates_mid_stream_error_as_ocr_error(monkeypatch) -> None:
@@ -446,20 +531,12 @@ def test_chat_propagates_mid_stream_error_as_ocr_error(monkeypatch) -> None:
     When   OllamaClient.chat() is called
     Then   the mid-stream error surfaces as an OCRError
     """
-    msg = MagicMock()
-    msg.content = "partial"
-    chunk = MagicMock()
-    chunk.message = msg
 
     def _fail_mid_stream():
-        yield chunk
+        yield _chunk("partial")
         raise RuntimeError("stream broke")
 
-    mock_client = MagicMock()
-    mock_client.chat.return_value = _fail_mid_stream()
-    mock_ollama = MagicMock()
-    mock_ollama.Client.return_value = mock_client
-    mock_ollama.ResponseError = Exception
+    mock_ollama = _mock_ollama_with_streams(_fail_mid_stream())
     monkeypatch.setitem(sys.modules, "ollama", mock_ollama)
 
     with pytest.raises(OCRError, match="stream broke"):
@@ -504,21 +581,112 @@ def test_chat_retries_without_think_on_type_error(monkeypatch) -> None:
 
 def test_chat_retries_without_think_on_response_error(monkeypatch) -> None:
     """
-    Given  a non-thinking model whose chat() rejects think with ResponseError
+    Given  a non-thinking model whose stream rejects think with a 400 that names it
     When   OllamaClient.chat() is called
     Then   it retries once without think and returns the streamed content
     """
-    mock_ollama = _make_chat_mock_ollama(["plain"])
-    good_stream = mock_ollama.Client.return_value.chat.return_value
-    mock_ollama.Client.return_value.chat.side_effect = [
-        mock_ollama.ResponseError("model does not support thinking"),
-        good_stream,
-    ]
+    mock_ollama = _mock_ollama_with_streams(
+        _stream_raising(_ResponseError("model does not support thinking", 400)),
+        iter([_chunk("plain")]),
+    )
     monkeypatch.setitem(sys.modules, "ollama", mock_ollama)
 
     result = OllamaClient("http://127.0.0.1:11434").chat("llama3", "hi")
 
     assert result == "plain"
+    retry_kwargs = mock_ollama.Client.return_value.chat.call_args_list[1].kwargs
+    assert "think" not in retry_kwargs
+
+
+def test_chat_does_not_retry_a_model_that_is_not_pulled(monkeypatch) -> None:
+    """
+    Given  a stream that fails on its first read with a 404 (the model is not pulled)
+    When   OllamaClient.chat() is called
+    Then   OCRError carries the status code and the request was made only once, so a missing
+           model does not double the wait
+    """
+    mock_ollama = _mock_ollama_with_streams(
+        _stream_raising(_ResponseError("model not found", 404)),
+    )
+    monkeypatch.setitem(sys.modules, "ollama", mock_ollama)
+
+    with pytest.raises(OCRError) as raised:
+        OllamaClient("http://127.0.0.1:11434").chat("llama3", "hi")
+
+    assert raised.value.status_code == 404
+    assert mock_ollama.Client.return_value.chat.call_count == 1
+
+
+def test_chat_reports_a_refused_connection_on_the_first_read_as_unreachable(monkeypatch) -> None:
+    """
+    Given  a stream that raises httpx.ConnectError on its first read (a real client makes the
+           request there, not at the call)
+    When   OllamaClient.chat() is called
+    Then   OllamaUnreachableError is raised, so an outage is not blamed on the model
+    """
+    import httpx  # noqa: PLC0415
+
+    mock_ollama = _mock_ollama_with_streams(
+        _stream_raising(httpx.ConnectError("connection refused")),
+    )
+    monkeypatch.setitem(sys.modules, "ollama", mock_ollama)
+
+    with pytest.raises(OllamaUnreachableError, match="cannot connect to Ollama"):
+        OllamaClient("http://127.0.0.1:11434").chat("llama3", "hi")
+
+
+def test_chat_reports_a_connection_lost_mid_stream_as_a_plain_ocr_error(monkeypatch) -> None:
+    """
+    Given  a stream that yields one chunk and then raises httpx.ReadError
+    When   OllamaClient.chat() is called
+    Then   a plain OCRError is raised, not OllamaUnreachableError: a server that dies mid-answer
+           can be the model's doing, and the evaluation tools ask the server afterwards
+    """
+    import httpx  # noqa: PLC0415
+
+    def _breaks_after_one_chunk():
+        yield _chunk("partial")
+        raise httpx.ReadError("connection reset")
+
+    mock_ollama = _mock_ollama_with_streams(_breaks_after_one_chunk())
+    monkeypatch.setitem(sys.modules, "ollama", mock_ollama)
+
+    with pytest.raises(OCRError) as raised:
+        OllamaClient("http://127.0.0.1:11434").chat("llama3", "hi")
+
+    assert not isinstance(raised.value, OllamaUnreachableError)
+
+
+def test_chat_closes_the_inner_stream_when_the_reader_is_abandoned(monkeypatch) -> None:
+    """
+    Given  a stream whose first chunk arrives after the first-token timeout
+    When   OllamaClient.chat() gives up and the reader thread is abandoned
+    Then   the inner stream was closed, so the HTTP response does not stay open
+    """
+    import time  # noqa: PLC0415
+
+    closed = []
+
+    def _slow_stream():
+        try:
+            time.sleep(0.3)
+            yield _chunk("late")
+            while True:
+                time.sleep(0.3)
+                yield _chunk("more")
+        finally:
+            closed.append(True)
+
+    mock_ollama = _mock_ollama_with_streams(_slow_stream())
+    monkeypatch.setitem(sys.modules, "ollama", mock_ollama)
+
+    with pytest.raises(OCRTimeoutError):
+        OllamaClient("http://127.0.0.1:11434").chat("llama3", "hi", timeout=0.05)
+
+    deadline = time.monotonic() + 3.0
+    while not closed and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert closed == [True]
 
 
 # ── _consume_iterator_with_first_token_timeout ─────────────────────────────
@@ -1008,6 +1176,7 @@ def _make_chat_mock_with_done_reason(
     *,
     prompt_eval_count: int = 1200,
     eval_count: int = 400,
+    durations: dict[str, int] | None = None,
 ) -> MagicMock:
     """Return a mock ``ollama`` module whose stream ends with a chunk reporting *done_reason*."""
     chunks = []
@@ -1024,6 +1193,8 @@ def _make_chat_mock_with_done_reason(
     last.done_reason = done_reason
     last.prompt_eval_count = prompt_eval_count
     last.eval_count = eval_count
+    for name, value in (durations or {}).items():
+        setattr(last, name, value)
     chunks.append(last)
     mock_client = MagicMock()
     mock_client.chat.return_value = iter(chunks)
@@ -1064,6 +1235,45 @@ def test_chat_with_stats_returns_the_cut_off_answer_and_its_marker(monkeypatch) 
     assert stats.truncated is True
     assert stats.prompt_eval_count == 8100
     assert stats.eval_count == 92
+
+
+def test_chat_with_stats_carries_the_durations_the_server_reports(monkeypatch) -> None:
+    """
+    Given  a stream whose last chunk reports the four durations Ollama measures, in nanoseconds
+    When   OllamaClient.chat_with_stats() is called
+    Then   the statistics carry them, so a caller can work out tokens per second and load time
+    """
+    durations = {
+        "total_duration": 5_000_000_000,
+        "load_duration": 1_500_000_000,
+        "prompt_eval_duration": 500_000_000,
+        "eval_duration": 3_000_000_000,
+    }
+    mock_ollama = _make_chat_mock_with_done_reason(
+        ["Fertig."], "stop", eval_count=300, durations=durations
+    )
+    monkeypatch.setitem(sys.modules, "ollama", mock_ollama)
+
+    _, stats = OllamaClient("http://127.0.0.1:11434").chat_with_stats("m", "hi")
+
+    assert (stats.total_duration, stats.load_duration) == (5_000_000_000, 1_500_000_000)
+    assert (stats.prompt_eval_duration, stats.eval_duration) == (500_000_000, 3_000_000_000)
+
+
+def test_chat_with_stats_reports_zero_durations_when_the_server_gives_none(monkeypatch) -> None:
+    """
+    Given  a stream whose last chunk reports no durations (an older server)
+    When   OllamaClient.chat_with_stats() is called
+    Then   all four durations are 0 and nothing else changes
+    """
+    mock_ollama = _make_chat_mock_with_done_reason(["Fertig."], "stop")
+    monkeypatch.setitem(sys.modules, "ollama", mock_ollama)
+
+    _, stats = OllamaClient("http://127.0.0.1:11434").chat_with_stats("m", "hi")
+
+    assert (stats.total_duration, stats.load_duration) == (0, 0)
+    assert (stats.prompt_eval_duration, stats.eval_duration) == (0, 0)
+    assert stats.done_reason == "stop"
 
 
 def test_chat_keeps_a_complete_answer(monkeypatch) -> None:
@@ -1213,3 +1423,27 @@ def test_chat_still_reports_an_empty_answer_that_ended_normally(monkeypatch) -> 
 
     with pytest.raises(OCRError, match="empty response"):
         OllamaClient("http://127.0.0.1:11434").chat("m", "hi")
+
+
+def test_chat_with_stats_tells_an_unreachable_server_from_a_failed_request(monkeypatch) -> None:
+    """
+    Given  a server that cannot be connected to, and one that answers with an HTTP error
+    When   OllamaClient.chat_with_stats() is called
+    Then   the first raises OllamaUnreachableError, the second a plain OCRError, and both are
+           OCRErrors, so callers that handle a failed request keep working
+    """
+    import httpx  # noqa: PLC0415
+
+    mock_ollama = _mock_ollama_with_streams(
+        _stream_raising(httpx.ConnectError("refused")),
+        _stream_raising(_ResponseError("model not found", 404)),
+    )
+    monkeypatch.setitem(sys.modules, "ollama", mock_ollama)
+
+    with pytest.raises(OllamaUnreachableError) as unreachable:
+        OllamaClient("http://127.0.0.1:11434").chat_with_stats("m", "hi")
+    assert isinstance(unreachable.value, OCRError)
+
+    with pytest.raises(OCRError) as refused:
+        OllamaClient("http://127.0.0.1:11434").chat_with_stats("m", "hi")
+    assert not isinstance(refused.value, OllamaUnreachableError)

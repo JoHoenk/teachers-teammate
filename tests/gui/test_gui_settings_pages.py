@@ -6,6 +6,7 @@ from __future__ import annotations
 import os
 import threading
 from unittest.mock import MagicMock
+from urllib.parse import urlparse
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QGroupBox, QLabel, QPushButton
@@ -2685,7 +2686,11 @@ def test_the_key_row_says_where_the_key_is_kept(qtbot, monkeypatch, no_keys) -> 
     plain = _proofreading(qtbot, _KeyUrlService(), {"correction_provider": "mistral_eu"})
     text = plain.key_row().line.text()
     assert "settings file" in text and "not encrypted" in text
-    assert "Get a key at" in text and "console.example.org" in text
+    key_url = "https://console.example.org/keys"
+    parsed = urlparse(key_url)
+    assert "Get a key at" in text
+    assert parsed.hostname == "console.example.org"
+    assert key_url in text
 
     no_url = _proofreading(qtbot, ProviderAppService(), {"correction_provider": "mistral_eu"})
     assert "Get a key at" not in no_url.key_row().line.text()

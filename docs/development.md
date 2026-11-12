@@ -1191,8 +1191,8 @@ privacy add-on is installed.
 ### Settings window
 
 One modal window (`gui/settings/_window.py:SettingsWindow`) holds everything set up once;
-the main window only holds what changes per batch.  The sidebar lists five pages
-(`SettingsPage`): AI models, Where the AI runs (`AI_SETUP`: local server, computer profile, API keys), Scan quality, Privacy and Add-ons.  The main window
+the main window only holds what changes per batch.  The sidebar lists six pages
+(`SettingsPage`): AI models, This computer (`AI_SETUP`: computer profile, local server) and Online services (`ONLINE_SERVICES`: the list of API keys), both drawn indented under AI models because they hold no choice of their own (`SUB_PAGES`), Scan quality, Privacy and Add-ons.  The main window
 opens it through the single entry point `MainWindow.open_settings(page, focus=..., preselect=...)`
 and, on OK, applies the result once (`_apply_settings_result`: update the panel, the
 anonymizer rules and the "hide names" view setting, save, check the services, refresh the
@@ -1209,7 +1209,7 @@ a set of settings and never talks to another page:
 | `is_valid()` / `validity_changed` | OK is disabled while a page cannot be saved (an invalid regex) |
 | `focus(focus, preselect)` | deep link: bring a part into view (`FOCUS_*` constants), tick entries |
 | `on_shown()` / `on_packages_changed()` | refresh when shown / after an install finished |
-| `set_hardware_setting()` / `set_ollama_url()` | follow what *Where the AI runs* changed |
+| `set_hardware_setting()` / `set_ollama_url()` | follow what *This computer* changed |
 | `close_blocker()` / `shutdown()` | why the window cannot close now / stop background work |
 
 A new setting is added to the page that shows it: put the widget there and its key in
@@ -1224,14 +1224,37 @@ nothing.  Settings that other pages change meanwhile (computer profile, server a
 engine's image preparation) are kept in the window's working copy, so a page built later
 starts from them.
 
-**Shared state is wired by the window**, not by the pages: the editable profile on *This
-computer* feeds the read-only profile lines of AI models and Add-ons; its server address
+**Shared state is wired by the window**, not by the pages: the editable profile on *Where the AI
+runs* feeds the read-only profile lines of AI models and Add-ons; its server address
 (announced on `editingFinished`, never while typing) feeds the model lists; a finished
 install on Add-ons calls `on_packages_changed()` on every built page and is re-emitted as
 `SettingsWindow.packages_changed`; choosing a recognition method applies its default image
 preparation on Scan quality.  **Deep links** between pages (a package hint's "Install…", "Download
 a model…", "change…" next to the profile) are `navigate_requested` signals that the window turns
 into `show_page(page, focus, preselect)`; `OpenDownloads` callbacks therefore return at once.
+
+**API keys** are one `ApiKeyDrafts` (`gui/settings/_credentials.py`) owned by the window and passed
+to pages as `SettingsContext.key_drafts`; the key row under the AI service and the list on *Where
+the AI runs* are both views of it (`ApiKeyRow`).  A key goes into `os.environ` as soon as it is
+committed — on `editingFinished` and 800 ms after the last keystroke — because providers read
+the key from there when they list their models, and that list is the check that the key works.
+It goes into the keychain/settings file only on OK (`apply()`, which also reports keys the
+keychain refused); every other way out of `done()` (Cancel, Esc, close, Restore › All settings)
+calls `discard()`, which puts the environment back, after the pages' `shutdown()` stopped any
+commit timer.  Whether a key was set outside the app is recorded once at start-up
+(`_credential_store.set_outside_app`), never read from the keychain.
+
+**One model, an override, and the privacy line.**  The AI models page has one proofreading/review
+block.  There is no setting for "different review model": the box starts ticked when the
+*effective* pairs differ (`review_has_own_model`; an empty model means the task default), and
+with it unticked `values()` writes the proofreading choice into the review keys.  The review
+section is loaded only while ticked, and an unloaded section asks no service.  The context
+window row (`proofreading_context`) is shown only while `context_choice(...).applies`, and
+only after the computer has been checked.  Choosing an online service while names would be sent
+as written is set to tick "Remove personal info": `privacy_line_state` decides the line, a
+transition from not online to online sets the turn-on, and the window hands it to the main window
+as `SettingsResult.turn_on_anonymization` — the stage guard and the confirmation before sending
+stay the authority.
 
 **Closing.**  `done()` calls `shutdown()` on every built page (a running model fetch is parked in
 `_model_fetch._RETIRED_THREADS`, never destroyed while running).  A pip install or

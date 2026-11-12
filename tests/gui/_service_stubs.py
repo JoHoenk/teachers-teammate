@@ -13,7 +13,9 @@ import os
 
 from typing import cast
 
+from teachers_teammate._model_defaults import default_model_for_task
 from teachers_teammate.application.context_choice import ContextChoice, context_choice
+from teachers_teammate.application.data_flow import text_goes_online
 from teachers_teammate.config import DEFAULTS
 from teachers_teammate.domain.data_location import (
     STAGE_OCR,
@@ -72,6 +74,25 @@ class LocalDataFlowStub:
     def describe_llm_location(self, provider: str, model: str, ollama_url: str) -> StageLocation:
         _ = model, ollama_url
         return StageLocation(DataLocation.THIS_COMPUTER, provider)
+
+    #: What ``anonymizer_available`` answers (name detection can run).
+    anonymizer_ready: bool = True
+
+    def default_model_for_task(self, provider: str, task: str) -> str:
+        """Answer like the real service: the task's default model of the provider."""
+        return default_model_for_task(provider, task)
+
+    def effective_model(self, provider: str, model: str, task: str) -> str:
+        """Answer like the real service: an empty model means the task's default."""
+        return model.strip() or self.default_model_for_task(provider, task)
+
+    def sends_text_online(self, settings: Mapping[str, object]) -> bool:
+        """Answer with the real rule, over this stub's own location and default models."""
+        return text_goes_online(settings, self.describe_llm_location, self.effective_model)
+
+    def anonymizer_available(self, language: str) -> bool:
+        _ = language
+        return self.anonymizer_ready
 
     def get_provider_info(self, provider: str) -> dict:
         """Provider metadata; the fakes that are asked about providers override this."""

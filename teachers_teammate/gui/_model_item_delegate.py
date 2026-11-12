@@ -49,6 +49,9 @@ class ModelItem:
     label: str = ""  # short right-aligned text, e.g. "★ Best"
     label_color: QColor | None = None
     tooltip: str = ""
+    #: What the entry stands for when its text is only a name (a service's id behind its
+    #: display name); read back with ``combo.currentData()``.
+    data: object = None
 
 
 class ModelItemDelegate(QStyledItemDelegate):
@@ -155,7 +158,7 @@ def fill_grouped(combo: QComboBox, groups: Sequence[Sequence[ModelItem]]) -> Non
             combo.insertSeparator(combo.count())
         first = False
         for item in group:
-            combo.addItem(item.text)
+            combo.addItem(item.text, item.data)
             row = combo.count() - 1
             if item.label:
                 combo.setItemData(row, item.label, ITEM_LABEL_ROLE)

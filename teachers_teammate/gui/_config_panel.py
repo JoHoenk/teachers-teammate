@@ -358,7 +358,7 @@ class ConfigPanel(QScrollArea):
         v.setContentsMargins(0, 2, 0, 4)
         v.setSpacing(6)
 
-        self._anonymization_enabled = QCheckBox("Remove personal info")
+        self._anonymization_enabled = QCheckBox(txt.REMOVE_PERSONAL_INFO)
         self._anonymization_enabled.setChecked(False)
         self._anonymization_enabled.toggled.connect(self._on_anonymization_changed)
         v.addWidget(self._anonymization_enabled)
@@ -788,6 +788,14 @@ class ConfigPanel(QScrollArea):
             return
         self._settings_dict["evaluation_enabled"] = True
         self._guard_stage("evaluation")
+
+    def set_anonymization_enabled(self, enabled: bool) -> None:
+        """Tick or untick "Remove personal info" as the teacher would.
+
+        The normal ``toggled`` path does the rest: the settings dict, the data-flow box and the
+        stage guard (which unticks the box again if name detection is missing).
+        """
+        self._anonymization_enabled.setChecked(enabled)
 
     def _on_anonymization_changed(self, checked: bool = True) -> None:
         self.refresh_data_flow()

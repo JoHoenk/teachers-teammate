@@ -12,7 +12,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import replace
 from typing import Any
 
-from ..config import Config
+from ..config import DEFAULTS, Config
 from ..domain.data_location import (
     OCR_ENGINE_NAMES,
     STAGE_ANONYMIZATION,
@@ -113,6 +113,50 @@ def llm_location(
     return replace(location, service=name)
 
 
+def llm_steps(correction_enabled: bool, evaluation_enabled: bool) -> tuple[str, ...]:
+    """Return the text steps a run takes, in order (``STAGE_CORRECTION``, ``STAGE_EVALUATION``).
+
+    The content review reads the proofread text, so it only runs after proofreading.  The one
+    place that says which steps exist: the data-flow box and the Settings window both ask it.
+    """
+    if not correction_enabled:
+        return ()
+    return (STAGE_CORRECTION, STAGE_EVALUATION) if evaluation_enabled else (STAGE_CORRECTION,)
+
+
+#: Settings-key prefix and default-model task of each text step.
+_LLM_STEP_SETTINGS = {
+    STAGE_CORRECTION: ("correction", "correction"),
+    STAGE_EVALUATION: ("evaluate", "evaluation"),
+}
+
+
+def text_goes_online(
+    settings: Mapping[str, object],
+    describe: Callable[[str, str, str], StageLocation],
+    effective_model: Callable[[str, str, str], str],
+) -> bool:
+    """Return whether a run with *settings* sends text to an online service.
+
+    Only the steps that run count (:func:`llm_steps`), each with the model it really uses
+    (*effective_model*: provider, model, task), classified by *describe* (provider, model,
+    Ollama URL) -- the classification the data-flow box uses, but from settings, so a page can
+    ask before anything is saved.
+    """
+    steps = llm_steps(
+        bool(settings.get("correction_enabled", DEFAULTS["correction_enabled"])),
+        bool(settings.get("evaluation_enabled", DEFAULTS["evaluation_enabled"])),
+    )
+    ollama_url = str(settings.get("ollama_url") or DEFAULTS["ollama_url"])
+    for step in steps:
+        prefix, task = _LLM_STEP_SETTINGS[step]
+        provider = str(settings.get(f"{prefix}_provider") or DEFAULTS[f"{prefix}_provider"])
+        model = effective_model(provider, str(settings.get(f"{prefix}_model") or ""), task)
+        if describe(provider, model, ollama_url).location is DataLocation.ONLINE:
+            return True
+    return False
+
+
 def describe_data_flow(
     config: Config,
     provider_info: ProviderInfo,
@@ -139,34 +183,17 @@ def describe_data_flow(
             detail=anonymization_badge(anonymizer_models) if hidden else "Off",
         ),
     ]
-    if config.correction_enabled:
+    for step in llm_steps(config.correction_enabled, config.evaluation_enabled):
+        if step == STAGE_CORRECTION:
+            provider, model = config.correction_provider, config.effective_correction_model
+        else:
+            provider, model = config.evaluate_provider, config.effective_evaluate_model
         stages.append(
             DataFlowStage(
-                STAGE_CORRECTION,
-                llm_location(
-                    config.correction_provider,
-                    config.effective_correction_model,
-                    config.ollama_url,
-                    provider_info,
-                    provider_region,
-                ),
+                step,
+                llm_location(provider, model, config.ollama_url, provider_info, provider_region),
                 "text",
                 personal_info_hidden=hidden,
             )
         )
-        if config.evaluation_enabled:
-            stages.append(
-                DataFlowStage(
-                    STAGE_EVALUATION,
-                    llm_location(
-                        config.evaluate_provider,
-                        config.effective_evaluate_model,
-                        config.ollama_url,
-                        provider_info,
-                        provider_region,
-                    ),
-                    "text",
-                    personal_info_hidden=hidden,
-                )
-            )
     return DataFlow(tuple(stages))

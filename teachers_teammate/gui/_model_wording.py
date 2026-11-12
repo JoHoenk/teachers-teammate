@@ -309,7 +309,8 @@ HINT_NO_SUGGESTION = "No suggestion available for this model."
 
 SAME_MODEL_TIP = (
     "Tip: using the same writing model for proofreading and review is faster, "
-    "because the model does not have to be reloaded for every document."
+    "because the model does not have to be reloaded for every document. Untick "
+    '"Use a different model for content review" to use one model for both.'
 )
 
 #: Title of the collapsible section holding settings a teacher rarely needs.

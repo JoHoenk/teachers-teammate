@@ -9,7 +9,9 @@ import pytest
 from teachers_teammate.application.data_flow import (
     describe_data_flow,
     llm_location,
+    llm_steps,
     ocr_location,
+    text_goes_online,
 )
 from teachers_teammate.domain.data_location import (
     STAGE_ANONYMIZATION,
@@ -770,3 +772,85 @@ def test_data_flow_gives_no_region_advice_for_an_own_server() -> None:
     flow = DataFlow((DataFlowStage(STAGE_CORRECTION, own_server, "text", False),))
 
     assert Advice.SERVICE_OUTSIDE_EU not in flow.advice
+
+
+def test_llm_steps_lists_the_review_only_after_proofreading() -> None:
+    """
+    Given  every combination of proofreading and content review being on
+    When   llm_steps() is asked
+    Then   the review is listed only together with proofreading
+    """
+    assert llm_steps(False, False) == ()
+    assert llm_steps(False, True) == ()
+    assert llm_steps(True, False) == (STAGE_CORRECTION,)
+    assert llm_steps(True, True) == (STAGE_CORRECTION, STAGE_EVALUATION)
+
+
+def _locate(provider: str, model: str, url: str) -> StageLocation:
+    return llm_location(provider, model, url, _info)
+
+
+def _default_model(provider: str, model: str, task: str) -> str:
+    return model.strip() or f"{provider}-{task}"
+
+
+@pytest.mark.parametrize(
+    ("settings", "online"),
+    [
+        ({"correction_provider": "ollama"}, False),
+        ({"correction_provider": "openai"}, True),
+        ({"correction_provider": "openai", "correction_enabled": False}, False),
+        ({"correction_provider": "ollama", "evaluate_provider": "openai"}, False),
+        (
+            {
+                "correction_provider": "ollama",
+                "evaluate_provider": "openai",
+                "evaluation_enabled": True,
+            },
+            True,
+        ),
+        (
+            {
+                "correction_provider": "openai",
+                "evaluate_provider": "ollama",
+                "correction_enabled": False,
+                "evaluation_enabled": True,
+            },
+            False,
+        ),
+        ({"correction_provider": "ollama", "correction_model": "gpt-oss:120b-cloud"}, True),
+    ],
+    ids=[
+        "local",
+        "online proofreading",
+        "online proofreading switched off",
+        "online review switched off",
+        "online review",
+        "review without proofreading",
+        "cloud model on the local server",
+    ],
+)
+def test_text_goes_online_follows_the_steps_that_run(settings: dict, online: bool) -> None:
+    """
+    Given  settings with local or online services and the steps switched on or off
+    When   text_goes_online() is asked
+    Then   only a step that runs, with the model it uses, can send text online
+    """
+    assert text_goes_online(settings, _locate, _default_model) is online
+
+
+def test_text_goes_online_uses_the_same_steps_as_the_data_flow(tmp_path: Path) -> None:
+    """
+    Given  a configuration with online review and proofreading switched off
+    When   the data-flow box and text_goes_online() are asked about it
+    Then   they agree
+    """
+    values = {
+        "correction_enabled": False,
+        "evaluation_enabled": True,
+        "evaluate_provider": "openai",
+    }
+    flow = describe_data_flow(make_config(tmp_path, **values), _info)
+
+    assert not flow.leaves_computer
+    assert not text_goes_online(values, _locate, _default_model)

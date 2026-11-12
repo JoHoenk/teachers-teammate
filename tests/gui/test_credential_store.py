@@ -244,3 +244,26 @@ def test_the_newer_plain_key_replaces_a_stale_keychain_key_when_it_is_moved(
     assert keychain.passwords == {(KEYRING_SERVICE, "OPENAI_API_KEY"): "sk-new"}
     assert credential_file == {}
     monkeypatch.delenv("OPENAI_API_KEY")
+
+
+@pytest.mark.gui
+def test_keys_already_in_the_environment_are_known_as_set_outside_the_app(
+    monkeypatch, credential_file
+) -> None:
+    """
+    Given  one key set in the environment before start-up and one only stored
+    When   the stored keys are loaded into the environment
+    Then   only the first counts as set outside the app (the second was put there by the app)
+    """
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-outside")
+    monkeypatch.setenv("MISTRAL_API_KEY", "")  # so the undo removes what the store puts there
+    monkeypatch.delenv("MISTRAL_API_KEY")
+    credential_file["credentials/MISTRAL_API_KEY"] = "m-stored"
+    store = CredentialStore()
+
+    store.load_into_environment(["OPENAI_API_KEY", "MISTRAL_API_KEY"])
+    store.load_into_environment(["OPENAI_API_KEY", "MISTRAL_API_KEY"])  # asked again later
+
+    assert _credential_store.set_outside_app("OPENAI_API_KEY")
+    assert not _credential_store.set_outside_app("MISTRAL_API_KEY")
+    assert os.environ["MISTRAL_API_KEY"] == "m-stored"

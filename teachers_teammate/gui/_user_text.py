@@ -126,7 +126,8 @@ EXPLANATIONS_SUPPORTED_TOOLTIP = (
 PAGE_AI_MODELS = "AI models"
 PAGE_SCAN_QUALITY = "Scan quality"
 PAGE_PRIVACY = "Privacy"
-PAGE_AI_SETUP = "Where the AI runs"
+PAGE_AI_SETUP = "This computer"
+PAGE_ONLINE_SERVICES = "Online services"
 PAGE_ADDONS = "Add-ons"
 
 #: The one place every message names when it says where a setting is changed.
@@ -134,9 +135,14 @@ WHERE_AI_MODELS = f"Settings → {PAGE_AI_MODELS}"
 WHERE_SCAN_QUALITY = f"Settings → {PAGE_SCAN_QUALITY}"
 WHERE_PRIVACY = f"Settings → {PAGE_PRIVACY}"
 WHERE_AI_SETUP = f"Settings → {PAGE_AI_SETUP}"
+WHERE_ONLINE_SERVICES = f"Settings → {PAGE_ONLINE_SERVICES}"
 WHERE_ADDONS = f"Settings → {PAGE_ADDONS}"
 WHERE_RESULTS = "Results, in the main window"
 OPEN_ADDONS = "Open Add-ons…"
+
+#: The step that replaces names before text is sent anywhere: the checkbox in the main window
+#: and the line on the AI models page that offers to turn it on must say the same words.
+REMOVE_PERSONAL_INFO = "Remove personal info"
 
 # ── Settings wording ──────────────────────────────────────────────────────────
 
@@ -154,17 +160,6 @@ CORRECTIONS_ONLY_TOOLTIP = (
 LEVEL_TOOLTIP = (
     "Target language level for the corrections (CEFR, A1 to C2). The proofreading keeps the "
     "student's wording and only changes what is wrong at this level."
-)
-
-#: The "Automatic" entry of the context choice while this computer is still being checked.
-CONTEXT_AUTO_CHECKING = "Automatic (checking this computer…)"
-#: The "Automatic" entry when the setting changes no window at all.
-CONTEXT_AUTO = "Automatic"
-#: Why the context choice is disabled: with proofreading capped at the base window it only
-#: sizes the content review, and only when that runs on its own Ollama model.
-CONTEXT_NOT_APPLICABLE_TOOLTIP = (
-    "Proofreading always uses 8,192 tokens. This setting sizes the content review when it "
-    "runs on its own Ollama model."
 )
 
 

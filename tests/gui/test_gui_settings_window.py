@@ -7,8 +7,9 @@ import os
 import threading
 from typing import Any, ClassVar
 
-from PySide6.QtCore import QThread
-from PySide6.QtWidgets import QMessageBox
+from PySide6.QtCore import QRect, QThread, Qt
+from PySide6.QtGui import QImage, QPainter
+from PySide6.QtWidgets import QMessageBox, QStyledItemDelegate, QStyleOptionViewItem
 import pytest
 
 from teachers_teammate.application.service import AnonymizerConfig
@@ -31,7 +32,7 @@ from teachers_teammate.gui.settings._page import (
 )
 
 from ._gui_harness import settings_context
-from ._settings_stubs import AddonsCapableService, ProviderAddonsService
+from ._settings_stubs import AddonsCapableService, FakeKeyring, ProviderAddonsService
 
 _PRIVACY_TAB_INDEX = {FOCUS_SENDING: 0, FOCUS_DETECTION: 1, FOCUS_PATTERNS: 2}
 
@@ -172,11 +173,12 @@ def _privacy_tab(window: SettingsWindow) -> int:
 
 
 @pytest.mark.gui
-def test_the_sidebar_lists_the_five_pages_in_order(qtbot) -> None:
+def test_the_sidebar_lists_the_six_pages_in_order(qtbot) -> None:
     """
     Given  the Settings window
     When   it is opened
-    Then   the sidebar lists AI models, Where the AI runs, Scan quality, Privacy and Add-ons, and
+    Then   the sidebar lists AI models, This computer, Online services, Scan quality, Privacy and
+           Add-ons, and
            selects the page it was opened on
     """
     window = _window(qtbot, SettingsPage.PRIVACY)
@@ -184,14 +186,52 @@ def test_the_sidebar_lists_the_five_pages_in_order(qtbot) -> None:
     titles = [window._sidebar.item(i).text() for i in range(window._sidebar.count())]
     assert titles == [
         "AI models",
-        "Where the AI runs",
+        "This computer",
+        "Online services",
         "Scan quality",
         "Privacy",
         "Add-ons",
     ]
     assert titles == [PAGE_TITLES[page] for page in SettingsPage]
-    assert window._sidebar.currentRow() == 3
+    assert window._sidebar.currentRow() == 4
     assert window.current_page() is SettingsPage.PRIVACY
+
+
+@pytest.mark.gui
+def test_this_computer_is_drawn_indented_under_ai_models(qtbot) -> None:
+    """
+    Given  the Settings window's sidebar
+    When   its rows are drawn
+    Then   This computer and Online services are drawn indented (they serve AI models), every other
+           row is not
+    """
+    window = _window(qtbot, SettingsPage.AI_MODELS)
+    lefts: dict[int, int] = {}
+
+    class _Recorder(QStyledItemDelegate):
+        def paint(self, painter, option, index) -> None:
+            lefts[index.row()] = option.rect.left()
+
+    class _Recording(window_module._SidebarDelegate, _Recorder):
+        pass
+
+    delegate = _Recording(window._sidebar)
+    image = QImage(200, 40, QImage.Format.Format_ARGB32)
+    painter = QPainter(image)
+    try:
+        for row in range(window._sidebar.count()):
+            option = QStyleOptionViewItem()
+            option.rect = QRect(0, 0, 190, 30)
+            delegate.paint(painter, option, window._sidebar.model().index(row, 0))
+    finally:
+        painter.end()
+
+    expected = {
+        row: window_module.SUB_PAGE_INDENT if page in window_module.SUB_PAGES else 0
+        for row, page in enumerate(SettingsPage)
+    }
+    assert lefts == expected
+    assert window_module.SUB_PAGES == {SettingsPage.AI_SETUP, SettingsPage.ONLINE_SERVICES}
 
 
 @pytest.mark.gui
@@ -258,7 +298,7 @@ def test_the_page_header_names_the_page(qtbot) -> None:
 @pytest.mark.gui
 def test_ok_merges_the_values_of_the_pages_that_were_visited(qtbot) -> None:
     """
-    Given  AI models, Scan quality and Where the AI runs were visited and changed
+    Given  AI models, Scan quality and This computer were visited and changed
     When   the result is read
     Then   it holds each page's changes under their keys, and no key of an unvisited page
     """
@@ -295,32 +335,174 @@ def test_the_result_has_the_privacy_choices_once_privacy_was_visited(qtbot) -> N
     assert result.restore_all is False
 
 
-@pytest.mark.gui
-def test_api_keys_are_saved_on_ok_and_not_on_cancel(qtbot, monkeypatch, credential_file) -> None:
-    """
-    Given  a key typed on the Where the AI runs page
-    When   the window is cancelled, and in another window the same key is entered and OK pressed
-    Then   Cancel stores nothing; OK stores the key
-    """
+def _enter_key(window: SettingsWindow, value: str = "sk-typed") -> None:
+    """Add a row for OPENAI_API_KEY on Online services and type *value* into it."""
+    credentials = window.page(SettingsPage.ONLINE_SERVICES)._credentials
+    credentials._add_combo.setCurrentIndex(credentials._add_combo.findData("OPENAI_API_KEY"))
+    credentials._add_btn.click()
+    credentials.field("OPENAI_API_KEY").setText(value)
+
+
+@pytest.fixture(name="no_openai_key")
+def _no_openai_key(monkeypatch) -> None:
     monkeypatch.setattr(
         os, "environ", {k: v for k, v in os.environ.items() if k != "OPENAI_API_KEY"}
     )
 
-    def enter_key(window: SettingsWindow) -> None:
-        credentials = window.page(SettingsPage.AI_SETUP)._credentials
-        credentials._add_combo.setCurrentIndex(credentials._add_combo.findData("OPENAI_API_KEY"))
-        credentials._add_btn.click()
-        credentials.field("OPENAI_API_KEY").setText("sk-typed")
 
-    cancelled = _window(qtbot, SettingsPage.AI_SETUP)
-    enter_key(cancelled)
+@pytest.mark.gui
+def test_ok_saves_a_key_pasted_on_the_ai_models_page_a_moment_ago(
+    qtbot, monkeypatch, credential_file
+) -> None:
+    """
+    Given  the AI models page on Mistral (EU) with a key pasted, its pause not over yet
+    When   OK is pressed
+    Then   the key is saved and in use, and closing starts no model list that is thrown away
+    """
+    monkeypatch.setenv("MISTRAL_API_KEY", "")  # so the undo removes what the window sets
+    monkeypatch.delenv("MISTRAL_API_KEY")
+    service = ProviderAddonsService()
+    window = _window(
+        qtbot,
+        SettingsPage.AI_MODELS,
+        service=service,
+        settings={"correction_provider": "mistral_eu"},
+    )
+    row = window.page(SettingsPage.AI_MODELS)._shared.key_row()
+    row.field.setText("k-pasted")
+    row.field.textEdited.emit("k-pasted")
+    service.invalidated.clear()
+
+    window.accept()
+
+    assert credential_file["credentials/MISTRAL_API_KEY"] == "k-pasted"
+    assert os.environ["MISTRAL_API_KEY"] == "k-pasted"
+    assert service.invalidated == []
+
+
+@pytest.mark.gui
+def test_cancelling_forgets_the_lists_fetched_with_a_discarded_key(qtbot, monkeypatch) -> None:
+    """
+    Given  a key committed in the window and a list cached for the services that share it
+    When   the window is cancelled
+    Then   the key is gone from the environment and so are the cached lists
+    """
+    monkeypatch.setenv("MISTRAL_API_KEY", "")  # so the undo removes what the window sets
+    monkeypatch.delenv("MISTRAL_API_KEY")
+    service = ProviderAddonsService()
+    window = _window(
+        qtbot,
+        SettingsPage.AI_MODELS,
+        service=service,
+        settings={"correction_provider": "mistral_eu"},
+    )
+    row = window.page(SettingsPage.AI_MODELS)._shared.key_row()
+    row.field.setText("k-wrong")
+    row.commit()
+    service.seed_cache("mistral", ["from-the-wrong-key"])
+    service.seed_cache("mistral_eu", ["from-the-wrong-key"])
+
+    window.reject()
+
+    assert "MISTRAL_API_KEY" not in os.environ
+    assert service.get_cached_models("mistral") is None
+    assert service.get_cached_models("mistral_eu") is None
+
+
+@pytest.mark.gui
+def test_api_keys_are_saved_on_ok_and_not_on_cancel(qtbot, no_openai_key, credential_file) -> None:
+    """
+    Given  a key typed on the Online services page
+    When   the window is cancelled, and in another window the same key is entered and OK pressed
+    Then   Cancel stores nothing and leaves the environment as it was; OK stores the key and
+           keeps it in the environment
+    """
+    cancelled = _window(qtbot, SettingsPage.ONLINE_SERVICES)
+    _enter_key(cancelled)
+    cancelled.page(SettingsPage.ONLINE_SERVICES)._credentials.commit()
+    assert os.environ["OPENAI_API_KEY"] == "sk-typed"  # used right away
     cancelled.reject()
     assert "credentials/OPENAI_API_KEY" not in credential_file
+    assert "OPENAI_API_KEY" not in os.environ
 
-    accepted = _window(qtbot, SettingsPage.AI_SETUP)
-    enter_key(accepted)
+    accepted = _window(qtbot, SettingsPage.ONLINE_SERVICES)
+    _enter_key(accepted)
     accepted.accept()
     assert credential_file["credentials/OPENAI_API_KEY"] == "sk-typed"
+    assert os.environ["OPENAI_API_KEY"] == "sk-typed"
+
+
+@pytest.mark.gui
+def test_escape_and_restore_all_put_the_environment_back(
+    qtbot, monkeypatch, no_openai_key, credential_file
+) -> None:
+    """
+    Given  a key typed in the window, and a key already stored by an earlier session
+    When   the window is closed with Esc, and another is closed through "Restore defaults → All"
+    Then   the environment is as it was both times and the store is untouched
+    """
+    credential_file["credentials/MISTRAL_API_KEY"] = "m-stored"
+    escaped = _window(qtbot, SettingsPage.ONLINE_SERVICES)
+    _enter_key(escaped)
+    escaped.page(SettingsPage.ONLINE_SERVICES)._credentials.commit()
+    qtbot.keyClick(escaped, Qt.Key.Key_Escape)
+    assert "OPENAI_API_KEY" not in os.environ
+
+    restoring = _window(qtbot, SettingsPage.ONLINE_SERVICES)
+    _enter_key(restoring)
+    restoring.page(SettingsPage.ONLINE_SERVICES)._credentials.commit()
+    restoring.done(SettingsWindow.RESTORE_ALL_RESULT)
+    assert "OPENAI_API_KEY" not in os.environ
+    assert credential_file == {"credentials/MISTRAL_API_KEY": "m-stored"}
+
+
+@pytest.mark.gui
+def test_a_key_waiting_for_its_pause_is_not_written_after_cancel(
+    qtbot, no_openai_key, credential_file
+) -> None:
+    """
+    Given  a key being typed, so its commit timer is running
+    When   the window is cancelled before the pause is over
+    Then   nothing is committed afterwards: the environment stays clean
+    """
+    window = _window(qtbot, SettingsPage.ONLINE_SERVICES)
+    _enter_key(window, "")
+    row = window.page(SettingsPage.ONLINE_SERVICES)._credentials.rows()[0]
+    row.field.setText("sk-half")
+    row.field.textEdited.emit("sk-half")
+    assert row._timer.isActive()
+
+    window.reject()
+    qtbot.wait(900)
+
+    assert "OPENAI_API_KEY" not in os.environ
+    assert credential_file == {}
+
+
+@pytest.mark.gui
+def test_ok_stores_a_key_and_warns_when_the_keychain_refused_it(
+    qtbot, monkeypatch, no_openai_key, credential_file
+) -> None:
+    """
+    Given  a system keychain that refuses to store, and a key typed in the window
+    When   OK is pressed
+    Then   the key is kept in the settings file and a warning names the service
+    """
+    from teachers_teammate.gui import _credential_store  # noqa: PLC0415
+
+    monkeypatch.setattr(_credential_store, "_keyring", lambda: FakeKeyring(refuses_writes=True))
+    warned: list[str] = []
+    monkeypatch.setattr(
+        QMessageBox, "warning", staticmethod(lambda _parent, _title, text: warned.append(text))
+    )
+    window = _window(qtbot, SettingsPage.ONLINE_SERVICES)
+    _enter_key(window)
+
+    window.accept()
+
+    assert credential_file["credentials/OPENAI_API_KEY"] == "sk-typed"
+    assert len(warned) == 1
+    assert "OpenAI" in warned[0] or "openai" in warned[0].lower()
 
 
 @pytest.mark.gui
@@ -367,10 +549,10 @@ def test_remembered_answers_are_written_back_on_ok_only(qtbot) -> None:
 @pytest.mark.use_case("Hardware_Profile_Override")
 def test_the_profile_chosen_on_this_computer_reaches_the_other_pages(qtbot) -> None:
     """
-    Given  AI models, Where the AI runs and Add-ons built, all on the "auto" profile
-    When   "My computer" is changed to a basic computer on Where the AI runs
-    Then   the read-only profile lines of the recognition picker, both AI sections and Add-ons
-           follow, and a page built afterwards starts with it
+    Given  AI models, This computer and Add-ons built, all on the "auto" profile
+    When   "My computer" is changed to a basic computer on This computer
+    Then   the profile line of the AI models page (which the recognition picker and both AI
+           sections follow) and Add-ons follow, and a page built afterwards starts with it
     """
     window = _window(qtbot, SettingsPage.AI_MODELS)
     window.show_page(SettingsPage.ADDONS)
@@ -383,9 +565,10 @@ def test_the_profile_chosen_on_this_computer_reaches_the_other_pages(qtbot) -> N
         )
 
     models = window.page(SettingsPage.AI_MODELS)
-    assert models._ocr_picker._hw_selector.setting() == "cpu"
-    assert models._proofreading._hw_selector.setting() == "cpu"
-    assert models._review._hw_selector.setting() == "cpu"
+    assert models._profile_line.selector.setting() == "cpu"
+    assert models._ocr_picker._hw_selector is models._profile_line.selector
+    assert models._shared._hw_selector is models._profile_line.selector
+    assert models._review._hw_selector is models._profile_line.selector
     assert window.page(SettingsPage.ADDONS)._hardware_selector.setting() == "cpu"
     assert window.values().settings["hardware_profile"] == "cpu"
 
@@ -396,7 +579,7 @@ def test_the_profile_chosen_on_this_computer_reaches_the_other_pages(qtbot) -> N
 @pytest.mark.use_case("Hardware_Profile_Override")
 def test_a_page_built_after_a_profile_change_starts_with_it(qtbot) -> None:
     """
-    Given  the profile changed on Where the AI runs before Add-ons was ever opened
+    Given  the profile changed on This computer before Add-ons was ever opened
     When   Add-ons is opened
     Then   its read-only profile already shows the new choice
     """
@@ -414,9 +597,10 @@ def test_a_page_built_after_a_profile_change_starts_with_it(qtbot) -> None:
 def test_the_server_address_reaches_the_ai_model_sections(qtbot) -> None:
     """
     Given  the AI models page that asked the default server for its models
-    When   another server address is entered on Where the AI runs (editing finished)
+    When   another server address is entered on This computer (editing finished)
     Then   the recognition picker, both sections and Add-ons use the new address, and the
-           sections ask the new server for its models
+           shared section (the review is not loaded while it shares the model) asks the new
+           server for its models
     """
     asked: list[str] = []
 
@@ -433,7 +617,7 @@ def test_the_server_address_reaches_the_ai_model_sections(qtbot) -> None:
     )
     window.show_page(SettingsPage.ADDONS)
     window.show_page(SettingsPage.AI_SETUP)
-    qtbot.waitUntil(lambda: len(asked) >= 2, timeout=5000)
+    qtbot.waitUntil(lambda: len(asked) >= 1, timeout=5000)
     asked.clear()
     computer = window.page(SettingsPage.AI_SETUP)
 
@@ -443,72 +627,11 @@ def test_the_server_address_reaches_the_ai_model_sections(qtbot) -> None:
     models = window.page(SettingsPage.AI_MODELS)
     url = "http://192.168.1.50:11434"
     assert models._ocr_picker._ollama_url == url
-    assert models._proofreading._ollama_url == url
+    assert models._shared._ollama_url == url
     assert models._review._ollama_url == url
+    assert not models._review._loaded
     assert window.page(SettingsPage.ADDONS)._ollama_url == url
-    qtbot.waitUntil(lambda: asked.count(url) >= 2, timeout=5000)  # proofreading and review
-
-
-@pytest.mark.gui
-def test_the_proofreading_service_chosen_on_ai_models_reaches_the_context_choice(
-    qtbot, monkeypatch
-) -> None:
-    """
-    Given  Where the AI runs built with one model for both stages, so the choice changes nothing
-    When   the proofreading service is switched to an online one on AI models
-    Then   the choice becomes usable at once, because the review now runs on its own model, and
-           the working settings carry the choice
-    """
-    monkeypatch.setenv("OPENAI_API_KEY", "k-test")
-    window = _window(
-        qtbot,
-        SettingsPage.AI_SETUP,
-        settings={
-            "correction_provider": "ollama",
-            "correction_model": "qwen3:4b",
-            "evaluate_provider": "ollama",
-            "evaluate_model": "qwen3:4b",
-        },
-    )
-    computer = window.page(SettingsPage.AI_SETUP)
-    qtbot.waitUntil(lambda: computer._hardware_selector.resolved() is not None, timeout=5000)
-    assert not computer._context_combo.isEnabled()
-
-    window.show_page(SettingsPage.AI_MODELS)
-    models = window.page(SettingsPage.AI_MODELS)
-    models._proofreading._provider.setCurrentText("openai")
-
-    assert computer._context_combo.isEnabled()
-    assert window._working["correction_provider"] == "openai"
-
-
-@pytest.mark.gui
-def test_the_review_service_chosen_on_ai_models_reaches_the_context_choice(qtbot) -> None:
-    """
-    Given  Where the AI runs built with one model for both stages, so the choice changes nothing
-    When   the content review is given another Ollama model on AI models
-    Then   the choice becomes usable at once, and the working settings carry the review model
-    """
-    window = _window(
-        qtbot,
-        SettingsPage.AI_SETUP,
-        settings={
-            "correction_provider": "ollama",
-            "correction_model": "qwen3:4b",
-            "evaluate_provider": "ollama",
-            "evaluate_model": "qwen3:4b",
-        },
-    )
-    computer = window.page(SettingsPage.AI_SETUP)
-    qtbot.waitUntil(lambda: computer._hardware_selector.resolved() is not None, timeout=5000)
-    assert not computer._context_combo.isEnabled()
-
-    window.show_page(SettingsPage.AI_MODELS)
-    models = window.page(SettingsPage.AI_MODELS)
-    models._review._model.setCurrentText("gemma4:e4b")
-
-    assert computer._context_combo.isEnabled()
-    assert window._working["evaluate_model"] == "gemma4:e4b"
+    qtbot.waitUntil(lambda: asked.count(url) >= 1, timeout=5000)
 
 
 @pytest.mark.gui
@@ -622,7 +745,7 @@ def test_a_deep_link_into_an_open_window_switches_page_and_tab(qtbot) -> None:
 
     assert window.current_page() is SettingsPage.ADDONS
     assert window.page(SettingsPage.ADDONS)._tabs.currentIndex() == AddonsPage.TAB_GPU
-    assert window._sidebar.currentRow() == 4
+    assert window._sidebar.currentRow() == 5
 
 
 @pytest.mark.gui
@@ -657,17 +780,17 @@ def test_the_api_keys_focus_brings_the_keys_into_view(qtbot, monkeypatch) -> Non
         QScrollArea, "ensureWidgetVisible", lambda self, widget, *a, **k: seen.append(widget)
     )
 
-    window = _window(qtbot, SettingsPage.AI_SETUP, focus=FOCUS_API_KEYS)
+    window = _window(qtbot, SettingsPage.ONLINE_SERVICES, focus=FOCUS_API_KEYS)
     window.show()
     qtbot.waitUntil(lambda: bool(seen), timeout=2000)
 
-    assert seen[-1] is window.page(SettingsPage.AI_SETUP)._credentials
+    assert seen[-1] is window.page(SettingsPage.ONLINE_SERVICES)._credentials
 
 
 @pytest.mark.gui
 def test_download_a_model_on_this_computer_opens_add_ons(qtbot) -> None:
     """
-    Given  the Where the AI runs page
+    Given  the This computer page
     When   "Download a model…" is pressed
     Then   the window shows Add-ons on the local models tab
     """
@@ -684,11 +807,11 @@ def test_the_change_link_on_add_ons_opens_this_computer(qtbot) -> None:
     """
     Given  the Add-ons page with its read-only "My computer" line
     When   "change…" is clicked
-    Then   the window shows Where the AI runs
+    Then   the window shows This computer
     """
     window = _window(qtbot, SettingsPage.ADDONS)
 
-    window.page(SettingsPage.ADDONS)._change_profile_lbl.linkActivated.emit("change")
+    window.page(SettingsPage.ADDONS)._profile_line.change_link.linkActivated.emit("change")
 
     assert window.current_page() is SettingsPage.AI_SETUP
 
@@ -713,7 +836,7 @@ def test_a_package_hint_install_switches_to_add_ons_and_the_hint_goes_after_the_
         settings={"correction_provider": "mistral"},
     )
     models = window.page(SettingsPage.AI_MODELS)
-    hint = models._proofreading._package_hint
+    hint = models._shared._package_hint
     assert not hint.isHidden()
 
     hint._button.click()
@@ -958,7 +1081,6 @@ def test_enter_in_a_field_on_add_ons_does_not_close_the_window(qtbot, monkeypatc
     When   Enter is pressed in "Add a model by name"
     Then   no button of the window is the default, and the window stays open
     """
-    from PySide6.QtCore import Qt  # noqa: PLC0415
     from PySide6.QtTest import QTest  # noqa: PLC0415
     from PySide6.QtWidgets import QPushButton  # noqa: PLC0415
 
@@ -1158,7 +1280,7 @@ def test_closing_parks_a_running_model_fetch(qtbot) -> None:
         service=_Slow(),
         settings={"correction_provider": "ollama"},
     )
-    thread = window.page(SettingsPage.AI_MODELS)._proofreading._fetch_thread
+    thread = window.page(SettingsPage.AI_MODELS)._shared._fetch_thread
     assert thread is not None and thread.isRunning()
 
     window.reject()
@@ -1174,9 +1296,9 @@ def test_closing_parks_a_running_model_fetch(qtbot) -> None:
 @pytest.mark.gui
 def test_the_window_remembers_the_last_page_and_its_size(qtbot) -> None:
     """
-    Given  a window closed on Where the AI runs
+    Given  a window closed on This computer
     When   a new window is built, and "All settings…" asks for the last page
-    Then   last_page() names Where the AI runs and the geometry was stored
+    Then   last_page() names This computer and the geometry was stored
     """
     assert last_page() is SettingsPage.AI_MODELS  # nothing stored yet
 
@@ -1223,3 +1345,26 @@ def test_every_page_class_declares_its_enum_value(qtbot) -> None:
         assert cls.page is page
         assert cls.title == PAGE_TITLES[page]
         assert cls.description
+
+
+@pytest.mark.gui
+def test_the_result_carries_the_turn_on_of_personal_info_removal(qtbot, monkeypatch) -> None:
+    """
+    Given  the AI models page where an online service was chosen with removal off, and a
+           second window where AI models was never opened
+    When   the results are read
+    Then   the first asks to turn "Remove personal info" on, the second does not
+    """
+    from teachers_teammate.gui.settings._ai_models_page import PrivacyLineState  # noqa: PLC0415
+
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-x")
+    window = _window(qtbot, SettingsPage.AI_MODELS, settings={"anonymization_enabled": False})
+    models = window.page(SettingsPage.AI_MODELS)
+    index = models._shared._provider.findData("openai")
+    models._shared._provider.setCurrentIndex(index)
+    assert models._privacy_state is PrivacyLineState.WILL_TURN_ON
+
+    assert window.values().turn_on_anonymization is True
+
+    never = _window(qtbot, SettingsPage.SCAN_QUALITY)
+    assert never.values().turn_on_anonymization is False

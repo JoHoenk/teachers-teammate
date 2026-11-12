@@ -91,25 +91,36 @@ class OcrModelPicker(QWidget):
         ollama_url: str = DEFAULTS["ollama_url"],
         hardware_profile: str = "auto",
         open_downloads: OpenDownloads | None = None,
+        profile_selector: HardwareProfileSelector | None = None,
         parent: QWidget | None = None,
     ) -> None:
+        """Build the picker.
+
+        *profile_selector* is an owner's "Suggestions are for …" selector: with it the picker
+        follows that one (the owner keeps it up to date) instead of resolving this computer
+        again for itself, and shows no line of its own.
+        """
         super().__init__(parent)
         self._app_service = app_service
         self._ollama_url = ollama_url
         self._fetch_thread: _ModelFetchThread | None = None
+        self._shared_selector = profile_selector
 
         form = QFormLayout(self)
         form.setContentsMargins(0, 0, 0, 0)
         form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapAllRows)
 
-        self._hw_selector = HardwareProfileSelector(
-            app_service=app_service,
-            setting=hardware_profile,
-            ollama_url=ollama_url,
-            read_only=True,
-            parent=self,
-        )
-        form.addRow(self._hw_selector)
+        if profile_selector is not None:
+            self._hw_selector = profile_selector
+        else:
+            self._hw_selector = HardwareProfileSelector(
+                app_service=app_service,
+                setting=hardware_profile,
+                ollama_url=ollama_url,
+                read_only=True,
+                parent=self,
+            )
+            form.addRow(self._hw_selector)
 
         self._build_engine_row(form)
         self._build_model_row(form, open_downloads)
@@ -196,15 +207,12 @@ class OcrModelPicker(QWidget):
         new_url = url or DEFAULTS["ollama_url"]
         changed = new_url != self._ollama_url
         self._ollama_url = new_url
-        self._hw_selector.set_ollama_url(self._ollama_url)
+        if self._shared_selector is None:
+            self._hw_selector.set_ollama_url(self._ollama_url)
         self._guidance.set_ollama_url(self._ollama_url)
         self._update_where_hint()
         if changed and self._ocr_engine.currentText() == "ollama":
             self._auto_fetch()
-
-    def set_hardware_setting(self, setting: str) -> None:
-        """Follow the computer profile chosen elsewhere (read-only here)."""
-        self._hw_selector.set_setting(setting)
 
     def refresh(self) -> None:
         """Re-apply engine-dependent state (visibility, model list, warnings)."""

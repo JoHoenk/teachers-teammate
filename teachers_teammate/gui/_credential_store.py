@@ -31,6 +31,19 @@ _QSETTINGS_ORG = "TeachersTeammate"
 _QSETTINGS_APP = "TeachersTeammate"
 _FILE_GROUP = "credentials"
 
+#: The keys that were already in the environment when :meth:`CredentialStore.load_into_environment`
+#: ran at start-up, i.e. set outside the app.  Only that call can tell them from keys the app put
+#: there itself, and the environment is process-wide, so the answer is kept here.  Asking the
+#: keychain instead could pop up an unlock prompt.
+_SET_OUTSIDE_APP: set[str] = set()
+#: The keys ``load_into_environment`` put into the environment itself.
+_LOADED_BY_APP: set[str] = set()
+
+
+def set_outside_app(env_key: str) -> bool:
+    """Return whether *env_key* was set in the environment before the app started."""
+    return env_key in _SET_OUTSIDE_APP
+
 
 class KeyLocation(StrEnum):
     """Where new keys are kept."""
@@ -136,10 +149,13 @@ class CredentialStore:
         for env_key in env_keys:
             self._migrate(env_key)
             if os.environ.get(env_key):
+                if env_key not in _LOADED_BY_APP:
+                    _SET_OUTSIDE_APP.add(env_key)
                 continue
             value = self.get(env_key)
             if value:
                 os.environ[env_key] = value
+                _LOADED_BY_APP.add(env_key)
 
     def _migrate(self, env_key: str) -> None:
         keyring = _keyring()

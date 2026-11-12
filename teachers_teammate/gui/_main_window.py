@@ -537,8 +537,11 @@ class MainWindow(QMainWindow):
         tooltips = {
             SettingsPage.AI_MODELS: "Which AI reads the handwriting, proofreads and reviews.",
             SettingsPage.AI_SETUP: (
-                "The local AI server and what this computer can run, and the access keys "
-                "for online AI services."
+                "What the AI models need from this computer: how powerful it is and where "
+                "the local AI server is."
+            ),
+            SettingsPage.ONLINE_SERVICES: (
+                "The access keys (API keys) of the online AI services you can use."
             ),
             SettingsPage.SCAN_QUALITY: "How scans are cleaned up before the text is read.",
             SettingsPage.PRIVACY: (
@@ -2389,6 +2392,11 @@ class MainWindow(QMainWindow):
     def _apply_settings_result(self, result: SettingsResult, *, hiding_was_possible: bool) -> None:
         """Take over what the Settings window changed, then save once."""
         self._config_panel.update_settings(result.settings)
+        if result.turn_on_anonymization:
+            # The AI models page said it would: an online service was chosen while names would
+            # be sent as written.  The checkbox's own handler guards the stage and refreshes
+            # the data-flow box; it comes before the save so the choice is kept.
+            self._config_panel.set_anonymization_enabled(True)
         if result.anonymizer_config is not None:
             before = self._config_panel.build_anonymizer_config()
             self._config_panel.update_anonymizer_config(result.anonymizer_config)

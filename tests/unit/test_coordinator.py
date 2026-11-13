@@ -15,6 +15,7 @@ from teachers_teammate.domain.correction_review import (
     SentenceNote,
     UnclearNote,
 )
+from teachers_teammate.domain.run_summary import RunStatus, RunSummary
 from teachers_teammate.infrastructure.reporting import FileDoneResult
 from teachers_teammate.infrastructure.workflow.coordinator import run_files
 from teachers_teammate.infrastructure.workflow.file_processor import ProcessingResult
@@ -43,14 +44,15 @@ def test_run_files_all_succeed(tmp_path: Path) -> None:
     """
     f1 = tmp_path / "a.png"
     f2 = tmp_path / "b.png"
-    succeeded, failed, skipped = run_files(
+    summary = run_files(
         [f1, f2],
         process_file=_success,
         cleanup_tmp=MagicMock(),
     )
-    assert succeeded == ["a.png", "b.png"]
-    assert failed == []
-    assert skipped == []
+    assert summary.succeeded == ("a.png", "b.png")
+    assert summary.failed == ()
+    assert summary.skipped == ()
+    assert summary.status is RunStatus.DONE
 
 
 def test_run_files_one_failure(tmp_path: Path) -> None:
@@ -67,10 +69,11 @@ def test_run_files_one_failure(tmp_path: Path) -> None:
             return _failure(path)
         return _success(path)
 
-    succeeded, failed, _skipped = run_files([f1, f2], process_file=process, cleanup_tmp=MagicMock())
+    summary = run_files([f1, f2], process_file=process, cleanup_tmp=MagicMock())
 
-    assert "ok.png" in succeeded
-    assert "bad.png" in failed
+    assert "ok.png" in summary.succeeded
+    assert "bad.png" in summary.failed
+    assert summary.exit_code == 1
 
 
 def test_run_files_a_skipped_file_is_neither_succeeded_nor_failed(tmp_path: Path) -> None:
@@ -89,11 +92,15 @@ def test_run_files_a_skipped_file_is_neither_succeeded_nor_failed(tmp_path: Path
 
     done: list = []
 
-    succeeded, failed, skipped = run_files(
+    summary = run_files(
         [f1, f2], process_file=process, cleanup_tmp=MagicMock(), on_file_done=done.append
     )
 
-    assert (succeeded, failed, skipped) == (["text.txt"], [], ["scan.png"])
+    assert (summary.succeeded, summary.failed, summary.skipped) == (
+        ("text.txt",),
+        (),
+        ("scan.png",),
+    )
     assert [event.skipped for event in done] == [False, True]
 
 
@@ -147,7 +154,7 @@ def test_run_files_stop_event_set_skips_all_files(tmp_path: Path) -> None:
     """
     Given  stop_event is already set before run_files begins
     When   run_files is called with two files
-    Then   process_file is never called and ([], []) is returned
+    Then   process_file is never called and both files are reported as not started
     """
     f1 = tmp_path / "a.png"
     f2 = tmp_path / "b.png"
@@ -155,7 +162,7 @@ def test_run_files_stop_event_set_skips_all_files(tmp_path: Path) -> None:
     stop.set()
     process_file = MagicMock()
 
-    succeeded, failed, _skipped = run_files(
+    summary = run_files(
         [f1, f2],
         process_file=process_file,
         cleanup_tmp=MagicMock(),
@@ -163,8 +170,96 @@ def test_run_files_stop_event_set_skips_all_files(tmp_path: Path) -> None:
     )
 
     process_file.assert_not_called()
-    assert succeeded == []
-    assert failed == []
+    assert summary.succeeded == ()
+    assert summary.failed == ()
+    assert summary.not_started == ("a.png", "b.png")
+    assert summary.status is RunStatus.STOPPED
+    assert summary.exit_code == 0
+
+
+def test_run_files_stop_after_file_lets_the_current_file_finish(tmp_path: Path) -> None:
+    """
+    Given  three files and "Stop after this file" is pressed while the first one is processed
+    When   run_files is called
+    Then   the first file succeeds completely, the other two are not started, and the run is
+           stopped, not failed
+    """
+    files = [tmp_path / "a.png", tmp_path / "b.png", tmp_path / "c.png"]
+    stop_after = threading.Event()
+    reporter = MagicMock()
+
+    def process(path: Path) -> ProcessingResult:
+        stop_after.set()
+        return _success(path)
+
+    summary = run_files(
+        files,
+        process_file=process,
+        cleanup_tmp=MagicMock(),
+        stop_after_file_event=stop_after,
+        reporter=reporter,
+    )
+
+    assert summary.succeeded == ("a.png",)
+    assert summary.not_started == ("b.png", "c.png")
+    assert summary.status is RunStatus.STOPPED
+    reporter.status.assert_any_call("\nStopped by user: 2 file(s) not started.")
+
+
+def test_run_files_stop_on_the_last_file_after_it_finished_is_done(tmp_path: Path) -> None:
+    """
+    Given  one file and "Stop after this file" is pressed while it is processed
+    When   run_files is called
+    Then   nothing was left undone, so the run is done (not stopped)
+    """
+    stop_after = threading.Event()
+
+    def process(path: Path) -> ProcessingResult:
+        stop_after.set()
+        return _success(path)
+
+    summary = run_files(
+        [tmp_path / "a.png"],
+        process_file=process,
+        cleanup_tmp=MagicMock(),
+        stop_after_file_event=stop_after,
+    )
+
+    assert summary.status is RunStatus.DONE
+
+
+def test_run_files_a_stopped_file_is_neither_succeeded_nor_failed(tmp_path: Path) -> None:
+    """
+    Given  two files and process_file reports the first as stopped by "Stop now"
+    When   run_files is called
+    Then   it is listed under stopped only, no error is logged, on_file_done carries the flag,
+           and the second file is not started
+    """
+    f1 = tmp_path / "a.png"
+    f2 = tmp_path / "b.png"
+    stop = threading.Event()
+    done: list = []
+
+    def process(path: Path) -> ProcessingResult:
+        stop.set()
+        return ProcessingResult(
+            False, "Stopped before proofreading.", "p.png", "raw", "", "", stopped=True
+        )
+
+    summary = run_files(
+        [f1, f2],
+        process_file=process,
+        cleanup_tmp=MagicMock(),
+        stop_event=stop,
+        on_file_done=done.append,
+    )
+
+    assert summary.stopped == ("a.png",)
+    assert summary.failed == ()
+    assert summary.not_started == ("b.png",)
+    assert summary.status is RunStatus.STOPPED
+    assert [event.stopped for event in done] == [True]
+    assert done[0].message == "Stopped before proofreading."
 
 
 # ── cleanup_tmp always called ──────────────────────────────────────────────
@@ -203,14 +298,13 @@ def test_run_files_empty_list_returns_empty_and_cleans_up(tmp_path: Path) -> Non
     """
     Given  an empty file list
     When   run_files is called
-    Then   result is ([], []) and cleanup_tmp is called
+    Then   nothing is reported and cleanup_tmp is called
     """
     cleanup = MagicMock()
 
-    succeeded, failed, _skipped = run_files([], process_file=MagicMock(), cleanup_tmp=cleanup)
+    summary = run_files([], process_file=MagicMock(), cleanup_tmp=cleanup)
 
-    assert succeeded == []
-    assert failed == []
+    assert summary == RunSummary()
     cleanup.assert_called_once()
 
 

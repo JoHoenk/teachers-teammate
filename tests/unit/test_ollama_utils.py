@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import sys
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -15,6 +15,7 @@ from teachers_teammate.exceptions import (
     OllamaConnectionError,
     OllamaUnreachableError,
     ResponseTruncatedError,
+    RunStoppedError,
 )
 from teachers_teammate.infrastructure import ollama_utils
 from teachers_teammate.infrastructure.ollama_utils import (
@@ -510,6 +511,98 @@ def test_an_answer_that_never_ends_is_abandoned_at_the_total_timeout() -> None:
     while not closed and time.monotonic() < deadline:
         time.sleep(0.01)
     assert closed == [True]
+
+
+def test_a_cancel_event_ends_a_running_answer_quickly_and_closes_the_stream() -> None:
+    """
+    Given  a stream that keeps producing chunks and a cancel event set after a moment
+    When   it is consumed with that event
+    Then   RunStoppedError is raised within about half a second and the stream is closed so the
+           server stops generating
+    """
+    import threading  # noqa: PLC0415
+    import time  # noqa: PLC0415
+
+    closed = []
+    cancel = threading.Event()
+
+    def _forever():
+        try:
+            while True:
+                time.sleep(0.01)
+                yield 1
+        finally:
+            closed.append(True)
+
+    threading.Timer(0.1, cancel.set).start()
+    started = time.monotonic()
+    with pytest.raises(RunStoppedError):
+        _consume_iterator_with_first_token_timeout(_forever(), 5.0, cancel_event=cancel)
+
+    assert time.monotonic() - started < 1.0
+    deadline = time.monotonic() + 2.0
+    while not closed and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert closed == [True]
+
+
+def test_a_cancel_event_ends_the_wait_for_the_first_token() -> None:
+    """
+    Given  a stream that never produces a first chunk and a cancel event set after a moment
+    When   it is consumed with a long first-token timeout
+    Then   RunStoppedError is raised long before that timeout
+    """
+    import threading  # noqa: PLC0415
+    import time  # noqa: PLC0415
+
+    cancel = threading.Event()
+
+    def _silent():
+        time.sleep(5)
+        yield 1
+
+    threading.Timer(0.1, cancel.set).start()
+    started = time.monotonic()
+    with pytest.raises(RunStoppedError):
+        _consume_iterator_with_first_token_timeout(_silent(), 30.0, cancel_event=cancel)
+
+    assert time.monotonic() - started < 1.5
+
+
+def test_a_chat_request_is_not_even_opened_when_already_cancelled(monkeypatch) -> None:
+    """
+    Given  an OllamaClient whose cancel event is already set
+    When   chat() is called
+    Then   RunStoppedError is raised and the server is never asked
+    """
+    import threading  # noqa: PLC0415
+
+    mock_ollama = _make_chat_mock_ollama(["never"])
+    monkeypatch.setitem(sys.modules, "ollama", mock_ollama)
+    cancel = threading.Event()
+    cancel.set()
+
+    with pytest.raises(RunStoppedError):
+        OllamaClient("http://127.0.0.1:11434", cancel_event=cancel).chat("llama3", "hi")
+
+    mock_ollama.Client.return_value.chat.assert_not_called()
+
+
+def test_a_cancel_event_that_is_not_set_changes_nothing(monkeypatch) -> None:
+    """
+    Given  an OllamaClient with a cancel event that stays unset
+    When   chat() is called
+    Then   the answer arrives as without an event
+    """
+    import threading  # noqa: PLC0415
+
+    monkeypatch.setitem(sys.modules, "ollama", _make_chat_mock_ollama(["Hello", " world"]))
+
+    result = OllamaClient("http://127.0.0.1:11434", cancel_event=threading.Event()).chat(
+        "llama3", "hi"
+    )
+
+    assert result == "Hello world"
 
 
 def test_a_total_timeout_does_not_cut_a_stream_that_finishes_in_time() -> None:
@@ -1447,3 +1540,176 @@ def test_chat_with_stats_tells_an_unreachable_server_from_a_failed_request(monke
     with pytest.raises(OCRError) as refused:
         OllamaClient("http://127.0.0.1:11434").chat_with_stats("m", "hi")
     assert not isinstance(refused.value, OllamaUnreachableError)
+
+
+def test_a_finished_answer_that_is_already_queued_survives_a_stop() -> None:
+    """
+    Given  a stream whose answer is complete while the cancel event is already set
+    When   it is consumed
+    Then   the finished answer is returned instead of being thrown away
+    """
+    import threading  # noqa: PLC0415
+    import time  # noqa: PLC0415
+
+    cancel = threading.Event()
+
+    def _answer():
+        yield 1
+        yield 2
+        # Both chunks and the end marker are queued before the consumer looks again.
+        time.sleep(0.05)
+
+    stream = _answer()
+    real_next_item = ollama_utils._next_item
+
+    def next_item_after_stop(item_queue, timeout, cancel_event):
+        if not cancel.is_set():
+            deadline = time.monotonic() + 5
+            while item_queue.qsize() < 3 and time.monotonic() < deadline:
+                time.sleep(0.01)  # until both chunks and the end marker are queued
+            cancel.set()  # ... then press "Stop now"
+        return real_next_item(item_queue, timeout, cancel_event)
+
+    with patch.object(ollama_utils, "_next_item", next_item_after_stop):
+        result = _consume_iterator_with_first_token_timeout(stream, 5.0, cancel_event=cancel)
+
+    assert result == [1, 2]
+
+
+@pytest.mark.parametrize("reason", ["stop", "first_token_timeout", "deadline"])
+def test_giving_up_on_a_request_cuts_its_connection(reason: str) -> None:
+    """
+    Given  a stream that never answers (or never ends) and a caller that can cut the connection
+    When   the request is stopped, times out waiting for the first token, or hits its deadline
+    Then   on_abandon is called once, so the server stops working on the abandoned request
+    """
+    import threading  # noqa: PLC0415
+    import time  # noqa: PLC0415
+
+    cancel = threading.Event()
+    cut: list[bool] = []
+
+    def _silent():
+        time.sleep(3)
+        yield 1
+
+    def _endless():
+        while True:
+            time.sleep(0.01)
+            yield 1
+
+    kwargs: dict = {"on_abandon": lambda: cut.append(True)}
+    if reason == "stop":
+        kwargs["cancel_event"] = cancel
+        threading.Timer(0.1, cancel.set).start()
+        stream, first, expected = _silent(), 30.0, RunStoppedError
+    elif reason == "first_token_timeout":
+        stream, first, expected = _silent(), 0.1, OCRTimeoutError
+    else:
+        kwargs["total_timeout"] = 0.1
+        stream, first, expected = _endless(), 5.0, OCRDeadlineError
+
+    with pytest.raises(expected):
+        _consume_iterator_with_first_token_timeout(stream, first, **kwargs)
+
+    assert cut == [True]
+
+
+def test_a_failing_on_abandon_does_not_hide_the_stop() -> None:
+    """
+    Given  an on_abandon callback that raises
+    When   the request is stopped
+    Then   RunStoppedError is still what the caller sees
+    """
+    import threading  # noqa: PLC0415
+    import time  # noqa: PLC0415
+
+    cancel = threading.Event()
+    cancel.set()
+
+    def _silent():
+        time.sleep(1)
+        yield 1
+
+    def boom() -> None:
+        raise RuntimeError("already closed")
+
+    with pytest.raises(RunStoppedError):
+        _consume_iterator_with_first_token_timeout(
+            _silent(), 30.0, cancel_event=cancel, on_abandon=boom
+        )
+
+
+def test_cut_connection_closes_the_http_client_of_the_request() -> None:
+    """
+    Given  an ollama client with an httpx client inside
+    When   its connection is cut
+    Then   the httpx client is closed (a blocked read fails and the server sees the drop)
+    """
+    client = MagicMock()
+
+    ollama_utils._cut_connection(client)
+
+    client._client.close.assert_called_once_with()
+
+
+def test_the_ollama_wrappers_let_a_stop_through_instead_of_degrading_to_a_warning() -> None:
+    """
+    Given  an Ollama client whose request is cut off by "Stop now"
+    When   invoke_ollama_chat or invoke_ollama_structured runs
+    Then   RunStoppedError propagates (any other error still becomes a warning)
+    """
+    from teachers_teammate.infrastructure._llm_invoke import (  # noqa: PLC0415
+        invoke_ollama_chat,
+        invoke_ollama_structured,
+    )
+
+    client = MagicMock()
+    client.chat.side_effect = RunStoppedError
+
+    def chat() -> tuple[str, str | None]:
+        return invoke_ollama_chat(
+            client,
+            model="m",
+            prompt="p",
+            timeout=1.0,
+            temperature=0.2,
+            fallback="raw",
+            failure="failed ({exc})",
+        )
+
+    def structured():
+        return invoke_ollama_structured(
+            client,
+            model="m",
+            prompt="p",
+            timeout=1.0,
+            temperature=0.2,
+            schema={},
+            parse=lambda text: (text, ""),
+        )
+
+    with pytest.raises(RunStoppedError):
+        chat()
+    with pytest.raises(RunStoppedError):
+        structured()
+
+    client.chat.side_effect = RuntimeError("boom")
+    assert chat() == ("raw", "failed (boom)")
+
+
+def test_stop_requested_reads_an_optional_event() -> None:
+    """
+    Given  no event, an unset event and a set event
+    When   stop_requested() is asked
+    Then   it is False, False, True
+    """
+    import threading  # noqa: PLC0415
+
+    from teachers_teammate.exceptions import stop_requested  # noqa: PLC0415
+
+    event = threading.Event()
+    assert stop_requested(None) is False
+    assert stop_requested(event) is False
+    event.set()
+    assert stop_requested(event) is True

@@ -56,6 +56,9 @@ DEFAULTS: dict[str, Any] = {
     # Whether scans (images, PDFs without a text layer) are read.  Off = only text that already
     # exists is used (text files, PDFs with a text layer) and scans are skipped.
     "recognition_enabled": True,
+    # Keep the computer from going to sleep while documents are processed (the screen may still
+    # turn off).  Not part of any cache key.
+    "keep_awake": True,
     # ── Preprocessing (pre-steps and PDF rendering) ───────────────────────────
     "pdf_render_dpi": 300,
     # "auto" | "always" | "never" — use a PDF's embedded text instead of OCR.
@@ -267,6 +270,11 @@ class Config:
     # is skipped; text files and PDFs with a text layer are used as they are.
     recognition_enabled: bool = DEFAULTS["recognition_enabled"]
 
+    # ── Run ──────────────────────────────────────────────────────────────────
+    # Keep the computer awake while a run is going.  Not in any fingerprint: it changes how the
+    # run is carried out, not what it produces.
+    keep_awake: bool = DEFAULTS["keep_awake"]
+
     # ── Anonymizer ───────────────────────────────────────────────────────────
     # None = derive the spaCy model from the document language ("Auto")
     anonymizer_primary_model: str | None = None
@@ -400,6 +408,7 @@ def load_config_file(path: Path) -> dict:
         "ollama_url",
         "ocr_timeout",
         "recognition_enabled",
+        "keep_awake",
         "correction_enabled",
         "anonymization_enabled",
         "correction_provider",

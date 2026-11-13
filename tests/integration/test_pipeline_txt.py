@@ -36,7 +36,7 @@ def test_pipeline_run_txt_input_writes_raw_text_without_ocr(tmp_path: Path) -> N
     source = cfg.input_dir / "note.txt"
     source.write_text("First line\nSecond line", encoding="utf-8")
 
-    rc = OCRPipeline(cfg).run()
+    rc = OCRPipeline(cfg).run().exit_code
 
     assert rc == 0
     state = StateRepository(resolve_artifact_dir(cfg.output_dir) / "state").load(source)
@@ -65,7 +65,7 @@ def test_pipeline_txt_input_triggers_on_file_done_callback(tmp_path: Path) -> No
     def _on_done(result: FileDoneResult) -> None:
         seen.append((result.ok, result.raw_text))
 
-    rc = OCRPipeline(cfg, progress=ProgressCallbacks(on_file_done=_on_done)).run()
+    rc = OCRPipeline(cfg, progress=ProgressCallbacks(on_file_done=_on_done)).run().exit_code
 
     assert rc == 0
     assert len(seen) == 1
@@ -101,7 +101,7 @@ def test_pipeline_txt_input_enters_correction_pipeline(tmp_path: Path) -> None:
             return_value=mock_corrector,
         ),
     ):
-        rc = OCRPipeline(cfg).run()
+        rc = OCRPipeline(cfg).run().exit_code
 
     assert rc == 0
     call_args = mock_corrector.correct.call_args
@@ -134,7 +134,7 @@ def test_pipeline_txt_input_non_utf8_falls_back_to_latin1(tmp_path: Path) -> Non
     def _on_done(result: FileDoneResult) -> None:
         seen.append(result.ok)
 
-    rc = OCRPipeline(cfg, progress=ProgressCallbacks(on_file_done=_on_done)).run()
+    rc = OCRPipeline(cfg, progress=ProgressCallbacks(on_file_done=_on_done)).run().exit_code
 
     assert rc == 0
     assert seen == [True]
@@ -160,7 +160,7 @@ def test_pipeline_saves_text_files_below_the_input_subfolder(tmp_path: Path) -> 
         (cfg.input_dir / name).mkdir()
         (cfg.input_dir / name / "essay.txt").write_text(f"text of {name}", encoding="utf-8")
 
-    rc = OCRPipeline(cfg).run()
+    rc = OCRPipeline(cfg).run().exit_code
 
     assert rc == 0
     for name in ("class1", "class2"):
@@ -185,7 +185,7 @@ def test_pipeline_refuses_text_files_in_the_input_folder_before_creating_it(
     reporter = MagicMock()
     reporter.warn.side_effect = warnings.append
 
-    rc = OCRPipeline(cfg, dependencies=PipelineDependencies(reporter=reporter)).run()
+    rc = OCRPipeline(cfg, dependencies=PipelineDependencies(reporter=reporter)).run().exit_code
 
     assert rc == 1
     assert "next run would read them as new documents" in warnings[0]
@@ -218,7 +218,9 @@ def test_pipeline_with_recognition_off_uses_text_files_and_skips_scans(
 
     with patch("teachers_teammate.infrastructure.pipeline.OCRStageService") as stage:
         stage.return_value.run_pages = ocr
-        rc = OCRPipeline(cfg, progress=ProgressCallbacks(on_file_done=events.append)).run()
+        rc = (
+            OCRPipeline(cfg, progress=ProgressCallbacks(on_file_done=events.append)).run().exit_code
+        )
 
     assert rc == 0
     by_name = {e.name: e for e in events}

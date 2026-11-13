@@ -584,3 +584,78 @@ def test_queued_scans_can_be_marked_skipped_before_the_run_and_unmarked_again(qt
 
     table.set_skipped_sources(set())
     assert table.item(0, ResultsTable._COL_OCR).text() == "-"
+
+
+def _stopped_event(source: str, stage: str, **extra) -> FileDoneEvent:
+    return FileDoneEvent(
+        source_id=source,
+        name="essay.png",
+        ok=False,
+        message=f"Stopped at {stage}.",
+        ocr_s=1.0,
+        correction_s=0.0,
+        stopped=True,
+        stopped_stage=stage,
+        **extra,
+    )
+
+
+@pytest.mark.gui
+def test_a_stop_at_the_review_is_shown_in_the_review_cell(qtbot) -> None:
+    """
+    Given  a file whose proofreading is stored while its review was cut short by "Stop now"
+           (no cell is marked running for the review: nothing reports that step starting)
+    When   the stopped result arrives
+    Then   the review cell says "stopped" with the note, and the proofreading cell keeps its tick
+    """
+    table = ResultsTable()
+    qtbot.addWidget(table)
+    table.set_queue(["essay.png"], source_ids=["/e.png"])
+    table.mark_processing("/e.png")
+    table.mark_correcting("/e.png")
+
+    table.add_result(_stopped_event("/e.png", "evaluation", raw_txt="raw", corr_txt="fixed"))
+
+    assert [table.item(0, col).text() for col in (1, 2, 3)] == ["✓", "✓", "stopped"]
+    assert "Stopped at evaluation." in table.item(0, 3).toolTip()
+
+
+@pytest.mark.gui
+def test_a_stop_at_the_review_does_not_blame_a_failed_proofreading(qtbot) -> None:
+    """
+    Given  proofreading that did not store a text (it failed), then "Stop now" at the review
+    When   the stopped result arrives
+    Then   the proofreading cell is not labelled "stopped" (it stays at the dash) and the
+           review cell is
+    """
+    table = ResultsTable()
+    qtbot.addWidget(table)
+    table.set_queue(["essay.png"], source_ids=["/e.png"])
+    table.mark_processing("/e.png")
+    table.mark_correcting("/e.png")
+
+    table.add_result(_stopped_event("/e.png", "evaluation", raw_txt="raw"))
+
+    assert [table.item(0, col).text() for col in (1, 2, 3)] == ["✓", "-", "stopped"]
+
+
+@pytest.mark.gui
+def test_a_stopped_file_keeps_its_stored_review_badge(qtbot) -> None:
+    """
+    Given  a stored proofreading with unclear expressions, then "Stop now" at the review
+    When   the stopped result carries the review
+    Then   the row keeps its review and the unclear badge
+    """
+    review = CorrectionReview(unclear=(UnclearNote("odd", "unclear", "rephrase"),))
+    table = ResultsTable()
+    qtbot.addWidget(table)
+    table.set_queue(["essay.png"], source_ids=["/e.png"])
+    table.mark_processing("/e.png")
+
+    table.add_result(
+        _stopped_event(
+            "/e.png", "evaluation", raw_txt="raw", corr_txt="fixed", correction_review=review
+        )
+    )
+
+    assert "1" in table.item(0, 2).text()

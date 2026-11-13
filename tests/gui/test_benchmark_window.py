@@ -312,6 +312,29 @@ def test_closing_by_hand_during_a_run_asks_before_stopping_it(
 
 
 @pytest.mark.gui
+def test_closing_detaches_a_benchmark_worker_that_does_not_stop_in_time(
+    window, monkeypatch
+) -> None:
+    """
+    Given  a Benchmark window whose worker is still running after the 2 s wait
+    When   the window is closed
+    Then   the worker is detached, so the running thread is not destroyed with the window
+    """
+    from teachers_teammate.gui.benchmark import _benchmark_window  # noqa: PLC0415
+
+    win, _service = window
+    worker = _RunningWorker()
+    worker.wait = lambda _ms: False  # ty: ignore[invalid-assignment]  # the stub never stops
+    win._worker = worker  # ty: ignore[invalid-assignment]  # test injects a running worker stub
+    detached: list = []
+    monkeypatch.setattr(_benchmark_window, "detach_running_worker", detached.append)
+
+    win.close()
+
+    assert detached == [worker]
+
+
+@pytest.mark.gui
 def test_closing_from_the_main_window_stops_a_run_without_asking(window, monkeypatch) -> None:
     """
     Given  a Benchmark window with a run going

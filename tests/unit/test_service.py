@@ -3,9 +3,11 @@
 
 from __future__ import annotations
 
+import contextlib
 import dataclasses
 import os
 from pathlib import Path
+import threading
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -21,7 +23,10 @@ from teachers_teammate.application.service import (
     RunPreflight,
 )
 from teachers_teammate.domain.model_listing import ModelListing
+from teachers_teammate.domain.run_summary import RunSummary
+from teachers_teammate.infrastructure.power import KEEP_AWAKE_REASON
 from teachers_teammate.infrastructure.state_repository import DocumentState
+from teachers_teammate.interfaces import SleepBlocker
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────
@@ -69,13 +74,14 @@ def test_run_selected_delegates_to_pipeline_factory(tmp_path: Path) -> None:
     """
     Given  a ProcessingApplicationService with an injected pipeline_factory
     When   run_selected() is called
-    Then   pipeline_factory is called once and its run() return value is forwarded
+    Then   pipeline_factory is called once and the RunSummary of its run() is forwarded
     """
     from tests.conftest import make_config  # noqa: PLC0415
 
     cfg = make_config(tmp_path)
+    summary = RunSummary(succeeded=("a.png",))
     mock_pipeline = MagicMock()
-    mock_pipeline.run.return_value = 42
+    mock_pipeline.run.return_value = summary
     factory = MagicMock(return_value=mock_pipeline)
     svc = _make_svc(pipeline_factory=factory)
 
@@ -83,7 +89,182 @@ def test_run_selected_delegates_to_pipeline_factory(tmp_path: Path) -> None:
 
     factory.assert_called_once()
     mock_pipeline.run.assert_called_once()
-    assert result == 42
+    assert result is summary
+
+
+@pytest.mark.unit
+def test_run_selected_passes_both_stop_events_to_the_pipeline(tmp_path: Path) -> None:
+    """
+    Given  a stop event ("Stop now") and a stop-after-file event
+    When   run_selected() is called with them
+    Then   the pipeline factory receives both
+    """
+    from tests.conftest import make_config  # noqa: PLC0415
+
+    factory = MagicMock(return_value=MagicMock(run=lambda: RunSummary()))
+    svc = _make_svc(pipeline_factory=factory)
+    now, after_file = threading.Event(), threading.Event()
+
+    svc.run_selected(make_config(tmp_path), stop_event=now, stop_after_file_event=after_file)
+
+    assert factory.call_args.kwargs["stop_event"] is now
+    assert factory.call_args.kwargs["stop_after_file_event"] is after_file
+
+
+class _RecordingBlocker(SleepBlocker):
+    """Records when the computer is held and released, and what it was told."""
+
+    def __init__(self, *, grants: bool = True) -> None:
+        self.events: list[str] = []
+        self._grants = grants
+
+    def hold(self, reason: str):
+        events = self.events
+
+        @contextlib.contextmanager
+        def held():
+            events.append(f"hold:{reason}")
+            try:
+                yield self._grants
+            finally:
+                events.append("release")
+
+        return held()
+
+
+@pytest.mark.unit
+def test_run_selected_holds_the_computer_awake_around_the_whole_run(tmp_path: Path) -> None:
+    """
+    Given  a service with a sleep blocker and keep_awake on (the default)
+    When   run_selected() runs the pipeline
+    Then   the computer is held before the pipeline runs and released after it, and the
+           pipeline gets to know whether the system agreed
+    """
+    from tests.conftest import make_config  # noqa: PLC0415
+
+    blocker = _RecordingBlocker()
+    order: list[str] = []
+    pipeline = MagicMock()
+    pipeline.run.side_effect = lambda: order.append("run") or RunSummary()
+    factory = MagicMock(return_value=pipeline)
+    svc = ProcessingApplicationService(pipeline_factory=factory, sleep_blocker=blocker)
+
+    svc.run_selected(make_config(tmp_path))
+
+    assert blocker.events == [f"hold:{KEEP_AWAKE_REASON}", "release"]
+    assert order == ["run"]
+    assert factory.call_args.kwargs["dependencies"].keep_awake.held is True
+
+
+@pytest.mark.unit
+def test_run_selected_reports_that_nothing_could_be_requested_without_a_blocker(
+    tmp_path: Path,
+) -> None:
+    """
+    Given  a computer with no way to ask for staying awake (WSL, a platform without a tool)
+    When   run_selected() runs with keep_awake on
+    Then   the state says it is enabled, not held and not available: nothing was refused
+    """
+    from teachers_teammate.infrastructure.power import NullSleepBlocker  # noqa: PLC0415
+    from tests.conftest import make_config  # noqa: PLC0415
+
+    pipeline = MagicMock()
+    pipeline.run.return_value = RunSummary()
+    factory = MagicMock(return_value=pipeline)
+    svc = ProcessingApplicationService(pipeline_factory=factory, sleep_blocker=NullSleepBlocker())
+
+    svc.run_selected(make_config(tmp_path))
+
+    state = factory.call_args.kwargs["dependencies"].keep_awake
+    assert (state.enabled, state.held, state.available) == (True, False, False)
+
+
+@pytest.mark.unit
+def test_run_selected_reports_a_refusal_when_a_blocker_exists(tmp_path: Path) -> None:
+    """
+    Given  a sleep blocker that exists but is refused by the system
+    When   run_selected() runs
+    Then   the state is not held but available: the system refused
+    """
+    from tests.conftest import make_config  # noqa: PLC0415
+
+    pipeline = MagicMock()
+    pipeline.run.return_value = RunSummary()
+    factory = MagicMock(return_value=pipeline)
+    svc = ProcessingApplicationService(
+        pipeline_factory=factory, sleep_blocker=_RecordingBlocker(grants=False)
+    )
+
+    svc.run_selected(make_config(tmp_path))
+
+    state = factory.call_args.kwargs["dependencies"].keep_awake
+    assert (state.held, state.available) == (False, True)
+
+
+@pytest.mark.unit
+def test_run_selected_releases_the_computer_when_the_pipeline_raises(tmp_path: Path) -> None:
+    """
+    Given  a pipeline that raises
+    When   run_selected() is called
+    Then   the exception propagates and the computer is released nevertheless
+    """
+    from tests.conftest import make_config  # noqa: PLC0415
+
+    blocker = _RecordingBlocker()
+    pipeline = MagicMock()
+    pipeline.run.side_effect = RuntimeError("boom")
+    svc = ProcessingApplicationService(
+        pipeline_factory=MagicMock(return_value=pipeline), sleep_blocker=blocker
+    )
+
+    with pytest.raises(RuntimeError, match="boom"):
+        svc.run_selected(make_config(tmp_path))
+
+    assert blocker.events[-1] == "release"
+
+
+@pytest.mark.unit
+def test_run_selected_does_not_hold_when_keep_awake_is_off(tmp_path: Path) -> None:
+    """
+    Given  keep_awake turned off in the config
+    When   run_selected() is called
+    Then   the blocker is not used and the pipeline is told it is off
+    """
+    from tests.conftest import make_config  # noqa: PLC0415
+
+    blocker = _RecordingBlocker()
+    factory = MagicMock(return_value=MagicMock(run=lambda: RunSummary()))
+    svc = ProcessingApplicationService(pipeline_factory=factory, sleep_blocker=blocker)
+
+    svc.run_selected(make_config(tmp_path, keep_awake=False))
+
+    assert blocker.events == []
+    state = factory.call_args.kwargs["dependencies"].keep_awake
+    assert (state.enabled, state.held) == (False, False)
+
+
+@pytest.mark.unit
+def test_run_selected_reports_the_keep_awake_state_and_a_refusal(tmp_path: Path) -> None:
+    """
+    Given  a blocker the system refuses, and a progress bundle with on_keep_awake
+    When   run_selected() is called
+    Then   the callback gets enabled=True, held=False once, before the pipeline is created
+    """
+    from tests.conftest import make_config  # noqa: PLC0415
+
+    seen: list = []
+    factory = MagicMock(return_value=MagicMock(run=lambda: RunSummary()))
+    svc = ProcessingApplicationService(
+        pipeline_factory=factory, sleep_blocker=_RecordingBlocker(grants=False)
+    )
+
+    svc.run_selected(
+        make_config(tmp_path),
+        progress=service_module.ProgressCallbacks(on_keep_awake=seen.append),
+    )
+
+    assert len(seen) == 1
+    assert (seen[0].enabled, seen[0].held) == (True, False)
 
 
 @pytest.mark.unit
@@ -2189,7 +2370,6 @@ def test_anonymizer_is_never_used_by_two_threads_at_once() -> None:
     When   the threads run at the same time
     Then   the anonymizer is never entered by more than one thread at a time
     """
-    import threading  # noqa: PLC0415
     import time  # noqa: PLC0415
 
     lock = threading.Lock()

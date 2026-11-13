@@ -29,7 +29,10 @@ from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 import hashlib
 import json
+import os
 from pathlib import Path
+import tempfile
+import time
 
 from ..domain.correction_review import CorrectionReview
 from ..domain.freshness import (
@@ -170,6 +173,22 @@ class OcrResultRecord:
     raw_text_format: str = "plain"
 
 
+_REPLACE_ATTEMPTS = 5
+_REPLACE_WAIT_S = 0.05
+
+
+def _replace_file(source: Path, target: Path) -> None:
+    """Move *source* over *target*; retry a refusal for a moment (Windows: file held open)."""
+    for attempt in range(_REPLACE_ATTEMPTS):
+        try:
+            os.replace(source, target)
+            return
+        except PermissionError:
+            if attempt == _REPLACE_ATTEMPTS - 1:
+                raise
+            time.sleep(_REPLACE_WAIT_S)
+
+
 class StateRepository:
     """Persistence service for loading, validating, and invalidating state records."""
 
@@ -277,7 +296,24 @@ class StateRepository:
     def save(self, input_file: Path, state: DocumentState) -> None:
         path = self.state_path_for_input(input_file)
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(asdict(state), indent=2), encoding="utf-8")
+        text = json.dumps(asdict(state), indent=2)
+        # Write beside the file, then swap it in: the process may end during a save (the window
+        # closed while a run was going), and a half-written file would lose the whole state.
+        # The temporary name is unique, so two saves of one document never share a file.
+        fd, temp_name = tempfile.mkstemp(dir=path.parent, prefix=path.name + ".", suffix=".tmp")
+        temp = Path(temp_name)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                handle.write(text)
+            _replace_file(temp, path)
+        except PermissionError:
+            # Windows refuses to replace a file that something else holds open (the window
+            # reading it, a virus scanner); writing in place still works there.
+            temp.unlink(missing_ok=True)
+            path.write_text(text, encoding="utf-8")
+        except OSError:
+            temp.unlink(missing_ok=True)
+            raise
 
     def record_preview_artifact(
         self,

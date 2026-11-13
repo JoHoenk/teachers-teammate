@@ -63,7 +63,7 @@ def test_correction_produces_openable_docx(tmp_path: Path, fmt: str) -> None:
     build_llm_patch, corrector_patch = _patch_correction(corrector)
 
     with build_llm_patch, corrector_patch:
-        rc = OCRPipeline(cfg).run()
+        rc = OCRPipeline(cfg).run().exit_code
 
     assert rc == 0
     docx_file = cfg.output_dir / "essay.docx"
@@ -107,7 +107,7 @@ def test_evaluation_stage_runs_and_persists(tmp_path: Path) -> None:
             return_value=evaluator,
         ),
     ):
-        rc = OCRPipeline(cfg).run()
+        rc = OCRPipeline(cfg).run().exit_code
 
     assert rc == 0
     assert evaluator.evaluate.call_args.args[0] == "corrected answer"
@@ -152,7 +152,7 @@ def test_anonymizer_runs_before_correction_and_restores(tmp_path: Path) -> None:
             return_value=anonymizer,
         ),
     ):
-        rc = OCRPipeline(cfg).run()
+        rc = OCRPipeline(cfg).run().exit_code
 
     assert rc == 0
     # Correction must see the anonymized text, not the raw PII.
@@ -187,10 +187,10 @@ def test_second_run_reuses_cached_correction(tmp_path: Path) -> None:
     build_llm_patch, corrector_patch = _patch_correction(corrector)
 
     with build_llm_patch, corrector_patch:
-        assert OCRPipeline(cfg).run() == 0
+        assert OCRPipeline(cfg).run().exit_code == 0
         assert corrector.correct.call_count == 1
         # Second run with unchanged config should hit the cache.
-        assert OCRPipeline(cfg).run() == 0
+        assert OCRPipeline(cfg).run().exit_code == 0
         assert corrector.correct.call_count == 1
 
 
@@ -217,7 +217,7 @@ def test_changed_correction_config_recomputes(tmp_path: Path) -> None:
 
     build_llm_patch, corrector_patch = _patch_correction(corrector)
     with build_llm_patch, corrector_patch:
-        assert OCRPipeline(cfg1).run() == 0
+        assert OCRPipeline(cfg1).run().exit_code == 0
     assert corrector.correct.call_count == 1
 
     # Same input/output dirs, different correction prompt → stale correction stage.
@@ -232,7 +232,7 @@ def test_changed_correction_config_recomputes(tmp_path: Path) -> None:
     )
     build_llm_patch2, corrector_patch2 = _patch_correction(corrector)
     with build_llm_patch2, corrector_patch2:
-        assert OCRPipeline(cfg2).run() == 0
+        assert OCRPipeline(cfg2).run().exit_code == 0
     assert corrector.correct.call_count == 2
 
 
@@ -269,7 +269,7 @@ def test_multipage_pdf_ocr_concatenates_pages(tmp_path: Path) -> None:
         correction_enabled=False,
         docx_enabled=False,
     )
-    rc = OCRPipeline(cfg).run()
+    rc = OCRPipeline(cfg).run().exit_code
 
     assert rc == 0
     state = _state_for(cfg, pdf_path)
@@ -305,6 +305,6 @@ def test_pipeline_reports_nonzero_exit_when_all_inputs_corrupt(tmp_path: Path) -
         "teachers_teammate.infrastructure.stage_builder.TesseractOCRProcessor",
         return_value=mock_ocr,
     ):
-        rc = OCRPipeline(cfg).run()
+        rc = OCRPipeline(cfg).run().exit_code
 
     assert rc != 0

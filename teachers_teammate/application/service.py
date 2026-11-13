@@ -43,6 +43,8 @@ from ..domain.output_files import (
     output_path,
 )
 from ..domain.pdf_text_layer import PdfTextLayerMode, normalize_pdf_text_layer
+from ..domain.run_summary import RunSummary
+from ..infrastructure import power
 from ..infrastructure.addon_manager import ADDON_AMD as ADDON_AMD  # noqa: PLC0414
 from ..infrastructure.addon_manager import ADDON_NVIDIA as ADDON_NVIDIA  # noqa: PLC0414
 from ..infrastructure.addon_manager import ADDON_PADDLE as ADDON_PADDLE  # noqa: PLC0414
@@ -77,6 +79,8 @@ from ..infrastructure.ocr_processor import (
 )
 from ..infrastructure.ollama_utils import warm_up_own_host_names
 from ..infrastructure.pipeline import OCRPipeline, preprocess_preview
+from ..infrastructure.power import KEEP_AWAKE_REASON, NullSleepBlocker, on_battery
+from ..infrastructure.reporting import KeepAwakeState
 from ..infrastructure.reporting import ProgressCallbacks as ProgressCallbacks  # noqa: PLC0414
 from ..infrastructure.stage_builder import (
     PipelineComponentFactory,
@@ -103,7 +107,7 @@ from ..infrastructure.workflow.cache_service import (
     compute_eval_config_hash,
     compute_ocr_config_hash,
 )
-from ..interfaces import SUPPORTED_SUFFIXES
+from ..interfaces import SUPPORTED_SUFFIXES, SleepBlocker
 from .commands import ApplicationCommands
 from .context_choice import ContextChoice, context_choice
 from .data_flow import (
@@ -259,8 +263,11 @@ class ProcessingApplicationService:
         pipeline_factory: Callable[..., OCRPipeline] | None = None,
         state_repository_factory: Callable[[Path], StateRepository] | None = None,
         component_factory: PipelineComponentFactory | None = None,
+        sleep_blocker: SleepBlocker | None = None,
     ) -> None:
         self._discovery = discovery or FileDiscovery()
+        # Held around a run only (see run_selected); a fake in tests, the platform's own here.
+        self._sleep_blocker = sleep_blocker or power.default_sleep_blocker()
         self._pipeline_factory = pipeline_factory or OCRPipeline
         self._state_repository_factory = state_repository_factory or StateRepository
         # Used only to keep preprocess_preview() in sync with a non-default factory a
@@ -304,24 +311,45 @@ class ProcessingApplicationService:
         config_file: Path | None = None,
         selected_source_paths: list[str] | None = None,
         stop_event: threading.Event | None = None,
+        stop_after_file_event: threading.Event | None = None,
         reporter=None,
         progress: ProgressCallbacks | None = None,
-    ) -> int:
+    ) -> RunSummary:
+        """Run the selected files (all when none are selected) and return what happened.
+
+        The computer is kept awake for the whole run unless ``config.keep_awake`` is off.
+        *stop_event* stops at once (the Ollama request being made is cancelled);
+        *stop_after_file_event* lets the file being processed finish and starts no other.
+        """
         from ..infrastructure.pipeline import PipelineDependencies  # noqa: PLC0415
 
-        pipeline = self._pipeline_factory(
-            config,
-            stop_event=stop_event,
-            config_file=config_file,
-            selected_source_paths=selected_source_paths,
-            dependencies=PipelineDependencies(
-                reporter=reporter,
-                component_factory=self._run_component_factory(),
-                hardware=self.resolve_hardware_profile(config.hardware_profile, config.ollama_url),
-            ),
-            progress=progress,
-        )
-        return pipeline.run()
+        blocker = self._sleep_blocker if config.keep_awake else NullSleepBlocker()
+        with blocker.hold(KEEP_AWAKE_REASON) as held:
+            awake = KeepAwakeState(
+                enabled=config.keep_awake,
+                held=held,
+                available=blocker.available,
+                on_battery=on_battery(),
+            )
+            if progress is not None and progress.on_keep_awake is not None:
+                progress.on_keep_awake(awake)
+            pipeline = self._pipeline_factory(
+                config,
+                stop_event=stop_event,
+                stop_after_file_event=stop_after_file_event,
+                config_file=config_file,
+                selected_source_paths=selected_source_paths,
+                dependencies=PipelineDependencies(
+                    reporter=reporter,
+                    component_factory=self._run_component_factory(),
+                    hardware=self.resolve_hardware_profile(
+                        config.hardware_profile, config.ollama_url
+                    ),
+                    keep_awake=awake,
+                ),
+                progress=progress,
+            )
+            return pipeline.run()
 
     def _run_component_factory(self) -> PipelineComponentFactory:
         """Return the stage factory of a run: its anonymizer shares this service's caches."""

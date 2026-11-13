@@ -13,7 +13,7 @@ from dataclasses import dataclass
 import json
 from typing import TYPE_CHECKING, Any, Literal, cast
 
-from ..exceptions import TRUNCATED_MESSAGE
+from ..exceptions import TRUNCATED_MESSAGE, RunStoppedError
 from .ollama_utils import PROOFREADING_NUM_CTX
 
 if TYPE_CHECKING:
@@ -104,6 +104,8 @@ def invoke_ollama_chat(  # noqa: PLR0913  # one keyword-only call shape shared b
         )
     except ResponseTruncatedError:
         return fallback, truncated_warning
+    except RunStoppedError:
+        raise  # a stop is not a failed request: the caller leaves the stage
     except Exception as exc:  # noqa: BLE001  # client may raise any transport error; degrade with a warning
         return fallback, _failure_warning(failure, exc)
 
@@ -259,6 +261,8 @@ def invoke_ollama_structured[T](  # noqa: PLR0913  # one keyword-only call shape
         )
     except ResponseTruncatedError:
         return StructuredResult(error=TRUNCATED_MESSAGE, failure="truncated")
+    except RunStoppedError:
+        raise  # a stop is not a failed request: the caller leaves the stage
     except Exception as exc:  # noqa: BLE001  # client may raise any transport error; degrade with a warning
         if _rejected_request(exc):
             # An older server or a model that refuses ``format``: a plain answer may still work.

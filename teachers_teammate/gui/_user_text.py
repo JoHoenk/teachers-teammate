@@ -124,6 +124,7 @@ EXPLANATIONS_SUPPORTED_TOOLTIP = (
 
 # ── Settings window: page names and "where to change it" ──────────────────────
 
+PAGE_GENERAL = "General"
 PAGE_AI_MODELS = "AI models"
 PAGE_SCAN_QUALITY = "Scan quality"
 PAGE_PRIVACY = "Privacy"

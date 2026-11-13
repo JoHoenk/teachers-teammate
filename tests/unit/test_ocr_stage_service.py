@@ -9,7 +9,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from teachers_teammate.exceptions import OCRError
+from teachers_teammate.exceptions import OCRError, RunStoppedError
 from teachers_teammate.infrastructure.workflow.ocr_service import OCRStageService
 
 
@@ -173,17 +173,16 @@ def test_run_pages_stop_event_set_before_loop_returns_stopped(tmp_path: Path) ->
     """
     Given  stop_event is already set before run_pages begins iterating
     When   run_pages is called with one image
-    Then   result is ([], 'Stopped by user.') and processor is not called
+    Then   RunStoppedError is raised (a stop is no OCR error) and processor is not called
     """
     img = tmp_path / "doc.png"
     stop = threading.Event()
     stop.set()
     svc, processor = _make_svc(stop_event=stop)
 
-    texts, err = svc.run_pages([img], "English")
+    with pytest.raises(RunStoppedError):
+        svc.run_pages([img], "English")
 
-    assert texts == []
-    assert err == "Stopped by user."
     processor.process_image.assert_not_called()
 
 
@@ -191,7 +190,7 @@ def test_run_pages_stop_event_mid_iteration(tmp_path: Path) -> None:
     """
     Given  two pages and stop_event is set after the first page is processed
     When   run_pages is called
-    Then   the second page is not processed and ([], 'Stopped by user.') is returned
+    Then   the second page is not processed and RunStoppedError is raised
     """
     p1 = tmp_path / "p1.png"
     p2 = tmp_path / "p2.png"
@@ -209,7 +208,27 @@ def test_run_pages_stop_event_mid_iteration(tmp_path: Path) -> None:
     processor.process_image.side_effect = process_and_maybe_stop
     svc = OCRStageService(processor=processor, stop_event=stop)
 
-    texts, err = svc.run_pages([p1, p2], "English")
+    with pytest.raises(RunStoppedError):
+        svc.run_pages([p1, p2], "English")
 
-    assert err == "Stopped by user."
     assert call_count == 1
+
+
+def test_run_pages_ocr_error_while_stopping_is_a_stop_not_an_error(tmp_path: Path) -> None:
+    """
+    Given  the engine raises OCRError for a request that "Stop now" cut off (stop_event is set)
+    When   run_pages is called
+    Then   RunStoppedError is raised instead of an "OCR failed" message
+    """
+    stop = threading.Event()
+    processor = MagicMock()
+
+    def fail_while_stopping(path: Path, *, language: str) -> str:
+        stop.set()
+        raise OCRError("connection closed")
+
+    processor.process_image.side_effect = fail_while_stopping
+    svc = OCRStageService(processor=processor, stop_event=stop)
+
+    with pytest.raises(RunStoppedError):
+        svc.run_pages([tmp_path / "p1.png"], "English")

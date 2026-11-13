@@ -434,8 +434,10 @@ class _DummyWorker:
         self.stage_started = _DummySignal()
         self.ocr_done = _DummySignal()
         self.file_done = _DummySignal()
-        self.finished_with_code = _DummySignal()
+        self.keep_awake_changed = _DummySignal()
+        self.run_finished = _DummySignal()
         self.stop_event = threading.Event()
+        self.stop_after_file_event = threading.Event()
         self._running = False
 
     def start(self) -> None:
@@ -443,6 +445,15 @@ class _DummyWorker:
 
     def isRunning(self) -> bool:
         return self._running
+
+    def request_stop(self, *, now: bool) -> None:
+        self.stop_after_file_event.set()
+        if now:
+            self.stop_event.set()
+
+    def wait(self, _msecs: int) -> bool:
+        self._running = False
+        return True
 
 
 class _DummyUpdateThread:

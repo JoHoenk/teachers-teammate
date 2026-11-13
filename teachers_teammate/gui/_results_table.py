@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
 
 from ..domain.correction_review import CorrectionReview
 from ..domain.formatted_text import TextFormat
+from ..domain.stages import STAGE_ORDER
 from . import _user_text as txt
 from ._constants import (
     _COLOUR_CACHED,
@@ -42,8 +43,11 @@ _RUNNING_SYMBOL = "▶"  # ▶
 _DONE_SYMBOL = "✓"  # ✓
 _FAIL_SYMBOL = "✗"  # ✗
 _SKIPPED_TEXT = "skipped"  # a scan that is left out because text recognition is off
+_STOPPED_TEXT = "stopped"  # the step a "Stop now" cut short
 _PENDING_COLOR = "#888888"
-_SKIPPED_ROW_BG = "#2b2b2b"  # neither the green of a success nor the red of a failure
+_NEUTRAL_ROW_BG = (
+    "#2b2b2b"  # skipped or stopped: neither the green of a success nor the red of a failure
+)
 
 _STAGE_FONT = QFont()
 _STAGE_FONT.setPointSize(13)
@@ -559,7 +563,6 @@ class ResultsTable(QTableWidget):
         source_id = event.source_id
         name = event.name
         ok = event.ok
-        preview_img = event.preview_img
         raw_txt = event.raw_txt
         corr_txt = event.corr_txt
         eval_txt = event.eval_txt
@@ -571,7 +574,16 @@ class ResultsTable(QTableWidget):
             for col in (self._COL_CORRECTION, self._COL_EVALUATION):
                 self._set_stage_cell(row, col, _PENDING_SYMBOL, _PENDING_COLOR)
             self.setItem(row, self._COL_DURATION, QTableWidgetItem(""))
-            self._tint_row(row, QBrush(QColor(_SKIPPED_ROW_BG)))
+            self._tint_row(row, QBrush(QColor(_NEUTRAL_ROW_BG)))
+            self.resizeColumnToContents(self._COL_FILE)
+            return
+        if event.stopped:
+            # The run was stopped: not a failure (red) and not complete (green).  What is done
+            # keeps its tick; the step that was cut short says so.
+            self._show_stopped_cells(row, event, (raw_txt, corr_txt, eval_txt))
+            self.setItem(row, self._COL_DURATION, QTableWidgetItem(""))
+            self._tint_row(row, QBrush(QColor(_NEUTRAL_ROW_BG)))
+            self._store_artifacts(row, event)
             self.resizeColumnToContents(self._COL_FILE)
             return
         self._finalize_stage_cells(row, event, (raw_txt, corr_txt, eval_txt))
@@ -584,20 +596,49 @@ class ResultsTable(QTableWidget):
             if cell is not None:
                 cell.setBackground(row_bg)
 
+        self._store_artifacts(row, event)
+
+        self.resizeColumnToContents(self._COL_FILE)
+        self.resizeColumnToContents(self._COL_DURATION)
+
+    def _store_artifacts(self, row: int, event: FileDoneEvent) -> None:
+        """Attach the preview and texts of *event* to *row* (double-click opens them)."""
         file_item = self.item(row, self._COL_FILE)
         if file_item is not None:
-            file_item.setData(self._ROLE_SOURCE, source_id)
-            file_item.setData(self._ROLE_IMAGE, preview_img)
-            file_item.setData(self._ROLE_PIXMAP, load_pixmap(preview_img))
-            file_item.setData(self._ROLE_RAW, raw_txt)
-            file_item.setData(self._ROLE_CORR, corr_txt)
-            file_item.setData(self._ROLE_EVAL, eval_txt)
+            file_item.setData(self._ROLE_SOURCE, event.source_id)
+            file_item.setData(self._ROLE_IMAGE, event.preview_img)
+            file_item.setData(self._ROLE_PIXMAP, load_pixmap(event.preview_img))
+            file_item.setData(self._ROLE_RAW, event.raw_txt)
+            file_item.setData(self._ROLE_CORR, event.corr_txt)
+            file_item.setData(self._ROLE_EVAL, event.eval_txt)
             file_item.setData(self._ROLE_REVIEW, event.correction_review)
             file_item.setData(self._ROLE_CORRECTION_WARNING, event.correction_warning)
         self._refresh_unclear_badge(row, event.correction_review)
 
-        self.resizeColumnToContents(self._COL_FILE)
-        self.resizeColumnToContents(self._COL_DURATION)
+    def _show_stopped_cells(
+        self, row: int, event: FileDoneEvent, artifacts: tuple[str, str, str]
+    ) -> None:
+        """Tick the steps that have a result, mark the cut-short one "stopped", leave the rest."""
+        # The result names the step it stopped at: no table cell is marked running for the review
+        # (nothing reports that step starting), so the running mark alone cannot tell.  Without
+        # a name (a stop between two steps) the cell that was marked running is the one.
+        cut = event.stopped_stage
+        for col, stage, artifact in zip(
+            (self._COL_OCR, self._COL_CORRECTION, self._COL_EVALUATION),
+            STAGE_ORDER,
+            artifacts,
+            strict=True,
+        ):
+            if artifact:
+                self._set_stage_cell(row, col, _DONE_SYMBOL, _COLOUR_OK)
+            elif stage == cut or (not cut and self._stage_symbol(row, col) == _RUNNING_SYMBOL):
+                self._set_stage_cell(row, col, _STOPPED_TEXT, _PENDING_COLOR)
+                cell = self.item(row, col)
+                if cell is not None:
+                    cell.setFont(_SKIPPED_FONT)
+                self._set_note(row, col, event.message)
+            else:
+                self._set_stage_cell(row, col, _PENDING_SYMBOL, _PENDING_COLOR)
 
     def _ensure_row(self, source_id: str, name: str) -> int:
         """Return *source_id*'s row, appending a fresh pending row when it has none."""

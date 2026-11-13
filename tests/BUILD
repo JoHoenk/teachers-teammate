@@ -509,6 +509,24 @@ py_test(
 )
 
 py_test(
+    name = "test_run_summary",
+    size = "small",
+    srcs = _COMMON_SRCS + ["unit/test_run_summary.py"],
+    args = ["unit/test_run_summary.py"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS,
+)
+
+py_test(
+    name = "test_power",
+    size = "small",
+    srcs = _COMMON_SRCS + ["unit/test_power.py"],
+    args = ["unit/test_power.py"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS + _PIPELINE_DEPS,
+)
+
+py_test(
     name = "test_state_repository",
     size = "small",
     srcs = _COMMON_SRCS + ["unit/test_state_repository.py"],
@@ -1306,6 +1324,27 @@ py_test(
 )
 
 py_test(
+    name = "test_gui_general_page",
+    size = "small",
+    srcs = _COMMON_SRCS + [
+        "gui/_gui_harness.py",
+        "gui/test_gui_general_page.py",
+    ],
+    args = ["gui/test_gui_general_page.py"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_lib"],
+)
+
+py_test(
+    name = "test_gui_run_status",
+    size = "small",
+    srcs = _COMMON_SRCS + ["gui/test_gui_run_status.py"],
+    args = ["gui/test_gui_run_status.py"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_lib"],
+)
+
+py_test(
     name = "test_gui_settings_pages",
     size = "small",
     srcs = _COMMON_SRCS + [
@@ -1598,12 +1637,14 @@ test_suite(
         ":test_ollama_discovery",
         ":test_ollama_utils",
         ":test_pipeline_txt_integration",
+        ":test_power",
         ":test_preprocess_service",
         ":test_preprocessor",
         ":test_preview_image_store",
         ":test_providers",
         ":test_providers_mistral_curation",
         ":test_release_stamp_versions",
+        ":test_run_summary",
         ":test_sent_text",
         ":test_service",
         ":test_stage_builder",
@@ -1628,6 +1669,7 @@ test_suite(
         ":test_gui_bootstrap",
         ":test_gui_config_panel",
         ":test_gui_formatted_text",
+        ":test_gui_general_page",
         ":test_gui_lifecycle",
         ":test_gui_main_window",
         ":test_gui_privacy_settings",
@@ -1636,6 +1678,7 @@ test_suite(
         ":test_gui_readiness",
         ":test_gui_results_table",
         ":test_gui_review_views",
+        ":test_gui_run_status",
         ":test_gui_settings_pages",
         ":test_gui_settings_window",
         ":test_gui_update_check",

@@ -273,6 +273,20 @@ def _no_background_network_threads(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture(autouse=True)
+def _never_block_system_sleep(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A test must never really keep the computer awake (nor start ``caffeinate`` & co).
+
+    The application service asks ``power.default_sleep_blocker()`` when it is built; tests that
+    care about the blocker pass their own fake.
+    """
+    try:
+        from teachers_teammate.infrastructure import power  # noqa: PLC0415
+    except ImportError:  # pure-unit targets without the package
+        return
+    monkeypatch.setattr(power, "default_sleep_blocker", power.NullSleepBlocker)
+
+
+@pytest.fixture(autouse=True)
 def credential_file(monkeypatch: pytest.MonkeyPatch) -> dict[str, object]:
     """Keep API keys off the real machine: no system keychain, an in-memory settings file.
 

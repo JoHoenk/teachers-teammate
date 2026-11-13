@@ -109,6 +109,23 @@ PaddleOCR is an optional add-on that can be installed from within Teacher's Team
 
 ---
 
+## Running from the command line
+
+### Exit codes
+
+The command line exits with `0` when the run finished without a failed file, and with `1` when a file failed or the run could not start (for example a refused output folder or an unreachable server). A file left out on purpose (a scan while text recognition is off) is neither: it does not change the exit code.
+
+### Keeping the computer awake
+
+By default the computer is kept from going to sleep while a run is going: Windows uses a power request (visible in `powercfg /requests`), macOS runs `caffeinate -i`, and Linux takes a `systemd-inhibit` lock. They end with the program. Under WSL nothing is held; the Windows side decides. The screen may still turn off.
+
+```bash
+teachers-teammate -i ./scans --allow-sleep    # let the computer sleep during the run
+teachers-teammate -i ./scans --keep-awake     # the default; useful to override keep_awake = false in ocr.toml
+```
+
+The same setting in `ocr.toml` is `keep_awake = true | false`.
+
 ## Image preprocessing
 
 Image preprocessing improves OCR accuracy by cleaning and normalising each document image before it is sent to the text recognition engine. All settings described here are available in **Settings → Scan quality…** and on the command line via `--preprocess-*` flags.

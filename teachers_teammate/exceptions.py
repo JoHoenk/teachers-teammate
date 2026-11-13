@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import threading
+
 
 class OCRError(Exception):
     """Raised by :class:`~teachers_teammate.interfaces.OCRProcessor` implementations
@@ -16,6 +18,23 @@ class OCRError(Exception):
     def __init__(self, *args: object, status_code: int | None = None) -> None:
         super().__init__(*args)
         self.status_code = status_code
+
+
+def stop_requested(event: threading.Event | None) -> bool:
+    """Return whether *event* (a run's "Stop now" event, or ``None``) is set."""
+    return event is not None and event.is_set()
+
+
+class RunStoppedError(Exception):
+    """Raised to leave a stage quickly when the teacher pressed "Stop now".
+
+    Deliberately *not* an :exc:`OCRError`: a stop is never a model failure, so no handler of
+    failed requests may treat it as one.  The stop event is the truth; this exception is only a
+    fast exit.  The Ollama wrappers in ``_llm_invoke`` re-raise it instead of degrading to a
+    warning, so :class:`~teachers_teammate.infrastructure.workflow.file_processor.FileProcessor`
+    needs only its ``except RunStoppedError`` handlers.  A new wrapper that catches every
+    exception must do the same.
+    """
 
 
 class OCRTimeoutError(OCRError):

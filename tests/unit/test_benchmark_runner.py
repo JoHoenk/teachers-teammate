@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import dataclasses
 from pathlib import Path
+import threading
 
 import pytest
 
@@ -63,6 +64,25 @@ def test_run_ocr_reports_engine_error_without_raising(tmp_path: Path, sample_png
     assert result.raw_text == ""
     assert result.error is not None
     assert "engine exploded" in result.error
+
+
+def test_run_ocr_reports_a_stop_as_stopped_by_user(tmp_path: Path, sample_png: Path) -> None:
+    """
+    Given  a stop_event that is already set
+    When   run_ocr() is called
+    Then   the result carries "Stopped by user." as its error (the Benchmark app shows it
+           like before) and no text
+    """
+    stop = threading.Event()
+    stop.set()
+    config = make_config(tmp_path, ocr_engine="tesseract", preprocess_method="none")
+
+    result = run_ocr(
+        config, sample_png, component_factory=_factory_with(_StubOCR("x")), stop_event=stop
+    )
+
+    assert result.raw_text == ""
+    assert result.error == "Stopped by user."
 
 
 def test_run_ocr_uses_text_input_directly(tmp_path: Path) -> None:

@@ -603,6 +603,86 @@ stage line and the cell's note with a blank line, so neither replaces the other.
 `_refresh_cell_tooltips()` recomposes every proofreading and content-review cell after the
 tooltips change and at the end of `set_queue()`.
 
+### Stopping a run and run outcomes
+
+A run has two stop events, both owned by `OCRWorker` and set through `request_stop(now=...)`:
+`stop_after_file_event` ("Stop": the file being processed finishes completely, no new file
+starts) and `stop_event` ("Stop now": also cancels the Ollama request being made and stops
+the file at its next step).  The Stop button is two-step (`_StopStage` in `_main_window.py`).
+
+The result of a run is `domain/run_summary.py:RunSummary`: `succeeded`, `failed`, `skipped`,
+`stopped` (interrupted by Stop now), `not_started` and `error` (the run could not start).
+`status` is failed > stopped > done, and `exit_code` is `1` only for failed.  `run_files()`
+(`workflow/coordinator.py`), `OCRPipeline.run()` and `ProcessingApplicationService.run_selected()`
+return it; `OCRWorker.run_finished` carries it to the GUI, and `gui/_run_status.py:describe_run`
+holds all the wording (progress text, tray message).  A stopped file is neither a success nor
+a failure, like a skipped one: `ProcessingResult.stopped` -> `FileDoneResult.stopped` ->
+`FileDoneEvent.stopped`, shown as a grey row with "stopped" in the cut-short step.
+
+Rules that keep a stop honest:
+
+* **A finished step is never thrown away.**  Each step stores its result as soon as it has
+  it, so a stopped file keeps it and the next run reuses it.  A request cut off by the stop is
+  never stored as a result: `RunStoppedError` leaves the step before anything is recorded.
+* **The event is the truth, `RunStoppedError` is the fast exit.**  It is not an `OCRError`
+  on purpose.  The Ollama wrappers in `_llm_invoke` re-raise it instead of degrading it to a
+  warning (any other error still becomes one, and is a failure even when Stop now was pressed
+  at the same moment); a new wrapper that catches every exception must do the same.
+  `FileProcessor` checks the event between steps (`_stopping()`) and **before** a slow
+  anonymization pass, and the steps raise `_stopped_abort(message, stage, ...)` themselves.
+  The abort carries the stage (`ProcessingResult.stopped_stage`, one of `ocr`, `correction`,
+  `evaluation`), so the results table marks the cut-short cell even for the review, which
+  has no "running" mark; it also carries the stored correction's review and warning.
+* **Without a later step nothing is "stopped".**  A recognition-only run whose text is stored
+  when the stop arrives is a success: the old unconditional check after recognition is gone.
+* **Cancelling an Ollama request.**  `OllamaClient(url, cancel_event=...)` makes the waiting
+  `_consume_iterator_with_first_token_timeout` poll the event every 0.2 s (`_next_item`); on
+  cancel the reader thread closes the stream, and `on_abandon` (`_cut_connection`) closes
+  the request's own `ollama.Client`, which also ends a request that has not produced a chunk
+  yet (model loading, a long prompt).  An answer already in the queue is handed over first
+  and never thrown away.  The pipeline
+  passes its stop event to the shared client; online services and Tesseract/Paddle cannot be
+  cancelled mid-request and finish it first.
+* **Closing the window** (`MainWindow.closeEvent`): a spontaneous close during a run asks first
+  (`_confirm_close_during_run`; File → Quit asks the same through `_on_quit_requested`), then
+  `request_stop(now=True)`, disconnects the worker's signals (no dialog on a hidden window) and
+  waits at most `CLOSE_GRACE_MS` (3 s).  A worker still running after that is detached
+  (`_worker.detach_running_worker`) and `_app_bootstrap.finish_process` ends the process with
+  `os._exit` instead of destroying a running `QThread` (which aborts).  The Benchmark window
+  does the same after its 2 s wait.  `StateRepository.save` writes a temporary file and swaps
+  it in (`os.replace`), because the process may now end during a save.
+
+### Keeping the computer awake
+
+`infrastructure/power.py` implements the `SleepBlocker` interface (`interfaces.py`) for each
+platform without extra packages; `hold(reason)` is a context manager that yields whether the
+system agreed and never raises.
+
+| Platform | Mechanism | Ends if the app dies |
+|---|---|---|
+| Windows | `PowerCreateRequest` + `PowerSetRequest(SystemRequired)` (shown by `powercfg /requests`); fallback `SetThreadExecutionState` on the same thread | yes (handle closes) |
+| macOS | `caffeinate -i -w <pid>` | yes (`-w`) |
+| Linux | `systemd-inhibit --what=idle:sleep … tail --pid=<pid> -f /dev/null` | yes (`tail --pid`) |
+| WSL / other | `NullSleepBlocker` | n/a |
+
+Only idle sleep of the system is requested; the screen may turn off.  On Linux the lock is
+`idle:sleep` in block mode, so logind also refuses the menu's Suspend while it is held.  The
+Linux command is `sh -c 'echo ready; exec tail --pid=…'`: `systemd-inhibit` starts it only after
+the lock was granted, so the printed line (`ready_line`) is what makes `held` true — a refusal,
+however slow, ends the helper without it.  macOS has no such signal and relies on `caffeinate`
+exiting at once when it refuses.  `SleepBlocker.available` is `False` for the null blocker, so
+`KeepAwakeState.available` tells "nothing was requested" (WSL) from "the system refused".  The only place it is held
+is `ProcessingApplicationService.run_selected()`, around the whole `pipeline.run()` (GUI and
+CLI both go through it), so it is released on errors and on Stop alike.  `Config.keep_awake`
+(default on; `--allow-sleep` / `--keep-awake`; Settings → General) switches it; it is in no
+cache key.  The service reports a `KeepAwakeState` (held or refused, on battery or not,
+`psutil.sensors_battery()`) to the banner and to `ProgressCallbacks.on_keep_awake`, which the
+main window shows under the progress bar.  Tests never block real sleep: `tests/conftest.py`
+replaces `power.default_sleep_blocker` with the null blocker; a test that cares passes its own
+`SleepBlocker` to the service.  Manual checks (not automatable): `powercfg /requests` on
+Windows (Modern Standby may need `PowerRequestExecutionRequired` too), `pmset -g assertions`
+on macOS, `systemd-inhibit --list` on Linux.
+
 ### Background tasks in the GUI
 
 New background work uses `gui/_background.py` instead of a `QThread` subclass:
@@ -1192,8 +1272,8 @@ privacy add-on is installed.
 ### Settings window
 
 One modal window (`gui/settings/_window.py:SettingsWindow`) holds everything set up once;
-the main window only holds what changes per batch.  The sidebar lists six pages
-(`SettingsPage`): AI models, This computer (`AI_SETUP`: computer profile, local server) and Online services (`ONLINE_SERVICES`: the list of API keys), both drawn indented under AI models because they hold no choice of their own (`SUB_PAGES`), Scan quality, Privacy and Add-ons.  The main window
+the main window only holds what changes per batch.  The sidebar lists seven pages
+(`SettingsPage`): General (`GENERAL`: `keep_awake`), AI models, This computer (`AI_SETUP`: computer profile, local server) and Online services (`ONLINE_SERVICES`: the list of API keys), both drawn indented under AI models because they hold no choice of their own (`SUB_PAGES`), Scan quality, Privacy and Add-ons.  The main window
 opens it through the single entry point `MainWindow.open_settings(page, focus=..., preselect=...)`
 and, on OK, applies the result once (`_apply_settings_result`: update the panel, the
 anonymizer rules and the "hide names" view setting, save, check the services, refresh the

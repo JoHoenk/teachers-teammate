@@ -233,6 +233,7 @@ class ConfigPanel(QScrollArea):
             "evaluation_enabled": DEFAULTS["evaluation_enabled"],
             "anonymization_enabled": DEFAULTS["anonymization_enabled"],
             "debug": DEFAULTS["debug"],
+            "keep_awake": DEFAULTS["keep_awake"],
         }
         self._settings_dict["anonymizer_primary_model"] = None
         # SECONDARY_MODEL_AUTO by default; SECONDARY_MODEL_NONE = the user chose "(none)".
@@ -1110,6 +1111,7 @@ class ConfigPanel(QScrollArea):
             # The GUI is intentionally always-recursive; no toggle is exposed.
             recursive=True,
             debug=bool(self._settings_dict.get("debug", DEFAULTS["debug"])),
+            keep_awake=bool(self._settings_dict.get("keep_awake", DEFAULTS["keep_awake"])),
             ocr=self._ocr_config_from_settings(),
             language=self._language.currentText().strip() or DEFAULTS["language"],
             ollama_url=self._settings_dict.get("ollama_url", DEFAULTS["ollama_url"]),
@@ -1301,6 +1303,7 @@ class ConfigPanel(QScrollArea):
             "preprocess_denoise",
             "preprocess_gamma",
             "debug",
+            "keep_awake",
             "docx_enabled",
             "text_enabled",
             "text_anonymized_enabled",

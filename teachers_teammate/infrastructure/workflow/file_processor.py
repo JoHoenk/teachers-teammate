@@ -18,11 +18,13 @@ from ...domain.output_files import (
     feeds_inputs,
     output_path,
 )
-from ...domain.stages import PROGRESS_STAGE_OCR, PROGRESS_STAGE_PREPROCESSING
+from ...domain.stages import PROGRESS_STAGE_OCR, PROGRESS_STAGE_PREPROCESSING, StageName
 from ...exceptions import (
     RECOGNITION_OFF_MESSAGE,
     PipelineInputError,
     RecognitionSwitchedOffError,
+    RunStoppedError,
+    stop_requested,
 )
 from ...interfaces import AnonymizationMap, Anonymizer, Corrector, DocumentCreator, Evaluator
 from ..correction import proofreading_pieces
@@ -57,6 +59,20 @@ class ProcessingResult:
     skipped: bool = False
     """The file was left out on purpose (a scan while text recognition is off): neither a
     success nor a failure.  ``ok`` is ``False`` and ``message`` says why."""
+    stopped: bool = False
+    """The run was stopped before this file was complete: neither a success nor a failure.
+    ``ok`` is ``False`` and ``message`` says before which step; the steps that were done are
+    stored and reused by the next run."""
+    stopped_stage: str = ""
+    """With ``stopped``: the step the stop cut short (``"ocr"``, ``"correction"`` or
+    ``"evaluation"``); empty when the file did not get as far as telling."""
+
+
+#: What a stopped file says, by the step it did not get to.
+STOPPED_BEFORE_RECOGNITION = "Stopped before the text was read."
+STOPPED_BEFORE_PROOFREADING = "Stopped before proofreading."
+STOPPED_BEFORE_REVIEW = "Stopped before the review."
+STOPPED_GENERIC = "Stopped by user."
 
 
 @dataclass(frozen=True)
@@ -105,6 +121,39 @@ class _StageAbort(Exception):
     def __init__(self, result: ProcessingResult) -> None:
         super().__init__()
         self.result = result
+
+
+def _stopped_abort(
+    message: str,
+    stage: StageName,
+    *,
+    preview_img: str = "",
+    raw_text: str = "",
+    correction_text: str = "",
+    text_format: TextFormat = "plain",
+    correction_review: CorrectionReview | None = None,
+    correction_warning: str = "",
+) -> _StageAbort:
+    """Return the abort that ends a file because the run was stopped.
+
+    It carries only what is already stored (the texts, and the review and warning that belong
+    to a stored correction), so the row shows what the next run reuses.
+    """
+    return _StageAbort(
+        ProcessingResult(
+            False,
+            message,
+            preview_img,
+            raw_text,
+            correction_text,
+            "",
+            text_format=text_format,
+            correction_review=correction_review,
+            correction_warning=correction_warning,
+            stopped=True,
+            stopped_stage=stage,
+        )
+    )
 
 
 class _LazyAnonymization:
@@ -159,33 +208,29 @@ class FileProcessor:
             raw_text, preview_img, source_image, ctx = self._run_preprocess_or_cache(file, ctx)
             text_format = self._text_format(ctx)
 
-            if self._stop_event and self._stop_event.is_set():
-                raise _StageAbort(
-                    ProcessingResult(
-                        False,
-                        "Stopped by user.",
-                        preview_img,
-                        raw_text,
-                        "",
-                        "",
-                        text_format=text_format,
-                    )
-                )
-
             # The extracted text is anonymized once, and only when something asks for it: a
             # proofreading that is not served from the cache.  Without proofreading nothing
             # else would ask, so it runs here to fill the session cache the previews read.
             anonymized = self._lazy_personal_info_removal(raw_text, preview_img)
-            if self._correction is None and self._anonymizer is not None:
+            if self._correction is None and self._anonymizer is not None and not self._stopping():
                 anonymized()
 
             correction_text, review, ctx, correction_warnings = self._run_correction_or_cache(
                 file, raw_text, preview_img, ctx, anonymized
             )
             evaluation_text, eval_warnings = self._run_evaluation_or_cache(
-                file, raw_text, correction_text, preview_img, ctx
+                file,
+                raw_text,
+                correction_text,
+                preview_img,
+                ctx,
+                stored_review=(review, "; ".join(correction_warnings)),
             )
             all_warnings = tuple(correction_warnings + eval_warnings)
+        except RunStoppedError:
+            # A cancelled request that no stage turned into a result itself: nothing of that
+            # step was stored, and the steps before it already are.
+            return ProcessingResult(False, STOPPED_GENERIC, "", "", "", "", stopped=True)
         except _StageAbort as abort:
             return abort.result
 
@@ -326,11 +371,22 @@ class FileProcessor:
                 f"       → Preprocessing done: {', '.join(prep_steps)} ({len(ocr_inputs)} page(s))"
             )
 
-        if self._stop_event and self._stop_event.is_set():
-            raise _StageAbort(ProcessingResult(False, "Stopped by user.", preview_img, "", "", ""))
+        if self._stopping() and prepared.raw_text_hint is None:
+            raise _stopped_abort(STOPPED_BEFORE_RECOGNITION, "ocr", preview_img=preview_img)
 
-        raw_text, ctx = self._run_ocr(file, ocr_inputs, prepared, preview_img, source_image, ctx)
+        try:
+            raw_text, ctx = self._run_ocr(
+                file, ocr_inputs, prepared, preview_img, source_image, ctx
+            )
+        except RunStoppedError as exc:
+            raise _stopped_abort(
+                STOPPED_BEFORE_RECOGNITION, "ocr", preview_img=preview_img
+            ) from exc
         return raw_text, preview_img, source_image, ctx
+
+    def _stopping(self) -> bool:
+        """Whether the teacher pressed "Stop now" (the other Stop only keeps new files away)."""
+        return stop_requested(self._stop_event)
 
     def _report_ocr_page(self, page: int, total: int) -> None:
         self._reporter.status(f"       → OCR page {page}/{total}...")
@@ -480,10 +536,23 @@ class FileProcessor:
             warnings = [cache_state.correction_warning] if cache_state.correction_warning else []
             return cache_state.correction_text, review, ctx, warnings
 
+        text_format = self._text_format(ctx)
+
+        def stopped() -> _StageAbort:
+            return _stopped_abort(
+                STOPPED_BEFORE_PROOFREADING,
+                "correction",
+                preview_img=preview_img,
+                raw_text=raw_text,
+                text_format=text_format,
+            )
+
+        # Before the anonymization: it is a full spaCy pass that a stop should not wait for.
+        if self._stopping():
+            raise stopped()
         self._reporter.status("       → Running correction...")
         text_for_correction, anon_map = anonymized()
 
-        text_format = self._text_format(ctx)
         # A text that goes out in several pieces cannot be changed across a piece boundary;
         # say so before the requests start, so the teacher knows what to expect.
         pieces, _max_chars = proofreading_pieces(
@@ -491,9 +560,14 @@ class FileProcessor:
         )
         if pieces is not None and pieces > 1:
             self._reporter.status(f"       → Proofreading {file.name} in {pieces} parts...")
-        outcome = self._correction.correct(
-            text_for_correction, self._language, text_format=text_format
-        )
+        if self._stopping():  # the anonymization may have taken a while
+            raise stopped()
+        try:
+            outcome = self._correction.correct(
+                text_for_correction, self._language, text_format=text_format
+            )
+        except RunStoppedError as exc:
+            raise stopped() from exc
         corrected_text = self._restore_pii(
             outcome.text or "", anon_map, preview_img=preview_img, raw_text=raw_text
         )
@@ -546,7 +620,14 @@ class FileProcessor:
         correction_text: str,
         preview_img: str,
         ctx: CacheContext,
+        *,
+        stored_review: tuple[CorrectionReview | None, str] = (None, ""),
     ) -> tuple[str, list[str]]:
+        """Run the content review, or return the cached one.
+
+        *stored_review* is the ``(review, warning)`` of the proofreading; a file stopped here
+        hands them back with the stored correction, so its row keeps them.
+        """
         if self._evaluation is None or not correction_text:
             return "", []
 
@@ -555,13 +636,36 @@ class FileProcessor:
             self._reporter.status("       → Using cached evaluation output")
             return cache_state.evaluation_text, []
 
+        stored = ctx.state.correction_done
+        review, review_warning = stored_review
+
+        def stopped() -> _StageAbort:
+            return _stopped_abort(
+                STOPPED_BEFORE_REVIEW,
+                "evaluation",
+                preview_img=preview_img,
+                raw_text=raw_text,
+                correction_text=correction_text if stored else "",
+                text_format=self._text_format(ctx),
+                correction_review=review if stored else None,
+                correction_warning=review_warning if stored else "",
+            )
+
+        # Before the anonymization: it is a spaCy pass that a stop should not wait for.
+        if self._stopping():
+            raise stopped()
         self._reporter.status("       → Running evaluation...")
         # The proofread text has its real names back, so hide them again: the review may
         # run on an online service just like proofreading.
         text_for_evaluation, anon_map = self._anonymize_for("evaluation", correction_text)
-        eval_text, eval_warning = self._evaluation.evaluate(
-            text_for_evaluation, self._language, text_format=self._text_format(ctx)
-        )
+        if self._stopping():
+            raise stopped()
+        try:
+            eval_text, eval_warning = self._evaluation.evaluate(
+                text_for_evaluation, self._language, text_format=self._text_format(ctx)
+            )
+        except RunStoppedError as exc:
+            raise stopped() from exc
         eval_text = self._restore_pii(
             eval_text or "",
             anon_map,

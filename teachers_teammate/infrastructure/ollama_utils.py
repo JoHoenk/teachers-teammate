@@ -22,7 +22,7 @@ from ..domain.context_budget import (
     ContextBudget,
     answers_with_the_same_text,
 )
-from ..exceptions import OllamaConnectionError
+from ..exceptions import OllamaConnectionError, RunStoppedError, stop_requested
 from .reporting import Reporter, StdoutReporter
 from .wsl import windows_host_addresses
 
@@ -223,15 +223,76 @@ def _mapped_stream[T](stream: Iterator[T], base_url: str) -> Iterator[T]:
                 pass
 
 
+def _cut_connection(client: ollama.Client) -> None:
+    """Close *client*'s HTTP connections, which ends a request that is still waiting.
+
+    Each request makes its own ``ollama.Client``, so nothing else is using this one.  Closing it
+    from another thread makes the blocked read fail at once and the server see the dropped
+    connection, which is what stops it working on an answer nobody waits for.
+    """
+    http = getattr(client, "_client", None)  # httpx.Client; ollama has no public close()
+    close = getattr(http, "close", None)
+    if close is not None:
+        close()
+
+
 def _rejects_think(exc: OCRError) -> bool:
     """Return whether *exc* is Ollama refusing the ``think`` flag (a 400 that names it)."""
     return exc.status_code == 400 and "think" in str(exc).lower()
+
+
+#: How often a waiting request looks at its cancel event (seconds): a stop takes effect within
+#: this long, and the polling costs nothing measurable.
+_CANCEL_POLL_S = 0.2
+
+
+def _next_item[T](
+    item_queue: queue.Queue[T],
+    timeout: float | None,
+    cancel_event: threading.Event | None,
+) -> T:
+    """Return the next queue item, waiting at most *timeout* seconds (``None`` = for ever).
+
+    Raises :exc:`queue.Empty` when the time is up and :exc:`RunStoppedError` as soon as
+    *cancel_event* is set and nothing is waiting in the queue: an item that already arrived
+    (the end of a finished answer included) is handed over first, never thrown away.
+    """
+    if cancel_event is None:
+        return item_queue.get() if timeout is None else item_queue.get(timeout=timeout)
+    end = None if timeout is None else time.monotonic() + timeout
+    while True:
+        try:
+            return item_queue.get_nowait()
+        except queue.Empty:
+            pass
+        if cancel_event.is_set():
+            raise RunStoppedError
+        step = _CANCEL_POLL_S
+        if end is not None:
+            step = min(step, max(end - time.monotonic(), 0.0))
+        try:
+            return item_queue.get(timeout=step)
+        except queue.Empty:
+            if end is not None and time.monotonic() >= end:
+                raise
+
+
+def _abandon(abandoned: threading.Event, on_abandon: Callable[[], None] | None) -> None:
+    """Tell the reader thread to stop, and cut the connection when the caller can."""
+    abandoned.set()
+    if on_abandon is not None:
+        try:
+            on_abandon()
+        except Exception:  # noqa: BLE001  # cutting the connection is best effort
+            logger.debug("could not cut the abandoned Ollama connection", exc_info=True)
 
 
 def _consume_iterator_with_first_token_timeout[T](
     it: Iterator[T],
     first_token_timeout: float,
     total_timeout: float | None = None,
+    cancel_event: threading.Event | None = None,
+    on_abandon: Callable[[], None] | None = None,
 ) -> list[T]:
     """Consume *it* in a background thread, enforcing a timeout on the first item.
 
@@ -240,6 +301,14 @@ def _consume_iterator_with_first_token_timeout[T](
     has begun it may take as long as it takes, unless *total_timeout* is given: then the whole
     answer has that many seconds, :exc:`~teachers_teammate.exceptions.OCRDeadlineError` is
     raised when it is still running, and the stream is closed so the server stops generating.
+
+    Setting *cancel_event* ends the wait within :data:`_CANCEL_POLL_S` seconds with
+    :exc:`~teachers_teammate.exceptions.RunStoppedError`; the stream is closed the same way.
+
+    The reader thread can only close the stream between two chunks.  While the server is still
+    loading the model or reading the prompt no chunk comes, so a caller that can cut the
+    connection from outside passes *on_abandon*: it is called (never raising) whenever the
+    request is given up on -- a timeout, the deadline or a stop.
     """
     from ..exceptions import (  # noqa: PLC0415  # avoid circular import at module level
         OCRDeadlineError,
@@ -273,13 +342,16 @@ def _consume_iterator_with_first_token_timeout[T](
     deadline = None if total_timeout is None else time.monotonic() + total_timeout
 
     try:
-        first = item_queue.get(timeout=first_token_timeout)
+        first = _next_item(item_queue, first_token_timeout, cancel_event)
     except queue.Empty:
-        abandoned.set()
+        _abandon(abandoned, on_abandon)
         raise OCRTimeoutError(
             f"No output within {first_token_timeout}s — the model may still be loading into "
             "memory. Try again in a moment, or check that Ollama is running."
         ) from None
+    except RunStoppedError:
+        _abandon(abandoned, on_abandon)
+        raise
 
     results: list[T] = []
     item: T | BaseException | None = first
@@ -291,17 +363,21 @@ def _consume_iterator_with_first_token_timeout[T](
                 raise item
             raise OCRError(str(item)) from item
         results.append(item)
-        if deadline is None:
-            item = item_queue.get()
-            continue
         try:
-            item = item_queue.get(timeout=max(deadline - time.monotonic(), 0.0))
+            item = _next_item(
+                item_queue,
+                None if deadline is None else max(deadline - time.monotonic(), 0.0),
+                cancel_event,
+            )
         except queue.Empty:
-            abandoned.set()
+            _abandon(abandoned, on_abandon)
             raise OCRDeadlineError(
                 f"the answer was still being written after {total_timeout:g}s; "
                 "the request was abandoned"
             ) from None
+        except RunStoppedError:
+            _abandon(abandoned, on_abandon)
+            raise
 
     t.join()
     return results
@@ -374,9 +450,18 @@ class OllamaClient:
     :meth:`_client`).
     """
 
-    def __init__(self, url: str, *, timeout: float = _CONNECT_TIMEOUT) -> None:
+    def __init__(
+        self,
+        url: str,
+        *,
+        timeout: float = _CONNECT_TIMEOUT,
+        cancel_event: threading.Event | None = None,
+    ) -> None:
         self.base_url = normalize_ollama_url(url)
         self._timeout = timeout
+        #: When set, a chat request that is waiting is abandoned (the server stops generating)
+        #: and raises :exc:`~teachers_teammate.exceptions.RunStoppedError`.
+        self._cancel_event = cancel_event
 
     def _client(self) -> ollama.Client:
         """Return an ``ollama.Client`` for :attr:`base_url`."""
@@ -667,6 +752,8 @@ class OllamaClient:
 
         from ..exceptions import OCRError, OllamaUnreachableError  # noqa: PLC0415
 
+        if stop_requested(self._cancel_event):
+            raise RunStoppedError
         message: dict = {"role": "user", "content": prompt}
         if images:
             message["images"] = images
@@ -701,7 +788,11 @@ class OllamaClient:
 
         try:
             chunks = _consume_iterator_with_first_token_timeout(
-                _mapped_stream(stream, self.base_url), timeout, total_timeout
+                _mapped_stream(stream, self.base_url),
+                timeout,
+                total_timeout,
+                self._cancel_event,
+                on_abandon=lambda: _cut_connection(client),
             )
         except OCRError as exc:
             # A model that does not support ``think`` rejects it with a 400 that names it.  Any
@@ -710,7 +801,11 @@ class OllamaClient:
             if think is None or not _rejects_think(exc):
                 raise
             chunks = _consume_iterator_with_first_token_timeout(
-                _mapped_stream(open_stream(None), self.base_url), timeout, total_timeout
+                _mapped_stream(open_stream(None), self.base_url),
+                timeout,
+                total_timeout,
+                self._cancel_event,
+                on_abandon=lambda: _cut_connection(client),
             )
         parts = [(chunk.message.content or "") for chunk in chunks if chunk.message]
         content = "".join(parts)

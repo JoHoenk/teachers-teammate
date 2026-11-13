@@ -26,6 +26,7 @@ from .. import _user_text as txt
 class SettingsPage(StrEnum):
     """The pages of the Settings window, in sidebar order (the value is the QSettings key)."""
 
+    GENERAL = "general"
     AI_MODELS = "ai_models"
     AI_SETUP = "ai_setup"
     ONLINE_SERVICES = "online_services"
@@ -213,6 +214,7 @@ class SettingsPageBase(QWidget):
 
 #: Sidebar titles, also used by the menu entries.
 PAGE_TITLES: dict[SettingsPage, str] = {
+    SettingsPage.GENERAL: txt.PAGE_GENERAL,
     SettingsPage.AI_MODELS: txt.PAGE_AI_MODELS,
     SettingsPage.AI_SETUP: txt.PAGE_AI_SETUP,
     SettingsPage.ONLINE_SERVICES: txt.PAGE_ONLINE_SERVICES,

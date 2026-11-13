@@ -41,7 +41,7 @@ def test_pipeline_run_returns_zero_exit_code(tmp_path: Path, sample_png: Path) -
         docx_enabled=False,
     )
     pipeline = OCRPipeline(cfg)
-    exit_code = pipeline.run()
+    exit_code = pipeline.run().exit_code
     assert exit_code == 0
 
 

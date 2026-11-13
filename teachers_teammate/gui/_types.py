@@ -58,6 +58,11 @@ class FileDoneEvent:
     """Why the file has no review (fallback to corrections-only); empty when there is one."""
     skipped: bool = False
     """The file was left out on purpose (a scan while text recognition is off), not a failure."""
+    stopped: bool = False
+    """The run was stopped while the file was processed: not a failure; what was done is kept."""
+    stopped_stage: str = ""
+    """With ``stopped``: the step the stop cut short (``"ocr"``, ``"correction"`` or
+    ``"evaluation"``); empty when the file did not get as far as telling."""
 
     @property
     def total_s(self) -> float:
@@ -75,6 +80,7 @@ class SettingsDict(TypedDict, total=False):
     hardware_profile: str
     ocr_timeout: int
     recognition_enabled: bool
+    keep_awake: bool
     preprocess_method: str
     preprocess_dewarp: bool
     preprocess_deskew: bool

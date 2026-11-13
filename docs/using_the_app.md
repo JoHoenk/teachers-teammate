@@ -12,7 +12,7 @@ The app is divided into two main areas, plus a separate **Settings** window:
 
 - **Menu bar** at the top:
   - **File** — Open Folder…, Open Files…, Export ▸ (the same choices as the **Export** button), Quit
-  - **Settings** — AI models…, Scan quality…, Privacy…, Add-ons…, and **All settings…** (`Ctrl+,`). Every entry opens the same **Settings window** on that page.
+  - **Settings** — General…, AI models…, Scan quality…, Privacy…, Add-ons…, and **All settings…** (`Ctrl+,`). Every entry opens the same **Settings window** on that page.
   - **Help** — User Guide…, Third-Party Licenses…, About…
 
 ### The Settings window
@@ -21,6 +21,7 @@ What you set up once lives in the Settings window, grouped by topic. Pick a page
 
 | Page | What it holds |
 |---|---|
+| **General** | How the app behaves while it works. For now: **Keep the computer awake**, on by default (see [Keeping the computer awake](#keeping-the-computer-awake)) |
 | **AI models** | Which method reads the handwriting (always on this computer), and which AI service and model proofreads and reviews. One model serves both steps unless you tick **Use a different model for content review**. Every service is listed, grouped by where it runs, and marked *key needed* while it has no key; choose an online service and its **key row appears right below it**: paste the key and the model list loads, which also checks that the key works. If text then goes to an online service with names in it, the page says **"Remove personal info" will be turned on** when you press OK (you can keep it off). The context window setting appears here only when it changes something |
 | **This computer** | Shown under AI models in the sidebar: what the AI models need from this computer. First how powerful it is (**My computer**; the model suggestions follow it) and its graphics card, then the address of the local AI server (usually this computer, or your school's own server) |
 | **Online services** | Also under AI models: the access keys (API keys) of the online AI services. The same keys you enter under the service on AI models, all in one list where you can remove one or add one for another service. Not needed while everything runs on this computer. Keys are kept in your system's keychain (macOS Keychain, Windows Credential Manager, or the Linux desktop keyring); where there is none, the page says that the key is kept in the app's settings file, not encrypted |
@@ -44,9 +45,22 @@ When you click **Run Selected**, the app works through your files one by one. Yo
 
 Each file goes through all the steps you have switched on — text recognition, removing personal information, and proofreading — in that order. Results appear in the list as soon as each file is finished.
 
+### Keeping the computer awake
+
+While documents are processed, the app keeps your computer from going to sleep on its own, so a long run is not interrupted. A short note under the progress bar says so. The screen may still turn off, which saves power. If your computer runs on battery, the app also reminds you to plug in the charger.
+
+What the app cannot prevent: closing the lid (on many laptops, in particular without an external screen), a nearly empty battery, and choosing **Sleep** from the system menu (on Linux the system refuses that choice, or asks for an administrator password, until the run ends). Keep the lid open during a long run. If you would rather not have this, switch off **Keep the computer awake** under **Settings → General**. Where the system does not allow it, or where the app has no way to ask (for example under WSL), the note says that the computer may go to sleep.
+
 ### Stopping and continuing
 
-You can click **Stop** at any time. Any files that finished before you stopped are already saved. When you click **Run Selected** again, the app picks up where it left off — already-finished files are skipped automatically.
+**Stop** works in two steps:
+
+1. **Click Stop once** to finish the document that is being processed, then stop. The button then reads **Stop now**, and the progress text says the run stops after this document.
+2. **Click Stop now** to stop at once. The step in progress is cut short (an AI request on this computer is cancelled within a moment; a request to an online service cannot be taken back, so it finishes first). What was already done for that document — for example the text that was read — is kept.
+
+A stopped run is not an error. The document that was cut short shows **stopped** in its step; documents that never started stay as they were. At the end the progress bar says, for example, *Stopped — 3 of 10 done, 1 unfinished, 6 not started*. Everything that finished is saved. When you click **Run Selected** again, the app picks up where it left off — finished work is reused automatically.
+
+**Closing the window during a run** asks first. If you choose **Stop and close**, the run stops at once and the window closes right away; it does not wait for the run to finish. Finished documents are kept, and the document that was being processed is picked up again next time.
 
 ### Editing the result by hand
 

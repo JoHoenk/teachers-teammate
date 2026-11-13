@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-import sys
 from typing import Any
 
 from PySide6.QtWidgets import (
@@ -22,9 +21,10 @@ from PySide6.QtWidgets import (
 from ...application.benchmark_service import BenchmarkApplicationService
 from ...application.service import ProcessingApplicationService
 from ...config import DEFAULTS
-from .._app_bootstrap import create_app
+from .._app_bootstrap import create_app, finish_process
 from .._log_widget import LogWidget
 from .._ocr_config_selector import OcrConfigSelector
+from .._worker import detach_running_worker
 from ._benchmark_worker import BenchmarkWorker
 from ._compare_view import CompareView
 from ._runs_list import RunsList
@@ -234,7 +234,9 @@ class BenchmarkWindow(QMainWindow):
         self._selector.stop_threads()
         if self._worker is not None and self._worker.isRunning():
             self._worker.stop_event.set()
-            self._worker.wait(2000)
+            if not self._worker.wait(2000):
+                # A running QThread must not be destroyed with its window.
+                detach_running_worker(self._worker)
         super().closeEvent(event)
 
     # ── helpers ───────────────────────────────────────────────────────────
@@ -258,7 +260,7 @@ def main_benchmark(*, window_factory=None) -> None:
     factory = window_factory or build_benchmark_window
     window = factory()
     window.show()
-    sys.exit(app.exec())
+    finish_process(app.exec())
 
 
 def build_benchmark_window(

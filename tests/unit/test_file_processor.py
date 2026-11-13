@@ -22,7 +22,11 @@ from teachers_teammate.infrastructure.correction import ChunkingCorrector
 from teachers_teammate.infrastructure.state_repository import DocumentState
 from teachers_teammate.infrastructure.workflow.cache_service import CacheContext
 from teachers_teammate.infrastructure.workflow.preprocess_service import PreparedInput
+from teachers_teammate.exceptions import RunStoppedError
 from teachers_teammate.infrastructure.workflow.file_processor import (
+    STOPPED_BEFORE_PROOFREADING,
+    STOPPED_BEFORE_RECOGNITION,
+    STOPPED_BEFORE_REVIEW,
     FileProcessor,
     FileProcessorConfig,
 )
@@ -299,27 +303,46 @@ def test_stop_event_before_ocr_returns_stopped(tmp_path: Path) -> None:
     """
     Given  stop_event is already set before OCR begins
     When   process() is called
-    Then   result is (False, 'Stopped by user.', preview_img, '', '', '')
+    Then   the file is stopped (not failed) before the text was read and OCR is not run
     """
     file = tmp_path / "doc.png"
     stop = threading.Event()
     stop.set()
 
-    fp, cache_svc, _, _ = _make_processor(tmp_path, stop_event=stop)
+    fp, _cache_svc, _, ocr_svc = _make_processor(tmp_path, stop_event=stop)
     result = fp.process(file)
 
+    assert result.stopped is True
     assert result.ok is False
-    assert result.message == "Stopped by user."
+    assert result.message == STOPPED_BEFORE_RECOGNITION
     assert result.raw_text == ""
     assert result.correction_text == ""
     assert result.evaluation_text == ""
+    ocr_svc.run_pages.assert_not_called()
 
 
-def test_stop_event_after_ocr_returns_partial(tmp_path: Path) -> None:
+def test_stop_during_ocr_request_returns_stopped(tmp_path: Path) -> None:
     """
-    Given  stop_event is set after OCR completes but before correction
+    Given  the OCR stage raises RunStoppedError because "Stop now" cut the request off
     When   process() is called
-    Then   result is (False, 'Stopped by user.', preview_img, raw_text, '', '')
+    Then   the file is stopped before recognition, with the preview kept, and nothing is stored
+    """
+    fp, cache_svc, _, ocr_svc = _make_processor(tmp_path)
+    ocr_svc.run_pages.side_effect = RunStoppedError
+
+    result = fp.process(tmp_path / "doc.png")
+
+    assert result.stopped is True
+    assert result.message == STOPPED_BEFORE_RECOGNITION
+    assert result.preview_img == "preview.png"
+    cache_svc.record_ocr.assert_not_called()
+
+
+def test_stop_after_ocr_without_proofreading_still_completes(tmp_path: Path) -> None:
+    """
+    Given  recognition only (no corrector) and stop_event set while OCR was running
+    When   process() is called
+    Then   the file is a success: every step the run asked for was done
     """
     file = tmp_path / "doc.png"
     stop = threading.Event()
@@ -333,11 +356,227 @@ def test_stop_event_after_ocr_returns_partial(tmp_path: Path) -> None:
 
     result = fp.process(file)
 
-    assert result.ok is False
-    assert result.message == "Stopped by user."
+    assert result.ok is True
+    assert result.stopped is False
+    assert result.raw_text == "extracted text"
+
+
+def test_stop_after_ocr_skips_proofreading_and_keeps_the_text(tmp_path: Path) -> None:
+    """
+    Given  a corrector and stop_event set after OCR finished
+    When   process() is called
+    Then   the file is stopped before proofreading, carries the stored text, and the corrector
+           is never asked
+    """
+    stop = threading.Event()
+    corrector = MagicMock()
+
+    def set_stop_after_ocr(*_args: object, **_kwargs: object) -> CacheContext:
+        stop.set()
+        return _make_ctx(_make_state())
+
+    fp, cache_svc, _, _ = _make_processor(tmp_path, stop_event=stop, corrector=corrector)
+    cache_svc.record_ocr.side_effect = set_stop_after_ocr
+
+    result = fp.process(tmp_path / "doc.png")
+
+    assert result.stopped is True
+    assert result.message == STOPPED_BEFORE_PROOFREADING
     assert result.raw_text == "extracted text"
     assert result.correction_text == ""
-    assert result.evaluation_text == ""
+    corrector.correct.assert_not_called()
+
+
+def test_a_failed_proofreading_is_a_failure_even_when_stop_was_pressed(tmp_path: Path) -> None:
+    """
+    Given  a corrector whose call fails for its own reason while "Stop now" was pressed
+    When   process() is called
+    Then   the failure is not turned into a stop (only RunStoppedError says the stop cut the
+           request off), and the unchanged source is not stored as a correction
+    """
+    stop = threading.Event()
+    corrector = MagicMock()
+
+    def correct(*_args: object, **_kwargs: object) -> CorrectionOutcome:
+        stop.set()
+        return CorrectionOutcome("raw", None, "Correction failed", failed=True)
+
+    corrector.correct.side_effect = correct
+    fp, cache_svc, _, _ = _make_processor(tmp_path, stop_event=stop, corrector=corrector)
+
+    result = fp.process(tmp_path / "doc.png")
+
+    assert result.stopped is False
+    assert result.correction_warning == "Correction failed"
+    cache_svc.record_correction.assert_not_called()
+
+
+def test_proofreading_raising_run_stopped_is_stopped(tmp_path: Path) -> None:
+    """
+    Given  a corrector that raises RunStoppedError
+    When   process() is called
+    Then   the file is stopped before proofreading
+    """
+    corrector = MagicMock()
+    corrector.correct.side_effect = RunStoppedError
+    fp, cache_svc, _, _ = _make_processor(tmp_path, corrector=corrector)
+
+    result = fp.process(tmp_path / "doc.png")
+
+    assert result.stopped is True
+    assert result.raw_text == "extracted text"
+    cache_svc.record_correction.assert_not_called()
+
+
+def test_stop_before_review_keeps_the_stored_proofreading(tmp_path: Path) -> None:
+    """
+    Given  proofreading finished and was stored, then "Stop now" is pressed
+    When   process() reaches the review
+    Then   the file is stopped before the review and still carries the proofread text
+    """
+    stop = threading.Event()
+    evaluator = MagicMock()
+    corrector = MagicMock()
+
+    def correct(*_args: object, **_kwargs: object) -> CorrectionOutcome:
+        stop.set()
+        return CorrectionOutcome("proofread")
+
+    corrector.correct.side_effect = correct
+    fp, cache_svc, _, _ = _make_processor(
+        tmp_path, stop_event=stop, corrector=corrector, evaluator=evaluator
+    )
+    cache_svc.record_correction.return_value = _make_ctx(
+        _make_state(correction_done=True, correction_text="proofread")
+    )
+
+    result = fp.process(tmp_path / "doc.png")
+
+    assert result.stopped is True
+    assert result.message == STOPPED_BEFORE_REVIEW
+    assert result.correction_text == "proofread"
+    evaluator.evaluate.assert_not_called()
+
+
+def test_review_cut_off_by_stop_is_stopped_and_not_stored(tmp_path: Path) -> None:
+    """
+    Given  the evaluator is cut off by "Stop now" (it raises RunStoppedError)
+    When   process() is called
+    Then   the file is stopped at the review and no evaluation is stored
+    """
+    corrector = MagicMock()
+    corrector.correct.return_value = CorrectionOutcome("proofread")
+    evaluator = MagicMock()
+    evaluator.evaluate.side_effect = RunStoppedError
+    fp, cache_svc, _, _ = _make_processor(tmp_path, corrector=corrector, evaluator=evaluator)
+    cache_svc.record_correction.return_value = _make_ctx(
+        _make_state(correction_done=True, correction_text="proofread")
+    )
+
+    result = fp.process(tmp_path / "doc.png")
+
+    assert result.stopped is True
+    assert result.message == STOPPED_BEFORE_REVIEW
+    assert result.stopped_stage == "evaluation"
+    cache_svc.record_evaluation.assert_not_called()
+
+
+def test_a_file_stopped_at_the_review_keeps_the_stored_review_and_warning(
+    tmp_path: Path,
+) -> None:
+    """
+    Given  a stored proofreading with a review and a warning, then "Stop now" at the review
+    When   process() is called
+    Then   the stopped result carries the correction, its review and its warning, so the row
+           keeps its badge and explanations
+    """
+    review = CorrectionReview(
+        sentences=(SentenceNote("a", "b", (ChangeNote("a", "b", "grammar", "why"),)),)
+    )
+    corrector = MagicMock()
+    corrector.correct.return_value = CorrectionOutcome("proofread", review, "only corrections")
+    evaluator = MagicMock()
+    evaluator.evaluate.side_effect = RunStoppedError
+    fp, cache_svc, _, _ = _make_processor(tmp_path, corrector=corrector, evaluator=evaluator)
+    cache_svc.record_correction.return_value = _make_ctx(
+        _make_state(correction_done=True, correction_text="proofread")
+    )
+
+    result = fp.process(tmp_path / "doc.png")
+
+    assert result.stopped is True
+    assert result.correction_text == "proofread"
+    assert result.correction_review == review
+    assert result.correction_warning == "only corrections"
+
+
+def test_a_stop_before_proofreading_does_not_wait_for_the_anonymizer(tmp_path: Path) -> None:
+    """
+    Given  "Stop now" pressed while the text was being read, and anonymization on
+    When   process() is called
+    Then   the file is stopped before proofreading without running the (slow) anonymizer
+    """
+    stop = threading.Event()
+    corrector = MagicMock()
+    anonymizer = MagicMock()
+    fp, _, _, ocr = _make_processor(
+        tmp_path, stop_event=stop, corrector=corrector, anonymizer=anonymizer
+    )
+
+    def read(*_args: object, **_kwargs: object) -> tuple[list[str], None]:
+        stop.set()
+        return ["extracted text"], None
+
+    ocr.run_pages.side_effect = read
+
+    result = fp.process(tmp_path / "doc.png")
+
+    assert result.stopped is True
+    assert result.stopped_stage == "correction"
+    anonymizer.anonymize.assert_not_called()
+    corrector.correct.assert_not_called()
+
+
+def test_a_stop_before_the_review_does_not_anonymize_for_it(tmp_path: Path) -> None:
+    """
+    Given  "Stop now" pressed while proofreading ran, and anonymization on
+    When   process() reaches the review
+    Then   the file is stopped before the review and the anonymizer ran only for proofreading
+    """
+    stop = threading.Event()
+    corrector = MagicMock()
+    corrector.correct.side_effect = lambda *_a, **_k: (stop.set(), CorrectionOutcome("done"))[1]
+    evaluator = MagicMock()
+    anonymizer = MagicMock()
+    anonymizer.anonymize.side_effect = lambda text: (text, {})
+    fp, cache_svc, _, _ = _make_processor(
+        tmp_path, stop_event=stop, corrector=corrector, evaluator=evaluator, anonymizer=anonymizer
+    )
+    cache_svc.record_correction.return_value = _make_ctx(
+        _make_state(correction_done=True, correction_text="done")
+    )
+
+    result = fp.process(tmp_path / "doc.png")
+
+    assert result.message == STOPPED_BEFORE_REVIEW
+    assert anonymizer.anonymize.call_count == 1
+    evaluator.evaluate.assert_not_called()
+
+
+def test_the_anonymizer_pre_pass_is_skipped_when_stopping(tmp_path: Path) -> None:
+    """
+    Given  no proofreading, anonymization on and "Stop now" pressed while the text was read
+    When   process() is called
+    Then   the pre-pass that only fills the preview cache does not run
+    """
+    stop = threading.Event()
+    anonymizer = MagicMock()
+    fp, _, _, ocr = _make_processor(tmp_path, stop_event=stop, anonymizer=anonymizer)
+    ocr.run_pages.side_effect = lambda *_a, **_k: (stop.set(), (["text"], None))[1]
+
+    fp.process(tmp_path / "doc.png")
+
+    anonymizer.anonymize.assert_not_called()
 
 
 # ── Text input path ────────────────────────────────────────────────────────

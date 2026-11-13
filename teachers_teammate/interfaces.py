@@ -15,11 +15,13 @@ Interfaces:
 * :class:`Corrector`         — proofreads extracted text
 * :class:`Evaluator`         — assesses quality of corrected text
 * :class:`DocumentCreator`   — writes the pipeline output to a file
+* :class:`SleepBlocker`      — keeps the computer from going to sleep while work runs
 """
 
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar, Literal, Protocol, runtime_checkable
@@ -337,4 +339,26 @@ class DocumentCreator(ABC):
                 should be written with its formatting (bold, strikethrough, ...).
             review: Explanations and unclear expressions of the proofreading, or ``None``
                 when the file was corrected without a review.
+        """
+
+
+class SleepBlocker(ABC):
+    """Keeps the computer from going to sleep on its own while a long job runs."""
+
+    @property
+    def available(self) -> bool:
+        """Whether this computer has a way to ask for it at all (``False``: nothing is requested)."""
+        return True
+
+    @abstractmethod
+    def hold(self, reason: str) -> AbstractContextManager[bool]:
+        """Block idle sleep until the ``with`` block ends.
+
+        Args:
+            reason: Plain-language reason, shown by the system's power tools.
+
+        Returns:
+            A context manager that yields whether the system agreed.  It never raises: a
+            computer that cannot be kept awake yields ``False`` and the job runs anyway.  Each
+            call makes its own request, so overlapping holds need no counting.
         """

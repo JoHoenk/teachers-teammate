@@ -11,7 +11,8 @@ from PySide6.QtCore import QThread, Signal
 
 from ..application.service import ProcessingApplicationService, ProgressCallbacks
 from ..config import Config
-from ..infrastructure.reporting import CallbackReporter, FileDoneResult
+from ..domain.run_summary import RunSummary
+from ..infrastructure.reporting import CallbackReporter, FileDoneResult, KeepAwakeState
 from ._types import FileDoneEvent
 
 
@@ -23,9 +24,10 @@ class _RunSelectedService(Protocol):
         *,
         selected_source_paths: list[str] | None = None,
         stop_event: threading.Event | None = None,
+        stop_after_file_event: threading.Event | None = None,
         reporter=None,
         progress: ProgressCallbacks | None = None,
-    ) -> int: ...
+    ) -> RunSummary: ...
 
 
 class _ConnectionService(Protocol):
@@ -49,7 +51,12 @@ class OCRWorker(QThread):
     stage_started(source_id, name, stage, idx, total)
     ocr_done(source_id, name, idx, total)
     file_done(FileDoneEvent)
-    finished_with_code(rc)
+    keep_awake_changed(KeepAwakeState)
+    run_finished(RunSummary)
+
+    Two events stop a run: ``stop_after_file_event`` lets the file being processed finish and
+    starts no other; ``stop_event`` ("Stop now") also stops that file at its next step.
+    :meth:`request_stop` sets them.
     """
 
     log_line = Signal(str)
@@ -58,7 +65,9 @@ class OCRWorker(QThread):
     stage_started = Signal(str, str, str, int, int)  # (source_id, name, stage, idx, total)
     ocr_done = Signal(str, str, int, int)  # (source_id, name, idx, total)
     file_done = Signal(object)  # FileDoneEvent
-    finished_with_code = Signal(int)
+    keep_awake_changed = Signal(object)  # KeepAwakeState, once at the start of the run
+    # Not "finished": QThread has a signal of that name.
+    run_finished = Signal(object)  # RunSummary
 
     def __init__(
         self,
@@ -72,6 +81,13 @@ class OCRWorker(QThread):
         self._selected_source_paths = selected_source_paths
         self._app_service = app_service or ProcessingApplicationService()
         self.stop_event = threading.Event()
+        self.stop_after_file_event = threading.Event()
+
+    def request_stop(self, *, now: bool) -> None:
+        """Ask the run to stop: after the file being processed, or (*now*) at its next step."""
+        self.stop_after_file_event.set()
+        if now:
+            self.stop_event.set()
 
     def run(self) -> None:
         # The pipeline narrative arrives through an explicit reporter (no stdout
@@ -128,27 +144,52 @@ class OCRWorker(QThread):
                     correction_review=result.correction_review,
                     correction_warning=result.correction_warning,
                     skipped=result.skipped,
+                    stopped=result.stopped,
+                    stopped_stage=result.stopped_stage,
                 )
             )
+
+        def on_keep_awake(state: KeepAwakeState) -> None:
+            self.keep_awake_changed.emit(state)
 
         try:
             pipeline_kwargs: dict[str, Any] = {
                 "stop_event": self.stop_event,
+                "stop_after_file_event": self.stop_after_file_event,
                 "reporter": reporter,
                 "progress": ProgressCallbacks(
                     on_file_started=on_file_started,
                     on_stage_started=on_stage_started,
                     on_ocr_done=on_ocr_done,
                     on_file_done=on_file_done,
+                    on_keep_awake=on_keep_awake,
                 ),
             }
             if self._selected_source_paths is not None:
                 pipeline_kwargs["selected_source_paths"] = self._selected_source_paths
-            rc = self._app_service.run_selected(self._config, **pipeline_kwargs)
+            summary = self._app_service.run_selected(self._config, **pipeline_kwargs)
         except (Exception, SystemExit) as exc:  # noqa: BLE001  # catch SystemExit to prevent the worker thread from killing the GUI process; also catches unexpected exceptions
             self.log_line.emit(f"FATAL ERROR: {exc}\n")
-            rc = 1
-        self.finished_with_code.emit(rc)
+            summary = RunSummary(error=str(exc) or "unexpected error")
+        self.run_finished.emit(summary)
+
+
+#: Workers that were still running when their window closed.  A running ``QThread`` must not be
+#: destroyed (that aborts the process), so it is kept here until the process ends; see
+#: :func:`~teachers_teammate.gui._app_bootstrap.finish_process`.
+_DETACHED: list[QThread] = []
+
+
+def detach_running_worker(worker: QThread) -> None:
+    """Keep *worker* alive on its own so closing its window cannot destroy a running thread."""
+    worker.setParent(None)
+    if worker not in _DETACHED:
+        _DETACHED.append(worker)
+
+
+def detached_workers_running() -> bool:
+    """Return whether a detached worker is still running."""
+    return any(worker.isRunning() for worker in _DETACHED)
 
 
 class _ConnectionCheckThread(QThread):

@@ -49,6 +49,7 @@ import threading
 from ..config import Config, OcrConfig
 from ..domain.model_catalog import HardwareDetection
 from ..domain.output_files import output_folder_refusal
+from ..domain.run_summary import RunSummary
 from ..exceptions import (
     RECOGNITION_OFF_MESSAGE,
     OllamaConnectionError,
@@ -59,13 +60,18 @@ from .file_discovery import FileDiscovery
 from .input_provider_factory import InputOptions, get_input_provider, supported_suffixes
 from .ollama_utils import OllamaClient
 from .preview_image_store import PreviewImageStore
-from .reporting import ProgressCallbacks, Reporter, StdoutReporter
+from .reporting import (
+    BATTERY_WARNING,
+    KeepAwakeState,
+    ProgressCallbacks,
+    Reporter,
+    StdoutReporter,
+)
 from .stage_builder import PipelineComponentFactory as PipelineComponentFactory  # noqa: PLC0414
 from .stage_builder import StageBuilder, default_build_preprocessor
 from .state_repository import StateRepository
 from .storage_root import resolve_artifact_dir, resolve_storage_root
 from .workflow.cache_service import CacheReconciliationService
-from .workflow.coordinator import RunOutcome
 from .workflow.coordinator import run_files as _run_files_coordinator
 from .workflow.file_processor import FileProcessor, FileProcessorConfig
 from .workflow.ocr_service import OCRStageService
@@ -89,6 +95,9 @@ class PipelineDependencies:
     reporter: Reporter | None = None
     # Hardware of the computer that runs Ollama; sizes the context window of the local models.
     hardware: HardwareDetection | None = None
+    # Whether the computer is kept awake for this run (the application layer holds it); the
+    # banner says so, and warns when the run is on battery power.
+    keep_awake: KeepAwakeState | None = None
 
 
 # ── Public helpers ─────────────────────────────────────────────────────────
@@ -171,8 +180,12 @@ class OCRPipeline:
     config_file:
         Path to the loaded config file, shown in the startup banner.
     stop_event:
-        Optional threading event; when set the pipeline finishes the current
-        phase and stops before starting the next file.
+        Optional threading event ("Stop now"); when set the pipeline cancels the Ollama request
+        being made, stops the file being processed before its next step and starts no further
+        file.  What was already done stays stored.
+    stop_after_file_event:
+        Optional threading event ("Stop after this file"); when set the file being processed
+        is finished completely and no further file is started.
     dependencies:
         Optional injection seam (tests/adapters).  Notably carries ``reporter``:
         the sink for the run narrative and advisory warnings, defaulting to
@@ -188,6 +201,7 @@ class OCRPipeline:
         config: Config,
         stop_event: threading.Event | None = None,
         *,
+        stop_after_file_event: threading.Event | None = None,
         config_file: Path | None = None,
         selected_source_paths: list[str] | None = None,
         dependencies: PipelineDependencies | None = None,
@@ -196,11 +210,13 @@ class OCRPipeline:
         self._config = config
         self._config_file = config_file
         self._stop_event = stop_event
+        self._stop_after_file_event = stop_after_file_event
         self._selected_source_paths = {
             str(Path(path).resolve()) for path in (selected_source_paths or [])
         }
         self._progress = progress or ProgressCallbacks()
         deps = dependencies or PipelineDependencies()
+        self._keep_awake: KeepAwakeState | None = deps.keep_awake
         self._reporter: Reporter = deps.reporter or StdoutReporter()
         self._component_factory = deps.component_factory or PipelineComponentFactory()
         self._hardware: HardwareDetection | None = deps.hardware
@@ -212,8 +228,12 @@ class OCRPipeline:
 
     # ── public ────────────────────────────────────────────────────────────
 
-    def run(self) -> int:
-        """Execute the full pipeline. Returns 0 on success, 1 if any file failed."""
+    def run(self) -> RunSummary:
+        """Execute the full pipeline and return what happened to each file.
+
+        A run that was stopped is not a failure: ``summary.exit_code`` is ``1`` only when a
+        file failed or the run could not start.
+        """
         cfg = self._config
         reporter = self._reporter
         refusal = output_folder_refusal(
@@ -224,7 +244,7 @@ class OCRPipeline:
         )
         if refusal:
             reporter.warn(f"ERROR: {refusal}")
-            return 1
+            return RunSummary(error=refusal)
         tmp_dir = resolve_artifact_dir(cfg.output_dir)
         cfg.output_dir.mkdir(parents=True, exist_ok=True)
         tmp_dir.mkdir(parents=True, exist_ok=True)
@@ -242,12 +262,12 @@ class OCRPipeline:
                 reporter.status("Checking Ollama connection... OK")
             except (RuntimeError, OllamaConnectionError) as exc:
                 reporter.warn(f"\nERROR: {exc}")
-                return 1
+                return RunSummary(error=str(exc))
         try:
             file_processor = self._setup_services(tmp_dir, artifact_store, state_repo)
         except (ValueError, RuntimeError, ProviderNotAvailableError) as exc:
             reporter.warn(f"ERROR: {exc}")
-            return 1
+            return RunSummary(error=str(exc))
 
         files = collect_files(cfg)
         if self._selected_source_paths:
@@ -255,26 +275,42 @@ class OCRPipeline:
         if not files:
             supported = ", ".join(s.lstrip(".").upper() for s in sorted(supported_suffixes()))
             reporter.status(f"No supported files found ({supported}). Nothing to do.")
-            return 0
+            return RunSummary()
 
         reporter.status(f"Found {len(files)} file(s) to process.\n")
-        succeeded, failed, skipped = self._run_files(files, file_processor, tmp_dir, artifact_store)
+        summary = self._run_files(files, file_processor, tmp_dir, artifact_store)
+        self._report_summary(summary)
+        return summary
 
+    def _report_summary(self, summary: RunSummary) -> None:
+        """Write the closing block of a run: the counts, then the files that need attention."""
+        reporter = self._reporter
         reporter.status("")
         reporter.status(_LINE)
-        done = f"Done: {len(succeeded)} succeeded, {len(failed)} failed"
-        reporter.status(f"{done}, {len(skipped)} skipped." if skipped else f"{done}.")
-        if failed:
+        counts = [
+            f"{len(summary.succeeded)} succeeded",
+            f"{len(summary.failed)} failed",
+        ]
+        if summary.skipped:
+            counts.append(f"{len(summary.skipped)} skipped")
+        if summary.stopped:
+            counts.append(f"{len(summary.stopped)} stopped")
+        if summary.not_started:
+            counts.append(f"{len(summary.not_started)} not started")
+        reporter.status(f"Done: {', '.join(counts)}.")
+        if summary.failed:
             reporter.status("Failed files:")
-            for name in failed:
+            for name in summary.failed:
                 reporter.status(f"  - {name}")
-        if skipped:
+        if summary.skipped:
             reporter.status(f"Skipped files ({RECOGNITION_OFF_MESSAGE.rstrip('.').lower()}):")
-            for name in skipped:
+            for name in summary.skipped:
+                reporter.status(f"  - {name}")
+        if summary.stopped or summary.not_started:
+            reporter.status("Unfinished files (stopped by user; what was done is kept):")
+            for name in (*summary.stopped, *summary.not_started):
                 reporter.status(f"  - {name}")
         reporter.status(_LINE)
-
-        return 1 if failed else 0
 
     def run_preview_only(self) -> int:
         """Preprocess all input files and save images to the temp cache directory.
@@ -370,12 +406,13 @@ class OCRPipeline:
         file_processor: FileProcessor,
         tmp_dir: Path,
         artifact_store: PreviewImageStore,
-    ) -> RunOutcome:
+    ) -> RunSummary:
         return _run_files_coordinator(
             files,
             process_file=file_processor.process,
             cleanup_tmp=lambda: self._cleanup_tmp(tmp_dir, artifact_store),
             stop_event=self._stop_event,
+            stop_after_file_event=self._stop_after_file_event,
             on_file_started=self._progress.on_file_started,
             on_file_done=self._progress.on_file_done,
             reporter=self._reporter,
@@ -456,7 +493,24 @@ class OCRPipeline:
             if enabled
         ]
         reporter.status(f"  Text files    : {', '.join(text_files) or 'disabled'}")
+        self._print_keep_awake()
+
+    def _print_keep_awake(self) -> None:
+        """Close the banner with whether the computer is kept awake (and a battery warning)."""
+        reporter = self._reporter
+        awake = self._keep_awake
+        if awake is not None:
+            if not awake.enabled:
+                reporter.status("  Keep awake    : off (the computer may go to sleep)")
+            elif awake.held:
+                reporter.status("  Keep awake    : yes")
+            elif not awake.available:
+                reporter.status("  Keep awake    : no (not available on this computer)")
+            else:
+                reporter.status("  Keep awake    : no (the system did not allow it)")
         reporter.status(_LINE)
+        if awake is not None and awake.enabled and awake.on_battery:
+            reporter.warn(BATTERY_WARNING)
 
     def _setup_services(
         self,
@@ -472,7 +526,7 @@ class OCRPipeline:
         # Build one shared OllamaClient for all Ollama-backed stages so URL
         # normalisation happens once and injection is explicit.
         ollama_client = (
-            OllamaClient(cfg.ollama_url)
+            OllamaClient(cfg.ollama_url, cancel_event=self._stop_event)
             if (cfg.recognition_enabled and cfg.ocr.engine == "ollama")
             or (cfg.correction_enabled and cfg.correction_provider == "ollama")
             or (cfg.evaluation_enabled and cfg.evaluate_provider == "ollama")

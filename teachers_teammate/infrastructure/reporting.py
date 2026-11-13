@@ -50,9 +50,37 @@ class FileDoneResult:
     """Why the file has no review (fallback to corrections-only); empty when there is one."""
     skipped: bool = False
     """The file was left out on purpose (``ok`` is ``False``, ``message`` says why)."""
+    stopped: bool = False
+    """The run was stopped while this file was processed (``ok`` is ``False``, ``message`` says
+    before which step); what was already done is stored and kept."""
+    stopped_stage: str = ""
+    """With ``stopped``: the step the stop cut short (``"ocr"``, ``"correction"`` or
+    ``"evaluation"``); empty when the file did not get as far as telling."""
 
 
 OnFileDoneFn = Callable[[FileDoneResult], None]
+
+
+@dataclass(frozen=True)
+class KeepAwakeState:
+    """Whether the computer is kept from sleeping during a run, and what the GUI should say."""
+
+    enabled: bool
+    """The teacher asked for it (``Config.keep_awake``)."""
+    held: bool = False
+    """The system agreed; ``False`` with ``enabled`` means the computer may sleep anyway."""
+    available: bool = True
+    """This computer has a way to ask for it; ``False``: nothing was requested (WSL, a platform
+    without a tool), so the system did not refuse either."""
+    on_battery: bool | None = None
+    """Running on battery power; ``None`` when there is no battery or it cannot be read."""
+
+
+BATTERY_WARNING = "Running on battery: plug in the charger, and keep the lid open."
+"""What the banner and the main window say when a run starts on battery power."""
+
+
+OnKeepAwakeFn = Callable[[KeepAwakeState], None]
 
 
 @dataclass(frozen=True)
@@ -64,13 +92,15 @@ class ProgressCallbacks:
     or ``"ocr"`` stage (not when OCR is served from the cache).
     ``on_ocr_done(source_id, name)`` fires after OCR, before correction.
     ``on_file_done(result)`` fires with a :class:`FileDoneResult` after a file completes
-    (success or failure).
+    (success, failure or stop).
+    ``on_keep_awake(state)`` fires once at the start of a run with a :class:`KeepAwakeState`.
     """
 
     on_file_started: OnFileStartedFn | None = None
     on_stage_started: OnStageStartedFn | None = None
     on_ocr_done: OnOcrDoneFn | None = None
     on_file_done: OnFileDoneFn | None = None
+    on_keep_awake: OnKeepAwakeFn | None = None
 
 
 @runtime_checkable

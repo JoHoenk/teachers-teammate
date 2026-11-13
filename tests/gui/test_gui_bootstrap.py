@@ -13,7 +13,7 @@ import threading
 import pytest
 from PySide6.QtWidgets import QApplication, QWidget
 
-from teachers_teammate.gui._app_bootstrap import create_app
+from teachers_teammate.gui._app_bootstrap import create_app, finish_process
 from teachers_teammate.gui.benchmark._benchmark_window import main_benchmark
 from teachers_teammate.gui.benchmark.composition import build_benchmark_window
 from teachers_teammate.gui._main_window import main_gui
@@ -159,3 +159,66 @@ def test_benchmark_window_close_stops_running_worker(qtbot) -> None:
     win.close()
     assert worker.stop_event.is_set()
     assert worker.waited is True
+
+
+@pytest.mark.gui
+def test_finish_process_exits_normally_without_a_detached_worker(monkeypatch) -> None:
+    """
+    Given  no worker left running after its window closed
+    When   the process is finished with code 3
+    Then   the normal exit function gets the code and no hard exit happens
+    """
+    from teachers_teammate.gui import _worker  # noqa: PLC0415
+
+    monkeypatch.setattr(_worker, "_DETACHED", [])
+    exits: list[int] = []
+    hard: list[int] = []
+
+    finish_process(3, exit_fn=exits.append, hard_exit=hard.append)
+
+    assert exits == [3]
+    assert hard == []
+
+
+@pytest.mark.gui
+def test_finish_process_hard_exits_while_a_detached_worker_runs(monkeypatch) -> None:
+    """
+    Given  a detached worker that is still running (destroying it would abort the process)
+    When   the process is finished with code 0
+    Then   the process ends without the normal exit, which would destroy the thread
+    """
+    from teachers_teammate.gui import _worker  # noqa: PLC0415
+
+    class _Running:
+        def isRunning(self) -> bool:
+            return True
+
+    monkeypatch.setattr(_worker, "_DETACHED", [_Running()])
+    exits: list[int] = []
+    hard: list[int] = []
+
+    finish_process(0, exit_fn=exits.append, hard_exit=hard.append, shutdown_logging=lambda: None)
+
+    assert hard == [0]
+    assert exits == []
+
+
+@pytest.mark.gui
+def test_a_detached_worker_that_finished_does_not_force_a_hard_exit(monkeypatch) -> None:
+    """
+    Given  a detached worker that has finished meanwhile
+    When   the process is finished
+    Then   the normal exit is used
+    """
+    from teachers_teammate.gui import _worker  # noqa: PLC0415
+
+    class _Done:
+        def isRunning(self) -> bool:
+            return False
+
+    monkeypatch.setattr(_worker, "_DETACHED", [_Done()])
+    exits: list[int] = []
+
+    finish_process(0, exit_fn=exits.append, hard_exit=lambda _c: exits.append(-1))
+
+    assert exits == [0]

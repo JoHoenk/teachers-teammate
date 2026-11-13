@@ -173,18 +173,18 @@ def _privacy_tab(window: SettingsWindow) -> int:
 
 
 @pytest.mark.gui
-def test_the_sidebar_lists_the_six_pages_in_order(qtbot) -> None:
+def test_the_sidebar_lists_the_seven_pages_in_order(qtbot) -> None:
     """
     Given  the Settings window
     When   it is opened
-    Then   the sidebar lists AI models, This computer, Online services, Scan quality, Privacy and
-           Add-ons, and
-           selects the page it was opened on
+    Then   the sidebar lists General, AI models, This computer, Online services, Scan quality,
+           Privacy and Add-ons, and selects the page it was opened on
     """
     window = _window(qtbot, SettingsPage.PRIVACY)
 
     titles = [window._sidebar.item(i).text() for i in range(window._sidebar.count())]
     assert titles == [
+        "General",
         "AI models",
         "This computer",
         "Online services",
@@ -193,8 +193,22 @@ def test_the_sidebar_lists_the_six_pages_in_order(qtbot) -> None:
         "Add-ons",
     ]
     assert titles == [PAGE_TITLES[page] for page in SettingsPage]
-    assert window._sidebar.currentRow() == 4
+    assert window._sidebar.currentRow() == 5
     assert window.current_page() is SettingsPage.PRIVACY
+
+
+@pytest.mark.gui
+def test_general_is_the_first_page_and_its_value_is_in_the_result(qtbot) -> None:
+    """
+    Given  the Settings window opened on General
+    When   its result is read
+    Then   General comes first in the page order, and keep_awake is part of the result
+    """
+    window = _window(qtbot, SettingsPage.GENERAL)
+
+    assert next(iter(SettingsPage)) is SettingsPage.GENERAL
+    assert window._sidebar.currentRow() == 0
+    assert window.values().settings["keep_awake"] is True
 
 
 @pytest.mark.gui
@@ -267,7 +281,7 @@ def test_a_page_is_built_the_first_time_it_is_shown(qtbot, monkeypatch) -> None:
     window = _window(qtbot, SettingsPage.PRIVACY)
     assert started == []
 
-    window._sidebar.setCurrentRow(0)
+    window._sidebar.setCurrentRow(1)
 
     assert window.built_pages() == [SettingsPage.AI_MODELS, SettingsPage.PRIVACY]
     assert started
@@ -745,7 +759,7 @@ def test_a_deep_link_into_an_open_window_switches_page_and_tab(qtbot) -> None:
 
     assert window.current_page() is SettingsPage.ADDONS
     assert window.page(SettingsPage.ADDONS)._tabs.currentIndex() == AddonsPage.TAB_GPU
-    assert window._sidebar.currentRow() == 5
+    assert window._sidebar.currentRow() == 6
 
 
 @pytest.mark.gui

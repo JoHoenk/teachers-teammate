@@ -23,7 +23,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from teachers_teammate.domain.correction_review import CorrectionOutcome
-from teachers_teammate.exceptions import OCRError
+from teachers_teammate.exceptions import OCRError, RunStoppedError
 from teachers_teammate.infrastructure.pipeline import (
     OCRPipeline,
     PipelineDependencies,
@@ -77,7 +77,7 @@ def test_pipeline_run_processes_image_and_persists_ocr_state(tmp_path: Path) -> 
         "teachers_teammate.infrastructure.stage_builder.TesseractOCRProcessor",
         return_value=mock_proc,
     ):
-        rc = OCRPipeline(cfg).run()
+        rc = OCRPipeline(cfg).run().exit_code
 
     assert rc == 0
     source = cfg.input_dir / "page.png"
@@ -102,7 +102,7 @@ def test_pipeline_run_returns_0_when_no_input_files(tmp_path: Path) -> None:
         "teachers_teammate.infrastructure.stage_builder.TesseractOCRProcessor",
         return_value=MagicMock(),
     ):
-        rc = OCRPipeline(cfg).run()
+        rc = OCRPipeline(cfg).run().exit_code
 
     assert rc == 0
 
@@ -129,7 +129,7 @@ def test_pipeline_run_returns_1_on_ocr_failure(tmp_path: Path) -> None:
         "teachers_teammate.infrastructure.stage_builder.TesseractOCRProcessor",
         return_value=mock_proc,
     ):
-        rc = OCRPipeline(cfg).run()
+        rc = OCRPipeline(cfg).run().exit_code
 
     assert rc == 1
 
@@ -158,7 +158,7 @@ def test_pipeline_run_processes_multiple_files(tmp_path: Path) -> None:
         "teachers_teammate.infrastructure.stage_builder.TesseractOCRProcessor",
         return_value=mock_proc,
     ):
-        rc = OCRPipeline(cfg).run()
+        rc = OCRPipeline(cfg).run().exit_code
 
     assert rc == 0
     repo = StateRepository(resolve_artifact_dir(cfg.output_dir) / "state")
@@ -192,7 +192,7 @@ def test_pipeline_run_processes_selected_sources_only(tmp_path: Path) -> None:
         "teachers_teammate.infrastructure.stage_builder.TesseractOCRProcessor",
         return_value=mock_proc,
     ):
-        rc = OCRPipeline(cfg, selected_source_paths=[selected_path]).run()
+        rc = OCRPipeline(cfg, selected_source_paths=[selected_path]).run().exit_code
 
     assert rc == 0
     repo = StateRepository(resolve_artifact_dir(cfg.output_dir) / "state")
@@ -230,7 +230,7 @@ def test_pipeline_selected_sources_disambiguate_duplicate_basenames(tmp_path: Pa
         "teachers_teammate.infrastructure.stage_builder.TesseractOCRProcessor",
         return_value=mock_proc,
     ):
-        rc = OCRPipeline(cfg, selected_source_paths=[str(right_page.resolve())]).run()
+        rc = OCRPipeline(cfg, selected_source_paths=[str(right_page.resolve())]).run().exit_code
 
     assert rc == 0
     repo = StateRepository(resolve_artifact_dir(cfg.output_dir) / "state")
@@ -261,7 +261,7 @@ def test_pipeline_run_returns_1_when_any_file_fails(tmp_path: Path) -> None:
         "teachers_teammate.infrastructure.stage_builder.TesseractOCRProcessor",
         return_value=mock_proc,
     ):
-        rc = OCRPipeline(cfg).run()
+        rc = OCRPipeline(cfg).run().exit_code
 
     assert rc == 1
 
@@ -288,7 +288,7 @@ def test_pipeline_cache_reuses_ocr_when_input_hash_unchanged(tmp_path: Path) -> 
         "teachers_teammate.infrastructure.stage_builder.TesseractOCRProcessor",
         return_value=first_ocr,
     ):
-        first_rc = OCRPipeline(cfg).run()
+        first_rc = OCRPipeline(cfg).run().exit_code
 
     assert first_rc == 0
 
@@ -298,7 +298,7 @@ def test_pipeline_cache_reuses_ocr_when_input_hash_unchanged(tmp_path: Path) -> 
         "teachers_teammate.infrastructure.stage_builder.TesseractOCRProcessor",
         return_value=second_ocr,
     ):
-        second_rc = OCRPipeline(cfg).run()
+        second_rc = OCRPipeline(cfg).run().exit_code
 
     assert second_rc == 0
     second_ocr.process_image.assert_not_called()
@@ -326,7 +326,7 @@ def test_pipeline_persists_preview_artifact_for_none_preprocess(tmp_path: Path) 
         "teachers_teammate.infrastructure.stage_builder.TesseractOCRProcessor",
         return_value=mock_ocr,
     ):
-        rc = OCRPipeline(cfg).run()
+        rc = OCRPipeline(cfg).run().exit_code
 
     assert rc == 0
     state = StateRepository(resolve_artifact_dir(cfg.output_dir) / "state").load(
@@ -365,15 +365,19 @@ def test_pipeline_reports_progress_and_keeps_original_for_grayscale(tmp_path: Pa
         "teachers_teammate.infrastructure.stage_builder.TesseractOCRProcessor",
         return_value=mock_ocr,
     ):
-        rc = OCRPipeline(
-            cfg,
-            dependencies=PipelineDependencies(reporter=reporter),
-            progress=ProgressCallbacks(
-                on_stage_started=lambda source_id, stage: stages.append(
-                    (Path(source_id).name, stage)
-                )
-            ),
-        ).run()
+        rc = (
+            OCRPipeline(
+                cfg,
+                dependencies=PipelineDependencies(reporter=reporter),
+                progress=ProgressCallbacks(
+                    on_stage_started=lambda source_id, stage: stages.append(
+                        (Path(source_id).name, stage)
+                    )
+                ),
+            )
+            .run()
+            .exit_code
+        )
 
     assert rc == 0
     narrative = [
@@ -417,7 +421,7 @@ def test_pipeline_reruns_ocr_when_preprocess_method_changes(tmp_path: Path) -> N
         "teachers_teammate.infrastructure.stage_builder.TesseractOCRProcessor",
         return_value=first_ocr,
     ):
-        first_rc = OCRPipeline(cfg).run()
+        first_rc = OCRPipeline(cfg).run().exit_code
 
     assert first_rc == 0
 
@@ -428,7 +432,7 @@ def test_pipeline_reruns_ocr_when_preprocess_method_changes(tmp_path: Path) -> N
         "teachers_teammate.infrastructure.stage_builder.TesseractOCRProcessor",
         return_value=second_ocr,
     ):
-        second_rc = OCRPipeline(cfg).run()
+        second_rc = OCRPipeline(cfg).run().exit_code
 
     assert second_rc == 0
     second_ocr.process_image.assert_called_once()
@@ -457,7 +461,7 @@ def test_pipeline_keeps_output_dir_docx_only(tmp_path: Path) -> None:
         "teachers_teammate.infrastructure.stage_builder.TesseractOCRProcessor",
         return_value=mock_proc,
     ):
-        rc = OCRPipeline(cfg).run()
+        rc = OCRPipeline(cfg).run().exit_code
 
     assert rc == 0
     output_entries = sorted(path.name for path in cfg.output_dir.iterdir())
@@ -534,10 +538,120 @@ def test_pipeline_stops_when_stop_event_is_set_before_first_file(tmp_path: Path)
         "teachers_teammate.infrastructure.stage_builder.TesseractOCRProcessor",
         return_value=mock_proc,
     ):
-        rc = OCRPipeline(cfg, stop_event=stop).run()
+        rc = OCRPipeline(cfg, stop_event=stop).run().exit_code
 
     assert rc == 0
     mock_proc.process_image.assert_not_called()
+
+
+def test_pipeline_stop_after_file_finishes_the_first_image_and_reports_the_rest(
+    tmp_path: Path,
+) -> None:
+    """
+    Given  two images and "Stop after this file" pressed while the first one is read
+    When   OCRPipeline.run() is called
+    Then   the first image is saved completely, the second is not started, the run is stopped
+           (exit code 0), and the closing lines name the unfinished file
+    """
+    cfg = make_config(
+        tmp_path,
+        ocr_engine="tesseract",
+        correction_enabled=False,
+        docx_enabled=False,
+        text_enabled=True,
+        preprocess_method="none",
+    )
+    _place_image(cfg.input_dir, "first.png")
+    _place_image(cfg.input_dir, "second.png")
+    stop_after = threading.Event()
+    lines: list[str] = []
+
+    class _Reporter:
+        def status(self, line: str) -> None:
+            lines.append(line)
+
+        def warn(self, line: str) -> None:
+            lines.append(line)
+
+    def read(*_args: object, **_kwargs: object) -> str:
+        stop_after.set()
+        return "text of the first page"
+
+    mock_proc = MagicMock()
+    mock_proc.process_image.side_effect = read
+
+    with patch(
+        "teachers_teammate.infrastructure.stage_builder.TesseractOCRProcessor",
+        return_value=mock_proc,
+    ):
+        summary = OCRPipeline(
+            cfg,
+            stop_after_file_event=stop_after,
+            dependencies=PipelineDependencies(reporter=_Reporter()),
+        ).run()
+
+    assert summary.succeeded == ("first.png",)
+    assert summary.not_started == ("second.png",)
+    assert summary.exit_code == 0
+    assert mock_proc.process_image.call_count == 1
+    assert (cfg.output_dir / "first.txt").read_text(encoding="utf-8").strip() == (
+        "text of the first page"
+    )
+    assert "Done: 1 succeeded, 0 failed, 1 not started." in lines
+    assert "  - second.png" in lines
+
+
+def test_pipeline_stop_now_during_ocr_keeps_nothing_half_done(tmp_path: Path) -> None:
+    """
+    Given  "Stop now" pressed while the first image is being read
+    When   OCRPipeline.run() is called
+    Then   the file is reported as stopped (not failed), no text file is written, and a later
+           run without a stop reads it normally
+    """
+    cfg = make_config(
+        tmp_path,
+        ocr_engine="tesseract",
+        correction_enabled=False,
+        docx_enabled=False,
+        text_enabled=True,
+        preprocess_method="none",
+    )
+    _place_image(cfg.input_dir, "page.png")
+    stop = threading.Event()
+    events: list = []
+
+    def read(*_args: object, **_kwargs: object) -> str:
+        stop.set()
+        raise RunStoppedError
+
+    mock_proc = MagicMock()
+    mock_proc.process_image.side_effect = read
+
+    with patch(
+        "teachers_teammate.infrastructure.stage_builder.TesseractOCRProcessor",
+        return_value=mock_proc,
+    ):
+        summary = OCRPipeline(
+            cfg,
+            stop_event=stop,
+            progress=ProgressCallbacks(on_file_done=events.append),
+        ).run()
+
+    assert summary.stopped == ("page.png",)
+    assert summary.failed == ()
+    assert summary.exit_code == 0
+    assert [(e.stopped, e.ok) for e in events] == [(True, False)]
+    assert not (cfg.output_dir / "page.txt").exists()
+
+    mock_proc.process_image.side_effect = None
+    mock_proc.process_image.return_value = "read now"
+    with patch(
+        "teachers_teammate.infrastructure.stage_builder.TesseractOCRProcessor",
+        return_value=mock_proc,
+    ):
+        second = OCRPipeline(cfg).run()
+
+    assert second.succeeded == ("page.png",)
 
 
 # ── Correction path ────────────────────────────────────────────────────────
@@ -577,7 +691,7 @@ def test_pipeline_run_with_correction_persists_correction_state(tmp_path: Path) 
             return_value=mock_corrector,
         ),
     ):
-        rc = OCRPipeline(cfg).run()
+        rc = OCRPipeline(cfg).run().exit_code
 
     assert rc == 0
     state = StateRepository(resolve_artifact_dir(cfg.output_dir) / "state").load(
@@ -614,7 +728,7 @@ def test_pipeline_run_with_docx_creates_docx_file(tmp_path: Path) -> None:
         "teachers_teammate.infrastructure.stage_builder.TesseractOCRProcessor",
         return_value=mock_ocr,
     ):
-        rc = OCRPipeline(cfg).run()
+        rc = OCRPipeline(cfg).run().exit_code
 
     assert rc == 0
     docx_files = list(cfg.output_dir.glob("*.docx"))
@@ -648,7 +762,7 @@ def test_pipeline_run_returns_1_when_ollama_unreachable(tmp_path: Path) -> None:
         "check_model",
         side_effect=OllamaConnectionError("Cannot connect to Ollama at http://127.0.0.1:11434"),
     ):
-        rc = OCRPipeline(cfg).run()
+        rc = OCRPipeline(cfg).run().exit_code
 
     assert rc == 1
 
@@ -677,7 +791,7 @@ def test_pipeline_run_returns_1_when_ocr_model_not_in_ollama(tmp_path: Path) -> 
         "check_model",
         side_effect=OllamaConnectionError("Model 'my-model' not found in Ollama"),
     ):
-        rc = OCRPipeline(cfg).run()
+        rc = OCRPipeline(cfg).run().exit_code
 
     assert rc == 1
 
@@ -711,7 +825,7 @@ def test_pipeline_run_proceeds_when_ollama_model_found(tmp_path: Path) -> None:
             return_value=mock_ocr,
         ),
     ):
-        rc = OCRPipeline(cfg).run()
+        rc = OCRPipeline(cfg).run().exit_code
 
     assert rc == 0
 
@@ -734,7 +848,7 @@ def test_pipeline_refuses_online_ocr_engine(tmp_path: Path, capsys) -> None:
     _place_image(cfg.input_dir)
 
     with patch("teachers_teammate.infrastructure.stage_builder.build_llm") as mock_build:
-        rc = OCRPipeline(cfg).run()
+        rc = OCRPipeline(cfg).run().exit_code
 
     assert rc == 1
     mock_build.assert_not_called()
@@ -755,7 +869,7 @@ def test_pipeline_refuses_online_ocr_engine_even_for_text_files(tmp_path: Path) 
     )
     (cfg.input_dir / "note.txt").write_text("Hello world", encoding="utf-8")
 
-    assert OCRPipeline(cfg).run() == 1
+    assert OCRPipeline(cfg).run().exit_code == 1
 
 
 def test_pipeline_setup_creates_paddleocr_processor(tmp_path: Path) -> None:
@@ -779,7 +893,7 @@ def test_pipeline_setup_creates_paddleocr_processor(tmp_path: Path) -> None:
     with patch(
         "teachers_teammate.infrastructure.stage_builder.PaddleOCRProcessor", return_value=mock_ocr
     ):
-        rc = OCRPipeline(cfg).run()
+        rc = OCRPipeline(cfg).run().exit_code
 
     assert rc == 0
     mock_ocr.process_image.assert_called_once()
@@ -1284,7 +1398,7 @@ def test_check_ollama_request_exception_is_silent(tmp_path: Path) -> None:
             return_value=mock_ocr,
         ),
     ):
-        result = OCRPipeline(cfg).run()
+        result = OCRPipeline(cfg).run().exit_code
 
     assert result == 0  # pipeline still succeeded despite the warning being skipped
 
@@ -1342,7 +1456,7 @@ def test_pipeline_batch_mixed_types_all_processed(tmp_path: Path) -> None:
         "teachers_teammate.infrastructure.stage_builder.TesseractOCRProcessor",
         return_value=mock_proc,
     ):
-        rc = OCRPipeline(cfg).run()
+        rc = OCRPipeline(cfg).run().exit_code
 
     assert rc == 0
     repo = StateRepository(resolve_artifact_dir(cfg.output_dir) / "state")
@@ -1378,7 +1492,7 @@ def test_pipeline_batch_failure_does_not_stop_remaining_files(tmp_path: Path) ->
         "teachers_teammate.infrastructure.stage_builder.TesseractOCRProcessor",
         return_value=mock_proc,
     ):
-        rc = OCRPipeline(cfg).run()
+        rc = OCRPipeline(cfg).run().exit_code
 
     assert rc == 1
     repo = StateRepository(resolve_artifact_dir(cfg.output_dir) / "state")
@@ -1413,7 +1527,7 @@ def test_pipeline_selected_source_not_in_input_dir_is_skipped(tmp_path: Path) ->
         "teachers_teammate.infrastructure.stage_builder.TesseractOCRProcessor",
         return_value=mock_proc,
     ):
-        rc = OCRPipeline(cfg, selected_source_paths=[outside_path]).run()
+        rc = OCRPipeline(cfg, selected_source_paths=[outside_path]).run().exit_code
 
     assert rc == 0
     mock_proc.process_image.assert_not_called()
@@ -1466,7 +1580,7 @@ def test_pipeline_ocr_and_correction_not_rerun_when_only_evaluation_config_chang
             return_value=first_evaluator,
         ),
     ):
-        first_rc = OCRPipeline(cfg).run()
+        first_rc = OCRPipeline(cfg).run().exit_code
 
     assert first_rc == 0
 
@@ -1493,7 +1607,7 @@ def test_pipeline_ocr_and_correction_not_rerun_when_only_evaluation_config_chang
             return_value=second_evaluator,
         ),
     ):
-        second_rc = OCRPipeline(cfg).run()
+        second_rc = OCRPipeline(cfg).run().exit_code
 
     assert second_rc == 0
     second_ocr.process_image.assert_not_called()
@@ -1547,7 +1661,7 @@ def test_pipeline_run_with_different_providers_per_stage_produces_full_state(
             return_value=mock_evaluator,
         ),
     ):
-        rc = OCRPipeline(cfg).run()
+        rc = OCRPipeline(cfg).run().exit_code
 
     assert rc == 0
     state = StateRepository(resolve_artifact_dir(cfg.output_dir) / "state").load(
@@ -1594,7 +1708,7 @@ def test_pipeline_stores_layout_html_as_markdown(tmp_path: Path) -> None:
         "teachers_teammate.infrastructure.stage_builder.TesseractOCRProcessor",
         return_value=mock_proc,
     ):
-        rc = OCRPipeline(cfg).run()
+        rc = OCRPipeline(cfg).run().exit_code
 
     assert rc == 0
     state = StateRepository(resolve_artifact_dir(cfg.output_dir) / "state").load(
@@ -1635,7 +1749,7 @@ def test_pipeline_tells_corrector_the_text_is_markdown_and_formats_the_docx(
         ),
         patch("teachers_teammate.infrastructure.stage_builder.build_llm", return_value=MagicMock()),
     ):
-        rc = OCRPipeline(cfg).run()
+        rc = OCRPipeline(cfg).run().exit_code
 
     assert rc == 0
     assert mock_corrector.correct.call_args.kwargs == {"text_format": "markdown"}
@@ -1670,7 +1784,7 @@ def test_pipeline_keeps_tesseract_style_plain_text_verbatim(tmp_path: Path) -> N
         "teachers_teammate.infrastructure.stage_builder.TesseractOCRProcessor",
         return_value=mock_proc,
     ):
-        rc = OCRPipeline(cfg).run()
+        rc = OCRPipeline(cfg).run().exit_code
 
     assert rc == 0
     state = StateRepository(resolve_artifact_dir(cfg.output_dir) / "state").load(

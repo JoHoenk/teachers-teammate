@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 import dataclasses
+from enum import Enum
 import logging
 import os
 from pathlib import Path
@@ -61,9 +62,11 @@ from ..config import (
 from ..domain.data_location import LOCAL_OCR_ENGINES, DataFlow
 from ..domain.model_catalog import HardwareDetection
 from ..domain.ollama_discovery import DiscoveredServer, DiscoveryScope, ServerKind
+from ..domain.run_summary import RunSummary
 from ..domain.stages import PROGRESS_STAGE_OCR, PROGRESS_STAGE_PREPROCESSING
+from ..infrastructure.reporting import BATTERY_WARNING, KeepAwakeState
 from . import _user_text as txt
-from ._app_bootstrap import create_app
+from ._app_bootstrap import create_app, finish_process
 from ._background import LatestTask, run_in_background, wait_for_background_tasks
 from ._chart_widget import ChartWidget
 from ._config_panel import ConfigPanel
@@ -96,12 +99,13 @@ from ._privacy_settings import (
 )
 from ._readiness_line import ReadinessLine, readiness
 from ._results_table import ResultsTable
+from ._run_status import RunTone, describe_run
 from ._stats_widget import SystemStatsWidget
 from ._system_monitor import SystemMonitorWindow
 from ._types import FileDoneEvent, PreprocessInfo
 from ._update_check import UpdateCheckThread
 from ._what_is_sent_dialog import WhatIsSentDialog
-from ._worker import OCRWorker
+from ._worker import OCRWorker, detach_running_worker
 from .settings import (
     PAGE_TITLES,
     SettingsContext,
@@ -177,16 +181,62 @@ class _PreprocessPreviewThread(QThread):
             self.done.emit(None, None, None, str(exc))
 
 
+class _StopStage(Enum):
+    """Where the two-step Stop button is: the first click finishes the document being
+    processed, the second stops at once."""
+
+    IDLE = "idle"
+    RUNNING = "running"
+    AFTER_FILE = "after_file"
+    NOW = "now"
+
+
+STOP_TEXT = "Stop"
+STOP_TOOLTIP = "Finish the document being processed, then stop."
+STOP_NOW_TEXT = "Stop now"
+STOP_NOW_TOOLTIP = (
+    "Stop at once. The document being processed is left unfinished; what is already done "
+    "is kept and reused next time."
+)
+STOPPING_SUFFIX = " — stopping after this document"
+STOPPING_NOW_TEXT = "Stopping…"
+#: How long closing the window waits for a stopping run (milliseconds): enough for a cancelled
+#: Ollama request and a state write, never for the run itself.
+CLOSE_GRACE_MS = 3000
+CLOSE_RUN_TITLE = "Documents are still being processed"
+CLOSE_RUN_TEXT = (
+    "Stop now and close Teacher's Teammate?\n\n"
+    "Finished documents are kept. The document being processed is left unfinished; what is "
+    "already done is reused next time."
+)
+CLOSE_RUN_STOP = "Stop and close"
+CLOSE_RUN_KEEP = "Keep running"
+AWAKE_HELD_TEXT = (
+    "Keeping the computer awake while documents are processed. The screen may turn off."
+)
+AWAKE_REFUSED_TEXT = "This computer did not allow staying awake; it may go to sleep during the run."
+AWAKE_UNAVAILABLE_TEXT = (
+    "The app cannot keep this computer awake (the system decides); "
+    "check its power settings if a long run must not be interrupted."
+)
+
+
 class _WorkerLike(Protocol):
     log_line: Any
     file_started: Any
     stage_started: Any
     ocr_done: Any
     file_done: Any
-    finished_with_code: Any
+    keep_awake_changed: Any
+    run_finished: Any
     stop_event: Any
+    stop_after_file_event: Any
 
     def start(self) -> None: ...
+
+    def request_stop(self, *, now: bool) -> None: ...
+
+    def wait(self, msecs: int, /) -> bool: ...
 
     def isRunning(self) -> bool: ...
 
@@ -342,6 +392,7 @@ class MainWindow(QMainWindow):
         if _icon is not None:
             self.setWindowIcon(_icon)
         self._init_runtime_state()
+        self._init_run_state()
 
         self._pull_manager.progress.connect(self._on_pull_progress)
         self._pull_manager.started.connect(self._on_pull_started)
@@ -366,6 +417,18 @@ class MainWindow(QMainWindow):
         #: The Benchmark window once opened (parentless, see ``_open_benchmark``).
         self._benchmark_window: BenchmarkWindow | None = None
 
+    def _init_run_state(self) -> None:
+        """Declare what the window knows about a run that is going: stopping, notes, closing."""
+        #: Where the two-step Stop button is (see :class:`_StopStage`).
+        self._stop_stage = _StopStage.IDLE
+        #: The progress text without the "stopping" note (see :meth:`_set_progress_text`).
+        self._progress_base = "Idle"
+        #: Set once the teacher agreed to stop the run and close (File → Quit asks itself).
+        self._close_confirmed = False
+        #: Under the progress bar; built in ``_build_left_panel``.
+        self._awake_note: QLabel
+        self._battery_note: QLabel
+
     def _init_queue_state(self) -> None:
         """Declare what the window knows about the files in its queue."""
         self._queued_files_by_source_id: dict[str, Path] = {}
@@ -381,7 +444,6 @@ class MainWindow(QMainWindow):
         # Queued scans the last check found a run would leave out (text recognition is off).
         self._skipped_scans: set[Path] = set()
         #: Files of the current run that were skipped (text recognition is off).
-        self._skipped_names: list[str] = []
 
     def _init_runtime_state(self) -> None:
         """Initialise per-window runtime state and declare widgets built later."""
@@ -584,7 +646,7 @@ class MainWindow(QMainWindow):
         quit_act = QAction("Quit", self)
         quit_act.setShortcut(QKeySequence(QKeySequence.StandardKey.Quit))
         quit_act.setMenuRole(QAction.MenuRole.QuitRole)
-        quit_act.triggered.connect(self.close)
+        quit_act.triggered.connect(self._on_quit_requested)
         file_menu.addAction(quit_act)
 
     def _build_settings_menu(self, bar: Any) -> None:
@@ -592,6 +654,10 @@ class MainWindow(QMainWindow):
         settings_menu = bar.addMenu("Settings")
         assert settings_menu is not None
         tooltips = {
+            SettingsPage.GENERAL: (
+                "How the app behaves while it works, for example keeping the computer awake "
+                "during a run."
+            ),
             SettingsPage.AI_MODELS: "Which AI reads the handwriting, proofreads and reviews.",
             SettingsPage.AI_SETUP: (
                 "What the AI models need from this computer: how powerful it is and where "
@@ -736,7 +802,8 @@ class MainWindow(QMainWindow):
             "QPushButton:disabled { background: #95a5a6; }"
         )
         self._run_btn.clicked.connect(self._on_run)
-        self._stop_btn = QPushButton("Stop")
+        self._stop_btn = QPushButton(STOP_TEXT)
+        self._stop_btn.setToolTip(STOP_TOOLTIP)
         self._stop_btn.setIcon(
             QIcon.fromTheme(
                 "media-playback-stop",
@@ -758,6 +825,17 @@ class MainWindow(QMainWindow):
         self._progress.setTextVisible(True)
         self._progress.setFormat("Idle")
         layout.addWidget(self._progress)
+
+        self._awake_note = QLabel()
+        self._awake_note.setWordWrap(True)
+        self._awake_note.setStyleSheet("color: #888888; font-size: 11px;")
+        self._awake_note.setVisible(False)
+        layout.addWidget(self._awake_note)
+        self._battery_note = QLabel(BATTERY_WARNING)
+        self._battery_note.setWordWrap(True)
+        self._battery_note.setStyleSheet("color: #e6a23c; font-size: 11px;")
+        self._battery_note.setVisible(False)
+        layout.addWidget(self._battery_note)
 
         left.setMinimumWidth(340)
         left.setMaximumWidth(420)
@@ -1004,7 +1082,65 @@ class MainWindow(QMainWindow):
             if not silent_on_error:
                 QMessageBox.warning(self, "Save failed", str(exc))
 
+    def _run_active(self) -> bool:
+        """Return whether an OCR worker is running right now."""
+        return bool(self._worker and self._worker.isRunning())
+
+    def _confirm_close_during_run(self) -> bool:
+        """Ask whether to stop the run and close; the default answer keeps the run going."""
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Question)
+        box.setWindowTitle(CLOSE_RUN_TITLE)
+        box.setText(CLOSE_RUN_TEXT)
+        stop_btn = box.addButton(CLOSE_RUN_STOP, QMessageBox.ButtonRole.DestructiveRole)
+        keep_btn = box.addButton(CLOSE_RUN_KEEP, QMessageBox.ButtonRole.RejectRole)
+        box.setDefaultButton(keep_btn)
+        box.exec()
+        return box.clickedButton() is stop_btn
+
+    def _on_quit_requested(self) -> None:
+        """File → Quit: ask first when a run is going, then close like the window's X."""
+        if self._run_active() and not self._confirm_close_during_run():
+            return
+        self._close_confirmed = True
+        self.close()
+
+    def _stop_worker_for_close(self) -> None:
+        """Stop the run at once, forget its signals and give it a moment to end.
+
+        Never waits for the run to finish: a worker that is still running after the grace
+        period (an online service cannot be interrupted) is detached, and the process ends
+        without destroying it (see :func:`~._app_bootstrap.finish_process`).
+        """
+        worker = self._worker
+        if worker is None or not worker.isRunning():
+            return
+        worker.request_stop(now=True)
+        for name in (
+            "log_line",
+            "file_started",
+            "stage_started",
+            "ocr_done",
+            "file_done",
+            "keep_awake_changed",
+            "run_finished",
+        ):
+            try:
+                getattr(worker, name).disconnect()
+            except (RuntimeError, TypeError, AttributeError):
+                pass  # nothing connected, or a test double without disconnect
+        if not worker.wait(CLOSE_GRACE_MS):
+            detach_running_worker(worker)  # ty: ignore[invalid-argument-type]  # a QThread
+
     def closeEvent(self, event: Any) -> None:
+        if (
+            self._run_active()
+            and not self._close_confirmed
+            and event.spontaneous()
+            and not self._confirm_close_during_run()
+        ):
+            event.ignore()
+            return
         try:
             self._save_settings(notify=False, silent_on_error=True)
         except Exception:  # noqa: BLE001  # never block window close on a settings-save error
@@ -1025,6 +1161,7 @@ class MainWindow(QMainWindow):
         self.hide()
         self._sent_texts_task.cancel()
         self._anonymize_task.cancel()
+        self._stop_worker_for_close()
         wait_for_background_tasks()
         event.accept()
 
@@ -1130,7 +1267,7 @@ class MainWindow(QMainWindow):
 
     def _run_in_progress(self) -> bool:
         """Return whether a requirement check or an OCR worker is already active."""
-        return self._preflight_running or bool(self._worker and self._worker.isRunning())
+        return self._preflight_running or self._run_active()
 
     def _warn_busy(self) -> None:
         QMessageBox.information(
@@ -1341,12 +1478,11 @@ class MainWindow(QMainWindow):
         self._chart.clear_data()
         self._preview.clear_preview()
         self._result_names = []
-        self._skipped_names = []
         self._result_ocr_times = []
         self._result_correction_times = []
         self._progress.setRange(0, len(selected_source_ids) * self._steps_per_file)
         self._progress.setValue(0)
-        self._progress.setFormat(f"Selected {len(selected_source_ids)} file(s) — Starting…")
+        self._set_progress_text(f"Selected {len(selected_source_ids)} file(s) — Starting…")
         self._tabs.setCurrentIndex(0)
 
         worker_factory = self._worker_factory or OCRWorker
@@ -1360,10 +1496,13 @@ class MainWindow(QMainWindow):
         self._worker.stage_started.connect(self._on_stage_started)
         self._worker.ocr_done.connect(self._on_ocr_done)
         self._worker.file_done.connect(self._on_file_done)
-        self._worker.finished_with_code.connect(self._on_finished)
+        self._worker.keep_awake_changed.connect(self._on_keep_awake)
+        self._worker.run_finished.connect(self._on_run_finished)
 
         self._run_btn.setEnabled(False)
-        self._stop_btn.setEnabled(True)
+        self._set_stop_stage(_StopStage.RUNNING)
+        self._awake_note.setVisible(False)
+        self._battery_note.setVisible(False)
         self._worker.start()
 
     def _on_stage_run_requested(self, selected_source_ids: list[str], stage: str) -> None:
@@ -1702,16 +1841,58 @@ class MainWindow(QMainWindow):
         self._text_size_timer.start()  # longer instructions leave less room for the text
 
     def _on_stop(self) -> None:
-        if self._worker and self._worker.isRunning():
-            self._worker.stop_event.set()
+        """First click: finish the document being processed; second click: stop at once."""
+        if not (self._worker and self._worker.isRunning()):
+            return
+        if self._stop_stage is _StopStage.RUNNING:
+            self._worker.request_stop(now=False)
+            self._set_stop_stage(_StopStage.AFTER_FILE)
+        elif self._stop_stage is _StopStage.AFTER_FILE:
+            self._worker.request_stop(now=True)
+            self._set_stop_stage(_StopStage.NOW)
+
+    def _set_stop_stage(self, stage: _StopStage) -> None:
+        """Move the Stop button to *stage*: its text, tooltip and whether it can be pressed."""
+        self._stop_stage = stage
+        if stage is _StopStage.AFTER_FILE:
+            self._stop_btn.setText(STOP_NOW_TEXT)
+            self._stop_btn.setToolTip(STOP_NOW_TOOLTIP)
+            self._stop_btn.setEnabled(True)
+            self._set_progress_text(self._progress_base)
+        elif stage is _StopStage.NOW:
             self._stop_btn.setEnabled(False)
-            self._progress.setFormat("Stopping\u2026 (finishing current phase)")
+            self._progress.setFormat(STOPPING_NOW_TEXT)
+        else:
+            self._stop_btn.setText(STOP_TEXT)
+            self._stop_btn.setToolTip(STOP_TOOLTIP)
+            self._stop_btn.setEnabled(stage is _StopStage.RUNNING)
+
+    def _set_progress_text(self, text: str) -> None:
+        """Show *text* in the progress bar, with a note while the run stops after this file."""
+        self._progress_base = text
+        if self._stop_stage is _StopStage.NOW:
+            return
+        suffix = STOPPING_SUFFIX if self._stop_stage is _StopStage.AFTER_FILE else ""
+        self._progress.setFormat(text + suffix)
+
+    def _on_keep_awake(self, state: KeepAwakeState) -> None:
+        """Say under the progress bar whether the computer is kept awake, and warn on battery."""
+        if state.enabled:
+            if state.held:
+                text = AWAKE_HELD_TEXT
+            elif state.available:
+                text = AWAKE_REFUSED_TEXT
+            else:
+                text = AWAKE_UNAVAILABLE_TEXT
+            self._awake_note.setText(text)
+        self._awake_note.setVisible(state.enabled)
+        self._battery_note.setVisible(bool(state.enabled and state.on_battery))
 
     # ── Worker signal handlers ────────────────────────────────────────────
 
     def _on_file_started(self, source_id: str, name: str, idx: int, total: int) -> None:
         self._progress.setValue((idx - 1) * self._steps_per_file)
-        self._progress.setFormat(f"[{idx}/{total}] {name} — starting…")
+        self._set_progress_text(f"[{idx}/{total}] {name} — starting…")
         self._results_table.mark_processing(source_id)
         # The previous run's preprocessing info is stale until this run records its own.
         # The text format is deliberately kept: the row still shows the previous texts, and
@@ -1728,7 +1909,7 @@ class MainWindow(QMainWindow):
     ) -> None:
         label = self._STAGE_PROGRESS_LABEL.get(stage)
         if label is not None:
-            self._progress.setFormat(f"[{idx}/{total}] {name} — {label}")
+            self._set_progress_text(f"[{idx}/{total}] {name} — {label}")
 
     def _on_file_done(self, event: FileDoneEvent) -> None:
         source_id = event.source_id
@@ -1745,9 +1926,8 @@ class MainWindow(QMainWindow):
         # Refresh from the persisted state even on failure/stop, when on_ocr_done never fired.
         self._refresh_preprocessing_info(source_id, text_format=event.text_format)
         self._set_export_enabled(True)
-        if event.skipped:
-            self._skipped_names.append(name)
-        elif not ok and message:
+        # A skipped or stopped file is not an error: its row says why, the final line counts it.
+        if not (event.skipped or event.stopped) and not ok and message:
             QMessageBox.warning(self, "Processing error", f"{name}:\n\n{message}")
         self._result_names.append(name)
         self._result_ocr_times.append(ocr_s)
@@ -2017,29 +2197,30 @@ class MainWindow(QMainWindow):
         self._readiness_line.end_download()
         QTimer.singleShot(0, self._start_readiness_check)
 
-    def _on_finished(self, rc: int) -> None:
+    def _on_run_finished(self, summary: RunSummary) -> None:
+        """Announce how the run ended: done, stopped (not an error) or finished with errors."""
         self._run_btn.setEnabled(True)
-        self._stop_btn.setEnabled(False)
-        if rc == 0:
+        self._set_stop_stage(_StopStage.IDLE)
+        self._awake_note.setVisible(False)
+        self._battery_note.setVisible(False)
+        text = describe_run(summary)
+        if text.complete:
             self._progress.setValue(self._progress.maximum())
-        self._progress.setFormat("Done \u2713" if rc == 0 else "Finished with errors")
+        self._progress_base = text.progress
+        self._progress.setFormat(text.progress)
         if self._result_names:
             self._tabs.setCurrentIndex(0)
-        n = len(self._result_names) - len(self._skipped_names)
-        msg = f"Done — {n} file(s) processed" if rc == 0 else "Finished with errors"
-        if rc == 0 and self._skipped_names:
-            msg += f", {len(self._skipped_names)} skipped"
-        self._tray.showMessage(
-            "Teacher's Teammate",
-            msg,
-            QSystemTrayIcon.MessageIcon.Information,
-            4000,
+        icon = (
+            QSystemTrayIcon.MessageIcon.Warning
+            if text.tone is RunTone.WARNING
+            else QSystemTrayIcon.MessageIcon.Information
         )
+        self._tray.showMessage("Teacher's Teammate", text.tray, icon, 4000)
 
     def _on_ocr_done(self, source_id: str, name: str, idx: int, total: int) -> None:
         if self._steps_per_file > 1:
             self._progress.setValue((idx - 1) * 2 + 1)
-            self._progress.setFormat(f"[{idx}/{total}] {name} — correcting…")
+            self._set_progress_text(f"[{idx}/{total}] {name} — correcting…")
             self._results_table.mark_correcting(source_id)
 
         # Attach preview/raw artefacts as soon as OCR finishes so double-click preview
@@ -2818,4 +2999,4 @@ def main_gui(
     if _splash is not None:
         _splash.finish(window)
 
-    sys.exit(app.exec())
+    finish_process(app.exec())

@@ -18,9 +18,11 @@ import threading
 import time
 
 from ...config import Config
+from ...exceptions import RunStoppedError
 from ..ollama_utils import OllamaClient
 from ..stage_builder import PipelineComponentFactory, StageBuilder
 from ..storage_root import resolve_artifact_dir
+from ..workflow.file_processor import STOPPED_GENERIC
 from ..workflow.ocr_service import OCRStageService
 
 
@@ -57,7 +59,11 @@ def run_ocr(
     builder = StageBuilder(config, factory)
     start = time.monotonic()
     try:
-        ollama_client = OllamaClient(config.ollama_url) if config.ocr.engine == "ollama" else None
+        ollama_client = (
+            OllamaClient(config.ollama_url, cancel_event=stop_event)
+            if config.ocr.engine == "ollama"
+            else None
+        )
         ocr = builder.build_ocr(ollama_client)
         preprocess_service = builder.build_preprocessor_service(tmp_dir)
         prepared = preprocess_service.preprocess_input(source)
@@ -81,5 +87,7 @@ def run_ocr(
             None,
             raw_text_format=processed.text_format,
         )
+    except RunStoppedError:
+        return OcrRunResult("", None, time.monotonic() - start, STOPPED_GENERIC)
     except Exception as exc:  # noqa: BLE001  # any stage may raise (engine missing, IO, provider); report, don't crash
         return OcrRunResult("", None, time.monotonic() - start, str(exc))

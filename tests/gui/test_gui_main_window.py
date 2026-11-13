@@ -36,6 +36,8 @@ from teachers_teammate.gui.settings._page import (
     FOCUS_ONLINE_SERVICES,
     FOCUS_PROOFREADING_KEY,
 )
+from teachers_teammate.domain.run_summary import RunSummary
+from teachers_teammate.infrastructure.reporting import KeepAwakeState
 from teachers_teammate.infrastructure.storage_root import resolve_artifact_dir
 from tests.conftest import make_config
 
@@ -49,6 +51,9 @@ class _DummySignal:
     def connect(self, fn):
         self._subs.append(fn)
 
+    def disconnect(self) -> None:
+        self._subs.clear()
+
     def emit(self, *args):
         for fn in self._subs:
             fn(*args)
@@ -61,10 +66,12 @@ class _DummyWorker:
         self.stage_started = _DummySignal()
         self.ocr_done = _DummySignal()
         self.file_done = _DummySignal()
-        self.finished_with_code = _DummySignal()
+        self.keep_awake_changed = _DummySignal()
+        self.run_finished = _DummySignal()
         self.selected_source_paths = selected_source_paths or []
         self.app_service = app_service
         self.stop_event = threading.Event()
+        self.stop_after_file_event = threading.Event()
         self._running = False
 
     def start(self) -> None:
@@ -72,6 +79,15 @@ class _DummyWorker:
 
     def isRunning(self) -> bool:
         return self._running
+
+    def request_stop(self, *, now: bool) -> None:
+        self.stop_after_file_event.set()
+        if now:
+            self.stop_event.set()
+
+    def wait(self, _msecs: int) -> bool:
+        self._running = False
+        return True
 
 
 class _RecordingMessageBox:
@@ -84,11 +100,13 @@ class _RecordingMessageBox:
     class Icon:
         Warning = "warning"
         Information = "information"
+        Question = "question"
 
     class ButtonRole:
         AcceptRole = "accept"
         RejectRole = "reject"
         ActionRole = "action"
+        DestructiveRole = "destructive"
 
     last: ClassVar[_RecordingMessageBox | None] = None
 
@@ -345,27 +363,124 @@ def test_main_window_refreshes_queue_on_input_folder_change(main_window, tmp_pat
 
 
 @pytest.mark.gui
-def test_main_window_stop_sets_worker_stop_event(main_window) -> None:
+def test_main_window_stop_is_a_two_step_button(main_window) -> None:
     """
     Given  a MainWindow with a running worker
-    When   Stop is triggered
-    Then   the worker stop_event is set and the stop button is disabled
+    When   Stop is clicked once and then again
+    Then   the first click only asks to stop after this document and turns the button into
+           "Stop now"; the second sets the worker's stop_event and disables the button
     """
     worker = _DummyWorker(None)
     worker.start()
     main_window._worker = worker
+    main_window._set_stop_stage(main_window_module._StopStage.RUNNING)
+    assert main_window._stop_btn.text() == "Stop"
+
+    main_window._on_stop()
+
+    assert worker.stop_after_file_event.is_set() is True
+    assert worker.stop_event.is_set() is False
+    assert main_window._stop_btn.text() == "Stop now"
+    assert main_window._stop_btn.isEnabled() is True
 
     main_window._on_stop()
 
     assert worker.stop_event.is_set() is True
     assert main_window._stop_btn.isEnabled() is False
+    assert "Stopping" in main_window._progress.format()
+
+
+@pytest.mark.gui
+def test_main_window_progress_says_it_stops_after_this_document(main_window) -> None:
+    """
+    Given  a run whose Stop was clicked once
+    When   the progress text changes with the next phase
+    Then   the text keeps the note that the run stops after this document
+    """
+    worker = _DummyWorker(None)
+    worker.start()
+    main_window._worker = worker
+    main_window._set_stop_stage(main_window_module._StopStage.RUNNING)
+    main_window._on_stop()
+
+    main_window._on_stage_started("/tmp/a.png", "a.png", "ocr", 1, 3)
+
+    assert main_window._progress.format() == "[1/3] a.png — OCR… — stopping after this document"
+
+
+@pytest.mark.gui
+def test_a_stopped_file_opens_no_error_dialog_and_shows_where_it_stopped(
+    main_window, monkeypatch
+) -> None:
+    """
+    Given  a queued scan whose recognition is running when the run is stopped
+    When   _on_file_done reports it as stopped
+    Then   no "Processing error" dialog opens, the recognition cell says "stopped", and the
+           row is neither green nor red
+    """
+    warned: list[str] = []
+    monkeypatch.setattr(
+        main_window_module.QMessageBox, "warning", lambda *a, **k: warned.append(str(a))
+    )
+    monkeypatch.setattr(main_window._app_service, "load_view", lambda *_a, **_k: None)
+    source = "/tmp/scan.png"
+    main_window._results_table.set_queue(["scan.png"], source_ids=[source])
+    main_window._results_table.mark_processing(source)
+
+    main_window._on_file_done(
+        FileDoneEvent(
+            source_id=source,
+            name="scan.png",
+            ok=False,
+            message="Stopped before the text was read.",
+            ocr_s=1.0,
+            correction_s=0.0,
+            stopped=True,
+        )
+    )
+
+    assert warned == []
+    assert main_window._results_table.item(0, 1).text() == "stopped"
+    assert "Stopped before the text was read." in main_window._results_table.item(0, 1).toolTip()
+    assert main_window._results_table.item(0, 0).background().color().name() == "#2b2b2b"
+
+
+@pytest.mark.gui
+def test_a_stopped_file_keeps_the_tick_of_the_step_that_finished(main_window, monkeypatch) -> None:
+    """
+    Given  a file whose text was read, then proofreading was cut short by "Stop now"
+    When   _on_file_done reports it as stopped, carrying the stored text
+    Then   the recognition cell keeps its tick, the proofreading cell says "stopped", and the
+           review cell stays pending
+    """
+    monkeypatch.setattr(main_window._app_service, "load_view", lambda *_a, **_k: None)
+    source = "/tmp/essay.png"
+    main_window._results_table.set_queue(["essay.png"], source_ids=[source])
+    main_window._results_table.mark_processing(source)
+    main_window._results_table.mark_correcting(source)
+
+    main_window._on_file_done(
+        FileDoneEvent(
+            source_id=source,
+            name="essay.png",
+            ok=False,
+            message="Stopped before proofreading.",
+            ocr_s=1.0,
+            correction_s=0.0,
+            raw_txt="the text",
+            stopped=True,
+        )
+    )
+
+    table = main_window._results_table
+    assert [table.item(0, col).text() for col in (1, 2, 3)] == ["✓", "stopped", "-"]
 
 
 @pytest.mark.gui
 def test_main_window_finished_updates_progress_and_tray(main_window, monkeypatch) -> None:
     """
     Given  a MainWindow that already processed one file
-    When   finished is signalled with success
+    When   the run finishes with a successful summary
     Then   buttons/progress are reset and a tray notification is sent
     """
     main_window._result_names = ["a.png"]
@@ -373,13 +488,275 @@ def test_main_window_finished_updates_progress_and_tray(main_window, monkeypatch
     seen: list[str] = []
     monkeypatch.setattr(main_window._tray, "showMessage", lambda *_args: seen.append("tray"))
 
-    main_window._on_finished(0)
+    main_window._on_run_finished(RunSummary(succeeded=("a.png",)))
 
     assert main_window._run_btn.isEnabled() is True
     assert main_window._stop_btn.isEnabled() is False
+    assert main_window._stop_btn.text() == "Stop"
     assert main_window._progress.value() == main_window._progress.maximum()
     assert "Done" in main_window._progress.format()
     assert seen == ["tray"]
+
+
+@pytest.mark.gui
+def test_main_window_a_stopped_run_is_announced_as_stopped_not_as_an_error(
+    main_window, monkeypatch
+) -> None:
+    """
+    Given  a run that was stopped after one of four documents
+    When   the run finishes
+    Then   the progress bar and the notification say "Stopped" with the counts, the bar is not
+           filled, and nothing says "error"
+    """
+    main_window._result_names = ["a.png", "b.png"]
+    main_window._progress.setRange(0, 8)
+    main_window._progress.setValue(3)
+    messages: list[str] = []
+    monkeypatch.setattr(
+        main_window._tray, "showMessage", lambda _title, text, *_a: messages.append(text)
+    )
+
+    main_window._on_run_finished(
+        RunSummary(succeeded=("a.png",), stopped=("b.png",), not_started=("c.png", "d.png"))
+    )
+
+    expected = "Stopped — 1 of 4 done, 1 unfinished, 2 not started"
+    assert main_window._progress.format() == expected
+    assert messages == [expected]
+    assert main_window._progress.value() == 3
+    assert "error" not in main_window._progress.format().lower()
+    assert main_window._run_btn.isEnabled() is True
+
+
+@pytest.mark.gui
+def test_the_awake_note_shows_during_a_run_and_warns_on_battery(main_window) -> None:
+    """
+    Given  a run that holds the computer awake on battery power
+    When   the keep-awake state arrives, and later the run finishes
+    Then   the note and the battery warning show, and both are hidden after the run
+    """
+    main_window._on_keep_awake(KeepAwakeState(enabled=True, held=True, on_battery=True))
+
+    assert main_window._awake_note.isHidden() is False
+    assert "awake" in main_window._awake_note.text()
+    assert main_window._battery_note.isHidden() is False
+
+    main_window._on_run_finished(RunSummary())
+
+    assert main_window._awake_note.isHidden() is True
+    assert main_window._battery_note.isHidden() is True
+
+
+@pytest.mark.gui
+def test_the_awake_note_says_so_when_the_system_refused(main_window) -> None:
+    """
+    Given  the system did not allow staying awake
+    When   the keep-awake state arrives
+    Then   the note says the computer may go to sleep, and there is no battery warning
+    """
+    main_window._on_keep_awake(KeepAwakeState(enabled=True, held=False, on_battery=False))
+
+    assert "may go to sleep" in main_window._awake_note.text()
+    assert main_window._battery_note.isHidden() is True
+
+
+@pytest.mark.gui
+def test_the_awake_note_does_not_blame_the_system_when_nothing_was_requested(main_window) -> None:
+    """
+    Given  a computer with no way to ask for staying awake (nothing was requested)
+    When   the keep-awake state arrives
+    Then   the note says the app cannot do it, not that the system did not allow it
+    """
+    main_window._on_keep_awake(KeepAwakeState(enabled=True, held=False, available=False))
+
+    text = main_window._awake_note.text()
+    assert "cannot keep this computer awake" in text
+    assert "did not allow" not in text
+
+
+@pytest.mark.gui
+def test_no_awake_note_when_keep_awake_is_off(main_window) -> None:
+    """
+    Given  keep_awake switched off
+    When   the keep-awake state arrives
+    Then   no note and no battery warning are shown
+    """
+    main_window._on_keep_awake(KeepAwakeState(enabled=False, held=False, on_battery=True))
+
+    assert main_window._awake_note.isHidden() is True
+    assert main_window._battery_note.isHidden() is True
+
+
+class _SpontaneousClose:
+    """A close event as the window's X sends it (``spontaneous()`` is true)."""
+
+    def __init__(self) -> None:
+        self.ignored = False
+        self.accepted = False
+
+    def spontaneous(self) -> bool:
+        return True
+
+    def ignore(self) -> None:
+        self.ignored = True
+
+    def accept(self) -> None:
+        self.accepted = True
+
+
+def _running_worker(main_window) -> _DummyWorker:
+    worker = _DummyWorker(None)
+    worker.start()
+    main_window._worker = worker
+    return worker
+
+
+@pytest.mark.gui
+def test_closing_during_a_run_asks_and_keep_running_changes_nothing(
+    main_window, monkeypatch
+) -> None:
+    """
+    Given  a running worker and a teacher who answers "Keep running"
+    When   the window's X is pressed
+    Then   the close is ignored and the worker is not asked to stop
+    """
+    worker = _running_worker(main_window)
+    monkeypatch.setattr(main_window, "_confirm_close_during_run", lambda: False)
+    event = _SpontaneousClose()
+
+    main_window.closeEvent(event)
+
+    assert event.ignored is True
+    assert event.accepted is False
+    assert worker.stop_event.is_set() is False
+    assert worker.isRunning() is True
+
+
+@pytest.mark.gui
+def test_closing_during_a_run_stops_at_once_and_does_not_wait_for_the_run(
+    main_window, monkeypatch
+) -> None:
+    """
+    Given  a running worker and a teacher who answers "Stop and close"
+    When   the window's X is pressed
+    Then   the worker is asked to stop now, given only the short grace period, its signals are
+           disconnected (no dialog on a hidden window) and the close is accepted
+    """
+    worker = _running_worker(main_window)
+    waits: list[int] = []
+    monkeypatch.setattr(main_window, "_confirm_close_during_run", lambda: True)
+    monkeypatch.setattr(worker, "wait", lambda ms: waits.append(ms) or True)
+    event = _SpontaneousClose()
+
+    main_window.closeEvent(event)
+
+    assert event.accepted is True
+    assert worker.stop_event.is_set() is True
+    assert waits == [main_window_module.CLOSE_GRACE_MS]
+    assert main_window_module.CLOSE_GRACE_MS <= 5000
+    assert worker.file_done._subs == []
+
+
+@pytest.mark.gui
+def test_closing_detaches_a_worker_that_does_not_stop_in_time(main_window, monkeypatch) -> None:
+    """
+    Given  a worker that is still running after the grace period (an online service)
+    When   the window is closed
+    Then   the worker is detached, so the running thread is not destroyed with the window
+    """
+    worker = _running_worker(main_window)
+    detached: list = []
+    monkeypatch.setattr(main_window, "_confirm_close_during_run", lambda: True)
+    monkeypatch.setattr(worker, "wait", lambda _ms: False)
+    monkeypatch.setattr(main_window_module, "detach_running_worker", detached.append)
+
+    main_window.closeEvent(_SpontaneousClose())
+
+    assert detached == [worker]
+
+
+@pytest.mark.gui
+def test_closing_without_a_run_asks_nothing(main_window, monkeypatch) -> None:
+    """
+    Given  no running worker
+    When   the window's X is pressed
+    Then   no question is asked and the close is accepted
+    """
+    monkeypatch.setattr(
+        main_window,
+        "_confirm_close_during_run",
+        lambda: (_ for _ in ()).throw(AssertionError("must not ask")),
+    )
+    event = _SpontaneousClose()
+
+    main_window.closeEvent(event)
+
+    assert event.accepted is True
+
+
+@pytest.mark.gui
+def test_a_programmatic_close_stops_the_run_without_asking(main_window, monkeypatch) -> None:
+    """
+    Given  a running worker
+    When   the window is closed by code (not the X)
+    Then   no question is asked, the run is stopped at once
+    """
+    worker = _running_worker(main_window)
+    monkeypatch.setattr(
+        main_window,
+        "_confirm_close_during_run",
+        lambda: (_ for _ in ()).throw(AssertionError("must not ask")),
+    )
+
+    main_window.close()
+
+    assert worker.stop_event.is_set() is True
+
+
+@pytest.mark.gui
+def test_quit_asks_while_a_run_is_going(main_window, monkeypatch) -> None:
+    """
+    Given  a running worker and a teacher who answers "Keep running" to File → Quit
+    When   Quit is triggered
+    Then   the window stays open and the run is untouched
+    """
+    worker = _running_worker(main_window)
+    monkeypatch.setattr(main_window, "_confirm_close_during_run", lambda: False)
+
+    main_window._on_quit_requested()
+
+    assert main_window._close_confirmed is False
+    assert worker.stop_event.is_set() is False
+    assert worker.isRunning() is True
+
+
+class _KeepRunningBox(_RecordingMessageBox):
+    """The close question answered with its second button, "Keep running"."""
+
+    def __init__(self, _parent=None) -> None:
+        super().__init__(_parent)
+        self.answer_index = 1
+
+
+@pytest.mark.gui
+def test_the_close_question_defaults_to_keep_running(main_window, monkeypatch) -> None:
+    """
+    Given  the close question
+    When   it is shown and answered with "Stop and close", then with "Keep running"
+    Then   "Keep running" is the default button; the first answer stops, the second does not
+    """
+    monkeypatch.setattr(main_window_module, "QMessageBox", _RecordingMessageBox)
+    stop_and_close = main_window._confirm_close_during_run()
+    box = _RecordingMessageBox.last
+    assert box is not None
+    assert box.buttons == ["Stop and close", "Keep running"]
+    assert box.default == "Keep running"
+
+    monkeypatch.setattr(main_window_module, "QMessageBox", _KeepRunningBox)
+    keep_running = main_window._confirm_close_during_run()
+
+    assert stop_and_close is True
+    assert keep_running is False
 
 
 @pytest.mark.gui
@@ -670,13 +1047,13 @@ def test_main_window_correction_edit_keeps_the_stored_warning_banner(
 def test_main_window_on_finished_shows_error_format(main_window, monkeypatch) -> None:
     """
     Given  a MainWindow
-    When   _on_finished(1) is called (non-zero exit code)
+    When   the run finishes with a failed file
     Then   progress bar format shows 'error'
     """
     seen: list[str] = []
     monkeypatch.setattr(main_window._tray, "showMessage", lambda *_args: seen.append("tray"))
     main_window._result_names = []
-    main_window._on_finished(1)
+    main_window._on_run_finished(RunSummary(failed=("a.png",)))
     assert "error" in main_window._progress.format().lower()
 
 
@@ -1339,13 +1716,14 @@ def test_settings_menu_lists_the_pages_then_all_settings(main_window) -> None:
     """
     Given  the main window
     When   the Settings menu is read
-    Then   it lists the six pages by name, a separator and "All settings…" on Ctrl+,
+    Then   it lists the seven pages by name, a separator and "All settings…" on Ctrl+,
     """
     menu = _menu(main_window, "Settings")
 
     entries = [a.text() for a in menu.actions() if not a.isSeparator()]
 
     assert entries == [
+        "General\u2026",
         "AI models\u2026",
         "This computer\u2026",
         "Online services\u2026",
@@ -4332,7 +4710,6 @@ def test_a_skipped_file_opens_no_error_dialog_and_is_counted_apart(
 
     assert warned == []
     assert main_window._results_table.item(0, 1).text() == "skipped"
-    assert main_window._skipped_names == ["scan.png"]
 
 
 @pytest.mark.gui

@@ -47,6 +47,7 @@ from ._addons_page import AddonsPage
 from ._ai_models_page import AiModelsPage
 from ._ai_setup_page import AiSetupPage
 from ._credentials import FILE_FALLBACK_TEXT, FILE_FALLBACK_TITLE, ApiKeyDrafts
+from ._general_page import GeneralPage
 from ._online_services_page import OnlineServicesPage
 from ._page import (
     PAGE_TITLES,
@@ -93,6 +94,7 @@ SIDEBAR_STYLE = (
 PAGE_MARGINS = (2, 12, 10, 4)
 
 _PAGE_CLASSES: dict[SettingsPage, type[SettingsPageBase]] = {
+    SettingsPage.GENERAL: GeneralPage,
     SettingsPage.AI_MODELS: AiModelsPage,
     SettingsPage.AI_SETUP: AiSetupPage,
     SettingsPage.ONLINE_SERVICES: OnlineServicesPage,

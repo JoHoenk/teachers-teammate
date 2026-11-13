@@ -34,6 +34,7 @@ from .config import (
 )
 from .domain.data_location import LOCAL_OCR_ENGINES, DataFlow, PrivacyLevel
 from .domain.pdf_text_layer import PDF_TEXT_LAYER_MODES
+from .domain.run_summary import RunSummary
 from .exceptions import ConfigFileNotFoundError, ConfigFileParseError
 
 
@@ -42,7 +43,7 @@ class _CliAppService(Protocol):
 
     def resolve_config_path(self, explicit: str | None) -> Path | None: ...
 
-    def run_selected(self, config: Config, /, *, config_file: Path | None = None) -> int: ...
+    def run_selected(self, config: Config, /, *, config_file: Path | None = None) -> RunSummary: ...
 
     def describe_data_flow(self, config: Config, /) -> DataFlow: ...
 
@@ -257,6 +258,19 @@ def _parse_args(
         dest="debug",
         action="store_false",
         help="Do not keep preprocessing temp files after the run.",
+    )
+    io_grp.add_argument(
+        "--keep-awake",
+        dest="keep_awake",
+        action="store_true",
+        default=DEFAULTS["keep_awake"],
+        help="Keep the computer from going to sleep during the run (default).",
+    )
+    io_grp.add_argument(
+        "--allow-sleep",
+        dest="keep_awake",
+        action="store_false",
+        help="Let the computer go to sleep during the run (by default it is kept awake).",
     )
 
     # ── OCR Parameters ─────────────────────────────────────────────────────
@@ -626,6 +640,7 @@ def run_cli(
         output_dir=Path(args.output) if args.output is not None else input_dir,
         recursive=args.recursive,
         debug=args.debug,
+        keep_awake=args.keep_awake,
         ocr=OcrConfig(
             engine=args.ocr_engine,
             model=args.ocr_model,
@@ -689,7 +704,7 @@ def run_cli(
             return 1
         print(f"WARNING: {warning}", file=sys.stderr)
     _print_data_flow(service.describe_data_flow(config))
-    return service.run_selected(config, config_file=config_path)
+    return service.run_selected(config, config_file=config_path).exit_code
 
 
 def main(

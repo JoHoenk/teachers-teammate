@@ -6,9 +6,9 @@ from collections.abc import Callable
 import logging
 from pathlib import Path
 import threading
-from typing import NamedTuple
 
 from ...domain.correction_review import align, review_summary
+from ...domain.run_summary import RunSummary
 from ..reporting import FileDoneResult, OnFileDoneFn, OnFileStartedFn, Reporter, StdoutReporter
 from .file_processor import ProcessingResult
 
@@ -18,36 +18,39 @@ ProcessFileFn = Callable[[Path], ProcessingResult]
 CleanupFn = Callable[[], None]
 
 
-class RunOutcome(NamedTuple):
-    """The file names of a run, sorted by what happened to them."""
-
-    succeeded: list[str]
-    failed: list[str]
-    skipped: list[str]
-    """Left out on purpose (a scan while text recognition is off): neither succeeded nor failed."""
-
-
 def run_files(
     files: list[Path],
     *,
     process_file: ProcessFileFn,
     cleanup_tmp: CleanupFn,
     stop_event: threading.Event | None = None,
+    stop_after_file_event: threading.Event | None = None,
     on_file_started: OnFileStartedFn | None = None,
     on_file_done: OnFileDoneFn | None = None,
     reporter: Reporter | None = None,
-) -> RunOutcome:
-    """Iterate *files*, calling *process_file* for each, and return the names by outcome."""
+) -> RunSummary:
+    """Iterate *files*, calling *process_file* for each, and return the names by outcome.
+
+    Two events end a run.  *stop_after_file_event* keeps new files from starting: the one being
+    processed finishes completely.  *stop_event* ("Stop now") also makes the file being
+    processed stop at its next step (see ``FileProcessor``); both leave the files that never
+    started in ``not_started``.
+    """
     reporter = reporter or StdoutReporter()
     total = len(files)
     succeeded: list[str] = []
     failed: list[str] = []
     skipped: list[str] = []
+    stopped: list[str] = []
+    not_started: list[str] = []
     try:
         for idx, file in enumerate(files, start=1):
             source_id = str(file.resolve())
-            if stop_event and stop_event.is_set():
-                reporter.status("\nStopped by user.")
+            if (stop_event and stop_event.is_set()) or (
+                stop_after_file_event and stop_after_file_event.is_set()
+            ):
+                not_started = [f.name for f in files[idx - 1 :]]
+                reporter.status(f"\nStopped by user: {len(not_started)} file(s) not started.")
                 break
             reporter.status(f"[{idx}/{total}] Processing: {file.name}")
             if on_file_started:
@@ -72,9 +75,14 @@ def run_files(
                         correction_review=result.correction_review,
                         correction_warning=result.correction_warning,
                         skipped=result.skipped,
+                        stopped=result.stopped,
+                        stopped_stage=result.stopped_stage,
                     )
                 )
-            if result.skipped:
+            if result.stopped:
+                reporter.status(f"       → {result.message}")
+                stopped.append(file.name)
+            elif result.skipped:
                 _logger.info("%s", result.message)
                 skipped.append(file.name)
             elif result.ok:
@@ -90,7 +98,13 @@ def run_files(
                 failed.append(file.name)
     finally:
         cleanup_tmp()
-    return RunOutcome(succeeded, failed, skipped)
+    return RunSummary(
+        succeeded=tuple(succeeded),
+        failed=tuple(failed),
+        skipped=tuple(skipped),
+        stopped=tuple(stopped),
+        not_started=tuple(not_started),
+    )
 
 
 def _review_line(result: ProcessingResult) -> str:

@@ -1156,3 +1156,131 @@ def test_manual_correction_edit_to_empty_text_drops_the_review(tmp_path: Path) -
     loaded = repo.load(source)
     assert loaded is not None
     assert loaded.correction_review is None
+
+
+def test_save_writes_through_a_temp_file_and_leaves_none_behind(tmp_path: Path) -> None:
+    """
+    Given  a repository and a stored state
+    When   the state is saved again with new content
+    Then   the file holds the new content, is valid JSON, and no ``.tmp`` file is left (the
+           swap is atomic, so a process that ends during a save cannot leave half a file)
+    """
+    repo = _repo(tmp_path)
+    source = _source_file(tmp_path)
+    first = repo.load_or_create(source, "somehash")
+    repo.save(source, first)
+
+    second = dataclasses.replace(first, raw_text="new text", ocr_done=True)
+    repo.save(source, second)
+
+    path = repo.state_path_for_input(source)
+    assert json.loads(path.read_text(encoding="utf-8"))["raw_text"] == "new text"
+    assert list(path.parent.glob("*.tmp")) == []
+
+
+def test_save_keeps_the_old_file_when_the_swap_fails(tmp_path: Path, monkeypatch) -> None:
+    """
+    Given  a stored state and a swap (os.replace) that fails
+    When   the state is saved again
+    Then   the error propagates and the previous file is intact
+    """
+    repo = _repo(tmp_path)
+    source = _source_file(tmp_path)
+    state = repo.load_or_create(source, "somehash")
+    repo.save(source, dataclasses.replace(state, raw_text="old", ocr_done=True))
+    path = repo.state_path_for_input(source)
+
+    def broken_replace(*_args: object) -> None:
+        raise OSError("disk full")
+
+    monkeypatch.setattr(
+        "teachers_teammate.infrastructure.state_repository.os.replace", broken_replace
+    )
+
+    with pytest.raises(OSError, match="disk full"):
+        repo.save(source, dataclasses.replace(state, raw_text="new"))
+
+    assert json.loads(path.read_text(encoding="utf-8"))["raw_text"] == "old"
+
+
+def test_save_writes_in_place_when_the_swap_is_refused(tmp_path: Path, monkeypatch) -> None:
+    """
+    Given  a swap (os.replace) that Windows refuses because the file is held open
+    When   the state is saved
+    Then   the state is still written, and no temporary file is left behind
+    """
+    monkeypatch.setattr("teachers_teammate.infrastructure.state_repository._REPLACE_WAIT_S", 0.0)
+    repo = _repo(tmp_path)
+    source = _source_file(tmp_path)
+    state = repo.load_or_create(source, "somehash")
+
+    def refused(*_args: object) -> None:
+        raise PermissionError("held open")
+
+    monkeypatch.setattr("teachers_teammate.infrastructure.state_repository.os.replace", refused)
+
+    repo.save(source, dataclasses.replace(state, raw_text="new"))
+
+    path = repo.state_path_for_input(source)
+    assert json.loads(path.read_text(encoding="utf-8"))["raw_text"] == "new"
+    assert list(path.parent.glob("*.tmp")) == []
+
+
+def test_save_retries_a_refused_swap_before_giving_in(tmp_path: Path, monkeypatch) -> None:
+    """
+    Given  a swap that is refused once and then works
+    When   the state is saved
+    Then   the swap is retried and the state is stored by the swap
+    """
+    import os as os_module  # noqa: PLC0415
+
+    real_replace = os_module.replace  # the patch below replaces it on the shared os module
+
+    monkeypatch.setattr("teachers_teammate.infrastructure.state_repository._REPLACE_WAIT_S", 0.0)
+    repo = _repo(tmp_path)
+    source = _source_file(tmp_path)
+    state = repo.load_or_create(source, "somehash")
+    calls: list[int] = []
+
+    def flaky(src, dst) -> None:
+        calls.append(1)
+        if len(calls) == 1:
+            raise PermissionError("held open")
+        real_replace(src, dst)
+
+    monkeypatch.setattr("teachers_teammate.infrastructure.state_repository.os.replace", flaky)
+
+    repo.save(source, dataclasses.replace(state, raw_text="new"))
+
+    assert len(calls) == 2
+    assert repo.load(source).raw_text == "new"
+
+
+def test_two_saves_never_share_a_temporary_file(tmp_path: Path) -> None:
+    """
+    Given  one document saved from two threads at once
+    When   both saves run many times
+    Then   none fails and the stored state is valid JSON
+    """
+    import threading  # noqa: PLC0415
+
+    repo = _repo(tmp_path)
+    source = _source_file(tmp_path)
+    state = repo.load_or_create(source, "somehash")
+    errors: list[BaseException] = []
+
+    def work(text: str) -> None:
+        try:
+            for _ in range(30):
+                repo.save(source, dataclasses.replace(state, raw_text=text))
+        except BaseException as exc:  # noqa: BLE001
+            errors.append(exc)
+
+    threads = [threading.Thread(target=work, args=(t,)) for t in ("a", "b")]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert errors == []
+    assert repo.load(source).raw_text in {"a", "b"}

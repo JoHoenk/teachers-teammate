@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from teachers_teammate.domain.data_location import DataFlow
+from teachers_teammate.domain.run_summary import RunSummary
 
 
 class _AppServiceStub:
@@ -34,7 +35,7 @@ class _AppServiceStub:
     def memory_warning_for_run(self, config) -> str:
         return ""
 
-    def run_selected(self, config, /, **kwargs) -> int:
+    def run_selected(self, config, /, **kwargs) -> RunSummary:
         raise AssertionError("the run must not start")
 
     def run_preview_only(self, config) -> int:
@@ -225,9 +226,9 @@ def test_main_allows_missing_output_when_no_docx(tmp_path: Path, monkeypatch) ->
     captured: list = []
 
     class _FakeAppService(_AppServiceStub):
-        def run_selected(self, config, /, **kwargs) -> int:
+        def run_selected(self, config, /, **kwargs) -> RunSummary:
             captured.append(config)
-            return 0
+            return RunSummary()
 
     monkeypatch.setattr(storage_module, "default_config_path", lambda: tmp_path / "ocr.toml")
     original_cwd = os.getcwd()
@@ -257,9 +258,9 @@ def test_the_proofreading_context_flag_reaches_the_config(tmp_path: Path, monkey
     captured: list = []
 
     class _FakeAppService(_AppServiceStub):
-        def run_selected(self, config, /, **kwargs) -> int:
+        def run_selected(self, config, /, **kwargs) -> RunSummary:
             captured.append(config)
-            return 0
+            return RunSummary()
 
     monkeypatch.setattr(storage_module, "default_config_path", lambda: tmp_path / "ocr.toml")
     original_cwd = os.getcwd()
@@ -329,9 +330,9 @@ def test_main_loads_config_file_defaults(tmp_path: Path) -> None:
         def resolve_config_path(self, explicit: str | None) -> Path | None:
             return Path(explicit) if explicit else None
 
-        def run_selected(self, config, /, **kwargs) -> int:
+        def run_selected(self, config, /, **kwargs) -> RunSummary:
             captured.append(config)
-            return 0
+            return RunSummary()
 
     rc = run_cli(
         argv=["--config", str(cfg_file), "-i", str(in_dir), "-o", str(out_dir)],
@@ -347,7 +348,7 @@ def test_main_uses_exit_fn_with_run_cli_result(tmp_path: Path) -> None:
     """
     Given  a valid input/output configuration
     When   main() is called with an injected app_service and exit_fn callback
-    Then   exit_fn receives the return code from run_cli
+    Then   exit_fn receives the exit code of the run summary (1: a file failed)
     """
     from teachers_teammate.cli import main  # noqa: PLC0415
 
@@ -355,8 +356,8 @@ def test_main_uses_exit_fn_with_run_cli_result(tmp_path: Path) -> None:
     captured_codes: list[int] = []
 
     class _FakeAppService(_AppServiceStub):
-        def run_selected(self, config, /, **kwargs) -> int:
-            return 7
+        def run_selected(self, config, /, **kwargs) -> RunSummary:
+            return RunSummary(failed=("a.png",))
 
     main(
         app_service=_FakeAppService(),
@@ -364,7 +365,7 @@ def test_main_uses_exit_fn_with_run_cli_result(tmp_path: Path) -> None:
         exit_fn=lambda code: captured_codes.append(code),
     )
 
-    assert captured_codes == [7]
+    assert captured_codes == [1]
 
 
 @pytest.mark.use_case("Headless_CLI_Batch")
@@ -517,9 +518,9 @@ def test_run_cli_propagates_preprocessing_to_config(tmp_path: Path, monkeypatch)
     captured: list = []
 
     class _FakeAppService(_AppServiceStub):
-        def run_selected(self, config, /, **kwargs) -> int:
+        def run_selected(self, config, /, **kwargs) -> RunSummary:
             captured.append(config)
-            return 0
+            return RunSummary()
 
     monkeypatch.setattr(storage_module, "default_config_path", lambda: tmp_path / "ocr.toml")
     original_cwd = os.getcwd()
@@ -631,9 +632,9 @@ def test_run_cli_tells_where_documents_are_processed(tmp_path: Path, capsys) -> 
             calls.append("describe")
             return flow
 
-        def run_selected(self, config, /, **kwargs) -> int:
+        def run_selected(self, config, /, **kwargs) -> RunSummary:
             calls.append("run")
-            return 0
+            return RunSummary()
 
     rc = run_cli(argv=["-i", str(tmp_path), "--no-docx"], app_service=_FakeAppService())
 
@@ -664,7 +665,7 @@ def test_run_cli_refuses_online_text_recognition_before_anything_starts(
         def describe_data_flow(self, config) -> DataFlow:
             raise AssertionError("no data flow may be announced for a refused run")
 
-        def run_selected(self, config, /, **kwargs) -> int:
+        def run_selected(self, config, /, **kwargs) -> RunSummary:
             raise AssertionError("a refused run must not start")
 
     rc = run_cli(
@@ -690,9 +691,9 @@ class _TextFlagsAppService(_AppServiceStub):
     def output_refusal_for_run(self, config) -> str:
         return self._output_refusal
 
-    def run_selected(self, config, /, **kwargs) -> int:
+    def run_selected(self, config, /, **kwargs) -> RunSummary:
         self.configs.append(config)
-        return 0
+        return RunSummary()
 
 
 @pytest.mark.use_case("Headless_CLI_Batch")
@@ -883,9 +884,9 @@ def test_run_cli_passes_anonymizer_settings_from_the_config_file(tmp_path: Path)
         def resolve_config_path(self, explicit: str | None) -> Path | None:
             return Path(explicit) if explicit else None
 
-        def run_selected(self, config, /, **kwargs) -> int:
+        def run_selected(self, config, /, **kwargs) -> RunSummary:
             captured.append(config)
-            return 0
+            return RunSummary()
 
     rc = run_cli(
         argv=["--config", str(cfg_file), "-o", str(tmp_path / "out")],
@@ -896,3 +897,46 @@ def test_run_cli_passes_anonymizer_settings_from_the_config_file(tmp_path: Path)
     assert captured[0].anonymizer_primary_model == "de_core_news_sm"
     assert captured[0].anonymizer_secondary_model == "none"
     assert captured[0].anonymizer_patterns == [("EMAIL", "x@y")]
+
+
+@pytest.mark.use_case("Headless_CLI_Batch")
+def test_a_stopped_run_exits_with_zero(tmp_path: Path) -> None:
+    """
+    Given  a run that was stopped: one file unfinished, one never started, none failed
+    When   run_cli() is called
+    Then   the exit code is 0, a stop is not an error
+    """
+    from teachers_teammate.cli import run_cli  # noqa: PLC0415
+
+    class _FakeAppService(_AppServiceStub):
+        def run_selected(self, config, /, **kwargs) -> RunSummary:
+            return RunSummary(stopped=("a.png",), not_started=("b.png",))
+
+    rc = run_cli(argv=["-i", str(tmp_path), "--no-docx"], app_service=_FakeAppService())
+
+    assert rc == 0
+
+
+@pytest.mark.use_case("Headless_CLI_Batch")
+@pytest.mark.parametrize(
+    ("flags", "expected"),
+    [([], True), (["--allow-sleep"], False), (["--allow-sleep", "--keep-awake"], True)],
+)
+def test_the_keep_awake_flags_reach_the_config(tmp_path: Path, flags, expected) -> None:
+    """
+    Given  no flag, --allow-sleep, or both flags (the last one wins)
+    When   run_cli() is called
+    Then   the config the run gets has keep_awake set accordingly (on by default)
+    """
+    from teachers_teammate.cli import run_cli  # noqa: PLC0415
+
+    captured: list = []
+
+    class _FakeAppService(_AppServiceStub):
+        def run_selected(self, config, /, **kwargs) -> RunSummary:
+            captured.append(config)
+            return RunSummary()
+
+    run_cli(argv=["-i", str(tmp_path), "--no-docx", *flags], app_service=_FakeAppService())
+
+    assert captured[0].keep_awake is expected

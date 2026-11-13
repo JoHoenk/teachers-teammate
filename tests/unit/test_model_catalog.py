@@ -23,6 +23,7 @@ from teachers_teammate.domain.model_catalog import (
     PROFILE_SETTINGS,
     RECOMMENDED,
     RequestProfile,
+    best_model,
     DetectionReason,
     HardwareDetection,
     HardwareProfile,
@@ -144,13 +145,14 @@ def test_normalize_tag_leaves_tagged_names_unchanged() -> None:
         (DEFAULT_OCR_MODEL, "8gb", Suitability.BEST),
         (DEFAULT_OCR_MODEL, "16gb", Suitability.BEST),
         ("glm-ocr:q8_0", "cpu", Suitability.BEST),
-        ("qwen3:4b", "cpu", Suitability.BEST),
+        ("gemma4:e4b", "cpu", Suitability.BEST),
         ("gemma4:e4b", "8gb", Suitability.BEST),
         ("gemma4:12b", "16gb", Suitability.BEST),
         (DEFAULT_WRITING_MODEL, "8gb", Suitability.BEST),
         # GOOD: further entries of the RECOMMENDED list
         ("qwen3-vl:8b", "8gb", Suitability.GOOD),
         ("deepseek-ocr:latest", "8gb", Suitability.GOOD),
+        ("qwen3:4b", "cpu", Suitability.GOOD),
         ("qwen3.5:9b", "8gb", Suitability.GOOD),
         ("qwen3.5:9b", "16gb", Suitability.GOOD),
         # WORKS: catalogued and within the card, but not recommended
@@ -718,19 +720,23 @@ def test_the_card_budget_is_the_usable_share_of_the_nominal_card() -> None:
 @pytest.mark.use_case("Model_Recommendation_By_Hardware")
 def test_a_recommended_model_is_not_best_where_it_cannot_work() -> None:
     """
-    Given  the recommended model for computers without a card (4 GB) and 8 GB of main memory,
-           of which 8 GB are reserved for the system
+    Given  the recommended model for computers without a card (5 GB) and computers with 8, 12
+           and 16 GB of main memory, of which 8 GB are reserved for the system
     When   it is rated with the computer's memory known, and without it
-    Then   it is too large with the memory known (nothing is left; swapping does not count)
-           and keeps its recommendation when the memory is unknown (a remote server)
+    Then   it is too large where the memory beyond the reserve is under 5 GB (swapping does not
+           count), best from 16 GB, and keeps its recommendation when the memory is unknown (a
+           remote server)
     """
-    assert rate_model("qwen3:4b", "general", "cpu", system_memory_gb=8.0).suitability is (
+    assert rate_model("gemma4:e4b", "general", "cpu", system_memory_gb=8.0).suitability is (
         Suitability.TOO_LARGE
     )
-    assert rate_model("qwen3:4b", "general", "cpu", system_memory_gb=12.0).suitability is (
+    assert rate_model("gemma4:e4b", "general", "cpu", system_memory_gb=12.0).suitability is (
+        Suitability.TOO_LARGE
+    )
+    assert rate_model("gemma4:e4b", "general", "cpu", system_memory_gb=16.0).suitability is (
         Suitability.BEST
     )
-    assert rate_model("qwen3:4b", "general", "cpu").suitability is Suitability.BEST
+    assert rate_model("gemma4:e4b", "general", "cpu").suitability is Suitability.BEST
 
 
 @pytest.mark.use_case("Model_Recommendation_By_Hardware")
@@ -771,10 +777,10 @@ def test_a_model_of_which_little_fits_the_card_is_very_slow() -> None:
 def test_a_computer_without_a_card_runs_small_models_comfortably_and_others_very_slowly() -> None:
     """
     Given  a computer without a graphics card and 32 GB of main memory
-    When   a 4 GB model and a 9.5 GB model are rated
+    When   a 5 GB model and a 9.5 GB model are rated
     Then   the first works, the second is slow, very slowly (all of it runs on the processor)
     """
-    small = rate_model("qwen3:4b", "general", "cpu", system_memory_gb=32.0)
+    small = rate_model("gemma4:e4b", "general", "cpu", system_memory_gb=32.0)
     large = rate_model("gemma4:12b", "general", "cpu", system_memory_gb=32.0)
 
     assert small.suitability is Suitability.BEST  # also the recommendation
@@ -829,7 +835,7 @@ def test_a_small_card_decides_the_rating_even_though_the_profile_is_cpu() -> Non
     large = rate_model("qwen3.5:9b", "general", "cpu", system_memory_gb=16.0, card_gb=card)
 
     assert card == pytest.approx(5.1)
-    assert small.suitability is Suitability.WORKS
+    assert small.suitability is Suitability.BEST  # it fits the card entirely; also recommended
     assert (large.suitability, large.very_slow) == (Suitability.SLOW, False)
     assert ram_needed_gb(7.2, "cpu", card) == pytest.approx(2.1)
 
@@ -918,3 +924,34 @@ def test_the_recommended_temperatures_apply_to_ollama_only() -> None:
 
     assert request_profile("gemma4:e4b", "google").temperature == 0.2
     assert review_temperature("gemma4:e4b", "google") == 0.7
+
+
+@pytest.mark.use_case("Model_Recommendation_By_Hardware")
+def test_best_model_skips_a_model_too_large_for_the_main_memory() -> None:
+    """
+    Given  a computer without a graphics card and 12 GB of main memory (4 GB usable)
+    When   the BEST writing model is asked for, and again with 32 GB and with no figure
+    Then   it is qwen3:4b on the small computer, which suitability() marks BEST and gemma4:e4b
+           (5 GB) TOO_LARGE; with enough memory or without a figure it is gemma4:e4b
+    """
+    assert best_model("general", "cpu", system_memory_gb=12.0) == "qwen3:4b"
+    assert suitability("qwen3:4b", "general", "cpu", system_memory_gb=12.0) is Suitability.BEST
+    assert (
+        suitability("gemma4:e4b", "general", "cpu", system_memory_gb=12.0) is Suitability.TOO_LARGE
+    )
+    assert best_model("general", "cpu", system_memory_gb=32.0) == "gemma4:e4b"
+    assert best_model("general", "cpu") == "gemma4:e4b"
+
+
+@pytest.mark.use_case("Model_Request_Profile")
+def test_the_request_profile_asks_gpt_oss_for_a_level_not_the_flag() -> None:
+    """
+    Given  gpt-oss (which ignores think=False), a model of another family and an online provider
+    When   the request profile of each is read
+    Then   gpt-oss gets the lowest reasoning level and the others keep the flag off, so the cache
+           key, the evaluation tools and the request read one value
+    """
+    assert request_profile("gpt-oss:20b").think == "low"
+    assert request_profile("hf.co/unsloth/gpt-oss-20b-GGUF:UD-Q4_K_XL").think == "low"
+    assert request_profile("gemma4:e4b").think is False
+    assert request_profile("gpt-oss:20b", "openai").think is False

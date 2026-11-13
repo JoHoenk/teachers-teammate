@@ -210,6 +210,15 @@ class OllamaModelGuidance(QWidget):
 
     # ── internal ───────────────────────────────────────────────────────────
 
+    def _best(self, profile: HardwareProfile) -> str:
+        """Return the BEST model of this selector's task on the active computer."""
+        return best_model(
+            self._category,
+            profile,
+            system_memory_gb=self.active_system_memory_gb(),
+            card_gb=self.active_card_gb(),
+        )
+
     def _rate(self, tags: list[str]) -> None:
         """(Re-)rate *tags* for the active profile; cache hits only, no network."""
         ratings = self._service.rate_ollama_models(
@@ -302,7 +311,7 @@ class OllamaModelGuidance(QWidget):
                 profile,
                 task=self._category,
                 memory_gb=rating.memory_gb,
-                best_for_task=best_model(self._category, profile),
+                best_for_task=self._best(profile),
                 system_memory_gb=self.active_system_memory_gb(),
                 card_gb=self.active_card_gb(),
                 very_slow=rating.very_slow,
@@ -314,7 +323,7 @@ class OllamaModelGuidance(QWidget):
         if not self._models:
             self._best_btn.hide()
             return
-        best = best_model(self._category, self.active_profile())
+        best = self._best(self.active_profile())
         if normalize_tag(best) in self._installed:
             self._best_btn.setText("Use best choice")
             self._best_btn.setVisible(True)
@@ -325,7 +334,7 @@ class OllamaModelGuidance(QWidget):
             self._best_btn.hide()
 
     def _on_best_button(self) -> None:
-        best = best_model(self._category, self.active_profile())
+        best = self._best(self.active_profile())
         listed = self._installed.get(normalize_tag(best))
         if listed is not None:
             self._combo.setCurrentText(listed)

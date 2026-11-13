@@ -35,15 +35,18 @@ from tools.model_eval.model_fit import (
     fit_line,
     growth_figures,
     growth_per_8k,
+    is_cpu_only,
     latest,
     need_bytes,
     ollama_off_by,
     ram_drop_bytes,
+    ollama_card_share,
     record_line,
     report_lines,
     size_for_decision,
     spilled,
     tier_windows,
+    tokens_per_second,
     within,
 )
 
@@ -67,6 +70,8 @@ def _record(  # noqa: PLR0913  # one keyword per figure a test may vary
     digest: str = DIGEST,
     measured_at: str = "2026-11-13T19:04:11Z",
     ollama_version: str = "0.40.15",
+    answer_tokens: int = 170,
+    generation_seconds: float = 2.0,
 ) -> FitRecord:
     """Return a record as a measurement would store it, with the figures a test names."""
     on_card = size_gb if vram_gb is None else vram_gb
@@ -95,6 +100,8 @@ def _record(  # noqa: PLR0913  # one keyword per figure a test may vary
         tag=tag,
         digest=digest,
         num_ctx=num_ctx,
+        answer_tokens=answer_tokens,
+        generation_seconds=generation_seconds,
         options={"temperature": 1.0, "num_ctx": num_ctx},
         load_seconds=4.2,
         ollama=OllamaReading(
@@ -127,14 +134,14 @@ def test_a_record_survives_the_round_trip_through_json() -> None:
 @pytest.mark.use_case("Model_Eval_Model_Fit")
 def test_a_record_of_another_schema_is_refused() -> None:
     """
-    Given  a stored line written by a later version of the tool
+    Given  a stored line written by another version of the tool (one without the speed fields)
     When   it is read
     Then   the reader refuses it instead of guessing what its fields mean
     """
     data = _record().to_json()
-    data["schema"] = 2
+    data["schema"] = 1
 
-    with pytest.raises(FitRecordError, match="schema 2 is not 1"):
+    with pytest.raises(FitRecordError, match="schema 1 is not 2"):
         FitRecord.from_json(data)
 
 
@@ -666,6 +673,132 @@ def test_a_spilled_measurement_says_so() -> None:
 
 
 @pytest.mark.use_case("Model_Eval_Model_Fit")
+def test_the_speed_is_the_answer_tokens_over_the_generation_time() -> None:
+    """
+    Given  a request that wrote 170 tokens in 2 seconds, one whose answer was too short to say
+           anything, and one with no generation time
+    When   the speed of each is read
+    Then   the first is 85 tokens per second and the other two have none
+    """
+    assert tokens_per_second(_record(answer_tokens=170, generation_seconds=2.0)) == 85.0
+    assert tokens_per_second(_record(answer_tokens=5, generation_seconds=0.1)) is None
+    assert tokens_per_second(_record(answer_tokens=170, generation_seconds=0.0)) is None
+
+
+@pytest.mark.use_case("Model_Eval_Model_Fit")
+def test_a_record_without_the_speed_fields_is_refused() -> None:
+    """
+    Given  a line of the current schema that lacks ``answer_tokens``
+    When   it is read
+    Then   the reader names the missing field instead of storing a record without a speed
+    """
+    data = _record().to_json()
+    del data["answer_tokens"]
+
+    with pytest.raises(FitRecordError, match="answer_tokens"):
+        FitRecord.from_json(data)
+
+
+@pytest.mark.use_case("Model_Eval_Model_Fit")
+def test_the_report_shows_the_speed_and_ollamas_own_split() -> None:
+    """
+    Given  a model Ollama kept 7 of 8 GB of on the card, which wrote 85 tokens per second
+    When   its report block and its measurement line are printed
+    Then   both name the speed and the share Ollama itself put on the card, which differs from
+           the card's own reading (the card holds all it was given)
+    """
+    record = _record(size_gb=8.0, vram_gb=7.0, card_gb=7.0)
+
+    assert ollama_card_share(record) == pytest.approx(0.875)
+    assert "85.0 tokens/s" in record_line(record)
+    block = "\n".join(report_lines(TAG, [record]))
+    assert "85.0 tokens/s" in block
+    assert "Ollama puts  88 % on the card" in block
+
+
+def _cpu_record(**kwargs) -> FitRecord:
+    """Return a CPU-only measurement: the model asked to stay off the card, nothing put on it."""
+    record = _record(size_gb=4.0, vram_gb=0.0, card_gb=0.0, ram_drop_gb=4.2, **kwargs)
+    return FitRecord(**{**record.__dict__, "options": {"num_ctx": record.num_ctx, "num_gpu": 0}})
+
+
+@pytest.mark.use_case("Model_Eval_Model_Fit")
+def test_a_cpu_only_record_is_not_a_spill_and_has_no_card_share() -> None:
+    """
+    Given  a record made with ``num_gpu`` 0, whose model naturally sits wholly in main memory
+    When   it is read
+    Then   it counts as CPU only, not as a spill, and has no share on the card
+    """
+    record = _cpu_record()
+
+    assert is_cpu_only(record)
+    assert not spilled(record)
+    assert ollama_card_share(record) is None
+    assert not is_cpu_only(_record())
+
+
+@pytest.mark.use_case("Model_Eval_Model_Fit")
+def test_a_cpu_only_record_never_decides_a_size() -> None:
+    """
+    Given  a CPU-only record and a normal one of the same build and window, the CPU one with the
+           larger newer figure
+    When   the record to decide a size with is looked up
+    Then   the normal record is returned, because the CPU record lacks the card's share
+    """
+    normal = _record(server="rx9070xt", size_gb=8.0, card_gb=8.2)
+    cpu = _cpu_record(server="rx9070xt-cpu", measured_at="2027-01-01T00:00:00Z")
+
+    chosen = size_for_decision([normal, cpu], tag=TAG, digest=DIGEST, num_ctx=BASE_NUM_CTX)
+
+    assert chosen == normal
+    assert catalog_lines(TAG, [cpu]) == [f"{TAG}: no measurement"]
+
+
+@pytest.mark.use_case("Model_Eval_Model_Fit")
+def test_a_cpu_only_report_names_the_speed_and_a_card_that_was_used() -> None:
+    """
+    Given  a CPU-only record that wrote 85 tokens per second, and one whose card rose by 3 GB
+    When   they are reported
+    Then   the first line says CPU only with the speed, and the second warns that the card was
+           used, so the speed is not a processor figure
+    """
+    good = record_line(_cpu_record())
+    bad = record_line(
+        FitRecord(
+            **{**_record(size_gb=4.0, vram_gb=4.0, card_gb=3.0).__dict__, "options": {"num_gpu": 0}}
+        )
+    )
+
+    assert "CPU only" in good
+    assert "85.0 tokens/s" in good
+    assert "CARD USED" not in good
+    assert "CARD USED" in bad
+
+
+@pytest.mark.use_case("Model_Eval_Model_Fit")
+def test_a_cpu_only_measurement_does_not_count_as_a_size_measurement_in_the_store(
+    tmp_path: Path,
+) -> None:
+    """
+    Given  a store holding only a CPU-only measurement of a build at 8,192 tokens
+    When   it is asked whether that build was measured, normally and CPU only
+    Then   only the CPU-only question is answered yes, so each kind is measured on its own
+    """
+    store = FitStore(tmp_path / "sizes.jsonl")
+    store.append(_cpu_record())
+    key = {
+        "server": SERVER,
+        "tag": TAG,
+        "digest": DIGEST,
+        "num_ctx": BASE_NUM_CTX,
+        "ollama_version": "0.40.15",
+    }
+
+    assert store.has(**key, cpu_only=True)
+    assert not store.has(**key)
+
+
+@pytest.mark.use_case("Model_Eval_Model_Fit")
 def test_the_comparison_marks_a_size_that_disagrees() -> None:
     """
     Given  the same build measured on two machines, 12 % apart
@@ -693,6 +826,22 @@ def test_the_comparison_accepts_two_machines_that_agree() -> None:
     lines = compare_lines(TAG, first, second)
 
     assert any("ok" in line for line in lines)
+    assert not any("DISAGREE" in line for line in lines)
+
+
+@pytest.mark.use_case("Model_Eval_Model_Fit")
+def test_the_comparison_skips_a_window_where_one_machine_spilled() -> None:
+    """
+    Given  the same build on two machines, one of which spilled to main memory, 13 % apart
+    When   the two are put side by side
+    Then   the window is shown as not compared and is not marked as disagreeing
+    """
+    first = [_record(server="rx9070xt", size_gb=7.55, card_gb=7.55)]
+    second = [_record(server="rtx3070", size_gb=6.59, vram_gb=5.55, card_gb=6.55)]
+
+    lines = compare_lines(TAG, first, second)
+
+    assert any("not compared: spilled on rtx3070" in line for line in lines)
     assert not any("DISAGREE" in line for line in lines)
 
 

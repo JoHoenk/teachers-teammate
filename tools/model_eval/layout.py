@@ -10,6 +10,7 @@ called, which files belong to it, and what a machine file holds.  It must not im
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import cache
 import json
 from pathlib import Path
 from typing import Any
@@ -51,10 +52,27 @@ def date_of(iso: str) -> str:
     return iso.strip()[:10]
 
 
+OLLAMA = "ollama"
+"""The provider of every run the tools make today: a model on an Ollama server of ours."""
+
+
+@cache
+def provider_names() -> tuple[str, ...]:
+    """Return the providers a run may name: the ones the app itself can talk to.
+
+    Read from the app's provider modules, so a provider added there is a valid name here without
+    anyone editing this module.  Read once per process: the modules do not change during a run of
+    the tools, and validating a store asks once per run file.
+    """
+    from teachers_teammate.infrastructure.llm_factory import list_providers  # noqa: PLC0415
+
+    return tuple(list_providers())
+
+
 def run_id(  # noqa: PLR0913  # one part of the id per argument, as the scheme reads
     *,
     date: str,
-    machine: str,
+    machine: str | None,
     model: str,
     model_info: dict,
     mode: str,
@@ -62,13 +80,27 @@ def run_id(  # noqa: PLR0913  # one part of the id per argument, as the scheme r
     repeat: int,
     explainer: str | None = None,
     label: str | None = None,
+    provider: str = OLLAMA,
 ) -> str:
     """Return the id of a run, which is also its file name.
 
     ``<date>_<machine>_<model-slug>_<digest8>_<mode>[_<explainer>]_T<t>_r<n>``; a ``label``
     replaces the ``r<n>`` suffix when two runs of one configuration would otherwise collide.
+
+    A run of another provider than Ollama ran on no machine of ours, so the provider takes the
+    place of the machine (``2026-12-01_openai_<model>_unknown_review_T0.2_r1``); an Ollama run's
+    id is the one it always had.
+
+    Raises:
+        ValueError: if an Ollama run has no machine.
     """
-    parts = [date_of(date), machine, model_slug(model), digest8(model_info), mode]
+    if provider == OLLAMA:
+        if not machine:
+            raise ValueError("a run on Ollama names the machine it ran on")
+        where = machine
+    else:
+        where = provider
+    parts = [date_of(date), where, model_slug(model), digest8(model_info), mode]
     if explainer:
         parts.append(model_slug(explainer))
     parts.append(f"T{temperature:g}")

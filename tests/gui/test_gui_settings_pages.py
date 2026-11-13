@@ -761,7 +761,7 @@ def test_the_automatic_context_says_what_the_review_gets(qtbot) -> None:
     index = page._context_combo.findData("auto")
     qtbot.waitUntil(lambda: not page._context_row.isHidden(), timeout=5000)
     assert page._context_combo.itemText(index) == (
-        "Automatic (now: 8,192 tokens for the content review)"
+        "Automatic (now: 32,768 tokens for the content review)"
     )
 
 

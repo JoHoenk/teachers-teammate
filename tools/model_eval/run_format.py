@@ -41,6 +41,7 @@ HEADER_KEYS: tuple[str, ...] = (
     "run_id",
     "testset",
     "manifest_sha256",
+    "provider",
     "machine",
     "kind",
     "date",
@@ -192,6 +193,14 @@ def profile_items(profile: Mapping[str, Any] | None) -> tuple[tuple[str, object]
     return tuple(sorted((str(key), value) for key, value in (profile or {}).items()))
 
 
+def host_of(header: Mapping[str, Any]) -> str:
+    """Return where the run of *header* ran: its machine, else its provider, else ``""``.
+
+    Reads the dict as it is, so the index can show a run the validator has not judged.
+    """
+    return str(header.get("machine") or header.get("provider") or "")
+
+
 @dataclass(frozen=True)
 class RunHeader:
     """The facts of a run's header that a reader groups, selects and orders runs by, typed.
@@ -205,7 +214,11 @@ class RunHeader:
     testset: str
     manifest_sha256: str
     eval_version: int
+    provider: str
+    """Who ran the model: ``ollama`` for a model on an Ollama server of ours, else the name of
+    the provider module (see :func:`.layout.provider_names`)."""
     machine: str
+    """The machine an Ollama run ran on; ``""`` for a provider that ran on none of ours."""
     date: str
     model: str
     digest: str
@@ -216,6 +229,15 @@ class RunHeader:
     num_ctx: int
     repeat: int
     request_profile: tuple[tuple[str, object], ...]
+
+    @property
+    def host(self) -> str:
+        """Return where the run ran: its machine, or its provider when no machine of ours ran it.
+
+        The name the index shows and ``--machine`` takes, so a run listed under ``openai`` is
+        selected with ``--machine openai``.
+        """
+        return self.machine or self.provider
 
     @classmethod
     def from_dict(cls, header: Mapping[str, Any]) -> RunHeader:
@@ -231,7 +253,8 @@ class RunHeader:
             testset=str(header["testset"]),
             manifest_sha256=str(header["manifest_sha256"]),
             eval_version=int(header["eval_version"]),
-            machine=str(header["machine"]),
+            provider=str(header["provider"]),
+            machine="" if header["machine"] is None else str(header["machine"]),
             date=str(header.get("date", "")),
             model=str(header["model"]),
             digest=str((header.get("model_info") or {}).get("digest", "")),

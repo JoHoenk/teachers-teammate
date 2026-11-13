@@ -37,7 +37,8 @@ class Selection:
     temperature: float | None = None
     """The temperature of the runs; ``None`` takes each model's own recommended one."""
     machine: str | None = None
-    """The machine whose runs are read; ``None`` takes the newest run's."""
+    """The machine whose runs are read, or the provider of an online service (what the index shows
+    in its machine column); ``None`` takes the newest run's."""
     testset: str | None = None
     """The test set whose runs are read; ``None`` takes the newest run's."""
     digest: str | None = None
@@ -141,7 +142,7 @@ def _anchor(
         and run.meta.mode is wanted.mode
         and run.meta.temperature == temperature
         and (wanted.testset is None or run.meta.testset == wanted.testset)
-        and (wanted.machine is None or run.meta.machine == wanted.machine)
+        and (wanted.machine is None or run.meta.host == wanted.machine)
     ]
     if not matching:
         raise ValueError(
@@ -149,7 +150,7 @@ def _anchor(
             f"temperature {temperature:g}"
         )
     newest = max(matching, key=lambda run: run.meta.date)
-    return (wanted.testset or newest.meta.testset, wanted.machine or newest.meta.machine)
+    return (wanted.testset or newest.meta.testset, wanted.machine or newest.meta.host)
 
 
 def _narrow(
@@ -169,7 +170,7 @@ def _narrow(
         run
         for run in runs
         if str(run.header["testset"]) == testset
-        and str(run.header["machine"]) == machine
+        and run.meta.host == machine
         and int(run.header["eval_version"]) == version
         and str(run.header["mode"]) == wanted.mode.value
         and float(run.header["temperature"]) == temperature
@@ -255,7 +256,8 @@ def _groups(out: Path, runs: Iterable[run_format.StoredRun], model: str) -> list
     found = grouping.groups(members, read_manifest(pin))
     if len(found) != 1:
         raise ValueError(
-            f"{model!r}: the runs make {len(found)} groups; "
+            f"{model!r}: the runs make {len(found)} groups (they differ in the machine or "
+            "provider, the test set, the temperature or the request profile); "
             "give --machine, --testset or --temperature to choose one"
         )
     return found

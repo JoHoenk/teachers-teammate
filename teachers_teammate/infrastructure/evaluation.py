@@ -75,7 +75,9 @@ class NativeOllamaEvaluator(Evaluator):
         timeout: float = 120.0,
         temperature: float = 0.7,
         num_ctx: int = EVALUATION_NUM_CTX_CAP,
+        think: bool | str = False,
     ) -> None:
+        self._think = think
         self._model = model
         self._client = client
         self._prompt = prompt or DEFAULTS["evaluate_prompt"]
@@ -110,6 +112,7 @@ class NativeOllamaEvaluator(Evaluator):
             prompt=self._message(corrected_text, language, text_format),
             timeout=self._timeout,
             temperature=self._temperature,
+            think=self._think,
             fallback="",
             failure="Evaluation failed ({exc}).",
             num_ctx=self._num_ctx,

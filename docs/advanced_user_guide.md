@@ -47,8 +47,8 @@ Teacher's Teammate distinguishes three computer types ("hardware profiles"): a b
 
 | Model | Memory (running) | Download | cpu | 8 GB | 16 GB | Notes |
 |---|---|---|---|---|---|---|
-| `qwen3:4b` | ~4 GB | 2.5 GB | ★ best | works | works | Small model for computers without a graphics card |
-| `gemma4:e4b` | ~5 GB | 6.6 GB | too large | ★ best | works | Default. Fast, and fits an 8 GB graphics card entirely |
+| `qwen3:4b` | ~4 GB | 2.5 GB | good | works | works | Small model for computers without a graphics card; it thinks first, so a page takes about twice as long as with `gemma4:e4b` |
+| `gemma4:e4b` | ~5 GB | 6.6 GB | ★ best | ★ best | works | Default. Fast, fits an 8 GB graphics card entirely, and a page takes about 2 to 3 minutes without a graphics card (a computer with 16 GB of main memory or more) |
 | `gemma4:12b` | ~9.5 GB | 8 GB | too large | too large | ★ best | Best for 16 GB graphics cards; on an 8 GB card it runs partly on the processor, so slower |
 | `qwen3.5:9b` | ~7.2 GB | 6.6 GB | too large | good | good | Alternative from another model family; can also read scanned pages |
 | `mistral:latest` | ~5.5 GB | 4.4 GB | too large | works | works | General-purpose writing model. It does not reliably follow the review format. |

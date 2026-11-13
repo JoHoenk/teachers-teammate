@@ -79,6 +79,7 @@ def _header_dict(**overrides) -> dict:
         "testset": "gec-2026-12",
         "manifest_sha256": "a" * 64,
         "eval_version": 5,
+        "provider": "ollama",
         "machine": "server",
         "date": "2026-11-12T10:00:00+00:00",
         "model": "gemma4:e4b",
@@ -113,6 +114,19 @@ def test_the_typed_header_reads_the_fields_readers_group_runs_by():
     assert meta.temperature == 1.0
     assert meta.request_profile == (("compact_json", False), ("temperature", 1.0))
     assert meta.explainer is None
+    assert (meta.provider, meta.machine) == ("ollama", "server")
+
+
+def test_the_typed_header_of_an_online_run_has_no_machine():
+    """
+    Given  the header of a run of an online provider, whose machine is null
+    When   it is typed
+    Then   the provider is named and the machine is empty, so readers that group by machine need
+           no case for it
+    """
+    meta = run_format.RunHeader.from_dict(_header_dict(provider="openai", machine=None))
+
+    assert (meta.provider, meta.machine) == ("openai", "")
 
 
 def test_the_typed_header_refuses_a_header_without_a_field_readers_need():

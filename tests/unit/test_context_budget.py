@@ -177,8 +177,9 @@ def test_the_memory_at_a_context_window_grows_with_the_measured_rate() -> None:
     When   its memory need at 8192, 16384 and 32768 tokens is computed
     Then   the measured model grows by its rate per step, the unmeasured one not at all
     """
-    unmeasured = find_spec("gemma4:e4b")
-    assert unmeasured is not None
+    catalog_spec = find_spec("gemma4:e4b")
+    assert catalog_spec is not None
+    unmeasured = dataclasses.replace(catalog_spec, memory_gb=5.0, context_gb_per_8k=None)
     measured = dataclasses.replace(unmeasured, context_gb_per_8k=1.2)
 
     assert memory_at_context_gb(measured, 8192) == pytest.approx(5.0)

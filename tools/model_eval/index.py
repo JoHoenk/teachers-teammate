@@ -15,7 +15,7 @@ from . import testset as testset_module
 from .layout import INDEX_NAME, date_of, digest8, manifest_for, run_files
 from .performance import per_100_words
 from .redaction import sha256_text
-from .run_format import StoredItem, StoredRun, read_run
+from .run_format import StoredItem, StoredRun, host_of, read_run
 from .scoring import DECIDING_LANGUAGES, mean_f_beta, pooled
 
 # ── the index ────────────────────────────────────────────────────────────────
@@ -85,7 +85,7 @@ def summarise_run(
     return RunSummary(
         run_id=str(header.get("run_id", path.stem)),
         date=date_of(str(header.get("date", ""))),
-        machine=str(header.get("machine", "")),
+        machine=host_of(header),
         model=str(header.get("model", "")),
         digest=digest8(model_info),
         mode=str(header.get("mode", "")),

@@ -41,6 +41,7 @@ def header(  # noqa: PLR0913  # one keyword per part of the key a test may vary
     eval_version: int | None = None,
     digest: str = DIGEST,
     compact_json: bool = False,
+    provider: str = "ollama",
     num_ctx: int = 8192,
     explainer: str | None = None,
     run_id: str | None = None,
@@ -52,6 +53,7 @@ def header(  # noqa: PLR0913  # one keyword per part of the key a test may vary
         "run_id": run_id or f"{model.replace(':', '-')}-r{repeat}",
         "testset": testset_id,
         "manifest_sha256": "a" * 64,
+        "provider": provider,
         "machine": machine,
         "eval_version": (
             protocol.current_stamp().eval_version if eval_version is None else eval_version

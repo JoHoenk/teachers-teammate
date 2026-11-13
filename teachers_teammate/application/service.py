@@ -591,9 +591,18 @@ class ProcessingApplicationService:
         """Return the curated Ollama model catalog."""
         return self._recommendations.ollama_catalog()
 
-    def best_ollama_model(self, category: ModelCategory, profile: HardwareProfile) -> str:
-        """Return the BEST Ollama model tag for *category* on *profile*."""
-        return self._recommendations.best_ollama_model(category, profile)
+    def best_ollama_model(
+        self,
+        category: ModelCategory,
+        profile: HardwareProfile,
+        *,
+        system_memory_gb: float | None = None,
+        card_gb: float | None = None,
+    ) -> str:
+        """Return the BEST Ollama model tag for *category* on this computer."""
+        return self._recommendations.best_ollama_model(
+            category, profile, system_memory_gb=system_memory_gb, card_gb=card_gb
+        )
 
     def classify_ollama_models(
         self, tags: list[str], ollama_url: str, *, cached_only: bool = False
@@ -631,9 +640,17 @@ class ProcessingApplicationService:
             machine_factor=self._speeds.machine_factors(ollama_url).for_category(task),
         )
 
-    def first_run_model_settings(self, profile: HardwareProfile) -> dict[str, str]:
+    def first_run_model_settings(
+        self,
+        profile: HardwareProfile,
+        *,
+        system_memory_gb: float | None = None,
+        card_gb: float | None = None,
+    ) -> dict[str, str]:
         """Return the first-start model settings (BEST picks) for *profile*."""
-        return self._recommendations.first_run_model_settings(profile)
+        return self._recommendations.first_run_model_settings(
+            profile, system_memory_gb=system_memory_gb, card_gb=card_gb
+        )
 
     def on_ollama_models_changed(self, ollama_url: str) -> None:
         """Evict the model list and classifications of *ollama_url* (call after a pull)."""

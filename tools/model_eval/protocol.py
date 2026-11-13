@@ -160,7 +160,7 @@ class _CapturingClient(OllamaClient):
         *,
         images: list[str] | None = None,
         options: dict | None = None,
-        think: bool | None = False,
+        think: bool | str = False,
         timeout: float = 120.0,
         format: dict | str | None = None,  # pylint: disable=redefined-builtin
         system: str = "",

@@ -325,6 +325,11 @@ class Config:
         return self.correction_profile.temperature
 
     @property
+    def evaluate_think(self) -> bool | str:
+        """Return how the content review asks a reasoning model to think (see ``RequestProfile``)."""
+        return request_profile(self.effective_evaluate_model, self.evaluate_provider).think
+
+    @property
     def evaluate_temperature(self) -> float:
         """Return the temperature the content review is sent at."""
         return review_temperature(self.effective_evaluate_model, self.evaluate_provider)

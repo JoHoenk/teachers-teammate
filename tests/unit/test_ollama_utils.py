@@ -651,6 +651,28 @@ def test_chat_forwards_think_false_by_default(monkeypatch) -> None:
     assert mock_ollama.Client.return_value.chat.call_args.kwargs.get("think") is False
 
 
+@pytest.mark.parametrize("model", ["gpt-oss:20b", "gemma4:e4b"])
+def test_the_client_leaves_the_think_value_to_the_caller(monkeypatch, model: str) -> None:
+    """
+    Given  a model of the family that ignores think=False (gpt-oss) and one that does not
+    When   OllamaClient.chat() is called with the default think, and with the level
+           the request profile names
+    Then   the default stays False for both and the level reaches the server unchanged: the
+           request profile decides the level, not the transport
+    """
+    mock_ollama = _make_chat_mock_ollama(["ok"])
+    chunks = list(mock_ollama.Client.return_value.chat.return_value)
+    mock_ollama.Client.return_value.chat.side_effect = lambda **_kwargs: iter(chunks)
+    monkeypatch.setitem(sys.modules, "ollama", mock_ollama)
+    client = OllamaClient("http://127.0.0.1:11434")
+
+    client.chat(model, "hi")
+    client.chat(model, "hi", think="low")
+
+    calls = mock_ollama.Client.return_value.chat.call_args_list
+    assert [call.kwargs.get("think") for call in calls] == [False, "low"]
+
+
 def test_chat_retries_without_think_on_type_error(monkeypatch) -> None:
     """
     Given  an older ollama client whose chat() rejects the think kwarg with TypeError

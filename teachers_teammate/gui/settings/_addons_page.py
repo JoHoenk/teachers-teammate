@@ -552,6 +552,15 @@ class AddonsPage(SettingsPageBase):
         setting = self._hardware_selector.setting()
         return cast(HardwareProfile, setting if setting != "auto" else "8gb")
 
+    def _best_model(self, category: ModelCategory, profile: HardwareProfile) -> str:
+        """Return the BEST model of *category* on the active computer."""
+        return best_model(
+            category,
+            profile,
+            system_memory_gb=self._active_system_memory_gb(),
+            card_gb=self._active_card_gb(),
+        )
+
     def _active_system_memory_gb(self) -> float | None:
         """Return the computer's memory in GB when known (it rates models too big for the card)."""
         detection = self._hardware_selector.resolved()
@@ -611,7 +620,7 @@ class AddonsPage(SettingsPageBase):
         for category, downloaded in self._installed_by_category.items():
             if downloaded:
                 continue
-            tag = best_model(category, profile)
+            tag = self._best_model(category, profile)
             item = self._model_items.get(tag)
             if item is None or tag in self._user_touched:
                 continue
@@ -723,7 +732,7 @@ class AddonsPage(SettingsPageBase):
         """Tick the BEST reading and writing models that are not downloaded yet."""
         profile = self._active_profile()
         found = 0
-        for tag in (best_model("ocr", profile), best_model("general", profile)):
+        for tag in (self._best_model("ocr", profile), self._best_model("general", profile)):
             item = self._model_items.get(tag)
             if item is None or not (item.flags() & Qt.ItemFlag.ItemIsEnabled):
                 continue  # not listed, or already downloaded

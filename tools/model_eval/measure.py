@@ -40,6 +40,7 @@ from teachers_teammate.infrastructure.ollama_utils import OllamaClient
 
 from . import protocol
 from .answer_mode import AnswerMode
+from .layout import OLLAMA
 from .performance import LoadedModel, Performance, RequestStats
 from .ports import ProbePort, RequestRecorder
 
@@ -100,7 +101,7 @@ class RecordingClient(OllamaClient):
         *,
         images: list[str] | None = None,
         options: dict | None = None,
-        think: bool | None = False,
+        think: bool | str = False,
         timeout: float = 120.0,
         format: dict | str | None = None,  # pylint: disable=redefined-builtin
         system: str = "",
@@ -469,10 +470,11 @@ def run_identity(  # noqa: PLR0913  # a record of many independent facts
     repeat: int,
     isolate: bool,
     sampler_vendor: str,
-    machine: str,
+    machine: str | None,
     testset: str,
     testset_sha256: str,
     texts: int,
+    provider: str = OLLAMA,
 ) -> dict:
     """Return the facts every session of one run shares: what it was run on and how.
 
@@ -497,8 +499,9 @@ def run_identity(  # noqa: PLR0913  # a record of many independent facts
             languages, mode=mode, compact_json=bool(request_profile.get("compact_json"))
         ),
         "answer_format_version": ANSWER_FORMAT_VERSION,
+        "provider": provider,
         "machine": machine,
-        "ollama_version": probe.version(),
+        "ollama_version": probe.version() if provider == OLLAMA else None,
         "model": model,
         "model_info": probe.model_info(model),
         "mode": mode,

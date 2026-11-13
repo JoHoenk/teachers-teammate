@@ -433,3 +433,47 @@ def test_an_eval_version_that_is_not_an_integer_is_reported_not_raised(tmp_path,
     problems = validation.validate_run(written.path)
 
     assert any("eval_version is not a positive integer" in problem for problem in problems)
+
+
+def test_format_mode_refuses_a_provider_the_app_cannot_talk_to(tmp_path):
+    """
+    Given  a run file whose header names a provider no module of the app implements
+    When   it is validated in format mode
+    Then   the provider is refused, with the names that are allowed
+    """
+    written = one(workspace(tmp_path))
+    rewrite(written.path, lambda header, items: header.update(provider="olama"))
+
+    problems = validation.validate_run(written.path)
+
+    assert any("provider is 'olama', not one of" in p and "ollama" in p for p in problems)
+
+
+def test_format_mode_wants_a_machine_and_a_server_version_for_a_run_on_ollama(tmp_path):
+    """
+    Given  a run on Ollama whose header has neither a machine nor a server version
+    When   it is validated in format mode
+    Then   both are refused, because a run on Ollama cannot be compared without them
+    """
+    written = one(workspace(tmp_path))
+    rewrite(written.path, lambda header, items: header.update(machine=None, ollama_version=None))
+
+    problems = validation.validate_run(written.path)
+
+    assert any("machine is not a non-empty string" in p for p in problems)
+    assert any("ollama_version is not a non-empty string" in p for p in problems)
+
+
+def test_format_mode_wants_no_machine_for_a_run_of_an_online_provider(tmp_path):
+    """
+    Given  a run of an online provider whose header still names a machine and a server version
+    When   it is validated in format mode
+    Then   both are refused, because the run ran on none of ours and a name would pass as one
+    """
+    written = one(workspace(tmp_path))
+    rewrite(written.path, lambda header, items: header.update(provider="openai"))
+
+    problems = validation.validate_run(written.path)
+
+    assert any("machine is not null" in p for p in problems)
+    assert any("ollama_version is not null" in p for p in problems)

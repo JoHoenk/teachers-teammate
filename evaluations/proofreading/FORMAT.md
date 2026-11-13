@@ -192,7 +192,8 @@ id, and the header repeats it; a renamed file is refused.
 ```
 
 * `date` — `YYYY-MM-DD` of the run;
-* `machine` — the machine id;
+* `machine` — the machine id; for a run of a provider other than `ollama`, which ran on no machine
+  of ours, the provider name stands here (`2026-12-01_openai_<model-slug>_unknown_review_T0.2_r1`);
 * `model-slug` — the tag in lower case with `/` and `:` replaced by `-` and a leading `hf.co/`
   removed (`gemma4:12b` → `gemma4-12b`);
 * `digest8` — the first eight hex digits of the model digest, `unknown` when the server gave none;
@@ -211,11 +212,12 @@ a run id that already exists.
 | `schema`, `type` | Format version `1`, and `"run"`. |
 | `run_id` | The id above; equal to the file name. |
 | `testset`, `manifest_sha256` | Which items, pinned by the hash of `manifest.json`. |
-| `machine` | The machine id; the server URL is not stored. |
+| `provider` | Who ran the model: `ollama` (a server of ours) or the name of one of the app's provider modules (`openai`, `anthropic`, …).  Where the model ran — this computer, our server, an online service — is not stored: it follows from the provider and is derived when it is shown.  A reader that groups runs groups by it, so one model name served by two providers never pools. |
+| `machine` | The machine id; the server URL is not stored.  A run on `ollama` names one with a file in `machines/`; a run of another provider has `null`. |
 | `kind` | `quality` (other things were allowed on the server) or `speed` (isolated, sampled). |
 | `date`, `tool_revision` | When, and at which commit. The revision is a pointer for a human reader; nothing checks it. |
 | `eval_version`, `fingerprint` | The protocol the run measured and the SHA-256 of its request side, both copied from `protocol.json` as they were at run time. |
-| `ollama_version`, `model`, `model_info` | The version, the tag, and the tag's `digest`, `quantization`, `parameter_size`, `family`. |
+| `ollama_version`, `model`, `model_info` | The version (`null` for a provider other than `ollama`), the tag, and the tag's `digest`, `quantization`, `parameter_size`, `family`. |
 | `mode`, `explainer`, `input` | `review`, `text` or `two-step`; the explaining model; `model` or `reference`. |
 | `temperature`, `num_ctx`, `seed`, `repeat` | The request. |
 | `request_profile` | The model's request profile as the app resolved it: `compact_json` (the
@@ -382,3 +384,4 @@ does; an item whose edit is stored as `{h, n}` cannot be rebuilt and stays at le
 | 1 | 2026-11-11, before the first committed run. `marks/<run-id>.json`, the teacher's marks of a
   run's explanations, and its check in `validate`. No version bump: it is a file of its own. |
 | 1 | 2026-11-11, before the first committed run. `scores` carries the GLEU counts of the model and of the source, the recall by half, and left alone and coverage for an item with `sentence_spans`. No version bump: the keys are numbers under a field the format already allows. |
+| 1 | 2026-11-13, before the first committed run. The header's `provider`; `machine` and `ollama_version` are `null` for a provider other than `ollama`, and the run id names the provider where the machine would be. No version bump: no run file was committed yet. |

@@ -94,6 +94,7 @@ class _ScriptedChat:
         *,
         system: str = "",
         options: dict | None = None,
+        think: bool | str = False,
         timeout: float = 120.0,
         format: dict | str | None = None,  # pylint: disable=redefined-builtin
         total_timeout: float | None = None,
@@ -344,11 +345,13 @@ class _RecordingClient:
         prompt: str,
         *,
         options: dict | None = None,
+        think: bool | str = False,
         timeout: float = 120.0,
         format: dict | str | None = None,  # pylint: disable=redefined-builtin
         system: str = "",
     ) -> str:
         """Record the request and return the scripted answer."""
+        del think
         self.requests.append(
             {"model": model, "prompt": prompt, "system": system, "options": options}
         )

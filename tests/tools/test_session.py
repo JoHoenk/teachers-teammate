@@ -17,6 +17,7 @@ _IDENTITY = {
     "fingerprint": "a" * 64,
     "instructions_sha256": "c" * 64,
     "answer_format_version": 3,
+    "provider": "ollama",
     "machine": "rx9070xt",
     "ollama_version": "0.40.15",
     "model": "granite4.1:3b",
@@ -82,6 +83,18 @@ def test_a_changed_digest_seed_version_or_fingerprint_is_named() -> None:
 
     for key in ("model_info.digest:", "seed:", "eval_version:", "fingerprint:"):
         assert any(line.startswith(key) for line in conflicts), key
+
+
+@pytest.mark.use_case("Model_Eval_Measure")
+def test_a_changed_provider_is_named() -> None:
+    """
+    Given  a session and a second one of another provider
+    When   they are compared
+    Then   the provider is named, so a run is never resumed into another service
+    """
+    conflicts = session.resume_conflicts(_header(), _header(provider="openai"))
+
+    assert any(line.startswith("provider:") for line in conflicts)
 
 
 @pytest.mark.use_case("Model_Eval_Measure")

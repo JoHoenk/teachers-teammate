@@ -778,7 +778,7 @@ class OllamaClient:
         *,
         images: list[str] | None = None,
         options: dict | None = None,
-        think: bool | None = False,
+        think: bool | str | None = False,
         timeout: float = 120.0,
         format: dict | str | None = None,  # pylint: disable=redefined-builtin  # the ollama API's name
         system: str = "",
@@ -839,7 +839,7 @@ class OllamaClient:
         *,
         images: list[str] | None = None,
         options: dict | None = None,
-        think: bool | None = False,
+        think: bool | str | None = False,
         timeout: float = 120.0,
         format: dict | str | None = None,  # pylint: disable=redefined-builtin  # the ollama API's name
         system: str = "",
@@ -856,7 +856,9 @@ class OllamaClient:
             images:  Optional list of base64-encoded images (for vision models).
             options: Optional Ollama options dict (e.g. ``{"temperature": 0}``).
             think:   Whether to let reasoning models emit ``<think>`` blocks.
-                     Defaults to ``False`` to keep reasoning out of OCR output.
+                     Defaults to ``False`` to keep reasoning out of OCR output.  A family that
+                     takes a reasoning level instead (``gpt-oss``) needs that level, which the
+                     caller reads from ``RequestProfile.think``.
                      Forwarded to Ollama; ignored (with a no-``think`` retry) on
                      older clients or models that don't support it.
             timeout: Seconds to wait for the first token of the answer.
@@ -884,7 +886,7 @@ class OllamaClient:
 
         structured: dict = {} if format is None else {"format": format}
 
-        def open_stream(think_flag: bool | None) -> Iterator:
+        def open_stream(think_flag: bool | str | None) -> Iterator:
             kwargs: dict = {
                 "model": model,
                 "messages": messages,

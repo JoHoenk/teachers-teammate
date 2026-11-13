@@ -186,6 +186,7 @@ def compute_correction_config_hash(config: Config, windows: RunWindows | None = 
         review_format,
         text_format,
         format(profile.temperature, "g"),
+        str(profile.think),
         # Review settings change the answer itself, so they belong in the key.
         config.correction_level,
         config.explanation_language,
@@ -212,6 +213,7 @@ def compute_eval_config_hash(config: Config, windows: RunWindows | None = None) 
         config.language,
         config.evaluate_prompt,
         format(config.evaluate_temperature, "g"),
+        str(config.evaluate_think),
         *_evaluation_window_fingerprint(config, windows),
         *_anonymization_fingerprint(config),
     )

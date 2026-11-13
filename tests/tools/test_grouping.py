@@ -50,6 +50,7 @@ def test_a_run_of_another_test_set_is_refused():
         {"num_ctx": 4096},
         {"digest": fixtures.OTHER_DIGEST},
         {"compact_json": True},
+        {"provider": "openai"},
         {"explainer": fixtures.OTHER},
     ],
 )

@@ -30,13 +30,29 @@ from pathlib import Path
 from typing import Any
 
 from teachers_teammate.domain.context_budget import BASE_NUM_CTX, CONTEXT_STEPS
-from teachers_teammate.domain.model_catalog import FULL_SPEED_SHARE, card_budget_gb
+from teachers_teammate.domain.model_catalog import (
+    FULL_SPEED_SHARE,
+    card_budget_gb,
+    card_share,
+    request_profile,
+)
 
 GB = 1e9
 """Ollama reports bytes; the catalog and the docs speak of GB (10^9), as the download sizes do."""
 
-SCHEMA = 1
-"""The version of the record format; a record of another version is refused, not guessed at."""
+SCHEMA = 2
+"""The version of the record format; a record of another version is refused, not guessed at.
+
+Version 2 added the speed of the request (``answer_tokens`` over ``generation_seconds``)."""
+
+CPU_ONLY_OPTIONS: dict[str, Any] = {"num_gpu": 0}
+"""The Ollama option that keeps the whole model on the processor: a CPU-only measurement."""
+
+CARD_USED_TOLERANCE_BYTES = 300_000_000
+"""A CPU-only run that raises the card's use by more than this did not stay off the card."""
+
+MIN_SPEED_TOKENS = 20
+"""An answer shorter than this says nothing about how fast the model writes."""
 
 MEMORY_TOLERANCE = 0.10
 """How far ``size@8k`` may be from the catalog's ``memory_gb`` before the report flags it."""
@@ -53,8 +69,17 @@ DEFAULT_STORE = Path("evaluations/model-fit/sizes.jsonl")
 DEFAULT_LIMITS = ("8gb", "16gb")
 """The tiers a report shows unless other limits are named."""
 
-PROMPT = "Schreibe den folgenden Satz ab: Der Hund läuft schnell nach Hause."
-"""The one short request per step: it loads the model and nothing else."""
+PROMPT = (
+    "Schreibe den folgenden Text unverändert ab.\n\n"
+    "Am Montagmorgen packte Lena ihre Tasche und ging zur Schule. Unterwegs traf sie ihren "
+    "Freund Paul, der ihr von seinem Wochenende erzählte. Sie hatten zusammen ein Fußballspiel "
+    "gesehen, und Paul war immer noch begeistert davon. In der ersten Stunde schrieb die Klasse "
+    "einen Test über die Verben, und danach las die Lehrerin eine kurze Geschichte vor. Am "
+    "Nachmittag half Lena ihrer Mutter im Garten, und am Abend schrieb sie ihrer Oma einen "
+    "langen Brief über die ganze Woche."
+)
+"""The one request per step: it loads the model, and its answer (about 170 tokens, a copy of the
+text) is long enough to read the speed of the model from."""
 
 
 class FitRecordError(ValueError):
@@ -116,6 +141,12 @@ class FitRecord:
     tag: str
     digest: str
     num_ctx: int
+    answer_tokens: int
+    """How many tokens the request's answer had (Ollama's ``eval_count``)."""
+
+    generation_seconds: float
+    """How long the model took to write them (Ollama's ``eval_duration``), load excluded."""
+
     options: dict[str, Any] = field(default_factory=dict)
     load_seconds: float = 0.0
     ollama: OllamaReading | None = None
@@ -134,6 +165,8 @@ class FitRecord:
             "tag": self.tag,
             "digest": self.digest,
             "num_ctx": self.num_ctx,
+            "answer_tokens": self.answer_tokens,
+            "generation_seconds": self.generation_seconds,
             "options": dict(self.options),
             "load_seconds": self.load_seconds,
             "ollama": None if self.ollama is None else _ollama_json(self.ollama),
@@ -162,6 +195,8 @@ class FitRecord:
                 tag=str(data["tag"]),
                 digest=str(data["digest"]),
                 num_ctx=int(data["num_ctx"]),
+                answer_tokens=int(data["answer_tokens"]),
+                generation_seconds=float(data["generation_seconds"]),
                 options=dict(data.get("options") or {}),
                 load_seconds=float(data.get("load_seconds") or 0.0),
                 ollama=_ollama_from(data.get("ollama")),
@@ -256,12 +291,23 @@ def ram_drop_bytes(record: FitRecord) -> int | None:
     return max(0, record.ram.idle_available_bytes - record.ram.min_available_bytes)
 
 
+def is_cpu_only(record: FitRecord) -> bool:
+    """Return whether the request kept the model off the card (``num_gpu`` 0), to read its speed.
+
+    Such a record says how fast the processor runs the model.  It is no size measurement: the
+    card's share is missing from the need, so the size lookups never use it.
+    """
+    return record.options.get("num_gpu") == 0
+
+
 def spilled(record: FitRecord) -> bool:
     """Return whether the model did not fit the card, so its need is only a lower bound.
 
     Two signs: Ollama itself reports part of the model in main memory, or the card's peak sits at
     its total, which means something had to go elsewhere.
     """
+    if is_cpu_only(record):
+        return False
     if record.ollama is not None and record.ollama.size_vram_bytes < record.ollama.size_bytes:
         return True
     return (
@@ -281,6 +327,24 @@ def need_bytes(record: FitRecord) -> int:
     size = record.ollama.size_bytes if record.ollama is not None else 0
     increase = card_increase_bytes(record)
     return size if increase is None else max(size, increase)
+
+
+def tokens_per_second(record: FitRecord) -> float | None:
+    """Return how fast the model wrote its answer, or ``None`` when the answer was too short."""
+    if record.answer_tokens < MIN_SPEED_TOKENS or record.generation_seconds <= 0:
+        return None
+    return record.answer_tokens / record.generation_seconds
+
+
+def ollama_card_share(record: FitRecord) -> float | None:
+    """Return the share of the model Ollama itself put on the card (what sets the speed).
+
+    This is Ollama's split between card and processor, not a reading of the card: it is the
+    figure the app's full-speed rule is about.  ``None`` without an Ollama reading.
+    """
+    if is_cpu_only(record) or record.ollama is None or record.ollama.size_bytes <= 0:
+        return None
+    return card_share(record.ollama.size_bytes, record.ollama.size_vram_bytes)
 
 
 def on_card_share(record: FitRecord) -> float | None:
@@ -337,10 +401,15 @@ class FitStore:
         digest: str,
         num_ctx: int,
         ollama_version: str,
+        cpu_only: bool = False,
     ) -> bool:
-        """Return whether this build was already measured at this window on this server."""
+        """Return whether this build was already measured at this window on this server.
+
+        A CPU-only measurement and a normal one are different measurements of the same build.
+        """
         return any(
-            record.server == server
+            is_cpu_only(record) == cpu_only
+            and record.server == server
             and record.tag == tag
             and record.digest == digest
             and record.num_ctx == num_ctx
@@ -355,9 +424,14 @@ class FitStore:
 def latest(
     records: Iterable[FitRecord], *, tag: str, digest: str, num_ctx: int
 ) -> dict[str, FitRecord]:
-    """Return the newest record per server for one build at one window."""
+    """Return the newest record per server for one build at one window.
+
+    CPU-only records are left out: they have no card share, so their size is no fit figure.
+    """
     newest: dict[str, FitRecord] = {}
     for record in records:
+        if is_cpu_only(record):
+            continue
         if record.tag != tag or record.digest != digest or record.num_ctx != num_ctx:
             continue
         known = newest.get(record.server)
@@ -584,8 +658,34 @@ def tier_windows(records: Sequence[FitRecord], limits: Sequence[FitLimit]) -> di
 # ── printing ─────────────────────────────────────────────────────────────────
 
 
+def _cpu_parts(record: FitRecord) -> list[str]:
+    """Return the report pieces of a CPU-only measurement: the speed, the memory, a warning."""
+    size = record.ollama.size_bytes / GB if record.ollama is not None else 0.0
+    speed = tokens_per_second(record)
+    parts = [
+        "CPU only",
+        "speed n/a" if speed is None else f"{speed:5.1f} tokens/s",
+        f"{record.answer_tokens} answer tokens",
+        f"Ollama {size:6.2f} GB",
+    ]
+    drop = ram_drop_bytes(record)
+    if drop is not None:
+        parts.append(f"main memory -{drop / GB:.2f} GB")
+    increase = card_increase_bytes(record)
+    if increase is not None and increase > CARD_USED_TOLERANCE_BYTES:
+        parts.append(f"CARD USED +{increase / GB:.2f} GB: num_gpu 0 did not keep it off the card")
+    return parts
+
+
+def _cpu_line(label: str, record: FitRecord) -> str:
+    """Return the line of a CPU-only measurement: *label*, then its report pieces."""
+    return "  ".join([label, *_cpu_parts(record)])
+
+
 def record_line(record: FitRecord) -> str:
     """Return the one line that reports a measurement just made."""
+    if is_cpu_only(record):
+        return _cpu_line(f"{record.tag} at {record.num_ctx:>6,} tokens:", record)
     need = need_bytes(record) / GB
     size = record.ollama.size_bytes / GB if record.ollama is not None else 0.0
     increase = card_increase_bytes(record)
@@ -603,10 +703,22 @@ def record_line(record: FitRecord) -> str:
         share = on_card_share(record)
         if share is not None:
             parts.append(f"{share * 100:3.0f} % on the card")
+    parts.extend(_speed_parts(record))
     parts.append(f"load {record.load_seconds:.1f} s")
     if spilled(record):
         parts.append("SPILLED")
     return "  ".join(parts)
+
+
+def _speed_parts(record: FitRecord) -> list[str]:
+    """Return the report pieces for Ollama's split and the speed of one measurement."""
+    parts: list[str] = []
+    split = ollama_card_share(record)
+    if split is not None:
+        parts.append(f"Ollama puts {split * 100:3.0f} % on the card")
+    speed = tokens_per_second(record)
+    parts.append("speed n/a" if speed is None else f"{speed:5.1f} tokens/s")
+    return parts
 
 
 def report_lines(
@@ -621,6 +733,10 @@ def report_lines(
     if not records:
         return [f"{tag}: no measurement"]
     server = records[0].server
+    if all(is_cpu_only(record) for record in records):
+        return [f"{tag} on {server}:"] + [
+            _cpu_line(f"  {record.num_ctx:>6,} tokens:", record) for record in records
+        ]
     lines = [f"{tag} on {server}:"]
     for record in records:
         need = need_bytes(record) / GB
@@ -638,6 +754,7 @@ def report_lines(
             parts.append(f"{off_by * 100:5.0f} % apart")
         if share is not None:
             parts.append(f"{share * 100:3.0f} % on the card")
+        parts.extend(_speed_parts(record))
         if drop is not None:
             parts.append(f"main memory -{drop / GB:.2f} GB")
         if spilled(record):
@@ -662,7 +779,9 @@ def compare_lines(tag: str, first: Sequence[FitRecord], second: Sequence[FitReco
     """Return the block that puts two servers' measurements of one model side by side.
 
     The agreement rule is the one the catalog's cross-check uses: the need at 8192 tokens within
-    :data:`MEMORY_TOLERANCE`, the growth within 20 % or 0.1 GB.
+    :data:`MEMORY_TOLERANCE`, the growth within 20 % or 0.1 GB.  A window where either machine
+    spilled is shown but not compared: part of the model sat in main memory there, so the need is
+    a lower bound and a gap says nothing about the two backends.
     """
     first, second = current_build(first), current_build(second)
     left = {record.num_ctx: record for record in first}
@@ -670,12 +789,27 @@ def compare_lines(tag: str, first: Sequence[FitRecord], second: Sequence[FitReco
     left_server = first[0].server if first else "?"
     right_server = second[0].server if second else "?"
     lines = [f"{tag}: {left_server} vs {right_server}"]
+    if any(is_cpu_only(record) for record in (*first, *second)):
+        for num_ctx in sorted(set(left) & set(right)):
+            speeds = [tokens_per_second(left[num_ctx]), tokens_per_second(right[num_ctx])]
+            shown = ["n/a" if speed is None else f"{speed:5.1f}" for speed in speeds]
+            lines.append(f"  {num_ctx:>6,} tokens: {shown[0]} vs {shown[1]} tokens/s")
+        return lines
     for num_ctx in sorted(set(left) | set(right)):
         one, other = left.get(num_ctx), right.get(num_ctx)
         if one is None or other is None:
             lines.append(f"  {num_ctx:>6,} tokens: measured on one server only")
             continue
         one_need, other_need = need_bytes(one) / GB, need_bytes(other) / GB
+        spilled_on = [
+            record.server for record in (one, other) if spilled(record)
+        ]  # a spilled step's need is only a lower bound: comparing it would report a false split
+        if spilled_on:
+            lines.append(
+                f"  {num_ctx:>6,} tokens: {one_need:6.2f} GB vs {other_need:6.2f} GB "
+                f"(not compared: spilled on {' and '.join(spilled_on)}, the need is a lower bound)"
+            )
+            continue
         off_by = abs(one_need - other_need) / max(one_need, other_need, 1e-9)
         mark = "ok" if off_by <= MEMORY_TOLERANCE else "DISAGREE"
         lines.append(
@@ -702,6 +836,7 @@ def catalog_lines(
     *records* may hold the measurements of more than one server: two backends that disagree give
     the larger figure, because the model has to fit on the machine that needs more.
     """
+    records = [record for record in records if not is_cpu_only(record)]
     if not records:
         return [f"{tag}: no measurement"]
     grouped: dict[str, list[FitRecord]] = {}
@@ -797,6 +932,7 @@ def measure_tag(  # noqa: PLR0913  # one keyword per thing a measurement needs
     again: bool = False,
     timeout: float = 600.0,
     clock: Callable[[], datetime] | None = None,
+    cpu_only: bool = False,
 ) -> tuple[FitRecord, ...]:
     """Measure *tag* at every window of *steps* and append what is new to *store*.
 
@@ -805,6 +941,8 @@ def measure_tag(  # noqa: PLR0913  # one keyword per thing a measurement needs
     window measured is the window the app would use.
 
     Returns the records this call made.  A step that is already stored is skipped, unless *again*.
+    With *cpu_only* the request carries ``num_gpu`` 0, so the model runs on the processor alone
+    and the record says how fast that is; the card's reading then shows that it stayed unused.
 
     Raises:
         FitMeasureError: the request failed, so this model cannot be measured further.
@@ -824,9 +962,18 @@ def measure_tag(  # noqa: PLR0913  # one keyword per thing a measurement needs
     made: list[FitRecord] = []
     for num_ctx in steps:
         if not again and store.has(
-            server=server, tag=tag, digest=digest, num_ctx=num_ctx, ollama_version=version
+            server=server,
+            tag=tag,
+            digest=digest,
+            num_ctx=num_ctx,
+            ollama_version=version,
+            cpu_only=cpu_only,
         ):
             continue
+        options = {
+            **proofreading_options(temperature, num_ctx),
+            **(CPU_ONLY_OPTIONS if cpu_only else {}),
+        }
         probe.unload_all()
         idle = agent.settle() if agent is not None else None
         window = agent.open_window() if agent is not None else None
@@ -837,7 +984,8 @@ def measure_tag(  # noqa: PLR0913  # one keyword per thing a measurement needs
                 _answer, stats = client.chat_with_stats(
                     tag,
                     PROMPT,
-                    options=proofreading_options(temperature, num_ctx),
+                    options=options,
+                    think=request_profile(tag).think,
                     timeout=timeout,
                 )
             except Exception as error:  # any failure means this model is not measurable
@@ -865,7 +1013,9 @@ def measure_tag(  # noqa: PLR0913  # one keyword per thing a measurement needs
             tag=tag,
             digest=digest,
             num_ctx=num_ctx,
-            options=proofreading_options(temperature, num_ctx),
+            answer_tokens=int(getattr(stats, "eval_count", 0)),
+            generation_seconds=getattr(stats, "eval_duration", 0) / 1e9,
+            options=options,
             load_seconds=getattr(stats, "load_duration", 0) / 1e9,
             ollama=OllamaReading(
                 context_length=loaded.context_length,
@@ -906,11 +1056,14 @@ def _ram_of(stats: Any, info: Any = None) -> RamReading | None:
 
 
 __all__ = [
+    "CARD_USED_TOLERANCE_BYTES",
+    "CPU_ONLY_OPTIONS",
     "DEFAULT_LIMITS",
     "DEFAULT_STORE",
     "GB",
     "LINEARITY_TOLERANCE",
     "MEMORY_TOLERANCE",
+    "MIN_SPEED_TOKENS",
     "PROMPT",
     "SCHEMA",
     "SPILL_SHARE",
@@ -929,9 +1082,11 @@ __all__ = [
     "current_build",
     "growth_figures",
     "growth_per_8k",
+    "is_cpu_only",
     "latest",
     "measure_tag",
     "need_bytes",
+    "ollama_card_share",
     "ollama_off_by",
     "on_card_share",
     "ram_drop_bytes",
@@ -940,5 +1095,6 @@ __all__ = [
     "size_for_decision",
     "spilled",
     "tier_windows",
+    "tokens_per_second",
     "within",
 ]

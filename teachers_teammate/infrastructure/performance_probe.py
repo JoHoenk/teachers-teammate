@@ -457,12 +457,13 @@ class PerformanceProbe:
         if not _is_installed(model, installed):
             return StepResult(step, model, StepOutcome.SKIPPED)
         load_s = self._warm_up(model, before=before)
-        system, prompt, schema, temperature = _writing_request(step, model, request)
+        system, prompt, schema, temperature, think = _writing_request(step, model, request)
         stats, outcome, message = self._measure(
             model,
             prompt=prompt,
             system=system,
             format=schema,
+            think=think,
             options={
                 **proofreading_options(temperature, request.num_ctx),
                 "num_predict": MEASURE_ANSWER_TOKENS,
@@ -509,6 +510,7 @@ class PerformanceProbe:
         images: list[str] | None = None,
         options: dict | None = None,
         format: dict | None = None,  # pylint: disable=redefined-builtin  # the ollama API's name
+        think: bool | str = False,
     ) -> tuple[ChatStats | None, StepOutcome, str]:
         """Send one request and return ``(stats, outcome, message)``.
 
@@ -522,6 +524,7 @@ class PerformanceProbe:
                 prompt,
                 images=images,
                 options=options,
+                think=think,
                 format=format,
                 system=system,
                 total_timeout=MEASURE_TIMEOUT_S,
@@ -583,8 +586,8 @@ def _is_installed(model: str, installed: Sequence[str]) -> bool:
 
 def _writing_request(
     step: SpeedStep, model: str, request: SpeedTestRequest
-) -> tuple[str, str, dict | None, float]:
-    """Return ``(system, prompt, schema, temperature)`` of the request a run would send."""
+) -> tuple[str, str, dict | None, float, bool | str]:
+    """Return ``(system, prompt, schema, temperature, think)`` of the request a run would send."""
     from ..config import DEFAULTS  # noqa: PLC0415
     from ..domain.notation import with_notation_hint  # noqa: PLC0415
     from .correction import request_messages  # noqa: PLC0415
@@ -595,7 +598,7 @@ def _writing_request(
         # The content review sends its instructions inside the message, as the evaluator does.
         system = with_notation_hint(DEFAULTS["evaluate_prompt"], "plain", task="evaluation")
         prompt = f"{system}\n\nLanguage: {request.language}\n\nCorrected text:\n\n{paragraph}"
-        return "", prompt, None, review_temperature(model)
+        return "", prompt, None, review_temperature(model), request_profile(model).think
     profile = request_profile(model)
     system, prompt = request_messages(
         paragraph,
@@ -603,4 +606,4 @@ def _writing_request(
         mode="review",
         compact_json=profile.compact_json,
     )
-    return system, prompt, schema_json(), profile.temperature
+    return system, prompt, schema_json(), profile.temperature, profile.think

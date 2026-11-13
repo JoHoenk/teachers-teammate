@@ -17,6 +17,7 @@ from tests.tools.store_workspace import (
     MACHINE,
     MODEL,
     TESTSET,
+    as_online_run,
     export,
     one,
     review,
@@ -781,6 +782,43 @@ def _mark_every_note(space) -> Path:
         ),
     )
     return path
+
+
+def test_an_online_run_is_selected_by_the_name_the_index_shows(tmp_path):
+    """
+    Given  an exported run of an online provider, which the index lists under its provider
+    When   it is selected with that name as --machine, and with another one
+    Then   the first finds the run, the group's record line names the provider, and the second
+           finds none
+    """
+    space = workspace(tmp_path)
+    as_online_run(space)
+    one(space, machine=None)
+
+    groups = selection.select(
+        space.out, selection.Selection(model=MODEL, temperature=0.7, machine="openai")
+    )
+
+    assert groups[0].key.provider == "openai"
+    assert ", openai, " in proofreading_store._group_line(groups[0])
+    with pytest.raises(ValueError, match="no run of"):
+        selection.select(
+            space.out, selection.Selection(model=MODEL, temperature=0.7, machine="mistral")
+        )
+
+
+def test_the_record_line_of_an_ollama_group_names_provider_and_machine(tmp_path):
+    """
+    Given  a committed run on Ollama
+    When   its group is written as a record line
+    Then   the line names the provider and the machine it ran on
+    """
+    space = workspace(tmp_path)
+    one(space)
+
+    group = selection.select(space.out, selection.Selection(model=MODEL, temperature=0.7))[0]
+
+    assert f", ollama on {MACHINE}, " in proofreading_store._group_line(group)
 
 
 def test_gate_treats_a_refused_marks_file_as_unmarked(tmp_path, capsys):

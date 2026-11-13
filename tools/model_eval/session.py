@@ -23,6 +23,7 @@ RESUME_KEYS: tuple[str, ...] = (
     "testset",
     "testset_sha256",
     "texts",
+    "provider",
     "machine",
     "ollama_version",
     "model",

@@ -48,6 +48,8 @@ FOCUS_API_KEYS = "api_keys"
 FOCUS_SERVER = "server"
 #: Same page, and the "Find the AI server" dialog opens at once.
 FOCUS_FIND_SERVER = "find_server"
+#: The speed test on *This computer*.
+FOCUS_SPEED = "speed"
 
 FOCUS_SENDING = "sending"
 FOCUS_DETECTION = "detection"

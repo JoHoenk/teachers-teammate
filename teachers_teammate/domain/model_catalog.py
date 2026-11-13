@@ -22,7 +22,10 @@ from __future__ import annotations
 from collections.abc import Collection, Sequence
 from dataclasses import dataclass, replace
 from enum import StrEnum
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
+
+if TYPE_CHECKING:
+    from .performance_estimate import SpeedBand, SpeedSource
 
 HardwareProfile = Literal["cpu", "8gb", "16gb"]
 HardwareProfileSetting = Literal["auto", "cpu", "8gb", "16gb"]
@@ -141,6 +144,38 @@ DEFAULT_REQUEST_PROFILE = RequestProfile()
 
 
 @dataclass(frozen=True)
+class AnswerLength:
+    """How long a model's answers are: 10th percentile, median, 90th percentile.
+
+    Writing models: answer tokens per 100 words of student text, proofreading in review mode.
+    Reading models: answer tokens per page.
+
+    A range rather than one figure because the middle 80 % of one model's answers on one test
+    set are about three times apart — how many errors a text has decides most of it, and no
+    test can know that.
+    """
+
+    low: int
+    typical: int
+    high: int
+
+
+@dataclass(frozen=True)
+class ReferenceSpeed:
+    """How fast a model runs on the reference machine, for models that are not installed here.
+
+    The machine factor (measured speed ÷ reference speed) transfers these figures to another
+    computer.  It only holds while the model fits the graphics card on both computers: a model
+    that spills to the processor breaks the ratio.
+    """
+
+    write_tps: float
+    """Answer tokens per second, proofreading in review mode."""
+    read_tps: float | None = None
+    """Request tokens per second; ``None`` when only the writing rate was measured."""
+
+
+@dataclass(frozen=True)
 class OllamaModelSpec:
     """One catalogued Ollama model with approximate resource needs."""
 
@@ -173,11 +208,25 @@ class OllamaModelSpec:
     #: How the app asks this model to proofread (see :class:`RequestProfile`).  Every catalog
     #: model starts on the default; a gate-1 run decides a value per model.
     request_profile: RequestProfile = DEFAULT_REQUEST_PROFILE
+    #: How long this model's answers are (see :class:`AnswerLength`).  ``None`` — not measured;
+    #: the estimate then takes the median of the catalogued models of the same kind.
+    answer_length: AnswerLength | None = None
+    #: How fast this model runs on the reference machine (see :class:`ReferenceSpeed`), so a
+    #: model that is not installed here can still get an expected speed band.  ``None`` — not
+    #: measured.
+    reference_speed: ReferenceSpeed | None = None
 
 
 # Download sizes (decimal GB) were checked against the Ollama registry manifests
 # with ``tools/verify_model_catalog.py`` on 2026-10-12 (the Hugging Face entry
 # against the repository file list).  ``memory_gb`` cannot be read from a manifest.
+#
+# ``answer_length`` and ``reference_speed`` were measured on ``rx9070xt-server`` (Radeon
+# RX 9070 XT) on 2026-11-13, review mode, window 8192, over 31 German, English and French
+# learner texts, at the temperature the app sends for that model.  ``answer_length`` is answer
+# tokens per 100 words of student text (10th percentile, median, 90th percentile);
+# ``reference_speed`` is the middle of the measured writing rate.  A model without them was not
+# measured: the estimate takes the median of its kind, and no expected band is shown for it.
 OLLAMA_CATALOG: tuple[OllamaModelSpec, ...] = (
     OllamaModelSpec(
         tag=DEFAULT_OCR_MODEL,
@@ -221,6 +270,8 @@ OLLAMA_CATALOG: tuple[OllamaModelSpec, ...] = (
         download_gb=2.5,
         note="Small writing model for computers without a graphics card.",
         structured_output=True,
+        answer_length=AnswerLength(low=791, typical=1086, high=1828),
+        reference_speed=ReferenceSpeed(write_tps=131.0),
     ),
     OllamaModelSpec(
         tag="qwen3.5:9b",
@@ -238,6 +289,8 @@ OLLAMA_CATALOG: tuple[OllamaModelSpec, ...] = (
         download_gb=6.6,
         note="Fast writing model that fits an 8 GB graphics card.",
         structured_output=True,
+        answer_length=AnswerLength(low=549, typical=1068, high=1824),
+        reference_speed=ReferenceSpeed(write_tps=96.0),
     ),
     OllamaModelSpec(
         tag="gemma4:12b",
@@ -246,6 +299,8 @@ OLLAMA_CATALOG: tuple[OllamaModelSpec, ...] = (
         download_gb=8.0,
         note="Best writing model for a 16 GB graphics card.",
         structured_output=True,
+        answer_length=AnswerLength(low=380, typical=1017, high=1879),
+        reference_speed=ReferenceSpeed(write_tps=118.0),
     ),
     OllamaModelSpec(
         tag="mistral:latest",
@@ -267,6 +322,8 @@ OLLAMA_CATALOG: tuple[OllamaModelSpec, ...] = (
         memory_gb=14.0,
         download_gb=13.8,
         note="Large reasoning model; its answers do not fit the proofreading format.",
+        answer_length=AnswerLength(low=581, typical=1075, high=1897),
+        reference_speed=ReferenceSpeed(write_tps=104.0),
     ),
 )
 
@@ -602,6 +659,20 @@ class ModelRating:
     #: For a ``SLOW`` model: whether so little of it fits on the graphics card that it runs very
     #: slowly (rather than somewhat slower).
     very_slow: bool = False
+    #: The speed band this model is expected to reach here; ``None`` when it was not worked out.
+    speed: SpeedBand | None = None
+    #: Where :attr:`speed` comes from; ``None`` when there is no band.
+    speed_source: SpeedSource | None = None
+
+
+#: Ratings that get no expected speed.  A model that spills to the processor is slower by an
+#: amount the machine factor cannot predict, one that does not fit is not a download to
+#: consider, and one of the wrong kind is not used for this task at all.
+_NO_EXPECTED_SPEED: tuple[Suitability, ...] = (
+    Suitability.SLOW,
+    Suitability.TOO_LARGE,
+    Suitability.WRONG_KIND,
+)
 
 
 def rate_model(
@@ -612,8 +683,14 @@ def rate_model(
     detected_uses: ModelUses | None = None,
     system_memory_gb: float | None = None,
     card_gb: float | None = None,
+    machine_factor: float | None = None,
 ) -> ModelRating:
-    """Rate *tag* for *task* on *profile* — the single rating path for all callers."""
+    """Rate *tag* for *task* on *profile* — the single rating path for all callers.
+
+    *machine_factor* is how much slower this computer is than the reference machine
+    (:class:`~.performance_estimate.MachineFactors`); with it, a model that was never measured
+    here gets the speed band it is expected to reach, so a teacher can judge a download.
+    """
     spec = find_spec(tag)
     model_uses = catalog_uses(spec) if spec is not None else detected_uses
     rated = suitability(
@@ -628,6 +705,7 @@ def rate_model(
     if rated is Suitability.SLOW and spec is not None:
         card = card_gb if card_gb is not None else card_budget_gb(profile)
         very_slow = is_very_slow(spec.memory_gb, card)
+    speed, speed_source = _expected_speed(spec, rated, machine_factor)
     return ModelRating(
         tag=tag,
         task=task,
@@ -637,7 +715,29 @@ def rate_model(
         note=spec.note if spec is not None else "",
         structured_output=spec.structured_output if spec is not None else None,
         very_slow=very_slow,
+        speed=speed,
+        speed_source=speed_source,
     )
+
+
+def _expected_speed(
+    spec: OllamaModelSpec | None,
+    rated: Suitability,
+    machine_factor: float | None,
+) -> tuple[SpeedBand | None, SpeedSource | None]:
+    """Return the band *spec* is expected to reach here, and where it comes from.
+
+    ``(None, None)`` when there is nothing to say: no catalog entry, no reference speed, no
+    measured model on this server, or a rating that makes the figure meaningless.
+    """
+    if spec is None or machine_factor is None or rated in _NO_EXPECTED_SPEED:
+        return None, None
+    from .performance_estimate import SpeedSource, expected_band  # noqa: PLC0415
+
+    speed = expected_band(spec, machine_factor)
+    if speed is None:
+        return None, None
+    return speed, SpeedSource.EXPECTED
 
 
 def models_for(

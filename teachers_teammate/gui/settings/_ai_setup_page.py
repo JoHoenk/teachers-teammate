@@ -10,7 +10,7 @@ window's wiring.  The keys of the online services are on *Online services*.
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 import sys
 from typing import Any
 
@@ -33,17 +33,20 @@ from .._model_fetch import _GpuDetectThread, _retire_thread
 from ._page import (
     FOCUS_FIND_SERVER,
     FOCUS_LOCAL_MODELS,
+    FOCUS_PROOFREADING,
     FOCUS_SERVER,
+    FOCUS_SPEED,
     SettingsContext,
     SettingsPage,
     SettingsPageBase,
 )
+from ._speed_panel import SpeedPanel
 
 TITLE = txt.PAGE_AI_SETUP
 DESCRIPTION = (
     f"What {txt.PAGE_AI_MODELS} needs from this computer: how powerful it is (the model "
-    "suggestions follow it) and where its local AI server is. Set up once; usually nothing "
-    "to change."
+    "suggestions follow it), where its local AI server is, and how fast it runs your models. "
+    "Set up once; usually nothing to change."
 )
 SERVER_GROUP = "Local AI server (Ollama)"
 SERVER_NOTE = (
@@ -83,12 +86,15 @@ class AiSetupPage(SettingsPageBase):
     hardware_setting_changed = Signal(str)
     #: A GPU add-on was installed from this page.
     addon_installed = Signal(str)
+    #: A speed test finished and stored its measurement.
+    speed_measured = Signal()
 
     def __init__(self, context: SettingsContext, parent: QWidget | None = None) -> None:
         super().__init__(context, parent)
         self._app_service = context.app_service
         self._gpu_detect_thread: _GpuDetectThread | None = None
         self._detected_gpus: list = []
+        self._speed_settings_provider: Callable[[], Mapping[str, Any]] | None = None
         settings = context.settings
         # Known before any widget is built: "My computer" must detect for the
         # configured server, not for the default one.
@@ -103,6 +109,7 @@ class AiSetupPage(SettingsPageBase):
             )
         )
         layout.addWidget(self._build_server_group())
+        layout.addWidget(self._build_speed_group())
         layout.addStretch(1)
 
     def focus(self, focus: str, preselect: Sequence[str] = ()) -> None:
@@ -113,6 +120,9 @@ class AiSetupPage(SettingsPageBase):
         elif focus == FOCUS_FIND_SERVER:
             self._scroll_to(self._ollama_url)
             QTimer.singleShot(0, self, self._on_find_server)
+        elif focus == FOCUS_SPEED:
+            self._scroll_to(self._speed_group)
+            self._speed_panel.refresh()
 
     def _build_server_group(self) -> QGroupBox:
         group = QGroupBox(SERVER_GROUP)
@@ -146,6 +156,53 @@ class AiSetupPage(SettingsPageBase):
         row.addStretch(1)
         form.addRow("", row)
         return group
+
+    def _build_speed_group(self) -> QGroupBox:
+        """Build the speed test: it measures the models chosen on *AI models* on this computer."""
+        group = QGroupBox(txt.SPEED_HEADING)
+        self._speed_group = group
+        layout = QVBoxLayout(group)
+        top = QHBoxLayout()
+        note = QLabel(txt.SPEED_NOTE)
+        note.setWordWrap(True)
+        note.setStyleSheet("color: #888; font-size: 11px;")
+        top.addWidget(note, stretch=1)
+        change = QPushButton(txt.SPEED_CHANGE_MODELS)
+        change.setFlat(True)
+        change.setToolTip(txt.SPEED_CHANGE_MODELS_TOOLTIP)
+        change.clicked.connect(lambda: self._navigate(SettingsPage.AI_MODELS, FOCUS_PROOFREADING))
+        top.addWidget(change)
+        layout.addLayout(top)
+        self._speed_panel = SpeedPanel(
+            app_service=self._app_service,
+            settings_provider=self._speed_settings,
+            profile_selector=self._hardware_selector,
+            ollama_url=self._url,
+            parent=group,
+        )
+        self._speed_panel.measured.connect(self.speed_measured.emit)
+        layout.addWidget(self._speed_panel)
+        self._speed_panel.refresh()
+        return group
+
+    def set_speed_settings_provider(self, provider: Callable[[], Mapping[str, Any]]) -> None:
+        """Take the settings the test measures from *provider* (the window hands the models
+        chosen on *AI models*, unsaved choices included) instead of the saved ones."""
+        self._speed_settings_provider = provider
+        self._speed_panel.refresh()
+
+    def _speed_settings(self) -> dict[str, Any]:
+        """Return the settings the speed test measures, with this page's own server address."""
+        base = (
+            self._speed_settings_provider()
+            if self._speed_settings_provider is not None
+            else self._context.settings
+        )
+        return {**base, "ollama_url": self._url}
+
+    def refresh_speed(self) -> None:
+        """Redraw the speed block: the models chosen on *AI models* or a measurement changed."""
+        self._speed_panel.refresh()
 
     def _build_performance_group(self, hardware_profile: str) -> QGroupBox:
         group = QGroupBox(PERFORMANCE_GROUP)
@@ -186,6 +243,7 @@ class AiSetupPage(SettingsPageBase):
             self._url = str(values["ollama_url"] or DEFAULTS["ollama_url"])
             self._ollama_url.setText(self._url)
             self._hardware_selector.set_ollama_url(self._url)
+            self._speed_panel.set_ollama_url(self._url)
         if "hardware_profile" in values:
             self._hardware_selector.set_setting(str(values["hardware_profile"]))
 
@@ -209,7 +267,8 @@ class AiSetupPage(SettingsPageBase):
             self.hardware_setting_changed.emit(after["hardware_profile"])
 
     def shutdown(self) -> None:
-        """Detach the GPU-detection thread before the page is destroyed."""
+        """Stop the speed test and detach the GPU-detection thread before the page is destroyed."""
+        self._speed_panel.shutdown()
         _retire_thread(self._gpu_detect_thread)
 
     # ── server ────────────────────────────────────────────────────────────────
@@ -220,6 +279,7 @@ class AiSetupPage(SettingsPageBase):
             return
         self._url = url
         self._hardware_selector.set_ollama_url(url)
+        self._speed_panel.set_ollama_url(url)
         self.ollama_url_changed.emit(url)
 
     def _on_find_server(self) -> None:

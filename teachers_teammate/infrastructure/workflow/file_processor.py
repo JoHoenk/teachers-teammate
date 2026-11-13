@@ -18,6 +18,7 @@ from ...domain.output_files import (
     feeds_inputs,
     output_path,
 )
+from ...domain.performance_estimate import SpeedStep
 from ...domain.stages import PROGRESS_STAGE_OCR, PROGRESS_STAGE_PREPROCESSING, StageName
 from ...exceptions import (
     RECOGNITION_OFF_MESSAGE,
@@ -29,6 +30,7 @@ from ...exceptions import (
 from ...interfaces import AnonymizationMap, Anonymizer, Corrector, DocumentCreator, Evaluator
 from ..correction import proofreading_pieces
 from ..reporting import OnOcrDoneFn, OnStageStartedFn, Reporter, StdoutReporter
+from ..run_stats import RunStatsCollector
 from .cache_service import CacheContext, CacheReconciliationService
 from .ocr_service import OCRStageService
 from .preprocess_service import PreparedInput, PreprocessService
@@ -113,6 +115,9 @@ class FileProcessorConfig:
     on_ocr_done: OnOcrDoneFn | None = None
     on_stage_started: OnStageStartedFn | None = None
     reporter: Reporter = field(default_factory=StdoutReporter)
+    stats: RunStatsCollector | None = None
+    """Turns the requests of each step into a sample of how fast this machine is; ``None``
+    when nothing measures the run (a test, a tool)."""
 
 
 class _StageAbort(Exception):
@@ -200,6 +205,7 @@ class FileProcessor:
         self._on_ocr_done = config.on_ocr_done
         self._on_stage_started = config.on_stage_started
         self._reporter = config.reporter
+        self._stats = config.stats
 
     def process(self, file: Path) -> ProcessingResult:
         """Process *file* through all pipeline stages."""
@@ -391,6 +397,26 @@ class FileProcessor:
     def _report_ocr_page(self, page: int, total: int) -> None:
         self._reporter.status(f"       → OCR page {page}/{total}...")
 
+    def _begin_sample(self, step: SpeedStep) -> None:
+        """Mark *step* as running, so the requests it sends become one sample."""
+        if self._stats is not None:
+            self._stats.begin(step)
+
+    def _finish_sample(self, *, words: int = 0, mode: str = "", usable: bool = True) -> None:
+        """Turn the requests of the step that just ended into one sample.
+
+        *words* is the text that went through, *mode* the proofreading mode really used.  A step
+        that sent no request (a result from the cache) gives no sample, and neither does one
+        that is not *usable*: a failed step, or a review that fell back to corrections only,
+        whose requests would be counted into the answer length of the mode that finally answered.
+        """
+        if self._stats is None:
+            return
+        if usable:
+            self._stats.finish(words=words, mode=mode)
+        else:
+            self._stats.discard()
+
     def _run_ocr(
         self,
         file: Path,
@@ -414,9 +440,17 @@ class FileProcessor:
                 self._reporter.status(f"       → PDF {prepared.text_layer_note} — using OCR")
             self._reporter.status("       → Running OCR...")
             self._notify_stage(file, PROGRESS_STAGE_OCR)
-            on_page = self._report_ocr_page if len(ocr_inputs) > 1 else None
+
+            def page_started(page: int, total: int) -> None:
+                if total > 1:
+                    self._report_ocr_page(page, total)
+                self._begin_sample(SpeedStep.READING)
+
+            def page_done(text: str) -> None:
+                self._finish_sample(words=len(text.split()))
+
             page_texts, ocr_err = self._ocr_stage_service.run_pages(
-                ocr_inputs, self._language, on_page=on_page
+                ocr_inputs, self._language, on_page=page_started, on_page_done=page_done
             )
             if ocr_err:
                 raise _StageAbort(ProcessingResult(False, ocr_err, preview_img, "", "", ""))
@@ -562,12 +596,20 @@ class FileProcessor:
             self._reporter.status(f"       → Proofreading {file.name} in {pieces} parts...")
         if self._stopping():  # the anonymization may have taken a while
             raise stopped()
+        self._begin_sample(SpeedStep.PROOFREADING)
         try:
             outcome = self._correction.correct(
                 text_for_correction, self._language, text_format=text_format
             )
         except RunStoppedError as exc:
             raise stopped() from exc
+        # The mode the answer was really written in: a review that fell back to corrections
+        # only answered in text mode, and its answer length is the text-mode one.
+        self._finish_sample(
+            words=len(text_for_correction.split()),
+            mode="review" if outcome.review is not None else "text",
+            usable=not (outcome.failed or outcome.fell_back),
+        )
         corrected_text = self._restore_pii(
             outcome.text or "", anon_map, preview_img=preview_img, raw_text=raw_text
         )
@@ -660,12 +702,14 @@ class FileProcessor:
         text_for_evaluation, anon_map = self._anonymize_for("evaluation", correction_text)
         if self._stopping():
             raise stopped()
+        self._begin_sample(SpeedStep.REVIEW)
         try:
             eval_text, eval_warning = self._evaluation.evaluate(
                 text_for_evaluation, self._language, text_format=self._text_format(ctx)
             )
         except RunStoppedError as exc:
             raise stopped() from exc
+        self._finish_sample(words=len(text_for_evaluation.split()), usable=not eval_warning)
         eval_text = self._restore_pii(
             eval_text or "",
             anon_map,

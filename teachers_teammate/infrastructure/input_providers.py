@@ -220,6 +220,22 @@ def pdf_has_text_layer(file_path: Path, mode: PdfTextLayerMode = "auto") -> bool
         pdf.close()
 
 
+def pdf_page_count(file_path: Path) -> int:
+    """Return how many pages *file_path* has, or ``0`` when it cannot be opened.
+
+    Only the page tree is read, nothing is rendered: the count is what a run's time estimate
+    needs, and it must not cost the work of reading the pages.
+    """
+    try:
+        pdf = pdfium.PdfDocument(str(file_path))
+    except Exception:  # noqa: BLE001  # an unreadable PDF is reported by the run itself
+        return 0
+    try:
+        return len(pdf)
+    finally:
+        pdf.close()
+
+
 class PdfInputProvider(InputProvider):
     """Loads a PDF as embedded text when it has a complete text layer, else as page images.
 

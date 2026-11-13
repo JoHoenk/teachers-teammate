@@ -19,11 +19,12 @@ from teachers_teammate.infrastructure.correction import (
 from teachers_teammate.interfaces import Corrector
 from tools.model_eval.comparison import WritingModelComparison
 from tools.model_eval.error_labels import ReferenceLabel
-from tools.model_eval.performance import Performance, RequestStats
+from tools.model_eval.performance import Performance, RequestStats, Spread
 from tools.model_eval.gleu import add, from_scores, gleu
 from tools.model_eval.item_scores import item_scores
 from tools.model_eval.report import (
     band_table,
+    catalog_lines,
     error_table,
     performance_table,
     summarise,
@@ -840,7 +841,7 @@ def test_speed_is_scaled_to_a_hundred_words_and_tokens_to_the_generation_time() 
 
     assert summary.seconds_per_100_words == 50.0
     assert summary.answer_tokens_per_s == 50.0
-    assert summary.answer_tokens_per_100_words == 1000.0
+    assert summary.answer_tokens_spread == Spread(1000.0, 1000.0, 1000.0)
     assert summary.vram_used_mb == 5500
     assert (summary.texts, summary.comparable) == (1, 1)
 
@@ -890,7 +891,63 @@ def test_the_performance_table_shows_a_dash_for_what_could_not_be_measured() -> 
 
     rendered = performance_table(summarise_performance([row]))
 
-    assert "| `gemma4:e4b` | 0.2 | review | 1 (1) | 50.0 | 50 | 1000 | 1.00 | - | - |" in rendered
+    assert (
+        "| `gemma4:e4b` | 0.2 | review | 1 (1) | 50.0 | 50 | 1000 / 1000 / 1000 | 1.00 | - | - |"
+        in rendered
+    )
+
+
+@pytest.mark.use_case("Model_Eval_Report")
+def test_the_answer_length_is_the_middle_eighty_percent_of_the_texts() -> None:
+    """
+    Given  eleven texts whose answers are 100, 200, ... 1100 tokens per 100 words
+    When   the performance is summarised
+    Then   the spread is the 10th percentile, the median and the 90th percentile, not the ends
+    """
+    rows = [
+        _timed(
+            id=f"de/de-{index:02d}",
+            performance=Performance(
+                requests=(
+                    RequestStats("gemma4:e4b", 200, 10 * index, 0.0, 0.1, 2.0, 2.2, 2.4, "stop"),
+                )
+            ),
+        )
+        for index in range(1, 12)
+    ]
+
+    summary = summarise_performance(rows)[0]
+
+    assert summary.answer_tokens_spread == Spread(200.0, 600.0, 1000.0)
+
+
+@pytest.mark.use_case("Model_Eval_Report")
+def test_the_catalog_lines_name_the_answer_length_of_every_review_mode_model() -> None:
+    """
+    Given  a measured review-mode text and a measured text-mode one
+    When   the catalog lines are built
+    Then   only the review-mode model gets a line, because a text-mode answer is the text itself
+    """
+    text_mode = _timed(id="de/de-02", mode="text")
+
+    rendered = catalog_lines(summarise_performance([_timed(), text_mode]))
+
+    assert "`gemma4:e4b` at 0.2: answer_length=AnswerLength(low=1000, typical=1000, high=1000)" in (
+        rendered
+    )
+    assert rendered.count("answer_length=") == 1
+
+
+@pytest.mark.use_case("Model_Eval_Report")
+def test_the_catalog_lines_say_so_when_no_review_mode_text_was_measured() -> None:
+    """
+    Given  only a text-mode text
+    When   the catalog lines are built
+    Then   the report says there is nothing to put in the catalog
+    """
+    assert catalog_lines(summarise_performance([_timed(mode="text")])) == (
+        "No review-mode text was measured: nothing to put in the catalog."
+    )
 
 
 @pytest.mark.use_case("Model_Eval_Report")

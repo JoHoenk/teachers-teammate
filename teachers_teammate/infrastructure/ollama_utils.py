@@ -6,8 +6,8 @@ connection-check threads use the same code path.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator
-from dataclasses import dataclass
+from collections.abc import Callable, Iterator, Mapping
+from dataclasses import dataclass, field
 import functools
 import ipaddress
 import logging
@@ -22,6 +22,7 @@ from ..domain.context_budget import (
     ContextBudget,
     answers_with_the_same_text,
 )
+from ..domain.model_catalog import normalize_tag
 from ..exceptions import OllamaConnectionError, RunStoppedError, stop_requested
 from .reporting import Reporter, StdoutReporter
 from .wsl import windows_host_addresses
@@ -442,6 +443,72 @@ def _is_transport_error(exc: BaseException) -> bool:
     return type(exc).__module__.split(".", 1)[0] == "httpx"
 
 
+def _http_json(url: str, timeout: float) -> dict:
+    """Return the JSON answer of *url*, read with the standard library.
+
+    The ``ollama`` client has no method for ``/api/version``, and a version is not worth a
+    second HTTP library.  A module-level function so a test can replace it.
+    """
+    import json  # noqa: PLC0415
+    import urllib.request  # noqa: PLC0415
+
+    with urllib.request.urlopen(url, timeout=timeout) as answer:
+        return json.loads(answer.read().decode("utf-8") or "{}")
+
+
+@dataclass(frozen=True)
+class LoadedModel:
+    """A model the server holds in memory, with how much of it sits on the graphics card."""
+
+    name: str
+    size_bytes: int
+    """Memory the model takes in total, on the card and in main memory together."""
+    size_vram_bytes: int
+    """The part of it on the graphics card."""
+    context_length: int = 0
+
+    @property
+    def on_card_share(self) -> float:
+        """Return the share (0 to 1) of the model that sits on the card."""
+        return self.size_vram_bytes / self.size_bytes if self.size_bytes else 0.0
+
+
+@dataclass(frozen=True)
+class ServerFacts:
+    """What the server says about itself: its version, the model digests, what is loaded.
+
+    The version and the digests are what makes a stored measurement go out of date: a tag is a
+    name that can be re-pointed, and Ollama counts tokens differently between versions.
+    """
+
+    version: str = ""
+    """The server's version; ``""`` when it did not say."""
+    digests: Mapping[str, str] = field(default_factory=dict)
+    """``{tag: digest}`` of the installed models."""
+    loaded: tuple[LoadedModel, ...] = ()
+    """The models the server held in memory when it was asked."""
+
+    def digest_of(self, tag: str) -> str:
+        """Return the digest of *tag*, or ``""`` when the server did not report one."""
+        wanted = normalize_tag(tag)
+        for name, digest in self.digests.items():
+            if normalize_tag(name) == wanted:
+                return digest
+        return ""
+
+    def loaded_names(self) -> tuple[str, ...]:
+        """Return the names of the models the server held in memory."""
+        return tuple(model.name for model in self.loaded)
+
+    def loaded_model(self, tag: str) -> LoadedModel | None:
+        """Return the loaded model named *tag*, or ``None`` when it is not loaded."""
+        wanted = normalize_tag(tag)
+        for model in self.loaded:
+            if normalize_tag(model.name) == wanted:
+                return model
+        return None
+
+
 class OllamaClient:
     """All HTTP access to a single Ollama server.
 
@@ -456,12 +523,17 @@ class OllamaClient:
         *,
         timeout: float = _CONNECT_TIMEOUT,
         cancel_event: threading.Event | None = None,
+        stats_sink: Callable[[str, ChatStats], None] | None = None,
     ) -> None:
         self.base_url = normalize_ollama_url(url)
         self._timeout = timeout
         #: When set, a chat request that is waiting is abandoned (the server stops generating)
         #: and raises :exc:`~teachers_teammate.exceptions.RunStoppedError`.
         self._cancel_event = cancel_event
+        #: Called as ``stats_sink(model, stats)`` after every chat request, with what the server
+        #: reported about it.  A run shares one client between all its stages, so one sink sees
+        #: every request of the run and can turn them into a measurement of the machine.
+        self._stats_sink = stats_sink
 
     def _client(self) -> ollama.Client:
         """Return an ``ollama.Client`` for :attr:`base_url`."""
@@ -486,6 +558,57 @@ class OllamaClient:
             return [(m.model, int(m.size or 0)) for m in resp.models if m.model]
         except Exception:  # noqa: BLE001  # Ollama client/transport may raise anything; degrade to an empty list
             return []
+
+    # ── Server facts ───────────────────────────────────────────────────────
+
+    def server_version(self) -> str:
+        """Return the version of the Ollama server, or ``""`` when it does not say."""
+        try:
+            return str(_http_json(f"{self.base_url}/api/version", self._timeout).get("version", ""))
+        except Exception:  # noqa: BLE001  # an old server or a hiccup: the version is optional
+            return ""
+
+    def model_digests(self) -> dict[str, str]:
+        """Return ``{tag: digest}`` of the installed models, or ``{}`` on any error.
+
+        The digest pins the weights: a tag is a name that can be re-pointed, so a measurement
+        of ``gemma4:e4b`` says nothing about a later pull of the same tag.
+        """
+        try:
+            resp = self._client().list()
+            return {m.model: str(m.digest or "") for m in resp.models if m.model}
+        except Exception:  # noqa: BLE001  # Ollama client/transport may raise anything
+            return {}
+
+    def loaded_models(self) -> tuple[LoadedModel, ...]:
+        """Return the models the server holds in memory right now, or ``()`` on any error."""
+        try:
+            resp = self._client().ps()
+            return tuple(
+                LoadedModel(
+                    name=str(m.model or m.name or ""),
+                    size_bytes=int(m.size or 0),
+                    size_vram_bytes=int(m.size_vram or 0),
+                    context_length=int(m.context_length or 0),
+                )
+                for m in resp.models
+                if (m.model or m.name)
+            )
+        except Exception:  # noqa: BLE001  # older Ollama versions may not have /api/ps
+            return ()
+
+    def server_facts(self) -> ServerFacts:
+        """Return version, model digests and loaded models in one go.
+
+        Never raises: a server that answers only part of it gives what it gave.  The caller
+        decides what a missing version or digest means (a measurement without them cannot be
+        told apart from one of another build).
+        """
+        return ServerFacts(
+            version=self.server_version(),
+            digests=self.model_digests(),
+            loaded=self.loaded_models(),
+        )
 
     # ── Connectivity checks ────────────────────────────────────────────────
 
@@ -811,6 +934,10 @@ class OllamaClient:
         content = "".join(parts)
         # The last chunk carries the summary of the whole answer; earlier ones leave these unset.
         stats = _chunk_stats(chunks[-1]) if chunks else ChatStats()
+        if self._stats_sink is not None:
+            # Before the checks below: a request that is refused here still cost the time the
+            # server reported, and the sink decides for itself whether the numbers are usable.
+            self._stats_sink(model, stats)
         # A reasoning model can spend the whole window on thinking it does not return: no text,
         # but a stop at the limit.  That is a cut-off answer, not an empty one -- say so.
         if not content.strip() and not stats.truncated:

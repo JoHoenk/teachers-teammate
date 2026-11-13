@@ -67,6 +67,8 @@ from .reporting import (
     Reporter,
     StdoutReporter,
 )
+from .run_stats import RunStatsCollector
+from .speed_store import SampleStore
 from .stage_builder import PipelineComponentFactory as PipelineComponentFactory  # noqa: PLC0414
 from .stage_builder import StageBuilder, default_build_preprocessor
 from .state_repository import StateRepository
@@ -525,8 +527,11 @@ class OCRPipeline:
 
         # Build one shared OllamaClient for all Ollama-backed stages so URL
         # normalisation happens once and injection is explicit.
+        # The same client reports every request's statistics to the collector, so one sink sees
+        # the whole run and can turn each step into a sample of how fast this machine is.
+        run_stats = RunStatsCollector(cfg.ollama_url, SampleStore().add)
         ollama_client = (
-            OllamaClient(cfg.ollama_url, cancel_event=self._stop_event)
+            OllamaClient(cfg.ollama_url, cancel_event=self._stop_event, stats_sink=run_stats.record)
             if (cfg.recognition_enabled and cfg.ocr.engine == "ollama")
             or (cfg.correction_enabled and cfg.correction_provider == "ollama")
             or (cfg.evaluation_enabled and cfg.evaluate_provider == "ollama")
@@ -578,6 +583,7 @@ class OCRPipeline:
                 on_ocr_done=self._progress.on_ocr_done,
                 on_stage_started=self._progress.on_stage_started,
                 reporter=self._reporter,
+                stats=run_stats,
             )
         )
 

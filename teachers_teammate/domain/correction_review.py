@@ -239,6 +239,9 @@ class CorrectionOutcome:
     failed: bool = False
     """``True`` when the provider call failed and *text* is the unchanged source: such an
     outcome is reported but never stored as a finished correction."""
+    fell_back: bool = False
+    """``True`` when review mode was asked for but its answer was unusable, so *text* comes from
+    the corrections-only call that followed (the failed review requests were sent as well)."""
 
 
 # ── Splicing ──────────────────────────────────────────────────────────────────

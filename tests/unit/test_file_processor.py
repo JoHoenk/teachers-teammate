@@ -18,7 +18,11 @@ from teachers_teammate.domain.correction_review import (
     SentenceNote,
 )
 from teachers_teammate.domain.formatted_text import TextFormat
+from teachers_teammate.domain.performance_estimate import SpeedStep
 from teachers_teammate.infrastructure.correction import ChunkingCorrector
+from teachers_teammate.infrastructure.ollama_utils import ChatStats
+from teachers_teammate.infrastructure.run_stats import RunStatsCollector
+from teachers_teammate.infrastructure.speed_store import RunSample, SampleKey
 from teachers_teammate.infrastructure.state_repository import DocumentState
 from teachers_teammate.infrastructure.workflow.cache_service import CacheContext
 from teachers_teammate.infrastructure.workflow.preprocess_service import PreparedInput
@@ -1530,10 +1534,12 @@ def test_process_multi_page_passes_page_progress_callback(tmp_path: Path) -> Non
         tmp_path, returns=_image_returns(tmp_path, ["grayscale"], pages=2), reporter=reporter
     )
 
-    def _run_pages(inputs, _language, on_page=None):
+    def _run_pages(inputs, _language, on_page=None, on_page_done=None):
         for i in range(len(inputs)):
             if on_page is not None:
                 on_page(i + 1, len(inputs))
+            if on_page_done is not None:
+                on_page_done("page text")
         return ["a", "b"], None
 
     ocr_svc.run_pages.side_effect = _run_pages
@@ -1545,19 +1551,30 @@ def test_process_multi_page_passes_page_progress_callback(tmp_path: Path) -> Non
     assert "→ Preprocessing done: grayscale (2 page(s))" in reporter.lines
 
 
-def test_process_single_page_passes_no_page_callback(tmp_path: Path) -> None:
+def test_process_single_page_logs_no_page_number(tmp_path: Path) -> None:
     """
     Given  a single-page image
-    When   process() is called
-    Then   run_pages receives on_page=None so no per-page noise is logged
+    When   process() is called and the OCR service reports the page
+    Then   no per-page line is logged: "page 1/1" would only be noise
     """
+    reporter = _ListReporter()
     fp, _cache, _prep, ocr_svc = _make_processor(
-        tmp_path, returns=_image_returns(tmp_path, ["grayscale"])
+        tmp_path, returns=_image_returns(tmp_path, ["grayscale"]), reporter=reporter
     )
+
+    def _run_pages(inputs, _language, on_page=None, on_page_done=None):
+        for i in range(len(inputs)):
+            if on_page is not None:
+                on_page(i + 1, len(inputs))
+            if on_page_done is not None:
+                on_page_done("page text")
+        return ["a"], None
+
+    ocr_svc.run_pages.side_effect = _run_pages
 
     fp.process(tmp_path / "doc.png")
 
-    assert ocr_svc.run_pages.call_args.kwargs == {"on_page": None}
+    assert not [line for line in reporter.lines if "OCR page" in line]
 
 
 def test_process_persists_original_when_preprocessing_changed_the_page(tmp_path: Path) -> None:
@@ -2004,3 +2021,157 @@ def test_cached_scan_is_still_processed_when_recognition_is_off(tmp_path: Path) 
     assert not result.skipped
     assert result.raw_text == "cached text"
     preprocess_svc.preprocess_input.assert_not_called()
+
+
+# ── What a run measures ────────────────────────────────────────────────────
+
+_URL = "http://127.0.0.1:11434"
+
+
+def _stats() -> ChatStats:
+    """Return the statistics of one complete request: a second reading, a second writing."""
+    return ChatStats(
+        done_reason="stop",
+        prompt_eval_count=1000,
+        eval_count=500,
+        total_duration=2_000_000_000,
+        load_duration=0,
+        prompt_eval_duration=1_000_000_000,
+        eval_duration=1_000_000_000,
+    )
+
+
+def _collector(samples: list[tuple[SampleKey, RunSample]]) -> RunStatsCollector:
+    """Return a collector that keeps its samples in *samples*."""
+    return RunStatsCollector(_URL, lambda key, sample: samples.append((key, sample)))
+
+
+def test_a_cached_correction_gives_no_sample(tmp_path: Path) -> None:
+    """
+    Given  a cached correction and a collector that would take a sample
+    When   process() is called
+    Then   nothing is stored, because the step sent no request to measure
+    """
+    state = _make_state(
+        ocr_done=True,
+        raw_text="raw",
+        correction_done=True,
+        correction_text="cached",
+        preview_img="p.png",
+    )
+    samples: list[tuple[SampleKey, RunSample]] = []
+    corrector = MagicMock()
+    fp, cache_svc, _, _ = _make_processor(
+        tmp_path,
+        returns=_StubReturns(cache_ctx=_make_ctx(state)),
+        corrector=corrector,
+        stats=_collector(samples),
+    )
+    cache_svc.record_ocr.return_value = _make_ctx(state)
+
+    fp.process(tmp_path / "doc.png")
+
+    corrector.correct.assert_not_called()
+    assert samples == []
+
+
+def test_a_fallback_to_text_mode_gives_no_sample(tmp_path: Path) -> None:
+    """
+    Given  a corrector that asked for a review, got an unusable answer and fell back to text mode
+    When   process() is called
+    Then   no sample is stored: the failed review requests would be counted into the text-mode
+           answer length
+    """
+    samples: list[tuple[SampleKey, RunSample]] = []
+    collector = _collector(samples)
+    corrector = MagicMock()
+
+    def correct(_text: str, _language: str, *, text_format: TextFormat = "plain") -> object:
+        collector.record("gemma4:e4b", _stats())
+        return CorrectionOutcome("fixed", None, "no explanations", fell_back=True)
+
+    corrector.correct.side_effect = correct
+    fp, cache_svc, _, _ = _make_processor(tmp_path, corrector=corrector, stats=collector)
+    cache_svc.record_correction.return_value = _make_ctx(
+        _make_state(correction_done=True, correction_text="fixed")
+    )
+
+    fp.process(tmp_path / "doc.png")
+
+    assert samples == []
+
+
+def test_a_text_mode_correction_is_stored_as_text_mode(tmp_path: Path) -> None:
+    """
+    Given  a corrector configured for corrections only, and a collector
+    When   process() is called
+    Then   the sample is stored under the text mode, because that is the answer it wrote
+    """
+    samples: list[tuple[SampleKey, RunSample]] = []
+    collector = _collector(samples)
+    corrector = MagicMock()
+
+    def correct(_text: str, _language: str, *, text_format: TextFormat = "plain") -> object:
+        collector.record("gemma4:e4b", _stats())
+        return CorrectionOutcome("fixed", None, None)
+
+    corrector.correct.side_effect = correct
+    fp, cache_svc, _, _ = _make_processor(tmp_path, corrector=corrector, stats=collector)
+    cache_svc.record_correction.return_value = _make_ctx(
+        _make_state(correction_done=True, correction_text="fixed")
+    )
+
+    fp.process(tmp_path / "doc.png")
+
+    assert [key.mode for key, _sample in samples] == ["text"]
+    assert [key.step for key, _sample in samples] == [SpeedStep.PROOFREADING]
+
+
+def test_a_failed_correction_gives_no_sample(tmp_path: Path) -> None:
+    """
+    Given  a corrector whose provider call failed
+    When   process() is called
+    Then   no sample is stored: the request of a failed call measures nothing
+    """
+    samples: list[tuple[SampleKey, RunSample]] = []
+    collector = _collector(samples)
+    corrector = MagicMock()
+
+    def correct(_text: str, _language: str, *, text_format: TextFormat = "plain") -> object:
+        collector.record("gemma4:e4b", _stats())
+        return CorrectionOutcome("raw", None, "boom", failed=True)
+
+    corrector.correct.side_effect = correct
+    fp, _cache_svc, _, _ = _make_processor(tmp_path, corrector=corrector, stats=collector)
+
+    fp.process(tmp_path / "doc.png")
+
+    assert samples == []
+
+
+def test_a_sample_that_cannot_be_saved_does_not_fail_the_file(tmp_path: Path) -> None:
+    """
+    Given  a collector whose sink fails with an OSError (a full disk)
+    When   process() is called
+    Then   the file is still processed successfully
+    """
+
+    def broken(_key: SampleKey, _sample: RunSample) -> None:
+        raise OSError("disk full")
+
+    collector = RunStatsCollector(_URL, broken)
+    corrector = MagicMock()
+
+    def correct(_text: str, _language: str, *, text_format: TextFormat = "plain") -> object:
+        collector.record("gemma4:e4b", _stats())
+        return CorrectionOutcome("fixed", None, None)
+
+    corrector.correct.side_effect = correct
+    fp, cache_svc, _, _ = _make_processor(tmp_path, corrector=corrector, stats=collector)
+    cache_svc.record_correction.return_value = _make_ctx(
+        _make_state(correction_done=True, correction_text="fixed")
+    )
+
+    result = fp.process(tmp_path / "doc.png")
+
+    assert result.ok

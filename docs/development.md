@@ -481,6 +481,156 @@ Windows; if the memory is taken out, count the RAM part of other loaded models a
 (2) **Apple Silicon**: the unified memory may make the spill look larger than it is.  No code change
 for now — "Run anyway" takes the sting out of a false warning.
 
+### Speed estimates: the test, the real runs and the time left
+
+Three questions, three answers, one owner each:
+
+| Question | Answered by | Where |
+| --- | --- | --- |
+| How fast is this computer? | the speed test, when the teacher asks for it | `infrastructure/performance_probe.py` |
+| How long will a run take? | the estimate from the store | `application/speed_estimates.py` |
+| How long is left? | the pace of the run so far | `gui/_run_status.py` |
+
+No widget computes a duration: `gui/_user_text.py` formats the figures the service returns, and
+`gui/_run_status.py` turns them into the note on the progress bar.
+
+#### Where the teacher sees it
+
+The speed of a computer is a fact about the computer, so the **Test speed** button, the rows per
+step and the warnings are on *Settings → This computer* (`gui/settings/_speed_panel.py`, group
+"Speed on this computer"), next to the computer's power, its graphics card and its server.  The
+test measures the models chosen on *AI models*: the window hands the panel those settings
+(`SettingsWindow._speed_settings`), unsaved choices included, and redraws it when the choice
+changes (`AiModelsPage.speed_choices_changed`).  *AI models* only shows the result, read-only:
+one line with the class-set time and a button that opens the test (`gui/settings/_speed_hint.py`).
+The panel owns no setting, so it adds no key to any page's `owned_keys`.
+
+`SpeedChoices` has two entry points.  `from_settings` (the Settings window) includes every step
+whose provider is Ollama, ticked or not, because the test measures models, not the next run.
+`from_config` (the time left of a run, `ProcessingApplicationService.speed_choices_for_run`) leaves
+out the steps the run switches off, so a re-run of text recognition alone is not charged for
+proofreading.  An empty `review_model` means the content review does not run on Ollama; it never
+means "same as proofreading" (a review on the proofreading model names it).
+
+The proofreading estimate follows `Config.correction_output`: the rates are the same in both
+modes, the answer length is not, so only the samples of the configured mode (and, before there
+are three, the catalog's review length or `TEXT_MODE_ANSWER`) say how long an answer is.
+
+#### What is measured, and with which request
+
+The test sends the app's own requests, so a figure means what a run will cost:
+
+| Step | Request | Answer length |
+| --- | --- | --- |
+| Reading | the OCR prompt with a drawn A4 page | tokens per page |
+| Proofreading | the review request on a test text | tokens per 100 words |
+| Review | the content-review request on the same text | tokens per 100 words |
+
+`MEASURE_ANSWER_TOKENS` (200) caps the two writing steps: enough for a steady rate, short enough
+that the whole test stays under a minute and a half on a card.  `MEASURE_TIMEOUT_S` (90) is the
+limit per request; a step that hits it is `TOO_SLOW`, and its figure is a lower bound at best.  A
+warm-up request (`WARMUP_PROMPT`, one token) loads the model first, so the load time is reported
+separately instead of being counted as speed.
+
+The test page is drawn (`draw_test_page`, `TEST_PAGE_WORDS` 350) and then preprocessed exactly as
+a run preprocesses a scan, because the image the model sees decides the image token count.
+
+#### The maths (`domain/performance_estimate.py`, pure)
+
+| Piece | Meaning |
+| --- | --- |
+| `ModelSpeed(read_tps, write_tps, image_tokens)` | one model on one machine: request tokens per second, answer tokens per second, tokens of one page image |
+| `TimeRange(low_s, high_s, typical_s)` | a duration as a range; `scaled` and `__add__` keep the three figures together |
+| `AnswerLength(low, typical, high)` | how long a model's answers are: per 100 words for a writing model, per page for a reading one |
+| `band(seconds_per_page)` | `SpeedBand`: `FAST` up to `FAST_LIMIT_S` (30 s), `OK` up to `OK_LIMIT_S` (90), `SLOW` up to `SLOW_LIMIT_S` (300), else `VERY_SLOW` |
+| `machine_factor(measured, reference)` | how much slower this computer is than the reference machine; `None` when either figure is missing, so "unknown" is never read as "the same" |
+| `median_factor`, `percentile` | the middle of several models' factors; the 10th and 90th percentile of a set of figures |
+| `MachineFactors(writing, reading)` | the two factors, with `for_category` picking one: a card can be better at reading a page than at writing an answer |
+| `expected_speed`, `expected_band` | a model's reference speed carried to this computer by the factor, and the band of the middle of the resulting range |
+| `SpeedSource` | `MEASURED` (this model, this computer) or `EXPECTED` (from the reference machine) |
+
+The constants that stand in for a measurement, each with where its value comes from:
+
+| Constant | Value | From |
+| --- | --- | --- |
+| `TYPICAL_PAGE_WORDS` | 250 | a handwritten A4 page of an essay holds 200 to 300 words |
+| `CHARS_PER_WORD` | 6.0 | German prose is the longest of the three languages (about 6.2), English the shortest (about 5.5) |
+| `DEFAULT_CHARS_PER_TOKEN` | 4.0 | between the window budget's cautious 3 and the 4.3 to 5 measured on German prose at page length |
+| `DEFAULT_IMAGE_TOKENS` | 1500 | a full A4 page at 300 DPI; how many tokens a vision model makes of it depends on its own encoder |
+| `TEXT_MODE_ANSWER` | 120 / 141 / 151 | `gemma4:e2b` over 9 texts on 2026-11-13; text mode answers with about the text's own length, so one figure serves every model |
+| `CONTENT_REVIEW_ANSWER` | 80 / 120 / 200 | a review answers with a short assessment; deliberately wide |
+| `DEFAULT_READING_ANSWER` | 350 / 600 / 1100 | a page of about 250 words plus the markup a reading model adds |
+
+A model without an `answer_length` gets the median over the catalogued models of its kind, not a
+constant (`default_answer_length`).
+
+#### The store (`infrastructure/speed_store.py`)
+
+Two files, both `SCHEMA` 1, both keyed by what makes a figure go out of date:
+
+| Store | Key | Holds |
+| --- | --- | --- |
+| `SpeedStore` | `SpeedKey`: server, tag, digest, Ollama version, graphics card | the test's result per step, with its outcome and message |
+| `SampleStore` | `SampleKey`: server, tag, step, mode | the last `KEEP_SAMPLES` (20) samples of real runs |
+
+The mode is part of the sample key because it decides how long the answer is: a review answer
+repeats the text and explains every change, a text-mode answer is about the text's length.  Mixing
+the two would make the answer length meaningless.
+
+Both files are read once per change: the parsed content is kept with the file's modification
+time, size and inode, so a model list that asks for fifty tags does not parse them fifty times
+and a write by the run's worker is still seen.  A file with another schema is read as empty, but
+it is moved to `<name>.bak` before this version writes over it, so an older app never destroys
+what a newer one measured.  Server addresses are normalised on write and on read.
+
+`RunStatsCollector` (`infrastructure/run_stats.py`) writes the samples: the pipeline hands it to
+the Ollama client as `stats_sink`, so every request of a run is seen.  It sums the requests of one
+page or one document into one `RunSample`, and counts a load only from `LOAD_THRESHOLD_S` (1 s) up,
+so a model that was in memory does not look like one that had to be loaded.  Collecting statistics
+never fails a document: a sink that cannot write (full or read-only disk) is logged and skipped.
+A step that failed, or whose review fell back to corrections only (`CorrectionOutcome.fell_back`),
+is discarded: the requests of the failed attempt would be counted into the answer length of the
+mode that finally answered.
+
+#### Real runs win over the test
+
+`speed_summary` prefers the samples to the stored test, per step and per model:
+
+- from `MIN_ANSWER_SAMPLES` (3) samples the run figures replace the catalog's answer length: they
+  are this class's error level with this model and these instructions, which no test can know.
+- from `PERCENTILE_SAMPLES` (10) the range is the 10th to the 90th percentile, so one runaway
+  answer no longer widens it.
+- a step whose samples are missing falls back to the test, and a step with neither gets no figure.
+
+`SpeedSummary.sample_count` and `sample_pages` say which of the two a row rests on, and the panel
+says it in words ("From your last 12 documents").
+
+#### The time left
+
+`RunPace` (`gui/_run_status.py`) starts from the store's seconds per page.  After the first file
+the run's own pace takes over, blended with the estimate for the first `BLEND_FILES` (3) files: one
+fast file is not a pace.  `pages_left` counts the pages of the files that are not done yet, from
+the run's page counts when they are known and from the average of the files done so far otherwise.
+Nothing known at all gives no figure, which is better than a guess the teacher would plan around.
+
+#### What is still open
+
+Four Ollama behaviours the test relies on, none of them measured yet:
+
+1. Does `prompt_eval_count` / `prompt_eval_duration` leave out a reused prompt start?  Send the
+   same request twice.  The answer decides whether the warm-up has to differ from the measuring
+   request.
+2. Is the time spent encoding the image inside `prompt_eval_duration`, or only in
+   `total_duration`?  Compare `total - load - prompt_eval - eval`.
+3. Is the writing rate of a 200-token answer within 10 % of a full answer's?
+4. Is `size_vram` 0 when Ollama is forced onto the processor (`num_gpu: 0`)?
+
+And the figures themselves: only `qwen3:4b`, `gemma4:e4b`, `gemma4:12b` and `gpt-oss:20b` have a
+`reference_speed`, and none of them has a `read_tps`.  A reading model therefore gets no expected
+band, and `MachineFactors.reading` is `None` in practice until the reading models are measured on
+the reference machine.  `tools/ocr_page_tokens.py` measures them, and
+`report --performance --catalog-lines` prints the `answer_length` lines for the writing models.
+
 ### Who owns what (hardware detection and recommendations)
 
 | Piece | Where | Rule |

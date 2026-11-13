@@ -565,6 +565,7 @@ def test_unrepairable_review_answer_falls_back_to_text_mode(monkeypatch) -> None
     assert outcome.text == "Hello world."
     assert outcome.review is None
     assert outcome.warning == FALLBACK_WARNING
+    assert outcome.fell_back is True
 
 
 def test_review_transport_error_keeps_the_source_text(monkeypatch) -> None:

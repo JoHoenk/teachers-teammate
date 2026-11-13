@@ -82,6 +82,24 @@ py_binary(
     ],
 )
 
+# Developer tool (needs a running Ollama server and the developer's own benchmark pages; not run
+# in CI) that measures what a reading model costs on one page: the answer tokens per page and the
+# words per page, which are the catalog's answer_length and TYPICAL_PAGE_WORDS.
+py_binary(
+    name = "ocr_page_tokens",
+    srcs = ["ocr_page_tokens.py"],
+    main = "ocr_page_tokens.py",
+    visibility = ["//visibility:public"],
+    deps = [
+        ":model_eval",
+        "//teachers_teammate:ocr_lib",
+        "@ocr_test_dependencies//numpy:pkg",
+        "@ocr_test_dependencies//ollama:pkg",
+        "@ocr_test_dependencies//opencv_python:pkg",
+        "@ocr_test_dependencies//pillow:pkg",
+    ],
+)
+
 # Developer tool (standard library only, writes the test set for compare_writing_models).
 py_binary(
     name = "prepare_gec_testset",

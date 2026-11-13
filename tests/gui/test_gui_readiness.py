@@ -9,7 +9,9 @@ from teachers_teammate.application.service import IssueKind, RequirementIssue
 from teachers_teammate.gui._dependency_guard_dialog import DependencyGuardDialog
 from teachers_teammate.gui._fix_targets import (
     COMMAND_CHOOSE_FOLDER,
+    COMMAND_GET_OLLAMA,
     COMMAND_RETRY,
+    COMMAND_START_OLLAMA,
     COMMAND_TURN_ON_RECOGNITION,
     COMMAND_USE_SERVER,
     RESULTS_NO_FOLDER,
@@ -104,6 +106,54 @@ def test_fix_for_an_unreachable_ollama_offers_retry_and_finding_the_server() -> 
         FixAction("Check again", command=COMMAND_RETRY),
         FixAction("Find server…", SettingsPage.AI_SETUP, FOCUS_FIND_SERVER),
     )
+
+
+@pytest.mark.unit
+def test_fix_for_a_missing_ollama_offers_the_download_page_and_a_new_check() -> None:
+    """
+    Given  a local address that does not answer and no Ollama program on the computer
+    When   its fix is asked
+    Then   the line says Ollama wasn't found, and the buttons open the download page and
+           check again
+    """
+    fix = _fix("", RequirementIssue("down", IssueKind.OLLAMA_NOT_FOUND))
+
+    assert fix.line == "Ollama wasn't found on this computer"
+    assert fix.actions == (
+        FixAction("Get Ollama…", command=COMMAND_GET_OLLAMA),
+        FixAction("Check again", command=COMMAND_RETRY),
+    )
+
+
+@pytest.mark.unit
+def test_fix_for_a_stopped_ollama_offers_to_start_it_where_the_app_can() -> None:
+    """
+    Given  an installed Ollama that isn't running, on a platform where the app may start it
+    When   its fix is asked
+    Then   the line says it isn't running, and the buttons start it and check again
+    """
+    fix = _fix("", RequirementIssue("down", IssueKind.OLLAMA_NOT_RUNNING, startable=True))
+
+    assert fix.line == "Ollama isn't running"
+    assert fix.actions == (
+        FixAction("Start Ollama", command=COMMAND_START_OLLAMA),
+        FixAction("Check again", command=COMMAND_RETRY),
+    )
+
+
+@pytest.mark.unit
+def test_fix_for_a_stopped_ollama_on_linux_names_the_service_command() -> None:
+    """
+    Given  an installed Ollama that isn't running, on a platform where the app may not start it
+    When   its fix is asked
+    Then   there is only "Check again", and its tooltip says how to start the service
+    """
+    fix = _fix("", RequirementIssue("down", IssueKind.OLLAMA_NOT_RUNNING))
+
+    assert fix.line == "Ollama isn't running"
+    assert [a.label for a in fix.actions] == ["Check again"]
+    assert fix.actions[0].command == COMMAND_RETRY
+    assert "systemctl start ollama" in fix.actions[0].tooltip
 
 
 @pytest.mark.unit

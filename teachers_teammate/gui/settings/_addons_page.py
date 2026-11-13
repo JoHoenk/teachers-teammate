@@ -16,7 +16,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import ClassVar, cast
 
-from PySide6.QtCore import Qt, QThread, Signal
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QBrush, QColor
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -53,6 +53,7 @@ from ...domain.model_catalog import (
 from .. import _user_text as txt
 from .._background import LatestTask
 from .._constants import _SPACY_MODEL_CHOICES as _SPACY_MODEL_DOWNLOAD_CHOICES
+from .._install_round import PACKAGE_PREFIX, InstallRound
 from .._model_guidance import PROVIDER_PREFIX, SPACY_PREFIX
 from .._model_wording import (
     ADD_MODEL_NOTE,
@@ -166,25 +167,6 @@ def _detect_installed(
     return result
 
 
-class _PipInstallThread(QThread):
-    """Installs pip packages in a background thread."""
-
-    log_line = Signal(str)
-    finished_ok = Signal(list)  # installed packages
-    finished_err = Signal(str)
-
-    def __init__(self, packages: list[str]) -> None:
-        super().__init__()
-        self._packages = packages
-
-    def run(self) -> None:
-        try:
-            ProcessingApplicationService().install_packages(self._packages, self.log_line.emit)
-            self.finished_ok.emit(self._packages)
-        except Exception as exc:  # noqa: BLE001  # surface any pip/subprocess failure to the UI via the error signal
-            self.finished_err.emit(str(exc))
-
-
 class AddonsPage(SettingsPageBase):
     """Install AI models for this computer, handwriting engines, online services and more.
 
@@ -230,12 +212,16 @@ class AddonsPage(SettingsPageBase):
         self._detect_task = LatestTask(self)
         self._detect_running = False
         self._detect_again = False  # a pull finished while a detection was running
-        self._dl_active_thread: QThread | None = None
         self._detection_started = False
         self._dl_checkboxes: dict[str, QCheckBox] = {}
         self._tesseract_status_lbl: QLabel | None = None
-        self._pull_manager = context.pull_manager  # owned by MainWindow; outlives this page
-        self._pulled_any = False  # a model of the current install round arrived
+        # The install round does the work; this page only shows it.
+        self._round = InstallRound(self._svc, context.pull_manager, self)
+        self._round.log_line.connect(self._dl_log_append)
+        self._round.item_started.connect(self._on_round_item_started)
+        self._round.pull_progress.connect(self._on_round_pull_progress)
+        self._round.failed.connect(self._on_round_failed)
+        self._round.finished.connect(self._on_round_finished)
         # Pre-ticking waits for BOTH the installed check and the hardware detection.
         self._installed_ready = False
         self._profile_ready = False
@@ -793,19 +779,11 @@ class AddonsPage(SettingsPageBase):
         if not self._detection_started:
             self._detection_started = True
             self._start_detection()
-        # If a pull is already running in the manager, subscribe to show current progress
-        if (
-            self._pull_manager is not None
-            and self._pull_manager.is_active
-            and not self._pull_connected
-        ):
-            model = self._pull_manager.current_model
+        # If a pull is already running in the manager, follow it to show current progress
+        model = self._round.follow_running_pull()
+        if model:
             self._dl_log.appendPlainText(f"(pull of {model!r} already in progress…)")
-            self._dl_progress.setValue(0)
-            self._dl_progress.show()
-            self._dl_abort_btn.setEnabled(True)
-            self._dl_abort_btn.show()
-            self._connect_pull_manager()
+            self._show_pull_progress()
 
     def focus(self, focus: str, preselect: Sequence[str] = ()) -> None:
         """Show the tab named *focus*; tick *preselect*.
@@ -853,37 +831,13 @@ class AddonsPage(SettingsPageBase):
 
     def close_blocker(self) -> str:
         """A pip install or language-model download must finish before the window closes."""
-        if self._dl_active_thread is not None and self._dl_active_thread.isRunning():
+        if self._round.busy():
             return CLOSE_BLOCKED
         return ""
 
     def shutdown(self) -> None:
         """Stop following the pull manager; a running pull keeps going in the main window."""
-        self._disconnect_pull_manager()
-
-    # ── pull manager subscription ────────────────────────────────────────────────
-
-    def _connect_pull_manager(self) -> None:
-        if self._pull_manager is None or self._pull_connected:
-            return
-        self._pull_manager.progress.connect(self._on_ollama_pull_progress)
-        self._pull_manager.finished.connect(self._on_manager_pull_done)
-        self._pull_manager.error.connect(self._on_manager_pull_error)
-        self._pull_connected = True
-
-    def _disconnect_pull_manager(self) -> None:
-        if self._pull_manager is None or not self._pull_connected:
-            return
-        for signal, slot in (
-            (self._pull_manager.progress, self._on_ollama_pull_progress),
-            (self._pull_manager.finished, self._on_manager_pull_done),
-            (self._pull_manager.error, self._on_manager_pull_error),
-        ):
-            try:
-                signal.disconnect(slot)
-            except (RuntimeError, TypeError):
-                pass  # already disconnected
-        self._pull_connected = False
+        self._round.detach()
 
     def _start_detection(self) -> None:
         if self._detect_running:
@@ -1031,7 +985,7 @@ class AddonsPage(SettingsPageBase):
         return packages
 
     def _on_download_install(self) -> None:
-        if self._dl_active_thread is not None and self._dl_active_thread.isRunning():
+        if self._round.running():
             return
 
         pip_packages = self._collect_pip_packages()
@@ -1055,64 +1009,14 @@ class AddonsPage(SettingsPageBase):
         if ollama_models and not self._confirm_too_large(ollama_models):
             return
 
-        self._pulled_any = False
         self._dl_log.clear()
         self._dl_install_btn.setEnabled(False)
-
-        if pip_packages:
-            self._dl_log.appendPlainText(f"pip install {' '.join(pip_packages)}")
-            thread = _PipInstallThread(pip_packages)
-            thread.log_line.connect(self._dl_log_append)
-            thread.finished_ok.connect(
-                lambda _pkgs, sm=spacy_models, om=ollama_models: self._on_pip_done(sm, om)
-            )
-            thread.finished_err.connect(self._on_download_err)
-            thread.start()
-            self._dl_active_thread = thread
-        elif spacy_models:
-            self._run_spacy_downloads(spacy_models, ollama_models)
-        else:
-            self._run_ollama_pulls(ollama_models)
-
-    def _on_pip_done(self, spacy_models: list, ollama_models: list) -> None:
-        self._dl_log.appendPlainText("✓ pip install complete.")
-        ProcessingApplicationService().inject_addon_packages_dir()
-        if spacy_models:
-            self._run_spacy_downloads(spacy_models, ollama_models)
-        elif ollama_models:
-            self._run_ollama_pulls(ollama_models)
-        else:
-            self._dl_install_btn.setEnabled(True)
-            self.packages_changed.emit()
-            self._start_detection()
-
-    def _run_spacy_downloads(self, spacy_models: list, ollama_models: list) -> None:
-        from .._addon_installer_dialog import _ModelDownloadThread  # noqa: PLC0415
-
-        model = spacy_models[0]
-        remaining = spacy_models[1:]
-        self._dl_log.appendPlainText(f"Downloading spaCy model: {model}")
-        target = ProcessingApplicationService().addon_packages_dir()
-        thread = _ModelDownloadThread(model, target)
-        thread.log_line.connect(self._dl_log_append)
-        thread.finished_ok.connect(
-            lambda sm=remaining, om=ollama_models: self._on_spacy_done(sm, om)
+        self._round.start(
+            packages=pip_packages,
+            spacy_models=spacy_models,
+            ollama_models=ollama_models,
+            ollama_url=self._ollama_url,
         )
-        thread.finished_err.connect(self._on_download_err)
-        thread.start()
-        self._dl_active_thread = thread
-
-    def _on_spacy_done(self, remaining: list, ollama_models: list) -> None:
-        self._dl_log.appendPlainText("✓ spaCy model downloaded.")
-        ProcessingApplicationService().inject_addon_packages_dir()
-        if remaining:
-            self._run_spacy_downloads(remaining, ollama_models)
-        elif ollama_models:
-            self._run_ollama_pulls(ollama_models)
-        else:
-            self._dl_install_btn.setEnabled(True)
-            self.packages_changed.emit()
-            self._start_detection()
 
     def _confirm_too_large(self, ollama_models: list[str]) -> bool:
         """Ask for confirmation before pulling models that exceed the profile budget.
@@ -1157,59 +1061,21 @@ class AddonsPage(SettingsPageBase):
         box.exec()
         return box.clickedButton() == download_btn
 
-    def _run_ollama_pulls(self, ollama_models: list) -> None:
-        model = ollama_models[0]
-        remaining = ollama_models[1:]
-        queued_behind = self._pull_manager is not None and self._pull_manager.is_active
-        self._dl_log.appendPlainText(
-            f"Queued behind the running download: {', '.join(ollama_models)}"
-            if queued_behind
-            else f"Pulling Ollama model: {model}"
-        )
+    # ── following the install round ──────────────────────────────────────────────
+
+    def _on_round_item_started(self, item: str) -> None:
+        """Show the progress bar and Abort for an Ollama pull; pip and spaCy have no bar."""
+        if item.startswith((PACKAGE_PREFIX, SPACY_PREFIX)):
+            return
+        self._show_pull_progress()
+
+    def _show_pull_progress(self) -> None:
         self._dl_progress.setValue(0)
         self._dl_progress.show()
         self._dl_abort_btn.setEnabled(True)
         self._dl_abort_btn.show()
 
-        if self._pull_manager is not None:
-            # Delegate to the main-window-owned manager: it pulls the whole queue, also
-            # after this window was closed.
-            self._connect_pull_manager()
-            self._pull_manager.start(self._ollama_url, model, remaining)
-        else:
-            from .._addon_installer_dialog import _OllamaPullThread  # noqa: PLC0415
-
-            thread = _OllamaPullThread(self._ollama_url, model)
-            thread.progress.connect(self._on_ollama_pull_progress)
-            thread.finished_ok.connect(lambda _name, rm=remaining: self._on_ollama_pull_done(rm))
-            thread.finished_err.connect(self._on_download_err)
-            thread.start()
-            self._dl_active_thread = thread
-
-    def _on_manager_pull_done(self, _model_name: str) -> None:
-        # Only connected while a manager pull is active, so _pull_manager is set.
-        if self._pull_manager is None:
-            return
-        queued = self._pull_manager.queued
-        if queued:
-            # The manager goes on with the next model by itself.
-            self._dl_log.appendPlainText("✓ Ollama model pulled.")
-            self._pulled_any = True
-            self._svc.on_ollama_models_changed(self._ollama_url)
-            self._dl_log.appendPlainText(f"Pulling Ollama model: {queued[0]}")
-            self._dl_progress.setValue(0)
-            return
-        self._disconnect_pull_manager()
-        self._on_ollama_pull_done([])
-
-    def _on_manager_pull_error(self, msg: str) -> None:
-        # Only connected while a manager pull is active, so _pull_manager is set.
-        if self._pull_manager is None:
-            return
-        self._disconnect_pull_manager()
-        self._on_download_err(msg)
-
-    def _on_ollama_pull_progress(self, status: str, completed: int, total: int) -> None:
+    def _on_round_pull_progress(self, status: str, completed: int, total: int) -> None:
         if total > 0:
             mb_done = completed / 1_048_576
             mb_total = total / 1_048_576
@@ -1218,46 +1084,27 @@ class AddonsPage(SettingsPageBase):
         else:
             self._dl_detect_lbl.setText(status)
 
-    def _on_ollama_pull_done(self, remaining: list) -> None:
-        self._dl_log.appendPlainText("✓ Ollama model pulled.")
-        self._dl_progress.hide()
-        self._dl_abort_btn.hide()
-        self._pulled_any = True
-        # The installed-model list and the classifications are stale from now on.
-        self._svc.on_ollama_models_changed(self._ollama_url)
-        if remaining:
-            self._run_ollama_pulls(remaining)
-        else:
-            self._dl_install_btn.setEnabled(True)
-            self._dl_detect_lbl.setText("Done.")
-            self.packages_changed.emit()
-            self._start_detection()
-
-    def _on_download_err(self, msg: str) -> None:
-        self._dl_abort_btn.hide()
-        self._dl_progress.hide()
-        if msg == "aborted":
+    def _on_round_failed(self, _item: str, message: str) -> None:
+        if message == "aborted":
             self._dl_log.appendPlainText("Download aborted.")
             self._dl_detect_lbl.setText("Aborted.")
         else:
-            self._dl_log.appendHtml(f'<span style="color:#c0392b;"><b>Error:</b> {msg}</span>')
+            self._dl_log.appendHtml(f'<span style="color:#c0392b;"><b>Error:</b> {message}</span>')
+
+    def _on_round_finished(self, installed_any: bool) -> None:
+        self._dl_progress.hide()
+        self._dl_abort_btn.hide()
         self._dl_install_btn.setEnabled(True)
-        if self._pulled_any:
-            # Earlier models of this round did arrive: show them as downloaded.
-            self._svc.on_ollama_models_changed(self._ollama_url)
-            self.packages_changed.emit()
-            self._start_detection()
+        if not installed_any:
+            return
+        # Something arrived: the installed list and the classifications are stale.
+        self._dl_detect_lbl.setText("Done.")
+        self.packages_changed.emit()
+        self._start_detection()
 
     def _on_abort(self) -> None:
-        from .._addon_installer_dialog import _OllamaPullThread  # noqa: PLC0415
-
         self._dl_abort_btn.setEnabled(False)
-        if self._pull_manager is not None:
-            self._pull_manager.abort()
-        elif isinstance(self._dl_active_thread, _OllamaPullThread):
-            # The abort button is only shown during Ollama pulls, so the active
-            # thread is always the abortable pull thread here.
-            self._dl_active_thread.request_abort()
+        self._round.abort()
 
     def _dl_log_append(self, line: str) -> None:
         self._dl_log.appendPlainText(line)

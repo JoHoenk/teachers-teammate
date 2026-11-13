@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from pathlib import Path
+import tempfile
 from typing import Any, ClassVar, cast
 
 from PySide6.QtCore import QObject, QThread, Signal
@@ -34,14 +35,13 @@ from teachers_teammate.domain.model_catalog import (
     ModelUses,
 )
 from teachers_teammate.domain.model_listing import ModelListing
-from teachers_teammate.gui import _anonymizer_config_widget, _model_fetch
+from teachers_teammate.gui import _anonymizer_config_widget, _install_round, _model_fetch
 from teachers_teammate.gui._background import LatestTask
 from teachers_teammate.gui._privacy_settings import FlowAcknowledgements
 from teachers_teammate.gui._main_window import MainWindow
 from teachers_teammate.gui._update_check import UpdateCheckThread
 from teachers_teammate.gui._worker import _ConnectionCheckThread
 from teachers_teammate.gui.settings import SettingsContext, SettingsResult
-from teachers_teammate.gui.settings import _addons_page
 
 from ._service_stubs import LocalDataFlowStub, context_choice_from
 
@@ -190,6 +190,12 @@ class FakeGuiService(LocalDataFlowStub):
     def on_ollama_models_changed(self, ollama_url: str) -> None:
         _ = ollama_url
 
+    def addon_packages_dir(self) -> Path:
+        return Path(tempfile.gettempdir()) / "teachers-teammate-addons"
+
+    def inject_addon_packages_dir(self) -> None:
+        pass
+
     def first_run_model_settings(self, profile) -> dict[str, str]:
         _ = profile
         return {"ocr_model": "", "correction_model": "", "evaluate_model": ""}
@@ -233,7 +239,7 @@ def neutralize_gui_threads(monkeypatch: Any) -> None:
         _ConnectionCheckThread,
         _model_fetch._GpuDetectThread,
         _model_fetch._ModelFetchThread,
-        _addons_page._PipInstallThread,
+        _install_round._PipInstallThread,
         _anonymizer_config_widget._SpacyModelFetchThread,
     ):
         monkeypatch.setattr(thread_cls, "start", lambda self: None)

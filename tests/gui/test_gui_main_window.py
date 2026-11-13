@@ -38,6 +38,7 @@ from teachers_teammate.gui.settings._page import (
     FOCUS_PROOFREADING_KEY,
 )
 from teachers_teammate.domain.run_summary import RunSummary
+from teachers_teammate.infrastructure.ollama_install import OLLAMA_DOWNLOAD_URL
 from teachers_teammate.infrastructure.reporting import KeepAwakeState
 from teachers_teammate.infrastructure.storage_root import resolve_artifact_dir
 from tests.conftest import make_config
@@ -1481,11 +1482,11 @@ def test_tools_menu_lists_benchmark_and_the_system_monitor(main_window) -> None:
     """
     Given  the main window
     When   its Tools menu is read
-    Then   it offers Benchmark… and System Monitor
+    Then   it offers Benchmark… and System Monitor, then the Setup Assistant on its own
     """
     labels = [a.text() for a in _menu(main_window, "Tools").actions()]
 
-    assert labels == ["Benchmark\u2026", "System Monitor"]
+    assert labels == ["Benchmark\u2026", "System Monitor", "", "Setup Assistant\u2026"]
 
 
 @pytest.mark.gui
@@ -2292,9 +2293,17 @@ def test_main_window_env_var_takes_priority_over_stored_credential(
 
 
 def _make_first_start_window(qtbot, monkeypatch, tmp_path: Path, detection) -> MainWindow:
-    """Create a MainWindow that takes the first-start path (no ocr.toml)."""
+    """Create a MainWindow that takes the first-start path (no ocr.toml).
+
+    The assistant opens on top of the window; it is cancelled here, which is the way out
+    that leaves today's setup in place.
+    """
+    from PySide6.QtWidgets import QDialog  # noqa: PLC0415
+    from teachers_teammate.gui.setup import SetupAssistant  # noqa: PLC0415
+
     monkeypatch.setattr(main_window_module, "UpdateCheckThread", _DummyUpdateThread)
     monkeypatch.setattr(MainWindow, "_start_readiness_check", lambda self, **_kw: None)
+    monkeypatch.setattr(SetupAssistant, "exec", lambda self: QDialog.DialogCode.Rejected)
     monkeypatch.setattr(
         ProcessingApplicationService, "resolve_config_path", lambda self, explicit: None
     )
@@ -2402,6 +2411,154 @@ def test_first_start_non_ollama_correction_provider_untouched(
     settings = win._config_panel.get_settings_dict()
     assert settings["correction_model"] == DEFAULTS["correction_model"]
     assert settings["ocr_model"] == DEFAULT_OCR_MODEL  # ocr provider still updated
+
+
+@pytest.mark.use_case("Recommended_Models_On_First_Start")
+def test_cancelling_the_assistant_on_a_first_start_keeps_todays_setup(
+    qtbot, monkeypatch, tmp_path: Path
+) -> None:
+    """
+    Given  a first start where the teacher closes the assistant without setting anything up
+    When   the window goes on
+    Then   the system language and the best models for this computer are saved, so the app
+           works without the assistant
+    """
+    monkeypatch.setattr(main_window_module, "system_language", lambda: "German")
+    detection = HardwareDetection(
+        profile="16gb", reason=DetectionReason.GPU_DETECTED, gpu_name="RTX 4090", memory_gb=24.0
+    )
+    win = _make_first_start_window(qtbot, monkeypatch, tmp_path, detection)
+    qtbot.waitUntil(lambda: "First start" in win._log.toPlainText(), timeout=5000)
+
+    saved = (tmp_path / "ocr.toml").read_text(encoding="utf-8")
+    best_16gb = RECOMMENDED["general"]["16gb"][0]
+    assert 'language = "German"' in saved
+    assert f'correction_model = "{best_16gb}"' in saved
+
+
+@pytest.mark.gui
+def test_cancelling_the_assistant_from_the_tools_menu_saves_nothing(
+    main_window, monkeypatch
+) -> None:
+    """
+    Given  a window that already has settings
+    When   the teacher opens the assistant from the Tools menu and closes it
+    Then   nothing is written and no model is chosen: the assistant only changes what the
+           teacher agreed to
+    """
+    from PySide6.QtWidgets import QDialog  # noqa: PLC0415
+    from teachers_teammate.gui.setup import SetupAssistant  # noqa: PLC0415
+
+    written: list = []
+    monkeypatch.setattr(SetupAssistant, "exec", lambda self: QDialog.DialogCode.Rejected)
+    monkeypatch.setattr(MainWindow, "_save_settings", lambda self, **_kw: written.append("save"))
+    monkeypatch.setattr(
+        MainWindow, "_apply_first_start_model_settings", lambda self: written.append("models")
+    )
+
+    main_window._open_setup_assistant()
+
+    assert written == []
+
+
+@pytest.mark.gui
+def test_closing_the_assistant_after_set_up_keeps_the_setup_on_a_first_start(
+    main_window, monkeypatch
+) -> None:
+    """
+    Given  a first start where the teacher pressed Set up
+    When   the done page is closed with the window's X (a reject)
+    Then   the first-start defaults do not run over the setup the teacher agreed to
+    """
+    from PySide6.QtWidgets import QDialog  # noqa: PLC0415
+    from teachers_teammate.gui.setup import SetupAssistant  # noqa: PLC0415
+
+    ran: list = []
+
+    def _exec(self) -> QDialog.DialogCode:
+        self._committed = True
+        return QDialog.DialogCode.Rejected
+
+    monkeypatch.setattr(SetupAssistant, "exec", _exec)
+    monkeypatch.setattr(MainWindow, "_apply_first_start_defaults", lambda self: ran.append(1))
+
+    main_window._open_setup_assistant(first_start=True)
+
+    assert ran == []
+
+
+@pytest.mark.gui
+def test_the_tools_menu_opens_the_assistant_on_the_current_settings(
+    main_window, monkeypatch
+) -> None:
+    """
+    Given  a window whose settings name a writing model of the teacher's own
+    When   the teacher picks the Setup Assistant from the Tools menu
+    Then   the assistant opens on those settings, not on a first start
+    """
+    from PySide6.QtWidgets import QDialog  # noqa: PLC0415
+    from teachers_teammate.gui.setup import SetupAssistant  # noqa: PLC0415
+
+    opened: list = []
+
+    def _record(self) -> QDialog.DialogCode:
+        opened.append(self)
+        return QDialog.DialogCode.Rejected
+
+    monkeypatch.setattr(SetupAssistant, "exec", _record)
+    main_window._config_panel.update_settings({"correction_model": "my-writer:latest"})
+
+    main_window._setup_action.trigger()
+
+    assert len(opened) == 1
+    context = opened[0]._context
+    assert context.first_start is False
+    assert context.settings["correction_model"] == "my-writer:latest"
+
+
+@pytest.mark.gui
+def test_the_setup_result_is_applied_without_a_guard_dialog(
+    main_window, monkeypatch, tmp_path: Path
+) -> None:
+    """
+    Given  a setup plan the teacher agreed to, with a new language and a new writing model
+    When   the window takes the result over
+    Then   the settings and the boxes change without a guard dialog, the window saves and
+           checks readiness, and the language's instructions follow
+    """
+    from teachers_teammate.gui.setup import SetupResult  # noqa: PLC0415
+
+    guarded: list = []
+    saved: list = []
+    checked: list = []
+
+    def _record_guard(stage: str) -> None:
+        # The real guard does nothing while saved settings are being loaded; record only the
+        # calls that would have checked a requirement and possibly opened a dialog.
+        if not main_window._config_panel._loading:
+            guarded.append(stage)
+
+    monkeypatch.setattr(main_window._config_panel, "_guard_stage", _record_guard)
+    monkeypatch.setattr(MainWindow, "_save_settings", lambda self, **kw: saved.append(kw))
+    monkeypatch.setattr(
+        MainWindow, "_start_readiness_check", lambda self, **_kw: checked.append("check")
+    )
+    main_window._config_path = tmp_path / "ocr.toml"
+
+    main_window._apply_setup_result(
+        SetupResult(
+            settings={"correction_provider": "ollama", "correction_model": "qwen3:8b"},
+            panel={"language": "German", "anonymization_enabled": True},
+        )
+    )
+
+    settings = main_window._config_panel.get_settings_dict()
+    assert settings["correction_model"] == "qwen3:8b"
+    assert main_window._config_panel.lookup_language() == "German"
+    assert guarded == []
+    assert saved == [{"notify": False}]
+    assert checked == ["check"]
+    assert "spaCy de" in main_window._config_panel._anonymization_uses.text()
 
 
 # ── add-ons wiring (review findings #1, #9, #10 and the GPU tab) ───────────
@@ -4501,6 +4658,82 @@ def test_an_unreachable_ollama_is_checked_again_until_it_answers(ready_window) -
     ready_window._on_readiness_check_done(unreachable, None)
     ready_window._on_readiness_check_done(RunPreflight(), None)
     assert ready_window._ollama_retry_timer.isActive() is False
+
+
+@pytest.mark.gui
+@pytest.mark.parametrize(
+    "kind",
+    [IssueKind.OLLAMA_UNREACHABLE, IssueKind.OLLAMA_NOT_FOUND, IssueKind.OLLAMA_NOT_RUNNING],
+)
+def test_the_retry_runs_for_every_kind_that_means_ollama_is_not_answering(
+    ready_window, kind: IssueKind
+) -> None:
+    """
+    Given  a blocker saying Ollama cannot be reached, was not found, or is not running
+    When   the answer arrives
+    Then   a retry is scheduled in each case, so an Ollama installed or started meanwhile
+           turns the line green without a click
+    """
+    result = RunPreflight(
+        ollama_unreachable="✗ down", ollama_issue=RequirementIssue("✗ down", kind)
+    )
+
+    ready_window._on_readiness_check_done(result, None)
+
+    assert ready_window._ollama_retry_timer.isActive() is True
+
+
+@pytest.mark.gui
+def test_get_ollama_opens_the_download_page(qtbot, ready_window, monkeypatch) -> None:
+    """
+    Given  a blocker saying Ollama wasn't found on this computer
+    When   "Get Ollama…" is pressed
+    Then   the download page is opened in the browser, and nothing is installed by the app
+    """
+    opened: list[str] = []
+    monkeypatch.setattr(
+        main_window_module.QDesktopServices, "openUrl", lambda url: opened.append(url.toString())
+    )
+    result = RunPreflight(
+        ollama_unreachable="✗ down",
+        ollama_issue=RequirementIssue("✗ down", IssueKind.OLLAMA_NOT_FOUND),
+    )
+    ready_window._on_readiness_check_done(result, None)
+
+    ready_window._readiness_line._buttons[0].click()
+
+    assert opened == [OLLAMA_DOWNLOAD_URL]
+
+
+@pytest.mark.gui
+def test_start_ollama_starts_it_in_the_background_and_checks_again(
+    qtbot, ready_window, monkeypatch
+) -> None:
+    """
+    Given  a blocker saying Ollama is installed but isn't running
+    When   "Start Ollama" is pressed
+    Then   the program is started off the GUI thread, and a fresh check follows a moment later
+    """
+    started: list[int] = []
+    checks: list[dict] = []
+    monkeypatch.setattr(ready_window._app_service, "start_ollama", lambda: started.append(1))
+    monkeypatch.setattr(
+        main_window_module,
+        "run_in_background",
+        lambda fn, on_done, **_kw: (fn(), on_done(None, None)),
+    )
+    monkeypatch.setattr(main_window_module.QTimer, "singleShot", lambda _ms, fn: fn())
+    monkeypatch.setattr(ready_window, "_start_readiness_check", lambda **kw: checks.append(kw))
+    result = RunPreflight(
+        ollama_unreachable="✗ down",
+        ollama_issue=RequirementIssue("✗ down", IssueKind.OLLAMA_NOT_RUNNING, startable=True),
+    )
+    ready_window._on_readiness_check_done(result, None)
+
+    ready_window._readiness_line._buttons[0].click()
+
+    assert started == [1]
+    assert checks == [{"fresh": True}]
 
 
 @pytest.mark.gui

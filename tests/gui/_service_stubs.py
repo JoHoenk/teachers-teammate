@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 import os
+from pathlib import Path
+import tempfile
 import threading
 from typing import cast
 
@@ -195,6 +197,7 @@ class RecommendationServiceStub(LocalDataFlowStub):
         self.detect_calls: list[tuple[str, bool]] = []
         self.changed_urls: list[str] = []
         self.gpu_calls: list[bool] = []  # the ``refresh`` flag of every detect_gpus call
+        self.injected_packages_dir = False  # inject_addon_packages_dir was called
 
     # providers ──────────────────────────────────────────────────────────────
     # Defaults for the model-list and package calls the AI-service dialogs make; a stub that
@@ -286,3 +289,10 @@ class RecommendationServiceStub(LocalDataFlowStub):
 
     def on_ollama_models_changed(self, ollama_url: str) -> None:
         self.changed_urls.append(ollama_url)
+
+    # ── add-on packages (install rounds) ─────────────────────────────────────
+    def addon_packages_dir(self) -> Path:
+        return Path(tempfile.gettempdir()) / "teachers-teammate-addons"
+
+    def inject_addon_packages_dir(self) -> None:
+        self.injected_packages_dir = True

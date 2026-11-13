@@ -58,7 +58,7 @@ from .._model_wording import (
     retiring_model_text,
     saved_model_not_offered_text,
 )
-from .._package_hint import PackageHint
+from .._package_hint import INSTALL_BUTTON, INSTALL_BUTTON_TOOLTIP, PackageHint
 from ._credentials import ApiKeyDrafts, ApiKeyRow
 
 
@@ -113,6 +113,8 @@ def service_groups(
     app_service: _SettingsAppService,
     ollama_url: str,
     packages: Mapping[str, str | None] | None = None,
+    *,
+    self_hosted: bool = True,
 ) -> list[list[ModelItem]]:
     """Return every AI service, grouped by where it runs, each labelled with what is missing.
 
@@ -122,6 +124,10 @@ def service_groups(
     services are sorted by name.  A service that needs a package or a key says so after its
     place, the package first because installing comes first.  *packages* is the answer of
     :func:`missing_packages`; without it the packages are looked for now.
+
+    ``self_hosted=False`` leaves the local services out: a place that only offers online
+    services (the Setup Assistant's proofreading page) must not offer a model it cannot
+    download there.
 
     The place and region come from ``describe_llm_location`` -- the call the location hint
     under the list uses -- so the label and the hint never disagree.
@@ -136,6 +142,8 @@ def service_groups(
         name = str(info.get("display_name") or provider)
         location = app_service.describe_llm_location(provider, "", ollama_url)
         if info.get("self_hosted"):
+            if not self_hosted:
+                continue
             bucket, place = own, _PLACE_OF_SELF_HOSTED[location.location]
         elif location.data_region is DataRegion.EU:
             bucket, place = eu, DataRegion.EU.label
@@ -174,6 +182,9 @@ class AiServiceSection(QWidget):
         key_drafts: ApiKeyDrafts | None = None,
         profile_selector: HardwareProfileSelector | None = None,
         same_model_tip: bool = True,
+        self_hosted: bool = True,
+        install_button_text: str = "",
+        install_button_tooltip: str = "",
         parent: QWidget | None = None,
     ) -> None:
         """Build the section.
@@ -181,11 +192,18 @@ class AiServiceSection(QWidget):
         *profile_selector* is the page's own "Suggestions are for …" selector: with it the
         section follows that one (the page keeps it up to date) instead of resolving this
         computer again for itself, and shows no line of its own.
+
+        ``self_hosted=False`` offers the online services only, for a place that cannot download
+        a local model (the Setup Assistant's proofreading page).  *install_button_text* and
+        *install_button_tooltip* rename the package hint's button; empty keeps its own wording.
         """
         super().__init__(parent)
         self._spec = spec
         self._drafts = key_drafts or ApiKeyDrafts(app_service, parent=self)
         self._show_same_model_tip = same_model_tip
+        self._self_hosted = self_hosted
+        self._install_button_text = install_button_text
+        self._install_button_tooltip = install_button_tooltip
         self._loaded = False
         self._app_service = app_service
         self._fetch_thread: _ModelFetchThread | None = None
@@ -230,7 +248,12 @@ class AiServiceSection(QWidget):
         self._missing_packages = missing_packages(self._app_service)
         fill_grouped(
             self._provider,
-            service_groups(self._app_service, self._ollama_url, self._missing_packages),
+            service_groups(
+                self._app_service,
+                self._ollama_url,
+                self._missing_packages,
+                self_hosted=self._self_hosted,
+            ),
         )
         self._provider.currentIndexChanged.connect(self._on_provider_selected)
         form.addRow("AI service:", self._provider)
@@ -238,7 +261,11 @@ class AiServiceSection(QWidget):
         self._where_hint = LocationHint()
         form.addRow("", self._where_hint)
 
-        self._package_hint = PackageHint(self._open_downloads)
+        self._package_hint = PackageHint(
+            self._open_downloads,
+            button_text=self._install_button_text or INSTALL_BUTTON,
+            button_tooltip=self._install_button_tooltip or INSTALL_BUTTON_TOOLTIP,
+        )
         form.addRow("", self._package_hint)
 
         # One row for whichever service is chosen; the key is entered right where the
@@ -399,7 +426,12 @@ class AiServiceSection(QWidget):
         self._provider.blockSignals(True)
         fill_grouped(
             self._provider,
-            service_groups(self._app_service, self._ollama_url, self._missing_packages),
+            service_groups(
+                self._app_service,
+                self._ollama_url,
+                self._missing_packages,
+                self_hosted=self._self_hosted,
+            ),
         )
         index = self._provider.findData(current)
         if index >= 0:

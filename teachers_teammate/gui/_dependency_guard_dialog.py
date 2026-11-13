@@ -59,6 +59,7 @@ class DependencyGuardDialog(QDialog):
         buttons = QDialogButtonBox()
         for action in self.fix_actions:
             button = QPushButton(action.label)
+            button.setToolTip(action.tooltip)
             buttons.addButton(button, QDialogButtonBox.ButtonRole.AcceptRole)
             button.clicked.connect(lambda _checked=False, a=action: self._on_action(a))
         buttons.addButton(QDialogButtonBox.StandardButton.Close)

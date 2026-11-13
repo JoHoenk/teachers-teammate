@@ -32,6 +32,8 @@ COMMAND_RETRY = "retry"
 COMMAND_CHOOSE_FOLDER = "choose_folder"
 COMMAND_TURN_ON_RECOGNITION = "turn_on_recognition"
 COMMAND_USE_SERVER = "use_server"
+COMMAND_GET_OLLAMA = "get_ollama"
+COMMAND_START_OLLAMA = "start_ollama"
 
 #: What is wrong with the Results step (the keys of :func:`results_fix`).
 RESULTS_NO_FOLDER = "no_folder"
@@ -48,11 +50,13 @@ class FixAction:
     page: SettingsPage | None = None
     focus: str = ""
     preselect: tuple[str, ...] = ()
-    #: ``"retry"``, ``"choose_folder"``, ``"turn_on_recognition"`` or ``"use_server"`` when
-    #: there is no page.
+    #: ``"retry"``, ``"choose_folder"``, ``"turn_on_recognition"``, ``"use_server"``,
+    #: ``"get_ollama"`` or ``"start_ollama"`` when there is no page.
     command: str = ""
     #: What the command works on (the server address of ``"use_server"``).
     argument: str = ""
+    #: A longer explanation for the button's tooltip (``""`` = none).
+    tooltip: str = ""
 
 
 @dataclass(frozen=True)
@@ -83,6 +87,46 @@ def _models_line(models: tuple[str, ...]) -> str:
     if len(models) == 1:
         return f"{models[0]} isn't downloaded yet"
     return f"{len(models)} AI models aren't downloaded yet"
+
+
+def _ollama_fix(issue: RequirementIssue) -> Fix | None:
+    """Return the fix for an Ollama that does not answer, or ``None`` for another kind.
+
+    A local address that does not answer is told apart by whether the program is there: the
+    teacher then either installs Ollama or starts it.  Where the app may not start it (Linux),
+    the tooltip names the service command instead of offering a button that would fail.
+    """
+    kind = issue.kind
+    if kind is IssueKind.OLLAMA_NOT_FOUND:
+        return Fix(
+            "Ollama wasn't found on this computer",
+            (
+                FixAction("Get Ollama…", command=COMMAND_GET_OLLAMA),
+                FixAction("Check again", command=COMMAND_RETRY),
+            ),
+        )
+    if kind is IssueKind.OLLAMA_NOT_RUNNING:
+        if issue.startable:
+            return Fix(
+                "Ollama isn't running",
+                (
+                    FixAction("Start Ollama", command=COMMAND_START_OLLAMA),
+                    FixAction("Check again", command=COMMAND_RETRY),
+                ),
+            )
+        return Fix(
+            "Ollama isn't running",
+            (FixAction("Check again", command=COMMAND_RETRY, tooltip=txt.OLLAMA_SERVICE_HINT),),
+        )
+    if kind is IssueKind.OLLAMA_UNREACHABLE:
+        return Fix(
+            "Ollama isn't reachable",
+            (
+                FixAction("Check again", command=COMMAND_RETRY),
+                FixAction("Find server…", SettingsPage.AI_SETUP, FOCUS_FIND_SERVER),
+            ),
+        )
+    return None
 
 
 def fix_for(
@@ -118,14 +162,9 @@ def fix_for(
             f"{name} isn't installed",
             (FixAction("Install…", SettingsPage.ADDONS, FOCUS_OCR_ENGINES),),
         )
-    if kind is IssueKind.OLLAMA_UNREACHABLE:
-        return Fix(
-            "Ollama isn't reachable",
-            (
-                FixAction("Check again", command=COMMAND_RETRY),
-                FixAction("Find server…", SettingsPage.AI_SETUP, FOCUS_FIND_SERVER),
-            ),
-        )
+    ollama = _ollama_fix(issue)
+    if ollama is not None:
+        return ollama
     if kind is IssueKind.NO_OLLAMA_MODEL:
         return Fix(
             "No AI model is downloaded in Ollama yet",

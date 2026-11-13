@@ -1232,7 +1232,7 @@ def test_closing_waits_while_an_install_runs(qtbot, scripted_box) -> None:
     shut_down: list[bool] = []
     addons.shutdown = lambda: shut_down.append(True)  # ty: ignore[invalid-assignment]
     busy = _Busy()
-    addons._dl_active_thread = busy
+    addons._round.busy = busy.isRunning  # ty: ignore[invalid-assignment]  # stands in for pip
     busy.start()
     try:
         window.accept()

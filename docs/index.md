@@ -44,6 +44,8 @@ When AI proofreading is turned on with an **online service** (such as OpenAI, An
 #. Select the files you want to process (or leave nothing selected to process everything), then click **Run Selected**.
 #. Click any row in the results list to open the **Preview** tab — the text is fully editable, so you can fix any remaining mistakes by hand before sending the text to correction or export.
 
+On a fresh install the **Setup Assistant** does steps 2 and 3 for you — see *Set up text recognition* below.
+
 For detailed guidance on choosing the best settings for your documents, see the {doc}`Advanced User Guide <advanced_user_guide>`.
 
 ---
@@ -70,9 +72,11 @@ Your settings are saved automatically and restored every time you start the app.
 
 ### Set up text recognition
 
-By default, Teacher's Teammate recognises text using a local AI program called **Ollama**, which runs on your computer and never sends data anywhere without your permission. If Ollama is not yet installed, download it from [ollama.com/download](https://ollama.com/download) and run its installer like any other program.
+The first time you start the app, the **Setup Assistant** opens and asks three plain questions: the language of your class, what your students hand in (handwritten pages or typed texts), and where the proofreading may run. It then shows you what it will set and what it will download, and you press **Set up** once. The downloads run in the background and the main window shows how far they are.
 
-Once Ollama is running, open **Settings → Add-ons…** inside Teacher's Teammate, click **Select the best models for my computer**, then **Install / Download Selected** — the app downloads the right reading and writing models for your computer. After that, set your input and output folders and click **Run Selected** — that's it.
+Teacher's Teammate recognises text using a local AI program called **Ollama**, which runs on your computer and never sends data anywhere without your permission. If Ollama is not installed yet, the assistant says so and offers **Get Ollama…**, which opens [ollama.com/download](https://ollama.com/download); run its installer like any other program. Once Ollama is running, the assistant's line turns green by itself — no click needed — and it downloads the right reading and writing models for your computer.
+
+You can run the assistant again at any time from **Tools → Setup Assistant…**. It starts from your saved answers and keeps a model that already works, so running it a second time changes nothing you did not ask for. Everything it sets can also be changed by hand in the Settings window.
 
 ## License
 

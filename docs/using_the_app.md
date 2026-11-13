@@ -4,7 +4,7 @@
 
 The app is divided into two main areas, plus a separate **Settings** window:
 
-- **Workflow panel (left side)** — everything that changes from batch to batch, in four steps: **1 Documents**, **2 Language** (with the **Level** of the students' writing), **3 What should happen** (recognize text, remove personal info, proofread, review content — each one a box you can tick) and **4 Results** (where the results go). Under each part of step 3 a grey line says which AI model does it and where it runs (for example *mistral-small-latest · Mistral (EU) · EU*); **change…** opens the place in Settings where you choose it. A step you have not ticked keeps its line in grey, so you see what ticking it would use. At the top, a box called **Where your documents are processed** gives the verdict for all steps at once — green: everything stays on this computer; yellow, orange or red: something is sent elsewhere — see *Where your documents are processed* below. Directly above the action buttons — **Run Selected**, **Stop**, **Export** — one line says whether a run can start. If something is missing it says what, with a button that opens the place that fixes it (**Download…**, **Install…**, **Enter key…**, **Choose…**, **Find server…**, **Turn on** or **Check again**); otherwise it shows *Ready* and how many documents will run. The line never blocks **Run**: the requirements are checked again when you press it.
+- **Workflow panel (left side)** — everything that changes from batch to batch, in four steps: **1 Documents**, **2 Language** (with the **Level** of the students' writing), **3 What should happen** (recognize text, remove personal info, proofread, review content — each one a box you can tick) and **4 Results** (where the results go). Under each part of step 3 a grey line says which AI model does it and where it runs (for example *mistral-small-latest · Mistral (EU) · EU*); **change…** opens the place in Settings where you choose it. A step you have not ticked keeps its line in grey, so you see what ticking it would use. At the top, a box called **Where your documents are processed** gives the verdict for all steps at once — green: everything stays on this computer; yellow, orange or red: something is sent elsewhere — see *Where your documents are processed* below. Directly above the action buttons — **Run Selected**, **Stop**, **Export** — one line says whether a run can start. If something is missing it says what, with a button that opens the place that fixes it (**Download…**, **Install…**, **Enter key…**, **Choose…**, **Find server…**, **Turn on** or **Check again**); otherwise it shows *Ready* and how many documents will run. Ollama gets two lines of its own: **Ollama wasn't found on this computer** with **Get Ollama…**, and **Ollama isn't running** with **Start Ollama** (on Linux, where the app may not start it, the button's tooltip names the service command instead). Both check again every few seconds, so the line turns green by itself once the server answers. The line never blocks **Run**: the requirements are checked again when you press it.
 
 - **Work area (right side)** — two tabs:
   - **Document Queue** — a list of your files (one row per document) with status indicators and a live activity log below it.
@@ -34,6 +34,28 @@ Changes on the pages are saved when you press **OK** and dropped when you press 
 You can also **drag a folder directly onto the window** to set it as the input folder.
 
 Status indicators turn green once each required service is up and running.
+
+---
+
+## Setting up
+
+The first time you start the app, the **Setup Assistant** opens by itself. It asks only what it cannot work out on its own, and it never changes anything until you press **Set up**.
+
+| Page | What it asks |
+|---|---|
+| **Welcome** | What the app does and what the assistant will ask |
+| **Your classes** | The language of your class, and whether the students hand in handwritten pages or typed texts |
+| **The AI on this computer** | Whether Ollama is installed and running, and how powerful your computer is. If Ollama is missing, **Get Ollama…** opens its download page; if it is installed but stopped, **Start Ollama** starts it. The line turns green by itself once the server answers |
+| **Proofreading** | Whether the AI proofreads on this computer or at an online service. Choosing an online service shows its key row right below it, and **Install now** fetches the part the app needs for it |
+| **Names and personal information** | Whether names and other personal information are replaced before any text goes online. It is ticked in advance and can only ever be turned on here, never off |
+| **Ready to set up** | What the assistant will set and download, one line per step, with a ticked box per download. Untick anything you do not want. Under the rows it says what the downloads add up to and how much space is free |
+| **All set** | How far each download has come, and the speed test for the models that just arrived. **Select documents…** closes the window and asks you for the folder with your students' work |
+
+The pages you see depend on your answers: with typed texts there is no reading model to choose, and with proofreading off there is nothing to ask about privacy.
+
+**Nothing starts by itself.** The downloads begin when you press **Set up**, a search for a server elsewhere on your network starts only from its own button, and the speed test runs only when you press **Test speed**.
+
+You can run the assistant again at any time from **Tools → Setup Assistant…**. It starts from your saved answers, keeps a model that already works, and keeps a content review that has its own model, so running it a second time changes nothing you did not ask for. **Cancel** changes nothing at all.
 
 ---
 
@@ -452,6 +474,8 @@ Right-click a row for more options:
 ## Tools menu
 
 The **Tools** menu holds what is not part of a batch.
+
+**Setup Assistant…** opens the assistant described under *Setting up* above. It starts from your saved answers, so it is the quickest way to change the language, the reading method or where the proofreading runs in one go.
 
 **System Monitor** opens its own window, which can stay open next to the main window while a batch runs (closing the main window closes it too), with
 

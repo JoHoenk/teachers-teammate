@@ -601,6 +601,30 @@ class _ThreadRecordingService(DummyAppService):
         return super().resolve_hardware_profile(setting, ollama_url)
 
 
+class _FoundServerService(DummyAppService):
+    """A service whose saved address is silent, while another server answers on this computer."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.asked: list[str] = []
+
+    def ollama_status(self, url: str):
+        from teachers_teammate.application.service import OllamaStatus  # noqa: PLC0415
+        from teachers_teammate.domain.ollama_discovery import OllamaState  # noqa: PLC0415
+
+        self.asked.append(url)
+        return OllamaStatus(state=OllamaState.NOT_RUNNING, can_start=True)
+
+    def discover_ollama_servers(self, scope):
+        from teachers_teammate.domain.ollama_discovery import (  # noqa: PLC0415
+            DiscoveredServer,
+            ServerKind,
+        )
+
+        _ = scope
+        return [DiscoveredServer(url="http://127.0.0.1:11435", kind=ServerKind.THIS_COMPUTER)]
+
+
 @pytest.fixture
 def computer_page(qtbot) -> AiSetupPage:
     page = AiSetupPage(settings_context(DummyAppService()))
@@ -643,6 +667,29 @@ def test_this_computer_shows_the_computer_first_then_the_server(computer_page) -
         txt.SPEED_HEADING,
     ]
     assert not hasattr(computer_page, "_credentials")
+
+
+@pytest.mark.gui
+def test_the_status_line_follows_the_address_and_use_it_fills_the_field(qtbot) -> None:
+    """
+    Given  a saved address that does not answer, while another server answers on this computer
+    When   the page is shown, and then "Use it" is pressed
+    Then   the line asks about the address in the field, and the button puts the found address
+           into the field, which the line then follows
+    """
+    service = _FoundServerService()
+    page = AiSetupPage(settings_context(service))
+    qtbot.addWidget(page)
+    page.show()
+    qtbot.waitUntil(lambda: page._status_line._buttons[0].text() == "Use it", timeout=3000)
+
+    assert service.asked == [page._ollama_url.text()]
+    assert page._status_line.url() == page._ollama_url.text()
+
+    page._status_line._buttons[0].click()
+
+    assert page._ollama_url.text() == "http://127.0.0.1:11435"
+    assert page._status_line.url() == "http://127.0.0.1:11435"
 
 
 @pytest.mark.gui
@@ -2639,6 +2686,25 @@ def test_the_service_list_marks_a_missing_package_before_a_missing_key(no_keys) 
     assert texts["Mistral"] == "outside the EU · not installed · key needed"
     assert texts["OpenAI (ChatGPT)"] == "outside the EU"
     assert texts["Ollama"] == "own server"
+
+
+@pytest.mark.gui
+def test_a_section_that_offers_online_services_only_leaves_the_local_one_out(no_keys) -> None:
+    """
+    Given  the same four services
+    When   the grouped list is built for a place that cannot download a local model
+    Then   Ollama is not offered, and the online services keep their groups and marks
+    """
+    groups = service_groups(ProviderAppService(), DEFAULTS["ollama_url"], self_hosted=False)
+
+    assert _service_texts(groups) == [
+        [],
+        [("Mistral (EU)", "EU · key needed")],
+        [
+            ("Mistral", "outside the EU · key needed"),
+            ("OpenAI (ChatGPT)", "outside the EU · key needed"),
+        ],
+    ]
 
 
 @pytest.mark.gui

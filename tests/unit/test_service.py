@@ -18,11 +18,13 @@ from teachers_teammate.application.service import (
     AnonymizerConfig,
     DocxExport,
     IssueKind,
+    OllamaStatus,
     ProcessingApplicationService,
     RequirementIssue,
     RunPreflight,
 )
 from teachers_teammate.domain.model_listing import ModelListing
+from teachers_teammate.domain.ollama_discovery import OllamaState
 from teachers_teammate.domain.run_summary import RunSummary
 from teachers_teammate.infrastructure.power import KEEP_AWAKE_REASON
 from teachers_teammate.infrastructure.state_repository import DocumentState
@@ -1509,6 +1511,8 @@ def test_manual_correction_edit_stores_the_notation_of_a_synthesised_ocr_text(
 
 # ── Run preflight & model-list caching ──────────────────────────────────────
 
+_INSTALL = "teachers_teammate.infrastructure.ollama_install"
+
 
 def _ollama_config(tmp_path: Path, **overrides):
     """Config whose OCR and proofreading both use Ollama."""
@@ -1544,6 +1548,18 @@ def _no_real_memory_reading(monkeypatch) -> None:
     monkeypatch.setattr(gpu_detector, "detect_available_memory_gb", lambda: None)
     # Not an Apple computer: that decides whether the whole model counts against the memory.
     monkeypatch.setattr(gpu_detector, "detect_apple_unified_memory_gb", lambda: None)
+
+
+@pytest.fixture(autouse=True)
+def _no_real_ollama_program(monkeypatch) -> None:
+    """Keep the Ollama program search off the real computer, so the kind is the same everywhere.
+
+    A test that needs a program found patches it itself.
+    """
+    from teachers_teammate.infrastructure import ollama_install  # noqa: PLC0415
+
+    monkeypatch.setattr(ollama_install, "find_ollama_program", lambda: None)
+    monkeypatch.setattr(ollama_install, "can_start_ollama", lambda: False)
 
 
 def _computer(svc, monkeypatch, *, profile, free_gb, card_gb=None, reason=None) -> None:
@@ -2007,6 +2023,226 @@ def test_preflight_reports_unreachable_ollama(tmp_path: Path) -> None:
     assert result.blocked is True
     assert result.ollama_unreachable == "✗ Cannot connect to Ollama"
     assert result.missing_models == ()
+
+
+@pytest.mark.unit
+def test_a_local_address_without_a_program_says_ollama_was_not_found(tmp_path: Path) -> None:
+    """
+    Given  a local Ollama address that does not answer and no Ollama program on the computer
+    When   the run preflight is computed
+    Then   the blocker says Ollama wasn't found, so the fix offers the download page
+    """
+    svc = _make_svc()
+    cfg = _ollama_config(tmp_path)
+
+    with (
+        _server_answers([], "✗ Cannot connect to Ollama"),
+        patch(f"{_INSTALL}.find_ollama_program", return_value=None),
+    ):
+        result = svc.check_run_preflight(cfg)
+
+    blocker = result.blocker
+    assert blocker is not None
+    assert blocker[1].kind is IssueKind.OLLAMA_NOT_FOUND
+    assert blocker[1].startable is False
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(("platform", "startable"), [("win32", True), ("linux", False)])
+def test_a_local_address_with_a_program_says_ollama_is_not_running(
+    tmp_path: Path, platform: str, startable: bool
+) -> None:
+    """
+    Given  a local Ollama address that does not answer, but the program is installed
+    When   the run preflight is computed
+    Then   the blocker says Ollama isn't running, and only Windows and macOS offer to start it
+    """
+    svc = _make_svc()
+    cfg = _ollama_config(tmp_path)
+
+    with (
+        _server_answers([], "✗ Cannot connect to Ollama"),
+        patch(f"{_INSTALL}.find_ollama_program", return_value=Path("/usr/bin/ollama")),
+        patch(f"{_INSTALL}.can_start_ollama", return_value=startable),
+    ):
+        result = svc.check_run_preflight(cfg)
+
+    blocker = result.blocker
+    assert blocker is not None
+    assert blocker[1].kind is IssueKind.OLLAMA_NOT_RUNNING
+    assert blocker[1].startable is startable
+
+
+@pytest.mark.unit
+def test_an_address_on_another_computer_is_only_unreachable(tmp_path: Path) -> None:
+    """
+    Given  an Ollama address on another computer that does not answer
+    When   the run preflight is computed
+    Then   the blocker stays "unreachable": nothing can be installed or started here
+    """
+    svc = _make_svc()
+    cfg = _ollama_config(tmp_path, ollama_url="http://192.168.1.20:11434")
+
+    with (
+        _server_answers([], "✗ Cannot connect to Ollama"),
+        patch(f"{_INSTALL}.find_ollama_program", return_value=Path("/usr/bin/ollama")),
+    ):
+        result = svc.check_run_preflight(cfg)
+
+    blocker = result.blocker
+    assert blocker is not None
+    assert blocker[1].kind is IssueKind.OLLAMA_UNREACHABLE
+
+
+@pytest.mark.unit
+def test_ollama_status_reports_the_version_and_the_models_it_has() -> None:
+    """
+    Given  a server that answers with a version and two models
+    When   ollama_status is asked
+    Then   it says running, with the version and the count, and offers no button
+    """
+    from teachers_teammate.infrastructure.ollama_discovery import ServerInfo  # noqa: PLC0415
+
+    svc = _make_svc()
+    info = ServerInfo(version="0.12.3", model_count=2)
+
+    with patch("teachers_teammate.infrastructure.ollama_discovery.probe_server", return_value=info):
+        status = svc.ollama_status("http://127.0.0.1:11434")
+
+    assert status.state is OllamaState.RUNNING
+    assert (status.version, status.model_count, status.can_start) == ("0.12.3", 2, False)
+
+
+@pytest.mark.unit
+def test_ollama_status_looks_for_the_program_only_when_nothing_answered() -> None:
+    """
+    Given  a local address that does not answer, and an installed program
+    When   ollama_status is asked
+    Then   it says not running and offers to start it, and the version stays empty
+    """
+    svc = _make_svc()
+
+    with (
+        patch("teachers_teammate.infrastructure.ollama_discovery.probe_server", return_value=None),
+        patch(f"{_INSTALL}.find_ollama_program", return_value=Path("/usr/bin/ollama")),
+        patch(f"{_INSTALL}.can_start_ollama", return_value=True),
+    ):
+        status = svc.ollama_status("http://127.0.0.1:11434")
+
+    assert status.state is OllamaState.NOT_RUNNING
+    assert (status.version, status.model_count, status.can_start) == ("", None, True)
+
+
+@pytest.mark.unit
+def test_start_ollama_does_nothing_without_a_program() -> None:
+    """
+    Given  a computer where no Ollama program was found
+    When   start_ollama is called
+    Then   nothing is started, so no error is raised for a teacher who has none
+    """
+    svc = _make_svc()
+
+    with (
+        patch(f"{_INSTALL}.find_ollama_program", return_value=None),
+        patch(f"{_INSTALL}.start_ollama") as start,
+    ):
+        svc.start_ollama()
+
+    start.assert_not_called()
+
+
+@pytest.mark.unit
+def test_start_ollama_starts_the_program_where_the_platform_allows_it() -> None:
+    """
+    Given  an installed Ollama program on a platform where the app may start it
+    When   start_ollama is called
+    Then   the program is started
+    """
+    svc = _make_svc()
+    program = Path("/Applications/Ollama.app")
+
+    with (
+        patch(f"{_INSTALL}.find_ollama_program", return_value=program),
+        patch(f"{_INSTALL}.can_start_ollama", return_value=True),
+        patch(f"{_INSTALL}.start_ollama") as start,
+    ):
+        svc.start_ollama()
+
+    start.assert_called_once_with(program)
+
+
+@pytest.mark.unit
+def test_the_setup_plan_comes_from_the_facts_and_the_ratings() -> None:
+    """
+    Given  a computer with a running Ollama, no models and 100 GB of free disk space
+    When   plan_setup is asked for handwritten pages and local proofreading
+    Then   the facts are gathered once and the setup plan names the recommended models
+    """
+    from teachers_teammate.application.setup_plan import (  # noqa: PLC0415
+        HandIn,
+        ProofreadingPlace,
+        SetupAnswers,
+    )
+    from teachers_teammate.config import DEFAULTS  # noqa: PLC0415
+    from teachers_teammate.domain.model_catalog import (  # noqa: PLC0415
+        DetectionReason,
+        HardwareDetection,
+        ModelRating,
+        Suitability,
+    )
+
+    svc = _make_svc()
+    answers = SetupAnswers(
+        language="German",
+        hand_in=HandIn.HANDWRITTEN,
+        proofreading=ProofreadingPlace.LOCAL,
+        ollama_url="http://127.0.0.1:11434",
+        hardware_profile="auto",
+        local_ai_shown=True,
+    )
+    hardware = HardwareDetection(profile="8gb", reason=DetectionReason.MANUAL)
+    recommended = {"ocr": "qwen2.5vl:7b", "general": "gemma4:e4b"}
+    asked_cached_only: list[bool] = []
+
+    def rate(tags, task, profile, url, **kwargs):
+        asked_cached_only.append(kwargs["cached_only"])
+        return [
+            ModelRating(
+                tag=tag,
+                task=task,
+                model_uses=None,
+                suitability=Suitability.BEST,
+                memory_gb=None,
+                note="",
+            )
+            for tag in tags
+        ]
+
+    with (
+        patch.object(svc, "ollama_status", return_value=OllamaStatus(OllamaState.RUNNING)),
+        patch.object(svc, "list_provider_models", return_value=[]),
+        patch.object(svc, "resolve_hardware_profile", return_value=hardware),
+        patch.object(svc, "anonymizer_available", return_value=False),
+        patch.object(svc, "is_module_importable", return_value=True),
+        patch.object(svc, "spacy_model_for_language", return_value="de_core_news_sm"),
+        patch.object(svc, "missing_provider_package", return_value=None),
+        patch.object(svc, "rate_ollama_models", side_effect=rate),
+        patch.object(
+            svc,
+            "best_ollama_model",
+            side_effect=lambda task, profile, **kwargs: recommended[task],
+        ),
+        patch(f"{_INSTALL}.free_disk_gb", return_value=100.0),
+    ):
+        plan = svc.plan_setup(answers, dict(DEFAULTS))
+
+    assert plan.settings["ocr_model"] == "qwen2.5vl:7b"
+    assert plan.settings["correction_model"] == "gemma4:e4b"
+    assert plan.panel["recognition_enabled"] is True
+    assert [download.name for download in plan.downloads] == ["qwen2.5vl:7b", "gemma4:e4b"]
+    # Background thread: an installed model outside the catalog is classified by the server.
+    assert asked_cached_only
+    assert not any(asked_cached_only)
 
 
 @pytest.mark.unit

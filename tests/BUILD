@@ -33,6 +33,9 @@ filegroup(
         "gui/test_gui_privacy_settings.py",
         "gui/test_gui_settings_pages.py",
         "gui/test_gui_settings_window.py",
+        "gui/test_gui_setup_assistant.py",
+        "gui/test_gui_setup_flow.py",
+        "gui/test_gui_setup_pages.py",
         "gui/test_gui_speed_panel.py",
         "gui/test_gui_widgets.py",
         "gui/test_hardware_profile_selector.py",
@@ -62,6 +65,7 @@ filegroup(
         "unit/test_ollama_utils.py",
         "unit/test_preprocessor.py",
         "unit/test_service.py",
+        "unit/test_setup_plan.py",
         "unit/test_stage_builder.py",
         "unit/test_state_repository.py",
     ],
@@ -379,6 +383,15 @@ py_test(
 )
 
 py_test(
+    name = "test_ollama_install",
+    size = "small",
+    srcs = _COMMON_SRCS + ["unit/test_ollama_install.py"],
+    args = ["unit/test_ollama_install.py"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS,
+)
+
+py_test(
     name = "test_ollama_utils",
     size = "small",
     srcs = _COMMON_SRCS + ["unit/test_ollama_utils.py"],
@@ -543,6 +556,15 @@ py_test(
     args = ["unit/test_service.py"],
     main = "run_test.py",
     deps = _COMMON_DEPS + _PIPELINE_DEPS,
+)
+
+py_test(
+    name = "test_setup_plan",
+    size = "small",
+    srcs = _COMMON_SRCS + ["unit/test_setup_plan.py"],
+    args = ["unit/test_setup_plan.py"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS,
 )
 
 py_test(
@@ -1349,6 +1371,15 @@ py_test(
 )
 
 py_test(
+    name = "test_gui_ollama_status_line",
+    size = "small",
+    srcs = _COMMON_SRCS + ["gui/test_gui_ollama_status_line.py"],
+    args = ["gui/test_gui_ollama_status_line.py"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_lib"],
+)
+
+py_test(
     name = "test_gui_worker",
     size = "small",
     srcs = _COMMON_SRCS + ["gui/test_gui_worker.py"],
@@ -1424,6 +1455,41 @@ py_test(
         "gui/test_gui_settings_window.py",
     ],
     args = ["gui/test_gui_settings_window.py"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_lib"],
+)
+
+py_test(
+    name = "test_gui_setup_assistant",
+    size = "small",
+    srcs = _COMMON_SRCS + [
+        "gui/_gui_harness.py",
+        "gui/_settings_stubs.py",
+        "gui/test_gui_setup_assistant.py",
+    ],
+    args = ["gui/test_gui_setup_assistant.py"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_lib"],
+)
+
+py_test(
+    name = "test_gui_setup_flow",
+    size = "small",
+    srcs = _COMMON_SRCS + ["gui/test_gui_setup_flow.py"],
+    args = ["gui/test_gui_setup_flow.py"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_lib"],
+)
+
+py_test(
+    name = "test_gui_setup_pages",
+    size = "small",
+    srcs = _COMMON_SRCS + [
+        "gui/_gui_harness.py",
+        "gui/_settings_stubs.py",
+        "gui/test_gui_setup_pages.py",
+    ],
+    args = ["gui/test_gui_setup_pages.py"],
     main = "run_test.py",
     deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_lib"],
 )
@@ -1581,6 +1647,15 @@ py_test(
 )
 
 py_test(
+    name = "test_gui_install_round",
+    size = "small",
+    srcs = _COMMON_SRCS + ["gui/test_gui_install_round.py"],
+    args = ["gui/test_gui_install_round.py"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_lib"],
+)
+
+py_test(
     name = "test_gui_addons_page",
     size = "small",
     srcs = _COMMON_SRCS + [
@@ -1702,6 +1777,7 @@ test_suite(
         ":test_ocr_stage_service",
         ":test_ocr_text_cleaner",
         ":test_ollama_discovery",
+        ":test_ollama_install",
         ":test_ollama_utils",
         ":test_performance_estimate",
         ":test_performance_probe",
@@ -1717,6 +1793,7 @@ test_suite(
         ":test_run_summary",
         ":test_sent_text",
         ":test_service",
+        ":test_setup_plan",
         ":test_speed_estimates",
         ":test_speed_store",
         ":test_stage_builder",
@@ -1742,6 +1819,7 @@ test_suite(
         ":test_gui_config_panel",
         ":test_gui_formatted_text",
         ":test_gui_general_page",
+        ":test_gui_install_round",
         ":test_gui_lifecycle",
         ":test_gui_main_window",
         ":test_gui_privacy_settings",
@@ -1753,6 +1831,9 @@ test_suite(
         ":test_gui_run_status",
         ":test_gui_settings_pages",
         ":test_gui_settings_window",
+        ":test_gui_setup_assistant",
+        ":test_gui_setup_flow",
+        ":test_gui_setup_pages",
         ":test_gui_speed_panel",
         ":test_gui_update_check",
         ":test_gui_what_is_sent",

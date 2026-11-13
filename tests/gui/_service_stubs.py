@@ -18,6 +18,9 @@ from teachers_teammate.application.context_choice import ContextChoice, context_
 from teachers_teammate.application.data_flow import text_goes_online
 from teachers_teammate.config import DEFAULTS
 from teachers_teammate.domain.data_location import (
+    STAGE_ANONYMIZATION,
+    STAGE_CORRECTION,
+    STAGE_EVALUATION,
     STAGE_OCR,
     DataFlow,
     DataFlowStage,
@@ -62,6 +65,19 @@ class LocalDataFlowStub:
         _ = config
         here = StageLocation(DataLocation.THIS_COMPUTER, "Ollama")
         return DataFlow((DataFlowStage(STAGE_OCR, here, "page images"),))
+
+    def describe_steps(self, config) -> DataFlow:
+        """Every step as if it were ticked, all on this computer."""
+        _ = config
+        here = StageLocation(DataLocation.THIS_COMPUTER, "Ollama")
+        return DataFlow(
+            (
+                DataFlowStage(STAGE_OCR, here, "page images"),
+                DataFlowStage(STAGE_ANONYMIZATION, here, "text", detail="Off"),
+                DataFlowStage(STAGE_CORRECTION, here, "text"),
+                DataFlowStage(STAGE_EVALUATION, here, "text"),
+            )
+        )
 
     def describe_ocr_location(self, engine: str, model: str, ollama_url: str) -> StageLocation:
         _ = model, ollama_url

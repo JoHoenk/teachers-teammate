@@ -19,7 +19,11 @@ from ...domain.output_files import (
     output_path,
 )
 from ...domain.stages import PROGRESS_STAGE_OCR, PROGRESS_STAGE_PREPROCESSING
-from ...exceptions import PipelineInputError
+from ...exceptions import (
+    RECOGNITION_OFF_MESSAGE,
+    PipelineInputError,
+    RecognitionSwitchedOffError,
+)
 from ...interfaces import AnonymizationMap, Anonymizer, Corrector, DocumentCreator, Evaluator
 from ..correction import proofreading_pieces
 from ..reporting import OnOcrDoneFn, OnStageStartedFn, Reporter, StdoutReporter
@@ -50,6 +54,9 @@ class ProcessingResult:
     """Explanations and unclear expressions of the proofreading, ``None`` without a review."""
     correction_warning: str = ""
     """Why this file has no review (e.g. the fallback to corrections-only); empty when none."""
+    skipped: bool = False
+    """The file was left out on purpose (a scan while text recognition is off): neither a
+    success nor a failure.  ``ok`` is ``False`` and ``message`` says why."""
 
 
 @dataclass(frozen=True)
@@ -83,6 +90,9 @@ class FileProcessorConfig:
     text_anonymizer: Anonymizer | None = None
     """Set to save the extracted text with personal data replaced as ``<name>_anonymized.txt``."""
     postprocessor: OcrOutputPostprocessor | None = None
+    recognize: bool = True
+    """Whether scans are read.  Off, a file that needs text recognition is skipped; text files,
+    PDFs with a text layer and files whose recognised text is already stored are not."""
     stop_event: threading.Event | None = None
     on_ocr_done: OnOcrDoneFn | None = None
     on_stage_started: OnStageStartedFn | None = None
@@ -134,6 +144,7 @@ class FileProcessor:
         self._correction = config.correction
         self._anonymizer = config.anonymizer
         self._postprocessor = config.postprocessor
+        self._recognize = config.recognize
         self._evaluation = config.evaluation
         self._doc_creator = config.doc_creator
         self._stop_event = config.stop_event
@@ -260,7 +271,15 @@ class FileProcessor:
             self._reporter.status("       → Preprocessing...")
             self._notify_stage(file, PROGRESS_STAGE_PREPROCESSING)
         try:
-            prepared = self._preprocess_service.preprocess_input(file)
+            if self._recognize:
+                prepared = self._preprocess_service.preprocess_input(file)
+            else:
+                prepared = self._preprocess_service.preprocess_input(file, allow_images=False)
+        except RecognitionSwitchedOffError as exc:
+            self._reporter.status(f"       → Skipped: {RECOGNITION_OFF_MESSAGE}")
+            raise _StageAbort(
+                ProcessingResult(False, str(exc), "", "", "", "", skipped=True)
+            ) from exc
         except (OSError, ValueError, RuntimeError, PipelineInputError) as exc:
             raise _StageAbort(
                 ProcessingResult(False, f"Preprocessing failed: {exc}", "", "", "", "")

@@ -27,6 +27,7 @@ from teachers_teammate.gui._ocr_config_selector import OcrConfigSelector
 from teachers_teammate.gui._preview_panel import DiffWidget, PreviewPanel, ZoomableImageView
 from teachers_teammate.gui._results_table import ResultsTable
 from teachers_teammate.gui._stats_widget import SystemStatsWidget
+from teachers_teammate.gui._system_monitor import SystemMonitorWindow
 from teachers_teammate.gui.benchmark._compare_view import CompareView
 from teachers_teammate.gui.benchmark._runs_list import RunsList
 from teachers_teammate.gui.benchmark.composition import build_benchmark_window
@@ -73,6 +74,7 @@ WIDGET_BUILDERS: list[tuple[str, Callable[[], QWidget]]] = [
     ("log_widget", lambda: LogWidget()),
     ("chart_widget", lambda: ChartWidget()),
     ("system_stats", lambda: SystemStatsWidget()),
+    ("system_monitor", lambda: SystemMonitorWindow()),
     ("collapsible", lambda: CollapsibleSection("Section")),
     ("ocr_config_selector", lambda: OcrConfigSelector(app_service=_FAKE)),
     ("compare_view", lambda: CompareView()),

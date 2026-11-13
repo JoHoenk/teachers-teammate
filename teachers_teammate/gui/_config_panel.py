@@ -35,6 +35,7 @@ from ..application.correction_options import (
     migrate_saved_correction_prompt,
     migrate_saved_evaluation_prompt,
 )
+from ..application.data_flow import ticked_steps
 from ..application.service import RequirementIssue
 from ..config import (
     DEFAULTS,
@@ -46,14 +47,37 @@ from ..config import (
     normalize_ocr_model,
 )
 from ..domain.correction_policy import LEVELS, normalize_level, normalize_output_mode
-from ..domain.data_location import DataFlow
+from ..domain.data_location import (
+    STAGE_ANONYMIZATION,
+    STAGE_CORRECTION,
+    STAGE_EVALUATION,
+    STAGE_OCR,
+    DataFlow,
+)
 from ..domain.pdf_text_layer import normalize_pdf_text_layer
 from . import _user_text as txt
 from ._background import LatestTask
 from ._constants import _LANGUAGES
-from ._data_flow_summary import DataFlowSummary
+from ._data_flow_summary import (
+    DataFlowSummary,
+    UsesLine,
+    detail_line,
+    same_model_line,
+    uses_line,
+    uses_tooltip,
+)
+from ._fix_targets import FixAction, fix_for
 from ._prompt_editor import PromptEditor
 from ._types import SettingsDict
+from .settings._page import FOCUS_OCR, FOCUS_PROOFREADING, FOCUS_REVIEW, SettingsPage
+
+#: The step the teacher sees for each stage the requirement guard can untick.
+_STAGE_STEP_TITLES = {
+    "ocr": txt.RECOGNIZE_TEXT,
+    "correction": txt.PROOFREAD,
+    "evaluation": txt.REVIEW_CONTENT,
+    "anonymizer": txt.REMOVE_PERSONAL_INFO,
+}
 
 
 class _PromptDialog(QDialog):
@@ -145,8 +169,9 @@ class ConfigPanel(QScrollArea):
 
     paths_changed = Signal()
     anonymizer_configure_requested = Signal(str, object)  # language, AnonymizerConfig
-    #: Bubbled from DependencyGuardDialog: Add-ons focus value, entries to preselect.
-    open_downloads_requested = Signal(str, list)
+    #: Open a Settings page: the page, the focus value on it, entries to preselect.  Sent by the
+    #: "change…" links under the steps and by the requirement guard.
+    open_settings_requested = Signal(object, str, list)
     #: The user changed the Results step (folder, which files); the main window saves.
     results_changed = Signal()
     #: The user confirmed an Instructions dialog (prompt, answer formats, explanations).
@@ -182,6 +207,7 @@ class ConfigPanel(QScrollArea):
             "ollama_url": DEFAULTS["ollama_url"],
             "hardware_profile": DEFAULTS["hardware_profile"],
             "ocr_timeout": DEFAULTS["ocr_timeout"],
+            "recognition_enabled": DEFAULTS["recognition_enabled"],
             "preprocess_method": DEFAULTS["preprocess_method"],
             "preprocess_dewarp": DEFAULTS["preprocess_dewarp"],
             "preprocess_deskew": DEFAULTS["preprocess_deskew"],
@@ -237,13 +263,9 @@ class ConfigPanel(QScrollArea):
         self._layout.addWidget(self._separator())
         self._build_step2_language()
         self._layout.addWidget(self._separator())
-        self._build_step3_anonymize()
+        self._build_step3_what_should_happen()
         self._layout.addWidget(self._separator())
-        self._build_step4_correct()
-        self._layout.addWidget(self._separator())
-        self._build_step5_evaluate()
-        self._layout.addWidget(self._separator())
-        self._build_step6_results()
+        self._build_step4_results()
         self._layout.addStretch()
 
         self.setWidget(inner)
@@ -279,7 +301,7 @@ class ConfigPanel(QScrollArea):
     def _build_step1_select_input(self) -> None:
         self._layout.addWidget(
             self._step_header(
-                "Step 1: Select Your Documents",
+                "1  Documents",
                 "Choose the documents you want to process.\n"
                 "You can pick individual files or a whole folder.\n"
                 "Subfolders are included automatically.",
@@ -321,7 +343,7 @@ class ConfigPanel(QScrollArea):
     def _build_step2_language(self) -> None:
         self._layout.addWidget(
             self._step_header(
-                "Step 2: Document Language",
+                "2  Language",
                 "Select the language the documents are written in.\n"
                 "This helps the app recognise text accurately and\n"
                 "proofread in the correct language.",
@@ -332,84 +354,18 @@ class ConfigPanel(QScrollArea):
         v.setContentsMargins(0, 2, 0, 4)
         v.setSpacing(4)
 
+        row = QHBoxLayout()
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(6)
         self._language = QComboBox()
         self._language.addItems(_LANGUAGES)
         self._language.setEditable(True)
         self._language.setCurrentText("English")
         self._language.activated.connect(self._language.hidePopup)
-        v.addWidget(self._language)
+        row.addWidget(self._language, stretch=1)
 
-        self._layout.addWidget(inner)
-
-    def _build_step3_anonymize(self) -> None:
-        self._layout.addWidget(
-            self._step_header(
-                "Step 3: Remove Personal Information",
-                "Automatically hides names, email addresses, and phone numbers\n"
-                "in the extracted text, before anything is sent for proofreading\n"
-                "or content review. The original information is restored in the\n"
-                "final document. Runs right after text recognition and does not\n"
-                "need proofreading. Not needed while everything runs on this\n"
-                f"computer. Requires the Privacy add-on (see {txt.WHERE_ADDONS}).",
-            )
-        )
-        inner = QWidget()
-        v = QVBoxLayout(inner)
-        v.setContentsMargins(0, 2, 0, 4)
-        v.setSpacing(6)
-
-        self._anonymization_enabled = QCheckBox(txt.REMOVE_PERSONAL_INFO)
-        self._anonymization_enabled.setChecked(False)
-        self._anonymization_enabled.toggled.connect(self._on_anonymization_changed)
-        v.addWidget(self._anonymization_enabled)
-
-        self._anon_configure_btn = QPushButton("Privacy rules…")
-        self._anon_configure_btn.setVisible(True)
-        self._anon_configure_btn.setToolTip(
-            "Set which types of personal information to hide and how."
-        )
-        self._anon_configure_btn.clicked.connect(self._on_configure_anonymizer)
-        v.addWidget(self._anon_configure_btn)
-
-        self._layout.addWidget(inner)
-
-    def _build_step4_correct(self) -> None:
-        self._layout.addWidget(
-            self._step_header(
-                "Step 4: Proofread",
-                "Use an AI service to fix spelling and grammar in the extracted text.\n"
-                f"Requires a connected AI service (see {txt.WHERE_AI_MODELS}).",
-            )
-        )
-        inner = QWidget()
-        v = QVBoxLayout(inner)
-        v.setContentsMargins(0, 2, 0, 4)
-        v.setSpacing(6)
-
-        self._correction_enabled = QCheckBox("Enable proofreading")
-        self._correction_enabled.setChecked(True)
-        self._correction_enabled.toggled.connect(self._update_correction_visibility)
-        v.addWidget(self._correction_enabled)
-
-        self._correction_prompt_btn = QPushButton("Instructions…")
-        self._correction_prompt_btn.setToolTip(
-            "Change the instructions sent to the AI service for proofreading, the language\n"
-            "of the explanations, and whether you get explanations at all.\n"
-            "Until you change them, the built-in instructions of the document language are used."
-        )
-        self._correction_prompt_btn.clicked.connect(self._on_configure_correction_prompt)
-        v.addWidget(self._correction_prompt_btn)
-
-        self._custom_prompt_note = QLabel(txt.CUSTOM_PROMPT_NOTE)
-        self._custom_prompt_note.setWordWrap(True)
-        self._custom_prompt_note.setStyleSheet("color: #e67e22; font-size: 8pt;")
-        self._custom_prompt_note.setVisible(False)
-        v.addWidget(self._custom_prompt_note)
-
-        row = QHBoxLayout()
-        row.setContentsMargins(0, 0, 0, 0)
-        row.setSpacing(6)
-        level_label = QLabel("Language level:")
+        # The level describes the students' writing, so it sits next to the language.
+        level_label = QLabel("Level:")
         level_label.setToolTip(txt.LEVEL_TOOLTIP)
         self._correction_level = QComboBox()
         self._correction_level.addItems(list(LEVELS))
@@ -417,16 +373,18 @@ class ConfigPanel(QScrollArea):
         self._correction_level.setToolTip(txt.LEVEL_TOOLTIP)
         row.addWidget(level_label)
         row.addWidget(self._correction_level)
-        row.addStretch()
         v.addLayout(row)
 
         self._layout.addWidget(inner)
 
-    def _build_step5_evaluate(self) -> None:
+    def _build_step3_what_should_happen(self) -> None:
         self._layout.addWidget(
             self._step_header(
-                "Step 5: Content Review",
-                "Let an AI service review the proofread text and generate a content review report.",
+                "3  What should happen",
+                "The text is always read from the scans. The other steps are optional.\n"
+                "Removing personal info runs on this computer, before anything is sent\n"
+                f"(it needs name detection, see {txt.WHERE_ADDONS}). Proofreading and\n"
+                f"content review use the AI models set under {txt.WHERE_AI_MODELS}.",
             )
         )
         inner = QWidget()
@@ -434,24 +392,105 @@ class ConfigPanel(QScrollArea):
         v.setContentsMargins(0, 2, 0, 4)
         v.setSpacing(6)
 
-        self._evaluation_enabled = QCheckBox("Enable content review")
+        self._recognition_enabled, self._ocr_uses, self._recognition_note = (
+            self._build_recognition_rows(v)
+        )
+
+        self._anonymization_enabled = QCheckBox(txt.REMOVE_PERSONAL_INFO)
+        self._anonymization_enabled.setChecked(False)
+        self._anonymization_enabled.toggled.connect(self._on_anonymization_changed)
+        self._anon_configure_btn = QPushButton(txt.RULES_BUTTON)
+        self._anon_configure_btn.setToolTip(
+            "Set which types of personal information to hide and how."
+        )
+        self._anon_configure_btn.clicked.connect(self._on_configure_anonymizer)
+        v.addLayout(self._checkbox_row(self._anonymization_enabled, self._anon_configure_btn))
+        # Personal-info removal has no place to change here: its button is "Rules…".
+        self._anonymization_uses = UsesLine(with_link=False)
+        v.addWidget(self._anonymization_uses)
+
+        self._correction_enabled = QCheckBox(txt.PROOFREAD)
+        self._correction_enabled.setChecked(True)
+        self._correction_enabled.setToolTip(
+            "Use an AI to fix spelling and grammar in the extracted text.\n"
+            f"Which AI: see {txt.WHERE_AI_MODELS}."
+        )
+        self._correction_enabled.toggled.connect(self._update_correction_visibility)
+        self._correction_prompt_btn = QPushButton(txt.OPTIONS_BUTTON)
+        self._correction_prompt_btn.setToolTip(
+            "Change the explanations (their language, or corrections only), the instructions\n"
+            "sent to the AI for proofreading, and the answer format.\n"
+            "Until you change them, the built-in instructions of the document language are used."
+        )
+        self._correction_prompt_btn.clicked.connect(self._on_configure_correction_prompt)
+        v.addLayout(self._checkbox_row(self._correction_enabled, self._correction_prompt_btn))
+        self._correction_uses = self._uses_line(SettingsPage.AI_MODELS, FOCUS_PROOFREADING)
+        v.addWidget(self._correction_uses)
+
+        self._custom_prompt_note = QLabel(txt.CUSTOM_PROMPT_NOTE)
+        self._custom_prompt_note.setWordWrap(True)
+        self._custom_prompt_note.setStyleSheet("color: #e67e22; font-size: 8pt;")
+        self._custom_prompt_note.setVisible(False)
+        v.addWidget(self._custom_prompt_note)
+
+        # Content review reads the proofread text, so its rows sit under Proofread.
+        review_rows = QWidget()
+        review_layout = QVBoxLayout(review_rows)
+        review_layout.setContentsMargins(20, 0, 0, 0)
+        review_layout.setSpacing(6)
+        self._evaluation_enabled = QCheckBox(txt.REVIEW_CONTENT)
         self._evaluation_enabled.setChecked(False)
         self._evaluation_enabled.toggled.connect(self._on_evaluation_enabled_changed)
-        v.addWidget(self._evaluation_enabled)
-
-        self._evaluation_prompt_btn = QPushButton("Instructions…")
+        self._evaluation_prompt_btn = QPushButton(txt.OPTIONS_BUTTON)
         self._evaluation_prompt_btn.setToolTip(
-            "Customize the instructions used to generate the content review report."
+            "Change the instructions used to generate the content review report."
         )
         self._evaluation_prompt_btn.clicked.connect(self._on_configure_evaluation_prompt)
-        v.addWidget(self._evaluation_prompt_btn)
+        review_layout.addLayout(
+            self._checkbox_row(self._evaluation_enabled, self._evaluation_prompt_btn)
+        )
+        self._evaluation_uses = self._uses_line(SettingsPage.AI_MODELS, FOCUS_REVIEW)
+        review_layout.addWidget(self._evaluation_uses)
+        v.addWidget(review_rows)
 
         self._layout.addWidget(inner)
 
-    def _build_step6_results(self) -> None:
+    def _build_recognition_rows(self, v: QVBoxLayout) -> tuple[QCheckBox, UsesLine, QLabel]:
+        """Add "Recognize text", its "uses" line and the queue note to *v*; return the widgets."""
+        checkbox = QCheckBox(txt.RECOGNIZE_TEXT)
+        checkbox.setChecked(DEFAULTS["recognition_enabled"])
+        checkbox.setToolTip(txt.RECOGNIZE_TEXT_TOOLTIP)
+        checkbox.toggled.connect(self._on_recognition_changed)
+        v.addWidget(checkbox)
+        uses = self._uses_line(SettingsPage.AI_MODELS, FOCUS_OCR)
+        v.addWidget(uses)
+        # What the switch means for the queue: scans that will be skipped, or "not needed".
+        note = QLabel()
+        note.setWordWrap(True)
+        note.setVisible(False)
+        v.addWidget(note)
+        return checkbox, uses, note
+
+    def _uses_line(self, page: SettingsPage, focus: str) -> UsesLine:
+        """Return a "uses" line whose "change…" opens *page* on *focus*."""
+        line = UsesLine()
+        line.change_requested.connect(lambda: self.open_settings_requested.emit(page, focus, []))
+        return line
+
+    @staticmethod
+    def _checkbox_row(checkbox: QCheckBox, button: QPushButton) -> QHBoxLayout:
+        """Return a row with *checkbox* on the left and its *button* right-aligned."""
+        row = QHBoxLayout()
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(6)
+        row.addWidget(checkbox, stretch=1)
+        row.addWidget(button)
+        return row
+
+    def _build_step4_results(self) -> None:
         self._layout.addWidget(
             self._step_header(
-                "Step 6: Results",
+                "4  Results",
                 "Where the results are saved, and which files a run creates there.",
             )
         )
@@ -589,6 +628,19 @@ class ConfigPanel(QScrollArea):
         self.refresh_data_flow()
         if not self._loading:
             self.results_changed.emit()
+
+    def results_problem(self) -> bool:
+        """Return whether a file output is on but no folder to write it to is chosen."""
+        wants_files = (
+            self._docx_enabled.isChecked()
+            or self._text_enabled.isChecked()
+            or self._text_anonymized_enabled.isChecked()
+        )
+        return wants_files and not self._output_dir.text().strip()
+
+    def choose_output_dir(self) -> None:
+        """Ask for the results folder (the "…" button and the readiness line's "Choose…")."""
+        self._on_browse_output_dir()
 
     def _on_browse_output_dir(self) -> None:
         start = self._output_dir.text().strip() or str(Path.home())
@@ -761,22 +813,119 @@ class ConfigPanel(QScrollArea):
 
         # _service is injected as object; narrowed to the concrete service type
         service: ProcessingApplicationService = self._service  # ty: ignore[invalid-assignment]
-        self._data_flow = service.describe_data_flow(self.lookup_config())
+        config = self.lookup_config()
+        # Ask once: the box shows the ticked steps, the lines under the steps show every step.
+        steps = service.describe_steps(config)
+        self._data_flow = ticked_steps(
+            steps,
+            correction_enabled=config.correction_enabled,
+            evaluation_enabled=config.evaluation_enabled,
+            recognition_enabled=config.recognition_enabled,
+        )
         self._data_flow_summary.set_flow(self._data_flow)
+        self._show_uses_lines(config, steps)
         self.data_flow_changed.emit(self._data_flow)
+
+    def _show_uses_lines(self, config: Config, steps: DataFlow) -> None:
+        """Fill the lines under the steps from *steps* (every step as if it were ticked).
+
+        An unticked step keeps its line, in grey, so the teacher sees what ticking it would
+        use.  The model is not part of the data flow, so it comes from *config*.
+        """
+        ocr = steps.stage(STAGE_OCR)
+        # Only Ollama has a model; Tesseract and PaddleOCR are named by the engine itself.
+        ocr_model = config.ocr.model if config.ocr.engine == "ollama" else ""
+        self._ocr_uses.set_line(
+            uses_line(ocr, ocr_model, enabled=config.recognition_enabled) if ocr else "",
+            uses_tooltip(ocr) if ocr else "",
+        )
+        names = steps.stage(STAGE_ANONYMIZATION)
+        self._anonymization_uses.set_line(detail_line(names) if names else "")
+
+        proofread = steps.stage(STAGE_CORRECTION)
+        proofread_on = self._correction_enabled.isChecked()
+        self._correction_uses.set_line(
+            uses_line(proofread, config.effective_correction_model, enabled=proofread_on)
+            if proofread
+            else "",
+            uses_tooltip(proofread) if proofread else "",
+        )
+        review = steps.stage(STAGE_EVALUATION)
+        if review is None:
+            self._evaluation_uses.set_line("")
+            return
+        review_on = self.review_will_run()
+        if (config.evaluate_provider, config.effective_evaluate_model) == (
+            config.correction_provider,
+            config.effective_correction_model,
+        ):
+            text = same_model_line(review, enabled=review_on)
+        else:
+            text = uses_line(review, config.effective_evaluate_model, enabled=review_on)
+        self._evaluation_uses.set_line(text, uses_tooltip(review))
 
     def data_flow(self) -> DataFlow | None:
         """Return the flow last rendered in the box (``None`` before the first render)."""
         return self._data_flow
 
+    def _on_recognition_changed(self, checked: bool) -> None:
+        """The teacher switched text recognition on or off."""
+        self._settings_dict["recognition_enabled"] = checked
+        self.refresh_data_flow()
+        # The note belongs to the old state; the readiness check that follows says what is
+        # skipped (or not needed) now.
+        self._recognition_note.setVisible(False)
+        if checked:
+            self._guard_stage("ocr")  # switched on: the engine has to be there
+
+    def show_recognition_note(self, *, skipped: int = 0, not_needed: bool = False) -> None:
+        """Say under "Recognize text" what the switch does to the documents in the queue.
+
+        *skipped* scans are left out while the step is off (orange); *not_needed* says the
+        step has nothing to do because every queued file is a text file (grey).  Neither:
+        the note is hidden.
+        """
+        if not self._recognition_enabled.isChecked() and skipped:
+            self._recognition_note.setText(txt.scans_skipped_note(skipped))
+            self._recognition_note.setStyleSheet("color: #e67e22; font-size: 8pt;")
+            self._recognition_note.setVisible(True)
+        elif self._recognition_enabled.isChecked() and not_needed:
+            self._recognition_note.setText(txt.RECOGNIZE_NOT_NEEDED)
+            self._recognition_note.setStyleSheet("color: #888; font-size: 8pt;")
+            self._recognition_note.setVisible(True)
+        else:
+            self._recognition_note.setVisible(False)
+
+    def recognition_enabled(self) -> bool:
+        """Return whether "Recognize text" is ticked."""
+        return self._recognition_enabled.isChecked()
+
+    def turn_on_recognition(self) -> None:
+        """Tick "Recognize text" as the teacher would (the "Turn on" button of the readiness line)."""
+        self._recognition_enabled.setChecked(True)
+
     def _update_correction_visibility(self, checked: bool = True) -> None:
+        self._sync_review_enabled()
         self.refresh_data_flow()
         if not checked:
             self._settings_dict["correction_enabled"] = False
             return
         self._settings_dict["correction_enabled"] = True
         self._correction_prompt_btn.setEnabled(True)
+        # The review comes back with proofreading, so its requirements count again: they are
+        # checked once proofreading's are met (see :meth:`_on_stage_guard_result`), so a
+        # problem both share is explained once, by proofreading.
         self._guard_stage("correction")
+
+    def _sync_review_enabled(self) -> None:
+        """Enable "Review content" only while "Proofread" is ticked.
+
+        The pipeline drops a review without proofreading, so the box would look "on" and do
+        nothing.  The tick is kept (and saved): the teacher finds it again with proofreading.
+        """
+        proofreading = self._correction_enabled.isChecked()
+        self._evaluation_enabled.setEnabled(proofreading)
+        self._evaluation_enabled.setToolTip("" if proofreading else txt.REVIEW_NEEDS_PROOFREADING)
 
     def _update_anonymize_visibility(self) -> None:
         pass  # driven by _on_anonymization_changed
@@ -929,6 +1078,14 @@ class ConfigPanel(QScrollArea):
         """Build the :class:`OcrConfig` slice from the stored advanced settings."""
         return OcrConfig.from_settings(self._settings_dict)
 
+    def review_will_run(self) -> bool:
+        """Return whether the content review runs: it is ticked and so is proofreading.
+
+        Every config the panel builds uses this, so the data-flow box, the preflight, the model
+        list and the memory check never count a review the run would drop.
+        """
+        return self._evaluation_enabled.isChecked() and self._correction_enabled.isChecked()
+
     def to_config(self) -> Config:
         """Build and return a Config from current field values."""
         input_text = self.get_input_dir()
@@ -957,6 +1114,7 @@ class ConfigPanel(QScrollArea):
             language=self._language.currentText().strip() or DEFAULTS["language"],
             ollama_url=self._settings_dict.get("ollama_url", DEFAULTS["ollama_url"]),
             ocr_timeout=int(self._settings_dict.get("ocr_timeout", DEFAULTS["ocr_timeout"])),
+            recognition_enabled=self._recognition_enabled.isChecked(),
             correction_enabled=self._correction_enabled.isChecked(),
             anonymization_enabled=self._anonymization_enabled.isChecked(),
             anonymizer_primary_model=self._settings_dict.get(
@@ -984,7 +1142,7 @@ class ConfigPanel(QScrollArea):
             ),
             answer_format_review=str(self._settings_dict.get("answer_format_review", "")),
             answer_format_text=str(self._settings_dict.get("answer_format_text", "")),
-            evaluation_enabled=self._evaluation_enabled.isChecked(),
+            evaluation_enabled=self.review_will_run(),
             evaluate_provider=self._settings_dict.get(
                 "evaluate_provider", DEFAULTS["evaluate_provider"]
             ),
@@ -1033,6 +1191,9 @@ class ConfigPanel(QScrollArea):
 
         self._load_prompts_and_language(values)
 
+        if "recognition_enabled" in values:
+            self._recognition_enabled.setChecked(bool(values["recognition_enabled"]))
+            self._settings_dict["recognition_enabled"] = self._recognition_enabled.isChecked()
         if "correction_enabled" in values:
             self._correction_enabled.setChecked(bool(values["correction_enabled"]))
         if "anonymization_enabled" in values:
@@ -1044,6 +1205,7 @@ class ConfigPanel(QScrollArea):
         self._sync_results_widgets()
 
         self._update_correction_visibility(self._correction_enabled.isChecked())
+        self._sync_review_enabled()
 
     def _load_prompts_and_language(self, values: dict) -> None:
         """Apply the correction/evaluation prompts and language combo from *values*.
@@ -1166,6 +1328,8 @@ class ConfigPanel(QScrollArea):
 
     def _stage_checkbox(self, stage: str) -> QCheckBox:
         """Return the enable checkbox of pipeline *stage*."""
+        if stage == "ocr":
+            return self._recognition_enabled
         if stage == "correction":
             return self._correction_enabled
         if stage == "evaluation":
@@ -1211,9 +1375,13 @@ class ConfigPanel(QScrollArea):
         settings = self._settings_dict
         return dataclasses.replace(
             config,
+            # Always recursive, like the config a run uses (see :meth:`to_config`): the check
+            # whether text files would land in the input folder must give the same answer.
+            recursive=True,
             ocr=self._ocr_config_from_settings(),
+            recognition_enabled=self._recognition_enabled.isChecked(),
             correction_enabled=self._correction_enabled.isChecked(),
-            evaluation_enabled=self._evaluation_enabled.isChecked(),
+            evaluation_enabled=self.review_will_run(),
             anonymization_enabled=self._anonymization_enabled.isChecked(),
             correction_provider=str(
                 settings.get("correction_provider", config.correction_provider)
@@ -1222,6 +1390,17 @@ class ConfigPanel(QScrollArea):
             evaluate_provider=str(settings.get("evaluate_provider", config.evaluate_provider)),
             evaluate_model=str(settings.get("evaluate_model", config.evaluate_model or "")),
             ollama_url=str(settings.get("ollama_url", config.ollama_url)),
+            ocr_timeout=int(settings.get("ocr_timeout", config.ocr_timeout)),
+            hardware_profile=str(settings.get("hardware_profile", config.hardware_profile)),
+            proofreading_context=str(
+                settings.get("proofreading_context", config.proofreading_context)
+            ),
+            # The Results step: "Text file, anonymized" alone needs name detection.
+            docx_enabled=bool(settings.get("docx_enabled", config.docx_enabled)),
+            text_enabled=bool(settings.get("text_enabled", config.text_enabled)),
+            text_anonymized_enabled=bool(
+                settings.get("text_anonymized_enabled", config.text_anonymized_enabled)
+            ),
             language=self._language.currentText().strip(),
             # What a run would send: "What is sent for this file" and the status box read the
             # anonymizer rules and the instructions from here, so they must be the live ones.
@@ -1245,6 +1424,8 @@ class ConfigPanel(QScrollArea):
     @staticmethod
     def _stage_inputs(config: Config, stage: str) -> tuple[str, ...]:
         """Return the config values the requirements of *stage* depend on."""
+        if stage == "ocr":
+            return (config.ocr.engine,)
         if stage == "correction":
             return (
                 config.correction_provider,
@@ -1259,51 +1440,57 @@ class ConfigPanel(QScrollArea):
         self, config: Config, stage: str, result: object, error: BaseException | None
     ) -> None:
         """Untick *stage* and explain when its background requirement check failed."""
-        if error is not None or not isinstance(result, list) or not result:
-            return  # all met (or the check itself failed: never block the UI on that)
-        issues = [issue for issue in result if isinstance(issue, RequirementIssue)]
+        issues = (
+            [issue for issue in result if isinstance(issue, RequirementIssue)]
+            if error is None and isinstance(result, list)
+            else []
+        )
+        if not issues:
+            # All met (or the check itself failed: never block the UI on that).  A review that
+            # was ticked before proofreading came back is checked now.
+            if stage == "correction" and self._evaluation_enabled.isChecked():
+                self._guard_stage("evaluation")
+            return
         checkbox = self._stage_checkbox(stage)
         if not checkbox.isChecked():
             return  # the user unticked it in the meantime
+        if stage == "evaluation" and not self._correction_enabled.isChecked():
+            return  # no review without proofreading: its tick stays for when it comes back
         if self._stage_inputs(self.lookup_config(), stage) != self._stage_inputs(config, stage):
             return  # the user chose another model/provider/server: this answer is outdated
         checkbox.blockSignals(True)
         checkbox.setChecked(False)
         checkbox.blockSignals(False)
         self.refresh_data_flow()  # signals were blocked: the box must be told itself
-        if stage == "correction":
+        if stage == "ocr":
+            self._settings_dict["recognition_enabled"] = False
+        elif stage == "correction":
             self._settings_dict["correction_enabled"] = False
         elif stage == "evaluation":
             self._settings_dict["evaluation_enabled"] = False
         else:
             self._settings_dict["anonymization_enabled"] = False
+        self._sync_review_enabled()
 
+        from ..application.service import ProcessingApplicationService  # noqa: PLC0415
         from ._dependency_guard_dialog import DependencyGuardDialog  # noqa: PLC0415
-        from ._model_guidance import PROVIDER_PREFIX  # noqa: PLC0415
-        from .settings._page import (  # noqa: PLC0415
-            FOCUS_LOCAL_MODELS,
-            FOCUS_NAME_DETECTION,
-            FOCUS_ONLINE_SERVICES,
-        )
 
-        focus = FOCUS_NAME_DETECTION if stage == "anonymizer" else FOCUS_LOCAL_MODELS
-        # A missing Ollama model is ticked in Add-ons, as on the "model missing" path of Run.
-        preselect: list[str] = []
-        if stage in ("correction", "evaluation"):
-            provider, model = (
-                (config.correction_provider, config.effective_correction_model)
-                if stage == "correction"
-                else (config.evaluate_provider, config.effective_evaluate_model)
-            )
-            if provider == "ollama" and model:
-                preselect.append(model)
-        # A missing provider package is installed on the online-services tab.
-        packages = [f"{PROVIDER_PREFIX}{issue.provider}" for issue in issues if issue.provider]
-        if packages:
-            focus, preselect = FOCUS_ONLINE_SERVICES, packages
-        dlg = DependencyGuardDialog(stage, issues, self)
-        dlg.open_downloads.connect(lambda: self.open_downloads_requested.emit(focus, preselect))
+        title = txt.GUARD_TITLE.format(step=_STAGE_STEP_TITLES.get(stage, stage))
+        service: ProcessingApplicationService = self._service  # ty: ignore[invalid-assignment]
+        fix = fix_for(
+            stage,
+            issues[0],
+            lambda provider: str(service.get_provider_info(provider).get("display_name", provider)),
+            language=self._language.currentText().strip(),
+        )
+        dlg = DependencyGuardDialog(title, issues, fix.actions, self)
+        dlg.action_chosen.connect(self._open_fix)
         dlg.exec()
+
+    def _open_fix(self, action: FixAction) -> None:
+        """Open the Settings place a fix button names."""
+        if action.page is not None:
+            self.open_settings_requested.emit(action.page, action.focus, list(action.preselect))
 
     def restore_defaults(self) -> None:
         self.load_from_dict(DEFAULTS)
@@ -1319,6 +1506,7 @@ class ConfigPanel(QScrollArea):
             "input": self.get_input_dir(),
             "output": str(self._settings_dict.get("output_dir", "")).strip(),
             "language": self._language.currentText().strip(),
+            "recognition_enabled": self._recognition_enabled.isChecked(),
             "correction_enabled": self._correction_enabled.isChecked(),
             "anonymization_enabled": self._anonymization_enabled.isChecked(),
             "correction_prompt": self._correction_prompt_text,

@@ -118,7 +118,8 @@ The diagrams below show the three main runtime flows.
 ### Benchmark app
 
 A second GUI app, **Benchmark** (`teachers-teammate-benchmark`, entry point
-`teachers_teammate.gui.benchmark:main_benchmark`), helps judge OCR quality for a
+`teachers_teammate.gui.benchmark:main_benchmark`; also **Tools → Benchmark…** in the main
+window), helps judge OCR quality for a
 single document. It runs the document through an OCR configuration, stores the
 result in an append-only history, and lets the user compare two stored runs
 side-by-side (image · text A · text B · diff + similarity). It follows the same
@@ -316,7 +317,7 @@ imported from a `hf.co/unsloth/…` GGUF ships none of them). The check prints t
 brings along, so a result can be traced. Check a Hugging Face build as its own tag; do not
 transfer a verdict between packagings.
 
-The check talks to `$OLLAMA_HOST` (else `127.0.0.1`); `--ollama-url` overrides it. From WSL in
+The check talks to `$OLLAMA_HOST` (else `127.0.0.1`); `--ollama-url` overrides it. (The app's own *Settings → This computer → Find…* finds the Windows host for you, see "Finding the Ollama server".) From WSL in
 its default NAT mode `127.0.0.1` is WSL itself, so point it at the Windows host
 (`ip route show default`), or set `networkingMode=mirrored` in `%USERPROFILE%\.wslconfig` and run
 `wsl --shutdown` so `127.0.0.1` reaches Windows. Ollama on Windows must listen on the network
@@ -1270,6 +1271,73 @@ closing), `tests/gui/test_gui_addons_page.py`; the main window's side is tested 
 `ScriptedSettingsWindow` (`tests/gui/_gui_harness.py`), a stand-in that returns a scripted
 result.
 
+### Main window: steps, readiness line, fix targets, tools
+
+**Steps.**  `ConfigPanel` has four steps: Documents, Language (with the Level), What should
+happen, Results.  Under recognition, personal-info removal, proofreading and review sits a
+`UsesLine` (`_data_flow_summary.py`) with the model and the place of the step.  The text comes
+from `ProcessingApplicationService.describe_steps(config)` -- every step as if it were ticked,
+so an unticked step keeps its (grey) line -- and `short_place` / `uses_line`, which share their
+words with the service list on AI models (`PLACE_*`).  The model is not part of
+`DataFlow`, and so not part of its fingerprint: a remembered "don't ask again" must survive a
+change of model.  The data-flow box (`DataFlowSummary`) keeps only the verdict and the advice;
+it shows the ticked part of the same answer (`application/data_flow.py:ticked_steps`), so the
+places and regions are asked for once per refresh, not twice.
+The review is a child of proofreading: `ConfigPanel.review_will_run()` (ticked **and**
+proofreading ticked) is what `to_config()` and `lookup_config()` pass as `evaluation_enabled`,
+so the box, the preflight, the Ollama model list and the memory check never count a review the
+pipeline would drop (`StageBuilder.build_evaluation`).  The tick itself is kept and saved.
+
+**Requirements and their fixes.**  `check_stage_requirements(config, stage)` (stages `ocr`,
+`anonymizer`, `correction`, `evaluation`) returns `RequirementIssue`s that carry an `IssueKind`,
+never only a sentence; `check_run_preflight(config, memory=..., recognition=..., fresh=...)` runs
+`ocr` first and exposes the first blocker as `RunPreflight.blocker -> (stage, issue)`.
+`recognition=False` leaves the engine check out for a run that reads no page
+(`needs_text_recognition(files, recognised=...)`: only text files, or text already stored; a PDF
+counts as reading, because its text layer is only known by opening it); `fresh=True` asks Ollama
+for its models again instead of using the cached list ("Check again", a returning window).
+The engine probes (`is_module_importable`, `_tesseract_installed`) are shared with the connection
+check, so a package installed from Add-ons is seen without a restart.  A new requirement is therefore: an
+`IssueKind`, its check, and **one row in `gui/_fix_targets.py:fix_for`** -- the line for the
+readiness line and the buttons (`FixAction`: a Settings page + focus + preselect, or a
+`command` such as `retry` / `choose_folder`).  `DependencyGuardDialog(title, issues, actions)`
+(the requirement guard when a step is ticked, and the dialog that stops Run) and the readiness
+line take their buttons from that one table.  Preselect entries in Add-ons are model tags,
+`provider:<id>` and `spacy:<model>`.
+
+**Readiness line** (`gui/_readiness_line.py`).  `readiness(...)` is a pure function: the first
+matching row wins (blocker, Results problem, no documents, no files, nothing selected,
+"Checking…", ready).  `MainWindow._update_readiness()` is instant (it reads the last answer and
+the cheap facts: queue, selection, folder) and runs on every selection change; the answer
+comes from `_start_readiness_check()`, a background `check_run_preflight(..., memory=False)` in
+a `LatestTask`.  It is started by every settings change (via `data_flow_changed`, debounced by
+400 ms), after Settings OK / restore / a finished install or download, at start-up, when the
+window is activated while something blocked, after the queue was refreshed (the files decide
+whether an engine is needed -- this also covers a Results tick: "Text file, anonymized" needs
+name detection) and every 10 s while Ollama is unreachable.  "Check again" and the activation
+re-check pass `fresh=True`.  `ConfigPanel.lookup_config()` is recursive like `to_config()`, so
+"text files would land in the documents folder" gets the same answer for the line and for Run.  The
+line never disables Run: Run checks again (`_check_requirements_then`) and stays the authority.
+A model download takes the line over (`show_download`) and hands it back with a new check.
+
+**Tools menu.**  *System Monitor* is `gui/_system_monitor.py:SystemMonitorWindow`, built at
+start-up and kept hidden so the chart collects every run; `SystemStatsWidget` polls only while
+shown.  It is a **parentless** window of its own, like Benchmark (an owned window would stay on
+top of the main window on Windows), so it can stay open and be arranged next to the main window
+while a batch runs; `MainWindow.closeEvent` closes it, otherwise an open monitor would keep the
+app alive.  *Benchmark…* creates `build_benchmark_window()` in-process (lazy import; the packaged
+build lists `teachers_teammate.gui.benchmark` as a hidden import), as a **parentless** window
+-- an owned window would stay on top of it on Windows -- and `MainWindow.closeEvent` calls its
+`close()`, because only that runs the window's own `closeEvent` that stops its worker.  The
+window is kept between uses: when it is shown again after a close, `reload_settings()` re-reads the
+saved server and "My computer" choice and asks for the models again (closing retired a running
+fetch).  A close by the user while a run is going asks first (`event.spontaneous()`); the main
+window closing it as the app quits does not.
+
+Tests: `tests/gui/test_gui_main_window.py` (menus, readiness, tools),
+`tests/gui/test_gui_readiness.py` (fix table, `readiness()`, the line, the dialog),
+`tests/gui/test_gui_config_panel.py` (steps, review rule, uses lines).
+
 ### Cache vs benchmark store
 
 These two stores have deliberately opposite shapes:
@@ -1903,7 +1971,7 @@ install below and Settings → Add-ons never write to the packages directory tog
 
 ### GPU monitoring package (automatic, with consent)
 
-The System Stats panel needs `pynvml` (NVIDIA) or `pyamdgpuinfo` (AMD, Linux only).  In a
+The System Monitor needs `pynvml` (NVIDIA) or `pyamdgpuinfo` (AMD, Linux only).  In a
 frozen build the main window asks the service (`pending_gpu_monitoring_addon`, background
 thread) whether this computer has a GPU whose package is missing.  If so, it asks the user
 **once** before downloading it (answer kept in QSettings under `gpu_monitoring/download`),
@@ -1980,3 +2048,56 @@ scroll position; the list marks the entry with the focus background and opens th
 minor-changes line when the entry is in it. List numbers run 1…n over the listed changes while
 the links keep the hunk number of the diff. Tests click with `qtbot.mouseClick` on a position
 found with `anchorAt()`; emitting `anchorClicked` by hand would not show what a person sees.
+
+
+### Text recognition switch (`recognition_enabled`)
+
+`Config.recognition_enabled` (default `True`, setting key of the same name, CLI `--no-recognition`)
+says whether scans are read at all.  It lives on `Config`, **not** on `OcrConfig`: `OcrConfig` says
+*how* pages are read and feeds `compute_ocr_config_hash` (an explicit field list), so a flag that
+decides *whether* a file is read changes no cache key.
+
+Off, the layers behave like this:
+
+- `PreprocessService.preprocess_input(file, allow_images=False)` raises `RecognitionSwitchedOffError`
+  (a `PipelineInputError`) when the loaded input has image units -- before any page is
+  preprocessed.  Text files and PDFs with a usable text layer pass.  `FileProcessor` turns it into
+  `ProcessingResult(ok=False, skipped=True, message=RECOGNITION_OFF_MESSAGE)`.  A file whose OCR
+  text is already cached never reaches that code and runs normally.
+- `run_files()` returns `RunOutcome(succeeded, failed, skipped)`; a skipped file is neither of the
+  others (exit code 0).  `FileDoneResult.skipped` -> `FileDoneEvent.skipped`; the main window opens
+  no error dialog for it and `ResultsTable.add_result` shows "skipped" in grey.
+- `_ollama_needed` / `configured_ollama_models` / `ocr_refusal_for_run` ignore the OCR model, the
+  pipeline does not check it, and `describe_data_flow` leaves the recognition stage out (no page
+  leaves anywhere).  `describe_steps` forces it back on so the line under the step can still say
+  what ticking it would use.
+- `check_run_preflight(config, files=..., recognised=...)` asks `plan_recognition()` (images are
+  scans; PDFs are opened with `pdf_has_text_layer()`, cached by path/size/mtime/mode, so call it from
+  a background thread) and returns `RunPreflight.skipped`; when no file is readable it is blocked by
+  `IssueKind.NOTHING_TO_READ` (fix: **Turn on**, `COMMAND_TURN_ON_RECOGNITION`).  The main window
+  feeds the result to `ConfigPanel.show_recognition_note()` and `ResultsTable.set_skipped_sources()`.
+- Ticking the box goes through the requirement guard like the other steps (`check_stage_requirements(
+  config, "ocr")`); the stage re-run in the preview menu overrides the box.
+
+### Finding the Ollama server
+
+Rules in `domain/ollama_discovery.py` (pure: `OLLAMA_HOST` parsing, `/proc/net/route` and
+`resolv.conf` parsing, `classify_host`, `scan_targets`), I/O in `infrastructure/ollama_discovery.py`
+(`probe_server`, `discover_this_computer`, `scan_network`) and `infrastructure/wsl.py`.  The only
+entry point for the GUI is `ProcessingApplicationService.discover_ollama_servers(scope)`.
+
+- `DiscoveryScope.THIS_COMPUTER`: the `OLLAMA_HOST` address, `127.0.0.1:11434`, and -- inside WSL --
+  the Windows host (default gateway, then name servers; no `wsl.exe`, that would start a
+  distribution).  Windows -> Ollama in WSL needs nothing: WSL2 forwards localhost.
+- `DiscoveryScope.NETWORK`: additionally the private `/24` of each card (psutil, fallback
+  `gethostbyname_ex`), 64 workers, 0.3 s per address, `GET /api/version` only, no redirects, no
+  proxy, stop event.  It **never runs unasked**: only the "Search the network..." button of
+  `gui/settings/_server_search_dialog.py`, after a confirmation.
+- A reply counts only if it is JSON with a string `version`.
+- Nothing switches the address by itself.  The dialog fills the field of the *This computer* page
+  (`AiSetupPage.set_server_url`); the main window runs one silent THIS_COMPUTER search per saved
+  address when Ollama is unreachable and offers the hit as "Use it" (`found_server_fix`,
+  `COMMAND_USE_SERVER`).
+- Privacy: `is_local_ollama_url(url, include_wsl_host=True)` (used by `application/data_flow.py` only)
+  counts the Windows host of WSL as this computer.  Hardware and memory probing keep the default
+  (`False`): from inside WSL those figures belong to the Linux side.

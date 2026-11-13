@@ -12,6 +12,7 @@ from teachers_teammate.infrastructure.input_providers import (
     ImageInputProvider,
     PdfInputProvider,
     TextInputProvider,
+    pdf_has_text_layer,
 )
 from tests.conftest import write_text_pdf
 
@@ -333,3 +334,22 @@ def test_pdf_provider_always_mode_renders_page_without_printable_text(tmp_path: 
         payload = PdfInputProvider(tmp_dir=tmp_path, text_layer="always").load(pdf)
 
     assert [unit.kind for unit in payload.units] == ["image"]
+
+
+# ── pdf_has_text_layer: the decision without rendering ─────────────────────
+
+
+def test_pdf_has_text_layer_agrees_with_the_provider_without_rendering(
+    tmp_path: Path, sample_pdf: Path
+) -> None:
+    """
+    Given  a text-only PDF, a scanned PDF, and a render directory that must stay empty
+    When   pdf_has_text_layer asks about both in auto mode, and about the text PDF in "never"
+    Then   only the typed PDF has a usable layer, "never" refuses it, and nothing was rendered
+    """
+    typed = write_text_pdf(tmp_path / "typed.pdf", [_LONG_TEXT, _LONG_TEXT])
+
+    assert pdf_has_text_layer(typed, "auto") is True
+    assert pdf_has_text_layer(sample_pdf, "auto") is False
+    assert pdf_has_text_layer(typed, "never") is False
+    assert list(tmp_path.glob("*_page*.png")) == []

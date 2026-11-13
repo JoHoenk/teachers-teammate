@@ -1719,3 +1719,49 @@ def test_a_text_that_goes_out_whole_is_not_announced(tmp_path: Path) -> None:
     fp.process(tmp_path / "doc.png")
 
     assert not [line for line in reporter.lines if "Proofreading" in line]
+
+
+# ── Text recognition switched off ──────────────────────────────────────────
+
+
+def test_scan_is_skipped_when_recognition_is_off(tmp_path: Path) -> None:
+    """
+    Given  a processor with recognition off whose preprocess service refuses page images
+    When   process() is called for an image
+    Then   the result is skipped (not ok, with the reason), no OCR ran and nothing was cached
+    """
+    from teachers_teammate.exceptions import RecognitionSwitchedOffError  # noqa: PLC0415
+
+    file = tmp_path / "scan.png"
+    file.write_bytes(b"data")
+    fp, cache_svc, preprocess_svc, ocr_svc = _make_processor(tmp_path, recognize=False)
+    preprocess_svc.preprocess_input.side_effect = RecognitionSwitchedOffError(file.name)
+
+    result = fp.process(file)
+
+    assert result.skipped
+    assert not result.ok
+    assert "switched off" in result.message
+    preprocess_svc.preprocess_input.assert_called_once_with(file, allow_images=False)
+    ocr_svc.run_pages.assert_not_called()
+    cache_svc.record_ocr.assert_not_called()
+
+
+def test_cached_scan_is_still_processed_when_recognition_is_off(tmp_path: Path) -> None:
+    """
+    Given  a scan whose recognised text is already stored, and recognition switched off
+    When   process() is called
+    Then   the stored text is used: nothing needs reading, so the file is not skipped
+    """
+    state = _make_state(ocr_done=True, raw_text="cached text", preview_img="p.png")
+    file = tmp_path / "scan.png"
+    file.write_bytes(b"data")
+    fp, _, preprocess_svc, _ = _make_processor(
+        tmp_path, returns=_StubReturns(cache_ctx=_make_ctx(state)), recognize=False
+    )
+
+    result = fp.process(file)
+
+    assert not result.skipped
+    assert result.raw_text == "cached text"
+    preprocess_svc.preprocess_input.assert_not_called()

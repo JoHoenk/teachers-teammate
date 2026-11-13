@@ -25,7 +25,7 @@ from collections.abc import Callable, Mapping, Sequence
 from enum import StrEnum
 from typing import Any
 
-from PySide6.QtCore import Signal
+from PySide6.QtCore import QTimer, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -380,6 +380,16 @@ class AiModelsPage(SettingsPageBase):
 
     def focus(self, focus: str, preselect: Sequence[str] = ()) -> None:
         _ = preselect
+        if focus == _page.FOCUS_PROOFREADING_KEY:
+            self._focus_key(self._shared, self._proofreading_group)
+            return
+        if focus == _page.FOCUS_REVIEW_KEY:
+            # Unticked, the review shares the proofreading model, and so its key.
+            if self._override.isChecked():
+                self._focus_key(self._review, self._review_box)
+            else:
+                self._focus_key(self._shared, self._proofreading_group)
+            return
         target = {
             _page.FOCUS_OCR: self._reading_group,
             _page.FOCUS_PROOFREADING: self._proofreading_group,
@@ -387,6 +397,18 @@ class AiModelsPage(SettingsPageBase):
         }.get(focus)
         if target is not None:
             self._scroll_to(target)
+
+    def _focus_key(self, section: AiServiceSection, fallback: QWidget) -> None:
+        """Scroll to the key row of *section* and put the cursor in its field.
+
+        A service that needs no key has no row: the *fallback* (its group) is shown instead.
+        """
+        row = section.key_row()
+        if row.isHidden():
+            self._scroll_to(fallback)
+            return
+        self._scroll_to(row)
+        QTimer.singleShot(0, row.field, row.field.setFocus)
 
     def shutdown(self) -> None:
         self._ocr_picker.stop_threads()

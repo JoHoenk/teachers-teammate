@@ -52,7 +52,7 @@ from ...domain.model_catalog import (
 )
 from .._background import LatestTask
 from .._constants import _SPACY_MODEL_CHOICES as _SPACY_MODEL_DOWNLOAD_CHOICES
-from .._model_guidance import PROVIDER_PREFIX
+from .._model_guidance import PROVIDER_PREFIX, SPACY_PREFIX
 from .._model_wording import (
     ADD_MODEL_NOTE,
     BEST_ALREADY_DOWNLOADED,
@@ -794,8 +794,16 @@ class AddonsPage(SettingsPageBase):
             self._connect_pull_manager()
 
     def focus(self, focus: str, preselect: Sequence[str] = ()) -> None:
-        """Show the tab named *focus*; tick *preselect* (model tags, ``provider:<name>``)."""
-        tags = [tag for tag in preselect if tag and not tag.startswith(PROVIDER_PREFIX)]
+        """Show the tab named *focus*; tick *preselect*.
+
+        Entries are model tags, ``provider:<name>`` (an online service's package) and
+        ``spacy:<model>`` (a name-detection model; spaCy itself is ticked with it while it is
+        not installed).
+        """
+        spacy = [tag for tag in preselect if tag.startswith(SPACY_PREFIX)]
+        tags = [
+            tag for tag in preselect if tag and not tag.startswith((PROVIDER_PREFIX, SPACY_PREFIX))
+        ]
         providers = [
             self._package_key(tag.removeprefix(PROVIDER_PREFIX))
             for tag in preselect
@@ -810,7 +818,10 @@ class AddonsPage(SettingsPageBase):
             self._tabs.setCurrentIndex(tab)
         self._preselect.extend(tags)
         self._preselect_providers.extend(providers)
-        if self._installed_ready and (tags or providers):
+        if spacy:
+            # A box that is already installed is disabled and stays as it is.
+            self._preselect_providers.extend(["spacy", *spacy])
+        if self._installed_ready and (tags or providers or spacy):
             # Detection is done: tick now (otherwise it ticks once detection finished).
             self._tick_preselect_tags()
 

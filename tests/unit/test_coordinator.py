@@ -43,13 +43,14 @@ def test_run_files_all_succeed(tmp_path: Path) -> None:
     """
     f1 = tmp_path / "a.png"
     f2 = tmp_path / "b.png"
-    succeeded, failed = run_files(
+    succeeded, failed, skipped = run_files(
         [f1, f2],
         process_file=_success,
         cleanup_tmp=MagicMock(),
     )
     assert succeeded == ["a.png", "b.png"]
     assert failed == []
+    assert skipped == []
 
 
 def test_run_files_one_failure(tmp_path: Path) -> None:
@@ -66,10 +67,34 @@ def test_run_files_one_failure(tmp_path: Path) -> None:
             return _failure(path)
         return _success(path)
 
-    succeeded, failed = run_files([f1, f2], process_file=process, cleanup_tmp=MagicMock())
+    succeeded, failed, _skipped = run_files([f1, f2], process_file=process, cleanup_tmp=MagicMock())
 
     assert "ok.png" in succeeded
     assert "bad.png" in failed
+
+
+def test_run_files_a_skipped_file_is_neither_succeeded_nor_failed(tmp_path: Path) -> None:
+    """
+    Given  two files and process_file reports the second as skipped
+    When   run_files is called
+    Then   the second is listed under skipped only, and on_file_done carries the flag
+    """
+    f1 = tmp_path / "text.txt"
+    f2 = tmp_path / "scan.png"
+
+    def process(path: Path) -> ProcessingResult:
+        if path == f2:
+            return ProcessingResult(False, "Needs text recognition", "", "", "", "", skipped=True)
+        return _success(path)
+
+    done: list = []
+
+    succeeded, failed, skipped = run_files(
+        [f1, f2], process_file=process, cleanup_tmp=MagicMock(), on_file_done=done.append
+    )
+
+    assert (succeeded, failed, skipped) == (["text.txt"], [], ["scan.png"])
+    assert [event.skipped for event in done] == [False, True]
 
 
 # ── Callbacks ─────────────────────────────────────────────────────────────
@@ -130,7 +155,7 @@ def test_run_files_stop_event_set_skips_all_files(tmp_path: Path) -> None:
     stop.set()
     process_file = MagicMock()
 
-    succeeded, failed = run_files(
+    succeeded, failed, _skipped = run_files(
         [f1, f2],
         process_file=process_file,
         cleanup_tmp=MagicMock(),
@@ -182,7 +207,7 @@ def test_run_files_empty_list_returns_empty_and_cleans_up(tmp_path: Path) -> Non
     """
     cleanup = MagicMock()
 
-    succeeded, failed = run_files([], process_file=MagicMock(), cleanup_tmp=cleanup)
+    succeeded, failed, _skipped = run_files([], process_file=MagicMock(), cleanup_tmp=cleanup)
 
     assert succeeded == []
     assert failed == []

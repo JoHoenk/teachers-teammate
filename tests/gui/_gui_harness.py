@@ -241,7 +241,7 @@ def neutralize_gui_threads(monkeypatch: Any) -> None:
     # Background tasks (hardware detection, installed-model checks, first start)
     # run on a shared pool: do not start any of them in the smoke harness.
     monkeypatch.setattr(LatestTask, "submit", lambda self, fn, on_done: 0)
-    monkeypatch.setattr(MainWindow, "_check_llm_status", lambda self: None)
+    monkeypatch.setattr(MainWindow, "_start_readiness_check", lambda self, **_kw: None)
     monkeypatch.setattr(MainWindow, "_load_toml_if_present", lambda self: None)
     monkeypatch.setattr(
         ProcessingApplicationService, "check_connection", lambda *a, **k: (True, True, "✓ OK")

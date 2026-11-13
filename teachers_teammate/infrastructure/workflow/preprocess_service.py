@@ -6,7 +6,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import NamedTuple
 
-from ...exceptions import PipelineInputError
+from ...exceptions import PipelineInputError, RecognitionSwitchedOffError
 from ...interfaces import ImagePreprocessor, InputPayload, InputProvider, TextOrigin
 from ..input_provider_factory import get_input_provider
 
@@ -50,11 +50,21 @@ class PreprocessService:
     def preprocess_input(
         self,
         file: Path,
+        *,
+        allow_images: bool = True,
     ) -> PreparedInput:
-        """Load *file* and preprocess its page images (or pass its text through)."""
+        """Load *file* and preprocess its page images (or pass its text through).
+
+        With ``allow_images=False`` (text recognition is switched off) an input that has to be
+        read from page images raises :exc:`RecognitionSwitchedOffError` before any page is
+        preprocessed: its text cannot be had without recognition.  Text files and PDFs with a
+        usable text layer pass.
+        """
         payload = self.load_input(file)
         if not payload.units:
             raise PipelineInputError(f"Input '{file.name}' produced no units.")
+        if not allow_images and any(unit.kind == "image" for unit in payload.units):
+            raise RecognitionSwitchedOffError(file.name)
 
         preprocessed: list[Path] = []
         steps: list[str] = []

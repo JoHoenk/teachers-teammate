@@ -127,6 +127,7 @@ class OCRWorker(QThread):
                     text_format=result.text_format,
                     correction_review=result.correction_review,
                     correction_warning=result.correction_warning,
+                    skipped=result.skipped,
                 )
             )
 

@@ -190,3 +190,39 @@ def test_pipeline_refuses_text_files_in_the_input_folder_before_creating_it(
     assert rc == 1
     assert "next run would read them as new documents" in warnings[0]
     assert not cfg.output_dir.exists()
+
+
+@pytest.mark.use_case("TXT_Ingestion_Without_OCR")
+def test_pipeline_with_recognition_off_uses_text_files_and_skips_scans(
+    tmp_path: Path, sample_png: Path
+) -> None:
+    """
+    Given  recognition switched off and an input folder with a text file and an image
+    When   OCRPipeline.run() is called
+    Then   the text file is processed, the image is reported as skipped (not as failed),
+           no OCR engine ran, and the exit code is 0
+    """
+    import shutil  # noqa: PLC0415
+
+    cfg = make_config(
+        tmp_path,
+        ocr_engine="tesseract",
+        recognition_enabled=False,
+        correction_enabled=False,
+        docx_enabled=False,
+    )
+    (cfg.input_dir / "note.txt").write_text("Typed essay", encoding="utf-8")
+    shutil.copy(sample_png, cfg.input_dir / "scan.png")
+    events: list[FileDoneResult] = []
+    ocr = MagicMock()
+
+    with patch("teachers_teammate.infrastructure.pipeline.OCRStageService") as stage:
+        stage.return_value.run_pages = ocr
+        rc = OCRPipeline(cfg, progress=ProgressCallbacks(on_file_done=events.append)).run()
+
+    assert rc == 0
+    by_name = {e.name: e for e in events}
+    assert by_name["note.txt"].ok and not by_name["note.txt"].skipped
+    assert by_name["scan.png"].skipped and not by_name["scan.png"].ok
+    assert "switched off" in by_name["scan.png"].message
+    ocr.assert_not_called()

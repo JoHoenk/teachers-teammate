@@ -82,6 +82,24 @@ def test_parse_args_explicit_input_output() -> None:
 
 
 @pytest.mark.use_case("Headless_CLI_Batch")
+def test_parse_args_no_recognition_switches_text_recognition_off() -> None:
+    """
+    Given  no flag, then --no-recognition, then --no-recognition --recognition
+    When   _parse_args() is called
+    Then   recognition is on by default, off with --no-recognition, and the last flag wins
+    """
+    from teachers_teammate.cli import _parse_args  # noqa: PLC0415
+
+    base = ["-i", "/in", "-o", "/out"]
+
+    assert _parse_args(argv=base).recognition_enabled is True
+    assert _parse_args(argv=[*base, "--no-recognition"]).recognition_enabled is False
+    assert (
+        _parse_args(argv=[*base, "--no-recognition", "--recognition"]).recognition_enabled is True
+    )
+
+
+@pytest.mark.use_case("Headless_CLI_Batch")
 def test_parse_args_flags() -> None:
     """
     Given  --recursive --debug --no-correction --no-docx

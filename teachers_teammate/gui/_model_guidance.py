@@ -59,6 +59,8 @@ OpenDownloads = Callable[[list[str], "QWidget | None"], None]
 #: Prefix of the Add-ons checkbox keys, and of the ``preselect`` entries, that name an AI
 #: service's package (``provider:mistral``) rather than an Ollama model.
 PROVIDER_PREFIX = "provider:"
+#: Prefix of a name-detection (spaCy) model in an Add-ons preselection: ``spacy:de_core_news_sm``.
+SPACY_PREFIX = "spacy:"
 
 _GREY = QColor("#888888")
 _ORANGE = QColor("#e67e22")

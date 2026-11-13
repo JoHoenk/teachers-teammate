@@ -212,6 +212,19 @@ def test_load_config_file_returns_recognised_keys(tmp_path: Path) -> None:
     assert "unknown_key" not in result
 
 
+def test_load_config_file_reads_recognition_enabled(tmp_path: Path) -> None:
+    """
+    Given  a TOML file that switches text recognition off
+    When   load_config_file() is called
+    Then   the key is returned (and recognition is on in DEFAULTS)
+    """
+    cfg_file = tmp_path / "ocr.toml"
+    cfg_file.write_text("recognition_enabled = false\n")
+
+    assert load_config_file(cfg_file)["recognition_enabled"] is False
+    assert DEFAULTS["recognition_enabled"] is True
+
+
 @pytest.mark.parametrize("engine", ["langchain", "openai", "gpt"])
 def test_load_config_file_replaces_online_ocr_engine(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], engine: str

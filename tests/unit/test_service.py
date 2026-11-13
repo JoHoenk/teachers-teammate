@@ -15,7 +15,10 @@ from teachers_teammate.application.commands import ApplicationCommands
 from teachers_teammate.application.service import (
     AnonymizerConfig,
     DocxExport,
+    IssueKind,
     ProcessingApplicationService,
+    RequirementIssue,
+    RunPreflight,
 )
 from teachers_teammate.domain.model_listing import ModelListing
 from teachers_teammate.infrastructure.state_repository import DocumentState
@@ -1706,6 +1709,66 @@ def test_describe_data_flow_reports_the_provider_region(tmp_path: Path) -> None:
 
 
 @pytest.mark.unit
+def test_describe_steps_lists_every_step_although_none_is_ticked(tmp_path: Path) -> None:
+    """
+    Given  a config with proofreading and review both off
+    When   the service describes the steps
+    Then   proofreading and the review are listed with the place they would run at
+    """
+    from tests.conftest import make_config  # noqa: PLC0415
+
+    cfg = make_config(
+        tmp_path,
+        ocr_engine="tesseract",
+        correction_enabled=False,
+        evaluation_enabled=False,
+        correction_provider="mistral_eu",
+        evaluate_provider="openai",
+    )
+    svc = _make_svc()
+
+    assert svc.describe_data_flow(cfg).stage("correction") is None
+    steps = svc.describe_steps(cfg)
+
+    assert steps.stage("correction").location.data_region.value == "eu"
+    assert steps.stage("evaluation").location.data_region.value == "non_eu"
+    assert steps.stage("ocr") is not None
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("correction", "evaluation"), [(False, False), (False, True), (True, False), (True, True)]
+)
+def test_ticked_steps_of_all_steps_equal_the_flow_of_the_ticked_config(
+    tmp_path: Path, correction: bool, evaluation: bool
+) -> None:
+    """
+    Given  a config with proofreading and review ticked or not (a review needs proofreading)
+    When   the all-steps flow is narrowed to the ticked steps
+    Then   it equals the flow the service describes for that very config
+    """
+    from teachers_teammate.application.data_flow import ticked_steps  # noqa: PLC0415
+    from tests.conftest import make_config  # noqa: PLC0415
+
+    cfg = make_config(
+        tmp_path,
+        ocr_engine="tesseract",
+        anonymization_enabled=True,
+        correction_enabled=correction,
+        evaluation_enabled=evaluation,
+        correction_provider="mistral_eu",
+        evaluate_provider="openai",
+    )
+    svc = _make_svc()
+
+    narrowed = ticked_steps(
+        svc.describe_steps(cfg), correction_enabled=correction, evaluation_enabled=evaluation
+    )
+
+    assert narrowed == svc.describe_data_flow(cfg)
+
+
+@pytest.mark.unit
 def test_describe_anonymizer_models_is_empty_without_personal_info_removal(
     tmp_path: Path,
 ) -> None:
@@ -1827,9 +1890,12 @@ def test_preflight_needs_no_ollama_for_other_engines(tmp_path: Path) -> None:
     svc = _make_svc()
     cfg = make_config(tmp_path, ocr_engine="tesseract", correction_enabled=False)
 
-    with patch(
-        "teachers_teammate.application.service.list_provider_models_checked",
-        side_effect=AssertionError("Ollama must not be contacted"),
+    with (
+        patch("teachers_teammate.application.service.shutil.which", return_value="/usr/bin/t"),
+        patch(
+            "teachers_teammate.application.service.list_provider_models_checked",
+            side_effect=AssertionError("Ollama must not be contacted"),
+        ),
     ):
         result = svc.check_run_preflight(cfg)
 
@@ -1841,7 +1907,7 @@ def test_stage_requirements_distinguish_no_models_from_not_running(tmp_path: Pat
     """
     Given  a server that answers but has no model downloaded
     When   the proofreading requirements are checked
-    Then   the issue says no model is downloaded (fixable in Downloads), not "not running"
+    Then   the issue says no model is downloaded (a download fixes it), not "not running"
     """
     svc = _make_svc()
     cfg = _ollama_config(tmp_path)
@@ -1850,14 +1916,14 @@ def test_stage_requirements_distinguish_no_models_from_not_running(tmp_path: Pat
         issues = svc.check_stage_requirements(cfg, "correction")
 
     assert [i.message for i in issues] == ["No model is downloaded in Ollama yet."]
-    assert issues[0].fixable_via_downloads is True
+    assert issues[0].kind is IssueKind.NO_OLLAMA_MODEL
 
     with _server_answers([], "✗ Cannot connect to Ollama") as request:
         issues = svc.check_stage_requirements(cfg, "correction")
 
     request.assert_called_once()
     assert [i.message for i in issues] == ["Ollama is not running. Start it with `ollama serve`."]
-    assert issues[0].fixable_via_downloads is False
+    assert issues[0].kind is IssueKind.OLLAMA_UNREACHABLE
 
 
 @pytest.mark.unit
@@ -2271,7 +2337,10 @@ def test_preflight_checks_anonymizer_for_anonymized_text_files(tmp_path: Path) -
     cfg = make_config(tmp_path, ocr_engine="tesseract", text_anonymized_enabled=True)
     svc = _make_svc()
 
-    with patch.object(svc, "list_installed_spacy_models", return_value=[]):
+    with (
+        patch.object(svc, "list_installed_spacy_models", return_value=[]),
+        patch("teachers_teammate.application.service.shutil.which", return_value="/usr/bin/t"),
+    ):
         result = svc.check_run_preflight(cfg)
 
     assert result.stage == "anonymizer"
@@ -2355,7 +2424,7 @@ def test_stage_requirements_report_a_missing_provider_package_before_asking_the_
     """
     Given  proofreading with Mistral while langchain_mistralai is not installed
     When   the stage requirements are checked
-    Then   one issue says Mistral support is not installed, is fixable in Downloads, and names
+    Then   one issue says Mistral support is not installed, is of the package kind, and names
            the provider so the app can open the providers tab with it ticked
     """
     svc = _make_svc()
@@ -2366,9 +2435,273 @@ def test_stage_requirements_report_a_missing_provider_package_before_asking_the_
     with patch.object(ProcessingApplicationService, "is_module_importable", lambda *_a: False):
         issues = svc.check_stage_requirements(cfg, "correction")
 
-    assert [(i.message, i.fixable_via_downloads, i.provider) for i in issues] == [
-        ("Mistral support is not installed yet.", True, "mistral")
+    assert [(i.message, i.kind, i.provider) for i in issues] == [
+        ("Mistral support is not installed yet.", IssueKind.PACKAGE_MISSING, "mistral")
     ]
+
+
+@pytest.mark.unit
+def test_stage_requirements_report_a_missing_api_key_after_the_package_check(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """
+    Given  proofreading with an online provider that needs a key
+    When   the stage requirements are checked without the key, then with the package missing
+    Then   the first gives a KEY_MISSING issue naming the service, the second only the
+           package (installing comes first)
+    """
+    svc = _make_svc()
+    cfg = dataclasses.replace(
+        _ollama_config(tmp_path), correction_provider="mistral_eu", correction_model="m"
+    )
+    monkeypatch.delenv("MISTRAL_API_KEY", raising=False)
+
+    with patch.object(ProcessingApplicationService, "is_module_importable", lambda *_a: True):
+        issues = svc.check_stage_requirements(cfg, "correction")
+    with patch.object(ProcessingApplicationService, "is_module_importable", lambda *_a: False):
+        package_first = svc.check_stage_requirements(cfg, "correction")
+
+    assert [(i.kind, i.provider) for i in issues] == [(IssueKind.KEY_MISSING, "mistral_eu")]
+    assert "Mistral" in issues[0].message
+    assert [i.kind for i in package_first] == [IssueKind.PACKAGE_MISSING]
+    monkeypatch.setenv("MISTRAL_API_KEY", "k")
+    with patch.object(ProcessingApplicationService, "is_module_importable", lambda *_a: True):
+        assert svc.check_stage_requirements(cfg, "correction") == []
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("engine", "module"), [("tesseract", "tesseract"), ("paddleocr", "paddleocr")]
+)
+def test_the_ocr_stage_reports_a_missing_engine(tmp_path: Path, engine: str, module: str) -> None:
+    """
+    Given  Tesseract or PaddleOCR chosen but not installed
+    When   the requirements of the "ocr" stage are checked
+    Then   an ENGINE_MISSING issue names the engine; once installed there is none
+    """
+    from tests.conftest import make_config  # noqa: PLC0415
+
+    svc = _make_svc()
+    cfg = make_config(tmp_path, ocr_engine=engine)
+
+    with (
+        patch("teachers_teammate.application.service.shutil.which", return_value=None),
+        patch("teachers_teammate.application.service.importlib.util.find_spec", return_value=None),
+    ):
+        issues = svc.check_stage_requirements(cfg, "ocr")
+    with (
+        patch("teachers_teammate.application.service.shutil.which", return_value="/usr/bin/t"),
+        patch(
+            "teachers_teammate.application.service.importlib.util.find_spec", return_value=object()
+        ),
+    ):
+        present = svc.check_stage_requirements(cfg, "ocr")
+
+    assert [(i.kind, i.engine) for i in issues] == [(IssueKind.ENGINE_MISSING, engine)]
+    assert present == []
+
+
+@pytest.mark.unit
+def test_the_ocr_stage_asks_nothing_for_ollama(tmp_path: Path) -> None:
+    """
+    Given  Ollama as the text-recognition engine
+    When   the "ocr" stage is checked
+    Then   there is no issue and no server is contacted (the preflight checks the server before)
+    """
+    svc = _make_svc()
+
+    with patch(
+        "teachers_teammate.application.service.list_provider_models_checked",
+        side_effect=AssertionError("Ollama must not be contacted"),
+    ):
+        assert svc.check_stage_requirements(_ollama_config(tmp_path), "ocr") == []
+
+
+@pytest.mark.unit
+def test_a_missing_engine_blocks_the_preflight_in_the_ocr_stage(tmp_path: Path) -> None:
+    """
+    Given  Tesseract chosen but not installed
+    When   the run preflight is computed
+    Then   the run is blocked in stage "ocr", before the other steps are looked at
+    """
+    from tests.conftest import make_config  # noqa: PLC0415
+
+    cfg = make_config(tmp_path, ocr_engine="tesseract", correction_enabled=False)
+
+    with patch("teachers_teammate.application.service.shutil.which", return_value=None):
+        result = _make_svc().check_run_preflight(cfg)
+
+    assert result.blocked is True
+    assert result.blocker is not None
+    assert result.blocker[0] == "ocr"
+    assert result.blocker[1].kind is IssueKind.ENGINE_MISSING
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("files", "recognised", "expected"),
+    [
+        (["a.txt", "b.TXT"], [], False),
+        (["scan.png"], [], True),
+        (["scan.png"], ["scan.png"], False),
+        (["scan.png", "notes.txt"], ["notes.txt"], True),
+        (["scan.pdf"], [], True),
+        ([], [], True),
+    ],
+    ids=["text-only", "image", "image-recognised", "image-and-text", "pdf", "nothing-queued"],
+)
+def test_needs_text_recognition_only_for_pages_that_are_not_read_yet(
+    files: list[str], recognised: list[str], expected: bool
+) -> None:
+    """
+    Given  queued files, some of them text files or already recognised
+    When   the service is asked whether a run over them reads pages
+    Then   only an image or PDF without stored text counts (nothing queued counts too)
+    """
+    needs = ProcessingApplicationService.needs_text_recognition(
+        [Path(f) for f in files], recognised={Path(f) for f in recognised}
+    )
+
+    assert needs is expected
+
+
+@pytest.mark.unit
+def test_a_run_that_reads_no_page_is_not_blocked_by_a_missing_engine(tmp_path: Path) -> None:
+    """
+    Given  Tesseract chosen but not installed, and a run over text files only
+    When   the preflight runs with recognition=False
+    Then   the run is not blocked, while the same preflight with recognition blocks it
+    """
+    from tests.conftest import make_config  # noqa: PLC0415
+
+    svc = _make_svc()
+    cfg = make_config(tmp_path, ocr_engine="tesseract", correction_enabled=False)
+
+    with patch("teachers_teammate.application.service.shutil.which", return_value=None):
+        reads_nothing = svc.check_run_preflight(cfg, recognition=False)
+        reads_pages = svc.check_run_preflight(cfg)
+
+    assert reads_nothing.blocked is False
+    assert reads_pages.blocker is not None
+    assert reads_pages.blocker[1].kind is IssueKind.ENGINE_MISSING
+
+
+@pytest.mark.unit
+def test_a_missing_paddleocr_is_looked_up_with_fresh_import_caches(tmp_path: Path) -> None:
+    """
+    Given  PaddleOCR chosen, and a service whose module lookup is recorded
+    When   the "ocr" stage is checked
+    Then   the lookup goes through is_module_importable (which refreshes the import caches),
+           so a package installed from Add-ons meanwhile is seen without a restart
+    """
+    from tests.conftest import make_config  # noqa: PLC0415
+
+    svc = _make_svc()
+    cfg = make_config(tmp_path, ocr_engine="paddleocr")
+    asked: list[str] = []
+
+    def importable(_self, module: str) -> bool:
+        asked.append(module)
+        return True
+
+    with patch.object(ProcessingApplicationService, "is_module_importable", importable):
+        assert svc.check_stage_requirements(cfg, "ocr") == []
+
+    assert asked == ["paddleocr"]
+
+
+@pytest.mark.unit
+def test_a_fresh_preflight_sees_a_model_pulled_since_the_list_was_cached(tmp_path: Path) -> None:
+    """
+    Given  a model list cached without the proofreading model, which was pulled afterwards
+    When   the preflight runs once as usual and once with fresh=True
+    Then   the first still reports the model missing and the second asks the server again
+    """
+    svc = _make_svc()
+    cfg = _ollama_config(tmp_path)
+
+    with _server_answers(["qwen3-vl:8b"]):
+        assert svc.check_run_preflight(cfg).missing_models == ("qwen3.5:9b",)
+    with _server_answers(["qwen3-vl:8b", "qwen3.5:9b"]) as request:
+        assert svc.check_run_preflight(cfg).missing_models == ("qwen3.5:9b",)
+        request.assert_not_called()
+        assert svc.check_run_preflight(cfg, fresh=True).blocked is False
+        request.assert_called_once()
+
+
+@pytest.mark.unit
+def test_preflight_without_memory_never_asks_the_memory_question(tmp_path: Path) -> None:
+    """
+    Given  a config the readiness line checks
+    When   the preflight runs with memory=False
+    Then   memory_warning_for_run is never called, so a bare readiness question stays cheap
+    """
+    from tests.conftest import make_config  # noqa: PLC0415
+
+    svc = _make_svc()
+    cfg = make_config(tmp_path, ocr_engine="tesseract", correction_enabled=False)
+
+    with (
+        patch("teachers_teammate.application.service.shutil.which", return_value="/usr/bin/t"),
+        patch.object(svc, "memory_warning_for_run", side_effect=AssertionError("asked")),
+    ):
+        result = svc.check_run_preflight(cfg, memory=False)
+
+    assert result.blocked is False
+    assert result.memory_warning == ""
+
+
+@pytest.mark.unit
+def test_the_blocker_is_the_first_unmet_requirement_in_one_shape() -> None:
+    """
+    Given  a preflight result for each kind of refusal, and one without any
+    When   the blocker is read
+    Then   each gives (stage, issue) with the matching kind and message, and a clear run gives
+           None
+    """
+    issue = RequirementIssue("No key.", IssueKind.KEY_MISSING, provider="openai")
+
+    def blocker(**fields) -> tuple[str, RequirementIssue]:
+        found = RunPreflight(**fields).blocker
+        assert found is not None
+        return found
+
+    assert RunPreflight().blocker is None
+    stage, found = blocker(ocr_not_allowed="Cloud model.")
+    assert (stage, found.kind, found.message) == (
+        "ocr",
+        IssueKind.OCR_NOT_ALLOWED,
+        "Cloud model.",
+    )
+    stage, found = blocker(ollama_unreachable="✗ down")
+    assert (stage, found.kind) == ("", IssueKind.OLLAMA_UNREACHABLE)
+    stage, found = blocker(missing_models=("a:1", "b:2"))
+    assert (stage, found.kind, found.models) == ("", IssueKind.MODEL_MISSING, ("a:1", "b:2"))
+    assert "'a:1', 'b:2'" in found.message
+    assert blocker(stage="evaluation", stage_issues=(issue,)) == ("evaluation", issue)
+
+
+@pytest.mark.unit
+def test_stage_requirements_carry_the_models_to_download(tmp_path: Path) -> None:
+    """
+    Given  a model that is not downloaded, and a language without its name-detection model
+    When   the requirements are checked
+    Then   the issues carry the Ollama tag and the spaCy model, so "Download…" can tick them
+    """
+    svc = _make_svc()
+    cfg = _ollama_config(tmp_path)
+
+    with _server_answers(["other:1"]):
+        model_issue = svc.check_stage_requirements(cfg, "correction")[0]
+    with patch.object(svc, "list_installed_spacy_models", return_value=["en_core_web_sm"]):
+        name_issue = svc.check_stage_requirements(
+            dataclasses.replace(cfg, language="German"), "anonymizer"
+        )[0]
+
+    assert model_issue.kind is IssueKind.MODEL_MISSING
+    assert model_issue.models == (cfg.effective_correction_model,)
+    assert name_issue.kind is IssueKind.NAME_DETECTION_MISSING
+    assert name_issue.models == (svc.spacy_model_for_language("German"),)
 
 
 @pytest.mark.unit
@@ -3009,3 +3342,148 @@ def test_an_online_provider_is_not_built_to_estimate_the_size(tmp_path: Path, mo
     assert estimate.words_per_piece is None
     assert estimate.content_review_fits is None
     assert estimate.words > 0
+
+
+# ── Text recognition switched off ────────────────────────────────────────────
+
+
+@pytest.mark.unit
+def test_recognition_plan_separates_files_with_text_from_scans(tmp_path: Path) -> None:
+    """
+    Given  a text file, an image, a recognised image, and two PDFs (one with a text layer)
+    When   the service plans a run with text recognition switched off
+    Then   the text file, the recognised image and the text PDF are readable; the image and
+           the scanned PDF are the scans a run leaves out
+    """
+    svc = _make_svc()
+    files = [tmp_path / n for n in ("a.txt", "scan.png", "done.jpg", "typed.pdf", "scanned.pdf")]
+    for file in files:
+        file.write_bytes(b"x")
+    has_text = {"typed.pdf"}
+
+    with patch(
+        "teachers_teammate.infrastructure.input_providers.pdf_has_text_layer",
+        side_effect=lambda path, mode: path.name in has_text,
+    ):
+        plan = svc.plan_recognition(files, recognised={tmp_path / "done.jpg"})
+
+    assert [p.name for p in plan.readable] == ["a.txt", "done.jpg", "typed.pdf"]
+    assert [p.name for p in plan.skipped] == ["scan.png", "scanned.pdf"]
+
+
+@pytest.mark.unit
+def test_recognition_plan_treats_an_unreadable_pdf_as_readable(tmp_path: Path) -> None:
+    """
+    Given  a PDF that cannot be opened to look for a text layer
+    When   the service plans a run with text recognition switched off
+    Then   the PDF is not guessed to be a scan: the run reports the real problem
+    """
+    svc = _make_svc()
+    broken = tmp_path / "broken.pdf"
+    broken.write_bytes(b"not a pdf")
+
+    with patch(
+        "teachers_teammate.infrastructure.input_providers.pdf_has_text_layer",
+        side_effect=RuntimeError("corrupt"),
+    ):
+        plan = svc.plan_recognition([broken])
+
+    assert plan.skipped == ()
+
+
+@pytest.mark.unit
+def test_preflight_with_recognition_off_and_only_scans_has_nothing_to_read(tmp_path: Path) -> None:
+    """
+    Given  recognition switched off and a queue of images only
+    When   the run preflight is computed with the queued files
+    Then   the run is blocked with NOTHING_TO_READ and lists the scans
+    """
+    svc = _make_svc()
+    cfg = _ollama_config(tmp_path, recognition_enabled=False, correction_enabled=False)
+    scans = [Path("a.png"), Path("b.jpg")]
+
+    with _server_answers([]) as request:
+        result = svc.check_run_preflight(cfg, files=scans)
+
+    request.assert_not_called()
+    assert result.blocked is True
+    assert result.blocker is not None
+    assert result.blocker[1].kind is IssueKind.NOTHING_TO_READ
+    assert list(result.skipped) == scans
+
+
+@pytest.mark.unit
+def test_preflight_with_recognition_off_runs_the_text_and_lists_the_skipped_scans(
+    tmp_path: Path,
+) -> None:
+    """
+    Given  recognition switched off, an Ollama OCR model that is not downloaded, and a queue of
+           a text file and an image
+    When   the run preflight is computed with the queued files
+    Then   the run is not blocked (no OCR model is needed to read no page), no engine is
+           checked, and the image is reported as skipped
+    """
+    svc = _make_svc()
+    cfg = _ollama_config(tmp_path, recognition_enabled=False, correction_enabled=False)
+
+    with _server_answers([]) as request:
+        result = svc.check_run_preflight(cfg, files=[Path("notes.txt"), Path("scan.png")])
+
+    request.assert_not_called()
+    assert result.blocked is False
+    assert [p.name for p in result.skipped] == ["scan.png"]
+
+
+@pytest.mark.unit
+def test_preflight_with_recognition_on_lists_no_skipped_scans(tmp_path: Path) -> None:
+    """
+    Given  recognition switched on and a queue of a text file and an image
+    When   the run preflight is computed with the queued files
+    Then   nothing is skipped
+    """
+    svc = _make_svc()
+    cfg = _ollama_config(tmp_path, correction_enabled=False)
+
+    with _server_answers(["qwen3-vl:8b"]):
+        result = svc.check_run_preflight(cfg, files=[Path("notes.txt"), Path("scan.png")])
+
+    assert result.skipped == ()
+    assert result.blocked is False
+
+
+@pytest.mark.unit
+def test_cloud_ocr_settings_are_not_refused_while_recognition_is_off(tmp_path: Path) -> None:
+    """
+    Given  an OCR model that would read pages on Ollama's servers, but recognition switched off
+    When   the refusal for the run is asked
+    Then   nothing is refused: no page is read, so no page can leave the computer
+    """
+    svc = _make_svc()
+    cfg = _ollama_config(
+        tmp_path,
+        ocr_model="qwen3-vl:235b-cloud",
+        recognition_enabled=False,
+        correction_enabled=False,
+    )
+
+    assert svc.ocr_refusal_for_run(cfg) == ""
+    assert svc.configured_ollama_models(cfg) == []
+
+
+@pytest.mark.unit
+def test_the_data_flow_has_no_recognition_step_while_it_is_off_but_the_steps_view_has(
+    tmp_path: Path,
+) -> None:
+    """
+    Given  a config with text recognition switched off
+    When   the data flow and the all-steps view are described
+    Then   the flow omits text recognition (no page leaves anywhere), the all-steps view
+           still lists it so the line under the step can say what ticking it would use
+    """
+    from teachers_teammate.domain.data_location import STAGE_OCR  # noqa: PLC0415
+
+    svc = _make_svc()
+    cfg = _ollama_config(tmp_path, recognition_enabled=False, correction_enabled=False)
+
+    assert svc.describe_data_flow(cfg).stage(STAGE_OCR) is None
+    assert svc.describe_steps(cfg).stage(STAGE_OCR) is not None

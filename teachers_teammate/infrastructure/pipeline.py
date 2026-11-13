@@ -49,7 +49,11 @@ import threading
 from ..config import Config, OcrConfig
 from ..domain.model_catalog import HardwareDetection
 from ..domain.output_files import output_folder_refusal
-from ..exceptions import OllamaConnectionError, ProviderNotAvailableError
+from ..exceptions import (
+    RECOGNITION_OFF_MESSAGE,
+    OllamaConnectionError,
+    ProviderNotAvailableError,
+)
 from ..interfaces import ImagePreprocessor
 from .file_discovery import FileDiscovery
 from .input_provider_factory import InputOptions, get_input_provider, supported_suffixes
@@ -61,6 +65,7 @@ from .stage_builder import StageBuilder, default_build_preprocessor
 from .state_repository import StateRepository
 from .storage_root import resolve_artifact_dir, resolve_storage_root
 from .workflow.cache_service import CacheReconciliationService
+from .workflow.coordinator import RunOutcome
 from .workflow.coordinator import run_files as _run_files_coordinator
 from .workflow.file_processor import FileProcessor, FileProcessorConfig
 from .workflow.ocr_service import OCRStageService
@@ -231,7 +236,7 @@ class OCRPipeline:
         reporter.status(f"Storage root: {storage.path.resolve()} ({storage.source})")
 
         self._print_banner()
-        if cfg.ocr.engine == "ollama":
+        if cfg.recognition_enabled and cfg.ocr.engine == "ollama":
             try:
                 OllamaClient(cfg.ollama_url).check_model(cfg.ocr.model, reporter)
                 reporter.status("Checking Ollama connection... OK")
@@ -253,14 +258,19 @@ class OCRPipeline:
             return 0
 
         reporter.status(f"Found {len(files)} file(s) to process.\n")
-        succeeded, failed = self._run_files(files, file_processor, tmp_dir, artifact_store)
+        succeeded, failed, skipped = self._run_files(files, file_processor, tmp_dir, artifact_store)
 
         reporter.status("")
         reporter.status(_LINE)
-        reporter.status(f"Done: {len(succeeded)} succeeded, {len(failed)} failed.")
+        done = f"Done: {len(succeeded)} succeeded, {len(failed)} failed"
+        reporter.status(f"{done}, {len(skipped)} skipped." if skipped else f"{done}.")
         if failed:
             reporter.status("Failed files:")
             for name in failed:
+                reporter.status(f"  - {name}")
+        if skipped:
+            reporter.status(f"Skipped files ({RECOGNITION_OFF_MESSAGE.rstrip('.').lower()}):")
+            for name in skipped:
                 reporter.status(f"  - {name}")
         reporter.status(_LINE)
 
@@ -360,7 +370,7 @@ class OCRPipeline:
         file_processor: FileProcessor,
         tmp_dir: Path,
         artifact_store: PreviewImageStore,
-    ) -> tuple[list[str], list[str]]:
+    ) -> RunOutcome:
         return _run_files_coordinator(
             files,
             process_file=file_processor.process,
@@ -388,13 +398,16 @@ class OCRPipeline:
         reporter.status(_LINE)
         if self._config_file is not None:
             reporter.status(f"  Config file   : {self._config_file}")
-        reporter.status(f"  OCR engine    : {cfg.ocr.engine}")
-        if cfg.ocr.engine == "ollama":
-            reporter.status(f"  OCR model     : {cfg.ocr.model}")
+        if not cfg.recognition_enabled:
+            reporter.status("  Recognition   : disabled (scans are skipped)")
+        else:
+            reporter.status(f"  OCR engine    : {cfg.ocr.engine}")
+            if cfg.ocr.engine == "ollama":
+                reporter.status(f"  OCR model     : {cfg.ocr.model}")
         reporter.status(f"  Preprocess    : {cfg.ocr.preprocess_method}")
         reporter.status(f"  Language      : {cfg.language}")
         if (
-            cfg.ocr.engine == "ollama"
+            (cfg.recognition_enabled and cfg.ocr.engine == "ollama")
             or (cfg.correction_enabled and cfg.correction_provider == "ollama")
             or (cfg.evaluation_enabled and cfg.evaluate_provider == "ollama")
         ):
@@ -460,7 +473,7 @@ class OCRPipeline:
         # normalisation happens once and injection is explicit.
         ollama_client = (
             OllamaClient(cfg.ollama_url)
-            if cfg.ocr.engine == "ollama"
+            if (cfg.recognition_enabled and cfg.ocr.engine == "ollama")
             or (cfg.correction_enabled and cfg.correction_provider == "ollama")
             or (cfg.evaluation_enabled and cfg.evaluate_provider == "ollama")
             else None
@@ -506,6 +519,7 @@ class OCRPipeline:
                 doc_creator=doc_creator,
                 anonymizer=anonymizer,
                 postprocessor=builder.build_ocr_postprocessor(),
+                recognize=cfg.recognition_enabled,
                 stop_event=self._stop_event,
                 on_ocr_done=self._progress.on_ocr_done,
                 on_stage_started=self._progress.on_stage_started,

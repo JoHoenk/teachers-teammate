@@ -53,6 +53,9 @@ DEFAULTS: dict[str, Any] = {
     "preprocess_method": "grayscale",
     "ollama_url": "http://127.0.0.1:11434",
     "ocr_timeout": 180,
+    # Whether scans (images, PDFs without a text layer) are read.  Off = only text that already
+    # exists is used (text files, PDFs with a text layer) and scans are skipped.
+    "recognition_enabled": True,
     # ── Preprocessing (pre-steps and PDF rendering) ───────────────────────────
     "pdf_render_dpi": 300,
     # "auto" | "always" | "never" — use a PDF's embedded text instead of OCR.
@@ -258,6 +261,12 @@ class Config:
     # An unknown value falls back to "auto" with a warning, as hardware_profile does.
     proofreading_context: str = DEFAULTS["proofreading_context"]
 
+    # ── Text recognition ─────────────────────────────────────────────────────
+    # Deliberately not part of OcrConfig: that slice says *how* pages are read (and
+    # fingerprints the cached text); this says *whether* scans are read at all.  Off, a scan
+    # is skipped; text files and PDFs with a text layer are used as they are.
+    recognition_enabled: bool = DEFAULTS["recognition_enabled"]
+
     # ── Anonymizer ───────────────────────────────────────────────────────────
     # None = derive the spaCy model from the document language ("Auto")
     anonymizer_primary_model: str | None = None
@@ -390,6 +399,7 @@ def load_config_file(path: Path) -> dict:
         "preprocess_method",
         "ollama_url",
         "ocr_timeout",
+        "recognition_enabled",
         "correction_enabled",
         "anonymization_enabled",
         "correction_provider",

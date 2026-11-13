@@ -107,3 +107,20 @@ class PipelineInputError(ValueError):
 
     Examples: unsupported file suffix, unreadable image, no OCR-able pages.
     """
+
+
+#: The one sentence for a scan that is left out because text recognition is switched off, so
+#: the exception, the queue row and the log say the same.
+RECOGNITION_OFF_MESSAGE = "Needs text recognition, which is switched off."
+
+
+class RecognitionSwitchedOffError(PipelineInputError):
+    """Raised for an input that has to be read from page images while recognition is off.
+
+    Not a failure: the pipeline turns it into a *skipped* file.  A subclass of
+    :exc:`PipelineInputError`, so a caller that does not know about skipping still treats the
+    file as one that cannot be used.
+    """
+
+    def __init__(self, name: str = "") -> None:
+        super().__init__(f"{name}: {RECOGNITION_OFF_MESSAGE}" if name else RECOGNITION_OFF_MESSAGE)

@@ -312,6 +312,22 @@ def _parse_args(
         ),
     )
     ocr_grp.add_argument(
+        "--recognition",
+        dest="recognition_enabled",
+        action="store_true",
+        default=DEFAULTS["recognition_enabled"],
+        help="Read scans (images, PDFs without a text layer) with the OCR engine (default).",
+    )
+    ocr_grp.add_argument(
+        "--no-recognition",
+        dest="recognition_enabled",
+        action="store_false",
+        help=(
+            "Do not read scans: use only text that already exists (TXT files, PDFs with a "
+            "text layer) and skip images and scanned PDFs. No OCR engine or model is needed."
+        ),
+    )
+    ocr_grp.add_argument(
         "--pdf-text-layer",
         choices=PDF_TEXT_LAYER_MODES,
         default=DEFAULTS["pdf_text_layer"],
@@ -629,6 +645,7 @@ def run_cli(
             args, "proofreading_context", DEFAULTS["proofreading_context"]
         ),
         ocr_timeout=args.ocr_timeout,
+        recognition_enabled=args.recognition_enabled,
         correction_enabled=args.correction_enabled,
         anonymization_enabled=args.anonymization_enabled,
         # No command-line flags for these: they come from the config file, like in the GUI, so a

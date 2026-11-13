@@ -20,7 +20,11 @@ from teachers_teammate.domain.model_catalog import (
 from teachers_teammate.domain.model_listing import ModelListing
 from teachers_teammate.gui.settings import _addons_page
 from teachers_teammate.gui.settings._addons_page import AddonsPage
-from teachers_teammate.gui.settings._page import FOCUS_LOCAL_MODELS, SettingsPage
+from teachers_teammate.gui.settings._page import (
+    FOCUS_LOCAL_MODELS,
+    FOCUS_NAME_DETECTION,
+    SettingsPage,
+)
 
 from ._gui_harness import settings_context
 from ._service_stubs import RecommendationServiceStub
@@ -368,6 +372,42 @@ def test_provider_preselect_is_not_mistaken_for_an_ollama_model(qtbot) -> None:
 
     assert "provider:mistral" not in dlg._model_items
     assert dlg._group_items["other"].childCount() == 0
+
+
+def test_spacy_preselect_ticks_the_model_and_spacy_itself(qtbot) -> None:
+    """
+    Given  the page focused on name detection with preselect=["spacy:de_core_news_sm"], while
+           spaCy is not installed
+    When   install detection finishes
+    Then   the name detection tab is shown, the model's box and the spaCy box are ticked, and
+           the entry is no Ollama model
+    """
+    from PySide6.QtWidgets import QTabWidget  # noqa: PLC0415
+
+    dlg = _make_dialog(qtbot)
+    dlg.focus(FOCUS_NAME_DETECTION, ["spacy:de_core_news_sm"])
+    dlg._on_detection_done(_detection_results(dlg, set()))
+
+    assert dlg.findChild(QTabWidget).currentIndex() == AddonsPage.TAB_NAME_DETECTION
+    assert dlg._dl_checkboxes["spacy:de_core_news_sm"].isChecked() is True
+    assert dlg._dl_checkboxes["spacy"].isChecked() is True
+    assert "spacy:de_core_news_sm" not in dlg._model_items
+
+
+def test_spacy_preselect_leaves_an_installed_spacy_alone(qtbot) -> None:
+    """
+    Given  spaCy already installed but not the preselected model
+    When   install detection finishes
+    Then   the model is ticked and the installed spaCy box stays as it is (disabled, installed)
+    """
+    dlg = _make_dialog(qtbot)
+    dlg.focus(FOCUS_NAME_DETECTION, ["spacy:de_core_news_sm"])
+
+    dlg._on_detection_done({**_detection_results(dlg, set()), "spacy": True})
+
+    assert dlg._dl_checkboxes["spacy:de_core_news_sm"].isChecked() is True
+    assert not dlg._dl_checkboxes["spacy"].isEnabled()
+    assert "Installed" in dlg._dl_checkboxes["spacy"].text()
 
 
 @pytest.mark.use_case("Model_Recommendation_By_Hardware")

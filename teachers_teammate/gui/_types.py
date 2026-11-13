@@ -56,6 +56,8 @@ class FileDoneEvent:
     """Explanations and unclear expressions, ``None`` when the file has no review."""
     correction_warning: str = ""
     """Why the file has no review (fallback to corrections-only); empty when there is one."""
+    skipped: bool = False
+    """The file was left out on purpose (a scan while text recognition is off), not a failure."""
 
     @property
     def total_s(self) -> float:
@@ -72,6 +74,7 @@ class SettingsDict(TypedDict, total=False):
     ollama_url: str
     hardware_profile: str
     ocr_timeout: int
+    recognition_enabled: bool
     preprocess_method: str
     preprocess_dewarp: bool
     preprocess_deskew: bool

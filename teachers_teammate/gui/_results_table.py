@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+from collections.abc import Collection
 from pathlib import Path
 from typing import Any, ClassVar
 
 from PySide6.QtCore import QEvent, QObject, QPoint, Qt, Signal
-from PySide6.QtGui import QColor, QFont, QPixmap
+from PySide6.QtGui import QBrush, QColor, QFont, QPixmap
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
@@ -40,11 +41,15 @@ _PENDING_SYMBOL = "-"  # hyphen-minus pending indicator
 _RUNNING_SYMBOL = "▶"  # ▶
 _DONE_SYMBOL = "✓"  # ✓
 _FAIL_SYMBOL = "✗"  # ✗
+_SKIPPED_TEXT = "skipped"  # a scan that is left out because text recognition is off
 _PENDING_COLOR = "#888888"
+_SKIPPED_ROW_BG = "#2b2b2b"  # neither the green of a success nor the red of a failure
 
 _STAGE_FONT = QFont()
 _STAGE_FONT.setPointSize(13)
 _STAGE_FONT.setBold(True)
+_SKIPPED_FONT = QFont()
+_SKIPPED_FONT.setPointSize(9)
 
 
 class _HoverDelegate(QStyledItemDelegate):
@@ -335,6 +340,37 @@ class ResultsTable(QTableWidget):
         self._refresh_cell_tooltips()
         self.resizeColumnToContents(self._COL_FILE)
 
+    def set_skipped_sources(self, source_ids: Collection[str], reason: str = "") -> None:
+        """Show which queued files a run will leave out because text recognition is off.
+
+        A row in *source_ids* that has not started shows "skipped" in the recognition cell
+        (with *reason* as its tooltip); a row that was marked before and is no longer in
+        *source_ids* goes back to pending.  Idempotent: the readiness check calls it after
+        every answer.
+        """
+        for source_id, row in self._row_by_source.items():
+            symbol = self._stage_symbol(row, self._COL_OCR)
+            if source_id in source_ids:
+                if symbol == _PENDING_SYMBOL:
+                    self._set_skipped_cell(row, reason)
+            elif symbol == _SKIPPED_TEXT:
+                self._set_stage_cell(row, self._COL_OCR, _PENDING_SYMBOL, _PENDING_COLOR)
+                self._tint_row(row, QBrush())
+
+    def _set_skipped_cell(self, row: int, reason: str) -> None:
+        """Show "skipped" (grey, small) in the recognition cell of *row*."""
+        self._set_stage_cell(row, self._COL_OCR, _SKIPPED_TEXT, _PENDING_COLOR)
+        item = self.item(row, self._COL_OCR)
+        if item is not None:
+            item.setFont(_SKIPPED_FONT)
+        self._set_note(row, self._COL_OCR, reason)
+
+    def _tint_row(self, row: int, brush: QBrush) -> None:
+        for col in range(self.columnCount()):
+            cell = self.item(row, col)
+            if cell is not None:
+                cell.setBackground(brush)
+
     def mark_processing(self, source_id: str) -> None:
         """Mark the OCR stage as running for the given file."""
         row = self._row_for_source(source_id)
@@ -529,6 +565,15 @@ class ResultsTable(QTableWidget):
         eval_txt = event.eval_txt
 
         row = self._ensure_row(source_id, name)
+        if event.skipped:
+            # Left out on purpose: not a success (green) and not a failure (red).
+            self._set_skipped_cell(row, event.message)
+            for col in (self._COL_CORRECTION, self._COL_EVALUATION):
+                self._set_stage_cell(row, col, _PENDING_SYMBOL, _PENDING_COLOR)
+            self.setItem(row, self._COL_DURATION, QTableWidgetItem(""))
+            self._tint_row(row, QBrush(QColor(_SKIPPED_ROW_BG)))
+            self.resizeColumnToContents(self._COL_FILE)
+            return
         self._finalize_stage_cells(row, event, (raw_txt, corr_txt, eval_txt))
         self.setItem(row, self._COL_DURATION, QTableWidgetItem(f"{event.total_s:.1f} s"))
 

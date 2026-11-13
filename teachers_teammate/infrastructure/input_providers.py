@@ -194,6 +194,32 @@ def _measure_page(page: pdfium.PdfPage, *, check_layout: bool) -> tuple[str, Pag
     return text, stats
 
 
+def pdf_has_text_layer(file_path: Path, mode: PdfTextLayerMode = "auto") -> bool:
+    """Return whether :class:`PdfInputProvider` would read *file_path* from its embedded text.
+
+    The same measurement and the same decision (:func:`use_text_layer`), but nothing is
+    rendered: the application asks it which queued PDFs a run can use without text
+    recognition.  Pages are measured only up to the first one that rules the text layer out.
+    """
+    if mode == "never":
+        return False
+    pdf = pdfium.PdfDocument(str(file_path))
+    try:
+
+        def measure_pages() -> Iterator[PageTextStats]:
+            for page_num in range(len(pdf)):
+                page = pdf[page_num]
+                try:
+                    _text, stats = _measure_page(page, check_layout=mode == "auto")
+                finally:
+                    page.close()
+                yield stats
+
+        return use_text_layer(mode, measure_pages())
+    finally:
+        pdf.close()
+
+
 class PdfInputProvider(InputProvider):
     """Loads a PDF as embedded text when it has a complete text layer, else as page images.
 

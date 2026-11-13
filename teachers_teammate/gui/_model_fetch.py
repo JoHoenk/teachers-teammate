@@ -253,6 +253,8 @@ _THREAD_RESULT_SIGNALS = (
     "progress",
     "error",
     "detect_done",
+    "found",
+    "search_done",
     "finished",
 )
 _RETIRED_WAIT_MS = 3000

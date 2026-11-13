@@ -182,6 +182,9 @@ _BUILD_BASE: list[str] = [
     # Tools > Benchmark... is opened in-process, through a lazy import PyInstaller can't see
     "--hidden-import",
     "teachers_teammate.gui.benchmark",
+    # Tools > Setup Assistant... is opened the same way
+    "--hidden-import",
+    "teachers_teammate.gui.setup",
     # CLI / pipeline modules (bundled so the full pipeline is available)
     "--hidden-import",
     "cv2",

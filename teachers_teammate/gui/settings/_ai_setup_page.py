@@ -30,6 +30,7 @@ from ...config import DEFAULTS
 from .. import _user_text as txt
 from .._hardware_profile_selector import HardwareProfileSelector
 from .._model_fetch import _GpuDetectThread, _retire_thread
+from .._ollama_status_line import OllamaStatusLine
 from ._page import (
     FOCUS_FIND_SERVER,
     FOCUS_LOCAL_MODELS,
@@ -146,6 +147,10 @@ class AiSetupPage(SettingsPageBase):
         url_row.addWidget(self._find_server_btn)
         form.addRow(SERVER_URL_LABEL, url_row)
 
+        self._status_line = OllamaStatusLine(app_service=self._app_service, url=self._url)
+        self._status_line.use_server_requested.connect(self.set_server_url)
+        form.addRow("", self._status_line)
+
         self._download_model_btn = QPushButton(DOWNLOAD_MODEL)
         self._download_model_btn.setToolTip(DOWNLOAD_MODEL_TOOLTIP)
         self._download_model_btn.clicked.connect(
@@ -242,6 +247,7 @@ class AiSetupPage(SettingsPageBase):
         if "ollama_url" in values:
             self._url = str(values["ollama_url"] or DEFAULTS["ollama_url"])
             self._ollama_url.setText(self._url)
+            self._status_line.set_url(self._url)
             self._hardware_selector.set_ollama_url(self._url)
             self._speed_panel.set_ollama_url(self._url)
         if "hardware_profile" in values:
@@ -269,6 +275,7 @@ class AiSetupPage(SettingsPageBase):
     def shutdown(self) -> None:
         """Stop the speed test and detach the GPU-detection thread before the page is destroyed."""
         self._speed_panel.shutdown()
+        self._status_line.shutdown()
         _retire_thread(self._gpu_detect_thread)
 
     # ── server ────────────────────────────────────────────────────────────────
@@ -278,6 +285,7 @@ class AiSetupPage(SettingsPageBase):
         if url == self._url:
             return
         self._url = url
+        self._status_line.set_url(url)
         self._hardware_selector.set_ollama_url(url)
         self._speed_panel.set_ollama_url(url)
         self.ollama_url_changed.emit(url)

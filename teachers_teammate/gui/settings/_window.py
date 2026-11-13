@@ -46,7 +46,7 @@ from ...config import OcrConfig
 from ._addons_page import AddonsPage
 from ._ai_models_page import AiModelsPage
 from ._ai_setup_page import AiSetupPage
-from ._credentials import FILE_FALLBACK_TEXT, FILE_FALLBACK_TITLE, ApiKeyDrafts
+from ._credentials import ApiKeyDrafts, discard_key_drafts, store_key_drafts
 from ._general_page import GeneralPage
 from ._online_services_page import OnlineServicesPage
 from ._page import (
@@ -511,14 +511,7 @@ class SettingsWindow(QDialog):
         with QSignalBlocker(self._key_drafts):
             for built in self._pages.values():
                 built.apply()
-        in_file = self._key_drafts.apply()
-        if in_file:
-            # The note on the keys promised the keychain, so say where they went instead.
-            titles = self._key_drafts.titles()
-            services = ", ".join(titles.get(env_key, env_key) for env_key in in_file)
-            QMessageBox.warning(
-                self, FILE_FALLBACK_TITLE, FILE_FALLBACK_TEXT.format(services=services)
-            )
+        store_key_drafts(self._key_drafts, self)
         super().accept()
 
     def done(self, result: int) -> None:
@@ -534,17 +527,11 @@ class SettingsWindow(QDialog):
         for built in self._pages.values():
             built.shutdown()
         if result != QDialog.DialogCode.Accepted:
-            self._forget_models_of(self._key_drafts.discard())
+            discard_key_drafts(self._key_drafts, self._context.app_service)
         qs = QSettings(_QSETTINGS_ORG, _QSETTINGS_APP)
         qs.setValue(GEOMETRY_KEY, self.saveGeometry())
         qs.setValue(LAST_PAGE_KEY, self.current_page().value)
         super().done(result)
-
-    def _forget_models_of(self, env_keys: list[str]) -> None:
-        """Drop the cached model lists fetched with keys that were just taken back."""
-        for env_key in env_keys:
-            for provider in self._key_drafts.providers_of(env_key):
-                self._context.app_service.invalidate_model_cache(provider, "")
 
     # ── result ────────────────────────────────────────────────────────────────
 

@@ -15,6 +15,7 @@ from teachers_teammate.domain.model_catalog import (
     DEFAULT_OCR_MODEL,
     DEFAULT_REQUEST_PROFILE,
     DEFAULT_WRITING_MODEL,
+    DISK_MARGIN_GB,
     HARDWARE_PROFILES,
     CARD_USABLE_SHARE,
     CPU_COMFORT_GB,
@@ -25,6 +26,7 @@ from teachers_teammate.domain.model_catalog import (
     RequestProfile,
     best_model,
     DetectionReason,
+    DiskVerdict,
     HardwareDetection,
     HardwareProfile,
     ModelUses,
@@ -32,6 +34,7 @@ from teachers_teammate.domain.model_catalog import (
     card_budget_gb,
     catalog_uses,
     choose_profile,
+    disk_verdict,
     find_spec,
     is_very_slow,
     memory_for_models_gb,
@@ -955,3 +958,26 @@ def test_the_request_profile_asks_gpt_oss_for_a_level_not_the_flag() -> None:
     assert request_profile("hf.co/unsloth/gpt-oss-20b-GGUF:UD-Q4_K_XL").think == "low"
     assert request_profile("gemma4:e4b").think is False
     assert request_profile("gpt-oss:20b", "openai").think is False
+
+
+@pytest.mark.parametrize(
+    ("needed_gb", "free_gb", "expected"),
+    [
+        (9.3, 212.0, DiskVerdict.ENOUGH),
+        (9.3, 9.3 + DISK_MARGIN_GB, DiskVerdict.ENOUGH),
+        (9.3, 9.3 + DISK_MARGIN_GB - 0.1, DiskVerdict.NOT_ENOUGH),
+        (9.3, 5.1, DiskVerdict.NOT_ENOUGH),
+        (9.3, None, DiskVerdict.UNKNOWN),
+        (0.0, 5.1, DiskVerdict.UNKNOWN),
+    ],
+)
+def test_disk_verdict_keeps_a_margin_and_admits_what_it_cannot_know(
+    needed_gb: float, free_gb: float | None, expected: DiskVerdict
+) -> None:
+    """
+    Given  downloads of a known size and the free space of the disk Ollama uses
+    When   the verdict is asked for
+    Then   it is enough only with the margin to spare, not enough below it, and unknown when
+           the free space or the size is not known
+    """
+    assert disk_verdict(needed_gb, free_gb) is expected

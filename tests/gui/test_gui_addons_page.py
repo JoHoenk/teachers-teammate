@@ -494,8 +494,8 @@ def test_detection_marks_rows_downloaded_and_disables_them(qtbot) -> None:
 def test_download_install_collects_ticked_child_rows(qtbot) -> None:
     """
     Given  two ticked model rows
-    When   _on_download_install runs with _run_ollama_pulls patched
-    Then   exactly those two tags are pulled (regression: flat-list loop)
+    When   _on_download_install runs with the install round patched
+    Then   exactly those two tags are handed to the round (regression: flat-list loop)
     """
     from PySide6.QtCore import Qt  # noqa: PLC0415
 
@@ -506,10 +506,10 @@ def test_download_install_collects_ticked_child_rows(qtbot) -> None:
         row.setCheckState(0, Qt.CheckState.Unchecked)
     dlg._model_items[DEFAULT_OCR_MODEL].setCheckState(0, Qt.CheckState.Checked)
     dlg._model_items["deepseek-ocr:latest"].setCheckState(0, Qt.CheckState.Checked)
-    pulls = MagicMock()
-    dlg._run_ollama_pulls = pulls  # ty: ignore[invalid-assignment]  # test patches the pull pipeline
+    start = MagicMock()
+    dlg._round.start = start  # ty: ignore[invalid-assignment]  # test patches the install round
     dlg._on_download_install()
-    pulls.assert_called_once_with([DEFAULT_OCR_MODEL, "deepseek-ocr:latest"])
+    assert start.call_args.kwargs["ollama_models"] == [DEFAULT_OCR_MODEL, "deepseek-ocr:latest"]
 
 
 # ── too-large confirmation ──────────────────────────────────────────────────
@@ -568,12 +568,12 @@ def test_too_large_selection_cancel_aborts(qtbot, monkeypatch) -> None:
     for _tag, row in dlg._iter_model_items():
         row.setCheckState(0, Qt.CheckState.Unchecked)
     dlg._model_items["gpt-oss:20b"].setCheckState(0, Qt.CheckState.Checked)
-    pulls = MagicMock()
-    dlg._run_ollama_pulls = pulls  # ty: ignore[invalid-assignment]  # test patches the pull pipeline
+    start = MagicMock()
+    dlg._round.start = start  # ty: ignore[invalid-assignment]  # test patches the install round
     _FakeMessageBox.clicked = "Cancel"
     monkeypatch.setattr(_addons_page, "QMessageBox", _FakeMessageBox)
     dlg._on_download_install()
-    pulls.assert_not_called()
+    start.assert_not_called()
     assert "needs about 14 GB of graphics memory" in _FakeMessageBox.last_text
     assert "computers of this type have about 8 GB" in _FakeMessageBox.last_text
 
@@ -593,12 +593,12 @@ def test_too_large_selection_download_anyway_proceeds(qtbot, monkeypatch) -> Non
     for _tag, row in dlg._iter_model_items():
         row.setCheckState(0, Qt.CheckState.Unchecked)
     dlg._model_items["gpt-oss:20b"].setCheckState(0, Qt.CheckState.Checked)
-    pulls = MagicMock()
-    dlg._run_ollama_pulls = pulls  # ty: ignore[invalid-assignment]  # test patches the pull pipeline
+    start = MagicMock()
+    dlg._round.start = start  # ty: ignore[invalid-assignment]  # test patches the install round
     _FakeMessageBox.clicked = "Download anyway"
     monkeypatch.setattr(_addons_page, "QMessageBox", _FakeMessageBox)
     dlg._on_download_install()
-    pulls.assert_called_once_with(["gpt-oss:20b"])
+    assert start.call_args.kwargs["ollama_models"] == ["gpt-oss:20b"]
 
 
 # ── custom models ────────────────────────────────────────────────────────────
@@ -773,30 +773,40 @@ def test_a_preselect_after_detection_ticks_at_once(qtbot) -> None:
     assert dlg._model_items["mistral:latest"].checkState(0) is Qt.CheckState.Checked
 
 
-def test_the_page_applies_immediately_and_blocks_closing_only_while_installing(qtbot) -> None:
+def test_the_page_applies_immediately_and_blocks_closing_only_while_installing(
+    qtbot, monkeypatch
+) -> None:
     """
     Given  the Add-ons page
-    When   a pip install or language-model download is running, and when it is not
+    When   a pip install is running, and when it is not
     Then   the page says it applies immediately, and close_blocker() explains why the window
            cannot close only while the install runs
     """
-    from PySide6.QtCore import QThread  # noqa: PLC0415
+    from PySide6.QtCore import QThread, Signal  # noqa: PLC0415
+
+    import teachers_teammate.gui._install_round as install_round  # noqa: PLC0415
 
     class _Busy(QThread):
-        def __init__(self) -> None:
+        log_line = Signal(str)
+        finished_ok = Signal(list)
+        finished_err = Signal(str)
+
+        def __init__(self, _service, _packages) -> None:
             super().__init__()
             self.release = threading.Event()
 
         def run(self) -> None:
             self.release.wait(5)
 
+    monkeypatch.setattr(install_round, "_PipInstallThread", _Busy)
     dlg = _make_dialog(qtbot)
     assert dlg.applies_immediately is True
     assert dlg.close_blocker() == ""
 
-    busy = _Busy()
-    dlg._dl_active_thread = busy
-    busy.start()
+    dlg._collect_pip_packages = lambda: ["spacy"]  # ty: ignore[invalid-assignment]
+    dlg._on_download_install()
+    busy = dlg._round._thread
+    assert isinstance(busy, _Busy)
     try:
         assert "installation is still running" in dlg.close_blocker()
     finally:
@@ -831,13 +841,13 @@ def test_a_running_pull_keeps_going_when_the_page_shuts_down(qtbot) -> None:
 
     manager = _Manager()
     dlg = _make_dialog(qtbot, pull_manager=manager)
-    dlg._run_ollama_pulls([DEFAULT_OCR_MODEL])
+    dlg._round.start(ollama_models=[DEFAULT_OCR_MODEL], ollama_url="http://127.0.0.1:11434")
     assert manager.started == [("http://127.0.0.1:11434", DEFAULT_OCR_MODEL)]
-    assert dlg._pull_connected
+    assert dlg._round._pull_connected
 
     dlg.shutdown()
 
-    assert not dlg._pull_connected
+    assert not dlg._round._pull_connected
     assert manager.aborted is False
     manager.finished.emit(DEFAULT_OCR_MODEL)  # a late answer must not reach the closed page
     assert dlg._dl_detect_lbl.text() != "Done."
@@ -870,19 +880,19 @@ def test_the_queue_of_models_is_handed_to_the_manager(qtbot) -> None:
     manager = _Manager()
     dlg = _make_dialog(qtbot, pull_manager=manager)
 
-    dlg._run_ollama_pulls(["a:1b", "b:1b"])
+    dlg._round.start(ollama_models=["a:1b", "b:1b"], ollama_url="http://127.0.0.1:11434")
     assert manager.calls == [("http://127.0.0.1:11434", "a:1b", ["b:1b"])]
 
     changed: list[bool] = []
     dlg.packages_changed.connect(lambda: changed.append(True))
 
     manager.finished.emit("a:1b")  # the manager goes on with b:1b by itself
-    assert dlg._pull_connected
+    assert dlg._round._pull_connected
     assert changed == []
 
     type(manager).queued = []
     manager.finished.emit("b:1b")
-    assert not dlg._pull_connected
+    assert not dlg._round._pull_connected
     assert changed == [True]
 
 
@@ -1074,7 +1084,7 @@ def _real_service():
 
 @pytest.mark.use_case("Model_Category_Guidance")
 def test_finished_pull_shows_model_as_downloaded_without_waiting_for_cache(
-    qtbot, fake_ollama
+    qtbot, monkeypatch, fake_ollama
 ) -> None:
     """
     Given  the real service that cached an empty installed-model list
@@ -1082,13 +1092,30 @@ def test_finished_pull_shows_model_as_downloaded_without_waiting_for_cache(
     Then   the model shows as downloaded at once (review finding #1: the stale
            5-minute cache used to hide it, so it was offered for download again)
     """
+    from PySide6.QtCore import QObject, Signal  # noqa: PLC0415
+
+    import teachers_teammate.gui._addon_installer_dialog as installer  # noqa: PLC0415
+
+    class _FakePullThread(QObject):
+        progress = Signal(str, int, int)
+        finished_ok = Signal(str)
+        finished_err = Signal(str)
+
+        def __init__(self, _url: str, model: str) -> None:
+            super().__init__()
+            self._model = model
+
+        def start(self) -> None:
+            self.finished_ok.emit(self._model)
+
+    monkeypatch.setattr(installer, "_OllamaPullThread", _FakePullThread)
     dlg = _make_dialog(qtbot, service=_real_service())
     dlg._start_detection()
     qtbot.waitUntil(lambda: dlg._installed_ready, timeout=5000)
     assert not dlg._model_items[DEFAULT_OCR_MODEL].text(3).startswith("✓")
 
     fake_ollama.installed[DEFAULT_OCR_MODEL] = 6_000_000_000  # the pull arrived
-    dlg._on_ollama_pull_done([])
+    dlg._round.start(ollama_models=[DEFAULT_OCR_MODEL], ollama_url="http://127.0.0.1:11434")
 
     # Decimal GB, like the catalog sizes shown before the download; "✓" marks it downloaded.
     qtbot.waitUntil(lambda: dlg._model_items[DEFAULT_OCR_MODEL].text(3) == "✓ 6.0 GB", timeout=5000)

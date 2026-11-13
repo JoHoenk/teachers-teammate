@@ -21,7 +21,7 @@ There is no temperature to set: the app sends the value each model's maker recom
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from enum import StrEnum
 from typing import Any
 
@@ -37,6 +37,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ...application.correction_options import review_has_own_model
 from ...config import CONTEXT_SETTINGS, DEFAULTS, OcrConfig
 from .. import _user_text as txt
 from .._background import LatestTask
@@ -87,25 +88,6 @@ _PROOFREADING_KEYS = (PROOFREADING.provider_key, PROOFREADING.model_key)
 _REVIEW_KEYS = (CONTENT_REVIEW.provider_key, CONTENT_REVIEW.model_key)
 #: Left margin of the review rows, so they read as part of the checkbox above them.
 _REVIEW_INDENT = 20
-
-
-def review_has_own_model(
-    values: Mapping[str, Any], effective_model: Callable[[str, str, str], str]
-) -> bool:
-    """Return whether the content review uses another service or model than proofreading.
-
-    Both sides are compared as a run would use them (*effective_model*: provider, model, task;
-    an empty model means the task's default), so "no model chosen" on one side and the default
-    on the other are the same model.
-    """
-
-    def effective(provider_key: str, model_key: str, task: str) -> tuple[str, str]:
-        provider = str(values.get(provider_key) or DEFAULTS[provider_key])
-        return provider, effective_model(provider, str(values.get(model_key) or ""), task)
-
-    return effective("evaluate_provider", "evaluate_model", "evaluation") != effective(
-        "correction_provider", "correction_model", "correction"
-    )
 
 
 class PrivacyLineState(StrEnum):

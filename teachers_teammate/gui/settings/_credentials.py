@@ -28,6 +28,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QMessageBox,
     QPushButton,
     QVBoxLayout,
     QWidget,
@@ -80,6 +81,8 @@ class _KeyService(Protocol):
     def list_providers(self) -> list[str]: ...
 
     def get_provider_info(self, provider: str) -> dict: ...
+
+    def invalidate_model_cache(self, provider: str, base_url: str = "") -> None: ...
 
 
 class ApiKeyDrafts(QObject):
@@ -249,6 +252,32 @@ class ApiKeyDrafts(QObject):
         self._initial.clear()
         self._env_before.clear()
         return restored
+
+
+def store_key_drafts(drafts: ApiKeyDrafts, parent: QWidget | None = None) -> None:
+    """Save the keys the window changed, and say where they went when the keychain refused.
+
+    The note on the keys promised the keychain, so a key that had to be kept in the settings
+    file instead is called out by name.  Both windows that edit keys (Settings and the Setup
+    Assistant) leave through here, so neither can forget the warning.
+    """
+    in_file = drafts.apply()
+    if not in_file:
+        return
+    titles = drafts.titles()
+    services = ", ".join(titles.get(env_key, env_key) for env_key in in_file)
+    QMessageBox.warning(parent, FILE_FALLBACK_TITLE, FILE_FALLBACK_TEXT.format(services=services))
+
+
+def discard_key_drafts(drafts: ApiKeyDrafts, app_service: _KeyService) -> None:
+    """Put the environment back and forget the model lists fetched with the discarded keys.
+
+    A list fetched with a key that is no longer in use says nothing about the next one, so it
+    must not be shown to the next window.
+    """
+    for env_key in drafts.discard():
+        for provider in drafts.providers_of(env_key):
+            app_service.invalidate_model_cache(provider, "")
 
 
 class ApiKeyRow(QWidget):

@@ -12,8 +12,16 @@ import shutil
 import sys
 from typing import TYPE_CHECKING, Any, ClassVar, NamedTuple, Protocol, cast
 
-from PySide6.QtCore import QEvent, QObject, QSettings, Qt, QThread, QTimer, Signal
-from PySide6.QtGui import QAction, QDragEnterEvent, QDropEvent, QIcon, QKeySequence, QPixmap
+from PySide6.QtCore import QEvent, QObject, QSettings, Qt, QThread, QTimer, QUrl, Signal
+from PySide6.QtGui import (
+    QAction,
+    QDesktopServices,
+    QDragEnterEvent,
+    QDropEvent,
+    QIcon,
+    QKeySequence,
+    QPixmap,
+)
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -65,7 +73,9 @@ from ..domain.ollama_discovery import DiscoveredServer, DiscoveryScope, ServerKi
 from ..domain.performance_estimate import TimeRange
 from ..domain.run_summary import RunSummary
 from ..domain.stages import PROGRESS_STAGE_OCR, PROGRESS_STAGE_PREPROCESSING
+from ..infrastructure.ollama_install import OLLAMA_DOWNLOAD_URL
 from ..infrastructure.reporting import BATTERY_WARNING, KeepAwakeState
+from ..infrastructure.system_locale import system_language
 from . import _user_text as txt
 from ._app_bootstrap import create_app, finish_process
 from ._background import LatestTask, run_in_background, wait_for_background_tasks
@@ -76,7 +86,9 @@ from ._data_flow_summary import advice_text, level_text, stage_tooltip
 from ._export_menu import ExportKind, build_export_menu
 from ._fix_targets import (
     COMMAND_CHOOSE_FOLDER,
+    COMMAND_GET_OLLAMA,
     COMMAND_RETRY,
+    COMMAND_START_OLLAMA,
     COMMAND_TURN_ON_RECOGNITION,
     COMMAND_USE_SERVER,
     RESULTS_NO_FOLDER,
@@ -119,6 +131,7 @@ from .settings._page import FOCUS_DETECTION, FOCUS_GPU
 
 if TYPE_CHECKING:
     from .benchmark._benchmark_window import BenchmarkWindow
+    from .setup import SetupResult
 
 
 class _TextExportOutcome(NamedTuple):
@@ -374,6 +387,12 @@ _SERVER_PLACES = {
     ServerKind.NETWORK: "another computer",
 }
 
+#: The kinds that mean "Ollama isn't answering": the line keeps looking while one of them
+#: blocks the run, so an Ollama installed or started meanwhile turns it green by itself.
+_OLLAMA_KINDS = frozenset(
+    {IssueKind.OLLAMA_UNREACHABLE, IssueKind.OLLAMA_NOT_FOUND, IssueKind.OLLAMA_NOT_RUNNING}
+)
+
 
 class MainWindow(QMainWindow):
     """Teacher's Teammate main application window."""
@@ -415,8 +434,11 @@ class MainWindow(QMainWindow):
         self._all_settings_action: QAction
         self._benchmark_action: QAction
         self._monitor_action: QAction
+        self._setup_action: QAction
         #: The Benchmark window once opened (parentless, see ``_open_benchmark``).
         self._benchmark_window: BenchmarkWindow | None = None
+        #: Whether the Setup Assistant is open, so a second click cannot open a second one.
+        self._setup_open = False
 
     def _init_run_state(self) -> None:
         """Declare what the window knows about a run that is going: stopping, notes, closing."""
@@ -694,7 +716,7 @@ class MainWindow(QMainWindow):
         self._all_settings_action = all_act
 
     def _build_tools_menu(self, bar: Any) -> None:
-        """Tools: things that are not part of a batch (Benchmark, System Monitor)."""
+        """Tools: things that are not part of a batch (Benchmark, System Monitor, Setup)."""
         tools_menu = bar.addMenu("Tools")
         assert tools_menu is not None
         benchmark_act = QAction("Benchmark\u2026", self)
@@ -707,8 +729,14 @@ class MainWindow(QMainWindow):
         monitor_act.setToolTip("How busy this computer is, and how long each document took.")
         monitor_act.triggered.connect(self._open_system_monitor)
         tools_menu.addAction(monitor_act)
+        tools_menu.addSeparator()
+        setup_act = QAction("Setup Assistant\u2026", self)
+        setup_act.setToolTip("Answer a few questions to set up the AI for this computer.")
+        setup_act.triggered.connect(lambda _checked=False: self._open_setup_assistant())
+        tools_menu.addAction(setup_act)
         self._benchmark_action = benchmark_act
         self._monitor_action = monitor_act
+        self._setup_action = setup_act
 
     def _open_system_monitor(self) -> None:
         self._monitor.show_and_raise()
@@ -908,9 +936,10 @@ class MainWindow(QMainWindow):
         QTimer.singleShot(0, lambda s=sizes: self._main_splitter.setSizes(s))
 
         if config_path is None or not config_path.exists():
-            # First start (no ocr.toml yet): pick the best models for this
-            # computer once detection finishes, then persist the choice.
-            self._apply_first_start_model_settings()
+            # First start (no ocr.toml yet): the assistant asks what only the teacher knows
+            # and works the models out from the answers.  It opens on top of this window, so
+            # the teacher sees the app first.
+            QTimer.singleShot(0, self._open_setup_assistant_first_start)
             return
         self._config_path = config_path
         try:
@@ -1020,6 +1049,73 @@ class MainWindow(QMainWindow):
                 "NOTICE: GPU monitoring was installed, but the driver gives no readings "
                 "for this graphics card.\n"
             )
+
+    def _open_setup_assistant_first_start(self) -> None:
+        """Open the assistant on a first start, on top of the window that just appeared."""
+        self._open_setup_assistant(first_start=True)
+
+    def _open_setup_assistant(self, *, first_start: bool = False) -> None:
+        """Ask the questions a first start needs, then apply the setup plan the teacher agreed to.
+
+        On a first start the assistant starts on the system language, because there is no
+        saved one yet; from the Tools menu it starts on the settings as they are.  Cancel on a
+        first start leaves today's setup in place (the best models for this computer and the
+        system language); from the Tools menu it changes nothing.
+        """
+        if self._setup_open:
+            return
+        from .setup import SetupAssistant, SetupContext  # noqa: PLC0415  # loaded on demand
+
+        language = ""
+        if first_start:
+            language = system_language() or self._config_panel.lookup_language()
+        context = SetupContext(
+            settings=self._config_panel.get_settings_dict(),
+            app_service=self._app_service,
+            pull_manager=self._pull_manager,
+            language=language,
+            privacy_available=self._privacy_available,
+            first_start=first_start,
+        )
+        assistant = SetupAssistant(context, self)
+        assistant.committed.connect(self._apply_setup_result)
+        self._setup_open = True
+        try:
+            assistant.exec()
+        finally:
+            self._setup_open = False
+        wants_documents = assistant.documents_wanted()
+        # Set up decides, not how the window closed: the X on the done page is a reject too.
+        was_set_up = assistant.is_committed()
+        assistant.deleteLater()
+        if first_start and not was_set_up:
+            self._apply_first_start_defaults()
+        if wants_documents:
+            self._config_panel.select_folder()
+
+    def _apply_first_start_defaults(self) -> None:
+        """Leave a first start with a working setup when the assistant was cancelled.
+
+        The system language goes into the panel, because no settings file names one yet; then
+        today's first start runs: the best models for this computer, once detection finishes.
+        """
+        language = system_language()
+        if language:
+            self._config_panel.load_from_dict({"language": language})
+            self._save_settings(notify=False)
+        self._apply_first_start_model_settings()
+
+    def _apply_setup_result(self, result: SetupResult) -> None:
+        """Take over what the assistant set up, then save once.
+
+        The main-window keys go through ``load_from_dict``, which skips the stage guard: the
+        models are still downloading, so a guard would untick Proofread and open a dialog.
+        """
+        self._config_panel.update_settings(result.settings)
+        self._config_panel.load_from_dict(result.panel)
+        self._save_settings(notify=False)
+        self._start_readiness_check()
+        self._refresh_queue_from_inputs()
 
     def _apply_first_start_model_settings(self) -> None:
         """Start first-start hardware detection in the background (AC12/AC13)."""
@@ -2085,9 +2181,7 @@ class MainWindow(QMainWindow):
         else:
             self._blocker = result.blocker
             self._skipped_scans = set(result.skipped)
-        unreachable = (
-            self._blocker is not None and self._blocker[1].kind is IssueKind.OLLAMA_UNREACHABLE
-        )
+        unreachable = self._blocker is not None and self._blocker[1].kind in _OLLAMA_KINDS
         if unreachable:
             self._ollama_retry_timer.start()
             self._search_local_server()
@@ -2157,7 +2251,7 @@ class MainWindow(QMainWindow):
             blocker_fix = fix_for(
                 stage, issue, self._provider_display_name, language=panel.lookup_language()
             )
-            if issue.kind is IssueKind.OLLAMA_UNREACHABLE and self._found_server is not None:
+            if issue.kind in _OLLAMA_KINDS and self._found_server is not None:
                 blocker_fix = found_server_fix(
                     _SERVER_PLACES[self._found_server.kind], self._found_server.url
                 )
@@ -2218,6 +2312,25 @@ class MainWindow(QMainWindow):
             self._config_panel.turn_on_recognition()
         elif action.command == COMMAND_USE_SERVER:
             self._use_ollama_server(action.argument)
+        elif action.command == COMMAND_GET_OLLAMA:
+            QDesktopServices.openUrl(QUrl(OLLAMA_DOWNLOAD_URL))
+        elif action.command == COMMAND_START_OLLAMA:
+            self._start_ollama()
+
+    def _start_ollama(self) -> None:
+        """Start the installed Ollama, then look again once it has had time to come up.
+
+        Starting it takes a moment, so the check runs a few seconds later instead of at once;
+        the 10 s retry keeps looking until the server answers.
+        """
+        run_in_background(self._app_service.start_ollama, self._on_ollama_start_done)
+
+    def _on_ollama_start_done(self, _result: object, error: BaseException | None) -> None:
+        """Look again in a few seconds, or tell the teacher in the log why Ollama did not start."""
+        if error is not None:
+            self._log.append_text(f"NOTICE: Ollama could not be started: {error}\n")
+            return
+        QTimer.singleShot(3000, lambda: self._start_readiness_check(fresh=True))
 
     def changeEvent(self, event: QEvent) -> None:
         """Check again when the window becomes active while something blocked a run.

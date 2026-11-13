@@ -1579,6 +1579,77 @@ Tests: `tests/gui/test_gui_main_window.py` (menus, readiness, tools),
 `tests/gui/test_gui_readiness.py` (fix table, `readiness()`, the line, the dialog),
 `tests/gui/test_gui_config_panel.py` (steps, review rule, uses lines).
 
+### Setup Assistant
+
+`gui/setup/` is a `QWizard` that asks what only the teacher knows and then writes the settings
+once.  It is opened on a first start (no settings file yet) and from **Tools → Setup Assistant…**;
+`MainWindow._open_setup_assistant(first_start=...)` builds the `SetupContext` (the settings as the
+panel shows them, the application service, the main window's `OllamaDownloadManager`, the system
+language on a first start) and connects `SetupAssistant.committed` to `_apply_setup_result`.
+
+**The order follows the answers** (`gui/setup/_flow.py`).  `ORDER` lists the seven pages —
+Welcome, Your classes, The AI on this computer, Proofreading, Names and personal information,
+Ready to set up, All set — and `next_page(page, answers)` decides which one follows, so a page
+only says what it asks and never where to go.  With typed texts the reading model is not asked
+for; with proofreading off there is nothing to ask about privacy.  A page that is never reached
+asks nothing: the Ollama status line, the computer profile, the online service section and the
+setup plan are all built the first time their page is shown.
+
+**The plan is a pure function** (`application/setup_plan.py`).  `SetupAnswers` is what the pages
+collected, `SetupFacts` is what `ProcessingApplicationService.setup_facts()` measured (profile,
+memory, card, whether Ollama answers, installed tags, free disk, whether removal and name
+detection are on, the missing package), and `build_setup_plan(answers, current, facts, rate=,
+best=, default_model=)` returns a `SetupPlan`: the Settings-window keys, the main-window keys,
+one `PlannedStep` per summary row, the `PlannedDownload`s, whether the review keeps its own
+model, the `DiskVerdict`, and the figures the summary line shows (`needed_gb`, `free_disk_gb`).
+Two rules shape it: **a working choice is kept** (an installed model that fits is not replaced
+by the recommendation, so running the assistant again changes nothing) and **nothing is turned
+off** ("Remove personal info" is only ever set to `True`, and a review with its own model keeps
+it).  The assistant writes only keys the Settings window or the main window already own, so
+`Config`, `DEFAULTS`, the TOML keys and the CLI are untouched and there is no migration.
+
+**The summary's wording lives in `gui/setup/_summary.py`.**  `summary_rows(plan, place_of,
+key_missing=)` turns a plan into `SummaryRow`s — the classes first, then one per step, each with
+the model, the place (`short_place`, the same words as the service list) and its downloads — so
+the lines can be tested without a window.  `SummaryRows` draws them with one ticked checkbox per
+download and hands back the ones the teacher left ticked; those, and only those, reach the round.
+
+**Downloads go through `InstallRound`** (`gui/_install_round.py`, taken out of Add-ons).  Set up
+calls `SetupAssistant.commit(downloads)`, which stores the typed keys once
+(`store_key_drafts`), emits `committed` with a `SetupResult(settings, panel)` and starts the
+round with one list per kind (pip packages, spaCy models, Ollama tags).  An Ollama tag whose
+`possible` is `False` — Ollama is not running — is left out, so it does not fail at once; the
+main window offers it as soon as the server answers.  The Done page follows the round and the
+pull manager, so every line says how far it is, and it offers the speed test on the settings the
+plan leaves behind, drawn again once the queue runs empty.
+
+**Nothing starts by itself.**  The downloads need **Set up**, a network search for a server
+elsewhere starts only from the dialog's own button, **Start Ollama** is a button, and the speed
+test runs only when the teacher presses **Test speed**.  The server address never changes
+without the teacher choosing it.
+
+**How the result is applied.**  `_apply_setup_result` puts the Settings-window keys into the
+panel with `update_settings` and the main-window keys with `load_from_dict` — which skips the
+stage guard, because the models are still downloading and a guard would untick Proofread and
+open a dialog — then saves once, checks the services and refreshes the queue.  Cancel changes
+nothing; on a first start it leaves today's setup in place (`_apply_first_start_defaults`: the
+system language and the best models for this computer).  **Select documents…** closes the window
+and asks the main window for the folder afterwards (`documents_wanted()`), because the folder
+dialog must not open behind the wizard.
+
+**Closing.**  `done()` refuses while the round is busy (`CLOSE_BLOCKED`, the Add-ons message),
+because the new package must be made importable first; otherwise it calls `shutdown()` on every
+page, which stops the pending plan, the status checks and a running speed test.  Cancel puts the
+typed keys back (`discard_key_drafts`) and forgets the model lists fetched with them.
+
+The packaged build lists `teachers_teammate.gui.setup` as a hidden import, because the main
+window imports the package lazily.
+
+Tests: `tests/gui/test_gui_setup_flow.py` (the order), `tests/gui/test_gui_setup_pages.py` (the
+pages, the summary rows and the done page), `tests/gui/test_gui_setup_assistant.py` (the wizard,
+Set up, Cancel, closing), `tests/test_setup_plan.py` (the setup plan's rules); the main window's side
+is tested in `tests/gui/test_gui_main_window.py`.
+
 ### Cache vs benchmark store
 
 These two stores have deliberately opposite shapes:

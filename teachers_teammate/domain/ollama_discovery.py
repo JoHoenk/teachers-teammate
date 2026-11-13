@@ -46,6 +46,37 @@ class DiscoveryScope(StrEnum):
     NETWORK = "network"
 
 
+class OllamaState(StrEnum):
+    """What the app knows about Ollama at an address, so it can say what to do next."""
+
+    #: It answered: nothing to do.
+    RUNNING = "running"
+    #: Found on this computer, but it does not answer: it has to be started.
+    NOT_RUNNING = "not_running"
+    #: An address on this computer, no answer, and no program found: it has to be installed.
+    NOT_FOUND = "not_found"
+    #: An address on another computer that does not answer: nothing can be started here.
+    NO_ANSWER = "no_answer"
+
+
+def ollama_state(*, answered: bool, local_address: bool, program_found: bool) -> OllamaState:
+    """Return what the app knows about Ollama, from what it could see.
+
+    "Not found" rather than "not installed": a custom install path cannot be seen, so the
+    wording never claims more than the app knows.
+
+    Args:
+        answered: The address answered as an Ollama server.
+        local_address: The address is on this computer (or the Windows host of a WSL session).
+        program_found: The Ollama program was found on this computer.
+    """
+    if answered:
+        return OllamaState.RUNNING
+    if not local_address:
+        return OllamaState.NO_ANSWER
+    return OllamaState.NOT_RUNNING if program_found else OllamaState.NOT_FOUND
+
+
 @dataclass(frozen=True)
 class DiscoveredServer:
     """An Ollama server that answered."""

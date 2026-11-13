@@ -416,6 +416,31 @@ class Suitability(StrEnum):
     UNKNOWN = "unknown"
 
 
+#: Free disk space (GB) kept beyond the downloads, so the computer keeps room to work.
+DISK_MARGIN_GB = 2.0
+
+
+class DiskVerdict(StrEnum):
+    """Whether the downloads fit on the disk Ollama keeps its models on."""
+
+    ENOUGH = "enough"
+    NOT_ENOUGH = "not_enough"
+    #: The free space could not be read, or the downloads are not known.
+    UNKNOWN = "unknown"
+
+
+def disk_verdict(needed_gb: float, free_gb: float | None) -> DiskVerdict:
+    """Return whether *needed_gb* of downloads fit in *free_gb* of disk space.
+
+    A warning only: Ollama's own settings can move the models folder, and the app cannot see
+    that, so a "not enough" is a reason to look, not a refusal.  The margin keeps the computer
+    from filling up to the last byte.
+    """
+    if free_gb is None or needed_gb <= 0:
+        return DiskVerdict.UNKNOWN
+    return DiskVerdict.ENOUGH if free_gb >= needed_gb + DISK_MARGIN_GB else DiskVerdict.NOT_ENOUGH
+
+
 def normalize_tag(tag: str) -> str:
     """Return *tag* in normalised form: stripped, with ``:latest`` appended when needed.
 

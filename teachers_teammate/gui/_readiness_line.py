@@ -179,6 +179,7 @@ class ReadinessLine(QWidget):
         self._actions = {}
         for button, action in zip(self._buttons, state.actions, strict=False):
             button.setText(action.label)
+            button.setToolTip(action.tooltip)
             button.setVisible(True)
             self._actions[button] = action
         for button in self._buttons[len(state.actions) :]:

@@ -141,6 +141,7 @@ WHERE_ONLINE_SERVICES = f"Settings → {PAGE_ONLINE_SERVICES}"
 WHERE_ADDONS = f"Settings → {PAGE_ADDONS}"
 WHERE_RESULTS = "Results, in the main window"
 WHERE_STEPS = "What should happen, in the main window"
+WHERE_SETUP = "Tools → Setup Assistant…"
 OPEN_ADDONS = "Open Add-ons…"
 
 #: The step that replaces names before text is sent anywhere: the checkbox in the main window
@@ -178,6 +179,12 @@ SAME_MODEL_AS_PROOFREADING = "Same model as proofreading"
 REVIEW_NEEDS_PROOFREADING = (
     "Content review reads the proofread text, so it runs only together with proofreading."
 )
+
+# ── Ollama ────────────────────────────────────────────────────────────────────
+
+#: How to start Ollama where the app can't do it: on Linux and in WSL the service needs admin
+#: rights, and a second server started as the user would use another models folder.
+OLLAMA_SERVICE_HINT = "Start the Ollama service, for example with `sudo systemctl start ollama`."
 
 # ── Settings wording ──────────────────────────────────────────────────────────
 

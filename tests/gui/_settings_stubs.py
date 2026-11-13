@@ -8,13 +8,26 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from datetime import date
+import os
 import threading
 
 from teachers_teammate.application.data_flow import llm_location
+from teachers_teammate.application.service import OllamaStatus
+from teachers_teammate.application.setup_plan import (
+    SetupAnswers,
+    SetupFacts,
+    SetupPlan,
+    build_setup_plan,
+)
 from teachers_teammate.domain.data_location import StageLocation
 from teachers_teammate.domain.formatted_text import TextFormat
-from teachers_teammate.domain.model_catalog import HardwareDetection, ModelCategory
+from teachers_teammate.domain.model_catalog import (
+    HardwareDetection,
+    ModelCategory,
+    best_model,
+)
 from teachers_teammate.domain.model_listing import ListedModel, ModelListing
+from teachers_teammate.domain.ollama_discovery import DiscoveryScope, OllamaState
 from teachers_teammate.domain.performance_estimate import TimeRange
 
 from ._service_stubs import RecommendationServiceStub, context_choice_from
@@ -63,6 +76,15 @@ class DummyAppService(RecommendationServiceStub):
         """Answer with the real rule, so the pages' labels and hints follow the provider info."""
         return llm_location(provider, model, ollama_url, self.get_provider_info)
 
+    def get_provider_data_region(self, provider: str) -> str:
+        """Answer with the region the provider info names, as the real service does."""
+        return str(self.get_provider_info(provider).get("data_region", "unknown"))
+
+    def provider_key_missing(self, provider: str) -> bool:
+        """Answer with the real rule: a key the environment does not hold is missing."""
+        info = self.get_provider_info(provider)
+        return bool(info.get("needs_api_key")) and not os.environ.get(str(info.get("env_key", "")))
+
     def list_provider_models(self, provider: str, *, base_url: str = "") -> list[str]:
         _ = base_url
         return [f"{provider}-model"]
@@ -78,6 +100,18 @@ class DummyAppService(RecommendationServiceStub):
 
     def is_module_importable(self, module: str) -> bool:
         return True
+
+    def ollama_status(self, url: str) -> OllamaStatus:
+        """Answer as a running server would: the pages' status line then has nothing to fix."""
+        _ = url
+        return OllamaStatus(state=OllamaState.RUNNING, version="0.12.3", model_count=2)
+
+    def discover_ollama_servers(self, scope: DiscoveryScope) -> list:
+        _ = scope
+        return []
+
+    def start_ollama(self) -> None:
+        pass
 
     def list_correction_prompt_presets(self) -> dict[str, str]:
         from teachers_teammate.infrastructure.correction import PRESET_PROMPTS  # noqa: PLC0415
@@ -317,3 +351,60 @@ class FakeKeyring:
         if (service, name) not in self.passwords:
             raise RuntimeError("no such password")
         del self.passwords[(service, name)]
+
+
+class SetupAppService(DummyAppService):
+    """A service that answers the assistant's plan question with the real rules.
+
+    ``setup_facts`` is canned (a 16 GB computer with a 16 GB card and plenty of disk), so the
+    plan the pages see is the one the real rules produce for those facts.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        #: The Ollama tags this computer has.
+        self.installed: list[str] = []
+        #: Whether Ollama answers, so its models can be pulled now.
+        self.ollama_running = True
+        #: Free space where Ollama keeps its models.
+        self.free_disk_gb: float | None = 200.0
+        #: The answers every plan was asked for, in order.
+        self.plan_calls: list[SetupAnswers] = []
+        #: The pip package an online service still needs, by provider.
+        self.missing: dict[str, str] = {}
+
+    def missing_provider_package(self, provider: str) -> str | None:
+        """Answer with the package this stub was told is missing."""
+        return self.missing.get(provider)
+
+    def setup_facts(self, answers: SetupAnswers, current: Mapping[str, object]) -> SetupFacts:
+        """Answer with canned facts about this computer."""
+        _ = answers
+        return SetupFacts(
+            profile="16gb",
+            system_memory_gb=32.0,
+            card_gb=16.0,
+            ollama_running=self.ollama_running,
+            installed_tags=frozenset(self.installed),
+            free_disk_gb=self.free_disk_gb,
+            removal_on=bool(current.get("anonymization_enabled")),
+            name_detection=self.anonymizer_ready,
+            spacy_installed=self.anonymizer_ready,
+            spacy_model="de_core_news_sm",
+            missing_package=self.missing_provider_package(answers.online_choice[0]) or "",
+        )
+
+    def plan_setup(self, answers: SetupAnswers, current: Mapping[str, object]) -> SetupPlan:
+        """Answer with the real plan for these answers and facts."""
+        self.plan_calls.append(answers)
+        facts = self.setup_facts(answers, current)
+        return build_setup_plan(
+            answers,
+            current,
+            facts,
+            rate=lambda tag, task: self.rate_ollama_models(
+                [tag], task, facts.profile, answers.ollama_url
+            )[0],
+            best=lambda task: best_model(task, facts.profile),
+            default_model=self.default_model_for_task,
+        )

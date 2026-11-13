@@ -13,7 +13,7 @@ import shutil
 import sys
 import threading
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 import uuid
 
 from ..config import DEFAULTS, Config, OcrConfig
@@ -35,7 +35,12 @@ from ..domain.model_catalog import (
     ram_needed_gb,
 )
 from ..domain.model_listing import ModelListing
-from ..domain.ollama_discovery import DiscoveredServer, DiscoveryScope
+from ..domain.ollama_discovery import (
+    DiscoveredServer,
+    DiscoveryScope,
+    OllamaState,
+    ollama_state,
+)
 from ..domain.output_files import (
     TEXT_SUFFIX,
     feeds_inputs,
@@ -121,6 +126,13 @@ from .data_flow import (
 from .formatting import TextFormatter
 from .model_recommendations import ModelRecommendationService
 from .sent_text import Anonymize, SentTexts, describe_sent_texts
+from .setup_plan import (
+    ProofreadingPlace,
+    SetupAnswers,
+    SetupFacts,
+    SetupPlan,
+    build_setup_plan,
+)
 from .speed_estimates import SpeedChoices, SpeedEstimateService, SpeedSummary
 from .text_size import TextSizeEstimate, proofreading_pieces
 
@@ -135,6 +147,11 @@ class IssueKind(StrEnum):
 
     OCR_NOT_ALLOWED = "ocr_not_allowed"
     ENGINE_MISSING = "engine_missing"
+    #: An address on this computer that does not answer, and no Ollama program was found.
+    OLLAMA_NOT_FOUND = "ollama_not_found"
+    #: Ollama is installed on this computer but does not answer: it has to be started.
+    OLLAMA_NOT_RUNNING = "ollama_not_running"
+    #: An address that does not answer, and nothing can be started from here.
     OLLAMA_UNREACHABLE = "ollama_unreachable"
     NO_OLLAMA_MODEL = "no_ollama_model"
     MODEL_MISSING = "model_missing"
@@ -158,6 +175,8 @@ class RequirementIssue:
     engine: str = ""
     #: Ollama tags that are not downloaded, or the spaCy model that is missing.
     models: tuple[str, ...] = ()
+    #: The app can start Ollama itself (``OLLAMA_NOT_RUNNING``): the fix offers a button.
+    startable: bool = False
 
 
 @dataclass(frozen=True)
@@ -183,6 +202,9 @@ class RunPreflight:
     ocr_not_allowed: str = ""
     #: Why Ollama cannot be used ("" when it is reachable or not needed).
     ollama_unreachable: str = ""
+    #: What is wrong with Ollama when it does not answer: not found, not running, or
+    #: unreachable (``None`` when it answered or is not needed).
+    ollama_issue: RequirementIssue | None = None
     #: Configured Ollama models that are not downloaded.
     missing_models: tuple[str, ...] = ()
     #: Stage whose requirements are unmet ("" when all are met) and the unmet issues.
@@ -229,7 +251,9 @@ class RunPreflight:
         if self.ocr_not_allowed:
             return "ocr", RequirementIssue(self.ocr_not_allowed, IssueKind.OCR_NOT_ALLOWED)
         if self.ollama_unreachable:
-            return "", RequirementIssue(self.ollama_unreachable, IssueKind.OLLAMA_UNREACHABLE)
+            return "", self.ollama_issue or RequirementIssue(
+                self.ollama_unreachable, IssueKind.OLLAMA_UNREACHABLE
+            )
         if self.missing_models:
             listed = ", ".join(f"'{model}'" for model in self.missing_models)
             noun = "Model" if len(self.missing_models) == 1 else "Models"
@@ -242,6 +266,19 @@ class RunPreflight:
         if self.stage_issues:
             return self.stage, self.stage_issues[0]
         return None
+
+
+@dataclass(frozen=True)
+class OllamaStatus:
+    """What the app knows about Ollama at an address, and what it can do about it."""
+
+    state: OllamaState
+    #: The server's version (``""`` when it did not answer).
+    version: str = ""
+    #: How many models it has downloaded (``None`` when it did not answer).
+    model_count: int | None = None
+    #: The app can start it from here (only ``NOT_RUNNING`` on Windows and macOS).
+    can_start: bool = False
 
 
 @dataclass(frozen=True)
@@ -1153,6 +1190,152 @@ class ProcessingApplicationService:
         self._store_listing("ollama", url, ModelListing(installed))
         return installed, unreachable
 
+    def _ollama_issue(self, url: str, message: str) -> RequirementIssue:
+        """Return what is wrong with Ollama at *url*: not found, not running, or unreachable.
+
+        A local address that does not answer is told apart by looking for the program: a
+        teacher who has just installed the app needs to know whether to install Ollama or to
+        start it.  An address on another computer can only be unreachable.
+        """
+        from ..infrastructure.ollama_install import (  # noqa: PLC0415
+            can_start_ollama,
+            find_ollama_program,
+        )
+        from ..infrastructure.ollama_utils import is_local_ollama_url  # noqa: PLC0415
+
+        if not is_local_ollama_url(url, include_wsl_host=True):
+            return RequirementIssue(message, IssueKind.OLLAMA_UNREACHABLE)
+        if find_ollama_program() is None:
+            return RequirementIssue(message, IssueKind.OLLAMA_NOT_FOUND)
+        return RequirementIssue(message, IssueKind.OLLAMA_NOT_RUNNING, startable=can_start_ollama())
+
+    def ollama_status(self, url: str) -> OllamaStatus:
+        """Return whether Ollama answers at *url*, and what the app can do about it.
+
+        One probe; the program is looked for only when nothing answered.  Blocking network
+        call: run it on a background thread.
+        """
+        from ..infrastructure import ollama_discovery  # noqa: PLC0415
+        from ..infrastructure.ollama_install import (  # noqa: PLC0415
+            can_start_ollama,
+            find_ollama_program,
+        )
+        from ..infrastructure.ollama_utils import (  # noqa: PLC0415
+            is_local_ollama_url,
+            normalize_ollama_url,
+        )
+
+        normalized = normalize_ollama_url(url)
+        info = ollama_discovery.probe_server(normalized)
+        program = None if info is not None else find_ollama_program()
+        state = ollama_state(
+            answered=info is not None,
+            local_address=is_local_ollama_url(normalized, include_wsl_host=True),
+            program_found=program is not None,
+        )
+        return OllamaStatus(
+            state=state,
+            version=info.version if info is not None else "",
+            model_count=info.model_count if info is not None else None,
+            can_start=state is OllamaState.NOT_RUNNING and can_start_ollama(),
+        )
+
+    def start_ollama(self) -> None:
+        """Start the Ollama program on this computer (background thread only).
+
+        Does nothing when no program was found, or when the platform has no way to start it
+        (on Linux the server is a system service).
+        """
+        from ..infrastructure.ollama_install import (  # noqa: PLC0415
+            can_start_ollama,
+            find_ollama_program,
+            start_ollama,
+        )
+
+        program = find_ollama_program()
+        if program is None or not can_start_ollama():
+            return
+        start_ollama(program)
+
+    # ── Setup Assistant ───────────────────────────────────────────────────────
+
+    def setup_facts(self, answers: SetupAnswers, current: Mapping[str, Any]) -> SetupFacts:
+        """Gather what the setup plan needs to know about this computer.
+
+        Blocking: it probes Ollama, reads the disk and asks spaCy.  Run it on a background
+        thread.  *current* is the settings as they are now, including the main window's
+        ``anonymization_enabled``.
+        """
+        from ..infrastructure.ollama_install import (  # noqa: PLC0415
+            free_disk_gb,
+            ollama_models_dir,
+        )
+        from ..infrastructure.ollama_utils import is_local_ollama_url  # noqa: PLC0415
+
+        url = answers.ollama_url
+        running = self.ollama_status(url).state is OllamaState.RUNNING
+        hardware = self.resolve_hardware_profile(answers.hardware_profile, url)
+        local = is_local_ollama_url(url, include_wsl_host=True)
+        return SetupFacts(
+            profile=hardware.profile,
+            system_memory_gb=hardware.system_memory_gb,
+            card_gb=hardware.card_gb,
+            ollama_running=running,
+            installed_tags=(
+                frozenset(self.list_provider_models("ollama", base_url=url))
+                if running
+                else frozenset()
+            ),
+            free_disk_gb=free_disk_gb(ollama_models_dir()) if local else None,
+            removal_on=bool(current.get("anonymization_enabled")),
+            name_detection=self.anonymizer_available(answers.language),
+            spacy_installed=self.is_module_importable("spacy"),
+            spacy_model=self.spacy_model_for_language(answers.language),
+            missing_package=(
+                self.missing_provider_package(answers.online_choice[0]) or ""
+                if answers.proofreading is ProofreadingPlace.ONLINE
+                else ""
+            ),
+        )
+
+    def plan_setup(self, answers: SetupAnswers, current: Mapping[str, Any]) -> SetupPlan:
+        """Return the setup plan for *answers*: the settings to write and the downloads to run.
+
+        Blocking, like :meth:`setup_facts`: run it on a background thread.
+        """
+        facts = self.setup_facts(answers, current)
+
+        def rate(tag: str, task: ModelCategory) -> ModelRating:
+            return self.rate_ollama_models(
+                [tag],
+                task,
+                facts.profile,
+                answers.ollama_url,
+                # Blocking is fine here (a background thread): an installed model outside the
+                # catalog is classified by asking the server, and one that stays unrated would
+                # be replaced although it works.
+                cached_only=False,
+                system_memory_gb=facts.system_memory_gb,
+                card_gb=facts.card_gb,
+            )[0]
+
+        def best(task: ModelCategory) -> str:
+            return self.best_ollama_model(
+                task,
+                facts.profile,
+                system_memory_gb=facts.system_memory_gb,
+                card_gb=facts.card_gb,
+            )
+
+        return build_setup_plan(
+            answers,
+            current,
+            facts,
+            rate=rate,
+            best=best,
+            default_model=self.default_model_for_task,
+        )
+
     def describe_data_flow(self, config: Config) -> DataFlow:
         """Return where each enabled step of *config* runs (this computer, another, online)."""
         return describe_data_flow(
@@ -1529,7 +1712,10 @@ class ProcessingApplicationService:
                 self._evict_ollama_model_list(config.ollama_url)
             installed, unreachable = self._installed_ollama_models(config.ollama_url)
             if unreachable:
-                return RunPreflight(ollama_unreachable=unreachable)
+                return RunPreflight(
+                    ollama_unreachable=unreachable,
+                    ollama_issue=self._ollama_issue(config.ollama_url, unreachable),
+                )
             configured = self.configured_ollama_models(config)
             missing = [m for m in configured if not models_include(m, installed)]
             if missing:

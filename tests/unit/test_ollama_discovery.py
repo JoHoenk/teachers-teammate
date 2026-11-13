@@ -12,12 +12,14 @@ import pytest
 from teachers_teammate.domain.ollama_discovery import (
     DEFAULT_SERVER_URL,
     DiscoveredServer,
+    OllamaState,
     ServerKind,
     classify_host,
     default_gateway,
     local_candidates,
     nameservers,
     ollama_host_url,
+    ollama_state,
     scan_targets,
     windows_host_addresses,
 )
@@ -275,3 +277,31 @@ def test_the_wsl_host_counts_as_this_computer_for_privacy_only() -> None:
         url = "http://172.31.0.1:11434"
         assert ollama_utils.is_local_ollama_url(url) is False
         assert ollama_utils.is_local_ollama_url(url, include_wsl_host=True) is True
+
+
+@pytest.mark.parametrize(
+    ("answered", "local_address", "program_found", "expected"),
+    [
+        (True, True, True, "running"),
+        (True, False, False, "running"),
+        (False, True, True, "not_running"),
+        (False, True, False, "not_found"),
+        (False, False, True, "no_answer"),
+        (False, False, False, "no_answer"),
+    ],
+)
+def test_ollama_state_says_what_to_do_next(
+    answered: bool, local_address: bool, program_found: bool, expected: str
+) -> None:
+    """
+    Given  what the app could see: whether the address answered, whether it is on this
+           computer, and whether the program was found
+    When   ollama_state is asked
+    Then   an answer means running; no answer on this computer means not running when the
+           program is there and not found when it isn't; elsewhere it is only no answer
+    """
+    state = ollama_state(
+        answered=answered, local_address=local_address, program_found=program_found
+    )
+
+    assert state is OllamaState(expected)

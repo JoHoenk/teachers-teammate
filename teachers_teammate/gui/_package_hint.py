@@ -22,7 +22,19 @@ class PackageHint(QWidget):
     again once the install finished (``on_packages_changed``).
     """
 
-    def __init__(self, open_downloads: OpenDownloads | None, parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        open_downloads: OpenDownloads | None,
+        parent: QWidget | None = None,
+        *,
+        button_text: str = INSTALL_BUTTON,
+        button_tooltip: str = INSTALL_BUTTON_TOOLTIP,
+    ) -> None:
+        """Build the hint.
+
+        *button_text* and *button_tooltip* name the button: the Setup Assistant installs the
+        package right there, so it says "Install now" instead of pointing at Add-ons.
+        """
         super().__init__(parent)
         self._open_downloads = open_downloads
         self._provider = ""
@@ -33,8 +45,8 @@ class PackageHint(QWidget):
         self._label.setWordWrap(True)
         self._label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         layout.addWidget(self._label, stretch=1)
-        self._button = QPushButton(INSTALL_BUTTON)
-        self._button.setToolTip(INSTALL_BUTTON_TOOLTIP)
+        self._button = QPushButton(button_text)
+        self._button.setToolTip(button_tooltip)
         self._button.setVisible(open_downloads is not None)
         self._button.clicked.connect(self._on_install)
         layout.addWidget(self._button, alignment=Qt.AlignmentFlag.AlignTop)

@@ -11,6 +11,7 @@ from typing import Any, ClassVar
 import pytest
 from PySide6.QtWidgets import QWidget
 
+from teachers_teammate.application.speed_estimates import SpeedSummary
 from teachers_teammate.application.service import (
     IssueKind,
     ProcessingApplicationService,
@@ -4794,3 +4795,39 @@ def test_an_unreachable_server_triggers_one_silent_search_and_offers_the_hit(
     assert ready_window._current_ollama_url() != hit.url
     ready_window._readiness_line._buttons[0].click()
     assert ready_window._current_ollama_url() == hit.url
+
+
+@pytest.mark.gui
+def test_the_time_left_is_estimated_for_the_steps_the_run_really_runs(
+    main_window, monkeypatch, tmp_path: Path
+) -> None:
+    """
+    Given  a run that only recognises text (a right-click on "Re-run text recognition":
+           proofreading and the content review are switched off)
+    When   the time left is estimated
+    Then   the estimate is asked for the reading model alone, not for the panel's other ticks
+    """
+    config = make_config(
+        tmp_path,
+        ocr_engine="ollama",
+        ocr_model="glm-ocr:q8_0",
+        recognition_enabled=True,
+        correction_enabled=False,
+        correction_provider="ollama",
+        evaluation_enabled=False,
+        evaluate_provider="ollama",
+    )
+    asked: list[object] = []
+    monkeypatch.setattr(
+        main_window._app_service,
+        "speed_summary",
+        lambda choices, **_kw: asked.append(choices) or SpeedSummary(),
+    )
+
+    main_window._estimate_per_page(config)
+
+    assert len(asked) == 1
+    choices = asked[0]
+    assert choices.reading_model == "glm-ocr:q8_0"  # ty: ignore[unresolved-attribute]
+    assert choices.writing_model == ""  # ty: ignore[unresolved-attribute]
+    assert choices.review_model == ""  # ty: ignore[unresolved-attribute]

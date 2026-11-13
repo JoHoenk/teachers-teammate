@@ -303,6 +303,7 @@ class ModelRecommendationService:
         cached_only: bool = False,
         system_memory_gb: float | None = None,
         card_gb: float | None = None,
+        machine_factor: float | None = None,
     ) -> list[ModelRating]:
         """Return a :class:`ModelRating` per tag — the single rating path for widgets.
 
@@ -312,7 +313,9 @@ class ModelRecommendationService:
         runs the models (``HardwareDetection.system_memory_gb``): with it, a model too big
         for the graphics card but within reach of that memory is rated slow, not too large.
         *card_gb* is the graphics memory models can use there (``HardwareDetection.card_gb``);
-        ``None`` assumes the size the profile stands for.
+        ``None`` assumes the size the profile stands for.  *machine_factor* is how much slower
+        this computer is than the reference machine, for the speed a model is expected to
+        reach; ``None`` leaves every rating without one.
         """
         classification = self.classify_ollama_models(tags, ollama_url, cached_only=cached_only)
         return [
@@ -323,6 +326,7 @@ class ModelRecommendationService:
                 detected_uses=classification.get(tag),
                 system_memory_gb=system_memory_gb,
                 card_gb=card_gb,
+                machine_factor=machine_factor,
             )
             for tag in tags
         ]

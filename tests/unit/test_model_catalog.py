@@ -44,6 +44,7 @@ from teachers_teammate.domain.model_catalog import (
     system_reserve_gb,
     uses_from_capabilities,
 )
+from teachers_teammate.domain.performance_estimate import SpeedBand, SpeedSource
 from teachers_teammate.infrastructure.providers.ollama import PROVIDER_INFO
 
 
@@ -556,6 +557,80 @@ def test_rate_model_bundles_everything_a_widget_needs() -> None:
     unknown = rate_model("mystery:latest", "ocr", "8gb")
     assert unknown.suitability is Suitability.UNKNOWN
     assert unknown.model_uses is None
+
+
+# ── the speed a model is expected to reach ─────────────────────────────────
+
+
+def test_a_model_that_was_never_measured_gets_the_band_it_is_expected_to_reach() -> None:
+    """
+    Given  a computer that reaches half the reference machine's writing speed
+    When   gemma4:e4b is rated for writing
+    Then   it carries the band that half speed gives, and says the figure is expected
+    """
+    rating = rate_model("gemma4:e4b", "general", "8gb", machine_factor=0.5)
+
+    assert rating.speed is SpeedBand.OK
+    assert rating.speed_source is SpeedSource.EXPECTED
+
+
+def test_a_slower_computer_gets_a_slower_band() -> None:
+    """
+    Given  a computer at a twentieth of the reference machine's writing speed
+    When   gemma4:e4b is rated for writing
+    Then   the band is very slow, because a page takes minutes there
+    """
+    rating = rate_model("gemma4:e4b", "general", "8gb", machine_factor=0.05)
+
+    assert rating.speed is SpeedBand.VERY_SLOW
+
+
+def test_without_a_measured_model_there_is_no_expected_speed() -> None:
+    """
+    Given  no machine factor, because nothing was measured on this server
+    When   a catalogued model is rated
+    Then   it carries no band, so the memory rating is all a teacher sees
+    """
+    rating = rate_model("gemma4:e4b", "general", "8gb")
+
+    assert rating.speed is None
+    assert rating.speed_source is None
+
+
+def test_a_model_that_does_not_fit_the_card_gets_no_expected_speed() -> None:
+    """
+    Given  a machine factor and a model too large for the card
+    When   it is rated
+    Then   it stays too large and carries no band, because it is not a download to consider
+    """
+    rating = rate_model("gpt-oss:20b", "general", "8gb", machine_factor=0.5)
+
+    assert rating.suitability is Suitability.TOO_LARGE
+    assert rating.speed is None
+
+
+def test_a_model_that_spills_to_the_processor_gets_no_expected_speed() -> None:
+    """
+    Given  a machine factor and a model that only fits with the help of the main memory
+    When   it is rated
+    Then   it stays slow and carries no band, because spilling breaks the factor
+    """
+    rating = rate_model("gpt-oss:20b", "general", "8gb", system_memory_gb=47.0, machine_factor=0.5)
+
+    assert rating.suitability is Suitability.SLOW
+    assert rating.speed is None
+
+
+def test_a_model_of_the_wrong_kind_gets_no_expected_speed() -> None:
+    """
+    Given  a machine factor and a reading model rated for writing
+    When   it is rated
+    Then   it carries no band, because it is not used for this task
+    """
+    rating = rate_model("glm-ocr:q8_0", "general", "8gb", machine_factor=0.5)
+
+    assert rating.suitability is Suitability.WRONG_KIND
+    assert rating.speed is None
 
 
 @pytest.mark.use_case("Model_Category_Guidance")

@@ -50,6 +50,7 @@ from ...domain.model_catalog import (
     normalize_tag,
     suitability_rank,
 )
+from .. import _user_text as txt
 from .._background import LatestTask
 from .._constants import _SPACY_MODEL_CHOICES as _SPACY_MODEL_DOWNLOAD_CHOICES
 from .._model_guidance import PROVIDER_PREFIX, SPACY_PREFIX
@@ -677,11 +678,13 @@ class AddonsPage(SettingsPageBase):
             decorated.sort(key=lambda entry: (entry[0], entry[1]))
             for _rank, tag, child, value, memory, very_slow in decorated:
                 group_item.addChild(child)
+                rating = ratings.get(tag)
+                expected = rating.speed if rating is not None else None
                 if category is not None:
-                    child.setText(
-                        1,
-                        compact_suitability_text(value, category, very_slow=very_slow),
-                    )
+                    label = compact_suitability_text(value, category, very_slow=very_slow)
+                    if expected is not None:
+                        label = f"{label} · {txt.speed_expected_label(expected)}"
+                    child.setText(1, label)
                 else:
                     # Models outside the catalog: say what they can do, not how good.
                     child.setText(1, abilities_text(abilities.get(tag)))
@@ -707,12 +710,14 @@ class AddonsPage(SettingsPageBase):
                     child.setForeground(0, QBrush())
                     child.setForeground(1, QBrush())
                     # The column shows a compact label; the tooltip has the full wording.
-                    child.setToolTip(
-                        1,
+                    note = (
                         suitability_text(value, category, very_slow=very_slow)
                         if category is not None
-                        else "",
+                        else ""
                     )
+                    if expected is not None:
+                        note = f"{note}\n{txt.speed_expected_note(expected)}"
+                    child.setToolTip(1, note)
 
     def _on_select_best_models(self) -> None:
         """Tick the BEST reading and writing models that are not downloaded yet."""

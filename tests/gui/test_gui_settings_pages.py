@@ -16,6 +16,7 @@ from teachers_teammate.config import DEFAULTS
 from teachers_teammate.domain.model_catalog import DEFAULT_WRITING_MODEL
 from teachers_teammate.domain.model_listing import ModelListing
 from teachers_teammate.gui import _model_fetch
+from teachers_teammate.gui import _user_text as txt
 from teachers_teammate.gui._model_item_delegate import ITEM_LABEL_ROLE
 from teachers_teammate.gui._ocr_config_selector import OcrConfigSelector
 from teachers_teammate.gui.settings._ai_models_page import (
@@ -39,6 +40,7 @@ from teachers_teammate.gui.settings._page import (
     FOCUS_REVIEW,
     FOCUS_REVIEW_KEY,
     FOCUS_SERVER,
+    FOCUS_SPEED,
     SettingsPage,
     SettingsPageBase,
 )
@@ -53,6 +55,7 @@ from ._settings_stubs import (
     CatalogAppService,
     DummyAppService,
     FakeKeyring,
+    MeasuredCatalogAppService,
     NonListableService,
     ProviderAppService,
     SlowMistralService,
@@ -625,8 +628,8 @@ def test_this_computer_shows_the_computer_first_then_the_server(computer_page) -
     """
     Given  the This computer page
     When   it is created
-    Then   its groups read top to bottom: how powerful this computer is, the local AI server --
-           and no API keys, those are on Online services
+    Then   its groups read top to bottom: how powerful this computer is, the local AI server,
+           the speed test -- and no API keys, those are on Online services
     """
     from teachers_teammate.gui.settings import _ai_setup_page  # noqa: PLC0415
 
@@ -634,8 +637,62 @@ def test_this_computer_shows_the_computer_first_then_the_server(computer_page) -
     items = (layout.itemAt(i).widget() for i in range(layout.count()))
     groups = [widget.title() for widget in items if isinstance(widget, QGroupBox)]
 
-    assert groups == [_ai_setup_page.PERFORMANCE_GROUP, _ai_setup_page.SERVER_GROUP]
+    assert groups == [
+        _ai_setup_page.PERFORMANCE_GROUP,
+        _ai_setup_page.SERVER_GROUP,
+        txt.SPEED_HEADING,
+    ]
     assert not hasattr(computer_page, "_credentials")
+
+
+@pytest.mark.gui
+def test_the_speed_test_button_is_on_this_computer(computer_page) -> None:
+    """
+    Given  the This computer page
+    When   it is created
+    Then   the speed test has its button here, and it owns no setting for it
+    """
+    assert computer_page._speed_panel._button.text() == txt.SPEED_TEST
+    assert computer_page.owned_keys() == {"ollama_url", "hardware_profile"}
+
+
+@pytest.mark.gui
+def test_this_computer_tests_the_models_the_window_hands_it(computer_page) -> None:
+    """
+    Given  the This computer page and a provider of the models as AI models shows them
+    When   the speed test asks for its settings
+    Then   it gets those settings with this page's own server address
+    """
+    computer_page.set_speed_settings_provider(lambda: {"ocr_model": "chosen:7b"})
+
+    settings = computer_page._speed_settings()
+
+    assert settings["ocr_model"] == "chosen:7b"
+    assert settings["ollama_url"] == computer_page._url
+
+
+@pytest.mark.gui
+def test_ai_models_has_no_test_button_but_a_line_that_opens_the_test(qtbot) -> None:
+    """
+    Given  the AI models page with a model on this computer
+    When   the "Measure…" button of its speed line is clicked
+    Then   the page has no Test speed button of its own, says nothing is measured yet, and
+           asks the window to open This computer at the speed test
+    """
+    context = settings_context(DummyAppService())
+    page = AiModelsPage(context)
+    qtbot.addWidget(page)
+    page.load(context.settings)
+    page.show()
+    asked: list[tuple[object, str]] = []
+    page.navigate_requested.connect(lambda target, focus, _pre: asked.append((target, focus)))
+
+    assert not hasattr(page, "_speed_panel")
+    assert not page._speed_hint.isHidden()
+    assert page._speed_hint._label.text() == txt.SPEED_NEVER_MEASURED
+    page._speed_hint._button.click()
+
+    assert asked == [(SettingsPage.AI_SETUP, FOCUS_SPEED)]
 
 
 def _wait_for_detection(qtbot, page) -> None:
@@ -2076,6 +2133,60 @@ def test_reading_model_shows_a_warning_hint(qtbot) -> None:
     assert "cannot read scans" not in hint
     index = section._model.findText("qwen3-vl:8b")
     assert "Reading model only" in section._model.itemData(index, Qt.ItemDataRole.ToolTipRole)
+
+
+@pytest.mark.use_case("Model_Category_Guidance")
+def test_a_measured_model_says_how_long_a_page_takes(qtbot) -> None:
+    """
+    Given  a proofreading model the speed test measured on this computer, and one it did not
+    When   the model list is filled
+    Then   the measured model's tooltip says how long a page takes and marks the figure as
+           measured, and the other model's tooltip says nothing about a time
+    """
+    service = MeasuredCatalogAppService(["qwen3.5:9b", "gpt-oss:20b"])
+    section = _proofreading(
+        qtbot,
+        service,
+        {"correction_provider": "ollama", "correction_model": "qwen3.5:9b"},
+        hardware_profile="8gb",
+    )
+    qtbot.waitUntil(lambda: len(section._guidance._models) == 2, timeout=5000)
+
+    measured = section._model.itemData(
+        section._model.findText("qwen3.5:9b"), Qt.ItemDataRole.ToolTipRole
+    )
+    unmeasured = section._model.itemData(
+        section._model.findText("gpt-oss:20b"), Qt.ItemDataRole.ToolTipRole
+    )
+
+    assert "about 25-70 s per page (measured)" in measured
+    assert "measured" not in unmeasured
+
+
+@pytest.mark.use_case("Model_Recommendation_By_Hardware")
+def test_a_model_that_was_not_measured_shows_the_speed_it_is_expected_to_reach(qtbot) -> None:
+    """
+    Given  a computer that reaches half the reference machine's speed, and gemma4:e4b installed
+    When   the proofreading section fills its model list
+    Then   the row says the band and that the figure is expected, and the tooltip says where
+           the figure comes from
+    """
+    service = CatalogAppService(["gemma4:e4b"])
+    service.machine_factor = 0.5
+    section = _proofreading(
+        qtbot,
+        service,
+        {"correction_provider": "ollama", "correction_model": "gemma4:e4b"},
+        hardware_profile="8gb",
+    )
+    qtbot.waitUntil(lambda: len(section._guidance._models) == 1, timeout=5000)
+
+    index = section._model.findText("gemma4:e4b")
+    label = section._model.itemData(index, ITEM_LABEL_ROLE)
+    tooltip = section._model.itemData(index, Qt.ItemDataRole.ToolTipRole)
+
+    assert "ok (expected)" in label
+    assert "Expected speed on this computer: ok." in tooltip
 
 
 @pytest.mark.use_case("Model_Recommendation_By_Hardware")

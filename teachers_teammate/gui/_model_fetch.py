@@ -14,7 +14,7 @@ presentation only; every query is delegated to the injected service, described b
 from __future__ import annotations
 
 import atexit
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 import html
 from typing import Protocol
 
@@ -31,6 +31,7 @@ from ..domain.model_catalog import (
     ModelUses,
 )
 from ..domain.model_listing import ModelGroup, ModelListing
+from ..domain.performance_estimate import TimeRange
 from ._model_wording import models_from_text
 
 # ── busy bar ──────────────────────────────────────────────────────────────────
@@ -120,6 +121,15 @@ class _SettingsAppService(Protocol):
     ) -> StageLocation: ...
 
     def default_model_for_task(self, provider: str, task: str) -> str: ...
+
+    def speed_page_times(
+        self,
+        tags: Sequence[str],
+        category: ModelCategory,
+        ollama_url: str,
+        *,
+        hardware: HardwareDetection | None = None,
+    ) -> dict[str, TimeRange]: ...
 
 
 # ── background threads ────────────────────────────────────────────────────────

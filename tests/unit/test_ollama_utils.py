@@ -19,6 +19,7 @@ from teachers_teammate.exceptions import (
 )
 from teachers_teammate.infrastructure import ollama_utils
 from teachers_teammate.infrastructure.ollama_utils import (
+    ChatStats,
     OllamaClient,
     _consume_iterator_with_first_token_timeout,
     is_local_ollama_url,
@@ -1713,3 +1714,161 @@ def test_stop_requested_reads_an_optional_event() -> None:
     assert stop_requested(event) is False
     event.set()
     assert stop_requested(event) is True
+
+
+# ── Server facts ───────────────────────────────────────────────────────────
+
+
+def _mock_server(monkeypatch, *, models, loaded, version="0.40.15") -> None:
+    """Install a mock ``ollama`` module and a mock ``/api/version`` answer."""
+    model_objects = []
+    for name, digest in models:
+        m = MagicMock()
+        m.model = name
+        m.digest = digest
+        m.size = 1_000_000_000
+        model_objects.append(m)
+    list_resp = MagicMock()
+    list_resp.models = model_objects
+
+    loaded_objects = []
+    for name, size, size_vram in loaded:
+        m = MagicMock()
+        m.model = name
+        m.name = name
+        m.size = size
+        m.size_vram = size_vram
+        m.context_length = 8192
+        loaded_objects.append(m)
+    ps_resp = MagicMock()
+    ps_resp.models = loaded_objects
+
+    mock_client = MagicMock()
+    mock_client.list.return_value = list_resp
+    mock_client.ps.return_value = ps_resp
+    mock_ollama = MagicMock()
+    mock_ollama.Client.return_value = mock_client
+    monkeypatch.setitem(sys.modules, "ollama", mock_ollama)
+    monkeypatch.setattr(ollama_utils, "_http_json", lambda url, timeout: {"version": version})
+
+
+def test_server_facts_gathers_version_digests_and_loaded_models(monkeypatch) -> None:
+    """
+    Given  a server that reports a version, two digests and one loaded model
+    When   OllamaClient.server_facts() is called
+    Then   all three are returned, and the loaded model knows its share on the card
+    """
+    _mock_server(
+        monkeypatch,
+        models=[("gemma4:e4b", "sha256:aaa"), ("glm-ocr:q8_0", "sha256:bbb")],
+        loaded=[("gemma4:e4b", 5_000_000_000, 4_000_000_000)],
+    )
+
+    facts = OllamaClient("http://127.0.0.1:11434").server_facts()
+
+    assert facts.version == "0.40.15"
+    assert facts.digest_of("gemma4:e4b") == "sha256:aaa"
+    assert facts.digest_of("glm-ocr:q8_0") == "sha256:bbb"
+    assert facts.digest_of("unknown:1b") == ""
+    assert facts.loaded_names() == ("gemma4:e4b",)
+    loaded = facts.loaded_model("gemma4:e4b")
+    assert loaded is not None
+    assert loaded.on_card_share == pytest.approx(0.8)
+
+
+def test_server_facts_survives_a_server_that_says_nothing(monkeypatch) -> None:
+    """
+    Given  a server whose version request fails and whose ps() raises
+    When   OllamaClient.server_facts() is called
+    Then   the facts are empty instead of an error
+    """
+    mock_client = MagicMock()
+    mock_client.list.side_effect = RuntimeError("boom")
+    mock_client.ps.side_effect = RuntimeError("boom")
+    mock_ollama = MagicMock()
+    mock_ollama.Client.return_value = mock_client
+    monkeypatch.setitem(sys.modules, "ollama", mock_ollama)
+
+    def _fail(url: str, timeout: float) -> dict:
+        raise OSError("no route to host")
+
+    monkeypatch.setattr(ollama_utils, "_http_json", _fail)
+
+    facts = OllamaClient("http://127.0.0.1:11434").server_facts()
+
+    assert facts.version == ""
+    assert facts.digests == {}
+    assert facts.loaded == ()
+
+
+def test_loaded_model_without_a_size_has_no_share(monkeypatch) -> None:
+    """
+    Given  a loaded model whose size the server did not report
+    When   its share on the card is asked for
+    Then   it is 0 rather than a division by zero
+    """
+    _mock_server(monkeypatch, models=[], loaded=[("x:1b", 0, 0)])
+
+    facts = OllamaClient("http://127.0.0.1:11434").server_facts()
+
+    loaded = facts.loaded_model("x:1b")
+    assert loaded is not None
+    assert loaded.on_card_share == 0.0
+
+
+# ── The statistics sink ────────────────────────────────────────────────────
+
+
+def test_the_sink_receives_the_statistics_of_a_request(monkeypatch) -> None:
+    """
+    Given  a client with a statistics sink and a stream that reports its token counts
+    When   chat() is called
+    Then   the sink is handed the model and the statistics, and the text comes back as before
+    """
+    mock_ollama = _make_chat_mock_with_done_reason(
+        ["Fertig."], "stop", prompt_eval_count=900, eval_count=120
+    )
+    monkeypatch.setitem(sys.modules, "ollama", mock_ollama)
+    seen: list[tuple[str, ChatStats]] = []
+
+    text = OllamaClient(
+        "http://127.0.0.1:11434", stats_sink=lambda model, stats: seen.append((model, stats))
+    ).chat("gemma4:e4b", "hi")
+
+    assert text == "Fertig."
+    assert len(seen) == 1
+    model, stats = seen[0]
+    assert model == "gemma4:e4b"
+    assert stats.prompt_eval_count == 900
+    assert stats.eval_count == 120
+
+
+def test_the_sink_also_sees_a_request_whose_answer_was_cut_off(monkeypatch) -> None:
+    """
+    Given  a stream that stops at the context window
+    When   chat() refuses the cut-off answer
+    Then   the sink was told about the request anyway: it cost the time the server reported
+    """
+    mock_ollama = _make_chat_mock_with_done_reason(["Der Text"], "length")
+    monkeypatch.setitem(sys.modules, "ollama", mock_ollama)
+    seen: list[ChatStats] = []
+
+    with pytest.raises(ResponseTruncatedError):
+        OllamaClient(
+            "http://127.0.0.1:11434", stats_sink=lambda _model, stats: seen.append(stats)
+        ).chat("m", "hi")
+
+    assert len(seen) == 1
+    assert seen[0].truncated is True
+
+
+def test_a_client_without_a_sink_still_answers(monkeypatch) -> None:
+    """
+    Given  a client built without a statistics sink
+    When   chat() is called
+    Then   the answer comes back and nothing else is needed
+    """
+    mock_ollama = _make_chat_mock_ollama(["Hallo", " Welt"])
+    monkeypatch.setitem(sys.modules, "ollama", mock_ollama)
+
+    assert OllamaClient("http://127.0.0.1:11434").chat("m", "hi") == "Hallo Welt"

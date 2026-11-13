@@ -330,11 +330,14 @@ class SettingsWindow(QDialog):
             page.hardware_setting_changed.connect(self._on_hardware_setting_changed)
             page.ollama_url_changed.connect(self._on_ollama_url_changed)
             page.addon_installed.connect(self.addon_installed.emit)
+            page.set_speed_settings_provider(self._speed_settings)
+            page.speed_measured.connect(self._on_speed_measured)
         elif isinstance(page, AddonsPage):
             page.packages_changed.connect(self._on_packages_changed)
         elif isinstance(page, AiModelsPage):
             page.ocr_engine_changed.connect(self._on_ocr_engine_changed)
             page.addon_installed.connect(self.addon_installed.emit)
+            page.speed_choices_changed.connect(self._on_speed_choices_changed)
         elif isinstance(page, ScanQualityPage):
             page.preview_requested.connect(self._on_preview_requested)
 
@@ -355,6 +358,29 @@ class SettingsWindow(QDialog):
         for built in self._pages.values():
             if not isinstance(built, AiSetupPage):
                 built.set_ollama_url(url)
+
+    def _speed_settings(self) -> dict[str, Any]:
+        """Return the settings the speed test measures: the models as *AI models* shows them.
+
+        Unsaved choices count, so two models can be compared before OK.  While that page was
+        never opened, the working settings are the choices.
+        """
+        models = self._pages.get(SettingsPage.AI_MODELS)
+        if isinstance(models, AiModelsPage):
+            return models.speed_settings()
+        return dict(self._working)
+
+    def _on_speed_choices_changed(self) -> None:
+        """The models chosen on *AI models* changed: the speed test measures other ones now."""
+        setup = self._pages.get(SettingsPage.AI_SETUP)
+        if isinstance(setup, AiSetupPage):
+            setup.refresh_speed()
+
+    def _on_speed_measured(self) -> None:
+        """A speed test stored a measurement: the line on *AI models* shows it too."""
+        models = self._pages.get(SettingsPage.AI_MODELS)
+        if isinstance(models, AiModelsPage):
+            models.refresh_speed()
 
     def _on_packages_changed(self) -> None:
         for built in self._pages.values():

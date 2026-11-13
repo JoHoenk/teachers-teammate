@@ -11,7 +11,7 @@ or the domain metrics directly.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 import dataclasses
 from pathlib import Path
 import threading
@@ -28,6 +28,7 @@ from ..domain.model_catalog import (
     ModelUses,
 )
 from ..domain.model_listing import ModelListing
+from ..domain.performance_estimate import TimeRange
 from ..infrastructure.benchmark.run_store import BenchmarkRunStore, NewRunRequest, StoredRun
 from ..infrastructure.benchmark.runner import OcrRunResult, run_ocr
 from ..infrastructure.ocr_processor import get_ocr_prompt
@@ -180,6 +181,17 @@ class BenchmarkApplicationService:
 
     def default_model_for_task(self, provider: str, task: str) -> str:
         return self._processing.default_model_for_task(provider, task)
+
+    def speed_page_times(
+        self,
+        tags: Sequence[str],
+        category: ModelCategory,
+        ollama_url: str,
+        *,
+        hardware: HardwareDetection | None = None,
+    ) -> dict[str, TimeRange]:
+        """Measured seconds per page of *tags*, for the model lists' tooltips (delegated)."""
+        return self._processing.speed_page_times(tags, category, ollama_url, hardware=hardware)
 
     def list_supported_suffixes(self) -> frozenset[str]:
         return self._processing.list_supported_suffixes()

@@ -8,15 +8,16 @@ a stub class instead of re-implementing them.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 import os
-
+import threading
 from typing import cast
 
 from teachers_teammate._model_defaults import default_model_for_task
 from teachers_teammate.application.context_choice import ContextChoice, context_choice
 from teachers_teammate.application.data_flow import text_goes_online
-from teachers_teammate.config import DEFAULTS
+from teachers_teammate.application.speed_estimates import SpeedChoices, SpeedSummary
+from teachers_teammate.config import DEFAULTS, Config
 from teachers_teammate.domain.data_location import (
     STAGE_ANONYMIZATION,
     STAGE_CORRECTION,
@@ -40,6 +41,8 @@ from teachers_teammate.domain.model_catalog import (
     rate_model,
 )
 from teachers_teammate.domain.model_listing import ModelListing
+from teachers_teammate.domain.performance_estimate import TimeRange
+from teachers_teammate.infrastructure.performance_probe import ProbeResult
 
 
 def context_choice_from(settings: Mapping[str, object], card_gb: float | None) -> ContextChoice:
@@ -120,6 +123,53 @@ class LocalDataFlowStub:
         info = self.get_provider_info(provider)
         return bool(info.get("needs_api_key")) and not os.environ.get(str(info.get("env_key", "")))
 
+    # ── speed test and time estimates (the panel on the AI models page) ───────
+    def speed_choices(self, settings: Mapping[str, object]) -> SpeedChoices:
+        """Answer with the real rule: the models a run would use for these settings."""
+        return SpeedChoices.from_settings(settings, effective_model=self.effective_model)
+
+    def speed_choices_for_run(self, config: Config) -> SpeedChoices:
+        """Answer with the real rule: the models of the steps the run switches on."""
+        return SpeedChoices.from_config(config, effective_model=self.effective_model)
+
+    def speed_summary(
+        self,
+        choices: SpeedChoices,
+        *,
+        hardware: HardwareDetection | None = None,
+        cached_only: bool = True,
+    ) -> SpeedSummary:
+        """Answer with nothing measured: a stub has no store to read."""
+        _ = choices, hardware, cached_only
+        return SpeedSummary()
+
+    def refresh_speed_server_facts(self, ollama_url: str) -> None:
+        """Nothing to fetch: a stub has no server."""
+        _ = ollama_url
+
+    def speed_page_times(
+        self,
+        tags: Sequence[str],
+        category: ModelCategory,
+        ollama_url: str,
+        *,
+        hardware: HardwareDetection | None = None,
+    ) -> dict[str, TimeRange]:
+        """Answer with nothing measured: a stub has no store to read."""
+        _ = tags, category, ollama_url, hardware
+        return {}
+
+    def test_speed(
+        self,
+        choices: SpeedChoices,
+        *,
+        hardware: HardwareDetection | None = None,
+        cancel_event: threading.Event | None = None,
+    ) -> ProbeResult:
+        """Refuse: a stub has no server to measure."""
+        _ = choices, hardware, cancel_event
+        raise RuntimeError("a stub has no server to measure")
+
 
 class RecommendationServiceStub(LocalDataFlowStub):
     """Deterministic ``detect_hardware`` / classification / rating methods.
@@ -137,6 +187,9 @@ class RecommendationServiceStub(LocalDataFlowStub):
 
     #: Memory of "this computer" reported with a chosen profile (``None`` = unknown).
     system_memory_gb: float | None = None
+
+    #: How much slower this computer is than the reference machine (``None`` = not measured).
+    machine_factor: float | None = None
 
     def __init__(self) -> None:
         self.detect_calls: list[tuple[str, bool]] = []
@@ -214,8 +267,10 @@ class RecommendationServiceStub(LocalDataFlowStub):
         cached_only: bool = False,
         system_memory_gb: float | None = None,
         card_gb: float | None = None,
+        machine_factor: float | None = None,
     ) -> list[ModelRating]:
         classification = self.classify_ollama_models(tags, ollama_url, cached_only=cached_only)
+        factor = self.machine_factor if machine_factor is None else machine_factor
         return [
             rate_model(
                 tag,
@@ -224,6 +279,7 @@ class RecommendationServiceStub(LocalDataFlowStub):
                 detected_uses=classification.get(tag),
                 system_memory_gb=system_memory_gb,
                 card_gb=card_gb,
+                machine_factor=factor,
             )
             for tag in tags
         ]

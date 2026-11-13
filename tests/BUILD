@@ -33,6 +33,7 @@ filegroup(
         "gui/test_gui_privacy_settings.py",
         "gui/test_gui_settings_pages.py",
         "gui/test_gui_settings_window.py",
+        "gui/test_gui_speed_panel.py",
         "gui/test_gui_widgets.py",
         "gui/test_hardware_profile_selector.py",
         "gui/test_model_wording.py",
@@ -563,6 +564,51 @@ py_test(
 )
 
 py_test(
+    name = "test_speed_estimates",
+    size = "small",
+    srcs = _COMMON_SRCS + ["unit/test_speed_estimates.py"],
+    args = ["unit/test_speed_estimates.py"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS,
+)
+
+py_test(
+    name = "test_speed_store",
+    size = "small",
+    srcs = _COMMON_SRCS + ["unit/test_speed_store.py"],
+    args = ["unit/test_speed_store.py"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS,
+)
+
+py_test(
+    name = "test_run_stats",
+    size = "small",
+    srcs = _COMMON_SRCS + ["unit/test_run_stats.py"],
+    args = ["unit/test_run_stats.py"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS,
+)
+
+py_test(
+    name = "test_performance_probe",
+    size = "small",
+    srcs = _COMMON_SRCS + ["unit/test_performance_probe.py"],
+    args = ["unit/test_performance_probe.py"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS + _IMAGE_DEPS + _CV_DEPS,
+)
+
+py_test(
+    name = "test_performance_estimate",
+    size = "small",
+    srcs = _COMMON_SRCS + ["unit/test_performance_estimate.py"],
+    args = ["unit/test_performance_estimate.py"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS,
+)
+
+py_test(
     name = "test_model_catalog",
     size = "small",
     srcs = _COMMON_SRCS + ["unit/test_model_catalog.py"],
@@ -792,6 +838,17 @@ py_test(
     args = ["tools/test_comparison.py"],
     main = "run_test.py",
     deps = _TOOL_DEPS,
+)
+
+# The developer tool that measures what a reading model costs on one page: the pure parts, so no
+# server and no page image.  The tool itself imports the image preprocessor, hence the CV deps.
+py_test(
+    name = "test_ocr_page_tokens",
+    size = "small",
+    srcs = _COMMON_SRCS + ["tools/test_ocr_page_tokens.py"],
+    args = ["tools/test_ocr_page_tokens.py"],
+    main = "run_test.py",
+    deps = _TOOL_DEPS + _CV_DEPS + _IMAGE_DEPS + ["//tools:ocr_page_tokens"],
 )
 
 py_test(
@@ -1145,6 +1202,7 @@ test_suite(
         ":test_model_eval_testset",
         ":test_model_eval_validation",
         ":test_no_plan_references",
+        ":test_ocr_page_tokens",
         ":test_prepare_gec_testset",
         ":test_verify_model_catalog_cli",
     ],
@@ -1478,6 +1536,15 @@ py_test(
 )
 
 py_test(
+    name = "test_gui_speed_panel",
+    size = "small",
+    srcs = _COMMON_SRCS + ["gui/test_gui_speed_panel.py"],
+    args = ["gui/test_gui_speed_panel.py"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_lib"],
+)
+
+py_test(
     name = "test_hardware_profile_selector",
     size = "small",
     srcs = _COMMON_SRCS + ["gui/test_hardware_profile_selector.py"],
@@ -1636,6 +1703,8 @@ test_suite(
         ":test_ocr_text_cleaner",
         ":test_ollama_discovery",
         ":test_ollama_utils",
+        ":test_performance_estimate",
+        ":test_performance_probe",
         ":test_pipeline_txt_integration",
         ":test_power",
         ":test_preprocess_service",
@@ -1644,9 +1713,12 @@ test_suite(
         ":test_providers",
         ":test_providers_mistral_curation",
         ":test_release_stamp_versions",
+        ":test_run_stats",
         ":test_run_summary",
         ":test_sent_text",
         ":test_service",
+        ":test_speed_estimates",
+        ":test_speed_store",
         ":test_stage_builder",
         ":test_state_repository",
         ":test_storage_policy",
@@ -1681,6 +1753,7 @@ test_suite(
         ":test_gui_run_status",
         ":test_gui_settings_pages",
         ":test_gui_settings_window",
+        ":test_gui_speed_panel",
         ":test_gui_update_check",
         ":test_gui_what_is_sent",
         ":test_gui_widgets",

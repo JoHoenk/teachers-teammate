@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Collection, Mapping
+from collections.abc import Callable, Collection, Mapping, Sequence
 import dataclasses
 from dataclasses import dataclass
 from enum import StrEnum
@@ -43,6 +43,7 @@ from ..domain.output_files import (
     output_path,
 )
 from ..domain.pdf_text_layer import PdfTextLayerMode, normalize_pdf_text_layer
+from ..domain.performance_estimate import MachineFactors, TimeRange
 from ..domain.run_summary import RunSummary
 from ..infrastructure import power
 from ..infrastructure.addon_manager import ADDON_AMD as ADDON_AMD  # noqa: PLC0414
@@ -120,10 +121,12 @@ from .data_flow import (
 from .formatting import TextFormatter
 from .model_recommendations import ModelRecommendationService
 from .sent_text import Anonymize, SentTexts, describe_sent_texts
+from .speed_estimates import SpeedChoices, SpeedEstimateService, SpeedSummary
 from .text_size import TextSizeEstimate, proofreading_pieces
 
 if TYPE_CHECKING:
     from ..infrastructure.anonymizer import SpacyAnonymizer
+    from ..infrastructure.performance_probe import ProbeResult
     from ..interfaces import Anonymizer
 
 
@@ -293,6 +296,8 @@ class ProcessingApplicationService:
         self._recommendations = ModelRecommendationService(
             invalidate_model_list=self._evict_ollama_model_list
         )
+        # Owns the speed test, the stored measurements and the server facts behind them.
+        self._speeds = SpeedEstimateService()
         self._commands = ApplicationCommands(
             discovery=self._discovery,
             state_store_factory=self._state_store,
@@ -609,7 +614,12 @@ class ProcessingApplicationService:
         system_memory_gb: float | None = None,
         card_gb: float | None = None,
     ) -> list[ModelRating]:
-        """Return a :class:`ModelRating` per tag for *task* on *profile*."""
+        """Return a :class:`ModelRating` per tag for *task* on *profile*.
+
+        The ratings carry the speed band a model is expected to reach here, worked out from
+        the models this server has measured; a model that was never measured anywhere gets
+        none.
+        """
         return self._recommendations.rate_ollama_models(
             tags,
             task,
@@ -618,6 +628,7 @@ class ProcessingApplicationService:
             cached_only=cached_only,
             system_memory_gb=system_memory_gb,
             card_gb=card_gb,
+            machine_factor=self._speeds.machine_factors(ollama_url).for_category(task),
         )
 
     def first_run_model_settings(self, profile: HardwareProfile) -> dict[str, str]:
@@ -627,6 +638,65 @@ class ProcessingApplicationService:
     def on_ollama_models_changed(self, ollama_url: str) -> None:
         """Evict the model list and classifications of *ollama_url* (call after a pull)."""
         self._recommendations.on_ollama_models_changed(ollama_url)
+        # A pull changes the digest, which is what a stored measurement is keyed by.
+        self._speeds.forget_server_facts(ollama_url)
+
+    # ── Speed test and time estimates (delegated) ─────────────────────────
+
+    def speed_choices(self, settings: Mapping[str, object]) -> SpeedChoices:
+        """Return the models *settings* name, as the speed test and the estimate need them.
+
+        The models are resolved the way a run resolves them, so the page tests what a run would
+        use rather than what an empty field happens to mean.
+        """
+        return SpeedChoices.from_settings(settings, effective_model=self.effective_model)
+
+    def speed_choices_for_run(self, config: Config) -> SpeedChoices:
+        """Return the models a run with *config* uses: only the steps that run, on Ollama.
+
+        What the time left of a run is worked out from, so a run that only reads the text, or
+        proofreads without a content review, is not charged for the steps it skips.
+        """
+        return SpeedChoices.from_config(config, effective_model=self.effective_model)
+
+    def refresh_speed_server_facts(self, ollama_url: str) -> None:
+        """Fetch the server's version and model digests (background thread only)."""
+        self._speeds.refresh_server_facts(ollama_url)
+
+    def test_speed(
+        self,
+        choices: SpeedChoices,
+        *,
+        hardware: HardwareDetection | None = None,
+        cancel_event: threading.Event | None = None,
+    ) -> ProbeResult:
+        """Run the speed test for *choices* and store the result (background thread only)."""
+        return self._speeds.test_speed(choices, hardware=hardware, cancel_event=cancel_event)
+
+    def speed_summary(
+        self,
+        choices: SpeedChoices,
+        *,
+        hardware: HardwareDetection | None = None,
+        cached_only: bool = True,
+    ) -> SpeedSummary:
+        """Return what the speed panel shows for *choices*; ``cached_only`` never waits."""
+        return self._speeds.speed_summary(choices, hardware=hardware, cached_only=cached_only)
+
+    def speed_machine_factors(self, ollama_url: str) -> MachineFactors:
+        """Return how much slower this computer is than the reference machine, per rate."""
+        return self._speeds.machine_factors(ollama_url)
+
+    def speed_page_times(
+        self,
+        tags: Sequence[str],
+        category: ModelCategory,
+        ollama_url: str,
+        *,
+        hardware: HardwareDetection | None = None,
+    ) -> dict[str, TimeRange]:
+        """Return the measured seconds per page of *tags*, for the model lists' tooltips."""
+        return self._speeds.page_times(tags, category, ollama_url, hardware=hardware)
 
     def default_model_for_task(self, provider: str, task: str) -> str:
         """Resolve default model for provider and task."""
@@ -1344,6 +1414,23 @@ class ProcessingApplicationService:
             else:
                 skipped.append(file)
         return RecognitionPlan(tuple(readable), tuple(skipped))
+
+    def page_counts(self, files: Collection[Path]) -> dict[str, int]:
+        """Return how many pages each of *files* has, keyed by resolved path.
+
+        An image or a text file is one page, a PDF as many as it has, and a file that cannot be
+        read counts as one: the figure feeds a time estimate, which must not fail over a file
+        the run itself will report.  Opens PDFs: call it from a background thread.
+        """
+        from ..infrastructure.input_providers import pdf_page_count  # noqa: PLC0415
+
+        counts: dict[str, int] = {}
+        for file in files:
+            pages = 1
+            if file.suffix.lower() == ".pdf":
+                pages = pdf_page_count(file) or 1
+            counts[str(file.resolve())] = pages
+        return counts
 
     def _pdf_has_text_layer(self, file: Path, mode: PdfTextLayerMode) -> bool:
         """Return whether *file* would be read from its embedded text (``True`` if unknown)."""

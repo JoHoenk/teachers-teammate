@@ -319,7 +319,9 @@ def _with_fallback_warning(text: str, warning: str | None) -> CorrectionOutcome:
     A *warning* from the text-mode call itself means that call failed too.
     """
     merged = FALLBACK_WARNING if warning is None else f"{FALLBACK_WARNING} {warning}"
-    return CorrectionOutcome(text=text, review=None, warning=merged, failed=warning is not None)
+    return CorrectionOutcome(
+        text=text, review=None, warning=merged, failed=warning is not None, fell_back=True
+    )
 
 
 class _ReviewCorrector(Corrector):
@@ -735,6 +737,7 @@ class ChunkingCorrector(Corrector):
             text=_join_text(outcomes, chunks),
             review=_merged_review(reviews) if reviews else None,
             warning=warning,
+            fell_back=any(outcome.fell_back for outcome in outcomes),
         )
 
 

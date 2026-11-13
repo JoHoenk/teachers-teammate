@@ -194,7 +194,9 @@ def test_the_report_command_prints_the_table_of_the_committed_runs(tmp_path, cap
         for row in results.read_rows(space.cache / "run.jsonl")
     ]
 
-    code = proofreading_store._report(Namespace(out=str(space.out), runs=[], performance=False))
+    code = proofreading_store._report(
+        Namespace(out=str(space.out), runs=[], performance=False, catalog_lines=False)
+    )
 
     summaries = report.summarise(rows)
 
@@ -214,7 +216,7 @@ def test_the_report_command_prints_the_same_table_from_a_local_cache(tmp_path, c
     space = workspace(tmp_path)
     one(space)
     committed = proofreading_store._report(
-        Namespace(out=str(space.out), runs=[], performance=False)
+        Namespace(out=str(space.out), runs=[], performance=False, catalog_lines=False)
     )
     from_runs = capsys.readouterr().out
 
@@ -225,6 +227,7 @@ def test_the_report_command_prints_the_same_table_from_a_local_cache(tmp_path, c
             by_error=None,
             count_marks=False,
             performance=False,
+            catalog_lines=False,
         )
     )
     from_cache = capsys.readouterr().out
@@ -249,6 +252,7 @@ def test_the_report_by_error_needs_the_test_set(tmp_path, capsys):
             by_error="category",
             count_marks=False,
             performance=False,
+            catalog_lines=False,
         )
     )
 
@@ -267,7 +271,9 @@ def test_the_report_command_names_a_run_it_refuses(tmp_path, capsys):
     written.path.write_text("", encoding="utf-8")
 
     code = proofreading_store._report(
-        Namespace(out=str(space.out), runs=[str(written.path)], performance=False)
+        Namespace(
+            out=str(space.out), runs=[str(written.path)], performance=False, catalog_lines=False
+        )
     )
 
     assert code == 1
@@ -287,7 +293,9 @@ def test_the_report_command_refuses_runs_of_different_eval_versions(tmp_path, ca
     monkeypatch.setattr(protocol, "is_recorded", lambda version, fingerprint: True)
     rewrite(second.path, lambda header, items: header.update(eval_version=other))
 
-    code = proofreading_store._report(Namespace(out=str(space.out), runs=[], performance=False))
+    code = proofreading_store._report(
+        Namespace(out=str(space.out), runs=[], performance=False, catalog_lines=False)
+    )
 
     captured = capsys.readouterr()
     assert code == 1

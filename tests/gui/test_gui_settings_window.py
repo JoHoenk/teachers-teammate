@@ -23,6 +23,8 @@ from teachers_teammate.gui.settings import (
 )
 from teachers_teammate.gui.settings import _window as window_module
 from teachers_teammate.gui.settings._addons_page import AddonsPage
+from teachers_teammate.gui.settings._ai_models_page import AiModelsPage
+from teachers_teammate.gui.settings._ai_setup_page import AiSetupPage
 from teachers_teammate.gui.settings._page import (
     FOCUS_API_KEYS,
     FOCUS_DETECTION,
@@ -1382,3 +1384,46 @@ def test_the_result_carries_the_turn_on_of_personal_info_removal(qtbot, monkeypa
 
     never = _window(qtbot, SettingsPage.SCAN_QUALITY)
     assert never.values().turn_on_anonymization is False
+
+
+@pytest.mark.gui
+def test_the_speed_test_measures_the_models_chosen_on_ai_models(qtbot) -> None:
+    """
+    Given  the Settings window with both AI models and This computer opened
+    When   the speed test on This computer asks for the settings it measures
+    Then   it gets those of the AI models page as it is shown now, with the server address
+    """
+    window = _window(qtbot, SettingsPage.AI_MODELS)
+    window.show_page(SettingsPage.AI_SETUP)
+    window.show_page(SettingsPage.AI_MODELS)
+    models = window.page(SettingsPage.AI_MODELS)
+    setup = window.page(SettingsPage.AI_SETUP)
+    assert isinstance(models, AiModelsPage)
+    assert isinstance(setup, AiSetupPage)
+
+    measured = setup._speed_panel._settings_provider()
+
+    assert measured["ocr_model"] == models.speed_settings()["ocr_model"]
+    assert measured["ollama_url"] == setup._url
+
+
+@pytest.mark.gui
+def test_a_measurement_on_this_computer_refreshes_the_line_on_ai_models(qtbot) -> None:
+    """
+    Given  the Settings window with both pages opened
+    When   a speed test on This computer reports a measurement
+    Then   the speed line on AI models is redrawn
+    """
+    window = _window(qtbot, SettingsPage.AI_MODELS)
+    window.show_page(SettingsPage.AI_SETUP)
+    window.show_page(SettingsPage.AI_MODELS)
+    models = window.page(SettingsPage.AI_MODELS)
+    setup = window.page(SettingsPage.AI_SETUP)
+    assert isinstance(models, AiModelsPage)
+    assert isinstance(setup, AiSetupPage)
+    redrawn: list[bool] = []
+    models._speed_hint.refresh = lambda: redrawn.append(True)  # type: ignore[method-assign]  # ty: ignore[invalid-assignment]
+
+    setup.speed_measured.emit()
+
+    assert redrawn == [True]

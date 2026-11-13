@@ -6,14 +6,16 @@ queries, hardware profiles and ratings, and (for the Add-ons page) what is insta
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from datetime import date
 import threading
 
 from teachers_teammate.application.data_flow import llm_location
 from teachers_teammate.domain.data_location import StageLocation
 from teachers_teammate.domain.formatted_text import TextFormat
+from teachers_teammate.domain.model_catalog import HardwareDetection, ModelCategory
 from teachers_teammate.domain.model_listing import ListedModel, ModelListing
+from teachers_teammate.domain.performance_estimate import TimeRange
 
 from ._service_stubs import RecommendationServiceStub, context_choice_from
 
@@ -236,6 +238,27 @@ class CatalogAppService(CachingDummyAppService):
     def list_provider_models(self, provider: str, *, base_url: str = "") -> list[str]:
         _ = base_url
         return self._models if provider == "ollama" else [f"{provider}-model"]
+
+
+class MeasuredCatalogAppService(CatalogAppService):
+    """A catalog service that also reports one model as measured on this computer."""
+
+    #: The tag the speed test measured, and how long one page takes with it.
+    measured_tag = "qwen3.5:9b"
+    measured_page = TimeRange(25.0, 70.0)
+
+    def speed_page_times(
+        self,
+        tags: Sequence[str],
+        category: ModelCategory,
+        ollama_url: str,
+        *,
+        hardware: HardwareDetection | None = None,
+    ) -> dict[str, TimeRange]:
+        _ = category, ollama_url, hardware
+        if self.measured_tag not in tags:
+            return {}
+        return {self.measured_tag: self.measured_page}
 
 
 # ── what the Add-ons page asks in addition ─────────────────────────────────────

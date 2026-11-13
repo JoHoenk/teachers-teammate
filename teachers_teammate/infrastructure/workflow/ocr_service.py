@@ -28,11 +28,13 @@ class OCRStageService:
         ocr_inputs: list[Path],
         language: str,
         on_page: Callable[[int, int], None] | None = None,
+        on_page_done: Callable[[str], None] | None = None,
     ) -> tuple[list[str], str | None]:
         """Run OCR on each input path; return ``(page_texts, error_message | None)``.
 
         *on_page* is called as ``on_page(page_number, total_pages)`` (1-based) right
-        before each page is sent to the OCR engine.
+        before each page is sent to the OCR engine, *on_page_done* with the page's text right
+        after it was read.
 
         Raises:
             :exc:`~teachers_teammate.exceptions.RunStoppedError`: when the run is stopped
@@ -54,5 +56,8 @@ class OCRStageService:
                     raise RunStoppedError from exc
                 label = f"page {i + 1}" if len(ocr_inputs) > 1 else "image"
                 return [], f"OCR failed ({label}): {exc}"
-            page_texts.append(clean_ocr_text(result))
+            page_text = clean_ocr_text(result)
+            page_texts.append(page_text)
+            if on_page_done is not None:
+                on_page_done(page_text)
         return page_texts, None

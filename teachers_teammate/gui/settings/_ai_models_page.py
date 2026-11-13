@@ -46,6 +46,7 @@ from ._ai_service_section import CONTENT_REVIEW, PROOFREADING, AiServiceSection
 from ._credentials import ApiKeyDrafts
 from ._page import SettingsContext, SettingsPage, SettingsPageBase
 from ._profile_line import ProfileLine
+from ._speed_hint import SpeedHint
 
 TITLE = "AI models"
 DESCRIPTION = (
@@ -144,6 +145,9 @@ class AiModelsPage(SettingsPageBase):
 
     #: The user chose another recognition method (not emitted while loading).
     ocr_engine_changed = Signal(str)
+    #: The service or model of a step changed: the speed test on *This computer* measures
+    #: other models now.
+    speed_choices_changed = Signal()
     #: An add-on (PaddleOCR) was installed from this page.
     addon_installed = Signal(str)
 
@@ -176,6 +180,17 @@ class AiModelsPage(SettingsPageBase):
         self._profile_line.change_requested.connect(lambda: self._navigate(SettingsPage.AI_SETUP))
         self._profile_line.selector.resolved_changed.connect(self._on_profile_resolved)
         layout.addWidget(self._profile_line)
+
+        self._speed_hint = SpeedHint(
+            app_service=context.app_service,
+            settings_provider=self.speed_settings,
+            profile_selector=self._profile_line.selector,
+            parent=self,
+        )
+        self._speed_hint.open_requested.connect(
+            lambda: self._navigate(SettingsPage.AI_SETUP, _page.FOCUS_SPEED)
+        )
+        layout.addWidget(self._speed_hint)
 
         self._reading_group = self._build_reading_group()
         layout.addWidget(self._reading_group)
@@ -298,6 +313,7 @@ class AiModelsPage(SettingsPageBase):
                 self._context_combo.setCurrentIndex(index if index >= 0 else 0)
             self._refresh_context_row()
             self._refresh_privacy_line()
+            self._speed_hint.refresh()
         finally:
             self._loading = False
 
@@ -458,8 +474,10 @@ class AiModelsPage(SettingsPageBase):
     def _on_choices_changed(self) -> None:
         """A choice of service or model changed: what depends on it is looked at again."""
         self._refresh_context_row()
+        self._speed_hint.refresh()
         if not self._loading:
             self._refresh_privacy_line()
+            self.speed_choices_changed.emit()
 
     # ── context window row ────────────────────────────────────────────────────
 
@@ -477,9 +495,28 @@ class AiModelsPage(SettingsPageBase):
             CONTENT_REVIEW.model_key: review_model,
         }
 
+    def refresh_speed(self) -> None:
+        """Redraw the class-set line: a speed test stored a new measurement."""
+        self._speed_hint.refresh()
+
+    def speed_settings(self) -> dict[str, object]:
+        """Return the settings the speed test measures: this page as it is now.
+
+        The recognition method and model come from the picker rather than from the loaded
+        values, so a method chosen a moment ago is what gets measured.
+        """
+        return {
+            **self._context.settings,
+            **self._live_settings(),
+            "ollama_url": self._ollama_url,
+            "ocr_engine": self._ocr_picker.engine(),
+            "ocr_model": self._ocr_picker.model(),
+        }
+
     def _on_profile_resolved(self, _detection: object) -> None:
         self._profile_known = True
         self._refresh_context_row()
+        self._speed_hint.refresh()
 
     def _refresh_context_row(self) -> None:
         """Show the context window row only while it changes something.
@@ -584,4 +621,6 @@ class AiModelsPage(SettingsPageBase):
 
     def _on_engine_changed(self, engine: str) -> None:
         if not self._loading:
+            self._speed_hint.refresh()
+            self.speed_choices_changed.emit()
             self.ocr_engine_changed.emit(engine)

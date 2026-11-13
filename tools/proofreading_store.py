@@ -25,6 +25,8 @@ Usage::
     bazel run //tools:proofreading_store -- index --out evaluations/proofreading
     bazel run //tools:proofreading_store -- report --out evaluations/proofreading --performance
     bazel run //tools:proofreading_store -- report --cache ~/gec-testset/results \\
+        --performance --catalog-lines
+    bazel run //tools:proofreading_store -- report --cache ~/gec-testset/results \\
         --testset ~/gec-testset/set --by-error category
     bazel run //tools:proofreading_store -- sheet --run RUN_ID --cache ~/gec-testset/results
 
@@ -33,7 +35,9 @@ runs); give it the corpora as well (``--corpora FILE`` or ``--corpus NAME=PATH``
 applies the five-word rule and the hashes against the real text.  ``index`` regenerates
 ``INDEX.md``.  ``report`` prints the results table of the committed runs, or with ``--cache`` of
 the rows a ``compare_writing_models run`` wrote locally (``--by-error`` groups the reference
-errors by kind and needs ``--testset``, a test set built with the corpus labels).  ``sheet``
+errors by kind and needs ``--testset``, a test set built with the corpus labels);
+``--performance`` adds the speed and memory table, and ``--catalog-lines`` the
+``answer_length=`` lines the catalog wants, ready to paste).  ``sheet``
 prints the explanation sheet of one committed run: the sample is the run's, so every machine draws
 the same one, and the source sentences come from the local cache.  A teacher marks each
 explanation, and ``marks`` turns the filled-in sheet into the marks file of that run.  ``manifest`` prints what a manifest
@@ -209,6 +213,9 @@ def _report_cache(args) -> int:
     if args.performance:
         print()
         print(report.performance_table(report.summarise_performance(rows)))
+    if args.catalog_lines:
+        print()
+        print(report.catalog_lines(report.summarise_performance(rows)))
     if args.by_error:
         if testset is None:
             print("\n--by-error needs --testset (the labels live in the test set)", file=sys.stderr)
@@ -306,6 +313,9 @@ def _report(args) -> int:
         if args.performance:
             print()
             print(report.performance_table(report.summarise_performance(items)))
+        if args.catalog_lines:
+            print()
+            print(report.catalog_lines(report.summarise_performance(items)))
     return 1 if refused else 0
 
 
@@ -699,6 +709,11 @@ def build_parser():
         "--performance",
         action="store_true",
         help="print the speed and memory table as well",
+    )
+    reporter.add_argument(
+        "--catalog-lines",
+        action="store_true",
+        help="print the answer_length= lines the catalog wants, one per model, ready to paste",
     )
     reporter.add_argument(
         "--cache",

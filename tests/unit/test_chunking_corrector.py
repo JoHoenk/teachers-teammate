@@ -89,7 +89,10 @@ class _RecordingCorrector(Corrector):
             return CorrectionOutcome(text=raw_text, warning="server unreachable", failed=True)
         if index in self._without_review:
             return CorrectionOutcome(
-                text=raw_text.upper(), review=None, warning=self._fallback_warning
+                text=raw_text.upper(),
+                review=None,
+                warning=self._fallback_warning,
+                fell_back=True,
             )
         review = CorrectionReview(
             sentences=(_sentence("a", "A"), _sentence("b", "B")),
@@ -313,3 +316,19 @@ def test_the_pieces_after_a_failed_one_are_not_sent() -> None:
 
     assert outcome.failed is True
     assert len(inner.calls) == 1
+
+
+@pytest.mark.use_case("Chunking_Corrector")
+def test_a_piece_that_fell_back_marks_the_merged_outcome_as_fallen_back() -> None:
+    """
+    Given  a long text whose second piece fell back to corrections only
+    When   it is proofread through the chunking corrector
+    Then   the merged outcome says it fell back, so no speed sample is taken of a mixed run;
+           and a text whose pieces all answered with a review does not say so
+    """
+    text = _german_text()
+    fell_back = ChunkingCorrector(_RecordingCorrector(without_review=frozenset({1})))
+    clean = ChunkingCorrector(_RecordingCorrector())
+
+    assert fell_back.correct(text, "German").fell_back is True
+    assert clean.correct(text, "German").fell_back is False

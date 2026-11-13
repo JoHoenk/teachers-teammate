@@ -14,10 +14,13 @@ the time: it competes for the card, so its timing says little about the model.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import asdict, dataclass
+from statistics import median
 from typing import TYPE_CHECKING
 
 from teachers_teammate.domain.model_catalog import normalize_tag
+from teachers_teammate.domain.performance_estimate import percentile
 
 if TYPE_CHECKING:
     from teachers_teammate.infrastructure.ollama_utils import ChatStats
@@ -181,3 +184,33 @@ class Performance:
 def per_100_words(seconds: float, words: int) -> float:
     """Return *seconds* scaled to 100 words of student text (0 when there are no words)."""
     return seconds / words * 100 if words else 0.0
+
+
+@dataclass(frozen=True)
+class Spread:
+    """The 10th percentile, median and 90th percentile of a set of figures.
+
+    A range rather than one figure, because the middle 80 % of one model's answers on one test
+    set are about three times apart: how many errors a text has decides most of it.  The ends
+    are left out so that one runaway answer does not widen the range for good.
+    """
+
+    low: float
+    typical: float
+    high: float
+
+    @classmethod
+    def of(cls, values: Sequence[float]) -> Spread | None:
+        """Return the spread of *values*, or ``None`` when there are none."""
+        if not values:
+            return None
+        ordered = sorted(values)
+        return cls(
+            low=percentile(ordered, 10),
+            typical=median(ordered),
+            high=percentile(ordered, 90),
+        )
+
+    def rounded(self) -> tuple[int, int, int]:
+        """Return the three figures as whole numbers, the way the catalog stores them."""
+        return round(self.low), round(self.typical), round(self.high)

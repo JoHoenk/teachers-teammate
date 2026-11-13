@@ -20,6 +20,10 @@ from .ollama_utils import OllamaClient
 
 _OCR_PROMPT = "Extract all visible text from this image in {language} exactly as written."
 
+OCR_ANSWER_TOKENS = 2048
+"""Tokens a page's answer may take.  A page of handwriting needs more than a short answer, and a
+page that runs into the limit keeps the text read so far."""
+
 # Every engine reads pages on a computer the user controls (see domain/data_location.py).
 SUPPORTED_OCR_ENGINES: list[str] = list(LOCAL_OCR_ENGINES)
 
@@ -67,7 +71,7 @@ class OllamaOCRProcessor(OCRProcessor):
             self._model,
             prompt,
             images=[b64],
-            options={"temperature": self._temperature, "num_predict": 2048},
+            options={"temperature": self._temperature, "num_predict": OCR_ANSWER_TOKENS},
             timeout=self._timeout,
             # The page limit is deliberate: a page that runs into it keeps the text read so far.
             allow_truncated=True,

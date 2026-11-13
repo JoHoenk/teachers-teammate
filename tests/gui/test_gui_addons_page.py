@@ -186,6 +186,25 @@ def test_switching_profile_updates_suitability(qtbot) -> None:
 
 
 @pytest.mark.use_case("Model_Recommendation_By_Hardware")
+def test_a_model_that_was_not_measured_shows_the_speed_it_is_expected_to_reach(qtbot) -> None:
+    """
+    Given  a computer whose measured models give a speed factor of 0.5
+    When   the suitability column is inspected
+    Then   a catalogued model that was never measured here carries the expected band,
+           and a model that does not fit the card carries none
+    """
+    service = _StubService()
+    service.machine_factor = 0.5
+    dlg = _make_dialog(qtbot, service=service)
+    dlg._on_detection_done(_detection_results(dlg, set()))
+    row = dlg._model_items["gemma4:e4b"]
+    assert row.text(1) == "★ Best · ok (expected)"
+    assert "Expected speed on this computer: ok." in row.toolTip(1)
+    # A model that does not fit the card has no page time worth naming.
+    assert "(expected)" not in dlg._model_items["gpt-oss:20b"].text(1)
+
+
+@pytest.mark.use_case("Model_Recommendation_By_Hardware")
 def test_too_large_rows_are_grey_but_checkable(qtbot) -> None:
     """
     Given  a TOO_LARGE model row on the 8gb profile

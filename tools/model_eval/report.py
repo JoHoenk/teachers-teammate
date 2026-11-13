@@ -13,10 +13,11 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 
 from . import scoring
+from .answer_mode import AnswerMode
 from .error_labels import UNLABELLED, ReferenceLabel
 from .languages import name as language_name
 from .languages import ordered
-from .performance import per_100_words
+from .performance import Spread, per_100_words
 from .quality import match_edits
 from .results import ResultRow
 from .scoring import ScoredItem
@@ -28,6 +29,7 @@ __all__ = [
     "ModelSummary",
     "PerformanceSummary",
     "band_table",
+    "catalog_lines",
     "error_table",
     "performance_table",
     "summarise",
@@ -300,7 +302,9 @@ class PerformanceSummary:
 
     seconds_per_100_words: float | None
     answer_tokens_per_s: float | None
-    answer_tokens_per_100_words: float | None
+    answer_tokens_spread: Spread | None
+    """Answer tokens per 100 words of student text: 10th percentile, median, 90th."""
+
     requests_per_text: float | None
     vram_used_mb: int | None
     """Highest memory the model added on the card, over the comparable texts."""
@@ -347,7 +351,13 @@ def summarise_performance(items: Sequence[ScoredItem]) -> list[PerformanceSummar
                     per_100_words(sum(row.seconds for row in clean), words) if words else None
                 ),
                 answer_tokens_per_s=answer / generation if generation else None,
-                answer_tokens_per_100_words=per_100_words(answer, words) if words else None,
+                answer_tokens_spread=Spread.of(
+                    [
+                        per_100_words(row.performance.answer_tokens, row.words)
+                        for row in clean
+                        if row.performance and row.words
+                    ]
+                ),
                 requests_per_text=(
                     sum(row.performance.request_count for row in clean if row.performance)
                     / len(clean)
@@ -359,6 +369,14 @@ def summarise_performance(items: Sequence[ScoredItem]) -> list[PerformanceSummar
             )
         )
     return summaries
+
+
+def _spread_cell(spread: Spread | None) -> str:
+    """Return the three answer-length figures of a row, or a dash when there are none."""
+    if spread is None:
+        return "-"
+    low, typical, high = spread.rounded()
+    return f"{low} / {typical} / {high}"
 
 
 def performance_table(summaries: Iterable[PerformanceSummary]) -> str:
@@ -373,7 +391,8 @@ def performance_table(summaries: Iterable[PerformanceSummary]) -> str:
 
     lines = [
         "| Model | T | Mode | Texts (comparable) | s per 100 words | Answer tokens/s "
-        "| Answer tokens per 100 words | Requests/text | Graphics memory MB | On the card |",
+        "| Answer tokens per 100 words (10th / median / 90th) | Requests/text "
+        "| Graphics memory MB | On the card |",
         "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
     ]
     for item in summaries:
@@ -383,7 +402,7 @@ def performance_table(summaries: Iterable[PerformanceSummary]) -> str:
             f"| {item.texts} ({item.comparable}) "
             f"| {number(item.seconds_per_100_words, '.1f')} "
             f"| {number(item.answer_tokens_per_s, '.0f')} "
-            f"| {number(item.answer_tokens_per_100_words, '.0f')} "
+            f"| {_spread_cell(item.answer_tokens_spread)} "
             f"| {number(item.requests_per_text, '.2f')} "
             f"| {number(item.vram_used_mb, 'd')} | {share} |"
         )
@@ -395,5 +414,31 @@ def performance_table(summaries: Iterable[PerformanceSummary]) -> str:
         'read from the card.  "On the card" is Ollama\'s own estimate and is unreliable for some '
         "models (it reported 0.4 GB for a Gemma 4 model that added 3.4 GB): trust the memory "
         "column.",
+    ]
+    return "\n".join(lines)
+
+
+def catalog_lines(summaries: Iterable[PerformanceSummary]) -> str:
+    """Return the ``answer_length=`` lines to paste into the catalog, one per model.
+
+    Only review mode has a catalog figure: the catalog's answer length is answer tokens per 100
+    words of student text in review mode.  A text-mode answer is the corrected text itself, so
+    its length is one constant for every model and not a figure per model.
+    """
+    lines: list[str] = []
+    for item in summaries:
+        if item.mode != AnswerMode.REVIEW or item.answer_tokens_spread is None:
+            continue
+        low, typical, high = item.answer_tokens_spread.rounded()
+        lines.append(
+            f"`{item.model}` at {item.temperature:g}: "
+            f"answer_length=AnswerLength(low={low}, typical={typical}, high={high})"
+        )
+    if not lines:
+        return "No review-mode text was measured: nothing to put in the catalog."
+    lines += [
+        "",
+        "Answer tokens per 100 words of student text, proofreading in review mode, at the "
+        "temperature named.  The catalog's docstring wants the run, the machine and the date.",
     ]
     return "\n".join(lines)

@@ -317,6 +317,205 @@ def text_size_line(estimate: TextSizeEstimate | None) -> tuple[str, str, str]:
     return line, "", tooltip
 
 
+# ── Speed test and time estimates ─────────────────────────────────────────────
+
+SPEED_HEADING = "Speed on this computer"
+SPEED_TEST = "Test speed"
+SPEED_STOP = "Stop"
+SPEED_TEST_TOOLTIP = (
+    "Measures how fast the chosen models write on this computer.\n"
+    "It uses the graphics card for up to a minute and a half per step, so it runs only\n"
+    "when you ask for it. Nothing is sent anywhere else."
+)
+SPEED_NOTE = (
+    f"Measures the models chosen on {PAGE_AI_MODELS}. "
+    "It runs only when you press the button, never by itself."
+)
+SPEED_NOTHING_TO_MEASURE = (
+    f"Nothing to measure: no step uses a model on this computer. The steps and their models "
+    f"are chosen on {PAGE_AI_MODELS}."
+)
+SPEED_CHANGE_MODELS = "Change models…"
+SPEED_CHANGE_MODELS_TOOLTIP = f"Opens {PAGE_AI_MODELS}, where the models are chosen."
+SPEED_HINT_MEASURE = "Measure…"
+SPEED_HINT_DETAILS = "Details…"
+SPEED_HINT_TOOLTIP = f"Opens {PAGE_AI_SETUP}, where the speed of this computer is measured."
+SPEED_STOP_TOOLTIP = "Stop the test. Nothing is saved."
+SPEED_STOPPING = "Stopping…"
+SPEED_TESTING = "Testing… this takes up to a minute and a half per step."
+SPEED_TEST_FAILED = "The test could not run: {reason}"
+SPEED_NEVER_MEASURED = "Not measured on this computer yet."
+SPEED_ON_CARD = "on the card ✓"
+SPEED_ON_PROCESSOR = "on the processor"
+SPEED_TOO_SLOW = "very slow (no answer in time)"
+SPEED_BUSY = "The server was busy with another model during the test; the times may be too long."
+SPEED_OUT_OF_DATE = (
+    "Measured {date}, but the model, the Ollama version or the graphics card has changed "
+    "since. Test again for a figure that fits."
+)
+SPEED_REMOTE = "Tested on the server at {host}; other people may be using it."
+SPEED_CARD_NOT_USED = (
+    "⚠ Ollama runs {model} on the processor, although {card} was found. "
+    "A smaller model fits on the card: {where}."
+)
+SPEED_SWAPS = (
+    "The reading and proofreading models don't fit in memory together: "
+    "each file adds about {load} of loading."
+)
+SPEED_CLASS_SET = "{files} two-page essays: about {span}"
+SPEED_PER_PAGE = "about {span} per page"
+SPEED_MEASURED_NOTE = "about {span} per page (measured)"
+SPEED_EXPECTED_LABEL = "{band} (expected)"
+SPEED_EXPECTED_NOTE = (
+    "Expected speed on this computer: {band}. Worked out from the models measured here, "
+    "not measured for this one."
+)
+SPEED_MEASURED_AT = "Measured {date}, {power}."
+SPEED_FROM_RUNS = "From your last {count} {unit}."
+SPEED_FROM_RUNS_ONE = "From your last {unit}."
+SPEED_ON_MAINS = "on mains power"
+SPEED_ON_BATTERY = "on battery power, so slower than usual"
+
+#: Teacher-facing names of the steps the test measures.
+SPEED_STEP_NAMES: dict[str, str] = {
+    "reading": "Reading",
+    "proofreading": "Proofreading",
+    "review": "Content review",
+}
+
+#: Teacher-facing names of the speed bands.
+SPEED_BAND_NAMES: dict[str, str] = {
+    "fast": "fast",
+    "ok": "ok",
+    "slow": "slow",
+    "very_slow": "very slow",
+}
+
+
+def speed_step_name(step: str) -> str:
+    """Return the teacher-facing name of a measured *step*."""
+    return SPEED_STEP_NAMES.get(step, step)
+
+
+def speed_band_name(band: str) -> str:
+    """Return the teacher-facing name of a speed *band*."""
+    return SPEED_BAND_NAMES.get(band, band)
+
+
+def format_duration(seconds: float) -> str:
+    """Return a span of *seconds* the way a teacher reads it: ``"40 s"``, ``"7 min"``, ``"2 h"``.
+
+    Rounded to whole seconds below a minute and to whole minutes above it: an estimate that
+    claims a second of precision would be a lie.
+    """
+    total = max(0, round(seconds))
+    if total < 60:
+        return f"{total} s"
+    if total < 3600:
+        return f"{round(total / 60)} min"
+    return _hours_text(total)
+
+
+def _hours_text(seconds: float) -> str:
+    """Return whole *seconds* as hours and minutes: ``"1 h 30 min"``, ``"3 h"``."""
+    hours, rest = divmod(round(seconds / 60), 60)
+    return f"{hours} h {rest} min" if rest else f"{hours} h"
+
+
+def format_span(low_s: float, high_s: float) -> str:
+    """Return a range of seconds as one phrase, both ends in the same unit.
+
+    The unit comes from the high end, so the two ends can be compared at a glance: ``(20, 30)``
+    gives ``"20-30 s"``, ``(420, 720)`` gives ``"7-12 min"`` and ``(5400, 10800)`` gives
+    ``"1 h 30 min - 3 h"``.  Seconds are kept up to two minutes, because a low end of 25 s would
+    otherwise round to ``"0 min"``.
+    """
+    low, high = max(0, round(low_s)), max(0, round(high_s))
+    if low == high:
+        return format_duration(low)
+    if high < 120:
+        return f"{low}-{high} s"
+    if high < 3600:
+        return f"{round(low / 60)}-{round(high / 60)} min"
+    return f"{_hours_text(low)} - {_hours_text(high)}"
+
+
+def speed_per_page(low_s: float, high_s: float) -> str:
+    """Return the per-page figure of one step, e.g. ``"about 20-30 s per page"``."""
+    return SPEED_PER_PAGE.format(span=format_span(low_s, high_s))
+
+
+def speed_measured_note(low_s: float, high_s: float) -> str:
+    """Return the tooltip note of a model whose speed was measured on this computer."""
+    return SPEED_MEASURED_NOTE.format(span=format_span(low_s, high_s))
+
+
+def speed_expected_label(band: str) -> str:
+    """Return the compact label of a model whose speed was not measured here."""
+    return SPEED_EXPECTED_LABEL.format(band=speed_band_name(band))
+
+
+def speed_expected_note(band: str) -> str:
+    """Return the tooltip line behind that label."""
+    return SPEED_EXPECTED_NOTE.format(band=speed_band_name(band))
+
+
+def speed_class_set(files: int, low_s: float, high_s: float) -> str:
+    """Return the example line for a class set of *files* two-page essays."""
+    return SPEED_CLASS_SET.format(files=files, span=format_span(low_s, high_s))
+
+
+def speed_measured_at(stamp: str, *, on_battery: bool | None) -> str:
+    """Return the date line under the rows, or ``""`` when nothing was measured.
+
+    *stamp* is the stored ``YYYY-MM-DD HH:MM`` stamp; only its date is shown, because the
+    figure is a property of the machine, not of the minute it was taken.
+    """
+    if not stamp:
+        return ""
+    power = SPEED_ON_BATTERY if on_battery else SPEED_ON_MAINS
+    return SPEED_MEASURED_AT.format(date=stamp[:10], power=power)
+
+
+def speed_from_runs(count: int, *, pages: bool) -> str:
+    """Return the line that says the figures come from real runs, or ``""`` without any.
+
+    *pages* says the count is pages rather than documents: a run that proofread nothing
+    measured only text recognition, which happens once per page.
+    """
+    if count <= 0:
+        return ""
+    unit = "page" if pages else "document"
+    if count == 1:
+        return SPEED_FROM_RUNS_ONE.format(unit=unit)
+    return SPEED_FROM_RUNS.format(count=count, unit=unit + "s")
+
+
+def speed_card_not_used(model: str, card: str) -> str:
+    """Return the warning that Ollama ran *model* on the processor although *card* was found."""
+    return SPEED_CARD_NOT_USED.format(model=model, card=card, where=WHERE_AI_MODELS)
+
+
+def speed_swaps(load_s: float) -> str:
+    """Return the warning that the models evict each other, with *load_s* seconds per file."""
+    return SPEED_SWAPS.format(load=format_duration(load_s))
+
+
+def speed_out_of_date(stamp: str) -> str:
+    """Return the warning that a measurement from *stamp* no longer fits this machine."""
+    return SPEED_OUT_OF_DATE.format(date=stamp[:10])
+
+
+def speed_remote(host: str) -> str:
+    """Return the note that the test ran on the server at *host*."""
+    return SPEED_REMOTE.format(host=host)
+
+
+def speed_test_failed(reason: str) -> str:
+    """Return the line shown when the test could not run at all."""
+    return SPEED_TEST_FAILED.format(reason=reason)
+
+
 # ── Hiding personal information in the previews ───────────────────────────────
 
 HIDE_PERSONAL_INFO_CHECKBOX = "Hide personal information in the texts shown in this app"

@@ -10,7 +10,7 @@ import os
 from pathlib import Path
 import shutil
 import sys
-from typing import TYPE_CHECKING, Any, ClassVar, NamedTuple, Protocol
+from typing import TYPE_CHECKING, Any, ClassVar, NamedTuple, Protocol, cast
 
 from PySide6.QtCore import QEvent, QObject, QSettings, Qt, QThread, QTimer, Signal
 from PySide6.QtGui import QAction, QDragEnterEvent, QDropEvent, QIcon, QKeySequence, QPixmap
@@ -62,6 +62,7 @@ from ..config import (
 from ..domain.data_location import LOCAL_OCR_ENGINES, DataFlow
 from ..domain.model_catalog import HardwareDetection
 from ..domain.ollama_discovery import DiscoveredServer, DiscoveryScope, ServerKind
+from ..domain.performance_estimate import TimeRange
 from ..domain.run_summary import RunSummary
 from ..domain.stages import PROGRESS_STAGE_OCR, PROGRESS_STAGE_PREPROCESSING
 from ..infrastructure.reporting import BATTERY_WARNING, KeepAwakeState
@@ -99,7 +100,7 @@ from ._privacy_settings import (
 )
 from ._readiness_line import ReadinessLine, readiness
 from ._results_table import ResultsTable
-from ._run_status import RunTone, describe_run
+from ._run_status import RunPace, RunTone, describe_run, time_left_note, time_left_tooltip
 from ._stats_widget import SystemStatsWidget
 from ._system_monitor import SystemMonitorWindow
 from ._types import FileDoneEvent, PreprocessInfo
@@ -425,6 +426,11 @@ class MainWindow(QMainWindow):
         self._progress_base = "Idle"
         #: Set once the teacher agreed to stop the run and close (File → Quit asks itself).
         self._close_confirmed = False
+        #: How fast the current run is going and how much of it is left (see ``RunPace``).
+        self._pace = RunPace()
+        #: Pages of the files of the current run, by source id; filled in the background.
+        self._run_pages: dict[str, int] = {}
+        self._pages_task = LatestTask(self)
         #: Under the progress bar; built in ``_build_left_panel``.
         self._awake_note: QLabel
         self._battery_note: QLabel
@@ -1482,6 +1488,7 @@ class MainWindow(QMainWindow):
         self._result_correction_times = []
         self._progress.setRange(0, len(selected_source_ids) * self._steps_per_file)
         self._progress.setValue(0)
+        self._start_pace(config, selected_source_ids)
         self._set_progress_text(f"Selected {len(selected_source_ids)} file(s) — Starting…")
         self._tabs.setCurrentIndex(0)
 
@@ -1504,6 +1511,45 @@ class MainWindow(QMainWindow):
         self._awake_note.setVisible(False)
         self._battery_note.setVisible(False)
         self._worker.start()
+
+    def _start_pace(self, config: Config, selected_source_ids: list[str]) -> None:
+        """Start the time-left figure: the estimate from the store, then the page counts.
+
+        The estimate is for *config*, the configuration this run really starts with (after a
+        right-click on a single step has switched the others off), not for the panel's ticks.
+
+        The estimate is read from the store on this thread (a small file); the page counts open
+        PDFs, so they are counted in the background and the figure is redrawn when they arrive.
+        """
+        self._pace = RunPace(self._estimate_per_page(config))
+        self._pace.set_files(len(selected_source_ids))
+        self._run_pages = {}
+        files = [
+            self._queued_files_by_source_id[source_id]
+            for source_id in selected_source_ids
+            if source_id in self._queued_files_by_source_id
+        ]
+        if not files:
+            return
+        service = self._app_service
+        self._pages_task.submit(lambda: service.page_counts(files), self._on_pages_known)
+
+    def _estimate_per_page(self, config: Config) -> TimeRange | None:
+        """Return how long one page takes on this computer, or ``None`` when nothing is known."""
+        try:
+            choices = self._app_service.speed_choices_for_run(config)
+            return self._app_service.speed_summary(choices).per_page
+        except Exception:  # noqa: BLE001  # an estimate must never keep a run from starting
+            return None
+
+    def _on_pages_known(self, result: object, error: BaseException | None) -> None:
+        """Take the page counts of the run's files and redraw the time left."""
+        if error is not None or not isinstance(result, dict):
+            return
+        pages = cast("dict[str, int]", result)
+        self._run_pages = pages
+        self._pace.set_pages(sum(pages.values()))
+        self._set_progress_text(self._progress_base)
 
     def _on_stage_run_requested(self, selected_source_ids: list[str], stage: str) -> None:
         """Check the requirements, then invalidate cache from *stage* onward and run rows."""
@@ -1873,7 +1919,20 @@ class MainWindow(QMainWindow):
         if self._stop_stage is _StopStage.NOW:
             return
         suffix = STOPPING_SUFFIX if self._stop_stage is _StopStage.AFTER_FILE else ""
-        self._progress.setFormat(text + suffix)
+        self._progress.setFormat(text + self._time_left_suffix() + suffix)
+
+    def _time_left_suffix(self) -> str:
+        """Return the note about the time left, and put its range in the bar's tooltip.
+
+        One figure in the bar, the range behind it: a range in the bar itself would not fit,
+        and the teacher who wants to know how sure the figure is can hover over it.
+        """
+        left = self._pace.time_left()
+        if left is None:
+            self._progress.setToolTip("")
+            return ""
+        self._progress.setToolTip(time_left_tooltip(left.low_s, left.high_s))
+        return " · " + time_left_note(left.typical_s)
 
     def _on_keep_awake(self, state: KeepAwakeState) -> None:
         """Say under the progress bar whether the computer is kept awake, and warn on battery."""
@@ -1932,7 +1991,9 @@ class MainWindow(QMainWindow):
         self._result_names.append(name)
         self._result_ocr_times.append(ocr_s)
         self._result_correction_times.append(correction_s)
+        self._pace.file_done(event.total_s, self._run_pages.get(source_id, 1))
         self._progress.setValue(len(self._result_names) * self._steps_per_file)
+        self._set_progress_text(self._progress_base)
         self._chart.update_data(
             self._result_names,
             self._result_ocr_times,
@@ -2208,6 +2269,8 @@ class MainWindow(QMainWindow):
             self._progress.setValue(self._progress.maximum())
         self._progress_base = text.progress
         self._progress.setFormat(text.progress)
+        self._progress.setToolTip("")
+        self._pace = RunPace()
         if self._result_names:
             self._tabs.setCurrentIndex(0)
         icon = (

@@ -22,6 +22,7 @@ from PySide6.QtGui import QColor
 from PySide6.QtWidgets import QComboBox, QHBoxLayout, QLabel, QPushButton, QWidget
 
 from ..domain.model_catalog import (
+    HardwareDetection,
     HardwareProfile,
     ModelCategory,
     ModelRating,
@@ -30,6 +31,7 @@ from ..domain.model_catalog import (
     normalize_tag,
     suitability_rank,
 )
+from ..domain.performance_estimate import TimeRange
 from . import _user_text as txt
 from ._hardware_profile_selector import HardwareProfileSelector
 from ._model_item_delegate import (
@@ -95,6 +97,15 @@ class _GuidanceService(Protocol):
         card_gb: float | None = None,
     ) -> list[ModelRating]: ...
 
+    def speed_page_times(
+        self,
+        tags: Sequence[str],
+        category: ModelCategory,
+        ollama_url: str,
+        *,
+        hardware: HardwareDetection | None = None,
+    ) -> dict[str, TimeRange]: ...
+
 
 class OllamaModelGuidance(QWidget):
     """Hint line + "Use best choice" button for an Ollama model combo."""
@@ -120,6 +131,7 @@ class OllamaModelGuidance(QWidget):
         self._models: list[str] = []
         self._installed: dict[str, str] = {}  # normalised tag -> spelling as listed
         self._ratings: dict[str, ModelRating] = {}
+        self._page_times: dict[str, TimeRange] = {}
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -156,6 +168,9 @@ class OllamaModelGuidance(QWidget):
         self._models = list(models)
         self._installed = {normalize_tag(tag): tag for tag in self._models}
         self._rate(self._models)
+        self._page_times = self._service.speed_page_times(
+            self._models, self._category, self._ollama_url, hardware=self._selector.resolved()
+        )
         previous = self._combo.currentText()
         ordered = sorted(self._models, key=self._sort_key)
         groups: list[list[ModelItem]] = [[], [], []]
@@ -248,11 +263,18 @@ class OllamaModelGuidance(QWidget):
         )
         if rating.memory_gb is not None:
             label = f"{label} · {memory_text(rating.memory_gb)}"
+        if rating.speed is not None:
+            label = f"{label} · {txt.speed_expected_label(rating.speed)}"
         self._combo.setItemData(index, label, ITEM_LABEL_ROLE)
         self._combo.setItemData(index, label_color, ITEM_LABEL_COLOR_ROLE)
         note = f"\n{rating.note}" if rating.note else ""
         if rating.structured_output:
             note = f"{note}\n{txt.EXPLANATIONS_SUPPORTED_TOOLTIP}"
+        measured = self._page_times.get(tag)
+        if measured is not None:
+            note = f"{note}\n{txt.speed_measured_note(measured.low_s, measured.high_s)}"
+        elif rating.speed is not None:
+            note = f"{note}\n{txt.speed_expected_note(rating.speed)}"
         self._combo.setItemData(
             index,
             f"{suitability_text(rating.suitability, self._category, very_slow=rating.very_slow)}{note}",

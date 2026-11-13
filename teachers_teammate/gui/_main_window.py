@@ -1036,7 +1036,11 @@ class MainWindow(QMainWindow):
         if error is not None or not isinstance(detection, HardwareDetection):
             return
         settings = self._config_panel.get_settings_dict()
-        best = self._app_service.first_run_model_settings(detection.profile)
+        best = self._app_service.first_run_model_settings(
+            detection.profile,
+            system_memory_gb=detection.system_memory_gb,
+            card_gb=detection.card_gb,
+        )
         apply: dict[str, str] = {}
         if (
             settings.get("ocr_engine") == "ollama"

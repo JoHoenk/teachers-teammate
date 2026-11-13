@@ -197,6 +197,30 @@ def test_native_ollama_corrector_default_temperature(mocker) -> None:
     assert mock_chat.call_args.kwargs["options"]["temperature"] == 0.7
 
 
+def test_native_ollama_corrector_sends_the_think_value_of_its_profile(mocker) -> None:
+    """
+    Given  a NativeOllamaCorrector whose request profile asks for the reasoning level "low"
+    When   correct() is called
+    Then   OllamaClient.chat receives think="low"; with the default profile, think=False
+    """
+    from teachers_teammate.domain.model_catalog import RequestProfile  # noqa: PLC0415
+    from teachers_teammate.infrastructure.ollama_utils import OllamaClient  # noqa: PLC0415
+
+    mock_chat = mocker.patch.object(OllamaClient, "chat", return_value="ok")
+    low = NativeOllamaCorrector(
+        model="m",
+        client=_ollama_client(),
+        settings=_TEXT_ONLY,
+        profile=RequestProfile(think="low"),
+    )
+    plain = NativeOllamaCorrector(model="m", client=_ollama_client(), settings=_TEXT_ONLY)
+
+    low.correct("text", "English")
+    assert mock_chat.call_args.kwargs["think"] == "low"
+    plain.correct("text", "English")
+    assert mock_chat.call_args.kwargs["think"] is False
+
+
 # ── Markdown notation hint ─────────────────────────────────────────────────
 
 

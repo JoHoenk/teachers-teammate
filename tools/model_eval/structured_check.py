@@ -639,6 +639,7 @@ class StructuredOutputCheck:
 
     def _ask(self, tag: str, sent: Sent, timeout: float | None = None) -> Sent:
         """Send *sent* once and return what came back, unjudged."""
+        from teachers_teammate.domain.model_catalog import request_profile  # noqa: PLC0415
         from teachers_teammate.exceptions import (  # noqa: PLC0415
             OCRDeadlineError,
             OCRError,
@@ -661,6 +662,7 @@ class StructuredOutputCheck:
                 user,
                 system=system,
                 options=proofreading_options(sent.temperature, sent.num_ctx),
+                think=request_profile(tag).think,
                 timeout=self._timeout if timeout is None else timeout,
                 format=schema_json(),
                 total_timeout=deadline,

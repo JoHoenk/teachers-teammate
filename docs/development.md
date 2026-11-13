@@ -375,6 +375,17 @@ bazel run //tools:verify_model_catalog -- fit --server rx9070xt \
     --gpu-token-file ~/.config/gpu_agent.token --tag gemma4:e4b --tag qwen3:4b
 ```
 
+The request is a copy of a short German text (about 170 tokens), long enough to read the model's
+speed from: every record stores the answer tokens and the generation time (`tokens_per_second`), and
+the report shows the speed next to Ollama's own split between card and processor
+(`ollama_card_share`, the share the app's full-speed rule is about), so the rating's share
+thresholds can be checked against measured speeds.
+
+`--cpu-only` sends `num_gpu` 0 and measures at 8,192 tokens only: the speed of the processor, for
+the tier that has no card. It needs a label of its own (the tool refuses to mix the two kinds), and
+the size lookups (`latest`, `size_for_decision`, `catalog_lines`) skip such records, because the
+card's share is missing from their need.
+
 `--server` is a short label for the machine; what it stands for is written once in the folder's
 README, because Ollama's API cannot report it. A step already stored for the same build and version
 is skipped (`--again` measures it again). The ladder stops for a tag when Ollama loaded a smaller
@@ -448,7 +459,7 @@ measured where possible (`docs/development.md`, *Choosing writing models*).
 | --- | --- |
 | Card budget | `CARD_USABLE_SHARE` (85 %) of the card's memory; Apple Silicon 66 % of the unified memory (`HardwareDetection.card_gb`); none without a card |
 | Reserve | the larger of `SYSTEM_RESERVE_MIN_GB` (8 GB) and `SYSTEM_RESERVE_SHARE` (20 %) of the total main memory; swapping to disk is never counted as memory |
-| Works (`WORKS`) | at least `FULL_SPEED_SHARE` (0.9) of the model fits the card; without a card, up to `CPU_COMFORT_GB` (4 GB) |
+| Works (`WORKS`) | at least `FULL_SPEED_SHARE` (0.9) of the model fits the card; without a card, up to `CPU_COMFORT_GB` (5 GB: a page in under five minutes on an ordinary processor, measured with `fit --cpu-only`) |
 | Slow (`SLOW`) | the part that does not fit (the *spill*) fits in main memory beyond the reserve; `ModelRating.very_slow` when under `SLOWER_SHARE` (0.7) of the model fits the card, or there is no card |
 | Does not fit (`TOO_LARGE`) | the spill does not fit; also whenever the main memory is unknown (a remote server) and the model is not within the card |
 | Recommended (`BEST` / `GOOD`) | the tier's list, but never for a model that does not fit the computer's known memory |

@@ -10,6 +10,7 @@ from tests.tools.store_workspace import (
     COMMITTED,
     MACHINE,
     MODEL,
+    as_online_run,
     export,
     one,
     workspace,
@@ -161,3 +162,21 @@ def test_the_index_mean_leaves_french_out_like_the_report(tmp_path, monkeypatch)
     )
 
     assert index.summarise_run(written.path).mean_f_beta == 1.0
+
+
+def test_the_index_shows_the_provider_where_a_run_has_no_machine(tmp_path):
+    """
+    Given  an exported run of an online provider, which ran on no machine of ours
+    When   the index is generated
+    Then   its machine column names the provider, and the run on Ollama still names its machine
+    """
+    space = workspace(tmp_path)
+    one(space)
+    as_online_run(space)
+    online = one(space, machine=None)
+
+    text = index.index_markdown(space.out)
+
+    online_line = next(line for line in text.splitlines() if online.run_id in line)
+    assert "| openai |" in online_line
+    assert any(MACHINE in line for line in text.splitlines() if MACHINE in line)

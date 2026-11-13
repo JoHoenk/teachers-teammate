@@ -114,7 +114,7 @@ The best models per computer type:
 
 | Your computer | Best reading model | Best writing model |
 |---|---|---|
-| Basic computer or small graphics card (under 8 GB) | `glm-ocr:q8_0` | `qwen3:4b` |
+| Basic computer or small graphics card (under 8 GB) | `glm-ocr:q8_0` | `gemma4:e4b` (`qwen3:4b` on a computer with less than about 13 GB of main memory) |
 | Graphics card with about 8 GB memory | `hf.co/prithivMLmods/chandra-ocr-2-GGUF:Q8_0` | `gemma4:e4b` |
 | Graphics card with 16 GB memory or more | `hf.co/prithivMLmods/chandra-ocr-2-GGUF:Q8_0` | `gemma4:12b` |
 

@@ -16,6 +16,7 @@ from tests.tools.store_workspace import (
     MODEL,
     TESTSET,
     append_session,
+    as_online_run,
     entry,
     export,
     first_item_as,
@@ -537,3 +538,79 @@ def test_a_text_that_fell_back_as_a_whole_exports_as_a_fallback(tmp_path):
 
     assert run_format.read_run(path).records[0]["outcome"]["warning_code"] == "fallback"
     assert validation.validate_run(path) == []
+
+
+def test_a_run_of_an_online_provider_is_exported_without_a_machine(tmp_path):
+    """
+    Given  a local run whose header names an online provider, on no machine and no Ollama server
+    When   it is exported without a machine
+    Then   the committed header names the provider, has no machine and no server version, the id
+           carries the provider where the machine would be, and the run passes format mode
+    """
+    space = workspace(tmp_path)
+    as_online_run(space)
+
+    written = one(space, machine=None)
+
+    header = run_format.read_run(written.path).header
+    assert (header["provider"], header["machine"], header["ollama_version"]) == (
+        "openai",
+        None,
+        None,
+    )
+    assert header["run_id"].startswith("2026-11-09_openai_")
+    assert validation.validate_run(written.path) == []
+
+
+def test_a_run_on_ollama_is_not_exported_without_a_machine(tmp_path):
+    """
+    Given  a local run on Ollama
+    When   it is exported without naming the machine
+    Then   the export is refused before anything is written, because its speed and memory depend
+           on the machine
+    """
+    space = workspace(tmp_path)
+
+    with pytest.raises(ValueError, match="needs --machine"):
+        export(space, machine=None)
+
+    assert not (space.out / "runs").exists()
+
+
+def test_an_aborted_run_on_ollama_does_not_block_an_online_export(tmp_path):
+    """
+    Given  a cache with a run of an online provider and an aborted run on Ollama that has no rows
+    When   it is exported without a machine
+    Then   the online run is written, because the aborted run is skipped and needs no machine
+    """
+    space = workspace(tmp_path)
+    as_online_run(space)
+    (space.cache / "aborted.jsonl").write_text("", encoding="utf-8")
+    (space.cache / "aborted.header.json").write_text(json.dumps([session()]), encoding="utf-8")
+
+    written = export(space, machine=None)
+
+    assert [run.path.exists() for run in written] == [True]
+
+
+def test_a_run_with_rows_on_ollama_names_itself_when_the_machine_is_missing(tmp_path):
+    """
+    Given  a cache with a run on Ollama that has rows
+    When   it is exported without a machine
+    Then   the refusal names the run file, and nothing is written
+    """
+    space = workspace(tmp_path)
+
+    with pytest.raises(ValueError, match=r"run\.jsonl: a run on Ollama needs --machine"):
+        export(space, machine=None)
+
+
+def test_the_header_of_an_ollama_run_names_the_provider(tmp_path):
+    """
+    Given  a local run made before the provider was recorded, and the run it exports to
+    When   the committed header is read
+    Then   the provider is Ollama, the only one the tools could run until then
+    """
+    written = one(workspace(tmp_path))
+
+    assert run_format.read_run(written.path).header["provider"] == "ollama"

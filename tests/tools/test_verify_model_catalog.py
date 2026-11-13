@@ -32,7 +32,7 @@ from tools.model_eval.model_fit import (
     spilled,
 )
 
-CATALOG_TAG = "qwen3:4b"
+CATALOG_TAG = "gemma4:e4b"
 """A writing model of the catalog, so a ``--tag`` list can mix it with a candidate."""
 
 CANDIDATE = "invented:1b"
@@ -95,6 +95,7 @@ class _ScriptedChat:
         *,
         system: str = "",
         options: dict | None = None,
+        think: bool | str = False,
         timeout: float = 120.0,
         format: dict | str | None = None,  # pylint: disable=redefined-builtin
         total_timeout: float | None = None,
@@ -491,16 +492,21 @@ class _FitClient:
         self.failing = failing
         self.probe = probe
         self.asked: list[str] = []
+        self.options: list[dict] = []
 
     def chat_with_stats(self, model: str, prompt: str, *, options=None, **kwargs):
         """Record the request, then fail or answer with the statistics of a load."""
         self.asked.append(model)
+        self.options.append(dict(options or {}))
         self.probe.tag = model
         self.probe.asked.append(int((options or {}).get("num_ctx", BASE_NUM_CTX)))
         if model in self.failing:
             raise OCRError("model not pulled")
         return "Der Hund läuft schnell nach Hause.", ChatStats(
-            done_reason="stop", load_duration=4_200_000_000
+            done_reason="stop",
+            load_duration=4_200_000_000,
+            eval_count=170,
+            eval_duration=2_000_000_000,
         )
 
 
@@ -621,8 +627,54 @@ def test_measuring_a_model_stores_one_record_per_window(
     assert records[0].card.agent_sha256 == "deadbeef"
     assert records[0].ram.min_available_bytes == int(28.5 * GB)
     assert records[0].ram.total_bytes == 33285996544
+    assert (records[0].answer_tokens, records[0].generation_seconds) == (170, 2.0)
     assert agent.settles == 3
     assert "needs" in out
+    assert "85.0 tokens/s" in out
+
+
+def test_a_cpu_only_run_asks_for_no_gpu_at_one_window(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    """
+    Given  a scripted server and agent
+    When   ``fit --cpu-only`` measures one model under its own label
+    Then   one request is sent, with ``num_gpu`` 0, at 8,192 tokens only, the record keeps that
+           option, and the output says CPU only and names the speed
+    """
+    client, _probe = _fit(monkeypatch, agent=_FakeAgent(increase_gb=0.0))
+    store = tmp_path / "sizes.jsonl"
+
+    code, out = _run(
+        capsys, *_fit_args(store, "--cpu-only", "--server", "rx9070xt-cpu", "--tag", CANDIDATE)
+    )
+
+    assert code == 0
+    records = FitStore(store).records()
+    assert [record.num_ctx for record in records] == [BASE_NUM_CTX]
+    assert records[0].options["num_gpu"] == 0
+    assert client.options[0]["num_gpu"] == 0
+    assert "CPU only" in out
+    assert "85.0 tokens/s" in out
+
+
+def test_a_cpu_only_label_is_never_mixed_with_size_measurements(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    """
+    Given  a store whose label already holds a normal size measurement
+    When   ``fit --cpu-only`` is asked to measure under the same label
+    Then   it refuses before any request and names a label to use instead
+    """
+    client, _probe = _fit(monkeypatch, agent=_FakeAgent())
+    store = tmp_path / "sizes.jsonl"
+    FitStore(store).append(_fit_record())
+
+    code, out = _run(capsys, *_fit_args(store, "--cpu-only", "--tag", CANDIDATE))
+
+    assert code == 2
+    assert "rx9070xt-cpu" in out
+    assert client.asked == []
 
 
 def test_a_failed_request_still_closes_the_agents_window(
@@ -890,6 +942,8 @@ def _fit_record(
         tag=tag,
         digest=DIGEST,
         num_ctx=num_ctx,
+        answer_tokens=170,
+        generation_seconds=2.0,
         options={"temperature": 1.0, "num_ctx": num_ctx},
         load_seconds=4.2,
         ollama=OllamaReading(

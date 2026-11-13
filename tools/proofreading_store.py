@@ -408,7 +408,8 @@ def _group_line(group: grouping.RunGroup) -> str:
     profile = ", ".join(f"{name} {value}" for name, value in key.request_profile) or "default"
     repeats = ", ".join(str(number) for number in group.repeats)
     return (
-        f"`{key.model}` {key.digest[:12]}, {key.testset}, {key.machine}, {key.mode.value}, "
+        f"`{key.model}` {key.digest[:12]}, {key.testset}, {key.provider}"
+        f"{f' on {key.machine}' if key.machine else ''}, {key.mode.value}, "
         f"temperature {key.temperature:g}, window {key.num_ctx}, profile {profile}, "
         f"eval v{key.eval_version}, repeats {repeats}"
     )
@@ -588,7 +589,9 @@ def _gate_commands(sub) -> None:
             "vendor's recommendation, else the app's 0.2)",
         )
         target.add_argument(
-            "--machine", help="the machine of the runs (default: the newest run of --model)"
+            "--machine",
+            help="the machine of the runs, or the provider of an online service, as the index "
+            "shows it (default: the newest run of --model)",
         )
         target.add_argument(
             "--testset", help="the test set of the runs (default: the newest run of --model)"
@@ -660,7 +663,12 @@ def build_parser():
     exporter.add_argument("--cache", required=True, help="the local results directory")
     exporter.add_argument("--testset", required=True, help="the test-set id, e.g. gec-2026-12")
     exporter.add_argument("--manifest", required=True, help="the manifest of that test set")
-    exporter.add_argument("--machine", required=True, help="id of the machine file `machines/`")
+    exporter.add_argument(
+        "--machine",
+        default=None,
+        help="id of the machine file in `machines/`; required for runs on Ollama, left out for "
+        "runs of an online provider",
+    )
     exporter.add_argument(
         "--out",
         default="evaluations/proofreading",

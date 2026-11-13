@@ -3667,3 +3667,16 @@ def test_the_data_flow_has_no_recognition_step_while_it_is_off_but_the_steps_vie
 
     assert svc.describe_data_flow(cfg).stage(STAGE_OCR) is None
     assert svc.describe_steps(cfg).stage(STAGE_OCR) is not None
+
+
+@pytest.mark.use_case("Recommended_Models_On_First_Start")
+def test_first_run_model_settings_respect_the_main_memory() -> None:
+    """
+    Given  a computer without a graphics card and 12 GB of main memory
+    When   first_run_model_settings is called with those figures
+    Then   the writing steps get qwen3:4b, the model that fits, not gemma4:e4b
+    """
+    svc = _make_svc()
+    settings = svc.first_run_model_settings("cpu", system_memory_gb=12.0)
+    assert settings["correction_model"] == "qwen3:4b"
+    assert settings["evaluate_model"] == "qwen3:4b"

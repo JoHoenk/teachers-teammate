@@ -24,7 +24,7 @@ from . import protocol
 from . import testset as testset_module
 from .answer_mode import AnswerMode
 from .gleu import ORDER, SOURCE_PREFIX
-from .layout import RUNS_DIR, manifest_for
+from .layout import OLLAMA, RUNS_DIR, manifest_for, provider_names
 from .redaction import MAX_EXPLANATION_CHARS, Redactor, forbidden_runs, sha256_text, word_count
 from .run_format import (
     HEADER_KEYS,
@@ -145,9 +145,10 @@ def _check_header(  # noqa: PLR0912, PLR0915  # one branch per required field of
         problems.append(f"{path.name}: type is {header['type']!r}, not {RUN_TYPE!r}")
     if not isinstance(header["run_id"], str) or header["run_id"] != path.stem:
         problems.append(f"{path.name}: the header names the run {header['run_id']!r}")
-    for key in ("testset", "machine", "ollama_version", "model", "date"):
+    for key in ("testset", "model", "date"):
         if not isinstance(header[key], str) or not header[key]:
             problems.append(f"{path.name}: {key} is not a non-empty string")
+    problems.extend(_check_provider(path, header))
     if header["mode"] not in _MODE_VALUES:
         problems.append(
             f"{path.name}: mode is {header['mode']!r}, not one of {sorted(_MODE_VALUES)}"
@@ -195,6 +196,27 @@ def _check_header(  # noqa: PLR0912, PLR0915  # one branch per required field of
     if sampler is not None and not isinstance(sampler, dict):
         problems.append(f"{path.name}: gpu_sampler is neither null nor an object")
     return problems
+
+
+def _check_provider(path: Path, header: dict) -> list[str]:
+    """Return what is wrong with the provider of a header and the facts that depend on it.
+
+    The provider is one the app can talk to.  A run on Ollama names the machine and the Ollama
+    version, because the speed and the memory of a model depend on both.  A run of another
+    provider ran on none of ours, so it names neither: ``null``, not a placeholder that would
+    look like a machine.
+    """
+    provider = header["provider"]
+    if not isinstance(provider, str) or provider not in provider_names():
+        return [f"{path.name}: provider is {provider!r}, not one of {', '.join(provider_names())}"]
+    found: list[str] = []
+    for key in ("machine", "ollama_version"):
+        value = header[key]
+        if provider == OLLAMA and (not isinstance(value, str) or not value):
+            found.append(f"{path.name}: {key} is not a non-empty string (the run is on Ollama)")
+        if provider != OLLAMA and value is not None:
+            found.append(f"{path.name}: {key} is not null (the run is of provider {provider!r})")
+    return found
 
 
 def _check_profile(path: Path, profile: Any) -> list[str]:

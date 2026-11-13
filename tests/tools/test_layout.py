@@ -101,6 +101,8 @@ def test_every_committed_run_has_its_machine_file():
         pytest.skip("no committed run yet")
     for path in layout.run_files(COMMITTED):
         machine = run_format.read_run(path).header["machine"]
+        if machine is None:  # a run of an online provider ran on no machine of ours
+            continue
         assert layout.machine_path(COMMITTED, machine).exists(), machine
 
 
@@ -149,3 +151,66 @@ def test_every_committed_machine_file_reads():
     assert paths, f"no machine file below {COMMITTED / layout.MACHINES_DIR}"
     for path in paths:
         assert layout.read_machine(path).id == path.stem
+
+
+def _id(**changes) -> str:
+    """Return a run id from invented facts, with *changes* applied."""
+    facts = {
+        "date": "2026-12-01T10:00:00",
+        "machine": "rx9070xt-server",
+        "model": "gemma4:e4b",
+        "model_info": {"digest": "sha256:0123456789abcdef"},
+        "mode": "review",
+        "temperature": 0.2,
+        "repeat": 1,
+    }
+    facts.update(changes)
+    return layout.run_id(**facts)
+
+
+def test_the_id_of_an_ollama_run_names_its_machine():
+    """
+    Given  the facts of a run on Ollama
+    When   its id is made, with the provider named and without
+    Then   both give the id the scheme always had: date, machine, model, digest, mode, T, repeat
+    """
+    expected = "2026-12-01_rx9070xt-server_gemma4-e4b_01234567_review_T0.2_r1"
+
+    assert _id() == expected
+    assert _id(provider="ollama") == expected
+
+
+def test_the_id_of_an_online_run_names_its_provider_in_the_place_of_the_machine():
+    """
+    Given  the facts of a run of an online provider, which ran on no machine of ours
+    When   its id is made
+    Then   the provider takes the machine's place, so two providers of one model name differ
+    """
+    first = _id(machine=None, provider="openai", model_info={})
+    second = _id(machine=None, provider="anthropic", model_info={})
+
+    assert first == "2026-12-01_openai_gemma4-e4b_unknown_review_T0.2_r1"
+    assert second != first
+
+
+def test_the_id_of_an_ollama_run_needs_its_machine():
+    """
+    Given  a run on Ollama without a machine
+    When   its id is made
+    Then   it is refused, because a speed without a machine cannot be compared
+    """
+    with pytest.raises(ValueError, match="names the machine"):
+        _id(machine=None)
+
+
+def test_the_providers_a_run_may_name_are_the_ones_the_app_talks_to():
+    """
+    Given  the provider modules of the app
+    When   the names a run may carry are listed
+    Then   Ollama and the online providers are in it, and nothing that is no provider
+    """
+    names = layout.provider_names()
+
+    assert layout.OLLAMA in names
+    assert {"openai", "anthropic"} <= set(names)
+    assert not any(name.startswith("_") for name in names)

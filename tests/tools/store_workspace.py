@@ -98,6 +98,7 @@ def session(  # noqa: PLR0913  # one keyword per field of a header, as the heade
     return {
         "date": date,
         "tool_revision": tool_revision,
+        "provider": "ollama",
         "machine": MACHINE,
         "ollama_version": "0.40.13",
         "model": model,
@@ -229,7 +230,7 @@ def export(space: Workspace, **kwargs) -> list[ExportedRun]:
         testset=kwargs.pop("testset", TESTSET),
         manifest=space.manifest,
         corpora=space.corpora,
-        machine=MACHINE,
+        machine=kwargs.pop("machine", MACHINE),
         out=space.out,
         **kwargs,
     )
@@ -240,6 +241,18 @@ def one(space: Workspace, **kwargs) -> ExportedRun:
     written = export(space, **kwargs)
     assert len(written) == 1, written
     return written[0]
+
+
+def as_online_run(space: Workspace, provider: str = "openai") -> None:
+    """Rewrite the local header of the workspace's run as one of an online *provider*.
+
+    Such a run ran on no machine of ours and on no Ollama server, so both are ``null``.
+    """
+    path = space.cache / "run.header.json"
+    sessions = json.loads(path.read_text(encoding="utf-8"))
+    for entry_ in sessions:
+        entry_.update(provider=provider, machine=None, ollama_version=None)
+    path.write_text(json.dumps(sessions), encoding="utf-8")
 
 
 def source_of(space: Workspace, item: str) -> str:

@@ -37,14 +37,17 @@ class GroupKey:
     """What has to agree before two runs may be read together.
 
     Everything a run was measured under, except the model itself: a group is one model on one
-    test set, at one window, with one request profile, on one machine.  The digest and the
-    profile are part of it because two digests of one tag are two models, and two profiles are two
-    requests.
+    test set, at one window, with one request profile, from one provider on one machine.  The
+    digest and the profile are part of it because two digests of one tag are two models, and two
+    profiles are two requests; the provider is, because one model name served by two providers is
+    two services, and a run of a provider that ran on no machine of ours has no digest to tell
+    them apart by.
     """
 
     testset: str
     manifest_sha256: str
     eval_version: int
+    provider: str
     machine: str
     model: str
     digest: str
@@ -62,6 +65,7 @@ class GroupKey:
             testset=meta.testset,
             manifest_sha256=meta.manifest_sha256,
             eval_version=meta.eval_version,
+            provider=meta.provider,
             machine=meta.machine,
             model=meta.model,
             digest=meta.digest,
@@ -88,6 +92,7 @@ class GroupKey:
             self.testset,
             self.manifest_sha256,
             self.eval_version,
+            self.provider,
             self.machine,
             self.mode,
             self.explainer,
@@ -98,6 +103,7 @@ class GroupKey:
         """Return a sort key, so a list of groups prints in the same order on every machine."""
         return (
             self.model,
+            self.provider,
             self.mode.value,
             self.temperature,
             self.num_ctx,

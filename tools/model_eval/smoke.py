@@ -617,6 +617,7 @@ class TextSmokeCheck:
 
     def _ask(self, tag: str, fixture: Fixture, temperature: float) -> TextAnswer:
         """Send the text-mode request for *fixture* once and return what came back."""
+        from teachers_teammate.domain.model_catalog import request_profile  # noqa: PLC0415
         from teachers_teammate.exceptions import (  # noqa: PLC0415
             OCRDeadlineError,
             OCRError,
@@ -635,6 +636,7 @@ class TextSmokeCheck:
                 user,
                 system=system,
                 options=proofreading_options(temperature, window_of(self._chat)),
+                think=request_profile(tag).think,
                 timeout=self._timeout,
                 total_timeout=self._deadline,
             )

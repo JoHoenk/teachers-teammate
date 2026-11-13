@@ -588,6 +588,7 @@ class NativeOllamaCorrector(_ReviewCorrector):
             system=system,
             timeout=self._timeout,
             temperature=self._temperature,
+            think=self._profile.think,
             fallback=raw_text,
             failure=_CORRECTION_FAILURE,
             num_ctx=self._num_ctx,
@@ -644,6 +645,7 @@ class NativeOllamaCorrector(_ReviewCorrector):
             schema=schema_json(),
             timeout=_review_timeout(self._timeout, raw_text),
             temperature=self._temperature,
+            think=self._profile.think,
             parse=validate_answer,
             num_ctx=self._num_ctx,
         )

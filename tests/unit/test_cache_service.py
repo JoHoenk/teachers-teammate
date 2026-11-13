@@ -483,6 +483,29 @@ def test_eval_config_hash_changes_with_the_recommended_temperature(tmp_path: Pat
         assert svc._eval_config_hash() != before
 
 
+def test_the_hashes_change_with_the_reasoning_level_a_model_is_asked_for(tmp_path: Path) -> None:
+    """
+    Given  gpt-oss, which the app asks for a reasoning level, and a catalogue that stops doing so
+    When   the correction and the evaluation hash are computed before and after
+    Then   both differ: pages proofread at another reasoning level are not served again
+    """
+    from teachers_teammate.domain import model_catalog  # noqa: PLC0415
+
+    svc, _, _ = _make_svc(
+        tmp_path,
+        correction_enabled=True,
+        correction_provider="ollama",
+        correction_model="gpt-oss:20b",
+        evaluation_enabled=True,
+        evaluate_provider="ollama",
+        evaluate_model="gpt-oss:20b",
+    )
+    correction, review = svc._correction_config_hash(), svc._eval_config_hash()
+    with patch.dict(model_catalog.THINK_LEVELS, {"gpt-oss": "medium"}):
+        assert svc._correction_config_hash() != correction
+        assert svc._eval_config_hash() != review
+
+
 def test_correction_config_hash_changes_with_model(tmp_path: Path) -> None:
     """
     Given  two services differing only in correction_model (regression guard)

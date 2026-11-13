@@ -148,6 +148,7 @@ def _default_build_native_ollama_evaluator(
     timeout: float,
     temperature: float,
     num_ctx: int,
+    think: bool | str = False,
 ) -> Evaluator:
     return NativeOllamaEvaluator(
         model=model,
@@ -156,6 +157,7 @@ def _default_build_native_ollama_evaluator(
         timeout=timeout,
         temperature=temperature,
         num_ctx=num_ctx,
+        think=think,
     )
 
 
@@ -258,7 +260,7 @@ class PipelineComponentFactory:
         [str, OllamaClient, str, float, float, CorrectionSettings, RequestProfile], Corrector
     ] = _default_build_native_ollama_corrector
     build_native_ollama_evaluator: Callable[
-        [str, OllamaClient, str, float, float, int], Evaluator
+        [str, OllamaClient, str, float, float, int, bool | str], Evaluator
     ] = _default_build_native_ollama_evaluator
     build_doc_creator: Callable[[str, str], DocumentCreator] = _default_build_doc_creator
     build_anonymizer: Callable[[str, AnonymizerConfig], Anonymizer] = _default_build_anonymizer
@@ -462,6 +464,7 @@ class StageBuilder:
                 float(cfg.ocr_timeout),
                 cfg.evaluate_temperature,
                 self.resolved_windows().evaluation,
+                cfg.evaluate_think,
             )
         llm = factory.build_llm(
             cfg.evaluate_provider,

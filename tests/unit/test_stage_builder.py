@@ -415,7 +415,7 @@ def test_the_resolved_window_reaches_the_evaluator(tmp_path: Path) -> None:
     builder.build_evaluation(MagicMock(), MagicMock())
 
     windows = builder.resolved_windows()
-    assert build_evaluator.call_args.args[-1] == windows.evaluation
+    assert build_evaluator.call_args.args[5] == windows.evaluation
 
 
 def test_without_hardware_the_window_stays_at_the_base_step(tmp_path: Path) -> None:
@@ -433,11 +433,17 @@ def test_without_hardware_the_window_stays_at_the_base_step(tmp_path: Path) -> N
 
 def test_an_online_provider_keeps_the_base_window(tmp_path: Path) -> None:
     """
-    Given  a correction provider that brings its own window
+    Given  a correction provider and a content-review provider that bring their own window
     When   the run windows are resolved with hardware at hand
     Then   the app still reports the base window and never pretends to set one
     """
-    config = make_config(tmp_path, correction_provider="openai", correction_model="gpt-4o")
+    config = make_config(
+        tmp_path,
+        correction_provider="openai",
+        correction_model="gpt-4o",
+        evaluate_provider="openai",
+        evaluate_model="gpt-4o",
+    )
 
     windows = StageBuilder(
         config=config,

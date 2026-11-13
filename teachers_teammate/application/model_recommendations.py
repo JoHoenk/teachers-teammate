@@ -215,15 +215,30 @@ class ModelRecommendationService:
         """Return the curated Ollama model catalog."""
         return OLLAMA_CATALOG
 
-    def best_ollama_model(self, category: ModelCategory, profile: HardwareProfile) -> str:
-        """Return the BEST Ollama model tag for *category* on *profile*."""
-        return best_model(category, profile)
+    def best_ollama_model(
+        self,
+        category: ModelCategory,
+        profile: HardwareProfile,
+        *,
+        system_memory_gb: float | None = None,
+        card_gb: float | None = None,
+    ) -> str:
+        """Return the BEST Ollama model tag for *category* on this computer."""
+        return best_model(category, profile, system_memory_gb=system_memory_gb, card_gb=card_gb)
 
-    def first_run_model_settings(self, profile: HardwareProfile) -> dict[str, str]:
-        """Return the first-start model settings (BEST picks) for *profile*."""
-        general = best_model("general", profile)
+    def first_run_model_settings(
+        self,
+        profile: HardwareProfile,
+        *,
+        system_memory_gb: float | None = None,
+        card_gb: float | None = None,
+    ) -> dict[str, str]:
+        """Return the first-start model settings (BEST picks) for this computer."""
+        general = best_model("general", profile, system_memory_gb=system_memory_gb, card_gb=card_gb)
         return {
-            "ocr_model": best_model("ocr", profile),
+            "ocr_model": best_model(
+                "ocr", profile, system_memory_gb=system_memory_gb, card_gb=card_gb
+            ),
             "correction_model": general,
             "evaluate_model": general,
         }

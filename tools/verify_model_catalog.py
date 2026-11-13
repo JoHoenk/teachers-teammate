@@ -112,6 +112,7 @@ from tools.model_eval.model_fit import (
     compare_lines,
     fit_failure,
     fit_line,
+    is_cpu_only,
     measure_tag,
     record_line,
     size_for_decision,
@@ -624,6 +625,8 @@ def _fit_header(args: argparse.Namespace, store: FitStore, probe: Any, info: Any
     print(f"tool commit: {tool_revision()}")
     print(f"ollama: {probe.version()}")
     print(f"server: {args.server}")
+    if args.cpu_only:
+        print("CPU only: num_gpu 0, 8,192 tokens, speed of the processor")
     print(f"store: {store.path}")
     if info is None:
         print("card: no agent, so Ollama's figures only")
@@ -648,6 +651,19 @@ def _fit_measure(args: argparse.Namespace, store: FitStore) -> int:
     if not tags:
         print("no model named: pass --tag, or a tag the catalog knows")
         return 2
+    mixed = [
+        record
+        for record in store.records()
+        if record.server == args.server and is_cpu_only(record) != args.cpu_only
+    ]
+    if mixed:
+        kind = "normal" if args.cpu_only else "CPU-only"
+        print(
+            f"{args.server} already holds {kind} measurements: use another --server label "
+            f"(for example {args.server}-cpu) so the two kinds are never mixed"
+        )
+        return 2
+    steps = (BASE_NUM_CTX,) if args.cpu_only else CONTEXT_STEPS
     agent = None
     info = None
     if args.gpu_agent is not None:
@@ -675,7 +691,9 @@ def _fit_measure(args: argparse.Namespace, store: FitStore) -> int:
                 server=args.server,
                 tag=tag,
                 temperature=temperature,
+                steps=steps,
                 again=args.again,
+                cpu_only=args.cpu_only,
             )
         except AgentError as error:
             print(f"{tag}: the memory agent stopped answering ({error}); nothing more measured")
@@ -1335,6 +1353,13 @@ def _add_fit(sub, shared) -> None:
         action="store_true",
         help="Measure with Ollama's figures only.  The records are flagged: Ollama's size leaves "
         "out the driver's share and can be far off.",
+    )
+    fit.add_argument(
+        "--cpu-only",
+        action="store_true",
+        help="Keep the model off the card (num_gpu 0) and measure how fast the processor runs it, "
+        "at 8,192 tokens only.  Needs its own --server label, e.g. rx9070xt-cpu: these records "
+        "say nothing about size.",
     )
     fit.add_argument(
         "--again",

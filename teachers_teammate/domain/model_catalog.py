@@ -50,7 +50,14 @@ CARD_USABLE_SHARE = 0.85
 NOMINAL_CARD_GB: dict[HardwareProfile, float] = {"cpu": 0.0, "8gb": 8.0, "16gb": 16.0}
 
 #: Largest model (GB) that is comfortable on the processor alone, without a graphics card.
-CPU_COMFORT_GB = 4.0
+#: "Comfortable" means a page of about 2,000 to 4,000 answer tokens in under five minutes on an
+#: ordinary processor.  Measured with ``verify_model_catalog fit --cpu-only`` on a Ryzen 7 5800H
+#: (the slower of two machines): ``gemma4:e4b`` (5.0 GB) 11 tokens/s, about 3 minutes a page;
+#: ``qwen3.5:4b`` and ``ministral-3:3b`` (4.4 GB) 11 to 16, 4 to 5; ``qwen3.5:9b`` (7.2 GB) 5.7,
+#: 11 minutes.  So the limit lies between 5.0 and 7.2 GB; the next measured model above 5.0 is
+#: too slow, and a school computer is probably slower than the Ryzen, so the limit stays at the
+#: largest model measured to be comfortable.
+CPU_COMFORT_GB = 5.0
 
 #: Main memory kept free for the operating system and the app: the larger of this many GB and
 #: ``SYSTEM_RESERVE_SHARE`` of the total.  Swapping to disk is never counted as memory.
@@ -124,6 +131,28 @@ catalog does not list, because the evaluation tools check candidates before they
 """
 
 
+THINK_LEVELS: dict[str, str] = {"gpt-oss": "low"}
+"""Model families that take a reasoning *level* instead of the on/off flag the app sends.
+
+``gpt-oss`` ignores ``think=False`` and reasons at its default level on every request (measured
+2026-11-12: 788 characters of hidden reasoning and 260 answer tokens for one corrected sentence,
+against 76 characters and 41 tokens with ``"low"``), which is what ran a full page past the
+window.  Proofreading needs next to no reasoning, so such a family is asked for the lowest level;
+:func:`request_profile` puts it into the profile, so the cache key, the evaluation tools and the
+request itself read the same value.
+"""
+
+
+def think_level(tag: str) -> str | None:
+    """Return the reasoning level the model *tag* has to be asked for, ``None`` for the flag.
+
+    Matches the family at the start of the model name, so a Hugging Face build such as
+    ``hf.co/unsloth/gpt-oss-20b-GGUF:UD-Q4_K_XL`` is covered as well.
+    """
+    name = tag.lower().rsplit("/", 1)[-1]
+    return next((level for family, level in THINK_LEVELS.items() if name.startswith(family)), None)
+
+
 @dataclass(frozen=True)
 class RequestProfile:
     """How the app asks one model to proofread; the default is what every model gets.
@@ -137,6 +166,9 @@ class RequestProfile:
     compact_json: bool = False
     #: The proofreading temperature the request is sent at.
     temperature: float = DEFAULT_CORRECTION_TEMPERATURE
+    #: What the request tells a reasoning model about thinking: ``False`` (off), or the level
+    #: (``"low"``) of a family that ignores the flag (see :data:`THINK_LEVELS`).
+    think: bool | str = False
 
 
 DEFAULT_REQUEST_PROFILE = RequestProfile()
@@ -200,10 +232,11 @@ class OllamaModelSpec:
     #: ``explanations ✓`` badge; it never switches the proofreading mode.
     structured_output: bool = False
     #: Extra memory (GB) per additional 8192 tokens of context window, measured with
-    #: ``ollama ps`` at 8192 and 16384 tokens (see ``docs/development.md``).  ``None`` — not
-    #: measured, or a model the user added — means the window stays at 8192 tokens.  It cannot
-    #: be derived from ``memory_gb``: how fast a context cache grows depends on the model's
-    #: attention design (sliding-window or linear-attention layers grow much more slowly).
+    #: ``verify_model_catalog fit`` at 8192, 16384 and 32768 tokens (see ``docs/development.md``).
+    #: ``None`` — not measured, or a model the user added — means the window stays at 8192
+    #: tokens.  It cannot be derived from ``memory_gb``: how fast a context cache grows depends
+    #: on the model's attention design (sliding-window or linear-attention layers grow much
+    #: more slowly).
     context_gb_per_8k: float | None = None
     #: How the app asks this model to proofread (see :class:`RequestProfile`).  Every catalog
     #: model starts on the default; a gate-1 run decides a value per model.
@@ -268,8 +301,11 @@ OLLAMA_CATALOG: tuple[OllamaModelSpec, ...] = (
         category="general",
         memory_gb=4.0,
         download_gb=2.5,
-        note="Small writing model for computers without a graphics card.",
-        structured_output=True,
+        # Fails gate 1 (2026-11-12): it answers "nothing to correct" in streaks, about one run in
+        # six, so the explanations badge stays off.
+        note="Small writing model for computers without a graphics card. Slow: it thinks for "
+        "several minutes per page.",
+        context_gb_per_8k=1.23,
         answer_length=AnswerLength(low=791, typical=1086, high=1828),
         reference_speed=ReferenceSpeed(write_tps=131.0),
     ),
@@ -281,6 +317,7 @@ OLLAMA_CATALOG: tuple[OllamaModelSpec, ...] = (
         note="Writing model for 8 GB and 16 GB graphics cards. Can also read scanned pages.",
         also_uses=frozenset({"ocr"}),
         structured_output=True,
+        context_gb_per_8k=0.28,
     ),
     OllamaModelSpec(
         tag="gemma4:e4b",
@@ -289,6 +326,7 @@ OLLAMA_CATALOG: tuple[OllamaModelSpec, ...] = (
         download_gb=6.6,
         note="Fast writing model that fits an 8 GB graphics card.",
         structured_output=True,
+        context_gb_per_8k=0.14,
         answer_length=AnswerLength(low=549, typical=1068, high=1824),
         reference_speed=ReferenceSpeed(write_tps=96.0),
     ),
@@ -299,6 +337,7 @@ OLLAMA_CATALOG: tuple[OllamaModelSpec, ...] = (
         download_gb=8.0,
         note="Best writing model for a 16 GB graphics card.",
         structured_output=True,
+        context_gb_per_8k=0.17,
         answer_length=AnswerLength(low=380, typical=1017, high=1879),
         reference_speed=ReferenceSpeed(write_tps=118.0),
     ),
@@ -321,7 +360,11 @@ OLLAMA_CATALOG: tuple[OllamaModelSpec, ...] = (
         category="general",
         memory_gb=14.0,
         download_gb=13.8,
-        note="Large reasoning model; its answers do not fit the proofreading format.",
+        # Passes gate 1 (2026-11-12) since the app asks it for the lowest reasoning level
+        # (``THINK_LEVELS``, read through ``request_profile``); at its default level it reasoned past the window on a full page.
+        note="Large model for a 16 GB graphics card. The app asks it to think as little as "
+        "possible, which suits proofreading.",
+        structured_output=True,
         answer_length=AnswerLength(low=581, typical=1075, high=1897),
         reference_speed=ReferenceSpeed(write_tps=104.0),
     ),
@@ -351,7 +394,9 @@ RECOMMENDED: dict[ModelCategory, dict[HardwareProfile, tuple[str, ...]]] = {
         ),
     },
     "general": {
-        "cpu": ("qwen3:4b",),
+        # gemma4:e4b passes gate 1 and writes the shortest pages; qwen3:4b fails gate 1 (empty
+        # answers) and thinks for about 4,000 tokens a page, which is 7 minutes on the Ryzen.
+        "cpu": ("gemma4:e4b", "qwen3:4b"),
         "8gb": ("gemma4:e4b", "qwen3.5:9b"),
         "16gb": ("gemma4:12b", "qwen3.5:9b"),
     },
@@ -427,7 +472,12 @@ def request_profile(tag: str, provider: str = "ollama") -> RequestProfile:
     """
     spec = find_spec(tag) if provider == "ollama" else None
     base = DEFAULT_REQUEST_PROFILE if spec is None else spec.request_profile
-    return replace(base, temperature=_temperature(tag, provider, DEFAULT_CORRECTION_TEMPERATURE))
+    level = think_level(tag) if provider == "ollama" else None
+    return replace(
+        base,
+        temperature=_temperature(tag, provider, DEFAULT_CORRECTION_TEMPERATURE),
+        think=level or False,
+    )
 
 
 def review_temperature(tag: str, provider: str = "ollama") -> float:
@@ -452,9 +502,31 @@ def uses_from_capabilities(capabilities: Collection[str]) -> ModelUses:
     return frozenset({"general"})
 
 
-def best_model(category: ModelCategory, profile: HardwareProfile) -> str:
-    """Return the BEST model tag for *category* on *profile*."""
-    return RECOMMENDED[category][profile][0]
+def best_model(
+    category: ModelCategory,
+    profile: HardwareProfile,
+    *,
+    system_memory_gb: float | None = None,
+    card_gb: float | None = None,
+) -> str:
+    """Return the BEST model tag for *category* on *profile*.
+
+    The first model of the profile's list, unless the computer's main memory is known and that
+    model is too large for it (:func:`suitability` rates it ``TOO_LARGE``): then the first one of
+    the list that fits.  A computer without a card and with little memory is therefore pointed to
+    the smaller model, and :func:`suitability` marks that one BEST.  When none fits, the first of
+    the list, as without a figure.
+    """
+    recommended = RECOMMENDED[category][profile]
+    if system_memory_gb is not None:
+        for tag in recommended:
+            spec = find_spec(tag)
+            if spec is None:
+                continue
+            card = card_gb if card_gb is not None else card_budget_gb(profile)
+            if _memory_fit(spec, card, system_memory_gb) is not Suitability.TOO_LARGE:
+                return tag
+    return recommended[0]
 
 
 def system_reserve_gb(system_memory_gb: float) -> float:
@@ -618,7 +690,8 @@ def suitability(
         # cannot work.  Without a figure for the main memory the type's list is all there is.
         if fit is Suitability.TOO_LARGE and system_memory_gb is not None:
             return Suitability.TOO_LARGE
-        return Suitability.BEST if normalized == recommended[0] else Suitability.GOOD
+        best = best_model(category, profile, system_memory_gb=system_memory_gb, card_gb=card_gb)
+        return Suitability.BEST if normalized == normalize_tag(best) else Suitability.GOOD
     return fit
 
 

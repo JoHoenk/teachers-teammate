@@ -727,6 +727,29 @@ def test_the_header_records_the_stamp_it_was_given_and_the_languages_hash() -> N
 
 
 @pytest.mark.use_case("Model_Eval_Measure")
+def test_the_header_names_the_provider_and_what_only_an_ollama_run_has() -> None:
+    """
+    Given  the identity of a run on Ollama, and one of an online provider on no machine of ours
+    When   both are built
+    Then   the first names Ollama, its machine and its server version; the second names its
+           provider and has neither a machine nor a server version
+    """
+    local = _identity()
+    online = _identity(provider="openai", machine=None)
+
+    assert (local["provider"], local["machine"], local["ollama_version"]) == (
+        "ollama",
+        "rx9070xt",
+        "0.40.15",
+    )
+    assert (online["provider"], online["machine"], online["ollama_version"]) == (
+        "openai",
+        None,
+        None,
+    )
+
+
+@pytest.mark.use_case("Model_Eval_Measure")
 def test_a_text_mode_header_has_another_instructions_hash_than_a_review_header() -> None:
     """
     Given  the same languages asked in review mode and in text mode

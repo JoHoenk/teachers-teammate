@@ -12,9 +12,10 @@ says "not measured yet".
 ## The record
 
 ```json
-{"schema": 1, "measured_at": "2026-11-13T19:04:11Z", "server": "rx9070xt",
+{"schema": 2, "measured_at": "2026-11-13T19:04:11Z", "server": "rx9070xt",
  "ollama_version": "0.40.15", "tool_commit": "abc1234",
  "tag": "gemma4:e4b", "digest": "sha256:…", "num_ctx": 16384,
+ "answer_tokens": 172, "generation_seconds": 2.4,
  "options": {"temperature": 1.0, "num_ctx": 16384}, "load_seconds": 4.2,
  "ollama": {"context_length": 16384, "size_bytes": 6012345678, "size_vram_bytes": 6012345678},
  "card": {"agent_sha256": "…", "source": "sysfs", "total_bytes": 17095983104,
@@ -25,13 +26,14 @@ says "not measured yet".
 
 | Field | Meaning |
 | --- | --- |
-| `schema` | The layout of the line. A reader refuses a number it does not know instead of guessing. |
+| `schema` | The layout of the line (2 since the speed fields). A reader refuses a number it does not know instead of guessing. |
 | `measured_at` | When the request ran, UTC. |
 | `server` | The short label of the machine (`--server`); see the table below. |
 | `ollama_version` | The server's version. A different version is a different backend, so a record only matches a run of the same version. |
 | `tool_commit` | The commit of this repository that made the record. |
 | `tag`, `digest` | The model, and the build of it. A tag that is pushed again gets a new digest, and its old records no longer match. |
 | `num_ctx` | The window the request asked for. |
+| `answer_tokens`, `generation_seconds` | The request's answer (Ollama's `eval_count`) and the time the model took to write it (`eval_duration`, load excluded). The speed is their quotient, computed when read; an answer under 20 tokens gives none. |
 | `options` | The options the request sent, i.e. the app's own proofreading request at that window. |
 | `load_seconds` | `ChatStats.load_duration` of the request: what a reload costs. |
 | `ollama.context_length` | The window Ollama really loaded (`/api/ps`). Smaller than `num_ctx` when the model's own maximum is smaller, and then the ladder stops. |
@@ -58,6 +60,15 @@ file is read. A change of the rule then costs no new measurement.
 | --- | --- | --- | --- |
 | `rx9070xt` | The headless Linux server, `gpu-server.example` | AMD RX 9070 XT, 16 GB | ROCm; the agent reads the card from `sysfs`. The reference measurement. |
 | `rtx-8gb-win` | The Windows host of the development WSL | NVIDIA, 8 GB | CUDA; the agent runs on Windows, because WSL's `nvidia-smi` reports 0 MiB used. A normal desktop session is open, which is what `CARD_USABLE_SHARE` stands for. |
+
+**CPU-only labels.** A measurement with `--cpu-only` (`num_gpu` 0, 8,192 tokens, the speed of the
+processor) goes under its own label, because it says nothing about size: the tool refuses to mix
+the two kinds under one label, and the size lookups ignore it.
+
+| Label | Machine | Processor |
+| --- | --- | --- |
+| `rx9070xt-cpu` | The headless Linux server | Intel Core i5-13600KF, 14 cores (6 P + 8 E) / 20 threads, 31 GiB |
+| `rtx-laptop-cpu` | The Windows host of the development WSL | AMD Ryzen 7 5800H, 8 cores / 16 threads |
 
 Fill in the exact GPU model, OS, driver and backend version, main memory, and the two Ollama
 variables (`OLLAMA_FLASH_ATTENTION`, `OLLAMA_KV_CACHE_TYPE`) of each machine here when its first
@@ -95,3 +106,12 @@ sends one short request at the app's own proofreading options, reads `/api/ps`, 
 and appends the record. A step that is already stored for the same build and version is skipped;
 `--again` measures it again. Commit the new lines with a message that names the machine and the
 date.
+
+For the speed of the processor alone, add `--cpu-only` and a label of its own (the agent is still
+asked, and its card reading must stay at the idle figure: the line warns `CARD USED` when it
+does not):
+
+```bash
+bazel run //tools:verify_model_catalog -- fit --cpu-only --server rx9070xt-cpu \
+  --ollama-url http://HOST:11434 --gpu-agent http://HOST:11436 --tag TAG
+```

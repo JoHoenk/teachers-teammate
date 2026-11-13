@@ -706,7 +706,7 @@ def test_the_page_follows_a_profile_chosen_on_this_computer(qtbot) -> None:
     with qtbot.waitSignal(dlg._hardware_selector.resolved_changed, timeout=5000):
         dlg.set_hardware_setting("cpu")
 
-    assert _ticked(dlg) == {"glm-ocr:q8_0", "qwen3:4b"}
+    assert _ticked(dlg) == {"glm-ocr:q8_0", "gemma4:e4b"}
 
 
 @pytest.mark.use_case("Hardware_Profile_Override")
@@ -931,7 +931,7 @@ def test_pre_ticking_waits_for_hardware_detection(qtbot) -> None:
 
     with qtbot.waitSignal(dlg._hardware_selector.resolved_changed, timeout=5000):
         service.detection_gate.set()
-    assert _ticked(dlg) == {"glm-ocr:q8_0", "qwen3:4b"}
+    assert _ticked(dlg) == {"glm-ocr:q8_0", "gemma4:e4b"}
 
 
 @pytest.mark.use_case("Hardware_Profile_Override")
@@ -951,7 +951,7 @@ def test_profile_change_replaces_untouched_auto_ticks_and_keeps_user_ticks(qtbot
 
     _choose_computer(qtbot, dlg, _CPU_TEXT)
 
-    assert _ticked(dlg) == {"glm-ocr:q8_0", "qwen3:4b", "mistral:latest"}
+    assert _ticked(dlg) == {"glm-ocr:q8_0", "gemma4:e4b", "mistral:latest"}
 
 
 @pytest.mark.use_case("Hardware_Profile_Override")

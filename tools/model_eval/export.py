@@ -23,6 +23,7 @@ from . import testset as testset_module
 from .error_labels import ReferenceLabel
 from .index import write_index
 from .layout import (
+    OLLAMA,
     RUNS_DIR,
     TESTSETS_DIR,
     kind_of,
@@ -260,7 +261,7 @@ def export(  # one argument per fact the run file needs
     testset: str,
     manifest: Path,
     corpora: Corpora,
-    machine: str,
+    machine: str | None,
     out: Path,
     label: str | None = None,
 ) -> list[ExportedRun]:
@@ -271,7 +272,8 @@ def export(  # one argument per fact the run file needs
         testset: Name of the test set, which has to be the manifest's.
         manifest: The manifest the builder wrote; it is copied to ``out`` and pins every run.
         corpora: The corpora, so strict mode can check the caps against the real text.
-        machine: Id of the machine file in ``out/machines/``.
+        machine: Id of the machine file in ``out/machines/``.  Runs on Ollama need it; a run of
+            another provider ran on no machine of ours and is exported without one.
         out: The repository directory (``evaluations/proofreading``).
         label: Replaces the ``r<n>`` suffix of the run id, for two runs of one configuration.
 
@@ -290,23 +292,36 @@ def export(  # one argument per fact the run file needs
         )
     if problems := testset_module.corpus_problems(pinned, corpora):
         raise ValueError("the corpora are not the ones the manifest pinned: " + "; ".join(problems))
-    machine_file = machine_path(out, machine)
-    if not machine_file.exists():
-        raise ValueError(f"{machine_file}: no such machine file; write it by hand first")
-    read_machine(machine_file)
+    if machine is not None:
+        machine_file = machine_path(out, machine)
+        if not machine_file.exists():
+            raise ValueError(f"{machine_file}: no such machine file; write it by hand first")
+        read_machine(machine_file)
+    # A run without rows is skipped, so it neither needs a machine nor is read twice.
+    runs = [
+        (read_rows(rows_path), rows_path, _session_header(header_path))
+        for rows_path, header_path in _cache_pairs(cache_dir)
+    ]
+    runs = [run for run in runs if run[0]]
+    if machine is None:
+        needing = [
+            path.name for _, path, header in runs if header.get("provider", OLLAMA) == OLLAMA
+        ]
+        if needing:
+            raise ValueError(
+                f"{', '.join(needing[:5])}: a run on Ollama needs --machine, the id of the machine "
+                "it ran on"
+            )
 
     stored = _store_manifest(out, testset, manifest, pinned)
     entries = _manifest_items_by_row(pinned)
     resolved = {entry["id"]: testset_module.resolve(entry, corpora) for entry in pinned["items"]}
     written: list[ExportedRun] = []
-    for rows_path, header_path in _cache_pairs(cache_dir):
-        rows = read_rows(rows_path)
-        if not rows:
-            continue
+    for rows, rows_path, header in runs:
         written.append(
             _export_one(
                 rows,
-                _session_header(header_path),
+                header,
                 rows_path=rows_path,
                 entries=entries,
                 resolved=resolved,
@@ -391,7 +406,7 @@ def _export_one(  # noqa: PLR0913  # the facts of one run file
     corpora: Corpora,
     manifest: Path,
     testset: str,
-    machine: str,
+    machine: str | None,
     out: Path,
     label: str | None,
 ) -> ExportedRun:
@@ -412,12 +427,17 @@ def _export_one(  # noqa: PLR0913  # the facts of one run file
     ordered = sorted(rows, key=lambda row: list(entries).index(row.id))
     eval_version, fingerprint, instructions, answer_format = _protocol_of(local, rows_path)
     revision = str(local.get("tool_revision", "unknown"))
+    provider = str(local.get("provider", OLLAMA))
+    ollama_version = str(local.get("ollama_version", "")) if provider == OLLAMA else None
+    if provider != OLLAMA:
+        machine = None
     header = {
         "schema": RUN_SCHEMA,
         "type": RUN_TYPE,
         "run_id": run_id(
             date=str(local.get("date", "")),
             machine=machine,
+            provider=provider,
             model=str(local.get("model", "")),
             model_info=local.get("model_info") or {},
             mode=str(local.get("mode", DEFAULT_MODE)),
@@ -428,13 +448,14 @@ def _export_one(  # noqa: PLR0913  # the facts of one run file
         ),
         "testset": testset,
         "manifest_sha256": testset_module.manifest_sha256(manifest),
+        "provider": provider,
         "machine": machine,
         "kind": kind_of({**local, "gpu_sampler": sampler_record(local.get("gpu_sampler"))}),
         "date": str(local.get("date", "")),
         "tool_revision": revision,
         "eval_version": eval_version,
         "fingerprint": fingerprint,
-        "ollama_version": str(local.get("ollama_version", "")),
+        "ollama_version": ollama_version,
         "model": str(local.get("model", "")),
         "model_info": dict(local.get("model_info") or {}),
         "mode": str(local.get("mode", DEFAULT_MODE)),

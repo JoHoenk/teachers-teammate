@@ -57,6 +57,7 @@ filegroup(
         "unit/test_gpu_detector.py",
         "unit/test_model_catalog.py",
         "unit/test_model_listing.py",
+        "unit/test_ollama_discovery.py",
         "unit/test_ollama_utils.py",
         "unit/test_preprocessor.py",
         "unit/test_service.py",
@@ -365,6 +366,15 @@ py_test(
     args = ["unit/test_preprocessor.py"],
     main = "run_test.py",
     deps = _COMMON_DEPS + _IMAGE_DEPS + _CV_DEPS,
+)
+
+py_test(
+    name = "test_ollama_discovery",
+    size = "small",
+    srcs = _COMMON_SRCS + ["unit/test_ollama_discovery.py"],
+    args = ["unit/test_ollama_discovery.py"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS + _REQUESTS_DEPS,
 )
 
 py_test(
@@ -1224,6 +1234,15 @@ py_test(
 )
 
 py_test(
+    name = "test_gui_readiness",
+    size = "small",
+    srcs = _COMMON_SRCS + ["gui/test_gui_readiness.py"],
+    args = ["gui/test_gui_readiness.py"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_lib"],
+)
+
+py_test(
     name = "test_gui_results_table",
     size = "small",
     srcs = _COMMON_SRCS + ["gui/test_gui_results_table.py"],
@@ -1576,6 +1595,7 @@ test_suite(
         ":test_ocr_processor",
         ":test_ocr_stage_service",
         ":test_ocr_text_cleaner",
+        ":test_ollama_discovery",
         ":test_ollama_utils",
         ":test_pipeline_txt_integration",
         ":test_preprocess_service",
@@ -1613,6 +1633,7 @@ test_suite(
         ":test_gui_privacy_settings",
         ":test_gui_privacy_view",
         ":test_gui_prompt_dialog",
+        ":test_gui_readiness",
         ":test_gui_results_table",
         ":test_gui_review_views",
         ":test_gui_settings_pages",

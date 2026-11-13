@@ -10,11 +10,11 @@ window's wiring.  The keys of the online services are on *Online services*.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 import sys
 from typing import Any
 
-from PySide6.QtCore import Signal
+from PySide6.QtCore import QTimer, Signal
 from PySide6.QtWidgets import (
     QFormLayout,
     QGroupBox,
@@ -31,7 +31,9 @@ from .. import _user_text as txt
 from .._hardware_profile_selector import HardwareProfileSelector
 from .._model_fetch import _GpuDetectThread, _retire_thread
 from ._page import (
+    FOCUS_FIND_SERVER,
     FOCUS_LOCAL_MODELS,
+    FOCUS_SERVER,
     SettingsContext,
     SettingsPage,
     SettingsPageBase,
@@ -49,6 +51,8 @@ SERVER_NOTE = (
     "server's address."
 )
 SERVER_URL_LABEL = "Server address:"
+FIND_SERVER = "Find…"
+FIND_SERVER_TOOLTIP = "Look for an Ollama server on this computer, or on your network, and pick it."
 SERVER_URL_TOOLTIP = (
     "The address of your Ollama server. Used for all text recognition,\n"
     "proofreading, and content review steps that use Ollama."
@@ -101,6 +105,15 @@ class AiSetupPage(SettingsPageBase):
         layout.addWidget(self._build_server_group())
         layout.addStretch(1)
 
+    def focus(self, focus: str, preselect: Sequence[str] = ()) -> None:
+        _ = preselect
+        if focus == FOCUS_SERVER:
+            self._scroll_to(self._ollama_url)
+            QTimer.singleShot(0, self._ollama_url, self._ollama_url.setFocus)
+        elif focus == FOCUS_FIND_SERVER:
+            self._scroll_to(self._ollama_url)
+            QTimer.singleShot(0, self, self._on_find_server)
+
     def _build_server_group(self) -> QGroupBox:
         group = QGroupBox(SERVER_GROUP)
         form = QFormLayout(group)
@@ -114,7 +127,14 @@ class AiSetupPage(SettingsPageBase):
         self._ollama_url.setToolTip(SERVER_URL_TOOLTIP)
         # editingFinished, not textChanged: a half-typed URL must not trigger detection.
         self._ollama_url.editingFinished.connect(self._on_url_edited)
-        form.addRow(SERVER_URL_LABEL, self._ollama_url)
+        self._find_server_btn = QPushButton(FIND_SERVER)
+        self._find_server_btn.setToolTip(FIND_SERVER_TOOLTIP)
+        self._find_server_btn.clicked.connect(self._on_find_server)
+        url_row = QHBoxLayout()
+        url_row.setContentsMargins(0, 0, 0, 0)
+        url_row.addWidget(self._ollama_url, stretch=1)
+        url_row.addWidget(self._find_server_btn)
+        form.addRow(SERVER_URL_LABEL, url_row)
 
         self._download_model_btn = QPushButton(DOWNLOAD_MODEL)
         self._download_model_btn.setToolTip(DOWNLOAD_MODEL_TOOLTIP)
@@ -201,6 +221,24 @@ class AiSetupPage(SettingsPageBase):
         self._url = url
         self._hardware_selector.set_ollama_url(url)
         self.ollama_url_changed.emit(url)
+
+    def _on_find_server(self) -> None:
+        """Open the search dialog; a server picked there goes into the address field."""
+        from ._server_search_dialog import ServerSearchDialog  # noqa: PLC0415
+
+        dialog = ServerSearchDialog(self._app_service, self.window())
+        dialog.server_chosen.connect(self.set_server_url)
+        dialog.manual_entry_requested.connect(self._focus_url_field)
+        dialog.exec()
+
+    def _focus_url_field(self) -> None:
+        self._ollama_url.setFocus()
+        self._ollama_url.selectAll()
+
+    def set_server_url(self, url: str) -> None:
+        """Put *url* into the address field and let the other pages follow, as after typing."""
+        self._ollama_url.setText(url)
+        self._on_url_edited()
 
     # ── hardware ──────────────────────────────────────────────────────────────
 

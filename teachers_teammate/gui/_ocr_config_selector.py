@@ -224,6 +224,24 @@ class OcrModelPicker(QWidget):
             self._app_service.invalidate_model_cache("ollama", base_url=self._ollama_url)
         self.refresh()
 
+    def set_hardware_profile(self, setting: str) -> None:
+        """Follow another "My computer" choice ("auto", "cpu", "8gb", "16gb").
+
+        Does nothing while the picker follows a profile selector it does not own, or when the
+        choice is the one it has: the selector resolves the computer again on every change.
+        """
+        if self._shared_selector is None and setting != self._hw_selector.setting():
+            self._hw_selector.set_setting(setting)
+
+    def reload_models(self) -> None:
+        """Ask the server for the model list again (for an Ollama choice), keeping the rest.
+
+        For a picker whose fetch was cut short by :meth:`stop_threads` — its window was closed
+        and is shown again.  Unlike :meth:`refresh` it leaves the chosen model and the
+        preparation method alone.
+        """
+        self._auto_fetch()
+
     def stop_threads(self) -> None:
         """Detach any in-flight model-fetch thread (call before closing).
 
@@ -671,6 +689,14 @@ class OcrConfigSelector(QWidget):
     def refresh(self) -> None:
         """Re-apply engine-dependent state (visibility, defaults, model fetch)."""
         self._picker.refresh()
+
+    def set_hardware_profile(self, setting: str) -> None:
+        """Follow another "My computer" choice."""
+        self._picker.set_hardware_profile(setting)
+
+    def reload_models(self) -> None:
+        """Ask the server for the model list again, keeping the chosen model."""
+        self._picker.reload_models()
 
     def stop_threads(self) -> None:
         """Detach any in-flight model-fetch thread (call before closing)."""

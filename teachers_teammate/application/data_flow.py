@@ -38,7 +38,9 @@ ProviderRegion = Callable[[str], str]
 
 def _ollama_location(model: str, ollama_url: str) -> StageLocation:
     return classify_ollama(
-        model, url_is_local=is_local_ollama_url(ollama_url), host=ollama_host(ollama_url)
+        model,
+        url_is_local=is_local_ollama_url(ollama_url, include_wsl_host=True),
+        host=ollama_host(ollama_url),
     )
 
 
@@ -100,7 +102,7 @@ def llm_location(
     where = llm_stage_location(
         self_hosted=self_hosted,
         model=model,
-        url_is_local=is_local_ollama_url(ollama_url),
+        url_is_local=is_local_ollama_url(ollama_url, include_wsl_host=True),
         host=ollama_host(ollama_url),
     )
     if not self_hosted:
@@ -122,6 +124,32 @@ def llm_steps(correction_enabled: bool, evaluation_enabled: bool) -> tuple[str, 
     if not correction_enabled:
         return ()
     return (STAGE_CORRECTION, STAGE_EVALUATION) if evaluation_enabled else (STAGE_CORRECTION,)
+
+
+def ticked_steps(
+    steps: DataFlow,
+    *,
+    correction_enabled: bool,
+    evaluation_enabled: bool,
+    recognition_enabled: bool = True,
+) -> DataFlow:
+    """Return the part of *steps* (every step as if it were ticked) that a run takes.
+
+    The same stages, in the same order, that :func:`describe_data_flow` lists for a config with
+    these ticks — so a caller that already has the all-steps flow does not ask for the places
+    and regions a second time.
+    """
+    text_steps = set(llm_steps(correction_enabled, evaluation_enabled))
+    return DataFlow(
+        tuple(
+            stage
+            for stage in steps.stages
+            if (stage.stage != STAGE_OCR or recognition_enabled)
+            and (
+                stage.stage not in (STAGE_CORRECTION, STAGE_EVALUATION) or stage.stage in text_steps
+            )
+        )
+    )
 
 
 #: Settings-key prefix and default-model task of each text step.
@@ -166,15 +194,17 @@ def describe_data_flow(
     """Return where every enabled step of *config* runs.
 
     Text recognition is listed even for text-only inputs: the answer is for the settings,
-    not for the files that happen to be selected.  Personal-info removal is listed too —
+    not for the files that happen to be selected.  Only a switched-off recognition
+    (``recognition_enabled``) leaves it out: no page is read, so no page image goes anywhere.
+    Personal-info removal is listed too —
     although it is not a pipeline step, it is the one place where names are taken out, so
     the box has to say whether it is on.  *anonymizer_models* are the spaCy models it will
     load, shown next to it.
     """
     hidden = config.anonymization_enabled
     ocr = ocr_location(config.ocr.engine, config.ocr.model, config.ollama_url)
-    stages = [
-        DataFlowStage(STAGE_OCR, ocr, "page images"),
+    stages = [DataFlowStage(STAGE_OCR, ocr, "page images")] if config.recognition_enabled else []
+    stages += [
         DataFlowStage(
             STAGE_ANONYMIZATION,
             StageLocation(DataLocation.THIS_COMPUTER, "spaCy"),

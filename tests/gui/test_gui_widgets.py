@@ -752,11 +752,12 @@ def test_stats_widget_refresh_does_not_crash(qtbot) -> None:
 
 
 @pytest.mark.gui
-def test_stats_widget_timer_starts_automatically(qtbot) -> None:
+def test_stats_widget_polls_only_while_shown(qtbot) -> None:
     """
     Given  a SystemStatsWidget with psutil available
-    When   the widget is instantiated
-    Then   the internal timer is active (or widget is disabled without psutil)
+    When   the widget is shown and hidden again
+    Then   the internal timer is idle at first, runs while shown and stops when hidden
+               (or the widget is disabled without psutil)
     """
     from teachers_teammate.gui._stats_widget import SystemStatsWidget, _PSUTIL_AVAILABLE  # noqa: PLC0415
 
@@ -765,7 +766,11 @@ def test_stats_widget_timer_starts_automatically(qtbot) -> None:
 
     if _PSUTIL_AVAILABLE:
         assert w._enabled is True
+        assert not w._timer.isActive()
+        w.show()
         assert w._timer.isActive()
+        w.hide()
+        assert not w._timer.isActive()
     else:
         assert w._enabled is False
 
@@ -1119,17 +1124,12 @@ def _stage(
     return DataFlowStage(name, StageLocation(location, service, region=region), receives, hidden)
 
 
-def _rows(box) -> str:
-    """Return every step row of a status box as one string of rich text, for assertions."""
-    return "\n".join(box.row_texts())
-
-
 @pytest.mark.gui
 def test_data_flow_summary_reassures_when_everything_is_local(qtbot) -> None:
     """
     Given  a data flow where every step runs on this computer
     When   the summary is rendered
-    Then   each step is listed and it says everything stays on this computer
+    Then   it says everything stays on this computer and lists no step rows
     """
     from teachers_teammate.domain.data_location import DataLocation  # noqa: PLC0415
     from teachers_teammate.gui._data_flow_summary import DataFlowSummary  # noqa: PLC0415
@@ -1144,12 +1144,10 @@ def test_data_flow_summary_reassures_when_everything_is_local(qtbot) -> None:
         )
     )
 
-    text = _rows(box)
-    assert "Text recognition" in text
-    assert "Proofreading" in text
-    assert "On this computer" in text
     assert "Everything stays on this computer." in box._body.text()
     assert "leaves this computer" not in box._body.text()
+    assert "Text recognition" not in box._body.text()
+    assert not hasattr(box, "row_texts")
 
 
 @pytest.mark.gui
@@ -1157,7 +1155,8 @@ def test_data_flow_summary_warns_and_advises_for_online_steps(qtbot) -> None:
     """
     Given  proofreading on an online service with names not hidden
     When   the summary is rendered
-    Then   it names the service, says data leaves, and advises hiding names
+    Then   it says text with names goes outside the EU and advises hiding names, by the
+           name of the checkbox and without a step number
     """
     from teachers_teammate.domain.data_location import DataLocation  # noqa: PLC0415
     from teachers_teammate.gui._data_flow_summary import DataFlowSummary  # noqa: PLC0415
@@ -1172,29 +1171,9 @@ def test_data_flow_summary_warns_and_advises_for_online_steps(qtbot) -> None:
         )
     )
 
-    text = _rows(box)
-    assert "Online service (OpenAI (ChatGPT)) · outside the EU" in text
-    assert "names as written" in text
     assert "Text with names is sent to a service outside the EU." in box._body.text()
     assert "Remove personal info" in box._body.text()
-
-
-@pytest.mark.gui
-def test_data_flow_summary_escapes_service_names(qtbot) -> None:
-    """
-    Given  a service name containing markup
-    When   the summary is rendered
-    Then   the markup is shown as text, not interpreted
-    """
-    from teachers_teammate.domain.data_location import DataLocation  # noqa: PLC0415
-    from teachers_teammate.gui._data_flow_summary import DataFlowSummary  # noqa: PLC0415
-
-    box = DataFlowSummary()
-    qtbot.addWidget(box)
-
-    box.set_flow(_flow(_stage("correction", DataLocation.ONLINE, "<b>x</b>")))
-
-    assert "&lt;b&gt;x&lt;/b&gt;" in _rows(box)
+    assert "Step" not in box._body.text()
 
 
 @pytest.mark.gui
@@ -1202,8 +1181,7 @@ def test_data_flow_summary_shows_an_anonymized_eu_service_in_yellow(qtbot) -> No
     """
     Given  proofreading at a service in the EU with names hidden
     When   the summary is rendered
-    Then   the row says where it runs and that names are hidden, and the verdict is the
-           milder "anonymized text in the EU" warning
+    Then   the verdict is the milder "anonymized text in the EU" warning
     """
     from teachers_teammate.domain.data_location import (  # noqa: PLC0415
         DataLocation,
@@ -1226,16 +1204,85 @@ def test_data_flow_summary_shows_an_anonymized_eu_service_in_yellow(qtbot) -> No
         )
     )
 
-    assert "Online service (Mistral (EU)) · EU · names hidden" in _rows(box)
     assert "Anonymized text is sent to a service in the EU." in box._body.text()
 
 
 @pytest.mark.gui
-def test_data_flow_summary_keeps_the_details_in_the_tooltip(qtbot) -> None:
+def test_short_place_uses_few_words_for_every_kind_of_place() -> None:
     """
-    Given  an online step of a vendor based in France
-    When   the summary is rendered
-    Then   the badge stays short and the tooltip names the vendor's country
+    Given  steps on this computer, on a school server, at an EU service, and at a service
+           that does not say where it processes data
+    When   their short places are asked
+    Then   they read "this computer", "own server", "<service> · EU" and
+           "<service> · outside the EU"
+    """
+    from teachers_teammate.domain.data_location import (  # noqa: PLC0415
+        DataLocation,
+        DataRegion,
+        StageLocation,
+    )
+    from teachers_teammate.gui._data_flow_summary import short_place  # noqa: PLC0415
+
+    here = StageLocation(DataLocation.THIS_COMPUTER, "Ollama")
+    server = StageLocation(DataLocation.OTHER_COMPUTER, "Ollama", host="school.example")
+    eu = StageLocation(DataLocation.ONLINE, "Mistral (EU)", region=DataRegion.EU)
+    unknown = StageLocation(DataLocation.ONLINE, "Mistral")
+
+    assert short_place(here) == "this computer"
+    assert short_place(server) == "own server"  # the host is for the tooltip
+    assert short_place(eu) == "Mistral (EU) · EU"
+    assert short_place(unknown) == "Mistral · outside the EU"
+
+
+@pytest.mark.gui
+def test_uses_line_names_model_and_place_and_falls_back_to_the_engine() -> None:
+    """
+    Given  a proofreading stage at an EU service and a Tesseract stage without a model
+    When   their "uses" lines are built
+    Then   the first shows model and place, the second the engine's name instead of a model
+    """
+    from teachers_teammate.domain.data_location import (  # noqa: PLC0415
+        DataLocation,
+        DataRegion,
+    )
+    from teachers_teammate.gui._data_flow_summary import uses_line  # noqa: PLC0415
+
+    online = _stage("correction", DataLocation.ONLINE, "Mistral (EU)", region=DataRegion.EU)
+    tesseract = _stage("ocr", DataLocation.THIS_COMPUTER, "Tesseract", "page images")
+
+    assert "mistral-small-latest · Mistral (EU) · EU" in uses_line(online, "mistral-small-latest")
+    assert "Tesseract · this computer" in uses_line(tesseract, "")
+
+
+@pytest.mark.gui
+def test_uses_line_is_grey_while_the_step_is_off_and_escapes_names() -> None:
+    """
+    Given  a step with markup in its service name
+    When   its line is built enabled and disabled
+    Then   the name is escaped, the enabled dot has the privacy colour and the disabled line
+           is grey all over
+    """
+    from teachers_teammate.domain.data_location import DataLocation  # noqa: PLC0415
+    from teachers_teammate.gui._data_flow_summary import level_color, uses_line  # noqa: PLC0415
+
+    stage = _stage("correction", DataLocation.ONLINE, "<b>x</b>")
+
+    on = uses_line(stage, "m")
+    off = uses_line(stage, "m", enabled=False)
+
+    assert "&lt;b&gt;x&lt;/b&gt;" in on
+    assert level_color(stage.privacy_level) in on
+    assert level_color(stage.privacy_level) not in off
+    assert "#888" in off
+    assert "m · " in off  # still says what ticking it would use
+
+
+@pytest.mark.gui
+def test_uses_tooltip_says_where_names_go_and_the_vendor_country(qtbot) -> None:
+    """
+    Given  an online step of a vendor based in France with names hidden
+    When   its tooltip is built
+    Then   it says the text is sent with names hidden and names the vendor's country
     """
     from teachers_teammate.domain.data_location import (  # noqa: PLC0415
         DataFlowStage,
@@ -1243,21 +1290,17 @@ def test_data_flow_summary_keeps_the_details_in_the_tooltip(qtbot) -> None:
         DataRegion,
         StageLocation,
     )
-    from teachers_teammate.gui._data_flow_summary import DataFlowSummary  # noqa: PLC0415
+    from teachers_teammate.gui._data_flow_summary import uses_tooltip  # noqa: PLC0415
 
     location = StageLocation(
         DataLocation.ONLINE, "Mistral (EU)", region=DataRegion.EU, vendor_country="France"
     )
-    stage = DataFlowStage("correction", location, "text")
-    box = DataFlowSummary()
-    qtbot.addWidget(box)
+    stage = DataFlowStage("correction", location, "text", personal_info_hidden=True)
 
-    box.set_flow(_flow(stage))
+    tip = uses_tooltip(stage)
 
-    row = box._row_labels[0]
-    assert isinstance(row, QLabel)
-    assert "France" not in row.text()
-    assert "Vendor based in France" in row.toolTip()
+    assert "names hidden" in tip
+    assert "Vendor based in France" in tip
 
 
 @pytest.mark.gui

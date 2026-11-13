@@ -179,6 +179,9 @@ _BUILD_BASE: list[str] = [
     # GUI entry point
     "--hidden-import",
     "teachers_teammate.gui",
+    # Tools > Benchmark... is opened in-process, through a lazy import PyInstaller can't see
+    "--hidden-import",
+    "teachers_teammate.gui.benchmark",
     # CLI / pipeline modules (bundled so the full pipeline is available)
     "--hidden-import",
     "cv2",

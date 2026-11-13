@@ -9,8 +9,10 @@ import threading
 from typing import Any, ClassVar
 
 import pytest
+from PySide6.QtWidgets import QWidget
 
 from teachers_teammate.application.service import (
+    IssueKind,
     ProcessingApplicationService,
     RequirementIssue,
     RunPreflight,
@@ -32,6 +34,7 @@ from teachers_teammate.gui.settings._page import (
     FOCUS_LOCAL_MODELS,
     FOCUS_NAME_DETECTION,
     FOCUS_ONLINE_SERVICES,
+    FOCUS_PROOFREADING_KEY,
 )
 from teachers_teammate.infrastructure.storage_root import resolve_artifact_dir
 from tests.conftest import make_config
@@ -125,7 +128,11 @@ def _no_network_in_gui_tests(monkeypatch) -> None:
     """Prevent all MainWindow tests from making Ollama/network calls via the dependency guard."""
     monkeypatch.setattr(ProcessingApplicationService, "check_stage_requirements", lambda *_: [])
     monkeypatch.setattr(
-        ProcessingApplicationService, "check_run_preflight", lambda *_: RunPreflight()
+        ProcessingApplicationService, "check_run_preflight", lambda *_args, **_kw: RunPreflight()
+    )
+    # The silent server search must not probe the real computer or its network.
+    monkeypatch.setattr(
+        ProcessingApplicationService, "discover_ollama_servers", lambda *_a, **_kw: []
     )
     # The status row checks its services in the background; never probe a real server.
     monkeypatch.setattr(
@@ -182,7 +189,7 @@ class _DummyUpdateThread:
 def main_window(qtbot, monkeypatch) -> MainWindow:
     """Create a MainWindow with startup side effects disabled."""
     monkeypatch.setattr(MainWindow, "_load_toml_if_present", lambda self: None)
-    monkeypatch.setattr(MainWindow, "_check_llm_status", lambda self: None)
+    monkeypatch.setattr(MainWindow, "_start_readiness_check", lambda self, **_kw: None)
     monkeypatch.setattr(main_window_module, "UpdateCheckThread", _DummyUpdateThread)
     win = MainWindow(worker_factory=_DummyWorker)
     qtbot.addWidget(win)
@@ -656,94 +663,7 @@ def test_main_window_correction_edit_keeps_the_stored_warning_banner(
     assert main_window._preview._review_banner.text() == "No explanations."
 
 
-# ── Additional coverage for _check_llm_status and related ─────────────────
-
-
-@pytest.mark.gui
-@pytest.mark.use_case("Service_Availability_Check")
-def test_main_window_check_llm_status_tesseract_ok(qtbot, monkeypatch) -> None:
-    """
-    Given  a MainWindow configured for tesseract OCR with no correction
-    When   _check_llm_status() runs
-    Then   the status label for tesseract is created with a green colour
-    """
-    monkeypatch.setattr(MainWindow, "_load_toml_if_present", lambda self: None)
-    win = MainWindow()
-    qtbot.addWidget(win)
-
-    monkeypatch.setattr(win._app_service, "check_connection", lambda **_kw: (True, True, "✓ OK"))
-    win._config_panel.get_settings_dict = lambda: {  # ty: ignore[invalid-assignment]  # test monkeypatches the method with a stub lambda
-        "ocr_engine": "tesseract",
-        "correction_enabled": False,
-        "evaluation_enabled": False,
-    }
-
-    win._check_llm_status()
-
-    assert "tesseract" in win._status_labels
-    lbl = win._status_labels["tesseract"]
-    # green = available (the result arrives from a background task)
-    _wait_for(lambda: "#27ae60" in lbl.styleSheet())
-
-
-@pytest.mark.gui
-def test_main_window_names_providers_as_they_declare_themselves(qtbot, monkeypatch) -> None:
-    """
-    Given  a provider whose PROVIDER_INFO declares a display name
-    When   the status row names it
-    Then   that name is used, as in the data-flow box, and engines keep their own names
-    """
-    monkeypatch.setattr(MainWindow, "_load_toml_if_present", lambda self: None)
-    win = MainWindow()
-    qtbot.addWidget(win)
-    monkeypatch.setattr(
-        win._app_service, "get_provider_info", lambda p: {"display_name": "OpenAI (ChatGPT)"}
-    )
-
-    assert win._service_display_name("openai") == "OpenAI (ChatGPT)"
-    assert win._service_display_name("tesseract") == "Tesseract"
-
-
-@pytest.mark.gui
-def test_main_window_check_llm_status_tesseract_missing(qtbot, monkeypatch) -> None:
-    """
-    Given  a MainWindow configured for tesseract OCR but tesseract is not on PATH
-    When   _check_llm_status() runs
-    Then   the status label for tesseract is red
-    """
-    monkeypatch.setattr(MainWindow, "_load_toml_if_present", lambda self: None)
-    win = MainWindow()
-    qtbot.addWidget(win)
-
-    monkeypatch.setattr(
-        win._app_service, "check_connection", lambda **_kw: (False, False, "✗ not found")
-    )
-    win._config_panel.get_settings_dict = lambda: {  # ty: ignore[invalid-assignment]  # test monkeypatches the method with a stub lambda
-        "ocr_engine": "tesseract",
-        "correction_enabled": False,
-        "evaluation_enabled": False,
-    }
-
-    win._check_llm_status()
-
-    assert "tesseract" in win._status_labels
-    lbl = win._status_labels["tesseract"]
-    _wait_for(lambda: "#c0392b" in lbl.styleSheet())
-
-
-@pytest.mark.gui
-def test_main_window_on_llm_check_done_sets_label_green(main_window) -> None:
-    """
-    Given  an 'ollama' entry exists in _status_labels
-    When   _on_llm_check_done(True, '') is called
-    Then   the label turns green
-    """
-    from PySide6.QtWidgets import QLabel  # noqa: PLC0415
-
-    lbl = QLabel("● Ollama")
-    main_window._status_labels["ollama"] = lbl
-    main_window._on_llm_check_done(True, True, "ok")
-    assert "#27ae60" in lbl.styleSheet()
+# ── Additional coverage ─────────────────────────────────────────────────────
 
 
 @pytest.mark.gui
@@ -857,7 +777,7 @@ def test_ok_in_settings_applies_saves_and_rechecks(main_window, monkeypatch) -> 
         result=SettingsResult(settings={"ocr_model": "my-reader:1b", "hardware_profile": "16gb"}),
     )
     calls: list[str] = []
-    monkeypatch.setattr(main_window, "_check_llm_status", lambda: calls.append("check"))
+    monkeypatch.setattr(main_window, "_start_readiness_check", lambda **_kw: calls.append("check"))
     monkeypatch.setattr(main_window, "_save_settings", lambda **_kw: calls.append("save"))
     monkeypatch.setattr(main_window, "_refresh_queue_from_inputs", lambda: calls.append("queue"))
 
@@ -910,7 +830,7 @@ def test_cancel_in_settings_changes_nothing(main_window, monkeypatch) -> None:
     )
     before = main_window._config_panel.get_settings_dict()
     calls: list[str] = []
-    monkeypatch.setattr(main_window, "_check_llm_status", lambda: calls.append("check"))
+    monkeypatch.setattr(main_window, "_start_readiness_check", lambda **_kw: calls.append("check"))
     monkeypatch.setattr(main_window, "_save_settings", lambda **_kw: calls.append("save"))
 
     main_window.open_settings(SettingsPage.AI_MODELS)
@@ -1167,15 +1087,251 @@ def _menu(window: MainWindow, title: str):
 
 
 @pytest.mark.gui
-def test_menu_bar_has_file_settings_and_help(main_window) -> None:
+def test_menu_bar_has_file_settings_tools_and_help(main_window) -> None:
     """
     Given  the main window
     When   its menu bar is read
-    Then   it has File, Settings and Help, and no Advanced Settings menu
+    Then   it has File, Settings, Tools and Help, and no Advanced Settings menu
     """
     titles = [a.text() for a in main_window.menuBar().actions()]
 
-    assert titles == ["File", "Settings", "Help"]
+    assert titles == ["File", "Settings", "Tools", "Help"]
+
+
+@pytest.mark.gui
+def test_tools_menu_lists_benchmark_and_the_system_monitor(main_window) -> None:
+    """
+    Given  the main window
+    When   its Tools menu is read
+    Then   it offers Benchmark… and System Monitor
+    """
+    labels = [a.text() for a in _menu(main_window, "Tools").actions()]
+
+    assert labels == ["Benchmark\u2026", "System Monitor"]
+
+
+@pytest.mark.gui
+def test_the_right_side_has_only_the_queue_and_the_preview(main_window) -> None:
+    """
+    Given  the main window
+    When   its tabs are read
+    Then   the Stats tab is gone: only Document Queue and Preview remain
+    """
+    tabs = [main_window._tabs.tabText(i) for i in range(main_window._tabs.count())]
+
+    assert tabs == ["Document Queue", "Preview"]
+
+
+class _FakeBenchmarkWindow(QWidget):
+    """A Benchmark window that records how often it was shown and closed."""
+
+    created: ClassVar[list[_FakeBenchmarkWindow]] = []
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.closed = 0
+        self.shown = 0
+        self.reloaded = 0
+        _FakeBenchmarkWindow.created.append(self)
+
+    def reload_settings(self) -> None:
+        self.reloaded += 1
+
+    def show(self) -> None:
+        self.shown += 1
+        super().show()
+
+    def close(self) -> bool:
+        self.closed += 1
+        return super().close()
+
+
+@pytest.fixture
+def fake_benchmark(monkeypatch):
+    """Replace the Benchmark window factory with a recording stand-in."""
+    from teachers_teammate.gui.benchmark import _benchmark_window  # noqa: PLC0415
+
+    _FakeBenchmarkWindow.created = []
+    monkeypatch.setattr(_benchmark_window, "build_benchmark_window", _FakeBenchmarkWindow)
+    return _FakeBenchmarkWindow
+
+
+@pytest.mark.gui
+def test_tools_benchmark_opens_one_window_and_a_second_click_reuses_it(
+    qtbot, main_window, fake_benchmark
+) -> None:
+    """
+    Given  the main window
+    When   Tools > Benchmark… is chosen twice
+    Then   one parentless Benchmark window exists and was shown both times
+    """
+    main_window._benchmark_action.trigger()
+    main_window._benchmark_action.trigger()
+
+    assert len(fake_benchmark.created) == 1
+    window = fake_benchmark.created[0]
+    qtbot.addWidget(window)
+    assert window.shown == 2
+    assert window.parent() is None
+    assert window.reloaded == 0  # it never went away: nothing to reload
+
+
+@pytest.mark.gui
+def test_reopening_a_closed_benchmark_window_follows_the_settings_again(
+    qtbot, main_window, fake_benchmark
+) -> None:
+    """
+    Given  a Benchmark window the teacher closed
+    When   Tools > Benchmark… is chosen again
+    Then   the same window is shown again after it reloaded the saved server and profile
+    """
+    main_window._benchmark_action.trigger()
+    window = fake_benchmark.created[0]
+    qtbot.addWidget(window)
+    window.hide()  # closed by the teacher
+
+    main_window._benchmark_action.trigger()
+
+    assert len(fake_benchmark.created) == 1
+    assert window.reloaded == 1
+    assert window.isVisible()
+
+
+@pytest.mark.gui
+def test_closing_the_main_window_closes_the_benchmark_window(
+    qtbot, main_window, fake_benchmark
+) -> None:
+    """
+    Given  an open Benchmark window
+    When   the main window is closed
+    Then   the Benchmark window's close() ran, so its worker is stopped
+    """
+    main_window._benchmark_action.trigger()
+    window = fake_benchmark.created[0]
+    qtbot.addWidget(window)
+
+    main_window.close()
+
+    assert window.closed == 1
+
+
+@pytest.mark.gui
+def test_the_system_monitor_is_hidden_until_the_menu_entry_shows_it(qtbot, main_window) -> None:
+    """
+    Given  the main window, whose monitor is built at start-up
+    When   Tools > System Monitor is chosen
+    Then   the monitor window was hidden before and is visible after, as a window of its
+           own that no other window owns (an owned window stays on top of its owner)
+    """
+    monitor = main_window._monitor
+    assert not monitor.isVisible()
+
+    main_window._monitor_action.trigger()
+
+    assert monitor.isVisible()
+    assert monitor.isWindow()
+    assert monitor.parent() is None
+
+
+@pytest.mark.gui
+def test_closing_the_main_window_closes_an_open_system_monitor(qtbot, main_window) -> None:
+    """
+    Given  an open System Monitor next to the main window
+    When   the main window is closed
+    Then   the monitor is closed with it, so no window keeps the app alive
+    """
+    main_window._monitor_action.trigger()
+    assert main_window._monitor.isVisible()
+
+    main_window.close()
+
+    assert not main_window._monitor.isVisible()
+
+
+@pytest.mark.gui
+def test_the_system_monitor_stays_open_while_the_main_window_is_used(qtbot, main_window) -> None:
+    """
+    Given  an open System Monitor
+    When   the main window is activated and the menu entry is chosen a second time
+    Then   the monitor stays open (it can run in parallel) and is raised, not duplicated
+    """
+    main_window._monitor_action.trigger()
+    main_window.activateWindow()
+    main_window._monitor_action.trigger()
+
+    assert main_window._monitor.isVisible()
+
+
+@pytest.mark.gui
+def test_the_stats_poll_only_while_the_monitor_is_visible(qtbot, main_window) -> None:
+    """
+    Given  the main window and its System Monitor
+    When   the monitor is shown and hidden again
+    Then   the stats timer runs only in between
+    """
+    pytest.importorskip("psutil")
+    stats = main_window._stats
+    assert not stats._timer.isActive()
+
+    main_window._monitor.show()
+    assert stats._timer.isActive()
+
+    main_window._monitor.hide()
+    assert not stats._timer.isActive()
+
+
+@pytest.mark.gui
+def test_the_chart_collects_a_run_while_the_monitor_is_hidden(main_window) -> None:
+    """
+    Given  a hidden System Monitor
+    When   a file finishes and the chart is updated
+    Then   the monitor's own chart holds the data, ready for when it is opened
+    """
+    assert main_window._chart is main_window._monitor.chart
+
+    main_window._chart.update_data(["a.png"], [1.0], [2.0])
+
+    assert main_window._monitor.chart.chart().series()
+
+
+@pytest.mark.gui
+def test_the_monitor_remembers_its_geometry(qtbot, main_window, monkeypatch) -> None:
+    """
+    Given  a System Monitor that was shown and hidden
+    When   a new monitor window is built
+    Then   it is given the geometry the first one saved
+    """
+    from teachers_teammate.gui import _system_monitor  # noqa: PLC0415
+
+    stored: dict[str, object] = {}
+
+    class MemorySettings:
+        def __init__(self, *_args: object) -> None:
+            pass
+
+        def value(self, key: str, default: object = None) -> object:
+            return stored.get(key, default)
+
+        def setValue(self, key: str, value: object) -> None:
+            stored[key] = value
+
+    monkeypatch.setattr(_system_monitor, "QSettings", MemorySettings)
+    restored: list[object] = []
+    monkeypatch.setattr(
+        _system_monitor.SystemMonitorWindow,
+        "restoreGeometry",
+        lambda self, data: restored.append(data) or True,
+    )
+    monitor = _system_monitor.SystemMonitorWindow()
+    qtbot.addWidget(monitor)
+    monitor.show()
+    monitor.hide()
+    assert _system_monitor.GEOMETRY_KEY in stored
+
+    other = _system_monitor.SystemMonitorWindow()
+    qtbot.addWidget(other)
+
+    assert restored == [stored[_system_monitor.GEOMETRY_KEY]]
 
 
 @pytest.mark.gui
@@ -1315,7 +1471,7 @@ def test_the_preview_opens_on_top_of_the_settings_window(main_window, monkeypatc
     When   the main window shows its result
     Then   the dialogs belong to the Settings window, so they cannot open behind it
     """
-    from PySide6.QtWidgets import QDialog, QWidget  # noqa: PLC0415
+    from PySide6.QtWidgets import QDialog  # noqa: PLC0415
 
     from teachers_teammate.config import OcrConfig  # noqa: PLC0415
 
@@ -1342,30 +1498,6 @@ def test_the_preview_opens_on_top_of_the_settings_window(main_window, monkeypatc
 
 
 @pytest.mark.gui
-def test_main_window_check_llm_status_paddleocr_ok(qtbot, monkeypatch) -> None:
-    """
-    Given  ocr_engine is paddleocr and paddleocr is importable
-    When   _check_llm_status is called
-    Then   paddleocr status label is set to green
-    """
-    monkeypatch.setattr(MainWindow, "_load_toml_if_present", lambda self: None)
-    win = MainWindow()
-    qtbot.addWidget(win)
-
-    monkeypatch.setattr(win._app_service, "check_connection", lambda **_kw: (True, True, "✓ OK"))
-    win._config_panel.get_settings_dict = lambda: {  # ty: ignore[invalid-assignment]  # test monkeypatches the method with a stub lambda
-        "ocr_engine": "paddleocr",
-        "correction_enabled": False,
-        "evaluation_enabled": False,
-        "ollama_url": "http://localhost:11434",
-    }
-
-    win._check_llm_status()
-
-    assert "paddleocr" in win._status_labels
-
-
-@pytest.mark.gui
 def test_main_window_load_toml_if_present_loads_values(qtbot, monkeypatch, tmp_path) -> None:
     """
     Given  a valid TOML config file exists at the resolved config path
@@ -1375,7 +1507,7 @@ def test_main_window_load_toml_if_present_loads_values(qtbot, monkeypatch, tmp_p
     config_path = tmp_path / "ocr.toml"
     config_path.write_text('language = "German"\n', encoding="utf-8")
 
-    monkeypatch.setattr(MainWindow, "_check_llm_status", lambda self: None)
+    monkeypatch.setattr(MainWindow, "_start_readiness_check", lambda self, **_kw: None)
     monkeypatch.setattr(
         "teachers_teammate.application.service.ProcessingApplicationService.resolve_config_path",
         lambda self, _: config_path,
@@ -1396,7 +1528,7 @@ def test_main_window_load_toml_if_present_no_path(qtbot, monkeypatch) -> None:
     When   _load_toml_if_present is called
     Then   method returns immediately without setting _config_path
     """
-    monkeypatch.setattr(MainWindow, "_check_llm_status", lambda self: None)
+    monkeypatch.setattr(MainWindow, "_start_readiness_check", lambda self, **_kw: None)
     monkeypatch.setattr(MainWindow, "_load_toml_if_present", lambda self: None)
     win = MainWindow()
     qtbot.addWidget(win)
@@ -1420,7 +1552,7 @@ def test_main_window_load_toml_if_present_exception_logged(qtbot, monkeypatch, t
     config_path = tmp_path / "bad.toml"
     config_path.write_text("bad content", encoding="utf-8")
 
-    monkeypatch.setattr(MainWindow, "_check_llm_status", lambda self: None)
+    monkeypatch.setattr(MainWindow, "_start_readiness_check", lambda self, **_kw: None)
     monkeypatch.setattr(MainWindow, "_load_toml_if_present", lambda self: None)
     win = MainWindow()
     qtbot.addWidget(win)
@@ -1438,121 +1570,6 @@ def test_main_window_load_toml_if_present_exception_logged(qtbot, monkeypatch, t
         _raise,
     )
     win._load_toml_if_present()  # should not raise
-
-
-@pytest.mark.gui
-def test_main_window_check_llm_status_openai_with_env(qtbot, monkeypatch) -> None:
-    """
-    Given  correction_provider is openai and OPENAI_API_KEY is set
-    When   _check_llm_status is called
-    Then   openai label is added to _status_labels
-    """
-    monkeypatch.setattr(MainWindow, "_load_toml_if_present", lambda self: None)
-    win = MainWindow()
-    qtbot.addWidget(win)
-
-    monkeypatch.setattr(win._app_service, "check_connection", lambda **_kw: (True, True, "✓ OK"))
-    win._config_panel.get_settings_dict = lambda: {  # ty: ignore[invalid-assignment]  # test monkeypatches the method with a stub lambda
-        "ocr_engine": "tesseract",
-        "correction_enabled": True,
-        "correction_provider": "openai",
-        "ollama_url": "http://localhost:11434",
-    }
-
-    win._check_llm_status()
-
-    assert "openai" in win._status_labels
-
-
-@pytest.mark.gui
-def test_main_window_check_llm_status_ollama_checks_in_background(qtbot, monkeypatch) -> None:
-    """
-    Given  ocr_engine is ollama
-    When   _check_llm_status is called
-    Then   the server is checked in the background and the label turns green on the result
-    """
-    monkeypatch.setattr(MainWindow, "_load_toml_if_present", lambda self: None)
-    win = MainWindow()
-    qtbot.addWidget(win)
-
-    calls: list[dict] = []
-    main_thread = threading.get_ident()
-
-    def _check(**kwargs):
-        calls.append({**kwargs, "on_gui_thread": threading.get_ident() == main_thread})
-        return True, True, "✓ OK"
-
-    monkeypatch.setattr(win._app_service, "check_connection", _check)
-    win._config_panel.get_settings_dict = lambda: {  # ty: ignore[invalid-assignment]  # test monkeypatches the method with a stub lambda
-        "ocr_engine": "ollama",
-        "correction_enabled": False,
-        "evaluation_enabled": False,
-        "ollama_url": "http://localhost:11434",
-    }
-
-    win._check_llm_status()
-
-    _wait_for(lambda: "#27ae60" in win._status_labels["ollama"].styleSheet())
-    assert calls[-1]["engine"] == "ollama"
-    assert calls[-1]["url"] == "http://localhost:11434"
-    assert calls[-1]["on_gui_thread"] is False
-
-
-@pytest.mark.gui
-def test_slow_status_checks_never_run_on_the_gui_thread(qtbot, monkeypatch) -> None:
-    """
-    Given  a paddleocr engine whose availability check blocks (imports paddle, probes CUDA)
-    When   _check_llm_status is called
-    Then   it returns at once; the label only changes once the check was released
-    """
-    monkeypatch.setattr(MainWindow, "_load_toml_if_present", lambda self: None)
-    win = MainWindow()
-    qtbot.addWidget(win)
-    release = threading.Event()
-
-    def _slow_check(**_kwargs):
-        assert release.wait(timeout=5), "test never released the check"
-        return True, True, "✓ OK"
-
-    monkeypatch.setattr(win._app_service, "check_connection", _slow_check)
-    win._config_panel.get_settings_dict = lambda: {  # ty: ignore[invalid-assignment]  # test monkeypatches the method with a stub lambda
-        "ocr_engine": "paddleocr",
-        "correction_enabled": False,
-        "evaluation_enabled": False,
-    }
-
-    win._check_llm_status()
-
-    lbl = win._status_labels["paddleocr"]
-    assert "#27ae60" not in lbl.styleSheet()
-    release.set()
-    _wait_for(lambda: "#27ae60" in lbl.styleSheet())
-
-
-@pytest.mark.gui
-def test_status_check_uses_the_service_model_selection(qtbot, monkeypatch) -> None:
-    """
-    Given  Ollama does OCR with one model and proofreading with another
-    When   the Ollama status check starts
-    Then   the first model the service lists as configured is the one that is checked
-    """
-    monkeypatch.setattr(MainWindow, "_load_toml_if_present", lambda self: None)
-    win = MainWindow()
-    qtbot.addWidget(win)
-    seen: list[str] = []
-    monkeypatch.setattr(
-        win._app_service,
-        "check_connection",
-        lambda **kw: seen.append(kw["model"]) or (True, True, "✓"),
-    )
-    monkeypatch.setattr(
-        win._app_service, "configured_ollama_models", lambda _config: ["ocr:1", "fix:2"]
-    )
-
-    win._start_ollama_check()
-
-    _wait_for(lambda: seen)
-    assert seen == ["ocr:1"]
 
 
 @pytest.mark.gui
@@ -1860,7 +1877,7 @@ def test_main_window_loads_credentials_on_startup(qtbot, monkeypatch, credential
 
     credential_file["credentials/OPENAI_API_KEY"] = "test-value-from-settings"
     monkeypatch.setattr(MainWindow, "_load_toml_if_present", lambda self: None)
-    monkeypatch.setattr(MainWindow, "_check_llm_status", lambda self: None)
+    monkeypatch.setattr(MainWindow, "_start_readiness_check", lambda self, **_kw: None)
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
 
     win = MainWindow(worker_factory=_DummyWorker)
@@ -1883,7 +1900,7 @@ def test_main_window_env_var_takes_priority_over_stored_credential(
 
     credential_file["credentials/OPENAI_API_KEY"] = "stored-value"
     monkeypatch.setattr(MainWindow, "_load_toml_if_present", lambda self: None)
-    monkeypatch.setattr(MainWindow, "_check_llm_status", lambda self: None)
+    monkeypatch.setattr(MainWindow, "_start_readiness_check", lambda self, **_kw: None)
     monkeypatch.setenv("OPENAI_API_KEY", "env-value")
 
     win = MainWindow(worker_factory=_DummyWorker)
@@ -1898,7 +1915,7 @@ def test_main_window_env_var_takes_priority_over_stored_credential(
 def _make_first_start_window(qtbot, monkeypatch, tmp_path: Path, detection) -> MainWindow:
     """Create a MainWindow that takes the first-start path (no ocr.toml)."""
     monkeypatch.setattr(main_window_module, "UpdateCheckThread", _DummyUpdateThread)
-    monkeypatch.setattr(MainWindow, "_check_llm_status", lambda self: None)
+    monkeypatch.setattr(MainWindow, "_start_readiness_check", lambda self, **_kw: None)
     monkeypatch.setattr(
         ProcessingApplicationService, "resolve_config_path", lambda self, explicit: None
     )
@@ -1962,7 +1979,7 @@ def test_existing_config_models_untouched(qtbot, monkeypatch, tmp_path: Path) ->
     )
     detect_calls: list = []
     monkeypatch.setattr(main_window_module, "UpdateCheckThread", _DummyUpdateThread)
-    monkeypatch.setattr(MainWindow, "_check_llm_status", lambda self: None)
+    monkeypatch.setattr(MainWindow, "_start_readiness_check", lambda self, **_kw: None)
     monkeypatch.setattr(
         ProcessingApplicationService, "resolve_config_path", lambda self, explicit: config_path
     )
@@ -2031,50 +2048,30 @@ def test_finished_pull_evicts_cached_model_list(main_window, monkeypatch) -> Non
 
 
 @pytest.mark.use_case("Recommended_Models_On_First_Start")
-def test_missing_model_box_opens_addons_with_models_preselected(
+def test_missing_model_dialog_opens_addons_with_models_preselected(
     qtbot, main_window, monkeypatch
 ) -> None:
     """
     Given  a run whose configured models are not installed
-    When   the user chooses "Open Add-ons…" in the warning
+    When   the user presses "Download…" in the dialog that stops the run
     Then   Settings opens on Add-ons, on the local models, with exactly the missing models
            preselected
     """
     from unittest.mock import MagicMock  # noqa: PLC0415
 
-    class _Box:
-        class Icon:
-            Warning = None
+    from teachers_teammate.gui._dependency_guard_dialog import (  # noqa: PLC0415
+        DependencyGuardDialog,
+    )
 
-        class ButtonRole:
-            RejectRole = None
-            ActionRole = None
-
-        def __init__(self, *_a, **_k) -> None:
-            self._buttons: list[object] = []
-
-        def setWindowTitle(self, _t: str) -> None: ...
-        def setText(self, _t: str) -> None: ...
-        def setIcon(self, _i: object) -> None: ...
-
-        def addButton(self, text: str, _role: object) -> object:
-            button = object()
-            self._buttons.append(button)
-            return button
-
-        def exec(self) -> int:
-            return 0
-
-        def clickedButton(self) -> object:
-            return self._buttons[-1]  # "Open Add-ons…"
-
+    monkeypatch.setattr(
+        DependencyGuardDialog, "exec", lambda self: self.action_chosen.emit(self.fix_actions[0])
+    )
     monkeypatch.setattr(main_window._config_panel, "to_config", lambda: MagicMock())
     monkeypatch.setattr(
         ProcessingApplicationService,
         "check_run_preflight",
-        lambda self, config: RunPreflight(missing_models=("qwen3-vl:8b", "qwen3.5:9b")),
+        lambda self, config, **_kw: RunPreflight(missing_models=("qwen3-vl:8b", "qwen3.5:9b")),
     )
-    monkeypatch.setattr(main_window_module, "QMessageBox", _Box)
     scripted = install_scripted_settings_window(monkeypatch, accepted=False)
 
     main_window._on_run()
@@ -2107,13 +2104,13 @@ def test_stats_gpu_button_opens_the_gpu_addons_tab(main_window, monkeypatch) -> 
 def test_the_panels_dependency_guard_opens_addons_with_its_focus(main_window, monkeypatch) -> None:
     """
     Given  the config panel's dependency guard asking for the name-detection add-on
-    When   the panel emits open_downloads_requested
+    When   the panel emits open_settings_requested for Add-ons
     Then   Settings opens on Add-ons with that focus and entries
     """
     scripted = install_scripted_settings_window(monkeypatch, accepted=False)
 
-    main_window._config_panel.open_downloads_requested.emit(
-        FOCUS_ONLINE_SERVICES, ["provider:mistral"]
+    main_window._config_panel.open_settings_requested.emit(
+        SettingsPage.ADDONS, FOCUS_ONLINE_SERVICES, ["provider:mistral"]
     )
 
     assert len(scripted.instances) == 1
@@ -2286,29 +2283,30 @@ def test_run_with_ollama_unreachable_shows_clear_message_and_does_not_start(
     """
     Given  Ollama is needed but not reachable
     When   Run is pressed
-    Then   a clear "Ollama is not running" message is shown, no worker starts and
-           the Run button is usable again
+    Then   the dialog says Ollama is not running and offers the server address, no worker
+           starts and the Run button is usable again
     """
+    from teachers_teammate.gui._dependency_guard_dialog import (  # noqa: PLC0415
+        DependencyGuardDialog,
+    )
+
     cfg = make_config(tmp_path)
     monkeypatch.setattr(main_window._config_panel, "to_config", lambda: cfg)
     monkeypatch.setattr(
         ProcessingApplicationService,
         "check_run_preflight",
-        lambda self, config: RunPreflight(ollama_unreachable="✗ Cannot connect to Ollama"),
+        lambda self, config, **_kw: RunPreflight(ollama_unreachable="✗ Cannot connect to Ollama"),
     )
-    monkeypatch.setattr(main_window, "_start_ollama_check", lambda: None)
-    shown: list[tuple[str, str]] = []
-    monkeypatch.setattr(
-        main_window_module.QMessageBox,
-        "warning",
-        lambda _parent, title, text: shown.append((title, text)),
-    )
+    shown: list[DependencyGuardDialog] = []
+    monkeypatch.setattr(DependencyGuardDialog, "exec", lambda self: shown.append(self))
 
     main_window._on_run()
     qtbot.waitUntil(lambda: bool(shown), timeout=3000)
 
-    assert shown[0][0] == "Ollama is not running"
-    assert "ollama serve" in shown[0][1]
+    dialog = shown[0]
+    assert dialog.windowTitle() == "The run can't start"
+    assert "Cannot connect to Ollama" in dialog.issues[0].message
+    assert [a.label for a in dialog.fix_actions] == ["Find server…"]  # "Check again" is no button
     assert main_window._worker is None
     assert main_window._run_btn.isEnabled() is True
 
@@ -2330,7 +2328,7 @@ def test_run_checks_requirements_off_the_gui_thread(
     main_window._results_table.selectRow(0)
     release = threading.Event()
 
-    def _slow_preflight(self, config):
+    def _slow_preflight(self, config, **_kw):
         assert release.wait(timeout=5), "test never released the check"
         return RunPreflight()
 
@@ -2362,9 +2360,9 @@ def test_run_shows_unmet_stage_requirement_dialog(
     monkeypatch.setattr(
         ProcessingApplicationService,
         "check_run_preflight",
-        lambda self, config: RunPreflight(
+        lambda self, config, **_kw: RunPreflight(
             stage="correction",
-            stage_issues=(RequirementIssue("Model is not downloaded.", True),),
+            stage_issues=(RequirementIssue("Model is not downloaded.", IssueKind.MODEL_MISSING),),
         ),
     )
     shown: list[str] = []
@@ -2375,7 +2373,7 @@ def test_run_shows_unmet_stage_requirement_dialog(
     main_window._on_run()
     qtbot.waitUntil(lambda: bool(shown), timeout=3000)
 
-    assert shown == ["Correction — Missing Requirements"]
+    assert shown == ["The run can't start"]
     assert main_window._worker is None
 
 
@@ -2393,7 +2391,7 @@ def test_insufficient_memory_runs_anyway_only_when_the_user_says_so(
     monkeypatch.setattr(
         ProcessingApplicationService,
         "check_run_preflight",
-        lambda self, config: RunPreflight(memory_warning="qwen3.5:9b needs about 7 GB."),
+        lambda self, config, **_kw: RunPreflight(memory_warning="qwen3.5:9b needs about 7 GB."),
     )
     monkeypatch.setattr(main_window_module, "QMessageBox", _RecordingMessageBox)
     main_window._results_table.set_queue(["a.png"], [str(tmp_path / "a.png")])
@@ -2425,7 +2423,7 @@ def test_cancelling_the_memory_warning_does_not_start_the_run(
     monkeypatch.setattr(
         ProcessingApplicationService,
         "check_run_preflight",
-        lambda self, config: RunPreflight(memory_warning="qwen3.5:9b needs about 7 GB."),
+        lambda self, config, **_kw: RunPreflight(memory_warning="qwen3.5:9b needs about 7 GB."),
     )
     monkeypatch.setattr(main_window_module, "QMessageBox", _RecordingMessageBox)
     main_window._results_table.set_queue(["a.png"], [str(tmp_path / "a.png")])
@@ -2547,27 +2545,28 @@ def test_run_refuses_online_ocr_with_an_explanation(
     """
     Given  a preflight that refuses text recognition (e.g. an Ollama cloud model)
     When   Run is pressed
-    Then   the reason is shown, no worker starts and Run is usable again
+    Then   the reason is shown with a way to choose another model, no worker starts and Run
+           is usable again
     """
+    from teachers_teammate.gui._dependency_guard_dialog import (  # noqa: PLC0415
+        DependencyGuardDialog,
+    )
+
     cfg = make_config(tmp_path)
     monkeypatch.setattr(main_window._config_panel, "to_config", lambda: cfg)
     monkeypatch.setattr(
         ProcessingApplicationService,
         "check_run_preflight",
-        lambda self, config: RunPreflight(ocr_not_allowed="Runs on Ollama's servers."),
+        lambda self, config, **_kw: RunPreflight(ocr_not_allowed="Runs on Ollama's servers."),
     )
-    shown: list[tuple[str, str]] = []
-    monkeypatch.setattr(
-        main_window_module.QMessageBox,
-        "warning",
-        lambda _parent, title, text: shown.append((title, text)),
-    )
+    shown: list[DependencyGuardDialog] = []
+    monkeypatch.setattr(DependencyGuardDialog, "exec", lambda self: shown.append(self))
 
     main_window._on_run()
     qtbot.waitUntil(lambda: bool(shown), timeout=3000)
 
-    assert shown[0][0] == "Text recognition must stay on your computer"
-    assert "Runs on Ollama's servers." in shown[0][1]
+    assert "Runs on Ollama's servers." in shown[0].issues[0].message
+    assert [a.label for a in shown[0].fix_actions] == ["Choose a model…"]
     assert main_window._worker is None
     assert main_window._run_btn.isEnabled() is True
 
@@ -2785,7 +2784,7 @@ def test_online_ocr_engine_in_saved_settings_is_announced(
     config_path = tmp_path / "ocr.toml"
     config_path.write_text('ocr_engine = "openai"\nocr_model = "gpt-4o"\n', encoding="utf-8")
     shown: list[tuple[str, str]] = []
-    monkeypatch.setattr(MainWindow, "_check_llm_status", lambda self: None)
+    monkeypatch.setattr(MainWindow, "_start_readiness_check", lambda self, **_kw: None)
     monkeypatch.setattr(
         ProcessingApplicationService, "resolve_config_path", lambda self, _: config_path
     )
@@ -2815,7 +2814,7 @@ def test_local_ocr_engine_in_saved_settings_is_not_announced(
     config_path = tmp_path / "ocr.toml"
     config_path.write_text('ocr_engine = "tesseract"\n', encoding="utf-8")
     shown: list[str] = []
-    monkeypatch.setattr(MainWindow, "_check_llm_status", lambda self: None)
+    monkeypatch.setattr(MainWindow, "_start_readiness_check", lambda self, **_kw: None)
     monkeypatch.setattr(
         ProcessingApplicationService, "resolve_config_path", lambda self, _: config_path
     )
@@ -2830,46 +2829,6 @@ def test_local_ocr_engine_in_saved_settings_is_not_announced(
     assert "Text recognition changed" not in shown
 
 
-# ── Ollama status heals itself ───────────────────────────────────────────────
-
-
-@pytest.mark.gui
-def test_red_ollama_status_is_rechecked_until_it_turns_green(main_window) -> None:
-    """
-    Given  an Ollama status that came back "not connected"
-    When   the check result arrives, and later a result says "connected"
-    Then   a retry is scheduled while red and cancelled once green
-    """
-    main_window._on_llm_check_done(False, False, "✗")
-    assert main_window._ollama_retry_timer.isActive() is True
-
-    main_window._on_llm_check_done(True, True, "✓")
-    assert main_window._ollama_retry_timer.isActive() is False
-    assert main_window._ollama_connected is True
-
-
-@pytest.mark.gui
-def test_recheck_runs_only_while_ollama_is_red(main_window, monkeypatch) -> None:
-    """
-    Given  a status row with an Ollama label
-    When   a recheck is requested while Ollama is connected, then while it is not
-    Then   a background check is only started in the second case
-    """
-    from PySide6.QtWidgets import QLabel  # noqa: PLC0415
-
-    started: list[int] = []
-    monkeypatch.setattr(main_window, "_start_ollama_check", lambda: started.append(1))
-    main_window._status_labels = {"ollama": QLabel("●")}
-
-    main_window._ollama_connected = True
-    main_window._recheck_ollama_status()
-    assert started == []
-
-    main_window._ollama_connected = False
-    main_window._recheck_ollama_status()
-    assert started == [1]
-
-
 # ── Run / re-run guards ──────────────────────────────────────────────────────
 
 
@@ -2880,16 +2839,19 @@ def test_stage_rerun_with_unmet_requirement_keeps_the_cached_results(
     """
     Given  Ollama is not running
     When   "Re-run Proofreading" is chosen from the queue context menu
-    Then   the "not running" message is shown and the cache is left untouched
+    Then   the dialog that says the run can't start is shown and the cache is left untouched
     """
+    from teachers_teammate.gui._dependency_guard_dialog import (  # noqa: PLC0415
+        DependencyGuardDialog,
+    )
+
     cfg = make_config(tmp_path)
     monkeypatch.setattr(main_window._config_panel, "to_config", lambda: cfg)
     monkeypatch.setattr(
         ProcessingApplicationService,
         "check_run_preflight",
-        lambda self, config: RunPreflight(ollama_unreachable="✗ Cannot connect to Ollama"),
+        lambda self, config, **_kw: RunPreflight(ollama_unreachable="✗ Cannot connect to Ollama"),
     )
-    monkeypatch.setattr(main_window, "_start_ollama_check", lambda: None)
     invalidated: list = []
     monkeypatch.setattr(
         main_window._app_service,
@@ -2898,13 +2860,13 @@ def test_stage_rerun_with_unmet_requirement_keeps_the_cached_results(
     )
     shown: list[str] = []
     monkeypatch.setattr(
-        main_window_module.QMessageBox, "warning", lambda _p, title, _t: shown.append(title)
+        DependencyGuardDialog, "exec", lambda self: shown.append(self.windowTitle())
     )
 
     main_window._on_stage_run_requested(["/tmp/a.png"], "correction")
     _wait_for(lambda: bool(shown))
 
-    assert shown == ["Ollama is not running"]
+    assert shown == ["The run can't start"]
     assert invalidated == []
     assert main_window._worker is None
 
@@ -2926,7 +2888,7 @@ def test_run_pressed_while_requirements_are_checked_starts_nothing_twice(
     release = threading.Event()
     checks: list[int] = []
 
-    def _slow_preflight(self, config):
+    def _slow_preflight(self, config, **_kw):
         checks.append(1)
         assert release.wait(timeout=5), "test never released the check"
         return RunPreflight()
@@ -2980,23 +2942,6 @@ def test_stage_rerun_is_refused_while_a_worker_runs(
     assert busy == ["Please wait"]
     assert invalidated == []
     assert main_window._preflight_running is False
-
-
-@pytest.mark.gui
-def test_closing_the_window_stops_the_ollama_retries(main_window) -> None:
-    """
-    Given  a red Ollama status with a retry scheduled
-    When   the window is closed
-    Then   the retry timer is stopped and a late check result schedules nothing new
-    """
-    from PySide6.QtGui import QCloseEvent  # noqa: PLC0415
-
-    main_window._on_llm_check_done(False, False, "✗")
-    assert main_window._ollama_retry_timer.isActive() is True
-
-    main_window.closeEvent(QCloseEvent())
-
-    assert main_window._ollama_retry_timer.isActive() is False
 
 
 def _gpu_monitoring_window(main_window, monkeypatch):
@@ -3935,3 +3880,540 @@ def test_main_window_does_not_probe_again_and_again_when_the_probe_fails(
 
     assert 2 <= settled <= 4
     assert len(calls) == settled
+
+
+# ── Readiness line ───────────────────────────────────────────────────────────
+
+
+@pytest.fixture
+def ready_window(qtbot, monkeypatch) -> MainWindow:
+    """A MainWindow whose readiness check is the real one (the shared fixture silences it)."""
+    monkeypatch.setattr(MainWindow, "_load_toml_if_present", lambda self: None)
+    monkeypatch.setattr(main_window_module, "UpdateCheckThread", _DummyUpdateThread)
+    win = MainWindow(worker_factory=_DummyWorker)
+    qtbot.addWidget(win)
+    return win
+
+
+def _preflight_returns(monkeypatch, result: RunPreflight) -> list[dict]:
+    """Make every preflight answer *result*; return the keyword arguments of each call."""
+    calls: list[dict] = []
+
+    def answer(self, config, **kwargs):
+        calls.append(kwargs)
+        return result
+
+    monkeypatch.setattr(ProcessingApplicationService, "check_run_preflight", answer)
+    return calls
+
+
+_MISSING_KEY = RunPreflight(
+    stage="correction",
+    stage_issues=(
+        RequirementIssue(
+            "No API key for Mistral (EU) is set.", IssueKind.KEY_MISSING, provider="mistral_eu"
+        ),
+    ),
+)
+
+
+def _line(window: MainWindow) -> str:
+    return window._readiness_line.label.text()
+
+
+def _buttons(window: MainWindow) -> list[str]:
+    return [b.text() for b in window._readiness_line._buttons if not b.isHidden()]
+
+
+@pytest.mark.gui
+def test_the_line_names_a_missing_key_and_its_button_opens_the_key_row(
+    qtbot, ready_window, monkeypatch
+) -> None:
+    """
+    Given  proofreading at an online service whose key is not set
+    When   the readiness check answers
+    Then   the line says so, asks for no memory check, and its "Enter key…" button opens AI
+           models on the proofreading key row
+    """
+    calls = _preflight_returns(monkeypatch, _MISSING_KEY)
+    scripted = install_scripted_settings_window(monkeypatch, accepted=False)
+
+    ready_window._start_readiness_check()
+    qtbot.waitUntil(lambda: "No API key for Mistral (EU) yet" in _line(ready_window), timeout=3000)
+
+    assert _buttons(ready_window) == ["Enter key…"]
+    assert calls[-1] == {
+        "memory": False,
+        "recognition": True,
+        "fresh": False,
+        "files": [],
+        "recognised": set(),
+    }
+    ready_window._readiness_line._buttons[0].click()
+    window = scripted.instances[0]
+    assert (window.page, window.focus) == (SettingsPage.AI_MODELS, FOCUS_PROOFREADING_KEY)
+
+
+@pytest.mark.gui
+def test_the_line_offers_the_server_address_and_check_again_for_ollama(
+    qtbot, ready_window, monkeypatch
+) -> None:
+    """
+    Given  an Ollama that cannot be reached
+    When   the readiness check answers, and "Check again" is pressed
+    Then   both buttons show, and pressing "Check again" asks again at once
+    """
+    _preflight_returns(monkeypatch, RunPreflight(ollama_unreachable="✗ Cannot connect"))
+    ready_window._start_readiness_check()
+    qtbot.waitUntil(lambda: "Ollama isn't reachable" in _line(ready_window), timeout=3000)
+    checks: list[int] = []
+    monkeypatch.setattr(ready_window, "_start_readiness_check", lambda **_kw: checks.append(1))
+
+    assert _buttons(ready_window) == ["Check again", "Find server…"]
+    ready_window._readiness_line._buttons[0].click()
+
+    assert checks == [1]
+
+
+@pytest.mark.gui
+def test_the_line_asks_for_a_results_folder_and_choose_opens_the_dialog(
+    qtbot, ready_window, monkeypatch, tmp_path: Path
+) -> None:
+    """
+    Given  "Word document" ticked while no results folder is chosen
+    When   the line updates, and "Choose…" is pressed
+    Then   the folder dialog opens, and the chosen folder lands in the Results step
+    """
+    from teachers_teammate.gui import _config_panel  # noqa: PLC0415
+
+    panel = ready_window._config_panel
+    panel._docx_enabled.setChecked(True)
+    ready_window._update_readiness()
+    assert "Choose where to save the results" in _line(ready_window)
+    assert _buttons(ready_window) == ["Choose…"]
+    monkeypatch.setattr(
+        _config_panel.QFileDialog, "getExistingDirectory", lambda *_a, **_k: str(tmp_path)
+    )
+
+    ready_window._readiness_line._buttons[0].click()
+
+    assert panel.get_output_dir() == str(tmp_path)
+    assert "Choose where to save the results" not in _line(ready_window)
+
+
+@pytest.mark.gui
+def test_selecting_rows_updates_the_count_without_a_new_check(
+    qtbot, ready_window, monkeypatch, tmp_path: Path
+) -> None:
+    """
+    Given  three documents in the queue and a first check that found nothing in the way
+    When   rows are selected
+    Then   the line counts them at once, and the progress bar stays "Idle"
+    """
+    for name in ("a.png", "b.png", "c.png"):
+        (tmp_path / name).touch()
+    checks: list[int] = []
+    monkeypatch.setattr(ready_window, "_start_readiness_check", lambda **_kw: checks.append(1))
+    ready_window._first_check_answered = True
+
+    ready_window._config_panel.set_input_dir(str(tmp_path))
+    assert _line(ready_window) == "Select the documents to run in the queue"
+    ready_window._results_table.selectRow(0)
+    assert _line(ready_window) == "✓ Ready · 1 of 3 documents"
+    ready_window._results_table.selectAll()
+
+    assert _line(ready_window) == "✓ Ready · 3 documents"
+    assert checks == []
+    assert ready_window._progress.format() == "Idle"
+
+
+@pytest.mark.gui
+def test_a_check_before_any_documents_are_chosen_says_what_to_do_first(
+    qtbot, ready_window, monkeypatch
+) -> None:
+    """
+    Given  a window without documents
+    When   the first check finds nothing wrong
+    Then   the line asks for documents
+    """
+    _preflight_returns(monkeypatch, RunPreflight())
+
+    ready_window._start_readiness_check()
+
+    qtbot.waitUntil(lambda: _line(ready_window) == "Select documents to start", timeout=3000)
+
+
+@pytest.mark.gui
+def test_the_line_says_checking_only_when_the_first_answer_is_slow(
+    qtbot, ready_window, monkeypatch, tmp_path: Path
+) -> None:
+    """
+    Given  documents in the queue and a first check that is slow
+    When   the delay passes, and later the answer arrives
+    Then   the line says "Checking…" meanwhile and the green line afterwards
+    """
+    release = threading.Event()
+
+    def slow(self, config, **_kw):
+        assert release.wait(timeout=5), "test never released the check"
+        return RunPreflight()
+
+    monkeypatch.setattr(ProcessingApplicationService, "check_run_preflight", slow)
+    panel = ready_window._config_panel
+    panel._selected_folder = tmp_path  # no scan of the folder: the queue below is the queue
+    ready_window._results_table.set_queue(["a.png"], [str(tmp_path / "a.png")])
+    ready_window._results_table.selectRow(0)
+
+    ready_window._start_readiness_check()
+    qtbot.waitUntil(lambda: _line(ready_window) == "Checking…", timeout=3000)
+    release.set()
+
+    qtbot.waitUntil(lambda: _line(ready_window) == "✓ Ready · 1 document", timeout=3000)
+
+
+@pytest.mark.gui
+def test_a_stale_readiness_answer_is_dropped(qtbot, ready_window, monkeypatch) -> None:
+    """
+    Given  two checks in flight, the first of which reports a blocker and answers last
+    When   both have answered
+    Then   only the newer (clear) answer counts: no warning is shown
+    """
+    gates = [threading.Event(), threading.Event()]
+    answers = [_MISSING_KEY, RunPreflight()]
+    started = {"n": 0}
+    lock = threading.Lock()
+
+    def preflight(self, config, **_kw):
+        with lock:
+            index = started["n"]
+            started["n"] += 1
+        assert gates[index].wait(timeout=5), "test never released the check"
+        return answers[index]
+
+    monkeypatch.setattr(ProcessingApplicationService, "check_run_preflight", preflight)
+    ready_window._start_readiness_check()
+    qtbot.waitUntil(lambda: started["n"] == 1, timeout=3000)
+    ready_window._start_readiness_check()
+    qtbot.waitUntil(lambda: started["n"] == 2, timeout=3000)
+
+    gates[1].set()
+    qtbot.wait(100)
+    gates[0].set()
+    qtbot.wait(200)
+
+    assert ready_window._blocker is None
+    assert "No API key" not in _line(ready_window)
+
+
+@pytest.mark.gui
+def test_an_unreachable_ollama_is_checked_again_until_it_answers(ready_window) -> None:
+    """
+    Given  an answer saying Ollama cannot be reached, and later a clear one
+    When   the answers arrive
+    Then   a retry is scheduled while it is unreachable and cancelled afterwards; another
+           kind of blocker schedules none
+    """
+    unreachable = RunPreflight(ollama_unreachable="✗ down")
+    ready_window._on_readiness_check_done(unreachable, None)
+    assert ready_window._ollama_retry_timer.isActive() is True
+
+    ready_window._on_readiness_check_done(_MISSING_KEY, None)
+    assert ready_window._ollama_retry_timer.isActive() is False
+    ready_window._on_readiness_check_done(unreachable, None)
+    ready_window._on_readiness_check_done(RunPreflight(), None)
+    assert ready_window._ollama_retry_timer.isActive() is False
+
+
+@pytest.mark.gui
+def test_activating_the_window_checks_again_only_while_something_blocks(
+    ready_window, monkeypatch
+) -> None:
+    """
+    Given  the window becoming active again
+    When   nothing blocked the last check, and then when a requirement was missing
+    Then   a new check starts only in the second case
+    """
+    from PySide6.QtCore import QEvent  # noqa: PLC0415
+
+    checks: list[int] = []
+    monkeypatch.setattr(ready_window, "_start_readiness_check", lambda **_kw: checks.append(1))
+    monkeypatch.setattr(ready_window, "isActiveWindow", lambda: True)
+    event = QEvent(QEvent.Type.ActivationChange)
+
+    ready_window._blocker = None
+    ready_window.changeEvent(event)
+    assert checks == []
+
+    ready_window._on_readiness_check_done(_MISSING_KEY, None)
+    ready_window.changeEvent(event)
+    assert checks == [1]
+
+
+@pytest.mark.gui
+def test_check_again_asks_the_server_for_a_fresh_model_list(
+    qtbot, ready_window, monkeypatch
+) -> None:
+    """
+    Given  an Ollama that cannot be reached
+    When   "Check again" is pressed
+    Then   the new check asks for fresh data (a model pulled in a terminal is then seen)
+    """
+    calls = _preflight_returns(monkeypatch, RunPreflight(ollama_unreachable="✗ Cannot connect"))
+    ready_window._start_readiness_check()
+    qtbot.waitUntil(lambda: "Ollama isn't reachable" in _line(ready_window), timeout=3000)
+    calls.clear()
+
+    ready_window._readiness_line._buttons[0].click()
+
+    qtbot.waitUntil(lambda: len(calls) >= 1, timeout=3000)
+    assert calls[-1]["fresh"] is True
+
+
+@pytest.mark.gui
+def test_the_check_asks_for_the_engine_only_when_a_page_is_to_be_read(
+    qtbot, ready_window, monkeypatch, tmp_path: Path
+) -> None:
+    """
+    Given  a folder with one text file, later also an image, and the image's text recognised
+    When   the readiness check starts each time
+    Then   it asks for the recognition engine only while an image is still to be read
+    """
+    (tmp_path / "a.txt").write_text("hello")
+    calls = _preflight_returns(monkeypatch, RunPreflight())
+    ready_window._config_panel.set_input_dir(str(tmp_path))
+
+    def asks_for_engine() -> bool:
+        calls.clear()
+        ready_window._start_readiness_check()
+        qtbot.waitUntil(lambda: len(calls) >= 1, timeout=3000)
+        return calls[-1]["recognition"]
+
+    assert asks_for_engine() is False
+    (tmp_path / "b.png").touch()
+    ready_window._refresh_queue_from_inputs()
+    assert asks_for_engine() is True
+    ready_window._recognised_files = set(ready_window._queued_files_by_source_id.values())
+    assert asks_for_engine() is False
+
+
+@pytest.mark.gui
+def test_ticking_a_results_box_asks_the_readiness_check_again(ready_window, monkeypatch) -> None:
+    """
+    Given  the main window
+    When   "Text file, anonymized" is ticked (it needs name detection)
+    Then   a new readiness check is scheduled, so the line follows what Run will require
+    """
+    scheduled: list[int] = []
+    monkeypatch.setattr(ready_window, "_schedule_readiness_check", lambda: scheduled.append(1))
+    box = ready_window._config_panel._text_anonymized_enabled
+
+    box.setChecked(not box.isChecked())
+
+    assert scheduled
+
+
+@pytest.mark.gui
+def test_the_line_warns_about_text_files_saved_in_a_subfolder_of_the_documents(
+    qtbot, ready_window, tmp_path: Path
+) -> None:
+    """
+    Given  documents in a folder and a results folder inside it, with "Text file" ticked
+    When   the readiness line updates
+    Then   it warns like Run would (Run looks into subfolders), instead of saying "Ready"
+    """
+    (tmp_path / "a.png").touch()
+    panel = ready_window._config_panel
+    panel.set_input_dir(str(tmp_path))
+    results = str(tmp_path / "results")
+    panel._output_dir.setText(results)
+    panel._settings_dict["output_dir"] = results
+    panel._text_enabled.setChecked(True)
+    ready_window._results_table.selectAll()
+
+    ready_window._update_readiness()
+
+    assert "outside the documents folder" in _line(ready_window)
+
+
+@pytest.mark.gui
+def test_a_settings_change_checks_once_after_a_pause(qtbot, ready_window, monkeypatch) -> None:
+    """
+    Given  a window whose settings change twice in a row
+    When   the pause passes
+    Then   one readiness check ran (the changes were bundled)
+    """
+    calls = _preflight_returns(monkeypatch, RunPreflight())
+    qtbot.waitUntil(lambda: len(calls) >= 1, timeout=3000)  # the start-up check
+    qtbot.wait(100)
+    calls.clear()
+
+    ready_window._config_panel._correction_enabled.setChecked(False)
+    ready_window._config_panel._correction_enabled.setChecked(True)
+    qtbot.waitUntil(lambda: len(calls) >= 1, timeout=3000)
+    qtbot.wait(600)
+
+    assert len(calls) == 1
+
+
+@pytest.mark.gui
+def test_a_download_takes_over_the_line_and_a_new_check_follows(
+    qtbot, ready_window, monkeypatch
+) -> None:
+    """
+    Given  a model download that starts and makes progress
+    When   the line is read, and then the download finishes
+    Then   the line showed the download with its progress, and ends with a new readiness check
+    """
+    checks: list[int] = []
+    monkeypatch.setattr(ready_window, "_start_readiness_check", lambda **_kw: checks.append(1))
+    monkeypatch.setattr(ready_window._app_service, "on_ollama_models_changed", lambda _url: None)
+
+    ready_window._on_pull_started("qwen3:8b")
+    ready_window._on_pull_progress("pulling", 50, 200)
+
+    assert _line(ready_window) == "Downloading qwen3:8b"
+    assert ready_window._readiness_line._download_bar.value() == 25
+    ready_window._on_pull_finished("qwen3:8b")
+    qtbot.waitUntil(lambda: checks == [1], timeout=3000)
+    assert ready_window._readiness_line.downloading is False
+
+
+@pytest.mark.gui
+def test_closing_the_window_stops_the_retries_and_pending_checks(ready_window) -> None:
+    """
+    Given  an unreachable Ollama with a retry scheduled and a check waiting for its pause
+    When   the window is closed
+    Then   both timers are stopped
+    """
+    from PySide6.QtGui import QCloseEvent  # noqa: PLC0415
+
+    ready_window._on_readiness_check_done(RunPreflight(ollama_unreachable="✗ down"), None)
+    ready_window._schedule_readiness_check()
+    assert ready_window._ollama_retry_timer.isActive() is True
+
+    ready_window.closeEvent(QCloseEvent())
+
+    assert ready_window._ollama_retry_timer.isActive() is False
+    assert ready_window._readiness_debounce.isActive() is False
+
+
+# ── Text recognition switched off ────────────────────────────────────────────
+
+
+@pytest.mark.gui
+def test_a_skipped_file_opens_no_error_dialog_and_is_counted_apart(
+    main_window, monkeypatch
+) -> None:
+    """
+    Given  a queued scan and a run that leaves it out because text recognition is off
+    When   _on_file_done reports it as skipped
+    Then   no "Processing error" dialog opens, the row says "skipped", and the finished run
+           names the skipped file
+    """
+    warned: list[str] = []
+    monkeypatch.setattr(
+        main_window_module.QMessageBox, "warning", lambda *a, **k: warned.append(str(a))
+    )
+    monkeypatch.setattr(main_window._app_service, "load_view", lambda *_a, **_k: None)
+    source = "/tmp/scan.png"
+    main_window._results_table.set_queue(["scan.png"], source_ids=[source])
+
+    main_window._on_file_done(
+        FileDoneEvent(
+            source_id=source,
+            name="scan.png",
+            ok=False,
+            message="Needs text recognition, which is switched off.",
+            ocr_s=0.0,
+            correction_s=0.0,
+            skipped=True,
+        )
+    )
+
+    assert warned == []
+    assert main_window._results_table.item(0, 1).text() == "skipped"
+    assert main_window._skipped_names == ["scan.png"]
+
+
+@pytest.mark.gui
+def test_the_line_offers_to_turn_recognition_on_when_there_is_nothing_to_read(
+    qtbot, ready_window, monkeypatch
+) -> None:
+    """
+    Given  text recognition switched off and a check that finds no document with text
+    When   the readiness check answers and "Turn on" is pressed
+    Then   the line says there is nothing to read, and the button ticks "Recognize text"
+    """
+    ready_window._config_panel._recognition_enabled.setChecked(False)
+    _preflight_returns(monkeypatch, RunPreflight(nothing_to_read=True))
+
+    ready_window._start_readiness_check()
+    qtbot.waitUntil(lambda: "Nothing to read" in _line(ready_window), timeout=3000)
+
+    assert _buttons(ready_window) == ["Turn on"]
+    ready_window._readiness_line._buttons[0].click()
+    assert ready_window._config_panel._recognition_enabled.isChecked() is True
+
+
+@pytest.mark.gui
+def test_the_note_counts_the_scans_the_check_found_and_marks_their_rows(
+    qtbot, ready_window, monkeypatch, tmp_path
+) -> None:
+    """
+    Given  recognition switched off, a queue of a scan and a text file, and a check that
+           reports the scan as skipped
+    When   the readiness check answers
+    Then   the note under the switch counts one scan, and only the scan's row says "skipped"
+    """
+    scan, note = tmp_path / "scan.png", tmp_path / "note.txt"
+    ready_window._queued_files_by_source_id = {str(scan.resolve()): scan, str(note.resolve()): note}
+    ready_window._results_table.set_queue(
+        ["scan.png", "note.txt"], [str(scan.resolve()), str(note.resolve())]
+    )
+    ready_window._config_panel._recognition_enabled.setChecked(False)
+    _preflight_returns(monkeypatch, RunPreflight(skipped=(scan,)))
+
+    ready_window._start_readiness_check()
+    qtbot.waitUntil(
+        lambda: ready_window._results_table.item(0, 1).text() == "skipped", timeout=3000
+    )
+
+    assert "1 scan will be skipped" in ready_window._config_panel._recognition_note.text()
+    assert ready_window._results_table.item(1, 1).text() == "-"
+
+
+# ── Finding Ollama ────────────────────────────────────────────────────────────
+
+
+@pytest.mark.gui
+def test_an_unreachable_server_triggers_one_silent_search_and_offers_the_hit(
+    qtbot, ready_window, monkeypatch
+) -> None:
+    """
+    Given  a saved address that does not answer, and Ollama running on the Windows computer
+    When   the readiness check answers "unreachable" (twice)
+    Then   this computer was searched once, the line offers "Use it" without changing the
+           address, and pressing it saves the found address
+    """
+    from teachers_teammate.domain.ollama_discovery import DiscoveredServer, ServerKind  # noqa: PLC0415
+
+    searched: list[object] = []
+    hit = DiscoveredServer("http://172.20.0.1:11434", ServerKind.WINDOWS_HOST, "0.12.3", 2)
+
+    def discover(self, scope, **_kw):
+        searched.append(scope)
+        return [hit]
+
+    monkeypatch.setattr(ProcessingApplicationService, "discover_ollama_servers", discover)
+    _preflight_returns(monkeypatch, RunPreflight(ollama_unreachable="✗ Cannot connect"))
+
+    ready_window._start_readiness_check()
+    qtbot.waitUntil(lambda: _buttons(ready_window) == ["Use it", "Find server…"], timeout=3000)
+    ready_window._start_readiness_check()
+    qtbot.wait(200)
+
+    assert len(searched) == 1
+    assert "the Windows computer" in _line(ready_window)
+    assert ready_window._current_ollama_url() != hit.url
+    ready_window._readiness_line._buttons[0].click()
+    assert ready_window._current_ollama_url() == hit.url

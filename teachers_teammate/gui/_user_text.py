@@ -10,6 +10,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from ..domain.correction_review import CHANGE_CATEGORIES, AlignedReview
+from ..exceptions import RECOGNITION_OFF_MESSAGE
 
 if TYPE_CHECKING:
     from ..application.text_size import TextSizeEstimate
@@ -96,7 +97,7 @@ RESET_BUTTON = "Reset to default"
 RESET_BUTTON_TOOLTIP = (
     "Put the built-in instructions of the document language back. Your changes in the box are lost."
 )
-LEVEL_PLACEHOLDER_TOOLTIP = "{level} is replaced by the Level setting of the proofreading."
+LEVEL_PLACEHOLDER_TOOLTIP = "{level} is replaced by the Level next to the document language."
 FIXED_HEADING = "Always added by the app"
 ANSWER_FORMAT_HEADING = "Answer format (advanced)"
 ANSWER_FORMAT_TOOLTIP = (
@@ -112,8 +113,8 @@ ANSWER_FORMAT_REVIEW_TITLE = "With explanations"
 ANSWER_FORMAT_TEXT_TITLE = "Corrections only"
 ANSWER_FORMAT_RESET_TOOLTIP = "Put the built-in answer format back."
 
-CORRECTION_PROMPT_DIALOG_TITLE = "Proofreading Instructions"
-EVALUATION_PROMPT_DIALOG_TITLE = "Content Review Instructions"
+CORRECTION_PROMPT_DIALOG_TITLE = "Proofreading options"
+EVALUATION_PROMPT_DIALOG_TITLE = "Content review options"
 
 EXPLANATIONS_SUPPORTED = "explanations ✓"
 EXPLANATIONS_SUPPORTED_TOOLTIP = (
@@ -138,11 +139,44 @@ WHERE_AI_SETUP = f"Settings → {PAGE_AI_SETUP}"
 WHERE_ONLINE_SERVICES = f"Settings → {PAGE_ONLINE_SERVICES}"
 WHERE_ADDONS = f"Settings → {PAGE_ADDONS}"
 WHERE_RESULTS = "Results, in the main window"
+WHERE_STEPS = "What should happen, in the main window"
 OPEN_ADDONS = "Open Add-ons…"
 
 #: The step that replaces names before text is sent anywhere: the checkbox in the main window
 #: and the line on the AI models page that offers to turn it on must say the same words.
 REMOVE_PERSONAL_INFO = "Remove personal info"
+
+# ── Main window: the steps ────────────────────────────────────────────────────
+
+RECOGNIZE_TEXT = "Recognize text"
+RECOGNIZE_TEXT_TOOLTIP = (
+    "Read the text from scans (photos and scanned pages).\n"
+    "Text files and PDFs that already contain their text are used as they are.\n"
+    "Switched off, only that existing text is used and scans are skipped."
+)
+RECOGNIZE_NOT_NEEDED = "Not needed here: the text of these documents is already available."
+
+
+def scans_skipped_note(count: int) -> str:
+    """Return the note under a switched-off "Recognize text" when *count* scans are queued."""
+    noun = "scan" if count == 1 else "scans"
+    return f"{count} {noun} will be skipped because text recognition is off."
+
+
+#: The tooltip of a "skipped" cell in the queue (the same sentence the pipeline reports).
+RECOGNITION_OFF_REASON = RECOGNITION_OFF_MESSAGE
+NOTHING_TO_READ_LINE = "Nothing to read: no document has text to use without recognition"
+TURN_ON_RECOGNITION = "Turn on"
+PROOFREAD = "Proofread"
+REVIEW_CONTENT = "Review content"
+RULES_BUTTON = "Rules…"
+OPTIONS_BUTTON = "Options…"
+GUARD_TITLE = "{step} can't be turned on"
+RUN_BLOCKED_TITLE = "The run can't start"
+SAME_MODEL_AS_PROOFREADING = "Same model as proofreading"
+REVIEW_NEEDS_PROOFREADING = (
+    "Content review reads the proofread text, so it runs only together with proofreading."
+)
 
 # ── Settings wording ──────────────────────────────────────────────────────────
 
@@ -159,7 +193,7 @@ CORRECTIONS_ONLY_TOOLTIP = (
 )
 LEVEL_TOOLTIP = (
     "Target language level for the corrections (CEFR, A1 to C2). The proofreading keeps the "
-    "student's wording and only changes what is wrong at this level."
+    "student's wording and only changes what is wrong at this level. Used by proofreading."
 )
 
 

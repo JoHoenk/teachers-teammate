@@ -18,6 +18,14 @@ Ollama runs AI vision models locally on your machine. Teacher's Teammate sends e
 
 **Ollama must be running** before you start a processing run. Download it from [ollama.com/download](https://ollama.com/download) and install it like any other program. By default Teacher's Teammate connects to `http://127.0.0.1:11434` (your own computer). If you run Ollama on a dedicated machine on your local network, change the address in **Settings → This computer…** or set `ollama_url` in the settings file — for example `http://192.168.1.50:11434`.
 
+You do not have to know the address: **Settings → This computer… → Find…** (also offered as **Find server…** when Ollama is not reachable) looks for a server that answers.
+
+- **This computer** — the address in `OLLAMA_HOST`, and `http://127.0.0.1:11434`. When the saved address is unreachable the app also looks here quietly and offers a server it finds with **Use it**; it never switches by itself.
+- **The Windows computer, when the app runs in WSL** — in WSL's default network mode `127.0.0.1` is the Linux side, so the dialog also asks the Windows computer (the default gateway and name server of the WSL session). Ollama on Windows must listen on the network for this (`OLLAMA_HOST=0.0.0.0`, then restart it), or WSL must use `networkingMode=mirrored`. For the *privacy* box the Windows computer counts as this computer, because it is.
+- **The network** — only after you press **Search the network…** and confirm. The app then asks every address of the private `/24` around each network connection (at most 254 per connection) for `GET /api/version`, nothing else; no document or setting is sent. Some school networks notice such a search, so ask your IT department first. A server found there is another computer: the privacy box shows it as such and the usual question before a run that leaves this computer applies.
+
+Only a reply that looks like Ollama's counts, so a router or web server on the same port is ignored.
+
 **Default models.** Without explicit model settings the app (and the command line) uses `hf.co/prithivMLmods/chandra-ocr-2-GGUF:Q8_0` for reading and `gemma4:e4b` for proofreading and content review. These defaults apply on every computer; the recommendations in the tables below depend on your hardware profile. Download them in **Settings → Add-ons…**, or choose other models with `ocr_model`, `correction_model` and `evaluate_model` in the settings file.
 
 **Reading models and hardware requirements:**
@@ -89,7 +97,7 @@ brew install tesseract
 winget install UB-Mannheim.TesseractOCR
 ```
 
-After installation, Tesseract's status indicator in Teacher's Teammate will turn green automatically.
+After installation, the line above **Run Selected** stops asking you to install Tesseract once the app has looked again (it does so when the window is activated).
 
 Language packs determine which languages Tesseract can read. Install additional packs via your package manager (Linux/macOS) or by selecting them during the Windows installer setup.
 
@@ -320,7 +328,7 @@ The answer is a *review*, not just a text: the corrected text plus a short expla
 | `correction_level` | `B2` | Target level (CEFR `A1`–`C2`) for every language. The prompt's `{level}` placeholder is filled with it; a custom prompt without `{level}` ignores the setting |
 | `explanation_language` | `""` | Language of the explanations and note tables; empty means the language of the document |
 | `correction_output` | `review` | `review` explains the changes; `text` is *Corrections only (faster)* and is also the automatic fallback when a model cannot answer in the explanation format |
-| `answer_format_review`, `answer_format_text` | `""` | Your own answer format for the two modes (empty = built-in). It tells the model how to fill in its reply; the app reads the reply in this format, so change it only if you know what you are doing. A custom format is tied to `answer_format_version` (written for you by the GUI; without it the current version is assumed). When an update changes the built-in format, an edit written for the older one is dropped with a warning. The proofreading **Instructions…** dialog edits them under *Answer format (advanced)* |
+| `answer_format_review`, `answer_format_text` | `""` | Your own answer format for the two modes (empty = built-in). It tells the model how to fill in its reply; the app reads the reply in this format, so change it only if you know what you are doing. A custom format is tied to `answer_format_version` (written for you by the GUI; without it the current version is assumed). When an update changes the built-in format, an edit written for the older one is dropped with a warning. The **Options…** dialog of **Proofread** edits them under *Answer format (advanced)* |
 | `proofreading_context` | `auto` | (Shown on **Settings → AI models…**, and only while it changes something.) The context window (in tokens) the model gets. Proofreading itself stays at 8192: a larger window doubles the length of the answer, and no check measures whether the longer answers are still as good. The setting therefore only sizes the **content review**, and only when that runs on its own Ollama model — with the same model for both stages, or with an online service, it changes nothing. `auto` grows the window with the size of the graphics card — 8192, 16384 or 32768, whichever still fits the card entirely — and stays at 8192 when there is no card, the card size is unknown or Ollama runs on another computer. It uses the card's total size, not the memory free at the moment: free memory changes between runs, and a window that changed with it would make Ollama reload the model and would invalidate the result cache. A fixed value from `8192`, `16384`, `32768` overrides `auto`; useful for a remote server whose card the app cannot see. A larger window lets longer texts through, but it also needs more memory |
 
 **Upgrading from an earlier version.** The default proofreading model is now `gemma4:e4b`
@@ -399,13 +407,15 @@ The diagram below shows all processing stages and the available options at each 
 
 ## Comparing OCR settings (Benchmark app)
 
-Choosing between engines, models, and image-preparation methods is easiest when you can see the results side by side on one of your own documents. Teacher's Teammate ships a separate **Benchmark** app for exactly this: it runs a single document through one OCR configuration, keeps every result in a timestamped history, and lets you compare any two of them.
+Choosing between engines, models, and image-preparation methods is easiest when you can see the results side by side on one of your own documents. Teacher's Teammate ships a **Benchmark** app for exactly this: it runs a single document through one OCR configuration, keeps every result in a timestamped history, and lets you compare any two of them.
 
 The Benchmark app is **text-recognition only** — it does not anonymize, proofread, review content, or write Word documents. It is a tool for tuning the OCR stage in isolation, not for producing finished output.
 
 ### Launching the Benchmark app
 
-The Benchmark app is a separate command, not a menu item inside the main window. It is available when Teacher's Teammate is installed as a Python package (it is not bundled into the standalone installers):
+Open it from **Tools → Benchmark…** in the main window; the standalone installers include it. It is its own window with its own taskbar entry, so you can place it next to the main window, and a second click on the menu entry brings the open one to the front. It reads the AI server and the computer profile from your saved settings when it opens and keeps them while it is open; a change you make in Settings afterwards reaches it the next time you open it. A benchmark and a batch can run at the same time, but they then share the graphics card, so both are slower. Closing the main window also closes the Benchmark window.
+
+When Teacher's Teammate is installed as a Python package, it can also be started without the main window:
 
 ```bash
 # From a package (pip) install — a console command is registered:

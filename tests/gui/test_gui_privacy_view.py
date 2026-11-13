@@ -479,7 +479,7 @@ def _no_network(monkeypatch) -> None:
         lambda self, **_kw: (False, False, "offline"),
     )
     monkeypatch.setattr(MainWindow, "_load_toml_if_present", lambda self: None)
-    monkeypatch.setattr(MainWindow, "_check_llm_status", lambda self: None)
+    monkeypatch.setattr(MainWindow, "_start_readiness_check", lambda self, **_kw: None)
     monkeypatch.setattr(main_window_module, "UpdateCheckThread", _DummyUpdateThread)
 
 

@@ -319,7 +319,8 @@ class StageBuilder:
         ocr = cfg.ocr
         factory = self.factory
         reason = online_ocr_reason(ocr.engine, ocr.model, ollama_host(cfg.ollama_url))
-        if reason:
+        # With recognition off no page is read, so a model that would read pages online is moot.
+        if reason and cfg.recognition_enabled:
             raise OnlineOcrNotAllowedError(reason)
         if ocr.engine == "tesseract":
             return factory.build_tesseract_ocr()

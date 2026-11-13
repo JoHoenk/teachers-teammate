@@ -24,6 +24,7 @@ from ..domain.context_budget import (
 )
 from ..exceptions import OllamaConnectionError
 from .reporting import Reporter, StdoutReporter
+from .wsl import windows_host_addresses
 
 if TYPE_CHECKING:
     import ollama
@@ -137,12 +138,17 @@ def warm_up_own_host_names() -> None:
     threading.Thread(target=_own_host_names, name="own-host-names", daemon=True).start()
 
 
-def is_local_ollama_url(url: str) -> bool:
+def is_local_ollama_url(url: str, *, include_wsl_host: bool = False) -> bool:
     """Return whether *url* points at this computer.
 
     True for ``localhost``, the whole loopback range (``127.0.0.0/8``, ``::1``),
     ``0.0.0.0`` and this computer's own host name or address (so the machine's LAN
     IP counts as local too); false for anything else.
+
+    With *include_wsl_host*, the Windows computer behind a WSL session counts too: it is the
+    same physical computer, so nothing sent to it leaves the teacher's computer.  Callers that
+    read this computer's graphics card or memory leave it off: from inside WSL those figures
+    are the Linux side's, not the Windows computer's that actually runs Ollama.
     """
     host = (urlparse(normalize_ollama_url(url)).hostname or "").lower()
     if not host:
@@ -156,7 +162,9 @@ def is_local_ollama_url(url: str) -> bool:
         pass
     # Only now look up the computer's own names: the cheap checks above answer the
     # common (default) URL without ever waiting on the network.
-    return host in _own_host_names()
+    if host in _own_host_names():
+        return True
+    return include_wsl_host and host in windows_host_addresses()
 
 
 def models_include(model_name: str, available: list[str]) -> bool:

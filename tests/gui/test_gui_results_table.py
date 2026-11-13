@@ -522,3 +522,65 @@ def test_unclear_badge_keeps_the_proofreading_stage_done(qtbot) -> None:
     table.set_correction_review("a.pdf", CorrectionReview())
     assert cell.text() == "✓"
     assert table.get_stage_statuses_for_source("a.pdf")[1] is StageStatus.DONE
+
+
+# ── skipped scans (text recognition switched off) ────────────────────────────
+
+
+@pytest.mark.gui
+def test_a_skipped_result_is_shown_as_skipped_not_as_a_failure(qtbot) -> None:
+    """
+    Given  a queued scan that the run left out because text recognition is off
+    When   its result arrives with skipped=True
+    Then   the recognition cell says "skipped" with the reason as tooltip, the other stages
+           stay pending, the duration is empty and the row is neither green nor red
+    """
+    table = ResultsTable()
+    qtbot.addWidget(table)
+    table.set_queue(["scan.png"], ["/in/scan.png"])
+    table.mark_processing("/in/scan.png")
+
+    table.add_result(
+        FileDoneEvent(
+            source_id="/in/scan.png",
+            name="scan.png",
+            ok=False,
+            message="Needs text recognition, which is switched off.",
+            ocr_s=0.0,
+            correction_s=0.0,
+            skipped=True,
+        )
+    )
+
+    ocr = table.item(0, ResultsTable._COL_OCR)
+    assert ocr is not None
+    assert ocr.text() == "skipped"
+    assert "switched off" in ocr.toolTip()
+    for col in (ResultsTable._COL_CORRECTION, ResultsTable._COL_EVALUATION):
+        cell = table.item(0, col)
+        assert cell is not None
+        assert cell.text() == "-"
+    duration = table.item(0, ResultsTable._COL_DURATION)
+    assert duration is not None
+    assert duration.text() == ""
+    background = ocr.background().color().name()
+    assert background not in ("#1a3d2a", "#3d1a1a")
+
+
+@pytest.mark.gui
+def test_queued_scans_can_be_marked_skipped_before_the_run_and_unmarked_again(qtbot) -> None:
+    """
+    Given  a queue of a scan and a text file
+    When   the scan is marked as skipped, and then the marks are cleared
+    Then   only the scan shows "skipped" in between, and it is pending again afterwards
+    """
+    table = ResultsTable()
+    qtbot.addWidget(table)
+    table.set_queue(["scan.png", "notes.txt"], ["/in/scan.png", "/in/notes.txt"])
+
+    table.set_skipped_sources({"/in/scan.png"}, "Needs text recognition, which is switched off.")
+    assert table.item(0, ResultsTable._COL_OCR).text() == "skipped"
+    assert table.item(1, ResultsTable._COL_OCR).text() == "-"
+
+    table.set_skipped_sources(set())
+    assert table.item(0, ResultsTable._COL_OCR).text() == "-"

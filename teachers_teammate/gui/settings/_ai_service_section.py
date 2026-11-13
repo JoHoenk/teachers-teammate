@@ -26,7 +26,13 @@ from PySide6.QtWidgets import QComboBox, QFormLayout, QHBoxLayout, QLabel, QWidg
 from ...config import DEFAULTS
 from ...domain.data_location import DataLocation, DataRegion
 from ...domain.model_listing import ListedModel, ModelListing
-from .._data_flow_summary import LocationHint, text_note
+from .._data_flow_summary import (
+    PLACE_ONLINE,
+    PLACE_OWN_SERVER,
+    PLACE_THIS_COMPUTER,
+    LocationHint,
+    text_note,
+)
 from .._hardware_profile_selector import HardwareProfileSelector
 from .._model_fetch import (
     _MODEL_GROUPS,
@@ -83,9 +89,9 @@ CONTENT_REVIEW = AiServiceSpec(
 
 #: Where a self-hosted service runs, as the service list says it.
 _PLACE_OF_SELF_HOSTED = {
-    DataLocation.THIS_COMPUTER: "this computer",
-    DataLocation.OTHER_COMPUTER: "own server",
-    DataLocation.ONLINE: "online",
+    DataLocation.THIS_COMPUTER: PLACE_THIS_COMPUTER,
+    DataLocation.OTHER_COMPUTER: PLACE_OWN_SERVER,
+    DataLocation.ONLINE: PLACE_ONLINE,
 }
 MARK_NOT_INSTALLED = "not installed"
 MARK_KEY_NEEDED = "key needed"

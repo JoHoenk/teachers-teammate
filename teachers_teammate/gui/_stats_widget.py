@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib
 
 from PySide6.QtCore import Qt, QTimer, Signal
+from PySide6.QtGui import QHideEvent, QShowEvent
 from PySide6.QtWidgets import (
     QGroupBox,
     QHBoxLayout,
@@ -63,7 +64,10 @@ _probe_gpu_monitoring()
 
 
 class SystemStatsWidget(QGroupBox):
-    """Live CPU / RAM / GPU* / VRAM* monitors, refreshed every second.
+    """Live CPU / RAM / GPU* / VRAM* monitors, refreshed every second while shown.
+
+    The timer runs only while the widget is visible: the System Monitor window is hidden
+    most of the time, and nobody reads a gauge that is not on screen.
 
     GPU and VRAM rows are shown when pynvml (NVIDIA) or pyamdgpuinfo (AMD)
     is installed and a supported GPU is detected.  A button to open the
@@ -96,8 +100,20 @@ class SystemStatsWidget(QGroupBox):
         self._timer = QTimer(self)
         self._timer.setInterval(1000)
         self._timer.timeout.connect(self._refresh)
-        self._timer.start()
         self._refresh()
+
+    def showEvent(self, event: QShowEvent) -> None:  # Qt override
+        """Start polling, with one reading at once so the gauges are not stale."""
+        super().showEvent(event)
+        if self._enabled:
+            self._refresh()
+            self._timer.start()
+
+    def hideEvent(self, event: QHideEvent) -> None:  # Qt override
+        """Stop polling while nobody can see the gauges."""
+        super().hideEvent(event)
+        if self._enabled:
+            self._timer.stop()
 
     def _make_row(self, name: str) -> tuple[QProgressBar, QLabel]:
         row = QWidget()

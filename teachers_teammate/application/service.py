@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable, Collection, Mapping
 import dataclasses
 from dataclasses import dataclass
+from enum import StrEnum
 import importlib.util
 import os
 from pathlib import Path
@@ -34,7 +35,14 @@ from ..domain.model_catalog import (
     ram_needed_gb,
 )
 from ..domain.model_listing import ModelListing
-from ..domain.output_files import feeds_inputs, output_folder_refusal, output_path
+from ..domain.ollama_discovery import DiscoveredServer, DiscoveryScope
+from ..domain.output_files import (
+    TEXT_SUFFIX,
+    feeds_inputs,
+    output_folder_refusal,
+    output_path,
+)
+from ..domain.pdf_text_layer import PdfTextLayerMode, normalize_pdf_text_layer
 from ..infrastructure.addon_manager import ADDON_AMD as ADDON_AMD  # noqa: PLC0414
 from ..infrastructure.addon_manager import ADDON_NVIDIA as ADDON_NVIDIA  # noqa: PLC0414
 from ..infrastructure.addon_manager import ADDON_PADDLE as ADDON_PADDLE  # noqa: PLC0414
@@ -115,14 +123,34 @@ if TYPE_CHECKING:
     from ..interfaces import Anonymizer
 
 
+class IssueKind(StrEnum):
+    """What is missing, so the GUI can offer the fix without reading the sentence."""
+
+    OCR_NOT_ALLOWED = "ocr_not_allowed"
+    ENGINE_MISSING = "engine_missing"
+    OLLAMA_UNREACHABLE = "ollama_unreachable"
+    NO_OLLAMA_MODEL = "no_ollama_model"
+    MODEL_MISSING = "model_missing"
+    PACKAGE_MISSING = "package_missing"
+    KEY_MISSING = "key_missing"
+    NAME_DETECTION_MISSING = "name_detection_missing"
+    #: Text recognition is switched off and no queued file has text to use without it.
+    NOTHING_TO_READ = "nothing_to_read"
+
+
 @dataclasses.dataclass(frozen=True)
 class RequirementIssue:
-    """A single unmet requirement for enabling a pipeline stage."""
+    """A single unmet requirement for enabling a pipeline stage or starting a run."""
 
+    #: The sentence for the dialog.
     message: str
-    fixable_via_downloads: bool
+    kind: IssueKind
+    #: The provider whose package or key is missing (``PACKAGE_MISSING``, ``KEY_MISSING``).
     provider: str = ""
-    """Set when the fix is installing this provider's package (Add-ons → Online AI services)."""
+    #: The text-recognition engine that is not installed (``ENGINE_MISSING``).
+    engine: str = ""
+    #: Ollama tags that are not downloaded, or the spaCy model that is missing.
+    models: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -157,6 +185,11 @@ class RunPreflight:
     #: do, or when Ollama runs on another computer).  A warning, not a refusal: free memory
     #: changes from run to run, so the user decides ("Run anyway" in the GUI, a flag in the CLI).
     memory_warning: str = ""
+    #: Text recognition is switched off and not one queued file can be used without it.
+    nothing_to_read: bool = False
+    #: The queued files this run leaves out because text recognition is switched off (scans).
+    #: Informational: they never block the run.
+    skipped: tuple[Path, ...] = ()
 
     @property
     def blocked(self) -> bool:
@@ -165,11 +198,53 @@ class RunPreflight:
         The memory warning does not block: the user decides whether to run anyway.
         """
         return bool(
-            self.ocr_not_allowed
+            self.nothing_to_read
+            or self.ocr_not_allowed
             or self.ollama_unreachable
             or self.missing_models
             or self.stage_issues
         )
+
+    @property
+    def blocker(self) -> tuple[str, RequirementIssue] | None:
+        """The first blocker as ``(stage, issue)``, or ``None`` when nothing blocks the run.
+
+        The stage is ``"ocr"`` for a refused recognition and ``""`` for a server or a model
+        that does not belong to one stage.  One shape for every blocker, so the GUI shows and
+        fixes them all the same way.
+        """
+        if self.nothing_to_read:
+            return "ocr", RequirementIssue(
+                "Text recognition is switched off, and none of these files has text to use "
+                "without it.",
+                IssueKind.NOTHING_TO_READ,
+            )
+        if self.ocr_not_allowed:
+            return "ocr", RequirementIssue(self.ocr_not_allowed, IssueKind.OCR_NOT_ALLOWED)
+        if self.ollama_unreachable:
+            return "", RequirementIssue(self.ollama_unreachable, IssueKind.OLLAMA_UNREACHABLE)
+        if self.missing_models:
+            listed = ", ".join(f"'{model}'" for model in self.missing_models)
+            noun = "Model" if len(self.missing_models) == 1 else "Models"
+            verb = "is" if len(self.missing_models) == 1 else "are"
+            return "", RequirementIssue(
+                f"{noun} {listed} {verb} not downloaded.",
+                IssueKind.MODEL_MISSING,
+                models=self.missing_models,
+            )
+        if self.stage_issues:
+            return self.stage, self.stage_issues[0]
+        return None
+
+
+@dataclass(frozen=True)
+class RecognitionPlan:
+    """Which queued files a run can use while text recognition is switched off."""
+
+    readable: tuple[Path, ...] = ()
+    """Text files, PDFs with a usable text layer, and files whose recognised text is stored."""
+    skipped: tuple[Path, ...] = ()
+    """Scans: images and PDFs that have to be read from page images."""
 
 
 class ProcessingApplicationService:
@@ -204,6 +279,9 @@ class ProcessingApplicationService:
         # Warnings already shown: resolving the settings happens on every preview.
         self._warned: set[str] = set()
         self._model_cache: dict[str, tuple[float, ModelListing]] = {}
+        # Whether a PDF has a usable text layer, by (path, size, mtime, mode): the readiness
+        # check asks again after every settings change, and opening a PDF is not free.
+        self._pdf_text_cache: dict[tuple[str, int, int, str], bool] = {}
         # Owns hardware detection and model classification (and their caches).
         self._recommendations = ModelRecommendationService(
             invalidate_model_list=self._evict_ollama_model_list
@@ -840,6 +918,39 @@ class ProcessingApplicationService:
             return self._check_provider(provider, url, model=model)
         return False, False, "Nothing to check."
 
+    def discover_ollama_servers(
+        self,
+        scope: DiscoveryScope = DiscoveryScope.THIS_COMPUTER,
+        *,
+        stop_event: threading.Event | None = None,
+        on_found: Callable[[DiscoveredServer], None] | None = None,
+        on_progress: Callable[[int, int], None] | None = None,
+    ) -> list[DiscoveredServer]:
+        """Return the Ollama servers that answer, searching as far as *scope* says.
+
+        ``THIS_COMPUTER`` asks this computer and, inside WSL, the Windows computer behind it:
+        a few addresses, quick and quiet.  ``NETWORK`` also asks the private network around
+        this computer (up to 254 addresses per network card): the caller must only ask for it
+        when the person did.  Blocking network calls: run it on a background thread.  Changes
+        no setting; *on_found* / *on_progress* are called from worker threads.
+        """
+        from ..infrastructure import ollama_discovery  # noqa: PLC0415
+
+        found = ollama_discovery.discover_this_computer()
+        if on_found is not None:
+            for server in found:
+                on_found(server)
+        if scope is DiscoveryScope.NETWORK:
+            known = {server.url for server in found}
+            found += [
+                server
+                for server in ollama_discovery.scan_network(
+                    stop_event=stop_event, on_found=on_found, on_progress=on_progress
+                )
+                if server.url not in known
+            ]
+        return found
+
     def _check_ollama(self, url: str, model: str = "") -> tuple[bool, bool, str]:
         from ..infrastructure.ollama_utils import OllamaClient  # noqa: PLC0415
 
@@ -849,11 +960,11 @@ class ProcessingApplicationService:
         if engine == "ollama":
             return self._check_ollama(url, model)
         if engine == "tesseract":
-            if shutil.which("tesseract") is not None:
+            if self._tesseract_installed():
                 return True, True, "✓ tesseract binary found"
             return False, False, "✗ tesseract not found — install Tesseract OCR"
         if engine == "paddleocr":
-            if importlib.util.find_spec("paddleocr") is None:
+            if not self.is_module_importable("paddleocr"):
                 return (
                     False,
                     False,
@@ -889,7 +1000,7 @@ class ProcessingApplicationService:
     def _ollama_needed(config: Config) -> bool:
         """Return whether any enabled stage of *config* talks to Ollama."""
         return (
-            config.ocr.engine == "ollama"
+            (config.recognition_enabled and config.ocr.engine == "ollama")
             or (config.correction_enabled and config.correction_provider == "ollama")
             or (config.evaluation_enabled and config.evaluate_provider == "ollama")
         )
@@ -898,7 +1009,7 @@ class ProcessingApplicationService:
     def configured_ollama_models(config: Config) -> list[str]:
         """Return the deduplicated Ollama models the enabled stages of *config* use."""
         models: list[str] = []
-        if config.ocr.engine == "ollama" and config.ocr.model:
+        if config.recognition_enabled and config.ocr.engine == "ollama" and config.ocr.model:
             models.append(config.ocr.model)
         if config.correction_enabled and config.correction_provider == "ollama":
             model = config.effective_correction_model or ""
@@ -934,6 +1045,22 @@ class ProcessingApplicationService:
             self.get_provider_info,
             self.get_provider_data_region,
             self.describe_anonymizer_models(config),
+        )
+
+    def describe_steps(self, config: Config) -> DataFlow:
+        """Return where every step would run if it were ticked, whatever *config* ticks.
+
+        The main window shows the model and place of each step even while it is unticked, so
+        the teacher sees what ticking it would use.  Asking here keeps the GUI from deciding
+        a place itself.
+        """
+        return self.describe_data_flow(
+            dataclasses.replace(
+                config,
+                recognition_enabled=True,
+                correction_enabled=True,
+                evaluation_enabled=True,
+            )
         )
 
     def estimate_text_size(
@@ -1131,6 +1258,8 @@ class ProcessingApplicationService:
         every run, whatever files it holds: the fix is one model choice, and it keeps the
         rule independent of which files happen to need recognition.
         """
+        if not config.recognition_enabled:
+            return ""  # no page is read, so what would read it does not matter
         return ocr_refusal(config.ocr.engine, config.ocr.model, config.ollama_url)
 
     @staticmethod
@@ -1147,13 +1276,116 @@ class ProcessingApplicationService:
             recursive=config.recursive,
         )
 
-    def check_run_preflight(self, config: Config) -> RunPreflight:
+    @staticmethod
+    def needs_text_recognition(files: Collection[Path], *, recognised: Collection[Path]) -> bool:
+        """Return whether a run over *files* has to read pages with the recognition engine.
+
+        Text files bypass recognition, and a file whose recognised text is already stored
+        (*recognised*) is not read again.  Anything else may need the engine — a PDF is counted
+        as needing it even when it turns out to carry a text layer, because that is only known
+        by opening it.  No files at all also counts as "needs it": nothing says otherwise yet.
+        """
+        if not files:
+            return True
+        return any(file.suffix.lower() != TEXT_SUFFIX and file not in recognised for file in files)
+
+    def plan_recognition(
+        self,
+        files: Collection[Path],
+        *,
+        recognised: Collection[Path] = (),
+        pdf_text_layer: str = "auto",
+    ) -> RecognitionPlan:
+        """Return which of *files* a run can use while text recognition is switched off.
+
+        A text file, a file whose recognised text is already stored (*recognised*) and a PDF
+        with a usable text layer (in the *pdf_text_layer* mode) need no recognition.  Images
+        and the other PDFs do: they are the scans the run leaves out.  A PDF that cannot be
+        opened counts as readable, so the run reports the real problem instead of this
+        guess.  Opens PDFs: call it from a background thread, never from the GUI thread.
+        """
+        mode = normalize_pdf_text_layer(pdf_text_layer)
+        readable: list[Path] = []
+        skipped: list[Path] = []
+        for file in files:
+            suffix = file.suffix.lower()
+            if suffix == TEXT_SUFFIX or file in recognised:
+                readable.append(file)
+            elif suffix == ".pdf" and self._pdf_has_text_layer(file, mode):
+                readable.append(file)
+            else:
+                skipped.append(file)
+        return RecognitionPlan(tuple(readable), tuple(skipped))
+
+    def _pdf_has_text_layer(self, file: Path, mode: PdfTextLayerMode) -> bool:
+        """Return whether *file* would be read from its embedded text (``True`` if unknown)."""
+        try:
+            stat = file.stat()
+        except OSError:
+            return True
+        key = (str(file), stat.st_size, stat.st_mtime_ns, mode)
+        cached = self._pdf_text_cache.get(key)
+        if cached is not None:
+            return cached
+        from ..infrastructure.input_providers import pdf_has_text_layer  # noqa: PLC0415
+
+        try:
+            answer = pdf_has_text_layer(file, mode)
+        except Exception:  # noqa: BLE001  # an unreadable PDF is reported by the run itself
+            return True
+        self._pdf_text_cache[key] = answer
+        return answer
+
+    def check_run_preflight(
+        self,
+        config: Config,
+        *,
+        memory: bool = True,
+        recognition: bool = True,
+        fresh: bool = False,
+        files: Collection[Path] | None = None,
+        recognised: Collection[Path] = (),
+    ) -> RunPreflight:
         """Return the unmet requirements before a run, or an all-clear result.
+
+        With text recognition switched off and *files* given, the result also lists the files
+        the run leaves out (``skipped``), and is blocked (``nothing_to_read``) when none of
+        them can be used.  Such a check opens PDFs, see :meth:`plan_recognition`.
+        """
+        skipped: tuple[Path, ...] = ()
+        if not config.recognition_enabled and files:
+            plan = self.plan_recognition(
+                files, recognised=recognised, pdf_text_layer=config.ocr.pdf_text_layer
+            )
+            if not plan.readable:
+                return RunPreflight(nothing_to_read=True, skipped=plan.skipped)
+            skipped = plan.skipped
+        result = self._check_requirements(
+            config, memory=memory, recognition=recognition, fresh=fresh
+        )
+        return dataclasses.replace(result, skipped=skipped) if skipped else result
+
+    def _check_requirements(
+        self,
+        config: Config,
+        *,
+        memory: bool,
+        recognition: bool,
+        fresh: bool,
+    ) -> RunPreflight:
+        """Return the unmet requirements before a run (the checks behind :meth:`check_run_preflight`).
 
         Makes blocking network calls: call it from a background thread, never from
         the GUI thread.  Order: text recognition allowed → Ollama reachable → models
-        downloaded → stage requirements (anonymizer, correction, evaluation) → memory
-        (a warning, so a blocked run still reports its stage issues first).
+        downloaded → stage requirements (text recognition engine, anonymizer, correction,
+        evaluation) → memory (a warning, so a blocked run still reports its stage issues
+        first).  ``memory=False`` skips the memory warning: the readiness line only asks
+        whether a run can start, and the question about free memory belongs to Run.
+        ``recognition=False`` skips the check of the text recognition engine for a run that
+        reads no page (only text files, or text that is already recognised): a missing
+        Tesseract must not stop it (see :meth:`needs_text_recognition`).  ``fresh=True`` asks the
+        Ollama server again instead of using the list it gave within the last minutes: for a
+        teacher who just ran ``ollama pull`` in a terminal and pressed "Check again".
         """
         ocr_reason = self.ocr_refusal_for_run(config)
         if ocr_reason:
@@ -1161,6 +1393,8 @@ class ProcessingApplicationService:
         if self._ollama_needed(config):
             from ..infrastructure.ollama_utils import models_include  # noqa: PLC0415
 
+            if fresh:
+                self._evict_ollama_model_list(config.ollama_url)
             installed, unreachable = self._installed_ollama_models(config.ollama_url)
             if unreachable:
                 return RunPreflight(ollama_unreachable=unreachable)
@@ -1169,7 +1403,7 @@ class ProcessingApplicationService:
             if missing:
                 return RunPreflight(missing_models=tuple(missing))
 
-        stages: list[str] = []
+        stages: list[str] = ["ocr"] if recognition and config.recognition_enabled else []
         if config.anonymization_enabled or config.text_anonymized_enabled:
             stages.append("anonymizer")
         if config.correction_enabled:
@@ -1180,7 +1414,7 @@ class ProcessingApplicationService:
             issues = self.check_stage_requirements(config, stage)
             if issues:
                 return RunPreflight(stage=stage, stage_issues=tuple(issues))
-        return RunPreflight(memory_warning=self.memory_warning_for_run(config))
+        return RunPreflight(memory_warning=self.memory_warning_for_run(config) if memory else "")
 
     def memory_warning_for_run(self, config: Config) -> str:
         """Return why the configured Ollama models do not fit in memory now, or ``""``.
@@ -1263,83 +1497,110 @@ class ProcessingApplicationService:
     def check_stage_requirements(self, config: Config, stage: str) -> list[RequirementIssue]:
         """Return unmet requirements for enabling *stage*.
 
-        *stage* is 'correction', 'evaluation' or 'anonymizer'.
+        *stage* is 'ocr', 'correction', 'evaluation' or 'anonymizer'.
         Empty list means all requirements are satisfied.
         """
-        issues: list[RequirementIssue] = []
+        if stage == "ocr":
+            return self._ocr_engine_issues(config.ocr.engine)
         if stage in ("correction", "evaluation"):
-            provider = (
-                config.correction_provider if stage == "correction" else config.evaluate_provider
-            )
-            model = (
-                (config.effective_correction_model or "")
-                if stage == "correction"
-                else (config.effective_evaluate_model or "")
-            )
-            if self.missing_provider_package(provider):
-                name = get_provider_info(provider).get("display_name", provider)
-                issues.append(
-                    RequirementIssue(
-                        f"{name} support is not installed yet.",
-                        fixable_via_downloads=True,
-                        provider=provider,
-                    )
+            return self._llm_stage_issues(config, stage)
+        if stage == "anonymizer":
+            return self._name_detection_issues(config.language)
+        return []
+
+    @staticmethod
+    def _tesseract_installed() -> bool:
+        """Return whether the Tesseract program is on the PATH."""
+        return shutil.which("tesseract") is not None
+
+    def _ocr_engine_issues(self, engine: str) -> list[RequirementIssue]:
+        """Return an issue when the text-recognition *engine* is not installed.
+
+        The same two checks as the connection check, without its graphics-card probe (that
+        one imports Paddle).  Ollama is checked by the preflight before the stages.
+        """
+        if engine == "tesseract" and not self._tesseract_installed():
+            return [
+                RequirementIssue(
+                    "Tesseract is not installed.", IssueKind.ENGINE_MISSING, engine=engine
                 )
-            elif provider == "ollama":
-                from ..infrastructure.ollama_utils import models_include  # noqa: PLC0415
+            ]
+        if engine == "paddleocr" and not self.is_module_importable("paddleocr"):
+            return [
+                RequirementIssue(
+                    "PaddleOCR is not installed.", IssueKind.ENGINE_MISSING, engine=engine
+                )
+            ]
+        return []
 
-                installed, unreachable = self._installed_ollama_models(config.ollama_url)
-                if unreachable:
-                    issues.append(
-                        RequirementIssue(
-                            "Ollama is not running. Start it with `ollama serve`.",
-                            fixable_via_downloads=False,
-                        )
-                    )
-                elif not installed:
-                    issues.append(
-                        RequirementIssue(
-                            "No model is downloaded in Ollama yet.",
-                            fixable_via_downloads=True,
-                        )
-                    )
-                elif model and not models_include(model, installed):
-                    issues.append(
-                        RequirementIssue(
-                            f"Model '{model}' is not downloaded.",
-                            fixable_via_downloads=True,
-                        )
-                    )
-        elif stage == "anonymizer":
-            installed_models = self.list_installed_spacy_models()
-            if not installed_models:
-                try:
-                    import spacy  # noqa: PLC0415, F401
+    def _llm_stage_issues(self, config: Config, stage: str) -> list[RequirementIssue]:
+        """Return what proofreading or the content review still needs (package, key, model)."""
+        provider = config.correction_provider if stage == "correction" else config.evaluate_provider
+        model = (
+            (config.effective_correction_model or "")
+            if stage == "correction"
+            else (config.effective_evaluate_model or "")
+        )
+        name = str(get_provider_info(provider).get("display_name", provider))
+        if self.missing_provider_package(provider):
+            return [
+                RequirementIssue(
+                    f"{name} support is not installed yet.",
+                    IssueKind.PACKAGE_MISSING,
+                    provider=provider,
+                )
+            ]
+        if self.provider_key_missing(provider):
+            return [
+                RequirementIssue(
+                    f"No API key for {name} is set.", IssueKind.KEY_MISSING, provider=provider
+                )
+            ]
+        if provider != "ollama":
+            return []
+        from ..infrastructure.ollama_utils import models_include  # noqa: PLC0415
 
-                    required = self.spacy_model_for_language(config.language)
-                    issues.append(
-                        RequirementIssue(
-                            f"spaCy NER model '{required}' is not downloaded.",
-                            fixable_via_downloads=True,
-                        )
-                    )
-                except ImportError:
-                    issues.append(
-                        RequirementIssue(
-                            "spaCy is not installed. Install it under Add-ons in the app.",
-                            fixable_via_downloads=True,
-                        )
-                    )
+        installed, unreachable = self._installed_ollama_models(config.ollama_url)
+        models = (model,) if model else ()
+        if unreachable:
+            return [
+                RequirementIssue(
+                    "Ollama is not running. Start it with `ollama serve`.",
+                    IssueKind.OLLAMA_UNREACHABLE,
+                )
+            ]
+        if not installed:
+            return [
+                RequirementIssue(
+                    "No model is downloaded in Ollama yet.",
+                    IssueKind.NO_OLLAMA_MODEL,
+                    models=models,
+                )
+            ]
+        if model and not models_include(model, installed):
+            return [
+                RequirementIssue(
+                    f"Model '{model}' is not downloaded.", IssueKind.MODEL_MISSING, models=models
+                )
+            ]
+        return []
+
+    def _name_detection_issues(self, language: str) -> list[RequirementIssue]:
+        """Return what removing names still needs: spaCy itself or the model of *language*."""
+        installed_models = self.list_installed_spacy_models()
+        required = self.spacy_model_for_language(language)
+        if installed_models:
+            if required in installed_models:
+                return []
+            message = f"spaCy NER model '{required}' is not downloaded."
+        else:
+            try:
+                import spacy  # noqa: PLC0415, F401
+            except ImportError:
+                message = "spaCy is not installed. Install it under Add-ons in the app."
             else:
-                required = self.spacy_model_for_language(config.language)
-                if required not in installed_models:
-                    issues.append(
-                        RequirementIssue(
-                            f"spaCy NER model '{required}' is not downloaded.",
-                            fixable_via_downloads=True,
-                        )
-                    )
-        return issues
+                message = f"spaCy NER model '{required}' is not downloaded."
+        return [RequirementIssue(message, IssueKind.NAME_DETECTION_MISSING, models=(required,))]
 
     def pull_ollama_model(
         self,

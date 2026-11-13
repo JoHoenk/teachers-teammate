@@ -39,7 +39,14 @@ class SettingsPage(StrEnum):
 FOCUS_OCR = "ocr"
 FOCUS_PROOFREADING = "proofreading"
 FOCUS_REVIEW = "review"
+#: The key row under the service that proofreads / reviews (the cursor goes into the field).
+FOCUS_PROOFREADING_KEY = "proofreading_key"
+FOCUS_REVIEW_KEY = "review_key"
 FOCUS_API_KEYS = "api_keys"
+#: The local AI server address field on *This computer* (the cursor goes into it).
+FOCUS_SERVER = "server"
+#: Same page, and the "Find the AI server" dialog opens at once.
+FOCUS_FIND_SERVER = "find_server"
 
 FOCUS_SENDING = "sending"
 FOCUS_DETECTION = "detection"

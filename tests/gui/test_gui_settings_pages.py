@@ -35,7 +35,10 @@ from teachers_teammate.gui.settings._credentials import ApiKeyDrafts, Credential
 from teachers_teammate.gui.settings._page import (
     FOCUS_LOCAL_MODELS,
     FOCUS_NAME_DETECTION,
+    FOCUS_PROOFREADING_KEY,
     FOCUS_REVIEW,
+    FOCUS_REVIEW_KEY,
+    FOCUS_SERVER,
     SettingsPage,
     SettingsPageBase,
 )
@@ -3158,6 +3161,80 @@ def test_the_review_deep_link_goes_to_the_override_or_to_the_review(
     assert calls == [page._override, page._review_box]
 
 
+@pytest.mark.gui
+def test_the_key_deep_links_put_the_cursor_in_the_key_field(qtbot, no_keys) -> None:
+    """
+    Given  the AI models page on Mistral (EU) with one shared model
+    When   the proofreading key link, and then the review key link, are followed
+    Then   both land on the shared key row (the review shares the proofreading model) and the
+           cursor is in its field
+    """
+    page = _models_page(
+        qtbot,
+        ProviderAppService(),
+        {"correction_provider": "mistral_eu", "evaluate_provider": "mistral_eu"},
+    )
+    row = page._shared.key_row()
+    assert not row.isHidden()
+
+    for focus in (FOCUS_PROOFREADING_KEY, FOCUS_REVIEW_KEY):
+        page.window().activateWindow()
+        row.field.clearFocus()
+        page.focus(focus)
+        qtbot.waitUntil(row.field.hasFocus, timeout=2000)
+
+
+@pytest.mark.gui
+def test_the_review_key_link_goes_to_the_review_row_when_it_has_its_own_service(
+    qtbot, monkeypatch, no_keys
+) -> None:
+    """
+    Given  a review on its own online service
+    When   the review key link is followed
+    Then   it scrolls to the review's key row, not the proofreading one
+    """
+    page = _models_page(
+        qtbot,
+        ProviderAppService(),
+        {"correction_provider": "ollama", "evaluate_provider": "mistral_eu"},
+    )
+    calls = _recorded_scrolls(page, monkeypatch)
+
+    page.focus(FOCUS_REVIEW_KEY)
+
+    assert page._override.isChecked()
+    assert calls == [page._review.key_row()]
+
+
+@pytest.mark.gui
+def test_the_key_link_scrolls_to_the_group_when_the_service_needs_no_key(
+    qtbot, monkeypatch
+) -> None:
+    """
+    Given  proofreading on Ollama, which needs no key
+    When   the proofreading key link is followed
+    Then   it scrolls to the proofreading group instead
+    """
+    page = _models_page(qtbot, ProviderAppService(), {"correction_provider": "ollama"})
+    calls = _recorded_scrolls(page, monkeypatch)
+
+    page.focus(FOCUS_PROOFREADING_KEY)
+
+    assert calls == [page._proofreading_group]
+
+
+@pytest.mark.gui
+def test_the_server_link_puts_the_cursor_in_the_address_field(computer_page, qtbot) -> None:
+    """
+    Given  the This computer page
+    When   the server link is followed
+    Then   the cursor is in the server address field
+    """
+    computer_page.focus(FOCUS_SERVER)
+
+    qtbot.waitUntil(computer_page._ollama_url.hasFocus, timeout=2000)
+
+
 # ── keys typed a moment before the page goes away ─────────────────────────────
 
 
@@ -3289,3 +3366,123 @@ def test_a_section_that_was_never_loaded_asks_no_service_for_a_key(qtbot, no_key
 
     assert section._fetch_thread is None
     assert service.checked_calls == []
+
+
+# ── Find the AI server ────────────────────────────────────────────────────────
+
+
+class _SearchService:
+    """Answers the server search with a fixed list and records the scopes asked."""
+
+    def __init__(self, servers=()) -> None:
+        self.servers = list(servers)
+        self.scopes: list[object] = []
+
+    def discover_ollama_servers(self, scope=None, **_kw):
+        self.scopes.append(scope)
+        return list(self.servers)
+
+
+def _windows_server():
+    from teachers_teammate.domain.ollama_discovery import DiscoveredServer, ServerKind  # noqa: PLC0415
+
+    return DiscoveredServer("http://172.31.0.1:11434", ServerKind.WINDOWS_HOST, "0.12.3", 4)
+
+
+@pytest.mark.gui
+def test_the_search_dialog_lists_a_hit_and_reports_the_chosen_address(qtbot) -> None:
+    """
+    Given  a search that finds Ollama on the Windows computer
+    When   the dialog opens and "Use this server" is pressed
+    Then   only this computer was searched, the entry names whose computer it is with version
+           and model count, and the chosen URL is emitted
+    """
+    from teachers_teammate.domain.ollama_discovery import DiscoveryScope  # noqa: PLC0415
+    from teachers_teammate.gui.settings._server_search_dialog import ServerSearchDialog  # noqa: PLC0415
+
+    service = _SearchService([_windows_server()])
+    dialog = ServerSearchDialog(service)
+    qtbot.addWidget(dialog)
+    qtbot.waitUntil(lambda: dialog.list.count() == 1 and not dialog.searching, timeout=3000)
+
+    text = dialog.list.item(0).text()
+    assert "Windows (this computer)" in text
+    assert "Ollama 0.12.3" in text and "4 models" in text
+    assert service.scopes == [DiscoveryScope.THIS_COMPUTER]
+    assert dialog.use_button.isEnabled()
+    with qtbot.waitSignal(dialog.server_chosen) as signal:
+        dialog.use_button.click()
+    assert signal.args == ["http://172.31.0.1:11434"]
+
+
+@pytest.mark.gui
+def test_the_search_dialog_explains_an_empty_result_and_never_scans_without_consent(
+    qtbot, monkeypatch
+) -> None:
+    """
+    Given  a search that finds nothing
+    When   the dialog opens, and the network button is pressed but the question is answered No
+    Then   the hints are shown, and no network search was started
+    """
+    from PySide6.QtWidgets import QMessageBox  # noqa: PLC0415
+
+    from teachers_teammate.gui.settings._server_search_dialog import ServerSearchDialog  # noqa: PLC0415
+
+    monkeypatch.setattr(QMessageBox, "question", lambda *_a, **_k: QMessageBox.StandardButton.No)
+    service = _SearchService()
+    dialog = ServerSearchDialog(service)
+    qtbot.addWidget(dialog)
+    qtbot.waitUntil(lambda: not dialog.searching, timeout=3000)
+
+    assert "OLLAMA_HOST" in dialog.status.text()
+    dialog.network_button.click()
+    assert len(service.scopes) == 1
+
+
+@pytest.mark.gui
+def test_the_network_search_starts_only_after_the_question_is_answered_yes(
+    qtbot, monkeypatch
+) -> None:
+    """
+    Given  an open dialog whose quick search is done
+    When   the network button is pressed and the question is answered Yes
+    Then   the network scope is searched, and its hit is added without duplicating others
+    """
+    from PySide6.QtWidgets import QMessageBox  # noqa: PLC0415
+
+    from teachers_teammate.domain.ollama_discovery import (  # noqa: PLC0415
+        DiscoveredServer,
+        DiscoveryScope,
+        ServerKind,
+    )
+    from teachers_teammate.gui.settings._server_search_dialog import ServerSearchDialog  # noqa: PLC0415
+
+    monkeypatch.setattr(QMessageBox, "question", lambda *_a, **_k: QMessageBox.StandardButton.Yes)
+    school = DiscoveredServer("http://192.168.1.20:11434", ServerKind.NETWORK, "0.12.3", 2)
+    service = _SearchService([school])
+    dialog = ServerSearchDialog(service)
+    qtbot.addWidget(dialog)
+    qtbot.waitUntil(lambda: not dialog.searching, timeout=3000)
+
+    dialog.network_button.click()
+    qtbot.waitUntil(lambda: service.scopes[-1] is DiscoveryScope.NETWORK, timeout=3000)
+    qtbot.waitUntil(lambda: not dialog.searching, timeout=3000)
+
+    assert dialog.list.count() == 1
+    assert "Another computer on your network" in dialog.list.item(0).text()
+
+
+@pytest.mark.gui
+def test_choosing_a_found_server_fills_the_address_field_and_tells_the_other_pages(
+    computer_page, qtbot
+) -> None:
+    """
+    Given  the This computer page
+    When   a server was chosen in the search
+    Then   the address field shows it and ollama_url_changed is emitted like after typing
+    """
+    with qtbot.waitSignal(computer_page.ollama_url_changed) as signal:
+        computer_page.set_server_url("http://172.31.0.1:11434")
+
+    assert computer_page.values()["ollama_url"] == "http://172.31.0.1:11434"
+    assert signal.args == ["http://172.31.0.1:11434"]

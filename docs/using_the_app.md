@@ -4,12 +4,11 @@
 
 The app is divided into two main areas, plus a separate **Settings** window:
 
-- **Workflow panel (left side)** — everything that changes from batch to batch, in numbered steps: your documents, their language, whether to remove personal information, proofread or review, and where the results go (**Step 6: Results**). At the top, a box called **Where your documents are processed** shows, for each step, whether it runs on this computer (green dot), on another computer (orange) or on an online service (red) — see *Where your documents are processed* below. Below the settings you will find coloured status indicators (one per feature the current setup uses) and the action buttons — **Run Selected**, **Stop**, **Export** — with a progress bar.
+- **Workflow panel (left side)** — everything that changes from batch to batch, in four steps: **1 Documents**, **2 Language** (with the **Level** of the students' writing), **3 What should happen** (recognize text, remove personal info, proofread, review content — each one a box you can tick) and **4 Results** (where the results go). Under each part of step 3 a grey line says which AI model does it and where it runs (for example *mistral-small-latest · Mistral (EU) · EU*); **change…** opens the place in Settings where you choose it. A step you have not ticked keeps its line in grey, so you see what ticking it would use. At the top, a box called **Where your documents are processed** gives the verdict for all steps at once — green: everything stays on this computer; yellow, orange or red: something is sent elsewhere — see *Where your documents are processed* below. Directly above the action buttons — **Run Selected**, **Stop**, **Export** — one line says whether a run can start. If something is missing it says what, with a button that opens the place that fixes it (**Download…**, **Install…**, **Enter key…**, **Choose…**, **Find server…**, **Turn on** or **Check again**); otherwise it shows *Ready* and how many documents will run. The line never blocks **Run**: the requirements are checked again when you press it.
 
-- **Work area (right side)** — three tabs:
-  - **Processing** — a list of your files (one row per document) with status indicators and a live activity log below it.
+- **Work area (right side)** — two tabs:
+  - **Document Queue** — a list of your files (one row per document) with status indicators and a live activity log below it.
   - **Preview** — the original document image next to the extracted and corrected text for the selected file.
-  - **Stats** — a chart showing how long each file took to process, plus live system resource usage (CPU, memory, and GPU if available).
 
 - **Menu bar** at the top:
   - **File** — Open Folder…, Open Files…, Export ▸ (the same choices as the **Export** button), Quit
@@ -60,6 +59,21 @@ If you want to redo just one part — for example, run proofreading again with a
 ### How the app remembers your results
 
 The app stores the result for every file it has processed. If you change only the proofreading settings and click **Run Selected** again, the app reuses the text it already read — it does not read your documents a second time. If you change the reading method or the image preparation setting, any affected files are re-read from scratch automatically.
+
+---
+
+## Switching text recognition off
+
+**Recognize text** is ticked by default: photos and scanned pages are read by the AI. Text files (`.txt`) and PDFs that already contain their text are used as they are either way, and a document whose text was recognised before is not read again.
+
+Untick **Recognize text** when you only want to work with text that already exists — for example to proofread a folder of typed essays without setting up a recognition model. Then:
+
+- text files, PDFs with a text layer and already-recognised documents run as usual;
+- **scans are skipped**: images and PDFs that have to be read from page images stay in the queue marked *skipped* (hover for the reason), get no Word document or text file, and are counted separately when the run ends — they are neither a success nor an error;
+- an orange note under the box says before you press **Run** how many scans will be skipped, and the box *Where your documents are processed* no longer lists text recognition, since no page is read;
+- if *every* queued document is a scan, the line above **Run** says *Nothing to read* and offers **Turn on**.
+
+The right-click action *Re-run Text Recognition* on a row still reads that page, whatever the box says. On the command line the same switch is `--no-recognition` (setting `recognition_enabled = false`).
 
 ---
 
@@ -140,7 +154,7 @@ For detailed settings and configuration options for the anonymizer, see the {doc
 
 ## Where your documents are processed
 
-The box at the top of the settings panel lists every step of the current setup and where it runs:
+The box at the top of the workflow panel gives the verdict for the current setup, and the dot in front of each line under **What should happen** says where that step runs:
 
 | Dot | Meaning |
 |---|---|
@@ -150,13 +164,13 @@ The box at the top of the settings panel lists every step of the current setup a
 | Orange — *Online service (name) · outside the EU · names hidden* | Anonymized text goes to a service outside the EU, or to one that does not say where it processes data. |
 | Red — *Online service (name) · EU or outside the EU · names as written* | The text is sent with the names in it. |
 
-**Personal info removal** is listed as its own line, after text recognition. It always stays
+**Remove personal info** has its own line under its checkbox. It always stays
 on this computer and says *On (spaCy en + de)* — the detection models in use — or *Off*.
 
 **Where is my data processed?** Each service says where it processes documents: **EU** for a
 member state of the European Union, **outside the EU** for everything else — including the
 United Kingdom, Switzerland, Norway and the other EEA countries, and any provider that does
-not declare its region. Hover over a line to see the vendor's home country.
+not declare its region. Hover over a step's line to see the vendor's home country.
 
 The last line of the box names the least private thing that happens, in green, yellow,
 orange or red — *Everything stays on this computer.*, *Anonymized text is sent to a service
@@ -252,7 +266,7 @@ and everything the anonymizer did recognize are hidden as expected.
 
 ## AI proofreading
 
-When **Enable proofreading** is turned on, the text from each document is sent to an AI for review and correction. The corrected text appears alongside the original in the results list.
+When **Proofread** is ticked, the text from each document is sent to an AI for review and correction. The corrected text appears alongside the original in the results list.
 
 ### Choosing an AI service
 
@@ -345,10 +359,10 @@ The **Proofread Text** tab stays clean: it holds only the corrected text, no mar
 can keep editing it and export it. The results list shows a small `?2` badge next to files
 that contain unclear expressions.
 
-Two settings belong to the review. The **Level** dropdown in the proofreading step (A1–C2,
+Two settings belong to the review. The **Level** dropdown in step 2, next to the language (A1–C2,
 default B2) tells the AI how strictly to correct: at B2 it fixes real errors and leaves a
-correct though simple wording alone. **Explanation language**, in the proofreading
-step's **Instructions…** dialog, sets the language of the explanations and of the note tables;
+correct though simple wording alone. **Explanation language**, in the
+**Options…** dialog of **Proofread**, sets the language of the explanations and of the note tables;
 *Same as the text* keeps them in the language of the document. The same dialog holds
 **Corrections only (faster)**.
 
@@ -363,12 +377,12 @@ gives you the explanations.
 
 ### Your own instructions
 
-The **Instructions…** button of a step shows what the AI is told. The **Instructions** box always holds the
+The **Options…** button of **Proofread** and of **Review content** shows what the AI is told. The **Instructions** box always holds the
 text that is really used: the built-in instructions of the document language, matched to the
 **Level** setting (`{level}` is replaced by it). You can change them right in the box.
 **Reset to default** puts the built-in text back. As long as the box holds the built-in text,
 it keeps following the document language; once you change it, your instructions are used for
-every language, and a one-line note under **Instructions…** in the panel says so. If your own
+every language, and a one-line note under **Proofread** in the panel says so. If your own
 text sets an output format itself ("return only …", "JSON", "[unclear]"), a hint warns you
 that it may confuse the model, because the app sets the format.
 
@@ -421,14 +435,18 @@ Right-click a row for more options:
 
 ---
 
-## Stats tab
+## Tools menu
 
-The **Stats** tab shows:
+The **Tools** menu holds what is not part of a batch.
 
-- a **timing chart** — how long each file took for text recognition and proofreading, and
-- a **system monitor** — live usage of your computer's processing power and memory, plus (when a supported graphics card is present) graphics card load, video memory, and temperature.
+**System Monitor** opens its own window, which can stay open next to the main window while a batch runs (closing the main window closes it too), with
+
+- a **timing chart** — how long each file took for text recognition and proofreading (it collects the data of every run, also while the window is closed), and
+- a **live monitor** — usage of your computer's processing power and memory, plus (when a supported graphics card is present) graphics card load and video memory. It only updates while the window is open.
 
 Graphics card monitoring requires a small extra add-on. The app will offer to install it automatically if a supported card is detected.
+
+**Benchmark…** opens the Benchmark app in its own window, to try a document with different text-recognition settings and compare the results side by side (see the advanced guide). It takes the AI server and computer profile from your saved settings when it opens. A benchmark and a batch can run at the same time, but they then share the graphics card, so both are slower. Closing the main window closes the Benchmark window too.
 
 ---
 
@@ -441,13 +459,13 @@ Extra features can be installed from inside the app — no external downloads or
 | **Privacy add-on** | *Install Privacy Add-on* button (shown when the feature is missing) | Removes personal information before proofreading |
 | **Language model for anonymization** | **Settings → Add-ons…** → *Name detection* | Choose your document language; the multilingual model is a safe default |
 | **PaddleOCR** | **Settings → AI models…** when PaddleOCR is selected | An alternative recognition method (~400 MB download) |
-| **Graphics card monitoring** | Offered automatically when a compatible card is found (Stats tab) | NVIDIA or AMD/Linux graphics card stats |
+| **Graphics card monitoring** | Offered automatically when a compatible card is found (**Tools → System Monitor**) | NVIDIA or AMD/Linux graphics card stats |
 
 ---
 
 ## Tips
 
-- **Output files are opt-in** — a run saves results internally and fills the list by default. In **Step 6: Results** choose which files a run writes automatically: **Word documents**, **text files** (`<name>.txt`) and **anonymized text files** (`<name>_anonymized.txt`, same rules as the export above). Or export on demand from the results list. Text files need an output folder outside the input folder; otherwise the next run would read them as new documents, so a run with text files going there does not start. (The Export menu only asks first, because it is a one-off save you may want in that folder.) If two documents would write the same output file — for example `essay.png` and `essay.pdf` in one folder — the second one is reported as failed instead of replacing the first.
+- **Output files are opt-in** — a run saves results internally and fills the list by default. In step **4 Results** choose which files a run writes automatically: **Word documents**, **text files** (`<name>.txt`) and **anonymized text files** (`<name>_anonymized.txt`, same rules as the export above). Or export on demand from the results list. Text files need an output folder outside the input folder; otherwise the next run would read them as new documents, so a run with text files going there does not start. (The Export menu only asks first, because it is a one-off save you may want in that folder.) If two documents would write the same output file — for example `essay.png` and `essay.pdf` in one folder — the second one is reported as failed instead of replacing the first.
 - **Sub-folders** — files inside sub-folders of the input folder are always included, and their output files go into the same sub-folders below the output folder (`class1/essay.png` → `<output>/class1/essay.docx`).
 - **Output formats** — the **table** format puts the original image, extracted text, and corrected text in three columns; the **comments** format attaches the corrections as Word comments next to the original text.
 - **Check what a service sees** — select a row in the results list and choose **What is sent for this file…** to read the exact text and instructions each service receives, with the hidden names marked.

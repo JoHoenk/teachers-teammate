@@ -208,3 +208,127 @@ def test_benchmark_follows_the_saved_hardware_profile_and_ollama_url(qtbot) -> N
     win._worker_factory = _FakeWorker
     win._on_run()
     assert started["ollama_url"] == "http://192.168.1.50:11434"
+
+
+@pytest.mark.gui
+def test_reload_settings_follows_a_server_and_profile_saved_since(qtbot, monkeypatch) -> None:
+    """
+    Given  a Benchmark window built with the default server and profile
+    When   the main app has saved another server and a 16 GB computer, and the window reloads
+    Then   the window, its picker and its hardware choice follow the saved values, and the
+           models are asked from the new server only (once)
+    """
+    service = _FakeService()
+    win = build_benchmark_window(app_service=service)  # ty: ignore[invalid-argument-type]
+    qtbot.addWidget(win)
+    reloads: list[int] = []
+    monkeypatch.setattr(win._selector, "reload_models", lambda: reloads.append(1))
+    service.saved_settings = {"hardware_profile": "16gb", "ollama_url": "http://192.168.1.50:11434"}
+
+    win.reload_settings()
+
+    assert win._ollama_url == "http://192.168.1.50:11434"
+    assert win._selector._picker._ollama_url == "http://192.168.1.50:11434"
+    assert win._selector._picker._hw_selector.setting() == "16gb"
+    assert reloads == []  # set_ollama_url already fetched from the new server
+
+
+@pytest.mark.gui
+def test_reload_settings_asks_for_the_models_again_when_the_server_is_unchanged(
+    qtbot, monkeypatch
+) -> None:
+    """
+    Given  a Benchmark window whose model fetch was cut short when it was closed
+    When   it reloads while the saved server is still the same
+    Then   the model list is asked for again, without resetting the chosen settings
+    """
+    win = build_benchmark_window(app_service=_FakeService())  # ty: ignore[invalid-argument-type]
+    qtbot.addWidget(win)
+    reloads: list[int] = []
+    monkeypatch.setattr(win._selector, "reload_models", lambda: reloads.append(1))
+
+    win.reload_settings()
+
+    assert reloads == [1]
+
+
+class _RunningWorker:
+    """A worker that is still going; records the stop request."""
+
+    def __init__(self) -> None:
+        import threading  # noqa: PLC0415
+
+        self.stop_event = threading.Event()
+
+    def isRunning(self) -> bool:
+        return True
+
+    def wait(self, _ms: int) -> bool:
+        return True
+
+
+class _UserClose:
+    """A close event from the window system (the user pressed the window's close button)."""
+
+    @staticmethod
+    def make():
+        from PySide6.QtGui import QCloseEvent  # noqa: PLC0415
+
+        class _Spontaneous(QCloseEvent):
+            def spontaneous(self) -> bool:
+                return True
+
+        return _Spontaneous()
+
+
+@pytest.mark.gui
+@pytest.mark.parametrize(("answer", "closes"), [("No", False), ("Yes", True)])
+def test_closing_by_hand_during_a_run_asks_before_stopping_it(
+    window, monkeypatch, answer: str, closes: bool
+) -> None:
+    """
+    Given  a Benchmark window with a run going
+    When   the user closes it and answers the question "Stop the run and close?"
+    Then   a "No" keeps the window open and the run going, a "Yes" stops the run and closes
+    """
+    from PySide6.QtWidgets import QMessageBox  # noqa: PLC0415
+
+    from teachers_teammate.gui.benchmark import _benchmark_window  # noqa: PLC0415
+
+    win, _service = window
+    worker = _RunningWorker()
+    win._worker = worker  # ty: ignore[invalid-assignment]  # test injects a running worker stub
+    monkeypatch.setattr(
+        _benchmark_window.QMessageBox,
+        "question",
+        lambda *_a, **_k: getattr(QMessageBox.StandardButton, answer),
+    )
+    event = _UserClose.make()
+
+    win.closeEvent(event)
+
+    assert event.isAccepted() is closes
+    assert worker.stop_event.is_set() is closes
+
+
+@pytest.mark.gui
+def test_closing_from_the_main_window_stops_a_run_without_asking(window, monkeypatch) -> None:
+    """
+    Given  a Benchmark window with a run going
+    When   the main window closes it as the app quits (not an event from the window system)
+    Then   the run is stopped and nobody is asked
+    """
+    from teachers_teammate.gui.benchmark import _benchmark_window  # noqa: PLC0415
+
+    win, _service = window
+    worker = _RunningWorker()
+    win._worker = worker  # ty: ignore[invalid-assignment]  # test injects a running worker stub
+
+    def _no_question(*_a, **_k):
+        raise AssertionError("closing from the main window must not ask")
+
+    monkeypatch.setattr(_benchmark_window.QMessageBox, "question", _no_question)
+
+    win.close()
+
+    assert worker.stop_event.is_set()

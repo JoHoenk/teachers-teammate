@@ -6,6 +6,7 @@ from collections.abc import Callable
 import logging
 from pathlib import Path
 import threading
+from typing import NamedTuple
 
 from ...domain.correction_review import align, review_summary
 from ..reporting import FileDoneResult, OnFileDoneFn, OnFileStartedFn, Reporter, StdoutReporter
@@ -17,6 +18,15 @@ ProcessFileFn = Callable[[Path], ProcessingResult]
 CleanupFn = Callable[[], None]
 
 
+class RunOutcome(NamedTuple):
+    """The file names of a run, sorted by what happened to them."""
+
+    succeeded: list[str]
+    failed: list[str]
+    skipped: list[str]
+    """Left out on purpose (a scan while text recognition is off): neither succeeded nor failed."""
+
+
 def run_files(
     files: list[Path],
     *,
@@ -26,12 +36,13 @@ def run_files(
     on_file_started: OnFileStartedFn | None = None,
     on_file_done: OnFileDoneFn | None = None,
     reporter: Reporter | None = None,
-) -> tuple[list[str], list[str]]:
-    """Iterate *files*, calling *process_file* for each, and return ``(succeeded, failed)`` names."""
+) -> RunOutcome:
+    """Iterate *files*, calling *process_file* for each, and return the names by outcome."""
     reporter = reporter or StdoutReporter()
     total = len(files)
     succeeded: list[str] = []
     failed: list[str] = []
+    skipped: list[str] = []
     try:
         for idx, file in enumerate(files, start=1):
             source_id = str(file.resolve())
@@ -60,9 +71,13 @@ def run_files(
                         text_format=result.text_format,
                         correction_review=result.correction_review,
                         correction_warning=result.correction_warning,
+                        skipped=result.skipped,
                     )
                 )
-            if result.ok:
+            if result.skipped:
+                _logger.info("%s", result.message)
+                skipped.append(file.name)
+            elif result.ok:
                 reporter.status(f"       → Saved: {result.message}")
                 summary = _review_line(result)
                 if summary:
@@ -75,7 +90,7 @@ def run_files(
                 failed.append(file.name)
     finally:
         cleanup_tmp()
-    return succeeded, failed
+    return RunOutcome(succeeded, failed, skipped)
 
 
 def _review_line(result: ProcessingResult) -> str:

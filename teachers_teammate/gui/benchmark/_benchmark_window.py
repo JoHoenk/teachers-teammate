@@ -48,9 +48,7 @@ class BenchmarkWindow(QMainWindow):
         self._source: Path | None = None
         self._language = DEFAULTS["language"]
         # Follow the main app: its Ollama server and its "My computer" choice.
-        saved = self._service.load_saved_settings()
-        self._ollama_url = str(saved.get("ollama_url") or DEFAULTS["ollama_url"])
-        self._hardware_profile = str(saved.get("hardware_profile") or DEFAULTS["hardware_profile"])
+        self._ollama_url, self._hardware_profile = self._saved_server_and_profile()
 
         central = QWidget()
         self.setCentralWidget(central)
@@ -188,8 +186,51 @@ class BenchmarkWindow(QMainWindow):
             self._service.delete_all_runs(self._source)
             self._refresh_runs()
 
+    def _saved_server_and_profile(self) -> tuple[str, str]:
+        """Return the Ollama server and the "My computer" choice the main app saved."""
+        saved = self._service.load_saved_settings()
+        return (
+            str(saved.get("ollama_url") or DEFAULTS["ollama_url"]),
+            str(saved.get("hardware_profile") or DEFAULTS["hardware_profile"]),
+        )
+
+    def reload_settings(self) -> None:
+        """Follow the main app again when this window is shown a second time.
+
+        The window is kept between uses, so a server or "My computer" choice changed in the
+        Settings window since it was built would otherwise go unnoticed.  The model list is
+        asked for again too: closing the window cut off a fetch that was still running.
+        """
+        url, profile = self._saved_server_and_profile()
+        url_changed = url != self._ollama_url
+        self._ollama_url, self._hardware_profile = url, profile
+        self._selector.set_hardware_profile(profile)
+        self._selector.set_ollama_url(url)  # asks the new server for its models
+        if not url_changed:
+            self._selector.reload_models()
+
+    def _confirm_stop_running_worker(self) -> bool:
+        """Ask whether to stop the running benchmark when the user closes the window."""
+        answer = QMessageBox.question(
+            self,
+            "Benchmark still running",
+            "A benchmark run is still going. Closing this window stops it.\n\n"
+            "Stop the run and close the window?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        return answer == QMessageBox.StandardButton.Yes
+
     def closeEvent(self, event: Any) -> None:
-        """Stop background threads before the window is destroyed."""
+        """Stop background threads before the window is destroyed.
+
+        The user closing the window while a run is going is asked first; the main window
+        closing it as it quits (not a ``spontaneous`` event) stops the run without asking.
+        """
+        running = self._worker is not None and self._worker.isRunning()
+        if running and event.spontaneous() and not self._confirm_stop_running_worker():
+            event.ignore()
+            return
         self._selector.stop_threads()
         if self._worker is not None and self._worker.isRunning():
             self._worker.stop_event.set()

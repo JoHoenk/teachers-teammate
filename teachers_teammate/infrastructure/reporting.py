@@ -48,6 +48,8 @@ class FileDoneResult:
     """Explanations and unclear expressions; ``None`` when the file has no review."""
     correction_warning: str = ""
     """Why the file has no review (fallback to corrections-only); empty when there is one."""
+    skipped: bool = False
+    """The file was left out on purpose (``ok`` is ``False``, ``message`` says why)."""
 
 
 OnFileDoneFn = Callable[[FileDoneResult], None]

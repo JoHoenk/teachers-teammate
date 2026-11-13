@@ -8,6 +8,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from teachers_teammate.exceptions import RecognitionSwitchedOffError
 from teachers_teammate.infrastructure.workflow.preprocess_service import PreprocessService
 from teachers_teammate.interfaces import InputPayload, InputUnit
 
@@ -213,3 +214,37 @@ def test_load_input_delegates_to_provider_factory(tmp_path: Path) -> None:
 
     provider.load.assert_called_once_with(file)
     assert result == payload
+
+
+# ── Text recognition switched off ──────────────────────────────────────────
+
+
+def test_preprocess_input_image_unit_with_recognition_off_is_refused_before_preprocessing(
+    tmp_path: Path,
+) -> None:
+    """
+    Given  an input made of page images and text recognition switched off (allow_images=False)
+    When   preprocess_input is called
+    Then   RecognitionSwitchedOffError is raised and no page was preprocessed
+    """
+    payload = InputPayload(units=[_image_unit(tmp_path / "p1.png")])
+    svc, _, preprocessor = _make_svc(tmp_path=tmp_path, payload=payload)
+
+    with pytest.raises(RecognitionSwitchedOffError, match="switched off"):
+        svc.preprocess_input(tmp_path / "scan.pdf", allow_images=False)
+
+    preprocessor.preprocess.assert_not_called()
+
+
+def test_preprocess_input_text_unit_passes_with_recognition_off(tmp_path: Path) -> None:
+    """
+    Given  a text input (a text file or a PDF with a text layer) and recognition switched off
+    When   preprocess_input is called with allow_images=False
+    Then   the text is returned as it is
+    """
+    payload = InputPayload(units=[_text_unit("typed essay")])
+    svc, _, _ = _make_svc(tmp_path=tmp_path, payload=payload)
+
+    prepared = svc.preprocess_input(tmp_path / "essay.txt", allow_images=False)
+
+    assert prepared.raw_text_hint == "typed essay"

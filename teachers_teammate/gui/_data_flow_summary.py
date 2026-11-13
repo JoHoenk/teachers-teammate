@@ -9,8 +9,8 @@ from __future__ import annotations
 
 from html import escape
 
-from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QFrame, QLabel, QVBoxLayout, QWidget
+from PySide6.QtCore import Qt, Signal
+from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QVBoxLayout, QWidget
 
 from ..domain.data_location import (
     Advice,
@@ -21,6 +21,7 @@ from ..domain.data_location import (
     PrivacyLevel,
     StageLocation,
 )
+from . import _user_text as txt
 
 #: One colour per level: green keeps everything here, yellow sends anonymized text into the
 #: EU, orange sends it out of it, red sends names.
@@ -42,6 +43,15 @@ _LEVEL_TEXT = {
     PrivacyLevel.NAMES_EU: "Text with names is sent to a service in the EU.",
     PrivacyLevel.NAMES_NON_EU: "Text with names is sent to a service outside the EU.",
 }
+
+
+#: Where a step runs, in the few words the panel has room for.  The service list on the AI
+#: models page uses the same words, so the two never describe one place differently.
+PLACE_THIS_COMPUTER = "this computer"
+PLACE_OWN_SERVER = "own server"
+PLACE_ONLINE = "online"
+
+_GREY = "#888"
 
 
 def level_color(level: PrivacyLevel) -> str:
@@ -72,8 +82,8 @@ _ADVICE_TEXT = {
         "Page images are sent to another computer. Only use one you trust and control."
     ),
     Advice.NAMES_SENT_AS_WRITTEN: (
-        "Names in the text are sent as written. Turn on “Remove personal info” "
-        "(Step 3) to hide them first, or choose a model that runs on this computer."
+        f"Names in the text are sent as written. Turn on “{txt.REMOVE_PERSONAL_INFO}” "
+        "to hide them first, or choose a model that runs on this computer."
     ),
     Advice.NAMES_MAY_BE_MISSED: (
         "Names are replaced automatically, so an unusual or misspelled name can be missed. "
@@ -91,9 +101,47 @@ def advice_text(advice: Advice) -> str:
     return _ADVICE_TEXT[advice]
 
 
-def stage_row(stage: DataFlowStage) -> str:
-    """Return one row of the status box as rich text, e.g. ``● Proofreading — Online …``."""
-    return f"{_dot(stage.privacy_level)} <b>{escape(stage.title)}</b> — {escape(stage.badge)}"
+def short_place(location: StageLocation) -> str:
+    """Return where a step runs in a few words, e.g. ``Mistral (EU) · EU``.
+
+    The host of another computer and the vendor's country go into the tooltip
+    (:attr:`StageLocation.details`): the panel is narrow.
+    """
+    if location.location is DataLocation.THIS_COMPUTER:
+        return PLACE_THIS_COMPUTER
+    if location.location is DataLocation.OTHER_COMPUTER:
+        return PLACE_OWN_SERVER
+    return f"{location.service} · {location.data_region.label}"
+
+
+def _marked(stage: DataFlowStage, text: str, *, enabled: bool) -> str:
+    """Return *text* (already escaped) behind the step's dot; grey all over while unticked."""
+    if not enabled:
+        return f'<span style="color:{_GREY};">● {text}</span>'
+    return f"{_dot(stage.privacy_level)} {text}"
+
+
+def uses_line(stage: DataFlowStage, model: str, *, enabled: bool = True) -> str:
+    """Return the "uses" line under a step as rich text: ``● <model> · <place>``.
+
+    Without a model (Tesseract has none) the engine's name stands in.  The dot has the colour
+    of the step's privacy level while the step is on; an unticked step is grey all over, but
+    still names what ticking it would use.
+    """
+    name = model or stage.location.service
+    return _marked(
+        stage, f"{escape(name)} · {escape(short_place(stage.location))}", enabled=enabled
+    )
+
+
+def same_model_line(stage: DataFlowStage, *, enabled: bool = True) -> str:
+    """Return the "uses" line of a step that runs the same model as the step before it."""
+    return _marked(stage, escape(txt.SAME_MODEL_AS_PROOFREADING), enabled=enabled)
+
+
+def detail_line(stage: DataFlowStage) -> str:
+    """Return the "uses" line of a step that has no place of its own (personal-info removal)."""
+    return f'<span style="color:{_GREY};">{escape(stage.detail)}</span>'
 
 
 def stage_tooltip(stage: DataFlowStage) -> str:
@@ -108,6 +156,11 @@ def stage_tooltip(stage: DataFlowStage) -> str:
     if location.data_region is DataRegion.EU:
         return f"Sent to {location.service}, {names}"
     return f"Sent to {location.service}, outside the EU, {names}"
+
+
+def uses_tooltip(stage: DataFlowStage) -> str:
+    """Tooltip of a "uses" line: where its text goes, whether names are hidden, the details."""
+    return f"{stage_tooltip(stage)}\n{stage.location.details}"
 
 
 def text_note(location: StageLocation) -> str:
@@ -137,50 +190,70 @@ class LocationHint(QLabel):
         self.setToolTip(details or location.details)
 
 
+class UsesLine(QWidget):
+    """The grey line under a step in the main window: what it uses, and a "change…" link.
+
+    The text comes from :func:`uses_line`; the link (when the step has a place in Settings)
+    emits :attr:`change_requested`.
+    """
+
+    #: "change…" was clicked.
+    change_requested = Signal()
+
+    def __init__(self, *, with_link: bool = True, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(22, 0, 0, 0)  # under the text of the checkbox above
+        layout.setSpacing(6)
+        self.label = QLabel()
+        self.label.setTextFormat(Qt.TextFormat.RichText)
+        self.label.setWordWrap(True)
+        self.label.setStyleSheet("font-size: 11px;")
+        layout.addWidget(self.label, stretch=1)
+        self.change_link = QLabel('<a href="change">change…</a>')
+        self.change_link.setStyleSheet("font-size: 11px;")
+        self.change_link.linkActivated.connect(lambda _link: self.change_requested.emit())
+        self.change_link.setVisible(with_link)
+        layout.addWidget(self.change_link)
+
+    def set_line(self, text: str, tooltip: str = "") -> None:
+        """Show *text* (rich text) with *tooltip*; an empty text hides the whole line."""
+        self.label.setText(text)
+        self.label.setToolTip(tooltip)
+        self.setVisible(bool(text))
+
+    def text(self) -> str:
+        """Return the rich text shown."""
+        return self.label.text()
+
+
 class DataFlowSummary(QFrame):
-    """Compact box listing where every enabled step of the current settings runs."""
+    """Compact box with the verdict on where the documents go, and what to do about it.
+
+    The step-by-step lines ("uses: …") sit under the steps in the main window; the box keeps
+    the headline and the advice.
+    """
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setFrameShape(QFrame.Shape.StyledPanel)
         self.setToolTip(
-            "Shows where your documents are read and proofread. A green dot means the step "
-            "runs on this computer; yellow, orange or red means data is sent elsewhere."
+            "Where your documents go with these settings. The dot next to each step under "
+            "\u201cWhat should happen\u201d says where that step runs."
         )
         layout = QVBoxLayout(self)
         layout.setContentsMargins(8, 6, 8, 6)
         layout.setSpacing(3)
         self._title = QLabel("WHERE YOUR DOCUMENTS ARE PROCESSED")
         self._title.setStyleSheet("QLabel { font-size: 9pt; font-weight: bold; color: #aaa; }")
-        # One label per row: the badge stays short and the tooltip holds the details.
-        self._rows = QVBoxLayout()
-        self._rows.setContentsMargins(0, 0, 0, 0)
-        self._rows.setSpacing(2)
-        self._row_labels: list[QLabel] = []
         self._body = QLabel()
         self._body.setTextFormat(Qt.TextFormat.RichText)
         self._body.setWordWrap(True)
         layout.addWidget(self._title)
-        layout.addLayout(self._rows)
         layout.addWidget(self._body)
-
-    def row_texts(self) -> list[str]:
-        """Return the rich text of every step row, top to bottom."""
-        return [label.text() for label in self._row_labels]
 
     def set_flow(self, flow: DataFlow) -> None:
         """Re-render for *flow*."""
-        for label in self._row_labels:
-            label.setParent(None)
-            label.deleteLater()
-        self._row_labels.clear()
-        for stage in flow.stages:
-            label = QLabel(stage_row(stage))
-            label.setTextFormat(Qt.TextFormat.RichText)
-            label.setWordWrap(True)
-            label.setToolTip(stage.location.details)
-            self._rows.addWidget(label)
-            self._row_labels.append(label)
         level = flow.level
         rows = [
             f'<span style="color:{level_color(level)};">'

@@ -727,7 +727,10 @@ py_test(
 py_test(
     name = "test_frozen_modes",
     size = "small",
-    srcs = _COMMON_SRCS + ["unit/test_frozen_modes.py"],
+    srcs = _COMMON_SRCS + [
+        "gui/_settings_stubs.py",
+        "unit/test_frozen_modes.py",
+    ],
     args = ["unit/test_frozen_modes.py"],
     main = "run_test.py",
     deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + [

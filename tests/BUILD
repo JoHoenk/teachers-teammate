@@ -438,6 +438,15 @@ py_test(
 )
 
 py_test(
+    name = "test_exchange_corrector",
+    size = "small",
+    srcs = _COMMON_SRCS + ["unit/test_exchange_corrector.py"],
+    args = ["unit/test_exchange_corrector.py"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS + _FORMAT_DEPS,
+)
+
+py_test(
     name = "test_exchange_t",
     size = "small",
     srcs = _COMMON_SRCS + ["unit/test_exchange_t.py"],
@@ -2023,6 +2032,7 @@ test_suite(
         ":test_domain_policy",
         ":test_edits",
         ":test_evaluation",
+        ":test_exchange_corrector",
         ":test_exchange_schemas",
         ":test_exchange_t",
         ":test_fallback_exchange",

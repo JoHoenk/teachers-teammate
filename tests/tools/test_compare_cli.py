@@ -10,13 +10,14 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from teachers_teammate.exceptions import OCRError
 from teachers_teammate.infrastructure.ollama_utils import PROOFREADING_NUM_CTX
 from tools import compare_writing_models
-from tools.model_eval import measure, protocol, results, runner, session
+from tools.model_eval import agent_client, measure, protocol, results, runner, session
 from tools.model_eval.answer_mode import AnswerMode
 
 MODEL = "gemma4:e2b"
@@ -97,6 +98,8 @@ def _args(tmp_path: Path) -> argparse.Namespace:
         isolate=False,
         gpu_sampler=None,
         gpu_ssh="",
+        gpu_agent=None,
+        gpu_token_file=None,
         machine=MACHINE,
         ollama_url="http://localhost:11434",
         mode=[AnswerMode.REVIEW],
@@ -416,3 +419,92 @@ def test_a_failed_smoke_skips_the_sessions_of_that_setup(tmp_path, monkeypatch, 
     assert f"smoke {MODEL} (plain, T=0.2, 8192): FAIL" in out
     assert f"review sessions of {MODEL} are skipped" in out
     assert not (args.out / results.result_file_name(MODEL, 0.2)).exists()
+
+
+class _FakeAgent:
+    """An AgentClient stand-in that answers ``info()`` with a card in use, or fails."""
+
+    def __init__(self, url, *, token=None, fail=False):
+        self.url = url
+        self.token = token
+        self._fail = fail
+
+    def info(self):
+        if self._fail:
+            raise agent_client.AgentError("connection refused")
+        return SimpleNamespace(vendor="amd", source="sysfs", agent_sha256="ab" * 32)
+
+
+@pytest.mark.use_case("Model_Eval_Measure")
+def test_a_memory_agent_is_recorded_in_the_matrix_and_read_with_its_token(tmp_path, monkeypatch):
+    """
+    Given  a command line with --gpu-agent and a token file
+    When   the run starts
+    Then   the agent is asked for its identity with the token, and the matrix carries a record of
+           the agent as the sampler, so the run counts as sampled without any shell access
+    """
+    seen: list[runner.Matrix] = []
+
+    def _capture(matrix, *args, **kwargs) -> runner.RunResult:
+        seen.append(matrix)
+        return runner.RunResult(refused=(), sessions=0, rows=0)
+
+    clients: list[_FakeAgent] = []
+
+    def _client(url, *, token=None):
+        clients.append(_FakeAgent(url, token=token))
+        return clients[-1]
+
+    monkeypatch.setattr(runner, "run_matrix", _capture)
+    monkeypatch.setattr(agent_client, "AgentClient", _client)
+    token_file = tmp_path / "token"
+    token_file.write_text("secret\n", encoding="utf-8")
+    args = _args(tmp_path)
+    args.gpu_agent = "http://server:11436"
+    args.gpu_token_file = token_file
+
+    assert compare_writing_models._run(args) == 0
+
+    assert clients[0].token == "secret"
+    assert seen[0].gpu_sampler == {
+        "kind": "agent",
+        "vendor": "amd",
+        "source": "sysfs",
+        "agent_sha256": "ab" * 32,
+    }
+
+
+@pytest.mark.use_case("Model_Eval_Measure")
+def test_a_memory_agent_that_cannot_be_asked_stops_the_run(tmp_path, monkeypatch, capsys):
+    """
+    Given  --gpu-agent naming an agent that does not answer
+    When   the run starts
+    Then   it is refused with exit code 2 before any text is sent, and the reason is printed
+    """
+    monkeypatch.setattr(
+        agent_client, "AgentClient", lambda url, *, token=None: _FakeAgent(url, fail=True)
+    )
+    monkeypatch.setattr(runner, "run_matrix", lambda *a, **k: pytest.fail("a run was started"))
+    args = _args(tmp_path)
+    args.gpu_agent = "http://server:11436"
+
+    assert compare_writing_models._run(args) == 2
+
+    assert "cannot be used" in capsys.readouterr().err
+
+
+@pytest.mark.use_case("Model_Eval_Measure")
+def test_the_agent_and_the_shell_sampler_are_not_combined(tmp_path, monkeypatch, capsys):
+    """
+    Given  both --gpu-agent and --gpu-sampler
+    When   the run starts
+    Then   it is refused with exit code 2, naming the two ways to read the card
+    """
+    monkeypatch.setattr(runner, "run_matrix", lambda *a, **k: pytest.fail("a run was started"))
+    args = _args(tmp_path)
+    args.gpu_agent = "http://server:11436"
+    args.gpu_sampler = "amd"
+
+    assert compare_writing_models._run(args) == 2
+
+    assert "pass one" in capsys.readouterr().err

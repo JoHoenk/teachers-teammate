@@ -39,6 +39,7 @@ from teachers_teammate.domain.model_catalog import normalize_tag
 from teachers_teammate.infrastructure.ollama_utils import OllamaClient
 
 from . import protocol
+from .agent_client import MIB, SETTLE_TOLERANCE_BYTES, AgentClient, AgentError
 from .answer_mode import AnswerMode
 from .layout import OLLAMA
 from .performance import LoadedModel, Performance, RequestStats
@@ -337,6 +338,95 @@ class VramSeries:
         return max(inside) if inside else None
 
 
+_IDLE_WAIT_S = 60.0
+"""How long a start waits for the card to stop moving before it gives up."""
+
+_AGENT_LEAD_S = 0.5
+"""The agent reads the card every 0.2 s and a poll adds up to as much: look this far back."""
+
+_AGENT_LAG_S = 0.5
+"""...and this far ahead of a text's end, for the poll that has not arrived yet."""
+
+
+class AgentSampler:
+    """Samples the graphics memory through the memory agent on the machine with the card.
+
+    The agent (:mod:`.gpu_agent`) is the one way the tools read a card on another machine, so a
+    run needs no shell access: it asks ``GET /info`` every ``interval_s`` and keeps the readings
+    with the time they arrive here, because the agent's clock can be seconds off.
+    """
+
+    def __init__(
+        self,
+        client: AgentClient,
+        *,
+        interval_s: float = 0.2,
+        clock: Clock = time.monotonic,
+    ) -> None:
+        self._client = client
+        self._interval_s = interval_s
+        self._clock = clock
+        self._stopped = threading.Event()
+        self._thread: threading.Thread | None = None
+        self.series = VramSeries()
+        self.baseline_mb: int | None = None
+
+    def _read(self) -> int | None:
+        """Return the memory in use now in MiB, or ``None`` when the agent has no reading."""
+        used = self._client.info().card_used_bytes
+        return None if used is None else used // MIB
+
+    def start(self) -> None:
+        """Wait for the card to be idle, take that as the baseline and keep sampling.
+
+        Card memory is given back a moment after Ollama reports a model unloaded.  A baseline
+        taken while it is still falling makes the next model look smaller than it is (a peak of
+        zero over the baseline), so the sampler waits for the card to stop moving first.
+
+        Raises:
+            RuntimeError: the agent did not answer, has no reading, or the card did not stop
+                moving within :data:`_IDLE_WAIT_S`, so there is nothing sound to measure against.
+        """
+        try:
+            settled = self._client.settle(max_s=_IDLE_WAIT_S)
+            first = self._read()
+        except AgentError as error:
+            raise RuntimeError(f"the memory agent could not be asked: {error}") from error
+        if first is None:
+            raise RuntimeError("the memory agent has no reading of the graphics memory")
+        if abs(first * MIB - settled) > SETTLE_TOLERANCE_BYTES:
+            raise RuntimeError(
+                f"the graphics memory did not settle within {_IDLE_WAIT_S:.0f} s "
+                f"({settled // MIB} MiB, then {first} MiB): is another program using the card?"
+            )
+        self.series.add(self._clock(), first)
+        self.baseline_mb = first
+        self._stopped.clear()
+        self._thread = threading.Thread(target=self._poll, daemon=True)
+        self._thread.start()
+
+    def _poll(self) -> None:
+        """Read the agent until stopped; a poll that fails is a gap, not an error."""
+        while not self._stopped.wait(self._interval_s):
+            try:
+                used = self._read()
+            except AgentError:
+                continue
+            if used is not None:
+                self.series.add(self._clock(), used)
+
+    def peak_mb(self, since: float, until: float) -> int | None:
+        """Return the peak memory in use between two times of this sampler's clock."""
+        return self.series.peak(since - _AGENT_LEAD_S, until + _AGENT_LAG_S)
+
+    def stop(self) -> None:
+        """Stop polling."""
+        self._stopped.set()
+        if self._thread is not None:
+            self._thread.join(timeout=_STOP_WAIT_S)
+            self._thread = None
+
+
 class GpuSampler:
     """Samples the graphics memory in use while a run goes on.
 
@@ -469,7 +559,7 @@ def run_identity(  # noqa: PLR0913  # a record of many independent facts
     seed: int | None,
     repeat: int,
     isolate: bool,
-    sampler_vendor: str,
+    sampler_vendor: str | dict,
     machine: str | None,
     testset: str,
     testset_sha256: str,

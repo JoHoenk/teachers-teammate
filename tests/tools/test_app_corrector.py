@@ -13,7 +13,12 @@ from teachers_teammate.infrastructure.stage_builder import PipelineComponentFact
 from teachers_teammate.interfaces import Corrector
 from tests.conftest import make_config
 from tools.model_eval.answer_mode import AnswerMode
-from tools.model_eval.app_corrector import app_corrector_factory, innermost, pieces_of
+from tools.model_eval.app_corrector import (
+    app_corrector_factory,
+    exchange_corrector_factory,
+    innermost,
+    pieces_of,
+)
 
 
 def _chain(corrector: Corrector) -> list[type[Corrector]]:
@@ -149,3 +154,28 @@ def test_a_corrector_that_does_not_chunk_sends_every_text_whole() -> None:
     Then   it is one piece
     """
     assert pieces_of(MagicMock(), "x" * 500, "German") == 1
+
+
+@pytest.mark.use_case("Model_Eval_Comparison")
+def test_the_exchange_factory_builds_the_exchange_corrector_in_the_chunking_wrapper() -> None:
+    """
+    Given  a client and a request profile
+    When   the exchange factory builds a corrector
+    Then   it is the app's exchange corrector in the chunking wrapper, carrying the profile it
+           was given, and its budget follows the window like the app's other correctors
+    """
+    from teachers_teammate.domain.model_catalog import RequestProfile  # noqa: PLC0415
+    from teachers_teammate.infrastructure.proofreading.corrector import (  # noqa: PLC0415
+        ExchangeCorrector,
+    )
+
+    client = OllamaClient("http://x")
+
+    small = exchange_corrector_factory(client, timeout=5.0, num_ctx=4096)("gemma4:e4b", 0.2)
+    large = exchange_corrector_factory(
+        client, timeout=5.0, num_ctx=8192, profile=RequestProfile(unclear_check=False)
+    )("gemma4:e4b", 0.2)
+
+    assert isinstance(small, ChunkingCorrector)
+    assert isinstance(small.inner, ExchangeCorrector)
+    assert small.inner.max_text_chars("German") < large.inner.max_text_chars("German")

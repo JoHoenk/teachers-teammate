@@ -23,6 +23,18 @@ updates:
       - dependency-name: "uuid-utils"
         update-types: ["version-update:semver-major"]
 
+  # The standalone build's own pins: PyInstaller and the platform-only packages the
+  # Linux lock cannot hold. A bump here is not covered by the Bazel tests (they run on
+  # Linux), so the smoke test of the next release dry run is its check.
+  - package-ecosystem: "pip"
+    directory: "/tools/build"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    groups:
+      build-pins:
+        patterns: ["*"]
+
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:

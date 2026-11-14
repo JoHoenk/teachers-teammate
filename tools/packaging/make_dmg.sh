@@ -5,7 +5,7 @@
 # Usage (from the repo root):
 #   bash tools/packaging/make_dmg.sh [version]
 #
-# Outputs: dist/teachers-teammate-<version>.dmg
+# Outputs: dist/teachers-teammate-<version>-macos.dmg
 
 set -euo pipefail
 

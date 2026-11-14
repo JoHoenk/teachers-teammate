@@ -22,40 +22,106 @@ ASSETS = ROOT / "teachers_teammate" / "assets"
 # Qt plugins and libraries that must not ship. libqgtk3 pulls GTK3, cairo, pango and glib
 # from the build machine; the desktop-portal plugin (kept) gives file dialogs without it.
 # The rest is a defensive net: a future import must not drag Chromium or FFmpeg back in.
-_DROPPED = ("platformthemes/libqgtk3", "WebEngine", "Qt6Quick3D", "Qt6Multimedia")
+_DROPPED = (
+    "platformthemes/libqgtk3",
+    "WebEngine",
+    "Qt6Quick3D",
+    "Qt6Multimedia",
+    # Platform plugins for devices without a desktop (framebuffer, KMS, VNC, test stubs): the
+    # app runs under X11 (xcb) or Wayland, and the smoke test under offscreen.
+    "platforms/libqeglfs",
+    "platforms/libqlinuxfb",
+    "platforms/libqvnc",
+    "platforms/libqminimal",
+    "platforms/libqvkkhrdisplay",
+    "plugins/egldeviceintegrations/",
+    "libQt6EglFSDeviceIntegration",
+    "libQt6EglFsKmsSupport",
+    # Raw input devices and the TUIO touch plugin, which is the only reason for QtNetwork.
+    "plugins/generic/",
+    "libQt6Network",
+    # The Python module and the plugins that only QtNetwork loads (TLS and network-state
+    # backends). Without the library they would be bundled but unloadable, and make_deb.sh
+    # could not measure the package's Depends: line. The app talks to servers through
+    # requests and httpx, not through Qt.
+    "PySide6/QtNetwork.",
+    "plugins/tls/",
+    "plugins/networkinformation/",
+    # The app never loads a QTranslator, so Qt's own translations are never read.
+    "Qt/translations/",
+)
 
-# PyInstaller collects the plugin's dependencies before the filter below removes the plugin, so
-# the GTK3 stack stays behind as top-level libraries of the build machine. Nothing else in the
-# bundle needs them (checked with readelf over PySide6, shiboken6, cv2, numpy and pypdfium2).
-# Matched by prefix on top-level names only: Pillow's own libharfbuzz lives in pillow.libs/.
-_GTK_STACK = (
-    "libgtk-3",
-    "libgdk-3",
-    "libgdk_pixbuf-2.0",
-    "libatk-1.0",
-    "libatk-bridge-2.0",
-    "libatspi",
-    "libcairo",
-    "libpango-1.0",
-    "libpangocairo-1.0",
-    "libpangoft2-1.0",
-    "libharfbuzz",
-    "libfribidi",
-    "libgraphite2",
-    "libthai",
-    "libdatrie",
-    "libpixman-1",
-    "libepoxy",
-    "libglycin-2",
-    "liblcms2",
+# Dropping the libqgtk3 plugin does not drop what it linked against: PyInstaller had already
+# walked its dependencies, so the whole GTK3 stack stayed in the bundle with nothing loading
+# it. These are the libraries that only libgtk-3.so.0 reached. `check_linux_bundle.py
+# --unused` lists every bundled library no other bundled file needs, which is how this list
+# was found and how it stays honest when PySide6 changes.
+_DROPPED_LIBS = (
+    "libgtk-3.so",
+    "libgdk-3.so",
+    "libgdk_pixbuf-2.0.so",
+    "libglycin-2.so",
+    "libcairo.so",
+    "libcairo-gobject.so",
+    "libpango-1.0.so",
+    "libpangocairo-1.0.so",
+    "libpangoft2-1.0.so",
+    "libatk-1.0.so",
+    "libatk-bridge-2.0.so",
+    "libatspi.so",
+    "libepoxy.so",
+    "libpixman-1.so",
+    "liblcms2.so",
+    "libfribidi.so",
+    "libthai.so",
+    "libdatrie.so",
+    "libgraphite2.so",
+    "libharfbuzz.so",
+    "libgio-2.0.so",
+    "libgobject-2.0.so",
+    "libgmodule-2.0.so",
+    "libmount.so",
+    "libblkid.so",
+    "libselinux.so",
+    "libseccomp.so",
+    # Xlib extensions GTK3 uses; Qt talks to X through xcb instead.
+    "libXRes.so",
+    "libXcomposite.so",
+    "libXcursor.so",
+    "libXdamage.so",
+    "libXext.so",
+    "libXfixes.so",
+    "libXi.so",
+    "libXinerama.so",
+    "libXrandr.so",
+    "libXrender.so",
+    "libXau.so",
+    "libXdmcp.so",
+    # Kerberos, which only libQt6Network linked against.
+    "libgssapi_krb5.so",
+    "libkrb5.so",
+    "libk5crypto.so",
+    "libkrb5support.so",
+    "libcom_err.so",
+    "libkeyutils.so",
+    # Found by `check_linux_bundle.py --unused` on the ubuntu-22.04 runner. libbsd is what
+    # libXdmcp pulls in there (dropped above), and libmd is what libbsd pulls in; Qt compiles its
+    # own pcre2 and libjpeg into the libraries it ships, and Pillow carries its own libjpeg in
+    # pillow.libs/.
+    "libbsd.so",
+    "libmd.so",
+    "libjpeg.so",
+    "libpcre2-8.so",
 )
 
 
 def _keep(entry):
     name = entry[0].replace("\\", "/")
-    if "/" not in name and name.startswith(_GTK_STACK):
+    if any(part in name for part in _DROPPED):
         return False
-    return not any(part in name for part in _DROPPED)
+    # Only the top level of the bundle holds host libraries; a Python extension module with
+    # a similar name must never be caught by this.
+    return not ("/" not in name and name.startswith(_DROPPED_LIBS))
 
 
 datas = [
@@ -121,7 +187,9 @@ a = Analysis(
     hooksconfig={},
     runtime_hooks=[],
     # setuptools is a build tool, not a runtime dependency: pip uses its own vendored copy.
-    excludes=["setuptools", "_distutils_hack", "pkg_resources"],
+    # readline would bundle the build machine's GPL-licensed libreadline; nothing in a windowed
+    # app has a terminal to complete in.
+    excludes=["setuptools", "_distutils_hack", "pkg_resources", "readline"],
     noarchive=False,
     optimize=0,
 )

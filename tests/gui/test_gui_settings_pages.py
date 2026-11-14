@@ -3592,6 +3592,14 @@ def test_the_search_dialog_lists_a_hit_and_reports_the_chosen_address(qtbot) -> 
     assert signal.args == ["http://172.31.0.1:11434"]
 
 
+def _wait_search_finished(qtbot, dialog) -> None:
+    """Wait until the search thread ended *and* its queued result reached the dialog."""
+    qtbot.waitUntil(
+        lambda: not dialog.searching and not dialog.status.text().startswith("Searching"),
+        timeout=3000,
+    )
+
+
 @pytest.mark.gui
 def test_the_search_dialog_explains_an_empty_result_and_never_scans_without_consent(
     qtbot, monkeypatch
@@ -3609,7 +3617,7 @@ def test_the_search_dialog_explains_an_empty_result_and_never_scans_without_cons
     service = _SearchService()
     dialog = ServerSearchDialog(service)
     qtbot.addWidget(dialog)
-    qtbot.waitUntil(lambda: not dialog.searching, timeout=3000)
+    _wait_search_finished(qtbot, dialog)
 
     assert "OLLAMA_HOST" in dialog.status.text()
     dialog.network_button.click()
@@ -3639,11 +3647,11 @@ def test_the_network_search_starts_only_after_the_question_is_answered_yes(
     service = _SearchService([school])
     dialog = ServerSearchDialog(service)
     qtbot.addWidget(dialog)
-    qtbot.waitUntil(lambda: not dialog.searching, timeout=3000)
+    _wait_search_finished(qtbot, dialog)
 
     dialog.network_button.click()
     qtbot.waitUntil(lambda: service.scopes[-1] is DiscoveryScope.NETWORK, timeout=3000)
-    qtbot.waitUntil(lambda: not dialog.searching, timeout=3000)
+    _wait_search_finished(qtbot, dialog)
 
     assert dialog.list.count() == 1
     assert "Another computer on your network" in dialog.list.item(0).text()

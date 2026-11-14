@@ -271,9 +271,11 @@ def _set_combo(combo: QComboBox, value: str) -> None:
 # ── retired threads ───────────────────────────────────────────────────────────
 
 
-#: Threads that outlived their dialog.  A running ``QThread`` must not be destroyed
-#: (that aborts the whole process) and these run a plain function with no event
-#: loop, so they cannot be interrupted either: they are parked here until they end.
+#: Threads that are running and may outlive the widget that started them.  A running
+#: ``QThread`` must not be destroyed (that aborts the whole process) and these run a plain
+#: function with no event loop, so they cannot be interrupted either: ``_start_thread``
+#: parks every thread here from its start, ``_retire_thread`` adds a thread whose widget
+#: lets go of it, and ``_purge_retired_threads`` drops the finished ones.
 _RETIRED_THREADS: set[QThread] = set()
 _THREAD_RESULT_SIGNALS = (
     "models_ready",
@@ -292,6 +294,18 @@ def _purge_retired_threads() -> None:
     """Drop retired threads that have finished."""
     for thread in [t for t in _RETIRED_THREADS if t.isFinished()]:
         _RETIRED_THREADS.discard(thread)
+
+
+def _start_thread(thread: QThread) -> None:
+    """Start *thread* and keep it alive until it ends, whatever happens to its widget.
+
+    A widget that is closed, deleted or garbage-collected without calling its ``shutdown()``
+    would otherwise drop the last reference to a thread that is still running, and Qt
+    aborts the process ("QThread: Destroyed while thread is still running").
+    """
+    _purge_retired_threads()
+    _RETIRED_THREADS.add(thread)
+    thread.start()
 
 
 def _retire_thread(thread: QThread | None) -> None:

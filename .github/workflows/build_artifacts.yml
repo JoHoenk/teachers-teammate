@@ -53,8 +53,12 @@ jobs:
         # entries below only attach the runner OS to the matching combination.
         artifact: ${{ fromJSON(inputs.platforms) }}
         include:
+          # glibc 2.35: Ubuntu 22.04+, Debian 12+, Mint 21+. Building on a newer image
+          # silently raises that floor, which check_linux_bundle.py then catches.
+          # If GitHub drops the 22.04 image, run the build in an ubuntu:22.04 container
+          # on ubuntu-latest instead of moving to a newer runner.
           - artifact: linux
-            os: ubuntu-24.04
+            os: ubuntu-22.04
           - artifact: windows
             os: windows-latest
           - artifact: macos
@@ -65,7 +69,7 @@ jobs:
 
       - uses: actions/setup-python@v7
         with:
-          python-version: "3.12"
+          python-version-file: .python-version
 
       - name: Resolve package version
         id: version
@@ -94,18 +98,68 @@ jobs:
             libxcb-xinerama0 libxcb-cursor0 libegl1 libgl1 libglib2.0-0
 
       - name: Install Python dependencies
+        shell: bash
         run: |
-          pip install --upgrade pip
           # Base runtime deps only — optional providers (langchain/spacy)
           # are downloaded at runtime by the in-app addon manager, so they are
           # intentionally not bundled into the standalone binary.
-          pip install -e .
-          pip install "pyinstaller>=6.0"
+          #
+          # Every version comes from requirements_test_lock.txt (plus the
+          # platform-only pins in tools/build/requirements_platform.txt), and
+          # check_pins.py fails the build if pip installed anything else.
+          python tools/build/make_constraints.py
+          python -m pip install --upgrade -c pyinstaller-work/constraints.txt pip
+          python -m pip install -c pyinstaller-work/constraints.txt \
+            -e . pyinstaller pyinstaller-hooks-contrib
+          python tools/build/check_pins.py
+          # pip's markers hide Windows-only and macOS-only dependencies of PyInstaller from a
+          # Linux resolver, so check them here, once, instead of on the runner that needs them.
+          if [[ "$RUNNER_OS" == "Linux" ]]; then
+            python tools/build/check_pins.py --platform win_amd64
+            python tools/build/check_pins.py --platform macosx_14_0_arm64
+          fi
+          # The license store must describe this environment, platform-only
+          # packages included — that is why this runs on all three OS jobs.
+          python tools/release/check_inventory.py --env
 
       - name: Build standalone binaries
         run: python tools/build/build_standalone.py
         env:
           QT_API: pyside6
+
+      - name: Smoke-test the binary (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: QT_QPA_PLATFORM=offscreen ./dist/teachers-teammate --_smoke_test smoke.json
+
+      - name: Smoke-test the binary (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $process = Start-Process -FilePath dist/teachers-teammate/teachers-teammate.exe `
+            -ArgumentList '--_smoke_test', 'smoke.json' -Wait -PassThru
+          if ($process.ExitCode -ne 0) {
+            throw "the smoke test exited with $($process.ExitCode)"
+          }
+
+      - name: Smoke-test the app (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: ./dist/teachers-teammate.app/Contents/MacOS/teachers-teammate --_smoke_test smoke.json
+
+      - name: Upload the smoke test result
+        if: ${{ always() && !inputs.skip_artifact_upload }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ inputs.artifact_prefix }}-${{ matrix.artifact }}-smoke
+          retention-days: ${{ inputs.retention_days }}
+          path: smoke.json
+
+      - name: Check the Linux bundle
+        if: runner.os == 'Linux'
+        run: |
+          python tools/build/check_linux_bundle.py --max-glibc 2.35
+          python tools/build/check_linux_bundle.py --unused
 
       - name: Create .deb package (Linux)
         if: runner.os == 'Linux'
@@ -199,6 +253,10 @@ jobs:
         uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3 # v3.0.4
         with:
           tag_name: ${{ inputs.release_tag }}
+          # The release is a draft until publish-release flips it. Without this the action
+          # publishes an existing draft after its first upload, and the release would be
+          # visible while the other platforms are still building.
+          draft: true
           files: |
             dist/teachers-teammate-*linux
             dist/teachers-teammate_*.deb

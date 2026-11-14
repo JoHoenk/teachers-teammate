@@ -8,9 +8,14 @@
 #   binary — bloating it and, worse, pulling in AGPL/GPL code (PyMuPDF, PyQt6).
 #   Building in a fresh venv with ONLY the base runtime deps (pip install -e .)
 #   guarantees the bundle matches third_party_licenses/ (the same set that
-#   tools/release/update_licenses.sh enumerates). Optional OCR/LLM/privacy
+#   tools/release/update_licenses.py enumerates). Optional OCR/LLM/privacy
 #   features are installed by users at runtime via the in-app addon installer
 #   (which is why pip is bundled with --collect-all).
+#
+# Why the constraints file?
+#   Every version comes from requirements_test_lock.txt plus
+#   tools/build/requirements_platform.txt, so two builds of the same commit produce
+#   the same bundle and the same license list. check_pins.py proves pip followed it.
 #
 # Usage (run from repo root):
 #   ./tools/build/build.sh
@@ -19,16 +24,30 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 VENV_DIR="$REPO_ROOT/.build_venv"
+CONSTRAINTS="$REPO_ROOT/pyinstaller-work/constraints.txt"
 
 cd "$REPO_ROOT"
+
+PYTHON="${PYTHON:-python3.12}"
+if ! command -v "$PYTHON" >/dev/null 2>&1; then
+    echo "ERROR: $PYTHON not found." >&2
+    echo "       The bundle is built with Python 3.12 (see .python-version)." >&2
+    exit 1
+fi
 
 echo "==> Clearing stale build artifacts"
 rm -rf "$VENV_DIR" build dist pyinstaller-work teachers_teammate.egg-info
 
+echo "==> Writing the pinned constraints"
+"$PYTHON" tools/build/make_constraints.py
+
 echo "==> Creating clean build venv at $VENV_DIR (base runtime deps only)"
-python3 -m venv "$VENV_DIR"
-"$VENV_DIR/bin/pip" install --quiet --upgrade pip
-"$VENV_DIR/bin/pip" install --quiet -e . "pyinstaller>=6.0"
+"$PYTHON" -m venv "$VENV_DIR"
+"$VENV_DIR/bin/pip" install --quiet --upgrade -c "$CONSTRAINTS" pip
+"$VENV_DIR/bin/pip" install --quiet -c "$CONSTRAINTS" -e . pyinstaller pyinstaller-hooks-contrib
+
+echo "==> Checking that every installed package is pinned"
+"$VENV_DIR/bin/python" tools/build/check_pins.py
 
 echo "==> Building standalone binary"
 "$VENV_DIR/bin/python" tools/build/build_standalone.py

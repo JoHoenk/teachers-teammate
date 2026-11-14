@@ -1,0 +1,25 @@
+# Packages the Linux lock cannot hold, or that only the build needs.
+#
+# requirements_test_lock.txt is resolved on Linux with Python 3.12, so it has no
+# pywin32-ctypes (Windows only) and no PyInstaller (a build tool, not a runtime
+# dependency of the app). Pinning them here keeps a build reproducible and lets
+# Dependabot bump them — see the "/tools/build" entry in .github/dependabot.yml.
+# The name matters: Dependabot's pip ecosystem only reads requirements*.txt, so a
+# file called constraints_platform.txt would never be bumped.
+#
+# A bump here is not covered by the Bazel tests, which run on Linux: the smoke
+# test of the next release dry run is its check.
+
+# pip itself: the bundle carries it for the in-app add-on installer, so its version is part
+# of what ships and must match third_party_licenses/packages.csv.
+pip==26.1.2
+
+# PyInstaller and what it needs that the lock does not carry.
+pyinstaller==6.22.3
+pyinstaller-hooks-contrib==2026.10
+altgraph==0.17.5
+# PyInstaller needs pefile on Windows and macholib on macOS; pip's markers hide them on Linux,
+# which is why check_pins.py --platform evaluates the target's markers itself.
+pefile==2024.8.26
+macholib==1.16.4
+pywin32-ctypes==0.2.3

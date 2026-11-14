@@ -642,6 +642,24 @@ py_test(
 )
 
 py_test(
+    name = "test_check_pins",
+    size = "small",
+    srcs = _COMMON_SRCS + ["unit/test_check_pins.py"],
+    args = ["unit/test_check_pins.py"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS + ["//tools/build:build_tools_lib"],
+)
+
+py_test(
+    name = "test_make_constraints",
+    size = "small",
+    srcs = _COMMON_SRCS + ["unit/test_make_constraints.py"],
+    args = ["unit/test_make_constraints.py"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS + ["//tools/build:build_tools_lib"],
+)
+
+py_test(
     name = "test_release_stamp_versions",
     size = "small",
     srcs = _COMMON_SRCS + ["unit/test_release_stamp_versions.py"],
@@ -2059,6 +2077,8 @@ test_suite(
         ":test_language",
         ":test_llm_factory",
         ":test_local_models",
+        ":test_check_pins",
+        ":test_make_constraints",
         ":test_markdown_shield",
         ":test_model_catalog",
         ":test_model_listing",

@@ -27,6 +27,7 @@ py_library(
         "//teachers_teammate:all_sources",
         "//tests:all_sources",
         "//tools:all_sources",
+        "//tools/build:all_sources",
     ],
     tags = ["manual"],
 )

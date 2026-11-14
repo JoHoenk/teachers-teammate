@@ -74,6 +74,12 @@ import subprocess
 import sys
 import tomllib
 
+_ROOT = Path(__file__).resolve().parent.parent.parent
+if str(_ROOT) not in sys.path:
+    sys.path.insert(0, str(_ROOT))
+
+from tools.release.build_only import is_build_only  # noqa: E402
+
 TextSource = Callable[[str], list[tuple[str, str]]]
 
 
@@ -110,20 +116,10 @@ BUNDLED_MD_OUTPUT = Path("teachers_teammate/assets/third_party_licenses.md")
 OVERRIDES_FILE = Path("tools/release/license_overrides.toml")
 
 # Packages that are build/dev tools or the application itself — excluded from
-# the license report even when present in the active environment.
+# the license report even when present in the active environment. The list lives in
+# build_only.py because check_inventory.py asks the same question.
 # NOTE: `pip` is intentionally NOT excluded — the standalone build bundles it
 # via `--collect-all pip` (in-app addon installer), so its license must ship.
-_EXCLUDE: frozenset[str] = frozenset(
-    {
-        "setuptools",
-        "wheel",
-        "piplicenses",
-        "pip-licenses",
-        "pip_licenses",
-        "teachers-teammate",
-        "teachers_teammate",
-    }
-)
 
 # Keyword-to-rank mapping for license permissiveness (lower = more permissive).
 # Keys are checked as substrings of the lowercased license string.
@@ -193,11 +189,7 @@ def get_all_installed_packages() -> list[dict]:
         check=True,
     )
     packages = json.loads(result.stdout)
-    return [
-        p
-        for p in packages
-        if p["Name"].lower() not in _EXCLUDE and p["Name"].lower().replace("-", "_") not in _EXCLUDE
-    ]
+    return [p for p in packages if not is_build_only(p["Name"])]
 
 
 def prepare_output_dir() -> None:

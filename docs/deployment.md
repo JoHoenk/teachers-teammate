@@ -43,19 +43,45 @@ Manual trigger with a version string (e.g. `v1.2.3`).
 
 ```
 lint ──┐
-       ├──► create-release (empty GitHub Release shell)
+       ├──► create-release (draft GitHub Release)
 test ──┘         │
-                 ├──► build-wheel       → wheel (.whl) attached to release
-                 └──► build-standalone  → platform installers attached to release
+                 ├──► build-wheel       → wheel (.whl) attached to the draft
+                 └──► build-standalone  → platform installers attached to the draft
+                                    │
+                                    └──► publish-release → flips the draft to published
 ```
+
+The release stays a draft until **publish-release** runs, so a half-uploaded release is never
+visible. The upload steps pass `draft: true` too: without it the upload action publishes an
+existing draft after its first upload. `create-release` sets `target_commitish` to the built
+commit, because a draft's tag is only created when the release is published. A pre-release
+version (one containing `-`) is published without `--latest`.
+
+A failed run leaves its draft behind: delete it with `gh release delete <tag> --cleanup-tag`
+before running the release again.
 
 The **build-standalone** job (`build_artifacts.yml`) runs in parallel on three GitHub-hosted runners:
 
 | Runner | Steps | Output |
 |--------|-------|--------|
-| `ubuntu-latest` | `tools/build/build_standalone.py` → `tools/packaging/make_deb.sh` | `teachers-teammate-<ver>-linux`, `teachers-teammate_<ver>.deb` |
-| `windows-latest` | `tools/build/build_standalone.py` → NSIS (`tools/packaging/windows.nsi`) | `teachers-teammate-<ver>-w64-setup.exe` |
-| `macos-latest` | `tools/build/build_standalone.py` → `tools/packaging/make_dmg.sh` | `teachers-teammate-<ver>-macos.dmg` |
+| `ubuntu-22.04` | pinned install → `tools/build/build_standalone.py` → smoke test → bundle checks → `tools/packaging/make_deb.sh` | `teachers-teammate-<ver>-linux`, `teachers-teammate_<ver>.deb` |
+| `windows-latest` | pinned install → `tools/build/build_standalone.py` → smoke test → NSIS (`tools/packaging/windows.nsi`) | `teachers-teammate-<ver>-w64-setup.exe` |
+| `macos-latest` | pinned install → `tools/build/build_standalone.py` → smoke test → `tools/packaging/make_dmg.sh` | `teachers-teammate-<ver>-macos.dmg` |
+
+The Linux job builds on `ubuntu-22.04` on purpose: PyInstaller bundles the libraries of the
+machine it builds on, so a newer image would silently raise the minimum glibc. If GitHub drops
+that image, build in an `ubuntu:22.04` container on `ubuntu-latest` rather than moving to a newer
+runner.
+
+Every job installs against `pyinstaller-work/constraints.txt` (see
+[Standalone binary](#standalone-binary)); the Linux job also runs
+`tools/build/check_pins.py --platform win_amd64` and `--platform macosx_14_0_arm64`, because pip
+evaluates PyInstaller's Windows-only (`pefile`) and macOS-only (`macholib`) dependencies against the
+Linux host and would never report them. Every job runs the app with `--_smoke_test smoke.json` and fails
+on a non-zero exit, and uploads `smoke.json` as an artifact. `tools/release/check_inventory.py
+--env` runs on all three, so the platform-only packages are covered too. The Linux job also runs
+`tools/build/check_linux_bundle.py` twice: `--max-glibc 2.35` proves the bundle starts on Ubuntu
+22.04, `--unused` proves it carries no library that nothing loads.
 
 The **build-wheel** job stamps the version into `pyproject.toml` via `tools/release/stamp_versions.py`, then builds a pure-Python wheel with Bazel.
 
@@ -67,9 +93,11 @@ All commands are run from the **repository root**.
 
 ### Prerequisites
 
-- Python 3.12
+- Python 3.12 (`.python-version`)
 - [Bazel](https://bazel.build/) (for wheel builds and tests)
-- [PyInstaller](https://pyinstaller.org/) ≥ 6.0 (`pip install "pyinstaller>=6.0"`)
+
+The standalone build installs [PyInstaller](https://pyinstaller.org/) itself, at the version
+pinned in `tools/build/requirements_platform.txt`; nothing has to be installed by hand.
 
 ```bash
 # Activate the project virtualenv
@@ -77,7 +105,6 @@ source .venv/bin/activate
 
 # Install the package with provider extras
 pip install -e ".[llm]"
-pip install "pyinstaller>=6.0"
 ```
 
 ### Python wheel
@@ -128,7 +155,16 @@ and runs the committed spec `tools/build/teachers-teammate.spec`, which lists wh
 contains. It produces a single self-contained executable (Linux), a `.app` bundle (macOS), or an
 `onedir` folder (Windows).
 
+Every version it installs comes from `requirements_test_lock.txt` plus
+`tools/build/requirements_platform.txt`: `tools/build/make_constraints.py` writes
+`pyinstaller-work/constraints.txt`, pip installs against it, and `tools/build/check_pins.py`
+fails the build when anything in the environment is not pinned. Two builds of the same commit
+therefore produce the same bundle and the same license list.
+
 ```bash
+python tools/build/make_constraints.py
+pip install -c pyinstaller-work/constraints.txt -e . pyinstaller pyinstaller-hooks-contrib
+python tools/build/check_pins.py
 python tools/build/build_standalone.py
 ```
 
@@ -140,7 +176,19 @@ Outputs:
 | Windows | `dist/teachers-teammate/teachers-teammate.exe` |
 | macOS | `dist/teachers-teammate.app/` |
 
-Convenience wrappers: `tools/build/build.sh` (Linux/macOS) and `tools/build/build.bat` (Windows).
+`tools/build/build.sh` (Linux/macOS) and `tools/build/build.bat` (Windows) do all of that in a
+fresh venv, so a local build matches CI.
+
+Then check what was built:
+
+```bash
+# The app starts and its imports resolve; writes a JSON report.
+QT_QPA_PLATFORM=offscreen ./dist/teachers-teammate --_smoke_test smoke.json
+
+# Linux only: the bundle runs on Ubuntu 22.04 (glibc 2.35) and carries no dead libraries.
+python tools/build/check_linux_bundle.py --max-glibc 2.35
+python tools/build/check_linux_bundle.py --unused
+```
 
 ### Platform installers
 
@@ -230,7 +278,10 @@ A silent uninstall keeps all user data unless `/DELDATA` (add-ons and models) or
 | File | Purpose |
 |------|---------|
 | `tools/build/build_standalone.py` | Primary cross-platform PyInstaller build (used by CI) |
-| `tools/build/build.sh` / `tools/build/build.bat` | Thin wrappers around `build_standalone.py` |
+| `tools/build/build.sh` / `tools/build/build.bat` | Fresh venv, pinned install, then `build_standalone.py` |
+| `tools/build/make_constraints.py` | Writes `pyinstaller-work/constraints.txt` from the lock and the platform pins |
+| `tools/build/check_pins.py` | Fails the build when an installed package is not pinned |
+| `tools/build/check_linux_bundle.py` | Checks the Linux bundle's glibc floor and lists libraries nothing loads |
 | `tools/build/teachers-teammate.spec` | The committed PyInstaller spec: what the bundle contains |
 | `tools/build/run_gui.py` | PyInstaller entry point (pip dispatch, smoke test, addon injection) |
 | `tools/packaging/make_ico.py` | Generates `.ico` and welcome BMP for Windows |

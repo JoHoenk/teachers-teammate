@@ -47,7 +47,7 @@ privacy = [
     # GPU acceleration for spaCy NER via cupy — install one matching your CUDA version:
     #   pip install "spacy[cuda12x]"   # CUDA 12.x
     #   pip install "spacy[cuda11x]"   # CUDA 11.x
-    # Or use the build script:  SPACY_GPU=1 CUDA_VER=12x ./packaging/build_frozen.sh
+    # Or set SPACY_GPU=1 and CUDA_VER=12x when running tools/build/build.sh.
 ]
 
 # ── Tooling extras ──────────────────────────────────────────────────────────
@@ -197,6 +197,7 @@ ignored-modules = [
     "langchain_core",
     "lxml",
     "markdown_it",
+    "packaging",
     "ollama",
     "numpy",
     "psutil",

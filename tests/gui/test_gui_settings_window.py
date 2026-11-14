@@ -319,7 +319,7 @@ def test_ok_merges_the_values_of_the_pages_that_were_visited(qtbot) -> None:
     Then   it holds each page's changes under their keys, and no key of an unvisited page
     """
     window = _window(qtbot, SettingsPage.AI_MODELS)
-    window.page(SettingsPage.AI_MODELS)._ocr_picker._ocr_engine.setCurrentText("tesseract")
+    window.page(SettingsPage.AI_MODELS)._ocr_picker.set_engine("ppocr")
     window.show_page(SettingsPage.SCAN_QUALITY)
     window.page(SettingsPage.SCAN_QUALITY)._controls._pdf_dpi.setValue(144)
     window.show_page(SettingsPage.AI_SETUP)
@@ -327,7 +327,7 @@ def test_ok_merges_the_values_of_the_pages_that_were_visited(qtbot) -> None:
 
     settings = window.values().settings
 
-    assert settings["ocr_engine"] == "tesseract"
+    assert settings["ocr_engine"] == "ppocr"
     assert settings["pdf_render_dpi"] == 144
     assert settings["ollama_url"] == "http://box:11434"
     assert "output_dir" not in settings
@@ -651,35 +651,21 @@ def test_the_server_address_reaches_the_ai_model_sections(qtbot) -> None:
 
 
 @pytest.mark.gui
-def test_choosing_a_method_applies_its_image_preparation_on_scan_quality(qtbot) -> None:
+def test_choosing_a_method_leaves_the_image_preparation_alone(qtbot) -> None:
     """
-    Given  AI models and Scan quality built
-    When   the teacher picks tesseract as the recognition method
-    Then   Scan quality shows the preparation tesseract works best with
+    Given  AI models and Scan quality built, and Original page chosen on Scan quality
+    When   the teacher picks the built-in reader as the recognition method
+    Then   Scan quality still shows Original page: the preparation does not depend on the method
     """
     window = _window(qtbot, SettingsPage.SCAN_QUALITY)
+    scan = window.page(SettingsPage.SCAN_QUALITY)
+    scan.load({"preprocess_method": "none"})
     window.show_page(SettingsPage.AI_MODELS)
 
-    window.page(SettingsPage.AI_MODELS)._ocr_picker._ocr_engine.setCurrentText("tesseract")
+    window.page(SettingsPage.AI_MODELS)._ocr_picker.set_engine("ppocr")
 
-    assert window.page(SettingsPage.SCAN_QUALITY).values()["preprocess_method"] == "clahe"
-
-
-@pytest.mark.gui
-def test_the_image_preparation_follows_the_method_even_if_scan_quality_is_unbuilt(qtbot) -> None:
-    """
-    Given  AI models opened first, Scan quality never opened
-    When   the teacher picks tesseract
-    Then   the result carries tesseract's preparation, and Scan quality shows it when it is
-           opened later
-    """
-    window = _window(qtbot, SettingsPage.AI_MODELS)
-    window.page(SettingsPage.AI_MODELS)._ocr_picker._ocr_engine.setCurrentText("tesseract")
-
-    assert window.values().settings["preprocess_method"] == "clahe"
-
-    window.show_page(SettingsPage.SCAN_QUALITY)
-    assert window.page(SettingsPage.SCAN_QUALITY).values()["preprocess_method"] == "clahe"
+    assert scan.values()["preprocess_method"] == "none"
+    assert window.values().settings["preprocess_method"] == "none"
 
 
 # ── preview ────────────────────────────────────────────────────────────────────
@@ -695,9 +681,10 @@ def test_the_preview_builds_the_whole_config_from_both_ocr_parts(qtbot) -> None:
     """
     window = _window(qtbot, SettingsPage.AI_MODELS)
     models = window.page(SettingsPage.AI_MODELS)
-    models._ocr_picker._ocr_engine.setCurrentText("tesseract")
+    models._ocr_picker.set_engine("ppocr")
     window.show_page(SettingsPage.SCAN_QUALITY)
     scan = window.page(SettingsPage.SCAN_QUALITY)
+    scan.load({"preprocess_method": "none"})
     scan._controls._pdf_dpi.setValue(144)
 
     with qtbot.waitSignal(window.preprocess_preview_requested, timeout=2000) as blocker:
@@ -705,9 +692,9 @@ def test_the_preview_builds_the_whole_config_from_both_ocr_parts(qtbot) -> None:
 
     config = blocker.args[0]
     assert isinstance(config, OcrConfig)
-    assert config.engine == "tesseract"
+    assert config.engine == "ppocr"
     assert config.temperature == 0.0  # fixed in the app
-    assert config.preprocess_method == "clahe"  # tesseract's default, applied on the change
+    assert config.preprocess_method == "none"
     assert config.pdf_render_dpi == 144
 
 
@@ -721,7 +708,7 @@ def test_the_preview_uses_the_saved_recognition_choice_when_ai_models_is_unbuilt
     window = _window(
         qtbot,
         SettingsPage.SCAN_QUALITY,
-        settings={"ocr_engine": "tesseract"},
+        settings={"ocr_engine": "ppocr"},
     )
     scan = window.page(SettingsPage.SCAN_QUALITY)
 
@@ -729,7 +716,7 @@ def test_the_preview_uses_the_saved_recognition_choice_when_ai_models_is_unbuilt
         scan.preview_requested.emit()
 
     config = blocker.args[0]
-    assert config.engine == "tesseract"
+    assert config.engine == "ppocr"
 
 
 # ── deep links ─────────────────────────────────────────────────────────────────
@@ -880,7 +867,7 @@ def test_restore_this_page_resets_only_that_page(qtbot, scripted_box) -> None:
     Then   Scan quality shows the defaults, AI models keeps its values, and the window stays open
     """
     window = _window(qtbot, SettingsPage.AI_MODELS)
-    window.page(SettingsPage.AI_MODELS)._ocr_picker._ocr_engine.setCurrentText("tesseract")
+    window.page(SettingsPage.AI_MODELS)._ocr_picker.set_engine("ppocr")
     window.show_page(SettingsPage.SCAN_QUALITY)
     scan = window.page(SettingsPage.SCAN_QUALITY)
     scan._controls._pdf_dpi.setValue(600)
@@ -889,7 +876,7 @@ def test_restore_this_page_resets_only_that_page(qtbot, scripted_box) -> None:
     window._restore_btn.click()
 
     assert scan.values()["pdf_render_dpi"] == DEFAULTS["pdf_render_dpi"]
-    assert window.page(SettingsPage.AI_MODELS).values()["ocr_engine"] == "tesseract"
+    assert window.page(SettingsPage.AI_MODELS).values()["ocr_engine"] == "ppocr"
     assert window.values().restore_all is False
     assert window.result() == 0
 
@@ -950,48 +937,24 @@ def test_restore_on_add_ons_does_not_promise_a_change_on_ok(qtbot, scripted_box)
 
 
 @pytest.mark.gui
-def test_restoring_scan_quality_keeps_the_preset_of_the_chosen_method(qtbot, scripted_box) -> None:
+def test_restoring_scan_quality_shows_the_defaults(qtbot, scripted_box) -> None:
     """
-    Given  tesseract chosen as the recognition method and a changed image preparation
-    When   "Restore defaults…" is answered with "This page" on Scan quality
-    Then   the preset is the one tesseract works best with (clahe), not the global default
+    Given  Original page chosen and another PDF resolution on Scan quality
+    When   "Restore defaults…" is answered with "This page"
+    Then   the preparation is Automatic again and the resolution is the default
     """
     window = _window(
         qtbot,
         SettingsPage.SCAN_QUALITY,
-        settings={"ocr_engine": "tesseract", "preprocess_method": "none"},
+        settings={"preprocess_method": "none", "pdf_render_dpi": 600},
     )
     scan = window.page(SettingsPage.SCAN_QUALITY)
     scripted_box.answers = ["This page"]
 
     window._restore_btn.click()
 
-    assert scan.values()["preprocess_method"] == "clahe"
+    assert scan.values()["preprocess_method"] == "auto"
     assert scan.values()["pdf_render_dpi"] == DEFAULTS["pdf_render_dpi"]
-
-
-@pytest.mark.gui
-def test_restoring_ai_models_applies_the_default_methods_preparation(qtbot, scripted_box) -> None:
-    """
-    Given  both pages open with tesseract chosen
-    When   "Restore defaults…" is answered with "This page" on AI models
-    Then   the recognition method is back to the default one and Scan quality follows with that
-           method's image preparation, as choosing the method by hand does
-    """
-    window = _window(
-        qtbot,
-        SettingsPage.SCAN_QUALITY,
-        settings={"ocr_engine": "tesseract", "preprocess_method": "clahe"},
-    )
-    window.show_page(SettingsPage.AI_MODELS)
-    scripted_box.answers = ["This page"]
-
-    window._restore_btn.click()
-
-    engine = window.page(SettingsPage.AI_MODELS).ocr_choice()[0]
-    assert engine == DEFAULTS["ocr_engine"]
-    expected = window._context.app_service.default_preprocess_for_engine(engine)
-    assert window.page(SettingsPage.SCAN_QUALITY).values()["preprocess_method"] == expected
 
 
 @pytest.mark.gui
@@ -1136,7 +1099,7 @@ def test_ok_is_the_default_button_again_after_leaving_add_ons(qtbot, monkeypatch
 @pytest.mark.gui
 def test_a_finished_install_does_not_reset_the_image_preparation(qtbot, monkeypatch) -> None:
     """
-    Given  saved settings with Tesseract and the image preparation "none", both pages built
+    Given  saved settings with the built-in reader and the image preparation "none", both pages built
     When   an install finishes and every page looks again (the recognition method itself
            did not change)
     Then   the image preparation is still "none", not the method's default
@@ -1145,7 +1108,7 @@ def test_a_finished_install_does_not_reset_the_image_preparation(qtbot, monkeypa
     window = _window(
         qtbot,
         SettingsPage.SCAN_QUALITY,
-        settings={"ocr_engine": "tesseract", "preprocess_method": "none"},
+        settings={"ocr_engine": "ppocr", "preprocess_method": "none"},
     )
     window.show_page(SettingsPage.AI_MODELS)
     scan = window.page(SettingsPage.SCAN_QUALITY)
@@ -1159,7 +1122,7 @@ def test_a_finished_install_does_not_reset_the_image_preparation(qtbot, monkeypa
 @pytest.mark.gui
 def test_a_finished_install_leaves_an_unbuilt_scan_page_alone(qtbot, monkeypatch) -> None:
     """
-    Given  saved settings with Tesseract and the image preparation "none", Scan quality
+    Given  saved settings with the built-in reader and the image preparation "none", Scan quality
            never opened
     When   an install finishes and every built page looks again
     Then   no image preparation is carried into the result (an unvisited page changes nothing)
@@ -1168,7 +1131,7 @@ def test_a_finished_install_leaves_an_unbuilt_scan_page_alone(qtbot, monkeypatch
     window = _window(
         qtbot,
         SettingsPage.AI_MODELS,
-        settings={"ocr_engine": "tesseract", "preprocess_method": "none"},
+        settings={"ocr_engine": "ppocr", "preprocess_method": "none"},
     )
 
     window._on_packages_changed()

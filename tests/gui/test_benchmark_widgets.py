@@ -20,7 +20,7 @@ def _run(run_id: str, text: str, raw_text_format: str = "plain") -> StoredRun:
         document_path="/docs/sample.pdf",
         display_name="sample.pdf",
         ocr_config_hash="abc12345",
-        ocr=OcrConfig(engine="tesseract", model="", preprocess_method="none"),
+        ocr=OcrConfig(engine="ppocr", model="", preprocess_method="none"),
         language="English",
         raw_text=text,
         preview_img="",

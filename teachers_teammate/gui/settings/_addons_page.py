@@ -1,4 +1,4 @@
-"""Settings → Add-ons: install AI models for this computer, engines, services and language models.
+"""Settings → Add-ons: install AI models for this computer, the reader, services and language models.
 
 Each downloadable category lives on its own tab; a shared log and a single
 "Install / Download Selected" button act across all tabs.  The "AI models for this computer"
@@ -39,6 +39,7 @@ from PySide6.QtWidgets import (
 
 from ...application.service import ProcessingApplicationService
 from ...config import DEFAULTS
+from ...domain.local_models import READER_SIZE_LABEL
 from ...domain.model_catalog import (
     HardwareProfile,
     ModelCategory,
@@ -53,7 +54,14 @@ from ...domain.model_catalog import (
 from .. import _user_text as txt
 from .._background import LatestTask
 from .._constants import _SPACY_MODEL_CHOICES as _SPACY_MODEL_DOWNLOAD_CHOICES
-from .._install_round import PACKAGE_PREFIX, InstallRound
+from .._install_round import (
+    PACKAGE_PREFIX,
+    PAGE_MODELS_ITEM,
+    PAGE_MODELS_PREFIX,
+    READER_ITEM,
+    READER_PREFIX,
+    InstallRound,
+)
 from .._model_guidance import PROVIDER_PREFIX, SPACY_PREFIX
 from .._model_wording import (
     ADD_MODEL_NOTE,
@@ -75,8 +83,8 @@ from ._page import (
     FOCUS_GPU,
     FOCUS_LOCAL_MODELS,
     FOCUS_NAME_DETECTION,
-    FOCUS_OCR_ENGINES,
     FOCUS_ONLINE_SERVICES,
+    FOCUS_READING_MODELS,
     SettingsContext,
     SettingsPage,
     SettingsPageBase,
@@ -89,7 +97,7 @@ DESCRIPTION = (
     "away and take effect immediately."
 )
 TAB_LOCAL_MODELS = "AI models for this computer"
-TAB_OCR_ENGINES = "Handwriting engines"
+TAB_READING_MODELS = txt.TAB_READING_MODELS
 TAB_ONLINE_SERVICES = "Online AI services"
 TAB_NAME_DETECTION = "Name detection"
 TAB_GPU = "Performance monitoring"
@@ -187,12 +195,12 @@ class AddonsPage(SettingsPageBase):
     TAB_LOCAL_MODELS = 0
     TAB_ONLINE_SERVICES = 1
     TAB_NAME_DETECTION = 2
-    TAB_OCR_ENGINES = 3
+    TAB_READING_MODELS = 3
     TAB_GPU = 4
 
     _FOCUS_TABS: ClassVar[dict[str, int]] = {
         FOCUS_LOCAL_MODELS: TAB_LOCAL_MODELS,
-        FOCUS_OCR_ENGINES: TAB_OCR_ENGINES,
+        FOCUS_READING_MODELS: TAB_READING_MODELS,
         FOCUS_ONLINE_SERVICES: TAB_ONLINE_SERVICES,
         FOCUS_NAME_DETECTION: TAB_NAME_DETECTION,
         FOCUS_GPU: TAB_GPU,
@@ -214,7 +222,6 @@ class AddonsPage(SettingsPageBase):
         self._detect_again = False  # a pull finished while a detection was running
         self._detection_started = False
         self._dl_checkboxes: dict[str, QCheckBox] = {}
-        self._tesseract_status_lbl: QLabel | None = None
         # The install round does the work; this page only shows it.
         self._round = InstallRound(self._svc, context.pull_manager, self)
         self._round.log_line.connect(self._dl_log_append)
@@ -247,7 +254,7 @@ class AddonsPage(SettingsPageBase):
         self._tabs.addTab(self._build_ollama_models_tab(), TAB_LOCAL_MODELS)
         self._tabs.addTab(self._build_providers_tab(), TAB_ONLINE_SERVICES)
         self._tabs.addTab(self._build_spacy_tab(), TAB_NAME_DETECTION)
-        self._tabs.addTab(self._build_ocr_engines_tab(), TAB_OCR_ENGINES)
+        self._tabs.addTab(self._build_reading_models_tab(), TAB_READING_MODELS)
         self._tabs.addTab(self._build_gpu_tab(), TAB_GPU)
 
         self._build_status_and_actions(main)
@@ -303,66 +310,38 @@ class AddonsPage(SettingsPageBase):
         scroll.setWidget(content)
         return scroll
 
-    def _build_tesseract_binary_note(self) -> QWidget:
-        """Return a platform-specific installation note for the Tesseract system binary."""
-        import sys  # noqa: PLC0415
-
-        container = QWidget()
-        layout = QVBoxLayout(container)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(4)
-
-        self._tesseract_status_lbl = QLabel("<b>Tesseract binary</b>  (system package — not pip)")
-        layout.addWidget(self._tesseract_status_lbl)
-
-        if sys.platform == "win32":
-            note = QLabel("Download and run the UB Mannheim installer for Windows:")
-            note.setWordWrap(True)
-            layout.addWidget(note)
-            btn = QPushButton("Open download page…")
-            btn.setFixedWidth(180)
-            btn.clicked.connect(
-                lambda: __import__("webbrowser").open(
-                    "https://github.com/UB-Mannheim/tesseract/wiki"
-                )
-            )
-            layout.addWidget(btn)
-        elif sys.platform == "darwin":
-            cmd = QLabel("<tt>brew install tesseract</tt>")
-            cmd.setTextInteractionFlags(
-                cmd.textInteractionFlags() | Qt.TextInteractionFlag.TextSelectableByMouse
-            )
-            layout.addWidget(cmd)
-        else:
-            cmd = QLabel(
-                "<tt>sudo apt install tesseract-ocr</tt>  "
-                "<span style='color:#888;font-size:9pt;'>"
-                "(Debian/Ubuntu — use your distro's package manager)</span>"
-            )
-            cmd.setWordWrap(True)
-            cmd.setTextInteractionFlags(
-                cmd.textInteractionFlags() | Qt.TextInteractionFlag.TextSelectableByMouse
-            )
-            layout.addWidget(cmd)
-
-        return container
-
-    def _build_ocr_engines_tab(self) -> QScrollArea:
+    def _build_reading_models_tab(self) -> QScrollArea:
         content = QWidget()
         layout = QVBoxLayout(content)
-        group = QGroupBox("Handwriting engines")
+        group = QGroupBox(TAB_READING_MODELS)
         group_layout = QVBoxLayout(group)
 
-        group_layout.addWidget(self._build_tesseract_binary_note())
-        group_layout.addSpacing(4)
+        intro = QLabel(
+            "The built-in reader reads pages on this computer, without a server. "
+            f"{txt.OCR_ENGINE_HINTS['ppocr']} Its model files, and the page models of the "
+            "automatic image preparation, come from PaddlePaddle (Apache-2.0) and are "
+            "downloaded once, only when you ask for them."
+        )
+        intro.setWordWrap(True)
+        group_layout.addWidget(intro)
 
-        for key, lbl in [
-            ("pytesseract", "pytesseract  (Python wrapper — pip install)"),
-            ("paddleocr", "PaddleOCR  (paddleocr + paddlepaddle, ~400 MB)"),
-        ]:
-            cb = QCheckBox(lbl)
-            self._dl_checkboxes[key] = cb
-            group_layout.addWidget(cb)
+        cb = QCheckBox(f"Built-in reader (PP-OCR) — {READER_SIZE_LABEL}")
+        self._dl_checkboxes[READER_ITEM] = cb
+        group_layout.addWidget(cb)
+
+        page_models = QCheckBox(txt.PAGE_MODELS_LABEL)
+        self._dl_checkboxes[PAGE_MODELS_ITEM] = page_models
+        group_layout.addWidget(page_models)
+        page_models_hint = QLabel(txt.PAGE_MODELS_HINT)
+        page_models_hint.setWordWrap(True)
+        page_models_hint.setStyleSheet("color: #888; font-size: 11px; margin-left: 20px;")
+        group_layout.addWidget(page_models_hint)
+
+        folder = QLabel(f"Saved in: {self._svc.models_dir()}")
+        folder.setStyleSheet("color: #888; font-size: 11px;")
+        folder.setWordWrap(True)
+        folder.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        group_layout.addWidget(folder)
 
         layout.addWidget(group)
         layout.addStretch(1)
@@ -793,8 +772,15 @@ class AddonsPage(SettingsPageBase):
         not installed).
         """
         spacy = [tag for tag in preselect if tag.startswith(SPACY_PREFIX)]
+        reader = [tag for tag in preselect if tag.startswith(READER_PREFIX)]
+        page_models = [tag for tag in preselect if tag.startswith(PAGE_MODELS_PREFIX)]
         tags = [
-            tag for tag in preselect if tag and not tag.startswith((PROVIDER_PREFIX, SPACY_PREFIX))
+            tag
+            for tag in preselect
+            if tag
+            and not tag.startswith(
+                (PROVIDER_PREFIX, SPACY_PREFIX, READER_PREFIX, PAGE_MODELS_PREFIX)
+            )
         ]
         providers = [
             self._package_key(tag.removeprefix(PROVIDER_PREFIX))
@@ -804,6 +790,8 @@ class AddonsPage(SettingsPageBase):
         tab = self._FOCUS_TABS.get(focus)
         if providers:
             tab = self.TAB_ONLINE_SERVICES
+        elif reader or page_models:
+            tab = self.TAB_READING_MODELS
         elif tags and tab is None:
             tab = self.TAB_LOCAL_MODELS
         if tab is not None:
@@ -813,7 +801,11 @@ class AddonsPage(SettingsPageBase):
         if spacy:
             # A box that is already installed is disabled and stays as it is.
             self._preselect_providers.extend(["spacy", *spacy])
-        if self._installed_ready and (tags or providers or spacy):
+        if reader:
+            self._preselect_providers.append(READER_ITEM)
+        if page_models:
+            self._preselect_providers.append(PAGE_MODELS_ITEM)
+        if self._installed_ready and (tags or providers or spacy or reader or page_models):
             # Detection is done: tick now (otherwise it ticks once detection finished).
             self._tick_preselect_tags()
 
@@ -873,18 +865,14 @@ class AddonsPage(SettingsPageBase):
     def _on_detection_done(self, results: dict) -> None:
         self._dl_detect_lbl.setText("Detection complete.")
 
-        tesseract_found = results.get("tesseract", False)
-        suffix = "  <span style='color:#27ae60;'>✓ binary found</span>" if tesseract_found else ""
-        if self._tesseract_status_lbl is not None:
-            self._tesseract_status_lbl.setText(
-                f"<b>Tesseract binary</b>  (system package — not pip){suffix}"
-            )
-
         for key, cb in self._dl_checkboxes.items():
             installed = results.get(key, False)
             base = cb.text().split("  ✓")[0]
             if installed:
-                cb.setText(f"{base}  ✓ Installed")
+                cb.setText(
+                    f"{base}  "
+                    f"{txt.READER_DOWNLOADED if key in (READER_ITEM, PAGE_MODELS_ITEM) else '✓ Installed'}"
+                )
                 cb.setChecked(True)
                 cb.setEnabled(False)
             else:
@@ -968,8 +956,6 @@ class AddonsPage(SettingsPageBase):
         packages: list[str] = []
         for key, pkgs in [
             ("spacy", ["spacy"]),
-            ("pytesseract", ["pytesseract"]),
-            ("paddleocr", ["paddlepaddle", "paddleocr"]),
         ]:
             cb = self._dl_checkboxes.get(key)
             if cb and cb.isChecked() and cb.isEnabled():
@@ -1003,7 +989,21 @@ class AddonsPage(SettingsPageBase):
             ):
                 ollama_models.append(tag)
 
-        if not pip_packages and not spacy_models and not ollama_models:
+        reader_cb = self._dl_checkboxes.get(READER_ITEM)
+        reader = bool(reader_cb and reader_cb.isChecked() and reader_cb.isEnabled())
+
+        page_models_cb = self._dl_checkboxes.get(PAGE_MODELS_ITEM)
+        page_models = bool(
+            page_models_cb and page_models_cb.isChecked() and page_models_cb.isEnabled()
+        )
+
+        if (
+            not pip_packages
+            and not spacy_models
+            and not ollama_models
+            and not reader
+            and not page_models
+        ):
             return
 
         if ollama_models and not self._confirm_too_large(ollama_models):
@@ -1014,6 +1014,8 @@ class AddonsPage(SettingsPageBase):
         self._round.start(
             packages=pip_packages,
             spacy_models=spacy_models,
+            reader=reader,
+            page_models=page_models,
             ollama_models=ollama_models,
             ollama_url=self._ollama_url,
         )

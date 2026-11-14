@@ -55,7 +55,7 @@ section "Functional Requirements" {
     }
 
     UseCase Runtime_Addon_Installation {
-        description = "As a user of a packaged build I want to install optional components (privacy add-on, PaddleOCR, graphics card monitoring) from within the app so that I can enable extra features without using a terminal."
+        description = "As a user of a packaged build I want to install optional components (privacy add-on, the built-in reader's model files, graphics card monitoring) from within the app so that I can enable extra features without using a terminal."
     }
 
     UseCase Language_Model_Download {

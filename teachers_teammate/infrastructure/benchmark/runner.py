@@ -20,6 +20,7 @@ import time
 from ...config import Config
 from ...exceptions import RunStoppedError
 from ..ollama_utils import OllamaClient
+from ..onnx.store import ModelStore
 from ..stage_builder import PipelineComponentFactory, StageBuilder
 from ..storage_root import resolve_artifact_dir
 from ..workflow.file_processor import STOPPED_GENERIC
@@ -43,6 +44,7 @@ def run_ocr(
     *,
     component_factory: PipelineComponentFactory | None = None,
     stop_event: threading.Event | None = None,
+    model_store: ModelStore | None = None,
 ) -> OcrRunResult:
     """Run OCR for *source* using *config* and return an :class:`OcrRunResult`.
 
@@ -52,11 +54,12 @@ def run_ocr(
         source: The document to OCR (PDF, image, or TXT).
         component_factory: Optional stage-constructor overrides (test injection).
         stop_event: Optional cooperative cancellation signal.
+        model_store: Where the built-in reader's model files are; ``None`` = the default folder.
     """
     factory = component_factory or PipelineComponentFactory()
     tmp_dir = resolve_artifact_dir(config.output_dir)
     tmp_dir.mkdir(parents=True, exist_ok=True)
-    builder = StageBuilder(config, factory)
+    builder = StageBuilder(config, factory, model_store=model_store)
     start = time.monotonic()
     try:
         ollama_client = (
@@ -64,7 +67,7 @@ def run_ocr(
             if config.ocr.engine == "ollama"
             else None
         )
-        ocr = builder.build_ocr(ollama_client)
+        ocr = builder.build_ocr(ollama_client, stop_event)
         preprocess_service = builder.build_preprocessor_service(tmp_dir)
         prepared = preprocess_service.preprocess_input(source)
         ocr_inputs = prepared.ocr_inputs

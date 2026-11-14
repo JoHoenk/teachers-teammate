@@ -7,6 +7,7 @@ import contextlib
 import dataclasses
 import os
 from pathlib import Path
+import sys
 import threading
 from unittest.mock import MagicMock, patch
 
@@ -26,9 +27,11 @@ from teachers_teammate.application.service import (
 from teachers_teammate.domain.model_listing import ModelListing
 from teachers_teammate.domain.ollama_discovery import OllamaState
 from teachers_teammate.domain.run_summary import RunSummary
+from teachers_teammate.infrastructure.onnx.store import ModelStore
 from teachers_teammate.infrastructure.power import KEEP_AWAKE_REASON
 from teachers_teammate.infrastructure.state_repository import DocumentState
 from teachers_teammate.interfaces import SleepBlocker
+from tests.conftest import fake_page_models_store, fake_reader_store, make_config
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────
@@ -44,11 +47,24 @@ def _as_listing(fake):
     return lambda provider, **kwargs: ModelListing(list(fake(provider, **kwargs)))
 
 
+#: The reader's model files as the tests find them: in place, unless a test passes its own store.
+_DEFAULT_STORE: ModelStore | None = None
+
+
+@pytest.fixture(autouse=True)
+def _reader_models_in_place(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Give every service of this file a store that holds the built-in reader's models."""
+    monkeypatch.setattr(
+        sys.modules[__name__], "_DEFAULT_STORE", fake_reader_store(tmp_path / "default_reader")
+    )
+
+
 def _make_svc(
     *,
     pipeline_factory=None,
     state_repository_factory=None,
     discovery=None,
+    model_store=None,
 ) -> ProcessingApplicationService:
     mock_pipeline_factory = pipeline_factory or MagicMock(return_value=MagicMock(run=lambda: 0))
     mock_state_factory = state_repository_factory or MagicMock(return_value=MagicMock())
@@ -57,6 +73,7 @@ def _make_svc(
         discovery=mock_discovery,
         pipeline_factory=mock_pipeline_factory,
         state_repository_factory=mock_state_factory,
+        model_store=model_store or _DEFAULT_STORE,
     )
 
 
@@ -78,8 +95,6 @@ def test_run_selected_delegates_to_pipeline_factory(tmp_path: Path) -> None:
     When   run_selected() is called
     Then   pipeline_factory is called once and the RunSummary of its run() is forwarded
     """
-    from tests.conftest import make_config  # noqa: PLC0415
-
     cfg = make_config(tmp_path)
     summary = RunSummary(succeeded=("a.png",))
     mock_pipeline = MagicMock()
@@ -101,8 +116,6 @@ def test_run_selected_passes_both_stop_events_to_the_pipeline(tmp_path: Path) ->
     When   run_selected() is called with them
     Then   the pipeline factory receives both
     """
-    from tests.conftest import make_config  # noqa: PLC0415
-
     factory = MagicMock(return_value=MagicMock(run=lambda: RunSummary()))
     svc = _make_svc(pipeline_factory=factory)
     now, after_file = threading.Event(), threading.Event()
@@ -142,8 +155,6 @@ def test_run_selected_holds_the_computer_awake_around_the_whole_run(tmp_path: Pa
     Then   the computer is held before the pipeline runs and released after it, and the
            pipeline gets to know whether the system agreed
     """
-    from tests.conftest import make_config  # noqa: PLC0415
-
     blocker = _RecordingBlocker()
     order: list[str] = []
     pipeline = MagicMock()
@@ -168,7 +179,6 @@ def test_run_selected_reports_that_nothing_could_be_requested_without_a_blocker(
     Then   the state says it is enabled, not held and not available: nothing was refused
     """
     from teachers_teammate.infrastructure.power import NullSleepBlocker  # noqa: PLC0415
-    from tests.conftest import make_config  # noqa: PLC0415
 
     pipeline = MagicMock()
     pipeline.run.return_value = RunSummary()
@@ -188,8 +198,6 @@ def test_run_selected_reports_a_refusal_when_a_blocker_exists(tmp_path: Path) ->
     When   run_selected() runs
     Then   the state is not held but available: the system refused
     """
-    from tests.conftest import make_config  # noqa: PLC0415
-
     pipeline = MagicMock()
     pipeline.run.return_value = RunSummary()
     factory = MagicMock(return_value=pipeline)
@@ -210,8 +218,6 @@ def test_run_selected_releases_the_computer_when_the_pipeline_raises(tmp_path: P
     When   run_selected() is called
     Then   the exception propagates and the computer is released nevertheless
     """
-    from tests.conftest import make_config  # noqa: PLC0415
-
     blocker = _RecordingBlocker()
     pipeline = MagicMock()
     pipeline.run.side_effect = RuntimeError("boom")
@@ -232,8 +238,6 @@ def test_run_selected_does_not_hold_when_keep_awake_is_off(tmp_path: Path) -> No
     When   run_selected() is called
     Then   the blocker is not used and the pipeline is told it is off
     """
-    from tests.conftest import make_config  # noqa: PLC0415
-
     blocker = _RecordingBlocker()
     factory = MagicMock(return_value=MagicMock(run=lambda: RunSummary()))
     svc = ProcessingApplicationService(pipeline_factory=factory, sleep_blocker=blocker)
@@ -252,8 +256,6 @@ def test_run_selected_reports_the_keep_awake_state_and_a_refusal(tmp_path: Path)
     When   run_selected() is called
     Then   the callback gets enabled=True, held=False once, before the pipeline is created
     """
-    from tests.conftest import make_config  # noqa: PLC0415
-
     seen: list = []
     factory = MagicMock(return_value=MagicMock(run=lambda: RunSummary()))
     svc = ProcessingApplicationService(
@@ -276,8 +278,6 @@ def test_run_selected_forwards_progress_callbacks_to_pipeline_factory(tmp_path: 
     When   run_selected() is called with a ProgressCallbacks bundle
     Then   the same bundle is passed to the pipeline factory as ``progress``
     """
-    from tests.conftest import make_config  # noqa: PLC0415
-
     factory = MagicMock(return_value=MagicMock(run=lambda: 0))
     svc = _make_svc(pipeline_factory=factory)
     progress = service_module.ProgressCallbacks(on_stage_started=MagicMock())
@@ -294,8 +294,6 @@ def test_run_preview_only_delegates_to_pipeline_factory(tmp_path: Path) -> None:
     When   run_preview_only() is called
     Then   pipeline_factory is called and run_preview_only() return value is forwarded
     """
-    from tests.conftest import make_config  # noqa: PLC0415
-
     cfg = make_config(tmp_path)
     mock_pipeline = MagicMock()
     mock_pipeline.run_preview_only.return_value = 0
@@ -342,12 +340,12 @@ def test_preprocess_preview_uses_injected_component_factory(
         state_repository_factory=MagicMock(),
         component_factory=factory,
     )
-    ocr = OcrConfig(preprocess_method="grayscale")
+    ocr = OcrConfig(preprocess_method="auto")
 
     _original, _processed, steps = svc.preprocess_preview(sample_png, ocr, tmp_path)
 
     assert steps == ["stub_step"]
-    build_preprocessor.assert_called_once_with(tmp_path, False, ocr)
+    build_preprocessor.assert_called_once_with(tmp_path, False, ocr, svc.model_store)
 
 
 # ── check_connection — engine checks ──────────────────────────────────────
@@ -393,71 +391,6 @@ def test_check_connection_ollama_engine_returns_false_when_no_models() -> None:
     assert connected is True
     assert model_ok is False
     assert "Ollama" in msg or "ollama" in msg.lower()
-
-
-@pytest.mark.unit
-@pytest.mark.use_case("Service_Availability_Check")
-def test_check_connection_tesseract_returns_true_when_binary_found(monkeypatch) -> None:
-    """
-    Given  shutil.which returns a non-None path for 'tesseract'
-    When   check_connection(engine='tesseract') is called
-    Then   returns (connected=True, model_ok=True, <success message>)
-    """
-    import shutil  # noqa: PLC0415
-
-    monkeypatch.setattr(shutil, "which", lambda _name: "/usr/bin/tesseract")
-    svc = _make_svc()
-    ok, _, msg = svc.check_connection(engine="tesseract")
-    assert ok is True
-    assert "tesseract" in msg.lower()
-
-
-@pytest.mark.unit
-def test_check_connection_tesseract_returns_false_when_binary_missing(monkeypatch) -> None:
-    """
-    Given  shutil.which returns None for 'tesseract'
-    When   check_connection(engine='tesseract') is called
-    Then   returns (connected=False, model_ok=False, <error message>)
-    """
-    import shutil  # noqa: PLC0415
-
-    monkeypatch.setattr(shutil, "which", lambda _name: None)
-    svc = _make_svc()
-    ok, _, msg = svc.check_connection(engine="tesseract")
-    assert ok is False
-    assert "tesseract" in msg.lower()
-
-
-@pytest.mark.unit
-def test_check_connection_paddleocr_returns_true_when_installed(monkeypatch) -> None:
-    """
-    Given  importlib.util.find_spec returns a non-None spec for 'paddleocr'
-    When   check_connection(engine='paddleocr') is called
-    Then   returns (connected=True, model_ok=True, <success message>)
-    """
-    import importlib.util  # noqa: PLC0415
-
-    monkeypatch.setattr(importlib.util, "find_spec", lambda _name: object())
-    svc = _make_svc()
-    ok, _, msg = svc.check_connection(engine="paddleocr")
-    assert ok is True
-    assert "paddleocr" in msg.lower()
-
-
-@pytest.mark.unit
-def test_check_connection_paddleocr_returns_false_when_not_installed(monkeypatch) -> None:
-    """
-    Given  importlib.util.find_spec returns None for 'paddleocr'
-    When   check_connection(engine='paddleocr') is called
-    Then   returns (connected=False, model_ok=False, <error message>)
-    """
-    import importlib.util  # noqa: PLC0415
-
-    monkeypatch.setattr(importlib.util, "find_spec", lambda _name: None)
-    svc = _make_svc()
-    ok, _, msg = svc.check_connection(engine="paddleocr")
-    assert ok is False
-    assert "paddleocr" in msg.lower()
 
 
 # ── check_connection — provider checks ────────────────────────────────────
@@ -546,7 +479,7 @@ def test_check_connection_no_engine_no_provider_returns_false() -> None:
     assert len(msg) > 0
 
 
-# ── list_ocr_engines / list_supported_suffixes / default_preprocess_for_engine
+# ── list_ocr_engines / list_supported_suffixes
 
 
 @pytest.mark.unit
@@ -554,12 +487,12 @@ def test_list_ocr_engines_returns_known_engines() -> None:
     """
     Given  a ProcessingApplicationService
     When   list_ocr_engines() is called
-    Then   the returned list includes 'ollama' and 'tesseract'
+    Then   the returned list includes 'ollama' and 'ppocr'
     """
     svc = _make_svc()
     engines = svc.list_ocr_engines()
     assert "ollama" in engines
-    assert "tesseract" in engines
+    assert "ppocr" in engines
 
 
 @pytest.mark.unit
@@ -577,16 +510,74 @@ def test_list_supported_suffixes_returns_frozenset_with_images() -> None:
 
 
 @pytest.mark.unit
-def test_default_preprocess_for_engine_returns_string() -> None:
+def test_page_models_notice_names_the_flag_only_when_the_automatic_preparation_lacks_them(
+    tmp_path: Path,
+) -> None:
     """
-    Given  a known OCR engine name
-    When   default_preprocess_for_engine() is called
-    Then   a non-empty string is returned
+    Given  a service whose model store has no page models
+    When   page_models_notice_for_run() is asked for an automatic run, an "Original page" run
+           and a run with recognition off
+    Then   only the automatic run that reads pages gets the one-line notice naming the flag
     """
-    svc = _make_svc()
-    result = svc.default_preprocess_for_engine("tesseract")
-    assert isinstance(result, str)
-    assert len(result) > 0
+    from teachers_teammate.config import OcrConfig  # noqa: PLC0415
+
+    svc = ProcessingApplicationService(
+        pipeline_factory=MagicMock(),
+        state_repository_factory=MagicMock(),
+        model_store=ModelStore(tmp_path / "models"),
+    )
+
+    auto = make_config(tmp_path, ocr=OcrConfig(preprocess_method="auto"))
+    original = make_config(tmp_path, ocr=OcrConfig(preprocess_method="none"))
+    off = make_config(tmp_path, ocr=OcrConfig(preprocess_method="auto"), recognition_enabled=False)
+
+    assert "--download-page-models" in svc.page_models_notice_for_run(auto)
+    assert svc.page_models_notice_for_run(original) == ""
+    assert svc.page_models_notice_for_run(off) == ""
+
+
+@pytest.mark.unit
+def test_the_page_models_are_installed_when_the_store_has_them(tmp_path: Path) -> None:
+    """
+    Given  a model store without the page models, and one that holds them
+    When   page_models_installed() is asked
+    Then   it is False for the first and True for the second, and the notice goes away
+    """
+    from teachers_teammate.config import OcrConfig  # noqa: PLC0415
+
+    config = make_config(tmp_path, ocr=OcrConfig(preprocess_method="auto"))
+
+    def service(store) -> ProcessingApplicationService:
+        return ProcessingApplicationService(
+            pipeline_factory=MagicMock(), state_repository_factory=MagicMock(), model_store=store
+        )
+
+    empty = service(fake_page_models_store(tmp_path / "a", installed=False))
+    full = service(fake_page_models_store(tmp_path / "b"))
+
+    assert not empty.page_models_installed()
+    assert full.page_models_installed()
+    assert full.page_models_notice_for_run(config) == ""
+
+
+@pytest.mark.unit
+def test_download_page_models_downloads_the_page_model_sets(tmp_path: Path) -> None:
+    """
+    Given  a service with a model store
+    When   download_page_models() is called
+    Then   the store is asked to download exactly the two page models, with the callbacks
+    """
+    from teachers_teammate.domain.local_models import PAGE_MODELS  # noqa: PLC0415
+
+    store = MagicMock()
+    svc = ProcessingApplicationService(
+        pipeline_factory=MagicMock(), state_repository_factory=MagicMock(), model_store=store
+    )
+    progress = MagicMock()
+
+    svc.download_page_models(progress, None)
+
+    store.download.assert_called_once_with(PAGE_MODELS, on_progress=progress, cancel=None)
 
 
 # ── _invalidate_from_stage (static helper) ────────────────────────────────
@@ -667,8 +658,6 @@ def test_record_manual_ocr_edit_delegates_to_store(tmp_path: Path) -> None:
     When   record_manual_ocr_edit() is called
     Then   the store receives the edited text and the updated state is returned
     """
-    from tests.conftest import make_config  # noqa: PLC0415
-
     source = tmp_path / "page.png"
     source.write_text("x")
     state = _minimal_state(tmp_path, source)
@@ -702,8 +691,6 @@ def test_record_manual_ocr_edit_returns_none_on_oserror(tmp_path: Path) -> None:
     When   record_manual_ocr_edit() is called
     Then   None is returned without raising
     """
-    from tests.conftest import make_config  # noqa: PLC0415
-
     source = tmp_path / "missing.png"
 
     with patch(
@@ -733,8 +720,6 @@ def test_record_manual_correction_edit_persists_text(tmp_path: Path) -> None:
     When   record_manual_correction_edit() is called
     Then   the store records the correction and the updated state is returned
     """
-    from tests.conftest import make_config  # noqa: PLC0415
-
     source = tmp_path / "page.png"
     source.write_text("x")
     state = dataclasses.replace(_minimal_state(tmp_path, source), ocr_done=True, raw_text="raw")
@@ -769,8 +754,6 @@ def test_manual_ocr_edit_survives_reconcile(tmp_path: Path) -> None:
     When   the cache is reconciled against the same (unchanged) runtime config
     Then   the edited text is preserved rather than flagged stale and wiped
     """
-    from tests.conftest import make_config  # noqa: PLC0415
-
     from teachers_teammate.infrastructure.file_discovery import (  # noqa: PLC0415
         FileDiscovery,
     )
@@ -919,24 +902,112 @@ def test_addon_packages_dir_delegates(tmp_path: Path) -> None:
 
 
 @pytest.mark.unit
-def test_get_installation_status_reports_tesseract_and_paddleocr() -> None:
+def test_get_installation_status_reports_the_built_in_reader(tmp_path: Path) -> None:
     """
-    Given  a ProcessingApplicationService and patched shutil.which + importlib.util.find_spec
+    Given  one service with the reader's model files and one without
     When   get_installation_status() is called
-    Then   'tesseract' is True when which returns a path and 'paddleocr' is False when spec is None
+    Then   'reader:ppocr' is True for the first and False for the second
     """
-    svc = _make_svc()
+    with_models = _make_svc(model_store=fake_reader_store(tmp_path / "a"))
+    without = _make_svc(model_store=fake_reader_store(tmp_path / "b", installed=False))
 
-    with (
-        patch(
-            "teachers_teammate.application.service.shutil.which", return_value="/usr/bin/tesseract"
-        ),
-        patch("teachers_teammate.application.service.importlib.util.find_spec", return_value=None),
-    ):
-        status = svc.get_installation_status()
+    assert with_models.get_installation_status()["reader:ppocr"] is True
+    assert without.get_installation_status()["reader:ppocr"] is False
 
-    assert status["tesseract"] is True
-    assert status["paddleocr"] is False
+
+@pytest.mark.unit
+def test_check_connection_reader_reports_whether_it_is_downloaded(tmp_path: Path) -> None:
+    """
+    Given  a service with and one without the reader's model files
+    When   check_connection(engine='ppocr') is called
+    Then   the first is connected, the second says the reader is not downloaded
+    """
+    ok, _, msg = _make_svc(model_store=fake_reader_store(tmp_path / "a")).check_connection(
+        engine="ppocr"
+    )
+    missing, _, missing_msg = _make_svc(
+        model_store=fake_reader_store(tmp_path / "b", installed=False)
+    ).check_connection(engine="ppocr")
+
+    assert ok is True and "built-in reader ready" in msg
+    assert missing is False and "not downloaded" in missing_msg and "31 MB" in missing_msg
+
+
+@pytest.mark.unit
+def test_reader_downloads_through_the_store(tmp_path: Path) -> None:
+    """
+    Given  a service whose store is empty and a fake download
+    When   download_reader() is called with progress and cancel
+    Then   the store is asked to download the reader's two model sets
+    """
+    store = MagicMock()
+    store.missing.return_value = [1]
+    store.root = tmp_path
+    svc = _make_svc(model_store=store)
+    cancel = threading.Event()
+
+    svc.download_reader(None, cancel)
+
+    assert store.download.call_args.kwargs == {"on_progress": None, "cancel": cancel}
+    assert len(list(store.download.call_args.args[0])) == 2
+    assert svc.reader_installed() is False
+    assert svc.models_dir() == tmp_path
+
+
+@pytest.mark.unit
+def test_reader_refusal_names_the_download_flag(tmp_path: Path) -> None:
+    """
+    Given  a run with the built-in reader and no model files, and one with Ollama
+    When   reader_refusal_for_run() is asked
+    Then   the first is refused with a sentence that names --download-reader, the second is not
+    """
+    svc = _reader_service(tmp_path)
+    config = make_config(tmp_path / "r", ocr_engine="ppocr")
+    config.input_dir.mkdir(parents=True, exist_ok=True)
+    (config.input_dir / "scan.png").write_bytes(b"x")
+
+    with patch.object(ProcessingApplicationService, "load_views", return_value={}):
+        refusal = svc.reader_refusal_for_run(config)
+
+        assert "--download-reader" in refusal
+        assert svc.reader_refusal_for_run(make_config(tmp_path / "o", ocr_engine="ollama")) == ""
+        assert (
+            svc.reader_refusal_for_run(
+                make_config(tmp_path / "s", ocr_engine="ppocr", recognition_enabled=False)
+            )
+            == ""
+        )
+
+
+@pytest.mark.unit
+def test_reader_refusal_lets_a_run_over_text_files_start(tmp_path: Path) -> None:
+    """
+    Given  the built-in reader without model files and an input folder with only a text file
+    When   reader_refusal_for_run() is asked
+    Then   the run is not refused (no page is read), but it is once an image is added
+    """
+    svc = _reader_service(tmp_path)
+    config = make_config(tmp_path / "r", ocr_engine="ppocr")
+    config.input_dir.mkdir(parents=True, exist_ok=True)
+    (config.input_dir / "essay.txt").write_text("Hello", encoding="utf-8")
+
+    with patch.object(ProcessingApplicationService, "load_views", return_value={}):
+        assert svc.reader_refusal_for_run(config) == ""
+
+        (config.input_dir / "scan.png").write_bytes(b"x")
+
+        assert "--download-reader" in svc.reader_refusal_for_run(config)
+
+
+def _reader_service(tmp_path: Path) -> ProcessingApplicationService:
+    """Return a service over an empty reader store that finds the files of a real folder."""
+    from teachers_teammate.infrastructure.file_discovery import (  # noqa: PLC0415
+        FileDiscovery as RealDiscovery,
+    )
+
+    return _make_svc(
+        model_store=fake_reader_store(tmp_path, installed=False), discovery=RealDiscovery()
+    )
 
 
 @pytest.mark.unit
@@ -1481,8 +1552,6 @@ def test_manual_correction_edit_stores_the_notation_of_a_synthesised_ocr_text(
     When   the user edits the correction (record_manual_correction_edit)
     Then   the synthesised state stores the OCR text as Markdown, not plain
     """
-    from tests.conftest import make_config  # noqa: PLC0415
-
     from teachers_teammate.infrastructure.file_discovery import (  # noqa: PLC0415
         FileDiscovery,
     )
@@ -1516,8 +1585,6 @@ _INSTALL = "teachers_teammate.infrastructure.ollama_install"
 
 def _ollama_config(tmp_path: Path, **overrides):
     """Config whose OCR and proofreading both use Ollama."""
-    from tests.conftest import make_config  # noqa: PLC0415
-
     values: dict = {
         "ocr_engine": "ollama",
         "ocr_model": "qwen3-vl:8b",
@@ -1594,7 +1661,7 @@ def test_expected_cache_keys_never_probe_this_computer(tmp_path: Path, monkeypat
     monkeypatch.setattr(gpu_detector, "detect_gpus", lambda: probes.append("gpu") or [])
     monkeypatch.setattr(gpu_detector, "detect_apple_unified_memory_gb", lambda: None)
     svc = _make_svc()
-    cfg = _ollama_config(tmp_path, ocr_engine="tesseract", hardware_profile="auto")
+    cfg = _ollama_config(tmp_path, ocr_engine="ppocr", hardware_profile="auto")
 
     windows = svc.resolved_windows(cfg)
     svc.load_views_reconciled(cfg, [])
@@ -1612,7 +1679,7 @@ def test_a_run_is_refused_when_the_model_would_have_to_swap(tmp_path: Path, monk
     Then   the problem names the model and the memory, so the run does not start and swap
     """
     svc = _make_svc()
-    cfg = _ollama_config(tmp_path, ocr_engine="tesseract")
+    cfg = _ollama_config(tmp_path, ocr_engine="ppocr")
     _computer(svc, monkeypatch, profile="cpu", free_gb=6.0)
 
     problem = svc.memory_warning_for_run(cfg)
@@ -1629,7 +1696,7 @@ def test_a_run_is_allowed_when_enough_memory_is_free(tmp_path: Path, monkeypatch
     Then   there is no problem
     """
     svc = _make_svc()
-    cfg = _ollama_config(tmp_path, ocr_engine="tesseract")
+    cfg = _ollama_config(tmp_path, ocr_engine="ppocr")
     _computer(svc, monkeypatch, profile="cpu", free_gb=12.0)
 
     assert svc.memory_warning_for_run(cfg) == ""
@@ -1645,7 +1712,7 @@ def test_only_what_does_not_fit_the_card_has_to_fit_the_free_memory(
     Then   4 GB is not enough (2.7 + 2 margin), 6 GB is
     """
     svc = _make_svc()
-    cfg = _ollama_config(tmp_path, ocr_engine="tesseract", correction_model="gemma4:12b")
+    cfg = _ollama_config(tmp_path, ocr_engine="ppocr", correction_model="gemma4:12b")
 
     _computer(svc, monkeypatch, profile="8gb", free_gb=4.0, card_gb=8.0 * 0.85)
     assert "gemma4:12b" in svc.memory_warning_for_run(cfg)
@@ -1665,7 +1732,7 @@ def test_apple_silicon_needs_the_whole_model_from_the_shared_memory(
     from teachers_teammate.domain.model_catalog import DetectionReason  # noqa: PLC0415
 
     svc = _make_svc()
-    cfg = _ollama_config(tmp_path, ocr_engine="tesseract")
+    cfg = _ollama_config(tmp_path, ocr_engine="ppocr")
     _computer(
         svc,
         monkeypatch,
@@ -1690,9 +1757,9 @@ def test_the_memory_check_leaves_other_cases_alone(tmp_path: Path, monkeypatch) 
     svc = _make_svc()
     _computer(svc, monkeypatch, profile="cpu", free_gb=0.5)
 
-    unknown = _ollama_config(tmp_path, ocr_engine="tesseract", correction_model="my-own:latest")
-    remote = _ollama_config(tmp_path, ocr_engine="tesseract", ollama_url="http://gpu-box.lan:11434")
-    no_ollama = _ollama_config(tmp_path, ocr_engine="tesseract", correction_enabled=False)
+    unknown = _ollama_config(tmp_path, ocr_engine="ppocr", correction_model="my-own:latest")
+    remote = _ollama_config(tmp_path, ocr_engine="ppocr", ollama_url="http://gpu-box.lan:11434")
+    no_ollama = _ollama_config(tmp_path, ocr_engine="ppocr", correction_enabled=False)
 
     assert svc.memory_warning_for_run(unknown) == ""
     assert svc.memory_warning_for_run(remote) == ""
@@ -1789,8 +1856,6 @@ def test_preflight_blocks_online_ocr_engine(tmp_path: Path) -> None:
     When   the run preflight is computed
     Then   the run is refused because pages cannot be anonymised before they are read
     """
-    from tests.conftest import make_config  # noqa: PLC0415
-
     cfg = make_config(tmp_path, ocr_engine="langchain")
 
     result = _make_svc(discovery=_discovery_of("page.png")).check_run_preflight(cfg)
@@ -1855,7 +1920,7 @@ def test_describe_ocr_refusal_names_the_reason_for_cloud_models_only() -> None:
 
     assert "Ollama's servers" in svc.describe_ocr_refusal("ollama", "qwen3-vl:235b-cloud", url)
     assert svc.describe_ocr_refusal("ollama", "qwen3-vl:8b", url) == ""
-    assert svc.describe_ocr_refusal("tesseract", "", url) == ""
+    assert svc.describe_ocr_refusal("ppocr", "", url) == ""
 
 
 @pytest.mark.unit
@@ -1865,11 +1930,9 @@ def test_describe_data_flow_uses_provider_metadata(tmp_path: Path) -> None:
     When   the service describes the data flow
     Then   proofreading is an online service named by its provider's display name
     """
-    from tests.conftest import make_config  # noqa: PLC0415
-
     cfg = make_config(
         tmp_path,
-        ocr_engine="tesseract",
+        ocr_engine="ppocr",
         correction_enabled=True,
         correction_provider="openai",
     )
@@ -1887,11 +1950,9 @@ def test_describe_data_flow_reports_the_provider_region(tmp_path: Path) -> None:
     When   the service describes the data flow
     Then   each step carries the region the provider declares, and the worst step decides
     """
-    from tests.conftest import make_config  # noqa: PLC0415
-
     cfg = make_config(
         tmp_path,
-        ocr_engine="tesseract",
+        ocr_engine="ppocr",
         correction_enabled=True,
         correction_provider="mistral_eu",
         evaluation_enabled=True,
@@ -1912,11 +1973,9 @@ def test_describe_steps_lists_every_step_although_none_is_ticked(tmp_path: Path)
     When   the service describes the steps
     Then   proofreading and the review are listed with the place they would run at
     """
-    from tests.conftest import make_config  # noqa: PLC0415
-
     cfg = make_config(
         tmp_path,
-        ocr_engine="tesseract",
+        ocr_engine="ppocr",
         correction_enabled=False,
         evaluation_enabled=False,
         correction_provider="mistral_eu",
@@ -1945,11 +2004,10 @@ def test_ticked_steps_of_all_steps_equal_the_flow_of_the_ticked_config(
     Then   it equals the flow the service describes for that very config
     """
     from teachers_teammate.application.data_flow import ticked_steps  # noqa: PLC0415
-    from tests.conftest import make_config  # noqa: PLC0415
 
     cfg = make_config(
         tmp_path,
-        ocr_engine="tesseract",
+        ocr_engine="ppocr",
         anonymization_enabled=True,
         correction_enabled=correction,
         evaluation_enabled=evaluation,
@@ -1974,8 +2032,6 @@ def test_describe_anonymizer_models_is_empty_without_personal_info_removal(
     When   the anonymizer models of the status box are asked for
     Then   there are none, so no model is loaded just to draw the box
     """
-    from tests.conftest import make_config  # noqa: PLC0415
-
     assert _make_svc().describe_anonymizer_models(make_config(tmp_path)) == []
 
 
@@ -1988,8 +2044,6 @@ def test_describe_anonymizer_models_names_the_resolved_models(
     When   the anonymizer models of the status box are asked for
     Then   the document model and the system model are named, as a run would load them
     """
-    from tests.conftest import make_config  # noqa: PLC0415
-
     mocker.patch(
         "teachers_teammate.infrastructure.spacy_models.installed_spacy_models",
         return_value=["de_core_news_sm", "en_core_web_sm"],
@@ -2298,17 +2352,14 @@ def test_preflight_ok_when_everything_is_available(tmp_path: Path) -> None:
 @pytest.mark.unit
 def test_preflight_needs_no_ollama_for_other_engines(tmp_path: Path) -> None:
     """
-    Given  a config that uses Tesseract and no Ollama stage
+    Given  a config that uses the built-in reader and no Ollama stage
     When   the run preflight is computed
     Then   the Ollama server is never contacted and the run may start
     """
-    from tests.conftest import make_config  # noqa: PLC0415
-
-    svc = _make_svc()
-    cfg = make_config(tmp_path, ocr_engine="tesseract", correction_enabled=False)
+    svc = _make_svc(model_store=fake_reader_store(tmp_path))
+    cfg = make_config(tmp_path, ocr_engine="ppocr", correction_enabled=False)
 
     with (
-        patch("teachers_teammate.application.service.shutil.which", return_value="/usr/bin/t"),
         patch(
             "teachers_teammate.application.service.list_provider_models_checked",
             side_effect=AssertionError("Ollama must not be contacted"),
@@ -2724,8 +2775,6 @@ def test_output_refusal_for_text_files_in_input_folder(tmp_path: Path) -> None:
     When   output_refusal_for_run() is asked
     Then   the run is refused; outside the input folder, or without text files, it is fine
     """
-    from tests.conftest import make_config  # noqa: PLC0415
-
     inputs = tmp_path / "in"
     (inputs / "out").mkdir(parents=True)
     (tmp_path / "out").mkdir()
@@ -2748,15 +2797,10 @@ def test_preflight_checks_anonymizer_for_anonymized_text_files(tmp_path: Path) -
     When   check_run_preflight() runs
     Then   the anonymizer requirement is reported
     """
-    from tests.conftest import make_config  # noqa: PLC0415
-
-    cfg = make_config(tmp_path, ocr_engine="tesseract", text_anonymized_enabled=True)
+    cfg = make_config(tmp_path, ocr_engine="ppocr", text_anonymized_enabled=True)
     svc = _make_svc()
 
-    with (
-        patch.object(svc, "list_installed_spacy_models", return_value=[]),
-        patch("teachers_teammate.application.service.shutil.which", return_value="/usr/bin/t"),
-    ):
+    with patch.object(svc, "list_installed_spacy_models", return_value=[]):
         result = svc.check_run_preflight(cfg)
 
     assert result.stage == "anonymizer"
@@ -2886,37 +2930,26 @@ def test_stage_requirements_report_a_missing_api_key_after_the_package_check(
 
 
 @pytest.mark.unit
-@pytest.mark.parametrize(
-    ("engine", "module"), [("tesseract", "tesseract"), ("paddleocr", "paddleocr")]
-)
-def test_the_ocr_stage_reports_a_missing_engine(tmp_path: Path, engine: str, module: str) -> None:
+def test_the_ocr_stage_reports_a_missing_reader(tmp_path: Path) -> None:
     """
-    Given  Tesseract or PaddleOCR chosen but not installed
+    Given  the built-in reader chosen, once without and once with its model files
     When   the requirements of the "ocr" stage are checked
-    Then   an ENGINE_MISSING issue names the engine; once installed there is none
+    Then   a READER_MODEL_MISSING issue is reported without them and none with them
     """
-    from tests.conftest import make_config  # noqa: PLC0415
+    cfg = make_config(tmp_path, ocr_engine="ppocr")
 
-    svc = _make_svc()
-    cfg = make_config(tmp_path, ocr_engine=engine)
+    issues = _make_svc(
+        model_store=fake_reader_store(tmp_path / "a", installed=False)
+    ).check_stage_requirements(cfg, "ocr")
+    present = _make_svc(model_store=fake_reader_store(tmp_path / "b")).check_stage_requirements(
+        cfg, "ocr"
+    )
 
-    with (
-        patch("teachers_teammate.application.service.shutil.which", return_value=None),
-        patch("teachers_teammate.application.service.importlib.util.find_spec", return_value=None),
-    ):
-        issues = svc.check_stage_requirements(cfg, "ocr")
-    with (
-        patch("teachers_teammate.application.service.shutil.which", return_value="/usr/bin/t"),
-        patch(
-            "teachers_teammate.application.service.importlib.util.find_spec", return_value=object()
-        ),
-    ):
-        present = svc.check_stage_requirements(cfg, "ocr")
-
-    assert [(i.kind, i.engine) for i in issues] == [(IssueKind.ENGINE_MISSING, engine)]
+    assert [i.kind for i in issues] == [IssueKind.READER_MODEL_MISSING]
     assert present == []
 
 
+@pytest.mark.unit
 @pytest.mark.unit
 def test_the_ocr_stage_asks_nothing_for_ollama(tmp_path: Path) -> None:
     """
@@ -2934,23 +2967,21 @@ def test_the_ocr_stage_asks_nothing_for_ollama(tmp_path: Path) -> None:
 
 
 @pytest.mark.unit
-def test_a_missing_engine_blocks_the_preflight_in_the_ocr_stage(tmp_path: Path) -> None:
+def test_a_missing_reader_blocks_the_preflight_in_the_ocr_stage(tmp_path: Path) -> None:
     """
-    Given  Tesseract chosen but not installed
+    Given  the built-in reader chosen but not downloaded
     When   the run preflight is computed
     Then   the run is blocked in stage "ocr", before the other steps are looked at
     """
-    from tests.conftest import make_config  # noqa: PLC0415
+    cfg = make_config(tmp_path, ocr_engine="ppocr", correction_enabled=False)
+    svc = _make_svc(model_store=fake_reader_store(tmp_path, installed=False))
 
-    cfg = make_config(tmp_path, ocr_engine="tesseract", correction_enabled=False)
-
-    with patch("teachers_teammate.application.service.shutil.which", return_value=None):
-        result = _make_svc().check_run_preflight(cfg)
+    result = svc.check_run_preflight(cfg)
 
     assert result.blocked is True
     assert result.blocker is not None
     assert result.blocker[0] == "ocr"
-    assert result.blocker[1].kind is IssueKind.ENGINE_MISSING
+    assert result.blocker[1].kind is IssueKind.READER_MODEL_MISSING
 
 
 @pytest.mark.unit
@@ -2982,48 +3013,21 @@ def test_needs_text_recognition_only_for_pages_that_are_not_read_yet(
 
 
 @pytest.mark.unit
-def test_a_run_that_reads_no_page_is_not_blocked_by_a_missing_engine(tmp_path: Path) -> None:
+def test_a_run_that_reads_no_page_is_not_blocked_by_a_missing_reader(tmp_path: Path) -> None:
     """
-    Given  Tesseract chosen but not installed, and a run over text files only
+    Given  the reader chosen but not downloaded, and a run over text files only
     When   the preflight runs with recognition=False
     Then   the run is not blocked, while the same preflight with recognition blocks it
     """
-    from tests.conftest import make_config  # noqa: PLC0415
+    svc = _make_svc(model_store=fake_reader_store(tmp_path, installed=False))
+    cfg = make_config(tmp_path, ocr_engine="ppocr", correction_enabled=False)
 
-    svc = _make_svc()
-    cfg = make_config(tmp_path, ocr_engine="tesseract", correction_enabled=False)
-
-    with patch("teachers_teammate.application.service.shutil.which", return_value=None):
-        reads_nothing = svc.check_run_preflight(cfg, recognition=False)
-        reads_pages = svc.check_run_preflight(cfg)
+    reads_nothing = svc.check_run_preflight(cfg, recognition=False)
+    reads_pages = svc.check_run_preflight(cfg)
 
     assert reads_nothing.blocked is False
     assert reads_pages.blocker is not None
-    assert reads_pages.blocker[1].kind is IssueKind.ENGINE_MISSING
-
-
-@pytest.mark.unit
-def test_a_missing_paddleocr_is_looked_up_with_fresh_import_caches(tmp_path: Path) -> None:
-    """
-    Given  PaddleOCR chosen, and a service whose module lookup is recorded
-    When   the "ocr" stage is checked
-    Then   the lookup goes through is_module_importable (which refreshes the import caches),
-           so a package installed from Add-ons meanwhile is seen without a restart
-    """
-    from tests.conftest import make_config  # noqa: PLC0415
-
-    svc = _make_svc()
-    cfg = make_config(tmp_path, ocr_engine="paddleocr")
-    asked: list[str] = []
-
-    def importable(_self, module: str) -> bool:
-        asked.append(module)
-        return True
-
-    with patch.object(ProcessingApplicationService, "is_module_importable", importable):
-        assert svc.check_stage_requirements(cfg, "ocr") == []
-
-    assert asked == ["paddleocr"]
+    assert reads_pages.blocker[1].kind is IssueKind.READER_MODEL_MISSING
 
 
 @pytest.mark.unit
@@ -3052,15 +3056,10 @@ def test_preflight_without_memory_never_asks_the_memory_question(tmp_path: Path)
     When   the preflight runs with memory=False
     Then   memory_warning_for_run is never called, so a bare readiness question stays cheap
     """
-    from tests.conftest import make_config  # noqa: PLC0415
-
     svc = _make_svc()
-    cfg = make_config(tmp_path, ocr_engine="tesseract", correction_enabled=False)
+    cfg = make_config(tmp_path, ocr_engine="ppocr", correction_enabled=False)
 
-    with (
-        patch("teachers_teammate.application.service.shutil.which", return_value="/usr/bin/t"),
-        patch.object(svc, "memory_warning_for_run", side_effect=AssertionError("asked")),
-    ):
+    with patch.object(svc, "memory_warning_for_run", side_effect=AssertionError("asked")):
         result = svc.check_run_preflight(cfg, memory=False)
 
     assert result.blocked is False
@@ -3411,8 +3410,6 @@ def test_run_selected_passes_a_component_factory_with_the_shared_anonymizer(tmp_
     Then   the dependencies carry a factory whose build_anonymizer is the service's
            cached builder, so the run fills the same cache a preview reads
     """
-    from tests.conftest import make_config  # noqa: PLC0415
-
     factory = MagicMock(return_value=MagicMock(run=lambda: 0))
     svc = _make_svc(pipeline_factory=factory)
 
@@ -3444,8 +3441,6 @@ def test_describe_sent_texts_shows_the_cached_text_that_a_run_sends(tmp_path: Pa
     When   describe_sent_texts() is asked what that file's proofreading receives
     Then   it reports the same anonymized text, with one spaCy pass in total
     """
-    from tests.conftest import make_config  # noqa: PLC0415
-
     anonymizer = MagicMock()
     anonymizer.anonymize.return_value = ("[PERSON_1] wrote", {"[PERSON_1]": "Anna"})
     svc = _make_svc()
@@ -3478,8 +3473,6 @@ def test_describe_sent_texts_without_anonymization_sends_names_as_written(
     When   describe_sent_texts() is asked what is sent
     Then   the text is the extracted text, and no spaCy model is loaded
     """
-    from tests.conftest import make_config  # noqa: PLC0415
-
     svc = _make_svc()
     config = dataclasses.replace(
         make_config(tmp_path), correction_enabled=True, anonymization_enabled=False
@@ -3501,8 +3494,6 @@ def test_describe_sent_texts_carries_the_prompt_the_stage_sends(tmp_path: Path) 
     When   describe_sent_texts() builds the report
     Then   each section carries the same instructions the stage sends
     """
-    from tests.conftest import make_config  # noqa: PLC0415
-
     svc = _make_svc()
     config = dataclasses.replace(make_config(tmp_path, language="German"), correction_enabled=True)
 
@@ -3670,8 +3661,6 @@ def test_an_online_provider_has_no_piece_count(tmp_path: Path, monkeypatch) -> N
     When   the size is estimated
     Then   there is no piece count, because nothing is split
     """
-    import sys  # noqa: PLC0415
-
     svc = _make_svc()
     cfg = _ollama_config(tmp_path, correction_provider="openai", correction_model="gpt-4o-mini")
     _computer(svc, monkeypatch, profile="cpu", free_gb=32.0)

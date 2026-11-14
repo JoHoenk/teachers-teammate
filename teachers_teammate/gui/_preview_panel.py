@@ -542,7 +542,7 @@ class PreviewPanel(QWidget):
         self._original_btn = QToolButton()
         self._original_btn.setText("Original")
         self._original_btn.setCheckable(True)
-        self._original_btn.setToolTip("Show the page as scanned, before preprocessing")
+        self._original_btn.setToolTip("Show the page as scanned, before it was prepared")
         self._original_btn.toggled.connect(self._on_original_toggled)
         self._original_btn.setVisible(False)
         tb_layout.addWidget(self._original_btn)
@@ -1256,11 +1256,9 @@ class PreviewPanel(QWidget):
             self._prep_lbl.setVisible(False)
             return
         if self._original_btn.isChecked():
-            text = "Showing the original page (before preprocessing)"
-        elif steps:
-            text = f"Preprocessed: {', '.join(steps)}"
+            text = "Showing the original page"
         else:
-            text = "No preprocessing applied — showing the original image"
+            text = txt.prepared_caption(steps)
         self._prep_lbl.setText(text)
         self._prep_lbl.setVisible(True)
 

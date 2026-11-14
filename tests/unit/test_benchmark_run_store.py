@@ -26,7 +26,7 @@ def _save(
             document_hash=doc_hash,
             document_path="/docs/sample.pdf",
             display_name="sample.pdf",
-            ocr=OcrConfig(engine="tesseract", model="", preprocess_method="none"),
+            ocr=OcrConfig(engine="ppocr", model="", preprocess_method="none"),
             language="English",
             ocr_config_hash=cfg_hash,
             raw_text=text,
@@ -49,7 +49,7 @@ def test_save_and_list_round_trip(tmp_path: Path) -> None:
     assert len(runs) == 1
     assert runs[0].run_id == saved.run_id
     assert runs[0].raw_text == "recognised text"
-    assert runs[0].ocr.engine == "tesseract"
+    assert runs[0].ocr.engine == "ppocr"
     assert runs[0].language == "English"
 
 
@@ -147,23 +147,14 @@ def test_list_documents_reports_display_name(tmp_path: Path) -> None:
 @pytest.mark.use_case("OCR_Run_Comparison")
 def test_save_round_trips_all_preprocessing_fields(tmp_path: Path) -> None:
     """
-    Given  a run whose OcrConfig enables pre-steps and a non-default PDF DPI
+    Given  a run whose OcrConfig is "Original page" with a non-default PDF DPI
     When   it is saved and reloaded from disk via list_for()
     Then   every preprocessing field survives the JSON round-trip
 
-    Without this, two runs differing only in pre-steps would be indistinguishable.
+    Without this, two runs differing only in the preparation would be indistinguishable.
     """
     store = BenchmarkRunStore(tmp_path)
-    ocr = OcrConfig(
-        engine="tesseract",
-        preprocess_method="clahe",
-        pdf_render_dpi=600,
-        dewarp=True,
-        deskew=True,
-        border_crop=False,
-        denoise=True,
-        gamma=False,
-    )
+    ocr = OcrConfig(engine="ppocr", preprocess_method="none", pdf_render_dpi=600)
     store.save(
         NewRunRequest(
             document_hash="doc1",
@@ -179,12 +170,7 @@ def test_save_round_trips_all_preprocessing_fields(tmp_path: Path) -> None:
 
     reloaded = store.list_for("doc1")[0].ocr
     assert reloaded.pdf_render_dpi == 600
-    assert reloaded.dewarp is True
-    assert reloaded.deskew is True
-    assert reloaded.border_crop is False
-    assert reloaded.denoise is True
-    assert reloaded.gamma is False
-    assert reloaded.preprocess_method == "clahe"
+    assert reloaded.preprocess_method == "none"
 
 
 def test_from_json_dict_defaults_missing_preprocessing_fields(tmp_path: Path) -> None:
@@ -203,7 +189,7 @@ def test_from_json_dict_defaults_missing_preprocessing_fields(tmp_path: Path) ->
         "display_name": "sample.pdf",
         "ocr_config_hash": "abc12345",
         "ocr": {
-            "engine": "tesseract",
+            "engine": "ppocr",
             "model": "",
             "provider": "",
             "preprocess_method": "none",
@@ -217,8 +203,6 @@ def test_from_json_dict_defaults_missing_preprocessing_fields(tmp_path: Path) ->
     }
     run = StoredRun.from_json_dict(legacy)
     assert run.ocr.pdf_render_dpi == 300
-    assert run.ocr.dewarp is False
-    assert run.ocr.gamma is False
 
 
 def test_online_run_from_an_older_version_still_reads_in_history() -> None:
@@ -289,29 +273,48 @@ def test_online_run_without_a_stored_model_shows_the_providers_default() -> None
     assert StoredRun.from_json_dict(old).config_summary() == "openai · gpt-4o · none"
 
 
-def test_config_summary_lists_enabled_pre_steps(tmp_path: Path) -> None:
+def test_a_run_of_the_old_preparation_loads_as_automatic_and_ignores_its_switches(
+    tmp_path: Path,
+) -> None:
     """
-    Given  a stored run with deskew and denoise enabled
-    When   config_summary() is rendered
-    Then   the enabled pre-step names appear and disabled ones do not
+    Given  a stored run from before the automatic preparation: method "clahe" with the switches
+           dewarp, deskew and denoise in its OCR config
+    When   it is reloaded and its summary rendered
+    Then   it loads (the switches are ignored), the method reads as "auto", and the summary
+           names the engine and the method
     """
-    store = BenchmarkRunStore(tmp_path)
-    store.save(
-        NewRunRequest(
-            document_hash="doc1",
-            document_path="/docs/sample.pdf",
-            display_name="sample.pdf",
-            ocr=OcrConfig(engine="tesseract", dewarp=False, deskew=True, denoise=True),
-            language="English",
-            ocr_config_hash="abc12345",
-            raw_text="text",
-            elapsed_s=1.0,
-        )
-    )
-    summary = store.list_for("doc1")[0].config_summary()
-    assert "deskew" in summary
-    assert "denoise" in summary
-    assert "dewarp" not in summary
+    from teachers_teammate.infrastructure.benchmark.run_store import StoredRun  # noqa: PLC0415
+
+    old = {
+        "schema_version": 1,
+        "run_id": "2026-01-01T00:00:00Z-abcd1234",
+        "document_hash": "doc1",
+        "document_path": "/docs/sample.pdf",
+        "display_name": "sample.pdf",
+        "ocr_config_hash": "abc12345",
+        "ocr": {
+            "engine": "ppocr",
+            "model": "",
+            "preprocess_method": "clahe",
+            "pdf_render_dpi": 300,
+            "dewarp": True,
+            "deskew": True,
+            "border_crop": False,
+            "denoise": True,
+            "gamma": False,
+            "temperature": 0.0,
+        },
+        "language": "English",
+        "raw_text": "text",
+        "preview_img": "",
+        "timestamp": "2026-01-01T00:00:00Z",
+        "elapsed_s": 1.0,
+    }
+
+    run = StoredRun.from_json_dict(old)
+
+    assert run.ocr.preprocess_method == "auto"
+    assert run.config_summary() == "ppocr · auto"
 
 
 def test_save_round_trips_text_format(tmp_path: Path) -> None:
@@ -326,7 +329,7 @@ def test_save_round_trips_text_format(tmp_path: Path) -> None:
             document_hash="doc1",
             document_path="/docs/sample.pdf",
             display_name="sample.pdf",
-            ocr=OcrConfig(engine="tesseract", model="", preprocess_method="none"),
+            ocr=OcrConfig(engine="ppocr", model="", preprocess_method="none"),
             language="English",
             ocr_config_hash="abc12345",
             raw_text="~~a~~",
@@ -350,7 +353,7 @@ def _legacy_run_json(raw_text: str) -> dict:
         "display_name": "d.pdf",
         "ocr_config_hash": "h",
         "ocr": {
-            "engine": "tesseract",
+            "engine": "ppocr",
             "model": "",
             "provider": "",
             "preprocess_method": "none",

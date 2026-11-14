@@ -1,4 +1,4 @@
-"""One round of installs: pip packages, then spaCy models, then Ollama pulls.
+"""One round of installs: pip packages, then spaCy models, the model files, then Ollama pulls.
 
 The Add-ons page and the Setup Assistant both install through this object, so the order, the
 log lines and the rule about closing the window are the same in both places.
@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from pathlib import Path
+import threading
 from typing import Any, Protocol
 
 from PySide6.QtCore import QObject, QThread, Signal
@@ -20,6 +21,16 @@ from ._model_guidance import SPACY_PREFIX
 
 #: How an item is named in :attr:`InstallRound.item_started` and ``item_done``.
 PACKAGE_PREFIX = "package:"
+#: The built-in reader's model files (``reader:ppocr``); also the Add-ons "preselect" entry.
+READER_PREFIX = "reader:"
+READER_ITEM = f"{READER_PREFIX}ppocr"
+#: The status line the round sends with the reader's download progress.
+READER_PROGRESS_STATUS = "Built-in reader"
+#: The page models of the automatic image preparation (``page_models:all``); also the Add-ons
+#: "preselect" entry.
+PAGE_MODELS_PREFIX = "page_models:"
+PAGE_MODELS_ITEM = f"{PAGE_MODELS_PREFIX}all"
+PAGE_MODELS_PROGRESS_STATUS = "Page models"
 
 
 class _InstallService(Protocol):
@@ -32,6 +43,18 @@ class _InstallService(Protocol):
     def inject_addon_packages_dir(self) -> None: ...
 
     def on_ollama_models_changed(self, ollama_url: str) -> None: ...
+
+    def download_reader(
+        self,
+        on_progress: Callable[[int, int], None] | None = None,
+        cancel: threading.Event | None = None,
+    ) -> None: ...
+
+    def download_page_models(
+        self,
+        on_progress: Callable[[int, int], None] | None = None,
+        cancel: threading.Event | None = None,
+    ) -> None: ...
 
 
 class _PullManager(Protocol):
@@ -70,7 +93,7 @@ class _PipInstallThread(QThread):
 
 
 class InstallRound(QObject):
-    """One round of installs: pip packages, then spaCy models, then Ollama pulls.
+    """One round of installs: pip packages, spaCy models, the reader and page models, Ollama pulls.
 
     pip and spaCy run here and must finish before their window closes (a new package has to be
     importable before anything uses it); the pulls are handed to the main window's
@@ -78,7 +101,7 @@ class InstallRound(QObject):
     """
 
     log_line = Signal(str)
-    item_started = Signal(str)  # "package:<pip>", "spacy:<model>", "<tag>"
+    item_started = Signal(str)  # "package:<pip>", "spacy:<model>", "reader:ppocr", ..., "<tag>"
     item_done = Signal(str)
     pull_progress = Signal(str, int, int)  # status, bytes done, bytes total
     finished = Signal(bool)  # True when anything was installed or pulled
@@ -95,7 +118,10 @@ class InstallRound(QObject):
         self._pull_manager = pull_manager  # owned by MainWindow; outlives this round
         self._pull_connected = False  # subscribed to the pull manager's signals
         self._thread: QThread | None = None
-        self._phase = ""  # "pip", "spacy" or "pull" — what the running thread does
+        # "pip", "spacy", "reader", "page_models" or "pull" — what the running thread does
+        self._phase = ""
+        self._reader = False
+        self._page_models = False
         self._packages: list[str] = []
         self._spacy_models: list[str] = []
         self._ollama_models: list[str] = []
@@ -111,6 +137,8 @@ class InstallRound(QObject):
         *,
         packages: Sequence[str] = (),
         spacy_models: Sequence[str] = (),
+        reader: bool = False,
+        page_models: bool = False,
         ollama_models: Sequence[str] = (),
         ollama_url: str = "",
     ) -> bool:
@@ -119,9 +147,17 @@ class InstallRound(QObject):
             return False
         self._packages = list(packages)
         self._spacy_models = list(spacy_models)
+        self._reader = reader
+        self._page_models = page_models
         self._ollama_models = list(ollama_models)
         self._ollama_url = ollama_url
-        if not (self._packages or self._spacy_models or self._ollama_models):
+        if not (
+            self._packages
+            or self._spacy_models
+            or self._reader
+            or self._page_models
+            or self._ollama_models
+        ):
             return False
         self._running = True
         self._installed_any = False
@@ -131,13 +167,13 @@ class InstallRound(QObject):
         elif self._spacy_models:
             self._start_spacy()
         else:
-            self._start_pulls()
+            self._after_spacy()
         return True
 
     def busy(self) -> bool:
-        """True while pip or spaCy runs: their window must not close yet."""
+        """True while pip, spaCy or a model download runs: their window must not close yet."""
         return (
-            self._phase in ("pip", "spacy")
+            self._phase in ("pip", "spacy", "reader", "page_models")
             and self._thread is not None
             and self._thread.isRunning()
         )
@@ -147,9 +183,15 @@ class InstallRound(QObject):
         return self._running
 
     def abort(self) -> None:
-        """Stop the pulls; a pip install or spaCy download cannot be stopped once it runs."""
-        from ._addon_installer_dialog import _OllamaPullThread  # noqa: PLC0415
+        """Stop the downloads; a pip install or spaCy download cannot be stopped once it runs."""
+        from ._addon_installer_dialog import (  # noqa: PLC0415
+            _OllamaPullThread,
+            _ReaderDownloadThread,
+        )
 
+        if isinstance(self._thread, _ReaderDownloadThread):
+            self._thread.cancel()
+            return
         if self._pull_manager is not None:
             self._pull_manager.abort()
         elif isinstance(self._thread, _OllamaPullThread):
@@ -194,10 +236,8 @@ class InstallRound(QObject):
         self._svc.inject_addon_packages_dir()
         if self._spacy_models:
             self._start_spacy()
-        elif self._ollama_models:
-            self._start_pulls()
         else:
-            self._finish()
+            self._after_spacy()
 
     # ── spaCy ────────────────────────────────────────────────────────────────────
 
@@ -223,10 +263,76 @@ class InstallRound(QObject):
         self._spacy_models = self._spacy_models[1:]
         if self._spacy_models:
             self._start_spacy()
+        else:
+            self._after_spacy()
+
+    def _after_spacy(self) -> None:
+        """Go on with the reader, the page models, the pulls, or end the round."""
+        if self._reader:
+            self._start_reader()
+        elif self._page_models:
+            self._start_page_models()
         elif self._ollama_models:
             self._start_pulls()
         else:
             self._finish()
+
+    # ── the built-in reader ──────────────────────────────────────────────────────
+
+    def _start_reader(self) -> None:
+        from ._addon_installer_dialog import _ReaderDownloadThread  # noqa: PLC0415
+
+        self.log_line.emit("Downloading the built-in reader…")
+        self._begin(READER_ITEM)
+        thread = _ReaderDownloadThread(self._svc)
+        thread.progress.connect(self.pull_progress_from_reader)
+        thread.finished_ok.connect(self._on_reader_done)
+        thread.finished_err.connect(self._on_reader_error)
+        self._thread = thread
+        self._phase = "reader"
+        thread.start()
+
+    def pull_progress_from_reader(self, done: int, total: int) -> None:
+        """Forward the reader's download progress as a pull progress line."""
+        self.pull_progress.emit(READER_PROGRESS_STATUS, done, total)
+
+    def _on_reader_done(self) -> None:
+        self.log_line.emit("✓ Built-in reader downloaded.")
+        self.item_done.emit(READER_ITEM)
+        self._installed_any = True
+        self._reader = False
+        # The finished thread must not stay the one abort() cancels: the Ollama pulls that
+        # follow are stopped through the pull manager.
+        self._thread = None
+        self._after_spacy()
+
+    def _on_reader_error(self, message: str) -> None:
+        self._on_error(message)
+
+    # ── the page models ──────────────────────────────────────────────────────────
+
+    def _start_page_models(self) -> None:
+        from ._addon_installer_dialog import _ReaderDownloadThread  # noqa: PLC0415
+
+        self.log_line.emit("Downloading the page models…")
+        self._begin(PAGE_MODELS_ITEM)
+        thread = _ReaderDownloadThread(self._svc, "download_page_models")
+        thread.progress.connect(
+            lambda done, total: self.pull_progress.emit(PAGE_MODELS_PROGRESS_STATUS, done, total)
+        )
+        thread.finished_ok.connect(self._on_page_models_done)
+        thread.finished_err.connect(self._on_error)
+        self._thread = thread
+        self._phase = "page_models"
+        thread.start()
+
+    def _on_page_models_done(self) -> None:
+        self.log_line.emit("✓ Page models downloaded.")
+        self.item_done.emit(PAGE_MODELS_ITEM)
+        self._installed_any = True
+        self._page_models = False
+        self._thread = None
+        self._after_spacy()
 
     # ── Ollama pulls ─────────────────────────────────────────────────────────────
 

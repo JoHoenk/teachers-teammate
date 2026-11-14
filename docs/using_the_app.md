@@ -25,7 +25,7 @@ What you set up once lives in the Settings window, grouped by topic. Pick a page
 | **AI models** | Which method reads the handwriting (always on this computer), and which AI service and model proofreads and reviews. One model serves both steps unless you tick **Use a different model for content review**. Every service is listed, grouped by where it runs, and marked *key needed* while it has no key; choose an online service and its **key row appears right below it**: paste the key and the model list loads, which also checks that the key works. If text then goes to an online service with names in it, the page says **"Remove personal info" will be turned on** when you press OK (you can keep it off). The context window setting appears here only when it changes something |
 | **This computer** | Shown under AI models in the sidebar: what the AI models need from this computer. First how powerful it is (**My computer**; the model suggestions follow it) and its graphics card, then the address of the local AI server (usually this computer, or your school's own server) |
 | **Online services** | Also under AI models: the access keys (API keys) of the online AI services. The same keys you enter under the service on AI models, all in one list where you can remove one or add one for another service. Not needed while everything runs on this computer. Keys are kept in your system's keychain (macOS Keychain, Windows Credential Manager, or the Linux desktop keyring); where there is none, the page says that the key is kept in the app's settings file, not encrypted |
-| **Scan quality** | How scans and photos are cleaned up before they are read: image preparation and its **Preview…**, corrections and enhancements; under **Expert settings** the PDF resolution and the PDF text layer |
+| **Scan quality** | How scans and photos are prepared before they are read: **Automatic** or **Original page**, with a **Preview…**, and a **Download…** line for the page models; under **Expert settings** the PDF resolution and the PDF text layer |
 | **Privacy** | What may leave this computer (the answers you chose not to be asked about again), and how names and other personal information are found and replaced |
 | **Add-ons** | Downloads of AI models for this computer and of optional parts: handwriting engines, online AI services, name detection models, performance monitoring |
 
@@ -146,7 +146,7 @@ The app rates each model for your computer. Models marked **Slower** or **Very s
 
 ### Other recognition methods
 
-Additional recognition methods are available for specific situations — for example, working without internet access or on computers with limited resources. For details, see the {doc}`Advanced User Guide <advanced_user_guide>`.
+The **Built-in reader (PP-OCR)** reads pages on any computer without an AI model or a server — a good choice for printed pages, and for computers that cannot run a vision model. It reads handwriting less well. Choose it under *Recognition method* in **Settings → AI models…**; the first time, press **Download built-in reader (31 MB)** (the files are fetched only when you ask, and the pages never leave your computer). For details, see the {doc}`Advanced User Guide <advanced_user_guide>`.
 
 ### Recognition always stays on computers you control
 
@@ -160,9 +160,11 @@ Ollama on another computer that you or your school run (see **Settings → This 
 
 ## Image preparation
 
-Before reading the text, the app can adjust each image to improve accuracy. **Grayscale** is the recommended starting point when using Ollama and works well in most situations.
+Before reading the text, the app prepares each image to improve accuracy. **Automatic (recommended)** looks at every page and does only what it needs: it straightens and turns photographed pages, flattens curved ones, evens out shadows and corrects a tilt. Clean scans pass unchanged. **Original page** sends each page as it is, to check what the preparation changes.
 
-To compare settings before processing a large folder, open **Settings → Scan quality…** and use the **Preview…** — it shows the original and prepared image side by side. Use Ctrl + mouse wheel to zoom.
+Turning sideways pages and flattening curved ones need two small page models (39 MB). Under *Automatic* on **Settings → Scan quality…** a line with **Download…** offers them while they are missing; *Automatic* still works without them, it skips those two steps. The files are fetched only when you ask.
+
+To compare settings before processing a large folder, open **Settings → Scan quality…** and use the **Preview…** — it shows the original and prepared image side by side, and says what was done ("Prepared: page turned, shadows evened out"). Use Ctrl + mouse wheel to zoom.
 
 For a full description of all image preparation options and when to use each one, see the {doc}`Advanced User Guide <advanced_user_guide>`.
 
@@ -496,7 +498,8 @@ Extra features can be installed from inside the app — no external downloads or
 |---|---|---|
 | **Privacy add-on** | *Install Privacy Add-on* button (shown when the feature is missing) | Removes personal information before proofreading |
 | **Language model for anonymization** | **Settings → Add-ons…** → *Name detection* | Choose your document language; the multilingual model is a safe default |
-| **PaddleOCR** | **Settings → AI models…** when PaddleOCR is selected | An alternative recognition method (~400 MB download) |
+| **Built-in reader** | **Settings → AI models…** when *Built-in reader (PP-OCR)* is selected, or **Settings → Add-ons… → Reading models** | A recognition method that needs no server and runs on any computer; best for printed pages (31 MB download, only when you ask for it) |
+| **Page models** | **Settings → Scan quality…** under *Automatic*, or **Settings → Add-ons… → Reading models** | Two small models (39 MB, only when you ask for them) that let *Automatic* image preparation turn sideways pages and flatten curved ones; it works without them, skipping those two steps |
 | **Graphics card monitoring** | Offered automatically when a compatible card is found (**Tools → System Monitor**) | NVIDIA or AMD/Linux graphics card stats |
 
 ---

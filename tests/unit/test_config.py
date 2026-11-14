@@ -245,37 +245,121 @@ def test_load_config_file_replaces_online_ocr_engine(
 @pytest.mark.parametrize(
     ("line", "expected"),
     [
-        ('ocr_engine = "langchain"', "langchain"),
-        ('ocr_engine = "openai"', "openai"),
-        ('ocr_engine = "Tesseract"', ""),
-        ('ocr_engine = "ollama"', ""),
-        ('language = "German"', ""),
+        ('ocr_engine = "langchain"', ("langchain", "ollama", True)),
+        ('ocr_engine = "openai"', ("openai", "ollama", True)),
+        ('ocr_engine = "Tesseract"', ("Tesseract", "ppocr", False)),
+        ('ocr_engine = "paddleocr"', ("paddleocr", "ppocr", False)),
+        ('ocr_engine = "ollama"', None),
+        ('ocr_engine = "ppocr"', None),
+        ('language = "German"', None),
     ],
 )
 def test_unavailable_ocr_engine_names_what_was_replaced(
-    tmp_path: Path, line: str, expected: str
+    tmp_path: Path, line: str, expected: tuple[str, str, bool] | None
 ) -> None:
     """
-    Given  a settings file with an online, a local or no OCR engine
+    Given  a settings file with an online, a removed local, a current or no OCR engine
     When   unavailable_ocr_engine() is asked
-    Then   it names the online engine, and is empty otherwise
+    Then   it names the old engine, its replacement and whether it was online (or nothing)
     """
     cfg_file = tmp_path / "ocr.toml"
     cfg_file.write_text(line + "\n")
 
-    assert unavailable_ocr_engine(cfg_file) == expected
+    replaced = unavailable_ocr_engine(cfg_file)
+
+    assert (None if replaced is None else (replaced.old, replaced.new, replaced.online)) == expected
 
 
-def test_unavailable_ocr_engine_is_empty_for_an_unreadable_file(tmp_path: Path) -> None:
+def test_unavailable_ocr_engine_is_none_for_an_unreadable_file(tmp_path: Path) -> None:
     """
     Given  a settings file that is not valid TOML
     When   unavailable_ocr_engine() is asked
-    Then   it answers "" instead of raising (loading reports the parse error itself)
+    Then   it answers None instead of raising (loading reports the parse error itself)
     """
     cfg_file = tmp_path / "ocr.toml"
     cfg_file.write_text("not = = toml")
 
-    assert unavailable_ocr_engine(cfg_file) == ""
+    assert unavailable_ocr_engine(cfg_file) is None
+
+
+@pytest.mark.parametrize("old", ["tesseract", "paddleocr", " Tesseract "])
+def test_a_removed_local_engine_becomes_the_built_in_reader(
+    tmp_path: Path, old: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """
+    Given  a settings file naming Tesseract or PaddleOCR and an Ollama model
+    When   load_config_file() is called
+    Then   the engine is the built-in reader, the model is kept, and stderr says it was removed
+    """
+    cfg_file = tmp_path / "ocr.toml"
+    cfg_file.write_text(f'ocr_engine = "{old}"\nocr_model = "my-model:7b"\n')
+
+    values = load_config_file(cfg_file)
+
+    assert values["ocr_engine"] == "ppocr"
+    assert values["ocr_model"] == "my-model:7b"
+    assert "was removed" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("method", ["clahe", "adaptive_threshold", "grayscale", "anything"])
+def test_a_method_of_the_old_preparation_reads_as_automatic(tmp_path: Path, method: str) -> None:
+    """
+    Given  a settings file saved before the automatic preparation, naming a method that is gone
+    When   load_config_file() is called and an OcrConfig is built from the result
+    Then   the method is "auto", whatever engine the file names
+    """
+    cfg_file = tmp_path / "ocr.toml"
+    cfg_file.write_text(f'ocr_engine = "ppocr"\npreprocess_method = "{method}"\n')
+
+    values = load_config_file(cfg_file)
+
+    assert values["preprocess_method"] == "auto"
+    assert (
+        OcrConfig.from_settings({"ocr_engine": "ollama", "preprocess_method": method})
+    ).preprocess_method == "auto"
+
+
+def test_original_page_is_kept_and_nothing_is_invented(tmp_path: Path) -> None:
+    """
+    Given  a settings file naming "none", and one naming no method at all
+    When   load_config_file() is called
+    Then   "none" is kept, and the second gets no value invented
+    """
+    kept = tmp_path / "kept.toml"
+    kept.write_text('preprocess_method = "NONE"\n')
+    unset = tmp_path / "unset.toml"
+    unset.write_text('ocr_engine = "ppocr"\n')
+
+    assert load_config_file(kept)["preprocess_method"] == "none"
+    assert "preprocess_method" not in load_config_file(unset)
+
+
+def test_the_default_preparation_is_automatic() -> None:
+    """
+    Given  the defaults, an OcrConfig and an empty settings dict
+    When   they are read
+    Then   the method is "auto" everywhere
+    """
+    assert DEFAULTS["preprocess_method"] == "auto"
+    assert OcrConfig().preprocess_method == "auto"
+    assert OcrConfig.from_settings({}).preprocess_method == "auto"
+
+
+def test_the_switches_of_the_old_preparation_in_a_settings_file_are_ignored(
+    tmp_path: Path,
+) -> None:
+    """
+    Given  a settings file with the five old switch keys
+    When   load_config_file() is called
+    Then   none of them is in the result (they are unknown keys, ignored without a word)
+    """
+    cfg_file = tmp_path / "ocr.toml"
+    cfg_file.write_text(
+        "preprocess_dewarp = false\npreprocess_deskew = false\npreprocess_border_crop = true\n"
+        "preprocess_denoise = false\npreprocess_gamma = true\n"
+    )
+
+    assert load_config_file(cfg_file) == {}
 
 
 def test_load_config_file_resets_model_of_replaced_online_engine(tmp_path: Path) -> None:
@@ -304,13 +388,13 @@ def test_load_config_file_keeps_model_of_local_engine(tmp_path: Path) -> None:
 
 def test_load_config_file_keeps_local_ocr_engines(tmp_path: Path) -> None:
     """
-    Given  a settings file naming Tesseract
+    Given  a settings file naming the built-in reader with stray case and spaces
     When   load_config_file() is called
     Then   the engine is kept (case and spaces folded)
     """
     cfg_file = tmp_path / "ocr.toml"
-    cfg_file.write_text('ocr_engine = " Tesseract "\n')
-    assert load_config_file(cfg_file)["ocr_engine"] == "tesseract"
+    cfg_file.write_text('ocr_engine = " PPOCR "\n')
+    assert load_config_file(cfg_file)["ocr_engine"] == "ppocr"
 
 
 def test_ocr_config_from_settings_replaces_online_engine() -> None:
@@ -597,11 +681,11 @@ def test_ocr_config_from_settings_maps_flat_keys_and_defaults() -> None:
     Then   present keys map onto the fields and missing ones take the defaults
     """
     ocr = OcrConfig.from_settings(
-        {"ocr_engine": "tesseract", "preprocess_dewarp": False, "pdf_text_layer": "NEVER"}
+        {"ocr_engine": "ppocr", "preprocess_method": "none", "pdf_text_layer": "NEVER"}
     )
 
-    assert ocr.engine == "tesseract"
-    assert ocr.dewarp is False
+    assert ocr.engine == "ppocr"
+    assert ocr.preprocess_method == "none"
     assert ocr.pdf_text_layer == "never"
     assert ocr.pdf_render_dpi == DEFAULTS["pdf_render_dpi"]
 

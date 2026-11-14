@@ -21,9 +21,22 @@ requirement.
 
 Optional components
 -------------------
-Optional OCR, LLM, and privacy features (LangChain, spaCy, PaddleOCR, ...) are
+Optional OCR, LLM, and privacy features (LangChain, spaCy, ...) are
 not bundled. They are installed on demand and are governed by their own
 licenses.
+
+Model files (Apache-2.0)
+-----------------------
+The built-in reader and the automatic image preparation run neural network models
+published by PaddlePaddle under the Apache License, Version 2.0: PP-OCRv6 small text
+detection and recognition, PP-LCNet_x1_0_doc_ori (page orientation) and UVDoc (flattening
+of photographed pages), in their ONNX exports on huggingface.co/PaddlePaddle. They are not
+bundled: each is downloaded once, only when the user asks for it, at a pinned revision
+checked against a SHA-256 sum (see teachers_teammate/domain/local_models.py).
+
+The built-in reader's text-box post-processing and line cropping re-implement the published
+algorithms of PaddleOCR (Apache-2.0, https://github.com/PaddlePaddle/PaddleOCR). No PaddleOCR
+source code is included in this product.
 
 Installer artifacts
 -------------------

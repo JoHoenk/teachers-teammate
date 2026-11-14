@@ -56,7 +56,7 @@ FOCUS_DETECTION = "detection"
 FOCUS_PATTERNS = "patterns"
 
 FOCUS_LOCAL_MODELS = "local_models"
-FOCUS_OCR_ENGINES = "ocr_engines"
+FOCUS_READING_MODELS = "reading_models"
 FOCUS_ONLINE_SERVICES = "online_services"
 FOCUS_NAME_DETECTION = "name_detection"
 FOCUS_GPU = "gpu"

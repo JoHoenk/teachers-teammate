@@ -9,10 +9,14 @@ from pathlib import Path
 
 from ...config import Config, OcrConfig
 from ...domain.context_budget import RunWindows, window_from_setting
+from ...domain.data_location import ENGINE_PPOCR
+from ...domain.local_models import reader_fingerprint
 from ..correction import instruction_parts
 from ..correction_schema import CONTRACT_VERSION
 from ..input_provider_factory import InputOptions, input_settings_fingerprint
 from ..ocr_processor import get_ocr_prompt
+from ..onnx.store import ModelStore
+from ..preprocessing.identity import auto_identity
 from ..preview_image_store import PreviewImageStore
 from ..state_repository import (
     DocumentState,
@@ -25,59 +29,54 @@ from ..state_repository import (
 
 # ── Module-level hash helpers (shared with application layer) ─────────────────
 
-# Bump a step's entry here whenever *its* algorithm changes (not just its on/off
-# setting), so cached results computed with the old behaviour are treated as stale
-# even though the user-visible flag didn't change. Steps not listed here have never
-# changed their algorithm, so their fingerprint entry stays a plain "True"/"False".
-# See image_preprocessor.py history for what changed at each version.
-_PRESTEP_ALGO_VERSIONS = {"deskew": "2", "border_crop": "2"}
 
-
-def _prestep_fingerprint(name: str, enabled: bool) -> str:
-    """Return the fingerprint entry for one pre-step flag.
-
-    Only folds the algorithm version in when the step is enabled, so configs that
-    never used it (the common case) keep the same hash -- and cached results -- as
-    before that step's algorithm changed.
-    """
-    if not enabled:
-        return "False"
-    version = _PRESTEP_ALGO_VERSIONS.get(name)
-    return f"True@v{version}" if version else "True"
-
-
-def _preprocess_fingerprint(ocr: OcrConfig, source: Path) -> tuple[str, ...]:
+def _preprocess_fingerprint(
+    ocr: OcrConfig, source: Path, store: ModelStore | None = None
+) -> tuple[str, ...]:
     """Return the preprocessing settings that change the image fed to OCR.
 
-    Every entry must be included in both the OCR cache hash and the preview hash so a
-    toggle (pre-step or PDF DPI) invalidates the cached result instead of returning stale
+    Every entry must be included in both the OCR cache hash and the preview hash so a changed
+    setting (the method, the PDF DPI) invalidates the cached result instead of returning stale
     OCR text or a stale preview image.
 
-    Method "none" skips every pre-step (see HandwritingPreprocessor.preprocess), so the
-    pre-step flags are folded to "False" in that case -- toggling them has no effect on
-    the image and must not force a re-run.
+    The automatic preparation adds what decides its pixels (``auto_identity``): its version,
+    whether the engine gets gray or colour, and which page models are downloaded — so a new
+    version of the steps, or downloading the page models, reads pages again once.  *store* is
+    where the page models are (``None`` = the default folder).  "Original page" is just
+    ``none``.
 
     *source* is the file being processed: format-specific input settings (the PDF text-layer
     mode) are only included for the formats they affect, so changing one does not invalidate
     results of other files.
     """
-    runs_presteps = ocr.preprocess_method != "none"
     text_layer = input_settings_fingerprint(source.suffix, InputOptions.from_ocr(ocr))
-    return (
-        ocr.preprocess_method,
-        str(ocr.pdf_render_dpi),
-        *text_layer,
-        _prestep_fingerprint("dewarp", runs_presteps and ocr.dewarp),
-        _prestep_fingerprint("deskew", runs_presteps and ocr.deskew),
-        _prestep_fingerprint("border_crop", runs_presteps and ocr.border_crop),
-        _prestep_fingerprint("denoise", runs_presteps and ocr.denoise),
-        _prestep_fingerprint("gamma", runs_presteps and ocr.gamma),
+    identity = (
+        auto_identity(ocr.engine, store or ModelStore()) if ocr.preprocess_method == "auto" else ()
     )
+    return (ocr.preprocess_method, *identity, str(ocr.pdf_render_dpi), *text_layer)
 
 
-def compute_ocr_config_hash(config: Config, ocr_prompt: str, source: Path) -> str:
-    """Return the OCR stage config hash for *config* and *ocr_prompt* when OCR-ing *source*."""
+def compute_ocr_config_hash(
+    config: Config, ocr_prompt: str, source: Path, store: ModelStore | None = None
+) -> str:
+    """Return the OCR stage config hash for *config* and *ocr_prompt* when OCR-ing *source*.
+
+    *store* is where the page models are; it only matters for the automatic preparation.
+    """
     ocr = config.ocr
+    if ocr.engine == ENGINE_PPOCR:
+        # The reader has no model tag, language or prompt of its own: a new model revision or
+        # reader version re-reads the pages, a changed language or Ollama model does not.
+        return compute_config_hash(
+            "ocr",
+            ocr.engine,
+            ocr.engine,
+            reader_fingerprint(),
+            *_preprocess_fingerprint(ocr, source, store),
+            "-",
+            "reader",
+            "-",
+        )
     return compute_config_hash(
         "ocr",
         ocr.engine,
@@ -85,7 +84,7 @@ def compute_ocr_config_hash(config: Config, ocr_prompt: str, source: Path) -> st
         # keeping the shape keeps every existing cached OCR result valid.
         ocr.engine,
         ocr.model,
-        *_preprocess_fingerprint(ocr, source),
+        *_preprocess_fingerprint(ocr, source, store),
         config.language,
         ocr_prompt,
         format(ocr.temperature, ".1f"),
@@ -248,8 +247,11 @@ class CacheReconciliationService:
         artifact_store: PreviewImageStore,
         config: Config,
         windows: RunWindows | None = None,
+        model_store: ModelStore | None = None,
     ) -> None:
         self._repo = state_repo
+        #: Where the page models are; the automatic preparation's identity depends on them.
+        self._model_store = model_store
         self._artifacts = artifact_store
         self._config = config
         #: The context windows this run resolved from the settings and the computer, so the
@@ -260,7 +262,7 @@ class CacheReconciliationService:
     # ── Config hash helpers (delegate to module-level functions) ──────────────
 
     def _ocr_config_hash(self, ocr_prompt: str, source: Path) -> str:
-        return compute_ocr_config_hash(self._config, ocr_prompt, source)
+        return compute_ocr_config_hash(self._config, ocr_prompt, source, self._model_store)
 
     def _correction_config_hash(self) -> str:
         return compute_correction_config_hash(self._config, self._windows)
@@ -281,7 +283,7 @@ class CacheReconciliationService:
         correction_config_hash = self._correction_config_hash()
         eval_config_hash = self._eval_config_hash()
         preview_config_hash = compute_config_hash(
-            "preview", source_hash, *_preprocess_fingerprint(cfg.ocr, file)
+            "preview", source_hash, *_preprocess_fingerprint(cfg.ocr, file, self._model_store)
         )
 
         # Capture artifact paths before reconciliation so we can delete them if cleared.

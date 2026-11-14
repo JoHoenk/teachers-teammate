@@ -15,8 +15,7 @@ covers the software bundled **inside** the Teacher's Teammate application itself
   system `hdiutil`. No third-party installer code is embedded in the artifact.
 - **Linux** — `make_deb.sh` builds a `.deb` (an `ar` archive of the binary plus
   metadata) using the system `dpkg-deb`. No third-party installer code is
-  embedded. The package declares `Depends: tesseract-ocr`, which the user's
-  package manager installs separately — it is not redistributed here.
+  embedded. The package declares no dependencies on other system packages.
 
 The application payload these installers wrap is identical on every platform and
 is documented in `third_party_licenses/`.

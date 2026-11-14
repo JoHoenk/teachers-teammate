@@ -28,8 +28,9 @@ Prefer Python? Each release also ships a wheel:
 pip install teachers_teammate-<version>-py3-none-any.whl
 ```
 
-Optional components — privacy protection (spaCy), PaddleOCR, GPU monitoring, and spaCy
-language models — can be installed from inside the app; no terminal required.
+Optional components — privacy protection (spaCy) and its language models, GPU
+monitoring, and the built-in reader's model files (31 MB) — can be installed from inside
+the app; no terminal required.
 
 ## Set up text recognition
 
@@ -149,7 +150,7 @@ Want to help develop Teacher's Teammate? See
 - [Ollama-OCR](https://github.com/imanoop7/Ollama-OCR) by imanoop7 — inspired this project
 - [Ollama](https://ollama.com) — local LLM inference runtime
 - [LangChain](https://github.com/langchain-ai/langchain) — LLM abstraction layer
-- [Tesseract OCR](https://github.com/tesseract-ocr/tesseract) — open-source OCR engine
+- [PaddleOCR](https://github.com/PaddlePaddle/PaddleOCR) — PP-OCR models (Apache-2.0) behind the built-in reader, run with OpenCV; the detector's post-processing re-implements PaddleOCR's DB algorithm
 
 ## License
 

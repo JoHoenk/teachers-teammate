@@ -20,7 +20,7 @@ from ._model_defaults import default_model_for_task
 from .domain.answer_format import ANSWER_FORMAT_VERSION, migrate_saved_formats
 from .domain.correction_policy import DEFAULT_LEVEL, normalize_level, normalize_output_mode
 from .domain.correction_prompts import migrate_saved_default, migrate_saved_prompt
-from .domain.data_location import LOCAL_OCR_ENGINES
+from .domain.data_location import ENGINE_PPOCR, LOCAL_OCR_ENGINES
 from .domain.model_catalog import (
     DEFAULT_OCR_MODEL,
     DEFAULT_WRITING_MODEL,
@@ -50,7 +50,7 @@ DEFAULTS: dict[str, Any] = {
     "ocr_engine": "ollama",
     "ocr_model": DEFAULT_OCR_MODEL,
     "language": "English",
-    "preprocess_method": "grayscale",
+    "preprocess_method": "auto",
     "ollama_url": "http://127.0.0.1:11434",
     "ocr_timeout": 180,
     # Whether scans (images, PDFs without a text layer) are read.  Off = only text that already
@@ -59,15 +59,10 @@ DEFAULTS: dict[str, Any] = {
     # Keep the computer from going to sleep while documents are processed (the screen may still
     # turn off).  Not part of any cache key.
     "keep_awake": True,
-    # ── Preprocessing (pre-steps and PDF rendering) ───────────────────────────
+    # ── Preprocessing (image preparation and PDF rendering) ───────────────────
     "pdf_render_dpi": 300,
     # "auto" | "always" | "never" — use a PDF's embedded text instead of OCR.
     "pdf_text_layer": "auto",
-    "preprocess_dewarp": True,
-    "preprocess_deskew": True,
-    "preprocess_border_crop": False,
-    "preprocess_denoise": True,
-    "preprocess_gamma": False,
     # ── Input / output ────────────────────────────────────────────────────────
     "recursive": False,
     "debug": False,
@@ -130,16 +125,31 @@ DEFAULTS: dict[str, Any] = {
 CONTEXT_SETTINGS: tuple[str, ...] = ("auto", "8192", "16384", "32768")
 
 
+#: Engines of older versions that were removed, and what replaces them.  Both were local, so the
+#: replacement is local too: the built-in reader also reads pages on this computer.
+RETIRED_OCR_ENGINES: dict[str, str] = {"tesseract": ENGINE_PPOCR, "paddleocr": ENGINE_PPOCR}
+
+#: How a teacher knew each retired engine (for the notice that it was replaced).
+RETIRED_ENGINE_NAMES: dict[str, str] = {"tesseract": "Tesseract", "paddleocr": "PaddleOCR"}
+
+
 def normalize_ocr_engine(value: object) -> str:
     """Return *value* if it is a local OCR engine, else the default engine.
 
     Settings files written by older versions may name an online engine (``langchain`` or a
     provider such as ``openai``).  Text recognition never goes online any more, so those
-    fall back to the default instead of silently uploading pages.
+    fall back to the default instead of silently uploading pages.  A removed local engine
+    (``tesseract``, ``paddleocr``) becomes the built-in reader.
     """
     engine = str(value).strip().lower()
     if engine in LOCAL_OCR_ENGINES:
         return engine
+    if engine in RETIRED_OCR_ENGINES:
+        print(
+            f"WARNING: ocr_engine {value!r} was removed; the built-in reader is used instead.",
+            file=sys.stderr,
+        )
+        return RETIRED_OCR_ENGINES[engine]
     print(
         f"WARNING: ocr_engine {value!r} is not available (text recognition stays on this "
         f"computer; choose one of {', '.join(LOCAL_OCR_ENGINES)}) — using "
@@ -155,9 +165,22 @@ def normalize_ocr_model(value: object, model: object) -> str:
     A model name saved next to an online engine (``gpt-4o``) means nothing to the engine
     that replaces it, so it is reset together with the engine.
     """
-    if str(value).strip().lower() in LOCAL_OCR_ENGINES:
+    if str(value).strip().lower() in (*LOCAL_OCR_ENGINES, *RETIRED_OCR_ENGINES):
         return str(model)
     return DEFAULTS["ocr_model"]
+
+
+PREPROCESS_METHODS = ("auto", "none")
+"""The two image preparations: the automatic one, and "Original page" (no step)."""
+
+
+def normalize_preprocess_method(method: object) -> str:
+    """Return ``"none"`` (Original page) for ``none``, ``"auto"`` for anything else.
+
+    Settings files from before the automatic preparation name ``grayscale``, ``clahe`` or
+    ``adaptive_threshold``: those methods are gone and read as the automatic preparation.
+    """
+    return "none" if str(method).strip().lower() == "none" else "auto"
 
 
 @dataclass
@@ -179,23 +202,19 @@ class OcrConfig:
     pdf_render_dpi: int = DEFAULTS["pdf_render_dpi"]
     pdf_text_layer: PdfTextLayerMode = DEFAULTS["pdf_text_layer"]
     """Whether a PDF's embedded text may replace OCR (``auto``/``always``/``never``)."""
-    dewarp: bool = DEFAULTS["preprocess_dewarp"]
-    deskew: bool = DEFAULTS["preprocess_deskew"]
-    border_crop: bool = DEFAULTS["preprocess_border_crop"]
-    denoise: bool = DEFAULTS["preprocess_denoise"]
-    gamma: bool = DEFAULTS["preprocess_gamma"]
 
     def __post_init__(self) -> None:
         # Programmatic callers and GUI settings bypass argparse ``choices``; fold
         # case/whitespace and fall back to "auto" for anything that is not a mode.
         self.pdf_text_layer = normalize_pdf_text_layer(self.pdf_text_layer)
+        self.preprocess_method = normalize_preprocess_method(self.preprocess_method)
 
     @classmethod
     def from_settings(cls, values: Mapping[str, object]) -> OcrConfig:
         """Build an :class:`OcrConfig` from a flat settings dict (``ocr.toml`` key names).
 
         Keys that are missing fall back to :data:`DEFAULTS`.  This is the single place the
-        GUI's flat settings (``ocr_engine``, ``preprocess_dewarp``, …) map onto the fields.
+        GUI's flat settings (``ocr_engine``, ``preprocess_method``, …) map onto the fields.
         """
 
         def get(key: str) -> Any:
@@ -204,14 +223,9 @@ class OcrConfig:
         return cls(
             engine=normalize_ocr_engine(get("ocr_engine")),
             model=normalize_ocr_model(get("ocr_engine"), get("ocr_model")),
-            preprocess_method=str(get("preprocess_method")),
+            preprocess_method=normalize_preprocess_method(get("preprocess_method")),
             pdf_render_dpi=int(get("pdf_render_dpi")),
             pdf_text_layer=get("pdf_text_layer"),
-            dewarp=bool(get("preprocess_dewarp")),
-            deskew=bool(get("preprocess_deskew")),
-            border_crop=bool(get("preprocess_border_crop")),
-            denoise=bool(get("preprocess_denoise")),
-            gamma=bool(get("preprocess_gamma")),
         )
 
 
@@ -346,19 +360,41 @@ def _read_toml(path: Path) -> dict[str, Any]:
         raise ConfigFileParseError(f"Could not parse config file {path}: {exc}") from exc
 
 
-def unavailable_ocr_engine(path: Path) -> str:
-    """Return the OCR engine *path* names if it is no longer available, else ``""``.
+@dataclass(frozen=True)
+class ReplacedEngine:
+    """An OCR engine a settings file named that is no longer available, and its replacement."""
 
-    :func:`load_config_file` already swaps such an engine for the default; this tells a
+    old: str
+    """The engine as the file wrote it."""
+    new: str
+    """The engine used instead."""
+    online: bool
+    """The old engine was an online service (not a removed local engine)."""
+
+
+def replaced_ocr_engine(value: object) -> ReplacedEngine | None:
+    """Return what replaces the OCR engine *value*, or ``None`` when it is still available."""
+    if value is None:
+        return None
+    engine = str(value).strip().lower()
+    if engine in LOCAL_OCR_ENGINES:
+        return None
+    if engine in RETIRED_OCR_ENGINES:
+        return ReplacedEngine(str(value), RETIRED_OCR_ENGINES[engine], online=False)
+    return ReplacedEngine(str(value), DEFAULTS["ocr_engine"], online=True)
+
+
+def unavailable_ocr_engine(path: Path) -> ReplacedEngine | None:
+    """Return the OCR engine *path* names if it is no longer available, else ``None``.
+
+    :func:`load_config_file` already swaps such an engine for its replacement; this tells a
     GUI what was swapped so it can say so instead of changing the setting silently.
     """
     try:
         engine = _read_toml(path).get("ocr_engine")
     except ConfigFileParseError:
-        return ""
-    if engine is None or str(engine).strip().lower() in LOCAL_OCR_ENGINES:
-        return ""
-    return str(engine)
+        return None
+    return replaced_ocr_engine(engine)
 
 
 def migrate_answer_formats(values: dict) -> bool:
@@ -438,11 +474,6 @@ def load_config_file(path: Path) -> dict:
         "anonymizer_patterns",
         "pdf_render_dpi",
         "pdf_text_layer",
-        "preprocess_dewarp",
-        "preprocess_deskew",
-        "preprocess_border_crop",
-        "preprocess_denoise",
-        "preprocess_gamma",
         "hardware_profile",
         "proofreading_context",
     }
@@ -454,6 +485,9 @@ def load_config_file(path: Path) -> dict:
             result["ocr_engine"], result.get("ocr_model", DEFAULTS["ocr_model"])
         )
         result["ocr_engine"] = normalize_ocr_engine(result["ocr_engine"])
+
+    if "preprocess_method" in result:
+        result["preprocess_method"] = normalize_preprocess_method(result["preprocess_method"])
 
     if "pdf_text_layer" in result:
         raw_mode = result["pdf_text_layer"]

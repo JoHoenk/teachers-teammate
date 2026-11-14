@@ -16,6 +16,8 @@ from __future__ import annotations
 import atexit
 from collections.abc import Callable, Sequence
 import html
+from pathlib import Path
+import threading
 from typing import Protocol
 
 from PySide6.QtCore import QThread, Signal
@@ -56,7 +58,23 @@ class _SettingsAppService(Protocol):
 
     def list_ocr_engines(self) -> list[str]: ...
 
-    def default_preprocess_for_engine(self, engine: str) -> str: ...
+    def reader_installed(self) -> bool: ...
+
+    def models_dir(self) -> Path: ...
+
+    def download_reader(
+        self,
+        on_progress: Callable[[int, int], None] | None = None,
+        cancel: threading.Event | None = None,
+    ) -> None: ...
+
+    def page_models_installed(self) -> bool: ...
+
+    def download_page_models(
+        self,
+        on_progress: Callable[[int, int], None] | None = None,
+        cancel: threading.Event | None = None,
+    ) -> None: ...
 
     def get_provider_info(self, provider: str) -> dict: ...
 

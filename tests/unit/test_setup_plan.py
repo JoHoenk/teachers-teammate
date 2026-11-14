@@ -221,18 +221,54 @@ def test_typed_pages_turn_recognition_off_and_leave_the_reading_model_alone() ->
     assert all(download.stage != STAGE_OCR for download in plan.downloads)
 
 
-def test_a_reading_method_other_than_ollama_is_kept() -> None:
+def test_the_built_in_reader_is_kept_and_nothing_is_downloaded_when_it_is_there() -> None:
     """
-    Given  the teacher reads pages with Tesseract
+    Given  the teacher reads pages with the built-in reader, whose model files are downloaded
     When   the setup plan is built for handwritten pages
-    Then   the engine and its model stay, the row says so, and nothing is downloaded for it
+    Then   the engine stays, the row says so, and nothing is downloaded for it
     """
-    plan = _plan(current=_current(ocr_engine="tesseract", ocr_model="deu"))
+    plan = _plan(
+        current=_current(ocr_engine="ppocr", ocr_model="deu"),
+        facts=_facts(reader_installed=True),
+    )
 
     assert "ocr_model" not in plan.settings
     row = _step(plan, STAGE_OCR)
-    assert (row.provider, row.model, row.kept) == ("tesseract", "deu", True)
+    assert (row.provider, row.kept, row.installed) == ("ppocr", True, True)
     assert all(download.stage != STAGE_OCR for download in plan.downloads)
+
+
+def test_the_built_in_reader_without_its_models_adds_a_download_and_no_proposal() -> None:
+    """
+    Given  the teacher reads pages with the built-in reader, which is not downloaded
+    When   the setup plan is built for handwritten pages
+    Then   one reader download is planned, the reader is kept, and no Ollama model is proposed
+    """
+    plan = _plan(
+        current=_current(ocr_engine="ppocr"),
+        facts=_facts(reader_installed=False),
+    )
+
+    (download,) = _downloads(plan, DownloadKind.READER_MODEL)
+    assert (download.name, download.stage) == ("ppocr", STAGE_OCR)
+    assert _step(plan, STAGE_OCR).kept is True
+    assert "ocr_model" not in plan.settings
+    assert not [d for d in _downloads(plan, DownloadKind.OLLAMA_MODEL) if d.stage == STAGE_OCR]
+
+
+def test_typed_pages_need_no_reader_download() -> None:
+    """
+    Given  the built-in reader chosen but not downloaded, and a class that hands in typed texts
+    When   the setup plan is built
+    Then   no reader download is planned (no page is read)
+    """
+    plan = _plan(
+        answers=_answers(hand_in=HandIn.TYPED),
+        current=_current(ocr_engine="ppocr"),
+        facts=_facts(reader_installed=False),
+    )
+
+    assert not _downloads(plan, DownloadKind.READER_MODEL)
 
 
 # ── proofreading and review ─────────────────────────────────────────────────

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import threading
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -11,11 +12,14 @@ import pytest
 from teachers_teammate.application.service import (
     ADDON_AMD,
     ADDON_NVIDIA,
-    ADDON_PADDLE,
+    ADDON_PRIVACY,
     GpuInfo,
 )
+from teachers_teammate.exceptions import ModelDownloadCancelledError, ModelDownloadError
 from teachers_teammate.gui import _addon_installer_dialog as mod
 from teachers_teammate.gui._addon_installer_dialog import (
+    PageModelsDownloadDialog,
+    ReaderDownloadDialog,
     AddonInstallerDialog,
     GpuAddonDialog,
     SpacyModelDownloadDialog,
@@ -226,7 +230,7 @@ def test_gpu_dialog_on_err_offers_retry(qtbot) -> None:
     assert dlg._install_btn.text() == "Retry"
 
 
-# ── paddle warning + worker threads + pip-missing ────────────────────────────
+# ── worker threads + pip-missing ────────────────────────────
 
 
 def _all_label_texts(dlg) -> list[str]:
@@ -236,20 +240,10 @@ def _all_label_texts(dlg) -> list[str]:
 
 
 @pytest.mark.gui
-def test_addon_installer_shows_paddle_size_warning(qtbot) -> None:
-    """Given the PaddleOCR addon / When the dialog is built / Then the size warning is present."""
-    dlg = AddonInstallerDialog(ADDON_PADDLE)
-    qtbot.addWidget(dlg)
-
-    # The size warning text mentions the approximate download size.
-    assert any("400 MB" in t for t in _all_label_texts(dlg))
-
-
-@pytest.mark.gui
 @pytest.mark.use_case("Runtime_Addon_Installation")
 def test_install_thread_run_emits_finished_ok() -> None:
     """Given a successful install / When _InstallThread.run executes / Then finished_ok is emitted."""
-    thread = mod._InstallThread(ADDON_PADDLE, Path("/tmp/pkg"))
+    thread = mod._InstallThread(ADDON_PRIVACY, Path("/tmp/pkg"))
     ok = MagicMock()
     thread.finished_ok.connect(ok)
 
@@ -262,7 +256,7 @@ def test_install_thread_run_emits_finished_ok() -> None:
 @pytest.mark.gui
 def test_install_thread_run_emits_finished_err_on_failure() -> None:
     """Given install raises / When _InstallThread.run executes / Then finished_err carries the message."""
-    thread = mod._InstallThread(ADDON_PADDLE, Path("/tmp/pkg"))
+    thread = mod._InstallThread(ADDON_PRIVACY, Path("/tmp/pkg"))
     err: list[str] = []
     thread.finished_err.connect(err.append)
 
@@ -297,3 +291,116 @@ def test_addon_installer_is_available_false_when_pip_missing() -> None:
         patch.dict(_sys.modules, {"pip": None}),
     ):
         assert AddonInstallerDialog.is_available() is False
+
+
+# ── the built-in reader's download ───────────────────────────────────────────
+
+
+class _FakeReaderService:
+    """Downloads nothing: reports progress, optionally fails, and notes whether it was cancelled."""
+
+    def __init__(self, *, error: Exception | None = None, wait_for_cancel: bool = False) -> None:
+        self.error = error
+        self.wait_for_cancel = wait_for_cancel
+        self.installed = False
+        self.page_models_calls = 0
+        self.started = threading.Event()
+
+    def models_dir(self) -> Path:
+        return Path("/tmp/models")
+
+    def download_page_models(self, on_progress=None, cancel=None) -> None:
+        self.page_models_calls += 1
+        self.download_reader(on_progress, cancel)
+
+    def download_reader(self, on_progress=None, cancel=None) -> None:
+        self.started.set()
+        if on_progress:
+            on_progress(1_000_000, 4_000_000)
+        if self.wait_for_cancel and cancel is not None:
+            assert cancel.wait(5), "the dialog never cancelled"
+            raise ModelDownloadCancelledError("cancelled")
+        if self.error is not None:
+            raise self.error
+        self.installed = True
+
+
+@pytest.mark.gui
+def test_reader_dialog_downloads_and_reports_progress_in_mb(qtbot) -> None:
+    """
+    Given  the reader download dialog with a service that downloads fine
+    When   Download is pressed
+    Then   the bar fills, the status shows MB, and "downloaded" is emitted
+    """
+    service = _FakeReaderService()
+    dlg = ReaderDownloadDialog(service)
+    qtbot.addWidget(dlg)
+
+    with qtbot.waitSignal(dlg.downloaded, timeout=5000):
+        dlg._start_btn.click()
+
+    assert service.installed
+    assert dlg._bar.value() == 100
+    assert "Downloaded" in dlg._status.text()
+    assert "/tmp/models" in dlg.findChildren(mod.QLabel)[0].text()
+
+
+@pytest.mark.gui
+def test_reader_dialog_shows_the_error_sentence_and_offers_retry(qtbot) -> None:
+    """
+    Given  a download that fails with a sentence for the teacher
+    When   Download is pressed
+    Then   the sentence is shown and the button becomes Retry
+    """
+    service = _FakeReaderService(error=ModelDownloadError("Could not reach huggingface.co."))
+    dlg = ReaderDownloadDialog(service)
+    qtbot.addWidget(dlg)
+
+    dlg._start_btn.click()
+    qtbot.waitUntil(lambda: dlg._start_btn.text() == "Retry", timeout=5000)
+
+    assert "Could not reach huggingface.co." in dlg._status.text()
+    assert service.installed is False
+
+
+@pytest.mark.gui
+def test_reader_dialog_cancel_stops_the_thread_and_installs_nothing(qtbot) -> None:
+    """
+    Given  a download that is running
+    When   Cancel is pressed
+    Then   the thread is told to stop, nothing is installed and the dialog says so
+    """
+    service = _FakeReaderService(wait_for_cancel=True)
+    dlg = ReaderDownloadDialog(service)
+    qtbot.addWidget(dlg)
+    dlg._start_btn.click()
+    qtbot.waitUntil(service.started.is_set, timeout=5000)
+
+    dlg._cancel_btn.click()
+    qtbot.waitUntil(lambda: dlg._start_btn.text() == "Retry", timeout=5000)
+
+    assert service.installed is False
+    assert "cancelled" in dlg._status.text()
+
+
+@pytest.mark.gui
+def test_page_models_dialog_downloads_the_page_models_and_names_them(qtbot) -> None:
+    """
+    Given  the page models download dialog with a service that downloads fine
+    When   Download is pressed
+    Then   the service's page-models download runs (not the reader's), the dialog says what
+           the models do and where they are kept, and "downloaded" is emitted
+    """
+    service = _FakeReaderService()
+    dlg = PageModelsDownloadDialog(service)
+    qtbot.addWidget(dlg)
+    text = dlg.findChildren(mod.QLabel)[0].text()
+
+    with qtbot.waitSignal(dlg.downloaded, timeout=5000):
+        dlg._start_btn.click()
+
+    assert dlg.windowTitle() == "Download the page models"
+    assert "turns sideways pages" in text
+    assert "/tmp/models" in text
+    assert service.page_models_calls == 1
+    assert dlg._bar.value() == 100

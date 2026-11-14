@@ -106,7 +106,7 @@ class AboutDialog(QDialog):
 
         credits_lbl = QLabel(
             '<p style="color:#888; font-size:8pt;">'
-            "Powered by Ollama &bull; Tesseract OCR &bull; LangChain<br>"
+            "Powered by Ollama &bull; OpenCV &bull; PaddleOCR models &bull; LangChain<br>"
             "pypdfium2 &bull; PySide6 &bull; qdarkstyle<br><br>"
             'Inspired by <a href="https://github.com/imanoop7/Ollama-OCR">'
             "Ollama-OCR</a> by imanoop7."

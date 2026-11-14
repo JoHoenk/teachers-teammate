@@ -14,10 +14,11 @@ from enum import StrEnum
 #: OCR engines that read pages on a computer the user controls, with the name shown for
 #: each.  Reading a page needs the whole page (names, grades, handwriting), so personal
 #: information cannot be hidden first: online services are deliberately not offered here.
+ENGINE_OLLAMA = "ollama"
+ENGINE_PPOCR = "ppocr"
 OCR_ENGINE_NAMES: dict[str, str] = {
-    "ollama": "Ollama",
-    "tesseract": "Tesseract",
-    "paddleocr": "PaddleOCR",
+    ENGINE_OLLAMA: "Ollama",
+    ENGINE_PPOCR: "Built-in reader",
 }
 LOCAL_OCR_ENGINES: tuple[str, ...] = tuple(OCR_ENGINE_NAMES)
 
@@ -139,7 +140,7 @@ class StageLocation:
     """Where one step runs and which service does the work."""
 
     location: DataLocation
-    #: Display name of the engine or provider ("Ollama", "Tesseract", "OpenAI").
+    #: Display name of the engine or provider ("Ollama", "Built-in reader", "OpenAI").
     service: str
     #: Host name of the other computer (OTHER_COMPUTER only).
     host: str = ""
@@ -220,9 +221,9 @@ def online_ocr_reason(engine: str, model: str, host: str) -> str:
         return (
             f"Text recognition with '{engine}' is not available: online services would "
             "receive the whole page, including names and grades. Use "
-            f"{', '.join(LOCAL_OCR_ENGINES)} instead."
+            f"{' or '.join(OCR_ENGINE_NAMES.values())} instead."
         )
-    if engine == "ollama" and (is_ollama_cloud_model(model) or is_ollama_cloud_host(host)):
+    if engine == ENGINE_OLLAMA and (is_ollama_cloud_model(model) or is_ollama_cloud_host(host)):
         return (
             f"The Ollama model '{model}' runs on Ollama's servers, not on your computer. "
             "Choose a model that is downloaded to your own Ollama."

@@ -91,3 +91,59 @@ git_override(
     commit = "08ff8c7d6c362153392003c671a9799a446b0db5",
     remote = "https://github.com/bmw-software-engineering/trlc.git",
 )
+
+# The built-in reader's pinned model files (domain/local_models.py), fetched once for the tests
+# that run the real models. Keep revision and hashes in step with the catalogue; the test
+# tests/unit/test_local_models.py and the integration test fail first if they drift.
+http_file = use_repo_rule(
+    "@bazel_tools//tools/build_defs/repo:http.bzl",
+    "http_file",
+)
+
+http_file(
+    name = "ppocr_small_det_onnx",
+    sha256 = "d73e0058b7a8086bbd57f3d10b8bcd4ff95363f67e06e2762b5e814fe9c9410e",
+    urls = ["https://huggingface.co/PaddlePaddle/PP-OCRv6_small_det_onnx/resolve/28fe5895c24fd108c19eb3e8479f4ab385fbfc62/inference.onnx"],
+)
+
+http_file(
+    name = "ppocr_small_det_yml",
+    sha256 = "193f435274bf9f0b5f71a929bbfbcf148282df7e633b34e7c373e8f44741b516",
+    urls = ["https://huggingface.co/PaddlePaddle/PP-OCRv6_small_det_onnx/resolve/28fe5895c24fd108c19eb3e8479f4ab385fbfc62/inference.yml"],
+)
+
+http_file(
+    name = "ppocr_small_rec_onnx",
+    sha256 = "5435fd747c9e0efe15a96d0b378d5bd157e9492ed8fd80edf08f30d02fa24634",
+    urls = ["https://huggingface.co/PaddlePaddle/PP-OCRv6_small_rec_onnx/resolve/b8f84f0b80c529de40b4fbb3544b84fa7233a513/inference.onnx"],
+)
+
+http_file(
+    name = "doc_ori_onnx",
+    sha256 = "af9a0a4f317ff0709ce752067807f819cb15d883f8ecad89f28df1c6ee2d9c92",
+    urls = ["https://huggingface.co/PaddlePaddle/PP-LCNet_x1_0_doc_ori_onnx/resolve/7330ab7039123e46af2dc03154b9969aa412c61d/inference.onnx"],
+)
+
+http_file(
+    name = "doc_ori_yml",
+    sha256 = "9e195eb729a8173588cd0e8a852c8b373aa606e79e77b4ac7d8346f5426caf26",
+    urls = ["https://huggingface.co/PaddlePaddle/PP-LCNet_x1_0_doc_ori_onnx/resolve/7330ab7039123e46af2dc03154b9969aa412c61d/inference.yml"],
+)
+
+http_file(
+    name = "uvdoc_onnx",
+    sha256 = "54cab30dc2cf347b4f3d6971c833b1c3d84f5ef17280f1f6d15796bff20e63d6",
+    urls = ["https://huggingface.co/PaddlePaddle/UVDoc_onnx/resolve/3bcf535371727d11e783101f79a504c68848aae3/inference.onnx"],
+)
+
+http_file(
+    name = "uvdoc_yml",
+    sha256 = "be83d537b358f3ff87740e77e14a83ee9e9a7bb215c33d091b69e8bd5904fe39",
+    urls = ["https://huggingface.co/PaddlePaddle/UVDoc_onnx/resolve/3bcf535371727d11e783101f79a504c68848aae3/inference.yml"],
+)
+
+http_file(
+    name = "ppocr_small_rec_yml",
+    sha256 = "ab078671bb49f06228eadccd34f1bb501e157f7a047095ffb943ba81512c77d1",
+    urls = ["https://huggingface.co/PaddlePaddle/PP-OCRv6_small_rec_onnx/resolve/b8f84f0b80c529de40b4fbb3544b84fa7233a513/inference.yml"],
+)

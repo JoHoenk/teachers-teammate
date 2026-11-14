@@ -12,7 +12,6 @@ from teachers_teammate.infrastructure import addon_manager
 from teachers_teammate.infrastructure.addon_manager import (
     ADDON_AMD,
     ADDON_NVIDIA,
-    ADDON_PADDLE,
     ADDON_PRIVACY,
     _packages_dir_readable,
     can_install_addons,
@@ -23,6 +22,7 @@ from teachers_teammate.infrastructure.addon_manager import (
     inject_packages_dir,
     install_addon_subprocess,
     is_addon_importable,
+    remove_retired_addons,
 )
 
 
@@ -127,18 +127,6 @@ def test_is_addon_importable_returns_true_when_spacy_present() -> None:
         assert is_addon_importable(ADDON_PRIVACY) is True
 
 
-def test_is_addon_importable_returns_false_when_paddleocr_missing() -> None:
-    """
-    Given  paddleocr is not installed (find_spec returns None)
-    When   is_addon_importable(ADDON_PADDLE) is called
-    Then   False is returned
-    """
-    with patch(
-        "teachers_teammate.infrastructure.addon_manager.importlib.util.find_spec", return_value=None
-    ):
-        assert is_addon_importable(ADDON_PADDLE) is False
-
-
 def test_is_addon_importable_unknown_addon_returns_false() -> None:
     """
     Given  an unrecognised addon name not in the registry
@@ -163,24 +151,6 @@ def test_clear_stale_modules_removes_spacy_entries() -> None:
         assert "spacy" not in sys.modules
         assert "spacy.util" not in sys.modules
         assert "spacy.lang.en" not in sys.modules
-
-
-def test_clear_stale_modules_removes_paddle_entries() -> None:
-    """
-    Given  paddle and paddleocr entries are present in sys.modules
-    When   clear_stale_modules(ADDON_PADDLE) is called
-    Then   all paddle-prefixed keys are removed from sys.modules
-    """
-    fake_modules = {
-        "paddleocr": MagicMock(),
-        "paddle": MagicMock(),
-        "paddle.device": MagicMock(),
-    }
-    with patch.dict(sys.modules, fake_modules):
-        clear_stale_modules(ADDON_PADDLE)
-        assert "paddleocr" not in sys.modules
-        assert "paddle" not in sys.modules
-        assert "paddle.device" not in sys.modules
 
 
 def test_clear_stale_modules_leaves_unrelated_modules() -> None:
@@ -706,3 +676,82 @@ def test_no_console_window_kwargs_elsewhere(monkeypatch) -> None:
 
     monkeypatch.setattr(sys, "platform", "linux")
     assert no_console_window_kwargs() == {}
+
+
+# ── remove_retired_addons ─────────────────────────────────────────────────────
+
+
+def _plant_package(pkg_dir: Path, dist: str, files: list[str], *, record: bool = True) -> None:
+    """Create *files* under *pkg_dir* and a ``<dist>.dist-info`` that lists them in RECORD."""
+    dist_info = pkg_dir / f"{dist}.dist-info"
+    dist_info.mkdir(parents=True)
+    for name in files:
+        path = pkg_dir / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("x", encoding="utf-8")
+    if record:
+        lines = [f"{name},sha256=abc,1" for name in files]
+        lines.append(f"{dist}.dist-info/RECORD,,")
+        (dist_info / "RECORD").write_text("\n".join(lines), encoding="utf-8")
+
+
+def test_remove_retired_addons_deletes_exactly_the_recorded_files(tmp_path: Path) -> None:
+    """
+    Given  a packages folder with the old Paddle add-on and an unrelated package
+    When   remove_retired_addons() runs
+    Then   only the files in the retired packages' RECORD go, the empty folders with them
+    """
+    _plant_package(tmp_path, "paddleocr-3.0.0", ["paddleocr/__init__.py", "paddleocr/sub/m.py"])
+    _plant_package(tmp_path, "opencv_contrib_python-4.10.0.84", ["cv2/__init__.py"])
+    _plant_package(tmp_path, "spacy-3.7.0", ["spacy/__init__.py"])
+    (tmp_path / "paddleocr" / "stray.txt").write_text("not in RECORD", encoding="utf-8")
+
+    removed = remove_retired_addons(tmp_path)
+
+    assert sorted(removed) == ["opencv-contrib-python", "paddleocr"]
+    assert not (tmp_path / "paddleocr" / "__init__.py").exists()
+    assert not (tmp_path / "paddleocr" / "sub").exists()
+    assert (tmp_path / "paddleocr" / "stray.txt").exists()  # not listed: left alone
+    assert not (tmp_path / "cv2").exists()
+    assert not (tmp_path / "paddleocr-3.0.0.dist-info").exists()
+    assert (tmp_path / "spacy" / "__init__.py").exists()
+    assert (tmp_path / "spacy-3.7.0.dist-info" / "RECORD").exists()
+
+
+def test_remove_retired_addons_leaves_a_package_without_record(tmp_path: Path) -> None:
+    """
+    Given  a retired package whose dist-info has no RECORD
+    When   remove_retired_addons() runs
+    Then   nothing of it is touched
+    """
+    _plant_package(tmp_path, "paddlepaddle-3.0.0", ["paddle/__init__.py"], record=False)
+
+    assert remove_retired_addons(tmp_path) == []
+    assert (tmp_path / "paddle" / "__init__.py").exists()
+
+
+def test_remove_retired_addons_never_leaves_the_packages_folder(tmp_path: Path) -> None:
+    """
+    Given  a RECORD that lists a path outside the packages folder
+    When   remove_retired_addons() runs
+    Then   the outside file is not deleted
+    """
+    packages = tmp_path / "packages"
+    packages.mkdir()
+    outside = tmp_path / "outside.txt"
+    outside.write_text("keep", encoding="utf-8")
+    _plant_package(packages, "paddlex-3.0.0", ["paddlex/__init__.py", "../outside.txt"])
+
+    remove_retired_addons(packages)
+
+    assert outside.exists()
+    assert not (packages / "paddlex").exists()
+
+
+def test_remove_retired_addons_ignores_a_missing_folder(tmp_path: Path) -> None:
+    """
+    Given  a packages folder that does not exist
+    When   remove_retired_addons() runs
+    Then   it returns an empty list
+    """
+    assert remove_retired_addons(tmp_path / "nope") == []

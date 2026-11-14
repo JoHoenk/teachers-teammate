@@ -12,7 +12,7 @@ dependencies = [
     "qdarkstyle>=3.2",
     "psutil>=5.9",
     "requests>=2.32",
-    "opencv-python>=4.9",
+    "opencv-python>=5.0",
     "pypdfium2>=4.0",
     "numpy>=1.26",
     "python-docx>=1.1,<2",
@@ -22,6 +22,8 @@ dependencies = [
     "platformdirs>=4.0",
     "ollama>=0.4",
     "pydantic>=2",
+    # The built-in reader reads its recogniser's character list from the model's inference.yml.
+    "PyYAML>=6",
     # API keys of the online AI services: the system keychain (macOS Keychain, Windows
     # Credential Manager, Linux Secret Service); without one the keys stay in the settings file.
     "keyring>=24",
@@ -44,15 +46,6 @@ privacy = [
     #   pip install "spacy[cuda11x]"   # CUDA 11.x
     # Or use the build script:  SPACY_GPU=1 CUDA_VER=12x ./packaging/build_frozen.sh
 ]
-paddle = [
-    # CPU build (works on all machines, no CUDA required)
-    "paddlepaddle>=3.0",
-    "paddleocr>=2.9",
-    # GPU build (requires CUDA toolkit on the machine):
-    #   pip install paddlepaddle-gpu paddleocr
-    # Or use the build script:  PADDLE_GPU=1 CUDA_VER=12x ./packaging/build_frozen.sh
-    # See: https://www.paddlepaddle.org.cn/install/quick
-]
 
 # ── Tooling extras ──────────────────────────────────────────────────────────
 # These are the single source of truth for the lin/test toolchains. The Bazel
@@ -65,7 +58,6 @@ test = [
     "pytest-qt>=4.4",
     # Optional runtime deps the unit/correction tests exercise directly.
     "langchain-core>=0.3",
-    "pytesseract>=0.3",
 ]
 dev = [
     # Lint / static analysis
@@ -202,10 +194,13 @@ ignored-modules = [
     "lxml",
     "markdown_it",
     "ollama",
+    "numpy",
     "psutil",
     "pydantic",
     "pypdfium2",
+    "requests",
     "spacy",
+    "yaml",
     # Test-only imports not in pylint's binary env.
     "pytest",
     # Optional extras intentionally absent from every lock (lazy-imported).
@@ -216,8 +211,6 @@ ignored-modules = [
     "langchain_mistralai",
     "langchain_cohere",
     "openai",
-    "paddle",
-    "paddleocr",
     "pynvml",
     "pyamdgpuinfo",
 ]
@@ -281,7 +274,7 @@ python-version = "3.12"
 
 [tool.ty.rules]
 # The runtime packages ARE resolved under Bazel (see //teachers_teammate:*_typed),
-# but the optional extras (LLM providers, PaddleOCR, GPU libs) are intentionally
+# but the optional extras (LLM providers, GPU libs) are intentionally
 # left out of the typecheck lock, so their lazy imports stay unresolved — tolerate
 # that rather than pin every optional dependency.
 unresolved-import = "ignore"
@@ -304,7 +297,7 @@ unresolved-attribute = "ignore"
 testpaths = ["tests"]
 addopts = "-v --tb=short"
 markers = [
-    "needs_tesseract: requires the tesseract binary on PATH",
+    "needs_reader_models: runs the built-in reader's real model files (Bazel fetches them)",
     "needs_ollama: requires a running Ollama instance",
     "gui: exercises PySide6 widgets/event loop",
     "use_case: links test to a named use case from use_cases.trlc",

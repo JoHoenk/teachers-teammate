@@ -17,6 +17,7 @@ from PySide6.QtWidgets import QCheckBox, QGridLayout, QLabel, QWidget
 
 from ...application.setup_plan import PlannedDownload, PlannedStep, SetupPlan
 from ...domain.data_location import (
+    OCR_ENGINE_NAMES,
     STAGE_ANONYMIZATION,
     STAGE_CORRECTION,
     STAGE_EVALUATION,
@@ -46,6 +47,8 @@ HANDWRITTEN = "handwritten pages"
 TYPED = "typed texts"
 SIZE_SMALL = "small"
 SIZE_GB = "{size:.1f} GB"
+SIZE_MB = "{size:.0f} MB"
+_MB_BELOW_GB = 0.1
 
 #: How wide the step name column is, so the details line up.
 _NAME_WIDTH = 150
@@ -68,6 +71,8 @@ class SummaryRow:
 
 def size_text(download: PlannedDownload) -> str:
     """Return the download's size as the row shows it: ``"6.0 GB"`` or ``"small"``."""
+    if download.size_gb is not None and download.size_gb < _MB_BELOW_GB:
+        return SIZE_MB.format(size=download.size_gb * 1000)
     if download.size_gb is None:
         return SIZE_SMALL
     return SIZE_GB.format(size=download.size_gb)
@@ -118,8 +123,14 @@ def _step_row(
             downloads=downloads,
         )
     if step.kept:
-        detail = ROW_KEPT.format(engine=step.provider) if step.stage == STAGE_OCR else ROW_KEEPS_OWN
-        return SummaryRow(name=name, detail=detail, note=ROW_INSTALLED)
+        if step.stage == STAGE_OCR:
+            detail = ROW_KEPT.format(engine=OCR_ENGINE_NAMES.get(step.provider, step.provider))
+        else:
+            detail = ROW_KEEPS_OWN
+        # A kept reader that is not downloaded yet lists its download (and no "installed").
+        return SummaryRow(
+            name=name, detail=detail, downloads=downloads, note="" if downloads else ROW_INSTALLED
+        )
     if not step.provider:
         return SummaryRow(name=name, detail=ROW_OFF)
     if _same_as_correction(step, correction):

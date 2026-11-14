@@ -13,7 +13,7 @@ source .venv/bin/activate
 
 # Run tests
 bazel test //tests:unit_tests --test_output=errors   # fast, no external services
-bazel test //tests/... --test_output=errors           # full suite (skips Tesseract/Ollama if absent)
+bazel test //tests/... --test_output=errors           # full suite (skips Ollama tests if absent)
 
 # Run a single test file
 bazel test //tests:test_config --test_output=errors
@@ -49,8 +49,8 @@ See the architecture diagrams in [docs/development.md](../docs/development.md).
 ```
 Config (config.py)
   → InputProvider (input_providers.py)          PDF/image/TXT → InputPayload of InputUnits
-  → ImagePreprocessor (image_preprocessor.py)   adaptive_threshold / CLAHE / grayscale / none
-  → OCRProcessor (ocr_processor.py)             Ollama | Tesseract | Paddle | LangChain
+  → ImagePreprocessor (preprocessing/)          automatic preparation (auto) or the original page (none)
+  → OCRProcessor (ocr_processor.py)             Ollama | built-in reader (PP-OCR)
      (TXT files bypass OCR — content flows directly to the next stage)
   → Anonymizer (anonymizer.py)                  spaCy NER + regex, optional
   → Corrector (correction.py)                   LangChain-based, optional
@@ -85,11 +85,11 @@ Key points:
 - Use `make_config(tmp_path, **overrides)` (plain function in `tests/conftest.py`) — not a fixture.
 - Fixtures: `sample_png`, `sample_pdf` in `tests/conftest.py`.
 - **Patch at the import site**, not at the origin:
-  - `teachers_teammate.infrastructure.pipeline.TesseractOCRProcessor`
+  - `teachers_teammate.infrastructure.stage_builder.PpOcrProcessor` (the builder constructs it there; `make_config` defaults to the built-in reader, `engine="ppocr"`, and `conftest.py` points the model store at an empty temporary folder, so nothing downloads)
   - For Ollama: `patch.dict(sys.modules, {"ollama": mock_ollama})` where `mock_ollama` exposes a mock `Client` (the `ollama` library is lazy-imported inside `OllamaClient`)
   - For lazy provider imports: `langchain_openai.ChatOpenAI`
 - Simulate missing optional packages: `patch.dict(sys.modules, {"langchain_anthropic": None})` → expect `SystemExit(1)`.
-- PaddleOCR (optional): `patch.dict(sys.modules, {"paddleocr": mock_module})`.
+- The built-in reader's real models (`reader_store(tmp_path)` in `tests/conftest.py`, Bazel-fetched `http_file`s) run only in tests marked `needs_reader_models`; everything else uses `fake_reader_store` or patches the processor.
 - **Coverage target**: keep meaningful tests and avoid coverage padding.
 
 ---

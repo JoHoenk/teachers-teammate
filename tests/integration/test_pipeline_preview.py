@@ -11,12 +11,13 @@ from pathlib import Path
 import pytest
 
 from teachers_teammate.config import OcrConfig
+from teachers_teammate.infrastructure.onnx.store import ModelStore
 from teachers_teammate.infrastructure.pipeline import OCRPipeline, preprocess_preview
 from tests.conftest import make_config
 
 
 @pytest.mark.use_case("Preview_Preprocessing")
-@pytest.mark.parametrize("method", ["adaptive_threshold", "clahe", "grayscale", "none"])
+@pytest.mark.parametrize("method", ["auto", "none"])
 def test_preprocess_preview_returns_existing_paths(
     tmp_path: Path, sample_png: Path, method: str
 ) -> None:
@@ -49,31 +50,30 @@ def test_preprocess_preview_none_returns_same_path_for_original_and_processed(
 
 
 @pytest.mark.use_case("Preview_Preprocessing")
-@pytest.mark.parametrize("method", ["adaptive_threshold", "clahe", "grayscale"])
-def test_preprocess_preview_processing_methods_return_different_path(
-    tmp_path: Path, sample_png: Path, method: str
+def test_preprocess_preview_of_the_automatic_preparation_writes_a_new_image(
+    tmp_path: Path, sample_png: Path
 ) -> None:
     """
-    Given  a PNG image and an active preprocessing method (not "none")
+    Given  a PNG image and the automatic preparation for Ollama (which reads gray pages)
     When   preprocess_preview() is called
-    Then   the processed path differs from the original and at least one step is recorded
+    Then   the processed path differs from the original and the gray conversion is recorded
     """
     original, processed, steps = preprocess_preview(
-        sample_png, OcrConfig(preprocess_method=method), tmp_path
+        sample_png, OcrConfig(engine="ollama", preprocess_method="auto"), tmp_path
     )
     assert original != processed
-    assert len(steps) >= 1
+    assert steps == ["grayscale"]
 
 
 @pytest.mark.use_case("Preview_Preprocessing")
 def test_preprocess_preview_works_with_pdf_input(tmp_path: Path, sample_pdf: Path) -> None:
     """
-    Given  a single-page PDF and method="grayscale"
+    Given  a single-page PDF and the automatic preparation
     When   preprocess_preview() is called
     Then   both returned paths exist and the original is a PNG (first page rendered from PDF)
     """
     original, processed, _steps = preprocess_preview(
-        sample_pdf, OcrConfig(preprocess_method="grayscale"), tmp_path
+        sample_pdf, OcrConfig(preprocess_method="auto"), tmp_path
     )
     assert original.exists()
     assert processed.exists()
@@ -82,16 +82,25 @@ def test_preprocess_preview_works_with_pdf_input(tmp_path: Path, sample_pdf: Pat
 
 
 @pytest.mark.use_case("Preview_Preprocessing")
-def test_preprocess_preview_applies_pre_steps(tmp_path: Path, sample_png: Path) -> None:
+def test_preprocess_preview_applies_the_steps_a_page_needs(tmp_path: Path) -> None:
     """
-    Given  an OcrConfig with deskew and border_crop enabled
-    When   preprocess_preview() is called
-    Then   the reported steps include both pre-steps (parity with a real run)
+    Given  a page lit unevenly (brightness 40 % at the left edge)
+    When   preprocess_preview() is called with the automatic preparation
+    Then   the reported steps include the light step (parity with a real run)
     """
-    ocr = OcrConfig(preprocess_method="grayscale", deskew=True, border_crop=True)
-    _original, _processed, steps = preprocess_preview(sample_png, ocr, tmp_path)
-    assert "deskew" in steps
-    assert "border_crop" in steps
+    import numpy as np  # noqa: PLC0415
+    from PIL import Image  # noqa: PLC0415
+
+    page = Image.new("RGB", (400, 120), (255, 255, 255))
+    gradient = np.linspace(0.4, 1.0, 400)[None, :, None]
+    source = tmp_path / "shadow.png"
+    Image.fromarray((np.asarray(page, dtype=np.float32) * gradient).astype(np.uint8)).save(source)
+
+    _original, _processed, steps = preprocess_preview(
+        source, OcrConfig(preprocess_method="auto"), tmp_path
+    )
+
+    assert "light" in steps
 
 
 @pytest.mark.use_case("Preview_Preprocessing")
@@ -108,22 +117,26 @@ def test_preprocess_preview_uses_the_given_build_preprocessor(
     PipelineComponentFactory expects the preview to match what that pipeline would
     actually run; calling the default constructor directly would silently diverge.
     """
-    calls: list[tuple[Path, bool, OcrConfig]] = []
-    ocr = OcrConfig(preprocess_method="grayscale")
+    calls: list[tuple[Path, bool, OcrConfig, ModelStore | None]] = []
+    ocr = OcrConfig(preprocess_method="auto")
 
     class _StubPreprocessor:
         def preprocess(self, image_path: Path) -> tuple[Path, list[str]]:
             return image_path, ["stub_step"]
 
-    def _stub_build_preprocessor(tmp_dir: Path, save_steps: bool, ocr_arg: OcrConfig):
-        calls.append((tmp_dir, save_steps, ocr_arg))
+    store = ModelStore(tmp_path / "models")
+
+    def _stub_build_preprocessor(
+        tmp_dir: Path, save_steps: bool, ocr_arg: OcrConfig, store_arg: ModelStore | None
+    ):
+        calls.append((tmp_dir, save_steps, ocr_arg, store_arg))
         return _StubPreprocessor()
 
     _original, _processed, steps = preprocess_preview(
-        sample_png, ocr, tmp_path, _stub_build_preprocessor
+        sample_png, ocr, tmp_path, _stub_build_preprocessor, model_store=store
     )
     assert steps == ["stub_step"]
-    assert calls == [(tmp_path, False, ocr)]
+    assert calls == [(tmp_path, False, ocr, store)]
 
 
 @pytest.mark.use_case("Preview_Preprocessing")
@@ -158,7 +171,7 @@ def test_pipeline_run_preview_only_propagates_failure_for_corrupt_image(tmp_path
     """
     cfg = make_config(
         tmp_path,
-        ocr_engine="tesseract",
+        ocr_engine="ppocr",
         correction_enabled=False,
         docx_enabled=False,
         preprocess_method="grayscale",

@@ -88,7 +88,7 @@ class SpeedChoices:
     """The models the AI models page has chosen, as the test and the estimate need them.
 
     An empty model means the step does not run, or does not run on Ollama: text recognition with
-    Tesseract or PaddleOCR has no model to measure, and a step on an online service is not
+    the built-in reader has no AI model to measure, and a step on an online service is not
     measured at all.
     """
 

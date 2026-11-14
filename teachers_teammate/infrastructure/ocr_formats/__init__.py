@@ -1,6 +1,6 @@
 """Format-aware post-processing of raw OCR output.
 
-Engines answer in different notations: plain text (Tesseract, Paddle), Markdown (many
+Engines answer in different notations: plain text (the built-in reader), Markdown (many
 vision-language models) or layout HTML (Chandra).  :class:`OcrOutputPostprocessor` detects
 the notation per page, parses it into a
 :class:`~teachers_teammate.domain.formatted_text.FormattedDocument`, applies filters

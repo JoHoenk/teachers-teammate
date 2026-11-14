@@ -9,7 +9,6 @@ from enum import StrEnum
 import importlib.util
 import os
 from pathlib import Path
-import shutil
 import sys
 import threading
 import time
@@ -20,8 +19,15 @@ from ..config import DEFAULTS, Config, OcrConfig
 from ..domain.context_budget import RunWindows, memory_at_context_gb
 from ..domain.correction_policy import DEFAULT_LEVEL, normalize_output_mode
 from ..domain.correction_review import CorrectionReview
-from ..domain.data_location import DataFlow, StageLocation, is_ollama_cloud_model
+from ..domain.data_location import ENGINE_PPOCR, DataFlow, StageLocation, is_ollama_cloud_model
 from ..domain.formatted_text import TextFormat
+from ..domain.local_models import (
+    PAGE_MODELS,
+    PAGE_MODELS_SKIPPED_NOTICE,
+    READER_MODELS,
+    READER_NOT_DOWNLOADED,
+    READER_SIZE_LABEL,
+)
 from ..domain.model_catalog import (
     RUN_MEMORY_MARGIN_GB,
     DetectionReason,
@@ -53,7 +59,6 @@ from ..domain.run_summary import RunSummary
 from ..infrastructure import power
 from ..infrastructure.addon_manager import ADDON_AMD as ADDON_AMD  # noqa: PLC0414
 from ..infrastructure.addon_manager import ADDON_NVIDIA as ADDON_NVIDIA  # noqa: PLC0414
-from ..infrastructure.addon_manager import ADDON_PADDLE as ADDON_PADDLE  # noqa: PLC0414
 from ..infrastructure.addon_manager import ADDON_PRIVACY as ADDON_PRIVACY  # noqa: PLC0414
 from ..infrastructure.anonymizer import (
     DEFAULT_PATTERNS as DEFAULT_ANONYMIZER_PATTERNS,  # noqa: F401
@@ -80,10 +85,8 @@ from ..infrastructure.llm_factory import (
 from ..infrastructure.ocr_processor import (
     SUPPORTED_OCR_ENGINES,
 )
-from ..infrastructure.ocr_processor import (
-    default_preprocess_for_engine as _infra_default_preprocess_for_engine,
-)
 from ..infrastructure.ollama_utils import warm_up_own_host_names
+from ..infrastructure.onnx.store import ModelStore
 from ..infrastructure.pipeline import OCRPipeline, preprocess_preview
 from ..infrastructure.power import KEEP_AWAKE_REASON, NullSleepBlocker, on_battery
 from ..infrastructure.reporting import KeepAwakeState
@@ -146,7 +149,8 @@ class IssueKind(StrEnum):
     """What is missing, so the GUI can offer the fix without reading the sentence."""
 
     OCR_NOT_ALLOWED = "ocr_not_allowed"
-    ENGINE_MISSING = "engine_missing"
+    #: The built-in reader's model files are not downloaded yet.
+    READER_MODEL_MISSING = "reader_model_missing"
     #: An address on this computer that does not answer, and no Ollama program was found.
     OLLAMA_NOT_FOUND = "ollama_not_found"
     #: Ollama is installed on this computer but does not answer: it has to be started.
@@ -171,8 +175,6 @@ class RequirementIssue:
     kind: IssueKind
     #: The provider whose package or key is missing (``PACKAGE_MISSING``, ``KEY_MISSING``).
     provider: str = ""
-    #: The text-recognition engine that is not installed (``ENGINE_MISSING``).
-    engine: str = ""
     #: Ollama tags that are not downloaded, or the spaCy model that is missing.
     models: tuple[str, ...] = ()
     #: The app can start Ollama itself (``OLLAMA_NOT_RUNNING``): the fix offers a button.
@@ -304,8 +306,11 @@ class ProcessingApplicationService:
         state_repository_factory: Callable[[Path], StateRepository] | None = None,
         component_factory: PipelineComponentFactory | None = None,
         sleep_blocker: SleepBlocker | None = None,
+        model_store: ModelStore | None = None,
     ) -> None:
         self._discovery = discovery or FileDiscovery()
+        # The built-in reader's model files; tests give it a store under a temporary folder.
+        self._model_store = model_store or ModelStore()
         # Held around a run only (see run_selected); a fake in tests, the platform's own here.
         self._sleep_blocker = sleep_blocker or power.default_sleep_blocker()
         self._pipeline_factory = pipeline_factory or OCRPipeline
@@ -339,6 +344,7 @@ class ProcessingApplicationService:
             discovery=self._discovery,
             state_store_factory=self._state_store,
             windows_for=self.resolved_windows,
+            model_store=self._model_store,
         )
 
     def _state_store(self, config: Config) -> StateRepository:
@@ -388,6 +394,7 @@ class ProcessingApplicationService:
                         config.hardware_profile, config.ollama_url
                     ),
                     keep_awake=awake,
+                    model_store=self._model_store,
                 ),
                 progress=progress,
             )
@@ -439,7 +446,9 @@ class ProcessingApplicationService:
                 StageHashes(
                     ocr_done=state.ocr_done,
                     ocr_config_hash=state.ocr_config_hash,
-                    expected_ocr_config_hash=compute_ocr_config_hash(config, ocr_prompt, file),
+                    expected_ocr_config_hash=compute_ocr_config_hash(
+                        config, ocr_prompt, file, self._model_store
+                    ),
                     correction_done=state.correction_done,
                     correction_config_hash=state.correction_config_hash,
                     expected_correction_config_hash=expected_corr_hash,
@@ -760,10 +769,6 @@ class ProcessingApplicationService:
         """Return supported OCR engine identifiers."""
         return list(SUPPORTED_OCR_ENGINES)
 
-    def default_preprocess_for_engine(self, engine: str) -> str:
-        """Return the recommended preprocessing method for *engine*."""
-        return _infra_default_preprocess_for_engine(engine)
-
     def list_supported_suffixes(self) -> frozenset[str]:
         """Return input file suffixes accepted by the pipeline."""
         return SUPPORTED_SUFFIXES
@@ -864,7 +869,11 @@ class ProcessingApplicationService:
     ) -> tuple[Path, Path, list[str]]:
         """Run preprocessing preview for one source file."""
         return preprocess_preview(
-            source_path, ocr, tmp_dir, self._component_factory.build_preprocessor
+            source_path,
+            ocr,
+            tmp_dir,
+            self._component_factory.build_preprocessor,
+            self._model_store,
         )
 
     def warm_up_anonymizer(self, language: str, config: object | None = None) -> None:
@@ -1111,21 +1120,10 @@ class ProcessingApplicationService:
     def _check_engine(self, engine: str, url: str, *, model: str = "") -> tuple[bool, bool, str]:
         if engine == "ollama":
             return self._check_ollama(url, model)
-        if engine == "tesseract":
-            if self._tesseract_installed():
-                return True, True, "✓ tesseract binary found"
-            return False, False, "✗ tesseract not found — install Tesseract OCR"
-        if engine == "paddleocr":
-            if not self.is_module_importable("paddleocr"):
-                return (
-                    False,
-                    False,
-                    "✗ paddleocr not installed — run: pip install paddlepaddle paddleocr",
-                )
-            from ..infrastructure.ocr_processor import paddle_gpu_available  # noqa: PLC0415
-
-            accel = "GPU" if paddle_gpu_available() else "CPU only"
-            return True, True, f"✓ paddleocr available · {accel}"
+        if engine == ENGINE_PPOCR:
+            if self.reader_installed():
+                return True, True, "✓ built-in reader ready"
+            return False, False, f"✗ built-in reader not downloaded ({READER_SIZE_LABEL})"
         return True, True, "✓ OK"
 
     def _check_provider(
@@ -1291,6 +1289,7 @@ class ProcessingApplicationService:
             name_detection=self.anonymizer_available(answers.language),
             spacy_installed=self.is_module_importable("spacy"),
             spacy_model=self.spacy_model_for_language(answers.language),
+            reader_installed=self.reader_installed(),
             missing_package=(
                 self.missing_provider_package(answers.online_choice[0]) or ""
                 if answers.proofreading is ProofreadingPlace.ONLINE
@@ -1560,6 +1559,50 @@ class ProcessingApplicationService:
             return ""  # no page is read, so what would read it does not matter
         return ocr_refusal(config.ocr.engine, config.ocr.model, config.ollama_url)
 
+    def page_models_notice_for_run(self, config: Config) -> str:
+        """Return the one line a run prints when it skips turning and flattening, else ``""``.
+
+        That is a run that reads pages with the automatic preparation while the page models
+        are not downloaded.  It is a notice, never a refusal: the run does not wait for them.
+        """
+        if (
+            config.recognition_enabled
+            and config.ocr.preprocess_method == "auto"
+            and not self.page_models_installed()
+        ):
+            return PAGE_MODELS_SKIPPED_NOTICE
+        return ""
+
+    def reader_refusal_for_run(self, config: Config) -> str:
+        """Return why the built-in reader cannot start this run, or ``""`` when it can.
+
+        Only a run that reads pages with the reader and has no model files is refused; the
+        sentence names the command line flag that downloads them.  A run over files that need
+        no reading (text files, text that is already recognised) is not: the model files are
+        only opened when a page is read, as in the main window
+        (see :meth:`needs_text_recognition`).
+        """
+        if not (
+            config.recognition_enabled
+            and config.ocr.engine == ENGINE_PPOCR
+            and not self.reader_installed()
+        ):
+            return ""
+        files = self.collect_input_files(config)
+        if not self.needs_text_recognition(files, recognised=self._recognised_files(config, files)):
+            return ""
+        return READER_NOT_DOWNLOADED
+
+    def _recognised_files(self, config: Config, files: list[Path]) -> set[Path]:
+        """Return the *files* whose recognised text is already stored (best effort)."""
+        try:
+            views = self.load_views(config, files)
+        except Exception:  # noqa: BLE001  # a lookup that fails only means "read it again"
+            return set()
+        return {
+            file for file in files if (view := views.get(str(file.resolve()))) and view.ocr_done
+        }
+
     @staticmethod
     def output_refusal_for_run(config: Config) -> str:
         """Return why this run's output folder must not be used, or ``""`` when it is fine.
@@ -1697,10 +1740,10 @@ class ProcessingApplicationService:
         first).  ``memory=False`` skips the memory warning: the readiness line only asks
         whether a run can start, and the question about free memory belongs to Run.
         ``recognition=False`` skips the check of the text recognition engine for a run that
-        reads no page (only text files, or text that is already recognised): a missing
-        Tesseract must not stop it (see :meth:`needs_text_recognition`).  ``fresh=True`` asks the
-        Ollama server again instead of using the list it gave within the last minutes: for a
-        teacher who just ran ``ollama pull`` in a terminal and pressed "Check again".
+        reads no page (only text files, or text that is already recognised): a reader that is
+        not downloaded must not stop it (see :meth:`needs_text_recognition`).  ``fresh=True``
+        asks the Ollama server again instead of using the list it gave within the last minutes:
+        for a teacher who just ran ``ollama pull`` in a terminal and pressed "Check again".
         """
         ocr_reason = self.ocr_refusal_for_run(config)
         if ocr_reason:
@@ -1826,30 +1869,65 @@ class ProcessingApplicationService:
             return self._name_detection_issues(config.language)
         return []
 
-    @staticmethod
-    def _tesseract_installed() -> bool:
-        """Return whether the Tesseract program is on the PATH."""
-        return shutil.which("tesseract") is not None
-
     def _ocr_engine_issues(self, engine: str) -> list[RequirementIssue]:
-        """Return an issue when the text-recognition *engine* is not installed.
+        """Return an issue when the text-recognition *engine* is not ready.
 
-        The same two checks as the connection check, without its graphics-card probe (that
-        one imports Paddle).  Ollama is checked by the preflight before the stages.
+        Ollama is checked by the preflight before the stages.
         """
-        if engine == "tesseract" and not self._tesseract_installed():
+        if engine == ENGINE_PPOCR and not self.reader_installed():
             return [
                 RequirementIssue(
-                    "Tesseract is not installed.", IssueKind.ENGINE_MISSING, engine=engine
-                )
-            ]
-        if engine == "paddleocr" and not self.is_module_importable("paddleocr"):
-            return [
-                RequirementIssue(
-                    "PaddleOCR is not installed.", IssueKind.ENGINE_MISSING, engine=engine
+                    "The built-in reader is not downloaded yet.", IssueKind.READER_MODEL_MISSING
                 )
             ]
         return []
+
+    # ── The built-in reader's model files ────────────────────────────────
+
+    def reader_installed(self) -> bool:
+        """Return whether the built-in reader's model files are downloaded."""
+        return not self._model_store.missing(READER_MODELS)
+
+    def download_reader(
+        self,
+        on_progress: Callable[[int, int], None] | None = None,
+        cancel: threading.Event | None = None,
+    ) -> None:
+        """Download the built-in reader's model files (only ever on the teacher's request).
+
+        Raises:
+            ModelDownloadError: with a sentence a teacher can act on.
+            ModelDownloadCancelledError: when *cancel* was set.
+        """
+        self._model_store.download(READER_MODELS, on_progress=on_progress, cancel=cancel)
+
+    # ── The page models of the automatic image preparation ───────────────
+
+    def page_models_installed(self) -> bool:
+        """Return whether the page models (turn, flatten) are downloaded."""
+        return not self._model_store.missing(PAGE_MODELS)
+
+    def download_page_models(
+        self,
+        on_progress: Callable[[int, int], None] | None = None,
+        cancel: threading.Event | None = None,
+    ) -> None:
+        """Download the page models (only ever on the teacher's request).
+
+        Raises:
+            ModelDownloadError: with a sentence a teacher can act on.
+            ModelDownloadCancelledError: when *cancel* was set.
+        """
+        self._model_store.download(PAGE_MODELS, on_progress=on_progress, cancel=cancel)
+
+    @property
+    def model_store(self) -> ModelStore:
+        """The store of the model files this service checks, downloads and runs from."""
+        return self._model_store
+
+    def models_dir(self) -> Path:
+        """Return the folder the downloaded model files live in."""
+        return self._model_store.root
 
     def _llm_stage_issues(self, config: Config, stage: str) -> list[RequirementIssue]:
         """Return what proofreading or the content review still needs (package, key, model)."""
@@ -2016,8 +2094,8 @@ class ProcessingApplicationService:
         """Probe availability of optional components and return a status map.
 
         Keys produced (all optional — only those whose *inputs* are supplied):
-        - ``"tesseract"`` — always checked
-        - ``"paddleocr"`` — always checked
+        - ``"reader:ppocr"`` — always checked (the built-in reader's model files)
+        - ``"page_models:all"`` — always checked (the page models of the automatic preparation)
         - ``"provider:{name}"`` — for each entry in *provider_modules*
         - ``"spacy:{model_id}"`` — for each id in *spacy_models*
         - ``"gpu:nvidia"`` — when *gpu_packages* contains ``"gpu:nvidia"``
@@ -2026,9 +2104,8 @@ class ProcessingApplicationService:
         - ``"langchain:{key}"`` — for each entry in *langchain_packages*
         """
         result: dict[str, bool] = {}
-        result["tesseract"] = shutil.which("tesseract") is not None
-        result["pytesseract"] = importlib.util.find_spec("pytesseract") is not None
-        result["paddleocr"] = importlib.util.find_spec("paddleocr") is not None
+        result["reader:ppocr"] = self.reader_installed()
+        result["page_models:all"] = self.page_models_installed()
 
         if provider_modules:
             for name, module_name in provider_modules.items():

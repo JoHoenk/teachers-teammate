@@ -196,9 +196,10 @@ def test_set_up_stores_the_keys_once(qtbot, keyring, no_keys, monkeypatch) -> No
 
 def test_set_up_starts_the_downloads_by_kind(qtbot, keyring, no_keys, monkeypatch) -> None:
     """
-    Given  a plan with a package, a name-detection model and an Ollama model
+    Given  a plan with a package, a name-detection model, the built-in reader and an Ollama
+           model
     When   Set up is pressed
-    Then   the round gets one list per kind, so pip, spaCy and the pulls run in order
+    Then   the round gets one list per kind, so pip, spaCy, the reader and the pulls run in order
     """
     service = SetupAppService()
     assistant = _assistant(qtbot, _context(service, correction_provider="openai"))
@@ -210,6 +211,7 @@ def test_set_up_starts_the_downloads_by_kind(qtbot, keyring, no_keys, monkeypatc
     downloads = (
         _download(DownloadKind.PACKAGE, "langchain-openai"),
         _download(DownloadKind.SPACY_MODEL, "de_core_news_sm"),
+        _download(DownloadKind.READER_MODEL, "ppocr"),
         _download(DownloadKind.OLLAMA_MODEL, "qwen3:8b"),
     )
 
@@ -219,6 +221,7 @@ def test_set_up_starts_the_downloads_by_kind(qtbot, keyring, no_keys, monkeypatc
         {
             "packages": ["langchain-openai"],
             "spacy_models": ["de_core_news_sm"],
+            "reader": True,
             "ollama_models": ["qwen3:8b"],
             "ollama_url": plan.settings.get("ollama_url", DEFAULTS["ollama_url"]),
         }

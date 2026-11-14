@@ -242,7 +242,7 @@ def test_choices_leave_out_a_step_that_does_not_run_on_ollama() -> None:
     Then   the proofreading model is empty, because there is nothing on this computer to measure
     """
     settings = {
-        "ocr_engine": "tesseract",
+        "ocr_engine": "ppocr",
         "correction_provider": "mistral",
         "correction_model": "mistral-large-latest",
         "evaluate_provider": "ollama",

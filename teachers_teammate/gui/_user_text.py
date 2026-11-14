@@ -7,9 +7,11 @@ widgets import these names; they never build such sentences themselves.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
 from ..domain.correction_review import CHANGE_CATEGORIES, AlignedReview
+from ..domain.local_models import PAGE_MODELS_SIZE_LABEL, READER_SIZE_LABEL
 from ..exceptions import RECOGNITION_OFF_MESSAGE
 
 if TYPE_CHECKING:
@@ -122,6 +124,77 @@ EXPLANATIONS_SUPPORTED_TOOLTIP = (
     "works with it."
 )
 
+# ── Text recognition: the engines and the built-in reader ─────────────────────
+
+#: The engine choice, by engine id.
+OCR_ENGINE_LABELS = {
+    "ollama": "Ollama (AI model)",
+    "ppocr": "Built-in reader (PP-OCR)",
+}
+OCR_ENGINE_HINTS = {
+    "ollama": "Best for handwriting. Fast with a graphics card.",
+    "ppocr": (
+        "Works on any computer without a server. Best for printed pages; reads handwriting "
+        "less well."
+    ),
+}
+READER_DOWNLOAD_LABEL = f"Download built-in reader ({READER_SIZE_LABEL})"
+READER_NOT_DOWNLOADED = "Not downloaded yet."
+READER_DOWNLOADED = "✓ Downloaded"
+
+# ── Image preparation: the two choices, the page models, the preview caption ──
+
+#: The image preparation choice, by the id stored in the settings.
+PREPROCESS_LABELS = {
+    "auto": "Automatic (recommended)",
+    "none": "Original page",
+}
+PREPROCESS_TOOLTIP = (
+    "How a page is prepared before it is read.\n\n"
+    "Automatic — straightens and turns photographed pages, evens out shadows and\n"
+    "  corrects a tilt. Clean scans pass unchanged.\n"
+    "Original page — sends each page as scanned or photographed. For checking\n"
+    "  what the preparation changes."
+)
+PREPROCESS_HINT = (
+    "Straightens and turns photographed pages, evens out shadows and corrects a tilt. "
+    "Clean scans pass unchanged."
+)
+PAGE_MODELS_LABEL = f"Page models — {PAGE_MODELS_SIZE_LABEL}"
+PAGE_MODELS_HINT = "Used by Automatic image preparation for any reading engine."
+PAGE_MODELS_MISSING_LINE = (
+    f"ⓘ Turning pages and flattening curved pages need the page models ({PAGE_MODELS_SIZE_LABEL})."
+)
+PAGE_MODELS_DOWNLOAD_BUTTON = "Download…"
+PAGE_MODELS_DOWNLOADED = "✓ Downloaded"
+
+#: What each step of the automatic preparation did, as the preview caption says it.  A step
+#: that is not listed (the gray conversion) is not worth a word.
+STEP_LABELS = {
+    "page": "page cut out",
+    "flatten": "page flattened",
+    "turn": "page turned",
+    "size": "scaled down",
+    "light": "shadows evened out",
+    "deskew": "tilt corrected",
+    "turned by tag": "turned by the photo's rotation tag",
+}
+
+
+def prepared_caption(steps: Sequence[str]) -> str:
+    """Return the preview caption for the steps that acted on the page.
+
+    "Prepared: page turned, shadows evened out"; "Prepared: nothing needed" when no step that
+    is worth a word acted.  Under "Original page" the only step there can be is the rotation
+    tag: "Original page (rotation tag applied)".  The steps' own reasons ("tilt 1.4°") go to
+    the debug log only.
+    """
+    if list(steps) == ["turned by tag"]:
+        return "Original page (rotation tag applied)"
+    words = [STEP_LABELS[name] for name in steps if name in STEP_LABELS]
+    return f"Prepared: {', '.join(words) if words else 'nothing needed'}"
+
+
 # ── Settings window: page names and "where to change it" ──────────────────────
 
 PAGE_GENERAL = "General"
@@ -139,6 +212,8 @@ WHERE_PRIVACY = f"Settings → {PAGE_PRIVACY}"
 WHERE_AI_SETUP = f"Settings → {PAGE_AI_SETUP}"
 WHERE_ONLINE_SERVICES = f"Settings → {PAGE_ONLINE_SERVICES}"
 WHERE_ADDONS = f"Settings → {PAGE_ADDONS}"
+TAB_READING_MODELS = "Reading models"
+WHERE_READING_MODELS = f"{WHERE_ADDONS} → {TAB_READING_MODELS}"
 WHERE_RESULTS = "Results, in the main window"
 WHERE_STEPS = "What should happen, in the main window"
 WHERE_SETUP = "Tools → Setup Assistant…"

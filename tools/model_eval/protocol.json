@@ -1,12 +1,18 @@
 {
   "schema": 1,
-  "current": 1,
+  "current": 2,
   "versions": [
     {
       "version": 1,
       "date": "2026-11-12",
       "fingerprint": "e15a6a030db6e02da24b53ea37c28db6ea20d18ec24bb1a7ceb849c3b31a8c1e",
       "why": "First version, restarted on 2026-11-12 when the early measurements were deleted: review and text mode, per-model request profile, a second try after a cut-off review answer, scores over the text without added Markdown marks, num_ctx 8192, long texts in pieces as in the app, answer format 1."
+    },
+    {
+      "version": 2,
+      "date": "2026-11-14",
+      "fingerprint": "c5d66dae736fd35834af32dfa9ce3be467febb2e34eb70ba6a76da06ac9effda",
+      "why": "The proofreading exchange (corrected text, explanations, unclear check) joins review and text as an answer mode, and the fingerprint now covers its three requests per language and the knob that turns step 3 off. The request side of review and text mode is unchanged: their part of the fingerprint hashes to version 1's."
     }
   ]
 }

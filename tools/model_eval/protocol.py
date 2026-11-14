@@ -36,15 +36,17 @@ import re
 from typing import Any
 
 from teachers_teammate.domain.answer_format import ANSWER_FORMAT_VERSION
-from teachers_teammate.domain.context_budget import answers_with_the_same_text
+from teachers_teammate.domain.context_budget import ContextBudget, answers_with_the_same_text
 from teachers_teammate.domain.correction_policy import DEFAULT_LEVEL
 from teachers_teammate.domain.formatted_text import PLAIN, TextFormat
 from teachers_teammate.domain.model_catalog import DEFAULT_REQUEST_PROFILE, RequestProfile
 from teachers_teammate.infrastructure.correction import instruction_parts
 from teachers_teammate.infrastructure.correction_schema import repair_message
 from teachers_teammate.infrastructure.ollama_utils import PROOFREADING_NUM_CTX, OllamaClient
+from teachers_teammate.infrastructure.proofreading.corrector import build_exchange_corrector
+from teachers_teammate.infrastructure.proofreading.port import PortAnswer, StepRequest
 
-from .answer_mode import CORRECTOR_MODES, DEFAULT_MODE, AnswerMode
+from .answer_mode import DEFAULT_MODE, RUNNABLE_MODES, AnswerMode
 from .app_corrector import app_corrector_factory, innermost
 from .languages import LANGUAGE_NAMES
 from .redaction import sha256_text
@@ -55,8 +57,8 @@ PROTOCOL_PATH = Path(__file__).with_name("protocol.json")
 NUM_CTX = PROOFREADING_NUM_CTX
 """The window the protocol measures at; the run and the fingerprint both use it."""
 
-MODES: tuple[AnswerMode, ...] = CORRECTOR_MODES
-"""The answer modes the fingerprint covers: the app's review answer and corrections only."""
+MODES: tuple[AnswerMode, ...] = RUNNABLE_MODES
+"""The answer modes the fingerprint covers: every mode a run can ask in."""
 
 FINGERPRINT_LANGUAGES: tuple[str, ...] = tuple(LANGUAGE_NAMES)
 """The languages the fingerprint covers: every one the tool can ask in, so a prompt change in any
@@ -72,6 +74,14 @@ The catalog's choice of profile per model is *not* part of the fingerprint — i
 run, like the temperature — but the request each choice produces is, so a change to the rule text
 or to a further knob changes the fingerprint and needs a new eval version.
 """
+
+EXCHANGE_PROFILE_VARIANTS: tuple[tuple[str, RequestProfile], ...] = (
+    ("plain", DEFAULT_REQUEST_PROFILE),
+    ("no-unclear", RequestProfile(unclear_check=False)),
+)
+"""The request profiles the fingerprint covers for the exchange: the one knob that changes which
+requests it sends is whether step ③ runs.  Temperature and thinking are the run's, in its header,
+and ``compact_json`` is a knob of the review request only."""
 
 _HEX64 = re.compile(r"^[0-9a-f]{64}$")
 
@@ -114,6 +124,8 @@ def instructions_sha256(
         if code not in LANGUAGE_NAMES:
             raise ValueError(f"no language name for {code!r}; the instructions cannot be hashed")
         names.append(LANGUAGE_NAMES[code])
+    if mode is AnswerMode.EXCHANGE:
+        return _exchange_instructions_sha256(names, level)
     parts: list[str] = []
     for name in sorted(names):
         policy, fixed = instruction_parts(
@@ -126,6 +138,28 @@ def instructions_sha256(
             compact_json=compact_json,
         )
         parts.append(f"## {name}\n{policy}\n\n{fixed}")
+    return sha256_text("\n\n---\n\n".join(parts))
+
+
+def _exchange_instructions_sha256(names: Iterable[str], level: str) -> str:
+    """Return the hash of the exchange's three system prompts and its parameter lines.
+
+    The exchange has no per-language prompt: its system prompts are fixed and versioned, and the
+    language, level and notes travel in the user message.  So the hash covers the prompts, their
+    version and the parameter lines of every language of the run.  It is recorded in the run
+    header, so a changed prompt stops a run from being resumed; that a changed prompt needs a new
+    ``eval_version`` is the fingerprint's job.
+    """
+    from teachers_teammate.domain.correction_prompts import (  # noqa: PLC0415
+        CORRECT_SYSTEM,
+        EXPLAIN_SYSTEM,
+        PROMPT_VERSION,
+        UNCLEAR_SYSTEM,
+        parameters,
+    )
+
+    parts = [f"prompt version {PROMPT_VERSION}", CORRECT_SYSTEM, EXPLAIN_SYSTEM, UNCLEAR_SYSTEM]
+    parts.extend(f"## {name}\n{parameters(name, level=level)}" for name in sorted(names))
     return sha256_text("\n\n---\n\n".join(parts))
 
 
@@ -218,6 +252,77 @@ def _captured(
     return client.requests, int(budget or 0)
 
 
+class _CapturingPort:
+    """A model port that keeps every request of the exchange and answers each step validly.
+
+    The probe text ``Probe.`` is "corrected" to ``Probe!``: one edit, so step ② is asked, and
+    step ③ answers that nothing is unclear.  What each step sends — its system and user message,
+    its answer schema, its thinking and its answer budget — is the request side of the exchange;
+    the temperature belongs to the run and is not kept.
+    """
+
+    def __init__(self) -> None:
+        self.requests: list[dict[str, Any]] = []
+
+    def window(self) -> ContextBudget:
+        """Return the window the protocol measures at."""
+        return ContextBudget(NUM_CTX)
+
+    def ask_text(self, req: StepRequest) -> PortAnswer:
+        """Keep *req* and answer a corrected probe text."""
+        self._keep(req)
+        return PortAnswer(raw="Probe!")
+
+    def ask_structured(self, req: StepRequest) -> PortAnswer:
+        """Keep *req* and answer an explanation of the one edit, or nothing unclear."""
+        self._keep(req)
+        if req.step == "explain":
+            raw = '{"edits": [{"id": 1, "category": "punctuation", "explanation": "x"}]}'
+        else:
+            raw = '{"unclear": []}'
+        return PortAnswer(raw=raw)
+
+    def _keep(self, req: StepRequest) -> None:
+        self.requests.append(
+            {
+                "step": req.step,
+                "system": req.system,
+                "prompt": req.user,
+                "format": None if req.schema is None else req.schema.model_json_schema(),
+                "think": req.think,
+                "answer_factor": req.answer_factor,
+                "repairable": req.repairable,
+            }
+        )
+
+
+def _captured_exchange(code: str, profile: RequestProfile) -> tuple[list[dict[str, Any]], int]:
+    """Return the requests the exchange sends for the probe text, and its text budget.
+
+    Raises:
+        RuntimeError: if the exchange sent another number of requests than its steps, so the
+            capture cannot quietly change shape.
+    """
+    port = _CapturingPort()
+    corrector = build_exchange_corrector(
+        OllamaClient("http://capture.invalid"),
+        "fingerprint",
+        timeout=60.0,
+        num_ctx=NUM_CTX,
+        profile=profile,
+        port=port,  # ty: ignore[invalid-argument-type]
+    )
+    name = LANGUAGE_NAMES[code]
+    corrector.correct(_PROBE_TEXT, name)
+    expected = 3 if profile.unclear_check else 2
+    if len(port.requests) != expected:
+        raise RuntimeError(
+            f"the fingerprint expected {expected} request(s) for exchange/{code}, "
+            f"the exchange sent {len(port.requests)}"
+        )
+    return port.requests, int(corrector.max_text_chars(name) or 0)
+
+
 def fingerprint() -> dict:
     """Return the request side of a run: what the fingerprint hashes, as sorted JSON.
 
@@ -236,8 +341,15 @@ def fingerprint() -> dict:
         requests[mode.value], budgets[mode.value] = {}, {}
         for code in FINGERPRINT_LANGUAGES:
             requests[mode.value][code], budgets[mode.value][code] = {}, {}
-            for label, profile in PROFILE_VARIANTS:
-                sent, budget = _captured(mode, code, profile)
+            variants = (
+                EXCHANGE_PROFILE_VARIANTS if mode is AnswerMode.EXCHANGE else PROFILE_VARIANTS
+            )
+            for label, profile in variants:
+                sent, budget = (
+                    _captured_exchange(code, profile)
+                    if mode is AnswerMode.EXCHANGE
+                    else _captured(mode, code, profile)
+                )
                 requests[mode.value][code][label] = [
                     sha256_text(json.dumps(request, sort_keys=True, ensure_ascii=False))
                     for request in sent

@@ -6,7 +6,13 @@ import json
 
 import pytest
 
-from tools.model_eval.answer_mode import CORRECTOR_MODES, DEFAULT_MODE, AnswerMode, parse_mode
+from tools.model_eval.answer_mode import (
+    CORRECTOR_MODES,
+    DEFAULT_MODE,
+    RUNNABLE_MODES,
+    AnswerMode,
+    parse_mode,
+)
 from tools.model_eval.results import ResultRow
 
 
@@ -38,12 +44,14 @@ def test_the_modes_are_the_three_ways_to_ask() -> None:
     Then   review and text are the ones the app's corrector answers in, two-step is not, and
            review is the default
     """
-    assert [mode.value for mode in AnswerMode] == ["review", "text", "two-step"]
+    assert [mode.value for mode in AnswerMode] == ["review", "text", "exchange", "two-step"]
     assert CORRECTOR_MODES == (AnswerMode.REVIEW, AnswerMode.TEXT)
     assert DEFAULT_MODE is AnswerMode.REVIEW
     assert AnswerMode.REVIEW.asks_corrector
     assert AnswerMode.TEXT.asks_corrector
     assert not AnswerMode.TWO_STEP.asks_corrector
+    assert not AnswerMode.EXCHANGE.asks_corrector  # it has its own factory, and no fingerprint
+    assert RUNNABLE_MODES == (AnswerMode.REVIEW, AnswerMode.TEXT, AnswerMode.EXCHANGE)
 
 
 @pytest.mark.parametrize("value", ["Review", "two_step", "chat", ""])
@@ -53,7 +61,7 @@ def test_parse_mode_refuses_a_value_that_is_not_a_mode(value: str) -> None:
     When   it is parsed
     Then   a ValueError names the allowed values
     """
-    with pytest.raises(ValueError, match="use one of: review, text, two-step"):
+    with pytest.raises(ValueError, match="use one of: review, text, exchange, two-step"):
         parse_mode(value)
 
 

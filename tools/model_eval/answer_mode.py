@@ -19,6 +19,9 @@ class AnswerMode(StrEnum):
     TEXT = "text"
     """The corrected text only."""
 
+    EXCHANGE = "exchange"
+    """The proofreading exchange: ① the corrected text, ② the explanations, ③ the unclear check."""
+
     TWO_STEP = "two-step"
     """Step 1 in text mode, step 2 explains (planned; nothing writes it yet)."""
 
@@ -30,6 +33,13 @@ class AnswerMode(StrEnum):
 
 CORRECTOR_MODES: tuple[AnswerMode, ...] = (AnswerMode.REVIEW, AnswerMode.TEXT)
 """The modes the app's corrector answers in; the fingerprint covers these."""
+
+EXCHANGE_MODES: tuple[AnswerMode, ...] = (AnswerMode.EXCHANGE,)
+"""The modes asked through the exchange.  They are **not** in the fingerprint: see
+:data:`CORRECTOR_MODES`, which is what ``protocol.json`` hashes."""
+
+RUNNABLE_MODES: tuple[AnswerMode, ...] = (*CORRECTOR_MODES, *EXCHANGE_MODES)
+"""Every mode ``compare_writing_models run`` can ask in."""
 
 DEFAULT_MODE = AnswerMode.REVIEW
 """The answer mode of the app's proofreading: corrections with explanations in one JSON answer."""
@@ -48,4 +58,11 @@ def parse_mode(value: str) -> AnswerMode:
         raise ValueError(f"unknown answer mode {value!r}; use one of: {allowed}") from None
 
 
-__all__ = ["CORRECTOR_MODES", "DEFAULT_MODE", "AnswerMode", "parse_mode"]
+__all__ = [
+    "CORRECTOR_MODES",
+    "DEFAULT_MODE",
+    "EXCHANGE_MODES",
+    "RUNNABLE_MODES",
+    "AnswerMode",
+    "parse_mode",
+]

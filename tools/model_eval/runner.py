@@ -56,7 +56,8 @@ class Matrix:
     """The seed of the first repeat; ``None`` sends no seed at all (``--no-seed``)."""
     timeout: float
     isolate: bool
-    gpu_sampler: str | None
+    gpu_sampler: str | dict | None
+    """The vendor of a sampler on this machine, or the agent's record (:func:`.layout.sampler_record`)."""
     machine: str
     compact_json: str = "catalog"
     """``catalog`` (each model's own choice), ``on`` or ``off``; see ``--compact-json``."""

@@ -406,7 +406,7 @@ def review_for_counting(
     empty review.  The rule is applied when a text is proofread and again when a stored row is
     re-scored, so a report of an older run says the same.
     """
-    if review is None and mode == AnswerMode.REVIEW and corrected != source:
+    if review is None and mode in (AnswerMode.REVIEW, AnswerMode.EXCHANGE) and corrected != source:
         return CorrectionReview()
     return review
 

@@ -534,6 +534,17 @@ class OllamaClient:
         #: reported about it.  A run shares one client between all its stages, so one sink sees
         #: every request of the run and can turn them into a measurement of the machine.
         self._stats_sink = stats_sink
+        self._last_stats: ChatStats | None = None
+
+    @property
+    def last_stats(self) -> ChatStats | None:
+        """Return what the server reported about the most recent chat request.
+
+        ``None`` before the first request and after one that never reached the server, so a
+        caller that reads it right after its own request cannot pick up an older answer's
+        numbers.
+        """
+        return self._last_stats
 
     def _client(self) -> ollama.Client:
         """Return an ``ollama.Client`` for :attr:`base_url`."""
@@ -879,6 +890,7 @@ class OllamaClient:
 
         if stop_requested(self._cancel_event):
             raise RunStoppedError
+        self._last_stats = None
         message: dict = {"role": "user", "content": prompt}
         if images:
             message["images"] = images
@@ -936,6 +948,7 @@ class OllamaClient:
         content = "".join(parts)
         # The last chunk carries the summary of the whole answer; earlier ones leave these unset.
         stats = _chunk_stats(chunks[-1]) if chunks else ChatStats()
+        self._last_stats = stats
         if self._stats_sink is not None:
             # Before the checks below: a request that is refused here still cost the time the
             # server reported, and the sink decides for itself whether the numbers are usable.

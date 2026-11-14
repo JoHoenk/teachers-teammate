@@ -24,6 +24,8 @@ from dataclasses import dataclass, replace
 from enum import StrEnum
 from typing import TYPE_CHECKING, Literal
 
+from .proofreading.result import ExchangeKind, StepName
+
 if TYPE_CHECKING:
     from .performance_estimate import SpeedBand, SpeedSource
 
@@ -154,6 +156,22 @@ def think_level(tag: str) -> str | None:
 
 
 @dataclass(frozen=True)
+class StepProfile:
+    """How one step of the exchange is sent: its temperature and its thinking.
+
+    A step is one kind of request (① correct, ② explain, ③ unclear).  The steps differ in what
+    they ask for — ① rewrites the text, ② and ③ answer a small JSON object — so they may differ
+    in temperature and in what a reasoning model is told.
+    """
+
+    #: The temperature the request is sent at.
+    temperature: float = DEFAULT_CORRECTION_TEMPERATURE
+    #: What the request tells a reasoning model about thinking: ``False`` (off), or the level
+    #: (``"low"``) of a family that ignores the flag (see :data:`THINK_LEVELS`).
+    think: bool | str = False
+
+
+@dataclass(frozen=True)
 class RequestProfile:
     """How the app asks one model to proofread; the default is what every model gets.
 
@@ -161,14 +179,57 @@ class RequestProfile:
     the request the app sends is what a run measures.
     """
 
-    #: Add the compact-JSON rule to the fixed part of a review request.  Off by default: a model
-    #: a teacher adds themselves gets the request that broke nobody.
+    #: Which exchange proofreads the text (see :data:`~.proofreading.result.ExchangeKind`).
+    exchange: ExchangeKind = "T"
+    #: The three steps of the exchange.
+    correct: StepProfile = StepProfile()
+    explain: StepProfile = StepProfile()
+    unclear: StepProfile = StepProfile()
+    #: Whether step ③ runs at all.  On for every model; only a tuning decision turns it off for
+    #: a tier, because a text whose meaning a reader cannot tell is what a teacher most needs.
+    unclear_check: bool = True
+    #: How many edits one explain request carries at most.
+    explain_batch: int = 20
+    #: Add the compact-JSON rule to the fixed part of the previous review request.  The exchange
+    #: does not send that request; the evaluation tools still measure it.
     compact_json: bool = False
-    #: The proofreading temperature the request is sent at.
-    temperature: float = DEFAULT_CORRECTION_TEMPERATURE
-    #: What the request tells a reasoning model about thinking: ``False`` (off), or the level
-    #: (``"low"``) of a family that ignores the flag (see :data:`THINK_LEVELS`).
-    think: bool | str = False
+
+    @property
+    def temperature(self) -> float:
+        """Return the temperature of step ①, the step that rewrites the text."""
+        return self.correct.temperature
+
+    @property
+    def think(self) -> bool | str:
+        """Return what step ① tells a reasoning model about thinking."""
+        return self.correct.think
+
+    def step(self, name: StepName) -> StepProfile:
+        """Return the profile of the step *name*; R's review step uses ①'s."""
+        if name == "explain":
+            return self.explain
+        if name == "unclear":
+            return self.unclear
+        return self.correct
+
+    def fingerprint(self) -> str:
+        """Return everything of this profile that changes a request, as one string.
+
+        Part of the correction cache key: two runs whose fingerprints differ send different
+        requests, so an answer of one must not be reused for the other.
+        """
+        steps = "|".join(
+            f"{step.temperature:g}/{step.think}"
+            for step in (self.correct, self.explain, self.unclear)
+        )
+        return "|".join(
+            [
+                self.exchange,
+                steps,
+                "unclear" if self.unclear_check else "no-unclear",
+                str(self.explain_batch),
+            ]
+        )
 
 
 DEFAULT_REQUEST_PROFILE = RequestProfile()
@@ -394,9 +455,10 @@ RECOMMENDED: dict[ModelCategory, dict[HardwareProfile, tuple[str, ...]]] = {
         ),
     },
     "general": {
-        # gemma4:e4b passes gate 1 and writes the shortest pages; qwen3:4b fails gate 1 (empty
-        # answers) and thinks for about 4,000 tokens a page, which is 7 minutes on the Ryzen.
-        "cpu": ("gemma4:e4b", "qwen3:4b"),
+        # gemma4:e4b passes gate 1 and writes the shortest pages.  qwen3:4b is not offered
+        # without a graphics card: it fails gate 1 (empty answers) and thinks for about 4,000
+        # tokens a page, which is 7 minutes on the Ryzen.
+        "cpu": ("gemma4:e4b",),
         "8gb": ("gemma4:e4b", "qwen3.5:9b"),
         "16gb": ("gemma4:12b", "qwen3.5:9b"),
     },
@@ -489,20 +551,22 @@ def _temperature(tag: str, provider: str, default: float) -> float:
 
 
 def request_profile(tag: str, provider: str = "ollama") -> RequestProfile:
-    """Return how the app asks *tag* to proofread: the compact rule and the temperature.
+    """Return how the app asks *tag* to proofread: the exchange, its steps and their settings.
 
     The one place the app, the instructions dialog, the cache key and the evaluation tools ask,
     so a profile change reaches all of them and no two can disagree about the request that is
-    sent.  A model the catalog does not know gets the default request.
+    sent.  A model the catalog does not know gets the default request.  All three steps start
+    from the model's own temperature and thinking level; per-step values come with a tuning
+    decision.
     """
     spec = find_spec(tag) if provider == "ollama" else None
     base = DEFAULT_REQUEST_PROFILE if spec is None else spec.request_profile
     level = think_level(tag) if provider == "ollama" else None
-    return replace(
-        base,
+    step = StepProfile(
         temperature=_temperature(tag, provider, DEFAULT_CORRECTION_TEMPERATURE),
         think=level or False,
     )
+    return replace(base, correct=step, explain=step, unclear=step)
 
 
 def review_temperature(tag: str, provider: str = "ollama") -> float:

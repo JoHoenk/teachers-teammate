@@ -31,11 +31,7 @@ if TYPE_CHECKING:
     from .ollama_utils import OllamaClient
 
 from ..domain.answer_format import resolve_format
-from ..domain.context_budget import (
-    REVIEW_ANSWER_FACTOR,
-    ContextBudget,
-    answers_with_the_same_text,
-)
+from ..domain.context_budget import REVIEW_ANSWER_FACTOR, ContextBudget
 from ..domain.correction_policy import CUT_OFF_TRIES, normalize_output_mode
 from ..domain.correction_prompts import (  # noqa: F401  # re-exported for callers and tests
     DUTCH_PROMPT,
@@ -64,26 +60,24 @@ from ..domain.model_catalog import DEFAULT_REQUEST_PROFILE, RequestProfile
 from ..domain.notation import with_notation_hint
 from ..domain.text_chunks import Chunk, split_for_budget
 from ..interfaces import Corrector
-from ._llm_invoke import (
-    _CORRECTION_FAILURE,
-    StructuredResult,
-    invoke_langchain_chain,
-    invoke_langchain_structured,
-    invoke_ollama_chat,
-    invoke_ollama_structured,
-    tidy_answer,
-)
 from .correction_schema import (
     DEFAULT_LEVEL,
     CorrectionAnswer,
-    escape_braces,
+    clean_answer,
     fill_placeholders,
-    repair_message,
-    schema_json,
     to_review,
     validate_answer,
 )
 from .ollama_utils import PROOFREADING_NUM_CTX
+from .proofreading.port import (
+    REVIEW_TIMEOUT_CAP,  # noqa: F401  # re-exported for the tests that pin the timeout
+    LangChainPort,
+    ModelPort,
+    OllamaPort,
+    StepRequest,
+    _review_timeout,  # noqa: F401  # re-exported for the tests that pin the timeout
+)
+from .proofreading.runner import StepRunner
 
 FALLBACK_WARNING = (
     "Explanations could not be produced for this file; only the corrections are shown."
@@ -91,9 +85,6 @@ FALLBACK_WARNING = (
 """Warning shown when a review answer failed and the file was corrected in text mode."""
 
 _PROVIDER_ERROR = "Correction failed; keeping original text."
-
-REVIEW_TIMEOUT_CAP = 600.0
-"""Upper bound in seconds for a review request, whatever the text length is."""
 
 _HUMAN_REVIEW = "Text language: {language}\nExplanation language: {explanation}\n\nText:\n\n{text}"
 _HUMAN_TEXT = "Text language: {language}\n\nText:\n\n{text}"
@@ -155,12 +146,9 @@ def _tidy_answer(raw_text: str, text_format: TextFormat) -> Callable[[str], str]
     return tidy
 
 
-def _review_timeout(base_timeout: float, raw_text: str) -> float:
-    """Return the timeout of a review request: longer answers need longer than the OCR timeout.
-
-    The cap bounds the growth with the text, never a timeout the user configured themselves.
-    """
-    return max(base_timeout, min(REVIEW_TIMEOUT_CAP, 60.0 + 0.05 * len(raw_text)))
+def _plain_answer(text: str) -> tuple[str, str]:
+    """Return a plain-text answer as it is: text mode has no schema to validate."""
+    return text, ""
 
 
 # ── Policy presets ────────────────────────────────────────────────────────────
@@ -298,8 +286,16 @@ def request_messages(  # noqa: PLR0913  # a request is many independent facts, a
     return system, _human_message(text, language, explanation_language, mode)
 
 
-def _review_outcome(answer: CorrectionAnswer, source: str) -> CorrectionOutcome | None:
-    """Splice *answer* into *source*; return ``None`` when not a single sentence could be placed."""
+def _review_outcome(
+    answer: CorrectionAnswer, source: str, text_format: TextFormat
+) -> CorrectionOutcome | None:
+    """Splice *answer* into *source*; return ``None`` when not a single sentence could be placed.
+
+    The answer is cleaned first (:func:`~.correction_schema.clean_answer`): markup the model
+    added to a plain text, a ``corrected`` that is not the sentence, and a change that changes
+    nothing would otherwise reach the teacher's text through the splice.
+    """
+    answer, _repairs = clean_answer(answer, text_format)
     review = to_review(answer)
     corrected, unplaced = splice(source, review.sentences)
     if review.sentences and len(unplaced) == len(review.sentences):
@@ -325,7 +321,7 @@ def _with_fallback_warning(text: str, warning: str | None) -> CorrectionOutcome:
 
 
 class _ReviewCorrector(Corrector):
-    """Shared review/text-mode plumbing; subclasses supply the two provider calls."""
+    """Shared review/text-mode plumbing; subclasses supply the connection (a port)."""
 
     _level: str
     _explanation_language: str
@@ -335,6 +331,8 @@ class _ReviewCorrector(Corrector):
     _num_ctx: int
     _profile: RequestProfile
     _cut_off_tries: int
+    _temperature: float
+    _port: ModelPort
 
     def _configure(self, prompt: str, settings: CorrectionSettings | None) -> None:
         """Store the prompt and apply *settings* (the defaults when none are given)."""
@@ -362,21 +360,37 @@ class _ReviewCorrector(Corrector):
         """Return how this corrector asks its model to proofread."""
         return self._profile
 
-    def _system(self, language: str, text_format: TextFormat, *, mode: str) -> str:
-        """Return the unescaped system instructions for *mode*."""
-        return _instructions(
-            self._prompt,
+    def _messages(
+        self, raw_text: str, language: str, text_format: TextFormat, *, mode: str
+    ) -> tuple[str, str]:
+        """Return ``(system, user)``: the messages a request of *mode* carries."""
+        return request_messages(
+            raw_text,
             language,
+            prompt=self._prompt,
             level=self._level,
             text_format=text_format,
             mode=mode,
             answer_format=self._answer_formats.get(mode, ""),
             compact_json=self._profile.compact_json,
+            explanation_language=self._explanation_language,
         )
 
-    def _message_values(self, raw_text: str, language: str, mode: str) -> dict[str, str]:
-        """Return the variables of the message that carries the text."""
-        return _message_values(raw_text, language, self._explanation_language, mode)
+    def _request(
+        self, raw_text: str, language: str, text_format: TextFormat, *, mode: str
+    ) -> StepRequest:
+        """Return the request of *mode* for *raw_text*."""
+        system, user = self._messages(raw_text, language, text_format, mode=mode)
+        review = mode == "review"
+        return StepRequest(
+            step="review" if review else "correct",
+            system=system,
+            user=user,
+            schema=CorrectionAnswer if review else None,
+            temperature=self._temperature,
+            think=self._profile.think,
+            answer_factor=REVIEW_ANSWER_FACTOR if review else 1.0,
+        )
 
     def correct(
         self, raw_text: str, language: str, *, text_format: TextFormat = "plain"
@@ -397,86 +411,39 @@ class _ReviewCorrector(Corrector):
         self, raw_text: str, language: str, text_format: TextFormat
     ) -> tuple[str, str | None]:
         """Correct in text mode: corrected text and an optional warning, never a review."""
-        raise NotImplementedError
+        outcome = StepRunner(self._port).run(
+            self._request(raw_text, language, text_format, mode="text"), _plain_answer
+        )
+        if outcome.value is None:
+            return raw_text, outcome.error or _PROVIDER_ERROR
+        return _tidy_answer(raw_text, text_format)(outcome.value), None
 
     def _correct_review(
         self, raw_text: str, language: str, text_format: TextFormat
     ) -> CorrectionOutcome | None:
         """Correct in review mode; ``None`` means the answer was unusable (-> text mode).
 
-        A provider error keeps the source text and reports the error.  An answer that does not
-        match the schema gets one repair request quoting the validation error; a provider that
-        cannot produce a schema-bound answer, an empty answer, or one that is still invalid
-        after the repair all return ``None`` so the caller corrects in text mode.
+        The rules of the requests themselves live in
+        :class:`~teachers_teammate.infrastructure.proofreading.runner.StepRunner`: a cut-off
+        answer is asked again, an answer that does not match the schema gets one repair request,
+        a repair that cannot fit the window is skipped, and a transport error ends the step.
 
-        The context window is handled in two places, because the answers cost differently:
-
-        * The *first* answer being cut off does not fail the file.  A review answer is longer
-          than the text (original and corrected wording, plus an explanation, for every changed
-          sentence), whereas text mode answers with about the text's length and has the shorter
-          system prompt.  So text mode often fits where the review did not, and the caller
-          falls back to it.  If text mode is cut off as well, that call reports the failure.
-          Before falling back, the same review request is asked again, up to the corrector's
-          ``cut_off_tries``: a cut-off is usually a runaway (a model that starts listing correct
-          fragments with an empty change), not a text that is too long, and a second try very
-          likely answers.  Only a model on this computer or the school's server is asked again
-          (see :func:`~teachers_teammate.domain.correction_policy.cut_off_tries`).  A last
-          cut-off falls back as before.
-        * The *repair* answer being cut off is handled the same way, without a second try: the
-          repair request repeats the text and adds the previous answer, so it is the longest
-          request of the three and a retry would not make it shorter.  A repair that cannot fit
-          the window is skipped before it is sent, which saves a round trip.
-
-        A provider error (``transport``) keeps the source text and reports the error: text mode
-        would meet the same unreachable server.
+        What is left here is what a failure means for the file.  A cut-off or unusable review
+        answer does not fail the file: text mode answers with about the text's length and has the
+        shorter system prompt, so it often fits where the review did not, and the caller falls
+        back to it.  A provider error (``transport``) keeps the source text and reports the
+        error: text mode would meet the same unreachable server.
         """
-        result = self._ask(raw_text, language, text_format, repair=None)
-        for _ in range(self._cut_off_tries - 1):
-            if result.failure != "truncated":
-                break
-            result = self._ask(raw_text, language, text_format, repair=None)
-        if result.failure == "truncated":
-            return None
-        if result.failure == "invalid" and result.raw.strip():
-            if not self._repair_fits(raw_text, language, text_format, result.raw, result.error):
-                return None
-            result = self._ask(raw_text, language, text_format, repair=(result.raw, result.error))
-            if result.failure == "truncated":
-                return None
-        if result.failure == "transport":
+        outcome = StepRunner(self._port, cut_off_tries=self._cut_off_tries).run(
+            self._request(raw_text, language, text_format, mode="review"), validate_answer
+        )
+        if outcome.failure == "transport":
             return CorrectionOutcome(
-                text=raw_text, review=None, warning=result.error or _PROVIDER_ERROR, failed=True
+                text=raw_text, review=None, warning=outcome.error or _PROVIDER_ERROR, failed=True
             )
-        if result.parsed is None:
+        if outcome.value is None:
             return None
-        return _review_outcome(result.parsed, raw_text)
-
-    def _repair_fits(
-        self,
-        raw_text: str,
-        language: str,
-        text_format: TextFormat,
-        previous_answer: str,
-        error: str,
-    ) -> bool:
-        """Return whether a repair request for these inputs fits the context window.
-
-        ``True`` where the window is unknown or not enforced (a LangChain provider with a
-        window of its own); the concrete corrector decides.
-        """
-        del raw_text, language, text_format, previous_answer, error  # unused by default
-        return True
-
-    def _ask(
-        self,
-        raw_text: str,
-        language: str,
-        text_format: TextFormat,
-        *,
-        repair: tuple[str, str] | None,
-    ) -> StructuredResult[CorrectionAnswer]:
-        """Ask the model for a schema-bound answer; *repair* is ``(previous answer, error)``."""
-        raise NotImplementedError
+        return _review_outcome(outcome.value, raw_text, text_format)
 
 
 class LangChainCorrector(_ReviewCorrector):
@@ -495,44 +462,10 @@ class LangChainCorrector(_ReviewCorrector):
         settings: CorrectionSettings | None = None,
         profile: RequestProfile = DEFAULT_REQUEST_PROFILE,
     ) -> None:
-        self._llm = llm
         self._configure(prompt, settings)
         self._profile = profile
-        self._strict_schema = (settings or CorrectionSettings()).strict_schema
-
-    def _correct_text(
-        self, raw_text: str, language: str, text_format: TextFormat
-    ) -> tuple[str, str | None]:
-        result = invoke_langchain_chain(
-            self._llm,
-            system=escape_braces(self._system(language, text_format, mode="text")),
-            human=_human_template("text"),
-            variables=self._message_values(raw_text, language, "text"),
-            fallback=raw_text,
-            failure_prefix="Correction failed",
-            failure_suffix="; keeping original text.",
-        )
-        return tidy_answer(result, _tidy_answer(raw_text, text_format))
-
-    def _ask(
-        self,
-        raw_text: str,
-        language: str,
-        text_format: TextFormat,
-        *,
-        repair: tuple[str, str] | None,
-    ) -> StructuredResult[CorrectionAnswer]:
-        human = _human_template("review")
-        if repair is not None:
-            human = f"{human}\n\n{escape_braces(repair_message(*repair))}"
-        return invoke_langchain_structured(
-            self._llm,
-            system=escape_braces(self._system(language, text_format, mode="review")),
-            human=human,
-            variables=self._message_values(raw_text, language, "review"),
-            schema=CorrectionAnswer,
-            strict=self._strict_schema,
-        )
+        self._temperature = 0.0  # the model carries its own temperature
+        self._port = LangChainPort(llm, strict=(settings or CorrectionSettings()).strict_schema)
 
 
 class NativeOllamaCorrector(_ReviewCorrector):
@@ -554,46 +487,10 @@ class NativeOllamaCorrector(_ReviewCorrector):
         settings: CorrectionSettings | None = None,
         profile: RequestProfile = DEFAULT_REQUEST_PROFILE,
     ) -> None:
-        self._model = model
-        self._client = client
-        self._timeout = timeout
-        self._temperature = temperature
         self._configure(prompt, settings)
         self._profile = profile
-
-    def _messages(
-        self, raw_text: str, language: str, text_format: TextFormat, *, mode: str
-    ) -> tuple[str, str]:
-        """Return ``(system, user)`` for the native API (no template, no escaping)."""
-        return request_messages(
-            raw_text,
-            language,
-            prompt=self._prompt,
-            level=self._level,
-            text_format=text_format,
-            mode=mode,
-            answer_format=self._answer_formats.get(mode, ""),
-            compact_json=self._profile.compact_json,
-            explanation_language=self._explanation_language,
-        )
-
-    def _correct_text(
-        self, raw_text: str, language: str, text_format: TextFormat
-    ) -> tuple[str, str | None]:
-        system, user = self._messages(raw_text, language, text_format, mode="text")
-        result = invoke_ollama_chat(
-            self._client,
-            model=self._model,
-            prompt=user,
-            system=system,
-            timeout=self._timeout,
-            temperature=self._temperature,
-            think=self._profile.think,
-            fallback=raw_text,
-            failure=_CORRECTION_FAILURE,
-            num_ctx=self._num_ctx,
-        )
-        return tidy_answer(result, _tidy_answer(raw_text, text_format))
+        self._temperature = temperature
+        self._port = OllamaPort(client, model, timeout=timeout, num_ctx=self._num_ctx)
 
     def max_text_chars(self, language: str, *, text_format: TextFormat = "plain") -> int:
         """Return how many characters of text one review request can carry.
@@ -608,46 +505,6 @@ class NativeOllamaCorrector(_ReviewCorrector):
         overhead = len(system) + len(user)
         return ContextBudget(self._num_ctx).max_text_chars(
             overhead, answer_factor=REVIEW_ANSWER_FACTOR
-        )
-
-    def _repair_fits(
-        self,
-        raw_text: str,
-        language: str,
-        text_format: TextFormat,
-        previous_answer: str,
-        error: str,
-    ) -> bool:
-        """Return whether the repair request for these inputs fits the context window."""
-        system, prompt = self._messages(raw_text, language, text_format, mode="review")
-        repair = f"{prompt}\n\n{repair_message(previous_answer, error)}"
-        budget = ContextBudget(self._num_ctx)
-        return budget.request_fits(
-            len(system) + len(repair), answer_tokens=answers_with_the_same_text(self._num_ctx)
-        )
-
-    def _ask(
-        self,
-        raw_text: str,
-        language: str,
-        text_format: TextFormat,
-        *,
-        repair: tuple[str, str] | None,
-    ) -> StructuredResult[CorrectionAnswer]:
-        system, prompt = self._messages(raw_text, language, text_format, mode="review")
-        if repair is not None:
-            prompt = f"{prompt}\n\n{repair_message(*repair)}"
-        return invoke_ollama_structured(
-            self._client,
-            model=self._model,
-            prompt=prompt,
-            system=system,
-            schema=schema_json(),
-            timeout=_review_timeout(self._timeout, raw_text),
-            temperature=self._temperature,
-            think=self._profile.think,
-            parse=validate_answer,
-            num_ctx=self._num_ctx,
         )
 
 

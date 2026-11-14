@@ -112,13 +112,17 @@ class ContextBudget:
         *,
         answer_factor: float = 0.0,
         answer_tokens: int = 0,
+        text_copies: int = 1,
     ) -> int:
         """Return how many characters of text fit next to *overhead_chars*.
 
         The answer grows with the text, not with the request: a review answer repeats the
         sentences it changed, so the fixed part of the request (system prompt and the message
         that carries the text) is taken out of the window first, and only what is left is shared
-        between the text and its answer.
+        between the text and its answer.  The request itself must also pass
+        :meth:`request_fits` with the allowance every request is checked with
+        (:func:`answers_with_the_same_text`), or the client refuses a text this method called
+        small enough; the smaller of the two limits is returned.
 
         Args:
             overhead_chars: Characters that go out with every request (system prompt plus the
@@ -127,11 +131,18 @@ class ContextBudget:
                 means "as long as the text" (text mode), :data:`REVIEW_ANSWER_FACTOR` a review.
             answer_tokens: Tokens reserved for a short answer of a known length; used when
                 *answer_factor* is 0 (a content review).
+            text_copies: How many times the request carries the text (``2`` for a request that
+                shows every sentence before and after the correction).
         """
         if answer_factor > 0:
             overhead_tokens = -(-overhead_chars // int(self.chars_per_token))
-            text_tokens = int((self.num_ctx - overhead_tokens) / (1.0 + answer_factor))
-            return max(0, int(text_tokens * self.chars_per_token))
+            text_tokens = int((self.num_ctx - overhead_tokens) / (text_copies + answer_factor))
+            by_answer = int(text_tokens * self.chars_per_token)
+            request_tokens = self.num_ctx - answers_with_the_same_text(self.num_ctx)
+            by_request = (
+                int(self.chars_per_token) * request_tokens - overhead_chars
+            ) // text_copies
+            return max(0, min(by_answer, by_request))
         available_tokens = self.num_ctx - answer_tokens
         available_chars = available_tokens * self.chars_per_token
         return max(0, int(available_chars - overhead_chars))

@@ -43,9 +43,8 @@ from ..domain.correction_review import (
     ChangeNote,
     SentenceNote,
     UnclearNote,
-    diff_opcodes,
-    tokenize,
 )
+from ..domain.proofreading.word_diff import diff_opcodes, tokenize
 from . import _user_text as txt
 
 FILTER_ALL = "all"

@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from teachers_teammate.infrastructure import correction
+from teachers_teammate.infrastructure import correction, correction_schema
 from tools.model_eval import protocol
 from tools.model_eval.languages import LANGUAGE_NAMES
 
@@ -101,7 +101,7 @@ def test_the_fingerprint_changes_when_a_prompt_changes(monkeypatch) -> None:
     [
         (correction, "_HUMAN_REVIEW", "Text: {text}\nLanguage: {language}\n{explanation}"),
         (correction, "_HUMAN_TEXT", "Text: {text}\nLanguage: {language}"),
-        (correction, "schema_json", lambda: {"type": "object"}),
+        (correction_schema.CorrectionAnswer, "model_json_schema", lambda: {"type": "object"}),
         (correction, "REVIEW_ANSWER_FACTOR", 3.0),
         (protocol, "repair_message", lambda previous, error: "Again, please."),
         (protocol, "NUM_CTX", 16384),

@@ -1913,6 +1913,66 @@ explanation would show as `&quot;`.
 Both functions are pure and table-tested in `tests/unit/test_correction_review.py`; the
 review views are tested with pytest-qt in `tests/gui/test_gui_review_views.py`.
 
+## Proofreading exchange
+
+The exchange is the newer shape of the proofreading and lives next to the review path
+described above: three requests instead of one, and the edits are always the diff of the
+student's text against the corrected text, so the model explains edits but never places
+them. The modules exist and are tested; the pipeline still runs the review path, so the
+running app is unchanged.
+
+| Module | Role |
+|---|---|
+| `domain/proofreading/word_diff.py` | `word_diff(raw, corrected)` → `Hunk`s. The one diff of the app: GUI preview, DOCX, `align`, the edits and the evaluation tools all read it. `difflib` is imported here and nowhere else |
+| `domain/proofreading/edits.py` | hunks → `Edit`s with ids, sentence groups, step-② batches, note merging, the overlap filter, the optional-comma rule, the framing check |
+| `domain/proofreading/review.py` | `CorrectionReview` v2 (`EditNote` with parts, `UnclearNote`), `align()` for display |
+| `domain/proofreading/quotes.py` | `find_spans()` for the quotes of step ③, `map_back()` through the hunks |
+| `domain/proofreading/markdown_shield.py` | `shield()` / `restore()`: strip the notation before the request, put it back after it |
+| `domain/correction_prompts.py` | the fixed English system prompts of the three steps, the parameter and notes blocks, the batch body of step ②, `PROMPT_VERSION` |
+| `infrastructure/proofreading/port.py` | `ModelPort` (Bridge): `OllamaPort`, `LangChainPort` |
+| `infrastructure/proofreading/runner.py` | `StepRunner`: cut-off tries, one repair, window check, timeout |
+| `infrastructure/proofreading/schemas.py` | the answer schemas of steps ② and ③ with their parsers |
+| `infrastructure/proofreading/exchanges/` | `Exchange` protocol, `EXCHANGES` registry, `TExchange`, `FallbackExchange` |
+
+**The three steps.** ① *Correct* sends the shielded text and gets plain text back; its answer
+is restored into the source notation and stored. ② *Explain* sends the sentences of a batch
+before and after the correction with `⟦n⟧` in front of every edit, and gets one category and
+one explanation per id back; the ids are pinned by an enum, so an answer with a wrong id is
+invalid rather than silently misattached. ③ *Unclear* sends the corrected text and gets the
+expressions a reader cannot tell, with a reason and a suggestion. ② and ③ depend only on ①
+and never fail the file: a failed batch leaves its edits unexplained with a warning, a failed
+③ leaves the unclear list empty with a warning. Only ① can fail a file, and then the source
+is kept.
+
+**Edits and ids.** `edits()` groups consecutive hunks into one edit, never across a sentence
+group: a deleted token run that reappears as an inserted run in the same group is one edit
+(the verb bracket), and hunks at most `GROUP_GAP_WORDS` words apart are merged. Ids run 1…k
+in text order over the whole text. An edit that only inserts a comma before `und` / `oder`
+between two main clauses is marked optional; the clause check is injected, so the rule is off
+when no spaCy model of the text language is installed.
+
+**Anchoring.** Step ③ quotes the corrected text. `find_spans()` looks the quote up in
+plain(corrected) (whitespace-normalised, then fuzzy), `map_back()` carries the span through
+the hunks to the raw text, and a quote that touches an edit is dropped and counted: the
+review never shows a flag on words the correction already changed.
+
+**Markdown shield.** `shield()` turns the parsed document into the request text — blocks as
+paragraphs, no marks, no list markers, crossed-out words removed — and keeps a map from every
+character back to its block and style. `restore()` diffs the request text against the answer
+and rebuilds the document along the source: equal characters keep their style, a replacement
+inside one styled span takes that style, a replacement across style boundaries loses it and is
+counted, an insertion takes a style only when both neighbours share it, and crossed-out words
+are put back exactly where they were. Block boundaries are always the source's. Plain-text
+sources skip the shield.
+
+**Adding an exchange.** Implement `Exchange` (`proofread`, `max_text_chars`, `cost_model`),
+register it in `EXCHANGES` under its `ExchangeKind`, and build it through `build_exchange()`
+so the port, the cut-off tries and the clause check arrive the same way for every exchange.
+`FallbackExchange(primary, fallback)` is the chain of responsibility an exchange uses when it
+can fall back to a cheaper one. Nothing outside `infrastructure/proofreading/` sees an
+exchange's own answer schema: each exchange maps its answer to `ExchangeResult`, and the GUI,
+the DOCX builder and the cache read `CorrectionReview` only.
+
 ## Error handling
 
 ### Design goals

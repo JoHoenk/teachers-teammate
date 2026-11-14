@@ -338,6 +338,7 @@ class _RecordingClient:
     def __init__(self, answer: str = '{"sentences": [], "unclear": []}') -> None:
         self.answer = answer
         self.requests: list[dict] = []
+        self.last_stats = None
 
     def chat(
         self,

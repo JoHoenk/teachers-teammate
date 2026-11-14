@@ -14,6 +14,7 @@ from teachers_teammate.domain.correction_review import (
     SentenceNote,
     UnclearNote,
     align,
+    best_note_index,
     review_summary,
     splice,
 )
@@ -457,7 +458,15 @@ def test_review_counts_and_placed_partition() -> None:
 
 def _counts(*, changes: int, unclear: int) -> AlignedReview:
     """Return an aligned review with the given numbers of hunks and unclear expressions."""
-    hunk = Hunk(original="a", corrected="b", kind="replace")
+    hunk = Hunk(
+        raw_start=0,
+        raw_end=1,
+        corrected_start=0,
+        corrected_end=1,
+        original="a",
+        corrected="b",
+        kind="replace",
+    )
     return AlignedReview(
         changes=tuple(AlignedChange(i + 1, hunk, None, -1) for i in range(changes)),
         unclear=tuple(
@@ -795,3 +804,20 @@ def test_from_dict_rejects_malformed_nested_records(record: dict) -> None:
     Then   it returns None instead of raising, so loading a file never crashes
     """
     assert CorrectionReview.from_dict(record) is None
+
+
+def test_the_note_with_the_larger_share_of_its_own_words_covered_wins() -> None:
+    """
+    Given  a diff part of two words and two notes, one changing a word of the part (his/her) and
+           one changing six words, two of them in the part
+    When   the best note for the part is chosen
+    Then   the narrow note wins: the part covers half of its words, a third of the other's
+    """
+    narrow = ChangeNote(original="his", corrected="her", category="grammar", explanation="A.")
+    wide = ChangeNote(
+        original="his friend went", corrected="her friends go", category="grammar", explanation="B."
+    )
+
+    best = best_note_index([wide, narrow], set(), frozenset({"his", "friend"}))
+
+    assert best == 1

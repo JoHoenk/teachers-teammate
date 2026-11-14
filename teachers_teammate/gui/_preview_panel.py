@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
-import difflib
 import html
 from pathlib import Path
 import re
@@ -39,6 +38,7 @@ from ..application.correction_review import CorrectionReviewPresenter
 from ..application.formatting import TextFormatter
 from ..domain.anonymization import mask
 from ..domain.correction_review import AlignedReview, CorrectionReview, review_summary
+from ..domain.proofreading.word_diff import diff_opcodes, tokenize
 from . import _user_text as txt
 from ._formatted_text import (
     PLACEHOLDER_BACKGROUND,
@@ -356,15 +356,14 @@ class DiffWidget(QTextEdit):
         current_font = self.font()
         font_size_pt = current_font.pointSize()
 
-        orig_tokens = self._tokenize(original)
-        corr_tokens = self._tokenize(corrected)
-        matcher = difflib.SequenceMatcher(None, orig_tokens, corr_tokens, autojunk=False)
+        orig_tokens = tokenize(original)
+        corr_tokens = tokenize(corrected)
 
         parts = [
             "<html><body>"
             f"<pre style='white-space: pre-wrap; font-family: monospace; font-size: {font_size_pt}pt;'>"
         ]
-        for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+        for tag, i1, i2, j1, j2 in diff_opcodes(orig_tokens, corr_tokens):
             if tag == "equal":
                 parts.append(self._escape_tokens(orig_tokens[i1:i2]))
             elif tag == "replace":
@@ -386,11 +385,6 @@ class DiffWidget(QTextEdit):
                 parts.append(f'<span style="background:#d7ffd7;color:#27ae60;">{new}</span>')
         parts.append("</pre></body></html>")
         self.setHtml("".join(parts))
-
-    @staticmethod
-    def _tokenize(text: str) -> list[str]:
-        """Split text into diff tokens while preserving whitespace and punctuation."""
-        return re.findall(r"\w+|[^\w\s]|\s+", text, flags=re.UNICODE)
 
     @staticmethod
     def _escape_tokens(tokens: list[str]) -> str:

@@ -50,7 +50,9 @@ def request_profile_for(
     elif compact_json == "off":
         profile = replace(profile, compact_json=False)
     if temperature is not None:
-        profile = replace(profile, temperature=temperature)
+        # ``--temperature`` is the temperature of step ① (the one that rewrites the text); the
+        # JSON-answering steps ② and ③ keep their own.
+        profile = replace(profile, correct=replace(profile.correct, temperature=temperature))
     return profile
 
 

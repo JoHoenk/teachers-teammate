@@ -12,6 +12,7 @@ dependency.  Only the infrastructure layer may import it; the domain stays pydan
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Literal
 
 from pydantic import BaseModel, Field
@@ -24,6 +25,8 @@ from ..domain.correction_review import (
     SentenceNote,
     UnclearNote,
 )
+from ..domain.formatted_text import TextFormat
+from ..domain.proofreading.word_diff import similarity
 
 CONTRACT_VERSION = ANSWER_FORMAT_VERSION
 """Bumped (in ``domain/answer_format.py``) whenever the answer format or the schema changes:
@@ -86,6 +89,80 @@ def fill_placeholders(policy: str, *, level: str) -> str:
 def escape_braces(text: str) -> str:
     """Escape every brace so *text* is safe inside a LangChain prompt template."""
     return text.replace("{", "{{").replace("}", "}}")
+
+
+UNRELATED_RATIO = 0.5
+"""Below this similarity a ``corrected`` is not a correction of its sentence.
+
+A real correction of a sentence with mistakes keeps well over half of its characters; a
+word-order change or a new verb form is far above this.  What falls below is a placeholder
+(the field's own name, a sentence of another text), and storing it would replace the
+student's sentence with something that has nothing to do with it.
+"""
+
+
+@dataclass(frozen=True)
+class Repairs:
+    """What :func:`clean_answer` had to fix, counted so a model that needs it stays visible."""
+
+    marks: int = 0
+    """Sentences whose answer carried markup the source did not have."""
+    noop: int = 0
+    """Changes whose two sides are the same words."""
+    junk: int = 0
+    """Sentences whose ``corrected`` was not a correction of the sentence."""
+
+
+def clean_answer(
+    answer: CorrectionAnswer, text_format: TextFormat
+) -> tuple[CorrectionAnswer, Repairs]:
+    """Return *answer* with the three things removed that are not proofreading.
+
+    The review path splices ``corrected`` verbatim into the text, so what the model wrote
+    around the correction would reach the teacher's document.  Three cases, all of them
+    cheap to recognise and none of them a judgement about the correction itself:
+
+    * Markup in a plain text (``**went**``): removed, as the corrections-only path already
+      does with :func:`~teachers_teammate.infrastructure.ocr_formats.normalize_llm_answer`.
+      A Markdown text is left alone: there the marks are the student's.
+    * A ``corrected`` that is not the sentence (:data:`UNRELATED_RATIO`): the sentence stays
+      as it was, because a placeholder must never replace the student's words, and so do not
+      its changes, which would explain corrections the text does not carry.
+    * A change whose ``original`` and ``corrected`` are the same words: dropped, because it
+      explains nothing.
+    """
+    from .ocr_formats import looks_like_markup, plain_text_of  # noqa: PLC0415
+
+    marks = noop = junk = 0
+    sentences: list[SentenceReview] = []
+    for sentence in answer.sentences:
+        corrected = sentence.corrected
+        changes = sentence.changes
+        if text_format != "markdown" and corrected.strip():
+            if looks_like_markup(corrected) and not looks_like_markup(sentence.original):
+                cleaned = plain_text_of(corrected, "markdown")
+                marks += cleaned != corrected
+                corrected = cleaned
+        if corrected.strip() and sentence.original.strip():
+            if similarity(_normal(sentence.original), _normal(corrected)) < UNRELATED_RATIO:
+                junk += 1
+                corrected = sentence.original
+                changes = []
+        kept = [
+            change for change in changes if _normal(change.original) != _normal(change.corrected)
+        ]
+        noop += len(changes) - len(kept)
+        sentences.append(
+            SentenceReview(original=sentence.original, corrected=corrected, changes=kept)
+        )
+    return answer.model_copy(update={"sentences": sentences}), Repairs(
+        marks=marks, noop=noop, junk=junk
+    )
+
+
+def _normal(text: str) -> str:
+    """Return *text* with every run of whitespace collapsed, for comparing two answers."""
+    return " ".join(text.split())
 
 
 def to_review(answer: CorrectionAnswer, *, unplaced: tuple[int, ...] = ()) -> CorrectionReview:

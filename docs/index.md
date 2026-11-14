@@ -59,6 +59,14 @@ For detailed guidance on choosing the best settings for your documents, see the 
 #. Launch **Teacher's Teammate** from the Start menu (Windows), the Applications folder (macOS), or your application launcher (Linux).
 
 :::{note}
+**Linux — two downloads:** `teachers-teammate_<version>_amd64.deb` installs the app into
+`/opt/teachers-teammate` and adds a launcher entry; install it with
+`sudo apt install ./teachers-teammate_<version>_amd64.deb`, which also pulls in the system
+libraries it needs. `teachers-teammate-<version>-linux-x86_64.tar.gz` is the portable build:
+unpack it anywhere and run `./teachers-teammate`.
+:::
+
+:::{note}
 **Windows — security notice:** Windows may show a "Windows protected your PC" message when running the installer. Click **More info**, then **Run anyway**. This warning appears only because the installer does not carry a paid security certificate — not because anything is wrong with the app. The full build process is publicly visible on [GitHub](https://github.com/JoHoenk/teachers-teammate), so you can inspect every step yourself.
 :::
 
@@ -81,11 +89,12 @@ You can run the assistant again at any time from **Tools → Setup Assistant…*
 ## License
 
 Teacher's Teammate is open-source software, released under the **Apache License 2.0**.
-The app bundles the Qt user-interface toolkit (via **PySide6**) under the **GNU LGPL v3**;
-Qt is dynamically linked and the complete source code is publicly available, so the
-toolkit can be replaced with a compatible build. You can read the full license and notice
-texts for every bundled component inside the app under **Help →
-Third-Party Licenses**.
+The app bundles the Qt user-interface toolkit (via **PySide6**) under the **GNU LGPL v3**.
+The Qt libraries are separate files in the application folder
+(`_internal/PySide6/Qt/lib`), not compiled into the program, so they can be replaced with a
+compatible build; the complete source code of Teacher's Teammate is publicly available, which
+satisfies the LGPL's relinking requirement. You can read the full license and notice texts for
+every bundled component inside the app under **Help → Third-Party Licenses**.
 
 ```{toctree}
 :hidden:

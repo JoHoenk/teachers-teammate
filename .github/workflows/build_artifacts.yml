@@ -94,8 +94,12 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update -qq
+          # Qt's xcb platform plugin links these; make_deb.sh measures the .deb's Depends: line
+          # from what the bundle needs, which only works when they are installed here.
           sudo apt-get install -y --no-install-recommends \
-            libxcb-xinerama0 libxcb-cursor0 libegl1 libgl1 libglib2.0-0
+            libxcb-xinerama0 libegl1 libgl1 libglib2.0-0 libxcb-cursor0 libxcb-icccm4 \
+            libxcb-image0 libxcb-keysyms1 libxcb-render-util0 libxcb-shape0 libxcb-util1 \
+            libxcb-xkb1 libxkbcommon-x11-0
 
       - name: Install Python dependencies
         shell: bash
@@ -130,7 +134,7 @@ jobs:
       - name: Smoke-test the binary (Linux)
         if: runner.os == 'Linux'
         shell: bash
-        run: QT_QPA_PLATFORM=offscreen ./dist/teachers-teammate --_smoke_test smoke.json
+        run: QT_QPA_PLATFORM=offscreen ./dist/teachers-teammate/teachers-teammate --_smoke_test smoke.json
 
       - name: Smoke-test the binary (Windows)
         if: runner.os == 'Windows'
@@ -171,16 +175,36 @@ jobs:
             bash tools/packaging/make_deb.sh
           fi
 
-      - name: Rename Linux binary (add version + platform suffix)
+      # apt resolves Depends, so a library missing from the control file fails here rather
+      # than on a user's machine. The smoke test then proves the app starts, and ldd on the
+      # real-display plugin proves it has every library it links against.
+      - name: Install the .deb in clean containers (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          for image in ubuntu:22.04 ubuntu:24.04 debian:12; do
+            echo "==> $image"
+            docker run --rm -v "$PWD/dist:/dist:ro" "$image" bash -c '
+              set -euo pipefail
+              apt-get update -qq
+              apt-get install -y -qq --no-install-recommends /dist/teachers-teammate_*_amd64.deb
+              QT_QPA_PLATFORM=offscreen teachers-teammate --_smoke_test /tmp/out.json
+              cat /tmp/out.json
+              if ldd /opt/teachers-teammate/_internal/PySide6/Qt/plugins/platforms/libqxcb.so \
+                  | grep "not found"; then
+                echo "the xcb platform plugin is missing libraries" >&2
+                exit 1
+              fi
+            '
+          done
+
+      - name: Create the portable tarball (Linux)
         if: runner.os == 'Linux'
         shell: bash
         run: |
           VER="${{ steps.version.outputs.value }}"
-          if [[ -n "$VER" ]]; then
-            mv dist/teachers-teammate "dist/teachers-teammate-${VER}-linux"
-          else
-            mv dist/teachers-teammate dist/teachers-teammate-linux
-          fi
+          if [[ -z "$VER" ]]; then VER="0.1.0"; fi
+          bash tools/packaging/make_tarball.sh "$VER"
 
       - name: Install NSIS and create installer (Windows)
         if: runner.os == 'Windows'
@@ -229,7 +253,7 @@ jobs:
           name: ${{ inputs.artifact_prefix }}-${{ matrix.artifact }}
           retention-days: ${{ inputs.retention_days }}
           path: |
-            dist/teachers-teammate-*linux
+            dist/teachers-teammate-*-linux-x86_64.tar.gz
             dist/teachers-teammate_*.deb
 
       - name: Upload build artifact (Windows)
@@ -258,7 +282,7 @@ jobs:
           # visible while the other platforms are still building.
           draft: true
           files: |
-            dist/teachers-teammate-*linux
+            dist/teachers-teammate-*-linux-x86_64.tar.gz
             dist/teachers-teammate_*.deb
             dist/teachers-teammate-*-w64-setup.exe
             dist/teachers-teammate-*-macos.dmg

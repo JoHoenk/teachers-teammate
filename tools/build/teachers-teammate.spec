@@ -190,61 +190,40 @@ elif sys.platform == "darwin":
 else:
     _icon = str(ASSETS / "teachers_teammate_icon.png")
 
-if sys.platform == "linux":
-    # Linux stays a single file until the folder build of the packaging plan lands.
-    exe = EXE(
-        pyz,
-        a.scripts,
-        a.binaries,
-        a.datas,
-        [],
-        name="teachers-teammate",
-        debug=False,
-        bootloader_ignore_signals=False,
-        strip=False,
-        upx=False,
-        upx_exclude=[],
-        runtime_tmpdir=None,
-        console=False,
-        disable_windowed_traceback=False,
-        argv_emulation=False,
-        target_arch=None,
-        codesign_identity=None,
-        entitlements_file=None,
-        icon=[_icon],
+# A folder on every platform, never a single file: the .deb installs it under /opt, the
+# portable tarball unpacks it, and the Qt libraries stay replaceable files instead of being
+# packed into an archive that unpacks to a temporary directory on every start.
+exe = EXE(
+    pyz,
+    a.scripts,
+    [],
+    exclude_binaries=True,
+    name="teachers-teammate",
+    debug=False,
+    bootloader_ignore_signals=False,
+    strip=False,
+    upx=False,
+    console=False,
+    disable_windowed_traceback=False,
+    argv_emulation=False,
+    target_arch=None,
+    codesign_identity=None,
+    entitlements_file=None,
+    icon=[_icon],
+)
+coll = COLLECT(
+    exe,
+    a.binaries,
+    a.datas,
+    strip=False,
+    upx=False,
+    upx_exclude=[],
+    name="teachers-teammate",
+)
+if sys.platform == "darwin":
+    app = BUNDLE(
+        coll,
+        name="teachers-teammate.app",
+        icon=_icon,
+        bundle_identifier="io.github.johoenk.teachers-teammate",
     )
-else:
-    exe = EXE(
-        pyz,
-        a.scripts,
-        [],
-        exclude_binaries=True,
-        name="teachers-teammate",
-        debug=False,
-        bootloader_ignore_signals=False,
-        strip=False,
-        upx=False,
-        console=False,
-        disable_windowed_traceback=False,
-        argv_emulation=False,
-        target_arch=None,
-        codesign_identity=None,
-        entitlements_file=None,
-        icon=[_icon],
-    )
-    coll = COLLECT(
-        exe,
-        a.binaries,
-        a.datas,
-        strip=False,
-        upx=False,
-        upx_exclude=[],
-        name="teachers-teammate",
-    )
-    if sys.platform == "darwin":
-        app = BUNDLE(
-            coll,
-            name="teachers-teammate.app",
-            icon=_icon,
-            bundle_identifier="io.github.johoenk.teachers-teammate",
-        )

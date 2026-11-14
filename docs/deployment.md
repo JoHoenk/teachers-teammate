@@ -64,7 +64,7 @@ The **build-standalone** job (`build_artifacts.yml`) runs in parallel on three G
 
 | Runner | Steps | Output |
 |--------|-------|--------|
-| `ubuntu-22.04` | pinned install → `tools/build/build_standalone.py` → smoke test → bundle checks → `tools/packaging/make_deb.sh` | `teachers-teammate-<ver>-linux`, `teachers-teammate_<ver>.deb` |
+| `ubuntu-22.04` | pinned install → `tools/build/build_standalone.py` → smoke test → bundle checks → `tools/packaging/make_deb.sh` → container install test → `tools/packaging/make_tarball.sh` | `teachers-teammate_<ver>.deb`, `teachers-teammate-<ver>-linux-x86_64.tar.gz` |
 | `windows-latest` | pinned install → `tools/build/build_standalone.py` → smoke test → NSIS (`tools/packaging/windows.nsi`) | `teachers-teammate-<ver>-w64-setup.exe` |
 | `macos-latest` | pinned install → `tools/build/build_standalone.py` → smoke test → `tools/packaging/make_dmg.sh` | `teachers-teammate-<ver>-macos.dmg` |
 
@@ -151,8 +151,7 @@ committed; only the throwaway `.venv-licenses/` is ignored.
 
 `tools/build/build_standalone.py` is the primary build script. It generates the platform icons
 and runs the committed spec `tools/build/teachers-teammate.spec`, which lists what the bundle
-contains. It produces a single self-contained executable (Linux), a `.app` bundle (macOS), or an
-`onedir` folder (Windows).
+contains. It produces a folder (Linux and Windows) or a `.app` bundle (macOS).
 
 Every version it installs comes from `requirements_test_lock.txt` plus
 `tools/build/requirements_platform.txt`: `tools/build/make_constraints.py` writes
@@ -171,9 +170,12 @@ Outputs:
 
 | Platform | Path |
 |----------|------|
-| Linux | `dist/teachers-teammate` |
+| Linux | `dist/teachers-teammate/teachers-teammate` |
 | Windows | `dist/teachers-teammate/teachers-teammate.exe` |
 | macOS | `dist/teachers-teammate.app/` |
+
+Every platform gets a folder, never a single file: the `.deb` installs it under `/opt`, the
+portable tarball unpacks it, and the Qt libraries stay separate files that can be replaced.
 
 `tools/build/build.sh` (Linux/macOS) and `tools/build/build.bat` (Windows) do all of that in a
 fresh venv, so a local build matches CI.
@@ -182,7 +184,7 @@ Then check what was built:
 
 ```bash
 # The app starts and its imports resolve; writes a JSON report.
-QT_QPA_PLATFORM=offscreen ./dist/teachers-teammate --_smoke_test smoke.json
+QT_QPA_PLATFORM=offscreen ./dist/teachers-teammate/teachers-teammate --_smoke_test smoke.json
 
 # Linux only: the bundle runs on Ubuntu 22.04 (glibc 2.35) and carries no dead libraries.
 python tools/build/check_linux_bundle.py --max-glibc 2.35
@@ -200,6 +202,25 @@ bash tools/packaging/make_deb.sh [version]
 # e.g.  bash tools/packaging/make_deb.sh 1.2.3
 # Output: dist/teachers-teammate_1.2.3_amd64.deb
 ```
+
+The package installs the folder into `/opt/teachers-teammate`, symlinks
+`/usr/bin/teachers-teammate` to it, and puts the desktop entry, the icon and the licenses under
+`/usr/share`. Its `Depends:` line is measured from the build every time (`check_linux_bundle.py --depends`):
+every `DT_NEEDED` entry of every bundled ELF file that the bundle does not itself carry, mapped
+to Debian packages with `ldconfig` and `dpkg-query`, plus `libc6` at the glibc floor the bundle
+needs. The build machine must have those libraries installed; the CI job does. CI installs the `.deb` in `ubuntu:22.04`, `ubuntu:24.04` and
+`debian:12` containers, runs the smoke test there, and checks that the xcb platform plugin has
+no missing libraries.
+
+**Linux — portable tarball**
+
+```bash
+bash tools/packaging/make_tarball.sh [version]
+# Output: dist/teachers-teammate-1.2.3-linux-x86_64.tar.gz
+```
+
+The tarball holds the same folder under `teachers-teammate-1.2.3/`, plus a `README.txt` that says
+to unpack it and run `./teachers-teammate`.
 
 **macOS — `.dmg` installer**
 
@@ -289,6 +310,7 @@ A silent uninstall keeps all user data unless `/DELDATA` (add-ons and models) or
 | `tools/packaging/make_ico.py` | Generates `.ico` and welcome BMP for Windows |
 | `tools/packaging/make_icns.sh` | Generates `.icns` for macOS |
 | `tools/packaging/make_deb.sh` | Creates `.deb` package for Debian/Ubuntu |
+| `tools/packaging/make_tarball.sh` | Creates the portable Linux `.tar.gz` |
 | `tools/packaging/make_dmg.sh` | Creates `.dmg` installer for macOS |
 | `tools/packaging/windows.nsi` | NSIS script for the Windows installer |
 | `tools/release/stamp_versions.py` | Stamps version into `pyproject.toml` and Bazel `BUILD` |

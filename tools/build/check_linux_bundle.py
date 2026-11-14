@@ -7,6 +7,10 @@ older one with a message about ``GLIBC_2.xx not found``. This reads the bundle's
 contents, runs ``objdump -T`` on every ELF file in it, and fails when one needs a newer
 ``GLIBC_x.y`` than ``--max-glibc``.
 
+``--depends`` prints the ``Depends:`` line of the ``.deb``: the libraries the bundle needs but
+does not carry, as Debian package names, measured from this build on this machine rather than
+written by hand. ``tools/packaging/make_deb.sh`` uses it.
+
 ``--unused`` answers the other question: which libraries did PyInstaller collect that
 nothing in the bundle loads? Those are dead weight, and they are how a dropped Qt plugin
 still drags its dependencies in.
@@ -15,6 +19,7 @@ Usage (from the repo root, after build_standalone.py):
 
     python tools/build/check_linux_bundle.py --max-glibc 2.35
     python tools/build/check_linux_bundle.py --unused
+    python tools/build/check_linux_bundle.py --depends
 """
 
 from __future__ import annotations
@@ -28,7 +33,9 @@ import subprocess
 import sys
 
 ROOT = Path(__file__).resolve().parent.parent.parent
-TOC = ROOT / "pyinstaller-work" / "teachers-teammate" / "PKG-00.toc"
+WORK = ROOT / "pyinstaller-work" / "teachers-teammate"
+#: A folder build writes COLLECT-00.toc, a single-file build PKG-00.toc.
+TOCS = (WORK / "COLLECT-00.toc", WORK / "PKG-00.toc")
 
 #: The kinds in the table of contents that are ELF files.
 _ELF_KINDS = frozenset({"BINARY", "EXTENSION"})
@@ -41,11 +48,26 @@ _SHARED_LIBRARY = re.compile(r"^lib.+\.so")
 #: Libraries the bootloader opens by name rather than through ``DT_NEEDED``.
 _DLOPENED = ("libpython",)
 
+#: The C library and its companions: the package ``libc6`` carries them, with a version bound
+#: instead of a name, so they never appear as separate dependencies.
+_GLIBC_LIBRARIES = re.compile(
+    r"^(ld-linux.*|libc|libm|libdl|libpthread|librt|libutil|libresolv|libnsl)\.so(\.\d+)*$"
+)
+
+
+def default_toc() -> Path:
+    """Return the table of contents of the last build, folder build first."""
+    for candidate in TOCS:
+        if candidate.is_file():
+            return candidate
+    return TOCS[0]
+
 
 def bundled_elf_files(toc_path: Path) -> list[tuple[str, Path]]:
     """Return ``(destination, source)`` for every ELF file the bundle carries."""
     contents = ast.literal_eval(toc_path.read_text(encoding="utf-8"))
-    entries = contents[2]
+    # COLLECT-00.toc is a one-tuple holding the list; PKG-00.toc keeps it at index 2.
+    entries = contents[2] if len(contents) > 2 else contents[0]
     return [(dest, Path(source)) for dest, source, kind in entries if kind in _ELF_KINDS]
 
 
@@ -108,6 +130,59 @@ def unused_libraries(files: list[tuple[str, Path]]) -> list[str]:
     return sorted(set(unused))
 
 
+def missing_sonames(needed: set[str], bundled: set[str]) -> list[str]:
+    """Return the ``DT_NEEDED`` names the bundle neither carries nor leaves to glibc."""
+    return sorted(name for name in needed - bundled if not _GLIBC_LIBRARIES.match(name))
+
+
+def debian_packages(sonames: list[str]) -> list[str]:
+    """Return the Debian packages that provide *sonames* on this machine (``ldconfig``, ``dpkg``)."""
+    listing = subprocess.run(["ldconfig", "-p"], capture_output=True, text=True, check=False).stdout
+    paths: dict[str, str] = {}
+    for line in listing.splitlines():
+        match = re.match(r"\s*(\S+) \(([^)]*)\) => (\S+)", line)
+        if match and "x86-64" in match.group(2):
+            paths.setdefault(match.group(1), match.group(3))
+    packages: set[str] = set()
+    problems: list[str] = []
+    for soname in sonames:
+        path = paths.get(soname)
+        if path is None:
+            problems.append(f"{soname} is not installed here")
+            continue
+        # A merged-/usr system lists /lib/... while dpkg may know /usr/lib/... (or the reverse).
+        for candidate in (path, str(Path(path).resolve()), "/usr" + path):
+            owner = subprocess.run(
+                ["dpkg-query", "-S", candidate], capture_output=True, text=True, check=False
+            )
+            if owner.returncode == 0:
+                packages.add(owner.stdout.split(":")[0].strip())
+                break
+        else:
+            problems.append(f"no Debian package owns {path} (needed as {soname})")
+    if problems:
+        raise RuntimeError(
+            "The Depends: line cannot be measured:\n  "
+            + "\n  ".join(problems)
+            + "\nInstall the libraries the bundle links against on the build machine first "
+            "(see the Qt system libraries step in .github/workflows/build_artifacts.yml)."
+        )
+    return sorted(packages)
+
+
+def depends_line(files: list[tuple[str, Path]]) -> str:
+    """Return the ``Depends:`` value: glibc at the floor the bundle needs, plus what it links."""
+    needed: set[str] = set()
+    newest = (2, 0)
+    for _, source in files:
+        if source.is_file():
+            needed |= needed_sonames(source)
+            newest = max(newest, max(needed_glibc(source), default=(2, 0)))
+    bundled = {destination.rsplit("/", 1)[-1] for destination, _ in files}
+    packages = debian_packages(missing_sonames(needed, bundled))
+    return ", ".join([f"libc6 (>= {newest[0]}.{newest[1]})", *packages])
+
+
 def main() -> int:
     """Check the bundle against ``--max-glibc``; return 0 when every file fits."""
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
@@ -122,21 +197,34 @@ def main() -> int:
         help="list the bundled libraries nothing loads instead of checking glibc",
     )
     parser.add_argument(
+        "--depends",
+        action="store_true",
+        help="print the .deb Depends: line measured from the bundle instead of checking glibc",
+    )
+    parser.add_argument(
         "--toc",
         type=Path,
-        default=TOC,
-        help="the bundle's PKG-00.toc (default: pyinstaller-work/teachers-teammate/PKG-00.toc)",
+        default=None,
+        help="the bundle's table of contents (default: the last build's, in pyinstaller-work/)",
     )
     args = parser.parse_args()
 
     if shutil.which("objdump") is None:
         print("objdump is missing; install binutils")
         return 1
-    if not args.toc.is_file():
-        print(f"{args.toc} is missing; run tools/build/build_standalone.py first")
+    toc = args.toc or default_toc()
+    if not toc.is_file():
+        print(f"{toc} is missing; run tools/build/build_standalone.py first")
         return 1
 
-    files = bundled_elf_files(args.toc)
+    files = bundled_elf_files(toc)
+    if args.depends:
+        try:
+            print(depends_line(files))
+        except RuntimeError as exc:
+            print(exc, file=sys.stderr)
+            return 1
+        return 0
     if args.unused:
         unused = unused_libraries(files)
         if not unused:

@@ -6,6 +6,8 @@ dist/
 build/
 !tools/build/
 !tools/build/**
+# The negations above would otherwise un-ignore the byte-code cache too.
+__pycache__/
 .coverage
 .claude/
 coverage_html/

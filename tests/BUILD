@@ -651,6 +651,15 @@ py_test(
 )
 
 py_test(
+    name = "test_check_linux_bundle",
+    size = "small",
+    srcs = _COMMON_SRCS + ["unit/test_check_linux_bundle.py"],
+    args = ["unit/test_check_linux_bundle.py"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS + ["//tools/build:build_tools_lib"],
+)
+
+py_test(
     name = "test_check_pins",
     size = "small",
     srcs = _COMMON_SRCS + ["unit/test_check_pins.py"],
@@ -2057,6 +2066,8 @@ test_suite(
         ":test_benchmark_runner",
         ":test_benchmark_service",
         ":test_cache_service",
+        ":test_check_linux_bundle",
+        ":test_check_pins",
         ":test_chunking_corrector",
         ":test_clean_answer",
         ":test_cli",
@@ -2087,7 +2098,6 @@ test_suite(
         ":test_language",
         ":test_llm_factory",
         ":test_local_models",
-        ":test_check_pins",
         ":test_make_constraints",
         ":test_markdown_shield",
         ":test_model_catalog",

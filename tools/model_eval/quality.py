@@ -28,13 +28,8 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from functools import lru_cache
 
-from teachers_teammate.domain.correction_review import (
-    AlignedReview,
-    CorrectionReview,
-    align,
-    diff_opcodes,
-    tokenize,
-)
+from teachers_teammate.domain.correction_review import AlignedReview, CorrectionReview, align
+from teachers_teammate.domain.proofreading.word_diff import diff_opcodes, tokenize
 
 Edit = tuple[int, int, tuple[str, ...]]
 """One word-diff change: ``(start, end, replacement)`` token indices into the source."""

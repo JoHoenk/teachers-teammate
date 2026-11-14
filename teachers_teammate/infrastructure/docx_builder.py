@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import copy
 from datetime import UTC, datetime
-import difflib
 from itertools import groupby, zip_longest
 import logging
 from pathlib import Path
@@ -39,7 +38,7 @@ from ..domain.correction_review import (
     CorrectionReview,
     UnclearNote,
     align,
-    change_tokens,
+    best_note_index,
     strip_marks,
     text_tokens,
 )
@@ -53,6 +52,7 @@ from ..domain.formatted_text import (
     list_markers,
     normalize_text_format,
 )
+from ..domain.proofreading.word_diff import diff_opcodes
 from ..interfaces import DocumentCreator
 
 _logger = logging.getLogger(__name__)
@@ -285,36 +285,28 @@ class _NoteSource:
 
     The comments layout computes its own word diff, whose parts do not line up one-to-one with
     the token hunks of ``align()`` (``his friend.`` is one part, ``his`` and ``friend`` two
-    hunks).  A part therefore asks for the note that changes the most of its words; notes the
-    document has not used yet win a tie, so a repeated edit gets its explanations in order.
+    hunks).  A part therefore asks the domain for the note that changes the most of its words
+    (:func:`~teachers_teammate.domain.correction_review.best_note_index`).
     """
 
     def __init__(self, aligned: AlignedReview | None, labels: dict[str, str]) -> None:
         self._labels = labels
-        self._notes: list[tuple[ChangeNote, frozenset[str]]] = []
+        self._notes: list[ChangeNote] = []
         self._used: set[int] = set()
         seen: set[int] = set()
         for entry in aligned.changes if aligned is not None else ():
             if entry.note is not None and id(entry.note) not in seen:
                 seen.add(id(entry.note))
-                self._notes.append((entry.note, change_tokens(entry.note)))
+                self._notes.append(entry.note)
 
     def comment(self, base: str, original: str, corrected: str) -> str:
         """Return the comment text for a diff part: *base*, plus its explanation if known."""
         part = text_tokens(original) | text_tokens(corrected)
-        best = -1
-        best_key: tuple[float, bool, int, int] | None = None
-        for index, (_note, tokens) in enumerate(self._notes):
-            overlap = len(part & tokens)
-            if not overlap:
-                continue
-            key = (overlap / len(tokens), index not in self._used, overlap, -index)
-            if best_key is None or key > best_key:
-                best, best_key = index, key
+        best = best_note_index(self._notes, self._used, part)
         if best < 0:
             return base
         self._used.add(best)
-        return _comment_text(base, self._notes[best][0], self._labels)
+        return _comment_text(base, self._notes[best], self._labels)
 
 
 def _aligned_review(
@@ -750,14 +742,12 @@ class DocxDocumentCreator(DocumentCreator):
         Lines are diffed by their words and styles; a word whose style the correction changed
         (a crossed-out word that lost its strikethrough) is commented like a changed word.
         """
-        matcher = difflib.SequenceMatcher(
-            None,
+        opcodes = diff_opcodes(
             [_line_key(line) for line in raw_lines],
             [_line_key(line) for line in corr_lines],
-            autojunk=False,
         )
         first = True
-        for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+        for tag, i1, i2, j1, j2 in opcodes:
             raw_block = raw_lines[i1:i2]
             corr_block = corr_lines[j1:j2]
             if tag == "equal":
@@ -785,11 +775,9 @@ class DocxDocumentCreator(DocumentCreator):
         corr_words = _words(corr_spans)
         if not raw_words and not corr_words:
             return
-        matcher = difflib.SequenceMatcher(
-            None, [word for word, _ in raw_words], [word for word, _ in corr_words], autojunk=False
-        )
+        opcodes = diff_opcodes([word for word, _ in raw_words], [word for word, _ in corr_words])
         parts: list[tuple[list[_Word], str | None, str, str]] = []
-        for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+        for tag, i1, i2, j1, j2 in opcodes:
             raw_chunk = raw_words[i1:i2]
             old_chunk = " ".join(word for word, _ in raw_chunk)
             corr_chunk = " ".join(word for word, _ in corr_words[j1:j2])

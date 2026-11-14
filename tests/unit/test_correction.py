@@ -9,7 +9,7 @@ from langchain_core.language_models.fake_chat_models import FakeListChatModel
 
 from teachers_teammate.domain.answer_format import REVIEW_FORMAT, TEXT_FORMAT
 from teachers_teammate.exceptions import TRUNCATED_MESSAGE
-from teachers_teammate.infrastructure import correction as correction_module
+from teachers_teammate.infrastructure.proofreading import port as port_module
 from teachers_teammate.infrastructure._llm_invoke import StructuredResult
 from teachers_teammate.domain.formatted_text import TextFormat
 from teachers_teammate.infrastructure.correction import (
@@ -203,7 +203,10 @@ def test_native_ollama_corrector_sends_the_think_value_of_its_profile(mocker) ->
     When   correct() is called
     Then   OllamaClient.chat receives think="low"; with the default profile, think=False
     """
-    from teachers_teammate.domain.model_catalog import RequestProfile  # noqa: PLC0415
+    from teachers_teammate.domain.model_catalog import (  # noqa: PLC0415
+        RequestProfile,
+        StepProfile,
+    )
     from teachers_teammate.infrastructure.ollama_utils import OllamaClient  # noqa: PLC0415
 
     mock_chat = mocker.patch.object(OllamaClient, "chat", return_value="ok")
@@ -211,7 +214,7 @@ def test_native_ollama_corrector_sends_the_think_value_of_its_profile(mocker) ->
         model="m",
         client=_ollama_client(),
         settings=_TEXT_ONLY,
-        profile=RequestProfile(think="low"),
+        profile=RequestProfile(correct=StepProfile(think="low")),
     )
     plain = NativeOllamaCorrector(model="m", client=_ollama_client(), settings=_TEXT_ONLY)
 
@@ -401,7 +404,7 @@ def _review_request(monkeypatch, profile=None, **settings: object) -> dict:
         captured.append(kwargs)
         return StructuredResult(error="(stop)", failure="transport")  # provider error, no repair
 
-    monkeypatch.setattr(correction_module, "invoke_langchain_structured", fake)
+    monkeypatch.setattr(port_module, "invoke_langchain_structured", fake)
     LangChainCorrector(
         FakeListChatModel(responses=[]),
         settings=CorrectionSettings(**settings),  # ty: ignore[invalid-argument-type]  # parametrised settings
@@ -435,7 +438,10 @@ def test_the_compact_rule_follows_the_models_profile(monkeypatch) -> None:
     When   each builds its review request
     Then   the rule ends the fixed part when the profile asks for it, and is absent otherwise
     """
-    from teachers_teammate.domain.model_catalog import RequestProfile  # noqa: PLC0415
+    from teachers_teammate.domain.model_catalog import (  # noqa: PLC0415
+        RequestProfile,
+        StepProfile,
+    )
 
     on = _review_system(monkeypatch, profile=RequestProfile(compact_json=True))
     off = _review_system(monkeypatch, profile=RequestProfile(compact_json=False))
@@ -453,10 +459,8 @@ def test_review_message_names_both_languages(monkeypatch) -> None:
     """
     request = _review_request(monkeypatch)
 
-    assert "Text language: {language}" in request["human"]
-    assert "Explanation language: {explanation}" in request["human"]
-    assert request["variables"]["language"] == "German"
-    assert request["variables"]["explanation"] == "German"
+    assert "Text language: German" in request["variables"]["text"]
+    assert "Explanation language: German" in request["variables"]["text"]
 
 
 def test_review_message_uses_the_explanation_language_setting(monkeypatch) -> None:
@@ -467,8 +471,8 @@ def test_review_message_uses_the_explanation_language_setting(monkeypatch) -> No
     """
     request = _review_request(monkeypatch, explanation_language="English")
 
-    assert request["variables"]["language"] == "German"
-    assert request["variables"]["explanation"] == "English"
+    assert "Text language: German" in request["variables"]["text"]
+    assert "Explanation language: English" in request["variables"]["text"]
 
 
 def test_review_prompt_never_translates_the_text(monkeypatch) -> None:
@@ -489,7 +493,10 @@ def test_custom_answer_format_replaces_the_built_in_one(monkeypatch) -> None:
     Then   it is sent instead of the built-in format, the compact-JSON rule follows it, and the
            corrections-only format is unaffected
     """
-    from teachers_teammate.domain.model_catalog import RequestProfile  # noqa: PLC0415
+    from teachers_teammate.domain.model_catalog import (  # noqa: PLC0415
+        RequestProfile,
+        StepProfile,
+    )
 
     system = _review_system(
         monkeypatch,
@@ -530,7 +537,7 @@ def test_review_mode_returns_the_corrected_text_and_its_review(monkeypatch) -> N
     """
     answer = CorrectionAnswer.model_validate_json(_answer_json())
     monkeypatch.setattr(
-        correction_module,
+        port_module,
         "invoke_langchain_structured",
         lambda *_args, **_kwargs: StructuredResult(parsed=answer, raw=_answer_json()),
     )
@@ -544,6 +551,61 @@ def test_review_mode_returns_the_corrected_text_and_its_review(monkeypatch) -> N
     assert outcome.review.unplaced == ()
 
 
+def test_a_review_answer_with_markup_a_placeholder_and_a_noop_is_cleaned(monkeypatch) -> None:
+    """
+    Given  a review answer that bolds a word of a plain text, answers one sentence with a
+    placeholder instead of a correction, and lists a change that changes nothing
+    When   correct() runs in review mode
+    Then   the stored text carries no markup, the placeholder sentence stays as the student
+           wrote it, and the change that changes nothing is gone
+    """
+    answer = CorrectionAnswer.model_validate_json(
+        json.dumps(
+            {
+                "sentences": [
+                    {
+                        "original": "Helo wrold.",
+                        "corrected": "**Hello** world.",
+                        "changes": [
+                            {
+                                "original": "Helo",
+                                "corrected": "Hello",
+                                "category": "spelling",
+                                "explanation": "Misspelt word.",
+                            },
+                            {
+                                "original": "world",
+                                "corrected": "world",
+                                "category": "other",
+                                "explanation": "Nothing.",
+                            },
+                        ],
+                    },
+                    {
+                        "original": "Ich habe gewartet.",
+                        "corrected": "corrected",
+                        "changes": [],
+                    },
+                ],
+                "unclear": [],
+            }
+        )
+    )
+    monkeypatch.setattr(
+        port_module,
+        "invoke_langchain_structured",
+        lambda *_args, **_kwargs: StructuredResult(parsed=answer, raw=""),
+    )
+
+    outcome = LangChainCorrector(FakeListChatModel(responses=[])).correct(
+        "Helo wrold. Ich habe gewartet.", "English"
+    )
+
+    assert outcome.text == "Hello world. Ich habe gewartet."
+    assert outcome.review is not None
+    assert [len(s.changes) for s in outcome.review.sentences] == [1, 0]
+
+
 def test_invalid_review_answer_is_repaired_once(monkeypatch) -> None:
     """
     Given  a model that first answers with unusable JSON and then with a valid answer
@@ -554,12 +616,12 @@ def test_invalid_review_answer_is_repaired_once(monkeypatch) -> None:
     humans: list[str] = []
 
     def fake(_llm, **kwargs):
-        humans.append(kwargs["human"])
+        humans.append(kwargs["variables"]["text"])
         if len(humans) == 1:
             return StructuredResult(raw="not json at all", error="(invalid)", failure="invalid")
         return StructuredResult(parsed=answer, raw=_answer_json())
 
-    monkeypatch.setattr(correction_module, "invoke_langchain_structured", fake)
+    monkeypatch.setattr(port_module, "invoke_langchain_structured", fake)
 
     outcome = LangChainCorrector(FakeListChatModel(responses=[])).correct("Helo wrold.", "English")
 
@@ -576,7 +638,7 @@ def test_unrepairable_review_answer_falls_back_to_text_mode(monkeypatch) -> None
     Then   the correction is shown without a review and the fallback warning is returned
     """
     monkeypatch.setattr(
-        correction_module,
+        port_module,
         "invoke_langchain_structured",
         lambda *_args, **_kwargs: StructuredResult(
             raw="garbage", error="(invalid)", failure="invalid"
@@ -599,7 +661,7 @@ def test_review_transport_error_keeps_the_source_text(monkeypatch) -> None:
     Then   the source text is kept and the provider error is reported instead of falling back
     """
     monkeypatch.setattr(
-        correction_module,
+        port_module,
         "invoke_langchain_structured",
         lambda *_args, **_kwargs: StructuredResult(
             error="Correction failed (boom); keeping original text.", failure="transport"
@@ -621,7 +683,7 @@ def test_review_answer_that_cannot_be_placed_falls_back_to_text_mode(monkeypatch
     """
     answer = CorrectionAnswer.model_validate_json(_answer_json())
     monkeypatch.setattr(
-        correction_module,
+        port_module,
         "invoke_langchain_structured",
         lambda *_args, **_kwargs: StructuredResult(parsed=answer, raw=_answer_json()),
     )
@@ -679,7 +741,7 @@ def test_empty_review_answer_falls_back_without_a_repair_request(monkeypatch) ->
         calls.append(kwargs["human"])
         return StructuredResult(raw="", error="(empty)", failure="invalid")
 
-    monkeypatch.setattr(correction_module, "invoke_langchain_structured", fake)
+    monkeypatch.setattr(port_module, "invoke_langchain_structured", fake)
     llm = FakeListChatModel(responses=["Hello world."])
 
     outcome = LangChainCorrector(llm).correct("Helo wrold.", "English")
@@ -1168,7 +1230,10 @@ def test_request_messages_are_what_the_native_corrector_sends(mocker) -> None:
     When   it proofreads a text, and request_messages() builds the request for the same text
     Then   the system and user messages it sent are exactly request_messages()'
     """
-    from teachers_teammate.domain.model_catalog import RequestProfile  # noqa: PLC0415
+    from teachers_teammate.domain.model_catalog import (  # noqa: PLC0415
+        RequestProfile,
+        StepProfile,
+    )
     from teachers_teammate.exceptions import ResponseTruncatedError  # noqa: PLC0415
     from teachers_teammate.infrastructure.correction import request_messages  # noqa: PLC0415
     from teachers_teammate.infrastructure.ollama_utils import OllamaClient  # noqa: PLC0415

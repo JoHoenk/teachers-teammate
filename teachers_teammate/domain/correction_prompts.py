@@ -1,10 +1,24 @@
-"""Built-in proofreading policies (one per language) and the migration of saved copies.
+"""The prompts of the proofreading exchange, and the policies of the previous review request.
 
-Pure text and string comparison: no I/O, no provider imports.  The policy is what a teacher
-may change; the answer-format rules are appended by ``infrastructure/correction_schema.py``.
+Two groups:
+
+* The **fixed prompts of the exchange** (① correct, ② explain, ③ unclear) at the end of this
+  module.  They are English for every text language, versioned by :data:`PROMPT_VERSION`, and a
+  teacher cannot edit them: the language of the text and of the explanations are parameters of
+  the user message.
+* The **per-language policies** of the previous one-request review, which the evaluation tools
+  still measure.  They are what a teacher could change; the answer-format rules were appended by
+  ``infrastructure/correction_schema.py``.
+
+Pure text and string comparison: no I/O, no provider imports.
 """
 
 from __future__ import annotations
+
+from collections.abc import Sequence
+
+from .proofreading.edits import Batch, Edit, group_after
+from .proofreading.word_diff import Hunk
 
 # ── Policy presets ────────────────────────────────────────────────────────────
 # One policy per language: the same rules, translated.  ``{level}`` is filled in by code;
@@ -314,3 +328,153 @@ def migrate_saved_default(prompt: str, default: str) -> str:
     if prompt.strip() and normalize_prompt_text(prompt) == normalize_prompt_text(default):
         return ""
     return prompt
+
+
+# ── The fixed prompts of the exchange ─────────────────────────────────────────
+# The exchange sends three requests per text: ① correct, ② explain the edits, ③ find the
+# unclear wording.  Their system prompts are fixed by the app and written in English for every
+# text language (the language of the text and of the explanations are parameters of the user
+# message, never placeholders that can go missing).  A teacher changes settings and notes, not
+# these texts.
+
+PROMPT_VERSION = "1"
+"""Version of the fixed prompts and answer shapes; part of the cache key and of the evaluation
+protocol.  Bumped whenever a prompt or a schema changes, because an answer of another version is
+not comparable."""
+
+CORRECT_SYSTEM = """\
+You are a proofreading assistant for a teacher. You correct a student's text and answer with the \
+corrected text and nothing else.
+
+Correct only real mistakes: grammar, spelling, punctuation, word choice, word order. Make the \
+smallest change that fixes each one.
+
+Keep the student's own words, style and sentence structure. Do not rewrite for style and do not \
+raise the level: the student's level is given in the message.
+
+If wording is unclear or ambiguous, do not guess what the student meant: leave it exactly as it \
+is written.
+
+Keep the shape of the text: the same paragraphs, the same line breaks, the same number of \
+sentences. Do not add marks, headings or comments. Answer with the text only, without a lead-in \
+and without a closing remark."""
+
+EXPLAIN_SYSTEM = """\
+You help a teacher understand the corrections made to a student's text. Each numbered edit \
+changes the student's wording. For every edit, give its category and one explanation.
+
+Categories: grammar, spelling, punctuation, word_choice, word_order, other.
+
+Explanations are written for the teacher, in the explanation language named in the message: one \
+short sentence that talks about the student in the third person (for example: "The student used \
+'hat'; verbs of motion form the Perfekt with 'sein'."). Say what rule the edit applies. Never \
+address the student with "you" and do not praise. If you think an edit was not needed, say so in \
+the explanation.
+
+Explain every edit, in order, and no other."""
+
+UNCLEAR_SYSTEM = """\
+You check a student's text for unclear or ambiguous wording, for a teacher. The mistakes in the \
+text are already corrected: do not report mistakes and do not rewrite for style.
+
+Report only expressions that are grammatically fine but whose meaning a reader cannot tell for \
+sure: a pronoun that could refer to two people, vague wording, an ambiguous phrase, missing \
+information. If nothing is unclear, report nothing.
+
+For each one, give the exact words from the text; why they are unclear, for the teacher, in the \
+explanation language named in the message, as one short sentence about the student in the third \
+person; a clearer wording, or the question the student should answer; and whether the intended \
+meaning can be told from the text at all."""
+
+NOTES_HEADING = "Notes from the teacher (context for the correction):"
+"""Heading of the teacher's notes in the user message of every step."""
+
+NOTES_LIMIT = 500
+"""How many characters of teacher notes a request carries; the dialog warns above this."""
+
+
+def parameters(language: str, *, level: str, explanation_language: str = "") -> str:
+    """Return the parameter lines of a user message: the languages and the CEFR level."""
+    return "\n".join(
+        [
+            f"Text language: {language}",
+            f"Explanation language: {explanation_language or language}",
+            f"CEFR level of the student: {level}",
+        ]
+    )
+
+
+def notes_block(notes: str) -> str:
+    """Return the teacher's notes as the marked block of a user message (``""`` without notes)."""
+    notes = notes.strip()
+    return f"\n\n{NOTES_HEADING}\n{notes}" if notes else ""
+
+
+def correct_user(text: str, *, language: str, level: str, notes: str = "") -> str:
+    """Return the user message of step ①: parameters, notes, the text to correct."""
+    head = parameters(language, level=level)
+    return f"{head}{notes_block(notes)}\n\nText:\n\n{text}"
+
+
+def explain_user(
+    body: str, *, language: str, level: str, explanation_language: str = "", notes: str = ""
+) -> str:
+    """Return the user message of step ②: parameters, notes, the sentences with their edits."""
+    head = parameters(language, level=level, explanation_language=explanation_language)
+    return f"{head}{notes_block(notes)}\n\nEdits:\n\n{body}"
+
+
+def unclear_user(
+    text: str, *, language: str, level: str, explanation_language: str = "", notes: str = ""
+) -> str:
+    """Return the user message of step ③: parameters, notes, the corrected text."""
+    head = parameters(language, level=level, explanation_language=explanation_language)
+    return f"{head}{notes_block(notes)}\n\nText:\n\n{text}"
+
+
+def explain_body(
+    source: str,
+    corrected: str,
+    spans: tuple[tuple[int, int], ...],
+    batch: Batch,
+    hunks: Sequence[Hunk],
+) -> str:
+    """Return the sentences of *batch* before and after the correction, with their edits.
+
+    Each sentence group is shown twice — as the student wrote it and as the correction leaves it,
+    with ``⟦n⟧`` in front of every edit — and then every edit is listed with its number, so the
+    model can name the rule it applies::
+
+        Sentences 7-8 (before): …zu Hause. Weil es regnete.
+        Sentences 7-8 (after):  …zu Hause, ⟦12⟧weil es regnete.
+        ⟦12⟧ ". Weil" → ", weil"
+    """
+    marks = {(part.raw_start, part.raw_end): edit.id for edit in batch.edits for part in edit.parts}
+
+    def mark(hunk: Hunk) -> str:
+        number = marks.get((hunk.raw_start, hunk.raw_end))
+        return f"⟦{number}⟧" if number is not None else ""
+
+    lines: list[str] = []
+    for group in batch.groups:
+        label = _group_label(group)
+        before = source[spans[group[0]][0] : spans[group[-1]][1]].strip()
+        after = group_after(corrected, spans, group, hunks, mark).strip()
+        lines.append(f"{label} (before): {before}")
+        lines.append(f"{label} (after):  {after}")
+    for edit in batch.edits:
+        lines.append(f"⟦{edit.id}⟧ {_arrow(edit)}")
+    return "\n".join(lines)
+
+
+def _group_label(group: Sequence[int]) -> str:
+    """Return the sentence numbers of *group* as the label of its two lines."""
+    numbers = [index + 1 for index in group]
+    if len(numbers) == 1:
+        return f"Sentence {numbers[0]}"
+    return f"Sentences {numbers[0]}-{numbers[-1]}"
+
+
+def _arrow(edit: Edit) -> str:
+    """Return *edit* as ``"old" → "new"``, with an empty side shown as ``""``."""
+    return f'"{edit.original}" → "{edit.corrected}"'

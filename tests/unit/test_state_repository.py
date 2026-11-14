@@ -9,6 +9,7 @@ import pytest
 
 import dataclasses
 
+from teachers_teammate.domain.correction_review import CorrectionReview, SentenceNote
 from teachers_teammate.infrastructure.state_repository import (
     DocumentState,
     OcrResultRecord,
@@ -569,6 +570,38 @@ def test_record_manual_ocr_edit_invalidates_correction_and_evaluation(tmp_path: 
     assert loaded.correction_text == ""
     assert loaded.evaluation_done is False
     assert loaded.evaluation_text == ""
+
+
+@pytest.mark.use_case("Manual_Text_Editing")
+def test_record_manual_ocr_edit_clears_the_review(tmp_path: Path) -> None:
+    """
+    Given  a corrected state that carries a review
+    When   the recognised text is edited
+    Then   the review is gone with the correction, because its offsets belong to the old text
+    """
+    source = _source_file(tmp_path)
+    source_hash = compute_file_hash(source)
+    repo = _repo(tmp_path)
+    review = CorrectionReview(
+        sentences=(SentenceNote(original="alt", corrected="neu", changes=()),),
+    )
+    state = dataclasses.replace(
+        repo.create(source, source_hash),
+        ocr_done=True,
+        raw_text="alt",
+        correction_done=True,
+        correction_text="neu",
+        correction_review=review.to_dict(),
+        correction_warning="a warning",
+    )
+
+    repo.record_manual_ocr_edit(source, state, raw_text="anders", preview_img="")
+
+    loaded = repo.load(source)
+    assert loaded is not None
+    assert loaded.review is None
+    assert loaded.correction_review is None
+    assert loaded.correction_warning == ""
 
 
 @pytest.mark.use_case("Manual_Text_Editing")

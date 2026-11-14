@@ -3249,6 +3249,9 @@ def test_correction_instructions_matches_what_the_corrector_sends(monkeypatch) -
     from teachers_teammate.infrastructure._llm_invoke import (  # noqa: PLC0415
         StructuredResult,
     )
+    from teachers_teammate.infrastructure.proofreading import (  # noqa: PLC0415
+        port as port_module,
+    )
     from teachers_teammate.infrastructure.correction import (  # noqa: PLC0415
         GERMAN_PROMPT,
         CorrectionSettings,
@@ -3264,7 +3267,7 @@ def test_correction_instructions_matches_what_the_corrector_sends(monkeypatch) -
         captured.append(kwargs["system"])
         return StructuredResult(error="(stop)", failure="transport")
 
-    monkeypatch.setattr(correction_module, "invoke_langchain_structured", fake)
+    monkeypatch.setattr(port_module, "invoke_langchain_structured", fake)
     LangChainCorrector(
         FakeListChatModel(responses=[]),
         settings=CorrectionSettings(level="B2", explanation_language=""),
@@ -3910,9 +3913,10 @@ def test_first_run_model_settings_respect_the_main_memory() -> None:
     """
     Given  a computer without a graphics card and 12 GB of main memory
     When   first_run_model_settings is called with those figures
-    Then   the writing steps get qwen3:4b, the model that fits, not gemma4:e4b
+    Then   the writing steps get gemma4:e4b, the only writing model the app offers without a
+           card: the smaller one it used to offer (qwen3:4b) fails gate 1
     """
     svc = _make_svc()
     settings = svc.first_run_model_settings("cpu", system_memory_gb=12.0)
-    assert settings["correction_model"] == "qwen3:4b"
-    assert settings["evaluate_model"] == "qwen3:4b"
+    assert settings["correction_model"] == "gemma4:e4b"
+    assert settings["evaluate_model"] == "gemma4:e4b"

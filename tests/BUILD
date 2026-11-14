@@ -118,6 +118,7 @@ py_library(
             "integration/*.py",
             "gui/*.py",
             "tools/*.py",
+            "fakes/*.py",
         ],
     ),
     visibility = ["//visibility:public"],
@@ -141,6 +142,8 @@ _COMMON_SRCS = [
     "gui/__init__.py",
     "gui/_service_stubs.py",
     "tools/__init__.py",
+    "fakes/__init__.py",
+    "fakes/fake_port.py",
 ]
 
 # infrastructure/correction_schema.py builds the review's JSON schema with pydantic, which
@@ -297,6 +300,123 @@ py_test(
     size = "small",
     srcs = _COMMON_SRCS + ["unit/test_correction_review.py"],
     args = ["unit/test_correction_review.py"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS,
+)
+
+py_test(
+    name = "test_clean_answer",
+    size = "small",
+    srcs = _COMMON_SRCS + ["unit/test_clean_answer.py"],
+    args = ["unit/test_clean_answer.py"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS + _FORMAT_DEPS,
+)
+
+py_test(
+    name = "test_fallback_exchange",
+    size = "small",
+    srcs = _COMMON_SRCS + ["unit/test_fallback_exchange.py"],
+    args = ["unit/test_fallback_exchange.py"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS + _FORMAT_DEPS,
+)
+
+py_test(
+    name = "test_step_runner",
+    size = "small",
+    srcs = _COMMON_SRCS + ["unit/test_step_runner.py"],
+    args = ["unit/test_step_runner.py"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS,
+)
+
+py_test(
+    name = "test_word_diff",
+    size = "small",
+    srcs = _COMMON_SRCS + ["unit/test_word_diff.py"],
+    args = ["unit/test_word_diff.py"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS,
+)
+
+py_test(
+    name = "test_sentences",
+    size = "small",
+    srcs = _COMMON_SRCS + ["unit/test_sentences.py"],
+    args = ["unit/test_sentences.py"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS,
+)
+
+py_test(
+    name = "test_edits",
+    size = "small",
+    srcs = _COMMON_SRCS + ["unit/test_edits.py"],
+    args = ["unit/test_edits.py"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS,
+)
+
+py_test(
+    name = "test_review_v2",
+    size = "small",
+    srcs = _COMMON_SRCS + ["unit/test_review_v2.py"],
+    args = ["unit/test_review_v2.py"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS,
+)
+
+py_test(
+    name = "test_markdown_shield",
+    size = "small",
+    srcs = _COMMON_SRCS + ["unit/test_markdown_shield.py"],
+    args = ["unit/test_markdown_shield.py"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS + _FORMAT_DEPS,
+)
+
+py_test(
+    name = "test_quotes",
+    size = "small",
+    srcs = _COMMON_SRCS + ["unit/test_quotes.py"],
+    args = ["unit/test_quotes.py"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS,
+)
+
+py_test(
+    name = "test_correction_prompts_steps",
+    size = "small",
+    srcs = _COMMON_SRCS + ["unit/test_correction_prompts_steps.py"],
+    args = ["unit/test_correction_prompts_steps.py"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS,
+)
+
+py_test(
+    name = "test_exchange_schemas",
+    size = "small",
+    srcs = _COMMON_SRCS + ["unit/test_exchange_schemas.py"],
+    args = ["unit/test_exchange_schemas.py"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS,
+)
+
+py_test(
+    name = "test_exchange_t",
+    size = "small",
+    srcs = _COMMON_SRCS + ["unit/test_exchange_t.py"],
+    args = ["unit/test_exchange_t.py"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS + _FORMAT_DEPS,
+)
+
+py_test(
+    name = "test_request_profile",
+    size = "small",
+    srcs = _COMMON_SRCS + ["unit/test_request_profile.py"],
+    args = ["unit/test_request_profile.py"],
     main = "run_test.py",
     deps = _COMMON_DEPS,
 )
@@ -1750,6 +1870,7 @@ test_suite(
         ":test_benchmark_service",
         ":test_cache_service",
         ":test_chunking_corrector",
+        ":test_clean_answer",
         ":test_cli",
         ":test_cli_composition",
         ":test_collect_files",
@@ -1758,11 +1879,16 @@ test_suite(
         ":test_coordinator",
         ":test_correction",
         ":test_correction_presets",
+        ":test_correction_prompts_steps",
         ":test_correction_review",
         ":test_data_location",
         ":test_docx_builder",
         ":test_domain_policy",
+        ":test_edits",
         ":test_evaluation",
+        ":test_exchange_schemas",
+        ":test_exchange_t",
+        ":test_fallback_exchange",
         ":test_file_processor",
         ":test_gpu_detector",
         ":test_input_provider_factory",
@@ -1770,6 +1896,7 @@ test_suite(
         ":test_interfaces",
         ":test_language",
         ":test_llm_factory",
+        ":test_markdown_shield",
         ":test_model_catalog",
         ":test_model_listing",
         ":test_ocr_formats",
@@ -1788,18 +1915,24 @@ test_suite(
         ":test_preview_image_store",
         ":test_providers",
         ":test_providers_mistral_curation",
+        ":test_quotes",
         ":test_release_stamp_versions",
+        ":test_request_profile",
+        ":test_review_v2",
         ":test_run_stats",
         ":test_run_summary",
         ":test_sent_text",
+        ":test_sentences",
         ":test_service",
         ":test_setup_plan",
         ":test_speed_estimates",
         ":test_speed_store",
         ":test_stage_builder",
         ":test_state_repository",
+        ":test_step_runner",
         ":test_storage_policy",
         ":test_text_chunks",
+        ":test_word_diff",
     ],
 )
 

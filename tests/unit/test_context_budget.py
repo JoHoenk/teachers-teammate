@@ -87,15 +87,17 @@ def test_the_text_budget_takes_the_prompt_out_of_the_window_before_sharing_it() 
     Given  a proofreading request with a 2105-character system prompt and an answer as long as
            the text
     When   the maximum text length is computed for an 8192-token window
-    Then   the prompt's own tokens are subtracted first, and only the rest is shared between the
-           text and its answer
+    Then   the prompt's own characters are subtracted first, from the half of the window a request
+           may take, so a text of the full budget is still accepted by the request check
     """
     budget = ContextBudget(8192)
 
     overhead = 2105
-    overhead_tokens = -(-overhead // 3)
-    assert budget.max_text_chars(overhead, answer_factor=1.0) == int(
-        (8192 - overhead_tokens) / 2 * 3
+    limit = budget.max_text_chars(overhead, answer_factor=1.0)
+    assert limit == 3 * (8192 - answers_with_the_same_text(8192)) - overhead
+    assert budget.request_fits(overhead + limit, answer_tokens=answers_with_the_same_text(8192))
+    assert not budget.request_fits(
+        overhead + limit + 3, answer_tokens=answers_with_the_same_text(8192)
     )
     assert budget.max_text_chars(2105, answer_factor=1.0) < budget.max_text_chars(
         1097, answer_factor=1.0
@@ -513,3 +515,19 @@ def test_proofreading_is_capped_at_the_base_window() -> None:
     assert PROOFREADING_NUM_CTX_CAP == BASE_NUM_CTX
     assert window_from_setting("16384") == BASE_NUM_CTX
     assert window_from_setting("32768") == BASE_NUM_CTX
+
+
+@pytest.mark.use_case("Context_Budget")
+def test_a_request_that_carries_the_text_twice_gets_half_the_text() -> None:
+    """
+    Given  a request that shows the text twice (before and after the correction)
+    When   the text budget is worked out with two copies
+    Then   the whole request, both copies included, still fits the request check
+    """
+    budget = ContextBudget(8192)
+    allowance = answers_with_the_same_text(8192)
+
+    limit = budget.max_text_chars(1_500, answer_factor=1.0, text_copies=2)
+
+    assert limit < budget.max_text_chars(1_500, answer_factor=1.0)
+    assert budget.request_fits(1_500 + 2 * limit, answer_tokens=allowance)

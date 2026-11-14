@@ -155,10 +155,10 @@ def test_normalize_tag_leaves_tagged_names_unchanged() -> None:
         # GOOD: further entries of the RECOMMENDED list
         ("qwen3-vl:8b", "8gb", Suitability.GOOD),
         ("deepseek-ocr:latest", "8gb", Suitability.GOOD),
-        ("qwen3:4b", "cpu", Suitability.GOOD),
         ("qwen3.5:9b", "8gb", Suitability.GOOD),
         ("qwen3.5:9b", "16gb", Suitability.GOOD),
         # WORKS: catalogued and within the card, but not recommended
+        ("qwen3:4b", "cpu", Suitability.WORKS),
         ("qwen2.5vl:7b", "8gb", Suitability.WORKS),
         ("mistral:latest", "8gb", Suitability.WORKS),
         ("mistral:latest", "16gb", Suitability.WORKS),
@@ -887,15 +887,15 @@ def test_a_catalog_profile_is_found_by_its_tag() -> None:
     """
     Given  a catalog model whose profile asks for compact JSON
     When   the profile is asked for by tag, with and without the ``:latest`` suffix
-    Then   the catalog's profile comes back, not the default
+    Then   the catalog's profile is the base, not the default
     """
     spec = replace(
         find_spec("gemma4:e4b"),  # ty: ignore[invalid-argument-type]  # the tag is in the catalog
-        request_profile=RequestProfile(compact_json=True, temperature=1.0),
+        request_profile=RequestProfile(compact_json=True),
     )
     catalog = tuple(spec if other.tag == spec.tag else other for other in OLLAMA_CATALOG)
     with patch.object(model_catalog, "OLLAMA_CATALOG", catalog):
-        assert request_profile("gemma4:e4b") == spec.request_profile
+        assert request_profile("gemma4:e4b").compact_json is True
         assert request_profile("gemma4").compact_json is False
 
 
@@ -934,14 +934,15 @@ def test_best_model_skips_a_model_too_large_for_the_main_memory() -> None:
     """
     Given  a computer without a graphics card and 12 GB of main memory (4 GB usable)
     When   the BEST writing model is asked for, and again with 32 GB and with no figure
-    Then   it is qwen3:4b on the small computer, which suitability() marks BEST and gemma4:e4b
-           (5 GB) TOO_LARGE; with enough memory or without a figure it is gemma4:e4b
+    Then   it is gemma4:e4b, which suitability() marks TOO_LARGE on the small computer and
+           BEST with enough memory: the list offers no smaller writing model, because the one
+           it used to offer (qwen3:4b) fails gate 1
     """
-    assert best_model("general", "cpu", system_memory_gb=12.0) == "qwen3:4b"
-    assert suitability("qwen3:4b", "general", "cpu", system_memory_gb=12.0) is Suitability.BEST
+    assert best_model("general", "cpu", system_memory_gb=12.0) == "gemma4:e4b"
     assert (
         suitability("gemma4:e4b", "general", "cpu", system_memory_gb=12.0) is Suitability.TOO_LARGE
     )
+    assert suitability("gemma4:e4b", "general", "cpu", system_memory_gb=32.0) is Suitability.BEST
     assert best_model("general", "cpu", system_memory_gb=32.0) == "gemma4:e4b"
     assert best_model("general", "cpu") == "gemma4:e4b"
 

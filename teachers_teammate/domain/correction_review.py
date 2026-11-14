@@ -14,11 +14,13 @@ from __future__ import annotations
 
 from bisect import bisect_left
 from collections import Counter
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Collection, Sequence
 from dataclasses import dataclass
-import difflib
 import re
-from typing import Any, Literal, cast
+from typing import Any, cast
+
+from .proofreading.review import MINOR_CATEGORIES
+from .proofreading.word_diff import Hunk, Similarity, tokenize, word_diff
 
 REVIEW_VERSION = 1
 """Version written by :meth:`CorrectionReview.to_dict`; ``from_dict`` rejects any other."""
@@ -44,16 +46,9 @@ _SEGMENT_RE = re.compile(
 #: split sentences).
 _MAX_FUZZY_SEGMENTS = 4
 
-#: Token pattern shared with the GUI's diff, so hunks and spans are measured in the same units.
-_TOKEN_RE = re.compile(r"\w+|[^\w\s]|\s+", flags=re.UNICODE)
-
 #: Markdown marks that a stored text may carry but an anchor string should not.
 _MARK_RE = re.compile(r"</?(?:sup|sub|u)>|~~|\*\*|__")
 _WORD_CHAR_RE = re.compile(r"\w", flags=re.UNICODE)
-
-MINOR_CATEGORIES: frozenset[str] = frozenset({"spelling", "punctuation"})
-"""Categories whose edits explain themselves: a typo, a comma.  They are marked in the text but
-not listed one by one in the overview of the changes."""
 
 
 @dataclass(frozen=True)
@@ -361,8 +356,7 @@ def _fuzzy_anchor(source: str, cursor: int, original: str) -> tuple[int, int] | 
         if stripped:
             start = match.start() + len(piece) - len(piece.lstrip())
             spans.append((start, start + len(stripped)))
-    matcher = difflib.SequenceMatcher(None, autojunk=False)
-    matcher.set_seq2(target)
+    matcher = Similarity(target)
     longest = len(target) * (2 / _FUZZY_RATIO - 1)
     best: tuple[int, int] | None = None
     best_ratio = _FUZZY_RATIO
@@ -371,40 +365,13 @@ def _fuzzy_anchor(source: str, cursor: int, original: str) -> tuple[int, int] | 
             start, end = spans[first][0], spans[last][1]
             if end - start > longest:
                 break
-            matcher.set_seq1(source[start:end])
-            if matcher.real_quick_ratio() < best_ratio or matcher.quick_ratio() < best_ratio:
-                continue
-            ratio = matcher.ratio()
+            ratio = matcher.ratio(source[start:end], at_least=best_ratio)
             if ratio >= best_ratio and (best is None or ratio > best_ratio):
                 best, best_ratio = (start, end), ratio
     return best
 
 
 # ── Alignment ─────────────────────────────────────────────────────────────────
-
-HunkKind = Literal["replace", "insert", "delete"]
-
-
-@dataclass(frozen=True)
-class Hunk:
-    """One contiguous difference of the local word diff."""
-
-    original: str
-    """Text of the hunk in the raw text (empty for an insertion)."""
-    corrected: str
-    """Text of the hunk in the corrected text (empty for a deletion)."""
-    kind: HunkKind
-
-    @property
-    def summary(self) -> str:
-        """Return the hunk as ``old → new``, using the GUI's wording for an empty side."""
-        original = " ".join(self.original.split())
-        corrected = " ".join(self.corrected.split())
-        if self.kind == "delete":
-            return f"{original} → (deleted)"
-        if self.kind == "insert":
-            return f"(inserted) → {corrected}"
-        return f"{original} → {corrected}"
 
 
 @dataclass(frozen=True)
@@ -525,30 +492,6 @@ def review_summary(aligned: AlignedReview | None, *, separator: str = ", ") -> s
     return separator.join(parts)
 
 
-def tokenize(text: str) -> list[str]:
-    """Split *text* into diff tokens, preserving whitespace and punctuation."""
-    return _TOKEN_RE.findall(text)
-
-
-DiffOpcode = tuple[str, int, int, int, int]
-
-
-def diff_opcodes(raw_tokens: Sequence[str], corrected_tokens: Sequence[str]) -> list[DiffOpcode]:
-    """Return the ``SequenceMatcher`` opcodes of the word diff, layout changes counted as equal.
-
-    A difference in whitespace alone (an OCR line break the model joined into a space) is not
-    a change a teacher can see or needs explained, so it is reported as ``equal``.  The GUI's
-    diff and :func:`align` both number the hunks from this list, so their numbers agree.
-    """
-    matcher = difflib.SequenceMatcher(None, raw_tokens, corrected_tokens, autojunk=False)
-    opcodes: list[DiffOpcode] = []
-    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
-        changed = "".join(raw_tokens[i1:i2]) + "".join(corrected_tokens[j1:j2])
-        layout_only = tag != "equal" and not changed.strip()
-        opcodes.append(("equal" if layout_only else tag, i1, i2, j1, j2))
-    return opcodes
-
-
 def strip_marks(text: str) -> str:
     """Remove the Markdown notation marks from an anchor string."""
     return _MARK_RE.sub("", text)
@@ -587,8 +530,10 @@ def align(raw_plain: str, corrected_plain: str, review: CorrectionReview) -> Ali
     )
     used: set[int] = set()
     changes: list[AlignedChange] = []
-    for hunk, raw_start, corrected_start in _hunks(raw_plain, corrected_plain):
-        sentence = _owning_sentence(raw_spans, corrected_spans, raw_start, corrected_start)
+    for hunk in word_diff(raw_plain, corrected_plain):
+        sentence = _owning_sentence(
+            raw_spans, corrected_spans, hunk.raw_start, hunk.corrected_start
+        )
         chosen = _best_note(notes, used, sentence, hunk, unlocated)
         if chosen >= 0:
             used.add(chosen)
@@ -598,7 +543,7 @@ def align(raw_plain: str, corrected_plain: str, review: CorrectionReview) -> Ali
                 hunk=hunk,
                 note=notes[chosen].note if chosen >= 0 else None,
                 sentence=notes[chosen].sentence if chosen >= 0 else sentence,
-                position=raw_start,
+                position=hunk.raw_start,
                 by_teacher=chosen < 0 and not _in_model_version(placed, sentence, hunk),
             )
         )
@@ -645,37 +590,6 @@ def change_tokens(note: ChangeNote) -> frozenset[str]:
 def _token_list(text: str) -> list[str]:
     """Return the lower-cased tokens of *text* in order (see :func:`text_tokens`)."""
     return [token.lower() for token in tokenize(strip_marks(text)) if token.strip()]
-
-
-def _hunks(raw: str, corrected: str) -> Iterator[tuple[Hunk, int, int]]:
-    """Yield ``(hunk, raw_offset, corrected_offset)`` for every difference between the texts."""
-    raw_tokens = tokenize(raw)
-    corrected_tokens = tokenize(corrected)
-    raw_offsets = _token_offsets(raw_tokens)
-    corrected_offsets = _token_offsets(corrected_tokens)
-    for tag, i1, i2, j1, j2 in diff_opcodes(raw_tokens, corrected_tokens):
-        if tag == "equal":
-            continue
-        old = "".join(raw_tokens[i1:i2])
-        new = "".join(corrected_tokens[j1:j2])
-        if old.strip() and new.strip():
-            kind: HunkKind = "replace"
-        elif old.strip():
-            kind = "delete"
-        else:
-            kind = "insert"
-        yield Hunk(original=old, corrected=new, kind=kind), raw_offsets[i1], corrected_offsets[j1]
-
-
-def _token_offsets(tokens: Sequence[str]) -> list[int]:
-    """Return the character offset of every token, plus the end of the last one (index -1)."""
-    offsets: list[int] = []
-    position = 0
-    for token in tokens:
-        offsets.append(position)
-        position += len(token)
-    offsets.append(position)
-    return offsets
 
 
 def _span_of_each(
@@ -732,6 +646,32 @@ def _in_model_version(placed: Sequence[SentenceNote], sentence: int, hunk: Hunk)
     if sentence < 0:
         return False
     return text_tokens(hunk.corrected) <= text_tokens(placed[sentence].corrected)
+
+
+def best_note_index(
+    notes: Sequence[ChangeNote],
+    used: Collection[int],
+    tokens: frozenset[str],
+) -> int:
+    """Return the index of the note that best explains *tokens*, or ``-1``.
+
+    The rule every view of a review uses when its own diff parts do not line up one-to-one
+    with the token hunks of :func:`align` (the DOCX comments compare whole words of a line):
+    the note whose own changed words are most covered by *tokens* wins (a note of one word that
+    the part contains beats a note of three words it only partly contains), and a note not yet
+    in *used* breaks ties, so a repeated edit gets its explanations in order.
+    """
+    best = -1
+    best_key: tuple[float, bool, int, int] | None = None
+    for index, note in enumerate(notes):
+        changed = change_tokens(note)
+        overlap = len(tokens & changed)
+        if not overlap:
+            continue
+        key = (overlap / len(changed), index not in used, overlap, -index)
+        if best_key is None or key > best_key:
+            best, best_key = index, key
+    return best
 
 
 def _best_note(

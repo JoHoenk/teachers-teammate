@@ -59,7 +59,9 @@ Config
   → OcrOutputPostprocessor (ocr_formats/)          plain | Markdown | Chandra HTML → stored
                                                    as plain or canonical Markdown (raw_text_format)
   → Anonymizer           (anonymizer.py)           spaCy NER + regex, optional
-  → Corrector            (correction.py)           LangChain-based, optional
+  → Corrector            (correction.py)           LangChain-based, optional; the exchange
+                                                   (infrastructure/proofreading/) is its
+                                                   replacement and is not wired yet
   → Evaluator            (evaluation.py)           LangChain-based, optional
   → DocumentCreator      (docx_builder.py)         table or comments DOCX format
 ```
@@ -92,7 +94,9 @@ Config
 | New GUI capability/check | Implement in `ProcessingApplicationService`, call it from the GUI — never duplicate discovery logic in widgets |
 | New GUI setting | Per-batch choices (documents, language, which steps run, Results) belong in `ConfigPanel`; anything set once belongs on a page of the Settings window (`gui/settings/`). Add the widget to the owning page and its key to that page's `load` / `values` / `owned_keys` — never to two pages. Say where to change it with the `WHERE_*` constants in `gui/_user_text.py`, not a hard-coded menu path. See `docs/development.md` → "Settings window" |
 | Benchmark app changes | Domain metrics in `domain/benchmark.py`; run persistence in `infrastructure/benchmark/run_store.py`; OCR-only run in `infrastructure/benchmark/runner.py`; orchestration in `application/benchmark_service.py`; GUI in `gui/benchmark/` (reuse `gui/_ocr_config_selector.py`). The OCR config slice is `Config.ocr` (`config.py:OcrConfig`). |
-| Model temperatures | Teachers set none. `RECOMMENDED_TEMPERATURES` in `domain/model_catalog.py` holds what each model's maker recommends; `request_profile(tag, provider)` and `review_temperature()` read it (0.2 and 0.7 where a maker states none, and for every online provider), `Config.correction_temperature` / `evaluate_temperature` expose it, and the cache key and the evaluation tools use the same functions. |
+| Model temperatures | Teachers set none. `RECOMMENDED_TEMPERATURES` in `domain/model_catalog.py` holds what each model's maker recommends; `request_profile(tag, provider)` and `review_temperature()` read it (0.2 and 0.7 where a maker states none, and for every online provider), `Config.correction_temperature` / `evaluate_temperature` expose it, and the cache key and the evaluation tools use the same functions. A `RequestProfile` carries one `StepProfile` (temperature, `think`) per step of the exchange; `profile.temperature` / `profile.think` are step ①'s. |
+| New proofreading exchange | Implement `Exchange` (`proofread`, `max_text_chars`, `cost_model`) in a module of `infrastructure/proofreading/exchanges/`, register it in `EXCHANGES` under its `ExchangeKind` (`domain/proofreading/result.py`), and build it through `build_exchange()` so port, cut-off tries and clause check arrive the same way. Map the exchange's own answer schema to `ExchangeResult` — nothing outside `infrastructure/proofreading/` may see it. `FallbackExchange(primary, fallback)` is the chain of responsibility. See `docs/development.md` → "Proofreading exchange" |
+| Proofreading steps / prompts | The three system prompts are fixed and versioned in `domain/correction_prompts.py` (`CORRECT_SYSTEM`, `EXPLAIN_SYSTEM`, `UNCLEAR_SYSTEM`, `PROMPT_VERSION`); languages, level and the teacher's notes travel in the user message (`parameters()`, `notes_block()`). Never make a prompt editable and never put output-format rules into it. The answer schemas of steps ② and ③ are in `infrastructure/proofreading/schemas.py`, the retry and repair rules in `runner.py:StepRunner` |
 | New evaluation corpus | Add `<name>.py` to `tools/model_eval/corpora/` (an `ADAPTER` class); a new test set is a module in `tools/model_eval/recipes/` that sets `RECIPE`. Nothing lists either: both packages find their modules. An adapter reads only the files it pins. |
 
 ### Apps & storage

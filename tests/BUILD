@@ -95,7 +95,6 @@ _TESTS_TYPED_DEPS = [
     "@ocr_test_dependencies//platformdirs:pkg",
     "@ocr_test_dependencies//psutil:pkg",
     "@ocr_test_dependencies//pypdfium2:pkg",
-    "@ocr_test_dependencies//pyside6_addons:pkg",
     "@ocr_test_dependencies//pyside6_essentials:pkg",
     "@ocr_test_dependencies//pytest:pkg",
     "@ocr_test_dependencies//pytest_mock:pkg",
@@ -215,7 +214,6 @@ _REQUESTS_DEPS = [
 
 _GUI_DEPS = [
     "@ocr_test_dependencies//psutil:pkg",
-    "@ocr_test_dependencies//pyside6_addons:pkg",
     "@ocr_test_dependencies//pyside6_essentials:pkg",
     "@ocr_test_dependencies//shiboken6:pkg",
     "@ocr_test_dependencies//pytest_qt:pkg",
@@ -1669,6 +1667,15 @@ py_test(
 )
 
 py_test(
+    name = "test_gui_chart_widget",
+    size = "small",
+    srcs = _COMMON_SRCS + ["gui/test_gui_chart_widget.py"],
+    args = ["gui/test_gui_chart_widget.py"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_lib"],
+)
+
+py_test(
     name = "test_gui_widgets",
     size = "small",
     srcs = _COMMON_SRCS + ["gui/test_gui_widgets.py"],
@@ -2109,6 +2116,7 @@ test_suite(
         ":test_gui_addons_page",
         ":test_gui_anonymizer_widget",
         ":test_gui_bootstrap",
+        ":test_gui_chart_widget",
         ":test_gui_config_panel",
         ":test_gui_formatted_text",
         ":test_gui_general_page",

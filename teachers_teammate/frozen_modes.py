@@ -29,7 +29,6 @@ _LAZY_MODULES: tuple[str, ...] = (
     "teachers_teammate.gui.setup",
     "teachers_teammate.gui.benchmark",
     "teachers_teammate.gui.settings",
-    "PySide6.QtCharts",
     "cv2",
     "pypdfium2",
     "docx",

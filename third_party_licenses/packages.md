@@ -34,7 +34,6 @@
 | pydantic_core | 2.50.4 | MIT |
 | pyinstaller | 6.22.3 | GPL-2.0-or-later WITH Bootloader-exception |
 | pypdfium2 | 5.15.2 | BSD-3-Clause, Apache-2.0, dependency licenses |
-| PySide6_Addons | 6.12.0 | LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only |
 | PySide6_Essentials | 6.12.0 | LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only |
 | python | 3.12 | PSF-2.0 |
 | python-docx | 1.2.0 | MIT |

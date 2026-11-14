@@ -244,7 +244,6 @@ _TYPED_DEPS_OCR = [
 
 _TYPED_DEPS_GUI = [
     "@ocr_test_dependencies//psutil:pkg",
-    "@ocr_test_dependencies//pyside6_addons:pkg",
     "@ocr_test_dependencies//pyside6_essentials:pkg",
     "@ocr_test_dependencies//qdarkstyle:pkg",
     "@ocr_test_dependencies//shiboken6:pkg",

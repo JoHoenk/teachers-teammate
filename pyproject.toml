@@ -8,10 +8,9 @@ readme = "README.md"
 requires-python = ">=3.12"
 license = { text = "Apache-2.0" }
 dependencies = [
-    # The two halves of PySide6 the app uses. The `PySide6` meta package would also pull
-    # PySide6_Pdf and PySide6_WebEngine (Chromium) since 6.12 — neither is used.
+    # Only the Essentials half of PySide6. The `PySide6` meta package would also pull
+    # PySide6_Addons, PySide6_Pdf and PySide6_WebEngine (Chromium) since 6.12 — none is used.
     "PySide6-Essentials>=6.7",
-    "PySide6-Addons>=6.7",
     "qdarkstyle>=3.2",
     "psutil>=5.9",
     "requests>=2.32",

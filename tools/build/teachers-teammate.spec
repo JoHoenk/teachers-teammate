@@ -6,7 +6,7 @@ below stays reviewable. ``tools/build/build_standalone.py`` generates the platfo
 and runs this spec.
 
 The diet: PyInstaller's PySide6 hooks collect the Qt modules the app imports (QtCore,
-QtGui, QtWidgets, QtCharts) and their plugins. ``collect_all("PySide6")`` would add about
+QtGui, QtWidgets) and their plugins. ``collect_all("PySide6")`` would add about
 200 MB of unused Qt — WebEngine (Chromium), Multimedia (FFmpeg), QML/Quick/3D, Designer
 and Pdf — and with them the build machine's GTK3, cairo and pango libraries.
 """

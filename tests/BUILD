@@ -90,12 +90,11 @@ _TESTS_TYPED_DEPS = [
     "@ocr_test_dependencies//markdown_it_py:pkg",
     "@ocr_test_dependencies//numpy:pkg",
     "@ocr_test_dependencies//ollama:pkg",
-    "@ocr_test_dependencies//opencv_python:pkg",
+    "@ocr_test_dependencies//opencv_python_headless:pkg",
     "@ocr_test_dependencies//pillow:pkg",
     "@ocr_test_dependencies//platformdirs:pkg",
     "@ocr_test_dependencies//psutil:pkg",
     "@ocr_test_dependencies//pypdfium2:pkg",
-    "@ocr_test_dependencies//pyside6:pkg",
     "@ocr_test_dependencies//pyside6_addons:pkg",
     "@ocr_test_dependencies//pyside6_essentials:pkg",
     "@ocr_test_dependencies//pytest:pkg",
@@ -164,7 +163,7 @@ _PDF_DEPS = ["@ocr_test_dependencies//pypdfium2:pkg"]
 # pyyaml: the built-in reader reads its recogniser's character list with it.
 _CV_DEPS = [
     "@ocr_test_dependencies//numpy:pkg",
-    "@ocr_test_dependencies//opencv_python:pkg",
+    "@ocr_test_dependencies//opencv_python_headless:pkg",
     "@ocr_test_dependencies//pyyaml:pkg",
 ]
 
@@ -216,7 +215,6 @@ _REQUESTS_DEPS = [
 
 _GUI_DEPS = [
     "@ocr_test_dependencies//psutil:pkg",
-    "@ocr_test_dependencies//pyside6:pkg",
     "@ocr_test_dependencies//pyside6_addons:pkg",
     "@ocr_test_dependencies//pyside6_essentials:pkg",
     "@ocr_test_dependencies//shiboken6:pkg",
@@ -715,6 +713,22 @@ py_test(
     args = ["unit/test_addon_manager.py"],
     main = "run_test.py",
     deps = _COMMON_DEPS,
+)
+
+# The smoke test imports every lazily loaded module of the app, so it needs the whole runtime
+# set — including the packages no other unit test imports (ollama, platformdirs, keyring).
+py_test(
+    name = "test_frozen_modes",
+    size = "small",
+    srcs = _COMMON_SRCS + ["unit/test_frozen_modes.py"],
+    args = ["unit/test_frozen_modes.py"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + [
+        "//teachers_teammate:gui_lib",
+        "@ocr_test_dependencies//keyring:pkg",
+        "@ocr_test_dependencies//ollama:pkg",
+        "@ocr_test_dependencies//platformdirs:pkg",
+    ],
 )
 
 py_test(
@@ -2027,6 +2041,7 @@ test_suite(
         ":test_exchange_t",
         ":test_fallback_exchange",
         ":test_file_processor",
+        ":test_frozen_modes",
         ":test_gpu_detector",
         ":test_input_provider_factory",
         ":test_input_providers",

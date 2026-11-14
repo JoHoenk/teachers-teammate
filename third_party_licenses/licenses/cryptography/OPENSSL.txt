@@ -1,0 +1,5 @@
+The cryptography wheels bundle OpenSSL 3, which is licensed under the Apache
+License, Version 2.0. Its full text is the file LICENSE.APACHE in this folder.
+
+OpenSSL project: https://www.openssl.org/
+Source of the bundled version: https://github.com/openssl/openssl/releases

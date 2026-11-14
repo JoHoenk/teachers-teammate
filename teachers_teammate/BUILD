@@ -215,6 +215,8 @@ _GUI_SRCS = [
     "gui/setup/_flow.py",
     "gui/setup/_pages.py",
     "gui/setup/_summary.py",
+    # Imports GUI modules (the smoke test) and is only run by the installed app.
+    "frozen_modes.py",
 ]
 
 # Third-party deps used ONLY to give the ty/pylint lint aspects real type
@@ -228,7 +230,7 @@ _TYPED_DEPS_OCR = [
     "@ocr_test_dependencies//markdown_it_py:pkg",
     "@ocr_test_dependencies//numpy:pkg",
     "@ocr_test_dependencies//ollama:pkg",
-    "@ocr_test_dependencies//opencv_python:pkg",
+    "@ocr_test_dependencies//opencv_python_headless:pkg",
     "@ocr_test_dependencies//pillow:pkg",
     "@ocr_test_dependencies//platformdirs:pkg",
     "@ocr_test_dependencies//psutil:pkg",
@@ -242,7 +244,6 @@ _TYPED_DEPS_OCR = [
 
 _TYPED_DEPS_GUI = [
     "@ocr_test_dependencies//psutil:pkg",
-    "@ocr_test_dependencies//pyside6:pkg",
     "@ocr_test_dependencies//pyside6_addons:pkg",
     "@ocr_test_dependencies//pyside6_essentials:pkg",
     "@ocr_test_dependencies//qdarkstyle:pkg",

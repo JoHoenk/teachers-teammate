@@ -8,11 +8,15 @@ readme = "README.md"
 requires-python = ">=3.12"
 license = { text = "Apache-2.0" }
 dependencies = [
-    "PySide6>=6.7",
+    # The two halves of PySide6 the app uses. The `PySide6` meta package would also pull
+    # PySide6_Pdf and PySide6_WebEngine (Chromium) since 6.12 — neither is used.
+    "PySide6-Essentials>=6.7",
+    "PySide6-Addons>=6.7",
     "qdarkstyle>=3.2",
     "psutil>=5.9",
     "requests>=2.32",
-    "opencv-python>=5.0",
+    # headless: the app never calls cv2.imshow, and the GUI build bundles a second Qt (Qt5).
+    "opencv-python-headless>=5.0",
     "pypdfium2>=4.0",
     "numpy>=1.26",
     "python-docx>=1.1,<2",
@@ -190,6 +194,7 @@ ignored-modules = [
     "cv2",
     "docx",
     "httpx",
+    "keyring",
     "langchain_core",
     "lxml",
     "markdown_it",

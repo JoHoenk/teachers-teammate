@@ -123,8 +123,10 @@ committed; only the throwaway `.venv-licenses/` is ignored.
 
 ### Standalone binary
 
-`tools/build/build_standalone.py` is the primary build script.
-It produces a single self-contained executable (Linux), a `.app` bundle (macOS), or an `onedir` folder (Windows).
+`tools/build/build_standalone.py` is the primary build script. It generates the platform icons
+and runs the committed spec `tools/build/teachers-teammate.spec`, which lists what the bundle
+contains. It produces a single self-contained executable (Linux), a `.app` bundle (macOS), or an
+`onedir` folder (Windows).
 
 ```bash
 python tools/build/build_standalone.py
@@ -182,8 +184,8 @@ makensis /DAPP_VERSION="1.2.3" /DAPP_VERSION_WIN="1.2.3.0" tools/packaging/windo
 |------|---------|
 | `tools/build/build_standalone.py` | Primary cross-platform PyInstaller build (used by CI) |
 | `tools/build/build.sh` / `tools/build/build.bat` | Thin wrappers around `build_standalone.py` |
-| `tools/build/run_gui.py` | PyInstaller GUI entry point (pip-dispatch + addon injection) |
-| `tools/build/run_cli.py` | PyInstaller CLI entry point |
+| `tools/build/teachers-teammate.spec` | The committed PyInstaller spec: what the bundle contains |
+| `tools/build/run_gui.py` | PyInstaller entry point (pip dispatch, smoke test, addon injection) |
 | `tools/packaging/make_ico.py` | Generates `.ico` and welcome BMP for Windows |
 | `tools/packaging/make_icns.sh` | Generates `.icns` for macOS |
 | `tools/packaging/make_deb.sh` | Creates `.deb` package for Debian/Ubuntu |

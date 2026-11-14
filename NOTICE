@@ -19,6 +19,11 @@ source code of Teacher's Teammate is publicly available at
 https://github.com/JoHoenk/teachers-teammate, satisfying the LGPL relink
 requirement.
 
+Bundled version: Qt 6.12.0 (PySide6 6.12.0, shiboken6 6.12.0). The corresponding
+source archive of Qt is published by the Qt project at
+https://download.qt.io/official_releases/qt/6.12/6.12.0/single/qt-everywhere-src-6.12.0.tar.xz
+and PySide6's at https://download.qt.io/official_releases/QtForPython/pyside6/PySide6-6.12.0-src/.
+
 Optional components
 -------------------
 Optional OCR, LLM, and privacy features (LangChain, spaCy, ...) are

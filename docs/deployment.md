@@ -176,6 +176,53 @@ makensis /DAPP_VERSION="1.2.3" /DAPP_VERSION_WIN="1.2.3.0" tools/packaging/windo
 # Output: dist/teachers-teammate-1.2.3-w64-setup.exe
 ```
 
+`tools/packaging/test_windows_installer.ps1` installs, updates and uninstalls that file and
+checks what is left behind; CI runs it on every Windows build. It needs an elevated shell
+(GitHub's `windows-latest` is one), which is why its per-user runs pass `/SCOPE=user`.
+
+```powershell
+pwsh -File tools/packaging/test_windows_installer.ps1 `
+    -Setup dist\teachers-teammate-1.2.3-w64-setup.exe -Version 1.2.3
+```
+
+#### Windows: scopes, command line and exit codes
+
+The installer starts **unelevated** and asks for administrator rights only when the chosen
+scope needs them, so a teacher without an administrator account can still install.
+
+| Scope | Folder | Registry | Needs |
+|-------|--------|----------|-------|
+| Only for me (default when not elevated) | `%LOCALAPPDATA%\Programs\TeachersTeammate` | `HKCU` | nothing |
+| All users (default when elevated) | `%ProgramFiles%\TeachersTeammate` | `HKLM`, 32-bit view | administrator rights |
+
+Settings, downloaded models and add-ons are kept per Windows account, in
+`%LOCALAPPDATA%\teachers_teammate`, whichever scope the program itself was installed in.
+
+| Argument | Meaning |
+|----------|---------|
+| `/S` | silent (NSIS) |
+| `/SCOPE=user` / `/SCOPE=all` | choose the scope; also passed to the elevated copy |
+| `/NODESKTOP` | no desktop shortcut (fresh install) |
+| `/ALLOWDOWNGRADE` | silent: allow installing an older version |
+| `/D=<folder>` | install folder of a fresh install (NSIS, must be the last argument, not quoted); an update always stays in the folder of the copy it updates. The relaunch for administrator rights passes it on |
+
+An update never runs the old uninstaller: it removes the old program files itself and leaves
+every registry value and every piece of user data alone. A folder that already holds other
+files is refused rather than emptied.
+
+| Exit code | Meaning |
+|-----------|---------|
+| 0 | done |
+| 1 / 2 | cancelled / aborted (NSIS defaults) |
+| 10 | Teacher's Teammate is still open |
+| 11 | an older version was refused |
+| 12 | the folder holds other files (silent runs; the folder page says so otherwise) |
+| 13 | would create a second copy in the other scope |
+| 14 | needs administrator rights |
+
+A silent uninstall keeps all user data unless `/DELDATA` (add-ons and models) or
+`/DELSETTINGS` (settings, saved API keys, results cache) is given.
+
 ---
 
 ## Tools overview

@@ -136,8 +136,25 @@ jobs:
           # Chocolatey does not update the current process PATH — prepend NSIS manually
           $env:PATH = "C:\Program Files (x86)\NSIS;$env:PATH"
           $ver    = "${{ steps.version.outputs.value }}"
-          $winVer = "${{ steps.version.outputs.win }}.0"
-          makensis /DAPP_VERSION="$ver" "/DAPP_VERSION_WIN=$winVer" tools/packaging/windows.nsi
+          $winVer = "${{ steps.version.outputs.win }}"
+          if ([string]::IsNullOrEmpty($ver))    { $ver    = "0.1.0" }
+          if ([string]::IsNullOrEmpty($winVer)) { $winVer = "0.1.0" }
+          makensis /DAPP_VERSION="$ver" "/DAPP_VERSION_WIN=$winVer.0" tools/packaging/windows.nsi
+
+      # The runner is elevated, so the per-user runs inside the script pass /SCOPE=user.
+      - name: Test the installer (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          # Step 9 of the test downloads the shipped v0.5.6 installer with `gh`, which refuses
+          # to run in Actions without a token.
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ver = "${{ steps.version.outputs.value }}"
+          if ([string]::IsNullOrEmpty($ver)) { $ver = "0.1.0" }
+          $setup = Get-ChildItem dist -Filter 'teachers-teammate-*-w64-setup.exe' | Select-Object -First 1
+          if ($null -eq $setup) { throw "no installer in dist/" }
+          pwsh -File tools/packaging/test_windows_installer.ps1 -Setup $setup.FullName -Version $ver
 
       - name: Create .dmg installer (macOS)
         if: runner.os == 'macOS'

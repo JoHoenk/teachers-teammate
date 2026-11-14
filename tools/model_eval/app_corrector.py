@@ -86,6 +86,47 @@ def app_corrector_factory(
     return build
 
 
+def exchange_corrector_factory(
+    client: OllamaClient,
+    *,
+    timeout: float,
+    num_ctx: int = PROOFREADING_NUM_CTX,
+    profile: RequestProfile | None = None,
+) -> CorrectorFactory:
+    """Return a factory building the exchange's corrector on *client*.
+
+    The corrector is the app's :class:`~teachers_teammate.infrastructure.proofreading.corrector.
+    ExchangeCorrector`, wrapped in ``ChunkingCorrector`` as ``stage_builder._chunked`` wraps
+    every corrector with a bounded request window.  The temperature and the thinking of each step come from *profile*; the
+    temperature the factory is asked for is not used, because ``--temperature`` is already the
+    profile's step ①.
+
+    Args:
+        client: The Ollama client the requests go through (a recording one in a measured run).
+        timeout: Seconds one request may take.
+        num_ctx: The context window the port asks for.
+        profile: The request profile; the default for a model the catalog does not know.
+    """
+    from teachers_teammate.domain.model_catalog import (  # noqa: PLC0415
+        DEFAULT_REQUEST_PROFILE,
+    )
+    from teachers_teammate.infrastructure.correction import ChunkingCorrector  # noqa: PLC0415
+    from teachers_teammate.infrastructure.proofreading.corrector import (  # noqa: PLC0415
+        build_exchange_corrector,
+    )
+
+    chosen = DEFAULT_REQUEST_PROFILE if profile is None else profile
+
+    def build(model: str, temperature: float) -> Corrector:  # noqa: ARG001  # see the docstring
+        return ChunkingCorrector(
+            build_exchange_corrector(
+                client, model, timeout=timeout, num_ctx=num_ctx, profile=chosen
+            )
+        )
+
+    return build
+
+
 def innermost(corrector: Corrector) -> Corrector:
     """Return the corrector that handles one piece: look through the chunking wrapper.
 

@@ -44,17 +44,21 @@ def test_a_changed_prompt_stops_a_run_with_the_message_that_says_what_to_do(monk
     assert "undo the change" in str(refused.value)
 
 
-def test_the_protocol_file_starts_at_version_one() -> None:
+def test_the_protocol_file_holds_both_versions_and_the_current_one_is_what_the_tool_computes() -> (
+    None
+):
     """
     Given  the version file of the request side
     When   the current stamp is asked for
-    Then   it is version 1, the only entry, and its fingerprint is the one the tool computes
+    Then   it is version 2, version 1 is still recorded (its runs stay checkable), and the
+           current fingerprint is the one the tool computes
     """
     stamp = protocol.current_stamp()
 
-    assert stamp.eval_version == 1
-    assert [v["version"] for v in protocol.read_protocol()["versions"]] == [1]
-    assert protocol.entry(1)["fingerprint"] == stamp.fingerprint
+    assert stamp.eval_version == 2
+    assert [v["version"] for v in protocol.read_protocol()["versions"]] == [1, 2]
+    assert protocol.entry(2)["fingerprint"] == stamp.fingerprint
+    assert protocol.is_recorded(1, protocol.entry(1)["fingerprint"])
 
 
 def test_a_version_file_that_cannot_be_read_refuses_instead_of_crashing(
@@ -189,7 +193,7 @@ def test_the_fingerprint_names_what_it_covers() -> None:
     """
     side = protocol.fingerprint()
 
-    assert set(side["requests"]) == {"review", "text"}
+    assert set(side["requests"]) == {"review", "text", "exchange"}
     assert set(side["requests"]["review"]) == set(protocol.FINGERPRINT_LANGUAGES)
     assert side["requests"]["review"]["de"] != side["requests"]["text"]["de"]
     assert all(
@@ -333,3 +337,27 @@ def test_the_instructions_hash_of_a_compact_run_differs_from_a_plain_one():
     assert protocol.instructions_sha256(
         ["de"], mode="text", compact_json=True
     ) == protocol.instructions_sha256(["de"], mode="text")
+
+
+def test_the_exchange_instructions_hash_follows_its_prompts_and_does_not_move_the_fingerprint(
+    monkeypatch,
+) -> None:
+    """
+    Given  the exchange answer mode
+    When   the instructions are hashed, and one of the exchange's prompts changes
+    Then   the hash differs from that of review and text mode and follows the prompt, while the
+           fingerprint of the protocol, which does not cover the exchange, stays as it was
+    """
+    from teachers_teammate.domain import correction_prompts  # noqa: PLC0415
+    from tools.model_eval.answer_mode import AnswerMode  # noqa: PLC0415
+
+    before = protocol.fingerprint_sha256()
+    exchange = protocol.instructions_sha256(["de", "en"], mode=AnswerMode.EXCHANGE)
+
+    monkeypatch.setattr(
+        correction_prompts, "CORRECT_SYSTEM", correction_prompts.CORRECT_SYSTEM + " x"
+    )
+
+    assert exchange != protocol.instructions_sha256(["de", "en"], mode=AnswerMode.TEXT)
+    assert exchange != protocol.instructions_sha256(["de", "en"], mode=AnswerMode.EXCHANGE)
+    assert protocol.fingerprint_sha256() == before

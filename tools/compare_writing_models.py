@@ -44,8 +44,12 @@ from typing import cast
 from teachers_teammate.domain.model_catalog import RequestProfile
 from teachers_teammate.infrastructure.ollama_utils import OllamaClient
 from tools.model_eval import defaults, protocol, results, runner
-from tools.model_eval.answer_mode import CORRECTOR_MODES, DEFAULT_MODE, AnswerMode, parse_mode
-from tools.model_eval.app_corrector import CorrectorFactory, app_corrector_factory
+from tools.model_eval.answer_mode import DEFAULT_MODE, RUNNABLE_MODES, AnswerMode, parse_mode
+from tools.model_eval.app_corrector import (
+    CorrectorFactory,
+    app_corrector_factory,
+    exchange_corrector_factory,
+)
 from tools.model_eval.cli_paths import workspace_path
 from tools.model_eval.languages import LANGUAGE_NAMES
 from tools.model_eval.ports import OllamaChatPort, RecordingPort
@@ -80,7 +84,7 @@ def _matrix(args: argparse.Namespace) -> runner.Matrix:
         base_seed=None if args.no_seed else args.seed,
         timeout=args.timeout,
         isolate=args.isolate,
-        gpu_sampler=args.gpu_sampler,
+        gpu_sampler=args.gpu_agent_record or args.gpu_sampler,
         machine=args.machine,
         compact_json=args.compact_json,
     )
@@ -91,6 +95,8 @@ def _seams(args: argparse.Namespace) -> runner.Seams:
     from tools.model_eval import measure  # noqa: PLC0415
 
     def new_sampler() -> measure.VramSampler | None:
+        if args.gpu_agent_client is not None:
+            return measure.AgentSampler(args.gpu_agent_client)
         if not args.gpu_sampler:
             return None
         return measure.GpuSampler(args.gpu_sampler, shlex.split(args.gpu_ssh))
@@ -100,6 +106,13 @@ def _seams(args: argparse.Namespace) -> runner.Seams:
     ) -> CorrectorFactory:
         # The seam promises a recording client; the app's factory wants the app's client type,
         # which is what the recording client is.
+        if mode is AnswerMode.EXCHANGE:
+            return exchange_corrector_factory(
+                cast(OllamaClient, client),
+                timeout=args.timeout,
+                num_ctx=protocol.NUM_CTX,
+                profile=profile,
+            )
         return app_corrector_factory(
             cast(OllamaClient, client),
             timeout=args.timeout,
@@ -118,6 +131,8 @@ def _seams(args: argparse.Namespace) -> runner.Seams:
             return SmokeCheck(check, probe=measure.ServerProbe(args.ollama_url)).run(
                 model, temperature
             )
+        # The exchange's step ① is a plain-text request like text mode's, so the text check
+        # screens it: the later steps are small JSON answers that never fail the file.
         return TextSmokeCheck(port, timeout=SMOKE_TIMEOUT).run(model, temperature)
 
     return runner.Seams(
@@ -185,6 +200,39 @@ def _languages(args: argparse.Namespace) -> list[str] | None:
     return chosen
 
 
+def _use_gpu_agent(args: argparse.Namespace) -> str | None:
+    """Ask the memory agent named by ``--gpu-agent`` who it is; ``None`` when all is well.
+
+    Sets ``args.gpu_agent_client`` and ``args.gpu_agent_record`` (what the header records), both
+    ``None`` without ``--gpu-agent``.  Returns the reason when the run may not start, after
+    saying it.
+    """
+    args.gpu_agent_client = None
+    args.gpu_agent_record = None
+    if not args.gpu_agent:
+        return None
+    if args.gpu_sampler:
+        _refuse("--gpu-agent and --gpu-sampler are two ways to read the card: pass one")
+        return "both"
+    from tools.model_eval.agent_client import AgentClient, AgentError  # noqa: PLC0415
+
+    token = args.gpu_token_file.read_text(encoding="utf-8").strip() if args.gpu_token_file else None
+    client = AgentClient(args.gpu_agent, token=token)
+    try:
+        info = client.info()
+    except AgentError as error:
+        _refuse(f"the memory agent at {args.gpu_agent} cannot be used: {error}")
+        return "unreachable"
+    args.gpu_agent_client = client
+    args.gpu_agent_record = {
+        "kind": "agent",
+        "vendor": info.vendor,
+        "source": info.source,
+        "agent_sha256": info.agent_sha256,
+    }
+    return None
+
+
 def _run(args: argparse.Namespace) -> int:
     """Run the matrix *args* describes, or say why it does not start."""
     # The request side is checked before anything is sent: a prompt, answer format or window that
@@ -198,6 +246,8 @@ def _run(args: argparse.Namespace) -> int:
     if languages is None:
         return 2
     args.language = languages
+    if _use_gpu_agent(args) is not None:
+        return 2
     records = results.read_testset(args.testset, languages)
     result = runner.run_matrix(
         _matrix(args),
@@ -268,10 +318,11 @@ def main() -> int:
     run.add_argument(
         "--mode",
         action="append",
-        choices=[mode.value for mode in CORRECTOR_MODES],
+        choices=[mode.value for mode in RUNNABLE_MODES],
         default=None,
         help="how to ask: 'review' (the app's JSON answer with explanations, default) or 'text' "
-        "(corrected text only).  Repeatable.",
+        "(corrected text only) or 'exchange' (the three-step proofreading exchange: corrected text, "
+        "explanations, unclear check).  Repeatable.",
     )
     run.add_argument("--timeout", type=float, default=900.0)
     run.add_argument(
@@ -311,6 +362,20 @@ def main() -> int:
         metavar="COMMAND",
         help="reach the machine with the card through this command, e.g. 'ssh.exe user@host' "
         "(from WSL the Windows client holds the key); empty: this machine",
+    )
+    run.add_argument(
+        "--gpu-agent",
+        default=None,
+        metavar="URL",
+        help="sample the graphics memory through the memory agent on the machine with the card "
+        "(tools/model_eval/gpu_agent.py), e.g. http://HOST:11436; no shell access needed",
+    )
+    run.add_argument(
+        "--gpu-token-file",
+        type=Path,
+        default=None,
+        metavar="PATH",
+        help="file holding the agent's token, sent as X-Token",
     )
     run.add_argument(
         "--machine",

@@ -11,7 +11,9 @@ import pytest
 
 from teachers_teammate.infrastructure.ollama_utils import ChatStats, OllamaClient
 from tools.model_eval import protocol, session
+from tools.model_eval.agent_client import MIB, AgentError
 from tools.model_eval.measure import (
+    AgentSampler,
     GpuSampler,
     MeasuredRun,
     Preparation,
@@ -819,3 +821,99 @@ def test_a_sampler_that_ignores_terminate_is_killed() -> None:
 
     assert process.terminated
     assert process.killed
+
+
+class _Agent:
+    """An agent client that reports the card's use as the next of a list, then the last."""
+
+    def __init__(self, used_mib: list[int | None], *, down: bool = False) -> None:
+        self._used = list(used_mib)
+        self._down = down
+
+    def info(self):
+        if self._down:
+            raise AgentError("connection refused")
+        value = self._used.pop(0) if len(self._used) > 1 else self._used[0]
+        return SimpleNamespace(card_used_bytes=None if value is None else value * MIB)
+
+    def settle(self, *, max_s: float = 15.0) -> int:
+        """Report the first reading as the settled one, as an idle card would."""
+        del max_s
+        if self._down:
+            raise AgentError("connection refused")
+        first = self._used.pop(0) if len(self._used) > 1 else self._used[0]
+        if first is None:
+            raise AgentError("no card reading")
+        return first * MIB
+
+
+def _wait_for(condition, seconds: float = 2.0) -> bool:
+    """Return whether *condition* became true within *seconds*."""
+    import time  # noqa: PLC0415
+
+    end = time.monotonic() + seconds
+    while time.monotonic() < end:
+        if condition():
+            return True
+        time.sleep(0.005)
+    return False
+
+
+@pytest.mark.use_case("Model_Eval_Measure")
+def test_the_agent_sampler_takes_the_idle_memory_as_baseline_and_finds_the_peak() -> None:
+    """
+    Given  an agent that reports 330 MiB at first and 6900 MiB once a model is loaded
+    When   the sampler is started and polls for a while
+    Then   the baseline is the first reading and the peak of the whole span is the highest one
+    """
+    sampler = AgentSampler(_Agent([330, 330, 6900]), interval_s=0.005)
+
+    sampler.start()
+    try:
+        assert _wait_for(lambda: len(sampler.series.samples) >= 4)
+        assert sampler.baseline_mb == 330
+        assert sampler.peak_mb(0.0, 1e12) == 6900
+    finally:
+        sampler.stop()
+
+
+@pytest.mark.use_case("Model_Eval_Measure")
+@pytest.mark.parametrize("agent", [_Agent([1], down=True), _Agent([None])])
+def test_the_agent_sampler_refuses_to_start_without_a_reading(agent) -> None:
+    """
+    Given  an agent that does not answer, or has no reading of the card
+    When   the sampler is started
+    Then   it raises, because nothing can be measured with it
+    """
+    with pytest.raises(RuntimeError):
+        AgentSampler(agent).start()
+
+
+@pytest.mark.use_case("Model_Eval_Measure")
+def test_a_failed_poll_is_a_gap_not_the_end_of_the_run() -> None:
+    """
+    Given  an agent that answers once and then fails
+    When   the sampler polls on
+    Then   it keeps running and stops cleanly
+    """
+    agent = _Agent([500])
+    sampler = AgentSampler(agent, interval_s=0.005)
+    sampler.start()
+    agent._down = True
+
+    assert not _wait_for(lambda: len(sampler.series.samples) >= 3, seconds=0.1)
+    sampler.stop()
+
+    assert sampler.series.samples[0][1] == 500
+
+
+@pytest.mark.use_case("Model_Eval_Measure")
+def test_the_agent_sampler_refuses_a_card_that_is_still_moving() -> None:
+    """
+    Given  a card that reads 8600 MiB when it settles and 300 MiB a moment later, as when the
+           memory of the last model is given back late
+    When   the sampler is started
+    Then   it refuses, because a baseline taken now would make the next model look empty
+    """
+    with pytest.raises(RuntimeError, match="did not settle"):
+        AgentSampler(_Agent([8600, 300, 300])).start()

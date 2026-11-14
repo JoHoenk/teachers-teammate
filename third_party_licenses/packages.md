@@ -26,9 +26,9 @@
 | PySide6 | 6.11.1 | LGPL-3.0-only |
 | PySide6_Addons | 6.11.1 | LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only |
 | PySide6_Essentials | 6.11.1 | LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only |
-| pytesseract | 0.3.13 | Apache Software License |
 | python | 3.12.8 | PSF-2.0 |
 | python-docx | 1.2.0 | MIT License |
+| PyYAML | 6.0.3 | MIT License |
 | QDarkStyle | 3.2.3 | MIT License |
 | QtPy | 2.4.3 | MIT License |
 | requests | 2.34.2 | Apache Software License |

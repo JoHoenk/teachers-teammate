@@ -124,7 +124,7 @@ def _marked(stage: DataFlowStage, text: str, *, enabled: bool) -> str:
 def uses_line(stage: DataFlowStage, model: str, *, enabled: bool = True) -> str:
     """Return the "uses" line under a step as rich text: ``● <model> · <place>``.
 
-    Without a model (Tesseract has none) the engine's name stands in.  The dot has the colour
+    Without a model (the built-in reader has none) the engine's name stands in.  The dot has the colour
     of the step's privacy level while the step is on; an unticked step is grey all over, but
     still names what ticking it would use.
     """

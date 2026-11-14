@@ -81,14 +81,13 @@ RuntimeError       <|-- OllamaConnectionError
 ' ── raising sites ─────────────────────────────────────────────────
 note right of OCRError
   Raised by:
-  OllamaClient, TesseractOCRProcessor,
-  PaddleOCRProcessor, LangChainOCRProcessor
+  OllamaClient, PpOcrProcessor
+  (the built-in reader)
 end note
 
 note right of ProviderNotAvailableError
   Raised by:
   providers/*.py (ImportError wrapping),
-  ocr_processor.py (_get_paddle),
   stage_builder.py (anonymizer)
 end note
 

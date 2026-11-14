@@ -48,6 +48,7 @@ from .ollama_utils import (
     ServerFacts,
     proofreading_options,
 )
+from .onnx.store import ModelStore
 
 _logger = logging.getLogger(__name__)
 
@@ -234,24 +235,19 @@ def draw_test_page(path: Path, *, dpi: int) -> Path:
     return path
 
 
-def sample_page_image(tmp_dir: Path, *, ocr: OcrConfig) -> tuple[Path, Path]:
+def sample_page_image(
+    tmp_dir: Path, *, ocr: OcrConfig, store: ModelStore | None = None
+) -> tuple[Path, Path]:
     """Draw the test page and run it through *ocr*'s preprocessing.
 
     Returns ``(drawn, preprocessed)``.  The preprocessing is the one a run applies, so the image
     the model sees is the image a run would send.
     """
-    from .image_preprocessor import HandwritingPreprocessor  # noqa: PLC0415
+    from .preprocessing.recipes import steps_for  # noqa: PLC0415
+    from .preprocessing.steps import StepPipeline  # noqa: PLC0415
 
     drawn = draw_test_page(tmp_dir / "speed-test-page.png", dpi=ocr.pdf_render_dpi)
-    preprocessor = HandwritingPreprocessor(
-        tmp_dir=tmp_dir,
-        method=ocr.preprocess_method,
-        dewarp=ocr.dewarp,
-        deskew=ocr.deskew,
-        border_crop=ocr.border_crop,
-        denoise=ocr.denoise,
-        gamma=ocr.gamma,
-    )
+    preprocessor = StepPipeline(steps_for(ocr, store or ModelStore()), tmp_dir=tmp_dir)
     processed, _steps = preprocessor.preprocess(drawn)
     return drawn, processed
 

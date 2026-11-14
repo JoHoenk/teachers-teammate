@@ -2,7 +2,6 @@
 
 Manages optional feature groups that are not bundled in the base installer:
   - privacy  (spacy)
-  - paddle   (paddlepaddle + paddleocr)
   - nvidia / amd  (live GPU monitoring; installed automatically when a GPU is found)
 
 The frozen binary re-invokes itself with ``--_pip_install_mode`` to run pip
@@ -16,19 +15,21 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable
 import importlib
 import importlib.util
+import logging
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import threading
 
 from .subprocess_utils import no_console_window_kwargs
 
+_logger = logging.getLogger(__name__)
+
 ADDON_PRIVACY = "privacy"
-ADDON_PADDLE = "paddle"
 ADDON_NVIDIA = "nvidia"
 ADDON_AMD = "amd"
-ADDON_TESSERACT = "tesseract_py"
 
 #: pip runs one at a time: two installs into the same ``--target`` directory (the
 #: automatic GPU-monitoring install and Settings → Add-ons) would corrupt each other.
@@ -49,13 +50,11 @@ ADDON_LLM_COHERE = "llm_cohere"
 
 _ADDON_PACKAGES: dict[str, list[str]] = {
     ADDON_PRIVACY: ["spacy>=3.7"],
-    ADDON_PADDLE: ["paddlepaddle>=3.0", "paddleocr>=2.9"],
     # nvidia-ml-py is the maintained replacement for the deprecated pyvnml package.
     # It installs the pynvml Python module (NVIDIA Management Library bindings).
     ADDON_NVIDIA: ["nvidia-ml-py"],
     # pyamdgpuinfo provides AMD GPU monitoring via the sysfs/DRM interface (Linux only).
     ADDON_AMD: ["pyamdgpuinfo"],
-    ADDON_TESSERACT: ["pytesseract>=0.3"],
     # LangChain packages — not bundled by PyInstaller; installed at runtime via Add-ons.
     ADDON_LLM_CORE: ["langchain-core>=1.4.7"],
     ADDON_LLM_OLLAMA: ["langchain-ollama>=0.2"],
@@ -69,10 +68,8 @@ _ADDON_PACKAGES: dict[str, list[str]] = {
 # Top-level module name used to check importability for each addon.
 _ADDON_CHECK_MODULE: dict[str, str] = {
     ADDON_PRIVACY: "spacy",
-    ADDON_PADDLE: "paddleocr",
     ADDON_NVIDIA: "pynvml",
     ADDON_AMD: "pyamdgpuinfo",
-    ADDON_TESSERACT: "pytesseract",
     ADDON_LLM_CORE: "langchain_core",
     ADDON_LLM_OLLAMA: "langchain_ollama",
     ADDON_LLM_OPENAI: "langchain_openai",
@@ -86,10 +83,8 @@ _ADDON_CHECK_MODULE: dict[str, str] = {
 # importlib.util.find_spec() performs a fresh filesystem probe.
 _ADDON_STALE_PREFIXES: dict[str, list[str]] = {
     ADDON_PRIVACY: ["spacy"],
-    ADDON_PADDLE: ["paddleocr", "paddlepaddle", "paddle"],
     ADDON_NVIDIA: ["pynvml"],
     ADDON_AMD: ["pyamdgpuinfo"],
-    ADDON_TESSERACT: ["pytesseract"],
     ADDON_LLM_CORE: ["langchain_core"],
     ADDON_LLM_OLLAMA: ["langchain_ollama"],
     ADDON_LLM_OPENAI: ["langchain_openai"],
@@ -131,6 +126,63 @@ def _packages_dir_readable(pkg_dir: Path) -> bool:
         return False
 
 
+#: Packages the retired Paddle Add-on put into the packages folder.  ``opencv-contrib-python`` is
+#: among them because it shadowed the app's own OpenCV (``pip --target`` folders come first on
+#: ``sys.path``); numpy is deliberately not: spaCy may need the copy there.
+_RETIRED_PACKAGES = frozenset({"paddlepaddle", "paddleocr", "paddlex", "opencv-contrib-python"})
+
+
+def _normalised_name(dist_info: Path) -> str:
+    """Return the package name of a ``<name>-<version>.dist-info`` folder, PEP 503 normalised."""
+    name = dist_info.name.removesuffix(".dist-info").split("-", 1)[0]
+    return name.lower().replace("_", "-").replace(".", "-")
+
+
+def remove_retired_addons(pkg_dir: Path) -> list[str]:
+    """Delete the retired Paddle Add-on's files from *pkg_dir*; return the packages removed.
+
+    Goes strictly by each package's ``RECORD`` file: exactly the files it lists (and only
+    those inside *pkg_dir*), then the ``.dist-info`` folder, then folders left empty.  A package
+    without a readable ``RECORD`` is left alone, and so is everything else.  Never raises: a
+    file in use is logged and left behind.
+    """
+    removed: list[str] = []
+    if not pkg_dir.is_dir():
+        return removed
+    root = pkg_dir.resolve()
+    for dist_info in sorted(pkg_dir.glob("*.dist-info")):
+        name = _normalised_name(dist_info)
+        if name not in _RETIRED_PACKAGES:
+            continue
+        try:
+            lines = (dist_info / "RECORD").read_text(encoding="utf-8").splitlines()
+        except OSError:
+            continue
+        folders: set[Path] = set()
+        for line in lines:
+            entry = line.rsplit(",", 2)[0].strip().strip('"')
+            if not entry:
+                continue
+            target = (pkg_dir / entry).resolve()
+            if root not in target.parents:
+                continue
+            try:
+                target.unlink(missing_ok=True)
+            except OSError as exc:
+                _logger.warning("Could not remove %s: %s", target, exc)
+                continue
+            folders.update(p for p in target.parents if root in p.parents)
+        shutil.rmtree(dist_info, ignore_errors=True)
+        for folder in sorted(folders, key=lambda p: len(p.parts), reverse=True):
+            try:
+                folder.rmdir()
+            except OSError:
+                pass  # not empty: something else lives there
+        removed.append(name)
+        _logger.info("Removed the retired %s package from %s", name, pkg_dir)
+    return removed
+
+
 def inject_packages_dir() -> None:
     """Prepend the addon packages directory to sys.path (idempotent).
 
@@ -144,6 +196,7 @@ def inject_packages_dir() -> None:
     """
     pkg_dir = get_packages_dir()
     pkg_str = str(pkg_dir)
+    remove_retired_addons(pkg_dir)
     if pkg_str not in sys.path:
         if pkg_dir.exists() and not _packages_dir_readable(pkg_dir):
             return

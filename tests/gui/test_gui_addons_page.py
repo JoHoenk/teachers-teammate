@@ -23,6 +23,7 @@ from teachers_teammate.gui.settings._addons_page import AddonsPage
 from teachers_teammate.gui.settings._page import (
     FOCUS_LOCAL_MODELS,
     FOCUS_NAME_DETECTION,
+    FOCUS_READING_MODELS,
     SettingsPage,
 )
 
@@ -413,6 +414,148 @@ def test_spacy_preselect_ticks_the_model_and_spacy_itself(qtbot) -> None:
     assert "spacy:de_core_news_sm" not in dlg._model_items
 
 
+def test_reader_preselect_opens_the_reading_models_tab_and_ticks_the_reader(qtbot) -> None:
+    """
+    Given  the page focused on the reading models with preselect=["reader:ppocr"] (the fix
+           button of a reader that is not downloaded)
+    When   install detection finishes
+    Then   the Reading models tab is shown, the reader's box is ticked, and the entry is
+           no Ollama model
+    """
+    from PySide6.QtWidgets import QTabWidget  # noqa: PLC0415
+
+    dlg = _make_dialog(qtbot)
+    dlg.focus(FOCUS_READING_MODELS, ["reader:ppocr"])
+    dlg._on_detection_done(_detection_results(dlg, set()))
+
+    assert dlg.findChild(QTabWidget).currentIndex() == AddonsPage.TAB_READING_MODELS
+    assert dlg._dl_checkboxes["reader:ppocr"].isChecked() is True
+    assert "reader:ppocr" not in dlg._model_items
+    assert dlg._collect_pip_packages() == []
+
+
+def test_a_downloaded_reader_shows_downloaded_and_is_not_ticked_again(qtbot) -> None:
+    """
+    Given  the built-in reader already downloaded
+    When   install detection finishes
+    Then   its box says "✓ Downloaded" and is disabled, so nothing is fetched again
+    """
+    dlg = _make_dialog(qtbot)
+
+    dlg._on_detection_done({**_detection_results(dlg, set()), "reader:ppocr": True})
+
+    box = dlg._dl_checkboxes["reader:ppocr"]
+    assert "✓ Downloaded" in box.text()
+    assert "31 MB" in box.text()
+    assert not box.isEnabled()
+
+
+def test_the_reader_box_starts_a_round_with_the_reader_only(qtbot) -> None:
+    """
+    Given  the reader's box ticked and nothing else
+    When   _on_download_install runs with the install round patched
+    Then   the round is started with reader=True and no packages, models or spaCy models
+    """
+    from PySide6.QtCore import Qt  # noqa: PLC0415
+
+    dlg = _make_dialog(qtbot)
+    dlg._on_detection_done(_detection_results(dlg, set()))
+    for _tag, row in dlg._iter_model_items():  # undo the pre-ticking of the best models
+        row.setCheckState(0, Qt.CheckState.Unchecked)
+    dlg._dl_checkboxes["reader:ppocr"].setChecked(True)
+    started: list[dict] = []
+
+    def start(**kwargs) -> bool:
+        started.append(kwargs)
+        return True
+
+    dlg._round.start = start  # ty: ignore[invalid-assignment]  # test patches the install round
+    dlg._on_download_install()
+
+    assert len(started) == 1
+    assert started[0]["reader"] is True
+    assert not started[0]["packages"] and not started[0]["ollama_models"]
+    assert not started[0]["spacy_models"]
+
+
+def test_the_page_models_have_their_own_box_that_shows_downloaded_when_present(qtbot) -> None:
+    """
+    Given  the Reading models tab
+    When   install detection reports the page models as downloaded
+    Then   their box (next to the reader's) says "✓ Downloaded" and is disabled, and the
+           reader's box is not touched
+    """
+    dlg = _make_dialog(qtbot)
+
+    dlg._on_detection_done({**_detection_results(dlg, set()), "page_models:all": True})
+
+    box = dlg._dl_checkboxes["page_models:all"]
+    assert "Page models" in box.text()
+    assert "39 MB" in box.text()
+    assert "✓ Downloaded" in box.text()
+    assert not box.isEnabled()
+    assert dlg._dl_checkboxes["reader:ppocr"].isEnabled()
+
+
+def test_the_page_models_box_starts_a_round_with_the_page_models_only(qtbot) -> None:
+    """
+    Given  the page models' box ticked and nothing else
+    When   _on_download_install runs with the install round patched
+    Then   the round is started with page_models=True, reader=False and nothing else
+    """
+    from PySide6.QtCore import Qt  # noqa: PLC0415
+
+    dlg = _make_dialog(qtbot)
+    dlg._on_detection_done(_detection_results(dlg, set()))
+    for _tag, row in dlg._iter_model_items():
+        row.setCheckState(0, Qt.CheckState.Unchecked)
+    dlg._dl_checkboxes["page_models:all"].setChecked(True)
+    started: list[dict] = []
+
+    def start(**kwargs) -> bool:
+        started.append(kwargs)
+        return True
+
+    dlg._round.start = start  # ty: ignore[invalid-assignment]  # test patches the install round
+    dlg._on_download_install()
+
+    assert len(started) == 1
+    assert started[0]["page_models"] is True
+    assert started[0]["reader"] is False
+    assert not started[0]["packages"] and not started[0]["ollama_models"]
+
+
+def test_a_page_models_preselect_opens_the_reading_models_tab_and_ticks_the_box(qtbot) -> None:
+    """
+    Given  the Add-ons page asked to focus with the "page_models:all" preselect entry
+    When   install detection has finished
+    Then   the Reading models tab is shown and the page models' box is ticked
+    """
+    dlg = _make_dialog(qtbot)
+    dlg._on_detection_done(_detection_results(dlg, set()))
+
+    dlg.focus("", ["page_models:all"])
+
+    assert dlg._tabs.currentIndex() == dlg.TAB_READING_MODELS
+    assert dlg._dl_checkboxes["page_models:all"].isChecked()
+
+
+def test_the_tab_names_where_the_models_are_saved(qtbot) -> None:
+    """
+    Given  the Reading models tab
+    When   its texts are read
+    Then   it names the folder the model files are saved in
+    """
+    from PySide6.QtWidgets import QLabel  # noqa: PLC0415
+
+    dlg = _make_dialog(qtbot)
+
+    texts = [label.text() for label in dlg.findChildren(QLabel)]
+    assert any(
+        text.startswith("Saved in: ") and "teachers-teammate-models" in text for text in texts
+    )
+
+
 def test_spacy_preselect_leaves_an_installed_spacy_alone(qtbot) -> None:
     """
     Given  spaCy already installed but not the preselected model
@@ -737,7 +880,7 @@ def test_a_new_server_address_starts_a_new_detection(qtbot) -> None:
     ("focus", "tab"),
     [
         ("local_models", AddonsPage.TAB_LOCAL_MODELS),
-        ("ocr_engines", AddonsPage.TAB_OCR_ENGINES),
+        ("reading_models", AddonsPage.TAB_READING_MODELS),
         ("online_services", AddonsPage.TAB_ONLINE_SERVICES),
         ("name_detection", AddonsPage.TAB_NAME_DETECTION),
         ("gpu", AddonsPage.TAB_GPU),
@@ -1189,7 +1332,7 @@ def test_tab_constants_point_at_the_matching_tabs(qtbot) -> None:
     assert tabs.tabText(AddonsPage.TAB_LOCAL_MODELS) == "AI models for this computer"
     assert tabs.tabText(AddonsPage.TAB_ONLINE_SERVICES) == "Online AI services"
     assert tabs.tabText(AddonsPage.TAB_NAME_DETECTION) == "Name detection"
-    assert tabs.tabText(AddonsPage.TAB_OCR_ENGINES) == "Handwriting engines"
+    assert tabs.tabText(AddonsPage.TAB_READING_MODELS) == "Reading models"
     assert tabs.tabText(AddonsPage.TAB_GPU) == "Performance monitoring"
 
 

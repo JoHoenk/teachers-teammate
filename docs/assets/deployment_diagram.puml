@@ -27,8 +27,7 @@ node "User's Machine" as LOCAL {
     component "StateRepository\n(per-file JSON cache)" as STATE
     component "PreviewImageStore\n(preview images)" as ART
     node "Local OCR Engines" as LOCAL_OCR {
-      component "Tesseract OCR" as TESS
-      component "PaddleOCR" as PADDLE
+      component "Built-in reader\n(PP-OCR via OpenCV)" as READER
     }
   }
 

@@ -16,8 +16,8 @@ Three rules shape it:
   (``cached_only``); the server's version and model digests, which decide whether a measurement
   is still current, are fetched in the background and only then redraw the block.
 
-While no step uses Ollama the block says so instead: text recognition with Tesseract or
-PaddleOCR has no model to measure, and a step on an online service is not measured at all.
+While no step uses Ollama the block says so instead: text recognition with the built-in
+reader has no AI model to measure, and a step on an online service is not measured at all.
 """
 
 from __future__ import annotations

@@ -51,7 +51,6 @@ from ..application.sent_text import SentTexts
 from ..application.service import (
     ADDON_AMD,
     ADDON_NVIDIA,
-    ADDON_PADDLE,
     ADDON_PRIVACY,
     DocxExport,
     IssueKind,
@@ -61,13 +60,16 @@ from ..application.service import (
 )
 from ..config import (
     DEFAULTS,
+    RETIRED_ENGINE_NAMES,
     Config,
     OcrConfig,
+    ReplacedEngine,
     dump_config_file,
     load_config_file,
     unavailable_ocr_engine,
 )
-from ..domain.data_location import LOCAL_OCR_ENGINES, DataFlow
+from ..domain.data_location import OCR_ENGINE_NAMES, DataFlow
+from ..domain.local_models import PAGE_MODELS_ADDON_ID, READER_ADDON_ID, READER_SIZE_LABEL
 from ..domain.model_catalog import HardwareDetection
 from ..domain.ollama_discovery import DiscoveredServer, DiscoveryScope, ServerKind
 from ..domain.performance_estimate import TimeRange
@@ -604,6 +606,7 @@ class MainWindow(QMainWindow):
         self._on_data_flow_changed(self._config_panel.data_flow())
         self._results_table.export_requested.connect(self._on_export_requested)
         self._config_panel.paths_changed.connect(self._refresh_queue_from_inputs)
+        self._config_panel.ocr_engine_replaced.connect(self._show_engine_replaced)
         self._config_panel.anonymizer_configure_requested.connect(
             lambda _language, _config: self.open_settings(
                 SettingsPage.PRIVACY, focus=FOCUS_DETECTION
@@ -962,22 +965,34 @@ class MainWindow(QMainWindow):
             self._log.append_text(f"WARNING: Could not load {config_path}: {exc}\n")
 
     def _tell_if_ocr_engine_was_replaced(self, config_path: Path) -> None:
-        """Say so when the saved settings named an online text-recognition engine.
+        """Say so when the saved settings named a text-recognition engine that is gone.
 
-        Such a setting is replaced by the default (see ``load_config_file``).  Doing that
-        silently would leave the next run failing for a reason the teacher never chose.
+        Such a setting is replaced (see ``load_config_file``).  Doing that silently would
+        leave the next run failing for a reason the teacher never chose.
         """
-        retired = unavailable_ocr_engine(config_path)
-        if not retired:
-            return
-        message = (
-            f"Your saved settings used “{retired}” for text recognition. Reading pages "
-            "online is no longer offered, because a page cannot be anonymised before it "
-            "is read, so the app now uses "
-            f"{DEFAULTS['ocr_engine']} on your computer instead "
-            f"({', '.join(LOCAL_OCR_ENGINES)} are available).\n\n"
-            "Proofreading and content review are not affected."
-        )
+        replaced = unavailable_ocr_engine(config_path)
+        if replaced is not None:
+            self._show_engine_replaced(replaced)
+
+    def _show_engine_replaced(self, replaced: ReplacedEngine) -> None:
+        """Tell the teacher which text-recognition engine was replaced, and by what."""
+        if replaced.online:
+            message = (
+                f"Your saved settings used “{replaced.old}” for text recognition. Reading pages "
+                "online is no longer offered, because a page cannot be anonymised before it "
+                "is read, so the app now uses "
+                f"{DEFAULTS['ocr_engine']} on your computer instead "
+                f"({' and '.join(OCR_ENGINE_NAMES.values())} are available).\n\n"
+                "Proofreading and content review are not affected."
+            )
+        else:
+            name = RETIRED_ENGINE_NAMES.get(replaced.old.strip().lower(), replaced.old)
+            message = (
+                f"Your saved settings used {name} for text recognition. It was replaced by "
+                "the built-in reader, which also reads pages on this computer without a "
+                f"server. Download it once under {txt.WHERE_READING_MODELS} "
+                f"({READER_SIZE_LABEL})."
+            )
         self._log.append_text(f"NOTICE: {message}\n")
         QMessageBox.information(self, "Text recognition changed", message)
 
@@ -2143,7 +2158,7 @@ class MainWindow(QMainWindow):
         *fresh* asks the Ollama server again instead of using the model list it gave a few
         minutes ago: wanted when the teacher asks to look again (a model pulled in a terminal).
 
-        The check contacts Ollama, may import spaCy and looks for Tesseract, so it never runs
+        The check contacts Ollama, may import spaCy and looks for the built-in reader, so it never runs
         on the GUI thread.  Only the latest answer counts.  Every place that changes what a
         run needs calls this: Settings, a finished download, a new window activation.
         """
@@ -2982,13 +2997,12 @@ class MainWindow(QMainWindow):
                 f"Download a name detection model under {txt.WHERE_ADDONS}\n"
                 "before using personal information removal.",
             )
-        elif addon == ADDON_PADDLE:
-            QMessageBox.information(
-                self._dialog_parent(),
-                "PaddleOCR Addon Installed",
-                "PaddleOCR has been installed.\n\n"
-                f"Select 'paddleocr' as the recognition method under {txt.WHERE_AI_MODELS}.",
-            )
+        elif addon == READER_ADDON_ID:
+            # The built-in reader's models arrived: the readiness line turns green on the
+            # check below; nothing else to tell.
+            self._log.append_text("The built-in reader is downloaded.\n")
+        elif addon == PAGE_MODELS_ADDON_ID:
+            self._log.append_text("The page models are downloaded.\n")
         elif addon in (ADDON_NVIDIA, ADDON_AMD):
             self._stats.refresh_gpu_monitoring()
         self._start_readiness_check()

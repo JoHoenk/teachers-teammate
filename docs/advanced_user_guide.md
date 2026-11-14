@@ -10,7 +10,7 @@ Text recognition — also called OCR (Optical Character Recognition) — is the 
 
 The OCR engine can be switched in **Settings → AI models…** or by changing the `ocr_engine` key in the settings file (TOML format). On the command line use `--ocr-engine`.
 
-Only engines that read pages on a computer you control are available: `ollama`, `tesseract` and `paddleocr`. Online vision models (the former `langchain` engine and `--ocr-provider`) were removed because a page cannot be anonymised before it is read. A settings file that still names one falls back to `ollama` with a warning, and Ollama cloud models (tags ending in `cloud`) are refused for OCR.
+Only engines that read pages on a computer you control are available: `ollama` and `ppocr` (the built-in reader). Online vision models (the former `langchain` engine and `--ocr-provider`) were removed because a page cannot be anonymised before it is read. A settings file that still names one falls back to `ollama` with a warning, and Ollama cloud models (tags ending in `cloud`) are refused for OCR.
 
 ### 1. Ollama (default)
 
@@ -69,7 +69,7 @@ Before a run the app also checks the memory that is free at that moment (keeping
 
 **Downloading reading models:**
 
-Open **Settings → Add-ons…** inside Teacher's Teammate, go to the **AI models for this computer** tab, tick the model you want, and click **Install / Download Selected** (the **Handwriting engines** tab is for the Tesseract and PaddleOCR engines instead). The download runs in the background and the model is available immediately when finished. You can also pull models directly from the command line:
+Open **Settings → Add-ons…** inside Teacher's Teammate, go to the **AI models for this computer** tab, tick the model you want, and click **Install / Download Selected** (the **Reading models** tab is for the built-in reader instead). The download runs in the background and the model is available immediately when finished. You can also pull models directly from the command line:
 
 ```bash
 ollama pull qwen3-vl:8b
@@ -77,35 +77,20 @@ ollama pull qwen3-vl:8b
 
 Any [vision model available on Ollama](https://ollama.com/library) can be used; the models listed above are the tested and recommended choices. Models that are not in the built-in catalog stay in the **Other models** group. The app asks Ollama what such a model can do: a model that can read images may be used for reading *and* writing, a text-only model for writing only; a model whose abilities cannot be determined is marked "No suggestion available". The size of these models is unknown, so they are never marked as too large. The built-in reading models are the other way round: they are meant for turning scans into text and are not offered for proofreading or content review. Some newer reading models are distributed through Hugging Face rather than the Ollama library — see *Understanding AI models* below for how to install those.
 
-### 2. [Tesseract](https://tesseract-ocr.github.io/) OCR
+### 2. The built-in reader (PP-OCR)
 
-Tesseract is a classic, rule-based OCR engine. It works without any internet connection, requires no AI model, and runs entirely on the CPU. It is a solid choice for clearly printed text in offline environments or on hardware without a GPU. Accuracy on handwriting is limited.
+The built-in reader runs on this computer without a server and without an AI model server. It is made of two small neural networks from the [PaddleOCR](https://github.com/PaddlePaddle/PaddleOCR) project (PP-OCRv6, Apache-2.0): one finds the lines on the page, the other reads each line. OpenCV, which the app already contains, runs them on the processor — no graphics card and no extra Python package are needed. It reads about fifty languages with one model, so the document language does not matter to it.
 
-Tesseract must be installed at the operating-system level separately from Teacher's Teammate:
+It is a good choice for printed pages and for computers that cannot run an AI vision model. It reads handwriting less well than the vision models above. Pages are read one column at a time, top to bottom; two columns are read as rows across both.
 
-```bash
-# Ubuntu / Debian
-sudo apt install tesseract-ocr tesseract-ocr-eng tesseract-ocr-deu
+The model files (about 31 MB) are downloaded **only when you ask for them**:
 
-# macOS (requires Homebrew — https://brew.sh)
-brew install tesseract
-```
+- in the app: choose *Built-in reader (PP-OCR)* as the recognition method and press **Download built-in reader (31 MB)**, or tick the reader under **Settings → Add-ons… → Reading models**;
+- on the command line: `teachers-teammate --download-reader`, once, then `--ocr-engine ppocr`.
 
-**Windows:** Download and run the installer from the [UB Mannheim Tesseract releases page](https://github.com/UB-Mannheim/tesseract/wiki). Alternatively, if you have the Windows Package Manager installed, run:
+They are kept in the app's data folder (shown under *Reading models*) and checked against a fixed checksum, so a damaged download is refused. The only host contacted is `huggingface.co`; if a school network blocks it, ask whoever looks after the network to allow it.
 
-```powershell
-winget install UB-Mannheim.TesseractOCR
-```
-
-After installation, the line above **Run Selected** stops asking you to install Tesseract once the app has looked again (it does so when the window is activated).
-
-Language packs determine which languages Tesseract can read. Install additional packs via your package manager (Linux/macOS) or by selecting them during the Windows installer setup.
-
-### 3. [PaddleOCR](https://github.com/PaddlePaddle/PaddleOCR)
-
-PaddleOCR is a deep-learning OCR engine developed by Baidu. It often outperforms Tesseract on degraded or mixed-language scans and handles a wider range of scripts. It works best with non-binarised input — use the **None** or **Grayscale** image preparation setting.
-
-PaddleOCR is an optional add-on that can be installed from within Teacher's Teammate when the PaddleOCR engine is selected — see {doc}`Using the App <using_the_app>`, *Installing extra features*. The download is approximately 400 MB.
+Settings files that still name `tesseract` or `paddleocr` (removed engines) now use the built-in reader; the app says so when it loads such a file. The Paddle add-on's old packages are removed from the add-on folder automatically.
 
 ---
 
@@ -126,25 +111,47 @@ teachers-teammate -i ./scans --keep-awake     # the default; useful to override 
 
 The same setting in `ocr.toml` is `keep_awake = true | false`.
 
-## Image preprocessing
+## Image preparation
 
-Image preprocessing improves OCR accuracy by cleaning and normalising each document image before it is sent to the text recognition engine. All settings described here are available in **Settings → Scan quality…** and on the command line via `--preprocess-*` flags.
+Before a page is read, the app prepares its image. There are two choices, set in **Settings → Scan quality…** (the *Image preparation* dropdown) or on the command line with `--preprocess-method`:
 
-### How the pipeline works
+| Choice | Setting | What it does |
+|--------|---------|--------------|
+| **Automatic (recommended)** | `auto` (default) | Looks at each page and does only what it needs: cuts a photographed page out, turns a sideways page upright, flattens a curved page, scales a huge page down, evens out shadows and corrects a tilt. A clean scan passes unchanged. |
+| **Original page** | `none` | Sends each page as scanned or photographed, for checking what the preparation changes. A phone photo's rotation tag (EXIF orientation) is still applied, so it does not reach the reader sideways. |
 
-Every image goes through this fixed sequence of stages:
+The older methods (`grayscale`, `clahe`, `adaptive_threshold`) and the switches for dewarp, deskew, border crop, denoise and brighten are gone. A settings file that still names one of those methods reads as *Automatic*; the old switch keys are ignored. Because of that, every document is read again the next time it is run after the update.
 
-```
-Grayscale → [Dewarp] → [Deskew] → [Border crop] → [Denoise] → [Brighten] → Contrast method
-```
+### What *Automatic* does
 
-Steps shown in brackets are optional. **Dewarp**, **Deskew** and **Denoise** are on by default (untick them in the settings, or pass `--no-preprocess-dewarp`, `--no-preprocess-deskew`, `--no-preprocess-denoise` on the command line); **Border crop** and **Brighten** are off by default. The final **contrast method** (the *Image preparation* dropdown) is always applied unless set to *None*.
+The steps run in this order; each acts only where the page needs it:
 
-Enable `--debug` (or the *Keep preprocessed files* toggle) to save a snapshot after every step — useful for diagnosing which step caused a quality change.
+| Step | Acts when | What it does |
+|------|-----------|--------------|
+| `page` | a page outline with four straight edges is found, shaped like a sheet (about A4) and brighter than its surroundings | cuts the page out with a perspective correction. A framed table on a clean scan is not taken for a page |
+| `flatten` | the image is a photo and `page` did not act, or the page's edges are curved | flattens the page with the UVDoc model (*page models*) |
+| `turn` | the orientation model is at least 90 % sure the page is turned by 90°, 180° or 270° | turns it upright (*page models*) |
+| `size` | the long side is more than 3508 pixels (A4 at 300 DPI) | scales the page down to that |
+| `light` | the paper is unevenly lit (shadows) | divides each colour channel by the brightness of the paper under the writing; pencil stays darker than the paper |
+| `deskew` | the writing is tilted by 0.3° to 10° | straightens it; a page tilted more than 10° is left alone |
+| `grayscale` | the engine is Ollama | Ollama gets a gray page; the built-in reader gets colour |
+
+There is no denoising and no black-and-white conversion. A photo is recognised by camera tags in the file, a page-like region with the wrong shape, or uneven light. Enable `--debug` (or the *Keep processed images for inspection* toggle) to save a snapshot after every step that acted.
+
+In the preview and under each result, the app says in words what was done: "Prepared: page turned, shadows evened out, tilt corrected", or "Prepared: nothing needed".
+
+### Page models
+
+*Turn* and *flatten* need two small models from PaddlePaddle (Apache-2.0; 39 MB together, from huggingface.co). They are downloaded only when you ask for them:
+
+- in the app: under *Automatic* on **Settings → Scan quality…** press **Download…**, or tick **Page models** under **Settings → Add-ons… → Reading models**;
+- on the command line: `teachers-teammate --download-page-models`, once.
+
+Without them *Automatic* still runs and skips those two steps; a run on the command line prints one line saying so. Downloading them changes what the preparation does, so pages are read again once.
 
 ### PDF render resolution
 
-PDF files must be converted to images before OCR. The resolution of this conversion is controlled by **PDF DPI** (default **300 DPI**).
+PDF files must be converted to images before OCR. The resolution of this conversion is controlled by **PDF DPI** (default **300 DPI**, under **Expert settings** on the Scan quality page).
 
 | DPI | Scale | Use case |
 |-----|-------|----------|
@@ -154,58 +161,6 @@ PDF files must be converted to images before OCR. The resolution of this convers
 | 600 | 8.3× | High quality; little benefit above 300 for most models |
 
 This setting has no effect on image inputs (JPG, PNG) — those are used at their native resolution.
-
-### Main contrast method
-
-The *Image preparation* dropdown controls how contrast and binarisation are applied as the final step of the pipeline. Choose one:
-
-| Method | Output | Best for |
-|--------|--------|----------|
-| `adaptive_threshold` | Binary (black/white) | Most handwriting; uneven lighting; default for Ollama |
-| `clahe` | Grayscale | Tesseract; engines that perform their own binarisation; faint or low-contrast text |
-| `grayscale` | Grayscale | Engines that require gray or colour input (e.g. PaddleOCR) |
-| `none` | Original colour | High-quality colour scans; PaddleOCR on printed material |
-
-Choosing `none` passes the file through unchanged, so the geometric corrections and tone/noise enhancements below never run; their checkboxes are disabled while `none` is selected.
-
-### Geometric corrections
-
-These steps fix spatial problems in the image before contrast enhancement. Apply them in the order shown; they can be combined freely.
-
-**Dewarp**
-Corrects perspective distortion caused by photographing a document at an angle or scanning an open book. The algorithm finds the largest quadrilateral contour in the image and remaps it to a rectangle. If no clear page boundary is detected (e.g. on flat-bed scans), the image passes through unchanged.
-*Use when:* documents are photographed with a phone or camera, or scanned from a book.
-
-**Deskew**
-Corrects rotational tilt up to ±45°. Searches candidate angles and picks the one whose ink lines up most sharply into horizontal rows, using a local (adaptive) ink threshold so the paper's own tone and any scanner-bed border never get mistaken for content. Corrections below 0.5° are skipped to avoid introducing noise.
-*Use when:* handwriting or the scanner mechanism introduces a visible tilt.
-
-**Border crop**
-Crops away any border with no content — a dark scanner frame or a plain white/gray margin alike — down to the bounding box of the detected ink (with a 10-pixel margin). Reducing the image area speeds up all subsequent steps.
-*Use when:* the scan or photo has a border (dark or plain) around the content. Not recommended for photographed documents where the border itself is content.
-
-### Tone / noise enhancements
-
-**Denoise**
-Applies non-local means denoising (`h=10`) to suppress scanner grain, paper texture noise, and faint pencil artifacts. Adds approximately 1–2 seconds of processing time per page.
-*Use when:* the scan has visible noise or the source document is old/degraded.
-
-**Brighten**
-Applies gamma correction (γ = 0.5) to raise the tonal midpoint of the image, recovering detail in dark or underexposed scans. Applied before the contrast step so the contrast method works on an already-normalised tone range.
-*Use when:* scans appear dark overall or ink looks faded.
-
-### Recommended combinations
-
-The pre-steps column lists steps to enable *in addition to* the defaults (Dewarp, Deskew, Denoise), unless stated otherwise.
-
-| Scenario | Method | Pre-steps |
-|----------|--------|-----------|
-| Standard flat-bed scan, handwriting | `adaptive_threshold` | Border crop |
-| Degraded or aged document | `adaptive_threshold` | Denoise, Border crop |
-| Photographed document (phone/camera) | `adaptive_threshold` | Dewarp, Deskew |
-| Dark or underexposed scan | `adaptive_threshold` | Brighten, Border crop |
-| Tesseract with faint text | `clahe` | Denoise |
-| Ollama/LangChain, clean high-quality scan | `grayscale` | — (untick Dewarp, Deskew, Denoise) |
 
 ---
 
@@ -268,17 +223,9 @@ lists just like any Ollama-library model — no further setup is required.
 
 ## Image preparation (preprocessing)
 
-Image preparation — referred to as *preprocessing* in the settings file — is applied to each image before it is passed to the OCR engine. The chosen method has a significant impact on recognition accuracy. Set it in **Settings → Scan quality…**.
+Image preparation — referred to as *preprocessing* in the settings file (`preprocess_method = "auto"` or `"none"`) — is applied to each image before it is passed to the OCR engine. *Automatic* is right for nearly every document and suits both engines; use *Original page* only to check what the preparation changes. The full description is under [Image preparation](#image-preparation) above.
 
-**`grayscale`** converts the image to greyscale without any further adjustments. It preserves tonal detail and is the recommended starting point for Ollama vision models, which handle contrast internally.
-
-**`adaptive_threshold`** applies locally adaptive thresholding to produce a high-contrast black-and-white image. It compensates well for uneven lighting across the page and is the most effective option for handwritten documents.
-
-**`clahe`** applies contrast-limited adaptive histogram equalisation (CLAHE), boosting local contrast without overexposing bright regions. This is often the best choice for Tesseract on low-contrast or faded scans.
-
-**`none`** passes the image through without modification. Use this when the input is already clean, or when colour information is important — for example, PaddleOCR sometimes performs better on colour input.
-
-Use the preview tool in **Settings → Scan quality…** to compare methods side by side before committing to a large batch. Ctrl + mouse wheel zooms the preview image.
+Use the **Preview…** button in **Settings → Scan quality…** to compare *Automatic* with *Original page* on one of your own documents before committing to a large batch. Ctrl + mouse wheel zooms the preview image.
 
 ---
 
@@ -386,7 +333,7 @@ Lighter models are sufficient for content review because the task is analytical 
 Runs all stages locally with the best available models. Requires a GPU with at least 8 GB VRAM for acceptable OCR throughput.
 
 - OCR: `ocr_engine=ollama`, `ocr_model=qwen3-vl:8b`
-- Image preparation: `preprocess_method=grayscale`
+- Image preparation: `preprocess_method=auto`
 - Proofreading: `correction_provider=ollama`, `correction_model=gemma4:e4b`, `correction_level=B2`
 - Content review: `evaluate_provider=ollama`, lightweight local model (e.g. `qwen3:4b`)
 
@@ -394,8 +341,8 @@ Runs all stages locally with the best available models. Requires a GPU with at l
 
 Prioritises speed and works without internet access. Best suited for cleanly printed text.
 
-- OCR: `ocr_engine=tesseract`
-- Image preparation: `preprocess_method=clahe`
+- OCR: `ocr_engine=ppocr` (download it once with `--download-reader`)
+- Image preparation: `preprocess_method=auto`
 - Proofreading: disabled
 - Content review: disabled
 

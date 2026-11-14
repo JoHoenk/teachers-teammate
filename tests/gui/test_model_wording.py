@@ -323,7 +323,7 @@ def test_a_computer_below_the_reserve_is_told_once_that_no_model_fits_it() -> No
 
     assert text.endswith(wording.TOO_LITTLE_MEMORY)
     assert "Computer memory" not in text
-    assert "Tesseract" in text and "another computer" in text
+    assert "built-in reader" in text and "another computer" in text
 
 
 @pytest.mark.use_case("Model_Recommendation_By_Hardware")

@@ -4,13 +4,13 @@ Three widgets, one per question:
 
 - :class:`OcrModelPicker` — *which method and model read the pages* (plus where the engine
   runs and the package warnings).
-- :class:`ScanQualityControls` — *how a page is prepared before it is read*: image
-  preparation, corrections, enhancements, PDF DPI and the PDF text layer (and, where
-  the owner has no Expert section of its own, the recognition temperature).
+- :class:`ScanQualityControls` — *how a page is prepared before it is read*: Automatic
+  or Original page, PDF DPI and the PDF text layer (and, where the owner has no Expert
+  section of its own, the recognition temperature).
 - :class:`OcrConfigSelector` — the two side by side, producing one :class:`OcrConfig`.
   Kept for the benchmark app, which needs the whole configuration in one place.
 
-All discovery (engines, models, preprocess defaults, where an engine runs) is delegated to
+All discovery (engines, models, where an engine runs) is delegated to
 the injected application service — the widgets contain presentation only, no business
 logic.  Only engines that read pages on a computer the user controls are offered: online
 vision models would receive the whole page, names included.
@@ -23,11 +23,9 @@ source.
 from __future__ import annotations
 
 from collections.abc import Callable
-import sys
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
-    QCheckBox,
     QComboBox,
     QDoubleSpinBox,
     QFormLayout,
@@ -39,14 +37,16 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ..config import DEFAULTS, OcrConfig
-from ..domain.data_location import DataLocation
+from ..config import DEFAULTS, PREPROCESS_METHODS, OcrConfig
+from ..domain.data_location import ENGINE_OLLAMA, ENGINE_PPOCR, DataLocation
+from ..domain.local_models import PAGE_MODELS_ADDON_ID, READER_ADDON_ID
 from ..domain.model_catalog import OCR_TEMPERATURE
 from ..domain.pdf_text_layer import (
     PDF_TEXT_LAYER_MODES,
     PdfTextLayerMode,
     normalize_pdf_text_layer,
 )
+from . import _user_text as txt
 from ._collapsible_section import CollapsibleSection
 from ._data_flow_summary import LocationHint
 from ._hardware_profile_selector import HardwareProfileSelector
@@ -58,6 +58,7 @@ from ._model_fetch import (
     _retire_thread,
     _set_combo,
     _SettingsAppService,
+    _start_thread,
     _status_busy,
     _status_ok,
 )
@@ -68,9 +69,6 @@ from ._model_wording import (
     asking_for_models_text,
     checking_models_text,
 )
-
-#: Image preparation presets, in the order they are offered.
-PREPROCESS_METHODS = ("adaptive_threshold", "clahe", "grayscale", "none")
 
 
 class OcrModelPicker(QWidget):
@@ -130,13 +128,20 @@ class OcrModelPicker(QWidget):
 
     def _build_engine_row(self, form: QFormLayout) -> None:
         self._ocr_engine = QComboBox()
-        self._ocr_engine.addItems(self._app_service.list_ocr_engines())
+        # Labels for the teacher, engine ids as data: nothing else reads the shown text.
+        for engine in self._app_service.list_ocr_engines():
+            self._ocr_engine.addItem(txt.OCR_ENGINE_LABELS.get(engine, engine), engine)
         self._ocr_engine.setToolTip(
             "Pages are always read on a computer you control. Online services are not offered: "
             "they would receive the whole page, including names and grades."
         )
-        self._ocr_engine.currentTextChanged.connect(self._on_engine_changed)
+        self._ocr_engine.currentIndexChanged.connect(self._on_engine_index_changed)
         form.addRow("Recognition method:", self._ocr_engine)
+
+        self._engine_hint = QLabel()
+        self._engine_hint.setWordWrap(True)
+        self._engine_hint.setStyleSheet("color: #888; font-size: 11px;")
+        form.addRow("", self._engine_hint)
 
         self._where_hint = LocationHint()
         form.addRow("", self._where_hint)
@@ -147,9 +152,9 @@ class OcrModelPicker(QWidget):
         self._extra_warn.setVisible(False)
         form.addRow("", self._extra_warn)
 
-        self._install_btn = QPushButton("Install PaddleOCR Addon…")
+        self._install_btn = QPushButton(txt.READER_DOWNLOAD_LABEL)
         self._install_btn.setVisible(False)
-        self._install_btn.clicked.connect(self._on_install_paddle_addon)
+        self._install_btn.clicked.connect(self._on_download_reader)
         form.addRow("", self._install_btn)
 
     def _build_model_row(self, form: QFormLayout, open_downloads: OpenDownloads | None) -> None:
@@ -187,11 +192,13 @@ class OcrModelPicker(QWidget):
 
     def engine(self) -> str:
         """Return the chosen recognition method."""
-        return self._ocr_engine.currentText()
+        return str(self._ocr_engine.currentData() or "")
 
     def set_engine(self, engine: str) -> None:
         """Choose the recognition method (applies its defaults through the signal)."""
-        _set_combo(self._ocr_engine, engine)
+        index = self._ocr_engine.findData(engine)
+        if index >= 0:
+            self._ocr_engine.setCurrentIndex(index)
 
     def model(self) -> str:
         """Return the chosen model name, falling back to the default when blank."""
@@ -211,16 +218,16 @@ class OcrModelPicker(QWidget):
             self._hw_selector.set_ollama_url(self._ollama_url)
         self._guidance.set_ollama_url(self._ollama_url)
         self._update_where_hint()
-        if changed and self._ocr_engine.currentText() == "ollama":
+        if changed and self.engine() == ENGINE_OLLAMA:
             self._auto_fetch()
 
     def refresh(self) -> None:
         """Re-apply engine-dependent state (visibility, model list, warnings)."""
-        self._on_engine_changed(self._ocr_engine.currentText())
+        self._on_engine_changed(self.engine())
 
     def on_packages_changed(self) -> None:
         """An add-on or model was installed: check the engine's package and the list again."""
-        if self._ocr_engine.currentText() == "ollama":
+        if self.engine() == ENGINE_OLLAMA:
             self._app_service.invalidate_model_cache("ollama", base_url=self._ollama_url)
         self.refresh()
 
@@ -255,35 +262,31 @@ class OcrModelPicker(QWidget):
 
     # ── internal ────────────────────────────────────────────────────────────
 
+    def _on_engine_index_changed(self, _index: int) -> None:
+        self._on_engine_changed(self.engine())
+
     def _on_engine_changed(self, engine: str) -> None:
         self.engine_changed.emit(engine)
 
-        is_ollama = engine == "ollama"
+        is_ollama = engine == ENGINE_OLLAMA
         self._ocr_model_label.setVisible(is_ollama)
         self._ocr_model_row.setVisible(is_ollama)
         # Hint line and "Use best choice" button exist only for Ollama.
         self._guidance.setVisible(is_ollama)
+        self._engine_hint.setText(txt.OCR_ENGINE_HINTS.get(engine, ""))
 
-        paddle_missing = engine == "paddleocr" and not self._app_service.is_module_importable(
-            "paddleocr"
-        )
-        frozen = getattr(sys, "frozen", False)
-        if paddle_missing and frozen:
-            warn = "paddleocr is not installed."
-        elif paddle_missing:
-            warn = '⚠ Not installed — run:  pip install "teachers-teammate[paddle]"'
-        else:
-            warn = ""
-        self._extra_warn.setText(warn)
-        self._extra_warn.setVisible(bool(warn))
-        self._install_btn.setVisible(paddle_missing and frozen)
+        # The built-in reader has to be downloaded once; say so and offer the download here.
+        reader_missing = engine == ENGINE_PPOCR and not self._app_service.reader_installed()
+        self._extra_warn.setText(txt.READER_NOT_DOWNLOADED if reader_missing else "")
+        self._extra_warn.setVisible(reader_missing)
+        self._install_btn.setVisible(reader_missing)
 
         self._auto_fetch()
         self._update_where_hint()
 
     def _update_where_hint(self) -> None:
         """Say where the chosen engine reads pages (and warn about cloud models)."""
-        engine = self._ocr_engine.currentText()
+        engine = self.engine()
         model = self._ocr_model.currentText().strip()
         location = self._app_service.describe_ocr_location(engine, model, self._ollama_url)
         refusal = self._app_service.describe_ocr_refusal(engine, model, self._ollama_url)
@@ -298,10 +301,10 @@ class OcrModelPicker(QWidget):
         self._where_hint.set_location(location, note, details)
 
     def _auto_fetch(self) -> None:
-        engine = self._ocr_engine.currentText()
+        engine = self.engine()
         # A fetch still running belongs to an engine that may no longer be the chosen one.
         _retire_thread(self._fetch_thread)
-        if engine == "ollama":
+        if engine == ENGINE_OLLAMA:
             # Always fetch in the thread (a cache hit there is instant): the
             # classification of custom models must not run on the GUI thread.
             url = self._ollama_url
@@ -318,7 +321,7 @@ class OcrModelPicker(QWidget):
             self._fetch_thread = _ModelFetchThread(fetch)
             self._fetch_thread.models_ready.connect(self._on_models_fetched)
             self._fetch_thread.progress.connect(self._on_fetch_progress)
-            self._fetch_thread.start()
+            _start_thread(self._fetch_thread)
         else:
             self._set_busy(False)
             self._status_lbl.setText("")
@@ -336,7 +339,7 @@ class OcrModelPicker(QWidget):
         self._set_busy(True, text)
 
     def _on_models_fetched(self, models: list) -> None:
-        if self._ocr_engine.currentText() != "ollama":
+        if self.engine() != ENGINE_OLLAMA:
             return  # an answer for an engine the user has already left
         self._set_busy(False)
         # Waiting hid the hint; show it again even when Ollama did not answer, so the
@@ -351,19 +354,22 @@ class OcrModelPicker(QWidget):
         # raw tag.
         self._guidance.set_models(models)
 
-    def _on_install_paddle_addon(self) -> None:
-        from ._addon_installer_dialog import AddonInstallerDialog  # noqa: PLC0415
+    def _on_download_reader(self) -> None:
+        from ._addon_installer_dialog import ReaderDownloadDialog  # noqa: PLC0415
 
-        dlg = AddonInstallerDialog("paddle", self.window())
-        dlg.installed.connect(self.addon_installed)
+        dlg = ReaderDownloadDialog(self._app_service, self.window())
+        dlg.downloaded.connect(lambda: self.addon_installed.emit(READER_ADDON_ID))
+        dlg.downloaded.connect(self.refresh)
         dlg.exec()
 
 
 class ScanQualityControls(QWidget):
-    """How a page is prepared before it is read: presets, corrections, PDF handling."""
+    """How a page is prepared before it is read: Automatic or Original page, PDF handling."""
 
     #: The user asked to preview the current image preparation.
     preprocess_preview_requested = Signal()
+    #: The page models were downloaded from the line under the combo (the add-on id).
+    addon_installed = Signal(str)
 
     def __init__(
         self,
@@ -406,18 +412,10 @@ class ScanQualityControls(QWidget):
         ph = QHBoxLayout(preprocess_row)
         ph.setContentsMargins(0, 0, 0, 0)
         self._preprocess = QComboBox()
-        self._preprocess.addItems(list(PREPROCESS_METHODS))
-        self._preprocess.setToolTip(
-            "Contrast enhancement applied before text recognition.\n\n"
-            "Enhanced contrast (adaptive_threshold) — binary output; robust to uneven\n"
-            "  lighting; best for Ollama and most handwriting.\n"
-            "Balanced contrast (clahe) — grayscale output; improves faint or low-\n"
-            "  contrast text; best for Tesseract.\n"
-            "Grayscale — converts to grayscale without further processing.\n"
-            "None — pass the original image directly to the OCR engine.\n"
-            "  Disables the corrections and enhancements below, which have no effect."
-        )
-        self._preprocess.currentTextChanged.connect(self._on_preprocess_method_changed)
+        for method in PREPROCESS_METHODS:
+            self._preprocess.addItem(txt.PREPROCESS_LABELS[method], userData=method)
+        self._preprocess.setToolTip(txt.PREPROCESS_TOOLTIP)
+        self._preprocess.currentIndexChanged.connect(self._update_page_models_line)
         ph.addWidget(self._preprocess, stretch=1)
         if show_preview_button:
             preview_btn = QPushButton("Preview…")
@@ -426,48 +424,24 @@ class ScanQualityControls(QWidget):
             ph.addWidget(preview_btn)
         form.addRow("Image preparation:", preprocess_row)
 
-        # Geometric correction checkboxes
-        corrections_row = QWidget()
-        cr = QHBoxLayout(corrections_row)
-        cr.setContentsMargins(0, 0, 0, 0)
-        self._dewarp = QCheckBox("Dewarp")
-        self._dewarp.setToolTip(
-            "Correct perspective distortion.\n"
-            "Use when documents are photographed at an angle or from books.\n"
-            "Has no effect on flat-bed scans."
-        )
-        self._deskew = QCheckBox("Deskew")
-        self._deskew.setToolTip(
-            "Correct page rotation up to ±45°.\n"
-            "Use when handwriting or the scanning angle introduces a tilt.\n"
-            "Skips correction if the detected angle is below 0.5°."
-        )
-        self._border_crop = QCheckBox("Border crop")
-        self._border_crop.setToolTip(
-            "Remove dark scanner borders before OCR.\n"
-            "Reduces image size → faster processing.\n"
-            "Not recommended for photographed documents."
-        )
-        for cb in (self._dewarp, self._deskew, self._border_crop):
-            cr.addWidget(cb)
-        cr.addStretch()
-        form.addRow("Corrections:", corrections_row)
+        hint = QLabel(txt.PREPROCESS_HINT)
+        hint.setWordWrap(True)
+        hint.setStyleSheet("color: #888; font-size: 11px;")
+        form.addRow(hint)
 
-        # Tone / noise enhancements + PDF DPI
-        enhancements_row = QWidget()
-        er = QHBoxLayout(enhancements_row)
-        er.setContentsMargins(0, 0, 0, 0)
-        self._denoise = QCheckBox("Denoise")
-        self._denoise.setToolTip(
-            "Non-local means noise removal.\n"
-            "Use for scans with visible grain or faint pencil artifacts.\n"
-            "Adds ~1-2 s processing time per page."
-        )
-        self._gamma = QCheckBox("Brighten")
-        self._gamma.setToolTip(
-            "Gamma correction (gamma=0.5) to brighten dark or underexposed scans.\n"
-            "Applied before the contrast step for best results."
-        )
+        # The page models are only ever downloaded on request; Automatic runs without them.
+        self._page_models_row = QWidget()
+        pm = QHBoxLayout(self._page_models_row)
+        pm.setContentsMargins(0, 0, 0, 0)
+        pm_label = QLabel(txt.PAGE_MODELS_MISSING_LINE)
+        pm_label.setWordWrap(True)
+        pm_label.setStyleSheet("color: #888; font-size: 11px;")
+        pm.addWidget(pm_label, stretch=1)
+        self._page_models_btn = QPushButton(txt.PAGE_MODELS_DOWNLOAD_BUTTON)
+        self._page_models_btn.clicked.connect(self._on_download_page_models)
+        pm.addWidget(self._page_models_btn)
+        form.addRow(self._page_models_row)
+
         self._pdf_dpi = QSpinBox()
         self._pdf_dpi.setRange(72, 600)
         self._pdf_dpi.setSingleStep(72)
@@ -477,17 +451,15 @@ class ScanQualityControls(QWidget):
             "72 = screen quality, 150 = draft, 300 = recommended, 600 = high quality.\n"
             "Has no effect on image inputs (JPG, PNG)."
         )
-        er.addWidget(self._denoise)
-        er.addWidget(self._gamma)
         if self._pdf_options_inline:
-            er.addWidget(QLabel("PDF:"))
-            er.addWidget(self._pdf_dpi)
-        er.addStretch()
-        form.addRow("Enhancements:", enhancements_row)
-
-        # "None" skips every pre-step (HandwritingPreprocessor.preprocess returns the
-        # original file unchanged), so the checkboxes above have no effect under it.
-        self._on_preprocess_method_changed(self._preprocess.currentText())
+            dpi_row = QWidget()
+            dr = QHBoxLayout(dpi_row)
+            dr.setContentsMargins(0, 0, 0, 0)
+            dr.addWidget(QLabel("PDF:"))
+            dr.addWidget(self._pdf_dpi)
+            dr.addStretch()
+            form.addRow("PDF resolution:", dpi_row)
+        self._update_page_models_line()
 
     def _build_temperature_row(
         self, form: QFormLayout, *, collapsed: bool = True, shown: bool = True
@@ -546,19 +518,24 @@ class ScanQualityControls(QWidget):
             self._pdf_options = holder
         return self._pdf_options
 
-    def set_engine_default(self, engine: str) -> None:
-        """Apply the image preparation this recognition method works best with."""
-        default = self._app_service.default_preprocess_for_engine(engine)
-        if default:
-            _set_combo(self._preprocess, default)
-
     def preprocess_method(self) -> str:
-        """Return the chosen image preparation preset."""
-        return self._preprocess.currentText()
+        """Return the chosen image preparation (``auto`` or ``none``)."""
+        return str(self._preprocess.currentData())
 
     def set_preprocess_method(self, method: str) -> None:
-        """Choose the image preparation preset."""
-        _set_combo(self._preprocess, method)
+        """Choose the image preparation."""
+        index = self._preprocess.findData(method)
+        if index >= 0:
+            self._preprocess.setCurrentIndex(index)
+
+    def refresh_page_models(self) -> None:
+        """Show or hide the download line again (the page models may have been downloaded)."""
+        self._update_page_models_line()
+
+    def showEvent(self, event: object) -> None:
+        """Look again whether the page models are there: the Add-ons page may have fetched them."""
+        self._update_page_models_line()
+        super().showEvent(event)  # ty: ignore[invalid-argument-type]  # typed object to match the Qt override
 
     def temperature(self) -> float:
         """Return the recognition temperature."""
@@ -575,15 +552,10 @@ class ScanQualityControls(QWidget):
         """Populate the controls from an :class:`OcrConfig` value object."""
         self.set_preprocess_method(ocr.preprocess_method)
         self.set_temperature(ocr.temperature)
-        self._dewarp.setChecked(ocr.dewarp)
-        self._deskew.setChecked(ocr.deskew)
-        self._border_crop.setChecked(ocr.border_crop)
-        self._denoise.setChecked(ocr.denoise)
-        self._gamma.setChecked(ocr.gamma)
         self._pdf_dpi.setValue(ocr.pdf_render_dpi)
         if self._pdf_text_layer is not None:
             _set_combo(self._pdf_text_layer, ocr.pdf_text_layer)
-        self._on_preprocess_method_changed(self._preprocess.currentText())
+        self._update_page_models_line()
 
     def pdf_text_layer(self) -> PdfTextLayerMode:
         """Return the chosen PDF text-layer mode."""
@@ -600,20 +572,27 @@ class ScanQualityControls(QWidget):
             temperature=self.temperature(),
             pdf_render_dpi=self._pdf_dpi.value(),
             pdf_text_layer=self.pdf_text_layer(),
-            dewarp=self._dewarp.isChecked(),
-            deskew=self._deskew.isChecked(),
-            border_crop=self._border_crop.isChecked(),
-            denoise=self._denoise.isChecked(),
-            gamma=self._gamma.isChecked(),
         )
 
     # ── internal ────────────────────────────────────────────────────────────
 
-    def _on_preprocess_method_changed(self, method: str) -> None:
-        """Disable the pre-step checkboxes under "none" -- they would have no effect."""
-        enabled = method != "none"
-        for cb in (self._dewarp, self._deskew, self._border_crop, self._denoise, self._gamma):
-            cb.setEnabled(enabled)
+    def _update_page_models_line(self, *_args: object) -> None:
+        """Show the download line only under Automatic while the page models are missing."""
+        missing = (
+            self.preprocess_method() == "auto" and not self._app_service.page_models_installed()
+        )
+        self._page_models_row.setVisible(missing)
+
+    def _on_download_page_models(self) -> None:
+        from ._addon_installer_dialog import PageModelsDownloadDialog  # noqa: PLC0415
+
+        dlg = PageModelsDownloadDialog(self._app_service, self.window())
+        dlg.downloaded.connect(self._on_page_models_downloaded)
+        dlg.exec()
+
+    def _on_page_models_downloaded(self) -> None:
+        self._update_page_models_line()
+        self.addon_installed.emit(PAGE_MODELS_ADDON_ID)
 
 
 class OcrConfigSelector(QWidget):
@@ -662,7 +641,7 @@ class OcrConfigSelector(QWidget):
         )
         layout.addWidget(self._scan)
 
-        self._picker.engine_changed.connect(self._scan.set_engine_default)
+        self._scan.addon_installed.connect(self.addon_installed.emit)
         self._scan.preprocess_preview_requested.connect(
             lambda: self.preprocess_preview_requested.emit(self.get_ocr_config())
         )
@@ -676,8 +655,8 @@ class OcrConfigSelector(QWidget):
     def load_ocr_config(self, ocr: OcrConfig) -> None:
         """Populate the controls from an :class:`OcrConfig` value object."""
         self._picker.set_engine(ocr.engine)
-        # Re-apply engine-dependent state first (it resets preprocess to the engine
-        # default and populates the model list), then override with the saved values.
+        # Re-apply engine-dependent state first (it populates the model list), then override
+        # with the saved values.
         self.refresh()
         self._picker.set_model(ocr.model)
         self._scan.load(ocr)

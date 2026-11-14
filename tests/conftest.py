@@ -20,7 +20,7 @@ os.environ.setdefault("QT_API", "pyside6")
 def sample_png(tmp_path: Path) -> Path:
     """A white PNG rendering legible black text ("Hello World").
 
-    The text is large enough that a real OCR engine (e.g. Tesseract) returns a
+    The text is large enough that a real OCR engine (the built-in reader) returns a
     non-empty result, which the integration tests rely on. Other consumers only
     need a valid, openable image.
     """
@@ -216,14 +216,11 @@ def make_config(tmp_path: Path, **overrides: object):
         "preprocess_method": "preprocess_method",
         "ocr_temperature": "temperature",
     }
-    # Pre-steps are off so tests don't depend on (or pay for) the production defaults.
+    # "Original page" so tests don't depend on (or pay for) the automatic preparation.
     ocr_defaults: dict = {
-        "engine": "tesseract",
+        "engine": "ppocr",
         "model": "",
         "preprocess_method": "none",
-        "dewarp": False,
-        "deskew": False,
-        "denoise": False,
     }
     for flat_key, ocr_key in ocr_field_map.items():
         if flat_key in overrides:
@@ -270,6 +267,18 @@ def _no_background_network_threads(monkeypatch: pytest.MonkeyPatch) -> None:
         return
     monkeypatch.setattr(UpdateCheckThread, "start", lambda self, *_a: None)
     monkeypatch.setattr(_ConnectionCheckThread, "start", lambda self, *_a: None)
+
+
+@pytest.fixture(autouse=True)
+def _models_dir_in_tmp(
+    tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Point the model store at an empty temporary folder: no test sees or fills the real one.
+
+    A test that needs the built-in reader's models builds its own store (``reader_store``) or
+    fakes the reader; none downloads.
+    """
+    monkeypatch.setenv("TEACHERS_TEAMMATE_MODELS_DIR", str(tmp_path_factory.mktemp("models")))
 
 
 @pytest.fixture(autouse=True)
@@ -325,18 +334,180 @@ def credential_file(monkeypatch: pytest.MonkeyPatch) -> dict[str, object]:
 
 def pytest_configure(config: pytest.Config) -> None:
     config.addinivalue_line("markers", "unit: pure unit test with no external dependencies")
-    config.addinivalue_line("markers", "needs_tesseract: requires the tesseract binary on PATH")
     config.addinivalue_line("markers", "needs_ollama: requires a running Ollama instance")
+    config.addinivalue_line(
+        "markers",
+        "needs_reader_models: runs the built-in reader's real model files (Bazel fetches them)",
+    )
+    config.addinivalue_line(
+        "markers",
+        "needs_page_models: runs the page models' real model files (Bazel fetches them)",
+    )
     config.addinivalue_line("markers", "gui: exercises PySide6 widgets/event loop")
     config.addinivalue_line(
         "markers", "use_case: links test to a named use case from use_cases.trlc"
     )
 
 
-_has_tesseract = shutil.which("tesseract") is not None
-_has_pytesseract = importlib.util.find_spec("pytesseract") is not None
+READER_MODEL_ENV = {
+    "PPOCR_SMALL_DET_ONNX": ("ppocr-small-det", "inference.onnx"),
+    "PPOCR_SMALL_DET_YML": ("ppocr-small-det", "inference.yml"),
+    "PPOCR_SMALL_REC_ONNX": ("ppocr-small-rec", "inference.onnx"),
+    "PPOCR_SMALL_REC_YML": ("ppocr-small-rec", "inference.yml"),
+}
+"""Environment variables (set by the Bazel target) naming the pinned model files."""
 
-skip_no_tesseract = pytest.mark.skipif(
-    not (_has_tesseract and _has_pytesseract),
-    reason="tesseract binary or pytesseract Python package not available",
+
+def _reader_model_files() -> dict[str, Path]:
+    """Return the pinned model files Bazel fetched, by variable name; empty if not available."""
+    root = os.environ.get("TEST_SRCDIR", "")
+    found: dict[str, Path] = {}
+    for name in READER_MODEL_ENV:
+        value = os.environ.get(name)
+        if not value or not root:
+            return {}
+        path = Path(root) / value
+        if not path.is_file():
+            return {}
+        found[name] = path
+    return found
+
+
+skip_no_reader_models = pytest.mark.skipif(
+    not _reader_model_files(),
+    reason="the built-in reader's model files are only fetched under Bazel",
 )
+
+
+PAGE_MODEL_ENV = {
+    "DOC_ORI_ONNX": ("doc-ori", "inference.onnx"),
+    "DOC_ORI_YML": ("doc-ori", "inference.yml"),
+    "UVDOC_ONNX": ("uvdoc", "inference.onnx"),
+    "UVDOC_YML": ("uvdoc", "inference.yml"),
+}
+"""Environment variables (set by the Bazel target) naming the page models' pinned files."""
+
+
+def _page_model_files() -> dict[str, Path]:
+    """Return the page models' files Bazel fetched, by variable name; empty if not available."""
+    root = os.environ.get("TEST_SRCDIR", "")
+    found: dict[str, Path] = {}
+    for name in PAGE_MODEL_ENV:
+        value = os.environ.get(name)
+        if not value or not root:
+            return {}
+        path = Path(root) / value
+        if not path.is_file():
+            return {}
+        found[name] = path
+    return found
+
+
+skip_no_page_models = pytest.mark.skipif(
+    not _page_model_files(),
+    reason="the page models' files are only fetched under Bazel",
+)
+
+
+def page_models_store(tmp_path: Path):
+    """Return a :class:`ModelStore` under *tmp_path* holding the pinned page models.
+
+    Like :func:`reader_store`: the files Bazel fetched are linked into the store's layout.  Only
+    for tests marked ``skip_no_page_models``.
+    """
+    import json  # noqa: PLC0415
+
+    from teachers_teammate.domain.local_models import PAGE_MODELS  # noqa: PLC0415
+    from teachers_teammate.infrastructure.onnx.store import ModelStore  # noqa: PLC0415
+
+    files = _page_model_files()
+    store = ModelStore(tmp_path / "page_models")
+    for model in PAGE_MODELS:
+        folder = store.folder(model)
+        folder.mkdir(parents=True)
+        for var, (key, name) in PAGE_MODEL_ENV.items():
+            if key != model.key:
+                continue
+            try:
+                (folder / name).symlink_to(files[var])
+            except OSError:
+                shutil.copy(files[var], folder / name)
+        (folder / ".verified").write_text(json.dumps({}), encoding="utf-8")
+    return store
+
+
+def fake_page_models_store(tmp_path: Path, *, installed: bool = True):
+    """Return a :class:`ModelStore` that looks like it holds the page models (empty files).
+
+    The files have the pinned sizes but no content, so ``is_installed`` is true and nothing can
+    run: for tests of identity and settings.  With ``installed=False`` the store is empty.
+    """
+    import json  # noqa: PLC0415
+
+    from teachers_teammate.domain.local_models import PAGE_MODELS  # noqa: PLC0415
+    from teachers_teammate.infrastructure.onnx.store import ModelStore  # noqa: PLC0415
+
+    store = ModelStore(tmp_path / "fake_page_models")
+    if not installed:
+        return store
+    for model in PAGE_MODELS:
+        folder = store.folder(model)
+        folder.mkdir(parents=True)
+        for file in model.files:
+            with (folder / file.name).open("wb") as handle:
+                handle.truncate(file.size)
+        (folder / ".verified").write_text(json.dumps({}), encoding="utf-8")
+    return store
+
+
+def reader_store(tmp_path: Path):
+    """Return a :class:`ModelStore` under *tmp_path* holding the pinned reader models.
+
+    The files Bazel fetched are linked (copied where links are not possible) into the store's
+    layout, so the real reader runs on the real models.  Only for tests marked
+    ``skip_no_reader_models``.
+    """
+    import json  # noqa: PLC0415
+
+    from teachers_teammate.domain.local_models import READER_MODELS  # noqa: PLC0415
+    from teachers_teammate.infrastructure.onnx.store import ModelStore  # noqa: PLC0415
+
+    files = _reader_model_files()
+    store = ModelStore(tmp_path / "models")
+    for model in READER_MODELS:
+        folder = store.folder(model)
+        folder.mkdir(parents=True)
+        for var, (key, name) in READER_MODEL_ENV.items():
+            if key != model.key:
+                continue
+            try:
+                (folder / name).symlink_to(files[var])
+            except OSError:
+                shutil.copy(files[var], folder / name)
+        (folder / ".verified").write_text(json.dumps({}), encoding="utf-8")
+    return store
+
+
+def fake_reader_store(tmp_path: Path, *, installed: bool = True):
+    """Return a :class:`ModelStore` under *tmp_path* that looks like it holds the reader models.
+
+    The files have the pinned sizes but no content (sparse), so ``is_installed`` is true and
+    nothing can run: for tests of requirement checks and settings, which never read a page.
+    With ``installed=False`` the store is empty.
+    """
+    import json  # noqa: PLC0415
+
+    from teachers_teammate.domain.local_models import READER_MODELS  # noqa: PLC0415
+    from teachers_teammate.infrastructure.onnx.store import ModelStore  # noqa: PLC0415
+
+    store = ModelStore(tmp_path / "fake_models")
+    if not installed:
+        return store
+    for model in READER_MODELS:
+        folder = store.folder(model)
+        folder.mkdir(parents=True)
+        for file in model.files:
+            with (folder / file.name).open("wb") as handle:
+                handle.truncate(file.size)
+        (folder / ".verified").write_text(json.dumps({}), encoding="utf-8")
+    return store

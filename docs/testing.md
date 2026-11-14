@@ -35,7 +35,7 @@ bazel test //tests:coverage_tests --test_output=errors
 bazel test //tests:test_config --test_output=errors
 ```
 
-Tesseract integration tests skip automatically when `tesseract` is not on `PATH` — no manual intervention required.
+The built-in reader's model tests (`//tests:test_ppocr_models`, the multi-page PDF scenario) run the real, pinned model files. Bazel fetches them once (31 MB, `http_file` in `MODULE.bazel`) and caches them; under plain pytest, where the files are not provided, those tests skip. Every other test fakes the reader (patch `teachers_teammate.infrastructure.stage_builder.PpOcrProcessor`) and points the model store at an empty temporary folder, so no test downloads anything. The page models of the automatic image preparation work the same way (`//tests:test_page_models`, marker `needs_page_models`, 39 MB; `conftest.page_models_store()` links the fetched files, `fake_page_models_store()` makes empty files of the pinned sizes).
 
 You can also invoke pytest directly (without Bazel) for quick ad-hoc runs, but Bazel is preferred in CI and for coverage because it applies the correct sandbox and dependency isolation.
 
@@ -57,7 +57,7 @@ genhtml bazel-out/_coverage/_coverage_report.dat -o coverage_html/
 
 | Marker | Meaning |
 |---|---|
-| `needs_tesseract` | Requires the `tesseract` binary on `PATH` |
+| `needs_reader_models` | Runs the built-in reader's real model files (Bazel fetches them; skipped without) |
 | `needs_ollama` | Requires a running Ollama instance |
 
 Run only tests that do not require Ollama (direct pytest, ad-hoc use only):

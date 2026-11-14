@@ -69,8 +69,28 @@ class BenchmarkApplicationService:
     def list_ocr_engines(self) -> list[str]:
         return self._processing.list_ocr_engines()
 
-    def default_preprocess_for_engine(self, engine: str) -> str:
-        return self._processing.default_preprocess_for_engine(engine)
+    def page_models_installed(self) -> bool:
+        return self._processing.page_models_installed()
+
+    def reader_installed(self) -> bool:
+        return self._processing.reader_installed()
+
+    def models_dir(self) -> Path:
+        return self._processing.models_dir()
+
+    def download_page_models(
+        self,
+        on_progress: Callable[[int, int], None] | None = None,
+        cancel: threading.Event | None = None,
+    ) -> None:
+        self._processing.download_page_models(on_progress, cancel)
+
+    def download_reader(
+        self,
+        on_progress: Callable[[int, int], None] | None = None,
+        cancel: threading.Event | None = None,
+    ) -> None:
+        self._processing.download_reader(on_progress, cancel)
 
     def describe_ocr_location(self, engine: str, model: str, ollama_url: str) -> StageLocation:
         return self._processing.describe_ocr_location(engine, model, ollama_url)
@@ -250,12 +270,18 @@ class BenchmarkApplicationService:
         if on_progress is not None:
             on_progress(f"Running OCR · {ocr.engine} · {ocr.model}")
         result = self._runner(
-            config, source, component_factory=self._component_factory, stop_event=stop_event
+            config,
+            source,
+            component_factory=self._component_factory,
+            stop_event=stop_event,
+            model_store=self._processing.model_store,
         )
         if result.error is not None:
             raise BenchmarkRunError(result.error)
 
-        ocr_config_hash = compute_ocr_config_hash(config, get_ocr_prompt(language), source)
+        ocr_config_hash = compute_ocr_config_hash(
+            config, get_ocr_prompt(language), source, self._processing.model_store
+        )
         if on_progress is not None:
             on_progress("Storing run…")
         return self._store.save(

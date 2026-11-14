@@ -29,7 +29,7 @@ def test_pipeline_run_txt_input_writes_raw_text_without_ocr(tmp_path: Path) -> N
     """
     cfg = make_config(
         tmp_path,
-        ocr_engine="tesseract",
+        ocr_engine="ppocr",
         correction_enabled=False,
         docx_enabled=False,
     )
@@ -53,7 +53,7 @@ def test_pipeline_txt_input_triggers_on_file_done_callback(tmp_path: Path) -> No
     """
     cfg = make_config(
         tmp_path,
-        ocr_engine="tesseract",
+        ocr_engine="ppocr",
         correction_enabled=False,
         docx_enabled=False,
     )
@@ -83,7 +83,7 @@ def test_pipeline_txt_input_enters_correction_pipeline(tmp_path: Path) -> None:
     """
     cfg = make_config(
         tmp_path,
-        ocr_engine="tesseract",
+        ocr_engine="ppocr",
         correction_enabled=True,
         docx_enabled=False,
         correction_provider="openai",
@@ -122,7 +122,7 @@ def test_pipeline_txt_input_non_utf8_falls_back_to_latin1(tmp_path: Path) -> Non
     """
     cfg = make_config(
         tmp_path,
-        ocr_engine="tesseract",
+        ocr_engine="ppocr",
         correction_enabled=False,
         docx_enabled=False,
     )
@@ -150,7 +150,7 @@ def test_pipeline_saves_text_files_below_the_input_subfolder(tmp_path: Path) -> 
     """
     cfg = make_config(
         tmp_path,
-        ocr_engine="tesseract",
+        ocr_engine="ppocr",
         correction_enabled=False,
         docx_enabled=False,
         text_enabled=True,
@@ -206,7 +206,7 @@ def test_pipeline_with_recognition_off_uses_text_files_and_skips_scans(
 
     cfg = make_config(
         tmp_path,
-        ocr_engine="tesseract",
+        ocr_engine="ppocr",
         recognition_enabled=False,
         correction_enabled=False,
         docx_enabled=False,

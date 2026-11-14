@@ -124,6 +124,30 @@ class _FakePullThread(QObject):
         self.finished_ok.emit(self._model)
 
 
+class _FakeReaderThread(QObject):
+    """Reports a downloaded built-in reader at once (or fails, or waits to be cancelled)."""
+
+    progress = Signal(int, int)
+    finished_ok = Signal()
+    finished_err = Signal(str)
+    cancelled: ClassVar[bool] = False
+
+    def __init__(self, _service: Any, method: str = "download_reader") -> None:
+        super().__init__()
+        self._item = "page_models:all" if method == "download_page_models" else "reader:ppocr"
+
+    def cancel(self) -> None:
+        _FakeReaderThread.cancelled = True
+
+    def start(self) -> None:
+        _Script.order.append("page_models" if self._item == "page_models:all" else "reader")
+        if _fails(self._item):
+            self.finished_err.emit(_Script.fail_with)
+            return
+        self.progress.emit(1_000_000, 2_000_000)
+        self.finished_ok.emit()
+
+
 class _BlockingPipThread(QThread):
     """A pip install that keeps running until the test releases it."""
 
@@ -148,6 +172,8 @@ def fake_threads(monkeypatch) -> type[_Script]:
     monkeypatch.setattr(_install_round, "_PipInstallThread", _FakePipThread)
     monkeypatch.setattr(_addon_installer_dialog, "_ModelDownloadThread", _FakeSpacyThread)
     monkeypatch.setattr(_addon_installer_dialog, "_OllamaPullThread", _FakePullThread)
+    monkeypatch.setattr(_addon_installer_dialog, "_ReaderDownloadThread", _FakeReaderThread)
+    _FakeReaderThread.cancelled = False
     return _Script
 
 
@@ -177,6 +203,149 @@ def _record(round_: InstallRound) -> dict[str, list[Any]]:
 
 
 # ── the order ────────────────────────────────────────────────────────────────
+
+
+@pytest.mark.use_case("Runtime_Addon_Installation")
+def test_a_round_runs_the_reader_between_spacy_and_the_pulls(qtbot, fake_threads) -> None:
+    """
+    Given  a round with a package, a spaCy model, the built-in reader and an Ollama model
+    When   it starts
+    Then   pip runs first, then spaCy, then the reader, then the pull — in that order
+    """
+    round_, _service = _round()
+    seen = _record(round_)
+
+    assert round_.start(
+        packages=["spacy"],
+        spacy_models=["en_core_web_sm"],
+        reader=True,
+        ollama_models=["a:1b"],
+        ollama_url="http://127.0.0.1:11434",
+    )
+
+    assert fake_threads.order == ["pip:spacy", "spacy:en_core_web_sm", "reader", "a:1b"]
+    assert seen["started"] == ["package:spacy", "spacy:en_core_web_sm", "reader:ppocr", "a:1b"]
+    assert "reader:ppocr" in seen["done"]
+    assert ("Built-in reader", 1_000_000, 2_000_000) in seen["progress"]
+    assert seen["finished"] == [True]
+
+
+@pytest.mark.use_case("Runtime_Addon_Installation")
+def test_a_round_with_only_the_reader_runs_and_finishes(qtbot, fake_threads) -> None:
+    """
+    Given  a round that asks for the built-in reader and nothing else
+    When   it starts
+    Then   the reader downloads and the round reports that something arrived
+    """
+    round_, _service = _round()
+    seen = _record(round_)
+
+    assert round_.start(reader=True)
+
+    assert fake_threads.order == ["reader"]
+    assert seen["finished"] == [True]
+
+
+@pytest.mark.use_case("Runtime_Addon_Installation")
+def test_a_round_downloads_the_page_models_after_the_reader_and_before_the_pulls(
+    qtbot, fake_threads
+) -> None:
+    """
+    Given  a round with the built-in reader, the page models and an Ollama model
+    When   it starts
+    Then   the reader downloads first, then the page models, then the pull, and the page
+           models report their own progress line
+    """
+    round_, _service = _round()
+    seen = _record(round_)
+
+    assert round_.start(
+        reader=True, page_models=True, ollama_models=["a:1b"], ollama_url="http://127.0.0.1:11434"
+    )
+
+    assert fake_threads.order == ["reader", "page_models", "a:1b"]
+    assert seen["started"] == ["reader:ppocr", "page_models:all", "a:1b"]
+    assert "page_models:all" in seen["done"]
+    assert ("Page models", 1_000_000, 2_000_000) in seen["progress"]
+    assert seen["finished"] == [True]
+
+
+@pytest.mark.use_case("Runtime_Addon_Installation")
+def test_a_round_with_only_the_page_models_runs_and_finishes(qtbot, fake_threads) -> None:
+    """
+    Given  a round that asks for the page models and nothing else
+    When   it starts
+    Then   they download and the round reports that something arrived
+    """
+    round_, _service = _round()
+    seen = _record(round_)
+
+    assert round_.start(page_models=True)
+
+    assert fake_threads.order == ["page_models"]
+    assert seen["finished"] == [True]
+
+
+@pytest.mark.use_case("Runtime_Addon_Installation")
+def test_a_failed_page_models_download_stops_the_round_with_its_sentence(
+    qtbot, fake_threads
+) -> None:
+    """
+    Given  a page models download that fails
+    When   the round runs with an Ollama pull behind it
+    Then   the failure names the page models and carries the sentence, and the pull never starts
+    """
+    fake_threads.fail_with = "Could not reach huggingface.co."
+    fake_threads.fail_item = "page_models:all"
+    round_, _service = _round()
+    seen = _record(round_)
+
+    round_.start(page_models=True, ollama_models=["a:1b"], ollama_url="u")
+
+    assert seen["failed"] == [("page_models:all", "Could not reach huggingface.co.")]
+    assert "a:1b" not in fake_threads.order
+    assert seen["finished"] == [False]
+
+
+@pytest.mark.use_case("Runtime_Addon_Installation")
+def test_a_failed_reader_download_stops_the_round_with_its_sentence(qtbot, fake_threads) -> None:
+    """
+    Given  a reader download that fails
+    When   the round runs with an Ollama pull behind it
+    Then   the failure names the reader and carries the sentence, and the pull never starts
+    """
+    fake_threads.fail_with = "Could not reach huggingface.co."
+    fake_threads.fail_item = "reader:ppocr"
+    round_, _service = _round()
+    seen = _record(round_)
+
+    round_.start(reader=True, ollama_models=["a:1b"], ollama_url="u")
+
+    assert seen["failed"] == [("reader:ppocr", "Could not reach huggingface.co.")]
+    assert "a:1b" not in fake_threads.order
+    assert seen["finished"] == [False]
+
+
+@pytest.mark.use_case("Runtime_Addon_Installation")
+def test_abort_cancels_a_running_reader_download(qtbot, monkeypatch) -> None:
+    """
+    Given  a round that is downloading the reader
+    When   abort() is called
+    Then   the reader's download thread is told to cancel
+    """
+
+    class _Waiting(_FakeReaderThread):
+        def start(self) -> None:
+            _Script.order.append("reader")
+
+    monkeypatch.setattr(_addon_installer_dialog, "_ReaderDownloadThread", _Waiting)
+    _FakeReaderThread.cancelled = False
+    round_, _service = _round()
+    round_.start(reader=True)
+
+    round_.abort()
+
+    assert _FakeReaderThread.cancelled is True
 
 
 @pytest.mark.use_case("Runtime_Addon_Installation")
@@ -430,7 +599,7 @@ def test_a_failed_pip_install_names_the_first_package(qtbot, fake_threads) -> No
     round_, _service = _round()
     seen = _record(round_)
 
-    round_.start(packages=["spacy", "pytesseract"])
+    round_.start(packages=["spacy", "langchain-core"])
 
     assert seen["failed"] == [("package:spacy", "pip is not available")]
     assert seen["finished"] == [False]

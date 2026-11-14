@@ -46,7 +46,7 @@ package "Infrastructure Layer" {
   [PreviewImageStore\n(preview images + intermediates)] as I_ART
   [FileDiscovery] as I_DISC
   [LLM Factory + Provider Registry\n(llm_factory.py, providers/)] as I_LLM
-  [OCR Adapters\n(Ollama / Tesseract / Paddle / LangChain)] as I_OCR
+  [OCR Adapters\n(Ollama / built-in reader)] as I_OCR
   [Correction & Evaluation Adapters\n(LangChain)] as I_CORR_EVAL
   [DOCX Adapter\n(DocxDocumentCreator)] as I_DOCX
 }

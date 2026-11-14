@@ -37,6 +37,27 @@ class RunStoppedError(Exception):
     """
 
 
+class ModelMissingError(OCRError):
+    """Raised when a model file the app runs itself has not been downloaded.
+
+    A subclass of :exc:`OCRError`, so a caller that handles failed reading keeps working; a
+    caller that can offer the download (the preflight check, the GUI) can tell the two apart.
+    ``str(exc)`` is the sentence a teacher reads.
+    """
+
+
+class ModelDownloadError(RuntimeError):
+    """Raised when a model file could not be downloaded.
+
+    ``str(exc)`` is a sentence a teacher (or the IT department) can act on: no connection,
+    host blocked, damaged on the way, no space left, folder not writable.
+    """
+
+
+class ModelDownloadCancelledError(ModelDownloadError):
+    """Raised when the teacher cancelled a model download; no partial file is left behind."""
+
+
 class OCRTimeoutError(OCRError):
     """Raised when no output arrives within the first-token timeout.
 

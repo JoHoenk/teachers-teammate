@@ -30,7 +30,7 @@ The venv is for running the app and your editor; Bazel manages its own toolchain
 ```bash
 # Tests
 bazel test //tests:unit_tests --test_output=errors   # fast, no external services
-bazel test //tests/... --test_output=errors           # full suite (skips Tesseract/Ollama if absent)
+bazel test //tests/... --test_output=errors           # full suite (skips Ollama tests if absent)
 
 # Lint + type check (ruff, pylint, ty)
 bazel test //:lint --test_output=errors

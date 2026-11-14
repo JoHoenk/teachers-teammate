@@ -32,13 +32,15 @@ import tempfile
 from teachers_teammate.config import OcrConfig
 from teachers_teammate.domain.model_catalog import OLLAMA_CATALOG
 from teachers_teammate.exceptions import OCRError
-from teachers_teammate.infrastructure.image_preprocessor import HandwritingPreprocessor
 from teachers_teammate.infrastructure.ocr_processor import OCR_ANSWER_TOKENS, get_ocr_prompt
 from teachers_teammate.infrastructure.ollama_utils import ChatStats, OllamaClient
 from teachers_teammate.infrastructure.performance_probe import (
     WARMUP_ANSWER_TOKENS,
     WARMUP_PROMPT,
 )
+from teachers_teammate.infrastructure.onnx.store import ModelStore
+from teachers_teammate.infrastructure.preprocessing.recipes import steps_for
+from teachers_teammate.infrastructure.preprocessing.steps import StepPipeline
 from tools.model_eval.performance import Spread
 
 _NS = 1e9
@@ -90,15 +92,7 @@ def _pages(paths: Sequence[Path]) -> list[Path]:
 
 def _prepared(page: Path, tmp_dir: Path, ocr: OcrConfig) -> Path:
     """Return *page* preprocessed the way a run preprocesses it."""
-    preprocessor = HandwritingPreprocessor(
-        tmp_dir=tmp_dir,
-        method=ocr.preprocess_method,
-        dewarp=ocr.dewarp,
-        deskew=ocr.deskew,
-        border_crop=ocr.border_crop,
-        denoise=ocr.denoise,
-        gamma=ocr.gamma,
-    )
+    preprocessor = StepPipeline(steps_for(ocr, ModelStore()), tmp_dir=tmp_dir)
     processed, _steps = preprocessor.preprocess(page)
     return processed
 

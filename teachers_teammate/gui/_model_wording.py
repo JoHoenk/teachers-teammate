@@ -65,8 +65,8 @@ def auto_profile_text(profile: str) -> str:
 
 #: Shown once under "My computer" when the computer cannot run a local model at all.
 TOO_LITTLE_MEMORY = (
-    "This computer has too little memory for AI models on this computer. Use Tesseract for "
-    "reading, or Ollama on another computer."
+    "This computer has too little memory for AI models on this computer. Use the built-in "
+    "reader for reading, or Ollama on another computer."
 )
 
 

@@ -142,7 +142,7 @@ class SettingsWindow(QDialog):
     preprocess_preview_requested = Signal(object)
     #: An install round on Add-ons finished (the main window refreshes its checks).
     packages_changed = Signal()
-    #: An add-on (PaddleOCR, GPU monitoring) was installed from a page.
+    #: An add-on (the built-in reader, GPU monitoring) was installed from a page.
     addon_installed = Signal(str)
 
     def __init__(
@@ -335,11 +335,11 @@ class SettingsWindow(QDialog):
         elif isinstance(page, AddonsPage):
             page.packages_changed.connect(self._on_packages_changed)
         elif isinstance(page, AiModelsPage):
-            page.ocr_engine_changed.connect(self._on_ocr_engine_changed)
             page.addon_installed.connect(self.addon_installed.emit)
             page.speed_choices_changed.connect(self._on_speed_choices_changed)
         elif isinstance(page, ScanQualityPage):
             page.preview_requested.connect(self._on_preview_requested)
+            page.addon_installed.connect(self.addon_installed.emit)
 
     def _on_navigate(self, page: object, focus: str, preselect: list) -> None:
         if isinstance(page, SettingsPage):
@@ -386,17 +386,6 @@ class SettingsWindow(QDialog):
         for built in self._pages.values():
             built.on_packages_changed()
         self.packages_changed.emit()
-
-    def _on_ocr_engine_changed(self, engine: str) -> None:
-        """Apply the new method's default image preparation, as choosing it always did."""
-        scan = self._pages.get(SettingsPage.SCAN_QUALITY)
-        if isinstance(scan, ScanQualityPage):
-            scan.set_engine_default(engine)
-            return
-        default = self._context.app_service.default_preprocess_for_engine(engine)
-        if default:
-            self._working["preprocess_method"] = default
-            self._carried["preprocess_method"] = default
 
     def _on_preview_requested(self) -> None:
         """Build the whole ``OcrConfig`` -- method and model from AI models -- and pass it on."""
@@ -464,23 +453,8 @@ class SettingsWindow(QDialog):
             self.done(self.RESTORE_ALL_RESULT)
 
     def _restore_page(self, page: SettingsPage) -> None:
-        """Show the defaults of *page*; image preparation follows the recognition method."""
-        before = self._current_engine()
+        """Show the defaults of *page*."""
         self._pages[page].restore_defaults()
-        if page is SettingsPage.SCAN_QUALITY:
-            # The built-in preset belongs to the default method; the one in use has its own.
-            scan = self._pages[page]
-            if isinstance(scan, ScanQualityPage):
-                scan.set_engine_default(before)
-        elif page is SettingsPage.AI_MODELS and self._current_engine() != before:
-            self._on_ocr_engine_changed(self._current_engine())
-
-    def _current_engine(self) -> str:
-        """Return the recognition method as shown (saved one while AI models was not opened)."""
-        ai_models = self._pages.get(SettingsPage.AI_MODELS)
-        if isinstance(ai_models, AiModelsPage):
-            return ai_models.ocr_choice()[0]
-        return OcrConfig.from_settings(self._working).engine
 
     def _confirm_restore_all(self) -> bool:
         box = QMessageBox(self)

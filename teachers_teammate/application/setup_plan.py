@@ -20,13 +20,15 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any
 
-from ..config import DEFAULTS
+from ..config import DEFAULTS, RETIRED_OCR_ENGINES
 from ..domain.data_location import (
+    ENGINE_PPOCR,
     STAGE_ANONYMIZATION,
     STAGE_CORRECTION,
     STAGE_EVALUATION,
     STAGE_OCR,
 )
+from ..domain.local_models import READER_MODEL_NAME, READER_SIZE_GB
 from ..domain.model_catalog import (
     OLLAMA_CATALOG,
     DiskVerdict,
@@ -103,6 +105,8 @@ class SetupFacts:
     spacy_model: str
     #: pip name of the online provider's package, or ``""`` when nothing is missing.
     missing_package: str
+    #: The built-in reader's model files are downloaded.
+    reader_installed: bool = False
 
 
 class DownloadKind(StrEnum):
@@ -110,6 +114,7 @@ class DownloadKind(StrEnum):
 
     PACKAGE = "package"
     SPACY_MODEL = "spacy_model"
+    READER_MODEL = "reader_model"
     OLLAMA_MODEL = "ollama_model"
 
 
@@ -118,7 +123,7 @@ class PlannedDownload:
     """One download the install round runs."""
 
     kind: DownloadKind
-    #: pip package, spaCy model or Ollama tag.
+    #: pip package, spaCy model, the reader's id (``ppocr``) or Ollama tag.
     name: str
     #: The stage that needs it: ``"ocr"``, ``"correction"`` or ``"anonymization"``.
     stage: str
@@ -207,6 +212,16 @@ def _current(values: Mapping[str, Any], key: str) -> str:
     return str(values.get(key) or DEFAULTS[key])
 
 
+def _reading_engine(current: Mapping[str, Any]) -> str:
+    """Return the saved reading engine; a removed one counts as the built-in reader.
+
+    The settings window turns a removed engine into the reader when it loads, but this has to
+    answer the same before it has: only ``ollama`` and ``ppocr`` are known from here on.
+    """
+    engine = _current(current, "ocr_engine").strip().lower()
+    return RETIRED_OCR_ENGINES.get(engine, engine)
+
+
 def _reading_plan(
     answers: SetupAnswers,
     current: Mapping[str, Any],
@@ -217,13 +232,14 @@ def _reading_plan(
     """Return the reading settings, its summary row and the model it proposes."""
     if answers.hand_in is not HandIn.HANDWRITTEN:
         return {}, [], ""
-    engine = _current(current, "ocr_engine")
-    if engine != "ollama":
+    if _reading_engine(current) == ENGINE_PPOCR:
+        # A reader that is chosen is kept like any working choice (its files are downloaded
+        # when they are missing); the assistant never proposes to switch to the reader.
         row = PlannedStep(
             stage=STAGE_OCR,
-            provider=engine,
-            model=_current(current, "ocr_model"),
-            installed=True,
+            provider=ENGINE_PPOCR,
+            model=READER_MODEL_NAME,
+            installed=facts.reader_installed,
             kept=True,
         )
         return {}, [row], ""
@@ -310,6 +326,7 @@ def _downloads_plan(
     *,
     names_wanted: bool,
     reading_tag: str,
+    reader_needed: bool,
     correction_model: str,
     place: ProofreadingPlace,
 ) -> list[PlannedDownload]:
@@ -333,6 +350,15 @@ def _downloads_plan(
                 kind=DownloadKind.SPACY_MODEL,
                 name=facts.spacy_model,
                 stage=STAGE_ANONYMIZATION,
+            )
+        )
+    if reader_needed and not facts.reader_installed:
+        downloads.append(
+            PlannedDownload(
+                kind=DownloadKind.READER_MODEL,
+                name=ENGINE_PPOCR,
+                stage=STAGE_OCR,
+                size_gb=READER_SIZE_GB,
             )
         )
     proposed = [(reading_tag, STAGE_OCR)]
@@ -407,6 +433,9 @@ def build_setup_plan(
         facts,
         names_wanted=names_wanted,
         reading_tag=reading_tag,
+        reader_needed=(
+            answers.hand_in is HandIn.HANDWRITTEN and _reading_engine(current) == ENGINE_PPOCR
+        ),
         correction_model=model,
         place=place,
     )

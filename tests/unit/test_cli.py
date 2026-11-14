@@ -29,6 +29,18 @@ class _AppServiceStub:
     def ocr_refusal_for_run(self, config) -> str:
         return ""
 
+    def reader_refusal_for_run(self, config) -> str:
+        return ""
+
+    def page_models_notice_for_run(self, config) -> str:
+        return ""
+
+    def download_reader(self, on_progress=None, cancel=None) -> None:
+        raise AssertionError("nothing may be downloaded")
+
+    def download_page_models(self, on_progress=None, cancel=None) -> None:
+        raise AssertionError("nothing may be downloaded")
+
     def output_refusal_for_run(self, config) -> str:
         return ""
 
@@ -120,17 +132,17 @@ def test_parse_args_flags() -> None:
 
 
 @pytest.mark.use_case("Headless_CLI_Batch")
-def test_parse_args_ocr_engine_tesseract() -> None:
+def test_parse_args_ocr_engine_ppocr() -> None:
     """
-    Given  --ocr-engine tesseract
+    Given  --ocr-engine ppocr
     When   _parse_args() is called
-    Then   ocr_engine == 'tesseract'
+    Then   ocr_engine == 'ppocr'
     """
     from teachers_teammate.cli import _parse_args  # noqa: PLC0415
 
-    args = _parse_args(argv=["--ocr-engine", "tesseract"])
+    args = _parse_args(argv=["--ocr-engine", "ppocr"])
 
-    assert args.ocr_engine == "tesseract"
+    assert args.ocr_engine == "ppocr"
 
 
 @pytest.mark.use_case("Headless_CLI_Batch")
@@ -436,32 +448,19 @@ def test_parse_args_correction_prompt() -> None:
 
 
 @pytest.mark.use_case("Headless_CLI_Batch")
-def test_parse_args_preprocess_flags_and_dpi() -> None:
+def test_parse_args_preprocess_method_and_dpi() -> None:
     """
-    Given  every --preprocess-* flag plus --pdf-render-dpi 600
+    Given  --preprocess-method none plus --pdf-render-dpi 600
     When   _parse_args() is called
-    Then   each flag is True and pdf_render_dpi is parsed
+    Then   both are parsed, and without the flag the method is "auto"
     """
     from teachers_teammate.cli import _parse_args  # noqa: PLC0415
 
-    args = _parse_args(
-        argv=[
-            "--preprocess-dewarp",
-            "--preprocess-deskew",
-            "--preprocess-border-crop",
-            "--preprocess-denoise",
-            "--preprocess-gamma",
-            "--pdf-render-dpi",
-            "600",
-        ]
-    )
+    args = _parse_args(argv=["--preprocess-method", "none", "--pdf-render-dpi", "600"])
 
-    assert args.preprocess_dewarp is True
-    assert args.preprocess_deskew is True
-    assert args.preprocess_border_crop is True
-    assert args.preprocess_denoise is True
-    assert args.preprocess_gamma is True
+    assert args.preprocess_method == "none"
     assert args.pdf_render_dpi == 600
+    assert _parse_args(argv=[]).preprocess_method == "auto"
 
 
 @pytest.mark.use_case("Headless_CLI_Batch")
@@ -479,34 +478,49 @@ def test_parse_args_pdf_dpi_out_of_range_exits(bad: str) -> None:
 
 
 @pytest.mark.use_case("Headless_CLI_Batch")
-def test_parse_args_dewarp_deskew_denoise_default_on_and_can_be_disabled() -> None:
+@pytest.mark.parametrize(
+    "removed",
+    [
+        "--preprocess-dewarp",
+        "--no-preprocess-dewarp",
+        "--preprocess-deskew",
+        "--no-preprocess-deskew",
+        "--preprocess-border-crop",
+        "--preprocess-denoise",
+        "--no-preprocess-denoise",
+        "--preprocess-gamma",
+    ],
+)
+def test_the_switches_of_the_old_preparation_are_gone(removed: str) -> None:
     """
-    Given  no preprocessing flags, then the matching --no-preprocess-* flags
-    When   _parse_args() is called
-    Then   dewarp/deskew/denoise default to True (border crop and gamma to False)
-           and each --no-preprocess-* flag turns its step off
+    Given  one of the switch flags of the old image preparation
+    When   _parse_args() is called with it
+    Then   argparse rejects it with SystemExit
     """
     from teachers_teammate.cli import _parse_args  # noqa: PLC0415
 
-    defaults = _parse_args(argv=[])
-    assert defaults.preprocess_dewarp is True
-    assert defaults.preprocess_deskew is True
-    assert defaults.preprocess_denoise is True
-    assert defaults.preprocess_border_crop is False
-    assert defaults.preprocess_gamma is False
+    with pytest.raises(SystemExit):
+        _parse_args(argv=[removed])
 
-    disabled = _parse_args(
-        argv=["--no-preprocess-dewarp", "--no-preprocess-deskew", "--no-preprocess-denoise"]
-    )
-    assert disabled.preprocess_dewarp is False
-    assert disabled.preprocess_deskew is False
-    assert disabled.preprocess_denoise is False
+
+@pytest.mark.use_case("Headless_CLI_Batch")
+@pytest.mark.parametrize("old_method", ["grayscale", "clahe", "adaptive_threshold"])
+def test_the_methods_of_the_old_preparation_are_not_choices(old_method: str) -> None:
+    """
+    Given  a method of the old preparation on the command line
+    When   _parse_args() is called
+    Then   argparse rejects it: the choices are auto and none
+    """
+    from teachers_teammate.cli import _parse_args  # noqa: PLC0415
+
+    with pytest.raises(SystemExit):
+        _parse_args(argv=["--preprocess-method", old_method])
 
 
 @pytest.mark.use_case("Headless_CLI_Batch")
 def test_run_cli_propagates_preprocessing_to_config(tmp_path: Path, monkeypatch) -> None:
     """
-    Given  preprocessing flags (including a --no-… override) and a PDF DPI on the command line
+    Given  --preprocess-method none and a PDF DPI on the command line
     When   run_cli() builds the Config and hands it to the application service
     Then   the OcrConfig carries every preprocessing setting
     """
@@ -531,8 +545,8 @@ def test_run_cli_propagates_preprocessing_to_config(tmp_path: Path, monkeypatch)
                 "-i",
                 str(tmp_path),
                 "--no-docx",
-                "--preprocess-border-crop",
-                "--no-preprocess-dewarp",
+                "--preprocess-method",
+                "none",
                 "--pdf-render-dpi",
                 "150",
             ],
@@ -543,10 +557,7 @@ def test_run_cli_propagates_preprocessing_to_config(tmp_path: Path, monkeypatch)
 
     assert rc == 0
     ocr = captured[0].ocr
-    assert ocr.border_crop is True
-    assert ocr.deskew is True  # on by default
-    assert ocr.denoise is True  # on by default
-    assert ocr.dewarp is False
+    assert ocr.preprocess_method == "none"
     assert ocr.pdf_render_dpi == 150
 
 
@@ -615,7 +626,7 @@ def test_run_cli_tells_where_documents_are_processed(tmp_path: Path, capsys) -> 
     flow = DataFlow(
         (
             DataFlowStage(
-                "ocr", StageLocation(DataLocation.THIS_COMPUTER, "Tesseract"), "page images"
+                "ocr", StageLocation(DataLocation.THIS_COMPUTER, "Built-in reader"), "page images"
             ),
             DataFlowStage(
                 "correction",
@@ -675,6 +686,154 @@ def test_run_cli_refuses_online_text_recognition_before_anything_starts(
 
     assert rc == 1
     assert "ERROR: Text recognition must stay on your computer." in capsys.readouterr().err
+
+
+@pytest.mark.use_case("Headless_CLI_Batch")
+def test_run_cli_refuses_the_reader_when_it_is_not_downloaded(tmp_path: Path, capsys) -> None:
+    """
+    Given  an application service that says the built-in reader is not downloaded
+    When   run_cli() is called with --ocr-engine ppocr
+    Then   it prints the sentence, exits with 1 and starts nothing
+    """
+    from teachers_teammate.cli import run_cli  # noqa: PLC0415
+
+    class _FakeAppService(_AppServiceStub):
+        def reader_refusal_for_run(self, config) -> str:
+            return "The built-in reader is not downloaded yet. Use --download-reader."
+
+        def describe_data_flow(self, config) -> DataFlow:
+            raise AssertionError("no data flow may be announced for a refused run")
+
+    rc = run_cli(
+        argv=["-i", str(tmp_path), "--no-docx", "--ocr-engine", "ppocr"],
+        app_service=_FakeAppService(),
+    )
+
+    assert rc == 1
+    assert "--download-reader" in capsys.readouterr().err
+
+
+@pytest.mark.use_case("Headless_CLI_Batch")
+def test_download_reader_flag_downloads_and_exits_without_input(capsys) -> None:
+    """
+    Given  --download-reader and no input folder
+    When   run_cli() is called
+    Then   the reader is downloaded with a progress line on stderr, and the exit code is 0
+    """
+    from teachers_teammate.cli import run_cli  # noqa: PLC0415
+
+    calls: list[str] = []
+
+    class _FakeAppService(_AppServiceStub):
+        def download_reader(self, on_progress=None, cancel=None) -> None:
+            calls.append("download")
+            assert on_progress is not None
+            on_progress(5_000_000, 31_000_000)
+
+    rc = run_cli(argv=["--download-reader"], app_service=_FakeAppService())
+
+    err = capsys.readouterr().err
+    assert rc == 0
+    assert calls == ["download"]
+    assert "5 of 31 MB" in err
+
+
+@pytest.mark.use_case("Headless_CLI_Batch")
+def test_download_reader_flag_reports_the_error_sentence(capsys) -> None:
+    """
+    Given  a download that fails with a sentence
+    When   run_cli() is called with --download-reader
+    Then   the sentence is printed after ERROR and the exit code is 1
+    """
+    from teachers_teammate.cli import run_cli  # noqa: PLC0415
+    from teachers_teammate.exceptions import ModelDownloadError  # noqa: PLC0415
+
+    class _FakeAppService(_AppServiceStub):
+        def download_reader(self, on_progress=None, cancel=None) -> None:
+            raise ModelDownloadError("Could not reach huggingface.co.")
+
+    rc = run_cli(argv=["--download-reader"], app_service=_FakeAppService())
+
+    assert rc == 1
+    assert "ERROR: Could not reach huggingface.co." in capsys.readouterr().err
+
+
+@pytest.mark.use_case("Headless_CLI_Batch")
+def test_download_page_models_flag_downloads_and_exits_without_input(capsys) -> None:
+    """
+    Given  --download-page-models and no input folder
+    When   run_cli() is called
+    Then   the page models are downloaded with a progress line on stderr, and the exit code is 0
+    """
+    from teachers_teammate.cli import run_cli  # noqa: PLC0415
+
+    calls: list[str] = []
+
+    class _FakeAppService(_AppServiceStub):
+        def download_page_models(self, on_progress=None, cancel=None) -> None:
+            calls.append("download")
+            assert on_progress is not None
+            on_progress(5_000_000, 38_000_000)
+
+    rc = run_cli(argv=["--download-page-models"], app_service=_FakeAppService())
+
+    err = capsys.readouterr().err
+    assert rc == 0
+    assert calls == ["download"]
+    assert "5 of 38 MB" in err
+    assert "The page models are ready." in err
+
+
+@pytest.mark.use_case("Headless_CLI_Batch")
+def test_download_page_models_flag_reports_the_error_sentence(capsys) -> None:
+    """
+    Given  a page-models download that fails with a sentence
+    When   run_cli() is called with --download-page-models
+    Then   the sentence is printed after ERROR and the exit code is 1
+    """
+    from teachers_teammate.cli import run_cli  # noqa: PLC0415
+    from teachers_teammate.exceptions import ModelDownloadError  # noqa: PLC0415
+
+    class _FakeAppService(_AppServiceStub):
+        def download_page_models(self, on_progress=None, cancel=None) -> None:
+            raise ModelDownloadError("Could not reach huggingface.co.")
+
+    rc = run_cli(argv=["--download-page-models"], app_service=_FakeAppService())
+
+    assert rc == 1
+    assert "ERROR: Could not reach huggingface.co." in capsys.readouterr().err
+
+
+@pytest.mark.use_case("Headless_CLI_Batch")
+def test_a_run_with_missing_page_models_prints_one_line_and_still_runs(
+    tmp_path: Path, capsys
+) -> None:
+    """
+    Given  a service that reports the page models as missing for the run
+    When   run_cli() runs
+    Then   the one-line notice goes to stderr and the run starts (it is a notice, not a refusal)
+    """
+    from teachers_teammate.cli import run_cli  # noqa: PLC0415
+    from teachers_teammate.domain.local_models import PAGE_MODELS_SKIPPED_NOTICE  # noqa: PLC0415
+
+    started: list[bool] = []
+
+    class _FakeAppService(_AppServiceStub):
+        def page_models_notice_for_run(self, config) -> str:
+            return PAGE_MODELS_SKIPPED_NOTICE
+
+        def run_selected(self, config, /, **kwargs) -> RunSummary:
+            started.append(True)
+            return RunSummary()
+
+    rc = run_cli(argv=["-i", str(tmp_path), "--no-docx"], app_service=_FakeAppService())
+
+    assert rc == 0
+    assert started == [True]
+    assert (
+        "Turning and flattening pages is skipped: page models not downloaded "
+        "(--download-page-models)" in capsys.readouterr().err
+    )
 
 
 class _TextFlagsAppService(_AppServiceStub):

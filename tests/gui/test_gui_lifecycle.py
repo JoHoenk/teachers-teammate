@@ -15,7 +15,7 @@ import pytest
 from PySide6.QtWidgets import QWidget
 
 from teachers_teammate.application.service import AnonymizerConfig, ProcessingApplicationService
-from teachers_teammate.gui._addon_installer_dialog import AddonInstallerDialog
+from teachers_teammate.gui._addon_installer_dialog import AddonInstallerDialog, ReaderDownloadDialog
 from teachers_teammate.gui._anonymizer_config_widget import AnonymizerConfigWidget
 from teachers_teammate.gui._chart_widget import ChartWidget
 from teachers_teammate.gui._collapsible_section import CollapsibleSection
@@ -61,7 +61,8 @@ WIDGET_BUILDERS: list[tuple[str, Callable[[], QWidget]]] = [
             "English", AnonymizerConfig(), ProcessingApplicationService()
         ),
     ),
-    ("addon_installer", lambda: AddonInstallerDialog("paddle")),
+    ("addon_installer", lambda: AddonInstallerDialog("privacy")),
+    ("reader_download", lambda: ReaderDownloadDialog()),
     ("about", lambda: AboutDialog()),
     ("help", lambda: HelpDialog()),
     ("licenses", lambda: ThirdPartyLicensesDialog()),

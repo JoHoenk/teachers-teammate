@@ -22,10 +22,7 @@ class _DummyAppService(RecommendationServiceStub):
         return ["ollama", "openai"]
 
     def list_ocr_engines(self) -> list[str]:
-        return ["ollama", "tesseract", "paddleocr"]
-
-    def default_preprocess_for_engine(self, engine: str) -> str:
-        return {"ollama": "grayscale", "tesseract": "clahe"}.get(engine, "")
+        return ["ollama", "ppocr"]
 
     def get_provider_info(self, provider: str) -> dict:
         return {
@@ -86,13 +83,13 @@ def selector(qtbot) -> OcrConfigSelector:
 @pytest.mark.gui
 def test_get_ocr_config_for_native_engine(selector) -> None:
     """
-    Given  the selector set to a native engine (tesseract)
+    Given  the selector set to a native engine (the built-in reader)
     When   get_ocr_config() is called
     Then   it returns an OcrConfig with that engine
     """
-    selector._picker._ocr_engine.setCurrentText("tesseract")
+    selector._picker.set_engine("ppocr")
     ocr = selector.get_ocr_config()
-    assert ocr.engine == "tesseract"
+    assert ocr.engine == "ppocr"
 
 
 @pytest.mark.gui
@@ -100,13 +97,16 @@ def test_online_providers_are_not_offered_as_recognition_methods(selector) -> No
     """
     Given  an app service that also lists online LLM providers (openai)
     When   the recognition-method choices are read
-    Then   only engines that run on the user's computer are offered
+    Then   only engines that run on the user's computer are offered, shown by their labels
+           while the engine ids stay the data behind them
     """
-    engines = [
-        selector._picker._ocr_engine.itemText(i)
-        for i in range(selector._picker._ocr_engine.count())
-    ]
-    assert engines == ["ollama", "tesseract", "paddleocr"]
+    combo = selector._picker._ocr_engine
+    labels = [combo.itemText(i) for i in range(combo.count())]
+    ids = [combo.itemData(i) for i in range(combo.count())]
+
+    assert ids == ["ollama", "ppocr"]
+    assert labels == ["Ollama (AI model)", "Built-in reader (PP-OCR)"]
+    assert selector._picker.engine() == "ollama"
 
 
 @pytest.mark.gui
@@ -117,10 +117,10 @@ def test_load_ocr_config_round_trips(selector) -> None:
     Then   the engine, preprocess method, and temperature are preserved
     """
     selector.load_ocr_config(
-        OcrConfig(engine="tesseract", model="", preprocess_method="none", temperature=0.3)
+        OcrConfig(engine="ppocr", model="", preprocess_method="none", temperature=0.3)
     )
     ocr = selector.get_ocr_config()
-    assert ocr.engine == "tesseract"
+    assert ocr.engine == "ppocr"
     assert ocr.preprocess_method == "none"
     assert ocr.temperature == 0.3
 
@@ -129,45 +129,33 @@ def test_load_ocr_config_round_trips(selector) -> None:
 @pytest.mark.use_case("Preview_Preprocessing")
 def test_load_ocr_config_round_trips_preprocessing_fields(selector) -> None:
     """
-    Given  an OcrConfig with pre-steps and a non-default PDF DPI loaded into the selector
+    Given  an OcrConfig with "Original page" and a non-default PDF DPI loaded into the selector
     When   get_ocr_config() is read back
-    Then   every preprocessing checkbox and the PDF DPI spin box round-trip
+    Then   the preparation and the PDF DPI spin box round-trip
     """
     selector.load_ocr_config(
-        OcrConfig(
-            engine="tesseract",
-            pdf_render_dpi=150,
-            dewarp=True,
-            deskew=False,
-            border_crop=True,
-            denoise=False,
-            gamma=True,
-        )
+        OcrConfig(engine="ppocr", preprocess_method="none", pdf_render_dpi=150)
     )
     ocr = selector.get_ocr_config()
     assert ocr.pdf_render_dpi == 150
-    assert ocr.dewarp is True
-    assert ocr.deskew is False
-    assert ocr.border_crop is True
-    assert ocr.denoise is False
-    assert ocr.gamma is True
+    assert ocr.preprocess_method == "none"
 
 
 @pytest.mark.gui
 @pytest.mark.use_case("Preview_Preprocessing")
 def test_preview_button_emits_full_ocr_config(selector, qtbot) -> None:
     """
-    Given  the selector with deskew and border_crop checked (not just a preprocess method)
+    Given  the selector with "Original page" and another PDF DPI chosen
     When   the Preview… button is clicked
-    Then   preprocess_preview_requested carries the complete OcrConfig, pre-steps included
+    Then   preprocess_preview_requested carries the complete OcrConfig
 
     Regression guard: previously the signal emitted only the preprocess-method string, so
-    the preview dialog silently ignored every checked pre-step checkbox.
+    the preview dialog silently ignored every other choice.
     """
     from PySide6.QtWidgets import QPushButton  # noqa: PLC0415
 
-    selector._scan._deskew.setChecked(True)
-    selector._scan._border_crop.setChecked(True)
+    selector._scan.set_preprocess_method("none")
+    selector._scan._pdf_dpi.setValue(144)
 
     preview_btn = next(
         w for w in selector.findChildren(QPushButton) if w.text().startswith("Preview")
@@ -177,8 +165,8 @@ def test_preview_button_emits_full_ocr_config(selector, qtbot) -> None:
 
     (emitted,) = blocker.args
     assert isinstance(emitted, OcrConfig)
-    assert emitted.deskew is True
-    assert emitted.border_crop is True
+    assert emitted.preprocess_method == "none"
+    assert emitted.pdf_render_dpi == 144
     assert emitted == selector.get_ocr_config()
 
 
@@ -187,48 +175,39 @@ def test_native_non_ollama_engine_hides_model_row(selector) -> None:
     """
     Given  the selector
     When   a non-ollama native engine is selected
-    Then   the model row is hidden (tesseract/paddle take no model name)
+    Then   the model row is hidden (the built-in reader takes no model name)
     """
-    selector._picker._ocr_engine.setCurrentText("tesseract")
+    selector._picker.set_engine("ppocr")
     assert selector._picker._ocr_model_row.isHidden() is True
-    selector._picker._ocr_engine.setCurrentText("ollama")
+    selector._picker.set_engine("ollama")
     assert selector._picker._ocr_model_row.isHidden() is False
 
 
 @pytest.mark.gui
-def test_prestep_checkboxes_disabled_under_preprocess_method_none(selector) -> None:
+def test_choosing_a_recognition_method_does_not_change_the_image_preparation(selector) -> None:
     """
-    Given  the selector
-    When   Image preparation is switched to "none" and then back to an active method
-    Then   the pre-step checkboxes are disabled under "none" and re-enabled otherwise
-
-    "none" skips every pre-step (HandwritingPreprocessor.preprocess returns the
-    original file unchanged), so a checked box under it would silently have no effect.
+    Given  the selector with "Original page" chosen
+    When   the recognition method changes to the built-in reader and back
+    Then   the preparation stays "Original page": it no longer follows the method
     """
-    checkboxes = [
-        selector._scan._dewarp,
-        selector._scan._deskew,
-        selector._scan._border_crop,
-        selector._scan._denoise,
-        selector._scan._gamma,
-    ]
-    selector._scan._preprocess.setCurrentText("none")
-    assert all(not cb.isEnabled() for cb in checkboxes)
+    selector._scan.set_preprocess_method("none")
 
-    selector._scan._preprocess.setCurrentText("grayscale")
-    assert all(cb.isEnabled() for cb in checkboxes)
+    selector._picker.set_engine("ppocr")
+    selector._picker.set_engine("ollama")
+
+    assert selector._scan.preprocess_method() == "none"
 
 
 @pytest.mark.gui
-def test_load_ocr_config_disables_prestep_checkboxes_for_method_none(selector) -> None:
+def test_load_ocr_config_shows_the_label_of_the_method(selector) -> None:
     """
     Given  an OcrConfig with preprocess_method="none"
     When   load_ocr_config() populates the selector
-    Then   the pre-step checkboxes are disabled
+    Then   the combo shows "Original page" while the stored id stays "none"
     """
-    selector.load_ocr_config(OcrConfig(engine="tesseract", preprocess_method="none"))
-    assert selector._scan._preprocess.currentText() == "none"
-    assert selector._scan._deskew.isEnabled() is False
+    selector.load_ocr_config(OcrConfig(engine="ppocr", preprocess_method="none"))
+    assert selector._scan._preprocess.currentText() == "Original page"
+    assert selector._scan.preprocess_method() == "none"
 
 
 # ── Ollama model guidance (sorting, hints, use-best button) ────────────────
@@ -373,17 +352,15 @@ def test_download_best_choice_calls_open_downloads(qtbot) -> None:
 @pytest.mark.use_case("Model_Category_Guidance")
 def test_non_ollama_engines_have_no_hint_and_button(qtbot) -> None:
     """
-    Given  the selector set to tesseract or paddleocr
+    Given  the selector set to the built-in reader
     When   the engine is switched
     Then   no hint line and no "Use best choice" button are shown, and they stay hidden for
            Ollama until its freshly fetched list is in (a stale hint is never shown)
     """
     selector = _ollama_selector(qtbot)
-    selector._picker._ocr_engine.setCurrentText("tesseract")
+    selector._picker.set_engine("ppocr")
     assert selector._picker._guidance.isHidden() is True
-    selector._picker._ocr_engine.setCurrentText("paddleocr")
-    assert selector._picker._guidance.isHidden() is True
-    selector._picker._ocr_engine.setCurrentText("ollama")
+    selector._picker.set_engine("ollama")
     assert selector._picker._guidance.isHidden() is True  # still asking, so no stale hint
     qtbot.waitUntil(lambda: selector._picker._guidance.isHidden() is False, timeout=5000)
 
@@ -496,20 +473,20 @@ def test_selector_warns_when_a_cloud_model_is_typed_in(qtbot) -> None:
 def test_switching_the_engine_retires_a_running_model_fetch(qtbot, monkeypatch) -> None:
     """
     Given  a selector whose Ollama model fetch is still running
-    When   the engine is switched to Tesseract
+    When   the engine is switched to the built-in reader
     Then   the running fetch is retired, so its late answer cannot reach the widgets
     """
     from teachers_teammate.gui import _ocr_config_selector  # noqa: PLC0415
 
     widget = OcrConfigSelector(app_service=_DummyAppService())
     qtbot.addWidget(widget)
-    widget._picker._ocr_engine.setCurrentText("ollama")
+    widget._picker.set_engine("ollama")
     retired: list[object] = []
     monkeypatch.setattr(_ocr_config_selector, "_retire_thread", retired.append)
     running = object()
     monkeypatch.setattr(widget._picker, "_fetch_thread", running)
 
-    widget._picker._ocr_engine.setCurrentText("tesseract")
+    widget._picker.set_engine("ppocr")
 
     assert running in retired
 
@@ -517,13 +494,13 @@ def test_switching_the_engine_retires_a_running_model_fetch(qtbot, monkeypatch) 
 @pytest.mark.gui
 def test_a_late_ollama_answer_does_not_touch_another_engines_widgets(qtbot) -> None:
     """
-    Given  a selector switched from Ollama to Tesseract
+    Given  a selector switched from Ollama to the built-in reader
     When   an Ollama model list arrives afterwards
     Then   the Ollama hint line stays hidden and the model field is not refilled
     """
     widget = OcrConfigSelector(app_service=_DummyAppService())
     qtbot.addWidget(widget)
-    widget._picker._ocr_engine.setCurrentText("tesseract")
+    widget._picker.set_engine("ppocr")
     before = widget._picker._ocr_model.currentText()
 
     widget._picker._on_models_fetched(["llama3.2-vision:11b"])
@@ -542,7 +519,7 @@ def test_the_ollama_hint_comes_back_when_ollama_does_not_answer(qtbot) -> None:
     """
     widget = OcrConfigSelector(app_service=_DummyAppService())
     qtbot.addWidget(widget)
-    widget._picker._ocr_engine.setCurrentText("ollama")
+    widget._picker.set_engine("ollama")
     widget._picker._set_busy(True, "Asking Ollama…")
     assert widget._picker._guidance.isHidden()
 
@@ -550,3 +527,86 @@ def test_the_ollama_hint_comes_back_when_ollama_does_not_answer(qtbot) -> None:
 
     assert not widget._picker._guidance.isHidden()
     assert "#c0392b" in widget._picker._status_lbl.text()
+
+
+# ── the built-in reader ─────────────────────────────────────────────────────
+
+
+class _ReaderService(_DummyAppService):
+    """A service whose reader is (not) downloaded and that records downloads."""
+
+    def __init__(self, *, present: bool) -> None:
+        super().__init__()
+        self.reader_present = present
+
+
+@pytest.mark.gui
+def test_the_reader_choice_shows_its_hint_and_hides_the_model_row(qtbot) -> None:
+    """
+    Given  a selector whose reader is downloaded
+    When   the engine is set to the built-in reader
+    Then   the hint line explains it, the model row is hidden, and there is no download button
+    """
+    widget = OcrConfigSelector(app_service=_ReaderService(present=True))
+    qtbot.addWidget(widget)
+    widget.show()
+
+    widget._picker.set_engine("ppocr")
+
+    assert widget._picker.engine() == "ppocr"
+    assert "without a server" in widget._picker._engine_hint.text()
+    assert not widget._picker._ocr_model_row.isVisible()
+    assert not widget._picker._install_btn.isVisible()
+    assert not widget._picker._extra_warn.isVisible()
+
+
+@pytest.mark.gui
+def test_the_download_button_shows_only_while_the_reader_is_missing(qtbot) -> None:
+    """
+    Given  a selector whose reader is not downloaded
+    When   the engine is set to the built-in reader, then back to Ollama
+    Then   "Not downloaded yet." and the Download button show for the reader only
+    """
+    widget = OcrConfigSelector(app_service=_ReaderService(present=False))
+    qtbot.addWidget(widget)
+    widget.show()
+
+    widget._picker.set_engine("ppocr")
+    assert widget._picker._extra_warn.isVisible()
+    assert widget._picker._extra_warn.text() == "Not downloaded yet."
+    assert widget._picker._install_btn.isVisible()
+    assert widget._picker._install_btn.text() == "Download built-in reader (31 MB)"
+
+    widget._picker.set_engine("ollama")
+    assert not widget._picker._install_btn.isVisible()
+    assert not widget._picker._extra_warn.isVisible()
+
+
+@pytest.mark.gui
+def test_a_finished_reader_download_is_reported_and_hides_the_button(qtbot, monkeypatch) -> None:
+    """
+    Given  a selector on the built-in reader whose models are missing
+    When   the download dialog reports success
+    Then   addon_installed("reader") is emitted and the button is gone
+    """
+    from teachers_teammate.gui import _addon_installer_dialog  # noqa: PLC0415
+
+    service = _ReaderService(present=False)
+    widget = OcrConfigSelector(app_service=service)
+    qtbot.addWidget(widget)
+    widget.show()
+    widget._picker.set_engine("ppocr")
+    seen: list[str] = []
+    widget.addon_installed.connect(seen.append)
+
+    def fake_exec(dialog) -> int:
+        service.reader_present = True
+        dialog.downloaded.emit()
+        return 0
+
+    monkeypatch.setattr(_addon_installer_dialog.ReaderDownloadDialog, "exec", fake_exec)
+
+    widget._picker._install_btn.click()
+
+    assert seen == ["reader"]
+    assert not widget._picker._install_btn.isVisible()

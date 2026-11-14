@@ -2,15 +2,17 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from teachers_teammate.config import OcrConfig
 from teachers_teammate.domain.model_catalog import DetectionReason, HardwareDetection
+from teachers_teammate.infrastructure.onnx.store import ModelStore
 from teachers_teammate.exceptions import OnlineOcrNotAllowedError
-from teachers_teammate.infrastructure.image_preprocessor import HandwritingPreprocessor
+from teachers_teammate.infrastructure.preprocessing.steps import StepPipeline
 from teachers_teammate.infrastructure.stage_builder import (
     PipelineComponentFactory,
     StageBuilder,
@@ -19,33 +21,41 @@ from tests.conftest import make_config
 
 
 @pytest.mark.use_case("Batch_OCR_Processing")
-def test_build_preprocessor_propagates_all_preprocessing_flags(tmp_path: Path) -> None:
+@pytest.mark.parametrize(("method", "first_step"), [("auto", "measure"), ("none", None)])
+def test_build_preprocessor_builds_the_steps_of_the_chosen_method(
+    tmp_path: Path, method: str, first_step: str | None
+) -> None:
     """
-    Given  a Config whose OcrConfig enables a subset of pre-steps
+    Given  a Config whose OcrConfig chooses the automatic preparation, or "Original page"
     When   StageBuilder.build_preprocessor() constructs the preprocessor
-    Then   each flag reaches the HandwritingPreprocessor (no positional mis-wiring)
+    Then   the preprocessor is a step pipeline of the automatic steps, or of none at all
     """
-    ocr = OcrConfig(
-        engine="tesseract",
-        preprocess_method="clahe",
-        dewarp=True,
-        deskew=False,
-        border_crop=True,
-        denoise=False,
-        gamma=True,
-    )
-    config = make_config(tmp_path, ocr=ocr)
+    config = make_config(tmp_path, ocr=OcrConfig(engine="ppocr", preprocess_method=method))
     builder = StageBuilder(config=config, factory=PipelineComponentFactory())
 
     pre = builder.build_preprocessor(tmp_path)
 
-    assert isinstance(pre, HandwritingPreprocessor)
-    assert pre._method == "clahe"
-    assert pre._dewarp is True
-    assert pre._deskew is False
-    assert pre._border_crop is True
-    assert pre._denoise is False
-    assert pre._gamma is True
+    assert isinstance(pre, StepPipeline)
+    assert [step.name for step in pre._steps][:1] == ([first_step] if first_step else [])
+
+
+@pytest.mark.use_case("Batch_OCR_Processing")
+def test_build_preprocessor_gives_the_run_s_model_store_to_the_factory(tmp_path: Path) -> None:
+    """
+    Given  a StageBuilder with a model store and a factory with its own preprocessor builder
+    When   build_preprocessor() is called
+    Then   the builder receives the output folder, the debug flag, the OcrConfig and the store
+    """
+    store = ModelStore(tmp_path / "models")
+    build = MagicMock()
+    config = make_config(tmp_path)
+    builder = StageBuilder(
+        config=config, factory=PipelineComponentFactory(build_preprocessor=build), model_store=store
+    )
+
+    builder.build_preprocessor(tmp_path)
+
+    build.assert_called_once_with(tmp_path, config.debug, config.ocr, store)
 
 
 @pytest.mark.use_case("Batch_OCR_Processing")
@@ -59,7 +69,7 @@ def test_build_preprocessor_service_uses_configured_pdf_dpi(tmp_path: Path) -> N
         PdfInputProvider,
     )
 
-    config = make_config(tmp_path, ocr=OcrConfig(engine="tesseract", pdf_render_dpi=150))
+    config = make_config(tmp_path, ocr=OcrConfig(engine="ppocr", pdf_render_dpi=150))
     builder = StageBuilder(config=config, factory=PipelineComponentFactory())
 
     service = builder.build_preprocessor_service(tmp_path)
@@ -78,7 +88,7 @@ def test_build_preprocessor_service_passes_configured_pdf_text_layer(
     When   the preprocessor service is built
     Then   the PDF provider uses the configured mode
     """
-    config = make_config(tmp_path, ocr=OcrConfig(engine="tesseract", pdf_text_layer="always"))
+    config = make_config(tmp_path, ocr=OcrConfig(engine="ppocr", pdf_text_layer="always"))
     builder = StageBuilder(config=config, factory=PipelineComponentFactory())
 
     provider = builder.build_preprocessor_service(tmp_path)._provider_factory(".pdf", tmp_path)
@@ -177,6 +187,47 @@ def test_build_ocr_allows_downloaded_ollama_model_on_another_computer(tmp_path: 
     StageBuilder(config=config, factory=factory).build_ocr(MagicMock())
 
     build_ollama_ocr.assert_called_once()
+
+
+def test_build_ocr_builds_the_built_in_reader_with_the_stop_event(tmp_path: Path) -> None:
+    """
+    Given  the built-in reader chosen and a run's stop event
+    When   StageBuilder.build_ocr() is called
+    Then   the factory builds the reader with a model store and that event, and no Ollama
+           processor is built
+    """
+    import threading  # noqa: PLC0415
+
+    reader = MagicMock()
+    build_ppocr = MagicMock(return_value=reader)
+    build_ollama_ocr = MagicMock()
+    factory = PipelineComponentFactory(
+        build_ppocr_ocr=build_ppocr, build_ollama_ocr=build_ollama_ocr
+    )
+    builder = StageBuilder(config=make_config(tmp_path, ocr_engine="ppocr"), factory=factory)
+    stop = threading.Event()
+
+    assert builder.build_ocr(None, stop) is reader
+
+    store, event = build_ppocr.call_args.args
+    assert store.root == Path(os.environ["TEACHERS_TEAMMATE_MODELS_DIR"])
+    assert event is stop
+    build_ollama_ocr.assert_not_called()
+
+
+def test_the_default_reader_builder_constructs_the_processor(tmp_path: Path) -> None:
+    """
+    Given  the default factory and the built-in reader chosen
+    When   StageBuilder.build_ocr() is called (the processor class patched at the import site)
+    Then   PpOcrProcessor is constructed with the store and the stop event
+    """
+    with patch("teachers_teammate.infrastructure.stage_builder.PpOcrProcessor") as processor:
+        StageBuilder(
+            config=make_config(tmp_path, ocr_engine="ppocr"), factory=PipelineComponentFactory()
+        ).build_ocr()
+
+    processor.assert_called_once()
+    assert processor.call_args.kwargs == {"stop_event": None}
 
 
 def test_build_text_anonymizer_only_when_enabled(tmp_path: Path) -> None:

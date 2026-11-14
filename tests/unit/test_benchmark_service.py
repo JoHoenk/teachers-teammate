@@ -42,7 +42,7 @@ def test_run_and_store_never_uses_pdf_text_layer(tmp_path: Path) -> None:
 
     service.run_and_store(
         _source(tmp_path),
-        ocr=OcrConfig(engine="tesseract", model="", pdf_text_layer="always"),
+        ocr=OcrConfig(engine="ppocr", model="", pdf_text_layer="always"),
         language="English",
     )
 
@@ -60,9 +60,7 @@ def test_run_and_store_persists_and_returns_run(tmp_path: Path) -> None:
     service = _service(tmp_path, runner)
     source = _source(tmp_path)
 
-    run = service.run_and_store(
-        source, ocr=OcrConfig(engine="tesseract", model=""), language="English"
-    )
+    run = service.run_and_store(source, ocr=OcrConfig(engine="ppocr", model=""), language="English")
     assert run.raw_text == "hello text"
     runs = service.list_runs(source)
     assert [r.run_id for r in runs] == [run.run_id]
@@ -79,7 +77,7 @@ def test_run_and_store_raises_on_runner_error(tmp_path: Path) -> None:
     source = _source(tmp_path)
 
     with pytest.raises(BenchmarkRunError, match="boom"):
-        service.run_and_store(source, ocr=OcrConfig(engine="tesseract"), language="English")
+        service.run_and_store(source, ocr=OcrConfig(engine="ppocr"), language="English")
     assert service.list_runs(source) == []
 
 
@@ -93,8 +91,8 @@ def test_delete_run_and_delete_all(tmp_path: Path) -> None:
     runner = lambda *a, **k: OcrRunResult("t", None, 0.1, None)  # noqa: E731
     service = _service(tmp_path, runner)
     source = _source(tmp_path)
-    r1 = service.run_and_store(source, ocr=OcrConfig(engine="tesseract"), language="English")
-    service.run_and_store(source, ocr=OcrConfig(engine="tesseract"), language="English")
+    r1 = service.run_and_store(source, ocr=OcrConfig(engine="ppocr"), language="English")
+    service.run_and_store(source, ocr=OcrConfig(engine="ppocr"), language="English")
 
     service.delete_run(source, r1.run_id)
     assert all(r.run_id != r1.run_id for r in service.list_runs(source))
@@ -114,8 +112,8 @@ def test_compare_returns_similarity(tmp_path: Path) -> None:
     runner = lambda *a, **k: OcrRunResult(next(texts), None, 0.1, None)  # noqa: E731
     service = _service(tmp_path, runner)
     source = _source(tmp_path)
-    a = service.run_and_store(source, ocr=OcrConfig(engine="tesseract"), language="English")
-    b = service.run_and_store(source, ocr=OcrConfig(engine="tesseract"), language="English")
+    a = service.run_and_store(source, ocr=OcrConfig(engine="ppocr"), language="English")
+    b = service.run_and_store(source, ocr=OcrConfig(engine="ppocr"), language="English")
 
     result = service.compare(a, b)
     assert 0.0 < result.similarity < 1.0
@@ -133,9 +131,7 @@ def test_run_and_store_persists_text_format(tmp_path: Path) -> None:
     service = _service(tmp_path, runner)
     source = _source(tmp_path)
 
-    run = service.run_and_store(
-        source, ocr=OcrConfig(engine="tesseract", model=""), language="English"
-    )
+    run = service.run_and_store(source, ocr=OcrConfig(engine="ppocr", model=""), language="English")
 
     assert run.raw_text_format == "markdown"
 
@@ -152,7 +148,7 @@ def test_compare_ignores_formatting_marks(tmp_path: Path) -> None:
     service = _service(tmp_path, runner)
     source = _source(tmp_path)
     plain = service.run_and_store(
-        source, ocr=OcrConfig(engine="tesseract", model=""), language="English"
+        source, ocr=OcrConfig(engine="ppocr", model=""), language="English"
     )
     markdown = dataclasses.replace(
         plain, raw_text="**hello** ~~old~~ world", raw_text_format="markdown"
@@ -162,3 +158,25 @@ def test_compare_ignores_formatting_marks(tmp_path: Path) -> None:
 
     assert comparison.similarity == 1.0
     assert comparison.stats_b.words == 3
+
+
+def test_the_reader_questions_are_answered_by_the_processing_service(tmp_path: Path) -> None:
+    """
+    Given  a benchmark service over a processing service that knows the reader
+    When   the benchmark's engine picker asks whether it is downloaded, where it is kept and
+           to download it
+    Then   every question reaches the processing service
+    """
+    from unittest.mock import MagicMock  # noqa: PLC0415
+
+    processing = MagicMock()
+    processing.reader_installed.return_value = False
+    processing.models_dir.return_value = tmp_path
+    service = BenchmarkApplicationService(
+        processing_service=processing, run_store=BenchmarkRunStore(tmp_path / "runs")
+    )
+
+    assert service.reader_installed() is False
+    assert service.models_dir() == tmp_path
+    service.download_reader(None, None)
+    processing.download_reader.assert_called_once_with(None, None)

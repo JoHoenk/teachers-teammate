@@ -45,6 +45,7 @@ from .._model_fetch import (
     _ModelFetchThread,
     _retire_thread,
     _SettingsAppService,
+    _start_thread,
     _status_busy,
     _status_note,
 )
@@ -624,7 +625,7 @@ class AiServiceSection(QWidget):
         self._fetch_thread = _ModelFetchThread(fetch, tag=provider)
         self._fetch_thread.listing_ready.connect(self._on_listing_ready)
         self._fetch_thread.progress.connect(self._on_fetch_progress)
-        self._fetch_thread.start()
+        _start_thread(self._fetch_thread)
 
     def _on_fetch_progress(self, provider: str, text: str) -> None:
         """Say what the running fetch is doing, unless the user has left that service."""

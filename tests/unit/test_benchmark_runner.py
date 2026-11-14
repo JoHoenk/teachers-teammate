@@ -28,7 +28,9 @@ class _StubOCR(OCRProcessor):
 
 
 def _factory_with(stub: _StubOCR) -> PipelineComponentFactory:
-    return dataclasses.replace(PipelineComponentFactory(), build_tesseract_ocr=lambda: stub)
+    return dataclasses.replace(
+        PipelineComponentFactory(), build_ppocr_ocr=lambda _store, _stop: stub
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -41,10 +43,10 @@ def _hermetic_storage(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
 def test_run_ocr_returns_extracted_text(tmp_path: Path, sample_png: Path) -> None:
     """
     Given  an image document and a stub OCR engine
-    When   run_ocr() is called with a tesseract config
+    When   run_ocr() is called with a built-in reader config
     Then   the extracted text and a preview image path are returned, no error
     """
-    config = make_config(tmp_path, ocr_engine="tesseract", preprocess_method="none")
+    config = make_config(tmp_path, ocr_engine="ppocr", preprocess_method="none")
     result = run_ocr(config, sample_png, component_factory=_factory_with(_StubOCR("recognised")))
 
     assert result.error is None
@@ -58,7 +60,7 @@ def test_run_ocr_reports_engine_error_without_raising(tmp_path: Path, sample_png
     When   run_ocr() is called
     Then   the failure is returned on the result rather than propagated
     """
-    config = make_config(tmp_path, ocr_engine="tesseract", preprocess_method="none")
+    config = make_config(tmp_path, ocr_engine="ppocr", preprocess_method="none")
     result = run_ocr(config, sample_png, component_factory=_factory_with(_StubOCR(raises=True)))
 
     assert result.raw_text == ""
@@ -75,7 +77,7 @@ def test_run_ocr_reports_a_stop_as_stopped_by_user(tmp_path: Path, sample_png: P
     """
     stop = threading.Event()
     stop.set()
-    config = make_config(tmp_path, ocr_engine="tesseract", preprocess_method="none")
+    config = make_config(tmp_path, ocr_engine="ppocr", preprocess_method="none")
 
     result = run_ocr(
         config, sample_png, component_factory=_factory_with(_StubOCR("x")), stop_event=stop
@@ -93,7 +95,7 @@ def test_run_ocr_uses_text_input_directly(tmp_path: Path) -> None:
     """
     txt = tmp_path / "note.txt"
     txt.write_text("plain text content", encoding="utf-8")
-    config = make_config(tmp_path, ocr_engine="tesseract", preprocess_method="none")
+    config = make_config(tmp_path, ocr_engine="ppocr", preprocess_method="none")
 
     result = run_ocr(config, txt, component_factory=_factory_with(_StubOCR("UNUSED")))
     assert result.error is None
@@ -110,7 +112,7 @@ def test_run_ocr_parses_layout_html_into_markdown(tmp_path: Path, sample_png: Pa
         '<div data-bbox="1 2 3 4" data-label="Text"><p>my <del>backpack</del> bag</p></div>'
         '<div data-bbox="5 6 7 8" data-label="Page-Footer"><p>4</p></div>'
     )
-    config = make_config(tmp_path, ocr_engine="tesseract", preprocess_method="none")
+    config = make_config(tmp_path, ocr_engine="ppocr", preprocess_method="none")
 
     result = run_ocr(config, sample_png, component_factory=_factory_with(_StubOCR(html)))
 
@@ -125,7 +127,7 @@ def test_run_ocr_keeps_plain_engine_output_plain(tmp_path: Path, sample_png: Pat
     When   run_ocr() is called
     Then   the format is plain and the text is returned verbatim
     """
-    config = make_config(tmp_path, ocr_engine="tesseract", preprocess_method="none")
+    config = make_config(tmp_path, ocr_engine="ppocr", preprocess_method="none")
 
     result = run_ocr(config, sample_png, component_factory=_factory_with(_StubOCR("- a\n- b")))
 

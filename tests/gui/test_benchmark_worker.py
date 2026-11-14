@@ -21,7 +21,7 @@ def _stored_run() -> StoredRun:
         document_path="/docs/sample.pdf",
         display_name="sample.pdf",
         ocr_config_hash="abc12345",
-        ocr=OcrConfig(engine="tesseract", model="", preprocess_method="none"),
+        ocr=OcrConfig(engine="ppocr", model="", preprocess_method="none"),
         language="English",
         raw_text="text",
         preview_img="",
@@ -46,7 +46,7 @@ class _FailService:
 
 def _worker(service) -> BenchmarkWorker:
     return BenchmarkWorker(
-        Path("/docs/sample.pdf"), OcrConfig(engine="tesseract"), "English", app_service=service
+        Path("/docs/sample.pdf"), OcrConfig(engine="ppocr"), "English", app_service=service
     )
 
 

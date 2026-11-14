@@ -11,6 +11,7 @@ from ..domain.context_budget import RunWindows
 from ..domain.stages import normalize_stage
 from ..infrastructure.file_discovery import FileDiscovery
 from ..infrastructure.ocr_processor import get_ocr_prompt
+from ..infrastructure.onnx.store import ModelStore
 from ..infrastructure.stage_builder import resolve_run_windows
 from ..infrastructure.state_repository import (
     DocumentState,
@@ -32,12 +33,15 @@ class ApplicationCommands:
         discovery: FileDiscovery,
         state_store_factory: Callable[[Config], StateRepository],
         windows_for: Callable[[Config], RunWindows] | None = None,
+        model_store: ModelStore | None = None,
     ) -> None:
         self._discovery = discovery
         self._state_store_factory = state_store_factory
         #: The context windows a run with a config uses on this computer, so a hash written
         #: here matches the one the run writes.  Without it only the settings are known.
         self._windows_for = windows_for or (lambda config: resolve_run_windows(config, None))
+        #: Where the page models are: the automatic preparation's cache key depends on them.
+        self._model_store = model_store
 
     def invalidate_from_stage(
         self,
@@ -69,7 +73,9 @@ class ApplicationCommands:
         *raw_text_format* is the notation the edited text is written in; ``None`` keeps the
         notation the state already has.
         """
-        ocr_config_hash = compute_ocr_config_hash(config, get_ocr_prompt(config.language), source)
+        ocr_config_hash = compute_ocr_config_hash(
+            config, get_ocr_prompt(config.language), source, self._model_store
+        )
         return self._record_manual_ocr_edit(
             self._state_store_factory(config),
             source=source,
@@ -94,7 +100,9 @@ class ApplicationCommands:
         *raw_text_format* is the notation of *raw_text*; it is stored when the edit has to
         synthesise the OCR text because the state has none yet.
         """
-        ocr_config_hash = compute_ocr_config_hash(config, get_ocr_prompt(config.language), source)
+        ocr_config_hash = compute_ocr_config_hash(
+            config, get_ocr_prompt(config.language), source, self._model_store
+        )
         correction_config_hash = compute_correction_config_hash(config, self._windows_for(config))
         return self._record_manual_correction_edit(
             self._state_store_factory(config),

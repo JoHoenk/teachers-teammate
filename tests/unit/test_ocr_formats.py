@@ -450,7 +450,7 @@ def test_plain_parser_splits_paragraphs_on_blank_lines_and_keeps_line_breaks() -
 
 def test_postprocessor_keeps_plain_text_verbatim() -> None:
     """
-    Given  Tesseract-style plain output
+    Given  Plain output as the built-in reader writes it
     When   process_pages is called
     Then   text is unchanged and flagged plain
     """

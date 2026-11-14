@@ -47,6 +47,8 @@ from pathlib import Path
 import threading
 
 from ..config import Config, OcrConfig
+from ..domain.data_location import ENGINE_PPOCR, OCR_ENGINE_NAMES
+from ..domain.local_models import READER_MODEL_NAME
 from ..domain.model_catalog import HardwareDetection
 from ..domain.output_files import output_folder_refusal
 from ..domain.run_summary import RunSummary
@@ -59,6 +61,7 @@ from ..interfaces import ImagePreprocessor
 from .file_discovery import FileDiscovery
 from .input_provider_factory import InputOptions, get_input_provider, supported_suffixes
 from .ollama_utils import OllamaClient
+from .onnx.store import ModelStore
 from .preview_image_store import PreviewImageStore
 from .reporting import (
     BATTERY_WARNING,
@@ -100,6 +103,9 @@ class PipelineDependencies:
     # Whether the computer is kept awake for this run (the application layer holds it); the
     # banner says so, and warns when the run is on battery power.
     keep_awake: KeepAwakeState | None = None
+    # Where the built-in reader's model files live; the application layer passes the store its
+    # readiness check looks at, so the run reads the folder that was checked.
+    model_store: ModelStore | None = None
 
 
 # ── Public helpers ─────────────────────────────────────────────────────────
@@ -123,8 +129,9 @@ def preprocess_preview(
     ocr: OcrConfig,
     tmp_dir: Path,
     build_preprocessor: Callable[
-        [Path, bool, OcrConfig], ImagePreprocessor
+        [Path, bool, OcrConfig, ModelStore | None], ImagePreprocessor
     ] = default_build_preprocessor,
+    model_store: ModelStore | None = None,
 ) -> tuple[Path, Path, list[str]]:
     """Preprocess *source_path* and return paths for both the original and processed image.
 
@@ -141,10 +148,12 @@ def preprocess_preview(
 
     Args:
         source_path: Path to a supported input file (PDF or image).
-        ocr:         The OCR config slice (method, pre-steps, PDF DPI) to preview.
+        ocr:         The OCR config slice (method, PDF DPI) to preview.
         tmp_dir:     Temporary directory for any intermediate and output files.
         build_preprocessor: Preprocessor constructor; defaults to
             :func:`stage_builder.default_build_preprocessor`.
+        model_store: Where the page models of the automatic preparation are; ``None`` = the
+            default folder.
 
     Returns:
         A tuple of ``(original_image_path, preprocessed_image_path, steps_applied)``.
@@ -164,7 +173,7 @@ def preprocess_preview(
     if image_path is None:
         raise ValueError(f"Preview is only available for image-based inputs: '{source_path.name}'.")
 
-    preprocessor = build_preprocessor(tmp_dir, False, ocr)
+    preprocessor = build_preprocessor(tmp_dir, False, ocr, model_store)
     out_path, steps = preprocessor.preprocess(image_path)
     return image_path, out_path, steps
 
@@ -222,6 +231,7 @@ class OCRPipeline:
         self._reporter: Reporter = deps.reporter or StdoutReporter()
         self._component_factory = deps.component_factory or PipelineComponentFactory()
         self._hardware: HardwareDetection | None = deps.hardware
+        self._model_store: ModelStore | None = deps.model_store
         self._artifact_store: PreviewImageStore | None = deps.artifact_store
         self._state_repo: StateRepository | None = deps.state_repo
         self._cache_service: CacheReconciliationService | None = deps.cache_service
@@ -359,7 +369,9 @@ class OCRPipeline:
         reporter.status(f"  Preview dir   : {tmp_dir.resolve()}")
         reporter.status(_LINE)
 
-        builder = StageBuilder(cfg, self._component_factory, self._reporter, self._hardware)
+        builder = StageBuilder(
+            cfg, self._component_factory, self._reporter, self._hardware, self._model_store
+        )
         preprocess_service = builder.build_preprocessor_service(tmp_dir)
         files = collect_files(cfg)
         return cfg, preprocess_service, files, tmp_dir
@@ -440,7 +452,12 @@ class OCRPipeline:
         if not cfg.recognition_enabled:
             reporter.status("  Recognition   : disabled (scans are skipped)")
         else:
-            reporter.status(f"  OCR engine    : {cfg.ocr.engine}")
+            if cfg.ocr.engine == ENGINE_PPOCR:
+                reporter.status(
+                    f"  OCR engine    : {OCR_ENGINE_NAMES[ENGINE_PPOCR]} ({READER_MODEL_NAME})"
+                )
+            else:
+                reporter.status(f"  OCR engine    : {cfg.ocr.engine}")
             if cfg.ocr.engine == "ollama":
                 reporter.status(f"  OCR model     : {cfg.ocr.model}")
         reporter.status(f"  Preprocess    : {cfg.ocr.preprocess_method}")
@@ -455,19 +472,6 @@ class OCRPipeline:
         reporter.status(f"  Output        : {cfg.output_dir.resolve()}")
         reporter.status(f"  Recursive     : {cfg.recursive}")
         reporter.status(f"  Debug         : {cfg.debug}")
-        if cfg.ocr.engine == "tesseract" and cfg.ocr.preprocess_method == "adaptive_threshold":
-            reporter.status(
-                "  HINT: Tesseract works best with CLAHE preprocessing. "
-                "Consider --preprocess-method clahe."
-            )
-        elif cfg.ocr.engine == "paddleocr" and cfg.ocr.preprocess_method in (
-            "adaptive_threshold",
-            "clahe",
-        ):
-            reporter.status(
-                "  HINT: PaddleOCR works on full-colour images; binarisation degrades accuracy. "
-                "Consider --preprocess-method none or grayscale."
-            )
         if not cfg.correction_enabled:
             reporter.status("  Correction    : disabled")
         else:
@@ -523,7 +527,9 @@ class OCRPipeline:
         """Build all pipeline services and return a ready-to-use FileProcessor."""
         cfg = self._config
         reporter = self._reporter
-        builder = StageBuilder(cfg, self._component_factory, self._reporter, self._hardware)
+        builder = StageBuilder(
+            cfg, self._component_factory, self._reporter, self._hardware, self._model_store
+        )
 
         # Build one shared OllamaClient for all Ollama-backed stages so URL
         # normalisation happens once and injection is explicit.
@@ -538,7 +544,7 @@ class OCRPipeline:
             else None
         )
 
-        ocr = builder.build_ocr(ollama_client)
+        ocr = builder.build_ocr(ollama_client, self._stop_event)
 
         correction, anonymizer = builder.build_correction_and_anonymizer(ollama_client)
         if cfg.correction_enabled:
@@ -556,6 +562,7 @@ class OCRPipeline:
             artifact_store=artifact_store,
             config=cfg,
             windows=builder.resolved_windows(),
+            model_store=self._model_store,
         )
         preprocess_service = self._preprocess_service or builder.build_preprocessor_service(tmp_dir)
         ocr_stage_service = self._ocr_stage_service or OCRStageService(

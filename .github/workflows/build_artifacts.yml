@@ -96,7 +96,7 @@ jobs:
       - name: Install Python dependencies
         run: |
           pip install --upgrade pip
-          # Base runtime deps only — optional providers (langchain/spacy/paddle)
+          # Base runtime deps only — optional providers (langchain/spacy)
           # are downloaded at runtime by the in-app addon manager, so they are
           # intentionally not bundled into the standalone binary.
           pip install -e .

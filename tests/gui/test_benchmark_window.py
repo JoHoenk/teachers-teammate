@@ -23,7 +23,7 @@ def _run(run_id: str, text: str) -> StoredRun:
         document_path="/docs/sample.pdf",
         display_name="sample.pdf",
         ocr_config_hash="abc12345",
-        ocr=OcrConfig(engine="tesseract", model="", preprocess_method="none"),
+        ocr=OcrConfig(engine="ppocr", model="", preprocess_method="none"),
         language="English",
         raw_text=text,
         preview_img="",
@@ -47,10 +47,7 @@ class _FakeService(RecommendationServiceStub):
         return ["ollama"]
 
     def list_ocr_engines(self) -> list[str]:
-        return ["ollama", "tesseract"]
-
-    def default_preprocess_for_engine(self, engine: str) -> str:
-        return "none"
+        return ["ollama", "ppocr"]
 
     def get_provider_info(self, provider: str) -> dict:
         return {"models": [], "default_model": "", "needs_api_key": False, "env_key": ""}

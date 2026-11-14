@@ -25,7 +25,7 @@ from PySide6.QtWidgets import (
 from ..application.service import ProcessingApplicationService
 from ..config import SECONDARY_MODEL_AUTO, SECONDARY_MODEL_NONE
 from . import _user_text as txt
-from ._model_fetch import _retire_thread
+from ._model_fetch import _retire_thread, _start_thread
 
 _INVALID_BG = QColor("#ffd0d0")
 _DETECTING = "Detecting…"
@@ -550,7 +550,7 @@ class AnonymizerConfigWidget(QWidget):
         thread.models_ready.connect(self._on_spacy_models_fetched)
         thread.error.connect(self._on_spacy_fetch_error)
         self._spacy_fetch_thread = thread
-        thread.start()
+        _start_thread(thread)
 
     # ── Public API ─────────────────────────────────────────────────────────────
 

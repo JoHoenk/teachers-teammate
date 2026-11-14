@@ -38,14 +38,23 @@ from tests.conftest import make_config
 # ── Helpers ────────────────────────────────────────────────────────────────
 
 
-def _place_image(input_dir: Path, name: str = "page.png") -> Path:
-    """Write a test PNG into *input_dir* and return its path."""
+def _place_image(input_dir: Path, name: str = "page.png", *, shadow: bool = False) -> Path:
+    """Write a test PNG into *input_dir* and return its path.
+
+    With *shadow* the page is lit from the right (brightness 40 % at the left edge), so the
+    automatic preparation has something to do.
+    """
     from PIL import Image, ImageDraw, ImageFont  # noqa: PLC0415
 
     img = Image.new("RGB", (400, 120), color=(255, 255, 255))
     draw = ImageDraw.Draw(img)
     font = ImageFont.load_default(size=48)
     draw.text((20, 30), "Hello World", fill=(0, 0, 0), font=font)
+    if shadow:
+        import numpy as np  # noqa: PLC0415
+
+        gradient = np.linspace(0.4, 1.0, img.width)[None, :, None]
+        img = Image.fromarray((np.asarray(img, dtype=np.float32) * gradient).astype(np.uint8))
     path = input_dir / name
     img.save(path)
     return path
@@ -57,13 +66,13 @@ def _place_image(input_dir: Path, name: str = "page.png") -> Path:
 @pytest.mark.use_case("Batch_OCR_Processing")
 def test_pipeline_run_processes_image_and_persists_ocr_state(tmp_path: Path) -> None:
     """
-    Given  one PNG in input_dir and a mocked TesseractOCRProcessor returning "hello world"
+    Given  one PNG in input_dir and a mocked PpOcrProcessor returning "hello world"
     When   OCRPipeline.run() is called
     Then   returns 0 and JSON cache state stores the extracted OCR text
     """
     cfg = make_config(
         tmp_path,
-        ocr_engine="tesseract",
+        ocr_engine="ppocr",
         correction_enabled=False,
         docx_enabled=False,
         preprocess_method="none",
@@ -74,7 +83,7 @@ def test_pipeline_run_processes_image_and_persists_ocr_state(tmp_path: Path) -> 
     mock_proc.process_image.return_value = "hello world"
 
     with patch(
-        "teachers_teammate.infrastructure.stage_builder.TesseractOCRProcessor",
+        "teachers_teammate.infrastructure.stage_builder.PpOcrProcessor",
         return_value=mock_proc,
     ):
         rc = OCRPipeline(cfg).run().exit_code
@@ -94,12 +103,12 @@ def test_pipeline_run_returns_0_when_no_input_files(tmp_path: Path) -> None:
     """
     cfg = make_config(
         tmp_path,
-        ocr_engine="tesseract",
+        ocr_engine="ppocr",
         correction_enabled=False,
         docx_enabled=False,
     )
     with patch(
-        "teachers_teammate.infrastructure.stage_builder.TesseractOCRProcessor",
+        "teachers_teammate.infrastructure.stage_builder.PpOcrProcessor",
         return_value=MagicMock(),
     ):
         rc = OCRPipeline(cfg).run().exit_code
@@ -115,7 +124,7 @@ def test_pipeline_run_returns_1_on_ocr_failure(tmp_path: Path) -> None:
     """
     cfg = make_config(
         tmp_path,
-        ocr_engine="tesseract",
+        ocr_engine="ppocr",
         correction_enabled=False,
         docx_enabled=False,
         preprocess_method="none",
@@ -126,7 +135,7 @@ def test_pipeline_run_returns_1_on_ocr_failure(tmp_path: Path) -> None:
     mock_proc.process_image.side_effect = OCRError("model crashed")
 
     with patch(
-        "teachers_teammate.infrastructure.stage_builder.TesseractOCRProcessor",
+        "teachers_teammate.infrastructure.stage_builder.PpOcrProcessor",
         return_value=mock_proc,
     ):
         rc = OCRPipeline(cfg).run().exit_code
@@ -143,7 +152,7 @@ def test_pipeline_run_processes_multiple_files(tmp_path: Path) -> None:
     """
     cfg = make_config(
         tmp_path,
-        ocr_engine="tesseract",
+        ocr_engine="ppocr",
         correction_enabled=False,
         docx_enabled=False,
         preprocess_method="none",
@@ -155,7 +164,7 @@ def test_pipeline_run_processes_multiple_files(tmp_path: Path) -> None:
     mock_proc.process_image.return_value = "text"
 
     with patch(
-        "teachers_teammate.infrastructure.stage_builder.TesseractOCRProcessor",
+        "teachers_teammate.infrastructure.stage_builder.PpOcrProcessor",
         return_value=mock_proc,
     ):
         rc = OCRPipeline(cfg).run().exit_code
@@ -176,7 +185,7 @@ def test_pipeline_run_processes_selected_sources_only(tmp_path: Path) -> None:
     """
     cfg = make_config(
         tmp_path,
-        ocr_engine="tesseract",
+        ocr_engine="ppocr",
         correction_enabled=False,
         docx_enabled=False,
         preprocess_method="none",
@@ -189,7 +198,7 @@ def test_pipeline_run_processes_selected_sources_only(tmp_path: Path) -> None:
     selected_path = str((cfg.input_dir / "b.png").resolve())
 
     with patch(
-        "teachers_teammate.infrastructure.stage_builder.TesseractOCRProcessor",
+        "teachers_teammate.infrastructure.stage_builder.PpOcrProcessor",
         return_value=mock_proc,
     ):
         rc = OCRPipeline(cfg, selected_source_paths=[selected_path]).run().exit_code
@@ -210,7 +219,7 @@ def test_pipeline_selected_sources_disambiguate_duplicate_basenames(tmp_path: Pa
     """
     cfg = make_config(
         tmp_path,
-        ocr_engine="tesseract",
+        ocr_engine="ppocr",
         correction_enabled=False,
         docx_enabled=False,
         preprocess_method="none",
@@ -227,7 +236,7 @@ def test_pipeline_selected_sources_disambiguate_duplicate_basenames(tmp_path: Pa
     mock_proc.process_image.return_value = "text"
 
     with patch(
-        "teachers_teammate.infrastructure.stage_builder.TesseractOCRProcessor",
+        "teachers_teammate.infrastructure.stage_builder.PpOcrProcessor",
         return_value=mock_proc,
     ):
         rc = OCRPipeline(cfg, selected_source_paths=[str(right_page.resolve())]).run().exit_code
@@ -246,7 +255,7 @@ def test_pipeline_run_returns_1_when_any_file_fails(tmp_path: Path) -> None:
     """
     cfg = make_config(
         tmp_path,
-        ocr_engine="tesseract",
+        ocr_engine="ppocr",
         correction_enabled=False,
         docx_enabled=False,
         preprocess_method="none",
@@ -258,7 +267,7 @@ def test_pipeline_run_returns_1_when_any_file_fails(tmp_path: Path) -> None:
     mock_proc.process_image.side_effect = ["success text", OCRError("fail")]
 
     with patch(
-        "teachers_teammate.infrastructure.stage_builder.TesseractOCRProcessor",
+        "teachers_teammate.infrastructure.stage_builder.PpOcrProcessor",
         return_value=mock_proc,
     ):
         rc = OCRPipeline(cfg).run().exit_code
@@ -275,7 +284,7 @@ def test_pipeline_cache_reuses_ocr_when_input_hash_unchanged(tmp_path: Path) -> 
     """
     cfg = make_config(
         tmp_path,
-        ocr_engine="tesseract",
+        ocr_engine="ppocr",
         correction_enabled=False,
         docx_enabled=False,
         preprocess_method="none",
@@ -285,7 +294,7 @@ def test_pipeline_cache_reuses_ocr_when_input_hash_unchanged(tmp_path: Path) -> 
     first_ocr = MagicMock()
     first_ocr.process_image.return_value = "first-run"
     with patch(
-        "teachers_teammate.infrastructure.stage_builder.TesseractOCRProcessor",
+        "teachers_teammate.infrastructure.stage_builder.PpOcrProcessor",
         return_value=first_ocr,
     ):
         first_rc = OCRPipeline(cfg).run().exit_code
@@ -295,7 +304,7 @@ def test_pipeline_cache_reuses_ocr_when_input_hash_unchanged(tmp_path: Path) -> 
     second_ocr = MagicMock()
     second_ocr.process_image.side_effect = OCRError("should not be called")
     with patch(
-        "teachers_teammate.infrastructure.stage_builder.TesseractOCRProcessor",
+        "teachers_teammate.infrastructure.stage_builder.PpOcrProcessor",
         return_value=second_ocr,
     ):
         second_rc = OCRPipeline(cfg).run().exit_code
@@ -313,7 +322,7 @@ def test_pipeline_persists_preview_artifact_for_none_preprocess(tmp_path: Path) 
     """
     cfg = make_config(
         tmp_path,
-        ocr_engine="tesseract",
+        ocr_engine="ppocr",
         correction_enabled=False,
         docx_enabled=False,
         preprocess_method="none",
@@ -323,7 +332,7 @@ def test_pipeline_persists_preview_artifact_for_none_preprocess(tmp_path: Path) 
     mock_ocr = MagicMock()
     mock_ocr.process_image.return_value = "text"
     with patch(
-        "teachers_teammate.infrastructure.stage_builder.TesseractOCRProcessor",
+        "teachers_teammate.infrastructure.stage_builder.PpOcrProcessor",
         return_value=mock_ocr,
     ):
         rc = OCRPipeline(cfg).run().exit_code
@@ -338,21 +347,23 @@ def test_pipeline_persists_preview_artifact_for_none_preprocess(tmp_path: Path) 
 
 
 @pytest.mark.use_case("Preview_Preprocessing")
-def test_pipeline_reports_progress_and_keeps_original_for_grayscale(tmp_path: Path) -> None:
+def test_pipeline_reports_progress_and_keeps_original_for_the_automatic_preparation(
+    tmp_path: Path,
+) -> None:
     """
-    Given  preprocess_method='grayscale', a stubbed Tesseract OCR and one image input
+    Given  the automatic preparation, a stubbed built-in reader and one unevenly lit image input
     When   OCRPipeline.run() completes
     Then   the log narrates preprocessing then OCR, on_stage_started fires for both stages,
            and the state records the applied steps plus a persisted original page
     """
     cfg = make_config(
         tmp_path,
-        ocr_engine="tesseract",
+        ocr_engine="ppocr",
         correction_enabled=False,
         docx_enabled=False,
-        preprocess_method="grayscale",
+        preprocess_method="auto",
     )
-    page = _place_image(cfg.input_dir, "page.png")
+    page = _place_image(cfg.input_dir, "page.png", shadow=True)
 
     lines: list[str] = []
     reporter = MagicMock()
@@ -362,7 +373,7 @@ def test_pipeline_reports_progress_and_keeps_original_for_grayscale(tmp_path: Pa
     mock_ocr = MagicMock()
     mock_ocr.process_image.return_value = "text"
     with patch(
-        "teachers_teammate.infrastructure.stage_builder.TesseractOCRProcessor",
+        "teachers_teammate.infrastructure.stage_builder.PpOcrProcessor",
         return_value=mock_ocr,
     ):
         rc = (
@@ -385,16 +396,15 @@ def test_pipeline_reports_progress_and_keeps_original_for_grayscale(tmp_path: Pa
         for line in lines
         if line.startswith("→") and ("Preprocessing" in line or "OCR" in line)
     ]
-    assert narrative == [
-        "→ Preprocessing...",
-        "→ Preprocessing done: grayscale (1 page(s))",
-        "→ Running OCR...",
-        "→ OCR done (1 page(s))",
-    ]
+    assert narrative[0] == "→ Preprocessing..."
+    assert narrative[1].startswith("→ Preprocessing done:")
+    assert "light" in narrative[1]
+    assert narrative[2:] == ["→ Running OCR...", "→ OCR done (1 page(s))"]
     assert stages == [("page.png", "preprocessing"), ("page.png", "ocr")]
     state = StateRepository(resolve_artifact_dir(cfg.output_dir) / "state").load(page)
     assert state is not None
-    assert state.preprocess_steps == ["grayscale"]
+    assert state.preprocess_steps is not None
+    assert "light" in state.preprocess_steps
     assert state.original_img.endswith("page_original.png")
     assert Path(state.original_img).exists()
 
@@ -403,12 +413,12 @@ def test_pipeline_reports_progress_and_keeps_original_for_grayscale(tmp_path: Pa
 def test_pipeline_reruns_ocr_when_preprocess_method_changes(tmp_path: Path) -> None:
     """
     Given  a file processed once with preprocess_method='none'
-    When   preprocess_method changes to 'grayscale' and pipeline runs again
+    When   preprocess_method changes to 'auto' and pipeline runs again
     Then   OCR stage is invalidated and OCR processor is called again
     """
     cfg = make_config(
         tmp_path,
-        ocr_engine="tesseract",
+        ocr_engine="ppocr",
         correction_enabled=False,
         docx_enabled=False,
         preprocess_method="none",
@@ -418,18 +428,18 @@ def test_pipeline_reruns_ocr_when_preprocess_method_changes(tmp_path: Path) -> N
     first_ocr = MagicMock()
     first_ocr.process_image.return_value = "first"
     with patch(
-        "teachers_teammate.infrastructure.stage_builder.TesseractOCRProcessor",
+        "teachers_teammate.infrastructure.stage_builder.PpOcrProcessor",
         return_value=first_ocr,
     ):
         first_rc = OCRPipeline(cfg).run().exit_code
 
     assert first_rc == 0
 
-    cfg.ocr.preprocess_method = "grayscale"
+    cfg.ocr.preprocess_method = "auto"
     second_ocr = MagicMock()
     second_ocr.process_image.return_value = "second"
     with patch(
-        "teachers_teammate.infrastructure.stage_builder.TesseractOCRProcessor",
+        "teachers_teammate.infrastructure.stage_builder.PpOcrProcessor",
         return_value=second_ocr,
     ):
         second_rc = OCRPipeline(cfg).run().exit_code
@@ -447,7 +457,7 @@ def test_pipeline_keeps_output_dir_docx_only(tmp_path: Path) -> None:
     """
     cfg = make_config(
         tmp_path,
-        ocr_engine="tesseract",
+        ocr_engine="ppocr",
         correction_enabled=False,
         docx_enabled=True,
         preprocess_method="none",
@@ -458,7 +468,7 @@ def test_pipeline_keeps_output_dir_docx_only(tmp_path: Path) -> None:
     mock_proc.process_image.return_value = "hello world"
 
     with patch(
-        "teachers_teammate.infrastructure.stage_builder.TesseractOCRProcessor",
+        "teachers_teammate.infrastructure.stage_builder.PpOcrProcessor",
         return_value=mock_proc,
     ):
         rc = OCRPipeline(cfg).run().exit_code
@@ -479,7 +489,7 @@ def test_pipeline_callbacks_are_invoked(tmp_path: Path) -> None:
     """
     cfg = make_config(
         tmp_path,
-        ocr_engine="tesseract",
+        ocr_engine="ppocr",
         correction_enabled=False,
         docx_enabled=False,
         preprocess_method="none",
@@ -492,7 +502,7 @@ def test_pipeline_callbacks_are_invoked(tmp_path: Path) -> None:
     mock_proc.process_image.return_value = "extracted"
 
     with patch(
-        "teachers_teammate.infrastructure.stage_builder.TesseractOCRProcessor",
+        "teachers_teammate.infrastructure.stage_builder.PpOcrProcessor",
         return_value=mock_proc,
     ):
         OCRPipeline(
@@ -520,7 +530,7 @@ def test_pipeline_stops_when_stop_event_is_set_before_first_file(tmp_path: Path)
     """
     cfg = make_config(
         tmp_path,
-        ocr_engine="tesseract",
+        ocr_engine="ppocr",
         correction_enabled=False,
         docx_enabled=False,
         preprocess_method="none",
@@ -535,7 +545,7 @@ def test_pipeline_stops_when_stop_event_is_set_before_first_file(tmp_path: Path)
     mock_proc.process_image.return_value = "text"
 
     with patch(
-        "teachers_teammate.infrastructure.stage_builder.TesseractOCRProcessor",
+        "teachers_teammate.infrastructure.stage_builder.PpOcrProcessor",
         return_value=mock_proc,
     ):
         rc = OCRPipeline(cfg, stop_event=stop).run().exit_code
@@ -555,7 +565,7 @@ def test_pipeline_stop_after_file_finishes_the_first_image_and_reports_the_rest(
     """
     cfg = make_config(
         tmp_path,
-        ocr_engine="tesseract",
+        ocr_engine="ppocr",
         correction_enabled=False,
         docx_enabled=False,
         text_enabled=True,
@@ -581,7 +591,7 @@ def test_pipeline_stop_after_file_finishes_the_first_image_and_reports_the_rest(
     mock_proc.process_image.side_effect = read
 
     with patch(
-        "teachers_teammate.infrastructure.stage_builder.TesseractOCRProcessor",
+        "teachers_teammate.infrastructure.stage_builder.PpOcrProcessor",
         return_value=mock_proc,
     ):
         summary = OCRPipeline(
@@ -610,7 +620,7 @@ def test_pipeline_stop_now_during_ocr_keeps_nothing_half_done(tmp_path: Path) ->
     """
     cfg = make_config(
         tmp_path,
-        ocr_engine="tesseract",
+        ocr_engine="ppocr",
         correction_enabled=False,
         docx_enabled=False,
         text_enabled=True,
@@ -628,7 +638,7 @@ def test_pipeline_stop_now_during_ocr_keeps_nothing_half_done(tmp_path: Path) ->
     mock_proc.process_image.side_effect = read
 
     with patch(
-        "teachers_teammate.infrastructure.stage_builder.TesseractOCRProcessor",
+        "teachers_teammate.infrastructure.stage_builder.PpOcrProcessor",
         return_value=mock_proc,
     ):
         summary = OCRPipeline(
@@ -646,7 +656,7 @@ def test_pipeline_stop_now_during_ocr_keeps_nothing_half_done(tmp_path: Path) ->
     mock_proc.process_image.side_effect = None
     mock_proc.process_image.return_value = "read now"
     with patch(
-        "teachers_teammate.infrastructure.stage_builder.TesseractOCRProcessor",
+        "teachers_teammate.infrastructure.stage_builder.PpOcrProcessor",
         return_value=mock_proc,
     ):
         second = OCRPipeline(cfg).run()
@@ -666,7 +676,7 @@ def test_pipeline_run_with_correction_persists_correction_state(tmp_path: Path) 
     """
     cfg = make_config(
         tmp_path,
-        ocr_engine="tesseract",
+        ocr_engine="ppocr",
         correction_enabled=True,
         docx_enabled=False,
         correction_provider="openai",
@@ -682,7 +692,7 @@ def test_pipeline_run_with_correction_persists_correction_state(tmp_path: Path) 
 
     with (
         patch(
-            "teachers_teammate.infrastructure.stage_builder.TesseractOCRProcessor",
+            "teachers_teammate.infrastructure.stage_builder.PpOcrProcessor",
             return_value=mock_ocr,
         ),
         patch("teachers_teammate.infrastructure.stage_builder.build_llm", return_value=MagicMock()),
@@ -713,7 +723,7 @@ def test_pipeline_run_with_docx_creates_docx_file(tmp_path: Path) -> None:
     """
     cfg = make_config(
         tmp_path,
-        ocr_engine="tesseract",
+        ocr_engine="ppocr",
         correction_enabled=False,
         docx_enabled=True,
         preprocess_method="none",
@@ -725,7 +735,7 @@ def test_pipeline_run_with_docx_creates_docx_file(tmp_path: Path) -> None:
     mock_ocr.process_image.return_value = "extracted text"
 
     with patch(
-        "teachers_teammate.infrastructure.stage_builder.TesseractOCRProcessor",
+        "teachers_teammate.infrastructure.stage_builder.PpOcrProcessor",
         return_value=mock_ocr,
     ):
         rc = OCRPipeline(cfg).run().exit_code
@@ -872,49 +882,22 @@ def test_pipeline_refuses_online_ocr_engine_even_for_text_files(tmp_path: Path) 
     assert OCRPipeline(cfg).run().exit_code == 1
 
 
-def test_pipeline_setup_creates_paddleocr_processor(tmp_path: Path) -> None:
-    """
-    Given  ocr_engine='paddleocr' and a mocked PaddleOCRProcessor
-    When   OCRPipeline.run() is called
-    Then   PaddleOCRProcessor is instantiated and process_image is called
-    """
-    cfg = make_config(
-        tmp_path,
-        ocr_engine="paddleocr",
-        correction_enabled=False,
-        docx_enabled=False,
-        preprocess_method="none",
-    )
-    _place_image(cfg.input_dir)
-
-    mock_ocr = MagicMock()
-    mock_ocr.process_image.return_value = "paddle text"
-
-    with patch(
-        "teachers_teammate.infrastructure.stage_builder.PaddleOCRProcessor", return_value=mock_ocr
-    ):
-        rc = OCRPipeline(cfg).run().exit_code
-
-    assert rc == 0
-    mock_ocr.process_image.assert_called_once()
-
-
 # ── run_preview_only ───────────────────────────────────────────────────────
 
 
 @pytest.mark.use_case("Preview_Preprocessing")
 def test_pipeline_run_preview_only_saves_preprocessed_images(tmp_path: Path) -> None:
     """
-    Given  one PNG in input_dir and method='grayscale'
+    Given  one PNG in input_dir and the automatic preparation
     When   OCRPipeline.run_preview_only() is called
     Then   returns 0 and a preprocessed PNG file exists in tmp_dir
     """
     cfg = make_config(
         tmp_path,
-        ocr_engine="tesseract",
+        ocr_engine="ppocr",
         correction_enabled=False,
         docx_enabled=False,
-        preprocess_method="grayscale",
+        preprocess_method="auto",
     )
     _place_image(cfg.input_dir, "scan.png")
 
@@ -946,7 +929,7 @@ def test_pipeline_run_preview_only_stopped_by_event(tmp_path: Path) -> None:
         tmp_path,
         correction_enabled=False,
         docx_enabled=False,
-        preprocess_method="grayscale",
+        preprocess_method="auto",
     )
     _place_image(cfg.input_dir, "scan.png")
 
@@ -962,60 +945,57 @@ def test_pipeline_run_preview_only_stopped_by_event(tmp_path: Path) -> None:
 # ── _setup_services hints ─────────────────────────────────────────────────
 
 
-def test_setup_services_tesseract_with_adaptive_threshold_prints_hint(
-    tmp_path: Path,
-    capsys,
-) -> None:
+def test_the_run_header_names_the_built_in_reader(tmp_path: Path, capsys) -> None:
     """
-    Given  ocr_engine='tesseract' and preprocess_method='adaptive_threshold'
+    Given  ocr_engine='ppocr' and a mocked reader
     When   OCRPipeline.run() is called
-    Then   a HINT about CLAHE preprocessing is printed
+    Then   the header says "Built-in reader" and shows no Ollama model or URL
     """
     cfg = make_config(
         tmp_path,
-        ocr_engine="tesseract",
+        ocr_engine="ppocr",
         correction_enabled=False,
         docx_enabled=False,
-        preprocess_method="adaptive_threshold",
+        preprocess_method="none",
     )
     _place_image(cfg.input_dir)
     mock_proc = MagicMock()
     mock_proc.process_image.return_value = "text"
     with patch(
-        "teachers_teammate.infrastructure.stage_builder.TesseractOCRProcessor",
-        return_value=mock_proc,
+        "teachers_teammate.infrastructure.stage_builder.PpOcrProcessor", return_value=mock_proc
     ):
         OCRPipeline(cfg).run()
-    captured = capsys.readouterr()
-    assert "HINT" in captured.out or "HINT" in captured.err or "clahe" in captured.out.lower()
+
+    out = capsys.readouterr().out
+    assert "OCR engine    : Built-in reader (PP-OCRv6 small)" in out
+    assert "OCR model" not in out
+    assert "Ollama URL" not in out
 
 
-def test_setup_services_paddleocr_with_clahe_prints_hint(
-    tmp_path: Path,
-    capsys,
-) -> None:
+def test_the_runs_stop_event_reaches_the_built_in_reader(tmp_path: Path) -> None:
     """
-    Given  ocr_engine='paddleocr' and preprocess_method='clahe' (binarisation)
-    When   OCRPipeline.run() is called
-    Then   a HINT about using 'none' or 'grayscale' preprocessing is printed
+    Given  a run with the built-in reader and a stop event
+    When   OCRPipeline.run() builds the reader
+    Then   the reader is constructed with that very event (so Stop now ends it within a line)
     """
     cfg = make_config(
         tmp_path,
-        ocr_engine="paddleocr",
+        ocr_engine="ppocr",
         correction_enabled=False,
         docx_enabled=False,
-        preprocess_method="clahe",
+        preprocess_method="none",
     )
     _place_image(cfg.input_dir)
     mock_proc = MagicMock()
-    mock_proc.process_image.return_value = "paddle text"
+    mock_proc.process_image.return_value = "text"
+    stop = threading.Event()
+
     with patch(
-        "teachers_teammate.infrastructure.stage_builder.PaddleOCRProcessor", return_value=mock_proc
-    ):
-        OCRPipeline(cfg).run()
-    captured = capsys.readouterr()
-    combined = captured.out + captured.err
-    assert "HINT" in combined or "grayscale" in combined.lower()
+        "teachers_teammate.infrastructure.stage_builder.PpOcrProcessor", return_value=mock_proc
+    ) as processor:
+        OCRPipeline(cfg, stop_event=stop).run()
+
+    assert processor.call_args.kwargs["stop_event"] is stop
 
 
 def test_setup_services_evaluation_with_no_correction_warns(
@@ -1029,7 +1009,7 @@ def test_setup_services_evaluation_with_no_correction_warns(
     """
     cfg = make_config(
         tmp_path,
-        ocr_engine="tesseract",
+        ocr_engine="ppocr",
         correction_enabled=False,
         docx_enabled=False,
         evaluation_enabled=True,
@@ -1040,7 +1020,7 @@ def test_setup_services_evaluation_with_no_correction_warns(
     mock_proc = MagicMock()
     mock_proc.process_image.return_value = "text"
     with patch(
-        "teachers_teammate.infrastructure.stage_builder.TesseractOCRProcessor",
+        "teachers_teammate.infrastructure.stage_builder.PpOcrProcessor",
         return_value=mock_proc,
     ):
         OCRPipeline(cfg).run()
@@ -1062,7 +1042,7 @@ def test_cleanup_tmp_preserves_files_in_debug_mode(
     """
     cfg = make_config(
         tmp_path,
-        ocr_engine="tesseract",
+        ocr_engine="ppocr",
         correction_enabled=False,
         docx_enabled=False,
         preprocess_method="none",
@@ -1078,7 +1058,7 @@ def test_cleanup_tmp_preserves_files_in_debug_mode(
     mock_proc = MagicMock()
     mock_proc.process_image.return_value = "text"
     with patch(
-        "teachers_teammate.infrastructure.stage_builder.TesseractOCRProcessor",
+        "teachers_teammate.infrastructure.stage_builder.PpOcrProcessor",
         return_value=mock_proc,
     ):
         OCRPipeline(cfg).run()
@@ -1291,7 +1271,7 @@ def test_pipeline_banner_printed_with_config_file_path(
     """
     cfg = make_config(
         tmp_path,
-        ocr_engine="tesseract",
+        ocr_engine="ppocr",
         correction_enabled=False,
         docx_enabled=False,
         preprocess_method="none",
@@ -1300,7 +1280,7 @@ def test_pipeline_banner_printed_with_config_file_path(
     mock_proc = MagicMock()
     mock_proc.process_image.return_value = "text"
     with patch(
-        "teachers_teammate.infrastructure.stage_builder.TesseractOCRProcessor",
+        "teachers_teammate.infrastructure.stage_builder.PpOcrProcessor",
         return_value=mock_proc,
     ):
         OCRPipeline(cfg, config_file=tmp_path / "ocr.toml").run()
@@ -1338,7 +1318,7 @@ def test_pipeline_run_preview_only_prints_failed_files(
     """
     cfg = make_config(
         tmp_path,
-        ocr_engine="tesseract",
+        ocr_engine="ppocr",
         correction_enabled=False,
         docx_enabled=False,
         preprocess_method="none",
@@ -1415,9 +1395,7 @@ def test_preview_file_text_unit_prints_and_returns_true(tmp_path: Path) -> None:
     from teachers_teammate.infrastructure.reporting import StdoutReporter  # noqa: PLC0415
     from teachers_teammate.infrastructure.workflow.preprocess_service import PreprocessService  # noqa: PLC0415
 
-    cfg = make_config(
-        tmp_path, ocr_engine="tesseract", correction_enabled=False, docx_enabled=False
-    )
+    cfg = make_config(tmp_path, ocr_engine="ppocr", correction_enabled=False, docx_enabled=False)
     pipeline = OCRPipeline.__new__(OCRPipeline)
     pipeline._config = cfg
     pipeline._reporter = StdoutReporter()
@@ -1441,7 +1419,7 @@ def test_pipeline_batch_mixed_types_all_processed(tmp_path: Path) -> None:
     """
     cfg = make_config(
         tmp_path,
-        ocr_engine="tesseract",
+        ocr_engine="ppocr",
         correction_enabled=False,
         docx_enabled=False,
         preprocess_method="none",
@@ -1453,7 +1431,7 @@ def test_pipeline_batch_mixed_types_all_processed(tmp_path: Path) -> None:
     mock_proc.process_image.return_value = "ocr text"
 
     with patch(
-        "teachers_teammate.infrastructure.stage_builder.TesseractOCRProcessor",
+        "teachers_teammate.infrastructure.stage_builder.PpOcrProcessor",
         return_value=mock_proc,
     ):
         rc = OCRPipeline(cfg).run().exit_code
@@ -1477,7 +1455,7 @@ def test_pipeline_batch_failure_does_not_stop_remaining_files(tmp_path: Path) ->
     """
     cfg = make_config(
         tmp_path,
-        ocr_engine="tesseract",
+        ocr_engine="ppocr",
         correction_enabled=False,
         docx_enabled=False,
         preprocess_method="none",
@@ -1489,7 +1467,7 @@ def test_pipeline_batch_failure_does_not_stop_remaining_files(tmp_path: Path) ->
     mock_proc.process_image.side_effect = [OCRError("fail on first"), "success text"]
 
     with patch(
-        "teachers_teammate.infrastructure.stage_builder.TesseractOCRProcessor",
+        "teachers_teammate.infrastructure.stage_builder.PpOcrProcessor",
         return_value=mock_proc,
     ):
         rc = OCRPipeline(cfg).run().exit_code
@@ -1513,7 +1491,7 @@ def test_pipeline_selected_source_not_in_input_dir_is_skipped(tmp_path: Path) ->
     """
     cfg = make_config(
         tmp_path,
-        ocr_engine="tesseract",
+        ocr_engine="ppocr",
         correction_enabled=False,
         docx_enabled=False,
         preprocess_method="none",
@@ -1524,7 +1502,7 @@ def test_pipeline_selected_source_not_in_input_dir_is_skipped(tmp_path: Path) ->
     mock_proc = MagicMock()
 
     with patch(
-        "teachers_teammate.infrastructure.stage_builder.TesseractOCRProcessor",
+        "teachers_teammate.infrastructure.stage_builder.PpOcrProcessor",
         return_value=mock_proc,
     ):
         rc = OCRPipeline(cfg, selected_source_paths=[outside_path]).run().exit_code
@@ -1547,7 +1525,7 @@ def test_pipeline_ocr_and_correction_not_rerun_when_only_evaluation_config_chang
     """
     cfg = make_config(
         tmp_path,
-        ocr_engine="tesseract",
+        ocr_engine="ppocr",
         correction_enabled=True,
         docx_enabled=False,
         evaluation_enabled=True,
@@ -1567,7 +1545,7 @@ def test_pipeline_ocr_and_correction_not_rerun_when_only_evaluation_config_chang
 
     with (
         patch(
-            "teachers_teammate.infrastructure.stage_builder.TesseractOCRProcessor",
+            "teachers_teammate.infrastructure.stage_builder.PpOcrProcessor",
             return_value=first_ocr,
         ),
         patch("teachers_teammate.infrastructure.stage_builder.build_llm", return_value=MagicMock()),
@@ -1594,7 +1572,7 @@ def test_pipeline_ocr_and_correction_not_rerun_when_only_evaluation_config_chang
 
     with (
         patch(
-            "teachers_teammate.infrastructure.stage_builder.TesseractOCRProcessor",
+            "teachers_teammate.infrastructure.stage_builder.PpOcrProcessor",
             return_value=second_ocr,
         ),
         patch("teachers_teammate.infrastructure.stage_builder.build_llm", return_value=MagicMock()),
@@ -1629,7 +1607,7 @@ def test_pipeline_run_with_different_providers_per_stage_produces_full_state(
     """
     cfg = make_config(
         tmp_path,
-        ocr_engine="tesseract",
+        ocr_engine="ppocr",
         correction_enabled=True,
         docx_enabled=False,
         evaluation_enabled=True,
@@ -1648,7 +1626,7 @@ def test_pipeline_run_with_different_providers_per_stage_produces_full_state(
 
     with (
         patch(
-            "teachers_teammate.infrastructure.stage_builder.TesseractOCRProcessor",
+            "teachers_teammate.infrastructure.stage_builder.PpOcrProcessor",
             return_value=mock_ocr,
         ),
         patch("teachers_teammate.infrastructure.stage_builder.build_llm", return_value=MagicMock()),
@@ -1685,7 +1663,7 @@ _CHANDRA_OUTPUT = (
 def _run_with_ocr_output(tmp_path: Path, output: str, **config_overrides):
     cfg = make_config(
         tmp_path,
-        ocr_engine="tesseract",
+        ocr_engine="ppocr",
         preprocess_method="none",
         **{"correction_enabled": False, "docx_enabled": False, **config_overrides},
     )
@@ -1705,7 +1683,7 @@ def test_pipeline_stores_layout_html_as_markdown(tmp_path: Path) -> None:
     cfg, mock_proc = _run_with_ocr_output(tmp_path, _CHANDRA_OUTPUT)
 
     with patch(
-        "teachers_teammate.infrastructure.stage_builder.TesseractOCRProcessor",
+        "teachers_teammate.infrastructure.stage_builder.PpOcrProcessor",
         return_value=mock_proc,
     ):
         rc = OCRPipeline(cfg).run().exit_code
@@ -1740,7 +1718,7 @@ def test_pipeline_tells_corrector_the_text_is_markdown_and_formats_the_docx(
 
     with (
         patch(
-            "teachers_teammate.infrastructure.stage_builder.TesseractOCRProcessor",
+            "teachers_teammate.infrastructure.stage_builder.PpOcrProcessor",
             return_value=mock_proc,
         ),
         patch(
@@ -1771,7 +1749,7 @@ def test_pipeline_tells_corrector_the_text_is_markdown_and_formats_the_docx(
     assert any(run.text == "passport" and run.font.superscript for run in runs)
 
 
-def test_pipeline_keeps_tesseract_style_plain_text_verbatim(tmp_path: Path) -> None:
+def test_pipeline_keeps_plain_reader_text_verbatim(tmp_path: Path) -> None:
     """
     Given  an OCR engine that answers with plain text containing list dashes and asterisks
     When   OCRPipeline.run() is called
@@ -1781,7 +1759,7 @@ def test_pipeline_keeps_tesseract_style_plain_text_verbatim(tmp_path: Path) -> N
     cfg, mock_proc = _run_with_ocr_output(tmp_path, text)
 
     with patch(
-        "teachers_teammate.infrastructure.stage_builder.TesseractOCRProcessor",
+        "teachers_teammate.infrastructure.stage_builder.PpOcrProcessor",
         return_value=mock_proc,
     ):
         rc = OCRPipeline(cfg).run().exit_code

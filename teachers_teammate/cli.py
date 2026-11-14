@@ -21,6 +21,7 @@ from collections.abc import Callable, Sequence
 import logging
 from pathlib import Path
 import sys
+import threading
 from typing import Protocol
 
 from ._model_defaults import default_model_for_task
@@ -28,14 +29,20 @@ from .application.service import ProcessingApplicationService
 from .config import (
     CONTEXT_SETTINGS,
     DEFAULTS,
+    PREPROCESS_METHODS,
     Config,
     OcrConfig,
     load_config_file,
 )
 from .domain.data_location import LOCAL_OCR_ENGINES, DataFlow, PrivacyLevel
+from .domain.local_models import (
+    HUGGING_FACE_HOST,
+    PAGE_MODELS_SIZE_LABEL,
+    READER_SIZE_LABEL,
+)
 from .domain.pdf_text_layer import PDF_TEXT_LAYER_MODES
 from .domain.run_summary import RunSummary
-from .exceptions import ConfigFileNotFoundError, ConfigFileParseError
+from .exceptions import ConfigFileNotFoundError, ConfigFileParseError, ModelDownloadError
 
 
 class _CliAppService(Protocol):
@@ -54,6 +61,22 @@ class _CliAppService(Protocol):
     def memory_warning_for_run(self, config: Config, /) -> str: ...
 
     def run_preview_only(self, config: Config, /) -> int: ...
+
+    def reader_refusal_for_run(self, config: Config, /) -> str: ...
+
+    def page_models_notice_for_run(self, config: Config, /) -> str: ...
+
+    def download_page_models(
+        self,
+        on_progress: Callable[[int, int], None] | None = None,
+        cancel: threading.Event | None = None,
+    ) -> None: ...
+
+    def download_reader(
+        self,
+        on_progress: Callable[[int, int], None] | None = None,
+        cancel: threading.Event | None = None,
+    ) -> None: ...
 
 
 _PDF_DPI_MIN = 72
@@ -288,9 +311,29 @@ def _parse_args(
         choices=list(LOCAL_OCR_ENGINES),
         metavar="ENGINE",
         help=(
-            "OCR engine: ollama (vision model via Ollama), tesseract (local install), or "
-            "paddleocr (local PaddleOCR). Online services are not offered: reading a page "
-            "needs the whole page, so personal information cannot be hidden first."
+            "OCR engine: ollama (AI vision model through Ollama, default) or ppocr (the "
+            "built-in reader: no server, best on printed pages; download it first with "
+            "--download-reader). Online services are not offered: reading a page needs the "
+            "whole page, so personal information cannot be hidden first."
+        ),
+    )
+    ocr_grp.add_argument(
+        "--download-reader",
+        action="store_true",
+        default=False,
+        help=(
+            f"Download the built-in reader's model files once ({READER_SIZE_LABEL}, from "
+            f"{HUGGING_FACE_HOST}) and exit."
+        ),
+    )
+    ocr_grp.add_argument(
+        "--download-page-models",
+        action="store_true",
+        default=False,
+        help=(
+            "Download the page models of the automatic image preparation once "
+            f"({PAGE_MODELS_SIZE_LABEL}, from {HUGGING_FACE_HOST}) and exit. They turn sideways "
+            "pages and flatten curved ones; without them those two steps are skipped."
         ),
     )
     ocr_grp.add_argument(
@@ -303,14 +346,12 @@ def _parse_args(
     ocr_grp.add_argument(
         "--preprocess-method",
         default=DEFAULTS["preprocess_method"],
-        choices=["adaptive_threshold", "clahe", "grayscale", "none"],
+        choices=list(PREPROCESS_METHODS),
         metavar="METHOD",
         help=(
-            "Image preprocessing method: "
-            "adaptive_threshold (grayscale → binary, robust to lighting variation), "
-            "clahe (grayscale → CLAHE contrast enhancement, recommended with Tesseract), "
-            "grayscale (grayscale only, no binarisation), or "
-            "none (pass the original image directly to the OCR engine)."
+            "Image preparation: auto (default; looks at each page and straightens, turns and "
+            "evens out photographed pages, clean scans pass unchanged) or none (the original "
+            "page, with the photo's rotation tag applied)."
         ),
     )
     ocr_grp.add_argument(
@@ -352,64 +393,6 @@ def _parse_args(
             "annotations or form fields) (default); always = whenever every page has any text; "
             "never = always OCR. Has no effect on image or TXT inputs."
         ),
-    )
-    ocr_grp.add_argument(
-        "--preprocess-dewarp",
-        action="store_true",
-        default=DEFAULTS["preprocess_dewarp"],
-        dest="preprocess_dewarp",
-        help="Correct perspective distortion before OCR (photographed pages, book scans) (default).",
-    )
-    ocr_grp.add_argument(
-        "--no-preprocess-dewarp",
-        dest="preprocess_dewarp",
-        action="store_false",
-        help="Do not correct perspective distortion.",
-    )
-    ocr_grp.add_argument(
-        "--preprocess-deskew",
-        action="store_true",
-        default=DEFAULTS["preprocess_deskew"],
-        dest="preprocess_deskew",
-        help=(
-            "Correct page tilt up to ±45° before OCR (minimum-area bounding-rectangle "
-            "detection) (default)."
-        ),
-    )
-    ocr_grp.add_argument(
-        "--no-preprocess-deskew",
-        dest="preprocess_deskew",
-        action="store_false",
-        help="Do not correct page tilt.",
-    )
-    ocr_grp.add_argument(
-        "--preprocess-border-crop",
-        action="store_true",
-        default=DEFAULTS["preprocess_border_crop"],
-        dest="preprocess_border_crop",
-        help="Crop dark scanner borders before OCR to reduce image size and processing time.",
-    )
-    ocr_grp.add_argument(
-        "--preprocess-denoise",
-        action="store_true",
-        default=DEFAULTS["preprocess_denoise"],
-        dest="preprocess_denoise",
-        help=(
-            "Non-local means noise removal before OCR (scanner grain, pencil artifacts) (default)."
-        ),
-    )
-    ocr_grp.add_argument(
-        "--no-preprocess-denoise",
-        dest="preprocess_denoise",
-        action="store_false",
-        help="Do not remove noise.",
-    )
-    ocr_grp.add_argument(
-        "--preprocess-gamma",
-        action="store_true",
-        default=DEFAULTS["preprocess_gamma"],
-        dest="preprocess_gamma",
-        help="Gamma brightening (gamma=0.5) for dark or underexposed scans.",
     )
     ocr_grp.add_argument(
         "--ollama-url",
@@ -579,6 +562,55 @@ def _print_data_flow(flow: DataFlow) -> None:
         )
 
 
+def _download_models(
+    download: Callable[[Callable[[int, int], None]], None], name: str, ready: str
+) -> int:
+    """Run *download* with a progress line on stderr; return the exit code.
+
+    *name* is what the progress line says is downloading, *ready* the sentence on success.
+    """
+
+    def progress(done: int, total: int) -> None:
+        if total:
+            print(
+                f"\rDownloading {name}: {done // 1_000_000} of {total // 1_000_000} MB",
+                end="",
+                file=sys.stderr,
+                flush=True,
+            )
+
+    try:
+        download(progress)
+    except ModelDownloadError as exc:
+        print(f"\nERROR: {exc}", file=sys.stderr)
+        return 1
+    print(f"\n{ready}", file=sys.stderr)
+    return 0
+
+
+def _download_reader(service: _CliAppService) -> int:
+    """Download the built-in reader with a progress line on stderr; return the exit code."""
+    return _download_models(
+        service.download_reader, "the built-in reader", "The built-in reader is ready."
+    )
+
+
+def _download_page_models(service: _CliAppService) -> int:
+    """Download the page models with a progress line on stderr; return the exit code."""
+    return _download_models(
+        service.download_page_models, "the page models", "The page models are ready."
+    )
+
+
+def _download_only(args: argparse.Namespace, service: _CliAppService) -> int | None:
+    """Run the download the flags ask for and return its exit code; ``None`` if none was asked."""
+    if args.download_reader:
+        return _download_reader(service)
+    if args.download_page_models:
+        return _download_page_models(service)
+    return None
+
+
 def run_cli(
     argv: Sequence[str] | None = None,
     app_service: _CliAppService | None = None,
@@ -598,15 +630,16 @@ def run_cli(
     try:
         config_path = service.resolve_config_path(pre_args.config)
         file_defaults = load_config_file(config_path) if config_path else {}
-    except ConfigFileNotFoundError as exc:
-        print(f"ERROR: {exc}", file=sys.stderr)
-        return 1
-    except ConfigFileParseError as exc:
+    except (ConfigFileNotFoundError, ConfigFileParseError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1
 
     # ── Full parse: CLI values override file defaults ───────────────────────
     args = _parse_args(providers, file_defaults, argv)
+
+    download_exit = _download_only(args, service)
+    if download_exit is not None:
+        return download_exit
 
     # Provider validation (moved out of load_config_file to keep config.py pure)
     valid_providers = frozenset(providers)
@@ -647,11 +680,6 @@ def run_cli(
             preprocess_method=args.preprocess_method,
             pdf_render_dpi=args.pdf_render_dpi,
             pdf_text_layer=args.pdf_text_layer,
-            dewarp=args.preprocess_dewarp,
-            deskew=args.preprocess_deskew,
-            border_crop=args.preprocess_border_crop,
-            denoise=args.preprocess_denoise,
-            gamma=args.preprocess_gamma,
         ),
         language=args.language,
         ollama_url=args.ollama_url,
@@ -692,7 +720,11 @@ def run_cli(
 
     if args.preview_only:
         return service.run_preview_only(config)
-    refusal = service.ocr_refusal_for_run(config) or service.output_refusal_for_run(config)
+    refusal = (
+        service.ocr_refusal_for_run(config)
+        or service.reader_refusal_for_run(config)
+        or service.output_refusal_for_run(config)
+    )
     if refusal:
         print(f"ERROR: {refusal}", file=sys.stderr)
         return 1
@@ -703,6 +735,9 @@ def run_cli(
             print("Use --ignore-memory-check to run anyway.", file=sys.stderr)
             return 1
         print(f"WARNING: {warning}", file=sys.stderr)
+    notice = service.page_models_notice_for_run(config)
+    if notice:
+        print(notice, file=sys.stderr)
     _print_data_flow(service.describe_data_flow(config))
     return service.run_selected(config, config_file=config_path).exit_code
 

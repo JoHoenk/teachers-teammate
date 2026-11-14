@@ -130,7 +130,7 @@ class AiModelsPage(SettingsPageBase):
     #: The service or model of a step changed: the speed test on *This computer* measures
     #: other models now.
     speed_choices_changed = Signal()
-    #: An add-on (PaddleOCR) was installed from this page.
+    #: The built-in reader's models were downloaded from this page.
     addon_installed = Signal(str)
 
     def __init__(self, context: SettingsContext, parent: QWidget | None = None) -> None:

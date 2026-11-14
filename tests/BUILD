@@ -98,11 +98,11 @@ _TESTS_TYPED_DEPS = [
     "@ocr_test_dependencies//pyside6:pkg",
     "@ocr_test_dependencies//pyside6_addons:pkg",
     "@ocr_test_dependencies//pyside6_essentials:pkg",
-    "@ocr_test_dependencies//pytesseract:pkg",
     "@ocr_test_dependencies//pytest:pkg",
     "@ocr_test_dependencies//pytest_mock:pkg",
     "@ocr_test_dependencies//pytest_qt:pkg",
     "@ocr_test_dependencies//python_docx:pkg",
+    "@ocr_test_dependencies//pyyaml:pkg",
     "@ocr_test_dependencies//qdarkstyle:pkg",
     "@ocr_test_dependencies//requests:pkg",
     "@ocr_test_dependencies//shiboken6:pkg",
@@ -161,9 +161,11 @@ _IMAGE_DEPS = ["@ocr_test_dependencies//pillow:pkg"]
 
 _PDF_DEPS = ["@ocr_test_dependencies//pypdfium2:pkg"]
 
+# pyyaml: the built-in reader reads its recogniser's character list with it.
 _CV_DEPS = [
     "@ocr_test_dependencies//numpy:pkg",
     "@ocr_test_dependencies//opencv_python:pkg",
+    "@ocr_test_dependencies//pyyaml:pkg",
 ]
 
 # infrastructure/ocr_formats parses OCR output with markdown-it-py (Markdown) and lxml (HTML).
@@ -172,6 +174,38 @@ _FORMAT_DEPS = [
     "@ocr_test_dependencies//lxml:pkg",
     "@ocr_test_dependencies//markdown_it_py:pkg",
 ]
+
+# The built-in reader's pinned model files (MODULE.bazel), for the tests that run the real
+# models. conftest.reader_store() links them into a ModelStore; without them those tests skip.
+_READER_MODEL_DATA = [
+    "@ppocr_small_det_onnx//file",
+    "@ppocr_small_det_yml//file",
+    "@ppocr_small_rec_onnx//file",
+    "@ppocr_small_rec_yml//file",
+]
+
+# The page models' pinned files (turn, flatten), for the tests that run the real models.
+# conftest.page_models_store() links them into a ModelStore; without them those tests skip.
+_PAGE_MODEL_DATA = [
+    "@doc_ori_onnx//file",
+    "@doc_ori_yml//file",
+    "@uvdoc_onnx//file",
+    "@uvdoc_yml//file",
+]
+
+_PAGE_MODEL_ENV = {
+    "DOC_ORI_ONNX": "$(rlocationpath @doc_ori_onnx//file)",
+    "DOC_ORI_YML": "$(rlocationpath @doc_ori_yml//file)",
+    "UVDOC_ONNX": "$(rlocationpath @uvdoc_onnx//file)",
+    "UVDOC_YML": "$(rlocationpath @uvdoc_yml//file)",
+}
+
+_READER_MODEL_ENV = {
+    "PPOCR_SMALL_DET_ONNX": "$(rlocationpath @ppocr_small_det_onnx//file)",
+    "PPOCR_SMALL_DET_YML": "$(rlocationpath @ppocr_small_det_yml//file)",
+    "PPOCR_SMALL_REC_ONNX": "$(rlocationpath @ppocr_small_rec_onnx//file)",
+    "PPOCR_SMALL_REC_YML": "$(rlocationpath @ppocr_small_rec_yml//file)",
+}
 
 # ── Individual py_test targets ────────────────────────────────────────────
 
@@ -191,7 +225,7 @@ _GUI_DEPS = [
 ]
 
 # infrastructure/pipeline.py has module-level imports of docx_builder (→ python-docx),
-# image_preprocessor (→ opencv-python), correction (→ langchain-core),
+# preprocessing (→ opencv-python), correction (→ langchain-core),
 # ocr_processor + ollama_utils (→ requests), and input_providers (→ pypdfium2).
 # Any test that imports from pipeline needs all of these.
 _PIPELINE_DEPS = (
@@ -563,19 +597,6 @@ py_test(
     srcs = _COMMON_SRCS + ["integration/test_pipeline_preview.py"],
     args = ["integration/test_pipeline_preview.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS + _PIPELINE_DEPS,
-)
-
-py_test(
-    name = "test_pipeline_tesseract_integration",
-    size = "small",
-    srcs = _COMMON_SRCS + ["integration/test_pipeline_tesseract.py"],
-    args = ["integration/test_pipeline_tesseract.py"],
-    main = "run_test.py",
-    tags = [
-        "manual",
-        "needs_tesseract",
-    ],
     deps = _COMMON_DEPS + _PIPELINE_DEPS,
 )
 
@@ -1353,6 +1374,7 @@ test_suite(
         ":test_model_eval_testset",
         ":test_model_eval_validation",
         ":test_no_plan_references",
+        ":test_no_retired_engines",
         ":test_ocr_page_tokens",
         ":test_prepare_gec_testset",
         ":test_verify_model_catalog_cli",
@@ -1861,6 +1883,121 @@ py_test(
     size = "small",
     srcs = _COMMON_SRCS + ["integration/test_pipeline_scenarios.py"],
     args = ["integration/test_pipeline_scenarios.py"],
+    data = _READER_MODEL_DATA,
+    env = _READER_MODEL_ENV,
+    main = "run_test.py",
+    deps = _COMMON_DEPS + _PIPELINE_DEPS,
+)
+
+py_test(
+    name = "test_local_models",
+    size = "small",
+    srcs = _COMMON_SRCS + ["unit/test_local_models.py"],
+    args = ["unit/test_local_models.py"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS,
+)
+
+py_test(
+    name = "test_model_store",
+    size = "small",
+    srcs = _COMMON_SRCS + ["unit/test_model_store.py"],
+    args = ["unit/test_model_store.py"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS + _REQUESTS_DEPS,
+)
+
+py_test(
+    name = "test_ppocr_detect",
+    size = "small",
+    srcs = _COMMON_SRCS + ["unit/test_ppocr_detect.py"],
+    args = ["unit/test_ppocr_detect.py"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS + _CV_DEPS,
+)
+
+py_test(
+    name = "test_ppocr_reading_order",
+    size = "small",
+    srcs = _COMMON_SRCS + ["unit/test_ppocr_reading_order.py"],
+    args = ["unit/test_ppocr_reading_order.py"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS + _CV_DEPS,
+)
+
+py_test(
+    name = "test_ppocr_recognise",
+    size = "small",
+    srcs = _COMMON_SRCS + ["unit/test_ppocr_recognise.py"],
+    args = ["unit/test_ppocr_recognise.py"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS + _CV_DEPS,
+)
+
+py_test(
+    name = "test_ppocr_engine",
+    size = "small",
+    srcs = _COMMON_SRCS + ["unit/test_ppocr_engine.py"],
+    args = ["unit/test_ppocr_engine.py"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS + _CV_DEPS + _REQUESTS_DEPS,
+)
+
+py_test(
+    name = "test_ppocr_models",
+    size = "medium",
+    srcs = _COMMON_SRCS + ["integration/test_ppocr_models.py"],
+    args = ["integration/test_ppocr_models.py"],
+    data = ["//tests/fixtures:umlaut_line.png"] + _READER_MODEL_DATA,
+    env = _READER_MODEL_ENV,
+    main = "run_test.py",
+    deps = _COMMON_DEPS + _PIPELINE_DEPS,
+)
+
+py_test(
+    name = "test_no_retired_engines",
+    size = "small",
+    srcs = _COMMON_SRCS + ["tools/test_no_retired_engines.py"],
+    args = ["tools/test_no_retired_engines.py"],
+    data = ["//teachers_teammate:all_sources"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS,
+)
+
+py_test(
+    name = "test_preprocessing_auto",
+    size = "small",
+    srcs = _COMMON_SRCS + [
+        "unit/preprocessing_auto_golden_data.py",
+        "unit/test_preprocessing_auto.py",
+    ],
+    args = ["unit/test_preprocessing_auto.py"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS + _PIPELINE_DEPS,
+)
+
+py_test(
+    name = "test_preprocessing_auto_golden",
+    size = "small",
+    srcs = _COMMON_SRCS + [
+        "unit/preprocessing_auto_golden_data.py",
+        "unit/test_preprocessing_auto_golden.py",
+    ],
+    args = ["unit/test_preprocessing_auto_golden.py"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS + _PIPELINE_DEPS,
+)
+
+py_test(
+    name = "test_page_models",
+    size = "medium",
+    srcs = _COMMON_SRCS + [
+        "integration/test_page_models.py",
+        "unit/preprocessing_auto_golden_data.py",
+    ],
+    args = ["integration/test_page_models.py"],
+    data = _PAGE_MODEL_DATA,
+    env = _PAGE_MODEL_ENV,
     main = "run_test.py",
     deps = _COMMON_DEPS + _PIPELINE_DEPS,
 )
@@ -1906,9 +2043,11 @@ test_suite(
         ":test_interfaces",
         ":test_language",
         ":test_llm_factory",
+        ":test_local_models",
         ":test_markdown_shield",
         ":test_model_catalog",
         ":test_model_listing",
+        ":test_model_store",
         ":test_ocr_formats",
         ":test_ocr_processor",
         ":test_ocr_stage_service",
@@ -1920,7 +2059,13 @@ test_suite(
         ":test_performance_probe",
         ":test_pipeline_txt_integration",
         ":test_power",
+        ":test_ppocr_detect",
+        ":test_ppocr_engine",
+        ":test_ppocr_reading_order",
+        ":test_ppocr_recognise",
         ":test_preprocess_service",
+        ":test_preprocessing_auto",
+        ":test_preprocessing_auto_golden",
         ":test_preprocessor",
         ":test_preview_image_store",
         ":test_providers",
@@ -1992,11 +2137,12 @@ test_suite(
 test_suite(
     name = "integration_tests",
     tests = [
+        ":test_page_models",
         ":test_pipeline_preview_integration",
         ":test_pipeline_run_integration",
         ":test_pipeline_scenarios_integration",
-        ":test_pipeline_tesseract_integration",
         ":test_pipeline_txt_integration",
+        ":test_ppocr_models",
     ],
 )
 

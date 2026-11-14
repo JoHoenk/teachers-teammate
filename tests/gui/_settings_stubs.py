@@ -44,14 +44,7 @@ class DummyAppService(RecommendationServiceStub):
         return context_choice_from(settings, card_gb)
 
     def list_ocr_engines(self) -> list[str]:
-        return ["ollama", "tesseract", "paddleocr"]
-
-    def default_preprocess_for_engine(self, engine: str) -> str:
-        return {
-            "ollama": "grayscale",
-            "tesseract": "clahe",
-            "paddleocr": "grayscale",
-        }.get(engine, "")
+        return ["ollama", "ppocr"]
 
     def get_provider_info(self, provider: str) -> dict:
         if provider == "openai":

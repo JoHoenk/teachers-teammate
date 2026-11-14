@@ -269,7 +269,7 @@ def test_the_fit_wording_is_empty_without_a_rating() -> None:
     When   the fit wording is asked for
     Then   there is none, so the page says nothing about a fit
     """
-    assert _fit_words(PlannedStep(stage="ocr", provider="tesseract", model="")) == ""
+    assert _fit_words(PlannedStep(stage="ocr", provider="ppocr", model="")) == ""
 
 
 def test_the_proofreading_page_offers_not_now_only_with_handwriting(qtbot) -> None:
@@ -651,21 +651,44 @@ def test_the_summary_says_when_the_review_uses_the_proofreading_model() -> None:
 
 def test_the_summary_says_when_a_step_keeps_what_it_had() -> None:
     """
-    Given  a plan whose reading keeps another method and whose review keeps its own model
+    Given  a plan whose reading keeps the built-in reader and whose review keeps its own model
     When   the summary's lines are worked out
-    Then   both rows say what is kept, so nothing looks as if it were being replaced
+    Then   both rows say what is kept (the reader by its name), so nothing looks replaced
     """
     plan = _plan(
-        _step("ocr", provider="tesseract", model="", kept=True),
+        _step("ocr", provider="ppocr", model="", kept=True),
         _step("evaluation", kept=True),
     )
     rows = _rows(plan)
     assert rows[1] == SummaryRow(
-        name=STEP_NAMES["ocr"], detail=ROW_KEPT.format(engine="tesseract"), note=ROW_INSTALLED
+        name=STEP_NAMES["ocr"], detail=ROW_KEPT.format(engine="Built-in reader"), note=ROW_INSTALLED
     )
     assert rows[2] == SummaryRow(
         name=STEP_NAMES["evaluation"], detail=ROW_KEEPS_OWN, note=ROW_INSTALLED
     )
+
+
+def test_the_summary_lists_the_reader_download_in_megabytes() -> None:
+    """
+    Given  a plan that keeps the built-in reader and downloads its model files
+    When   the summary's lines are worked out
+    Then   the reading row names the reader, lists one download of "31 MB" and has no "installed"
+    """
+    from teachers_teammate.gui.setup._summary import size_text  # noqa: PLC0415
+
+    reader = PlannedDownload(
+        kind=DownloadKind.READER_MODEL, name="ppocr", stage="ocr", size_gb=0.031
+    )
+    plan = _plan(
+        _step("ocr", provider="ppocr", model="PP-OCRv6 small", kept=True), downloads=(reader,)
+    )
+
+    row = _rows(plan)[1]
+
+    assert row.detail == ROW_KEPT.format(engine="Built-in reader")
+    assert row.downloads == (reader,)
+    assert row.note == ""
+    assert size_text(reader) == "31 MB"
 
 
 def test_the_summary_says_when_a_step_is_off() -> None:
@@ -1105,3 +1128,25 @@ def test_the_done_page_stops_the_speed_test_when_the_window_closes(qtbot, monkey
     done.shutdown()
 
     assert done._speed.stopped == 1
+
+
+def test_the_done_page_follows_the_reader_download_in_megabytes(qtbot) -> None:
+    """
+    Given  a download list with the built-in reader
+    When   the round starts it, reports how far it is, and finishes it
+    Then   the reader's line says running, then megabytes (not "0.0 of 0.0 GB"), then done
+    """
+    from teachers_teammate.gui.setup._pages import DONE_PROGRESS_MB, _DownloadRows  # noqa: PLC0415
+
+    rows = _DownloadRows()
+    qtbot.addWidget(rows)
+    reader = PlannedDownload(kind=DownloadKind.READER_MODEL, name="ppocr", stage="ocr")
+    rows.set_downloads([reader])
+
+    rows.started("reader:ppocr")
+    assert rows._state["ppocr"] == DONE_RUNNING
+    rows.pull_progress("Built-in reader", 12_000_000.0, 31_000_000.0)
+    assert rows._labels["ppocr"].text() == DONE_PROGRESS_MB.format(done=12, total=31)
+    rows.done("reader:ppocr")
+
+    assert rows._labels["ppocr"].text() == DONE_DONE

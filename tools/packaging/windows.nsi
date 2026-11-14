@@ -39,7 +39,9 @@ OutFile "..\..\dist\teachers-teammate-${APP_VERSION}-w64-setup.exe"
 ; Default install directory: a sentinel. NSIS puts /D=<folder> into $INSTDIR before .onInit and
 ; removes it from the command line, so the only way to know whether the caller gave a folder
 ; is that $INSTDIR is no longer the sentinel. .onInit sets the real default for the scope.
-!define DEFAULT_DIR_SENTINEL "C:\__TeachersTeammate_default_folder__"
+; It ends in \TeachersTeammate on purpose: Browse on the folder page appends the last part of
+; this compile-time path to the folder the teacher picks.
+!define DEFAULT_DIR_SENTINEL "C:\__tt_default_folder__\TeachersTeammate"
 InstallDir "${DEFAULT_DIR_SENTINEL}"
 
 ; Start without elevation. UAC is only triggered when the user explicitly
@@ -356,7 +358,7 @@ Function .onInit
       StrCpy $INSTDIR $FoundAll
       StrCpy $PreviousVersion $VerAll
     ${Else}
-      ; Both scopes: ask which copy to update.
+      ; Both scopes. A silent run names the copy with /SCOPE=; an interactive one stops.
       ${If} ${Silent}
         ${If} $CmdScope == "all"
           StrCpy $Mode "update"
@@ -375,43 +377,11 @@ Function .onInit
           Quit
         ${EndIf}
       ${Else}
-        MessageBox MB_YESNOCANCEL|MB_ICONQUESTION \
-          "Teacher's Teammate is installed twice on this computer: for all users in$\r$\n$FoundAll$\r$\nand for you in$\r$\n$FoundUser.$\r$\n$\r$\nYes: update the all-users copy and remove your own.$\r$\nNo: update only your own copy.$\r$\nCancel: quit." \
-          /SD IDYES IDYES both_all IDNO both_user
+        ; Two copies only exist from before this installer looked in both places. Do not
+        ; guess which one to keep: name both and let the teacher remove one.
+        MessageBox MB_OK|MB_ICONEXCLAMATION \
+          "Teacher's Teammate is installed twice on this computer: for all users in$\r$\n$FoundAll$\r$\nand for you in$\r$\n$FoundUser.$\r$\n$\r$\nRemove one of them in Windows Settings > Apps, then run this setup again."
         Quit
-        both_all:
-          ; Remove my own copy now, while this is still my account: after an elevation with
-          ; another account, HKCU and the shortcut folders would belong to that account.
-          StrCpy $CheckDir $FoundUser
-          Call CheckAppClosed
-          !insertmacro RemoveProgramFiles "$FoundUser"
-          SetShellVarContext current
-          Delete "$SMPROGRAMS\${APP_NAME}\Teacher's Teammate.lnk"
-          Delete "$SMPROGRAMS\${APP_NAME}\Uninstall.lnk"
-          RMDir  "$SMPROGRAMS\${APP_NAME}"
-          Delete "$DESKTOP\Teacher's Teammate.lnk"
-          !insertmacro RemoveInstallValues HKCU
-          ${If} $IsAdmin == "0"
-            StrCpy $R1 "/SCOPE=all /ELEVATED"
-            !insertmacro RelaunchElevated "$R1"
-            ${If} $0 <= 32
-              MessageBox MB_OK|MB_ICONSTOP "Teacher's Teammate needs administrator rights to update the all-users copy. Your own copy was removed; nothing else was changed."
-            ${EndIf}
-            Quit
-          ${EndIf}
-          StrCpy $Mode "update"
-          StrCpy $InstallScope "all"
-          SetShellVarContext all
-          StrCpy $INSTDIR $FoundAll
-          StrCpy $PreviousVersion $VerAll
-          Goto both_done
-        both_user:
-          StrCpy $Mode "update"
-          StrCpy $InstallScope "user"
-          SetShellVarContext current
-          StrCpy $INSTDIR $FoundUser
-          StrCpy $PreviousVersion $VerUser
-        both_done:
       ${EndIf}
     ${EndIf}
   ${EndIf}

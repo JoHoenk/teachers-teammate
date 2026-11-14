@@ -277,7 +277,10 @@ Settings, downloaded models and add-ons are kept per Windows account, in
 
 An update never runs the old uninstaller: it removes the old program files itself and leaves
 every registry value and every piece of user data alone. A folder that already holds other
-files is refused rather than emptied.
+files is refused rather than emptied. When a computer has a copy in both scopes (possible only
+from before the installer looked in both places), the interactive setup names both and asks
+for one to be removed in Windows Settings; a silent run needs `/SCOPE=` to pick the copy
+(exit code 13 without it).
 
 | Exit code | Meaning |
 |-----------|---------|
@@ -286,7 +289,7 @@ files is refused rather than emptied.
 | 10 | Teacher's Teammate is still open |
 | 11 | an older version was refused |
 | 12 | the folder holds other files (silent runs; the folder page says so otherwise) |
-| 13 | would create a second copy in the other scope |
+| 13 | would create a second copy in the other scope, or two copies exist and `/SCOPE=` is missing |
 | 14 | needs administrator rights |
 
 A silent uninstall keeps all user data unless `/DELDATA` (add-ons and models) or

@@ -26,7 +26,7 @@ from PySide6.QtWidgets import (
 )
 
 from ...domain.ollama_discovery import DiscoveredServer, DiscoveryScope, ServerKind
-from .._model_fetch import _retire_thread
+from .._model_fetch import _retire_thread, _start_thread
 
 TITLE = "Find the AI server"
 INTRO = (
@@ -204,7 +204,7 @@ class ServerSearchDialog(QDialog):
         thread.progress.connect(self._on_progress)
         thread.search_done.connect(self._on_done)
         self._thread = thread
-        thread.start()
+        _start_thread(thread)
 
     def _on_network_clicked(self) -> None:
         answer = QMessageBox.question(

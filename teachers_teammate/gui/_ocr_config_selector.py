@@ -58,6 +58,7 @@ from ._model_fetch import (
     _retire_thread,
     _set_combo,
     _SettingsAppService,
+    _start_thread,
     _status_busy,
     _status_ok,
 )
@@ -320,7 +321,7 @@ class OcrModelPicker(QWidget):
             self._fetch_thread = _ModelFetchThread(fetch)
             self._fetch_thread.models_ready.connect(self._on_models_fetched)
             self._fetch_thread.progress.connect(self._on_fetch_progress)
-            self._fetch_thread.start()
+            _start_thread(self._fetch_thread)
         else:
             self._set_busy(False)
             self._status_lbl.setText("")

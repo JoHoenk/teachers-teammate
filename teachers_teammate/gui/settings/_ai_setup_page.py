@@ -29,7 +29,7 @@ from PySide6.QtWidgets import (
 from ...config import DEFAULTS
 from .. import _user_text as txt
 from .._hardware_profile_selector import HardwareProfileSelector
-from .._model_fetch import _GpuDetectThread, _retire_thread
+from .._model_fetch import _GpuDetectThread, _retire_thread, _start_thread
 from .._ollama_status_line import OllamaStatusLine
 from ._page import (
     FOCUS_FIND_SERVER,
@@ -317,7 +317,7 @@ class AiSetupPage(SettingsPageBase):
         self._gpu_detect_thread = _GpuDetectThread(self._app_service)
         self._gpu_detect_thread.detect_done.connect(self._on_gpu_detected)
         self._gpu_detect_thread.finished.connect(lambda: self._gpu_detect_btn.setEnabled(True))
-        self._gpu_detect_thread.start()
+        _start_thread(self._gpu_detect_thread)
 
     def _on_gpu_detected(self, gpus: list) -> None:
         self._detected_gpus = gpus

@@ -2390,6 +2390,39 @@ def test_closing_parks_a_running_fetch_thread_without_waiting(qtbot) -> None:
 
 
 @pytest.mark.use_case("Model_Category_Guidance")
+def test_a_running_fetch_thread_survives_a_section_that_is_never_shut_down(qtbot) -> None:
+    """
+    Given  a proofreading section whose model list is still being fetched
+    When   the section is dropped without calling shutdown()
+    Then   the thread is already parked, so collecting the section cannot destroy it while it
+           runs (Qt would abort the whole process) and it leaves the registry once finished
+    """
+    release = threading.Event()
+
+    class _SlowService(DummyAppService):
+        def list_provider_models(self, provider: str, *, base_url: str = "") -> list[str]:
+            _ = base_url
+            release.wait(10)
+            return [f"{provider}-model"]
+
+    section = _proofreading(
+        qtbot,
+        _SlowService(),
+        {"correction_provider": "ollama", "ollama_url": DEFAULTS["ollama_url"]},
+        hardware_profile="8gb",
+    )
+    thread = section._fetch_thread
+    assert thread is not None and thread.isRunning()
+
+    assert thread in _model_fetch._RETIRED_THREADS
+
+    release.set()
+    qtbot.waitUntil(thread.isFinished, timeout=5000)
+    _model_fetch._purge_retired_threads()
+    assert thread not in _model_fetch._RETIRED_THREADS
+
+
+@pytest.mark.use_case("Model_Category_Guidance")
 def test_typed_model_without_tag_counts_as_installed_latest(qtbot) -> None:
     """
     Given  a proofreading section whose server lists "mistral:latest"

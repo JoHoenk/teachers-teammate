@@ -19,6 +19,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
+import threading
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -33,7 +34,12 @@ from ..domain.context_budget import (
     stage_windows,
 )
 from ..domain.correction_policy import cut_off_tries
-from ..domain.data_location import DataLocation, llm_stage_location, online_ocr_reason
+from ..domain.data_location import (
+    ENGINE_PPOCR,
+    DataLocation,
+    llm_stage_location,
+    online_ocr_reason,
+)
 from ..domain.model_catalog import HardwareDetection, RequestProfile
 from ..exceptions import OnlineOcrNotAllowedError, ProviderNotAvailableError
 from ..interfaces import (
@@ -57,14 +63,13 @@ from .correction import (
 )
 from .docx_builder import DocxDocumentCreator
 from .evaluation import LangChainEvaluator, NativeOllamaEvaluator
-from .image_preprocessor import HandwritingPreprocessor
 from .llm_factory import build_llm, get_provider_info
-from .ocr_processor import (
-    OllamaOCRProcessor,
-    PaddleOCRProcessor,
-    TesseractOCRProcessor,
-)
+from .ocr_processor import OllamaOCRProcessor
 from .ollama_utils import OllamaClient, is_local_ollama_url, ollama_host
+from .onnx.store import ModelStore
+from .ppocr.engine import PpOcrProcessor
+from .preprocessing.recipes import steps_for
+from .preprocessing.steps import StepPipeline
 from .reporting import Reporter, StdoutReporter
 from .spacy_models import installed_spacy_models
 from .system_locale import system_language
@@ -74,27 +79,20 @@ from .workflow.preprocess_service import PreprocessService
 
 
 def default_build_preprocessor(
-    tmp_dir: Path, save_steps: bool, ocr: OcrConfig
+    tmp_dir: Path, save_steps: bool, ocr: OcrConfig, store: ModelStore | None = None
 ) -> ImagePreprocessor:
-    """Build the preprocessor for *ocr*'s settings; shared by real runs and the GUI preview."""
-    return HandwritingPreprocessor(
-        tmp_dir=tmp_dir,
-        save_steps=save_steps,
-        method=ocr.preprocess_method,
-        dewarp=ocr.dewarp,
-        deskew=ocr.deskew,
-        border_crop=ocr.border_crop,
-        denoise=ocr.denoise,
-        gamma=ocr.gamma,
+    """Build the preprocessor for *ocr*'s settings; shared by real runs and the GUI preview.
+
+    *store* is where the page models of the automatic preparation are (``None`` = the default
+    folder).
+    """
+    return StepPipeline(
+        steps_for(ocr, store or ModelStore()), tmp_dir=tmp_dir, save_steps=save_steps
     )
 
 
-def _default_build_tesseract_ocr() -> OCRProcessor:
-    return TesseractOCRProcessor()
-
-
-def _default_build_paddle_ocr(language: str) -> OCRProcessor:
-    return PaddleOCRProcessor(language=language)
+def _default_build_ppocr_ocr(store: ModelStore, stop_event: threading.Event | None) -> OCRProcessor:
+    return PpOcrProcessor(store, stop_event=stop_event)
 
 
 def _default_build_ollama_ocr(
@@ -243,11 +241,12 @@ class PipelineComponentFactory:
     implementations without subclassing.
     """
 
-    build_preprocessor: Callable[[Path, bool, OcrConfig], ImagePreprocessor] = (
+    build_preprocessor: Callable[[Path, bool, OcrConfig, ModelStore | None], ImagePreprocessor] = (
         default_build_preprocessor
     )
-    build_tesseract_ocr: Callable[[], OCRProcessor] = _default_build_tesseract_ocr
-    build_paddle_ocr: Callable[[str], OCRProcessor] = _default_build_paddle_ocr
+    build_ppocr_ocr: Callable[[ModelStore, threading.Event | None], OCRProcessor] = (
+        _default_build_ppocr_ocr
+    )
     build_ollama_ocr: Callable[[str, OllamaClient, int, float], OCRProcessor] = (
         _default_build_ollama_ocr
     )
@@ -285,6 +284,10 @@ class StageBuilder:
     #: needed to size the context window of the local models; ``None`` means "not known" and
     #: keeps the base window.
     hardware: HardwareDetection | None = None
+    #: Where the built-in reader's model files are looked for.  The application layer passes
+    #: the store its readiness check uses, so a run reads the folder that was checked;
+    #: ``None`` means the default folder.
+    model_store: ModelStore | None = None
 
     def _build_ollama_client(self) -> OllamaClient:
         """Create the shared OllamaClient for all Ollama-backed stages."""
@@ -295,7 +298,9 @@ class StageBuilder:
         return resolve_run_windows(self.config, self.hardware)
 
     def build_preprocessor(self, output_dir: Path) -> ImagePreprocessor:
-        return self.factory.build_preprocessor(output_dir, self.config.debug, self.config.ocr)
+        return self.factory.build_preprocessor(
+            output_dir, self.config.debug, self.config.ocr, self.model_store
+        )
 
     def build_preprocessor_service(self, output_dir: Path) -> PreprocessService:
         """Build the input-loading/preprocessing service."""
@@ -310,7 +315,11 @@ class StageBuilder:
             ),
         )
 
-    def build_ocr(self, ollama_client: OllamaClient | None = None) -> OCRProcessor:
+    def build_ocr(
+        self,
+        ollama_client: OllamaClient | None = None,
+        stop_event: threading.Event | None = None,
+    ) -> OCRProcessor:
         """Build the OCR processor; refuse settings that would read pages online.
 
         Raises:
@@ -324,10 +333,8 @@ class StageBuilder:
         # With recognition off no page is read, so a model that would read pages online is moot.
         if reason and cfg.recognition_enabled:
             raise OnlineOcrNotAllowedError(reason)
-        if ocr.engine == "tesseract":
-            return factory.build_tesseract_ocr()
-        if ocr.engine == "paddleocr":
-            return factory.build_paddle_ocr(cfg.language)
+        if ocr.engine == ENGINE_PPOCR:
+            return factory.build_ppocr_ocr(self.model_store or ModelStore(), stop_event)
         client = ollama_client or self._build_ollama_client()
         return factory.build_ollama_ocr(ocr.model, client, cfg.ocr_timeout, ocr.temperature)
 

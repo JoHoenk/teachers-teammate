@@ -45,6 +45,8 @@ from ..config import (
     migrate_answer_formats,
     normalize_ocr_engine,
     normalize_ocr_model,
+    normalize_preprocess_method,
+    replaced_ocr_engine,
 )
 from ..domain.correction_policy import LEVELS, normalize_level, normalize_output_mode
 from ..domain.data_location import (
@@ -168,6 +170,8 @@ class ConfigPanel(QScrollArea):
     """Left-hand panel: main pipeline configuration as a numbered workflow."""
 
     paths_changed = Signal()
+    #: A settings dict named a text-recognition engine that is gone; carries a ReplacedEngine.
+    ocr_engine_replaced = Signal(object)
     anonymizer_configure_requested = Signal(str, object)  # language, AnonymizerConfig
     #: Open a Settings page: the page, the focus value on it, entries to preselect.  Sent by the
     #: "change…" links under the steps and by the requirement guard.
@@ -209,11 +213,6 @@ class ConfigPanel(QScrollArea):
             "ocr_timeout": DEFAULTS["ocr_timeout"],
             "recognition_enabled": DEFAULTS["recognition_enabled"],
             "preprocess_method": DEFAULTS["preprocess_method"],
-            "preprocess_dewarp": DEFAULTS["preprocess_dewarp"],
-            "preprocess_deskew": DEFAULTS["preprocess_deskew"],
-            "preprocess_border_crop": DEFAULTS["preprocess_border_crop"],
-            "preprocess_denoise": DEFAULTS["preprocess_denoise"],
-            "preprocess_gamma": DEFAULTS["preprocess_gamma"],
             "pdf_render_dpi": DEFAULTS["pdf_render_dpi"],
             "pdf_text_layer": DEFAULTS["pdf_text_layer"],
             "correction_provider": DEFAULTS["correction_provider"],
@@ -834,7 +833,7 @@ class ConfigPanel(QScrollArea):
         use.  The model is not part of the data flow, so it comes from *config*.
         """
         ocr = steps.stage(STAGE_OCR)
-        # Only Ollama has a model; Tesseract and PaddleOCR are named by the engine itself.
+        # Only Ollama has a model; the built-in reader is named by the engine itself.
         ocr_model = config.ocr.model if config.ocr.engine == "ollama" else ""
         self._ocr_uses.set_line(
             uses_line(ocr, ocr_model, enabled=config.recognition_enabled) if ocr else "",
@@ -1234,15 +1233,19 @@ class ConfigPanel(QScrollArea):
             self._language.currentTextChanged.connect(self._on_language_changed)
         self._on_language_changed(self._language.currentText())
 
-    @staticmethod
-    def _with_local_ocr_engine(values: dict) -> dict:
+    def _with_local_ocr_engine(self, values: dict) -> dict:
         """Return *values* with an unavailable OCR engine (and its model) replaced.
 
         A settings file from an older version may name an online engine: fall back to the
-        default engine and reset the model that went with it.
+        default engine and reset the model that went with it.  A removed local engine
+        (Tesseract, PaddleOCR) becomes the built-in reader.  Either replacement is reported
+        through :attr:`ocr_engine_replaced`, so it never happens silently.
         """
         if "ocr_engine" not in values:
             return values
+        replaced = replaced_ocr_engine(values["ocr_engine"])
+        if replaced is not None:
+            self.ocr_engine_replaced.emit(replaced)
         fixed = {**values, "ocr_engine": normalize_ocr_engine(values["ocr_engine"])}
         if "ocr_model" in values:
             fixed["ocr_model"] = normalize_ocr_model(values["ocr_engine"], values["ocr_model"])
@@ -1258,7 +1261,6 @@ class ConfigPanel(QScrollArea):
             "ocr_model",
             "ollama_url",
             "hardware_profile",
-            "preprocess_method",
             "correction_provider",
             "correction_model",
             "explanation_language",
@@ -1287,6 +1289,12 @@ class ConfigPanel(QScrollArea):
                 str(values["correction_output"])
             )
 
+        if "preprocess_method" in values:
+            # Methods of earlier versions (grayscale, clahe, …) read as the automatic one.
+            self._settings_dict["preprocess_method"] = normalize_preprocess_method(
+                values["preprocess_method"]
+            )
+
         if "pdf_text_layer" in values:
             self._settings_dict["pdf_text_layer"] = normalize_pdf_text_layer(
                 str(values["pdf_text_layer"])
@@ -1297,11 +1305,6 @@ class ConfigPanel(QScrollArea):
                 self._settings_dict[key] = int(values[key])
 
         for key in (
-            "preprocess_dewarp",
-            "preprocess_deskew",
-            "preprocess_border_crop",
-            "preprocess_denoise",
-            "preprocess_gamma",
             "debug",
             "keep_awake",
             "docx_enabled",

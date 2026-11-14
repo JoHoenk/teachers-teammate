@@ -3010,7 +3010,7 @@ class _MemorySettings:
 def _online_proofreading_config(tmp_path: Path):
     return make_config(
         tmp_path,
-        ocr_engine="tesseract",
+        ocr_engine="ppocr",
         correction_enabled=True,
         correction_provider="openai",
     )
@@ -3339,6 +3339,41 @@ def test_online_ocr_engine_in_saved_settings_is_announced(
 
 
 @pytest.mark.gui
+@pytest.mark.parametrize(("old", "name"), [("tesseract", "Tesseract"), ("paddleocr", "PaddleOCR")])
+def test_a_removed_local_engine_in_saved_settings_is_announced(
+    qtbot, monkeypatch, tmp_path: Path, old: str, name: str
+) -> None:
+    """
+    Given  a settings file from an older version that names Tesseract or PaddleOCR
+    When   the window loads it
+    Then   the teacher is told, once, that the built-in reader replaced it and where to
+           download it (31 MB), and the panel uses the reader
+    """
+    config_path = tmp_path / "ocr.toml"
+    config_path.write_text(f'ocr_engine = "{old}"\n', encoding="utf-8")
+    shown: list[tuple[str, str]] = []
+    monkeypatch.setattr(MainWindow, "_start_readiness_check", lambda self, **_kw: None)
+    monkeypatch.setattr(
+        ProcessingApplicationService, "resolve_config_path", lambda self, _: config_path
+    )
+    monkeypatch.setattr(
+        main_window_module.QMessageBox,
+        "information",
+        lambda _parent, title, text: shown.append((title, text)),
+    )
+
+    win = MainWindow()
+    qtbot.addWidget(win)
+
+    assert [title for title, _ in shown] == ["Text recognition changed"]
+    text = shown[0][1]
+    assert f"used {name} for text recognition" in text
+    assert "built-in reader" in text and "31 MB" in text
+    assert "Settings → Add-ons → Reading models" in text
+    assert win._config_panel._settings_dict["ocr_engine"] == "ppocr"
+
+
+@pytest.mark.gui
 def test_local_ocr_engine_in_saved_settings_is_not_announced(
     qtbot, monkeypatch, tmp_path: Path
 ) -> None:
@@ -3348,7 +3383,7 @@ def test_local_ocr_engine_in_saved_settings_is_not_announced(
     Then   no notice is shown
     """
     config_path = tmp_path / "ocr.toml"
-    config_path.write_text('ocr_engine = "tesseract"\n', encoding="utf-8")
+    config_path.write_text('ocr_engine = "ppocr"\n', encoding="utf-8")
     shown: list[str] = []
     monkeypatch.setattr(MainWindow, "_start_readiness_check", lambda self, **_kw: None)
     monkeypatch.setattr(

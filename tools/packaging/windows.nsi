@@ -277,7 +277,7 @@ Function un.UnDataPageCreate
     "Choose which user data to remove:"
 
   ${NSD_CreateCheckBox} 10u 28u 270u 14u \
-    "Delete downloaded packages (spaCy, PaddleOCR, language models)"
+    "Delete downloaded packages (spaCy, language models, the built-in reader)"
   Pop $UnDelPackages
   ${NSD_Check} $UnDelPackages
 
@@ -335,6 +335,8 @@ Section "Uninstall"
   ; Delete addon packages if the user selected the checkbox.
   ${If} $DoDelPackages == ${BST_CHECKED}
     RMDir /r "$LOCALAPPDATA\teachers_teammate\packages"
+    ; The built-in reader's model files (domain/local_models.py) live next to the packages.
+    RMDir /r "$LOCALAPPDATA\teachers_teammate\models"
   ${EndIf}
 
   ; Delete remaining application cache and settings if the user selected the checkbox.

@@ -10,13 +10,20 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from teachers_teammate.config import DEFAULTS, OcrConfig
+from teachers_teammate.infrastructure.input_provider_factory import (
+    InputOptions,
+    input_settings_fingerprint,
+)
+from teachers_teammate.infrastructure.onnx.store import ModelStore
+from teachers_teammate.infrastructure.preprocessing.identity import AUTO_VERSION
 from teachers_teammate.infrastructure.state_repository import DocumentState, OcrResultRecord
 from teachers_teammate.infrastructure.workflow.cache_service import (
     CacheContext,
     CacheReconciliationService,
     _preprocess_fingerprint,
+    compute_ocr_config_hash,
 )
-from tests.conftest import make_config
+from tests.conftest import fake_page_models_store, make_config
 
 _PDF = Path("worksheet.pdf")
 
@@ -149,8 +156,8 @@ def test_ocr_config_hash_changes_with_pdf_text_layer(tmp_path: Path) -> None:
     When   _ocr_config_hash is called with the same prompt
     Then   the hashes differ so switching mode re-runs cached PDFs
     """
-    svc_auto, _, _ = _make_svc(tmp_path, ocr=OcrConfig(engine="tesseract", pdf_text_layer="auto"))
-    svc_never, _, _ = _make_svc(tmp_path, ocr=OcrConfig(engine="tesseract", pdf_text_layer="never"))
+    svc_auto, _, _ = _make_svc(tmp_path, ocr=OcrConfig(engine="ppocr", pdf_text_layer="auto"))
+    svc_never, _, _ = _make_svc(tmp_path, ocr=OcrConfig(engine="ppocr", pdf_text_layer="never"))
     assert svc_auto._ocr_config_hash("p", _PDF) != svc_never._ocr_config_hash("p", _PDF)
 
 
@@ -160,7 +167,7 @@ def test_ocr_config_hash_changes_with_engine(tmp_path: Path) -> None:
     When   _ocr_config_hash is called with the same prompt
     Then   the two hashes are different
     """
-    svc_a, _, _ = _make_svc(tmp_path, ocr_engine="tesseract")
+    svc_a, _, _ = _make_svc(tmp_path, ocr_engine="ppocr")
     svc_b, _, _ = _make_svc(tmp_path, ocr_engine="ollama")
     assert svc_a._ocr_config_hash("p", _PDF) != svc_b._ocr_config_hash("p", _PDF)
 
@@ -173,10 +180,10 @@ def test_correction_config_hash_independent_of_ocr_engine(tmp_path: Path) -> Non
     Then   the two hashes are equal (OCR engine does not affect correction hash)
     """
     svc_a, _, _ = _make_svc(
-        tmp_path, ocr_engine="tesseract", correction_enabled=True, correction_provider="openai"
+        tmp_path, ocr_engine="ppocr", correction_enabled=True, correction_provider="openai"
     )
     svc_b, _, _ = _make_svc(
-        tmp_path, ocr_engine="paddleocr", correction_enabled=True, correction_provider="openai"
+        tmp_path, ocr_engine="ollama", correction_enabled=True, correction_provider="openai"
     )
     assert svc_a._correction_config_hash() == svc_b._correction_config_hash()
 
@@ -276,8 +283,8 @@ def test_ocr_config_hash_independent_of_correction_provider(tmp_path: Path) -> N
     When   _ocr_config_hash() is called on each with the same prompt
     Then   the two hashes are equal (correction provider does not affect OCR hash)
     """
-    svc_a, _, _ = _make_svc(tmp_path, ocr_engine="tesseract", correction_provider="openai")
-    svc_b, _, _ = _make_svc(tmp_path, ocr_engine="tesseract", correction_provider="anthropic")
+    svc_a, _, _ = _make_svc(tmp_path, ocr_engine="ppocr", correction_provider="openai")
+    svc_b, _, _ = _make_svc(tmp_path, ocr_engine="ppocr", correction_provider="anthropic")
     assert svc_a._ocr_config_hash("Transcribe.", _PDF) == svc_b._ocr_config_hash(
         "Transcribe.", _PDF
     )
@@ -286,13 +293,13 @@ def test_ocr_config_hash_independent_of_correction_provider(tmp_path: Path) -> N
 @pytest.mark.use_case("Multi_Provider_Stage_Configuration")
 def test_three_stage_hashes_are_all_different_when_providers_differ(tmp_path: Path) -> None:
     """
-    Given  ocr_engine='tesseract', correction_provider='openai', evaluate_provider='anthropic'
+    Given  ocr_engine='ppocr', correction_provider='openai', evaluate_provider='anthropic'
     When   each stage hash method is called
     Then   all three hashes are non-empty and mutually distinct
     """
     svc, _, _ = _make_svc(
         tmp_path,
-        ocr_engine="tesseract",
+        ocr_engine="ppocr",
         correction_enabled=True,
         correction_provider="openai",
         evaluation_enabled=True,
@@ -309,14 +316,56 @@ def test_three_stage_hashes_are_all_different_when_providers_differ(tmp_path: Pa
     assert ocr_h != eval_h
 
 
+def test_the_ollama_ocr_key_does_not_depend_on_the_reader_models(tmp_path: Path) -> None:
+    """
+    Given  a fixed Ollama configuration
+    When   its OCR config hash is computed with another reader fingerprint
+    Then   the key is the same (only the built-in reader's key follows its models)
+    """
+    cfg = make_config(
+        tmp_path,
+        language="German",
+        ocr=OcrConfig(
+            engine="ollama", model="qwen3-vl:8b", preprocess_method="none", temperature=0.0
+        ),
+    )
+
+    key = compute_ocr_config_hash(cfg, "PROMPT", Path("page.png"))
+    with patch(
+        "teachers_teammate.infrastructure.workflow.cache_service.reader_fingerprint",
+        return_value="PP-OCRv6_small@new+new/v2",
+    ):
+        assert compute_ocr_config_hash(cfg, "PROMPT", Path("page.png")) == key
+
+
+def test_the_reader_key_ignores_language_and_ollama_model_but_not_the_models(
+    tmp_path: Path,
+) -> None:
+    """
+    Given  configurations of the built-in reader differing in language, Ollama model and prompt
+    When   the OCR config hashes are computed
+    Then   they are equal, and another reader fingerprint gives another key
+    """
+    base = make_config(tmp_path, language="German", ocr_engine="ppocr", ocr_model="a:1")
+    other = make_config(tmp_path, language="French", ocr_engine="ppocr", ocr_model="b:2")
+
+    key = compute_ocr_config_hash(base, "one prompt", Path("page.png"))
+    assert key == compute_ocr_config_hash(other, "another prompt", Path("page.png"))
+    with patch(
+        "teachers_teammate.infrastructure.workflow.cache_service.reader_fingerprint",
+        return_value="PP-OCRv6_small@new+new/v2",
+    ):
+        assert compute_ocr_config_hash(base, "one prompt", Path("page.png")) != key
+
+
 def test_ocr_config_hash_changes_with_temperature(tmp_path: Path) -> None:
     """
     Given  two services differing only in ocr_temperature
     When   _ocr_config_hash() is called with the same prompt
     Then   the two hashes differ (temperature affects OCR cache invalidation)
     """
-    svc_a, _, _ = _make_svc(tmp_path, ocr_temperature=0.0)
-    svc_b, _, _ = _make_svc(tmp_path, ocr_temperature=0.7)
+    svc_a, _, _ = _make_svc(tmp_path, ocr_engine="ollama", ocr_temperature=0.0)
+    svc_b, _, _ = _make_svc(tmp_path, ocr_engine="ollama", ocr_temperature=0.7)
     assert svc_a._ocr_config_hash("p", _PDF) != svc_b._ocr_config_hash("p", _PDF)
 
 
@@ -325,108 +374,92 @@ def test_ocr_config_hash_changes_with_temperature(tmp_path: Path) -> None:
     "mutate",
     [
         lambda o: replace(o, pdf_render_dpi=600),
-        lambda o: replace(o, dewarp=True),
-        lambda o: replace(o, deskew=True),
-        lambda o: replace(o, border_crop=True),
-        lambda o: replace(o, denoise=True),
-        lambda o: replace(o, gamma=True),
+        lambda o: replace(o, preprocess_method="none"),
+        lambda o: replace(o, engine="ollama"),
     ],
-    ids=["pdf_render_dpi", "dewarp", "deskew", "border_crop", "denoise", "gamma"],
+    ids=["pdf_render_dpi", "method", "engine_output"],
 )
 def test_ocr_config_hash_changes_with_each_preprocessing_field(
     tmp_path: Path, mutate: Callable[[OcrConfig], OcrConfig]
 ) -> None:
     """
-    Given  two configs differing only in one preprocessing field (a pre-step or PDF DPI)
+    Given  two configs differing only in one preprocessing field (PDF DPI, the method, or the
+           engine, which decides whether the automatic preparation hands over gray or colour)
     When   _ocr_config_hash() is called with the same prompt
-    Then   the two hashes differ, so toggling the field invalidates the OCR cache
+    Then   the two hashes differ, so changing the field invalidates the OCR cache
 
-    Without this, the cache (which has no expiry) returns stale OCR text after a toggle.
+    Without this, the cache (which has no expiry) returns stale OCR text after a change.
     """
-    base = OcrConfig(engine="tesseract", dewarp=False, deskew=False, denoise=False)
+    base = OcrConfig(engine="ppocr", preprocess_method="auto")
     svc_a, _, _ = _make_svc(tmp_path, ocr=base)
     svc_b, _, _ = _make_svc(tmp_path, ocr=mutate(base))
     assert svc_a._ocr_config_hash("p", _PDF) != svc_b._ocr_config_hash("p", _PDF)
 
 
-def test_preprocess_fingerprint_matches_legacy_format_when_rewritten_steps_are_off() -> None:
+def test_the_automatic_fingerprint_names_version_output_and_available_model_steps(
+    tmp_path: Path,
+) -> None:
     """
-    Given  an OcrConfig with deskew and border_crop off (the two pre-steps whose
-           algorithm was rewritten; every other field varies from its default)
+    Given  the automatic preparation for the built-in reader, with no page models, and with them
     When   _preprocess_fingerprint() is called
-    Then   every entry is the plain flag value with no "@v..." version suffix
-
-    Regression guard: an algorithm-version marker that applies unconditionally to
-    every entry changes the hash -- and invalidates the cache -- even for configs
-    that never used the rewritten steps and whose OCR output is unaffected.
+    Then   the entries are the method, the AUTO_VERSION, the output, the available model steps
+           ("+turn", "+flatten"), the DPI and the text-layer entries
     """
-    ocr = OcrConfig(
-        engine="tesseract",
-        preprocess_method="adaptive_threshold",
-        pdf_render_dpi=600,
-        dewarp=True,
-        deskew=False,
-        border_crop=False,
-        denoise=True,
-        gamma=True,
-    )
-    assert _preprocess_fingerprint(ocr, _PDF) == (
-        "adaptive_threshold",
+    ocr = OcrConfig(engine="ppocr", preprocess_method="auto", pdf_render_dpi=600)
+    empty = ModelStore(tmp_path / "empty")
+    full = fake_page_models_store(tmp_path)
+
+    assert _preprocess_fingerprint(ocr, _PDF, empty) == (
+        "auto",
+        f"v{AUTO_VERSION}",
+        "colour",
         "600",
-        "True",
-        "False",
-        "False",
-        "True",
-        "True",
+        *input_settings_fingerprint(".pdf", InputOptions.from_ocr(ocr)),
+    )
+    assert _preprocess_fingerprint(ocr, _PDF, full)[1:5] == (
+        f"v{AUTO_VERSION}",
+        "colour",
+        "+turn",
+        "+flatten",
     )
 
 
-@pytest.mark.parametrize("field", ["deskew", "border_crop"])
-def test_preprocess_fingerprint_versions_only_the_rewritten_steps(field: str) -> None:
+def test_downloading_the_page_models_changes_the_automatic_key_once(tmp_path: Path) -> None:
     """
-    Given  an OcrConfig with *field* (deskew or border_crop, whose algorithm changed)
-           enabled alongside dewarp (whose algorithm hasn't changed)
-    When   _preprocess_fingerprint() is called
-    Then   only *field*'s entry carries an "@v" version suffix
+    Given  a config with the automatic preparation
+    When   the OCR config hash is computed without and with the page models downloaded
+    Then   the two keys differ (pages are read again once), and a store with them gives the
+           same key every time
     """
-    if field == "deskew":
-        ocr = OcrConfig(
-            engine="tesseract", preprocess_method="adaptive_threshold", dewarp=True, deskew=True
-        )
-    else:
-        ocr = OcrConfig(
-            engine="tesseract",
-            preprocess_method="adaptive_threshold",
-            dewarp=True,
-            border_crop=True,
-        )
-    names = ["method", "dpi", "dewarp", "deskew", "border_crop", "denoise", "gamma"]
-    fp = dict(zip(names, _preprocess_fingerprint(ocr, _PDF), strict=True))
-    assert fp["dewarp"] == "True"
-    assert fp[field] == "True@v2"
+    cfg = make_config(tmp_path, ocr=OcrConfig(engine="ollama", preprocess_method="auto"))
+    empty = ModelStore(tmp_path / "empty")
+    full = fake_page_models_store(tmp_path)
+
+    without = compute_ocr_config_hash(cfg, "p", _PDF, empty)
+    with_models = compute_ocr_config_hash(cfg, "p", _PDF, full)
+
+    assert without != with_models
+    assert with_models == compute_ocr_config_hash(cfg, "p", _PDF, full)
 
 
-def test_ocr_config_hash_unaffected_by_prestep_flags_under_method_none(tmp_path: Path) -> None:
+def test_the_original_page_key_is_the_method_alone(tmp_path: Path) -> None:
     """
-    Given  two configs with preprocess_method="none" that differ only in whether
-           deskew is on
-    When   _ocr_config_hash() is called with the same prompt
-    Then   the two hashes are equal
+    Given  "Original page" (method none)
+    When   the fingerprint is computed without and with the page models
+    Then   both are the method, the DPI and the text-layer entries: the models change nothing
+    """
+    ocr = OcrConfig(engine="ppocr", preprocess_method="none")
 
-    "none" skips every pre-step (HandwritingPreprocessor.preprocess returns the
-    original file unchanged), so the flag has no effect on the image fed to OCR and
-    must not force a re-run when toggled.
-    """
-    base = OcrConfig(engine="tesseract", preprocess_method="none")
-    svc_a, _, _ = _make_svc(tmp_path, ocr=base)
-    svc_b, _, _ = _make_svc(tmp_path, ocr=replace(base, deskew=True))
-    assert svc_a._ocr_config_hash("p", _PDF) == svc_b._ocr_config_hash("p", _PDF)
+    plain = _preprocess_fingerprint(ocr, _PDF, ModelStore(tmp_path / "empty"))
+
+    assert plain[0] == "none"
+    assert plain == _preprocess_fingerprint(ocr, _PDF, fake_page_models_store(tmp_path))
 
 
 @pytest.mark.use_case("Preview_Preprocessing")
 def test_preview_hash_changes_with_preprocessing_field(tmp_path: Path) -> None:
     """
-    Given  two configs differing only in a pre-step flag
+    Given  two configs differing only in the image preparation method
     When   prepare() computes the preview config hash for each
     Then   the two preview hashes differ, so the cached preview image is regenerated
     """
@@ -440,9 +473,9 @@ def test_preview_hash_changes_with_preprocessing_field(tmp_path: Path) -> None:
         repo.reconcile_runtime_config.return_value = state
         return svc.prepare(src).preview_config_hash
 
-    h_off = _prepare(OcrConfig(engine="tesseract", dewarp=False, deskew=False, denoise=False))
-    h_on = _prepare(OcrConfig(engine="tesseract", dewarp=False, deskew=False, denoise=True))
-    assert h_off != h_on
+    h_auto = _prepare(OcrConfig(engine="ppocr", preprocess_method="auto"))
+    h_none = _prepare(OcrConfig(engine="ppocr", preprocess_method="none"))
+    assert h_auto != h_none
 
 
 def test_correction_config_hash_changes_with_the_recommended_temperature(tmp_path: Path) -> None:
@@ -798,7 +831,7 @@ def test_pdf_text_layer_mode_changes_hash_only_for_pdfs(tmp_path: Path, mode: st
     When   the OCR config hash is computed for a PDF and for a JPG
     Then   the PDF hash changes while the JPG hash stays valid (its OCR input is unchanged)
     """
-    base = OcrConfig(engine="tesseract")
+    base = OcrConfig(engine="ppocr")
     svc_auto, _, _ = _make_svc(tmp_path, ocr=base)
     svc_mode, _, _ = _make_svc(tmp_path, ocr=replace(base, pdf_text_layer=mode))
 

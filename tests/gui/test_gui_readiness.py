@@ -28,9 +28,9 @@ from teachers_teammate.gui.settings._page import (
     FOCUS_LOCAL_MODELS,
     FOCUS_NAME_DETECTION,
     FOCUS_OCR,
-    FOCUS_OCR_ENGINES,
     FOCUS_ONLINE_SERVICES,
     FOCUS_PROOFREADING_KEY,
+    FOCUS_READING_MODELS,
     FOCUS_REVIEW_KEY,
     FOCUS_SERVER,
     SettingsPage,
@@ -77,19 +77,20 @@ def test_fix_for_a_refused_recognition_offers_the_model_choice() -> None:
 
 
 @pytest.mark.unit
-@pytest.mark.parametrize(
-    ("engine", "name"), [("tesseract", "Tesseract"), ("paddleocr", "PaddleOCR")]
-)
-def test_fix_for_a_missing_engine_offers_the_install(engine: str, name: str) -> None:
+def test_fix_for_a_missing_reader_offers_the_download() -> None:
     """
-    Given  a text-recognition engine that is not installed
+    Given  the built-in reader whose model files are not downloaded
     When   its fix is asked
-    Then   the line names the engine and "Install…" opens the engines tab of Add-ons
+    Then   the line says so and "Download…" opens the Reading models tab with the reader ticked
     """
-    fix = _fix("ocr", RequirementIssue("x", IssueKind.ENGINE_MISSING, engine=engine))
+    fix = _fix("ocr", RequirementIssue("x", IssueKind.READER_MODEL_MISSING))
 
-    assert fix.line == f"{name} isn't installed"
-    assert fix.actions == (FixAction("Install…", SettingsPage.ADDONS, FOCUS_OCR_ENGINES),)
+    assert fix.line == "The built-in reader isn't downloaded yet"
+    assert fix.actions == (
+        FixAction(
+            "Download…", SettingsPage.ADDONS, FOCUS_READING_MODELS, preselect=("reader:ppocr",)
+        ),
+    )
 
 
 @pytest.mark.unit

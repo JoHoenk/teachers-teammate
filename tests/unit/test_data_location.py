@@ -146,16 +146,15 @@ def test_online_ocr_engines_are_refused(engine: str) -> None:
 @pytest.mark.parametrize(
     ("engine", "model", "host"),
     [
-        ("tesseract", "", "localhost"),
-        ("paddleocr", "", "localhost"),
+        ("ppocr", "", "localhost"),
         ("ollama", "deepseek-ocr:latest", "localhost"),
         ("ollama", "deepseek-ocr:latest", "school-server"),
-        ("tesseract", "x-cloud:cloud", "localhost"),  # model is irrelevant for tesseract
+        ("ppocr", "x-cloud:cloud", "localhost"),  # model is irrelevant for the reader
     ],
 )
 def test_local_ocr_is_allowed(engine: str, model: str, host: str) -> None:
     """
-    Given  a local engine (Ollama with a downloaded model, Tesseract, PaddleOCR)
+    Given  a local engine (Ollama with a downloaded model, the built-in reader)
     When   online_ocr_reason() is asked
     Then   there is no reason to refuse
     """
@@ -291,12 +290,11 @@ def test_ocr_location_for_each_engine() -> None:
     """
     Given  the supported engines and an unsupported one
     When   ocr_location() classifies them
-    Then   Tesseract and PaddleOCR are on this computer and the unsupported one is online
+    Then   the built-in reader is on this computer and the unsupported one is online
     """
-    assert ocr_location("tesseract", "", "http://127.0.0.1:11434").location is (
-        DataLocation.THIS_COMPUTER
-    )
-    assert ocr_location("paddleocr", "", "http://127.0.0.1:11434").service == "PaddleOCR"
+    reader = ocr_location("ppocr", "", "http://127.0.0.1:11434")
+    assert reader.location is DataLocation.THIS_COMPUTER
+    assert reader.service == "Built-in reader"
     assert ocr_location("langchain", "", "http://127.0.0.1:11434").location is DataLocation.ONLINE
 
 
@@ -373,7 +371,7 @@ def test_describe_data_flow_online_proofreading_and_review(tmp_path: Path) -> No
     Then   both text steps are outbound, and name hiding is reported for both
     """
     base = {
-        "ocr_engine": "tesseract",
+        "ocr_engine": "ppocr",
         "correction_enabled": True,
         "correction_provider": "openai",
         "evaluation_enabled": True,

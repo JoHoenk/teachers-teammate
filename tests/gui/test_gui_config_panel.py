@@ -629,8 +629,8 @@ def test_only_the_latest_guard_check_of_a_stage_counts(qtbot, monkeypatch) -> No
 @pytest.mark.gui
 def test_config_panel_to_config_applies_preprocess_and_pdf_settings(qtbot, tmp_path: Path) -> None:
     """
-    Given  a ConfigPanel whose settings disable dewarp/deskew/denoise, enable border crop and
-           gamma, and set 150 DPI and the "never" PDF text layer
+    Given  a ConfigPanel whose settings choose "Original page", 150 DPI and the "never" PDF text
+           layer
     When   to_config() is called
     Then   the OcrConfig carries those values instead of the defaults
     """
@@ -641,11 +641,7 @@ def test_config_panel_to_config_applies_preprocess_and_pdf_settings(qtbot, tmp_p
     panel.set_input_dir(str(input_dir))
     panel.update_settings(
         {
-            "preprocess_dewarp": False,
-            "preprocess_deskew": False,
-            "preprocess_denoise": False,
-            "preprocess_border_crop": True,
-            "preprocess_gamma": True,
+            "preprocess_method": "none",
             "pdf_render_dpi": 150,
             "pdf_text_layer": "never",
         }
@@ -653,16 +649,39 @@ def test_config_panel_to_config_applies_preprocess_and_pdf_settings(qtbot, tmp_p
 
     ocr = panel.to_config().ocr
 
-    assert not (ocr.dewarp or ocr.deskew or ocr.denoise)
-    assert ocr.border_crop and ocr.gamma
+    assert ocr.preprocess_method == "none"
     assert ocr.pdf_render_dpi == 150
     assert ocr.pdf_text_layer == "never"
+
+
+@pytest.mark.gui
+def test_a_method_of_the_old_preparation_in_the_settings_reads_as_automatic(
+    qtbot, tmp_path: Path
+) -> None:
+    """
+    Given  a settings dict that names a method of the old preparation, and keys of its switches
+    When   load_from_dict() and then to_config() are called
+    Then   the method is "auto", and the switch keys neither appear in to_dict() nor fail
+    """
+    panel = ConfigPanel()
+    qtbot.addWidget(panel)
+    panel.set_input_dir(str(tmp_path))
+
+    panel.load_from_dict(
+        {"preprocess_method": "clahe", "preprocess_dewarp": False, "preprocess_gamma": True}
+    )
+
+    assert panel.to_config().ocr.preprocess_method == "auto"
+    assert panel.to_dict()["preprocess_method"] == "auto"
+    assert not any(
+        key.startswith("preprocess_") and key != "preprocess_method" for key in panel.to_dict()
+    )
 
 
 def test_load_from_dict_restores_advanced_ocr_settings(qtbot, tmp_path: Path) -> None:
     """
     Given  a settings dict (as read from ocr.toml) with the PDF text layer, render DPI,
-           provider and pre-step flags set
+           provider and image preparation set
     When   load_from_dict() and then to_config() are called
     Then   the OcrConfig carries those values instead of falling back to the defaults
     """
@@ -676,16 +695,14 @@ def test_load_from_dict_restores_advanced_ocr_settings(qtbot, tmp_path: Path) ->
         {
             "pdf_text_layer": "Never",
             "pdf_render_dpi": 150,
-            "preprocess_dewarp": False,
-            "preprocess_gamma": True,
+            "preprocess_method": "none",
         }
     )
 
     ocr = panel.to_config().ocr
     assert ocr.pdf_text_layer == "never"
     assert ocr.pdf_render_dpi == 150
-    assert ocr.dewarp is False
-    assert ocr.gamma is True
+    assert ocr.preprocess_method == "none"
     assert panel.to_dict()["pdf_text_layer"] == "never"
 
 
@@ -795,7 +812,7 @@ def test_every_step_shows_what_it_uses(qtbot) -> None:
 @pytest.mark.gui
 def test_a_program_engine_is_named_by_the_engine_not_by_the_ollama_model(qtbot) -> None:
     """
-    Given  Tesseract chosen as the engine, while the saved model is still an Ollama tag
+    Given  the built-in reader chosen as the engine, while the saved model is still an Ollama tag
     When   the panel shows what text recognition uses
     Then   the line does not name the Ollama model, which is not what is used
     """
@@ -803,10 +820,35 @@ def test_a_program_engine_is_named_by_the_engine_not_by_the_ollama_model(qtbot) 
     qtbot.addWidget(panel)
     panel.set_service(_StepsService())
 
-    panel.update_settings({**_MISTRAL, "ocr_engine": "tesseract"})
+    panel.update_settings({**_MISTRAL, "ocr_engine": "ppocr"})
 
     assert "qwen2.5vl:7b" not in panel._ocr_uses.text()
     assert "this computer" in panel._ocr_uses.text()
+
+
+@pytest.mark.gui
+@pytest.mark.parametrize(
+    ("engine", "online"), [("tesseract", False), ("paddleocr", False), ("openai", True)]
+)
+def test_a_replaced_engine_in_a_settings_dict_is_reported_once(
+    qtbot, engine: str, online: bool
+) -> None:
+    """
+    Given  a settings dict that names a removed local engine or an online one
+    When   the panel takes it over
+    Then   the replacement is reported through ocr_engine_replaced (and the engine is local)
+    """
+    panel = ConfigPanel()
+    qtbot.addWidget(panel)
+    panel.set_service(_StepsService())
+    seen: list[object] = []
+    panel.ocr_engine_replaced.connect(seen.append)
+
+    panel.load_from_dict({**_MISTRAL, "ocr_engine": engine})
+
+    assert len(seen) == 1
+    assert (seen[0].old, seen[0].online) == (engine, online)
+    assert panel._settings_dict["ocr_engine"] in ("ppocr", "ollama")
 
 
 @pytest.mark.gui
@@ -1520,7 +1562,7 @@ def test_ticking_recognition_checks_the_engine_and_unticks_when_it_is_missing(
     class _Service(_GuardService):
         def check_stage_requirements(self, config, stage: str):
             assert stage == "ocr"
-            return [RequirementIssue("Tesseract is missing.", IssueKind.ENGINE_MISSING)]
+            return [RequirementIssue("The reader is missing.", IssueKind.READER_MODEL_MISSING)]
 
     panel = ConfigPanel()
     qtbot.addWidget(panel)

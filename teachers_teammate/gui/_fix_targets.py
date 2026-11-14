@@ -12,17 +12,17 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from ..application.service import IssueKind, RequirementIssue
-from ..domain.data_location import OCR_ENGINE_NAMES
 from . import _user_text as txt
+from ._install_round import READER_ITEM
 from ._model_guidance import PROVIDER_PREFIX, SPACY_PREFIX
 from .settings._page import (
     FOCUS_FIND_SERVER,
     FOCUS_LOCAL_MODELS,
     FOCUS_NAME_DETECTION,
     FOCUS_OCR,
-    FOCUS_OCR_ENGINES,
     FOCUS_ONLINE_SERVICES,
     FOCUS_PROOFREADING_KEY,
+    FOCUS_READING_MODELS,
     FOCUS_REVIEW_KEY,
     SettingsPage,
 )
@@ -156,11 +156,17 @@ def fix_for(
             "Text recognition must run on this computer",
             (FixAction("Choose a model…", SettingsPage.AI_MODELS, FOCUS_OCR),),
         )
-    if kind is IssueKind.ENGINE_MISSING:
-        name = OCR_ENGINE_NAMES.get(issue.engine, issue.engine)
+    if kind is IssueKind.READER_MODEL_MISSING:
         return Fix(
-            f"{name} isn't installed",
-            (FixAction("Install…", SettingsPage.ADDONS, FOCUS_OCR_ENGINES),),
+            "The built-in reader isn't downloaded yet",
+            (
+                FixAction(
+                    "Download…",
+                    SettingsPage.ADDONS,
+                    FOCUS_READING_MODELS,
+                    (READER_ITEM,),
+                ),
+            ),
         )
     ollama = _ollama_fix(issue)
     if ollama is not None:

@@ -4,7 +4,7 @@
 # Why a dedicated venv (not the active one)?
 #   PyInstaller freezes whatever is importable in the running interpreter. If the
 #   build runs inside a dev venv that also has the optional extras installed
-#   (langchain, spaCy, PaddleOCR, PyMuPDF, PyQt6, …), those get swept into the
+#   (langchain, spaCy, PyMuPDF, PyQt6, …), those get swept into the
 #   binary — bloating it and, worse, pulling in AGPL/GPL code (PyMuPDF, PyQt6).
 #   Building in a fresh venv with ONLY the base runtime deps (pip install -e .)
 #   guarantees the bundle matches third_party_licenses/ (the same set that

@@ -53,7 +53,7 @@ from .. import _user_text as txt
 from .._background import LatestTask
 from .._data_flow_summary import short_place
 from .._hardware_profile_selector import HardwareProfileSelector
-from .._install_round import PACKAGE_PREFIX
+from .._install_round import PACKAGE_PREFIX, READER_PREFIX, READER_PROGRESS_STATUS
 from .._model_guidance import PROVIDER_PREFIX, SPACY_PREFIX
 from .._ollama_status_line import OllamaStatusLine
 from ..settings._ai_service_section import PROOFREADING, AiServiceSection
@@ -193,11 +193,14 @@ DONE_RUNNING = "↓ downloading…"
 DONE_DONE = "✓ done"
 DONE_FAILED = "✗ {message}"
 DONE_PROGRESS = "↓ {done:.1f} of {total:.1f} GB"
+DONE_PROGRESS_MB = "↓ {done:.0f} of {total:.0f} MB"
+READER_NAME = "ppocr"  # the name of the reader's download row (``PlannedDownload.name``)
 DONE_SELECT = "Select documents…"
 DONE_SELECT_TOOLTIP = "Close this window and choose the folder with your students' work."
 
 #: Bytes in a gigabyte, for the pull progress the manager reports in bytes.
 _GB = 1_000_000_000.0
+_MB = 1_000_000.0
 
 
 def _fit_words(step: PlannedStep) -> str:
@@ -993,16 +996,21 @@ class _DownloadRows(QWidget):
                 self._state[name] = DONE_FAILED.format(message=message)
                 status.setText(self._state[name])
 
-    def pull_progress(self, _status: str, done: float, total: float) -> None:
+    def pull_progress(self, status: str, done: float, total: float) -> None:
         """The running pull reports how far it is, in bytes.
 
         The signal carries a status text ("pulling sha256:…"), not the model, so the row is
         the one :meth:`started` named last.
         """
-        name = self._pulling
+        # The built-in reader's download reports through the same signal, under its own name.
+        name = READER_NAME if status == READER_PROGRESS_STATUS else self._pulling
         if name not in self._labels or not total:
             return
-        self._state[name] = DONE_PROGRESS.format(done=done / _GB, total=total / _GB)
+        self._state[name] = (
+            DONE_PROGRESS_MB.format(done=done / _MB, total=total / _MB)
+            if total < _GB / 10
+            else DONE_PROGRESS.format(done=done / _GB, total=total / _GB)
+        )
         self._labels[name].setText(self._state[name])
 
     def _set(self, item: str, text: str) -> None:
@@ -1025,7 +1033,7 @@ class _DownloadRows(QWidget):
 
 def _item_name(item: str) -> str:
     """Return the download name behind an install round item key."""
-    for prefix in (PACKAGE_PREFIX, SPACY_PREFIX):
+    for prefix in (PACKAGE_PREFIX, SPACY_PREFIX, READER_PREFIX):
         if item.startswith(prefix):
             return item[len(prefix) :]
     return item

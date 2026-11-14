@@ -194,9 +194,9 @@ def test_restore_defaults_resets_only_the_pages_own_keys(qtbot) -> None:
 
 @pytest.fixture
 def models_page(qtbot) -> AiModelsPage:
-    page = AiModelsPage(settings_context(DummyAppService(), settings={"ocr_engine": "tesseract"}))
+    page = AiModelsPage(settings_context(DummyAppService(), settings={"ocr_engine": "ppocr"}))
     qtbot.addWidget(page)
-    page.load({"ocr_engine": "tesseract"})
+    page.load({"ocr_engine": "ppocr"})
     page.show()
     return page
 
@@ -209,7 +209,7 @@ def test_ai_models_page_offers_the_recognition_methods(models_page) -> None:
     Then   the recognition picker is there with its methods, and the chosen one is returned
     """
     assert models_page._ocr_picker._ocr_engine.count() > 0
-    assert models_page.values()["ocr_engine"] == "tesseract"
+    assert models_page.values()["ocr_engine"] == "ppocr"
     assert models_page.values()["ocr_model"]
 
 
@@ -233,7 +233,7 @@ def test_the_page_says_which_computer_the_suggestions_are_for_only_once(models_p
 def test_ai_models_visibility_reacts_to_engine(qtbot, monkeypatch) -> None:
     """
     Given  the AI models page with OPENAI_API_KEY available
-    When   the method is set to tesseract (native, no model row), then to ollama
+    When   the method is set to the built-in reader (native, no model row), then to ollama
     Then   the model row is hidden, then visible again
     """
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
@@ -242,11 +242,11 @@ def test_ai_models_visibility_reacts_to_engine(qtbot, monkeypatch) -> None:
     page.show()
     picker = page._ocr_picker
 
-    picker._ocr_engine.setCurrentText("tesseract")
+    picker.set_engine("ppocr")
     assert picker._ocr_model_label.isVisible() is False
     assert picker._ocr_model_row.isVisible() is False
 
-    picker._ocr_engine.setCurrentText("ollama")
+    picker.set_engine("ollama")
     assert picker._ocr_model_label.isVisible() is True
     assert picker._ocr_model_row.isVisible() is True
 
@@ -263,10 +263,10 @@ def test_choosing_a_method_is_reported_but_loading_is_not(qtbot) -> None:
     engines: list[str] = []
     page.ocr_engine_changed.connect(engines.append)
 
-    page.load({"ocr_engine": "tesseract"})
+    page.load({"ocr_engine": "ppocr"})
     assert engines == []
 
-    page._ocr_picker._ocr_engine.setCurrentText("ollama")
+    page._ocr_picker.set_engine("ollama")
     assert engines == ["ollama"]
 
 
@@ -280,7 +280,7 @@ def test_the_pages_values_round_trip(qtbot) -> None:
     page = AiModelsPage(settings_context(CachingDummyAppService()))
     qtbot.addWidget(page)
     saved = {
-        "ocr_engine": "tesseract",
+        "ocr_engine": "ppocr",
         "correction_provider": "ollama",
         "correction_model": "my-writer:7b",
         "evaluate_provider": "ollama",
@@ -453,13 +453,13 @@ def test_scan_quality_has_the_preparation_options(scan_page) -> None:
     """
     Given  the Scan quality page
     When   it is created
-    Then   it has the corrections, enhancements and PDF options, and no temperature of its own
-          ; the PDF options are in its own
-           collapsed Expert section, not among the everyday options
+    Then   it has the two-entry preparation combo and the PDF options, and no temperature of its
+           own and none of the old switches; the PDF options are in its own collapsed Expert
+           section, not among the everyday options
     """
     scan = scan_page._controls
-    for box in (scan._dewarp, scan._deskew, scan._border_crop, scan._denoise, scan._gamma):
-        assert box is not None
+    for old in ("_dewarp", "_deskew", "_border_crop", "_denoise", "_gamma"):
+        assert not hasattr(scan, old)
     assert scan._pdf_dpi is not None
     assert scan._pdf_text_layer is not None
     assert not scan._ocr_temperature.isVisible()
@@ -471,46 +471,54 @@ def test_scan_quality_has_the_preparation_options(scan_page) -> None:
 
 
 @pytest.mark.gui
+def test_the_preparation_combo_has_two_labelled_entries_that_keep_the_ids(scan_page) -> None:
+    """
+    Given  the Scan quality page
+    When   the image preparation combo is read
+    Then   it offers "Automatic (recommended)" (auto) and "Original page" (none), and the
+           stored id follows the choice, not the label
+    """
+    combo = scan_page._controls._preprocess
+
+    assert [combo.itemText(i) for i in range(combo.count())] == [
+        "Automatic (recommended)",
+        "Original page",
+    ]
+    assert [combo.itemData(i) for i in range(combo.count())] == ["auto", "none"]
+    assert scan_page.values()["preprocess_method"] == "auto"
+    combo.setCurrentIndex(1)
+    assert scan_page.values()["preprocess_method"] == "none"
+
+
+@pytest.mark.gui
 def test_scan_quality_returns_its_keys_with_the_right_types(scan_page) -> None:
     """
     Given  the Scan quality page
     When   values() is called
-    Then   it returns the preparation keys including debug, and nothing of the AI models page
+    Then   it returns the preparation keys including debug, none of the old switch keys, and
+           nothing of the AI models page
     """
     values = scan_page.values()
 
-    for key in (
-        "preprocess_method",
-        "preprocess_dewarp",
-        "preprocess_deskew",
-        "preprocess_border_crop",
-        "preprocess_denoise",
-        "preprocess_gamma",
-        "pdf_render_dpi",
-        "pdf_text_layer",
-        "debug",
-    ):
+    for key in ("preprocess_method", "pdf_render_dpi", "pdf_text_layer", "debug"):
         assert key in values
-    assert isinstance(values["preprocess_dewarp"], bool)
     assert isinstance(values["pdf_render_dpi"], int)
+    for old in ("dewarp", "deskew", "border_crop", "denoise", "gamma"):
+        assert f"preprocess_{old}" not in values
+        assert f"preprocess_{old}" not in scan_page.owned_keys()
     assert "ocr_engine" not in values
     assert "ocr_temperature" not in values
     assert "correction_provider" not in values
 
 
 @pytest.mark.gui
-def test_scan_quality_checkbox_defaults(scan_page) -> None:
+def test_scan_quality_defaults_to_the_automatic_preparation(scan_page) -> None:
     """
     Given  the Scan quality page
     When   it is created
-    Then   dewarp, deskew and denoise are pre-selected; border crop and gamma are not
+    Then   the preparation is "auto"
     """
-    values = scan_page.values()
-    assert values["preprocess_dewarp"] is True
-    assert values["preprocess_deskew"] is True
-    assert values["preprocess_border_crop"] is False
-    assert values["preprocess_denoise"] is True
-    assert values["preprocess_gamma"] is False
+    assert scan_page.values()["preprocess_method"] == "auto"
 
 
 @pytest.mark.gui
@@ -521,9 +529,7 @@ def test_scan_quality_round_trips_saved_values(scan_page) -> None:
     Then   the page returns them unchanged, and opens "Expert settings" for a debug choice
     """
     saved = {
-        "preprocess_method": "clahe",
-        "preprocess_dewarp": False,
-        "preprocess_border_crop": True,
+        "preprocess_method": "none",
         "pdf_render_dpi": 144,
         "pdf_text_layer": "never",
         "debug": True,
@@ -535,6 +541,90 @@ def test_scan_quality_round_trips_saved_values(scan_page) -> None:
     for key, value in saved.items():
         assert values[key] == value
     assert scan_page._expert_section.expanded
+
+
+@pytest.mark.gui
+def test_a_method_of_the_old_preparation_loads_as_automatic(scan_page) -> None:
+    """
+    Given  saved settings from before the automatic preparation (method clahe, old switch keys)
+    When   they are loaded into the Scan quality page
+    Then   the combo shows Automatic
+    """
+    scan_page.load({"preprocess_method": "clahe", "preprocess_dewarp": False})
+
+    assert scan_page.values()["preprocess_method"] == "auto"
+
+
+def _download_line(scan_page):
+    """Return the row with the page models' download line."""
+    return scan_page._controls._page_models_row
+
+
+@pytest.mark.gui
+def test_the_download_line_shows_only_under_automatic_while_the_models_are_missing(qtbot) -> None:
+    """
+    Given  a service without the page models
+    When   the preparation is Automatic, then Original page, and then the models are downloaded
+    Then   the line with the Download… button shows only under Automatic while they are missing
+    """
+    service = DummyAppService()
+    service.page_models_present = False
+    page = ScanQualityPage(settings_context(service))
+    qtbot.addWidget(page)
+    page.show()
+
+    assert _download_line(page).isVisibleTo(page)
+    page.load({"preprocess_method": "none"})
+    assert not _download_line(page).isVisibleTo(page)
+    page.load({"preprocess_method": "auto"})
+    assert _download_line(page).isVisibleTo(page)
+    service.page_models_present = True
+    page._controls.refresh_page_models()
+    assert not _download_line(page).isVisibleTo(page)
+
+
+@pytest.mark.gui
+def test_the_download_line_is_hidden_when_the_models_are_there(scan_page) -> None:
+    """
+    Given  a service whose page models are downloaded
+    When   the Scan quality page is shown under Automatic
+    Then   there is no download line
+    """
+    assert not _download_line(scan_page).isVisibleTo(scan_page)
+
+
+@pytest.mark.gui
+def test_the_download_button_opens_the_page_models_dialog_and_hides_the_line(
+    qtbot, monkeypatch
+) -> None:
+    """
+    Given  a service without the page models and the Scan quality page under Automatic
+    When   Download… is pressed and the dialog reports that the download finished
+    Then   the page tells the window the add-on was installed, and the line goes away
+    """
+    from teachers_teammate.domain.local_models import PAGE_MODELS_ADDON_ID  # noqa: PLC0415
+    from teachers_teammate.gui import _addon_installer_dialog  # noqa: PLC0415
+
+    service = DummyAppService()
+    service.page_models_present = False
+    page = ScanQualityPage(settings_context(service))
+    qtbot.addWidget(page)
+    page.show()
+    installed: list[str] = []
+    page.addon_installed.connect(installed.append)
+
+    def fake_exec(dialog) -> int:
+        service.page_models_present = True
+        dialog.downloaded.emit()
+        return 0
+
+    monkeypatch.setattr(_addon_installer_dialog.PageModelsDownloadDialog, "exec", fake_exec)
+    button = next(b for b in page.findChildren(QPushButton) if b.text() == "Download…")
+
+    button.click()
+
+    assert installed == [PAGE_MODELS_ADDON_ID]
+    assert not _download_line(page).isVisibleTo(page)
 
 
 @pytest.mark.gui
@@ -562,24 +652,12 @@ def test_ocr_config_combines_the_recognition_choice_with_the_scan_choices(scan_p
     """
     scan_page.load({"preprocess_method": "none", "pdf_render_dpi": 144})
 
-    config = scan_page.ocr_config("tesseract", "some-model")
+    config = scan_page.ocr_config("ppocr", "some-model")
 
-    assert (config.engine, config.model) == ("tesseract", "some-model")
+    assert (config.engine, config.model) == ("ppocr", "some-model")
     assert config.temperature == 0.0
     assert config.preprocess_method == "none"
     assert config.pdf_render_dpi == 144
-
-
-@pytest.mark.gui
-def test_the_default_preparation_follows_the_engine(scan_page) -> None:
-    """
-    Given  the Scan quality page
-    When   the window applies the default preparation of tesseract
-    Then   the preset is the one tesseract works best with
-    """
-    scan_page.set_engine_default("tesseract")
-
-    assert scan_page.values()["preprocess_method"] == "clahe"
 
 
 # ── This computer ──────────────────────────────────────────────────────────────

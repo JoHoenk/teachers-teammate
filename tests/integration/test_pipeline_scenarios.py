@@ -19,7 +19,7 @@ from teachers_teammate.exceptions import OCRError
 from teachers_teammate.infrastructure.pipeline import OCRPipeline
 from teachers_teammate.infrastructure.state_repository import StateRepository
 from teachers_teammate.infrastructure.storage_root import resolve_artifact_dir
-from tests.conftest import make_config, skip_no_tesseract
+from tests.conftest import make_config, reader_store, skip_no_reader_models
 
 
 def _state_for(cfg, source: Path):
@@ -236,18 +236,23 @@ def test_changed_correction_config_recomputes(tmp_path: Path) -> None:
     assert corrector.correct.call_count == 2
 
 
-# ── multi-page PDF OCR (real Tesseract) ──────────────────────────────────────
+# ── multi-page PDF OCR (the real built-in reader) ────────────────────────────
 
 
-@pytest.mark.needs_tesseract
-@skip_no_tesseract
+@pytest.mark.needs_reader_models
+@skip_no_reader_models
 @pytest.mark.use_case("Batch_OCR_Processing")
-def test_multipage_pdf_ocr_concatenates_pages(tmp_path: Path) -> None:
+def test_multipage_pdf_ocr_concatenates_pages(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """
     Given  a two-page PDF with legible text on each page
-    When   OCRPipeline.run() processes it with the Tesseract engine
-    Then   it succeeds and the cached raw text is labelled per page
+    When   OCRPipeline.run() processes it with the built-in reader and its real models
+    Then   it succeeds and the cached raw text is labelled per page and holds the words
     """
+    from teachers_teammate.infrastructure.onnx.store import MODELS_DIR_ENV  # noqa: PLC0415
+
+    monkeypatch.setenv(MODELS_DIR_ENV, str(reader_store(tmp_path).root))
     from PIL import Image, ImageDraw, ImageFont  # noqa: PLC0415
 
     in_dir = tmp_path / "input"
@@ -265,7 +270,7 @@ def test_multipage_pdf_ocr_concatenates_pages(tmp_path: Path) -> None:
     cfg = make_config(
         tmp_path,
         input_dir=in_dir,
-        ocr_engine="tesseract",
+        ocr_engine="ppocr",
         correction_enabled=False,
         docx_enabled=False,
     )
@@ -276,6 +281,8 @@ def test_multipage_pdf_ocr_concatenates_pages(tmp_path: Path) -> None:
     assert state is not None
     assert "Page 1:" in state.raw_text
     assert "Page 2:" in state.raw_text
+    assert "Hello World" in state.raw_text
+    assert "Second Page" in state.raw_text
 
 
 # ── corrupt inputs ────────────────────────────────────────────────────────────
@@ -290,7 +297,7 @@ def test_pipeline_reports_nonzero_exit_when_all_inputs_corrupt(tmp_path: Path) -
     """
     cfg = make_config(
         tmp_path,
-        ocr_engine="tesseract",
+        ocr_engine="ppocr",
         correction_enabled=False,
         docx_enabled=False,
         preprocess_method="none",
@@ -302,7 +309,7 @@ def test_pipeline_reports_nonzero_exit_when_all_inputs_corrupt(tmp_path: Path) -
     mock_ocr.process_image.side_effect = OCRError("corrupt image data")
 
     with patch(
-        "teachers_teammate.infrastructure.stage_builder.TesseractOCRProcessor",
+        "teachers_teammate.infrastructure.stage_builder.PpOcrProcessor",
         return_value=mock_ocr,
     ):
         rc = OCRPipeline(cfg).run().exit_code

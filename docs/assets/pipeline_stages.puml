@@ -43,7 +43,7 @@ package "2  Image Preparation  (local)" as S_PRE {
 ' Stage 3: Text Recognition (OCR)
 package "3  Text Recognition (OCR)" as S_OCR {
   component "Ollama vision model  (local) -- recommended" as OCR_OL <<local>>
-  component "Tesseract · PaddleOCR  (local) -- alternative engines" as OCR_ALT <<local>>
+  component "Built-in reader (PP-OCR, local) -- no server needed" as OCR_ALT <<local>>
   component "Cloud vision model  (cloud)" as OCR_CL <<cloud>>
 }
 

@@ -114,11 +114,6 @@ class StoredRun:
                 "model": self.ocr.model,
                 "preprocess_method": self.ocr.preprocess_method,
                 "pdf_render_dpi": self.ocr.pdf_render_dpi,
-                "dewarp": self.ocr.dewarp,
-                "deskew": self.ocr.deskew,
-                "border_crop": self.ocr.border_crop,
-                "denoise": self.ocr.denoise,
-                "gamma": self.ocr.gamma,
                 "temperature": self.ocr.temperature,
             },
             "language": self.language,
@@ -156,14 +151,10 @@ class StoredRun:
                 engine=_legacy_engine(ocr_raw),
                 model=_legacy_model(ocr_raw),
                 preprocess_method=ocr_raw["preprocess_method"],
-                # .get() keeps runs written before these fields existed loadable.  Runs that
-                # predate the pre-step fields applied none of them, whatever today's defaults.
+                # .get() keeps runs written before this field existed loadable.  The switches of
+                # the old preparation (dewarp, deskew, …) are ignored; an old method name reads
+                # as the automatic preparation.
                 pdf_render_dpi=ocr_raw.get("pdf_render_dpi", DEFAULTS["pdf_render_dpi"]),
-                dewarp=ocr_raw.get("dewarp", False),
-                deskew=ocr_raw.get("deskew", False),
-                border_crop=ocr_raw.get("border_crop", False),
-                denoise=ocr_raw.get("denoise", False),
-                gamma=ocr_raw.get("gamma", False),
                 temperature=ocr_raw["temperature"],
             ),
             language=raw["language"],
@@ -181,19 +172,6 @@ class StoredRun:
         if ocr.model:
             parts.append(ocr.model)
         parts.append(ocr.preprocess_method)
-        pre_steps = [
-            name
-            for name, enabled in (
-                ("dewarp", ocr.dewarp),
-                ("deskew", ocr.deskew),
-                ("border_crop", ocr.border_crop),
-                ("denoise", ocr.denoise),
-                ("gamma", ocr.gamma),
-            )
-            if enabled
-        ]
-        if pre_steps:
-            parts.append("+".join(pre_steps))
         return " · ".join(parts)
 
 

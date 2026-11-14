@@ -98,6 +98,7 @@ certifi==2026.10.23 \
     # via
     #   httpcore
     #   httpx
+    #   langchain-core
     #   requests
 cffi==2.1.1 \
     --hash=sha256:046bfc24911b37851ee1b51aab8bffe713d89c68c6a057b09484ce9fd5f69b4e \
@@ -1200,7 +1201,6 @@ packaging==26.3 \
     # via
     #   langchain-core
     #   langsmith
-    #   pytesseract
     #   pytest
     #   qtpy
     #   spacy
@@ -1290,9 +1290,7 @@ pillow==13.0.0 \
     --hash=sha256:fc481f742ccda20e9ed760b8f978dff50f2a4e9bc253ac167fb0a05b0783ef52 \
     --hash=sha256:ff3fe9eb621fbb9db4c4be33ab946f6bac5f98ab50ca8d3260503653656c961b \
     --hash=sha256:ffea6b2986a797c84b6d1d27d4f43e0b83c73fc16281a930891cd237cf0d08fe
-    # via
-    #   pytesseract
-    #   teachers-teammate (pyproject.toml)
+    # via teachers-teammate (pyproject.toml)
 platformdirs==4.14.5 \
     --hash=sha256:32e9921db7385aa8169bee4fe9501923e5715ba9fb7ea3b9c69b0d8e0639f7a1 \
     --hash=sha256:8e778c6fa421516f4d3369449f8df3b0e1b72c0e0005fe88e3ec772d0a14e750
@@ -1631,10 +1629,6 @@ pyside6-webengine==6.12.0.140 \
     --hash=sha256:c041c9921d7c91c9e51a2c027f434d05c3c59baa2c8f17b71dc8194e77791f06 \
     --hash=sha256:f9b61b1d457a591ee590a6b80515f25a3e61e2576a2a0a70566380f9d9de4ab0
     # via pyside6
-pytesseract==0.3.13 \
-    --hash=sha256:4bf5f880c99406f52a3cfc2633e42d9dc67615e69d8a509d74867d3baddb5db9 \
-    --hash=sha256:7a99c6c2ac598360693d83a416e36e0b33a67638bb9d77fdcac094a3589d4b34
-    # via teachers-teammate (pyproject.toml)
 pytest==9.2.0 \
     --hash=sha256:07acdcf88ec174f907dc01af70bf52d49b014bbab03faeeade31c96b18c2e588 \
     --hash=sha256:97c4f3b1f3c7414aa36465e09b8220f1d03627993bd51b1282e193753c80557b
@@ -1728,7 +1722,9 @@ pyyaml==6.0.3 \
     --hash=sha256:f7057c9a337546edc7973c0d3ba84ddcdf0daa14533c2065749c9075001090e6 \
     --hash=sha256:fa160448684b4e94d80416c0fa4aac48967a969efe22931448d853ada8baf926 \
     --hash=sha256:fc09d0aa354569bc501d4e787133afc08552722d3ab34836a80547331bb5d4a0
-    # via langchain-core
+    # via
+    #   langchain-core
+    #   teachers-teammate (pyproject.toml)
 qdarkstyle==3.2.3 \
     --hash=sha256:0c0b7f74a6e92121008992b369bab60468157db1c02cd30d64a5e9a3b402f1ae \
     --hash=sha256:ea980ee426d594909cf1058306832af71ff6cbad6f69237b036d1550635aefbc

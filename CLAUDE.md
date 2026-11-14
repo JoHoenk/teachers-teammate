@@ -10,7 +10,7 @@ source .venv/bin/activate
 
 # Run tests
 bazel test //tests:unit_tests --test_output=errors   # fast, no external services
-bazel test //tests/... --test_output=errors           # full suite (skips Tesseract/Ollama if absent)
+bazel test //tests/... --test_output=errors           # full suite (skips Ollama tests if absent)
 
 # Run a single test file
 bazel test //tests:test_config --test_output=errors
@@ -53,8 +53,8 @@ gui/ / cli.py    — adapters; must not contain discovery or availability logic
 ```
 Config
   → InputProvider        (input_providers.py)      PDF/image/TXT → InputPayload of InputUnits
-  → ImagePreprocessor    (image_preprocessor.py)   adaptive_threshold / CLAHE / grayscale / none
-  → OCRProcessor         (ocr_processor.py)        Ollama | Tesseract | Paddle | LangChain
+  → ImagePreprocessor    (preprocessing/)          automatic preparation (auto) or the original page (none)
+  → OCRProcessor         (ocr_processor.py)        Ollama | built-in reader (PP-OCR)
      (TXT files bypass OCR — content flows directly to the next stage)
   → OcrOutputPostprocessor (ocr_formats/)          plain | Markdown | Chandra HTML → stored
                                                    as plain or canonical Markdown (raw_text_format)
@@ -85,6 +85,9 @@ Config
 | Finding the Ollama server | Rules in `domain/ollama_discovery.py`, probing in `infrastructure/ollama_discovery.py`, WSL host in `infrastructure/wsl.py`; GUI only calls `ProcessingApplicationService.discover_ollama_servers(scope)`. The network scope asks many computers: start it only from an explicit user action, and never switch `ollama_url` without the user choosing. See `docs/development.md` → "Finding the Ollama server" |
 | Stopping a run / its result | `domain/run_summary.py:RunSummary` is what every run returns (`status` failed > stopped > done; `exit_code` 1 only for failed). Two events: `stop_after_file_event` ("Stop") and `stop_event` ("Stop now"); `OllamaClient(cancel_event=)` cancels the request; `RunStoppedError` is a fast exit only, the event is the truth. A stopped file is `ProcessingResult.stopped`, never a failure and never stored half done. Wording in `gui/_run_status.py`. See `docs/development.md` → "Stopping a run and run outcomes" |
 | Keep the computer awake | `infrastructure/power.py` (`SleepBlocker` per platform); held only in `ProcessingApplicationService.run_selected()`; `Config.keep_awake` (Settings → General, `--allow-sleep`). Tests get the null blocker from `conftest.py`. See `docs/development.md` → "Keeping the computer awake" |
+| New OCR engine | Id in `OCR_ENGINE_NAMES` (`domain/data_location.py`, the name teachers see), a `build_<engine>_ocr` field and branch in `PipelineComponentFactory` / `StageBuilder.build_ocr` (`infrastructure/stage_builder.py`), its cache identity in `compute_ocr_config_hash` (`workflow/cache_service.py`: what makes it read a page differently), a check in `_check_engine` / `_ocr_engine_issues` plus an `IssueKind` and its row in `gui/_fix_targets.py:fix_for`, and its label in `gui/_user_text.py:OCR_ENGINE_LABELS`. Engines are local only (`LOCAL_OCR_ENGINES`). The built-in reader is `ppocr` (`infrastructure/ppocr/`: `detect.py` → `reading_order.py` → `recognise.py`, joined in `engine.py`); `READER_VERSION` in `domain/local_models.py` is bumped when its output changes. See `docs/development.md` → "Text recognition engines" |
+| A model file the app runs itself | A `LocalModel` (repo, pinned revision, size and SHA-256 per file) in `domain/local_models.py` (the reader's two, and the two **page models** `DOC_ORI` / `UVDOC` of the automatic image preparation: turn and flatten, `PAGE_MODELS`; `--download-page-models`); `infrastructure/onnx/store.py:ModelStore` keeps it under the user data folder, `CvDnnNet` runs it. **Downloads only on request** (Add-ons tab, the fix button, the Setup Assistant, `--download-reader`) — never at start-up, never silently. Tests get the files as Bazel `http_file`s (`MODULE.bazel`), never from the network. See `docs/development.md` → "Local model files" |
+| New image preparation step | Add a `Step` (`name`, `apply(image, ctx) -> StepResult`) to `auto_steps` in `infrastructure/preprocessing/auto.py` and bump `AUTO_VERSION` (`preprocessing/identity.py`); the settings get **no switch of its own** (teachers see "Automatic" or "Original page"). Keep `tests/unit/test_preprocessing_auto_golden.py` green: it pins the pixels of the automatic preparation (regenerate its digests when the change is on purpose). Thresholds are named constants in `auto.py`. See `docs/development.md` → "Image preparation" |
 | New input file type | Add suffix to `SUPPORTED_SUFFIXES` in `interfaces.py` **and** a builder to `_SUFFIX_TO_BUILDER` in `infrastructure/input_provider_factory.py` |
 | PDF embedded-text rules | Thresholds/modes in `domain/pdf_text_layer.py`; measurement in `PdfInputProvider` (`infrastructure/input_providers.py`); setting is `OcrConfig.pdf_text_layer` (default `auto`), passed to providers via `InputOptions` in `input_provider_factory.py`; benchmark always OCRs |
 | New OCR output notation (HTML/Markdown/…) | Add an `OcrOutputParser` to `infrastructure/ocr_formats/` and list it in `default_parsers()`; model in `domain/formatted_text.py`, adapters use `application/formatting.py:TextFormatter` (see `docs/development.md` → "OCR output formats") |
@@ -120,7 +123,7 @@ delete). See `docs/development.md` → "Storage, hashing & caching".
 - **Line length**: 100. Double quotes. Config under `[tool.ruff]` in `pyproject.toml`.
 - **Lazy imports** (imports inside functions): add `# noqa: PLC0415`.
 - **Text notation**: `raw_text` / `correction_text` are plain *or* Markdown (see `raw_text_format`). Never feed them to diffs/metrics directly — use `TextFormatter.plain_text`; never parse them from a widget — use `TextFormatter.document`.
-- **Type checker**: `ty` (Astral, Rust-based). Configure under `[tool.ty]` in `pyproject.toml`. Runtime packages (PySide6, numpy, spaCy, …) are resolved under Bazel via the lint-only `//teachers_teammate:gui_lib_typed` / `ocr_lib_typed` targets (which carry the pip deps; the wheel libs stay clean). Optional extras (LLM providers, PaddleOCR, GPU libs) are intentionally not wired, so `unresolved-import` is kept ignored for their lazy imports.
+- **Type checker**: `ty` (Astral, Rust-based). Configure under `[tool.ty]` in `pyproject.toml`. Runtime packages (PySide6, numpy, spaCy, …) are resolved under Bazel via the lint-only `//teachers_teammate:gui_lib_typed` / `ocr_lib_typed` targets (which carry the pip deps; the wheel libs stay clean). Optional extras (LLM providers, GPU libs) are intentionally not wired, so `unresolved-import` is kept ignored for their lazy imports.
 - **Suppress ty with `# ty: ignore[<rule>]`, NOT `# type: ignore[...]`.** ty uses its own directive and rule names (`assignment`→`invalid-assignment`, `arg-type`→`invalid-argument-type`, `override`→`invalid-method-override`, `union-attr`→`unresolved-attribute`, …); mypy-style `# type: ignore` is silently inert. Prefer fixing or a precise `# ty: ignore[<rule>]` with a reason.
 - **Run linters through Bazel only.** ruff/ty versions are pinned in `third_party/lint/tools.bzl` (wired from `MODULE.bazel`); a `ruff`/`ty` installed into a local `.venv` can be a different version and give different results. Use `bazel test //:lint` and `bazel run //:format.fix` — do not run venv `ruff`/`ty` directly.
 - **GUI code** (`teachers_teammate/gui/`): use pytest-qt for widget/thread behavior.
@@ -131,11 +134,11 @@ delete). See `docs/development.md` → "Storage, hashing & caching".
 - Use `make_config(tmp_path, **overrides)` (plain function in `tests/conftest.py`) — not a fixture.
 - Fixtures: `sample_png`, `sample_pdf` in `tests/conftest.py`.
 - **Patch at the import site**, not at the origin:
-  - `teachers_teammate.infrastructure.pipeline.TesseractOCRProcessor`
+  - `teachers_teammate.infrastructure.stage_builder.PpOcrProcessor` (the builder constructs it there; `make_config` defaults to the built-in reader, `engine="ppocr"`, and `conftest.py` points the model store at an empty temporary folder, so nothing downloads)
   - For Ollama: `patch.dict(sys.modules, {"ollama": mock_ollama})` where `mock_ollama` exposes a mock `Client` (the `ollama` library is lazy-imported inside `OllamaClient`)
   - For lazy provider imports: `langchain_openai.ChatOpenAI`
 - Simulate missing optional packages: `patch.dict(sys.modules, {"langchain_anthropic": None})` → expect `RuntimeError` (message contains "is not installed"). Provider `create()` raises `RuntimeError`, and `build_llm()` converts any `SystemExit` from a provider into `RuntimeError` so it never propagates to callers.
-- PaddleOCR (optional): `patch.dict(sys.modules, {"paddleocr": mock_module})`.
+- The built-in reader's real models (`reader_store(tmp_path)` in `tests/conftest.py`, Bazel-fetched `http_file`s) run only in tests marked `needs_reader_models`; everything else uses `fake_reader_store` or patches the processor.
 
 ## Installed LangChain packages (dev env)
 

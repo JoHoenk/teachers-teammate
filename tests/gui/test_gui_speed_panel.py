@@ -254,7 +254,7 @@ def test_a_step_that_hit_the_time_limit_says_so_instead_of_a_range(qtbot) -> Non
 @pytest.mark.gui
 def test_the_panel_says_so_while_no_step_runs_on_ollama(qtbot) -> None:
     """
-    Given  a page whose text recognition is Tesseract and whose proofreading is off
+    Given  a page whose text recognition is the built-in reader and whose proofreading is off
     When   the panel is drawn
     Then   the button and the figures are hidden and a line says there is nothing to measure
     """

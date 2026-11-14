@@ -64,7 +64,47 @@ def context_choice_from(settings: Mapping[str, object], card_gb: float | None) -
 
 
 class LocalDataFlowStub:
-    """Reports every step as running on this computer (the common, uneventful case)."""
+    """Reports every step as running on this computer (the common, uneventful case).
+
+    Also answers for the built-in reader's model files, which every GUI stub shares.
+    """
+
+    #: Whether the built-in reader's model files "are downloaded" (a test sets it per stub).
+    reader_present: bool = True
+    reader_progress: tuple[int, int] = (0, 0)
+    reader_downloads: int = 0
+
+    def reader_installed(self) -> bool:
+        """Answer whether the reader's model files are downloaded."""
+        return self.reader_present
+
+    #: Whether the page models of the automatic preparation "are downloaded".
+    page_models_present: bool = True
+    page_models_downloads: int = 0
+
+    def page_models_installed(self) -> bool:
+        """Answer whether the page models are downloaded."""
+        return self.page_models_present
+
+    def download_page_models(self, on_progress=None, cancel=None) -> None:
+        """Pretend to download: report once, then the files are there."""
+        self.page_models_downloads += 1
+        if on_progress:
+            on_progress(1_000_000, 2_000_000)
+            on_progress(2_000_000, 2_000_000)
+        self.page_models_present = True
+
+    def models_dir(self) -> Path:
+        """Return a folder name for the dialogs to show."""
+        return Path(tempfile.gettempdir()) / "teachers-teammate-models"
+
+    def download_reader(self, on_progress=None, cancel=None) -> None:
+        """Pretend to download: report once, then the files are there."""
+        self.reader_downloads += 1
+        if on_progress:
+            on_progress(1_000_000, 2_000_000)
+            on_progress(2_000_000, 2_000_000)
+        self.reader_present = True
 
     def describe_data_flow(self, config) -> DataFlow:
         _ = config

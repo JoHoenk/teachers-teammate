@@ -4,8 +4,10 @@ from __future__ import annotations
 
 from pathlib import Path
 import sys
+import threading
+from typing import Any
 
-from PySide6.QtCore import QThread, Signal
+from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
@@ -22,11 +24,12 @@ from PySide6.QtWidgets import (
 from ..application.service import (
     ADDON_AMD,
     ADDON_NVIDIA,
-    ADDON_PADDLE,
     ADDON_PRIVACY,
     GpuInfo,
     ProcessingApplicationService,
 )
+from ..domain.local_models import HUGGING_FACE_HOST, PAGE_MODELS_SIZE_LABEL, READER_SIZE_LABEL
+from ..exceptions import ModelDownloadCancelledError
 from . import _user_text as txt
 from ._constants import _SPACY_MODEL_CHOICES
 
@@ -46,17 +49,6 @@ _ADDON_META: dict[str, dict] = {
             f"<i>{txt.WHERE_ADDONS}</i> before using anonymization."
         ),
         "size_warning": "",
-    },
-    ADDON_PADDLE: {
-        "title": "Install PaddleOCR Addon",
-        "description": (
-            "This installs <b>paddlepaddle</b> and <b>paddleocr</b> for fully local "
-            "OCR inference without a network connection.<br><br>"
-            f'After installation, select <i>"paddleocr"</i> as the recognition method under '
-            f"<i>{txt.WHERE_AI_MODELS}</i>."
-        ),
-        "size_warning": "⚠  Download is approximately 400 MB. Make sure you have a stable "
-        "internet connection and sufficient disk space.",
     },
 }
 
@@ -195,6 +187,154 @@ class AddonInstallerDialog(QDialog):
             return True
         except ImportError:
             return False
+
+
+# ── The built-in reader's model files ──────────────────────────────────────────
+
+
+class _ReaderDownloadThread(QThread):
+    """Downloads a set of model files in a background thread.
+
+    The built-in reader's by default; ``method`` names another download of the service
+    (``"download_page_models"``).
+    """
+
+    progress = Signal(int, int)  # bytes done, bytes total
+    finished_ok = Signal()
+    finished_err = Signal(str)
+
+    def __init__(self, service: Any, method: str = "download_reader") -> None:
+        super().__init__()
+        self._service = service
+        self._method = method
+        self._cancel = threading.Event()
+
+    def cancel(self) -> None:
+        """Stop after the chunk that is arriving; no partial file is kept."""
+        self._cancel.set()
+
+    def run(self) -> None:
+        try:
+            getattr(self._service, self._method)(self.progress.emit, self._cancel)
+            self.finished_ok.emit()
+        except ModelDownloadCancelledError:
+            self.finished_err.emit("aborted")
+        except Exception as exc:  # noqa: BLE001  # any failure reaches the UI as a sentence
+            self.finished_err.emit(str(exc))
+
+
+class ReaderDownloadDialog(QDialog):
+    """Modal dialog that downloads the built-in reader with a progress bar in MB.
+
+    Emits ``downloaded()`` on success so callers can refresh what depends on it.  A subclass
+    downloads another set of model files by changing the class attributes below.
+    """
+
+    downloaded = Signal()
+
+    _TITLE = "Download the built-in reader"
+    _INTRO = (
+        "The built-in reader reads pages on this computer, without a server. Its model "
+        f"files ({READER_SIZE_LABEL}, Apache-2.0, from PaddlePaddle) are downloaded once "
+        f"from {HUGGING_FACE_HOST} and kept in:"
+    )
+    _METHOD = "download_reader"
+
+    def __init__(self, service: Any = None, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._service = service or ProcessingApplicationService()
+        self._thread: _ReaderDownloadThread | None = None
+
+        self.setWindowTitle(self._TITLE)
+        self.setMinimumWidth(480)
+        layout = QVBoxLayout(self)
+        layout.setSpacing(10)
+        desc = QLabel(f"{self._INTRO}<br><tt>{self._service.models_dir()}</tt>")
+        desc.setWordWrap(True)
+        desc.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        layout.addWidget(desc)
+
+        self._bar = QProgressBar()
+        self._bar.setRange(0, 100)
+        self._bar.setValue(0)
+        layout.addWidget(self._bar)
+        self._status = QLabel("")
+        self._status.setWordWrap(True)
+        layout.addWidget(self._status)
+
+        buttons = QDialogButtonBox()
+        self._start_btn = QPushButton("Download")
+        self._start_btn.setDefault(True)
+        buttons.addButton(self._start_btn, QDialogButtonBox.ButtonRole.AcceptRole)
+        self._cancel_btn = QPushButton("Cancel")
+        buttons.addButton(self._cancel_btn, QDialogButtonBox.ButtonRole.RejectRole)
+        layout.addWidget(buttons)
+        self._start_btn.clicked.connect(self._start)
+        self._cancel_btn.clicked.connect(self._on_cancel)
+
+    def _start(self) -> None:
+        self._start_btn.setEnabled(False)
+        self._start_btn.setText("Downloading…")
+        self._status.setText("Starting download…")
+        self._thread = _ReaderDownloadThread(self._service, self._METHOD)
+        self._thread.progress.connect(self._on_progress)
+        self._thread.finished_ok.connect(self._on_ok)
+        self._thread.finished_err.connect(self._on_err)
+        self._thread.start()
+
+    def _on_cancel(self) -> None:
+        if self._thread is not None and self._thread.isRunning():
+            self._cancel_btn.setEnabled(False)
+            self._thread.cancel()
+            return
+        self.reject()
+
+    def _on_progress(self, done: int, total: int) -> None:
+        if total > 0:
+            self._bar.setValue(int(100 * done / total))
+            self._status.setText(f"{done / 1_000_000:.1f} / {total / 1_000_000:.1f} MB")
+
+    def _on_ok(self) -> None:
+        self._bar.setValue(100)
+        self._status.setText(f'<span style="color:#27ae60;">{txt.READER_DOWNLOADED}</span>')
+        self._start_btn.setText("Done ✓")
+        self._cancel_btn.setText("Close")
+        self._cancel_btn.setEnabled(True)
+        self.downloaded.emit()
+
+    def _on_err(self, message: str) -> None:
+        text = "The download was cancelled." if message == "aborted" else message
+        self._status.setText(f'<span style="color:#c0392b;"><b>Error:</b> {text}</span>')
+        self._start_btn.setEnabled(True)
+        self._start_btn.setText("Retry")
+        self._cancel_btn.setEnabled(True)
+        self._cancel_btn.setText("Close")
+
+    def reject(self) -> None:
+        if self._thread is not None and self._thread.isRunning():
+            return
+        super().reject()
+
+    def closeEvent(self, event: object) -> None:
+        from PySide6.QtGui import QCloseEvent  # noqa: PLC0415
+
+        if self._thread is not None and self._thread.isRunning():
+            if isinstance(event, QCloseEvent):
+                event.ignore()
+            return
+        super().closeEvent(event)  # ty: ignore[invalid-argument-type]  # event is typed object to match the overridden signature; QDialog.closeEvent wants QCloseEvent
+
+
+class PageModelsDownloadDialog(ReaderDownloadDialog):
+    """Modal dialog that downloads the page models of the automatic image preparation."""
+
+    _TITLE = "Download the page models"
+    _INTRO = (
+        "The automatic image preparation turns sideways pages and flattens curved ones with two "
+        f"small models ({PAGE_MODELS_SIZE_LABEL}, Apache-2.0, from PaddlePaddle). They are "
+        f"downloaded once from {HUGGING_FACE_HOST} and kept in:"
+    )
+    _METHOD = "download_page_models"
 
 
 # ── spaCy model download ───────────────────────────────────────────────────────
@@ -525,8 +665,6 @@ class _OllamaPullThread(QThread):
 
     def __init__(self, url: str, model_name: str) -> None:
         super().__init__()
-        import threading  # noqa: PLC0415
-
         self._url = url
         self._model_name = model_name
         self._abort_event = threading.Event()

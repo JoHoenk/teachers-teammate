@@ -197,7 +197,7 @@ _BUILD_BASE: list[str] = [
     "--hidden-import",
     "teachers_teammate.infrastructure.docx_builder",
     "--hidden-import",
-    "teachers_teammate.infrastructure.image_preprocessor",
+    "teachers_teammate.infrastructure.preprocessing.recipes",
     "tools/build/run_gui.py",
 ]
 

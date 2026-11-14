@@ -802,8 +802,8 @@ Rules that keep a stop honest:
   the request's own `ollama.Client`, which also ends a request that has not produced a chunk
   yet (model loading, a long prompt).  An answer already in the queue is handed over first
   and never thrown away.  The pipeline
-  passes its stop event to the shared client; online services and Tesseract/Paddle cannot be
-  cancelled mid-request and finish it first.
+  passes its stop event to the shared client, and to the built-in reader, which checks it before
+  every line (`RunStoppedError`) and so stops within a line.
 * **Closing the window** (`MainWindow.closeEvent`): a spontaneous close during a run asks first
   (`_confirm_close_during_run`; File → Quit asks the same through `_on_quit_requested`), then
   `request_stop(now=True)`, disconnects the worker's signals (no dialog on a hidden window) and
@@ -1312,6 +1312,177 @@ with `monkeypatch.setitem(corpora.adapters(), …)` and takes it through build, 
 modes of `validate`, without touching anything outside the test), and `test_corpus_regression.py`
 for the committed set, which runs only with `GEC_CORPORA` set to a `{name: path}` file.
 
+## Text recognition engines
+
+Two engines read pages, both on a computer the user controls (`LOCAL_OCR_ENGINES`; online
+services are refused by `online_ocr_reason`, because a page cannot be anonymised before it is
+read):
+
+| Id | Name | What it is |
+|---|---|---|
+| `ollama` (default) | Ollama (AI model) | A vision model through the Ollama server; best for handwriting |
+| `ppocr` | Built-in reader (PP-OCR) | PP-OCRv6 *small* detection and recognition, run by `cv2.dnn`; no server |
+
+The reader (`infrastructure/ppocr/`) reads a page in five steps (`engine.py:PpOcrProcessor`):
+
+1. `image_io.read_image` — Unicode-safe load (OpenCV applies the EXIF turn).
+2. `detect.detect` — the page is scaled so its long side is at most `DetectorSettings.max_side`
+   (1600 px, never up, sides rounded to multiples of 32), the DB detector returns a probability
+   map, and `boxes_from_map` turns it into rotated boxes: threshold `0.2`, boxes whose mean
+   probability is below `0.45` or whose short side is under 3 map pixels are dropped, the rest
+   grow by Paddle's *unclip* (`2 x area x 1.4 / perimeter`).  These four numbers are the ones in
+   the pinned model's `inference.yml`; `tests/integration/test_ppocr_models.py` compares them
+   with the file, so a new revision that changes them fails there.
+3. **The boxes are lengthened** by `line_end_pad` = 0.6 x the line height (0.3 at each end).
+   Paddle's boxes are tight: on a drawn A4 page at a detector size of 1600 px only 1 line of 8
+   kept its full stops and last letters; with lengthened boxes 8 of 8 did, at 960, 1600 and
+   2000 px alike.  `max_side` and `line_end_pad` are provisional; the evaluation tool measures
+   them on real handwriting.
+4. `reading_order.reading_order` — rows by centre height (a box joins the row when its centre is
+   within half the median line height), each row left to right.  One column only.
+5. Per box: check the stop event, `recognise.crop_line` (perspective warp to an upright strip;
+   a strip 1.5 x taller than wide is turned 90 degrees), `recogniser_input` (height 48, width
+   at least 320 and at most 3200, `(x/255 - 0.5)/0.5`), one forward pass, `ctc_decode`
+   (classes are `["<blank>", *character_dict, " "]` = 18,710, the model's output size).  Words
+   of a row are joined with a space, rows with a newline; empty lines are dropped.
+   Recognition is one line at a time: batching measured slower.
+
+**Why `cv2.dnn`, and the `OnnxNet` seam.**  OpenCV is already part of the app, so the reader
+adds no package.  ONNX Runtime was measured too: the detector runs a full A4 page in 2.1 s
+instead of 2.4 s, at 78 MB installed and no Intel-Mac build.  The reader depends on the
+one-method `OnnxNet` protocol (`infrastructure/onnx/runner.py`) only, so a model that
+`cv2.dnn` runs differently on real pages is a new class and a dependency, not a rewrite.
+`CvDnnNet` loads from **bytes**, not from the path: OpenCV's path functions fail on a Windows
+user folder with an umlaut (a test loads from `Jörg Müller`).  PyYAML reads the recogniser's
+character list from `inference.yml` (a base dependency).
+
+**`READER_VERSION`** (`domain/local_models.py`) is bumped whenever detection, recognition,
+reading order or joining changes what the reader returns; it is part of the cache identity, so
+stored pages are read again.
+
+**Adding an engine** is in `CLAUDE.md` ("New OCR engine").  The settings file of an older
+version may name `tesseract` or `paddleocr`: `config.normalize_ocr_engine` maps them to `ppocr`
+(`RETIRED_OCR_ENGINES`, a notice names the old engine and where to download the reader), and an
+online engine falls back to the default as before.
+
+## Image preparation
+
+Teachers see two choices: **Automatic (recommended)** (`preprocess_method = "auto"`, the default)
+and **Original page** (`"none"`).  `infrastructure/preprocessing/` holds all of it:
+
+- `steps.py` — `Step` (a `name` and `apply(image, ctx) -> StepResult`), `StepContext` (the
+  source's DPI, whether the file carries camera tags, and a dict of measurements one step
+  leaves for the later ones) and `StepPipeline`, which implements `ImagePreprocessor`: load once
+  (`image_io.read_image`, which applies the EXIF rotation tag), run the steps, list the names of
+  the steps that *acted*, write `<stem>_preprocessed.png`, put the DPI back.  With `save_steps`
+  every acting step also leaves a JPEG snapshot.  An **empty list** is "Original page": the file
+  is returned untouched — except a photo whose EXIF orientation is not 1, which is decoded
+  (that applies the turn) and written as a PNG; the listed name is then `turned by tag`.
+- `auto.py` — the automatic preparation and every threshold as a named constant.  `auto_steps(engine,
+  store)` lists, in order: `measure` (never acts; leaves the page outline, the unevenness of the
+  light and the *photo?* verdict), `page` (corners → perspective warp, only for an outline with
+  four straight edges, a sheet's aspect and a contrast against its surroundings), `flatten`
+  (UVDoc, when `page` did not act and the image is a photo, or the outline is curved), `turn`
+  (doc_ori, confidence ≥ 0.9), `size` (long side ≤ 3508), `light` (each channel divided by the
+  background: dilate, median, ¼ size), `deskew` (0.3° ≤ tilt ≤ 10°) and the output (Ollama
+  gray, the built-in reader colour).  There is no denoise and no binarising.  A photo is: camera
+  tags in the file, **or** a page-like region (contrast against its surroundings) with the wrong
+  shape, **or** uneven light.  A scan with a framed table has no contrast between inside and
+  outside the frame, so it is no page and no photo.
+- `page_models.py` — `PageModels`: the two `cv2.dnn` wrappers behind the `OnnxNet` seam
+  (resize and normalisation from each model's `inference.yml`).  A model step without its files
+  returns `acted=False`, reason "page models not downloaded", and `PageModels.note_missing()`
+  logs that once per run (info), not per page.  A model that fails at run time never fails the
+  page: the step declines and the failure is logged.
+- `identity.py` — `AUTO_VERSION`, `auto_output(engine)`, `available_page_steps(store)` and
+  `auto_identity(engine, store)`, without importing OpenCV (the cache key needs them for every
+  page).
+- `recipes.py` — `steps_for(ocr, store)`: `none` → `[]`, anything else → `auto_steps(ocr.engine,
+  store)`.  `stage_builder.default_build_preprocessor(tmp_dir, save_steps, ocr, store)` is
+  `StepPipeline(steps_for(ocr, store or ModelStore()), …)`; the factory, `preprocess_preview`, the
+  speed probe and `tools/ocr_page_tokens.py` all pass the model store through.
+
+**The gates are conservative on purpose.**  Every step acts only where its measurement says so
+and leaves the page alone otherwise, so a clean scan passes unchanged; a thing the steps get
+wrong costs less than a thing they do to a page that did not need it.  The thresholds are first
+values; the evaluation tool's stages tune them (the numbers change constants or steps and bump
+`AUTO_VERSION`).
+
+**Page models.**  `DOC_ORI` (PP-LCNet_x1_0_doc_ori) and `UVDOC` are `LocalModel`s in
+`domain/local_models.py` (group `PAGE_MODELS`, 39 MB, Apache-2.0, PaddlePaddle), downloaded only
+on request: **Download…** on Scan quality, the **Page models** box on Add-ons → Reading models
+(`page_models:all`, between the reader and the Ollama pulls in `InstallRound`), or
+`--download-page-models`.  Missing page models are **not** an `IssueKind`: a run never waits for
+them; the CLI prints one notice line (`page_models_notice_for_run`).  `UVDoc` answers an image at
+the size it was given, so the page goes to it scaled to at most `FLATTEN_MAX_SIDE` (2048).
+
+**Identity.**  `cache_service._preprocess_fingerprint(ocr, source, store)` is the method; for
+`auto` also `v<AUTO_VERSION>`, `colour` / `gray`, and `+turn` / `+flatten` for the page models
+that are downloaded; then the PDF DPI and text-layer entries.  Downloading the page models, a
+new `AUTO_VERSION` or another engine's output re-reads pages **once**, and that is intended.
+Bump `AUTO_VERSION` whenever a step, a threshold or a page model revision changes.  The model
+store reaches the key through `CacheReconciliationService(model_store=…)`,
+`ApplicationCommands(model_store=…)` and `compute_ocr_config_hash(…, store)`; with `None` it is
+the default folder (the tests point that at an empty temporary one).
+
+**How to change it.**  A new step is a `Step` in `auto_steps`, with its gate and a named
+constant, a `STEP_LABELS` entry in `gui/_user_text.py` if it is worth a word in the preview
+caption, and an `AUTO_VERSION` bump.  It gets **no switch of its own**.  A step's `reason` text
+("tilt 1.4°") goes to the debug log only.
+
+**Tests.**  `test_preprocessing_auto.py` (drawn pictures: photo → `page` acts; framed table →
+it does not; flat scan → `light` does not act; 3° corrected, 15° left; 5000 px → 3508; colour
+vs gray; fake page models for turn / flatten and for missing files),
+`test_preprocessing_auto_golden.py` (a digest of the automatic preparation without page models
+on the sample PNG and PDF page plus three drawn pictures; a change in the pixels without an
+`AUTO_VERSION` bump fails — the digests belong to the pinned OpenCV on Linux, so after an
+OpenCV update look at the pictures, then regenerate from the failure messages) and
+`test_page_models.py` (`needs_page_models`, the real pinned files as Bazel `http_file`s: a page
+turned 90/180/270° is restored, a curved page's lines get straighter).
+
+## Local model files
+
+`domain/local_models.py` is the catalogue of model files the app runs itself (not through
+Ollama): a `LocalModel` has a Hugging Face repo, a **pinned commit**, and per file its size and
+SHA-256.  `READER_MODELS` are the reader's two sets (31,191,354 bytes, "31 MB").
+
+`infrastructure/onnx/store.py:ModelStore` keeps them under
+`<user data>/models/<repo name>/<revision>/` (`TEACHERS_TEAMMATE_MODELS_DIR` moves the root;
+`conftest.py` points it at an empty temporary folder for every test).
+
+- **A download happens only when the teacher asks**: the reader's Download button, Add-ons →
+  Reading models, the Setup Assistant's *Set up*, or `--download-reader`.  Never at start-up,
+  never silently, and nothing about the user is sent (User-Agent `teachers-teammate/<version>`).
+- Each file streams into `<name>.part`, hashing as it is written; size and SHA-256 must match
+  before `os.replace` gives it its name, and a `.verified` marker is written once all files of a
+  model are in.  `is_installed` checks the marker and the sizes only (no hashing), so the
+  readiness line can ask every few seconds.  Cancel is checked per chunk and removes the part
+  file; the streamed response is closed on every way out.
+- **One download at a time per process** (`_DOWNLOAD_LOCK`): two would write the same `.part`
+  file.  What is missing is worked out inside the lock, so a download that waited finds the
+  files in place and fetches nothing; it can still be cancelled while it waits.
+- A run reads the store its service checks (`ProcessingApplicationService(model_store=)` →
+  `PipelineDependencies.model_store` / `run_ocr(model_store=)` → `StageBuilder.model_store`), so
+  the readiness check and the run never look at different folders.
+- `reader_refusal_for_run` (CLI) refuses only a run that has a file to read: a folder of text
+  files, or of files whose text is stored, starts without the model files, as in the main window.
+- Errors are sentences a teacher or an IT department can act on (`ModelDownloadError`): the
+  host that could not be reached (`huggingface.co`), a damaged download, no space, a folder that
+  cannot be written.
+- **Tests never use the network.**  `MODULE.bazel` fetches the four pinned files as `http_file`
+  repos (sha256 included) for the targets that run the real models; `conftest.reader_store()`
+  links them into a store, `fake_reader_store()` makes empty files of the pinned sizes for tests
+  that only ask whether the reader is "installed".
+- **Pinning a new revision**: change `revision` and the per-file size/sha256 in
+  `domain/local_models.py` *and* the matching `http_file` urls and hashes in `MODULE.bazel`,
+  then run `//tests:test_ppocr_models` (it checks the numbers in the new `inference.yml`) and
+  bump `READER_VERSION` if the output changes.  The models are Apache-2.0 (PaddlePaddle) and
+  are not shipped with the app, so they have no entry in `third_party_licenses/`; `NOTICE` names
+  them.  The **page models** of the automatic image preparation (`PAGE_MODELS`) are pinned the
+  same way; their four `http_file`s are `doc_ori_*` and `uvdoc_*`, their test helpers
+  `conftest.page_models_store()` and `fake_page_models_store()`, and a new revision means a
+  bump of `AUTO_VERSION` (`preprocessing/identity.py`) and a look at `test_page_models.py`.
+
 ## Storage, hashing & caching
 
 All persistent data lives under a single **storage root**, resolved by
@@ -1340,9 +1511,15 @@ OS cache directory (`~/.cache/teachers_teammate` on Linux).
   contents; the **identity of a document** regardless of its path or name.
 - `compute_ocr_config_hash(config, ocr_prompt)` (`workflow/cache_service.py`) — a
   fingerprint of the OCR stage configuration (engine, model, preprocess
-  method, language, prompt, temperature). The engine is hashed twice: a "provider"
+  method — for `auto` with its version, output and available page models —, language, prompt,
+  temperature). The engine is hashed twice: a "provider"
   slot used to sit next to it, and keeping the shape keeps existing cached OCR results
-  valid. Used by the cache to detect stale stages and by the benchmark store to label
+  valid. For the built-in reader (`ppocr`) the model slot is `reader_fingerprint()`
+  (`PP-OCRv6_small@<det rev>+<rec rev>/v<READER_VERSION>`) and the language, prompt and
+  temperature slots are constants: the reader reads every language with one model, so a
+  changed language or Ollama model never re-reads a page, while a new model revision or
+  `READER_VERSION` does. A test pins an Ollama key, so the Ollama shape cannot drift.
+  The models themselves live in the user data folder (`models/`), not in the cache. Used by the cache to detect stale stages and by the benchmark store to label
   runs.
 - `compute_correction_config_hash` / `compute_eval_config_hash` include an
   `"anonymized"` part while anonymisation is on (both stages see its text), so
@@ -1462,8 +1639,8 @@ Results) stay in `ConfigPanel`.
 **Pages are built lazily.**  Each page starts background work (model lists, hardware
 detection, installed-package detection), so a page is built the first time it is shown, and
 `SettingsWindow.values()` merges only the pages that were built.  An unvisited page changes
-nothing.  Settings that other pages change meanwhile (computer profile, server address, an
-engine's image preparation) are kept in the window's working copy, so a page built later
+nothing.  Settings that other pages change meanwhile (computer profile, server address) are kept in
+the window's working copy, so a page built later
 starts from them.
 
 **Shared state is wired by the window**, not by the pages: the editable profile on *Where the AI
@@ -1537,8 +1714,9 @@ never only a sentence; `check_run_preflight(config, memory=..., recognition=...,
 (`needs_text_recognition(files, recognised=...)`: only text files, or text already stored; a PDF
 counts as reading, because its text layer is only known by opening it); `fresh=True` asks Ollama
 for its models again instead of using the cached list ("Check again", a returning window).
-The engine probes (`is_module_importable`, `_tesseract_installed`) are shared with the connection
-check, so a package installed from Add-ons is seen without a restart.  A new requirement is therefore: an
+The engine probes (`is_module_importable`, `reader_installed`) are shared with the connection
+check, so a package or the reader's models installed from Add-ons are seen without a restart
+(`IssueKind.READER_MODEL_MISSING`, fix: the **Reading models** tab of Add-ons with `reader:ppocr` ticked).  A new requirement is therefore: an
 `IssueKind`, its check, and **one row in `gui/_fix_targets.py:fix_for`** -- the line for the
 readiness line and the buttons (`FixAction`: a Settings page + focus + preselect, or a
 `command` such as `retry` / `choose_folder`).  `DependencyGuardDialog(title, issues, actions)`
@@ -1607,6 +1785,10 @@ by the recommendation, so running the assistant again changes nothing) and **not
 off** ("Remove personal info" is only ever set to `True`, and a review with its own model keeps
 it).  The assistant writes only keys the Settings window or the main window already own, so
 `Config`, `DEFAULTS`, the TOML keys and the CLI are untouched and there is no migration.
+A reader that is already chosen (`ocr_engine = ppocr`) is kept like any working choice: its row is
+*kept*, and when its model files are not downloaded the setup plan adds one `DownloadKind.READER_MODEL`
+download (31 MB, the install round's *reader* phase between spaCy and the pulls).  The assistant
+never proposes to switch to the reader.
 
 **The summary's wording lives in `gui/setup/_summary.py`.**  `summary_rows(plan, place_of,
 key_missing=)` turns a plan into `SummaryRow`s — the classes first, then one per step, each with
@@ -1716,7 +1898,7 @@ Where the setting applies:
 
 ## OCR output formats & formatted text
 
-OCR engines answer in different notations: plain text (Tesseract, Paddle), Markdown (many
+OCR engines answer in different notations: plain text (the built-in reader), Markdown (many
 vision-language models) or layout HTML (Chandra: `<div data-bbox=… data-label=…>` with inline
 `<b>`, `<sup>`, `<del>`). There is no standard for this, so the pipeline normalises every
 answer once, right after OCR, and everything downstream works on one canonical form.
@@ -1736,7 +1918,7 @@ engine output ─► clean_ocr_text ─► OcrOutputPostprocessor ─► text + 
 | `TextFormatter` | `application/formatting.py` | what adapters (GUI/CLI) call; they never import parsers |
 
 **Stored form.** `DocumentState.raw_text` is either the engine's text verbatim
-(`raw_text_format == "plain"`, e.g. Tesseract output, `.txt` input) or canonical Markdown
+(`raw_text_format == "plain"`, e.g. the built-in reader's output, `.txt` input) or canonical Markdown
 (`"markdown"`: CommonMark + GFM strikethrough/tables + inline `<sup>`/`<sub>`/`<u>`).
 Text is only treated as Markdown when the engine's output carried real formatting, so plain
 OCR output containing `- ` or `*` is never reinterpreted. The correction is written in the
@@ -2287,7 +2469,7 @@ models, and how those installations survive application restarts.
 
 ### Addon packages directory
 
-Optional packages that are installed at runtime — spaCy, PaddleOCR, LLM provider connectors,
+Optional packages that are installed at runtime — spaCy, LLM provider connectors,
 GPU monitoring libraries — all land in a **persistent user-writable directory** that is separate
 from the application bundle or the development venv:
 
@@ -2301,7 +2483,9 @@ The location is computed by `addon_manager.get_packages_dir()` using
 `platformdirs.user_data_dir`. This directory is prepended to `sys.path` by
 `inject_packages_dir()` so anything installed there is importable.
 
-`inject_packages_dir()` is called:
+`inject_packages_dir()` first runs `remove_retired_addons()`: the retired Paddle add-on
+(`paddlepaddle`, `paddleocr`, `paddlex`, `opencv-contrib-python`, which shadowed the app's own
+OpenCV) is deleted by its `RECORD` files only; numpy is left alone.  It is then called:
 
 - At application startup (`run_gui.py`, `gui/__main__.py`, `__main__.py`), so packages
   installed during a previous session are immediately available.
@@ -2331,7 +2515,7 @@ if "--_pip_install_mode" in sys.argv:
 ```
 
 `addon_manager.install_addon_subprocess()` uses this mechanism for the addon packages
-(spaCy, PaddleOCR, GPU monitoring).  `_PipInstallThread` in `settings/_addons_page.py` also
+(spaCy, GPU monitoring).  `_PipInstallThread` in `settings/_addons_page.py` also
 uses it when `sys.frozen` is `True`.
 
 In development (non-frozen) builds, both code paths fall back to the standard
@@ -2407,10 +2591,10 @@ can start.
 
 | What | How downloaded | Where stored | Required at startup? |
 |---|---|---|---|
-| pip packages (spaCy, PaddleOCR, …) | pip via `--_pip_install_mode` (frozen) or `-m pip` (source) | packages_dir (frozen) / venv (source) | `inject_packages_dir()` |
+| pip packages (spaCy, LLM connectors, …) | pip via `--_pip_install_mode` (frozen) or `-m pip` (source) | packages_dir (frozen) / venv (source) | `inject_packages_dir()` |
 | spaCy language models | pip wheel from GitHub Releases | packages_dir | `inject_packages_dir()` |
 | Ollama models | Ollama HTTP API (`/api/pull`) | Ollama data dir | Ollama server running |
-| Tesseract | OS package manager (not in-app) | System PATH | Tesseract binary on PATH |
+| Built-in reader's model files (31 MB) | HTTPS from `huggingface.co`, only on request (`ModelStore.download`) | `<user data>/models/<repo>/<revision>/` | Never at start-up |
 
 **Focus in the Changes tab** (`gui/_review_views.py`). Choosing a change or an unclear
 expression — by clicking its words in the text or its number in the list — marks it in both

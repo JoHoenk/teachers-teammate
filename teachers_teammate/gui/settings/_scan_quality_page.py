@@ -16,8 +16,8 @@ from ._page import SettingsContext, SettingsPage, SettingsPageBase
 
 TITLE = "Scan quality"
 DESCRIPTION = (
-    "How scans and photos are cleaned up before the text is read. The defaults suit most "
-    "scans; Preview… shows the effect on one of your documents."
+    "How scans and photos are prepared before the text is read. Automatic suits most "
+    "documents; Preview… shows the effect on one of your own."
 )
 GROUP_TITLE = "Preparing scans and photos"
 DEBUG_LABEL = "Keep processed images for inspection"
@@ -29,18 +29,13 @@ DEBUG_TOOLTIP = (
 #: The settings keys :class:`ScanQualityControls` shows (the temperature lives on AI models).
 SCAN_KEYS = (
     "preprocess_method",
-    "preprocess_dewarp",
-    "preprocess_deskew",
-    "preprocess_border_crop",
-    "preprocess_denoise",
-    "preprocess_gamma",
     "pdf_render_dpi",
     "pdf_text_layer",
 )
 
 
 class ScanQualityPage(SettingsPageBase):
-    """Image preparation preset, corrections, enhancements; Expert: PDF handling, debug."""
+    """Image preparation (Automatic or Original page); Expert: PDF handling, debug."""
 
     page = SettingsPage.SCAN_QUALITY
     title = TITLE
@@ -48,6 +43,8 @@ class ScanQualityPage(SettingsPageBase):
 
     #: The user asked to preview the image preparation (the window adds the OCR choice).
     preview_requested = Signal()
+    #: The page models were downloaded from the line under the combo.
+    addon_installed = Signal(str)
 
     def __init__(self, context: SettingsContext, parent: QWidget | None = None) -> None:
         super().__init__(context, parent)
@@ -66,6 +63,7 @@ class ScanQualityPage(SettingsPageBase):
             parent=group,
         )
         self._controls.preprocess_preview_requested.connect(self.preview_requested.emit)
+        self._controls.addon_installed.connect(self.addon_installed.emit)
         group_layout.addWidget(self._controls)
         layout.addWidget(group)
 
@@ -98,11 +96,6 @@ class ScanQualityPage(SettingsPageBase):
         ocr = self._controls.ocr_config(DEFAULTS["ocr_engine"], DEFAULTS["ocr_model"])
         return {
             "preprocess_method": ocr.preprocess_method,
-            "preprocess_dewarp": ocr.dewarp,
-            "preprocess_deskew": ocr.deskew,
-            "preprocess_border_crop": ocr.border_crop,
-            "preprocess_denoise": ocr.denoise,
-            "preprocess_gamma": ocr.gamma,
             "pdf_render_dpi": ocr.pdf_render_dpi,
             "pdf_text_layer": ocr.pdf_text_layer,
             "debug": self._debug.isChecked(),
@@ -110,10 +103,6 @@ class ScanQualityPage(SettingsPageBase):
 
     def owned_keys(self) -> frozenset[str]:
         return frozenset((*SCAN_KEYS, "debug"))
-
-    def set_engine_default(self, engine: str) -> None:
-        """Apply the image preparation the newly chosen recognition method works best with."""
-        self._controls.set_engine_default(engine)
 
     def ocr_config(self, engine: str, model: str) -> OcrConfig:
         """Return the full :class:`OcrConfig` for *engine*/*model* with this page's choices."""

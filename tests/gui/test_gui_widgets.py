@@ -420,7 +420,7 @@ def test_preview_panel_shows_steps_caption_and_original_toggle(qtbot, tmp_path: 
     """
     Given  a loaded PreviewPanel and preprocessing info with an original page
     When   set_preprocessing() is called and the Original toggle is clicked
-    Then   the caption lists the steps, the toggle becomes visible, and toggling switches
+    Then   the caption says in words what the steps did, the toggle becomes visible, and toggling switches
            the shown image between processed and original
     """
     from teachers_teammate.gui._preview_panel import PreviewPanel  # noqa: PLC0415
@@ -431,23 +431,23 @@ def test_preview_panel_shows_steps_caption_and_original_toggle(qtbot, tmp_path: 
     processed = _solid_pixmap(100, 100)
     panel.load(processed, "raw", "", "")
 
-    panel.set_preprocessing(_solid_png(tmp_path / "orig.png", 200, 300), ["grayscale", "deskew"])
+    panel.set_preprocessing(_solid_png(tmp_path / "orig.png", 200, 300), ["light", "deskew"])
 
     assert panel._prep_lbl.isVisible()
-    assert panel._prep_lbl.text() == "Preprocessed: grayscale, deskew"
+    assert panel._prep_lbl.text() == "Prepared: shadows evened out, tilt corrected"
     assert panel._original_btn.isVisible()
     assert panel._original_pixmap is None  # not loaded until first toggle
 
     panel._original_btn.click()
     assert panel._original_btn.isChecked()
-    assert "original page" in panel._prep_lbl.text()
+    assert panel._prep_lbl.text() == "Showing the original page"
     assert panel._image_view._pix_item is not None
     assert panel._image_view._pix_item.pixmap().width() == 200
 
     panel._original_btn.click()
     assert panel._image_view._pix_item is not None
     assert panel._image_view._pix_item.pixmap().width() == 100
-    assert panel._prep_lbl.text() == "Preprocessed: grayscale, deskew"
+    assert panel._prep_lbl.text() == "Prepared: shadows evened out, tilt corrected"
 
 
 @pytest.mark.gui
@@ -475,7 +475,7 @@ def test_preview_panel_load_accepts_preprocessing_info(qtbot, tmp_path: Path) ->
         ),
     )
 
-    assert panel._prep_lbl.text() == "Preprocessed: deskew"
+    assert panel._prep_lbl.text() == "Prepared: tilt corrected"
     assert panel._original_btn.isVisible()
 
 
@@ -544,7 +544,7 @@ def test_preview_panel_caption_states_when_nothing_was_applied(qtbot) -> None:
     panel.set_preprocessing(None, [])
 
     assert panel._prep_lbl.isVisible()
-    assert "No preprocessing applied" in panel._prep_lbl.text()
+    assert panel._prep_lbl.text() == "Prepared: nothing needed"
     assert not panel._original_btn.isVisible()
 
 
@@ -1166,7 +1166,7 @@ def test_data_flow_summary_warns_and_advises_for_online_steps(qtbot) -> None:
 
     box.set_flow(
         _flow(
-            _stage("ocr", DataLocation.THIS_COMPUTER, "Tesseract", "page images"),
+            _stage("ocr", DataLocation.THIS_COMPUTER, "Built-in reader", "page images"),
             _stage("correction", DataLocation.ONLINE, "OpenAI (ChatGPT)"),
         )
     )
@@ -1237,7 +1237,7 @@ def test_short_place_uses_few_words_for_every_kind_of_place() -> None:
 @pytest.mark.gui
 def test_uses_line_names_model_and_place_and_falls_back_to_the_engine() -> None:
     """
-    Given  a proofreading stage at an EU service and a Tesseract stage without a model
+    Given  a proofreading stage at an EU service and a built-in reader stage without a model
     When   their "uses" lines are built
     Then   the first shows model and place, the second the engine's name instead of a model
     """
@@ -1248,10 +1248,10 @@ def test_uses_line_names_model_and_place_and_falls_back_to_the_engine() -> None:
     from teachers_teammate.gui._data_flow_summary import uses_line  # noqa: PLC0415
 
     online = _stage("correction", DataLocation.ONLINE, "Mistral (EU)", region=DataRegion.EU)
-    tesseract = _stage("ocr", DataLocation.THIS_COMPUTER, "Tesseract", "page images")
+    reader = _stage("ocr", DataLocation.THIS_COMPUTER, "Built-in reader", "page images")
 
     assert "mistral-small-latest · Mistral (EU) · EU" in uses_line(online, "mistral-small-latest")
-    assert "Tesseract · this computer" in uses_line(tesseract, "")
+    assert "Built-in reader · this computer" in uses_line(reader, "")
 
 
 @pytest.mark.gui
@@ -1407,3 +1407,22 @@ def test_preview_panel_warns_when_the_content_review_cannot_read_the_text(qtbot)
     assert "too long for content review" in label.text()
     assert "#e67e22" in label.text()  # the amber span, not a failure colour
     assert "cannot be split" in label.toolTip()
+
+
+@pytest.mark.gui
+def test_the_caption_names_steps_in_words_and_ignores_the_gray_conversion(qtbot) -> None:
+    """
+    Given  the steps of an automatic preparation, with the gray conversion for Ollama
+    When   the caption is built
+    Then   every acting step has its words, the gray conversion none, and the rotation tag alone
+           reads "Original page (rotation tag applied)"
+    """
+    from teachers_teammate.gui import _user_text as txt  # noqa: PLC0415
+
+    assert (
+        txt.prepared_caption(["page", "turn", "size", "light", "deskew", "grayscale"])
+        == "Prepared: page cut out, page turned, scaled down, shadows evened out, tilt corrected"
+    )
+    assert txt.prepared_caption(["flatten"]) == "Prepared: page flattened"
+    assert txt.prepared_caption(["grayscale"]) == "Prepared: nothing needed"
+    assert txt.prepared_caption(["turned by tag"]) == "Original page (rotation tag applied)"

@@ -14,7 +14,7 @@ Responsibilities
 
 Why a separate store?
 ---------------------
-The preprocessor (`HandwritingPreprocessor`) writes its output to a temp
+The preprocessor (`StepPipeline`) writes its output to a temp
 directory and does not know about the long-term cache layout.  This store
 provides the stable canonical path and performs the copy so the path can be
 recorded in `DocumentState`.  In practice, when the preprocessor and the store
@@ -25,7 +25,7 @@ empty and this store is never called.
 
 What this module does NOT do
 -----------------------------
-- It does not perform image transformation — that is `HandwritingPreprocessor`.
+- It does not perform image transformation — that is `StepPipeline` with its steps.
 - It does not manage JSON state records — that is `StateRepository`.
 - It does not decide *when* a preview is stale — that is `domain/freshness.py`.
 """

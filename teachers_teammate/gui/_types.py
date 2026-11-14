@@ -82,11 +82,6 @@ class SettingsDict(TypedDict, total=False):
     recognition_enabled: bool
     keep_awake: bool
     preprocess_method: str
-    preprocess_dewarp: bool
-    preprocess_deskew: bool
-    preprocess_border_crop: bool
-    preprocess_denoise: bool
-    preprocess_gamma: bool
     pdf_render_dpi: int
     pdf_text_layer: str
     correction_provider: str

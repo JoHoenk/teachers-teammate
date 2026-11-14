@@ -85,15 +85,13 @@ Version: ${VERSION}
 Architecture: ${ARCH}
 Maintainer: ${MAINTAINER}
 Installed-Size: ${INSTALLED_SIZE}
-Depends: tesseract-ocr
-Recommends: tesseract-ocr-eng, tesseract-ocr-deu
 Section: utils
 Priority: optional
 Homepage: https://github.com/JoHoenk/teachers-teammate
 Description: ${DESCRIPTION}
  A local, privacy-first OCR pipeline for handwritten lecture notes.
- Supports Tesseract, PaddleOCR, Ollama, and remote LLM providers
- for both OCR extraction and text correction. Includes a CLI and a
+ Reads pages with a built-in reader or with Ollama, and proofreads
+ them with Ollama or remote LLM providers. Includes a CLI and a
  PySide6 GUI with live preview and statistics.
 EOF
 

@@ -4,9 +4,12 @@
 Usage (run from the repo root):
     python tools/build/build_standalone.py
 
+The bundle's contents live in the committed spec next to this file
+(``teachers-teammate.spec``); this script generates the platform icons and runs it.
+
 Outputs:
     dist/teachers-teammate                        (Linux onefile)
-    dist/teachers-teammate/teachers-teammate.exe     (Windows onedir)
+    dist/teachers-teammate/teachers-teammate.exe  (Windows onedir)
     dist/teachers-teammate.app/                   (macOS onedir .app bundle)
 """
 
@@ -19,68 +22,8 @@ import sys
 import tempfile
 
 ROOT = Path(__file__).resolve().parent.parent.parent
-
-# ── Flags shared by every build ────────────────────────────────────────────
-
-_COMMON: list[str] = [
-    "--noupx",
-    # Wipe PyInstaller's cache/work dir so a stale analysis can never leak
-    # previously-installed packages into a fresh build.
-    "--clean",
-    "--workpath",
-    "pyinstaller-work",
-    "--paths",
-    ".",
-    # ':' separator works on all platforms with PyInstaller >= 6.0
-    "--add-data",
-    "teachers_teammate/assets:teachers_teammate/assets",
-    "--add-data",
-    "teachers_teammate/infrastructure/providers:teachers_teammate/infrastructure/providers",
-    "--add-data",
-    "docs/using_the_app.md:docs",
-    "--add-data",
-    "docs/advanced_user_guide.md:docs",
-    "--add-data",
-    "docs/index.md:docs",
-    "--add-data",
-    "README.md:.",
-    "--hidden-import",
-    "teachers_teammate.infrastructure.providers",
-    "--hidden-import",
-    "teachers_teammate.infrastructure.providers.ollama",
-    "--hidden-import",
-    "teachers_teammate.infrastructure.providers.openai",
-    "--hidden-import",
-    "teachers_teammate.infrastructure.providers.anthropic",
-    "--hidden-import",
-    "teachers_teammate.infrastructure.providers.google",
-    "--hidden-import",
-    "teachers_teammate.infrastructure.providers.mistral",
-    "--hidden-import",
-    "teachers_teammate.infrastructure.providers.mistral_eu",
-    "--hidden-import",
-    "teachers_teammate.infrastructure.providers._mistral_common",
-    "--hidden-import",
-    "teachers_teammate.infrastructure.providers.cohere",
-    # Bundle pip so the frozen binary can re-invoke itself in pip-dispatch mode
-    # for the in-app addon installer.
-    "--collect-all",
-    "pip",
-    # keyring finds its platform backends (macOS Keychain, Windows Credential Manager,
-    # Linux Secret Service) through package metadata, which PyInstaller does not follow.
-    "--collect-submodules",
-    "keyring",
-    "--copy-metadata",
-    "keyring",
-    # timeit and cProfile are stdlib but some pip/spaCy code paths import them;
-    # ensure they are bundled. cProfile depends on the C extension _lsprof.
-    "--hidden-import",
-    "timeit",
-    "--hidden-import",
-    "cProfile",
-    "--hidden-import",
-    "_lsprof",
-]
+SPEC = Path(__file__).resolve().parent / "teachers-teammate.spec"
+ASSETS = ROOT / "teachers_teammate" / "assets"
 
 
 def _ensure_assets() -> None:
@@ -90,32 +33,6 @@ def _ensure_assets() -> None:
     script = ROOT / "tools" / "packaging" / "make_ico.py"
     if script.exists():
         subprocess.run([sys.executable, str(script)], check=True, cwd=ROOT)
-
-
-def _icon_flags() -> list[str]:
-    """Return the --icon flag(s) for the current platform, or [] if not found.
-
-    The canonical icon source is teachers_teammate_icon.png. Platform-specific
-    icon symbols (.ico/.icns) are generated from that image when needed.
-    """
-    assets = ROOT / "teachers_teammate" / "assets"
-    source_png = assets / "teachers_teammate_icon.png"
-    if not source_png.exists():
-        return []
-
-    if sys.platform == "win32":
-        p = assets / "teachers_teammate.ico"
-    elif sys.platform == "darwin":
-        p = assets / "teachers_teammate.icns"
-        _ensure_icns(source_png, p)
-    else:
-        p = source_png
-
-    if not p.exists() and sys.platform in ("win32", "darwin"):
-        # Fall back to PNG if symbol generation is not possible in this env.
-        p = source_png
-
-    return [f"--icon={p}"] if p.exists() else []
 
 
 def _ensure_icns(source_png: Path, out_icns: Path) -> None:
@@ -166,61 +83,34 @@ def _ensure_icns(source_png: Path, out_icns: Path) -> None:
         return
 
 
-# ── Build flags ─────────────────────────────────────────────────────────────
-# The single binary bundles both the GUI entry point and all CLI modules so
-# that the OCR pipeline is fully functional inside the frozen executable.
-
-_BUILD_BASE: list[str] = [
-    "--windowed",
-    "--name",
-    "teachers-teammate",
-    "--collect-all",
-    "PySide6",
-    # GUI entry point
-    "--hidden-import",
-    "teachers_teammate.gui",
-    # Tools > Benchmark... is opened in-process, through a lazy import PyInstaller can't see
-    "--hidden-import",
-    "teachers_teammate.gui.benchmark",
-    # Tools > Setup Assistant... is opened the same way
-    "--hidden-import",
-    "teachers_teammate.gui.setup",
-    # CLI / pipeline modules (bundled so the full pipeline is available)
-    "--hidden-import",
-    "cv2",
-    "--hidden-import",
-    "pypdfium2",
-    "--hidden-import",
-    "teachers_teammate.cli",
-    "--hidden-import",
-    "teachers_teammate.infrastructure.correction",
-    "--hidden-import",
-    "teachers_teammate.infrastructure.docx_builder",
-    "--hidden-import",
-    "teachers_teammate.infrastructure.preprocessing.recipes",
-    "tools/build/run_gui.py",
-]
+def _ensure_icons() -> None:
+    """Generate the platform icon symbols the spec refers to, from the canonical PNG."""
+    _ensure_assets()
+    source_png = ASSETS / "teachers_teammate_icon.png"
+    if sys.platform == "darwin" and source_png.exists():
+        _ensure_icns(source_png, ASSETS / "teachers_teammate.icns")
 
 
-def _build_flags() -> list[str]:
-    icon = _icon_flags()
-    # macOS: omit --onefile so PyInstaller produces a .app bundle (onedir)
-    # Windows: use onedir for faster startup (no temp extraction on each launch)
-    if sys.platform in ("darwin", "win32"):
-        return [*icon, *_BUILD_BASE]
-    return ["--onefile", *icon, *_BUILD_BASE]
-
-
-# ── Runner ─────────────────────────────────────────────────────────────────
-
-
-def _run(flags: list[str]) -> None:
+def _run() -> None:
     env = os.environ.copy()
     # PySide6 needs a display driver even at analysis time on Linux
     if sys.platform.startswith("linux"):
         env.setdefault("QT_QPA_PLATFORM", "offscreen")
     subprocess.run(
-        [sys.executable, "-m", "PyInstaller", *flags],
+        [
+            sys.executable,
+            "-m",
+            "PyInstaller",
+            # Wipe PyInstaller's cache/work dir so a stale analysis can never leak
+            # previously-installed packages into a fresh build.
+            "--clean",
+            "--noconfirm",
+            "--workpath",
+            "pyinstaller-work",
+            "--distpath",
+            "dist",
+            str(SPEC),
+        ],
         check=True,
         cwd=ROOT,
         env=env,
@@ -234,9 +124,9 @@ def main() -> None:
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
 
-    _ensure_assets()
+    _ensure_icons()
     print("==> Building standalone binary…")
-    _run(_COMMON + _build_flags())
+    _run()
     if sys.platform == "darwin":
         label = "dist/teachers-teammate.app"
     elif sys.platform == "win32":
@@ -244,19 +134,6 @@ def main() -> None:
     else:
         label = "dist/teachers-teammate"
     print(f"    done → {label}\n")
-
-    # ── macOS: create a DMG installer (uncomment to enable) ──────────────────
-    # Wraps the .app bundle into a distributable .dmg with an /Applications
-    # symlink for drag-install UX.  Requires macOS (uses hdiutil).
-    #
-    # if sys.platform == "darwin":
-    #     import subprocess as _sp
-    #     _version = "0.1.0"  # update or read from pyproject.toml
-    #     _sp.run(
-    #         ["bash", str(ROOT / "tools" / "packaging" / "make_dmg.sh"), _version],
-    #         check=True,
-    #     )
-    #     print(f"    DMG → dist/teachers-teammate-{_version}-macos.dmg\n")
 
 
 if __name__ == "__main__":

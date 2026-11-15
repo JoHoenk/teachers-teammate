@@ -252,6 +252,7 @@ class BenchmarkWindow(QMainWindow):
 
 def main_benchmark(*, window_factory=None) -> None:
     """Launch the benchmark GUI."""
+    ProcessingApplicationService.inject_addon_packages_dir()  # idempotent; a wheel install's entry point starts here
     from .._main_window import _app_icon  # noqa: PLC0415  reuse the shared app icon
 
     # Start the slow own-host-name lookup before any widget asks where a step runs.

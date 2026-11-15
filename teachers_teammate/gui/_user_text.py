@@ -219,6 +219,17 @@ WHERE_STEPS = "What should happen, in the main window"
 WHERE_SETUP = "Tools → Setup Assistant…"
 OPEN_ADDONS = "Open Add-ons…"
 
+#: After an app update the add-ons wait for one click: the readiness line, the Add-ons page.
+ADDONS_OUTDATED_LINE = "Add-ons need an update after the app update"
+UPDATE_ADDONS = "Update add-ons"
+ADDONS_OUTDATED_NOTE = (
+    "The app was updated, and so were some of the packages it shares with its add-ons. The "
+    "add-ons stay switched off until they are installed again: this downloads them once. "
+    "Everything else works meanwhile."
+)
+ADDONS_UPDATING = "Updating the add-ons…"
+ADDONS_UPDATED = "The add-ons are up to date."
+
 #: The step that replaces names before text is sent anywhere: the checkbox in the main window
 #: and the line on the AI models page that offers to turn it on must say the same words.
 REMOVE_PERSONAL_INFO = "Remove personal info"

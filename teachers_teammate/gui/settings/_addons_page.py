@@ -60,6 +60,7 @@ from .._install_round import (
     PAGE_MODELS_PREFIX,
     READER_ITEM,
     READER_PREFIX,
+    UPDATE_ADDONS_ITEM,
     InstallRound,
 )
 from .._model_guidance import PROVIDER_PREFIX, SPACY_PREFIX
@@ -80,6 +81,7 @@ from .._model_wording import (
     too_large_tooltip,
 )
 from ._page import (
+    FOCUS_ADDON_UPDATE,
     FOCUS_GPU,
     FOCUS_LOCAL_MODELS,
     FOCUS_NAME_DETECTION,
@@ -247,6 +249,8 @@ class AddonsPage(SettingsPageBase):
         main.setContentsMargins(0, 0, 0, 0)
         main.setSpacing(8)
 
+        main.addWidget(self._build_update_banner())
+
         self._tabs = QTabWidget()
         self._tabs.setMinimumHeight(460)
         main.addWidget(self._tabs, stretch=1)
@@ -258,6 +262,7 @@ class AddonsPage(SettingsPageBase):
         self._tabs.addTab(self._build_gpu_tab(), TAB_GPU)
 
         self._build_status_and_actions(main)
+        self._refresh_update_banner()
 
         # Enter in a text field must only do what that field does.  A dialog would also
         # "press" its default button (the first push button, e.g. Install Selected).  The
@@ -265,6 +270,33 @@ class AddonsPage(SettingsPageBase):
         for button in self.findChildren(QPushButton):
             button.setAutoDefault(False)
             button.setDefault(False)
+
+    def _build_update_banner(self) -> QWidget:
+        """Build the line that offers *Update add-ons* after an app update (hidden otherwise)."""
+        self._update_banner = QWidget()
+        layout = QHBoxLayout(self._update_banner)
+        layout.setContentsMargins(0, 0, 0, 0)
+        note = QLabel(f"<b>{txt.ADDONS_OUTDATED_LINE}.</b> {txt.ADDONS_OUTDATED_NOTE}")
+        note.setWordWrap(True)
+        self._update_btn = QPushButton(txt.UPDATE_ADDONS)
+        self._update_btn.clicked.connect(self._on_update_addons)
+        layout.addWidget(note, stretch=1)
+        layout.addWidget(self._update_btn)
+        return self._update_banner
+
+    def _refresh_update_banner(self) -> None:
+        """Show the banner while the packages folder waits for an update."""
+        self._update_banner.setVisible(self._svc.addons_outdated())
+
+    def _on_update_addons(self) -> None:
+        """Install the add-ons again with the app's package versions (the teacher clicked)."""
+        if self._round.running():
+            return
+        self._dl_log.clear()
+        self._dl_install_btn.setEnabled(False)
+        self._update_btn.setEnabled(False)
+        self._dl_detect_lbl.setText(txt.ADDONS_UPDATING)
+        self._round.start(update_addons=True)
 
     def _build_status_and_actions(self, main: QVBoxLayout) -> None:
         """Build the detection label, progress bar, log and the action row."""
@@ -787,6 +819,8 @@ class AddonsPage(SettingsPageBase):
             for tag in preselect
             if tag.startswith(PROVIDER_PREFIX)
         ]
+        if focus == FOCUS_ADDON_UPDATE:
+            self._update_btn.setFocus()
         tab = self._FOCUS_TABS.get(focus)
         if providers:
             tab = self.TAB_ONLINE_SERVICES
@@ -1067,7 +1101,7 @@ class AddonsPage(SettingsPageBase):
 
     def _on_round_item_started(self, item: str) -> None:
         """Show the progress bar and Abort for an Ollama pull; pip and spaCy have no bar."""
-        if item.startswith((PACKAGE_PREFIX, SPACY_PREFIX)):
+        if item == UPDATE_ADDONS_ITEM or item.startswith((PACKAGE_PREFIX, SPACY_PREFIX)):
             return
         self._show_pull_progress()
 
@@ -1097,6 +1131,8 @@ class AddonsPage(SettingsPageBase):
         self._dl_progress.hide()
         self._dl_abort_btn.hide()
         self._dl_install_btn.setEnabled(True)
+        self._update_btn.setEnabled(True)
+        self._refresh_update_banner()
         if not installed_any:
             return
         # Something arrived: the installed list and the classifications are stale.

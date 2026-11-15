@@ -91,6 +91,9 @@ class FakeGuiService(LocalDataFlowStub):
         _ = provider
         return None
 
+    def addons_outdated(self) -> bool:
+        return False
+
     def list_provider_packages(self) -> dict[str, tuple[str, str]]:
         return {}
 

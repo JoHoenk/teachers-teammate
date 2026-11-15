@@ -58,6 +58,7 @@ def test_frozen_only_checks_are_skipped_in_source_mode() -> None:
 
     assert "assets" not in names
     assert "pip" not in names
+    assert "addon constraints" not in names
     assert {"imports", "qt", "reader", "pdf", "docx", "providers"} <= set(names)
 
 
@@ -73,3 +74,37 @@ def test_forget_keys_removes_every_provider_key(credential_file, keychain) -> No
     assert exit_code == 0
     assert credential_file == {"credentials/UNRELATED": "keep me"}
     assert keychain.passwords == {}
+
+
+def test_addon_constraints_check_compares_the_bundle_with_what_is_running(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """
+    Given  a frozen bundle whose constraints pin the running numpy, pydantic, requests, pillow
+    When   the add-on constraints check runs, and again with numpy pinned to another version
+    Then   the first passes and the second names numpy; a bundle without the file fails too
+    """
+    import importlib.metadata  # noqa: PLC0415
+    import sys  # noqa: PLC0415
+
+    from teachers_teammate.infrastructure import addon_manager  # noqa: PLC0415
+
+    bundle = tmp_path / "bundle"
+    pins = bundle / addon_manager.ADDON_CONSTRAINTS_RELATIVE
+    pins.parent.mkdir(parents=True)
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "_MEIPASS", str(bundle), raising=False)
+    versions = {
+        name: importlib.metadata.version(name)
+        for name in frozen_modes._CONSTRAINED_RUNTIME_PACKAGES
+    }
+    lines = [f"{name}=={version}" for name, version in versions.items()]
+    pins.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    assert frozen_modes._check_addon_constraints() is None
+
+    pins.write_text("\n".join(["numpy==0.0.1", *lines[1:]]) + "\n", encoding="utf-8")
+    assert "numpy" in (frozen_modes._check_addon_constraints() or "")
+
+    pins.unlink()
+    assert "is not in the bundle" in (frozen_modes._check_addon_constraints() or "")

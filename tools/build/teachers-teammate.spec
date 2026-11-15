@@ -135,6 +135,16 @@ datas = [
     (str(ROOT / "docs" / "index.md"), "docs"),
     (str(ROOT / "README.md"), "."),
 ]
+# The versions this bundle ships, written by build_standalone.py just before PyInstaller runs.
+# The installed app gives it to pip as `-c` for every add-on install and compares the add-on
+# folder against it after an app update (teachers_teammate/infrastructure/addon_manager.py).
+_ADDON_CONSTRAINTS = ROOT / "teachers_teammate" / "_build" / "addon_constraints.txt"
+if not _ADDON_CONSTRAINTS.is_file():
+    raise SystemExit(
+        f"{_ADDON_CONSTRAINTS} is missing: build with tools/build/build_standalone.py "
+        "(or run tools/build/addon_constraints.py first)"
+    )
+datas.append((str(_ADDON_CONSTRAINTS), "teachers_teammate/_build"))
 binaries = []
 hiddenimports = [
     # Providers are discovered at runtime from the providers folder (bundled as data above);
@@ -176,6 +186,13 @@ hiddenimports += _pip[2]
 # Secret Service) through package metadata, which PyInstaller does not follow.
 datas += copy_metadata("keyring")
 hiddenimports += collect_submodules("keyring")
+
+# The smoke test (``frozen_modes._check_addon_constraints``) reads the version of these four
+# through ``importlib.metadata`` and compares it with the add-on constraints. PyInstaller only
+# bundles a package's metadata when a hook asks for it (numpy and pydantic happen to have one;
+# requests and pillow do not), so ask for all four here, not by luck of the hooks.
+for _shared in ("numpy", "pydantic", "requests", "pillow"):
+    datas += copy_metadata(_shared)
 
 a = Analysis(
     [str(ROOT / "tools" / "build" / "run_gui.py")],

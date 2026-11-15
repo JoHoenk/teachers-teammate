@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import sys
 import threading
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -2932,6 +2933,98 @@ def test_stage_requirements_report_a_missing_api_key_after_the_package_check(
     monkeypatch.setenv("MISTRAL_API_KEY", "k")
     with patch.object(ProcessingApplicationService, "is_module_importable", lambda *_a: True):
         assert svc.check_stage_requirements(cfg, "correction") == []
+
+
+@pytest.mark.unit
+def test_stage_requirements_ask_for_the_add_on_update_after_an_app_update(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """
+    Given  spaCy and langchain-mistralai in an add-on folder that an app update made outdated
+    When   removing names and proofreading with Mistral are checked
+    Then   both report ADDONS_OUTDATED instead of "not installed"; a stage that needs no
+           add-on (reading) is unaffected
+    """
+    from teachers_teammate.infrastructure import addon_manager  # noqa: PLC0415
+
+    monkeypatch.setattr(addon_manager, "addons_outdated", lambda: True)
+    monkeypatch.setattr(addon_manager, "addon_in_folder", lambda _name: True)
+    svc = _make_svc(model_store=fake_reader_store(tmp_path / "models"))
+    cfg = dataclasses.replace(
+        _ollama_config(tmp_path), correction_provider="mistral", correction_model="m"
+    )
+
+    with patch.object(ProcessingApplicationService, "is_module_importable", lambda *_a: False):
+        correction = svc.check_stage_requirements(cfg, "correction")
+    anonymizer = svc.check_stage_requirements(cfg, "anonymizer")
+
+    assert [i.kind for i in correction] == [IssueKind.ADDONS_OUTDATED]
+    assert [i.kind for i in anonymizer] == [IssueKind.ADDONS_OUTDATED]
+    assert svc.check_stage_requirements(cfg, "ocr") == []
+
+
+@pytest.mark.unit
+def test_an_outdated_folder_without_the_needed_add_on_changes_nothing(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """
+    Given  an outdated add-on folder that holds no Mistral package
+    When   proofreading with Mistral is checked
+    Then   the package is reported missing as before (installing it is the fix)
+    """
+    from teachers_teammate.infrastructure import addon_manager  # noqa: PLC0415
+
+    monkeypatch.setattr(addon_manager, "addons_outdated", lambda: True)
+    monkeypatch.setattr(addon_manager, "addon_in_folder", lambda _name: False)
+    cfg = dataclasses.replace(
+        _ollama_config(tmp_path), correction_provider="mistral", correction_model="m"
+    )
+
+    with patch.object(ProcessingApplicationService, "is_module_importable", lambda *_a: False):
+        issues = _make_svc().check_stage_requirements(cfg, "correction")
+
+    assert [i.kind for i in issues] == [IssueKind.PACKAGE_MISSING]
+
+
+@pytest.mark.unit
+def test_the_gpu_add_on_is_not_installed_again_while_the_folder_waits_for_an_update(
+    monkeypatch,
+) -> None:
+    """
+    Given  the installed app, an NVIDIA card without its package, and outdated add-ons
+    When   the pending GPU add-on is asked for
+    Then   none is pending: the update brings it back, a second copy would not
+    """
+    from teachers_teammate.infrastructure import addon_manager  # noqa: PLC0415
+
+    svc = _make_svc()
+    monkeypatch.setattr(addon_manager, "can_install_addons", lambda: True)
+    monkeypatch.setattr(addon_manager, "is_addon_importable", lambda _addon: False)
+    monkeypatch.setattr(svc, "detect_gpus", lambda **_k: [SimpleNamespace(vendor="nvidia")])
+    monkeypatch.setattr(addon_manager, "addons_outdated", lambda: False)
+    assert svc.pending_gpu_monitoring_addon() == "nvidia"
+
+    monkeypatch.setattr(addon_manager, "addons_outdated", lambda: True)
+
+    assert svc.pending_gpu_monitoring_addon() is None
+
+
+@pytest.mark.unit
+def test_update_addons_hands_the_log_to_the_add_on_manager(monkeypatch) -> None:
+    """
+    Given  the application service
+    When   the add-ons are updated
+    Then   the add-on manager does it, with the caller's log callback
+    """
+    from teachers_teammate.infrastructure import addon_manager  # noqa: PLC0415
+
+    seen: list[object] = []
+    monkeypatch.setattr(addon_manager, "update_installed_addons", seen.append)
+    log = lambda _line: None  # noqa: E731
+
+    _make_svc().update_addons(log)
+
+    assert seen == [log]
 
 
 @pytest.mark.unit

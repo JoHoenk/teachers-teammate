@@ -13,6 +13,7 @@ import threading
 import pytest
 from PySide6.QtWidgets import QApplication, QWidget
 
+from teachers_teammate.application.service import ProcessingApplicationService
 from teachers_teammate.gui._app_bootstrap import create_app, finish_process
 from teachers_teammate.gui.benchmark._benchmark_window import main_benchmark
 from teachers_teammate.gui.benchmark.composition import build_benchmark_window
@@ -222,3 +223,31 @@ def test_a_detached_worker_that_finished_does_not_force_a_hard_exit(monkeypatch)
     finish_process(0, exit_fn=exits.append, hard_exit=lambda _c: exits.append(-1))
 
     assert exits == [0]
+
+
+@pytest.mark.gui
+@pytest.mark.parametrize("entry", ["main_gui", "main_benchmark"])
+def test_the_gui_entry_points_inject_the_add_on_folder_first(qtbot, monkeypatch, entry) -> None:
+    """
+    Given  a wheel install, where nothing else put the add-on folder on sys.path
+    When   main_gui() or main_benchmark() starts
+    Then   the add-on folder is injected before the window is built
+    """
+    calls: list[str] = []
+    monkeypatch.setattr(
+        ProcessingApplicationService,
+        "inject_addon_packages_dir",
+        staticmethod(lambda: calls.append("inject")),
+    )
+    monkeypatch.setattr(QApplication, "exec", lambda self: 0)
+    monkeypatch.setattr(sys, "exit", lambda *a: None)
+
+    def factory():
+        calls.append("window")
+        win = build_main_window() if entry == "main_gui" else build_benchmark_window()
+        qtbot.addWidget(win)
+        return win
+
+    {"main_gui": main_gui, "main_benchmark": main_benchmark}[entry](window_factory=factory)
+
+    assert calls[:2] == ["inject", "window"]

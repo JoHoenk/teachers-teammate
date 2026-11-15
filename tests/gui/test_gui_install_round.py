@@ -148,6 +148,26 @@ class _FakeReaderThread(QObject):
         self.finished_ok.emit()
 
 
+class _FakeUpdateThread(QObject):
+    """Runs the service's add-on update at once, as the real thread does in the background."""
+
+    log_line = Signal(str)
+    finished_ok = Signal()
+    finished_err = Signal(str)
+
+    def __init__(self, service: Any) -> None:
+        super().__init__()
+        self._service = service
+
+    def start(self) -> None:
+        _Script.order.append("update")
+        if _fails("update"):
+            self.finished_err.emit(_Script.fail_with)
+            return
+        self._service.update_addons(self.log_line.emit)
+        self.finished_ok.emit()
+
+
 class _BlockingPipThread(QThread):
     """A pip install that keeps running until the test releases it."""
 
@@ -170,6 +190,7 @@ def fake_threads(monkeypatch) -> type[_Script]:
     _Script.fail_with = ""
     _Script.fail_item = ""
     monkeypatch.setattr(_install_round, "_PipInstallThread", _FakePipThread)
+    monkeypatch.setattr(_install_round, "_AddonUpdateThread", _FakeUpdateThread)
     monkeypatch.setattr(_addon_installer_dialog, "_ModelDownloadThread", _FakeSpacyThread)
     monkeypatch.setattr(_addon_installer_dialog, "_OllamaPullThread", _FakePullThread)
     monkeypatch.setattr(_addon_installer_dialog, "_ReaderDownloadThread", _FakeReaderThread)
@@ -228,6 +249,49 @@ def test_a_round_runs_the_reader_between_spacy_and_the_pulls(qtbot, fake_threads
     assert "reader:ppocr" in seen["done"]
     assert ("Built-in reader", 1_000_000, 2_000_000) in seen["progress"]
     assert seen["finished"] == [True]
+
+
+@pytest.mark.use_case("Runtime_Addon_Installation")
+def test_the_add_on_update_runs_first_and_alone_is_a_round(qtbot, fake_threads) -> None:
+    """
+    Given  a round that updates the add-ons and also installs a package
+    When   it starts
+    Then   the update runs before pip, reports itself as an item, and the round finishes with
+           something installed; an update alone is a complete round
+    """
+    round_, service = _round()
+    seen = _record(round_)
+
+    assert round_.start(update_addons=True, packages=["langchain-openai"])
+
+    assert fake_threads.order == ["update", "pip:langchain-openai"]
+    assert seen["started"] == ["update:addons", "package:langchain-openai"]
+    assert "update:addons" in seen["done"]
+    assert service.addon_updates == 1
+    assert seen["finished"] == [True]
+
+    fake_threads.order.clear()
+    assert round_.start(update_addons=True)
+    assert fake_threads.order == ["update"]
+    assert seen["finished"] == [True, True]
+
+
+@pytest.mark.use_case("Runtime_Addon_Installation")
+def test_a_failed_add_on_update_stops_the_round_with_pips_sentence(qtbot, fake_threads) -> None:
+    """
+    Given  an add-on update that fails (offline, or a conflict with the bundle)
+    When   the round runs with a package behind it
+    Then   the failure names the update and the package after it is not installed
+    """
+    fake_threads.fail_with = "No matching distribution"
+    round_, _service = _round()
+    seen = _record(round_)
+
+    round_.start(update_addons=True, packages=["langchain-openai"])
+
+    assert seen["failed"] == [("update:addons", "No matching distribution")]
+    assert fake_threads.order == ["update"]
+    assert seen["finished"] == [False]
 
 
 @pytest.mark.use_case("Runtime_Addon_Installation")

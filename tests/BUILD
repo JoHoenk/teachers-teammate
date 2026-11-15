@@ -660,6 +660,15 @@ py_test(
 )
 
 py_test(
+    name = "test_addon_constraints",
+    size = "small",
+    srcs = _COMMON_SRCS + ["unit/test_addon_constraints.py"],
+    args = ["unit/test_addon_constraints.py"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS + ["//tools/build:build_tools_lib"],
+)
+
+py_test(
     name = "test_check_pins",
     size = "small",
     srcs = _COMMON_SRCS + ["unit/test_check_pins.py"],
@@ -2058,6 +2067,7 @@ py_test(
 test_suite(
     name = "unit_tests",
     tests = [
+        ":test_addon_constraints",
         ":test_addon_manager",
         ":test_anonymization_mask",
         ":test_anonymizer",

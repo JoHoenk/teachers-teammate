@@ -31,12 +31,16 @@ READER_PROGRESS_STATUS = "Built-in reader"
 PAGE_MODELS_PREFIX = "page_models:"
 PAGE_MODELS_ITEM = f"{PAGE_MODELS_PREFIX}all"
 PAGE_MODELS_PROGRESS_STATUS = "Page models"
+#: The add-ons installed again after an app update (``update:addons``).
+UPDATE_ADDONS_ITEM = "update:addons"
 
 
 class _InstallService(Protocol):
     """What the round asks the application service; the facade methods are the only ones."""
 
     def install_packages(self, packages: list[str], progress_cb: Callable[[str], None]) -> None: ...
+
+    def update_addons(self, progress_cb: Callable[[str], None]) -> None: ...
 
     def addon_packages_dir(self) -> Path: ...
 
@@ -92,6 +96,25 @@ class _PipInstallThread(QThread):
             self.finished_err.emit(str(exc))
 
 
+class _AddonUpdateThread(QThread):
+    """Installs the add-ons again after an app update, in a background thread."""
+
+    log_line = Signal(str)
+    finished_ok = Signal()
+    finished_err = Signal(str)
+
+    def __init__(self, app_service: _InstallService) -> None:
+        super().__init__()
+        self._svc = app_service
+
+    def run(self) -> None:
+        try:
+            self._svc.update_addons(self.log_line.emit)
+            self.finished_ok.emit()
+        except Exception as exc:  # noqa: BLE001  # surface any pip/subprocess failure to the UI via the error signal
+            self.finished_err.emit(str(exc))
+
+
 class InstallRound(QObject):
     """One round of installs: pip packages, spaCy models, the reader and page models, Ollama pulls.
 
@@ -118,10 +141,11 @@ class InstallRound(QObject):
         self._pull_manager = pull_manager  # owned by MainWindow; outlives this round
         self._pull_connected = False  # subscribed to the pull manager's signals
         self._thread: QThread | None = None
-        # "pip", "spacy", "reader", "page_models" or "pull" — what the running thread does
+        # "update", "pip", "spacy", "reader", "page_models" or "pull" — what the running thread does
         self._phase = ""
         self._reader = False
         self._page_models = False
+        self._update_addons = False
         self._packages: list[str] = []
         self._spacy_models: list[str] = []
         self._ollama_models: list[str] = []
@@ -139,20 +163,27 @@ class InstallRound(QObject):
         spacy_models: Sequence[str] = (),
         reader: bool = False,
         page_models: bool = False,
+        update_addons: bool = False,
         ollama_models: Sequence[str] = (),
         ollama_url: str = "",
     ) -> bool:
-        """Begin the round; return False when there is nothing to do or one is running."""
+        """Begin the round; return False when there is nothing to do or one is running.
+
+        ``update_addons`` installs the add-ons in the packages folder again after an app update;
+        it runs before everything else in the round.
+        """
         if self._running:
             return False
         self._packages = list(packages)
         self._spacy_models = list(spacy_models)
         self._reader = reader
         self._page_models = page_models
+        self._update_addons = update_addons
         self._ollama_models = list(ollama_models)
         self._ollama_url = ollama_url
         if not (
-            self._packages
+            self._update_addons
+            or self._packages
             or self._spacy_models
             or self._reader
             or self._page_models
@@ -162,18 +193,25 @@ class InstallRound(QObject):
         self._running = True
         self._installed_any = False
         self._current = ""
+        if self._update_addons:
+            self._start_update()
+        else:
+            self._after_update()
+        return True
+
+    def _after_update(self) -> None:
+        """Go on with the pip packages, or whatever follows them."""
         if self._packages:
             self._start_pip()
         elif self._spacy_models:
             self._start_spacy()
         else:
             self._after_spacy()
-        return True
 
     def busy(self) -> bool:
         """True while pip, spaCy or a model download runs: their window must not close yet."""
         return (
-            self._phase in ("pip", "spacy", "reader", "page_models")
+            self._phase in ("update", "pip", "spacy", "reader", "page_models")
             and self._thread is not None
             and self._thread.isRunning()
         )
@@ -210,6 +248,27 @@ class InstallRound(QObject):
         self._connect_pull_manager()
         self._current = self._pull_manager.current_model
         return self._current
+
+    # ── the add-ons after an app update ──────────────────────────────────────────
+
+    def _start_update(self) -> None:
+        self.log_line.emit("Installing the add-ons again…")
+        self._begin(UPDATE_ADDONS_ITEM)
+        thread = _AddonUpdateThread(self._svc)
+        thread.log_line.connect(self.log_line)
+        thread.finished_ok.connect(self._on_update_done)
+        thread.finished_err.connect(self._on_error)
+        self._thread = thread
+        self._phase = "update"
+        thread.start()
+
+    def _on_update_done(self) -> None:
+        self.log_line.emit("✓ Add-ons updated.")
+        self.item_done.emit(UPDATE_ADDONS_ITEM)
+        self._installed_any = True
+        self._update_addons = False
+        self._thread = None
+        self._after_update()
 
     # ── pip ──────────────────────────────────────────────────────────────────────
 

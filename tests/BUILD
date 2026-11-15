@@ -722,6 +722,22 @@ py_test(
     deps = _COMMON_DEPS,
 )
 
+# The smoke test imports every lazily loaded module of the app, so it needs the whole runtime
+# set — including the packages no other unit test imports (ollama, platformdirs, keyring).
+py_test(
+    name = "test_frozen_modes",
+    size = "small",
+    srcs = _COMMON_SRCS + ["unit/test_frozen_modes.py"],
+    args = ["unit/test_frozen_modes.py"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + [
+        "//teachers_teammate:gui_lib",
+        "@ocr_test_dependencies//keyring:pkg",
+        "@ocr_test_dependencies//ollama:pkg",
+        "@ocr_test_dependencies//platformdirs:pkg",
+    ],
+)
+
 py_test(
     name = "test_gpu_detector",
     size = "small",
@@ -2042,6 +2058,7 @@ test_suite(
         ":test_exchange_t",
         ":test_fallback_exchange",
         ":test_file_processor",
+        ":test_frozen_modes",
         ":test_gpu_detector",
         ":test_input_provider_factory",
         ":test_input_providers",

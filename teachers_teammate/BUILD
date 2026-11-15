@@ -217,6 +217,8 @@ _GUI_SRCS = [
     "gui/setup/_flow.py",
     "gui/setup/_pages.py",
     "gui/setup/_summary.py",
+    # Imports GUI modules (the smoke test) and is only run by the installed app.
+    "frozen_modes.py",
 ]
 
 # Third-party deps used ONLY to give the ty/pylint lint aspects real type

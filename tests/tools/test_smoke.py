@@ -33,6 +33,7 @@ from tools.model_eval.smoke import (
     LOAD_ALLOWANCE,
     SMOKE_DEADLINE,
     SMOKE_FIXTURES,
+    STEP_ONE_SMOKE_FIXTURES,
     TEXT_SMOKE_FIXTURES,
     Smoke,
     SmokeCheck,
@@ -48,6 +49,7 @@ from tools.model_eval.structured_check import (
     StructuredOutputCheck,
     fixture_named,
     review_request,
+    step_one_request,
     text_of,
 )
 
@@ -679,6 +681,45 @@ def test_the_text_smoke_sends_the_apps_text_request() -> None:
     system, prompt = chat.requests[0][1:]
     assert "JSON" not in system
     assert "Gestern hat sie ins Kino gegangen mit sein Freundin." in prompt
+
+
+def test_the_step_one_smoke_sends_the_exchanges_request_on_the_plain_fixtures() -> None:
+    """
+    Given  the smoke check built for step one of the exchange
+    When   it sends its fixtures
+    Then   it sends step one's own system prompt on the three plain fixtures and none of text
+           mode's, and a setup that fails text mode's Markdown fixture still passes
+    """
+    from teachers_teammate.domain.correction_prompts import CORRECT_SYSTEM  # noqa: PLC0415
+
+    chat = _ScriptedChat({name: [_text_ok(name)] for name in STEP_ONE_SMOKE_FIXTURES})
+
+    smoke = TextSmokeCheck(chat, request=step_one_request, fixtures=STEP_ONE_SMOKE_FIXTURES).run(
+        CANDIDATE, 0.2
+    )
+
+    assert smoke.passed
+    assert STEP_ONE_SMOKE_FIXTURES == ("plain DE", "plain EN", "plain FR")
+    assert [system for _, system, _ in chat.requests] == [CORRECT_SYSTEM] * 3
+    assert "Gestern hat sie ins Kino gegangen mit sein Freundin." in chat.requests[0][2]
+
+
+def test_the_step_one_smoke_fails_a_setup_whose_plain_answer_is_not_the_text() -> None:
+    """
+    Given  step one's smoke check and a setup that answers a plain German text with a remark
+    When   it is run
+    Then   the setup fails on that fixture, twice, so a broken step one is still screened out
+    """
+    chat = _ScriptedChat(
+        {"plain DE": [lambda _prompt: ("Sure, here is your text! " * 20, _stats())]}
+    )
+
+    smoke = TextSmokeCheck(chat, request=step_one_request, fixtures=STEP_ONE_SMOKE_FIXTURES).run(
+        CANDIDATE, 0.2
+    )
+
+    assert not smoke.passed
+    assert smoke.reason.startswith("plain DE:")
 
 
 # ── the command line ──────────────────────────────────────────────────────────

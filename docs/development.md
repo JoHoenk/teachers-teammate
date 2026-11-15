@@ -293,7 +293,10 @@ and never when a second try could not have cured it (a hard failure is a gate-1 
 a soft one is "no verdict"). A file that goes on past the failing fixture is an interrupted gate-1
 run, not a smoke check, and is continued. A request that timed out is not saved as a run, so gate 1
 asks it again under its own timeout. `--no-smoke` skips the stage, and
-`compare_writing_models run` smokes each model once per mode before its first session.
+`compare_writing_models run` smokes each model once per mode before its first session.  The
+exchange modes (`exchange`, `correct-only`) are screened with step ①'s own request on the three plain
+fixtures, because a comparison sends plain text only; text mode's Markdown fixture and prompt would
+skip a model for a fault the run never meets.
 
 The window is `--num-ctx`, 8192 by default: the window the app uses for proofreading, always. A
 model the automatic rule would lift above the checked window on a tier's card is noted in the

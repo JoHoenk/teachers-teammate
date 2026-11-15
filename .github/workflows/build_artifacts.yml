@@ -33,25 +33,17 @@ on:
         required: false
         type: boolean
         default: false
-      platforms:
-        description: 'JSON array of platforms to build (subset of ["linux","windows","macos"])'
-        required: false
-        type: string
-        default: '["linux","windows","macos"]'
 
 jobs:
   build-package:
     name: Build & Package (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    permissions:
-      contents: write
+    # No permissions of its own: the caller's apply. Only the release publishes assets and
+    # needs `contents: write` (release.yml grants it); a test build runs with read access.
 
     strategy:
       fail-fast: false
       matrix:
-        # `artifact` is filtered by the `platforms` input; the `include`
-        # entries below only attach the runner OS to the matching combination.
-        artifact: ${{ fromJSON(inputs.platforms) }}
         include:
           # glibc 2.35: Ubuntu 22.04+, Debian 12+, Mint 21+. Building on a newer image
           # silently raises that floor, which check_linux_bundle.py then catches.
@@ -74,9 +66,10 @@ jobs:
       - name: Resolve package version
         id: version
         shell: bash
+        env:
+          RAW_VERSION: ${{ inputs.version }}
         run: |
-          RAW="${{ inputs.version }}"
-          CLEAN="${RAW#v}"
+          CLEAN="${RAW_VERSION#v}"
           # Strip pre-release suffix for Windows installer (VIProductVersion requires X.Y.Z.W)
           WIN="${CLEAN%%-*}"
           echo "value=${CLEAN}" >> "$GITHUB_OUTPUT"
@@ -88,7 +81,9 @@ jobs:
       - name: Stamp release version into source
         if: inputs.version != ''
         shell: bash
-        run: python tools/release/stamp_versions.py --version "${{ inputs.version }}"
+        env:
+          VERSION: ${{ inputs.version }}
+        run: python tools/release/stamp_versions.py --version "$VERSION"
 
       - name: Install Qt system libraries (Linux)
         if: runner.os == 'Linux'
@@ -186,9 +181,11 @@ jobs:
       - name: Create .deb package (Linux)
         if: runner.os == 'Linux'
         shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.value }}
         run: |
-          if [[ -n "${{ steps.version.outputs.value }}" ]]; then
-            bash tools/packaging/make_deb.sh "${{ steps.version.outputs.value }}"
+          if [[ -n "$VERSION" ]]; then
+            bash tools/packaging/make_deb.sh "$VERSION"
           else
             bash tools/packaging/make_deb.sh
           fi
@@ -222,20 +219,22 @@ jobs:
       - name: Create the portable tarball (Linux)
         if: runner.os == 'Linux'
         shell: bash
-        run: |
-          VER="${{ steps.version.outputs.value }}"
-          if [[ -z "$VER" ]]; then VER="0.1.0"; fi
-          bash tools/packaging/make_tarball.sh "$VER"
+        env:
+          VERSION: ${{ steps.version.outputs.value }}
+        run: bash tools/packaging/make_tarball.sh "${VERSION:-0.1.0}"
 
       - name: Install NSIS and create installer (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
+        env:
+          VERSION: ${{ steps.version.outputs.value }}
+          WIN_VERSION: ${{ steps.version.outputs.win }}
         run: |
           choco install nsis --no-progress -y
           # Chocolatey does not update the current process PATH — prepend NSIS manually
           $env:PATH = "C:\Program Files (x86)\NSIS;$env:PATH"
-          $ver    = "${{ steps.version.outputs.value }}"
-          $winVer = "${{ steps.version.outputs.win }}"
+          $ver    = $env:VERSION
+          $winVer = $env:WIN_VERSION
           if ([string]::IsNullOrEmpty($ver))    { $ver    = "0.1.0" }
           if ([string]::IsNullOrEmpty($winVer)) { $winVer = "0.1.0" }
           makensis /DAPP_VERSION="$ver" "/DAPP_VERSION_WIN=$winVer.0" tools/packaging/windows.nsi
@@ -248,8 +247,9 @@ jobs:
           # Step 9 of the test downloads the shipped v0.5.6 installer with `gh`, which refuses
           # to run in Actions without a token.
           GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.value }}
         run: |
-          $ver = "${{ steps.version.outputs.value }}"
+          $ver = $env:VERSION
           if ([string]::IsNullOrEmpty($ver)) { $ver = "0.1.0" }
           $setup = Get-ChildItem dist -Filter 'teachers-teammate-*-w64-setup.exe' | Select-Object -First 1
           if ($null -eq $setup) { throw "no installer in dist/" }
@@ -258,9 +258,11 @@ jobs:
       - name: Create .dmg installer (macOS)
         if: runner.os == 'macOS'
         shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.value }}
         run: |
-          if [[ -n "${{ steps.version.outputs.value }}" ]]; then
-            bash tools/packaging/make_dmg.sh "${{ steps.version.outputs.value }}"
+          if [[ -n "$VERSION" ]]; then
+            bash tools/packaging/make_dmg.sh "$VERSION"
           else
             bash tools/packaging/make_dmg.sh
           fi

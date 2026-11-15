@@ -1,0 +1,73 @@
+name: Build bundles
+
+# Manual, private test build: produces the three platform bundles as workflow-run
+# artifacts (no GitHub Release, no tag). Download one with:
+#   gh run download <run-id> -n teachers-teammate-linux
+#
+# Only the newest manual build is kept: once a build succeeds, artifacts from earlier manual
+# runs are deleted (a failed build leaves the previous one in place). Pull-request builds
+# carry their own artifact prefix and are left alone.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version stamped into the bundles (e.g. v0.0.0-test)"
+        required: true
+        type: string
+        default: "v0.0.0-test"
+  # The installer scripts and the bundle spec are only exercised on their own system, so a
+  # change to any of them builds and tests the bundles here rather than after the release.
+  pull_request:
+    paths:
+      - "tools/packaging/**"
+      - "tools/build/**"
+      - ".github/workflows/build_*.yml"
+
+# A new push to the same pull request cancels the run it supersedes; a dispatch is never
+# cancelled, so two dispatches cannot delete each other's artifacts.
+concurrency:
+  group: build_bundles-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  ARTIFACT_PREFIX: teachers-teammate
+
+jobs:
+  build-bundles:
+    # Read access is enough (nothing is published), so a pull request from a fork, whose
+    # token cannot be raised, builds like any other.
+    permissions:
+      contents: read
+    uses: ./.github/workflows/build_artifacts.yml
+    with:
+      version: ${{ inputs.version }}
+      retention_days: 2
+      # A pull request's bundles are named apart, so the prune step below never deletes
+      # artifacts a reviewer may still want to download.
+      artifact_prefix: ${{ github.event_name == 'pull_request' && 'teachers-teammate-pr' || 'teachers-teammate' }}
+
+  prune-old-artifacts:
+    name: Delete previous bundle artifacts
+    needs: [build-bundles]
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    permissions:
+      actions: write
+    steps:
+      - name: Delete artifacts from earlier runs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for name in \
+            "${ARTIFACT_PREFIX}-linux" "${ARTIFACT_PREFIX}-windows" "${ARTIFACT_PREFIX}-macos" \
+            "${ARTIFACT_PREFIX}-linux-smoke" "${ARTIFACT_PREFIX}-windows-smoke" \
+            "${ARTIFACT_PREFIX}-macos-smoke"; do
+            gh api --paginate \
+              "repos/${{ github.repository }}/actions/artifacts?name=${name}&per_page=100" \
+              --jq '.artifacts[] | select(.workflow_run.id != ${{ github.run_id }}) | .id' |
+            while read -r id; do
+              echo "Deleting artifact ${id} (${name})"
+              gh api -X DELETE "repos/${{ github.repository }}/actions/artifacts/${id}"
+            done
+          done

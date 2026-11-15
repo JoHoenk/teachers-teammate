@@ -1,25 +1,81 @@
 name: Release
 
+# A release is a tag: the tag is the version and the commit it points at is what is built.
+#   git tag v0.5.7 && git push origin v0.5.7
+# The workflow leaves a complete draft release; the maintainer reviews it and publishes it.
+
 on:
-  workflow_dispatch:
-    inputs:
-      version:
-        description: "Release version (e.g. v1.0.0)"
-        required: true
-        type: string
+  push:
+    tags: ["v*"]
 
 permissions:
   contents: read
 
+# One run per tag. A shared group would keep only one pending run and cancel the others, so
+# three tags pushed together would lose the middle one. Different tags build side by side;
+# the version checks in `validate` and `publish-release` keep "Latest" on the highest version.
+concurrency:
+  group: release-${{ github.ref_name }}
+  cancel-in-progress: false
+
 jobs:
+  # ── Validate the tag before anything is built ─────────────────────────────
+  # Fails in seconds, before a build starts or a draft exists. A bad tag is deleted by hand
+  # (`git push --delete origin <tag>`) and pushed again.
+  validate:
+    name: Validate the tag
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # The whole history, so the tagged commit can be checked against origin/main.
+          fetch-depth: 0
+
+      - name: Check the tag form and that the tag is on main
+        env:
+          TAG: ${{ github.ref_name }}
+          SHA: ${{ github.sha }}
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          # vX.Y.Z or vX.Y.Z-(alpha|beta|rc|pre)[.]N, the number required. A PEP 440 form
+          # without the dash (v0.5.7rc1) is rejected: GitHub would publish it as Latest and
+          # VIProductVersion would break makensis.
+          if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-(alpha|beta|rc|pre)\.?[0-9]+)?$ ]]; then
+            echo "::error::'$TAG' is not a release tag. Use vX.Y.Z or vX.Y.Z-(alpha|beta|rc|pre)[.]N."
+            echo "Delete it with: git push --delete origin '$TAG'"
+            exit 1
+          fi
+          python3 tools/release/stamp_versions.py --version "$TAG" --check
+          if ! git merge-base --is-ancestor "$SHA" origin/main; then
+            echo "::error::'$TAG' does not point at a commit on main, so it cannot ship."
+            echo "Delete it with: git push --delete origin '$TAG'"
+            exit 1
+          fi
+          # The app's update check reads /releases/latest, so a version that is not newer than
+          # it would either replace it as "Latest" or ship a build nobody is offered.
+          latest=$(gh api "repos/$REPO/releases/latest" --jq .tag_name 2>/dev/null || true)
+          if [[ -n "$latest" && "$latest" != "$TAG" ]]; then
+            base="${TAG%%-*}"
+            highest=$(printf '%s\n%s\n' "$latest" "$base" | sort -V | tail -n1)
+            # A pre-release of the latest version itself is stale too, so the base must be
+            # strictly higher; a final tag may only equal it on a re-run (handled above).
+            if [[ "$highest" != "$base" || "$base" == "$latest" ]]; then
+              echo "::error::'$TAG' is not newer than the latest release '$latest'."
+              echo "Delete it with: git push --delete origin '$TAG'"
+              exit 1
+            fi
+          fi
+
   # ── Quality gate ─────────────────────────────────────────────────────────
-  # The merge queue keeps `main` green, but a release is dispatched manually and
-  # may target any ref/tag — and it publishes artifacts publicly, so we re-run
-  # lint + tests here as a hard gate before anything is created.
+  # The merge queue keeps `main` green, but a tag can be pushed at any time and the release
+  # publishes artifacts publicly, so lint + tests run again as a hard gate.
   lint:
+    needs: [validate]
     uses: ./.github/workflows/format_lint.yml
 
   test:
+    needs: [validate]
     uses: ./.github/workflows/tests.yml
 
   # ── Create the GitHub Release (empty shell, build jobs attach assets) ────
@@ -33,18 +89,15 @@ jobs:
       - uses: actions/checkout@v7
 
       # A draft, so a half-uploaded release is never visible: publish-release flips it once
-      # every asset is attached.
+      # every asset is attached. The tag exists already, so it needs no target commit.
       - uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3 # v3.0.4
         with:
-          tag_name: ${{ inputs.version }}
-          # A draft's tag is only created when it is published; without this it would be put on
-          # whatever the default branch is at that moment instead of the commit that was built.
-          target_commitish: ${{ github.sha }}
-          name: "Release ${{ inputs.version }}"
+          tag_name: ${{ github.ref_name }}
+          name: "Release ${{ github.ref_name }}"
           generate_release_notes: true
           draft: true
-          prerelease: ${{ contains(inputs.version, '-') }}
-          make_latest: ${{ !contains(inputs.version, '-') }}
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          make_latest: ${{ !contains(github.ref_name, '-') }}
 
   # ── Wheel (pure-Python, platform-independent) ───────────────────────────
   build-wheel:
@@ -53,10 +106,10 @@ jobs:
       contents: write
     uses: ./.github/workflows/build_wheel.yml
     with:
-      version: ${{ inputs.version }}
+      version: ${{ github.ref_name }}
       skip_artifact_upload: true
       publish_release_assets: true
-      release_tag: ${{ inputs.version }}
+      release_tag: ${{ github.ref_name }}
 
   # ── Standalone executables + platform installers ─────────────────────────
   build-standalone:
@@ -65,10 +118,10 @@ jobs:
       contents: write
     uses: ./.github/workflows/build_artifacts.yml
     with:
-      version: ${{ inputs.version }}
+      version: ${{ github.ref_name }}
       skip_artifact_upload: true
       publish_release_assets: true
-      release_tag: ${{ inputs.version }}
+      release_tag: ${{ github.ref_name }}
 
   # ── Publish ───────────────────────────────────────────────────────────────
   # The last job, so the release only becomes visible once the wheel and every
@@ -83,10 +136,19 @@ jobs:
       - name: Flip the draft to a published release
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ inputs.version }}
+          TAG: ${{ github.ref_name }}
         run: |
           if [[ "$TAG" == *-* ]]; then
             gh release edit "$TAG" --draft=false --repo "${{ github.repository }}"
           else
-            gh release edit "$TAG" --draft=false --latest --repo "${{ github.repository }}"
+            # Tags build side by side, so an older one may finish last: it must not take
+            # "Latest" from a higher version published in the meantime.
+            latest=$(gh api "repos/${{ github.repository }}/releases/latest" --jq .tag_name 2>/dev/null || true)
+            highest=$(printf '%s\n%s\n' "${latest:-v0}" "$TAG" | sort -V | tail -n1)
+            if [[ "$highest" == "$TAG" ]]; then
+              gh release edit "$TAG" --draft=false --latest --repo "${{ github.repository }}"
+            else
+              echo "::notice::'$latest' is newer than '$TAG', so '$TAG' is not marked Latest."
+              gh release edit "$TAG" --draft=false --latest=false --repo "${{ github.repository }}"
+            fi
           fi

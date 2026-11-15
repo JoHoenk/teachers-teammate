@@ -294,7 +294,7 @@ def test_closing_by_hand_during_a_run_asks_before_stopping_it(
 
     win, _service = window
     worker = _RunningWorker()
-    win._worker = worker  # ty: ignore[invalid-assignment]  # test injects a running worker stub
+    win._worker = worker
     monkeypatch.setattr(
         _benchmark_window.QMessageBox,
         "question",
@@ -322,7 +322,7 @@ def test_closing_detaches_a_benchmark_worker_that_does_not_stop_in_time(
     win, _service = window
     worker = _RunningWorker()
     worker.wait = lambda _ms: False  # ty: ignore[invalid-assignment]  # the stub never stops
-    win._worker = worker  # ty: ignore[invalid-assignment]  # test injects a running worker stub
+    win._worker = worker
     detached: list = []
     monkeypatch.setattr(_benchmark_window, "detach_running_worker", detached.append)
 
@@ -342,7 +342,7 @@ def test_closing_from_the_main_window_stops_a_run_without_asking(window, monkeyp
 
     win, _service = window
     worker = _RunningWorker()
-    win._worker = worker  # ty: ignore[invalid-assignment]  # test injects a running worker stub
+    win._worker = worker
 
     def _no_question(*_a, **_k):
         raise AssertionError("closing from the main window must not ask")

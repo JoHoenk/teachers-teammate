@@ -65,7 +65,7 @@ def _keyring() -> ModuleType | None:
     try:
         backend = keyring.get_keyring()
         return keyring if getattr(backend, "priority", 0) > 0 else None
-    except Exception:  # noqa: BLE001 -- a broken backend is "no keychain", whatever it raised
+    except Exception:  # a broken backend is "no keychain", whatever it raised
         LOG.debug("keyring backend could not be loaded", exc_info=True)
         return None
 
@@ -95,7 +95,7 @@ class CredentialStore:
         if keyring is not None:
             try:
                 value = keyring.get_password(KEYRING_SERVICE, env_key)
-            except Exception:  # noqa: BLE001 -- locked or cancelled keyring: use the file copy
+            except Exception:  # locked or cancelled keyring: use the file copy
                 LOG.debug("keyring read failed for %s", env_key, exc_info=True)
                 value = None
             if value:
@@ -135,7 +135,7 @@ class CredentialStore:
     def _delete_keyring_value(keyring: ModuleType, env_key: str) -> None:
         try:
             keyring.delete_password(KEYRING_SERVICE, env_key)
-        except Exception:  # noqa: BLE001 -- nothing stored (PasswordDeleteError) or locked
+        except Exception:  # nothing stored (PasswordDeleteError) or locked
             LOG.debug("keyring delete failed for %s", env_key, exc_info=True)
 
     # ── all keys ──────────────────────────────────────────────────────────────
@@ -165,7 +165,7 @@ class CredentialStore:
         try:
             # Overwrites: the plain copy is the newer key (see ``get``).
             keyring.set_password(KEYRING_SERVICE, env_key, plain)
-        except Exception:  # noqa: BLE001 -- leave the plain copy; it is tried again next start
+        except Exception:  # leave the plain copy; it is tried again next start
             LOG.debug("moving %s into the keyring failed", env_key, exc_info=True)
             return
         self._remove_file_value(env_key)

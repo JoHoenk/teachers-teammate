@@ -23,7 +23,6 @@ from collections.abc import Callable, Sequence
 import dataclasses
 import logging
 import threading
-from typing import cast
 from urllib.parse import urlparse
 
 from ..domain.model_catalog import (
@@ -159,7 +158,7 @@ class ModelRecommendationService:
         """
         if setting in HARDWARE_PROFILES:
             return HardwareDetection(
-                profile=cast(HardwareProfile, setting),
+                profile=setting,
                 reason=DetectionReason.MANUAL,
                 system_memory_gb=self._local_system_memory_gb(ollama_url),
             )

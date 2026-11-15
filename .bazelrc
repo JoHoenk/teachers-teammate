@@ -4,3 +4,9 @@ build --java_runtime_version=remotejdk_17
 test --java_runtime_version=remotejdk_17
 build --tool_java_runtime_version=remotejdk_17
 test --tool_java_runtime_version=remotejdk_17
+
+# CI (`--config=ci`): a stale MODULE.bazel.lock fails the build instead of being
+# updated silently, and the runner log stays readable.
+common:ci --lockfile_mode=error --color=yes --curses=no
+# The CI disk cache is restored and saved whole; keep it from growing without bound.
+common:ci --experimental_disk_cache_gc_max_size=2G

@@ -1,3 +1,4 @@
+load("@rules_python//python:defs.bzl", "py_library")
 load("@rules_python//python:pip.bzl", "compile_pip_requirements")
 load("//third_party/lint:linters.bzl", "pylint_test", "ruff_test", "ty_test")
 

@@ -360,7 +360,7 @@ class ReviewDiffView(QTextBrowser):
             selections.append(selection)
         self.setExtraSelections(selections)
         if selections:
-            self._reveal(selections[0].cursor)  # ty: ignore[unresolved-attribute]  # PySide6
+            self._reveal(selections[0].cursor)
 
     def _link_ranges(self, target: str) -> list[tuple[int, int]]:
         """Return ``(position, length)`` of every run of text that links to *target*."""
@@ -372,7 +372,7 @@ class ReviewDiffView(QTextBrowser):
                 fragment = iterator.fragment()
                 if fragment.isValid() and fragment.charFormat().anchorHref() == target:
                     ranges.append((fragment.position(), fragment.length()))
-                iterator += 1  # ty: ignore[unsupported-operator]  # QTextBlock.iterator
+                iterator += 1
             block = block.next()
         return ranges
 

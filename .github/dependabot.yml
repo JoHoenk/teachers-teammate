@@ -35,6 +35,23 @@ updates:
       build-pins:
         patterns: ["*"]
 
+  # The Bazel modules in MODULE.bazel and the Bazel version in .bazelversion.
+  # Two pins stay manual: the `trlc` git_override (a commit, not a release) and the
+  # PlantUML artifact of the Maven install.
+  - package-ecosystem: "bazel"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    groups:
+      bazel:
+        patterns: ["*"]
+    # Bazel 9 is a decision of its own, not a bump: every rule has to support
+    # Bazel 8 first, so a proposal that needs 9 is closed rather than merged.
+    ignore:
+      - dependency-name: "bazel"
+        versions: [">=9"]
+
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:

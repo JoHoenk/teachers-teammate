@@ -60,8 +60,10 @@ class StepContext:
 class Step(Protocol):
     """One operation of the image preparation."""
 
-    name: str
-    """The name listed in ``preprocess_steps`` (and, lower-cased, in a snapshot's file name)."""
+    @property
+    def name(self) -> str:
+        """The name listed in ``preprocess_steps`` (and, lower-cased, in a snapshot's file name)."""
+        ...
 
     def apply(self, image: Any, ctx: StepContext) -> StepResult:
         """Return the image after this step."""

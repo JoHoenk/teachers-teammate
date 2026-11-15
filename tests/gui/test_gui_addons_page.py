@@ -470,7 +470,7 @@ def test_the_reader_box_starts_a_round_with_the_reader_only(qtbot) -> None:
         started.append(kwargs)
         return True
 
-    dlg._round.start = start  # ty: ignore[invalid-assignment]  # test patches the install round
+    dlg._round.start = start  # ty: ignore[invalid-assignment]
     dlg._on_download_install()
 
     assert len(started) == 1
@@ -517,7 +517,7 @@ def test_the_page_models_box_starts_a_round_with_the_page_models_only(qtbot) -> 
         started.append(kwargs)
         return True
 
-    dlg._round.start = start  # ty: ignore[invalid-assignment]  # test patches the install round
+    dlg._round.start = start  # ty: ignore[invalid-assignment]
     dlg._on_download_install()
 
     assert len(started) == 1
@@ -651,7 +651,7 @@ def test_download_install_collects_ticked_child_rows(qtbot) -> None:
     dlg._model_items[DEFAULT_OCR_MODEL].setCheckState(0, Qt.CheckState.Checked)
     dlg._model_items["deepseek-ocr:latest"].setCheckState(0, Qt.CheckState.Checked)
     start = MagicMock()
-    dlg._round.start = start  # ty: ignore[invalid-assignment]  # test patches the install round
+    dlg._round.start = start
     dlg._on_download_install()
     assert start.call_args.kwargs["ollama_models"] == [DEFAULT_OCR_MODEL, "deepseek-ocr:latest"]
 
@@ -713,7 +713,7 @@ def test_too_large_selection_cancel_aborts(qtbot, monkeypatch) -> None:
         row.setCheckState(0, Qt.CheckState.Unchecked)
     dlg._model_items["gpt-oss:20b"].setCheckState(0, Qt.CheckState.Checked)
     start = MagicMock()
-    dlg._round.start = start  # ty: ignore[invalid-assignment]  # test patches the install round
+    dlg._round.start = start
     _FakeMessageBox.clicked = "Cancel"
     monkeypatch.setattr(_addons_page, "QMessageBox", _FakeMessageBox)
     dlg._on_download_install()
@@ -738,7 +738,7 @@ def test_too_large_selection_download_anyway_proceeds(qtbot, monkeypatch) -> Non
         row.setCheckState(0, Qt.CheckState.Unchecked)
     dlg._model_items["gpt-oss:20b"].setCheckState(0, Qt.CheckState.Checked)
     start = MagicMock()
-    dlg._round.start = start  # ty: ignore[invalid-assignment]  # test patches the install round
+    dlg._round.start = start
     _FakeMessageBox.clicked = "Download anyway"
     monkeypatch.setattr(_addons_page, "QMessageBox", _FakeMessageBox)
     dlg._on_download_install()

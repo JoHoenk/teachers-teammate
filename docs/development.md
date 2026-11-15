@@ -32,6 +32,10 @@ bazel test //:py_ruff
 bazel test //:py_pylint
 ```
 
+ruff and ty come with `aspect_rules_lint` (see `MODULE.bazel`), the same ruff the formatter
+uses; a version bump is a rules_lint bump. Run them through Bazel only — a `ruff`/`ty` from a
+local `.venv` can be a different version and report different results.
+
 ### Type checking
 
 ```bash

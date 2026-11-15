@@ -8,9 +8,11 @@ in ``_settings_dict`` alongside.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 import dataclasses
 from pathlib import Path
 import sys
+from typing import Any, cast
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
@@ -1068,9 +1070,10 @@ class ConfigPanel(QScrollArea):
         """Return the document language currently chosen in the panel."""
         return self._language.currentText().strip()
 
-    def update_settings(self, settings: dict) -> None:
+    def update_settings(self, settings: Mapping[str, Any]) -> None:
         """Apply values returned by the Settings window (or another source of settings)."""
-        self._settings_dict.update(settings)
+        # Callers pass all keys or only a subset (e.g. just ``ollama_url``).
+        self._settings_dict.update(cast("SettingsDict", settings))
         self._sync_results_widgets()
         self.refresh_data_flow()
 

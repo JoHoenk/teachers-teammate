@@ -730,7 +730,8 @@ class ResultsTable(QTableWidget):
         menu.addSeparator()
         what_is_sent = menu.addAction("What is sent for this file…")
 
-        action = menu.exec(self.viewport().mapToGlobal(pos))  # ty: ignore[invalid-argument-type]  # PySide6 stub lists a no-arg exec() overload first; exec(QPoint) is valid
+        # PySide6's stub lists a no-arg exec() overload first; exec(QPoint) is valid.
+        action = menu.exec(self.viewport().mapToGlobal(pos))
         if action is None:
             return
         if action is rerun_ocr:

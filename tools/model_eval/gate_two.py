@@ -938,7 +938,7 @@ def _mean_range(per_language: Sequence[Sequence[float | None]]) -> grouping.Rang
         return None
     means = []
     for index in range(length):
-        found = [values[index] for values in per_language if values[index] is not None]
+        found = [value for values in per_language if (value := values[index]) is not None]
         if not found:
             return None
         means.append(sum(found) / len(found))

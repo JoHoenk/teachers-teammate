@@ -160,7 +160,7 @@ def find_outline(gray: Any) -> PageOutline | None:
     contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     if not contours:
         return None
-    largest = max(contours, key=cv2.contourArea)  # ty: ignore[no-matching-overload]
+    largest = max(contours, key=cv2.contourArea)
     share = cv2.contourArea(largest) / (h * w)
     if share < PAGE_MIN_AREA or share > PAGE_MAX_AREA:
         return None
@@ -434,9 +434,9 @@ def estimate_skew_angle(gray: Any) -> float:
         return float(np.var(rotated.sum(axis=1)))
 
     coarse = sorted((float(a) for a in np.arange(-SKEW_SEARCH, SKEW_SEARCH + 0.01, 0.5)), key=abs)
-    best = max(coarse, key=score)  # ty: ignore[no-matching-overload]
+    best = max(coarse, key=score)
     fine = sorted((float(a) for a in np.arange(best - 0.5, best + 0.51, 0.05)), key=abs)
-    angle = float(max(fine, key=score))  # ty: ignore[no-matching-overload]
+    angle = float(max(fine, key=score))
     if score(angle) < 1.10 * score(0.0):
         return 0.0  # no clear improvement over leaving the page as it is
     return angle

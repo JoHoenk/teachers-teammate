@@ -12,6 +12,7 @@ from dataclasses import asdict, dataclass, field, fields
 import hashlib
 import json
 from pathlib import Path
+from typing import Any
 
 from teachers_teammate.domain.correction_review import CorrectionReview
 from teachers_teammate.domain.model_catalog import sampling_text
@@ -221,7 +222,7 @@ class ResultRow:
         return cls(**values)
 
 
-def _field_names(cls: type) -> tuple[str, ...]:
+def _field_names(cls: type[Any]) -> tuple[str, ...]:
     """Return the names of the dataclass fields of *cls*."""
     return tuple(entry.name for entry in fields(cls))
 

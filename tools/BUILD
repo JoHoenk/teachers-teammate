@@ -1,5 +1,7 @@
 """Bazel targets for developer tools."""
 
+load("@rules_python//python:defs.bzl", "py_binary", "py_library")
+
 py_binary(
     name = "extract_test_specs",
     srcs = ["extract_test_specs.py"],

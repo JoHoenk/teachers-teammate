@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Literal, cast
+from typing import Literal
 
 StageName = Literal["ocr", "correction", "evaluation"]
 
@@ -20,4 +20,4 @@ def normalize_stage(stage: str) -> StageName:
     if value not in STAGE_ORDER:
         msg = f"Invalid stage '{stage}'. Expected one of: {', '.join(STAGE_ORDER)}"
         raise ValueError(msg)
-    return cast(StageName, value)
+    return value

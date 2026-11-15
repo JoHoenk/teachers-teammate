@@ -1,3 +1,5 @@
+load("@rules_python//python:defs.bzl", "py_binary", "py_library")
+
 py_library(
     name = "release_tools_lib",
     srcs = [

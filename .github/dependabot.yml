@@ -1,9 +1,19 @@
 version: 2
+
+# Every entry below carries `cooldown: default-days: 7`: a version update is proposed only
+# once the release is a week old. The build installs by version (the lock's hashes are
+# dropped by make_constraints.py), so a malicious release of any of the ~90 packages the
+# bundle carries would be merged before anyone noticed it. Such releases are usually found
+# and pulled within days, so a week of waiting is what makes the difference. Security
+# updates are never delayed — Dependabot exempts them from the cooldown.
+
 updates:
   - package-ecosystem: "pip"
     directory: "/"
     schedule:
       interval: "weekly"
+    cooldown:
+      default-days: 7
     open-pull-requests-limit: 10
     groups:
       pip-security:
@@ -30,6 +40,8 @@ updates:
     directory: "/tools/build"
     schedule:
       interval: "weekly"
+    cooldown:
+      default-days: 7
     open-pull-requests-limit: 5
     groups:
       build-pins:
@@ -42,6 +54,8 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
+    cooldown:
+      default-days: 7
     open-pull-requests-limit: 5
     groups:
       bazel:
@@ -56,6 +70,8 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
+    cooldown:
+      default-days: 7
     groups:
       github-actions:
         patterns: ["*"]

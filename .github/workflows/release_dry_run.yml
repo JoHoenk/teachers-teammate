@@ -19,6 +19,8 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - name: Check the version form
         env:
@@ -38,20 +40,16 @@ jobs:
     needs: [validate]
     uses: ./.github/workflows/tests.yml
 
+  # Both build jobs run read-only and upload their outputs as artifacts, exactly as in the
+  # release. There is no `publish` job: a dry run never touches a release.
   build-wheel:
     needs: [lint, test]
-    permissions:
-      contents: write
     uses: ./.github/workflows/build_wheel.yml
     with:
       version: ${{ inputs.version }}
-      skip_artifact_upload: true
 
   build-standalone:
     needs: [lint, test]
-    permissions:
-      contents: write
     uses: ./.github/workflows/build_artifacts.yml
     with:
       version: ${{ inputs.version }}
-      skip_artifact_upload: true

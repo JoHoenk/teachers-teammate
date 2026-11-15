@@ -23,7 +23,8 @@ Builds the Sphinx site (`bazel build //docs:html`) on every push to `main` and o
 ### Release dry run (`release_dry_run.yml`)
 
 Manual trigger (`workflow_dispatch`) with a version string (e.g. `v1.0.0-rc1`).
-Runs the full build matrix — lint, test, wheel, and all platform standalone builds — but **does not upload artifacts or publish a release**.
+Runs the full build matrix — lint, test, wheel, and all platform standalone builds — but **never
+touches a release**: the builds run read-only and their outputs stay in the run's artifacts.
 Use this to validate the build before cutting a real release. It starts with the same `validate`
 job as the release, so a version that would fail there fails here first, before anything is built.
 
@@ -63,10 +64,13 @@ and `v0.5.7-rc.1` both, `v0.5.7-rc.` and `v0.5.7-pre` not. A PEP 440 form withou
 validate ──► lint ──┐
              test ──┴──► create-release (draft GitHub Release)
                               │
-                              ├──► build-wheel      → wheel (.whl) attached to the draft
-                              └──► build-standalone → platform installers attached to the draft
+                              ├──► build-wheel      (read-only) → wheel artifact
+                              └──► build-standalone (read-only) → installer artifacts
                                                  │
-                                                 └──► publish-release → flips the draft to published
+                                                 └──► publish → SHA256SUMS + attestations,
+                                                               assets attached to the draft
+                                                 │
+                                                 └──► you: review the draft, click *Publish*
 ```
 
 **validate** runs first and fails within seconds, before anything is built or a draft exists: it
@@ -79,13 +83,26 @@ and forbids moving an existing one.
 
 Each tag has its own concurrency group (`release-<tag>`), so tags pushed together all build, side
 by side — a single shared group would keep only one pending run and cancel the rest.
-**publish-release** marks a final release *Latest* only if no higher version is already published,
-so an older tag that finishes last cannot take it over.
 
-The release stays a draft until **publish-release** runs, so a half-uploaded release is never
-visible. The upload steps pass `draft: true` too: without it the upload action publishes an
-existing draft after its first upload. A pre-release version (one containing `-`) is published
-without `--latest`.
+**publish** is the only job that writes to the release, and it only uploads files: it downloads
+the four release artifacts by name (`release-wheel`, `release-linux`, `release-windows`,
+`release-macos`; the `release` prefix keeps the manual *Build bundles* clean-up away from them),
+requires exactly one wheel, `.deb`, tarball, installer and `.dmg` and nothing else, writes `SHA256SUMS`, attests the build provenance of each file and
+attaches them to the draft with `gh release upload`. It never flips the draft to published.
+
+The build jobs (`build_wheel.yml`, `build_artifacts.yml`) declare `permissions: contents: read`
+themselves, so a caller cannot raise them, and every `actions/checkout` sets
+`persist-credentials: false`. The build runs ~90 PyPI packages and PyInstaller hooks; a bad
+version of any of them must not be able to replace files on a release. The assets reach the
+release only through the artifact store and the `publish` job.
+
+The release stays a **draft** until you publish it, so a half-uploaded release is never visible
+and the update check (`/releases/latest`) never offers it. Open the draft from the job summary
+(or `https://github.com/<owner>/teachers-teammate/releases/edit/<tag>`), check the notes and the
+assets, and click *Publish* — for a final release also tick *Set as the latest release*; a `-`
+tag is already marked pre-release. The workflow does not mark a release *Latest*; the job summary
+tells you whether to tick the box (**not** when a higher version is already published), so an
+older tag that finishes last does not take it over — the maintainer's choice decides.
 
 A failed run leaves its draft behind: delete it with `gh release delete <tag> --cleanup-tag`
 before pushing the tag again.
@@ -117,6 +134,34 @@ on a non-zero exit, and uploads `smoke.json` as an artifact. The Linux job also 
 teacher's Add-ons window.
 
 The **build-wheel** job stamps the version into `pyproject.toml` via `tools/release/stamp_versions.py`, then builds a pure-Python wheel with Bazel.
+
+### Checksums and provenance
+
+Every release carries a `SHA256SUMS` file and a build-provenance attestation per asset:
+
+```bash
+sha256sum -c SHA256SUMS --ignore-missing
+gh attestation verify teachers-teammate-<version>-w64-setup.exe --repo JoHoenk/teachers-teammate
+```
+
+The attestation is signed with GitHub's OIDC token for this repository's release workflow, so it
+proves which workflow and commit produced the file — not merely that the file is unchanged since
+it was downloaded. It vouches for the workflow run, not for the packages that run installed.
+`SHA256SUMS` covers the same files for a check without `gh`.
+
+### Dependency updates (`dependabot.yml`)
+
+Dependabot proposes weekly bumps for the Python pins (`/` and `/tools/build`), the Bazel modules
+in `MODULE.bazel` and the actions in `.github/workflows`. Every entry carries
+`cooldown: default-days: 7`: a version update is proposed only once the release is a week old.
+The build installs by version — the lock's hashes are dropped by `make_constraints.py` — so a
+malicious release of any of the ~90 packages the bundle carries would otherwise be merged before
+anyone noticed it. Such releases are usually found and pulled within days. Security updates are
+never delayed.
+
+Two pins stay manual: the `trlc` `git_override` (a commit, not a release) and the PlantUML
+artifact of the Maven install. A proposal that needs Bazel 9 is ignored: every rule has to
+support Bazel 8 first, so moving to 9 is a decision, not a bump.
 
 ---
 

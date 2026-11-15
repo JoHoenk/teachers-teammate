@@ -13,7 +13,8 @@ permissions:
 
 # One run per tag. A shared group would keep only one pending run and cancel the others, so
 # three tags pushed together would lose the middle one. Different tags build side by side;
-# the version checks in `validate` and `publish-release` keep "Latest" on the highest version.
+# the version check in `validate` keeps a tag from shipping below the latest release, and
+# nothing marks a release "Latest" on its own — the maintainer does that when publishing.
 concurrency:
   group: release-${{ github.ref_name }}
   cancel-in-progress: false
@@ -30,6 +31,7 @@ jobs:
         with:
           # The whole history, so the tagged commit can be checked against origin/main.
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Check the tag form and that the tag is on main
         env:
@@ -78,77 +80,151 @@ jobs:
     needs: [validate]
     uses: ./.github/workflows/tests.yml
 
-  # ── Create the GitHub Release (empty shell, build jobs attach assets) ────
+  # ── Create the draft release ──────────────────────────────────────────────
+  # The only job besides `publish` that may write: it creates the empty draft the assets
+  # are attached to. No build job holds a write token (see the reusable workflows).
   create-release:
-    name: Create GitHub Release
+    name: Create the draft release
     needs: [lint, test]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v7
-
-      # A draft, so a half-uploaded release is never visible: publish-release flips it once
-      # every asset is attached. The tag exists already, so it needs no target commit.
-      - uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3 # v3.0.4
-        with:
-          tag_name: ${{ github.ref_name }}
-          name: "Release ${{ github.ref_name }}"
-          generate_release_notes: true
-          draft: true
-          prerelease: ${{ contains(github.ref_name, '-') }}
-          make_latest: ${{ !contains(github.ref_name, '-') }}
+      - name: Create the draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+          REPO: ${{ github.repository }}
+        run: |
+          # A draft, so a half-uploaded release is never visible and the update check
+          # (`/releases/latest`) never offers it. The tag exists already, so `--verify-tag`
+          # is the check and no target commit is needed.
+          args=(--draft --verify-tag --generate-notes --title "Release $TAG")
+          if [[ "$TAG" == *-* ]]; then
+            args+=(--prerelease)
+          fi
+          gh release create "$TAG" --repo "$REPO" "${args[@]}"
 
   # ── Wheel (pure-Python, platform-independent) ───────────────────────────
+  # Read-only: it uploads the wheel as an artifact, and `publish` attaches it.
   build-wheel:
     needs: [create-release]
-    permissions:
-      contents: write
     uses: ./.github/workflows/build_wheel.yml
     with:
       version: ${{ github.ref_name }}
-      skip_artifact_upload: true
-      publish_release_assets: true
-      release_tag: ${{ github.ref_name }}
+      retention_days: 3
+      # Named apart from the manual "Build bundles" artifacts, whose prune step deletes
+      # `teachers-teammate-*` from every other run — it must never reach a release's files.
+      artifact_name: release-wheel
 
   # ── Standalone executables + platform installers ─────────────────────────
+  # Read-only, for the same reason.
   build-standalone:
     needs: [create-release]
-    permissions:
-      contents: write
     uses: ./.github/workflows/build_artifacts.yml
     with:
       version: ${{ github.ref_name }}
-      skip_artifact_upload: true
-      publish_release_assets: true
-      release_tag: ${{ github.ref_name }}
+      retention_days: 3
+      # Same reason: `release-linux`, `release-windows`, `release-macos` (+ `-smoke`).
+      artifact_prefix: release
 
-  # ── Publish ───────────────────────────────────────────────────────────────
-  # The last job, so the release only becomes visible once the wheel and every
-  # platform installer are attached to it.
-  publish-release:
-    name: Publish the release
+  # ── Attach the assets to the draft ────────────────────────────────────────
+  # The one job that writes to the release, and it only uploads files: it never flips the
+  # draft to published. The maintainer reviews the notes and the assets in the release form
+  # and clicks *Publish* (DC12) — a failed build therefore never leaves a public release
+  # without installers, and immutable releases stay possible.
+  publish:
+    name: Attach the assets to the draft
     needs: [build-wheel, build-standalone]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
+      # `gh run download` lists this run's artifacts.
+      actions: read
+      # For the provenance attestation: the OIDC token proves which workflow built the files.
+      id-token: write
+      attestations: write
     steps:
-      - name: Flip the draft to a published release
+      # Only the artifacts that carry release files, by name: nothing else of this run (smoke
+      # reports, anything a build step added under another name) can reach the release.
+      - name: Download the build artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          gh run download "$RUN_ID" --repo "$REPO" --dir artifacts \
+            -n release-wheel -n release-linux -n release-windows -n release-macos
+
+      # Exactly one file of each kind, or the run fails: a draft with a missing installer
+      # (or a stray extra file) must never be offered for publishing.
+      - name: Collect the release files
+        run: |
+          mkdir -p release
+          fail=0
+          for pattern in '*.whl' '*.deb' '*-linux-x86_64.tar.gz' '*-w64-setup.exe' '*-macos.dmg'; do
+            mapfile -t found < <(find artifacts -type f -name "$pattern")
+            if [[ ${#found[@]} -ne 1 ]]; then
+              echo "::error::expected exactly one '$pattern', found ${#found[@]}"
+              fail=1
+              continue
+            fi
+            cp -v "${found[0]}" release/
+          done
+          # Nothing besides those five files may be in the artifacts.
+          extra=$(find artifacts -type f | wc -l)
+          if [[ "$extra" -ne 5 ]]; then
+            echo "::error::the artifacts hold $extra files, expected exactly 5"
+            find artifacts -type f
+            fail=1
+          fi
+          exit "$fail"
+
+      - name: Write SHA256SUMS
+        working-directory: release
+        run: sha256sum * > SHA256SUMS
+
+      - name: Attest the build provenance
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: release/*
+
+      - name: Upload the assets to the draft
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
+          REPO: ${{ github.repository }}
+        run: gh release upload "$TAG" release/* --repo "$REPO" --clobber
+
+      - name: Summarise the draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+          REPO: ${{ github.repository }}
         run: |
-          if [[ "$TAG" == *-* ]]; then
-            gh release edit "$TAG" --draft=false --repo "${{ github.repository }}"
-          else
-            # Tags build side by side, so an older one may finish last: it must not take
-            # "Latest" from a higher version published in the meantime.
-            latest=$(gh api "repos/${{ github.repository }}/releases/latest" --jq .tag_name 2>/dev/null || true)
-            highest=$(printf '%s\n%s\n' "${latest:-v0}" "$TAG" | sort -V | tail -n1)
-            if [[ "$highest" == "$TAG" ]]; then
-              gh release edit "$TAG" --draft=false --latest --repo "${{ github.repository }}"
+          {
+            echo "### Draft release \`$TAG\`"
+            echo
+            echo "Nothing is public yet. Check the notes and the assets, then click **Publish**:"
+            echo "https://github.com/$REPO/releases/edit/$TAG"
+            echo
+            if [[ "$TAG" == *-* ]]; then
+              echo "The draft is already marked pre-release."
             else
-              echo "::notice::'$latest' is newer than '$TAG', so '$TAG' is not marked Latest."
-              gh release edit "$TAG" --draft=false --latest=false --repo "${{ github.repository }}"
+              # GitHub would pick "Latest" by creation date, so an older tag that finishes
+              # last could take it from a higher version: say which way to tick.
+              latest=$(gh api "repos/$REPO/releases/latest" --jq .tag_name 2>/dev/null || true)
+              highest=$(printf '%s\n%s\n' "${latest:-v0}" "$TAG" | sort -V | tail -n1)
+              if [[ "$highest" == "$TAG" ]]; then
+                echo "Tick **Set as the latest release** when you publish."
+              else
+                echo "**Do not** tick *Set as the latest release*: \`$latest\` is newer than \`$TAG\`."
+              fi
             fi
-          fi
+            echo
+            echo "| Asset | Size |"
+            echo "|---|---|"
+            for f in release/*; do
+              printf '| %s | %s |\n' "$(basename "$f")" "$(du -h "$f" | cut -f1)"
+            done
+          } >> "$GITHUB_STEP_SUMMARY"

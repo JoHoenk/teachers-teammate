@@ -55,9 +55,13 @@ def edits(source: str, other: str) -> frozenset[Edit]:
     return frozenset(ordered_edits(source, other))
 
 
-@lru_cache(maxsize=32)
+@lru_cache(maxsize=16384)
 def ordered_edits(source: str, other: str) -> tuple[Edit, ...]:
     """Return the word-diff changes that turn *source* into *other*, in text order.
+
+    The result is cached for many pairs: a report reads every row of every run of a test set, and
+    the same text's reference is diffed again for each of them, and each version's own diff is
+    asked for by the scoring, the outcomes and the rows of the report.
 
     The same changes as :func:`edits`, which is a set because the scoring only needs membership;
     a caller that wants to point at one change (a note that explains it) needs the order, which

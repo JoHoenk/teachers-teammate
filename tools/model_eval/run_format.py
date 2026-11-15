@@ -250,7 +250,13 @@ class RunHeader:
 
     @classmethod
     def from_dict(cls, header: Mapping[str, Any]) -> RunHeader:
-        """Return the typed header of *header*.
+        """Return the typed header of *header*, committed or from a local cache.
+
+        A local cache's header carries no ``run_id`` (the file name is the run) and names the
+        texts by ``testset_sha256``, the hash of the test records, where an exported run carries
+        the manifest's hash.  Both are read into ``manifest_sha256``, so one mapping serves the two
+        sources; the field then holds the hash of whichever the header names, and two headers
+        compare only when they come from the same source.
 
         Raises:
             KeyError: if a field the readers need is missing.
@@ -258,9 +264,9 @@ class RunHeader:
         """
         explainer = header.get("explainer")
         return cls(
-            run_id=str(header["run_id"]),
+            run_id=str(header.get("run_id", "")),
             testset=str(header["testset"]),
-            manifest_sha256=str(header["manifest_sha256"]),
+            manifest_sha256=str(header.get("manifest_sha256") or header.get("testset_sha256", "")),
             eval_version=int(header["eval_version"]),
             provider=str(header["provider"]),
             machine="" if header["machine"] is None else str(header["machine"]),

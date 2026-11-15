@@ -12,12 +12,13 @@ line.
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
+from typing import Any
 
 from . import scoring, summary
 from .answer_mode import AnswerMode
-from .run_format import StoredItem, StoredRun
+from .run_format import RunHeader, StoredItem, StoredRun
 
 DECIDING_LANGUAGES: tuple[str, ...] = scoring.DECIDING_LANGUAGES
 """The languages whose mean decides; French is reported only."""
@@ -60,7 +61,11 @@ class GroupKey:
     @classmethod
     def of(cls, run: StoredRun) -> GroupKey:
         """Return the key of *run*, from its header."""
-        meta = run.meta
+        return cls.of_header(run.meta)
+
+    @classmethod
+    def of_header(cls, meta: RunHeader) -> GroupKey:
+        """Return the key of a typed header, committed or from a local cache."""
         return cls(
             testset=meta.testset,
             manifest_sha256=meta.manifest_sha256,
@@ -75,6 +80,23 @@ class GroupKey:
             temperature=meta.temperature,
             num_ctx=meta.num_ctx,
         )
+
+    @classmethod
+    def of_local(cls, header: Mapping[str, Any]) -> GroupKey:
+        """Return the key of a run in a local cache, from its header dict.
+
+        A cache's header is the dict a run writes next to its rows, not a committed run's line 1:
+        it has no ``run_id`` and names the texts by ``testset_sha256``, the hash of the test
+        records, where an exported run names them by ``manifest_sha256``, the hash of the
+        manifest.  :class:`~.run_format.RunHeader` reads both into one field, so the keys of two
+        cache runs compare as they should.  A cache run's key is **not** equal to the key of the
+        exported run of the same measurement, because the two hashes are different numbers.
+
+        Raises:
+            KeyError: if the header lacks a field the key is made of.
+            ValueError: if a field has a value of the wrong kind.
+        """
+        return cls.of_header(RunHeader.from_dict(header))
 
     def measured_alike(self, other: GroupKey) -> bool:
         """Whether *other* was measured the same way, apart from the model and its request.

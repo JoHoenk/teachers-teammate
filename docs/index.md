@@ -39,7 +39,7 @@ When AI proofreading is turned on with an **online service** (such as OpenAI, An
 ## Quick workflow
 
 #. Open an **input folder** — drag it onto the window or click the folder button.
-#. Text recognition is already set to Ollama by default — just make sure Ollama is running on your computer (see *Set up text recognition* below).
+#. Run the **Setup Assistant** once (it opens on the first start): it checks what handwriting recognition needs on your computer and downloads it (see *Set up text recognition* below).
 #. Optionally turn on **AI proofreading** in the settings panel.
 #. Select the files you want to process (or leave nothing selected to process everything), then click **Run Selected**.
 #. Click any row in the results list to open the **Preview** tab — the text is fully editable, so you can fix any remaining mistakes by hand before sending the text to correction or export.
@@ -54,8 +54,8 @@ For detailed guidance on choosing the best settings for your documents, see the 
 
 ### Install Teacher's Teammate
 
-#. Go to the [releases page](https://github.com/JoHoenk/teachers-teammate/tags) and download the installer for your operating system.
-#. Run the installer like any other program.
+#. Go to the [releases page](https://github.com/JoHoenk/teachers-teammate/releases/latest) and download the installer for your operating system.
+#. Run the installer like any other program. On Windows its last page offers **Start Teacher's Teammate**; leave it ticked and the app opens right away, with the Setup Assistant on the first start.
 #. Launch **Teacher's Teammate** from the Start menu (Windows), the Applications folder (macOS), or your application launcher (Linux).
 
 :::{note}
@@ -82,7 +82,9 @@ Your settings are saved automatically and restored every time you start the app.
 
 The first time you start the app, the **Setup Assistant** opens and asks three plain questions: the language of your class, what your students hand in (handwritten pages or typed texts), and where the proofreading may run. It then shows you what it will set and what it will download, and you press **Set up** once. The downloads run in the background and the main window shows how far they are.
 
-Teacher's Teammate recognises text using a local AI program called **Ollama**, which runs on your computer and never sends data anywhere without your permission. If Ollama is not installed yet, the assistant says so and offers **Get Ollama…**, which opens [ollama.com/download](https://ollama.com/download); run its installer like any other program. Once Ollama is running, the assistant's line turns green by itself — no click needed — and it downloads the right reading and writing models for your computer.
+Teacher's Teammate reads handwriting in one of two ways. The **built-in reader** (about 31 MB) runs inside the app and needs no extra program; choose it under **Settings → AI models**, and the assistant downloads its files for you. The default is a reading model that runs in a local AI program called **Ollama**, which runs on your computer and never sends data anywhere without your permission. If Ollama is not installed yet, the assistant says so and offers **Get Ollama…**, which opens [ollama.com/download](https://ollama.com/download); run its installer like any other program. Once Ollama is running, the assistant's line turns green by itself — no click needed — and it downloads the right reading and writing models for your computer. Ollama is also what runs AI proofreading on your own computer.
+
+For photographed pages, **Automatic** image preparation can turn a sideways page upright and flatten a curved one. This needs two small **page models** (about 39 MB). The assistant lists them as their own line and downloads them with the rest, whichever way the pages are read.
 
 You can run the assistant again at any time from **Tools → Setup Assistant…**. It starts from your saved answers and keeps a model that already works, so running it a second time changes nothing you did not ask for. Everything it sets can also be changed by hand in the Settings window.
 

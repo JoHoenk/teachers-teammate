@@ -15,6 +15,11 @@ from teachers_teammate.application.setup_plan import (
     build_setup_plan,
 )
 from teachers_teammate.config import DEFAULTS
+from teachers_teammate.domain.local_models import (
+    PAGE_MODELS_ADDON_ID,
+    PAGE_MODELS_SIZE_GB,
+    PAGE_MODELS_SIZE_LABEL,
+)
 from teachers_teammate.domain.data_location import (
     STAGE_ANONYMIZATION,
     STAGE_CORRECTION,
@@ -229,7 +234,7 @@ def test_the_built_in_reader_is_kept_and_nothing_is_downloaded_when_it_is_there(
     """
     plan = _plan(
         current=_current(ocr_engine="ppocr", ocr_model="deu"),
-        facts=_facts(reader_installed=True),
+        facts=_facts(reader_installed=True, page_models_installed=True),
     )
 
     assert "ocr_model" not in plan.settings
@@ -254,6 +259,70 @@ def test_the_built_in_reader_without_its_models_adds_a_download_and_no_proposal(
     assert _step(plan, STAGE_OCR).kept is True
     assert "ocr_model" not in plan.settings
     assert not [d for d in _downloads(plan, DownloadKind.OLLAMA_MODEL) if d.stage == STAGE_OCR]
+
+
+def test_handwritten_pages_with_automatic_preparation_plan_the_page_models() -> None:
+    """
+    Given  handwritten pages, the automatic image preparation and no page models downloaded
+    When   the setup plan is built
+    Then   one page-models download is planned for the reading step, sized like the label
+    """
+    plan = _plan(
+        current=_current(preprocess_method="auto"), facts=_facts(page_models_installed=False)
+    )
+
+    (download,) = _downloads(plan, DownloadKind.PAGE_MODELS)
+    assert (download.name, download.stage) == (PAGE_MODELS_ADDON_ID, STAGE_OCR)
+    assert download.size_gb == PAGE_MODELS_SIZE_GB
+    assert f"{PAGE_MODELS_SIZE_GB * 1000:.0f} MB" == PAGE_MODELS_SIZE_LABEL
+
+
+def test_page_models_that_are_downloaded_are_not_planned_again() -> None:
+    """
+    Given  handwritten pages with the automatic preparation and the page models downloaded
+    When   the setup plan is built
+    Then   no page-models download is planned
+    """
+    plan = _plan(facts=_facts(page_models_installed=True))
+
+    assert not _downloads(plan, DownloadKind.PAGE_MODELS)
+
+
+def test_the_original_page_needs_no_page_models() -> None:
+    """
+    Given  handwritten pages and the teacher chose "Original page" for the image preparation
+    When   the setup plan is built
+    Then   no page-models download is planned, and the choice is not changed
+    """
+    plan = _plan(current=_current(preprocess_method="none"))
+
+    assert not _downloads(plan, DownloadKind.PAGE_MODELS)
+    assert "preprocess_method" not in plan.settings
+
+
+def test_typed_pages_need_no_page_models() -> None:
+    """
+    Given  a class that hands in typed texts, so no page is read or prepared
+    When   the setup plan is built
+    Then   no page-models download is planned
+    """
+    plan = _plan(answers=_answers(hand_in=HandIn.TYPED, proofreading=ProofreadingPlace.OFF))
+
+    assert not _downloads(plan, DownloadKind.PAGE_MODELS)
+
+
+def test_the_page_models_are_planned_for_the_built_in_reader_too() -> None:
+    """
+    Given  handwritten pages read by the built-in reader, which is downloaded, and no page models
+    When   the setup plan is built
+    Then   only the page models are planned (they serve every reading engine)
+    """
+    plan = _plan(
+        current=_current(ocr_engine="ppocr"),
+        facts=_facts(reader_installed=True, page_models_installed=False),
+    )
+
+    assert [d.kind for d in plan.downloads if d.stage == STAGE_OCR] == [DownloadKind.PAGE_MODELS]
 
 
 def test_typed_pages_need_no_reader_download() -> None:

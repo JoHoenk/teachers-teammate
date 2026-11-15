@@ -9,6 +9,7 @@ differently.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import math
 
 HUGGING_FACE_HOST = "huggingface.co"
 """The one host the files come from; named in the download error so an IT department knows what
@@ -134,6 +135,9 @@ PAGE_MODELS_DOWNLOAD_COMMAND = "teachers-teammate --download-page-models"
 
 PAGE_MODELS_SIZE_LABEL = "39 MB"
 """The page models' download size as teachers read it (``sum(m.size)`` is 38,473,315 bytes)."""
+
+PAGE_MODELS_SIZE_GB = math.ceil(sum(m.size for m in PAGE_MODELS) / 1e6) / 1e3
+"""The page models' download size in GB, rounded up to the MB that ``PAGE_MODELS_SIZE_LABEL`` says."""
 
 PAGE_MODELS_NOT_DOWNLOADED = "page models not downloaded"
 """Why a model step of the automatic preparation did not act (debug log and CLI line)."""

@@ -1790,6 +1790,15 @@ A reader that is already chosen (`ocr_engine = ppocr`) is kept like any working 
 download (31 MB, the install round's *reader* phase between spaCy and the pulls).  The assistant
 never proposes to switch to the reader.
 
+**The page models** (`DOC_ORI` / `UVDOC`, 39 MB) serve the *Automatic* image preparation whatever
+engine reads the page, so they are planned apart from the reader.  When pages are handwritten,
+`preprocess_method` (saved value, default `auto`) is `auto` and `SetupFacts.page_models_installed`
+is `False`, `build_setup_plan` adds one `DownloadKind.PAGE_MODELS` download (`PAGE_MODELS_ADDON_ID`, stage
+`ocr`, `PAGE_MODELS_SIZE_GB`).  Installed, typed pages or *Original page* plan nothing, and the
+assistant never changes `preprocess_method`.  The summary draws it as its own "Page models" row
+after the reading row (the reading row does not list it); `_start_downloads` hands it to the
+round as `page_models=True`, which runs after the reader.
+
 **The summary's wording lives in `gui/setup/_summary.py`.**  `summary_rows(plan, place_of,
 key_missing=)` turns a plan into `SummaryRow`s — the classes first, then one per step, each with
 the model, the place (`short_place`, the same words as the service list) and its downloads — so

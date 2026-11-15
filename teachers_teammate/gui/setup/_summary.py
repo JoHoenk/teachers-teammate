@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QCheckBox, QGridLayout, QLabel, QWidget
 
-from ...application.setup_plan import PlannedDownload, PlannedStep, SetupPlan
+from ...application.setup_plan import DownloadKind, PlannedDownload, PlannedStep, SetupPlan
 from ...domain.data_location import (
     OCR_ENGINE_NAMES,
     STAGE_ANONYMIZATION,
@@ -33,6 +33,8 @@ STEP_NAMES: dict[str, str] = {
     STAGE_ANONYMIZATION: txt.REMOVE_PERSONAL_INFO,
 }
 CLASSES_NAME = "Your classes"
+PAGE_MODELS_NAME = "Page models"
+PAGE_MODELS_DETAIL = "turn and flatten photographed pages"
 
 ROW_DOWNLOADED = "✓ downloaded"
 ROW_INSTALLED = "✓ installed"
@@ -93,8 +95,19 @@ def summary_rows(
     """
     correction = next((step for step in plan.steps if step.stage == STAGE_CORRECTION), None)
     rows = [_classes_row(plan)]
-    rows += [_step_row(step, plan, correction, place_of, key_missing) for step in plan.steps]
+    for step in plan.steps:
+        rows.append(_step_row(step, plan, correction, place_of, key_missing))
+        if step.stage == STAGE_OCR:
+            rows += _page_models_rows(plan)
     return rows
+
+
+def _page_models_rows(plan: SetupPlan) -> list[SummaryRow]:
+    """Return the row of the page models' download; none when they are there or not needed."""
+    downloads = tuple(item for item in plan.downloads if item.kind is DownloadKind.PAGE_MODELS)
+    if not downloads:
+        return []
+    return [SummaryRow(name=PAGE_MODELS_NAME, detail=PAGE_MODELS_DETAIL, downloads=downloads)]
 
 
 def _classes_row(plan: SetupPlan) -> SummaryRow:
@@ -153,7 +166,11 @@ def _same_as_correction(step: PlannedStep, correction: PlannedStep | None) -> bo
 
 def _downloads_for(step: PlannedStep, plan: SetupPlan) -> tuple[PlannedDownload, ...]:
     """Return the downloads that belong to *step*'s stage."""
-    return tuple(download for download in plan.downloads if download.stage == step.stage)
+    return tuple(
+        download
+        for download in plan.downloads
+        if download.stage == step.stage and download.kind is not DownloadKind.PAGE_MODELS
+    )
 
 
 def _note(step: PlannedStep, downloads: Sequence[PlannedDownload]) -> str:

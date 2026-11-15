@@ -2280,6 +2280,7 @@ def test_the_setup_plan_comes_from_the_facts_and_the_ratings() -> None:
         patch.object(svc, "is_module_importable", return_value=True),
         patch.object(svc, "spacy_model_for_language", return_value="de_core_news_sm"),
         patch.object(svc, "missing_provider_package", return_value=None),
+        patch.object(svc, "page_models_installed", return_value=False),
         patch.object(svc, "rate_ollama_models", side_effect=rate),
         patch.object(
             svc,
@@ -2293,7 +2294,11 @@ def test_the_setup_plan_comes_from_the_facts_and_the_ratings() -> None:
     assert plan.settings["ocr_model"] == "qwen2.5vl:7b"
     assert plan.settings["correction_model"] == "gemma4:e4b"
     assert plan.panel["recognition_enabled"] is True
-    assert [download.name for download in plan.downloads] == ["qwen2.5vl:7b", "gemma4:e4b"]
+    assert [download.name for download in plan.downloads] == [
+        "page_models",
+        "qwen2.5vl:7b",
+        "gemma4:e4b",
+    ]
     # Background thread: an installed model outside the catalog is classified by the server.
     assert asked_cached_only
     assert not any(asked_cached_only)

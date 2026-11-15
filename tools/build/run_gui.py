@@ -55,6 +55,19 @@ from teachers_teammate.infrastructure.addon_manager import (
 
 inject_packages_dir()
 
+# ── smoke test dispatch ──────────────────────────────────────────────────────
+# A build is checked by running the app with `--_smoke_test <file>`: the checks live in
+# teachers_teammate/frozen_modes.py, the result goes to the file (a --windowed
+# build has no console on Windows) and the exit code says whether it passed.
+if "--_smoke_test" in sys.argv:
+    _idx = sys.argv.index("--_smoke_test")
+
+    from pathlib import Path as _SmokePath  # noqa: PLC0415, E402
+
+    from teachers_teammate.frozen_modes import run_smoke_test  # noqa: PLC0415, E402
+
+    raise SystemExit(run_smoke_test(_SmokePath(sys.argv[_idx + 1])))
+
 # ── spaCy model download dispatch ─────────────────────────────────────────────
 # spaCy models live on GitHub Releases, not PyPI.  spaCy's own download command
 # knows how to resolve the correct wheel URL — but it uses run_command() which

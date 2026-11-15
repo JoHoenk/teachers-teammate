@@ -193,6 +193,7 @@ ignored-modules = [
     "cv2",
     "docx",
     "httpx",
+    "keyring",
     "langchain_core",
     "lxml",
     "markdown_it",

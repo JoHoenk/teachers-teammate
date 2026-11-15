@@ -157,6 +157,24 @@ jobs:
         shell: bash
         run: ./dist/teachers-teammate.app/Contents/MacOS/teachers-teammate --_smoke_test smoke.json
 
+      # `.python-version` is the one place the version is written down: rules_python builds the
+      # Bazel tests with it, setup-python installs it here, and the smoke test reports what
+      # PyInstaller actually froze.  A mismatch means the bundle and the tests disagree.
+      - name: Check the bundle's Python version
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          import pathlib
+          import sys
+
+          expected = pathlib.Path(".python-version").read_text(encoding="utf-8").strip()
+          actual = json.loads(pathlib.Path("smoke.json").read_text(encoding="utf-8"))["versions"]["python"]
+          if actual != expected:
+              sys.exit(f"the bundle runs on Python {actual}, .python-version says {expected}")
+          print(f"the bundle runs on Python {actual}")
+          PY
+
       # The add-ons' packages are not in the test lock (on purpose), so this is the only place
       # their newest releases are held against the bundled numpy, pydantic, ... A conflict shows
       # here, not as a pip error in a teacher's Add-ons window. Nothing is installed (dry run).

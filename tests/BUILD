@@ -696,6 +696,20 @@ py_test(
     deps = _COMMON_DEPS + ["//tools/release:release_tools_lib"],
 )
 
+# `.python-version` is the one place the Python version is written down (rules_python reads it for
+# the toolchain, setup-python in CI, build.sh/build.bat name the same minor).  This target holds
+# the interpreter the tests run on to it.
+py_test(
+    name = "test_python_version",
+    size = "small",
+    srcs = _COMMON_SRCS + ["unit/test_python_version.py"],
+    args = ["unit/test_python_version.py"],
+    data = ["//:.python-version"],
+    env = {"PYTHON_VERSION_FILE": "$(rlocationpath //:.python-version)"},
+    main = "run_test.py",
+    deps = _COMMON_DEPS,
+)
+
 py_test(
     name = "test_interfaces",
     size = "small",
@@ -2136,6 +2150,7 @@ test_suite(
         ":test_preview_image_store",
         ":test_providers",
         ":test_providers_mistral_curation",
+        ":test_python_version",
         ":test_quotes",
         ":test_release_stamp_versions",
         ":test_request_profile",

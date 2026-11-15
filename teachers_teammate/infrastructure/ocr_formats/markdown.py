@@ -223,7 +223,7 @@ def _html_blocks(content: str) -> tuple[Block, ...]:
         return ()
     try:
         return parse_html_blocks(content)
-    except (etree.LxmlError, ValueError):
+    except etree.LxmlError, ValueError:
         return (Block("paragraph", (Span(content.strip()),)),)
 
 

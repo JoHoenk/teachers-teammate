@@ -1,6 +1,6 @@
 # Packages the Linux lock cannot hold, or that only the build needs.
 #
-# requirements_test_lock.txt is resolved on Linux with Python 3.12, so it has no
+# requirements_test_lock.txt is resolved on Linux with the Python of `.python-version`, so it has no
 # pywin32-ctypes (Windows only) and no PyInstaller (a build tool, not a runtime
 # dependency of the app). Pinning them here keeps a build reproducible and lets
 # Dependabot bump them — see the "/tools/build" entry in .github/dependabot.yml.

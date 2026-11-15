@@ -406,7 +406,7 @@ def migrate_answer_formats(values: dict) -> bool:
     """
     try:
         version = int(values.get("answer_format_version", ANSWER_FORMAT_VERSION))
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         version = -1
     review, text, reset = migrate_saved_formats(
         str(values.get("answer_format_review", "")),

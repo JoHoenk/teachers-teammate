@@ -274,7 +274,7 @@ class StateRepository:
             known = {field.name for field in dataclasses.fields(DocumentState)}
             # Fields dropped by newer versions are ignored rather than discarding the cache.
             state = DocumentState(**{key: value for key, value in raw.items() if key in known})
-        except (OSError, json.JSONDecodeError, TypeError, ValueError):
+        except OSError, json.JSONDecodeError, TypeError, ValueError:
             return None
         if state.schema_version != self._SCHEMA_VERSION:
             return None

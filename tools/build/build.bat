@@ -4,8 +4,8 @@
 :: Why a dedicated venv (not the active one)?
 ::   PyInstaller freezes whatever is importable in the running interpreter. If the
 ::   build runs inside a dev venv that also has the optional extras installed
-::   (langchain, spaCy, PyMuPDF, PyQt6, ...), those get swept into the
-::   binary -- bloating it and pulling in AGPL/GPL code (PyMuPDF, PyQt6).
+::   (langchain, spaCy, ...), those get swept into the binary -- bloating it and
+::   pulling in code whose licence the bundle does not carry.
 ::   Building in a fresh venv with ONLY the base runtime deps (pip install -e .)
 ::   guarantees the bundle matches third_party_licenses\. Optional OCR/LLM/privacy
 ::   features are installed by users at runtime via the in-app addon installer.
@@ -22,10 +22,10 @@ pushd "%~dp0..\.."
 set "VENV_DIR=%CD%\.build_venv"
 set "CONSTRAINTS=%CD%\pyinstaller-work\constraints.txt"
 
-py -3.12 --version >nul 2>&1
+py -3.14 --version >nul 2>&1
 if errorlevel 1 (
-    echo ERROR: Python 3.12 not found.
-    echo        The bundle is built with Python 3.12 ^(see .python-version^).
+    echo ERROR: Python 3.14 not found.
+    echo        The bundle is built with Python 3.14 ^(see .python-version^).
     popd
     endlocal
     exit /b 1
@@ -39,11 +39,11 @@ rmdir /s /q pyinstaller-work 2>nul
 rmdir /s /q teachers_teammate.egg-info 2>nul
 
 echo ==^> Writing the pinned constraints
-py -3.12 tools\build\make_constraints.py
+py -3.14 tools\build\make_constraints.py
 if errorlevel 1 goto :fail
 
 echo ==^> Creating clean build venv (base runtime deps only)
-py -3.12 -m venv "%VENV_DIR%"
+py -3.14 -m venv "%VENV_DIR%"
 "%VENV_DIR%\Scripts\pip" install --quiet --upgrade -c "%CONSTRAINTS%" pip
 "%VENV_DIR%\Scripts\pip" install --quiet -c "%CONSTRAINTS%" -e . pyinstaller pyinstaller-hooks-contrib
 if errorlevel 1 goto :fail

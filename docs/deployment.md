@@ -126,7 +126,7 @@ All commands are run from the **repository root**.
 
 ### Prerequisites
 
-- Python 3.12 (`.python-version`)
+- Python 3.14 (`.python-version`)
 - [Bazel](https://bazel.build/) (for wheel builds and tests)
 
 The standalone build installs [PyInstaller](https://pyinstaller.org/) itself, at the version
@@ -205,10 +205,10 @@ Before it runs PyInstaller, `build_standalone.py` writes `teachers_teammate/_bui
 environment except the build tools. The spec bundles it. The installed app gives it to pip as `-c`
 for every add-on install, and compares the add-on folder against it after an app update — see
 `docs/development.md` → "The bundle's constraints and add-ons after an app update". The folder is
-`packages/` next to the other per-user data and **is not versioned by Python version**: a change of
-`.python-version` has to move or drop its content (compiled add-on packages do not run on another
-Python), which the PR that changes it must do. The constraints compare package versions only and
-would not notice a Python bump.
+`packages/` next to the other per-user data. Add-ons built for another Python are noticed at
+start: the app reads the Python tag in every `.dist-info/WHEEL`, keeps such a folder off
+`sys.path` and asks for *Update add-ons*, which reinstalls the add-ons for the running Python and
+drops what is left over. Nothing is deleted before that click.
 
 Outputs:
 
@@ -234,6 +234,21 @@ QT_QPA_PLATFORM=offscreen ./dist/teachers-teammate/teachers-teammate --_smoke_te
 python tools/build/check_linux_bundle.py --max-glibc 2.35
 python tools/build/check_linux_bundle.py --unused
 ```
+
+### The Python version
+
+`.python-version` holds the full patch (`3.14.10`). `MODULE.bazel` names it once more
+(`python.toolchain`, which gives the Bazel toolchain its coverage tool): change both together.
+rules_python reads the file for the toolchain, `setup-python` reads it in CI, and
+`tools/build/build.sh` / `build.bat` name the same minor. `//tests:test_python_version` fails when
+the interpreter the tests run on differs from the file, and the bundle workflow fails when a
+`smoke.json` reports another version.
+
+To bump the patch, change `.python-version` and `MODULE.bazel` and make sure the rules_python
+version in `MODULE.bazel` knows it (`python/versions.bzl`, `MINOR_MAPPING`); then relock with
+`bazel run //:requirements_test.update` and `//:requirements_dev.update`. Nothing reports a newer
+patch yet: the weekly add-on job that would (`addon_resolution.yml`) is not written, so check
+`actions/python-versions` by hand before a release.
 
 ### Platform installers
 

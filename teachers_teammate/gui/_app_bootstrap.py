@@ -67,7 +67,7 @@ def finish_process(
             try:
                 if stream is not None:
                     stream.flush()
-            except (OSError, ValueError):
+            except OSError, ValueError:
                 pass
         (hard_exit or os._exit)(code)
         return

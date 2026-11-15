@@ -2,7 +2,7 @@
 """Write the pip constraints file the standalone build installs against.
 
 The versions come from ``requirements_test_lock.txt`` — the lock the tests run against,
-resolved with Python 3.12 — plus ``tools/build/requirements_platform.txt`` for the packages
+resolved with the Python of `.python-version` — plus ``tools/build/requirements_platform.txt`` for the packages
 that lock cannot hold (Windows-only ones) and the build tools themselves.
 
 Usage (from the repo root):

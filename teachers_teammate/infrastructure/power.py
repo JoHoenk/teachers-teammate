@@ -215,7 +215,7 @@ def _prints_line(proc: subprocess.Popen[Any], line: str, timeout: float) -> bool
         try:
             first = proc.stdout.readline() if proc.stdout is not None else b""
             seen.append(first.decode("utf-8", errors="replace").strip() == line)
-        except (OSError, ValueError):  # the pipe was closed under us
+        except OSError, ValueError:  # the pipe was closed under us
             seen.append(False)
         finally:
             answered.set()

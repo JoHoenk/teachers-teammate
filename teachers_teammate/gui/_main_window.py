@@ -934,7 +934,7 @@ class MainWindow(QMainWindow):
                 restored = [int(v) for v in raw_sizes]
                 if restored[0] >= 200 and restored[1] >= 400:
                     sizes = restored
-            except (ValueError, TypeError):
+            except ValueError, TypeError:
                 pass
         QTimer.singleShot(0, lambda s=sizes: self._main_splitter.setSizes(s))
 
@@ -1248,7 +1248,7 @@ class MainWindow(QMainWindow):
         ):
             try:
                 getattr(worker, name).disconnect()
-            except (RuntimeError, TypeError, AttributeError):
+            except RuntimeError, TypeError, AttributeError:
                 pass  # nothing connected, or a test double without disconnect
         if not worker.wait(CLOSE_GRACE_MS):
             detach_running_worker(worker)  # ty: ignore[invalid-argument-type]  # a QThread
@@ -2140,7 +2140,7 @@ class MainWindow(QMainWindow):
                 if view is not None:
                     info = PreprocessInfo(view.original_img, view.preprocess_steps)
                     text_format = view.raw_text_format
-        except (OSError, ValueError):
+        except OSError, ValueError:
             pass
         self._results_table.set_preprocessing(source_id, info)
         self._results_table.set_text_format(source_id, text_format)
@@ -2435,7 +2435,7 @@ class MainWindow(QMainWindow):
                         preprocess=PreprocessInfo(view.original_img, view.preprocess_steps),
                     )
                     self._results_table.set_text_format(source_id, view.raw_text_format)
-        except (OSError, ValueError):
+        except OSError, ValueError:
             # Non-fatal: preview metadata will be fully attached on file_done.
             pass
 

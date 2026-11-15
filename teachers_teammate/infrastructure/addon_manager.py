@@ -13,7 +13,9 @@ The installed app ships ``addon_constraints.txt`` (``tools/build/addon_constrain
 it at build time): the exact version of every package the app bundles.  Every pip call passes it
 as ``-c``, so an add-on can never bring its own numpy or pydantic that would shadow the bundled
 one, and a folder left by an older app version is recognised (:func:`outdated_shared_packages`)
-and kept off ``sys.path`` until the teacher updates the add-ons.
+and kept off ``sys.path`` until the teacher updates the add-ons.  A folder built for another
+Python is treated the same way (:func:`foreign_python_packages`): its compiled modules cannot be
+imported here, so the app asks for *Update add-ons* instead of failing on the first import.
 """
 
 from __future__ import annotations
@@ -179,25 +181,44 @@ def _distributions(pkg_dir: Path) -> list[tuple[str, str, Path]]:
     return found
 
 
-def _remove_distribution(pkg_dir: Path, dist_info: Path) -> bool:
-    """Delete the files *dist_info*'s ``RECORD`` lists (and the folder); return whether it did.
+def _record_targets(pkg_dir: Path, dist_info: Path) -> list[Path] | None:
+    """Return the resolved files inside *pkg_dir* that *dist_info*'s ``RECORD`` lists.
 
-    Only files inside *pkg_dir* are touched, then the ``.dist-info`` folder, then folders left
-    empty.  Without a readable ``RECORD`` nothing is removed.  Never raises: a file in use is
-    logged and left behind.
+    ``None`` when the ``RECORD`` cannot be read (missing, or not valid UTF-8).
     """
     try:
         lines = (dist_info / "RECORD").read_text(encoding="utf-8").splitlines()
-    except OSError:
-        return False
+    except OSError, ValueError:
+        return None
     root = pkg_dir.resolve()
-    folders: set[Path] = set()
+    targets: list[Path] = []
     for line in lines:
         entry = line.rsplit(",", 2)[0].strip().strip('"')
         if not entry:
             continue
         target = (pkg_dir / entry).resolve()
-        if root not in target.parents:
+        if root in target.parents:
+            targets.append(target)
+    return targets
+
+
+def _remove_distribution(
+    pkg_dir: Path, dist_info: Path, keep: frozenset[Path] = frozenset()
+) -> bool:
+    """Delete the files *dist_info*'s ``RECORD`` lists (and the folder); return whether it did.
+
+    Only files inside *pkg_dir* are touched, then the ``.dist-info`` folder, then folders left
+    empty.  Files in *keep* (what another copy of the same package owns) stay.  Without a
+    readable ``RECORD`` nothing is removed.  Never raises: a file in use is logged and left
+    behind.
+    """
+    targets = _record_targets(pkg_dir, dist_info)
+    if targets is None:
+        return False
+    root = pkg_dir.resolve()
+    folders: set[Path] = set()
+    for target in targets:
+        if target in keep:
             continue
         try:
             target.unlink(missing_ok=True)
@@ -212,6 +233,25 @@ def _remove_distribution(pkg_dir: Path, dist_info: Path) -> bool:
         except OSError:
             pass  # not empty: something else lives there
     return True
+
+
+def _remove_stale(pkg_dir: Path, stale: list[tuple[str, str, Path]]) -> list[str]:
+    """Remove the *stale* distributions; return the names removed.
+
+    An update installs the new copy beside the old one (``pip --target`` only replaces what has
+    the same file name), so a stale ``.dist-info`` often shares its files with the fresh copy of
+    the same package.  What another, not stale copy of that name lists stays.
+    """
+    stale_folders = {folder for _name, _version, folder in stale}
+    owned: dict[str, set[Path]] = {}
+    for name, _version, folder in _distributions(pkg_dir):
+        if folder not in stale_folders:
+            owned.setdefault(name, set()).update(_record_targets(pkg_dir, folder) or [])
+    removed: list[str] = []
+    for name, _version, dist_info in stale:
+        if _remove_distribution(pkg_dir, dist_info, frozenset(owned.get(name, ()))):
+            removed.append(name)
+    return removed
 
 
 def remove_retired_addons(pkg_dir: Path) -> list[str]:
@@ -265,6 +305,92 @@ def read_constraints(path: Path) -> dict[str, str]:
     return pins
 
 
+def _wheel_tags(dist_info: Path) -> list[str]:
+    """Return the ``Tag:`` lines of a ``.dist-info/WHEEL`` file; empty when it has none."""
+    try:
+        text = (dist_info / "WHEEL").read_text(encoding="utf-8")
+    except OSError, ValueError:  # unreadable or not UTF-8: say nothing, leave it alone
+        return []
+    return [
+        line.split(":", 1)[1].strip()
+        for line in text.splitlines()
+        if line.lower().startswith("tag:")
+    ]
+
+
+_PYTHON_TAG = re.compile(r"(py|cp)(\d)(\d*)")
+
+
+def _running_python() -> tuple[int, int]:
+    """Return ``(major, minor)`` of the running interpreter."""
+    return sys.version_info[0], sys.version_info[1]
+
+
+def _tag_fits(tag: str) -> bool:
+    """Return whether a wheel tag runs on the running interpreter.
+
+    * ``pyX-none-…`` / ``pyXY-none-…`` is pure Python for X (any minor) or for 3.Y and later:
+      it fits when X is the running major and Y is at most the running minor, as pip accepts it.
+    * ``cpXY-abi3-…`` uses the stable ABI, which is forward compatible: it fits when XY is at
+      most the running version.
+    * ``cpXY-cpXY…-…`` and ``cpXY-none-…`` are for one interpreter: they fit only that one.
+    """
+    parts = tag.split("-")
+    if len(parts) != 3:
+        return False
+    python_tag, abi_tag, _platform_tag = parts
+    major, minor = _running_python()
+    for part in python_tag.split("."):
+        match = _PYTHON_TAG.fullmatch(part)
+        if match is None or int(match.group(2)) != major:
+            continue
+        kind, tag_minor = match.group(1), match.group(3)
+        if abi_tag == "abi3":
+            if kind == "cp" and tag_minor and int(tag_minor) <= minor:
+                return True
+        elif kind == "py":
+            if abi_tag == "none" and (not tag_minor or int(tag_minor) <= minor):
+                return True
+        elif tag_minor and int(tag_minor) == minor:
+            if abi_tag == "none" or abi_tag.removesuffix("m") == f"cp{major}{minor}":
+                return True
+    return False
+
+
+def _foreign_distributions(pkg_dir: Path) -> list[tuple[str, str, Path]]:
+    """Return the distributions in *pkg_dir* that were built for another Python.
+
+    Only in the installed app: a source or wheel run has no bundle, and its Python is the
+    developer's own.  A distribution without a readable ``RECORD`` is left alone too, since
+    nothing could remove it and the folder would stay off for good.
+    """
+    if not getattr(sys, "frozen", False) or not pkg_dir.is_dir():
+        return []
+    return [
+        found
+        for found in _distributions(pkg_dir)
+        if (tags := _wheel_tags(found[2]))
+        and not any(_tag_fits(tag) for tag in tags)
+        and _record_targets(pkg_dir, found[2]) is not None
+    ]
+
+
+def foreign_python_packages(pkg_dir: Path) -> list[str]:
+    """Return the distributions in *pkg_dir* that were built for another Python.
+
+    Read from each ``.dist-info/WHEEL``'s ``Tag:`` lines — one small file per distribution, so
+    it is computed at every start like :func:`outdated_shared_packages`, with no marker file to
+    keep in step.  A distribution whose tags all miss the running interpreter was installed by
+    an add-on of an app version that bundled another Python; its compiled modules cannot be
+    imported here.  A distribution without a ``WHEEL`` file is left alone: nothing says.  Always
+    empty outside the installed app.
+
+    Returns:
+        The normalised names, sorted.
+    """
+    return sorted({name for name, _version, _folder in _foreign_distributions(pkg_dir)})
+
+
 def outdated_shared_packages(pkg_dir: Path, constraints: Path | None) -> list[str]:
     """Return the packages in *pkg_dir* whose version is not the one the app bundles.
 
@@ -289,8 +415,14 @@ def outdated_shared_packages(pkg_dir: Path, constraints: Path | None) -> list[st
 
 
 def addons_outdated() -> bool:
-    """Return whether the add-on folder holds packages from an older app version."""
-    return bool(outdated_shared_packages(get_packages_dir(), addon_constraints_path()))
+    """Return whether the add-on folder holds packages from an older app version or another Python.
+
+    ``False`` outside the installed app."""
+    pkg_dir = get_packages_dir()
+    return bool(
+        outdated_shared_packages(pkg_dir, addon_constraints_path())
+        or foreign_python_packages(pkg_dir)
+    )
 
 
 def installed_addon_requirements(pkg_dir: Path | None = None) -> list[str]:
@@ -314,14 +446,30 @@ def drop_outdated_shared_packages(pkg_dir: Path, constraints: Path | None) -> li
 
     The update installs every add-on again with the bundle's versions, which replaces the shared
     packages those add-ons need.  A copy nothing needs any more (an older add-on's dependency) is
-    left over, and the app has its own: it goes, by its ``RECORD`` file.
+    left over, and the app has its own: it goes, by its ``RECORD`` file.  The copy the update
+    just installed has the bundle's version and stays.
     """
-    outdated = set(outdated_shared_packages(pkg_dir, constraints))
-    removed: list[str] = []
-    for name, _version, dist_info in _distributions(pkg_dir):
-        if name in outdated and _remove_distribution(pkg_dir, dist_info):
-            removed.append(name)
-            _logger.info("Removed the outdated %s copy from %s", name, pkg_dir)
+    if constraints is None or not pkg_dir.is_dir():
+        return []
+    pins = read_constraints(constraints)
+    stale = [d for d in _distributions(pkg_dir) if d[0] in pins and d[1] != pins[d[0]]]
+    removed = _remove_stale(pkg_dir, stale)
+    for name in removed:
+        _logger.info("Removed the outdated %s copy from %s", name, pkg_dir)
+    return removed
+
+
+def drop_foreign_packages(pkg_dir: Path) -> list[str]:
+    """Delete the distributions built for another Python; return their names.
+
+    The update installs every add-on again, which replaces the package folders with the ones for
+    the running interpreter.  A copy nothing needs any more (an older add-on's dependency) is
+    left over and cannot be imported here: it goes, by its ``RECORD`` file.  The copy the update
+    just installed (same name, fits this Python) keeps its files.
+    """
+    removed = _remove_stale(pkg_dir, _foreign_distributions(pkg_dir))
+    for name in removed:
+        _logger.info("Removed the %s copy built for another Python from %s", name, pkg_dir)
     return removed
 
 
@@ -335,21 +483,37 @@ def update_installed_addons(progress_cb: Callable[[str], None]) -> None:
     """Bring the add-on folder in line with the app after an app update.
 
     Installs every add-on in the folder again with the bundle's versions, removes the outdated
-    shared copies that left over, and makes the folder importable.  Language models are not
-    touched: they share no package with the app.
+    shared copies and the ones built for another Python that left over, and makes the folder
+    importable.  Language models are not touched: they share no package with the app, and a
+    ``py3-none-any`` model runs on any Python.
+
+    Each add-on is installed on its own: one without a wheel for this Python (or a failed
+    download) does not keep the others, nor the clean-up, from happening.  The folder is made
+    usable first; the failures are reported afterwards, and an add-on whose old copy could not
+    be replaced is gone from the folder (install it again on Settings → Add-ons).
 
     Raises:
         OSError: if the folder cannot be written.
-        RuntimeError: if pip fails (offline, a conflict with the bundle, ...).
+        RuntimeError: if this is not the installed app, or pip failed for some add-ons
+            (offline, a conflict with the bundle, ...).
     """
+    if not getattr(sys, "frozen", False):
+        raise RuntimeError("Add-ons are updated only in the installed app")
     pkg_dir = get_packages_dir()
-    requirements = installed_addon_requirements(pkg_dir)
-    if requirements:
-        install_packages_subprocess(requirements, pkg_dir, progress_cb)
+    failures: list[str] = []
+    for requirement in installed_addon_requirements(pkg_dir):
+        try:
+            install_packages_subprocess([requirement], pkg_dir, progress_cb)
+        except RuntimeError as exc:
+            _logger.warning("Could not update %s: %s", requirement, exc)
+            failures.append(f"{requirement}: {exc}")
     drop_outdated_shared_packages(pkg_dir, addon_constraints_path())
+    drop_foreign_packages(pkg_dir)
     inject_packages_dir()
     for addon in _ADDON_STALE_PREFIXES:
         clear_stale_modules(addon)
+    if failures:
+        raise RuntimeError("; ".join(failures))
 
 
 def pip_policy_arguments(*, upgrade: bool = True) -> list[str]:
@@ -389,9 +553,10 @@ def inject_packages_dir() -> None:
     current user (e.g. installed via 'Run as Administrator'), injection is
     silently skipped to avoid a PermissionError in the import machinery.
 
-    A folder that holds packages of an older app version (:func:`outdated_shared_packages`) is
-    skipped too: its copy of numpy or pydantic would replace the bundled one.  The app runs on
-    its own bundle until the teacher updates the add-ons.
+    A folder that holds packages of an older app version (:func:`outdated_shared_packages`) or
+    packages built for another Python (:func:`foreign_python_packages`) is skipped too: its copy
+    of numpy or pydantic would replace the bundled one, and its compiled modules would not
+    import.  The app runs on its own bundle until the teacher updates the add-ons.
     """
     pkg_dir = get_packages_dir()
     pkg_str = str(pkg_dir)
@@ -400,11 +565,12 @@ def inject_packages_dir() -> None:
         if pkg_dir.exists() and not _packages_dir_readable(pkg_dir):
             return
         outdated = outdated_shared_packages(pkg_dir, addon_constraints_path())
-        if outdated:
+        foreign = foreign_python_packages(pkg_dir)
+        if outdated or foreign:
             _logger.warning(
                 "Add-ons need an update after the app update; not using %s (%s)",
                 pkg_dir,
-                ", ".join(outdated),
+                ", ".join(sorted({*outdated, *foreign})),
             )
             return
         sys.path.insert(0, pkg_str)

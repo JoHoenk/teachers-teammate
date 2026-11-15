@@ -49,7 +49,7 @@ def _is_terminal(stream: TextIO) -> bool:
     """Whether *stream* is a terminal, so one line can be rewritten in place."""
     try:
         return bool(stream.isatty())
-    except (AttributeError, ValueError):
+    except AttributeError, ValueError:
         return False
 
 

@@ -2232,8 +2232,9 @@ class ProcessingApplicationService:
     def addons_outdated(self) -> bool:
         """Return whether an app update left add-ons that wait for *Update add-ons*.
 
-        They stay off (the app runs on its own bundle) until :meth:`update_addons` ran.  Reads
-        folder names only, so it is cheap; ``False`` outside the installed app.
+        They stay off (the app runs on its own bundle) until :meth:`update_addons` ran.  Reads the
+        folder names and one small ``WHEEL`` file per package; ``False`` outside the installed
+        app.
         """
         from ..infrastructure.addon_manager import addons_outdated  # noqa: PLC0415
 
@@ -2246,7 +2247,7 @@ class ProcessingApplicationService:
 
         Raises:
             OSError: if the packages directory cannot be written.
-            RuntimeError: if pip fails.
+            RuntimeError: if pip fails for an add-on, or this is not the installed app.
         """
         from ..infrastructure.addon_manager import update_installed_addons  # noqa: PLC0415
 

@@ -309,7 +309,7 @@ def _server_unreachable(probe: ProbePort) -> bool:
     """
     try:
         probe.version()
-    except (OSError, ValueError):
+    except OSError, ValueError:
         return True
     return False
 

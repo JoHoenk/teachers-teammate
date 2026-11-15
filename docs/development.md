@@ -8,7 +8,7 @@ For runtime tuning and provider/model strategy, see the
 
 ## Prerequisites
 
-- Python 3.12
+- Python 3.14
 - [Bazel](https://bazel.build/) — used as the build and test harness; all `bazel` commands below assume it is on `PATH`
 - [uv](https://docs.astral.sh/uv/) (optional — speeds up venv creation)
 
@@ -2540,6 +2540,12 @@ The location is computed by `addon_manager.get_packages_dir()` using
 `platformdirs.user_data_dir`. This directory is prepended to `sys.path` by
 `inject_packages_dir()` so anything installed there is importable.
 
+The folder is **not** versioned by Python: a package compiled for another interpreter stays where
+it is after an app update.  `foreign_python_packages()` reads the Python tag in every
+`.dist-info/WHEEL` at each start and treats such a folder like an outdated one — off `sys.path`,
+*Update add-ons* in Settings → Add-ons.  See "The bundle's constraints and add-ons after an app
+update" below.
+
 `inject_packages_dir()` first runs `remove_retired_addons()`: the retired Paddle add-on
 (`paddlepaddle`, `paddleocr`, `paddlex`, `opencv-contrib-python`, which shadowed the app's own
 OpenCV) is deleted by its `RECORD` files only; numpy is left alone.  It is then called:
@@ -2583,6 +2589,18 @@ only part of a package, so putting the folder last is wrong too).  Two things pr
   injects the folder.  `pending_gpu_monitoring_addon()` is `None` while the folder waits, so the
   automatic GPU install never adds a second copy.  Language models are separate packages that
   share nothing with the app and are not touched.
+- **Another Python.** The folder is not versioned by Python, so an app update that changes
+  `.python-version` leaves compiled add-on packages behind that cannot be imported.
+  `foreign_python_packages(pkg_dir)` reads the `Tag:` lines of every `.dist-info/WHEEL` at every
+  start (no marker file to keep in step): `pyX-none` and `pyXY-none` fit when XY is at most the
+  running version, `cpXY-abi3` fits when XY is at most the running version, `cpXY-cpXY…` and
+  `cpXY-none` only on that exact interpreter.  Only in the installed app, and a distribution
+  without a readable `WHEEL` or `RECORD` is left alone.  A folder with a foreign distribution
+  counts as outdated — off `sys.path`, the same *Update add-ons* banner — and
+  `update_installed_addons()` installs the add-ons one by one (a failure does not stop the
+  clean-up; it is raised at the end) and drops what the reinstall left over
+  (`drop_foreign_packages()`, by `RECORD`; files the fresh copy of the same package lists stay).
+  spaCy language models are `py3-none-any` and stay.
 - **Checks.** The smoke test (`addon constraints`, frozen only) proves the file is in the bundle
   and pins the numpy, pydantic, requests and Pillow the bundle really carries.  In CI,
   `tools/build/check_addon_resolution.py` runs the built app's pip in `--dry-run` mode once per

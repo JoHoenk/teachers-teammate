@@ -762,8 +762,18 @@ def test_remove_retired_addons_ignores_a_missing_folder(tmp_path: Path) -> None:
 # ── The bundle's constraints: the pip policy, outdated copies, the update ─────
 
 
-def _dist_info(pkg_dir: Path, name: str, version: str, files: tuple[str, ...] = ()) -> None:
-    """Plant what pip leaves for a package: ``<name>-<version>.dist-info`` with a RECORD."""
+def _dist_info(
+    pkg_dir: Path,
+    name: str,
+    version: str,
+    files: tuple[str, ...] = (),
+    tags: tuple[str, ...] = (),
+) -> None:
+    """Plant what pip leaves for a package: ``<name>-<version>.dist-info`` with a RECORD.
+
+    *tags* become the ``Tag:`` lines of the ``WHEEL`` file pip writes beside the RECORD; without
+    them the distribution has no WHEEL file at all.
+    """
     info = pkg_dir / f"{name}-{version}.dist-info"
     info.mkdir(parents=True)
     record = [f"{name}/__init__.py,sha256=x,1", *(f"{file},sha256=x,1" for file in files)]
@@ -773,6 +783,10 @@ def _dist_info(pkg_dir: Path, name: str, version: str, files: tuple[str, ...] = 
         (pkg_dir / file).parent.mkdir(parents=True, exist_ok=True)
         (pkg_dir / file).write_text("", encoding="utf-8")
     (info / "RECORD").write_text("\n".join(record) + "\n", encoding="utf-8")
+    if tags:
+        wheel = ["Wheel-Version: 1.0", "Generator: bdist_wheel (0.43.0)", "Root-Is-Purelib: false"]
+        wheel += [f"Tag: {tag}" for tag in tags]
+        (info / "WHEEL").write_text("\n".join(wheel) + "\n", encoding="utf-8")
 
 
 @pytest.fixture(name="frozen_bundle")
@@ -1047,3 +1061,196 @@ def test_update_removes_a_stale_copy_pip_did_not_replace(
 
     assert not (pkg_dir / "numpy-2.4.0.dist-info").exists()
     assert addon_manager.addons_outdated() is False
+
+
+# ── Add-ons built for another Python ─────────────────────────────────────────
+
+
+@pytest.fixture(name="python_314")
+def _python_314(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Pretend the installed app runs CPython 3.14 (the version is patched, not read)."""
+    monkeypatch.setattr(addon_manager, "_running_python", lambda: (3, 14))
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+
+
+@pytest.mark.parametrize(
+    ("tags", "foreign"),
+    [
+        (("cp312-cp312-manylinux_2_35_x86_64",), True),
+        (("cp38-abi3-manylinux_2_35_x86_64",), False),
+        (("py3-none-any",), False),
+        (("cp314-cp314-manylinux_2_35_x86_64",), False),
+        (("py313-none-any",), False),
+        (("py315-none-any",), True),
+        (("cp314-none-manylinux_2_35_x86_64",), False),
+        (("cp313-none-any",), True),
+        (("cp315-abi3-manylinux_2_35_x86_64",), True),
+    ],
+)
+def test_foreign_python_packages_reads_the_wheel_tags(
+    tmp_path: Path, python_314: None, tags: tuple[str, ...], foreign: bool
+) -> None:
+    """
+    Given  a distribution whose WHEEL names *tags*
+    When   the packages built for another Python are asked for
+    Then   only a tag the running 3.14 cannot import counts as foreign
+    """
+    pkg_dir = tmp_path / "packages"
+    _dist_info(pkg_dir, "spacy", "3.8.0", tags=tags)
+
+    assert addon_manager.foreign_python_packages(pkg_dir) == (["spacy"] if foreign else [])
+
+
+def test_a_distribution_without_a_wheel_file_is_not_foreign(
+    tmp_path: Path, python_314: None
+) -> None:
+    """
+    Given  a distribution whose dist-info has no WHEEL file
+    When   the packages built for another Python are asked for
+    Then   it is left alone: nothing says which interpreter built it
+    """
+    pkg_dir = tmp_path / "packages"
+    _dist_info(pkg_dir, "spacy", "3.8.0")
+
+    assert addon_manager.foreign_python_packages(pkg_dir) == []
+
+
+def test_a_language_model_stays(tmp_path: Path, python_314: None) -> None:
+    """
+    Given  a spaCy language model, which is a py3-none-any wheel
+    When   the packages built for another Python are asked for
+    Then   the model is not named, so an app update keeps it
+    """
+    pkg_dir = tmp_path / "packages"
+    _dist_info(pkg_dir, "en_core_web_sm", "3.8.0", tags=("py3-none-any",))
+
+    assert addon_manager.foreign_python_packages(pkg_dir) == []
+
+
+def test_inject_skips_a_folder_built_for_another_python(
+    tmp_path: Path, python_314: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """
+    Given  an add-on folder holding a distribution compiled for 3.12
+    When   inject_packages_dir() runs
+    Then   the folder is not put on sys.path, and it is once the copy is for 3.14
+    """
+    pkg_dir = tmp_path / "packages"
+    _dist_info(pkg_dir, "spacy", "3.8.0", tags=("cp312-cp312-manylinux_2_35_x86_64",))
+    monkeypatch.setattr(addon_manager, "get_packages_dir", lambda: pkg_dir)
+
+    inject_packages_dir()
+    assert str(pkg_dir) not in sys.path
+    assert addon_manager.addons_outdated() is True
+
+    shutil.rmtree(pkg_dir / "spacy-3.8.0.dist-info")
+    _dist_info(pkg_dir, "spacy", "3.8.0", tags=("cp314-cp314-manylinux_2_35_x86_64",))
+    inject_packages_dir()
+    assert str(pkg_dir) in sys.path
+    assert addon_manager.addons_outdated() is False
+
+
+def test_update_drops_a_leftover_built_for_another_python(
+    tmp_path: Path, python_314: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """
+    Given  a folder with spaCy for 3.14 and a numpy left over from a 3.12 install
+    When   the add-ons are updated
+    Then   the 3.12 copy is removed, so the folder can be used
+    """
+    pkg_dir = tmp_path / "packages"
+    _dist_info(pkg_dir, "spacy", "3.8.0", tags=("cp314-cp314-manylinux_2_35_x86_64",))
+    _dist_info(pkg_dir, "numpy", "2.4.0", tags=("cp312-cp312-manylinux_2_35_x86_64",))
+    monkeypatch.setattr(addon_manager, "get_packages_dir", lambda: pkg_dir)
+    monkeypatch.setattr(addon_manager, "install_packages_subprocess", lambda *_a, **_k: None)
+
+    with patch.dict(sys.modules):
+        addon_manager.update_installed_addons(lambda _line: None)
+
+    assert not (pkg_dir / "numpy-2.4.0.dist-info").exists()
+    assert addon_manager.addons_outdated() is False
+
+
+def test_update_keeps_the_fresh_copy_beside_a_stale_dist_info(
+    tmp_path: Path, python_314: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """
+    Given  spaCy 3.8.0 for 3.12 and the spaCy 3.8.7 for 3.14 pip installed beside it
+    When   the add-ons are updated
+    Then   only the stale dist-info and its own files go; the fresh copy's files stay
+    """
+    pkg_dir = tmp_path / "packages"
+    _dist_info(
+        pkg_dir, "spacy", "3.8.0", files=("spacy/old.py",), tags=("cp312-cp312-linux_x86_64",)
+    )
+    _dist_info(pkg_dir, "spacy", "3.8.7", tags=("cp314-cp314-linux_x86_64",))
+    monkeypatch.setattr(addon_manager, "get_packages_dir", lambda: pkg_dir)
+    monkeypatch.setattr(addon_manager, "install_packages_subprocess", lambda *_a, **_k: None)
+
+    with patch.dict(sys.modules):
+        addon_manager.update_installed_addons(lambda _line: None)
+
+    assert not (pkg_dir / "spacy-3.8.0.dist-info").exists()
+    assert not (pkg_dir / "spacy" / "old.py").exists()
+    assert (pkg_dir / "spacy-3.8.7.dist-info").is_dir()
+    assert (pkg_dir / "spacy" / "__init__.py").is_file()
+
+
+def test_foreign_check_is_off_outside_the_installed_app(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """
+    Given  a source run and a folder holding a package built for another Python
+    When   the add-ons are checked and an update is asked for
+    Then   nothing is outdated, and the update refuses before it touches pip or the folder
+    """
+    pkg_dir = tmp_path / "packages"
+    _dist_info(pkg_dir, "spacy", "3.8.0", tags=("cp312-cp312-linux_x86_64",))
+    monkeypatch.setattr(addon_manager, "_running_python", lambda: (3, 14))
+    monkeypatch.setattr(addon_manager, "get_packages_dir", lambda: pkg_dir)
+    monkeypatch.delattr(sys, "frozen", raising=False)
+
+    assert addon_manager.foreign_python_packages(pkg_dir) == []
+    assert addon_manager.addons_outdated() is False
+    with pytest.raises(RuntimeError, match="installed app"):
+        addon_manager.update_installed_addons(lambda _line: None)
+    assert (pkg_dir / "spacy-3.8.0.dist-info").is_dir()
+
+
+def test_update_cleans_up_when_one_add_on_fails_to_install(
+    tmp_path: Path, python_314: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """
+    Given  two add-ons built for 3.12, one of which has no wheel for 3.14
+    When   the add-ons are updated
+    Then   the other is installed, the folder is cleaned and usable, and the failure is raised
+    """
+    pkg_dir = tmp_path / "packages"
+    _dist_info(pkg_dir, "spacy", "3.8.0", tags=("cp312-cp312-linux_x86_64",))
+    _dist_info(pkg_dir, "pyamdgpuinfo", "2.1.7", tags=("cp312-cp312-linux_x86_64",))
+    monkeypatch.setattr(addon_manager, "get_packages_dir", lambda: pkg_dir)
+    monkeypatch.setattr(addon_manager, "inject_packages_dir", lambda: None)
+
+    def _install(packages: list[str], _target: Path, _cb: object, **_kw: object) -> None:
+        if packages[0].startswith("pyamdgpuinfo"):
+            raise RuntimeError("no matching distribution")
+
+    monkeypatch.setattr(addon_manager, "install_packages_subprocess", _install)
+
+    with pytest.raises(RuntimeError, match="no matching distribution"):
+        addon_manager.update_installed_addons(lambda _line: None)
+
+    assert addon_manager.foreign_python_packages(pkg_dir) == []
+
+
+def test_a_wheel_file_that_is_not_text_is_left_alone(tmp_path: Path, python_314: None) -> None:
+    """
+    Given  a distribution whose WHEEL file is not valid UTF-8
+    When   the packages built for another Python are asked for
+    Then   nothing raises and the distribution is not named
+    """
+    pkg_dir = tmp_path / "packages"
+    _dist_info(pkg_dir, "spacy", "3.8.0")
+    (pkg_dir / "spacy-3.8.0.dist-info" / "WHEEL").write_bytes(b"\xff\xfe\x00Tag: cp312")
+
+    assert addon_manager.foreign_python_packages(pkg_dir) == []

@@ -220,7 +220,7 @@ class CorrectionReview:
                 ),
                 unplaced=tuple(int(i) for i in record.get("unplaced", [])),
             )
-        except (KeyError, TypeError, ValueError, AttributeError):
+        except KeyError, TypeError, ValueError, AttributeError:
             return None
 
 

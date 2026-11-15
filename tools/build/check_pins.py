@@ -35,10 +35,16 @@ from packaging.requirements import Requirement
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 CONSTRAINTS = ROOT / "pyinstaller-work" / "constraints.txt"
+PYTHON_VERSION_FILE = ROOT / ".python-version"
 
 # Never shipped and never a dependency of the app: pip installs itself into every venv, and
 # wheel is the packaging toolchain. The project itself is the thing being built.
 _EXEMPT = frozenset({"pip", "wheel", "teachers-teammate"})
+
+
+def python_minor() -> str:
+    """Return the ``major.minor`` of `.python-version`, the one place the version is written down."""
+    return ".".join(PYTHON_VERSION_FILE.read_text(encoding="utf-8").strip().split(".")[:2])
 
 
 def normalize(name: str) -> str:
@@ -162,7 +168,7 @@ def resolve_for_platform(platform: str, constraints: Path) -> dict:
         "--only-binary",
         ":all:",
         "--python-version",
-        "3.12",
+        python_minor(),
         "--platform",
         platform,
         "-c",

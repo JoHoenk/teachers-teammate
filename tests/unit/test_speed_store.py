@@ -351,18 +351,15 @@ def test_the_directory_is_created_on_the_first_save(tmp_path: Path) -> None:
     assert path.exists()
 
 
-def test_the_default_path_lives_under_the_storage_root(tmp_path: Path, monkeypatch) -> None:
+def test_the_default_path_lives_under_the_data_root(tmp_path: Path, monkeypatch) -> None:
     """
-    Given  a storage root
+    Given  a data root
     When   the store is asked for its path
     Then   the file sits in a ``speed`` directory below that root
     """
     from teachers_teammate.infrastructure import speed_store  # noqa: PLC0415
-    from teachers_teammate.infrastructure.storage_root import StorageRoot  # noqa: PLC0415
 
-    monkeypatch.setattr(
-        speed_store, "resolve_storage_root", lambda: StorageRoot(path=tmp_path, source="test")
-    )
+    monkeypatch.setattr(speed_store, "resolve_data_folder", lambda name: tmp_path / name)
 
     assert SpeedStore().path == tmp_path / "speed" / "measurements.json"
 

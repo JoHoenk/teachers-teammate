@@ -109,8 +109,13 @@ Two GUI apps share the layers above: the main pipeline (`teachers-teammate` /
 `gui/benchmark:main_benchmark`) — runs a document through OCR configs, keeps an
 append-only history, and compares two runs side-by-side.
 
-All persistent data lives under `resolve_storage_root()`
-(`$TEACHERS_TEAMMATE_TMPDIR` or the OS cache dir). Identity/fingerprint helpers:
+Persistent data lives in three per-user places (`infrastructure/storage_root.py`;
+`$TEACHERS_TEAMMATE_TMPDIR`, when set, makes all three that one folder): the **cache**
+`resolve_storage_root()` (results, previews; may be deleted by cleanup tools), the **config
+root** `resolve_config_root()` (`ocr.toml`) and the **data root** `resolve_data_root()`
+(`benchmark/`, `speed/`, via `resolve_data_folder(name)`, which moves a folder an earlier
+version left in the cache). Anything a teacher cannot rebuild goes to the config or data root,
+never the cache; the Windows uninstaller's "Settings…" box deletes those files too. Identity/fingerprint helpers:
 `compute_file_hash` (document content), `compute_ocr_config_hash` (OCR stage
 fingerprint), `compute_cache_key` (path → short key). Two distinct stores: the
 pipeline **cache** (`StateRepository`, one overwritten `DocumentState` per

@@ -1485,23 +1485,39 @@ SHA-256.  `READER_MODELS` are the reader's two sets (31,191,354 bytes, "31 MB").
 
 ## Storage, hashing & caching
 
-All persistent data lives under a single **storage root**, resolved by
-`infrastructure/storage_root.py:resolve_storage_root()` — the
-`TEACHERS_TEAMMATE_TMPDIR` environment variable when set, otherwise the per-user
-OS cache directory (`~/.cache/teachers_teammate` on Linux).
+Persistent data lives in three per-user places, resolved by `infrastructure/storage_root.py`:
+
+| Root | Function | Holds | Linux / Windows / macOS |
+|---|---|---|---|
+| cache (**storage root**) | `resolve_storage_root()` | results, previews, the cache of every run; may be deleted by cleanup tools | `~/.cache/teachers_teammate` / `%LOCALAPPDATA%\teachers_teammate\Cache` / `~/Library/Caches/teachers_teammate` |
+| config | `resolve_config_root()` | `ocr.toml` | `~/.config/teachers_teammate` / `%LOCALAPPDATA%\teachers_teammate` / `~/Library/Application Support/teachers_teammate` |
+| data | `resolve_data_root()` | `benchmark/`, `speed/` (next to `packages/` and `models/`, which have their own lookup) | `~/.local/share/teachers_teammate` / `%LOCALAPPDATA%\teachers_teammate` / `~/Library/Application Support/teachers_teammate` |
+
+The `TEACHERS_TEAMMATE_TMPDIR` environment variable, when set, replaces all three with that one
+folder (tests, portable use). The rule: what a teacher cannot rebuild (settings, benchmark
+history, speed measurements) never goes into the cache.
+
+**Moving from the cache.** Versions up to 0.5.6 kept `ocr.toml`, `benchmark/` and `speed/` in the
+cache folder. `resolve_config_path(None)` and `resolve_data_folder(name)` move them to the new
+place the first time they are asked for (`migrate_once`: only when the new one is missing; when
+both exist the new one wins and the old one stays; a move that fails is logged and the old file
+is still read). On Windows the config and data folders are the same, so the uninstaller's
+settings switch removes `ocr.toml`, `benchmark\` and `speed\` there.
 
 ```
-<storage_root>/
-├── ocr.toml                                   # configuration (the pipeline config)
+<storage_root>/                                    # the cache
 ├── artifacts/
-│   └── <output_dir_key>/                      # key = sha256(output_dir.resolve())[:16]
-│       ├── <stem>_preprocessed.png            # preview image (one per source stem)
-│       ├── <stem>_original.<ext>              # page before preprocessing (only if steps changed it)
-│       └── state/<stem>_<source_key>.json     # CACHE: one DocumentState per (output_dir, path)
+│   └── <output_dir_key>/                          # key = sha256(output_dir.resolve())[:16]
+│       ├── <stem>_preprocessed.png                # preview image (one per source stem)
+│       ├── <stem>_original.<ext>                  # page before preprocessing (only if steps changed it)
+│       └── state/<stem>_<source_key>.json         # CACHE: one DocumentState per (output_dir, path)
+<config_root>/ocr.toml                             # configuration (the pipeline config)
+<data_root>/
+├── speed/                                         # measured speeds (samples.json, measurements.json)
 └── benchmark/
-    └── <document_hash>/                       # compute_file_hash(document)
-        ├── document.json                      # {document_hash, display_name, last_path}
-        ├── <UTC-ts>-<ocr_cfg_hash[:8]>.json   # StoredRun (self-describing)
+    └── <document_hash>/                           # compute_file_hash(document)
+        ├── document.json                          # {document_hash, display_name, last_path}
+        ├── <UTC-ts>-<ocr_cfg_hash[:8]>.json       # StoredRun (self-describing)
         └── images/<UTC-ts>-<ocr_cfg_hash[:8]>.png
 ```
 

@@ -99,6 +99,13 @@ LOAD_ALLOWANCE = 600.0
 TEXT_SMOKE_FIXTURES: tuple[str, ...] = ("plain DE", "Markdown", "plain FR")
 """The fixtures of the text-mode smoke check: the three short ones, in that order."""
 
+STEP_ONE_SMOKE_FIXTURES: tuple[str, ...] = ("plain DE", "plain EN", "plain FR")
+"""The fixtures of the smoke check of step ① of the exchange: the plain texts, one per language.
+
+A comparison sends plain text only, so the Markdown fixture of text mode says nothing about a
+run of ``exchange`` or ``correct-only``.
+"""
+
 TEXT_LENGTH_RATIO: tuple[float, float] = (0.6, 1.5)
 """How far a text-mode answer may be from the length of its text and still be that text."""
 
@@ -544,8 +551,10 @@ def _lost_marks(source: str, corrected: str) -> bool:
     return any(source.count(marker) > corrected.count(marker) for marker in MARKERS)
 
 
-def text_smoke_decision(answers: Sequence[TextAnswer]) -> Smoke:
-    """Return what the text-mode *answers* say about their setup.
+def text_smoke_decision(
+    answers: Sequence[TextAnswer], fixtures: Sequence[str] = TEXT_SMOKE_FIXTURES
+) -> Smoke:
+    """Return what the text-mode *answers* say about their setup, judged on *fixtures*.
 
     The same two-in-a-row rule as :func:`smoke_decision`: a fixture fails the setup only when
     both its tries fail.  The mode has no recorded failure to calibrate from, so it is a first
@@ -556,7 +565,7 @@ def text_smoke_decision(answers: Sequence[TextAnswer]) -> Smoke:
         grouped.setdefault(answer.fixture, []).append(answer)
     warnings: list[str] = []
     seconds = sum(answer.seconds for answer in answers)
-    for name in TEXT_SMOKE_FIXTURES:
+    for name in fixtures:
         attempts = grouped.get(name, [])
         if not attempts:
             continue
@@ -580,13 +589,18 @@ class TextSmokeCheck:
     """Send the text-mode smoke fixtures to one setup: the gate for models that only run there.
 
     Models that run in text mode only have no review answer to judge, so this sends the app's
-    text-mode request for the three short fixtures, each once and once more on a failure.
+    text-mode request for the three short fixtures, each once and once more on a failure.  The
+    runs of the proofreading exchange pass step ①'s request and its plain fixtures instead
+    (:func:`~.structured_check.step_one_request`, :data:`STEP_ONE_SMOKE_FIXTURES`): they get the
+    screen of the request they send.
 
     Args:
         chat: The server.
         timeout: Seconds one request may wait for its first token.
         on_run: Called with every answer as it comes back, for the record.
         deadline: Seconds a whole answer may take; ``None`` for no limit.
+        request: Builds ``(system, user)`` of a fixture's request; text mode's by default.
+        fixtures: The fixtures to send, in order; text mode's three by default.
     """
 
     def __init__(
@@ -596,16 +610,20 @@ class TextSmokeCheck:
         timeout: float = SMOKE_TIMEOUT,
         on_run: Callable[[TextAnswer], None] | None = None,
         deadline: float | None = SMOKE_DEADLINE,
+        request: Callable[[str, TextFormat, str], tuple[str, str]] = text_request,
+        fixtures: Sequence[str] = TEXT_SMOKE_FIXTURES,
     ) -> None:
         self._chat = chat
         self._timeout = timeout
         self._deadline = deadline
         self._on_run = on_run
+        self._request = request
+        self._fixtures = tuple(fixtures)
 
     def run(self, tag: str, temperature: float) -> Smoke:
         """Send the text-mode fixtures to *tag* and return what they say about the setup."""
         answers: list[TextAnswer] = []
-        for name in TEXT_SMOKE_FIXTURES:
+        for name in self._fixtures:
             fixture = fixture_named(name)
             answers.append(self._ask(tag, fixture, temperature))
             if text_problem(answers[-1]) is None:
@@ -613,7 +631,7 @@ class TextSmokeCheck:
             answers.append(self._ask(tag, fixture, temperature))
             if text_problem(answers[-1]) is not None:
                 break
-        return text_smoke_decision(answers)
+        return text_smoke_decision(answers, self._fixtures)
 
     def _ask(self, tag: str, fixture: Fixture, temperature: float) -> TextAnswer:
         """Send the text-mode request for *fixture* once and return what came back."""
@@ -628,7 +646,7 @@ class TextSmokeCheck:
         )
 
         source = text_of(fixture).text
-        system, user = text_request(fixture.language, fixture.text_format, source)
+        system, user = self._request(fixture.language, fixture.text_format, source)
         started = time.monotonic()
         try:
             raw, stats = self._chat.chat_with_stats(
@@ -681,6 +699,7 @@ __all__ = [
     "SMOKE_DEADLINE",
     "SMOKE_FIXTURES",
     "SMOKE_TIMEOUT",
+    "STEP_ONE_SMOKE_FIXTURES",
     "TEXT_SMOKE_FIXTURES",
     "Smoke",
     "SmokeCheck",

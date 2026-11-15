@@ -58,12 +58,13 @@ from tools.model_eval.progress import STYLES, Progress
 from tools.model_eval.smoke import (
     SMOKE_DEADLINE,
     SMOKE_TIMEOUT,
+    STEP_ONE_SMOKE_FIXTURES,
     Smoke,
     SmokeCheck,
     TextSmokeCheck,
     setup_label,
 )
-from tools.model_eval.structured_check import StructuredOutputCheck
+from tools.model_eval.structured_check import StructuredOutputCheck, step_one_request
 
 
 def _sampling_option(text: str) -> tuple[str, float]:
@@ -171,8 +172,16 @@ def _seams(args: argparse.Namespace) -> runner.Seams:
             return SmokeCheck(check, probe=measure.ServerProbe(args.ollama_url)).run(
                 model, temperature
             )
-        # The exchange's step ① is a plain-text request like text mode's, so the text check
-        # screens it: the later steps are small JSON answers that never fail the file.
+        if mode.asks_exchange:
+            # Step ① decides whether a file fails (the later steps are small JSON answers that
+            # never do), so it is screened with its own request on the plain fixtures the run
+            # sends, not with text mode's prompt and its Markdown fixture.
+            return TextSmokeCheck(
+                port,
+                timeout=SMOKE_TIMEOUT,
+                request=step_one_request,
+                fixtures=STEP_ONE_SMOKE_FIXTURES,
+            ).run(model, temperature)
         return TextSmokeCheck(port, timeout=SMOKE_TIMEOUT).run(model, temperature)
 
     return runner.Seams(

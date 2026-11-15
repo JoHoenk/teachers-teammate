@@ -2517,7 +2517,45 @@ OpenCV) is deleted by its `RECORD` files only; numpy is left alone.  It is then 
 - After every successful install or model download, so the newly installed package is
   usable in the same session without a restart.
 
-The function is idempotent — safe to call multiple times.
+The function is idempotent — safe to call multiple times.  Every entry point calls it first
+(`ProcessingApplicationService.inject_addon_packages_dir()`): `run_gui.py` and `__main__.py`,
+and `main_gui()`, `main_benchmark()` and `cli.main()` for a wheel install, so a spaCy model
+downloaded in one session is found after a restart however the app was started.
+
+### The bundle's constraints and add-ons after an app update (frozen builds)
+
+The packages folder comes **first** on `sys.path`.  A numpy, pydantic or requests that an
+add-on's install brought along would therefore replace the bundled one (PyInstaller may bundle
+only part of a package, so putting the folder last is wrong too).  Two things prevent that:
+
+- **Constraints.** `tools/build/addon_constraints.py` (run by `build_standalone.py`, bundled by
+  the spec) writes `teachers_teammate/_build/addon_constraints.txt` — `name==version` of every
+  package in the build environment except the build tools (`BUILD_ONLY`).
+  `addon_manager.pip_policy_arguments()` adds `--upgrade --only-binary :all: --no-cache-dir -c <file>`
+  to every pip call of the installed app: `--upgrade` because `pip --target` leaves an existing
+  package folder alone; wheels only because a source build would start the GUI exe as its build
+  interpreter; no cache because pip's cache is shared with other Python programs and never
+  cleaned.  An add-on whose requirements conflict with the bundle fails with pip's own message.
+  A language model is installed without `--upgrade` (it must leave what is there alone).  Source
+  runs and wheel installs get none of it (`addon_constraints_path()` is `None`).
+- **Outdated folders.** After an app update the folder may hold copies from the old bundle.
+  `outdated_shared_packages(pkg_dir, constraints)` compares the folder names
+  (`<name>-<version>.dist-info`) with the constraints at every start; when something differs
+  `inject_packages_dir()` leaves the folder **off** `sys.path` and the app runs on its own bundle.
+  `ProcessingApplicationService.addons_outdated()` tells the GUI: the requirement checks for a
+  step that needs an add-on in the folder (spaCy, a LangChain package) return
+  `IssueKind.ADDONS_OUTDATED` (`fix_for` → *Update add-ons…*), and Settings → Add-ons shows a
+  banner with **Update add-ons**.  Nothing downloads before that click.  `update_addons()` →
+  `addon_manager.update_installed_addons()` installs every add-on in the folder again with the
+  constraints, removes the outdated shared copies pip did not replace (by `RECORD`), and
+  injects the folder.  `pending_gpu_monitoring_addon()` is `None` while the folder waits, so the
+  automatic GPU install never adds a second copy.  Language models are separate packages that
+  share nothing with the app and are not touched.
+- **Checks.** The smoke test (`addon constraints`, frozen only) proves the file is in the bundle
+  and pins the numpy, pydantic, requests and Pillow the bundle really carries.  In CI,
+  `tools/build/check_addon_resolution.py` runs the built app's pip in `--dry-run` mode once per
+  add-on (Linux job), which is the only place the newest `langchain-openai` & co. are held
+  against the bundled versions (they are not in the test lock on purpose).
 
 ### pip package install (frozen builds)
 
@@ -2584,7 +2622,8 @@ does not host them.
 
 1. **URL resolution** — `spacy.cli.download.get_compatibility()`, `get_version()`, and
    `get_model_filename()` compute the exact wheel URL for the installed spaCy version.
-2. **Wheel install** — `pip install --target <packages_dir> --prefer-binary <url>` downloads
+2. **Wheel install** — `pip install --target <packages_dir> --only-binary :all: --no-cache-dir
+   -c <constraints> <url>` (frozen builds; `--prefer-binary <url>` from source) downloads
    and unpacks the wheel into the addon packages directory.
 
 In frozen builds, URL resolution must happen inside the frozen Python interpreter

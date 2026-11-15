@@ -238,6 +238,8 @@ class RecommendationServiceStub(LocalDataFlowStub):
         self.changed_urls: list[str] = []
         self.gpu_calls: list[bool] = []  # the ``refresh`` flag of every detect_gpus call
         self.injected_packages_dir = False  # inject_addon_packages_dir was called
+        self.outdated_addons = False  # an app update left add-ons that wait for an update
+        self.addon_updates = 0  # how often update_addons ran
 
     # providers ──────────────────────────────────────────────────────────────
     # Defaults for the model-list and package calls the AI-service dialogs make; a stub that
@@ -263,6 +265,14 @@ class RecommendationServiceStub(LocalDataFlowStub):
 
     def list_provider_packages(self) -> dict[str, tuple[str, str]]:
         return {}
+
+    def addons_outdated(self) -> bool:
+        return self.outdated_addons
+
+    def update_addons(self, progress_cb) -> None:
+        self.addon_updates += 1
+        progress_cb("installing the add-ons again")
+        self.outdated_addons = False
 
     # hardware ───────────────────────────────────────────────────────────────
     def detect_hardware(self, ollama_url: str, *, refresh: bool = False) -> HardwareDetection:

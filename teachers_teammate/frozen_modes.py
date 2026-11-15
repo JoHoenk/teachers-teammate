@@ -6,7 +6,7 @@ before the splash screen and before any heavy import.
 
 ``run_smoke_test`` is what proves a build is complete: the modules the app loads lazily,
 Qt's image plugins, the reader's OpenCV runtime, PDF and DOCX writing, the provider list,
-the bundled assets and the pip dispatch. CI runs it on every build (see
+the bundled assets, the pip dispatch and the add-on constraints. CI runs it on every build (see
 ``.github/workflows/build_artifacts.yml``) and the Windows installer test runs it again on
 the installed copy.
 
@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 import importlib
+import importlib.metadata
 from io import BytesIO
 import json
 import os
@@ -60,6 +61,10 @@ _ASSETS: tuple[str, ...] = (
     "docs/advanced_user_guide.md",
     "docs/index.md",
 )
+
+# Packages whose copy in the add-on folder would shadow the bundled one and break the app, which
+# is why the constraints file must pin them to what the bundle carries.
+_CONSTRAINED_RUNTIME_PACKAGES: tuple[str, ...] = ("numpy", "pydantic", "requests", "pillow")
 
 # A check returns ``None`` when it passes and a short description of the problem when it fails.
 Check = Callable[[], "str | None"]
@@ -185,6 +190,33 @@ def _check_pip() -> str | None:
     return None
 
 
+def _check_addon_constraints() -> str | None:
+    """Check that the add-on constraints match the packages the bundle really carries (frozen only).
+
+    The installed app gives this file to pip for every add-on install; a missing or stale one
+    would let an add-on bring its own numpy or pydantic.
+    """
+    from teachers_teammate.infrastructure import addon_manager  # noqa: PLC0415
+
+    path = addon_manager.addon_constraints_path()
+    if path is None:
+        return f"{addon_manager.ADDON_CONSTRAINTS_RELATIVE} is not in the bundle"
+    pins = addon_manager.read_constraints(path)
+    if not pins:
+        return f"{path.name} lists no package"
+    problems: list[str] = []
+    for name in _CONSTRAINED_RUNTIME_PACKAGES:
+        try:
+            installed = importlib.metadata.version(name)
+        except importlib.metadata.PackageNotFoundError:
+            problems.append(f"{name} is not in the bundle")
+            continue
+        pinned = pins.get(name.lower())
+        if pinned != installed:
+            problems.append(f"{name} is {installed} but the constraints say {pinned}")
+    return "; ".join(problems) or None
+
+
 def _check_keychain() -> str | None:
     """Check that a real keychain backend is available (Windows and macOS only)."""
     import keyring  # noqa: PLC0415
@@ -207,7 +239,11 @@ def _checks() -> list[tuple[str, Check]]:
         ("providers", _check_providers),
     ]
     if frozen:
-        checks += [("assets", _check_assets), ("pip", _check_pip)]
+        checks += [
+            ("assets", _check_assets),
+            ("pip", _check_pip),
+            ("addon constraints", _check_addon_constraints),
+        ]
     if sys.platform in ("win32", "darwin"):
         checks.append(("keychain", _check_keychain))
     return checks

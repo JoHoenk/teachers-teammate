@@ -3142,6 +3142,9 @@ def main_gui(
                         so it is already visible during startup.  When provided the internal
                         splash-creation logic is skipped and the caller's splash is reused.
     """
+    # Idempotent: run_gui.py and __main__.py did it already; a wheel install's entry point
+    # did not, and a language model downloaded in a session would be lost after a restart.
+    ProcessingApplicationService.inject_addon_packages_dir()
     # Start the slow own-host-name lookup before any widget asks where a step runs.
     ProcessingApplicationService.warm_up_locality_checks()
     # Suppress Qt's D-Bus tray warning when org.kde.StatusNotifierWatcher is absent.

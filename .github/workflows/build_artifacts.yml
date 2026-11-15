@@ -162,6 +162,13 @@ jobs:
         shell: bash
         run: ./dist/teachers-teammate.app/Contents/MacOS/teachers-teammate --_smoke_test smoke.json
 
+      # The add-ons' packages are not in the test lock (on purpose), so this is the only place
+      # their newest releases are held against the bundled numpy, pydantic, ... A conflict shows
+      # here, not as a pip error in a teacher's Add-ons window. Nothing is installed (dry run).
+      - name: Check that the add-ons resolve against the bundle (Linux)
+        if: runner.os == 'Linux'
+        run: python tools/build/check_addon_resolution.py dist/teachers-teammate/teachers-teammate
+
       - name: Upload the smoke test result
         if: ${{ always() && !inputs.skip_artifact_upload }}
         uses: actions/upload-artifact@v7

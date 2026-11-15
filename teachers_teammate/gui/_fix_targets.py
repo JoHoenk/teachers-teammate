@@ -16,6 +16,7 @@ from . import _user_text as txt
 from ._install_round import READER_ITEM
 from ._model_guidance import PROVIDER_PREFIX, SPACY_PREFIX
 from .settings._page import (
+    FOCUS_ADDON_UPDATE,
     FOCUS_FIND_SERVER,
     FOCUS_LOCAL_MODELS,
     FOCUS_NAME_DETECTION,
@@ -129,6 +130,33 @@ def _ollama_fix(issue: RequirementIssue) -> Fix | None:
     return None
 
 
+def _general_fix(kind: IssueKind) -> Fix | None:
+    """Return the fix for a requirement that is not about one model or package, else ``None``."""
+    if kind is IssueKind.NOTHING_TO_READ:
+        return Fix(
+            txt.NOTHING_TO_READ_LINE,
+            (FixAction(txt.TURN_ON_RECOGNITION, command=COMMAND_TURN_ON_RECOGNITION),),
+        )
+    if kind is IssueKind.ADDONS_OUTDATED:
+        return Fix(
+            txt.ADDONS_OUTDATED_LINE,
+            (
+                FixAction(
+                    txt.UPDATE_ADDONS + "…",
+                    SettingsPage.ADDONS,
+                    FOCUS_ADDON_UPDATE,
+                    tooltip=txt.ADDONS_OUTDATED_NOTE,
+                ),
+            ),
+        )
+    if kind is IssueKind.OCR_NOT_ALLOWED:
+        return Fix(
+            "Text recognition must run on this computer",
+            (FixAction("Choose a model…", SettingsPage.AI_MODELS, FOCUS_OCR),),
+        )
+    return None
+
+
 def fix_for(
     stage: str,
     issue: RequirementIssue,
@@ -146,16 +174,9 @@ def fix_for(
         language: The document language, to name the language of a missing name detection.
     """
     kind = issue.kind
-    if kind is IssueKind.NOTHING_TO_READ:
-        return Fix(
-            txt.NOTHING_TO_READ_LINE,
-            (FixAction(txt.TURN_ON_RECOGNITION, command=COMMAND_TURN_ON_RECOGNITION),),
-        )
-    if kind is IssueKind.OCR_NOT_ALLOWED:
-        return Fix(
-            "Text recognition must run on this computer",
-            (FixAction("Choose a model…", SettingsPage.AI_MODELS, FOCUS_OCR),),
-        )
+    general = _general_fix(kind)
+    if general is not None:
+        return general
     if kind is IssueKind.READER_MODEL_MISSING:
         return Fix(
             "The built-in reader isn't downloaded yet",

@@ -1099,3 +1099,25 @@ def test_the_keep_awake_flags_reach_the_config(tmp_path: Path, flags, expected) 
     run_cli(argv=["-i", str(tmp_path), "--no-docx", *flags], app_service=_FakeAppService())
 
     assert captured[0].keep_awake is expected
+
+
+@pytest.mark.use_case("Runtime_Addon_Installation")
+def test_main_injects_the_add_on_folder_before_it_runs(monkeypatch) -> None:
+    """
+    Given  a wheel install, started through the cli entry point
+    When   main() runs
+    Then   the add-on folder is injected first, then the run's exit code is passed on
+    """
+    from teachers_teammate import cli  # noqa: PLC0415
+
+    calls: list[object] = []
+    monkeypatch.setattr(
+        cli.ProcessingApplicationService,
+        "inject_addon_packages_dir",
+        staticmethod(lambda: calls.append("inject")),
+    )
+    monkeypatch.setattr(cli, "run_cli", lambda **_k: calls.append("run") or 7)
+
+    cli.main(exit_fn=calls.append)
+
+    assert calls == ["inject", "run", 7]

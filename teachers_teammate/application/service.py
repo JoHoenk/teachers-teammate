@@ -164,6 +164,8 @@ class IssueKind(StrEnum):
     NAME_DETECTION_MISSING = "name_detection_missing"
     #: Text recognition is switched off and no queued file has text to use without it.
     NOTHING_TO_READ = "nothing_to_read"
+    #: An app update changed packages the add-ons share with it: they stay off until updated.
+    ADDONS_OUTDATED = "addons_outdated"
 
 
 @dataclasses.dataclass(frozen=True)
@@ -1939,7 +1941,10 @@ class ProcessingApplicationService:
             else (config.effective_evaluate_model or "")
         )
         name = str(get_provider_info(provider).get("display_name", provider))
-        if self.missing_provider_package(provider):
+        missing_package = self.missing_provider_package(provider)
+        if missing_package and self._addon_needs_update(missing_package):
+            return [self._addons_outdated_issue()]
+        if missing_package:
             return [
                 RequirementIssue(
                     f"{name} support is not installed yet.",
@@ -1982,8 +1987,22 @@ class ProcessingApplicationService:
             ]
         return []
 
+    @staticmethod
+    def _addons_outdated_issue() -> RequirementIssue:
+        return RequirementIssue(
+            "The add-ons need an update after the app update.", IssueKind.ADDONS_OUTDATED
+        )
+
+    def _addon_needs_update(self, distribution: str) -> bool:
+        """Return whether *distribution* is installed as an add-on but kept off by an app update."""
+        from ..infrastructure.addon_manager import addon_in_folder, addons_outdated  # noqa: PLC0415
+
+        return addons_outdated() and addon_in_folder(distribution)
+
     def _name_detection_issues(self, language: str) -> list[RequirementIssue]:
         """Return what removing names still needs: spaCy itself or the model of *language*."""
+        if self._addon_needs_update("spacy"):
+            return [self._addons_outdated_issue()]
         installed_models = self.list_installed_spacy_models()
         required = self.spacy_model_for_language(language)
         if installed_models:
@@ -2210,6 +2229,29 @@ class ProcessingApplicationService:
 
         install_addon_subprocess(addon, target, progress_cb)
 
+    def addons_outdated(self) -> bool:
+        """Return whether an app update left add-ons that wait for *Update add-ons*.
+
+        They stay off (the app runs on its own bundle) until :meth:`update_addons` ran.  Reads
+        folder names only, so it is cheap; ``False`` outside the installed app.
+        """
+        from ..infrastructure.addon_manager import addons_outdated  # noqa: PLC0415
+
+        return addons_outdated()
+
+    def update_addons(self, progress_cb: Callable[[str], None]) -> None:
+        """Install the add-ons in the packages directory again with the app's package versions.
+
+        Slow (downloads): call it from a background thread, and only after the teacher asked.
+
+        Raises:
+            OSError: if the packages directory cannot be written.
+            RuntimeError: if pip fails.
+        """
+        from ..infrastructure.addon_manager import update_installed_addons  # noqa: PLC0415
+
+        update_installed_addons(progress_cb)
+
     def install_packages(
         self,
         packages: list[str],
@@ -2239,7 +2281,9 @@ class ProcessingApplicationService:
             is_addon_importable,
         )
 
-        if not can_install_addons():
+        # After an app update the add-on waits for "Update add-ons"; installing it again
+        # here would add a second copy to a folder the app does not use yet.
+        if not can_install_addons() or self.addons_outdated():
             return None
         addon = gpu_monitoring_addon(gpu.vendor for gpu in self.detect_gpus())
         if addon is None or is_addon_importable(addon):
@@ -2299,8 +2343,14 @@ class ProcessingApplicationService:
         """
         warm_up_own_host_names()
 
-    def inject_addon_packages_dir(self) -> None:
-        """Prepend the addon packages directory to sys.path (idempotent)."""
+    @staticmethod
+    def inject_addon_packages_dir() -> None:
+        """Prepend the addon packages directory to sys.path (idempotent).
+
+        Every entry point calls this first, so packages installed under Add-ons are importable
+        after a restart however the app was started.  A folder left by an older app version is
+        not added (see :meth:`addons_outdated`).
+        """
         from ..infrastructure.addon_manager import inject_packages_dir  # noqa: PLC0415
 
         inject_packages_dir()

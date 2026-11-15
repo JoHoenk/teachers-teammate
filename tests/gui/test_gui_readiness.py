@@ -24,6 +24,7 @@ from teachers_teammate.gui._fix_targets import (
 )
 from teachers_teammate.gui._readiness_line import ReadinessLine, Tone, readiness
 from teachers_teammate.gui.settings._page import (
+    FOCUS_ADDON_UPDATE,
     FOCUS_FIND_SERVER,
     FOCUS_LOCAL_MODELS,
     FOCUS_NAME_DETECTION,
@@ -224,6 +225,25 @@ def test_fix_for_a_missing_key_picks_the_key_row_of_the_step(stage: str, focus: 
 
     assert fix.line == "No API key for Mistral (EU) yet"
     assert fix.actions == (FixAction("Enter key…", SettingsPage.AI_MODELS, focus),)
+
+
+@pytest.mark.unit
+def test_fix_for_outdated_add_ons_opens_the_update_line_of_add_ons() -> None:
+    """
+    Given  add-ons that wait for an update after the app update
+    When   their fix is asked
+    Then   "Update add-ons…" opens Settings → Add-ons on the update banner and explains why
+    """
+    fix = _fix("correction", RequirementIssue("x", IssueKind.ADDONS_OUTDATED))
+
+    assert fix.line == "Add-ons need an update after the app update"
+    (action,) = fix.actions
+    assert (action.label, action.page, action.focus) == (
+        "Update add-ons…",
+        SettingsPage.ADDONS,
+        FOCUS_ADDON_UPDATE,
+    )
+    assert action.tooltip
 
 
 @pytest.mark.unit

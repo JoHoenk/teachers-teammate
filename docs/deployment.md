@@ -64,7 +64,7 @@ The **build-standalone** job (`build_artifacts.yml`) runs in parallel on three G
 
 | Runner | Steps | Output |
 |--------|-------|--------|
-| `ubuntu-22.04` | pinned install → `tools/build/build_standalone.py` → smoke test → bundle checks → `tools/packaging/make_deb.sh` → container install test → `tools/packaging/make_tarball.sh` | `teachers-teammate_<ver>.deb`, `teachers-teammate-<ver>-linux-x86_64.tar.gz` |
+| `ubuntu-22.04` | pinned install → `tools/build/build_standalone.py` → smoke test → add-on resolution check → bundle checks → `tools/packaging/make_deb.sh` → container install test → `tools/packaging/make_tarball.sh` | `teachers-teammate_<ver>.deb`, `teachers-teammate-<ver>-linux-x86_64.tar.gz` |
 | `windows-latest` | pinned install → `tools/build/build_standalone.py` → smoke test → NSIS (`tools/packaging/windows.nsi`) | `teachers-teammate-<ver>-w64-setup.exe` |
 | `macos-latest` | pinned install → `tools/build/build_standalone.py` → smoke test → `tools/packaging/make_dmg.sh` | `teachers-teammate-<ver>-macos.dmg` |
 
@@ -80,7 +80,11 @@ evaluates PyInstaller's Windows-only (`pefile`) and macOS-only (`macholib`) depe
 Linux host and would never report them. Every job runs the app with `--_smoke_test smoke.json` and fails
 on a non-zero exit, and uploads `smoke.json` as an artifact. The Linux job also runs
 `tools/build/check_linux_bundle.py` twice: `--max-glibc 2.35` proves the bundle starts on Ubuntu
-22.04, `--unused` proves it carries no library that nothing loads.
+22.04, `--unused` proves it carries no library that nothing loads. After the smoke test it runs
+`tools/build/check_addon_resolution.py`: the built app's own pip resolves every add-on's requirement
+(`--dry-run`, nothing is installed) against the bundle's versions, so a new release of
+`langchain-openai` or spaCy that needs another numpy or pydantic fails the build instead of a
+teacher's Add-ons window.
 
 The **build-wheel** job stamps the version into `pyproject.toml` via `tools/release/stamp_versions.py`, then builds a pure-Python wheel with Bazel.
 
@@ -165,6 +169,16 @@ pip install -c pyinstaller-work/constraints.txt -e . pyinstaller pyinstaller-hoo
 python tools/build/check_pins.py
 python tools/build/build_standalone.py
 ```
+
+Before it runs PyInstaller, `build_standalone.py` writes `teachers_teammate/_build/addon_constraints.txt`
+(`tools/build/addon_constraints.py`, git-ignored): the version of every package in the build
+environment except the build tools. The spec bundles it. The installed app gives it to pip as `-c`
+for every add-on install, and compares the add-on folder against it after an app update — see
+`docs/development.md` → "The bundle's constraints and add-ons after an app update". The folder is
+`packages/` next to the other per-user data and **is not versioned by Python version**: a change of
+`.python-version` has to move or drop its content (compiled add-on packages do not run on another
+Python), which the PR that changes it must do. The constraints compare package versions only and
+would not notice a Python bump.
 
 Outputs:
 
@@ -308,6 +322,8 @@ removes them.
 | `tools/build/build.sh` / `tools/build/build.bat` | Fresh venv, pinned install, then `build_standalone.py` |
 | `tools/build/make_constraints.py` | Writes `pyinstaller-work/constraints.txt` from the lock and the platform pins |
 | `tools/build/check_pins.py` | Fails the build when an installed package is not pinned |
+| `tools/build/addon_constraints.py` | Writes the bundle's package versions (`teachers_teammate/_build/addon_constraints.txt`) that the installed app gives to pip |
+| `tools/build/check_addon_resolution.py` | Dry-runs every add-on's requirement against the built app's constraints |
 | `tools/build/check_linux_bundle.py` | Checks the Linux bundle's glibc floor and lists libraries nothing loads |
 | `tools/build/teachers-teammate.spec` | The committed PyInstaller spec: what the bundle contains |
 | `tools/build/run_gui.py` | PyInstaller entry point (pip dispatch, smoke test, addon injection) |

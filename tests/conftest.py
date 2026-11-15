@@ -6,6 +6,7 @@ import importlib.util
 import os
 from pathlib import Path
 import shutil
+import sys
 
 import pytest
 
@@ -279,6 +280,24 @@ def _models_dir_in_tmp(
     fakes the reader; none downloads.
     """
     monkeypatch.setenv("TEACHERS_TEAMMATE_MODELS_DIR", str(tmp_path_factory.mktemp("models")))
+
+
+@pytest.fixture(autouse=True)
+def _add_on_folder_in_tmp(
+    tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Point the add-on packages folder at an empty temporary one and restore ``sys.path``.
+
+    The entry points put that folder on ``sys.path`` and clean up retired add-ons in it; a test
+    must never see or touch the real one, nor leave the path changed for the next test.
+    """
+    try:
+        from teachers_teammate.infrastructure import addon_manager  # noqa: PLC0415
+    except ImportError:  # pure-unit targets without the package
+        return
+    folder = tmp_path_factory.mktemp("addon_root") / "packages"
+    monkeypatch.setattr(addon_manager, "get_packages_dir", lambda: folder)
+    monkeypatch.setattr(sys, "path", list(sys.path))
 
 
 @pytest.fixture(autouse=True)

@@ -21,6 +21,7 @@ from teachers_teammate.domain.model_listing import ModelListing
 from teachers_teammate.gui.settings import _addons_page
 from teachers_teammate.gui.settings._addons_page import AddonsPage
 from teachers_teammate.gui.settings._page import (
+    FOCUS_ADDON_UPDATE,
     FOCUS_LOCAL_MODELS,
     FOCUS_NAME_DETECTION,
     FOCUS_READING_MODELS,
@@ -1425,3 +1426,47 @@ def test_enter_in_the_name_field_does_not_press_a_button(qtbot, monkeypatch) -> 
     assert pressed == []
     assert not any(button.autoDefault() for button in dlg.findChildren(QPushButton))
     assert dlg.isVisible() is True
+
+
+# ── After an app update: the banner offers "Update add-ons" ──────────────────
+
+
+def test_the_update_banner_shows_only_while_add_ons_are_outdated(qtbot) -> None:
+    """
+    Given  the Add-ons page, once with current add-ons and once with outdated ones
+    When   the page is shown
+    Then   the banner and its button appear only for the outdated ones
+    """
+    current = _make_dialog(qtbot)
+    stale_service = _StubService()
+    stale_service.outdated_addons = True
+    stale = _make_dialog(qtbot, service=stale_service)
+    stale.show()
+
+    assert current._update_banner.isHidden()
+    assert stale._update_banner.isVisible()
+    assert stale._update_btn.text() == "Update add-ons"
+
+
+def test_update_add_ons_installs_only_after_the_click_and_then_hides_the_banner(
+    qtbot,
+) -> None:
+    """
+    Given  outdated add-ons and the Add-ons page (a deep link focused the update)
+    When   the page is built, and then the teacher clicks "Update add-ons"
+    Then   nothing was installed before the click; the click updates once and the banner goes
+    """
+    service = _StubService()
+    service.outdated_addons = True
+    page = _make_dialog(qtbot, service=service)
+    page.show()
+    page.focus(FOCUS_ADDON_UPDATE)
+    assert service.addon_updates == 0
+
+    with qtbot.waitSignal(page._round.finished, timeout=5000):
+        page._update_btn.click()
+
+    assert service.addon_updates == 1
+    assert page._update_banner.isHidden()
+    assert page._update_btn.isEnabled()
+    assert "installing the add-ons again" in page._dl_log.toPlainText()

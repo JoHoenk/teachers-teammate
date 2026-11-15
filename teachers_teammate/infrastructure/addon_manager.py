@@ -8,6 +8,12 @@ The frozen binary re-invokes itself with ``--_pip_install_mode`` to run pip
 inside the same Python interpreter that was bundled by PyInstaller, then
 installs packages into a persistent user-writable directory that is prepended
 to ``sys.path`` at every startup.
+
+The installed app ships ``addon_constraints.txt`` (``tools/build/addon_constraints.py`` writes
+it at build time): the exact version of every package the app bundles.  Every pip call passes it
+as ``-c``, so an add-on can never bring its own numpy or pydantic that would shadow the bundled
+one, and a folder left by an older app version is recognised (:func:`outdated_shared_packages`)
+and kept off ``sys.path`` until the teacher updates the add-ons.
 """
 
 from __future__ import annotations
@@ -18,6 +24,7 @@ import importlib.util
 import logging
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
@@ -47,6 +54,14 @@ ADDON_LLM_ANTHROPIC = "llm_anthropic"
 ADDON_LLM_GOOGLE = "llm_google"
 ADDON_LLM_MISTRAL = "llm_mistral"
 ADDON_LLM_COHERE = "llm_cohere"
+
+#: Where the build puts the constraints file, relative to the folder the bundle's files sit in.
+ADDON_CONSTRAINTS_RELATIVE = Path("teachers_teammate") / "_build" / "addon_constraints.txt"
+
+#: What every pip call of the installed app adds (see :func:`pip_policy_arguments`).
+_PIP_UPGRADE = "--upgrade"
+_PIP_ONLY_BINARY = ("--only-binary", ":all:")
+_PIP_NO_CACHE = "--no-cache-dir"
 
 _ADDON_PACKAGES: dict[str, list[str]] = {
     ADDON_PRIVACY: ["spacy>=3.7"],
@@ -95,6 +110,11 @@ _ADDON_STALE_PREFIXES: dict[str, list[str]] = {
 }
 
 
+def addon_requirements() -> dict[str, list[str]]:
+    """Return the pip requirements of every add-on, by add-on name (a copy)."""
+    return {addon: list(packages) for addon, packages in _ADDON_PACKAGES.items()}
+
+
 def get_packages_dir() -> Path:
     """Return the persistent user-writable directory for addon packages."""
     try:
@@ -132,55 +152,230 @@ def _packages_dir_readable(pkg_dir: Path) -> bool:
 _RETIRED_PACKAGES = frozenset({"paddlepaddle", "paddleocr", "paddlex", "opencv-contrib-python"})
 
 
+def _normalise(name: str) -> str:
+    """Return *name* in PEP 503 form (``Nvidia_ML.py`` → ``nvidia-ml-py``)."""
+    return re.sub(r"[-_.]+", "-", name).lower()
+
+
 def _normalised_name(dist_info: Path) -> str:
     """Return the package name of a ``<name>-<version>.dist-info`` folder, PEP 503 normalised."""
-    name = dist_info.name.removesuffix(".dist-info").split("-", 1)[0]
-    return name.lower().replace("_", "-").replace(".", "-")
+    return _normalise(dist_info.name.removesuffix(".dist-info").split("-", 1)[0])
+
+
+def _distributions(pkg_dir: Path) -> list[tuple[str, str, Path]]:
+    """Return ``(normalised name, version, dist-info folder)`` of what *pkg_dir* holds.
+
+    Read from the folder names only, which pip writes as ``<name>-<version>.dist-info``:
+    cheap enough to do at every start.
+    """
+    found: list[tuple[str, str, Path]] = []
+    try:
+        folders = sorted(pkg_dir.glob("*.dist-info"))
+    except OSError:
+        return found
+    for folder in folders:
+        name, _, version = folder.name.removesuffix(".dist-info").partition("-")
+        found.append((_normalise(name), version, folder))
+    return found
+
+
+def _remove_distribution(pkg_dir: Path, dist_info: Path) -> bool:
+    """Delete the files *dist_info*'s ``RECORD`` lists (and the folder); return whether it did.
+
+    Only files inside *pkg_dir* are touched, then the ``.dist-info`` folder, then folders left
+    empty.  Without a readable ``RECORD`` nothing is removed.  Never raises: a file in use is
+    logged and left behind.
+    """
+    try:
+        lines = (dist_info / "RECORD").read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return False
+    root = pkg_dir.resolve()
+    folders: set[Path] = set()
+    for line in lines:
+        entry = line.rsplit(",", 2)[0].strip().strip('"')
+        if not entry:
+            continue
+        target = (pkg_dir / entry).resolve()
+        if root not in target.parents:
+            continue
+        try:
+            target.unlink(missing_ok=True)
+        except OSError as exc:
+            _logger.warning("Could not remove %s: %s", target, exc)
+            continue
+        folders.update(p for p in target.parents if root in p.parents)
+    shutil.rmtree(dist_info, ignore_errors=True)
+    for folder in sorted(folders, key=lambda p: len(p.parts), reverse=True):
+        try:
+            folder.rmdir()
+        except OSError:
+            pass  # not empty: something else lives there
+    return True
 
 
 def remove_retired_addons(pkg_dir: Path) -> list[str]:
     """Delete the retired Paddle Add-on's files from *pkg_dir*; return the packages removed.
 
-    Goes strictly by each package's ``RECORD`` file: exactly the files it lists (and only
-    those inside *pkg_dir*), then the ``.dist-info`` folder, then folders left empty.  A package
-    without a readable ``RECORD`` is left alone, and so is everything else.  Never raises: a
-    file in use is logged and left behind.
+    Goes strictly by each package's ``RECORD`` file (see :func:`_remove_distribution`).  A package
+    without a readable ``RECORD`` is left alone, and so is everything else.
     """
     removed: list[str] = []
     if not pkg_dir.is_dir():
         return removed
-    root = pkg_dir.resolve()
-    for dist_info in sorted(pkg_dir.glob("*.dist-info")):
-        name = _normalised_name(dist_info)
-        if name not in _RETIRED_PACKAGES:
+    for name, _version, dist_info in _distributions(pkg_dir):
+        if name not in _RETIRED_PACKAGES or not _remove_distribution(pkg_dir, dist_info):
             continue
-        try:
-            lines = (dist_info / "RECORD").read_text(encoding="utf-8").splitlines()
-        except OSError:
-            continue
-        folders: set[Path] = set()
-        for line in lines:
-            entry = line.rsplit(",", 2)[0].strip().strip('"')
-            if not entry:
-                continue
-            target = (pkg_dir / entry).resolve()
-            if root not in target.parents:
-                continue
-            try:
-                target.unlink(missing_ok=True)
-            except OSError as exc:
-                _logger.warning("Could not remove %s: %s", target, exc)
-                continue
-            folders.update(p for p in target.parents if root in p.parents)
-        shutil.rmtree(dist_info, ignore_errors=True)
-        for folder in sorted(folders, key=lambda p: len(p.parts), reverse=True):
-            try:
-                folder.rmdir()
-            except OSError:
-                pass  # not empty: something else lives there
         removed.append(name)
         _logger.info("Removed the retired %s package from %s", name, pkg_dir)
     return removed
+
+
+# ── The constraints of the installed app ────────────────────────────────────────────────────
+
+
+def addon_constraints_path() -> Path | None:
+    """Return the constraints file the installed app ships, or ``None``.
+
+    ``None`` outside a frozen build: a source checkout or a wheel install has no bundle whose
+    versions an add-on could clash with.  A frozen build without the file (the smoke test
+    reports that) is logged and treated like a source run.
+    """
+    meipass = getattr(sys, "_MEIPASS", None)
+    if not getattr(sys, "frozen", False) or meipass is None:
+        return None
+    path = Path(meipass) / ADDON_CONSTRAINTS_RELATIVE
+    if path.is_file():
+        return path
+    _logger.warning("The add-on constraints file %s is missing", path)
+    return None
+
+
+def read_constraints(path: Path) -> dict[str, str]:
+    """Return ``{normalised name: version}`` from a constraints file of ``name==version`` lines."""
+    pins: dict[str, str] = {}
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return pins
+    for line in text.splitlines():
+        name, separator, version = line.strip().partition("==")
+        if separator and name and version and not name.startswith("#"):
+            pins[_normalise(name)] = version.strip()
+    return pins
+
+
+def outdated_shared_packages(pkg_dir: Path, constraints: Path | None) -> list[str]:
+    """Return the packages in *pkg_dir* whose version is not the one the app bundles.
+
+    These are the copies an earlier app version's add-on install left behind: the folder comes
+    first on ``sys.path``, so such a copy would replace the bundled one.  Only packages named in
+    both the folder and *constraints* count; an add-on's own packages are not in the app's list.
+    ``None`` (no constraints: a source run) means nothing is outdated.
+
+    Returns:
+        The normalised names, sorted.
+    """
+    if constraints is None or not pkg_dir.is_dir():
+        return []
+    pins = read_constraints(constraints)
+    return sorted(
+        {
+            name
+            for name, version, _folder in _distributions(pkg_dir)
+            if name in pins and version != pins[name]
+        }
+    )
+
+
+def addons_outdated() -> bool:
+    """Return whether the add-on folder holds packages from an older app version."""
+    return bool(outdated_shared_packages(get_packages_dir(), addon_constraints_path()))
+
+
+def installed_addon_requirements(pkg_dir: Path | None = None) -> list[str]:
+    """Return the requirement of every add-on whose package is in the add-on folder.
+
+    What an update installs again (spaCy language models are separate packages and are not
+    listed: they share no package with the app).
+    """
+    installed = {name for name, _version, _folder in _distributions(pkg_dir or get_packages_dir())}
+    requirements: list[str] = []
+    for packages in _ADDON_PACKAGES.values():
+        for requirement in packages:
+            name = _normalise(re.split(r"[<>=!~\[;\s]", requirement, maxsplit=1)[0])
+            if name in installed and requirement not in requirements:
+                requirements.append(requirement)
+    return requirements
+
+
+def drop_outdated_shared_packages(pkg_dir: Path, constraints: Path | None) -> list[str]:
+    """Delete the outdated shared copies an update's install did not replace; return their names.
+
+    The update installs every add-on again with the bundle's versions, which replaces the shared
+    packages those add-ons need.  A copy nothing needs any more (an older add-on's dependency) is
+    left over, and the app has its own: it goes, by its ``RECORD`` file.
+    """
+    outdated = set(outdated_shared_packages(pkg_dir, constraints))
+    removed: list[str] = []
+    for name, _version, dist_info in _distributions(pkg_dir):
+        if name in outdated and _remove_distribution(pkg_dir, dist_info):
+            removed.append(name)
+            _logger.info("Removed the outdated %s copy from %s", name, pkg_dir)
+    return removed
+
+
+def addon_in_folder(distribution: str, pkg_dir: Path | None = None) -> bool:
+    """Return whether the add-on folder holds the package *distribution* (pip name)."""
+    wanted = _normalise(distribution)
+    return any(name == wanted for name, _v, _f in _distributions(pkg_dir or get_packages_dir()))
+
+
+def update_installed_addons(progress_cb: Callable[[str], None]) -> None:
+    """Bring the add-on folder in line with the app after an app update.
+
+    Installs every add-on in the folder again with the bundle's versions, removes the outdated
+    shared copies that left over, and makes the folder importable.  Language models are not
+    touched: they share no package with the app.
+
+    Raises:
+        OSError: if the folder cannot be written.
+        RuntimeError: if pip fails (offline, a conflict with the bundle, ...).
+    """
+    pkg_dir = get_packages_dir()
+    requirements = installed_addon_requirements(pkg_dir)
+    if requirements:
+        install_packages_subprocess(requirements, pkg_dir, progress_cb)
+    drop_outdated_shared_packages(pkg_dir, addon_constraints_path())
+    inject_packages_dir()
+    for addon in _ADDON_STALE_PREFIXES:
+        clear_stale_modules(addon)
+
+
+def pip_policy_arguments(*, upgrade: bool = True) -> list[str]:
+    """Return the pip arguments the installed app adds to every install (none from source).
+
+    * ``--upgrade``: ``pip --target`` leaves a package folder that already exists alone, so an
+      old numpy copy would never be replaced.
+    * ``--only-binary :all:``: a source build would start the GUI executable as its build
+      interpreter, and a school computer has no compiler.
+    * ``--no-cache-dir``: pip's download cache is shared with other Python programs and never
+      cleaned; nothing here installs the same wheel twice.
+    * ``-c <constraints>``: every package the app bundles stays at the bundled version, or pip
+      says why the add-on cannot be installed.
+
+    Args:
+        upgrade: ``False`` for a language model, whose install must leave alone what is there.
+    """
+    if not getattr(sys, "frozen", False):
+        return []
+    arguments = [*_PIP_ONLY_BINARY, _PIP_NO_CACHE]
+    if upgrade:
+        arguments.insert(0, _PIP_UPGRADE)
+    constraints = addon_constraints_path()
+    if constraints is not None:
+        arguments += ["-c", str(constraints)]
+    return arguments
 
 
 def inject_packages_dir() -> None:
@@ -193,12 +388,24 @@ def inject_packages_dir() -> None:
     If the packages directory exists but its files are not readable by the
     current user (e.g. installed via 'Run as Administrator'), injection is
     silently skipped to avoid a PermissionError in the import machinery.
+
+    A folder that holds packages of an older app version (:func:`outdated_shared_packages`) is
+    skipped too: its copy of numpy or pydantic would replace the bundled one.  The app runs on
+    its own bundle until the teacher updates the add-ons.
     """
     pkg_dir = get_packages_dir()
     pkg_str = str(pkg_dir)
     remove_retired_addons(pkg_dir)
     if pkg_str not in sys.path:
         if pkg_dir.exists() and not _packages_dir_readable(pkg_dir):
+            return
+        outdated = outdated_shared_packages(pkg_dir, addon_constraints_path())
+        if outdated:
+            _logger.warning(
+                "Add-ons need an update after the app update; not using %s (%s)",
+                pkg_dir,
+                ", ".join(outdated),
+            )
             return
         sys.path.insert(0, pkg_str)
     if sys.platform == "win32" and pkg_dir.exists() and hasattr(os, "add_dll_directory"):
@@ -281,7 +488,8 @@ def install_packages_subprocess(
     """Install *packages* into *target* using the bundled pip (frozen) or system pip (source).
 
     In frozen builds the executable re-invokes itself with ``--_pip_install_mode``
-    so that pip runs inside the same Python interpreter that PyInstaller bundled.
+    so that pip runs inside the same Python interpreter that PyInstaller bundled, with the
+    arguments of :func:`pip_policy_arguments` (bundle constraints, wheels only, no cache).
     In non-frozen builds a regular ``python -m pip install --upgrade`` is used.
     Output lines are streamed to *progress_cb* in real time.  Installs are
     serialised process-wide.
@@ -306,7 +514,7 @@ def install_packages_subprocess(
             "install",
             "--target",
             str(target),
-            "--prefer-binary",
+            *pip_policy_arguments(),
             *network,
             *packages,
         ]
@@ -381,7 +589,7 @@ def download_spacy_model_subprocess(
             model,
             "--target",
             str(target),
-            "--prefer-binary",
+            *pip_policy_arguments(upgrade=False),
         ]
     else:
         try:

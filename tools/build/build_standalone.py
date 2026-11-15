@@ -91,6 +91,15 @@ def _ensure_icons() -> None:
         _ensure_icns(source_png, ASSETS / "teachers_teammate.icns")
 
 
+def _write_addon_constraints() -> None:
+    """Write the versions the bundle ships, which the installed app gives to pip (the spec adds it)."""
+    subprocess.run(
+        [sys.executable, str(Path(__file__).resolve().parent / "addon_constraints.py")],
+        check=True,
+        cwd=ROOT,
+    )
+
+
 def _run() -> None:
     env = os.environ.copy()
     # PySide6 needs a display driver even at analysis time on Linux
@@ -125,6 +134,7 @@ def main() -> None:
         sys.stdout.reconfigure(encoding="utf-8")
 
     _ensure_icons()
+    _write_addon_constraints()
     print("==> Building standalone binary…")
     _run()
     if sys.platform == "darwin":

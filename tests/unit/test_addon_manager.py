@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -755,3 +757,289 @@ def test_remove_retired_addons_ignores_a_missing_folder(tmp_path: Path) -> None:
     Then   it returns an empty list
     """
     assert remove_retired_addons(tmp_path / "nope") == []
+
+
+# ── The bundle's constraints: the pip policy, outdated copies, the update ─────
+
+
+def _dist_info(pkg_dir: Path, name: str, version: str, files: tuple[str, ...] = ()) -> None:
+    """Plant what pip leaves for a package: ``<name>-<version>.dist-info`` with a RECORD."""
+    info = pkg_dir / f"{name}-{version}.dist-info"
+    info.mkdir(parents=True)
+    record = [f"{name}/__init__.py,sha256=x,1", *(f"{file},sha256=x,1" for file in files)]
+    (pkg_dir / name).mkdir(exist_ok=True)
+    (pkg_dir / name / "__init__.py").write_text("", encoding="utf-8")
+    for file in files:
+        (pkg_dir / file).parent.mkdir(parents=True, exist_ok=True)
+        (pkg_dir / file).write_text("", encoding="utf-8")
+    (info / "RECORD").write_text("\n".join(record) + "\n", encoding="utf-8")
+
+
+@pytest.fixture(name="frozen_bundle")
+def _frozen_bundle(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """A frozen app whose bundle pins numpy 2.5.4 and pydantic 2.14.3; returns the pins file."""
+    bundle = tmp_path / "bundle"
+    pins = bundle / addon_manager.ADDON_CONSTRAINTS_RELATIVE
+    pins.parent.mkdir(parents=True)
+    pins.write_text("numpy==2.5.4\npydantic==2.14.3\n", encoding="utf-8")
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "_MEIPASS", str(bundle), raising=False)
+    return pins
+
+
+def test_pip_policy_is_empty_for_a_source_run(monkeypatch: pytest.MonkeyPatch) -> None:
+    """
+    Given  a source run or wheel install
+    When   the pip policy is asked for
+    Then   there is nothing to add
+    """
+    monkeypatch.delattr(sys, "frozen", raising=False)
+
+    assert addon_manager.pip_policy_arguments() == []
+
+
+def test_pip_policy_of_the_installed_app(frozen_bundle: Path) -> None:
+    """
+    Given  the installed app
+    When   the pip policy is asked for
+    Then   it upgrades, takes wheels only, skips the cache and passes the bundle's constraints
+    """
+    arguments = addon_manager.pip_policy_arguments()
+
+    assert arguments == [
+        "--upgrade",
+        "--only-binary",
+        ":all:",
+        "--no-cache-dir",
+        "-c",
+        str(frozen_bundle),
+    ]
+    assert "--upgrade" not in addon_manager.pip_policy_arguments(upgrade=False)
+
+
+def test_a_frozen_build_without_the_file_installs_without_constraints(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """
+    Given  a frozen build whose bundle lacks the constraints file
+    When   the pip policy is asked for
+    Then   wheels-only and no-cache still apply, but no -c
+    """
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "_MEIPASS", str(tmp_path), raising=False)
+
+    arguments = addon_manager.pip_policy_arguments()
+
+    assert "--only-binary" in arguments
+    assert "-c" not in arguments
+
+
+def test_installed_app_pip_call_carries_the_policy(
+    tmp_path: Path, frozen_bundle: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """
+    Given  the installed app
+    When   an add-on and a spaCy model are installed
+    Then   both pip commands carry the constraints, wheels-only and no cache; only the
+           add-on's upgrades what is there
+    """
+    captured: list[list[str]] = []
+
+    class _Proc:
+        returncode = 0
+        stdout = iter([])
+
+        def wait(self) -> None:
+            pass
+
+        def __enter__(self) -> object:
+            return self
+
+        def __exit__(self, *_: object) -> None:
+            pass
+
+    monkeypatch.setattr(subprocess, "Popen", lambda cmd, **_k: captured.append(cmd) or _Proc())
+
+    install_addon_subprocess(ADDON_PRIVACY, tmp_path / "pkg", lambda _: None)
+    download_spacy_model_subprocess("en_core_web_sm", tmp_path / "pkg", lambda _: None)
+
+    assert len(captured) == 2
+    addon, model = captured[0], captured[1]
+    for command in captured:
+        assert command[command.index("-c") + 1] == str(frozen_bundle)
+        assert "--only-binary" in command
+        assert "--no-cache-dir" in command
+    assert "--upgrade" in addon
+    assert "--upgrade" not in model
+
+
+def test_source_pip_call_has_no_policy(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """
+    Given  a source run
+    When   a package is installed
+    Then   pip is not given the bundle's policy (a dev environment has no bundle)
+    """
+    monkeypatch.delattr(sys, "frozen", raising=False)
+    captured: list[list[str]] = []
+
+    class _Proc:
+        returncode = 0
+        stdout = iter([])
+
+        def wait(self) -> None:
+            pass
+
+        def __enter__(self) -> object:
+            return self
+
+        def __exit__(self, *_: object) -> None:
+            pass
+
+    monkeypatch.setattr(subprocess, "Popen", lambda cmd, **_k: captured.append(cmd) or _Proc())
+
+    addon_manager.install_packages_subprocess(["six"], tmp_path / "pkg", lambda _: None)
+
+    assert "-c" not in captured[0]
+    assert "--only-binary" not in captured[0]
+
+
+def test_outdated_shared_packages_compares_folder_and_constraints(
+    tmp_path: Path, frozen_bundle: Path
+) -> None:
+    """
+    Given  a folder with numpy 2.4.0 (the bundle has 2.5.4), pydantic 2.14.3 and spaCy
+    When   the outdated packages are asked for
+    Then   only numpy is named: same version and packages the app does not ship do not count
+    """
+    pkg_dir = tmp_path / "packages"
+    _dist_info(pkg_dir, "numpy", "2.4.0")
+    _dist_info(pkg_dir, "pydantic", "2.14.3")
+    _dist_info(pkg_dir, "spacy", "3.8.0")
+
+    assert addon_manager.outdated_shared_packages(pkg_dir, frozen_bundle) == ["numpy"]
+
+
+def test_nothing_is_outdated_without_constraints_or_folder(tmp_path: Path) -> None:
+    """
+    Given  a source run (no constraints), and a folder that does not exist
+    When   the outdated packages are asked for
+    Then   the list is empty
+    """
+    pkg_dir = tmp_path / "packages"
+    _dist_info(pkg_dir, "numpy", "1.0")
+
+    assert addon_manager.outdated_shared_packages(pkg_dir, None) == []
+    assert addon_manager.outdated_shared_packages(tmp_path / "none", tmp_path / "c.txt") == []
+
+
+def test_inject_skips_a_folder_from_an_older_app(
+    tmp_path: Path, frozen_bundle: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """
+    Given  an add-on folder holding another numpy than the bundle
+    When   inject_packages_dir() runs
+    Then   the folder is not put on sys.path, and it is once the copy matches
+    """
+    pkg_dir = tmp_path / "packages"
+    _dist_info(pkg_dir, "numpy", "2.4.0")
+    monkeypatch.setattr(addon_manager, "get_packages_dir", lambda: pkg_dir)
+
+    inject_packages_dir()
+    assert str(pkg_dir) not in sys.path
+    assert addon_manager.addons_outdated() is True
+
+    frozen_bundle.write_text("numpy==2.4.0\n", encoding="utf-8")
+    inject_packages_dir()
+    assert str(pkg_dir) in sys.path
+    assert addon_manager.addons_outdated() is False
+
+
+def test_installed_addon_requirements_lists_what_is_in_the_folder(tmp_path: Path) -> None:
+    """
+    Given  a folder with spaCy and langchain-openai (and a language model)
+    When   the installed add-on requirements are asked for
+    Then   the add-ons' requirements come back, not the model or anything else
+    """
+    pkg_dir = tmp_path / "packages"
+    _dist_info(pkg_dir, "spacy", "3.8.0")
+    _dist_info(pkg_dir, "langchain_openai", "1.0.0")
+    _dist_info(pkg_dir, "en_core_web_sm", "3.8.0")
+    _dist_info(pkg_dir, "numpy", "2.4.0")
+
+    assert addon_manager.installed_addon_requirements(pkg_dir) == [
+        "spacy>=3.7",
+        "langchain-openai>=0.2",
+    ]
+    assert addon_manager.addon_in_folder("spaCy", pkg_dir)
+    assert not addon_manager.addon_in_folder("pyamdgpuinfo", pkg_dir)
+
+
+def test_drop_outdated_shared_packages_removes_by_record(
+    tmp_path: Path, frozen_bundle: Path
+) -> None:
+    """
+    Given  an outdated numpy copy, a current pydantic and spaCy in the folder
+    When   the outdated copies are dropped
+    Then   numpy's files are gone and everything else stays
+    """
+    pkg_dir = tmp_path / "packages"
+    _dist_info(pkg_dir, "numpy", "2.4.0", files=("numpy/core/a.py",))
+    _dist_info(pkg_dir, "pydantic", "2.14.3")
+    _dist_info(pkg_dir, "spacy", "3.8.0")
+
+    removed = addon_manager.drop_outdated_shared_packages(pkg_dir, frozen_bundle)
+
+    assert removed == ["numpy"]
+    assert not (pkg_dir / "numpy").exists()
+    assert not (pkg_dir / "numpy-2.4.0.dist-info").exists()
+    assert (pkg_dir / "pydantic").is_dir()
+    assert (pkg_dir / "spacy-3.8.0.dist-info").is_dir()
+
+
+def test_update_installs_the_addons_again_and_makes_the_folder_usable(
+    tmp_path: Path, frozen_bundle: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """
+    Given  a folder with spaCy and an outdated numpy
+    When   the add-ons are updated and pip (faked) replaces numpy with the bundle's version
+    Then   spaCy's requirement was installed with the policy, the folder is on sys.path and
+           nothing is outdated
+    """
+    pkg_dir = tmp_path / "packages"
+    _dist_info(pkg_dir, "spacy", "3.8.0")
+    _dist_info(pkg_dir, "numpy", "2.4.0")
+    monkeypatch.setattr(addon_manager, "get_packages_dir", lambda: pkg_dir)
+    installs: list[tuple[list[str], Path]] = []
+
+    def fake_install(packages: list[str], target: Path, _cb: object, **_kw: object) -> None:
+        installs.append((packages, target))
+        shutil.rmtree(pkg_dir / "numpy-2.4.0.dist-info")
+        _dist_info(pkg_dir, "numpy", "2.5.4")
+
+    monkeypatch.setattr(addon_manager, "install_packages_subprocess", fake_install)
+
+    addon_manager.update_installed_addons(lambda _line: None)
+
+    assert installs == [(["spacy>=3.7"], pkg_dir)]
+    assert str(pkg_dir) in sys.path
+    assert addon_manager.addons_outdated() is False
+
+
+def test_update_removes_a_stale_copy_pip_did_not_replace(
+    tmp_path: Path, frozen_bundle: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """
+    Given  an outdated numpy that none of the installed add-ons needs again
+    When   the add-ons are updated
+    Then   the stale copy is removed, so the folder can be used
+    """
+    pkg_dir = tmp_path / "packages"
+    _dist_info(pkg_dir, "spacy", "3.8.0")
+    _dist_info(pkg_dir, "numpy", "2.4.0")
+    monkeypatch.setattr(addon_manager, "get_packages_dir", lambda: pkg_dir)
+    monkeypatch.setattr(addon_manager, "install_packages_subprocess", lambda *_a, **_k: None)
+
+    addon_manager.update_installed_addons(lambda _line: None)
+
+    assert not (pkg_dir / "numpy-2.4.0.dist-info").exists()
+    assert addon_manager.addons_outdated() is False

@@ -23,6 +23,8 @@ coverage_html/
 
 # PyInstaller build scratch
 pyinstaller-work/
+# Written by tools/build/addon_constraints.py, bundled as data
+teachers_teammate/_build/
 
 # IDE
 .vscode/

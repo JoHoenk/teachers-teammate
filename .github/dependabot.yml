@@ -25,7 +25,7 @@ updates:
 
   # The standalone build's own pins: PyInstaller and the platform-only packages the
   # Linux lock cannot hold. A bump here is not covered by the Bazel tests (they run on
-  # Linux), so the smoke test of the next release dry run is its check.
+  # Linux), so the bundle test build (`.github/workflows/build_bundles.yml`) is its check.
   - package-ecosystem: "pip"
     directory: "/tools/build"
     schedule:

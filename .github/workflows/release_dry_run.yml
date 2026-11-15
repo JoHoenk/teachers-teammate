@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Release version — use v1.0.0-rc (or -pre, -alpha) for a pre-release dry run"
+        description: "Release version — use v1.0.0-rc1 (or -pre, -alpha) for a pre-release dry run"
         required: true
         type: string
 
@@ -12,10 +12,30 @@ permissions:
   contents: read
 
 jobs:
+  # The same check release.yml runs on a tag, so a version that would fail there fails here
+  # first, before anything is built.
+  validate:
+    name: Validate the version
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Check the version form
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          if [[ ! "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-(alpha|beta|rc|pre)\.?[0-9]*)?$ ]]; then
+            echo "::error::'$VERSION' is not a release version. Use vX.Y.Z or vX.Y.Z-(alpha|beta|rc|pre)[.]N."
+            exit 1
+          fi
+          python3 tools/release/stamp_versions.py --version "$VERSION" --check
+
   lint:
+    needs: [validate]
     uses: ./.github/workflows/format_lint.yml
 
   test:
+    needs: [validate]
     uses: ./.github/workflows/tests.yml
 
   build-wheel:

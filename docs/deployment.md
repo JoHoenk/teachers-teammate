@@ -24,41 +24,71 @@ Builds the Sphinx site (`bazel build //docs:html`) on every push to `main` and o
 
 Manual trigger (`workflow_dispatch`) with a version string (e.g. `v1.0.0-rc1`).
 Runs the full build matrix — lint, test, wheel, and all platform standalone builds — but **does not upload artifacts or publish a release**.
-Use this to validate the build before cutting a real release.
+Use this to validate the build before cutting a real release. It starts with the same `validate`
+job as the release, so a version that would fail there fails here first, before anything is built.
 
-### Windows test build (`build_windows.yml`)
+### Bundle test build (`build_bundles.yml`)
 
-Manual trigger with an optional version string (default `v0.0.0-test`).
-Builds only the Windows NSIS installer — no lint/test gate, no release, no tag — and uploads it as a workflow-run artifact with 2-day retention. After a successful build, artifacts from earlier runs of this workflow are deleted, so only the newest installer is kept (a failed build leaves the previous one in place):
+Manual trigger with a version string (default `v0.0.0-test`).
+Builds all three platform bundles — no lint/test gate, no release, no tag — and uploads them as
+workflow-run artifacts with 2-day retention. After a successful build, artifacts from earlier manual
+runs of this workflow are deleted, so only the newest bundles are kept (a failed build leaves the
+previous ones in place):
 
 ```bash
-gh workflow run build_windows.yml -f version=v0.0.0-test
+gh workflow run build_bundles.yml -f version=v0.0.0-test
 gh run watch
-gh run download <run-id> -n teachers-teammate-windows
+gh run download <run-id> -n teachers-teammate-linux   # or -windows, -macos
 ```
+
+A pull request that touches `tools/packaging/**`, `tools/build/**` or
+`.github/workflows/build_*.yml` runs it too, with read-only access (so a fork's pull request works).
+Its artifacts are named `teachers-teammate-pr-*` and are never pruned by a manual run. A new push to
+the same pull request cancels the run it supersedes.
 
 ### Release (`release.yml`)
 
-Manual trigger with a version string (e.g. `v1.2.3`).
+A release is a tag: the tag is the version and the commit it points at is what is built.
+
+```bash
+git tag v1.2.3            # or v1.2.3-rc1 for a pre-release
+git push origin v1.2.3
+```
+
+Accepted are `vX.Y.Z` and `vX.Y.Z-(alpha|beta|rc|pre)[.]N`, the number required — `v0.5.7-rc1`
+and `v0.5.7-rc.1` both, `v0.5.7-rc.` and `v0.5.7-pre` not. A PEP 440 form without the dash (`v0.5.7rc1`) is rejected: GitHub would publish it as
+*Latest*, and `VIProductVersion` would break `makensis`.
 
 ```
-lint ──┐
-       ├──► create-release (draft GitHub Release)
-test ──┘         │
-                 ├──► build-wheel       → wheel (.whl) attached to the draft
-                 └──► build-standalone  → platform installers attached to the draft
-                                    │
-                                    └──► publish-release → flips the draft to published
+validate ──► lint ──┐
+             test ──┴──► create-release (draft GitHub Release)
+                              │
+                              ├──► build-wheel      → wheel (.whl) attached to the draft
+                              └──► build-standalone → platform installers attached to the draft
+                                                 │
+                                                 └──► publish-release → flips the draft to published
 ```
+
+**validate** runs first and fails within seconds, before anything is built or a draft exists: it
+checks the tag form, that the tagged commit is on `main` (so a tag on a side branch cannot
+ship) and that the version is newer than the latest published release (the app's update check
+reads `/releases/latest`; a pre-release must belong to a higher version). A bad tag is deleted by hand (`git push --delete origin <tag>`) and pushed again.
+
+A tag ruleset in the repository settings allows only the maintainer to create or delete `v*` tags
+and forbids moving an existing one.
+
+Each tag has its own concurrency group (`release-<tag>`), so tags pushed together all build, side
+by side — a single shared group would keep only one pending run and cancel the rest.
+**publish-release** marks a final release *Latest* only if no higher version is already published,
+so an older tag that finishes last cannot take it over.
 
 The release stays a draft until **publish-release** runs, so a half-uploaded release is never
 visible. The upload steps pass `draft: true` too: without it the upload action publishes an
-existing draft after its first upload. `create-release` sets `target_commitish` to the built
-commit, because a draft's tag is only created when the release is published. A pre-release
-version (one containing `-`) is published without `--latest`.
+existing draft after its first upload. A pre-release version (one containing `-`) is published
+without `--latest`.
 
 A failed run leaves its draft behind: delete it with `gh release delete <tag> --cleanup-tag`
-before running the release again.
+before pushing the tag again.
 
 The **build-standalone** job (`build_artifacts.yml`) runs in parallel on three GitHub-hosted runners:
 

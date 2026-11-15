@@ -18,13 +18,15 @@ _SEMVER_PRE_MAP = {"alpha": "a", "beta": "b", "rc": "rc", "pre": "rc"}
 def normalize_version(raw: str) -> str:
     """Normalize and validate a release version string.
 
-    Accepts both PEP 440 and SemVer pre-release notation:
+    Accepts both PEP 440 and SemVer pre-release notation, with or without a dot before the
+    pre-release number:
       v0.1.2-rc     → 0.1.2rc0
+      v0.1.2-rc1    → 0.1.2rc1
       v0.1.2-rc.1   → 0.1.2rc1
       v0.1.2-alpha.2 → 0.1.2a2
     """
     version = raw.lstrip("v")
-    m = re.match(r"^(\d+(?:\.\d+)*)-([a-z]+)(?:\.(\d+))?$", version)
+    m = re.match(r"^(\d+(?:\.\d+)*)-([a-z]+)(?:\.?(\d+))?$", version)
     if m:
         base, pre_type, pre_num = m.group(1), m.group(2), m.group(3) or "0"
         pep_pre = _SEMVER_PRE_MAP.get(pre_type)
@@ -119,6 +121,11 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--version", required=True, help="Release version (v-prefixed accepted)")
     parser.add_argument(
+        "--check",
+        action="store_true",
+        help="Validate the version and print the normalised form; write nothing",
+    )
+    parser.add_argument(
         "--init-file",
         default="teachers_teammate/__init__.py",
         help="Path to teachers_teammate/__init__.py",
@@ -141,18 +148,20 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         version = normalize_version(args.version)
-        stamp_files(
-            version=version,
-            init_path=Path(args.init_file),
-            build_path=Path(args.build_file),
-            target_name=args.wheel_target,
-        )
+        if not args.check:
+            stamp_files(
+                version=version,
+                init_path=Path(args.init_file),
+                build_path=Path(args.build_file),
+                target_name=args.wheel_target,
+            )
     except (OSError, ValueError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1
 
     print(f"Resolved version: {version}")
-    print(f"Stamped version: {version}")
+    if not args.check:
+        print(f"Stamped version: {version}")
     return 0
 
 

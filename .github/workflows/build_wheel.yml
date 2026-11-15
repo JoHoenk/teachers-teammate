@@ -48,8 +48,10 @@ jobs:
           python-version: "3.12"
 
       - name: Stamp pyproject and Bazel wheel version
+        env:
+          VERSION: ${{ inputs.version }}
         run: |
-          python tools/release/stamp_versions.py --version "${{ inputs.version }}"
+          python tools/release/stamp_versions.py --version "$VERSION"
 
       - name: Build wheel with Bazel
         run: |

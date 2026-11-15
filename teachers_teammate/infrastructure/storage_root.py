@@ -7,6 +7,10 @@ Responsibilities
   priority order: env-var override → OS user-cache directory.
 - `compute_cache_key(value)` — produce a short stable identifier from a string.
   Used by `StateRepository` to map a source-file path to a JSON state-file name.
+- `resolve_config_root()` / `resolve_data_root()` — where the teacher's *own* data lives
+  (settings; benchmark history and speed measurements), apart from the cache.
+- `resolve_data_folder(name)` — one folder of the data root, moved there from the cache the
+  first time it is asked for.
 - `default_config_path()` — canonical path of the default ``ocr.toml`` file.
 - `resolve_config_path(explicit)` — locate the config file to load.
 
@@ -15,6 +19,14 @@ Storage root candidates (in priority order)
 1. ``TEACHERS_TEAMMATE_TMPDIR`` environment variable, when set.
 2. The per-user OS cache directory returned by ``platformdirs.user_cache_dir``
    (falls back to ``~/.cache/teachers_teammate`` when ``platformdirs`` is absent).
+
+Settings and history are not cache
+----------------------------------
+The cache (results, previews) may be deleted by cleanup tools at any time and costs nothing
+but time to rebuild.  Settings, benchmark history and speed measurements cannot be rebuilt,
+so they live in the per-user *config* and *data* folders (``platformdirs.user_config_dir`` /
+``user_data_dir``).  With ``TEACHERS_TEAMMATE_TMPDIR`` set all three roots are that one folder.
+Files an earlier version wrote into the cache are moved over once.
 
 What this module does NOT do
 -----------------------------
@@ -28,8 +40,10 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 import hashlib
+import logging
 import os
 from pathlib import Path
+import shutil
 
 from ..exceptions import ConfigFileNotFoundError, StorageResolutionError
 
@@ -40,10 +54,17 @@ __all__ = [
     "StorageRoot",
     "compute_cache_key",
     "default_config_path",
+    "migrate_once",
     "resolve_artifact_dir",
     "resolve_config_path",
+    "resolve_config_root",
+    "resolve_data_folder",
+    "resolve_data_root",
     "resolve_storage_root",
 ]
+
+_log = logging.getLogger(__name__)
+_APP_NAME = "teachers_teammate"
 
 
 @dataclass(frozen=True)
@@ -71,6 +92,89 @@ def _get_platform_cache_dir() -> Path:
     cache_dir = Path(user_cache_dir("teachers_teammate", appauthor=False, ensure_exists=True))
     cache_dir.mkdir(parents=True, exist_ok=True)
     return cache_dir
+
+
+def _override_root() -> Path | None:
+    """Return the ``TEACHERS_TEAMMATE_TMPDIR`` folder, or ``None`` when it is not set."""
+    override = os.environ.get("TEACHERS_TEAMMATE_TMPDIR", "").strip()
+    return Path(override) if override else None
+
+
+def _platform_dir(kind: str) -> Path:
+    """Return the per-user OS folder of *kind* (``"cache"``, ``"config"`` or ``"data"``).
+
+    The folder is not created: callers that write create it, and the migration looks at the
+    cache folder without making one.
+    """
+    try:
+        import platformdirs  # noqa: PLC0415
+    except ImportError:
+        fallback = {"cache": ".cache", "config": ".config", "data": ".local/share"}[kind]
+        return Path.home() / fallback / _APP_NAME
+    finder = getattr(platformdirs, f"user_{kind}_dir")
+    return Path(finder(_APP_NAME, appauthor=False))
+
+
+def _legacy_cache_root() -> Path | None:
+    """Return the OS cache folder earlier versions kept everything in.
+
+    ``None`` under the override: there the old and the new place are the same folder.
+    """
+    return None if _override_root() else _platform_dir("cache")
+
+
+def _user_root(kind: str) -> Path:
+    """Return the per-user folder of *kind*, or the storage root when it cannot be used."""
+    override = _override_root()
+    if override is not None:
+        return override
+    path = _platform_dir(kind)
+    try:
+        path.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        _log.warning("Cannot use %s (%s); keeping the %s in the storage root", path, exc, kind)
+        return resolve_storage_root().path
+    return path
+
+
+def resolve_config_root() -> Path:
+    """Return the folder of the settings file (``ocr.toml``)."""
+    return _user_root("config")
+
+
+def resolve_data_root() -> Path:
+    """Return the folder of the data the teacher cannot rebuild (history, speed data)."""
+    return _user_root("data")
+
+
+def migrate_once(old: Path, new: Path) -> bool:
+    """Move *old* to *new* when *old* exists and *new* does not.
+
+    When both exist, *new* wins and *old* stays untouched.  A move that fails (read-only
+    folder, file in use) is logged and leaves *old* where it is.
+
+    Returns:
+        ``True`` when something was moved.
+    """
+    if new.exists() or not old.exists():
+        return False
+    try:
+        new.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(old, new)
+    except OSError as exc:
+        _log.warning("Could not move %s to %s: %s", old, new, exc)
+        return False
+    _log.info("Moved %s to %s", old, new)
+    return True
+
+
+def resolve_data_folder(name: str) -> Path:
+    """Return the folder *name* of the data root, moved over from the cache on first use."""
+    folder = resolve_data_root() / name
+    legacy = _legacy_cache_root()
+    if legacy is not None:
+        migrate_once(legacy / name, folder)
+    return folder
 
 
 def _probe_writable(path: Path) -> tuple[bool, str | None]:
@@ -148,8 +252,8 @@ _DEFAULT_CONFIG_NAME = "ocr.toml"
 
 
 def default_config_path() -> Path:
-    """Return the default ``ocr.toml`` path inside the platform storage root."""
-    return resolve_storage_root().path / _DEFAULT_CONFIG_NAME
+    """Return the default ``ocr.toml`` path inside the config root."""
+    return resolve_config_root() / _DEFAULT_CONFIG_NAME
 
 
 def resolve_config_path(explicit: str | None) -> Path | None:
@@ -157,7 +261,8 @@ def resolve_config_path(explicit: str | None) -> Path | None:
 
     Search order:
     1. Explicit ``--config`` path (raises :exc:`ConfigFileNotFoundError` if missing).
-    2. ``ocr.toml`` in the platform storage root.
+    2. ``ocr.toml`` in the config root.  An ``ocr.toml`` an earlier version left in the cache
+       folder is moved there first, unless one is already there.
 
     Args:
         explicit: Value of ``--config`` from the pre-parse, or ``None``.
@@ -171,4 +276,10 @@ def resolve_config_path(explicit: str | None) -> Path | None:
             raise ConfigFileNotFoundError(f"Config file not found: {p}")
         return p
     storage_default = default_config_path()
+    legacy_root = _legacy_cache_root()
+    if legacy_root is not None:
+        legacy = legacy_root / _DEFAULT_CONFIG_NAME
+        if legacy.is_file() and not storage_default.exists():
+            if not migrate_once(legacy, storage_default):
+                return legacy  # could not be moved: still read what the teacher saved
     return storage_default if storage_default.is_file() else None

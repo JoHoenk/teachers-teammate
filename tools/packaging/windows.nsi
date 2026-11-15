@@ -690,7 +690,7 @@ Function un.UnDataPageCreate
     "(built-in reader, page models, name detection, packages for online AI services)"
   Pop $0
 
-  ${NSD_CreateCheckBox} 10u 70u 270u 14u "Settings, saved API keys and the results cache"
+  ${NSD_CreateCheckBox} 10u 70u 270u 14u "Settings, API keys, benchmark history and results cache"
   Pop $UnDelCache
   ; unchecked by default — user may want to keep settings if reinstalling
 
@@ -800,6 +800,12 @@ Section "Uninstall"
     ; An all-users uninstall does not touch HKCU below; do not leave the empty parent behind.
     DeleteRegKey /ifempty HKCU "${REG_KEY}"
     RMDir /r "$LOCALAPPDATA\teachers_teammate\Cache"
+    ; The settings file, the benchmark history and the speed data sit beside packages\ and
+    ; models\ (the config and data folders are the same on Windows). Earlier versions kept them
+    ; in Cache\, which the line above already removed.
+    Delete "$LOCALAPPDATA\teachers_teammate\ocr.toml"
+    RMDir /r "$LOCALAPPDATA\teachers_teammate\benchmark"
+    RMDir /r "$LOCALAPPDATA\teachers_teammate\speed"
     RMDir "$LOCALAPPDATA\teachers_teammate"
   ${EndIf}
 

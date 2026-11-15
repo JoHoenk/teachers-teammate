@@ -2308,7 +2308,7 @@ class ProcessingApplicationService:
     # ── Storage root / config path helpers ───────────────────────────────
 
     def default_config_path(self) -> Path:
-        """Return the default ``ocr.toml`` path inside the platform storage root."""
+        """Return the default ``ocr.toml`` path inside the config root."""
         return _infra_default_config_path()
 
     def resolve_config_path(self, explicit: str | None) -> Path | None:

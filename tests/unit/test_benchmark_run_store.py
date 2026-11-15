@@ -409,3 +409,16 @@ def test_from_json_dict_keeps_explicit_plain_text_untouched() -> None:
     run = StoredRun.from_json_dict(raw)
 
     assert (run.raw_text, run.raw_text_format) == ("**not bold**", "plain")
+
+
+def test_default_root_is_the_data_folder_not_the_cache(tmp_path: Path, monkeypatch) -> None:
+    """
+    Given  a data root
+    When   a BenchmarkRunStore is built without a root
+    Then   it uses the ``benchmark`` folder of the data root
+    """
+    from teachers_teammate.infrastructure.benchmark import run_store  # noqa: PLC0415
+
+    monkeypatch.setattr(run_store, "resolve_data_folder", lambda name: tmp_path / name)
+
+    assert BenchmarkRunStore().root == tmp_path / "benchmark"

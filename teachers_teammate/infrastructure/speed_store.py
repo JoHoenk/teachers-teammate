@@ -1,4 +1,4 @@
-"""Where measured speeds are kept: two JSON files under the storage root.
+"""Where measured speeds are kept: two JSON files in the data folder.
 
 ``measurements.json`` holds what the speed test found, one record per model.  A measurement is
 only worth something together with what it was measured on, so the key carries the server, the
@@ -43,7 +43,7 @@ from typing import Any, cast
 
 from ..domain.performance_estimate import ModelSpeed, SpeedStep, StepOutcome
 from .ollama_utils import normalize_ollama_url
-from .storage_root import resolve_storage_root
+from .storage_root import resolve_data_folder
 
 _logger = logging.getLogger(__name__)
 
@@ -189,7 +189,7 @@ class SampleStore:
         """Create the store.
 
         Args:
-            path: The file to use; ``<storage root>/speed/samples.json`` when ``None``.
+            path: The file to use; ``<data root>/speed/samples.json`` when ``None``.
         """
         self._path = path
         self._lock = threading.Lock()
@@ -199,7 +199,7 @@ class SampleStore:
     def path(self) -> Path:
         """Return the file the store reads and writes."""
         if self._path is None:
-            self._path = resolve_storage_root().path / "speed" / "samples.json"
+            self._path = resolve_data_folder("speed") / "samples.json"
         return self._path
 
     def samples(self, server: str, tag: str, step: SpeedStep) -> dict[str, tuple[RunSample, ...]]:
@@ -317,7 +317,7 @@ class SpeedStore:
         """Create the store.
 
         Args:
-            path: The file to use; ``<storage root>/speed/measurements.json`` when ``None``.
+            path: The file to use; ``<data root>/speed/measurements.json`` when ``None``.
         """
         self._path = path
         self._lock = threading.Lock()
@@ -327,7 +327,7 @@ class SpeedStore:
     def path(self) -> Path:
         """Return the file the store reads and writes."""
         if self._path is None:
-            self._path = resolve_storage_root().path / "speed" / "measurements.json"
+            self._path = resolve_data_folder("speed") / "measurements.json"
         return self._path
 
     # ── reading ────────────────────────────────────────────────────────────

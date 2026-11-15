@@ -6,7 +6,7 @@ and overwrites it on every run, this store is an **append-only experiment log**:
 many timestamped runs accumulate per document so the benchmark app can compare
 OCR configurations against each other over time.
 
-Layout (under ``<storage_root>/benchmark/``)::
+Layout (under ``<data_root>/benchmark/``)::
 
     <document_hash>/                       # compute_file_hash(document)
         document.json                      # {document_hash, display_name, last_path}
@@ -30,7 +30,7 @@ import shutil
 import uuid
 
 from ...config import DEFAULTS, OcrConfig
-from ..storage_root import resolve_storage_root
+from ..storage_root import resolve_data_folder
 
 BENCHMARK_KEEP_LAST_N = 20
 _SCHEMA_VERSION = 1
@@ -179,7 +179,7 @@ class BenchmarkRunStore:
     """Filesystem store for append-only benchmark runs."""
 
     def __init__(self, root: Path | None = None, *, keep_last: int = BENCHMARK_KEEP_LAST_N) -> None:
-        self._root = root or (resolve_storage_root().path / "benchmark")
+        self._root = root or (resolve_data_folder("benchmark"))
         self._keep_last = keep_last
 
     @property

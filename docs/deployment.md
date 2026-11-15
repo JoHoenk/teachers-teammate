@@ -292,7 +292,11 @@ for one to be removed in Windows Settings; a silent run needs `/SCOPE=` to pick 
 | 14 | needs administrator rights |
 
 A silent uninstall keeps all user data unless `/DELDATA` (add-ons and models) or
-`/DELSETTINGS` (settings, saved API keys, results cache) is given.
+`/DELSETTINGS` (settings file `ocr.toml`, benchmark history, speed data, Qt settings, saved API
+keys, results cache) is given. Settings, benchmark history and speed data live in
+`%LOCALAPPDATA%\teachers_teammate` beside `packages\` and `models\`, not in the cache folder;
+the installer test checks that an update and a plain uninstall keep them and `/DELSETTINGS`
+removes them.
 
 ---
 

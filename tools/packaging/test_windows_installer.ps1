@@ -176,6 +176,12 @@ foreach ($sub in @('packages', 'models', 'Cache')) {
     New-Item -ItemType Directory -Path (Join-Path $DataDir $sub) -Force | Out-Null
     Set-Content -LiteralPath (Join-Path $DataDir "$sub\marker.txt") -Value 'keep me'
 }
+# The settings file, the benchmark history and the speed data (PR 7) sit beside packages\.
+Set-Content -LiteralPath (Join-Path $DataDir 'ocr.toml') -Value 'keep me'
+foreach ($sub in @('benchmark', 'speed')) {
+    New-Item -ItemType Directory -Path (Join-Path $DataDir $sub) -Force | Out-Null
+    Set-Content -LiteralPath (Join-Path $DataDir "$sub\marker.txt") -Value 'keep me'
+}
 
 # ── 3. Update over the same install ─────────────────────────────────────────
 
@@ -184,6 +190,10 @@ Assert-Equal 0 (Invoke-Setup @('/SCOPE=user')) 'the second run exits 0'
 Assert-Equal 'keep me' (Get-UninstallValue $QtKey 'ci_marker') 'the Qt settings marker survives (F1)'
 foreach ($sub in @('packages', 'models', 'Cache')) {
     Assert-Present (Join-Path $DataDir "$sub\marker.txt") "the $sub marker survives"
+}
+Assert-Present (Join-Path $DataDir 'ocr.toml') 'the settings file survives the update'
+foreach ($sub in @('benchmark', 'speed')) {
+    Assert-Present (Join-Path $DataDir "$sub\marker.txt") "the $sub marker survives the update"
 }
 Assert-Equal $Version (Get-UninstallValue "HKCU:\$UninstKey" 'DisplayVersion') 'one Apps entry, with the version'
 Assert-Missing $AllUsersDir 'nothing was written to Program Files'
@@ -212,6 +222,10 @@ Assert-Equal 'keep me' (Get-UninstallValue $QtKey 'ci_marker') 'the Qt settings 
 foreach ($sub in @('packages', 'models', 'Cache')) {
     Assert-Present (Join-Path $DataDir "$sub\marker.txt") "the $sub data survives"
 }
+Assert-Present (Join-Path $DataDir 'ocr.toml') 'the settings file survives the uninstall'
+foreach ($sub in @('benchmark', 'speed')) {
+    Assert-Present (Join-Path $DataDir "$sub\marker.txt") "the $sub data survives the uninstall"
+}
 
 # ── 6. Uninstall, removing the data ─────────────────────────────────────────
 
@@ -219,6 +233,10 @@ Write-Step 'Uninstall, removing the user data'
 Assert-Equal 0 (Invoke-Setup @('/SCOPE=user')) 'the reinstall exits 0'
 Invoke-Uninstaller -Directory $UserDir -Arguments @('/DELDATA', '/DELSETTINGS')
 foreach ($sub in @('packages', 'models', 'Cache')) {
+    Assert-Missing (Join-Path $DataDir $sub) "the $sub folder is gone"
+}
+Assert-Missing (Join-Path $DataDir 'ocr.toml') 'the settings file is gone'
+foreach ($sub in @('benchmark', 'speed')) {
     Assert-Missing (Join-Path $DataDir $sub) "the $sub folder is gone"
 }
 Assert-Missing $QtKey 'the Qt settings key is gone'

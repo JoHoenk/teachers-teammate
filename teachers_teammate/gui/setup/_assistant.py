@@ -144,6 +144,7 @@ class SetupAssistant(QWizard):
             packages=[item.name for item in downloads if item.kind is DownloadKind.PACKAGE],
             spacy_models=[item.name for item in downloads if item.kind is DownloadKind.SPACY_MODEL],
             reader=any(item.kind is DownloadKind.READER_MODEL for item in downloads),
+            page_models=any(item.kind is DownloadKind.PAGE_MODELS for item in downloads),
             ollama_models=[
                 item.name
                 for item in downloads

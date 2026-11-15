@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any
 
-from ..config import DEFAULTS, RETIRED_OCR_ENGINES
+from ..config import DEFAULTS, RETIRED_OCR_ENGINES, normalize_preprocess_method
 from ..domain.data_location import (
     ENGINE_PPOCR,
     STAGE_ANONYMIZATION,
@@ -28,7 +28,12 @@ from ..domain.data_location import (
     STAGE_EVALUATION,
     STAGE_OCR,
 )
-from ..domain.local_models import READER_MODEL_NAME, READER_SIZE_GB
+from ..domain.local_models import (
+    PAGE_MODELS_ADDON_ID,
+    PAGE_MODELS_SIZE_GB,
+    READER_MODEL_NAME,
+    READER_SIZE_GB,
+)
 from ..domain.model_catalog import (
     OLLAMA_CATALOG,
     DiskVerdict,
@@ -107,6 +112,8 @@ class SetupFacts:
     missing_package: str
     #: The built-in reader's model files are downloaded.
     reader_installed: bool = False
+    #: The page models (turn and flatten) of the automatic image preparation are downloaded.
+    page_models_installed: bool = False
 
 
 class DownloadKind(StrEnum):
@@ -115,6 +122,7 @@ class DownloadKind(StrEnum):
     PACKAGE = "package"
     SPACY_MODEL = "spacy_model"
     READER_MODEL = "reader_model"
+    PAGE_MODELS = "page_models"
     OLLAMA_MODEL = "ollama_model"
 
 
@@ -123,7 +131,7 @@ class PlannedDownload:
     """One download the install round runs."""
 
     kind: DownloadKind
-    #: pip package, spaCy model, the reader's id (``ppocr``) or Ollama tag.
+    #: pip package, spaCy model, the reader's id (``ppocr``), ``page_models`` or Ollama tag.
     name: str
     #: The stage that needs it: ``"ocr"``, ``"correction"`` or ``"anonymization"``.
     stage: str
@@ -327,6 +335,7 @@ def _downloads_plan(
     names_wanted: bool,
     reading_tag: str,
     reader_needed: bool,
+    page_models_needed: bool,
     correction_model: str,
     place: ProofreadingPlace,
 ) -> list[PlannedDownload]:
@@ -359,6 +368,15 @@ def _downloads_plan(
                 name=ENGINE_PPOCR,
                 stage=STAGE_OCR,
                 size_gb=READER_SIZE_GB,
+            )
+        )
+    if page_models_needed and not facts.page_models_installed:
+        downloads.append(
+            PlannedDownload(
+                kind=DownloadKind.PAGE_MODELS,
+                name=PAGE_MODELS_ADDON_ID,
+                stage=STAGE_OCR,
+                size_gb=PAGE_MODELS_SIZE_GB,
             )
         )
     proposed = [(reading_tag, STAGE_OCR)]
@@ -435,6 +453,10 @@ def build_setup_plan(
         reading_tag=reading_tag,
         reader_needed=(
             answers.hand_in is HandIn.HANDWRITTEN and _reading_engine(current) == ENGINE_PPOCR
+        ),
+        page_models_needed=(
+            answers.hand_in is HandIn.HANDWRITTEN
+            and normalize_preprocess_method(_current(current, "preprocess_method")) == "auto"
         ),
         correction_model=model,
         place=place,

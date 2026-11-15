@@ -74,7 +74,7 @@ may embed one of NSIS's compression modules:
 - **zlib** — zlib/libpng license (reproduced above).
 - **bzip2** — the bzip2 license (BSD-style; includes an author-attribution
   requirement). Full text: https://github.com/kichik/nsis/blob/master/COPYING
-- **LZMA** (NSIS default) — Common Public License version 1.0 (CPL-1.0). NSIS
+- **LZMA** (used by this installer) — Common Public License version 1.0 (CPL-1.0). NSIS
   grants a special exception permitting static or dynamic linking to the LZMA
   module files without subjecting the linked code to CPL terms; modifications to
   the LZMA module files themselves remain under CPL-1.0. Full CPL-1.0 text and

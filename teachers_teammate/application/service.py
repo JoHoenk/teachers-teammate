@@ -1290,6 +1290,7 @@ class ProcessingApplicationService:
             spacy_installed=self.is_module_importable("spacy"),
             spacy_model=self.spacy_model_for_language(answers.language),
             reader_installed=self.reader_installed(),
+            page_models_installed=self.page_models_installed(),
             missing_package=(
                 self.missing_provider_package(answers.online_choice[0]) or ""
                 if answers.proofreading is ProofreadingPlace.ONLINE

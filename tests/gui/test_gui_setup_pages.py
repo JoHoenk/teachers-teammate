@@ -53,6 +53,8 @@ from teachers_teammate.gui.setup._summary import (
     CLASSES_NAME,
     HANDWRITTEN,
     ROW_CLASSES,
+    PAGE_MODELS_DETAIL,
+    PAGE_MODELS_NAME,
     ROW_DOWNLOADED,
     ROW_INSTALLED,
     ROW_KEEPS_OWN,
@@ -691,6 +693,47 @@ def test_the_summary_lists_the_reader_download_in_megabytes() -> None:
     assert size_text(reader) == "31 MB"
 
 
+def test_the_summary_gives_the_page_models_a_row_of_their_own() -> None:
+    """
+    Given  a plan that reads with an Ollama model and downloads the page models
+    When   the summary's lines are worked out
+    Then   a "Page models" row follows the reading row with one download of "39 MB", and the
+           reading row does not list it
+    """
+    from teachers_teammate.domain.local_models import (  # noqa: PLC0415
+        PAGE_MODELS_ADDON_ID,
+        PAGE_MODELS_SIZE_GB,
+    )
+    from teachers_teammate.gui.setup._summary import size_text  # noqa: PLC0415
+
+    page_models = PlannedDownload(
+        kind=DownloadKind.PAGE_MODELS,
+        name=PAGE_MODELS_ADDON_ID,
+        stage="ocr",
+        size_gb=PAGE_MODELS_SIZE_GB,
+    )
+    reading = _download("ocr", "qwen2.5vl:7b")
+    plan = _plan(_step("ocr", model="qwen2.5vl:7b"), downloads=(reading, page_models))
+
+    _classes, reading_row, page_row = _rows(plan)
+
+    assert reading_row.downloads == (reading,)
+    assert (page_row.name, page_row.detail) == (PAGE_MODELS_NAME, PAGE_MODELS_DETAIL)
+    assert page_row.downloads == (page_models,)
+    assert size_text(page_models) == "39 MB"
+
+
+def test_the_summary_has_no_page_models_row_when_none_are_planned() -> None:
+    """
+    Given  a plan that reads with an Ollama model and plans no page-models download
+    When   the summary's lines are worked out
+    Then   there is no "Page models" row
+    """
+    plan = _plan(_step("ocr"), downloads=(_download("ocr"),))
+
+    assert PAGE_MODELS_NAME not in [row.name for row in _rows(plan)]
+
+
 def test_the_summary_says_when_a_step_is_off() -> None:
     """
     Given  a plan whose proofreading is not set up
@@ -957,7 +1000,7 @@ def _fake_speed(monkeypatch) -> None:
 
 def test_the_done_page_lists_the_downloads_it_started(qtbot, monkeypatch) -> None:
     """
-    Given  a plan with two downloads
+    Given  a plan with two Ollama models and the page models
     When   the done page is shown
     Then   each download has a line, and each says it is still waiting
     """
@@ -967,8 +1010,12 @@ def test_the_done_page_lists_the_downloads_it_started(qtbot, monkeypatch) -> Non
 
     done.initializePage()
 
-    assert list(done._rows._labels) == ["hf.co/prithivMLmods/chandra-ocr-2-GGUF:Q8_0", "gemma4:12b"]
-    assert [label.text() for label in done._rows._labels.values()] == [DONE_WAITING] * 2
+    assert list(done._rows._labels) == [
+        "hf.co/prithivMLmods/chandra-ocr-2-GGUF:Q8_0",
+        "page_models",
+        "gemma4:12b",
+    ]
+    assert [label.text() for label in done._rows._labels.values()] == [DONE_WAITING] * 3
 
 
 def test_the_done_page_follows_the_install_round(qtbot, monkeypatch) -> None:

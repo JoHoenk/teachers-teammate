@@ -14,12 +14,12 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Set up Bazel cache
-        uses: actions/cache@v6
+      - name: Set up Bazel
+        uses: bazel-contrib/setup-bazel@f34d6a05eae3c24acab7fa54587492daeaeffdab # 0.19.2
         with:
-          path: ~/.cache/bazel
-          key: bazel-test-${{ runner.os }}-${{ hashFiles('MODULE.bazel', 'requirements_test_lock.txt') }}
-          restore-keys: bazel-test-${{ runner.os }}-
+          bazelisk-cache: true
+          disk-cache: tests
+          repository-cache: true
 
       - name: Allow unprivileged user namespaces (Bazel linux-sandbox)
         # Ubuntu 24.04 runners block them via AppArmor, which makes Bazel fall
@@ -36,6 +36,6 @@ jobs:
         # LangChain is an optional runtime dependency (pip install "teachers-teammate[llm]").
         # The test lock file (requirements_test_lock.txt) includes langchain-core so that
         # correction, evaluation, and LLM OCR tests are exercised in CI.
-        run: bazel test //tests/... --test_output=errors
+        run: bazel test --config=ci //tests/... --test_output=errors
         env:
           QT_QPA_PLATFORM: offscreen

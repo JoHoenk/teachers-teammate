@@ -338,7 +338,7 @@ def _captured_exchange(
         timeout=60.0,
         num_ctx=NUM_CTX,
         profile=profile,
-        port=sent_to,  # ty: ignore[invalid-argument-type]
+        port=sent_to,
     )
     name = LANGUAGE_NAMES[code]
     corrector.correct(_PROBE_TEXT, name)

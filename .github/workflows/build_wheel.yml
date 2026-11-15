@@ -47,6 +47,13 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Set up Bazel
+        uses: bazel-contrib/setup-bazel@f34d6a05eae3c24acab7fa54587492daeaeffdab # 0.19.2
+        with:
+          bazelisk-cache: true
+          disk-cache: wheel
+          repository-cache: true
+
       - name: Stamp pyproject and Bazel wheel version
         env:
           VERSION: ${{ inputs.version }}
@@ -55,7 +62,7 @@ jobs:
 
       - name: Build wheel with Bazel
         run: |
-          bazel build //teachers_teammate:teachers_teammate_wheel
+          bazel build --config=ci //teachers_teammate:teachers_teammate_wheel
           mkdir -p dist
           cp bazel-bin/teachers_teammate/*.whl dist/
 

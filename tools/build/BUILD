@@ -5,6 +5,8 @@ run_gui.py); addon_constraints.py, check_addon_resolution.py, make_constraints.p
 and check_linux_bundle.py are also libraries, so a unit test can drive them.
 """
 
+load("@rules_python//python:defs.bzl", "py_library")
+
 py_library(
     name = "build_tools_lib",
     srcs = [

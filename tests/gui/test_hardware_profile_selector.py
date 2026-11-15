@@ -29,7 +29,7 @@ class _StubService:
         _ = ollama_url
         if setting in ("cpu", "8gb", "16gb"):
             return HardwareDetection(
-                profile=setting,  # ty: ignore[invalid-argument-type]  # narrowed by the check above
+                profile=setting,
                 reason=DetectionReason.MANUAL,
                 system_memory_gb=self.manual_memory_gb,
             )

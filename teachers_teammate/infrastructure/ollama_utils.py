@@ -291,7 +291,7 @@ def _abandon(abandoned: threading.Event, on_abandon: Callable[[], None] | None) 
     if on_abandon is not None:
         try:
             on_abandon()
-        except Exception:  # noqa: BLE001  # cutting the connection is best effort
+        except Exception:  # cutting the connection is best effort
             logger.debug("could not cut the abandoned Ollama connection", exc_info=True)
 
 

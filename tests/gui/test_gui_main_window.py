@@ -5096,6 +5096,6 @@ def test_the_time_left_is_estimated_for_the_steps_the_run_really_runs(
 
     assert len(asked) == 1
     choices = asked[0]
-    assert choices.reading_model == "glm-ocr:q8_0"  # ty: ignore[unresolved-attribute]
-    assert choices.writing_model == ""  # ty: ignore[unresolved-attribute]
-    assert choices.review_model == ""  # ty: ignore[unresolved-attribute]
+    assert choices.reading_model == "glm-ocr:q8_0"
+    assert choices.writing_model == ""
+    assert choices.review_model == ""

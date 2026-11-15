@@ -19,7 +19,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from pathlib import Path
 import tempfile
-from typing import Any, ClassVar, cast
+from typing import Any, ClassVar
 
 from PySide6.QtCore import QObject, QThread, Signal
 from PySide6.QtWidgets import QWidget
@@ -31,7 +31,6 @@ from teachers_teammate.domain.model_catalog import (
     OLLAMA_CATALOG,
     DetectionReason,
     HardwareDetection,
-    HardwareProfile,
     ModelUses,
 )
 from teachers_teammate.domain.model_listing import ModelListing
@@ -140,7 +139,7 @@ class FakeGuiService(LocalDataFlowStub):
         _ = ollama_url
         if setting in ("cpu", "8gb", "16gb"):
             return HardwareDetection(
-                profile=cast(HardwareProfile, setting),
+                profile=setting,
                 reason=DetectionReason.MANUAL,
             )
         return HardwareDetection(

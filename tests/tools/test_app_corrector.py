@@ -214,7 +214,7 @@ def test_a_correct_only_corrector_sends_step_one_alone_and_returns_the_text_with
     corrector = exchange_corrector_factory(
         client,
         timeout=5.0,
-        steps=frozenset({"correct"}),  # ty: ignore[invalid-argument-type]
+        steps=frozenset({"correct"}),
     )("gemma4:e4b", 0.2)
 
     outcome = corrector.correct("Ich habe ein Hund.", "German")
@@ -234,7 +234,7 @@ def test_a_correct_only_file_whose_step_one_failed_keeps_its_failure() -> None:
     Then   the file fails with its warning and keeps the source, as in the full exchange
     """
     corrector = exchange_corrector_factory(
-        _OneStepClient(fail=True),  # ty: ignore[invalid-argument-type]
+        _OneStepClient(fail=True),
         timeout=5.0,
         steps=frozenset({"correct"}),
     )("gemma4:e4b", 0.2)

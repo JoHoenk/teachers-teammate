@@ -31,15 +31,15 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Set up Bazel cache
-        uses: actions/cache@v6
+      - name: Set up Bazel
+        uses: bazel-contrib/setup-bazel@f34d6a05eae3c24acab7fa54587492daeaeffdab # 0.19.2
         with:
-          path: ~/.cache/bazel
-          key: bazel-docs-${{ runner.os }}-${{ hashFiles('MODULE.bazel', 'third_party/**') }}
-          restore-keys: bazel-docs-${{ runner.os }}-
+          bazelisk-cache: true
+          disk-cache: docs
+          repository-cache: true
 
       - name: Build Sphinx HTML
-        run: bazel build //docs:html
+        run: bazel build --config=ci //docs:html
 
       - name: Stage site for Pages
         run: |

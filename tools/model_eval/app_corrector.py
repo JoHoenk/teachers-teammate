@@ -145,7 +145,7 @@ def exchange_corrector_factory(
                     timeout=timeout,
                     num_ctx=num_ctx,
                     profile=chosen,
-                    port=port,  # ty: ignore[invalid-argument-type]  # a ModelPort by shape
+                    port=port,
                 )
             )
         )

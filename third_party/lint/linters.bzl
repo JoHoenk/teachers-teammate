@@ -13,16 +13,16 @@ pylint = lint_pylint_aspect(
 pylint_test = lint_test(aspect = pylint)
 
 ruff = lint_ruff_aspect(
-    # Pinned binary (//third_party/lint:tools.bzl) instead of the built-in
-    # @aspect_rules_lint//lint:ruff_bin so the version is explicit/reproducible.
-    binary = Label("//third_party/lint:ruff"),
+    # rules_lint's built-in ruff, the same binary the formatter uses
+    # (@aspect_rules_lint//format:ruff), so lint and format cannot drift apart.
+    binary = Label("@aspect_rules_lint//lint:ruff_bin"),
     configs = [Label("//:pyproject.toml")],
 )
 
 ruff_test = lint_test(aspect = ruff)
 
 ty = lint_ty_aspect(
-    binary = Label("//third_party/lint:ty"),
+    binary = Label("@aspect_rules_lint//lint:ty_bin"),
     config = Label("//:pyproject.toml"),
 )
 

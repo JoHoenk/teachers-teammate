@@ -22,7 +22,7 @@ from ...domain.proofreading.review import CHANGE_CATEGORIES
 Category = Literal["grammar", "spelling", "punctuation", "word_choice", "word_order", "other"]
 """The categories an explanation may name; the same list the review stores."""
 
-assert set(Category.__args__) == set(CHANGE_CATEGORIES)  # ty: ignore[unresolved-attribute]
+assert set(Category.__args__) == set(CHANGE_CATEGORIES)
 
 
 class ExplainNote(BaseModel):

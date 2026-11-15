@@ -15,6 +15,7 @@ Running tests
         bazel test //tests/...
 """
 
+load("@rules_python//python:defs.bzl", "py_library", "py_test")
 load("//third_party/lint:linters.bzl", "pylint_test", "ruff_test", "ty_test")
 
 # ── Test files tagged with @pytest.mark.use_case (for doc extraction) ────

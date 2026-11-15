@@ -14,12 +14,12 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Set up Bazel cache
-        uses: actions/cache@v6
+      - name: Set up Bazel
+        uses: bazel-contrib/setup-bazel@f34d6a05eae3c24acab7fa54587492daeaeffdab # 0.19.2
         with:
-          path: ~/.cache/bazel
-          key: bazel-lint-${{ runner.os }}-${{ hashFiles('MODULE.bazel', 'third_party/**') }}
-          restore-keys: bazel-lint-${{ runner.os }}-
+          bazelisk-cache: true
+          disk-cache: lint
+          repository-cache: true
 
       - name: Allow unprivileged user namespaces (Bazel linux-sandbox)
         # Ubuntu 24.04 runners block them via AppArmor, which makes Bazel fall
@@ -27,7 +27,7 @@ jobs:
         run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
 
       - name: Check formatting
-        run: bazel run //:format.check
+        run: bazel run --config=ci //:format.check
 
       - name: Run Python linters
-        run: bazel test //:lint --test_output=errors
+        run: bazel test --config=ci //:lint --test_output=errors

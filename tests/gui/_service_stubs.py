@@ -13,7 +13,6 @@ import os
 from pathlib import Path
 import tempfile
 import threading
-from typing import cast
 
 from teachers_teammate._model_defaults import default_model_for_task
 from teachers_teammate.application.context_choice import ContextChoice, context_choice
@@ -282,7 +281,7 @@ class RecommendationServiceStub(LocalDataFlowStub):
     def resolve_hardware_profile(self, setting: str, ollama_url: str) -> HardwareDetection:
         if setting in ("cpu", "8gb", "16gb"):
             return HardwareDetection(
-                profile=cast(HardwareProfile, setting),
+                profile=setting,
                 reason=DetectionReason.MANUAL,
                 system_memory_gb=self.system_memory_gb,
             )

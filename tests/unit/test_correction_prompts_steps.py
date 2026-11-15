@@ -143,7 +143,7 @@ def test_the_prompts_are_versioned_and_english() -> None:
     When   they are read
     Then   they carry a version, name no language placeholder and no output format
     """
-    assert PROMPT_VERSION
+    assert PROMPT_VERSION.strip()
     for prompt in (CORRECT_SYSTEM, EXPLAIN_SYSTEM, UNCLEAR_SYSTEM):
         assert "{language}" not in prompt
         assert "{level}" not in prompt

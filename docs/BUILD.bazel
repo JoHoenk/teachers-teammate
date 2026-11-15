@@ -5,7 +5,7 @@ Build and serve:
     bazel run //docs:html.serve
 """
 
-load("@rules_python//sphinxdocs:sphinx.bzl", "sphinx_build_binary", "sphinx_docs")
+load("@sphinxdocs//sphinxdocs:sphinx.bzl", "sphinx_build_binary", "sphinx_docs")
 
 # The Markdown pages, for tests/tools/test_no_plan_references.py. Not built or shipped.
 filegroup(

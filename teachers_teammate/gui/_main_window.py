@@ -2747,7 +2747,7 @@ class MainWindow(QMainWindow):
         service = self._app_service
 
         def _describe() -> object:
-            return service.describe_sent_texts(config, raw_txt, corr_txt, text_format=text_format)  # ty: ignore[invalid-argument-type]
+            return service.describe_sent_texts(config, raw_txt, corr_txt, text_format=text_format)
 
         def _on_done(result: object, error: BaseException | None) -> None:
             busy.accept()

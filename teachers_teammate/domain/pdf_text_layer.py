@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Literal, cast
+from typing import Literal
 
 PdfTextLayerMode = Literal["auto", "always", "never"]
 
@@ -61,7 +61,7 @@ def parse_pdf_text_layer(value: object) -> PdfTextLayerMode | None:
         return None
     lowered = value.strip().lower()
     if lowered in PDF_TEXT_LAYER_MODES:
-        return cast(PdfTextLayerMode, lowered)
+        return lowered
     return None
 
 

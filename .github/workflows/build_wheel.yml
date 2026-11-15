@@ -69,4 +69,6 @@ jobs:
         uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3 # v3.0.4
         with:
           tag_name: ${{ inputs.release_tag }}
+          # Stay a draft: publish-release in release.yml is the only thing that publishes.
+          draft: true
           files: dist/*.whl

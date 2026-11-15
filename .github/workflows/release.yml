@@ -32,11 +32,17 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # A draft, so a half-uploaded release is never visible: publish-release flips it once
+      # every asset is attached.
       - uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3 # v3.0.4
         with:
           tag_name: ${{ inputs.version }}
+          # A draft's tag is only created when it is published; without this it would be put on
+          # whatever the default branch is at that moment instead of the commit that was built.
+          target_commitish: ${{ github.sha }}
           name: "Release ${{ inputs.version }}"
           generate_release_notes: true
+          draft: true
           prerelease: ${{ contains(inputs.version, '-') }}
           make_latest: ${{ !contains(inputs.version, '-') }}
 
@@ -63,3 +69,24 @@ jobs:
       skip_artifact_upload: true
       publish_release_assets: true
       release_tag: ${{ inputs.version }}
+
+  # ── Publish ───────────────────────────────────────────────────────────────
+  # The last job, so the release only becomes visible once the wheel and every
+  # platform installer are attached to it.
+  publish-release:
+    name: Publish the release
+    needs: [build-wheel, build-standalone]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Flip the draft to a published release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.version }}
+        run: |
+          if [[ "$TAG" == *-* ]]; then
+            gh release edit "$TAG" --draft=false --repo "${{ github.repository }}"
+          else
+            gh release edit "$TAG" --draft=false --latest --repo "${{ github.repository }}"
+          fi

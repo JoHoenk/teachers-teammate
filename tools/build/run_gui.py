@@ -68,6 +68,14 @@ if "--_smoke_test" in sys.argv:
 
     raise SystemExit(run_smoke_test(_SmokePath(sys.argv[_idx + 1])))
 
+# ── forget-keys dispatch ─────────────────────────────────────────────────────
+# The uninstaller runs `--_forget_keys` before it removes the program files: the API
+# keys live in the system keychain, which no uninstaller can enumerate.
+if "--_forget_keys" in sys.argv:
+    from teachers_teammate.frozen_modes import forget_keys  # noqa: PLC0415, E402
+
+    raise SystemExit(forget_keys())
+
 # ── spaCy model download dispatch ─────────────────────────────────────────────
 # spaCy models live on GitHub Releases, not PyPI.  spaCy's own download command
 # knows how to resolve the correct wheel URL — but it uses run_command() which

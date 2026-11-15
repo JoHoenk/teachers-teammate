@@ -19,8 +19,13 @@ command-line tool.
 
 Download the installer for your platform from the
 [releases page](https://github.com/JoHoenk/teachers-teammate/releases) and run it. Then launch
-**Teacher's Teammate** from the Start menu (Windows), the Applications folder (macOS), or with
-`teachers-teammate-gui` from a terminal.
+**Teacher's Teammate** from the Start menu (Windows), the Applications folder (macOS), or your
+application launcher (Linux).
+
+Linux has two downloads: `teachers-teammate_<version>_amd64.deb` installs into
+`/opt/teachers-teammate` and adds a launcher entry, and
+`teachers-teammate-<version>-linux-x86_64.tar.gz` is the portable build — unpack it and run
+`./teachers-teammate`.
 
 Prefer Python? Each release also ships a wheel:
 

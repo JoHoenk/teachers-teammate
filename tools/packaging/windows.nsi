@@ -1,10 +1,23 @@
 ; NSIS installer script for Teacher's Teammate
-; Build from repo root:  makensis tools/packaging/windows.nsi
+; Build from repo root:
+;   makensis /DAPP_VERSION="1.2.3" /DAPP_VERSION_WIN="1.2.3.0" tools/packaging/windows.nsi
 ;
 ; Prerequisites:
 ;   * Binaries must already be in dist\ (run tools/build/build_standalone.py first)
 ;   * NSIS >= 3.0  (https://nsis.sourceforge.io/)
-;   * NSIS plugins (all bundled with NSIS): LogicLib, nsDialogs, System, UserInfo
+;   * NSIS plugins (all bundled with NSIS): LogicLib, nsDialogs, System, FileFunc, WordFunc
+;
+; Two scopes, one script. A per-user install lives in %LOCALAPPDATA%\Programs and needs no
+; rights; an all-users install lives in Program Files and needs administrator rights. The
+; installer starts unelevated and asks for elevation only when the chosen scope needs it, so
+; a teacher without an administrator account can still install.
+;
+; An update never runs the old uninstaller: it removes the old program files itself, inside
+; the install section, and leaves every registry value and every piece of user data alone.
+; docs/deployment.md lists the command line and the exit codes.
+
+Unicode true
+SetCompressor /SOLID lzma
 
 !define APP_NAME      "Teacher's Teammate"
 ; APP_VERSION and APP_VERSION_WIN can be overridden via /D on the command line.
@@ -23,8 +36,13 @@
 Name    "${APP_NAME} ${APP_VERSION}"
 OutFile "..\..\dist\teachers-teammate-${APP_VERSION}-w64-setup.exe"
 
-; Default install directory — overridden in .onInit based on scope.
-InstallDir "$PROGRAMFILES64\TeachersTeammate"
+; Default install directory: a sentinel. NSIS puts /D=<folder> into $INSTDIR before .onInit and
+; removes it from the command line, so the only way to know whether the caller gave a folder
+; is that $INSTDIR is no longer the sentinel. .onInit sets the real default for the scope.
+; It ends in \TeachersTeammate on purpose: Browse on the folder page appends the last part of
+; this compile-time path to the folder the teacher picks.
+!define DEFAULT_DIR_SENTINEL "C:\__tt_default_folder__\TeachersTeammate"
+InstallDir "${DEFAULT_DIR_SENTINEL}"
 
 ; Start without elevation. UAC is only triggered when the user explicitly
 ; chooses "Install for all users" on the scope page (see ScopePageLeave).
@@ -36,6 +54,7 @@ RequestExecutionLevel user
 !include "FileFunc.nsh"
 !include "LogicLib.nsh"
 !include "nsDialogs.nsh"
+!include "WordFunc.nsh"
 
 !define MUI_ABORTWARNING
 !define MUI_ICON   "..\..\teachers_teammate\assets\teachers_teammate.ico"
@@ -49,12 +68,37 @@ RequestExecutionLevel user
 Var IsAdmin          ; "1" if the process has administrator rights, "0" otherwise
 Var InstallScope     ; "all" = system-wide (HKLM), "user" = current user (HKCU)
 Var UninstScope      ; same two values, read back during uninstall
+Var Mode             ; "fresh" or "update"
+
+; What is already on this computer (empty when nothing is installed)
+Var FoundAll         ; install folder of an all-users copy
+Var FoundUser        ; install folder of a per-user copy
+Var VerAll           ; its DisplayVersion
+Var VerUser
+
+; Upgrade detection
+Var PreviousVersion     ; DisplayVersion of the copy being updated, for the text
+Var PreviousVersionNum  ; the same, numbers only, for the comparison
+Var PrevLabel           ; "Teacher's Teammate 1.2.3", or "An earlier version of Teacher's Teammate"
+
+; Command line
+Var CmdScope            ; "/SCOPE=" value, "" when not given
+Var CmdNoDesktop        ; "1" when /NODESKTOP was given
+Var CmdAllowDowngrade   ; "1" when /ALLOWDOWNGRADE was given
+Var DirGiven            ; "1" when /D= was given, so $INSTDIR is not ours to set
+
+; Pages
+Var WelcomeText
+Var SkipWelcome         ; "1" in the elevated copy: no Welcome, no Scope page
+Var DesktopShortcut     ; "1" when a desktop shortcut is wanted
 Var ScopeDialog
 Var ScopeAllUsers
 Var ScopeCurrentUser
+Var ScopeDesktop
 
-; Upgrade detection
-Var PreviousVersion  ; DisplayVersion of an already-installed copy, "" if none
+; The app-still-open check
+Var CheckDir
+Var CheckHandle
 
 ; Uninstaller cleanup page variables
 Var UnDelPackages    ; checkbox control handle for packages directory
@@ -62,12 +106,92 @@ Var UnDelCache       ; checkbox control handle for cache/settings directory
 Var DoDelPackages    ; BST_CHECKED / BST_UNCHECKED — user's choice
 Var DoDelCache       ; BST_CHECKED / BST_UNCHECKED — user's choice
 
+; ── Macros ───────────────────────────────────────────────────────────────────
+
+; shell32::IsUserAnAdmin is true only for an elevated token, which is exactly the question
+; both the installer and the uninstaller ask. NSIS needs a separate un. function.
+!macro DefineIsElevated FUNC
+Function ${FUNC}
+  System::Call 'shell32::IsUserAnAdmin() i.r0'
+  ${If} $0 <> 0
+    StrCpy $IsAdmin "1"
+  ${Else}
+    StrCpy $IsAdmin "0"
+  ${EndIf}
+FunctionEnd
+!macroend
+!insertmacro DefineIsElevated "IsElevated"
+!insertmacro DefineIsElevated "un.IsElevated"
+
+; A running exe cannot be opened for writing on Windows, and that holds for every version,
+; including the shipped ones, which have no instance lock. $CheckDir is the folder to test.
+!macro DefineCheckAppClosed FUNC ID
+Function ${FUNC}
+  ${IfNot} ${FileExists} "$CheckDir\teachers-teammate.exe"
+    Return
+  ${EndIf}
+  retry${ID}:
+  ClearErrors
+  FileOpen $CheckHandle "$CheckDir\teachers-teammate.exe" a
+  ${IfNot} ${Errors}
+    FileClose $CheckHandle
+    Return
+  ${EndIf}
+  ${If} ${Silent}
+    SetErrorLevel 10
+    Quit
+  ${EndIf}
+  MessageBox MB_RETRYCANCEL|MB_ICONEXCLAMATION \
+    "Teacher's Teammate is still open. Close it, also its System Monitor and Benchmark windows, then click Retry." \
+    IDRETRY retry${ID}
+  Quit
+FunctionEnd
+!macroend
+!insertmacro DefineCheckAppClosed "CheckAppClosed" "I"
+!insertmacro DefineCheckAppClosed "un.CheckAppClosed" "U"
+
+; Remove the files this installer put there, and the folder only when nothing else is in it.
+; A teacher's own file in the install folder survives an update and an uninstall.
+!macro RemoveProgramFiles DIR
+  RMDir /r "${DIR}\_internal"
+  Delete "${DIR}\teachers-teammate.exe"
+  Delete "${DIR}\Uninstall.exe"
+  RMDir "${DIR}"
+!macroend
+
+; The three values the installer owns. Qt's own subkey keeps the parent key alive.
+!macro RemoveInstallValues HIVE
+  DeleteRegKey   ${HIVE} "${UNINST_KEY}"
+  DeleteRegValue ${HIVE} "${REG_KEY}" "InstallDir"
+  DeleteRegValue ${HIVE} "${REG_KEY}" "Version"
+  DeleteRegValue ${HIVE} "${REG_KEY}" "Scope"
+  DeleteRegKey /ifempty ${HIVE} "${REG_KEY}"
+!macroend
+
+; Start this installer again with administrator rights. The result lands in $0: > 32 means the
+; elevated copy started, anything else means UAC was refused or cancelled.
+!macro RelaunchElevated ARGS
+  System::Call 'shell32::ShellExecuteW(i $HWNDPARENT, w "runas", w "$EXEPATH", w "${ARGS}", w "$EXEDIR", i 1) i.r0'
+!macroend
+
 ; ── Installer pages ──────────────────────────────────────────────────────────
 
+!define MUI_PAGE_CUSTOMFUNCTION_PRE WelcomePagePre
+; .onInit works out the text: fresh install, update, reinstall or downgrade.
+!define MUI_WELCOMEPAGE_TEXT "$WelcomeText"
 !insertmacro MUI_PAGE_WELCOME
+
 Page custom ScopePageCreate ScopePageLeave
+
+!define MUI_PAGE_CUSTOMFUNCTION_PRE DirectoryPagePre
+!define MUI_PAGE_CUSTOMFUNCTION_LEAVE DirectoryPageLeave
 !insertmacro MUI_PAGE_DIRECTORY
+
 !insertmacro MUI_PAGE_INSTFILES
+
+!define MUI_FINISHPAGE_RUN
+!define MUI_FINISHPAGE_RUN_TEXT "Start Teacher's Teammate"
+!define MUI_FINISHPAGE_RUN_FUNCTION StartAppUnelevated
 !insertmacro MUI_PAGE_FINISH
 
 ; ── Uninstaller pages ────────────────────────────────────────────────────────
@@ -87,65 +211,293 @@ VIAddVersionKey "ProductVersion"  "${APP_VERSION}"
 VIAddVersionKey "CompanyName"     "${APP_PUBLISHER}"
 VIAddVersionKey "FileVersion"     "${APP_VERSION}"
 VIAddVersionKey "FileDescription" "Installer for ${APP_NAME}"
-VIAddVersionKey "LegalCopyright"  "Apache-2.0 Licence"
+VIAddVersionKey "LegalCopyright"  "${U+00A9} 2026 Teacher's Teammate contributors ${U+00B7} Apache-2.0"
 
 ; ── Initialisation ───────────────────────────────────────────────────────────
 
 Function .onInit
-  ; Detect whether we are running with administrator rights.
-  UserInfo::GetAccountType
-  Pop $0
-  ${If} $0 == "Admin"
-    StrCpy $IsAdmin "1"
+  Call IsElevated
+
+  ${If} $INSTDIR == "${DEFAULT_DIR_SENTINEL}"
+    StrCpy $DirGiven "0"
   ${Else}
-    StrCpy $IsAdmin "0"
+    StrCpy $DirGiven "1"
   ${EndIf}
 
-  ; Set default scope and install directory based on privilege level,
-  ; then override with any previous install location stored in the registry.
-  ${If} $IsAdmin == "1"
-    StrCpy $InstallScope "all"
-    SetShellVarContext all
-    StrCpy $INSTDIR "$PROGRAMFILES64\TeachersTeammate"
-    ReadRegStr $0 HKLM "${REG_KEY}" "InstallDir"
-    ${If} $0 != ""
-      StrCpy $INSTDIR $0
+  StrCpy $Mode "fresh"
+  StrCpy $CmdScope ""
+  StrCpy $CmdNoDesktop "0"
+  StrCpy $CmdAllowDowngrade "0"
+  StrCpy $SkipWelcome "0"
+  StrCpy $DesktopShortcut "1"
+  StrCpy $WelcomeText ""
+  StrCpy $PreviousVersion ""
+  StrCpy $PreviousVersionNum "0.0.0"
+
+  ; ── the command line ──────────────────────────────────────────────────────
+  ${GetParameters} $R0
+  ${GetOptions} $R0 "/SCOPE=" $R1
+  ${IfNot} ${Errors}
+    ${If} $R1 == "user"
+      StrCpy $CmdScope "user"
+    ${ElseIf} $R1 == "all"
+      StrCpy $CmdScope "all"
+    ${EndIf}
+  ${EndIf}
+  ${GetOptions} $R0 "/NODESKTOP" $R1
+  ${IfNot} ${Errors}
+    StrCpy $CmdNoDesktop "1"
+    StrCpy $DesktopShortcut "0"
+  ${EndIf}
+  ${GetOptions} $R0 "/ALLOWDOWNGRADE" $R1
+  ${IfNot} ${Errors}
+    StrCpy $CmdAllowDowngrade "1"
+  ${EndIf}
+  ${GetOptions} $R0 "/ELEVATED" $R1
+  ${IfNot} ${Errors}
+    StrCpy $SkipWelcome "1"
+  ${EndIf}
+
+  ; ── what is already installed ─────────────────────────────────────────────
+  ; A copy counts only when its exe is still there: a leftover registry value from a
+  ; half-finished uninstall must not turn a fresh install into an update.
+  StrCpy $FoundAll ""
+  StrCpy $FoundUser ""
+  ReadRegStr $0 HKLM "${REG_KEY}" "InstallDir"
+  ${If} $0 != ""
+  ${AndIf} ${FileExists} "$0\teachers-teammate.exe"
+    StrCpy $FoundAll $0
+    ReadRegStr $VerAll HKLM "${UNINST_KEY}" "DisplayVersion"
+  ${EndIf}
+  ReadRegStr $0 HKCU "${REG_KEY}" "InstallDir"
+  ${If} $0 != ""
+  ${AndIf} ${FileExists} "$0\teachers-teammate.exe"
+    StrCpy $FoundUser $0
+    ReadRegStr $VerUser HKCU "${UNINST_KEY}" "DisplayVersion"
+  ${EndIf}
+
+  ; ── decide the mode ───────────────────────────────────────────────────────
+  ${If} $FoundAll == ""
+    ${If} $FoundUser == ""
+      ; Nothing installed: a fresh install in the scope the command line or the rights give.
+      ${If} $CmdScope == "all"
+        StrCpy $InstallScope "all"
+      ${ElseIf} $CmdScope == "user"
+        StrCpy $InstallScope "user"
+      ${ElseIf} $IsAdmin == "1"
+        StrCpy $InstallScope "all"
+      ${Else}
+        StrCpy $InstallScope "user"
+      ${EndIf}
+      ${If} $InstallScope == "all"
+      ${AndIf} $IsAdmin == "0"
+        ${If} ${Silent}
+          SetErrorLevel 14
+          Quit
+        ${EndIf}
+        ; Interactive: the scope page offers the relaunch (see ScopePageLeave).
+      ${EndIf}
+      ${If} $InstallScope == "all"
+        SetShellVarContext all
+        ${If} $DirGiven == "0"
+          StrCpy $INSTDIR "$PROGRAMFILES64\TeachersTeammate"
+        ${EndIf}
+      ${Else}
+        SetShellVarContext current
+        ${If} $DirGiven == "0"
+          StrCpy $INSTDIR "$LOCALAPPDATA\Programs\TeachersTeammate"
+        ${EndIf}
+      ${EndIf}
+    ${Else}
+      ; Only a personal copy: update it in place.
+      ${If} $CmdScope == "all"
+        ${IfNot} ${Silent}
+          MessageBox MB_OK|MB_ICONSTOP \
+            "Teacher's Teammate is installed only for you. Installing it for all users as well would create a second copy. Remove it first, or start this installer without /SCOPE=all."
+        ${EndIf}
+        SetErrorLevel 13
+        Quit
+      ${EndIf}
+      StrCpy $Mode "update"
+      StrCpy $InstallScope "user"
+      SetShellVarContext current
+      StrCpy $INSTDIR $FoundUser
+      StrCpy $PreviousVersion $VerUser
     ${EndIf}
   ${Else}
-    StrCpy $InstallScope "user"
-    SetShellVarContext current
-    StrCpy $INSTDIR "$LOCALAPPDATA\Programs\TeachersTeammate"
-    ReadRegStr $0 HKCU "${REG_KEY}" "InstallDir"
-    ${If} $0 != ""
-      StrCpy $INSTDIR $0
+    ${If} $FoundUser == ""
+      ; Only an all-users copy.
+      ${If} $CmdScope == "user"
+        ${IfNot} ${Silent}
+          MessageBox MB_OK|MB_ICONSTOP \
+            "Teacher's Teammate is installed for all users. Installing it only for you as well would create a second copy. Remove it first, or start this installer without /SCOPE=user."
+        ${EndIf}
+        SetErrorLevel 13
+        Quit
+      ${EndIf}
+      ${If} $IsAdmin == "0"
+        ${If} ${Silent}
+          SetErrorLevel 14
+          Quit
+        ${EndIf}
+        MessageBox MB_OKCANCEL|MB_ICONINFORMATION \
+          "Teacher's Teammate is installed for all users. Updating it needs administrator rights.$\r$\n$\r$\nClick OK to continue with administrator rights, or Cancel to quit." \
+          /SD IDOK IDOK elevate_update
+        Quit
+        elevate_update:
+          StrCpy $R1 "/SCOPE=all /ELEVATED"
+          !insertmacro RelaunchElevated "$R1"
+          ${If} $0 <= 32
+            MessageBox MB_OK|MB_ICONSTOP "Teacher's Teammate needs administrator rights to update the all-users copy. Nothing was changed."
+          ${EndIf}
+          Quit
+      ${EndIf}
+      StrCpy $Mode "update"
+      StrCpy $InstallScope "all"
+      SetShellVarContext all
+      StrCpy $INSTDIR $FoundAll
+      StrCpy $PreviousVersion $VerAll
+    ${Else}
+      ; Both scopes. A silent run names the copy with /SCOPE=; an interactive one stops.
+      ${If} ${Silent}
+        ${If} $CmdScope == "all"
+          StrCpy $Mode "update"
+          StrCpy $InstallScope "all"
+          SetShellVarContext all
+          StrCpy $INSTDIR $FoundAll
+          StrCpy $PreviousVersion $VerAll
+        ${ElseIf} $CmdScope == "user"
+          StrCpy $Mode "update"
+          StrCpy $InstallScope "user"
+          SetShellVarContext current
+          StrCpy $INSTDIR $FoundUser
+          StrCpy $PreviousVersion $VerUser
+        ${Else}
+          SetErrorLevel 13
+          Quit
+        ${EndIf}
+      ${Else}
+        ; Two copies only exist from before this installer looked in both places. Do not
+        ; guess which one to keep: name both and let the teacher remove one.
+        MessageBox MB_OK|MB_ICONEXCLAMATION \
+          "Teacher's Teammate is installed twice on this computer: for all users in$\r$\n$FoundAll$\r$\nand for you in$\r$\n$FoundUser.$\r$\n$\r$\nRemove one of them in Windows Settings > Apps, then run this setup again."
+        Quit
+      ${EndIf}
     ${EndIf}
   ${EndIf}
 
-  ; ── Detect a previous installation and offer an in-place upgrade ──────────
-  ; $INSTDIR now points at any previous install location read above.
-  ${If} $InstallScope == "all"
-    ReadRegStr $PreviousVersion HKLM "${UNINST_KEY}" "DisplayVersion"
-  ${Else}
-    ReadRegStr $PreviousVersion HKCU "${UNINST_KEY}" "DisplayVersion"
+  ; ── a folder that holds somebody else's files (a silent run has no folder page) ──
+  ${If} ${Silent}
+  ${AndIf} $Mode == "fresh"
+    Call FolderIsOurs
+    ${If} $0 == "0"
+      SetErrorLevel 12
+      Quit
+    ${EndIf}
   ${EndIf}
 
-  ${If} ${FileExists} "$INSTDIR\Uninstall.exe"
-    MessageBox MB_OKCANCEL|MB_ICONQUESTION \
-      "Teacher's Teammate $PreviousVersion is already installed.$\r$\n$\r$\nClick OK to upgrade to ${APP_VERSION}. Your settings and downloaded models will be kept.$\r$\nClick Cancel to abort the installation." \
-      /SD IDOK IDOK upgrade_proceed
-    Quit
-  upgrade_proceed:
-    ; Run the existing uninstaller silently and synchronously, leaving it in
-    ; place (_?=) so the old files are removed before the new bundle is written.
-    ; The silent uninstaller skips the data-cleanup page (see un.onInit), so
-    ; user settings and downloaded packages in LocalAppData are preserved.
-    ExecWait '"$INSTDIR\Uninstall.exe" /S _?=$INSTDIR'
+  ; ── the version, and the text the Welcome page shows ──────────────────────
+  ${If} $Mode == "fresh"
+    StrCpy $WelcomeText "This installs ${APP_NAME} ${APP_VERSION} on this computer.$\r$\n$\r$\nIn the next step you choose whether it is installed for all users or only for you."
+  ${Else}
+    ${If} $PreviousVersion == ""
+      StrCpy $PrevLabel "An earlier version of ${APP_NAME}"
+    ${Else}
+      StrCpy $PrevLabel "${APP_NAME} $PreviousVersion"
+      StrCpy $R0 $PreviousVersion
+      Call StripPrerelease
+      StrCpy $PreviousVersionNum $R0
+    ${EndIf}
+    ; Compare numbers only: 0.6.0-beta.1 counts as 0.6.0, on both sides.
+    StrCpy $R0 "${APP_VERSION}"
+    Call StripPrerelease
+    ${VersionCompare} "$PreviousVersionNum" "$R0" $R3
+    ${If} $R3 == "0"
+      ${If} $PreviousVersion == "${APP_VERSION}"
+        StrCpy $WelcomeText "${APP_NAME} ${APP_VERSION} is already installed. This reinstalls it. Your settings, add-ons and downloaded models stay."
+      ${Else}
+        StrCpy $WelcomeText "$PrevLabel is installed. This replaces it with ${APP_VERSION}. Your settings, add-ons and downloaded models stay."
+      ${EndIf}
+    ${ElseIf} $R3 == "1"
+      ${If} ${Silent}
+        ${If} $CmdAllowDowngrade != "1"
+          SetErrorLevel 11
+          Quit
+        ${EndIf}
+      ${Else}
+        MessageBox MB_YESNO|MB_ICONEXCLAMATION \
+          "Version $PreviousVersion is installed, which is newer than ${APP_VERSION}. Install the older version?" \
+          /SD IDNO IDYES downgrade_ok
+        Quit
+        downgrade_ok:
+      ${EndIf}
+      StrCpy $WelcomeText "Version $PreviousVersion is installed, which is newer than ${APP_VERSION}. This replaces it with the older version. Your settings, add-ons and downloaded models stay."
+    ${Else}
+      StrCpy $WelcomeText "$PrevLabel is installed. This updates it to ${APP_VERSION}. Your settings, add-ons and downloaded models stay."
+    ${EndIf}
   ${EndIf}
 FunctionEnd
 
-; ── Install scope page ───────────────────────────────────────────────────────
+; Cut a version string at its first "-": 0.6.0-beta.1 → 0.6.0. In: $R0. Out: $R0.
+Function StripPrerelease
+  StrCpy $R7 0
+  ${Do}
+    StrCpy $R8 $R0 1 $R7
+    ${If} $R8 == ""
+      ${ExitDo}
+    ${EndIf}
+    ${If} $R8 == "-"
+      StrCpy $R0 $R0 $R7
+      ${ExitDo}
+    ${EndIf}
+    IntOp $R7 $R7 + 1
+  ${Loop}
+FunctionEnd
+
+; ── Pages ────────────────────────────────────────────────────────────────────
+
+Function WelcomePagePre
+  ${If} $SkipWelcome == "1"
+    Abort
+  ${EndIf}
+FunctionEnd
+
+Function DirectoryPagePre
+  ${If} $Mode == "update"
+    Abort
+  ${EndIf}
+FunctionEnd
+
+; Is $INSTDIR ours to install into? $0 = "1" when it is missing, empty, or already holds
+; teachers-teammate.exe; "0" when it holds somebody else's files.
+Function FolderIsOurs
+  StrCpy $0 "1"
+  ${IfNot} ${FileExists} "$INSTDIR\teachers-teammate.exe"
+    ; ${DirState}: 0 = empty, 1 = not empty, -1 = does not exist
+    ${DirState} "$INSTDIR" $1
+    ${If} $1 == 1
+      StrCpy $0 "0"
+    ${EndIf}
+  ${EndIf}
+FunctionEnd
+
+; The folder page. A silent run skips page callbacks, so .onInit makes the same check.
+Function DirectoryPageLeave
+  Call FolderIsOurs
+  ${If} $0 == "0"
+    MessageBox MB_OK|MB_ICONEXCLAMATION \
+      "This folder already contains other files. Choose an empty folder or a new one."
+    Abort
+  ${EndIf}
+FunctionEnd
 
 Function ScopePageCreate
+  ; The elevated copy was started with the scope already chosen.
+  ${If} $Mode == "update"
+  ${OrIf} $SkipWelcome == "1"
+    Abort
+  ${EndIf}
+
   nsDialogs::Create 1018
   Pop $ScopeDialog
   ${If} $ScopeDialog == error
@@ -154,6 +506,7 @@ Function ScopePageCreate
 
   ${NSD_CreateLabel} 0 0 280u 16u \
     "Choose how ${APP_NAME} should be installed:"
+  Pop $0
 
   ${NSD_CreateRadioButton} 10u 22u 270u 14u \
     "Install for all users  (Program Files - requires administrator rights)"
@@ -162,6 +515,16 @@ Function ScopePageCreate
   ${NSD_CreateRadioButton} 10u 40u 270u 14u \
     "Install only for me  (AppData - no administrator rights required)"
   Pop $ScopeCurrentUser
+
+  ${NSD_CreateLabel} 10u 60u 270u 24u \
+    "Settings and downloads (models, add-ons) are kept separately for each Windows user."
+  Pop $0
+
+  ${NSD_CreateCheckBox} 10u 90u 270u 14u "Put a shortcut on the desktop"
+  Pop $ScopeDesktop
+  ${If} $DesktopShortcut == "1"
+    ${NSD_Check} $ScopeDesktop
+  ${EndIf}
 
   ; Pre-select based on current scope (set in .onInit).
   ${If} $InstallScope == "all"
@@ -174,35 +537,68 @@ Function ScopePageCreate
 FunctionEnd
 
 Function ScopePageLeave
+  ${NSD_GetState} $ScopeDesktop $0
+  ${If} $0 == ${BST_CHECKED}
+    StrCpy $DesktopShortcut "1"
+  ${Else}
+    StrCpy $DesktopShortcut "0"
+  ${EndIf}
+
   ${NSD_GetState} $ScopeAllUsers $0
   ${If} $0 == ${BST_CHECKED}
-    ; User wants a system-wide install.
     ${If} $IsAdmin == "0"
-      ; We are not elevated — re-launch with UAC elevation.
-      ; ShellExecuteW returns > 32 on success (process handle), <= 32 on failure.
-      System::Call 'shell32::ShellExecuteW(i $HWNDPARENT, w "runas", w "$EXEPATH", w "", w "", i 1) i.r0'
-      ${If} $0 > 32
-        ; Elevated instance launched successfully — quit the non-elevated one.
-        Quit
-      ${Else}
-        ; UAC was cancelled or denied — stay on the scope page.
-        Abort
+      ; Not elevated: start this installer again with administrator rights. The elevated copy
+      ; skips Welcome and Scope and goes straight to the folder page.
+      StrCpy $R1 "/SCOPE=all /ELEVATED"
+      ${If} $DesktopShortcut == "0"
+        StrCpy $R1 "/SCOPE=all /ELEVATED /NODESKTOP"
       ${EndIf}
+      ; /D= must be the last argument, and it is not quoted.
+      ${If} $DirGiven == "1"
+        StrCpy $R1 "$R1 /D=$INSTDIR"
+      ${EndIf}
+      !insertmacro RelaunchElevated "$R1"
+      ${If} $0 > 32
+        Quit
+      ${EndIf}
+      MessageBox MB_OK|MB_ICONSTOP \
+        "Installing for all users needs administrator rights. Choose 'Install only for me', or run the installer again as an administrator."
+      Abort
     ${EndIf}
     StrCpy $InstallScope "all"
     SetShellVarContext all
-    StrCpy $INSTDIR "$PROGRAMFILES64\TeachersTeammate"
+    ${If} $DirGiven == "0"
+      StrCpy $INSTDIR "$PROGRAMFILES64\TeachersTeammate"
+    ${EndIf}
   ${Else}
     StrCpy $InstallScope "user"
     SetShellVarContext current
-    StrCpy $INSTDIR "$LOCALAPPDATA\Programs\TeachersTeammate"
+    ${If} $DirGiven == "0"
+      StrCpy $INSTDIR "$LOCALAPPDATA\Programs\TeachersTeammate"
+    ${EndIf}
   ${EndIf}
+FunctionEnd
+
+; Explorer starts the app as the signed-in user, never elevated, even after an
+; over-the-shoulder elevation.
+Function StartAppUnelevated
+  Exec '"$WINDIR\explorer.exe" "$INSTDIR\teachers-teammate.exe"'
 FunctionEnd
 
 ; ── Install sections ─────────────────────────────────────────────────────────
 
 Section "Core (required)" SecCore
   SectionIn RO
+
+  StrCpy $CheckDir $INSTDIR
+  Call CheckAppClosed
+
+  ; An update removes the old program files itself; the old uninstaller is never run, so
+  ; nothing it might delete can be lost.
+  ${If} $Mode == "update"
+    !insertmacro RemoveProgramFiles "$INSTDIR"
+  ${EndIf}
+
   SetOutPath "$INSTDIR"
 
   ; Install the full onedir bundle produced by PyInstaller
@@ -261,7 +657,12 @@ Section "Start Menu shortcuts" SecStartMenu
 SectionEnd
 
 Section "Desktop shortcut" SecDesktop
-  CreateShortcut "$DESKTOP\Teacher's Teammate.lnk" "$INSTDIR\teachers-teammate.exe"
+  ; On an update, leave an existing shortcut alone and do not create a missing one: the
+  ; teacher may have deleted it on purpose.
+  ${If} $Mode == "fresh"
+  ${AndIf} $DesktopShortcut == "1"
+    CreateShortcut "$DESKTOP\Teacher's Teammate.lnk" "$INSTDIR\teachers-teammate.exe"
+  ${EndIf}
 SectionEnd
 
 ; ── Uninstaller data-cleanup page ────────────────────────────────────────────
@@ -273,18 +674,29 @@ Function un.UnDataPageCreate
     Abort
   ${EndIf}
 
-  ${NSD_CreateLabel} 0 0 280u 20u \
-    "Choose which user data to remove:"
+  ; The elevated run may be another account's (a second administrator approving the prompt).
+  ; Its user data is then that account's, so the page names the account it will remove.
+  ReadEnvStr $R0 "USERNAME"
 
-  ${NSD_CreateCheckBox} 10u 28u 270u 14u \
-    "Delete downloaded packages (spaCy, language models, the built-in reader)"
+  ${NSD_CreateLabel} 0 0 280u 20u \
+    "Choose what else to remove for the Windows account $\"$R0$\":"
+  Pop $0
+
+  ${NSD_CreateCheckBox} 10u 26u 270u 14u "Downloaded add-ons and model files"
   Pop $UnDelPackages
   ${NSD_Check} $UnDelPackages
 
-  ${NSD_CreateCheckBox} 10u 48u 270u 14u \
-    "Delete application cache and settings"
+  ${NSD_CreateLabel} 22u 40u 258u 24u \
+    "(built-in reader, page models, name detection, packages for online AI services)"
+  Pop $0
+
+  ${NSD_CreateCheckBox} 10u 70u 270u 14u "Settings, saved API keys and the results cache"
   Pop $UnDelCache
   ; unchecked by default — user may want to keep settings if reinstalling
+
+  ${NSD_CreateLabel} 10u 94u 270u 40u \
+    "AI models you downloaded in Ollama are kept: they belong to Ollama.$\r$\nRemove Ollama itself in Windows Settings > Apps."
+  Pop $0
 
   nsDialogs::Show
 FunctionEnd
@@ -296,31 +708,72 @@ FunctionEnd
 
 ; ── Uninstaller ──────────────────────────────────────────────────────────────
 
+; The scope is the one whose install folder this uninstaller sits in. HKLM no longer wins
+; just because it exists: a per-user copy next to an all-users copy must remove itself.
+Function un.DetectScope
+  StrCpy $UninstScope "user"
+  StrCpy $R0 $INSTDIR
+  StrCpy $R1 $R0 1 -1
+  ${If} $R1 == "\"
+    StrCpy $R0 $R0 -1
+  ${EndIf}
+  ReadRegStr $R1 HKLM "${REG_KEY}" "InstallDir"
+  ${If} $R1 != ""
+    StrCpy $R2 $R1 1 -1
+    ${If} $R2 == "\"
+      StrCpy $R1 $R1 -1
+    ${EndIf}
+    ${If} $R1 == $R0
+      StrCpy $UninstScope "all"
+    ${EndIf}
+  ${EndIf}
+FunctionEnd
+
 Function un.onInit
-  ; When the installer runs us silently as part of an in-place upgrade, the
-  ; data-cleanup page never appears — so explicitly preserve all user data
-  ; (downloaded packages and settings/cache) instead of inheriting page defaults.
-  IfSilent 0 +3
+  Call un.IsElevated
+  Call un.DetectScope
+
+  ; An all-users copy needs one elevated run. The elevated copy finds itself elevated and
+  ; carries on; the unelevated one is done.
+  ${If} $UninstScope == "all"
+  ${AndIf} $IsAdmin == "0"
+    ${If} ${Silent}
+      SetErrorLevel 14
+      Quit
+    ${EndIf}
+    ${GetParameters} $R0
+    System::Call 'shell32::ShellExecuteW(i $HWNDPARENT, w "runas", w "$INSTDIR\Uninstall.exe", w "$R0", w "$INSTDIR", i 1) i.r0'
+    ${If} $0 <= 32
+      MessageBox MB_OK|MB_ICONSTOP "Removing the program for all users needs administrator rights."
+    ${EndIf}
+    Quit
+  ${EndIf}
+
+  ; A silent uninstall keeps every piece of user data unless it is asked for.
+  ${If} ${Silent}
     StrCpy $DoDelPackages ${BST_UNCHECKED}
     StrCpy $DoDelCache    ${BST_UNCHECKED}
+    ${GetParameters} $R0
+    ${GetOptions} $R0 "/DELDATA" $R1
+    ${IfNot} ${Errors}
+      StrCpy $DoDelPackages ${BST_CHECKED}
+    ${EndIf}
+    ${GetOptions} $R0 "/DELSETTINGS" $R1
+    ${IfNot} ${Errors}
+      StrCpy $DoDelCache ${BST_CHECKED}
+    ${EndIf}
+  ${EndIf}
 FunctionEnd
 
 Section "Uninstall"
-  ; Determine the install scope from the registry to use the right hive
-  ; for shortcuts and uninstall-entry removal.
-  ReadRegStr $UninstScope HKLM "${REG_KEY}" "Scope"
   ${If} $UninstScope == "all"
     SetShellVarContext all
   ${Else}
-    ReadRegStr $UninstScope HKCU "${REG_KEY}" "Scope"
-    ${If} $UninstScope != "user"
-      StrCpy $UninstScope "user"   ; fallback if registry is missing
-    ${EndIf}
     SetShellVarContext current
   ${EndIf}
 
-  ; Remove program files.
-  RMDir /r "$INSTDIR"
+  StrCpy $CheckDir $INSTDIR
+  Call un.CheckAppClosed
 
   ; Remove shortcuts (SetShellVarContext above routes $SMPROGRAMS correctly).
   Delete "$SMPROGRAMS\${APP_NAME}\Teacher's Teammate.lnk"
@@ -339,17 +792,23 @@ Section "Uninstall"
     RMDir /r "$LOCALAPPDATA\teachers_teammate\models"
   ${EndIf}
 
-  ; Delete remaining application cache and settings if the user selected the checkbox.
+  ; Delete settings and cache if the user selected the checkbox. The API keys live in the
+  ; Windows Credential Manager, which no uninstaller can enumerate: the app deletes them.
   ${If} $DoDelCache == ${BST_CHECKED}
-    RMDir /r "$LOCALAPPDATA\teachers_teammate"
+    ExecWait '"$INSTDIR\teachers-teammate.exe" --_forget_keys'
+    DeleteRegKey HKCU "Software\TeachersTeammate\TeachersTeammate"
+    ; An all-users uninstall does not touch HKCU below; do not leave the empty parent behind.
+    DeleteRegKey /ifempty HKCU "${REG_KEY}"
+    RMDir /r "$LOCALAPPDATA\teachers_teammate\Cache"
+    RMDir "$LOCALAPPDATA\teachers_teammate"
   ${EndIf}
 
-  ; Remove registry entries from the correct hive.
+  ; Remove program files, then the registry values of the scope we are removing.
+  !insertmacro RemoveProgramFiles "$INSTDIR"
+
   ${If} $UninstScope == "all"
-    DeleteRegKey HKLM "${UNINST_KEY}"
-    DeleteRegKey HKLM "${REG_KEY}"
+    !insertmacro RemoveInstallValues HKLM
   ${Else}
-    DeleteRegKey HKCU "${UNINST_KEY}"
-    DeleteRegKey HKCU "${REG_KEY}"
+    !insertmacro RemoveInstallValues HKCU
   ${EndIf}
 SectionEnd

@@ -6,8 +6,12 @@ before the splash screen and before any heavy import.
 
 ``run_smoke_test`` is what proves a build is complete: the modules the app loads lazily,
 Qt's image plugins, the reader's OpenCV runtime, PDF and DOCX writing, the provider list,
-the bundled assets and the pip dispatch. Run it on a finished build with
-``teachers-teammate --_smoke_test result.json``; the unit test runs the same checks from source.
+the bundled assets and the pip dispatch. CI runs it on every build (see
+``.github/workflows/build_artifacts.yml``) and the Windows installer test runs it again on
+the installed copy.
+
+``forget_keys`` is what the uninstaller calls before it removes the program files: the API
+keys sit in the system keychain, which no uninstaller can enumerate.
 """
 
 from __future__ import annotations
@@ -221,6 +225,24 @@ def _versions() -> dict[str, str]:
         if version:
             versions[name] = str(version)
     return versions
+
+
+def forget_keys() -> int:
+    """Delete every provider's API key from the keychain and from the settings file.
+
+    The uninstaller runs this before it removes the program files: the keys live in the
+    Windows Credential Manager, which no uninstaller can enumerate.  No Qt application is
+    needed — ``QSettings`` works without one.
+    """
+    from teachers_teammate.gui._credential_store import CredentialStore  # noqa: PLC0415
+    from teachers_teammate.infrastructure import llm_factory  # noqa: PLC0415
+
+    store = CredentialStore()
+    for provider in llm_factory.list_providers():
+        env_key = str(llm_factory.get_provider_info(provider).get("env_key", ""))
+        if env_key:
+            store.remove(env_key)
+    return 0
 
 
 def run_smoke_test(out_path: Path) -> int:

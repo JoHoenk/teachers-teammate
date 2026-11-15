@@ -15,6 +15,13 @@ on:
         required: true
         type: string
         default: "v0.0.0-test"
+  # The installer script and the bundle spec are only exercised on Windows, so a change to
+  # either builds and tests the installer here rather than after the release.
+  pull_request:
+    paths:
+      - "tools/packaging/**"
+      - "tools/build/**"
+      - ".github/workflows/build_*.yml"
 
 env:
   ARTIFACT_NAME: teachers-teammate-windows
@@ -32,6 +39,7 @@ jobs:
   prune-old-artifacts:
     name: Delete previous Windows artifacts
     needs: [build-windows]
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04
     permissions:
       actions: write

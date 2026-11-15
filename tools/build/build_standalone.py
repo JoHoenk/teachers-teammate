@@ -8,9 +8,9 @@ The bundle's contents live in the committed spec next to this file
 (``teachers-teammate.spec``); this script generates the platform icons and runs it.
 
 Outputs:
-    dist/teachers-teammate                        (Linux onefile)
-    dist/teachers-teammate/teachers-teammate.exe  (Windows onedir)
-    dist/teachers-teammate.app/                   (macOS onedir .app bundle)
+    dist/teachers-teammate/teachers-teammate      (Linux folder)
+    dist/teachers-teammate/teachers-teammate.exe  (Windows folder)
+    dist/teachers-teammate.app/                   (macOS .app bundle)
 """
 
 from __future__ import annotations
@@ -132,7 +132,7 @@ def main() -> None:
     elif sys.platform == "win32":
         label = "dist/teachers-teammate/teachers-teammate.exe"
     else:
-        label = "dist/teachers-teammate"
+        label = "dist/teachers-teammate/teachers-teammate"
     print(f"    done → {label}\n")
 
 

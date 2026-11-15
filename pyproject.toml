@@ -14,7 +14,8 @@ dependencies = [
     "qdarkstyle>=3.2",
     "psutil>=5.9",
     "requests>=2.32",
-    "opencv-python>=5.0",
+    # headless: the app never calls cv2.imshow, and the GUI build bundles a second Qt (Qt5).
+    "opencv-python-headless>=5.0",
     "pypdfium2>=4.0",
     "numpy>=1.26",
     "python-docx>=1.1,<2",

@@ -230,7 +230,7 @@ _TYPED_DEPS_OCR = [
     "@ocr_test_dependencies//markdown_it_py:pkg",
     "@ocr_test_dependencies//numpy:pkg",
     "@ocr_test_dependencies//ollama:pkg",
-    "@ocr_test_dependencies//opencv_python:pkg",
+    "@ocr_test_dependencies//opencv_python_headless:pkg",
     "@ocr_test_dependencies//pillow:pkg",
     "@ocr_test_dependencies//platformdirs:pkg",
     "@ocr_test_dependencies//psutil:pkg",

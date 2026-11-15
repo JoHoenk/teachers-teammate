@@ -2,11 +2,10 @@
 
 | License | Count |
 |---------|-------|
-| MIT | 20 |
+| MIT | 23 |
 | BSD-3-Clause | 8 |
-| MIT License | 3 |
 | Apache-2.0 | 2 |
-| LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only | 2 |
+| LGPL-3.0-only | 2 |
 | PSF-2.0 | 2 |
 | Apache-2.0 OR BSD-2-Clause | 1 |
 | Apache-2.0 OR BSD-3-Clause | 1 |

@@ -12,18 +12,45 @@ and notice texts for all bundled third-party components are reproduced in:
 Qt / PySide6 (LGPL-3.0)
 -----------------------
 The bundled GUI toolkit (Qt, via PySide6) is used under the terms of the
-GNU Lesser General Public License, version 3 (LGPL-3.0). The Qt libraries are
-separate files in the application folder (_internal/PySide6/Qt/lib), not
-compiled into the program, and the application loads them at runtime, so they
-can be replaced with a compatible build. The complete source code of Teacher's
-Teammate is publicly available at
-https://github.com/JoHoenk/teachers-teammate, satisfying the LGPL relink
-requirement.
+GNU Lesser General Public License, version 3 (LGPL-3.0); the license texts are in
+the "Third-Party Licenses" dialog and in third_party_license.txt. The Qt libraries
+are separate files in the application folder (the PySide6 folder inside _internal,
+or inside the macOS app bundle), not compiled into the program, and the
+application loads them at runtime, so they can be replaced with a compatible build
+of the same Qt version. Nothing in the license of Teacher's Teammate restricts
+changing the application for your own use or reverse engineering it to debug such
+changes. The complete source code of Teacher's Teammate is publicly available at
+https://github.com/JoHoenk/teachers-teammate.
 
 Bundled version: Qt 6.12.0 (PySide6 6.12.0, shiboken6 6.12.0). The corresponding
-source archive of Qt is published by the Qt project at
-https://download.qt.io/official_releases/qt/6.12/6.12.0/single/qt-everywhere-src-6.12.0.tar.xz
-and PySide6's at https://download.qt.io/official_releases/QtForPython/pyside6/PySide6-6.12.0-src/.
+source of Qt is published by the Qt project, per module (qtbase, qtsvg,
+qtimageformats, qtwayland) at
+https://download.qt.io/archive/qt/6.12/6.12.0/submodules/
+or as one archive at
+https://download.qt.io/archive/qt/6.12/6.12.0/single/qt-everywhere-src-6.12.0.tar.xz
+and the source of PySide6 and shiboken6 at
+https://download.qt.io/official_releases/QtForPython/pyside6/PySide6-6.12.0-src/.
+
+Only Qt modules that the LGPL covers are bundled. The build fails if a module that
+Qt offers only under the GPL-3.0 or a commercial license (for example Qt Charts)
+would be included.
+
+FFmpeg (LGPL-2.1)
+-----------------
+The OpenCV package (opencv-python-headless 5.0.0.93) carries FFmpeg 8.1.1 as shared
+libraries (libavcodec, libavformat, libavutil, libswscale, libswresample). The
+Linux build is configured without the GPL options (--enable-shared,
+--enable-openssl and --enable-libvpx only). They are used under the GNU Lesser
+General Public License, version 2.1, the text of which is in the OpenCV entry of the
+third-party license list. The application never reads video. The source of that
+FFmpeg version is at https://ffmpeg.org/releases/ffmpeg-8.1.1.tar.gz; the wheel's build recipe is at
+https://github.com/opencv/opencv-python (tag 93).
+
+certifi (MPL-2.0)
+-----------------
+certifi's CA bundle and Python code are used under the Mozilla Public License 2.0.
+The source of the bundled version (2026.10.23) is at
+https://github.com/certifi/python-certifi and https://pypi.org/project/certifi/2026.10.23/.
 
 Optional components
 -------------------

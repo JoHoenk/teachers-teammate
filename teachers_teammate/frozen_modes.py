@@ -16,7 +16,7 @@ keys sit in the system keychain, which no uninstaller can enumerate.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 import importlib
 from io import BytesIO
 import json
@@ -59,6 +59,21 @@ _ASSETS: tuple[str, ...] = (
     "docs/using_the_app.md",
     "docs/advanced_user_guide.md",
     "docs/index.md",
+)
+
+# Qt modules that Qt offers only under the GPL-3.0 or a commercial license. The rest of Qt is
+# LGPL-3.0, which lets an Apache-2.0 application link it; one of these in the bundle would make
+# the whole application GPL-3.0. ``tools/build/teachers-teammate.spec`` drops the same names
+# (a unit test keeps the two lists equal); the smoke test is the check on the finished bundle.
+GPL_ONLY_QT_MODULES: tuple[str, ...] = (
+    "Charts",
+    "DataVisualization",
+    "Graphs",
+    "HttpServer",
+    "Lottie",
+    "Quick3D",
+    "VirtualKeyboard",
+    "WaylandCompositor",
 )
 
 # A check returns ``None`` when it passes and a short description of the problem when it fails.
@@ -167,6 +182,32 @@ def _check_assets() -> str | None:
     return None
 
 
+def gpl_only_qt_files(names: Iterable[str]) -> list[str]:
+    """Return the file or folder names (without their folder) that belong to a GPL-only Qt module.
+
+    Matches the library (``libQt6Charts.so.6``, ``Qt6Charts.dll``) and the Python module
+    (``QtCharts.abi3.so``, ``QtCharts.pyd``) of each module in :data:`GPL_ONLY_QT_MODULES`.
+    """
+    prefixes = tuple(
+        f"{lib}{qt}{module}"
+        for module in GPL_ONLY_QT_MODULES
+        for qt in ("Qt6", "Qt")
+        for lib in ("lib", "")
+    )
+    return sorted(name for name in names if name.startswith(prefixes))
+
+
+def _check_qt_licenses() -> str | None:
+    """Check that no GPL-only Qt module is in the bundle (frozen builds only)."""
+    found: list[str] = []
+    for folder, folders, files in os.walk(_root()):
+        names = [*folders, *files]
+        found += [str(Path(folder, name)) for name in gpl_only_qt_files(names)]
+    if found:
+        return "GPL-only Qt modules in the bundle: " + ", ".join(sorted(found))
+    return None
+
+
 def _check_pip() -> str | None:
     """Check that the bundled pip answers through the app's pip dispatch (frozen only)."""
     try:
@@ -207,7 +248,11 @@ def _checks() -> list[tuple[str, Check]]:
         ("providers", _check_providers),
     ]
     if frozen:
-        checks += [("assets", _check_assets), ("pip", _check_pip)]
+        checks += [
+            ("assets", _check_assets),
+            ("qt licenses", _check_qt_licenses),
+            ("pip", _check_pip),
+        ]
     if sys.platform in ("win32", "darwin"):
         checks.append(("keychain", _check_keychain))
     return checks

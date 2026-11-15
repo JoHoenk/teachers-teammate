@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -117,6 +118,36 @@ def _run() -> None:
     )
 
 
+def _license_destination() -> Path | None:
+    """Return the folder that carries the license files, or ``None`` where packaging does it.
+
+    The Windows installer takes the whole folder, so the files land next to the program; the
+    macOS bundle keeps them in ``Contents/Resources``. On Linux ``make_deb.sh`` and
+    ``make_tarball.sh`` put them into the package's documentation folder.
+    """
+    if sys.platform == "win32":
+        return ROOT / "dist" / "teachers-teammate"
+    if sys.platform == "darwin":
+        return ROOT / "dist" / "teachers-teammate.app" / "Contents" / "Resources"
+    return None
+
+
+def _add_license_files() -> None:
+    """Copy NOTICE and the full third-party license list into the finished bundle.
+
+    The LGPL needs the notice and the license texts to travel with every copy of Qt.
+    """
+    destination = _license_destination()
+    if destination is None:
+        return
+    destination.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(ROOT / "NOTICE", destination / "NOTICE.txt")
+    shutil.copyfile(
+        ROOT / "third_party_licenses" / "third_party_license.txt",
+        destination / "third_party_license.txt",
+    )
+
+
 def main() -> None:
     # Windows default console encoding (cp1252) cannot represent some Unicode
     # chars used in the progress messages below.  Force UTF-8 so the output is
@@ -127,6 +158,7 @@ def main() -> None:
     _ensure_icons()
     print("==> Building standalone binary…")
     _run()
+    _add_license_files()
     if sys.platform == "darwin":
         label = "dist/teachers-teammate.app"
     elif sys.platform == "win32":

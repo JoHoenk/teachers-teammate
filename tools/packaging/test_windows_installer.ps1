@@ -161,6 +161,8 @@ Remove-Item -LiteralPath 'C:\tt-foreign' -Recurse -Force -ErrorAction SilentlyCo
 Write-Step 'Fresh per-user install'
 Assert-Equal 0 (Invoke-Setup @('/SCOPE=user')) 'the installer exits 0'
 Assert-Present (Join-Path $UserDir 'teachers-teammate.exe') 'the exe is under %LOCALAPPDATA%\Programs'
+Assert-Present (Join-Path $UserDir 'NOTICE.txt') 'the notice is installed next to the exe (LGPL)'
+Assert-Present (Join-Path $UserDir 'third_party_license.txt') 'the license list is installed next to the exe'
 Assert-Equal $Version (Get-UninstallValue "HKCU:\$UninstKey" 'DisplayVersion') 'the Apps entry has the version'
 Assert-Equal $UserDir (Get-UninstallValue "HKCU:\$RegKey" 'InstallDir') 'the install folder is recorded'
 Assert-Equal 'user' (Get-UninstallValue "HKCU:\$RegKey" 'Scope') 'the scope is recorded'

@@ -750,6 +750,7 @@ py_test(
         "unit/test_frozen_modes.py",
     ],
     args = ["unit/test_frozen_modes.py"],
+    data = ["//tools/build:spec"],
     main = "run_test.py",
     deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + [
         "//teachers_teammate:gui_lib",

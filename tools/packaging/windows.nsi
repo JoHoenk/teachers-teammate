@@ -155,6 +155,8 @@ FunctionEnd
 !macro RemoveProgramFiles DIR
   RMDir /r "${DIR}\_internal"
   Delete "${DIR}\teachers-teammate.exe"
+  Delete "${DIR}\NOTICE.txt"
+  Delete "${DIR}\third_party_license.txt"
   Delete "${DIR}\Uninstall.exe"
   RMDir "${DIR}"
 !macroend

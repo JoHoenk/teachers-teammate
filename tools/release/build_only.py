@@ -21,6 +21,8 @@ BUILD_ONLY: frozenset[str] = frozenset(
         "macholib",  # PyInstaller's Mach-O reader, installed on macOS only
         "pefile",  # PyInstaller's PE reader, installed on Windows only
         "pip-licenses",  # the collector itself
+        "prettytable",  # pip-licenses' own dependencies
+        "wcwidth",
         "pyinstaller-hooks-contrib",
         "setuptools",  # excluded from the bundle by the spec
         "teachers-teammate",  # the project

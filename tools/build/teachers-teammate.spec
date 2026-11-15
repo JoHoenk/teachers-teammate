@@ -19,14 +19,32 @@ from PyInstaller.utils.hooks import collect_all, collect_submodules, copy_metada
 ROOT = Path(SPECPATH).resolve().parent.parent
 ASSETS = ROOT / "teachers_teammate" / "assets"
 
+# Qt modules that Qt offers only under the GPL-3.0 or a commercial license. The rest of Qt is
+# LGPL-3.0, which lets an Apache-2.0 application link it; one of these in the bundle would make
+# the whole application GPL-3.0, so a future import must never drag one in. The smoke test
+# (teachers_teammate/frozen_modes.py) checks the finished bundle, and a unit test keeps this
+# list equal to its GPL_ONLY_QT_MODULES.
+GPL_ONLY_QT_MODULES = (
+    "Charts",
+    "DataVisualization",
+    "Graphs",
+    "HttpServer",
+    "Lottie",
+    "Quick3D",
+    "VirtualKeyboard",
+    "WaylandCompositor",
+)
+
 # Qt plugins and libraries that must not ship. libqgtk3 pulls GTK3, cairo, pango and glib
 # from the build machine; the desktop-portal plugin (kept) gives file dialogs without it.
 # The rest is a defensive net: a future import must not drag Chromium or FFmpeg back in.
 _DROPPED = (
     "platformthemes/libqgtk3",
     "WebEngine",
-    "Qt6Quick3D",
     "Qt6Multimedia",
+    # The GPL-only modules: the library "Qt6<name>" and the Python module "Qt<name>" of each.
+    *(f"Qt6{module}" for module in GPL_ONLY_QT_MODULES),
+    *(f"Qt{module}" for module in GPL_ONLY_QT_MODULES),
     # Platform plugins for devices without a desktop (framebuffer, KMS, VNC, test stubs): the
     # app runs under X11 (xcb) or Wayland, and the smoke test under offscreen.
     "platforms/libqeglfs",

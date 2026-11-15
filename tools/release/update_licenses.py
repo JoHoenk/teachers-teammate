@@ -19,7 +19,7 @@ Two-step process:
 
   Step 2 — Compile the final distribution artifact:
       third_party_licenses/third_party_license.txt     ← one file, all packages
-      teachers_teammate/assets/third_party_licenses.md  ← bundled into GUI
+      teachers_teammate/assets/third_party_licenses.md  ← bundled into GUI, starts with NOTICE
 
 Transitive dependencies are included automatically because the script queries
 all packages installed in the current environment (the dedicated .venv-licenses/
@@ -29,34 +29,44 @@ For packages that don't bundle a license file in their wheel, add an entry to
 tools/release/license_overrides.toml.
 
 ╔══════════════════════════════════════════════════════════════════════════╗
-║  RELEASE PATH = --compile-only.  A FULL run (Step 1) is DESTRUCTIVE.      ║
+║  RELEASE PATH = --compile-only.  A FULL run (Step 1) is DESTRUCTIVE and    ║
+║  needs --destructive.                                                      ║
 ╚══════════════════════════════════════════════════════════════════════════╝
 
-The committed third_party_licenses/licenses/ store is partly HAND-CURATED. The
-automatic collector only captures each package's *own* shallow license files; it
-does NOT descend into the deep per-platform/vendored license trees where some
-packages keep the attributions for the native libraries they statically link or
-the Python deps they vendor. Those were added by hand and the renderer now
-recurses into subfolders to surface them. Hand-curated packages include:
+The committed third_party_licenses/ store is mostly HAND-CURATED. The full run cannot
+reproduce it: it installs the newest packages instead of the locked ones, sees only the
+platform it runs on, never reports `python` or `pyinstaller`, and copies each package's own
+shallow license files only. Hand-made parts of the store:
 
-    pypdfium2  → licenses/pypdfium2/deps/        (PDFium's freetype/libjpeg/zlib/…)
-    numpy      → licenses/numpy/numpy/…          (pocketfft, pcg64, SVML, highway, …)
-    pip        → licenses/pip/src/pip/_vendor/…  (urllib3, requests, rich, certifi, …)
-    opencv-python → licenses/opencv-python/LICENSE-3RD-PARTY.txt  (FFmpeg/libpng/…)
-    PySide6    → SPDX texts + pyside6_qt_third_party.md  (Qt bundled components)
+    packages.csv rows     python (the version of .python-version), pyinstaller (its bootloader
+                          is in the exe), and the platform-only packages: pywin32-ctypes
+                          (Windows) and SecretStorage, jeepney, cryptography, cffi, pycparser
+                          (Linux). The versions come from requirements_test_lock.txt and
+                          tools/build/requirements_platform.txt; check_inventory.py --env
+                          compares them with what the build installs.
+    python/               one file per component of CPython's "Licenses and Acknowledgements
+                          for Incorporated Software" (Doc/license.rst of the bundled patch
+                          version), plus bzip2 and liblzma
+    pyinstaller/          COPYING.txt (bootloader exception)
+    cryptography/         OPENSSL.txt (the wheels contain OpenSSL 3)
+    pypdfium2/deps/       BUILD_LICENSES/ of the wheel, flat: the top-level files, the
+                          llvm-libc, brotli and libyuv files of the subfolders that apply to
+                          the PyPI wheels (not android, musl, v8_xfa), and every
+                          `#include ./SHARED/Apache-2.0.txt` line replaced by that text
+    numpy/                the wheel's vendored-library tree (pocketfft, pcg64, SVML, highway, …)
+    pip/                  src/pip/_vendor/… (urllib3, requests, rich, certifi, …)
+    PySide6_Essentials/   the SPDX texts, pyside6_qt_third_party.md and qt_third_party/ (one file
+                          per Qt component, from the qt_attribution.json files of Qt 6.12.0)
+    shiboken6/            LGPL-3.0-only.txt
 
-A FULL run calls prepare_output_dir() which `rmtree`s third_party_licenses/ and
-re-collects from wheels — WIPING all of the above. So:
-
-    * To REGENERATE the shipped artifacts (the normal case, e.g. before a
-      release), use --compile-only. It reads the committed store and needs no
-      pip env, so the hand-curated trees are preserved.
-    * Only do a FULL run when dependencies actually change, and afterwards
-      RE-APPLY the hand-curated trees listed above before committing.
+Releases use --compile-only: it reads the committed store, applies the license overrides,
+rewrites packages.csv/.md and summary.md from it and regenerates the two output files. When a
+dependency moves, edit the store by hand (copy the new texts from the wheel at the locked
+version), then run --compile-only.
 
 Usage:
     python tools/release/update_licenses.py --compile-only  # release path (safe)
-    python tools/release/update_licenses.py                 # full run (DESTRUCTIVE)
+    python tools/release/update_licenses.py --destructive   # full run (DESTRUCTIVE)
 """
 
 from __future__ import annotations
@@ -114,6 +124,10 @@ BUNDLED_MD_OUTPUT = Path("teachers_teammate/assets/third_party_licenses.md")
 # don't bundle their license in the wheel, or where the auto-selected license
 # should be replaced.  See the file for the TOML schema.
 OVERRIDES_FILE = Path("tools/release/license_overrides.toml")
+
+# The notice that explains how the bundled components are licensed (LGPL duties, source links).
+# It opens the in-app license view and is shipped next to the program.
+NOTICE_FILE = Path("NOTICE")
 
 # Packages that are build/dev tools or the application itself — excluded from
 # the license report even when present in the active environment. The list lives in
@@ -250,7 +264,7 @@ def make_folder_text_source(licenses_dir: Path) -> TextSource:
 def write_csv(packages: list[dict]) -> None:
     output = OUTPUT_DIR / "packages.csv"
     with output.open("w", newline="", encoding="utf-8") as f:
-        writer = csv.writer(f)
+        writer = csv.writer(f, lineterminator="\n")
         writer.writerow(["Package", "Version", "License"])
         for pkg in sorted(packages, key=lambda p: p["Name"].lower()):
             writer.writerow([pkg["Name"], pkg["Version"], pkg["License"]])
@@ -501,7 +515,7 @@ def write_license_txt(
             for filename, text in texts:
                 lines += [f"--- {filename} ---", "", text, ""]
         else:
-            lines += ["[License text not available — see manual_review.md]", ""]
+            lines += ["[License text missing — add it to third_party_licenses/licenses/]", ""]
 
         lines.append("")
 
@@ -526,6 +540,14 @@ def write_bundled_gui_markdown(
         "",
         "This application bundles third-party software. "
         "The full license and notice texts are reproduced below.",
+        "",
+        "## How these components are licensed",
+        "",
+        "```",
+        NOTICE_FILE.read_text(encoding="utf-8").rstrip(),
+        "```",
+        "",
+        "---",
         "",
     ]
 
@@ -553,7 +575,7 @@ def write_bundled_gui_markdown(
                     "",
                 ]
         else:
-            lines += ["*License text not available — see manual_review.md.*", ""]
+            lines += ["*License text missing — add it to third_party_licenses/licenses/.*", ""]
 
         lines.append("---")
         lines.append("")
@@ -617,7 +639,21 @@ def main() -> None:
             "files. No pip environment required."
         ),
     )
+    parser.add_argument(
+        "--destructive",
+        action="store_true",
+        help=(
+            f"Run the full collection (Step 1): wipes {OUTPUT_DIR}/ and rebuilds it from the "
+            "packages installed here. Loses every hand-made file listed in the module docstring."
+        ),
+    )
     args = parser.parse_args()
+
+    if not args.compile_only and not args.destructive:
+        parser.error(
+            "pass --compile-only (the release path), or --destructive for the full run that "
+            "wipes the hand-curated store; see the docstring of this file"
+        )
 
     overrides = load_overrides(OVERRIDES_FILE)
 
@@ -630,6 +666,12 @@ def main() -> None:
         packages = read_packages_from_csv(source_dir)
         text_source = make_folder_text_source(source_dir / "licenses")
         print(f"    Packages read from CSV:      {len(packages)}")
+        # The overrides win over the CSV, so the two cannot disagree on a license name; the
+        # derived tables are written from the result.
+        apply_license_choices(packages, overrides)
+        write_csv(packages)
+        write_markdown(packages)
+        write_summary(packages)
         print()
         print("==> Step 2: Compiling third_party_license.txt and bundled GUI markdown…")
         _run_step2(packages, overrides, text_source, source_dir)
@@ -640,11 +682,11 @@ def main() -> None:
         # -----------------------------------------------------------------------
         print("==> Step 1: Collecting packages (direct + transitive)…")
         print(
-            "    WARNING: a full run wipes third_party_licenses/ and re-collects\n"
-            "    from wheels. Hand-curated native/vendored license trees (pypdfium2,\n"
-            "    numpy, pip, opencv-python, PySide6) are NOT reproduced and must be\n"
-            "    re-applied afterwards. For a normal release regeneration use\n"
-            "    --compile-only instead. See this file's module docstring.",
+            "    WARNING: a full run wipes third_party_licenses/ and re-collects from the\n"
+            "    wheels installed here. Every hand-made file (the python and pyinstaller\n"
+            "    rows, platform-only packages, pypdfium2/deps, numpy and pip vendored trees,\n"
+            "    the Qt attributions, cryptography/OPENSSL.txt) is lost. Release regeneration\n"
+            "    is --compile-only; see this file's module docstring.",
             file=sys.stderr,
         )
 

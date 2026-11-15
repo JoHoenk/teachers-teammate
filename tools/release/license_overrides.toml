@@ -545,7 +545,9 @@ Library.
 [packages.pyinstaller]
 license = "GPL-2.0-or-later WITH Bootloader-exception"
 
-# The CPython interpreter is reported by pip-licenses as 'python' with no wheel license file; embed the PSF license text.
+# The CPython interpreter is not a distribution: pip-licenses never reports it, so its row in
+# packages.csv and the texts in licenses/python/ are made by hand (see update_licenses.py). This
+# entry only holds the license name and the PSF text.
 [packages.python]
 license = "PSF-2.0"
 text = """
@@ -829,3 +831,14 @@ LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR
 OTHER TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR
 PERFORMANCE OF THIS SOFTWARE.
 """
+
+# These three wheels only carry the "License :: OSI Approved :: MIT License" classifier, which
+# pip-licenses reports as "MIT License". One spelling, so the summary counts them with the rest.
+[packages."jaraco.classes"]
+license = "MIT"
+
+[packages."markdown-it-py"]
+license = "MIT"
+
+[packages.mdurl]
+license = "MIT"

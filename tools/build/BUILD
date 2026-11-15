@@ -22,3 +22,11 @@ filegroup(
     srcs = glob(["*.py"]),
     visibility = ["//visibility:public"],
 )
+
+# The committed PyInstaller spec, as data: a unit test reads the lists it keeps in step with the
+# code (tests/unit/test_frozen_modes.py).
+filegroup(
+    name = "spec",
+    srcs = ["teachers-teammate.spec"],
+    visibility = ["//visibility:public"],
+)

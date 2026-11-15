@@ -93,7 +93,7 @@ All commands are run from the **repository root**.
 
 ### Prerequisites
 
-- Python 3.12 (`.python-version`)
+- Python 3.12.16 (`.python-version`; the `python` row of the license list names the same patch version)
 - [Bazel](https://bazel.build/) (for wheel builds and tests)
 
 The standalone build installs [PyInstaller](https://pyinstaller.org/) itself, at the version
@@ -122,18 +122,44 @@ ls bazel-bin/teachers_teammate/*.whl
 
 ### Third-party license report
 
-Before cutting a release, regenerate the license documentation and commit both
-the per-package store and the GUI asset:
+The store `third_party_licenses/` is mostly **hand-made**: the full collector run cannot
+reproduce it (see below). Releases therefore only compile it:
 
 ```bash
-bash tools/release/update_licenses.sh
+python tools/release/update_licenses.py --compile-only
 git add third_party_licenses/ teachers_teammate/assets/third_party_licenses.md
 ```
 
-The script creates an isolated venv (`.venv-licenses/`) containing only the base
-runtime dependencies (`pip install -e .`) plus `pip-licenses`, so dev/test
-packages are never included. The enumerated set (base + transitive) matches
-exactly what PyInstaller bundles into the standalone binary.
+`--compile-only` reads `packages.csv` and `licenses/`, applies the license names of
+`tools/release/license_overrides.toml`, rewrites `packages.csv`, `packages.md` and `summary.md`
+from them and writes the two compiled files (`third_party_license.txt` and the in-app
+`third_party_licenses.md`, which starts with `NOTICE`). It needs no virtual environment.
+
+**When a dependency changes** (a lock bump, a new or removed package), edit the store by hand,
+then compile:
+
+1. Put the version in `packages.csv` (the same as `requirements_test_lock.txt` or
+   `tools/build/requirements_platform.txt`; `python` is the patch version of `.python-version`).
+2. Copy the license files of the new version from the wheel into `licenses/<package>/`. Compare the
+   old and new texts; bundled-library notices change between versions (pypdfium2, numpy, pillow,
+   lxml, opencv).
+3. For a Qt/PySide6 bump, regenerate `licenses/PySide6_Essentials/qt_third_party/` from the
+   `qt_attribution.json` files of the new Qt version (see `pyside6_qt_third_party.md`), and change
+   the version and links in `NOTICE`.
+4. Run `--compile-only`.
+
+`check_inventory.py --env` runs on every OS build and fails when the build installs a distribution
+that has no row in `packages.csv` or a different version.
+
+What the hand-made parts are (the same list is in the docstring of `update_licenses.py`):
+the `python` and `pyinstaller` rows and texts, the platform-only packages (`pywin32-ctypes` on
+Windows; `SecretStorage`, `jeepney`, `cryptography`, `cffi`, `pycparser` on Linux),
+`pypdfium2/deps/`, the vendored trees of `numpy` and `pip`, the Qt attributions, and
+`cryptography/OPENSSL.txt`.
+
+`bash tools/release/update_licenses.sh --destructive` still exists as the full collector run. It
+installs the newest packages instead of the locked ones, sees one platform only and wipes the
+store, so **do not use it to prepare a release**. Without `--destructive` it does nothing.
 
 Outputs:
 
@@ -141,9 +167,14 @@ Outputs:
 |------|---------|
 | `third_party_licenses/packages.md` | Table of all runtime packages and their license types |
 | `third_party_licenses/summary.md` | Aggregated count per license type |
-| `third_party_licenses/licenses/<pkg>/` | Copied LICENSE / NOTICE files per package |
-| `third_party_licenses/manual_review.md` | Packages where no license file was found in the wheel |
-| `teachers_teammate/assets/third_party_licenses.md` | Single bundled file shown in **Help → Third-Party Licenses** |
+| `third_party_licenses/licenses/<pkg>/` | The LICENSE / NOTICE files per package |
+| `third_party_licenses/third_party_license.txt` | All of it in one file; shipped as `third_party_license.txt` |
+| `teachers_teammate/assets/third_party_licenses.md` | Single bundled file shown in **Help → Third-Party Licenses**; starts with `NOTICE` |
+
+`NOTICE` and `third_party_license.txt` travel with every download: in the `.deb` and the tarball
+under the documentation folder, in the Windows install folder, and in the macOS `.app`
+(`Contents/Resources`) and next to it in the `.dmg`. Qt is used under the LGPL-3.0, so the notice
+and the source links must reach the user with each copy.
 
 Both `third_party_licenses/` and `teachers_teammate/assets/third_party_licenses.md` are
 committed; only the throwaway `.venv-licenses/` is ignored.
@@ -315,5 +346,5 @@ A silent uninstall keeps all user data unless `/DELDATA` (add-ons and models) or
 | `tools/packaging/make_dmg.sh` | Creates `.dmg` installer for macOS |
 | `tools/packaging/windows.nsi` | NSIS script for the Windows installer |
 | `tools/release/stamp_versions.py` | Stamps version into `pyproject.toml` and Bazel `BUILD` |
-| `tools/release/update_licenses.py` | Generates third-party license report and GUI asset |
-| `tools/release/update_licenses.sh` | Creates isolated venv and runs `update_licenses.py` |
+| `tools/release/update_licenses.py` | Compiles the third-party license report and GUI asset (`--compile-only`) |
+| `tools/release/update_licenses.sh` | The destructive full run (`--destructive`), not for releases |

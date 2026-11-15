@@ -17,31 +17,23 @@ on:
         required: false
         type: number
         default: 14
-      skip_artifact_upload:
-        description: "Skip uploading wheel to the artifact store"
-        required: false
-        type: boolean
-        default: false
-      publish_release_assets:
-        description: "Upload wheel directly to a GitHub Release"
-        required: false
-        type: boolean
-        default: false
-      release_tag:
-        description: "Release tag to publish against when publish_release_assets is true"
-        required: false
-        type: string
-        default: ""
+
+# Read-only, and declared here rather than left to the caller: the wheel is built by Bazel
+# from the same third-party code the bundles use, so it must not be able to write to a
+# release. release.yml's `publish` job attaches the wheel. A caller cannot raise this.
+permissions:
+  contents: read
 
 jobs:
   build-wheel:
     name: Build wheel
     runs-on: ubuntu-24.04
-    permissions:
-      contents: write
 
     steps:
       - uses: actions/checkout@v7
+        with:
+          # The token stays out of .git/config: nothing here pushes.
+          persist-credentials: false
 
       - uses: actions/setup-python@v7
         with:
@@ -67,17 +59,7 @@ jobs:
           cp bazel-bin/teachers_teammate/*.whl dist/
 
       - uses: actions/upload-artifact@v7
-        if: ${{ !inputs.skip_artifact_upload }}
         with:
           name: ${{ inputs.artifact_name }}
           retention-days: ${{ inputs.retention_days }}
           path: dist/*.whl
-
-      - name: Publish wheel to GitHub Release
-        if: ${{ inputs.publish_release_assets }}
-        uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3 # v3.0.4
-        with:
-          tag_name: ${{ inputs.release_tag }}
-          # Stay a draft: publish-release in release.yml is the only thing that publishes.
-          draft: true
-          files: dist/*.whl

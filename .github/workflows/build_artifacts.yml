@@ -18,28 +18,18 @@ on:
         required: false
         type: string
         default: ""
-      publish_release_assets:
-        description: "Publish installers to a GitHub Release"
-        required: false
-        type: boolean
-        default: false
-      release_tag:
-        description: "Release tag to publish against when publish_release_assets is true"
-        required: false
-        type: string
-        default: ""
-      skip_artifact_upload:
-        description: "Skip uploading build outputs to the artifact store"
-        required: false
-        type: boolean
-        default: false
+
+# Read-only, and declared here rather than left to the caller: the build runs ~90 PyPI
+# packages and PyInstaller hooks, so a bad version of any of them must not be able to write
+# to a release. The assets go to the artifact store; release.yml's `publish` job attaches
+# them. A caller cannot raise this.
+permissions:
+  contents: read
 
 jobs:
   build-package:
     name: Build & Package (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    # No permissions of its own: the caller's apply. Only the release publishes assets and
-    # needs `contents: write` (release.yml grants it); a test build runs with read access.
 
     strategy:
       fail-fast: false
@@ -58,6 +48,10 @@ jobs:
 
     steps:
       - uses: actions/checkout@v7
+        with:
+          # The token stays out of .git/config: nothing here pushes, and a build step that
+          # runs third-party code must not find a credential lying around.
+          persist-credentials: false
 
       - uses: actions/setup-python@v7
         with:
@@ -183,7 +177,7 @@ jobs:
         run: python tools/build/check_addon_resolution.py dist/teachers-teammate/teachers-teammate
 
       - name: Upload the smoke test result
-        if: ${{ always() && !inputs.skip_artifact_upload }}
+        if: ${{ always() }}
         uses: actions/upload-artifact@v7
         with:
           name: ${{ inputs.artifact_prefix }}-${{ matrix.artifact }}-smoke
@@ -288,7 +282,7 @@ jobs:
       # Platform-specific uploads prevent the macOS onedir intermediate
       # (dist/teachers-teammate/) from being swept up alongside the .dmg.
       - name: Upload build artifact (Linux)
-        if: ${{ runner.os == 'Linux' && !inputs.skip_artifact_upload }}
+        if: runner.os == 'Linux'
         uses: actions/upload-artifact@v7
         with:
           name: ${{ inputs.artifact_prefix }}-${{ matrix.artifact }}
@@ -298,7 +292,7 @@ jobs:
             dist/teachers-teammate_*.deb
 
       - name: Upload build artifact (Windows)
-        if: ${{ runner.os == 'Windows' && !inputs.skip_artifact_upload }}
+        if: runner.os == 'Windows'
         uses: actions/upload-artifact@v7
         with:
           name: ${{ inputs.artifact_prefix }}-${{ matrix.artifact }}
@@ -306,24 +300,9 @@ jobs:
           path: dist/teachers-teammate-*-w64-setup.exe
 
       - name: Upload build artifact (macOS)
-        if: ${{ runner.os == 'macOS' && !inputs.skip_artifact_upload }}
+        if: runner.os == 'macOS'
         uses: actions/upload-artifact@v7
         with:
           name: ${{ inputs.artifact_prefix }}-${{ matrix.artifact }}
           retention-days: ${{ inputs.retention_days }}
           path: dist/teachers-teammate-*-macos.dmg
-
-      - name: Publish GitHub Release assets
-        if: inputs.publish_release_assets
-        uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3 # v3.0.4
-        with:
-          tag_name: ${{ inputs.release_tag }}
-          # The release is a draft until publish-release flips it. Without this the action
-          # publishes an existing draft after its first upload, and the release would be
-          # visible while the other platforms are still building.
-          draft: true
-          files: |
-            dist/teachers-teammate-*-linux-x86_64.tar.gz
-            dist/teachers-teammate_*.deb
-            dist/teachers-teammate-*-w64-setup.exe
-            dist/teachers-teammate-*-macos.dmg

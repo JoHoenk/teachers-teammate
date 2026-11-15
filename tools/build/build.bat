@@ -44,7 +44,9 @@ if errorlevel 1 goto :fail
 
 echo ==^> Creating clean build venv (base runtime deps only)
 py -3.14 -m venv "%VENV_DIR%"
+if errorlevel 1 goto :fail
 "%VENV_DIR%\Scripts\pip" install --quiet --upgrade -c "%CONSTRAINTS%" pip
+if errorlevel 1 goto :fail
 "%VENV_DIR%\Scripts\pip" install --quiet -c "%CONSTRAINTS%" -e . pyinstaller pyinstaller-hooks-contrib
 if errorlevel 1 goto :fail
 

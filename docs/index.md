@@ -78,6 +78,25 @@ Optional features — such as privacy protection (removing personal information 
 
 Your settings are saved automatically and restored every time you start the app.
 
+### Check your download
+
+Every release ships a `SHA256SUMS` file next to the installers, and every installer carries a
+build-provenance attestation. If you or your IT department want to be sure a download is the
+file this project built:
+
+```bash
+# Linux, in the folder that holds the download and SHA256SUMS
+sha256sum -c SHA256SUMS --ignore-missing
+# macOS
+shasum -a 256 -c SHA256SUMS --ignore-missing
+# Any system, with the GitHub CLI (https://cli.github.com)
+gh attestation verify teachers-teammate-<version>-w64-setup.exe --repo JoHoenk/teachers-teammate
+```
+
+The first two compare the file against the checksum list. The third asks GitHub whether the file
+was built by this repository's release workflow, which is stronger: it names the workflow and the
+commit the file came from.
+
 ### Set up text recognition
 
 The first time you start the app, the **Setup Assistant** opens and asks three plain questions: the language of your class, what your students hand in (handwritten pages or typed texts), and where the proofreading may run. It then shows you what it will set and what it will download, and you press **Set up** once. The downloads run in the background and the main window shows how far they are.

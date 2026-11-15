@@ -1670,7 +1670,7 @@ def test_the_chart_collects_a_run_while_the_monitor_is_hidden(main_window) -> No
 
     main_window._chart.update_data(["a.png"], [1.0], [2.0])
 
-    assert main_window._monitor.chart.chart().series()
+    assert main_window._monitor.chart._names == ["a.png"]
 
 
 @pytest.mark.gui

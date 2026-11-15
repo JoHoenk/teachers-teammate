@@ -145,6 +145,7 @@ _PERFORMANCE_KEYS = frozenset(
         "wall_s",
         "done_reason",
         "failed",
+        "step",
         "name",
         "size_bytes",
         "size_vram_bytes",
@@ -189,8 +190,16 @@ def is_number(value: Any) -> bool:
 
 
 def profile_items(profile: Mapping[str, Any] | None) -> tuple[tuple[str, object], ...]:
-    """Return a header's request profile as sorted items, so two profiles compare by value."""
-    return tuple(sorted((str(key), value) for key, value in (profile or {}).items()))
+    """Return a header's request profile as sorted items, so two profiles compare by value.
+
+    A nested object (the sampling ``options``) becomes sorted items too, so the result is hashable.
+    """
+    return tuple(
+        sorted(
+            (str(key), profile_items(value) if isinstance(value, Mapping) else value)
+            for key, value in (profile or {}).items()
+        )
+    )
 
 
 def host_of(header: Mapping[str, Any]) -> str:

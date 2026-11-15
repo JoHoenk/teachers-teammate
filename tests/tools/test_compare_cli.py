@@ -8,6 +8,7 @@ too, and a run whose sessions agree does go on.
 from __future__ import annotations
 
 import argparse
+from dataclasses import replace
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -104,6 +105,7 @@ def _args(tmp_path: Path) -> argparse.Namespace:
         ollama_url="http://localhost:11434",
         mode=[AnswerMode.REVIEW],
         compact_json="catalog",
+        option=[],
         no_smoke=True,
         progress="off",
     )
@@ -508,3 +510,70 @@ def test_the_agent_and_the_shell_sampler_are_not_combined(tmp_path, monkeypatch,
     assert compare_writing_models._run(args) == 2
 
     assert "pass one" in capsys.readouterr().err
+
+
+def test_an_option_names_a_sampling_value_and_a_number() -> None:
+    """
+    Given  `--option` values: a good one, one without a number, an unknown name and no equals sign
+    When   they are parsed
+    Then   the good one gives its name and number and the others are refused with the allowed names
+    """
+    assert compare_writing_models._sampling_option("presence_penalty=0") == (
+        "presence_penalty",
+        0.0,
+    )
+    assert compare_writing_models._sampling_option("top_p=0.9") == ("top_p", 0.9)
+    for bad in ("presence_penalty=lots", "seed=1", "top_p", "temperature=0.1"):
+        with pytest.raises(argparse.ArgumentTypeError):
+            compare_writing_models._sampling_option(bad)
+
+
+def test_the_options_of_a_run_reach_the_profile_the_header_and_the_file_name(tmp_path) -> None:
+    """
+    Given  a run asked for correct-only mode with a presence penalty of 0
+    When   its matrix is built and the header facts of a session are read
+    Then   step one's profile carries the value, the header's request profile lists it, and the
+           results file name says so
+    """
+    args = _args(tmp_path)
+    args.option = [("presence_penalty", 0.0)]
+    args.gpu_agent_record = None
+    args.mode = [AnswerMode.CORRECT_ONLY]
+
+    matrix = compare_writing_models._matrix(args)
+    profile = matrix.profile_of(MODEL, 0.2)
+
+    assert profile.correct.sampling() == {"presence_penalty": 0.0}
+    assert profile.explain.sampling() == {}
+    assert runner.as_dict(profile)["options"] == {"presence_penalty": 0.0}
+    plain = replace(matrix, options=()).profile_of(MODEL, 0.2)
+    assert "options" not in runner.as_dict(plain)
+    assert results.result_file_name(MODEL, 0.2, AnswerMode.CORRECT_ONLY, None, matrix.options) != (
+        results.result_file_name(MODEL, 0.2, AnswerMode.CORRECT_ONLY)
+    )
+
+
+def test_an_option_is_refused_where_it_would_be_ignored_or_given_twice(tmp_path, capsys) -> None:
+    """
+    Given  `--option` with review mode, then `--option` twice with one name, then a top_k that is
+           not whole and a value that is not finite
+    When   each run is started or parsed
+    Then   the run is refused before anything is sent (exit code 2) and the message says why
+    """
+    args = _args(tmp_path)
+    args.option = [("presence_penalty", 0.0)]
+    args.mode = [AnswerMode.REVIEW, AnswerMode.CORRECT_ONLY]
+    assert compare_writing_models._run(args) == 2
+    assert "ignored in review mode" in capsys.readouterr().err
+
+    args.mode = [AnswerMode.CORRECT_ONLY]
+    args.option = [("top_p", 0.5), ("top_p", 0.9)]
+    assert compare_writing_models._run(args) == 2
+    assert "top_p is given more than once" in capsys.readouterr().err
+
+    args.option = [("presence_penalty", 0.0)]
+    assert compare_writing_models._option_problem(args) is None
+    for bad in ("top_k=20.5", "top_p=nan", "top_p=inf"):
+        with pytest.raises(argparse.ArgumentTypeError):
+            compare_writing_models._sampling_option(bad)
+    assert compare_writing_models._sampling_option("top_k=20") == ("top_k", 20.0)

@@ -61,6 +61,8 @@ class Matrix:
     machine: str
     compact_json: str = "catalog"
     """``catalog`` (each model's own choice), ``on`` or ``off``; see ``--compact-json``."""
+    options: tuple[tuple[str, float], ...] = ()
+    """Sampling values sent with step ① besides the temperature (``--option``); empty: the tag."""
 
     def seed_of(self, repeat: int) -> int | None:
         """Return the seed of *repeat* (1-based), or ``None`` when no seed is sent."""
@@ -69,7 +71,7 @@ class Matrix:
     def profile_of(self, model: str, temperature: float | None) -> RequestProfile:
         """Return the request profile *model* is asked with in this run."""
         return defaults.request_profile_for(
-            model, compact_json=self.compact_json, temperature=temperature
+            model, compact_json=self.compact_json, temperature=temperature, options=self.options
         )
 
     def temperature_of(self, model: str, temperature: float | None) -> float:
@@ -133,7 +135,11 @@ class RunResult:
 
 def as_dict(profile: RequestProfile) -> dict:
     """Return *profile* as the header records it: its knobs, JSON-ready."""
-    return {"compact_json": profile.compact_json, "temperature": profile.temperature}
+    record: dict = {"compact_json": profile.compact_json, "temperature": profile.temperature}
+    if profile.correct.options:
+        # Only a run that sets sampling values says so: earlier headers stay as they were.
+        record["options"] = profile.correct.sampling()
+    return record
 
 
 def identity(
@@ -183,7 +189,11 @@ def plan(
                 temperature = matrix.temperature_of(model, asked)
                 for repeat in range(1, matrix.repeats + 1):
                     name = results.result_file_name(
-                        model, temperature, mode, repeat if matrix.repeats > 1 else None
+                        model,
+                        temperature,
+                        mode,
+                        repeat if matrix.repeats > 1 else None,
+                        matrix.options,
                     )
                     path = matrix.out / name
                     done = results.read_done_ids(path)

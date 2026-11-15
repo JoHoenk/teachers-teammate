@@ -48,6 +48,7 @@ committed set is one command.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 import sys
 
@@ -186,6 +187,33 @@ def _index(args) -> int:
     return 0
 
 
+def _pooled_profiles(cache: Path) -> list[str]:
+    """Return a line for every (model, temperature, mode) whose files were asked differently.
+
+    The rows of a cache do not say which sampling values they were asked with, so the table would
+    pool a run at ``presence_penalty=0`` with one at the tag's value.  The headers say; two
+    different request profiles under one key are reported instead of averaged.
+    """
+    seen: dict[tuple, set[str]] = {}
+    for path in sorted(cache.glob("*.header.json")):
+        try:
+            sessions = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        for header in sessions if isinstance(sessions, list) else [sessions]:
+            if not isinstance(header, dict) or "request_profile" not in header:
+                continue
+            key = (header.get("model"), header.get("temperature"), header.get("mode"))
+            seen.setdefault(key, set()).add(json.dumps(header["request_profile"], sort_keys=True))
+    return [
+        f"{model} at {temperature} ({mode}): {len(profiles)} request profiles in one folder"
+        for (model, temperature, mode), profiles in sorted(
+            seen.items(), key=lambda item: str(item[0])
+        )
+        if len(profiles) > 1
+    ]
+
+
 def _report_cache(args) -> int:
     """Print the results table of a local cache; return the exit code.
 
@@ -193,6 +221,12 @@ def _report_cache(args) -> int:
     """
     # The test set is optional for the table, but with it the band and the new numbers are
     # recomputed from the record's spans instead of being taken from the row.
+    if pooled := _pooled_profiles(workspace_path(args.cache)):
+        print("refused: the folder pools runs that were asked differently:", file=sys.stderr)
+        for line in pooled:
+            print(f"  {line}", file=sys.stderr)
+        print("Keep one folder per set of sampling values.", file=sys.stderr)
+        return 2
     testset = workspace_path(args.testset) if args.testset else None
     records = results.read_records_by_id(testset) if testset else {}
     if args.count_marks and not args.testset:

@@ -14,6 +14,7 @@ import json
 from pathlib import Path
 
 from teachers_teammate.domain.correction_review import CorrectionReview
+from teachers_teammate.domain.model_catalog import sampling_text
 
 from . import languages
 from .answer_mode import DEFAULT_MODE, AnswerMode, parse_mode
@@ -308,15 +309,23 @@ def read_labels(testset: Path) -> dict[str, tuple[ReferenceLabel, ...]]:
 
 
 def result_file_name(
-    model: str, temperature: float, mode: AnswerMode = DEFAULT_MODE, repeat: int | None = None
+    model: str,
+    temperature: float,
+    mode: AnswerMode = DEFAULT_MODE,
+    repeat: int | None = None,
+    options: Sequence[tuple[str, float]] = (),
 ) -> str:
-    """Return the name of the results file of one model, temperature, answer mode and repeat.
+    """Return the name of the results file of one model, temperature, mode, options and repeat.
 
     The default mode and a single run keep the names earlier runs used, so those files still
-    resume; only a second answer mode and the repeats of a repeated run get a suffix.
+    resume; only a second answer mode, sampling options and the repeats of a repeated run get a
+    suffix.  A run with other sampling values is another measurement, so it must not share a file.
     """
-    suffix = ("" if mode == DEFAULT_MODE else f"__{mode.value}") + (
-        "" if repeat is None else f"__r{repeat}"
+    sampling = "".join(f"__{name}-{sampling_text(value)}" for name, value in sorted(options))
+    suffix = (
+        ("" if mode == DEFAULT_MODE else f"__{mode.value}")
+        + sampling
+        + ("" if repeat is None else f"__r{repeat}")
     )
     return f"{model.replace('/', '_').replace(':', '_')}__T{temperature:g}{suffix}.jsonl"
 
@@ -406,7 +415,7 @@ def review_for_counting(
     empty review.  The rule is applied when a text is proofread and again when a stored row is
     re-scored, so a report of an older run says the same.
     """
-    if review is None and mode in (AnswerMode.REVIEW, AnswerMode.EXCHANGE) and corrected != source:
+    if review is None and AnswerMode(mode).has_explanations and corrected != source:
         return CorrectionReview()
     return review
 

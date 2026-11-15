@@ -306,6 +306,11 @@ class PerformanceSummary:
     """Answer tokens per 100 words of student text: 10th percentile, median, 90th."""
 
     requests_per_text: float | None
+    step_one_share: float | None
+    """Share of the tool's waiting time that step ① of the exchange took, over the comparable
+    texts whose requests carry a step tag.  A correct-only run shows 100 %; ``None`` for review and
+    text mode, which have no steps, and for rows written before the tag existed."""
+
     vram_used_mb: int | None
     """Highest memory the model added on the card, over the comparable texts."""
 
@@ -364,11 +369,26 @@ def summarise_performance(items: Sequence[ScoredItem]) -> list[PerformanceSummar
                     if clean
                     else None
                 ),
+                step_one_share=_step_one_share(clean),
                 vram_used_mb=max(used) if used else None,
                 on_card_share=min(shares) if shares else None,
             )
         )
     return summaries
+
+
+def _step_one_share(rows: Sequence[ScoredItem]) -> float | None:
+    """Return the share of the waiting time that went to step ①, or ``None`` without step tags."""
+    first = other = 0.0
+    for row in rows:
+        if row.performance is None:
+            continue
+        for request in row.performance.requests:
+            if request.step == "correct":
+                first += request.wall_s
+            elif request.step:
+                other += request.wall_s
+    return first / (first + other) if first else None
 
 
 def _spread_cell(spread: Spread | None) -> str:
@@ -392,8 +412,8 @@ def performance_table(summaries: Iterable[PerformanceSummary]) -> str:
     lines = [
         "| Model | T | Mode | Texts (comparable) | s per 100 words | Answer tokens/s "
         "| Answer tokens per 100 words (10th / median / 90th) | Requests/text "
-        "| Graphics memory MB | On the card |",
-        "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+        "| Step ① share of time | Graphics memory MB | On the card |",
+        "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
     ]
     for item in summaries:
         share = "-" if item.on_card_share is None else f"{item.on_card_share:.0%}"
@@ -404,6 +424,7 @@ def performance_table(summaries: Iterable[PerformanceSummary]) -> str:
             f"| {number(item.answer_tokens_per_s, '.0f')} "
             f"| {_spread_cell(item.answer_tokens_spread)} "
             f"| {number(item.requests_per_text, '.2f')} "
+            f"| {'-' if item.step_one_share is None else format(item.step_one_share, '.0%')} "
             f"| {number(item.vram_used_mb, 'd')} | {share} |"
         )
     lines += [

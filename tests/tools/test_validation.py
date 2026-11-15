@@ -477,3 +477,25 @@ def test_format_mode_wants_no_machine_for_a_run_of_an_online_provider(tmp_path):
 
     assert any("machine is not null" in p for p in problems)
     assert any("ollama_version is not null" in p for p in problems)
+
+
+def test_format_mode_accepts_the_sampling_values_a_run_lists_and_refuses_bad_ones(tmp_path):
+    """
+    Given  a committed run whose request profile lists sampling values, then one with an unknown
+           name, one with a text value and one with an empty object
+    When   each is validated in format mode
+    Then   the first passes and each of the others is refused for its own reason
+    """
+    written = one(workspace(tmp_path))
+
+    def asked(options):
+        def change(header, items):
+            header["request_profile"]["options"] = options
+
+        rewrite(written.path, change)
+        return validation.validate_run(written.path)
+
+    assert not any("options" in problem for problem in asked({"presence_penalty": 0.0}))
+    assert any("unknown name 'seed'" in problem for problem in asked({"seed": 1}))
+    assert any("top_p is not a number" in problem for problem in asked({"top_p": "high"}))
+    assert any("non-empty object" in problem for problem in asked({}))

@@ -948,3 +948,38 @@ def test_the_sheet_command_reads_a_cache_of_several_runs(tmp_path, monkeypatch, 
     assert "Run: `gemma4-e4b-r1`" in printed.out
     assert "| 1 | `de-01` | 0 |" in printed.out
     assert fixtures.EXPLANATION in printed.out
+
+
+def test_a_cache_that_pools_runs_with_other_sampling_values_is_refused(tmp_path, capsys):
+    """
+    Given  a results folder holding two runs of one model at one temperature, one with a
+           presence penalty set and one without
+    When   `report --cache` runs over it
+    Then   it refuses, names the model and says to keep one folder per set of sampling values,
+           instead of averaging two measurements
+    """
+    for name, profile in (
+        ("a", {"compact_json": False, "temperature": 0.7}),
+        ("b", {"compact_json": False, "temperature": 0.7, "options": {"presence_penalty": 0.0}}),
+    ):
+        header = {
+            "model": "qwen3.5:9b",
+            "temperature": 0.7,
+            "mode": "correct-only",
+            "request_profile": profile,
+        }
+        (tmp_path / f"{name}.header.json").write_text(json.dumps([header]), encoding="utf-8")
+
+    code = proofreading_store._report_cache(
+        Namespace(
+            cache=str(tmp_path),
+            testset=None,
+            by_error=None,
+            count_marks=False,
+            performance=False,
+            catalog_lines=False,
+        )
+    )
+
+    assert code == 2
+    assert "qwen3.5:9b" in capsys.readouterr().err

@@ -179,3 +179,86 @@ def test_the_exchange_factory_builds_the_exchange_corrector_in_the_chunking_wrap
     assert isinstance(small, ChunkingCorrector)
     assert isinstance(small.inner, ExchangeCorrector)
     assert small.inner.max_text_chars("German") < large.inner.max_text_chars("German")
+
+
+class _OneStepClient:
+    """A client that answers step one and fails the test when any other step asks."""
+
+    last_stats = None
+
+    def __init__(self, corrected: str = "Ich habe einen Hund.", *, fail: bool = False) -> None:
+        self.corrected = corrected
+        self.fail = fail
+        self.systems: list[str] = []
+
+    def chat(self, model, prompt, *, system="", **_):
+        self.systems.append(system)
+        if self.fail:
+            raise ConnectionError("no server")
+        return self.corrected
+
+
+@pytest.mark.use_case("Model_Eval_Comparison")
+def test_a_correct_only_corrector_sends_step_one_alone_and_returns_the_text_without_a_review() -> (
+    None
+):
+    """
+    Given  the exchange built to send step one only
+    When   a text is proofread
+    Then   exactly one request goes out, with step one's prompt, and the outcome is the corrected
+           text with no review and no warning about the explanations that were never asked for
+    """
+    from teachers_teammate.domain.correction_prompts import CORRECT_SYSTEM  # noqa: PLC0415
+
+    client = _OneStepClient()
+    corrector = exchange_corrector_factory(
+        client,
+        timeout=5.0,
+        steps=frozenset({"correct"}),  # ty: ignore[invalid-argument-type]
+    )("gemma4:e4b", 0.2)
+
+    outcome = corrector.correct("Ich habe ein Hund.", "German")
+
+    assert client.systems == [CORRECT_SYSTEM]
+    assert outcome.text == "Ich habe einen Hund."
+    assert outcome.review is None
+    assert outcome.warning is None
+    assert not outcome.failed
+
+
+@pytest.mark.use_case("Model_Eval_Comparison")
+def test_a_correct_only_file_whose_step_one_failed_keeps_its_failure() -> None:
+    """
+    Given  the exchange built to send step one only, and a server that does not answer
+    When   a text is proofread
+    Then   the file fails with its warning and keeps the source, as in the full exchange
+    """
+    corrector = exchange_corrector_factory(
+        _OneStepClient(fail=True),  # ty: ignore[invalid-argument-type]
+        timeout=5.0,
+        steps=frozenset({"correct"}),
+    )("gemma4:e4b", 0.2)
+
+    outcome = corrector.correct("Ich habe ein Hund.", "German")
+
+    assert outcome.failed
+    assert outcome.text == "Ich habe ein Hund."
+    assert outcome.warning
+
+
+@pytest.mark.use_case("Model_Eval_Comparison")
+def test_a_correct_only_corrector_splits_a_long_text_exactly_as_the_exchange_does() -> None:
+    """
+    Given  the full exchange and the correct-only one, built on the same window
+    When   they are asked how much text one request carries
+    Then   the budgets are equal, so both send the same pieces and the runs pair text for text
+    """
+    client = OllamaClient("http://x")
+
+    full = exchange_corrector_factory(client, timeout=5.0, num_ctx=8192)("m", 0.2)
+    only = exchange_corrector_factory(
+        client, timeout=5.0, num_ctx=8192, steps=frozenset({"correct"})
+    )("m", 0.2)
+
+    assert isinstance(full, ChunkingCorrector) and isinstance(only, ChunkingCorrector)
+    assert only.inner.max_text_chars("German") == full.inner.max_text_chars("German")

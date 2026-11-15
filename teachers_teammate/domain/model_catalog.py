@@ -155,6 +155,23 @@ def think_level(tag: str) -> str | None:
     return next((level for family, level in THINK_LEVELS.items() if name.startswith(family)), None)
 
 
+SAMPLING_OPTIONS: frozenset[str] = frozenset(
+    {"top_k", "top_p", "min_p", "presence_penalty", "frequency_penalty", "repeat_penalty"}
+)
+"""The sampling values of Ollama a profile may set besides the temperature.
+
+``seed`` and ``num_ctx`` are not among them: the seed belongs to a run, the window to the app.
+"""
+
+
+def sampling_text(value: float) -> str:
+    """Return *value* as the text that names it in a file name and in a cache key.
+
+    Twelve significant digits, so two values a request tells apart never share a name.
+    """
+    return format(value, ".12g")
+
+
 @dataclass(frozen=True)
 class StepProfile:
     """How one step of the exchange is sent: its temperature and its thinking.
@@ -169,6 +186,30 @@ class StepProfile:
     #: What the request tells a reasoning model about thinking: ``False`` (off), or the level
     #: (``"low"``) of a family that ignores the flag (see :data:`THINK_LEVELS`).
     think: bool | str = False
+    #: Sampling values the request sends besides the temperature, as sorted ``(name, value)``
+    #: pairs of :data:`SAMPLING_OPTIONS`.  Empty: the model's own tag decides (Ollama applies the
+    #: values of the model's Modelfile), which is what every request sent until a measurement
+    #: shows that a model needs another value.
+    options: tuple[tuple[str, float], ...] = ()
+
+    def __post_init__(self) -> None:
+        """Refuse an option no request may carry, and keep the pairs in one order."""
+        unknown = sorted({name for name, _ in self.options} - SAMPLING_OPTIONS)
+        if unknown:
+            allowed = ", ".join(sorted(SAMPLING_OPTIONS))
+            raise ValueError(f"unknown sampling option {unknown[0]!r} (allowed: {allowed})")
+        names = [name for name, _ in self.options]
+        repeated = sorted({name for name in names if names.count(name) > 1})
+        if repeated:
+            raise ValueError(f"sampling option {repeated[0]!r} is given more than once")
+        for name, value in self.options:
+            if name == "top_k" and not float(value).is_integer():
+                raise ValueError(f"sampling option 'top_k' must be a whole number, not {value:g}")
+        object.__setattr__(self, "options", tuple(sorted(self.options)))
+
+    def sampling(self) -> dict[str, float]:
+        """Return the extra sampling values as the options dict of a request."""
+        return dict(self.options)
 
 
 @dataclass(frozen=True)
@@ -220,6 +261,7 @@ class RequestProfile:
         """
         steps = "|".join(
             f"{step.temperature:g}/{step.think}"
+            + "".join(f"/{name}={sampling_text(value)}" for name, value in step.options)
             for step in (self.correct, self.explain, self.unclear)
         )
         return "|".join(

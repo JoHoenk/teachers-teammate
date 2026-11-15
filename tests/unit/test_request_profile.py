@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from dataclasses import replace
 
+import pytest
+
 from teachers_teammate.domain.model_catalog import (
     DEFAULT_REQUEST_PROFILE,
     RequestProfile,
@@ -120,3 +122,69 @@ def test_the_fingerprint_is_stable_for_the_same_profile() -> None:
     Then   they are equal, so the cache key of a run does not change between runs
     """
     assert RequestProfile().fingerprint() == RequestProfile().fingerprint()
+
+
+def test_a_step_can_carry_sampling_values_besides_the_temperature() -> None:
+    """
+    Given  a step profile with a presence penalty and a top-p, given in any order
+    When   the step is read
+    Then   the values are kept sorted by name and read back as the options dict of a request
+    """
+    step = StepProfile(options=(("top_p", 0.9), ("presence_penalty", 0.0)))
+
+    assert step.options == (("presence_penalty", 0.0), ("top_p", 0.9))
+    assert step.sampling() == {"presence_penalty": 0.0, "top_p": 0.9}
+    assert StepProfile().sampling() == {}
+
+
+@pytest.mark.parametrize("name", ["seed", "num_ctx", "temperature", "banana"])
+def test_a_value_a_request_may_not_carry_is_refused(name: str) -> None:
+    """
+    Given  an option that belongs to the run, the app or nobody (seed, window, temperature, a typo)
+    When   a step profile is built with it
+    Then   it is refused and the message names the allowed options
+    """
+    with pytest.raises(ValueError, match="unknown sampling option") as refused:
+        StepProfile(options=((name, 1.0),))
+
+    assert "presence_penalty" in str(refused.value)
+
+
+def test_the_fingerprint_changes_with_a_sampling_value_and_only_then() -> None:
+    """
+    Given  a profile without sampling values and the same profile with one on step one
+    When   their fingerprints are compared
+    Then   they differ, the value is in the sampled one, and the plain one lists none, so a cached
+           answer is never reused across sampling values
+    """
+    plain = RequestProfile()
+    sampled = replace(plain, correct=StepProfile(options=(("presence_penalty", 0.0),)))
+
+    assert plain.fingerprint() != sampled.fingerprint()
+    assert "presence_penalty=0" in sampled.fingerprint()
+    assert "=" not in plain.fingerprint()
+
+
+def test_a_repeated_name_and_a_fractional_top_k_are_refused() -> None:
+    """
+    Given  a step profile that names one option twice, and one with top_k 20.5
+    When   it is built
+    Then   both are refused, so a value never depends on the order it was given in
+    """
+    with pytest.raises(ValueError, match="more than once"):
+        StepProfile(options=(("top_p", 0.5), ("top_p", 0.9)))
+    with pytest.raises(ValueError, match="whole number"):
+        StepProfile(options=(("top_k", 20.5),))
+    assert StepProfile(options=(("top_k", 20.0),)).sampling() == {"top_k": 20.0}
+
+
+def test_two_close_sampling_values_have_two_fingerprints() -> None:
+    """
+    Given  two profiles whose top_p differs in the eighth digit
+    When   their fingerprints are compared
+    Then   they differ, so a cached answer is not reused for the other value
+    """
+    low = replace(RequestProfile(), correct=StepProfile(options=(("top_p", 0.9),)))
+    near = replace(RequestProfile(), correct=StepProfile(options=(("top_p", 0.90000001),)))
+
+    assert low.fingerprint() != near.fingerprint()

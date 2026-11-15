@@ -36,12 +36,13 @@ from __future__ import annotations
 
 import argparse
 from datetime import UTC, datetime
+import math
 from pathlib import Path
 import shlex
 import sys
 from typing import cast
 
-from teachers_teammate.domain.model_catalog import RequestProfile
+from teachers_teammate.domain.model_catalog import SAMPLING_OPTIONS, RequestProfile
 from teachers_teammate.infrastructure.ollama_utils import OllamaClient
 from tools.model_eval import defaults, protocol, results, runner
 from tools.model_eval.answer_mode import DEFAULT_MODE, RUNNABLE_MODES, AnswerMode, parse_mode
@@ -63,6 +64,43 @@ from tools.model_eval.smoke import (
     setup_label,
 )
 from tools.model_eval.structured_check import StructuredOutputCheck
+
+
+def _sampling_option(text: str) -> tuple[str, float]:
+    """Return ``(name, value)`` of a ``--option NAME=VALUE``, or refuse it for argparse."""
+    name, separator, value = text.partition("=")
+    if not separator or name not in SAMPLING_OPTIONS:
+        allowed = ", ".join(sorted(SAMPLING_OPTIONS))
+        raise argparse.ArgumentTypeError(f"{text!r}: use NAME=VALUE with NAME one of {allowed}")
+    try:
+        number = float(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"{text!r}: {value!r} is not a number") from None
+    if not math.isfinite(number):
+        raise argparse.ArgumentTypeError(f"{text!r}: {value!r} is not a finite number")
+    if name == "top_k" and not number.is_integer():
+        raise argparse.ArgumentTypeError(f"{text!r}: top_k is a whole number")
+    return name, number
+
+
+def _option_problem(args: argparse.Namespace) -> str | None:
+    """Return why the ``--option`` values cannot be used with this run, or ``None``.
+
+    Only the proofreading exchange sends sampling values; the review and text modes would ignore
+    them and still write files that say they were asked with them.  A name given twice would leave
+    the value to chance.
+    """
+    names = [name for name, _ in args.option]
+    repeated = sorted({name for name in names if names.count(name) > 1})
+    if repeated:
+        return f"--option {repeated[0]} is given more than once"
+    elsewhere = [mode.value for mode in args.mode if not mode.asks_exchange]
+    if names and elsewhere:
+        return (
+            "--option reaches the proofreading exchange only; it would be ignored in "
+            f"{', '.join(elsewhere)} mode.  Ask with --mode exchange or --mode correct-only."
+        )
+    return None
 
 
 def _refuse(message: str) -> int:
@@ -87,6 +125,7 @@ def _matrix(args: argparse.Namespace) -> runner.Matrix:
         gpu_sampler=args.gpu_agent_record or args.gpu_sampler,
         machine=args.machine,
         compact_json=args.compact_json,
+        options=tuple(args.option),
     )
 
 
@@ -106,12 +145,13 @@ def _seams(args: argparse.Namespace) -> runner.Seams:
     ) -> CorrectorFactory:
         # The seam promises a recording client; the app's factory wants the app's client type,
         # which is what the recording client is.
-        if mode is AnswerMode.EXCHANGE:
+        if mode.asks_exchange:
             return exchange_corrector_factory(
                 cast(OllamaClient, client),
                 timeout=args.timeout,
                 num_ctx=protocol.NUM_CTX,
                 profile=profile,
+                steps=frozenset({"correct"}) if mode is AnswerMode.CORRECT_ONLY else None,
             )
         return app_corrector_factory(
             cast(OllamaClient, client),
@@ -237,6 +277,8 @@ def _run(args: argparse.Namespace) -> int:
     """Run the matrix *args* describes, or say why it does not start."""
     # The request side is checked before anything is sent: a prompt, answer format or window that
     # changed since the current version needs a new version in protocol.json, not a new run.
+    if problem := _option_problem(args):
+        return _refuse(problem)
     try:
         stamp = protocol.current_stamp()
     except protocol.ProtocolError as error:
@@ -301,6 +343,17 @@ def main() -> int:
         default=None,
         help="Run at temperature X (repeatable; default: each model's request profile, which is "
         "the temperature its vendor recommends, else the app's 0.2).",
+    )
+    run.add_argument(
+        "--option",
+        action="append",
+        default=[],
+        type=_sampling_option,
+        metavar="NAME=VALUE",
+        help="Send a sampling value with step ① besides the temperature, e.g. "
+        "presence_penalty=0 or top_p=0.9 (repeatable).  The names are those of Ollama in "
+        f"{', '.join(sorted(SAMPLING_OPTIONS))}.  Without it the model's own tag decides, as in "
+        "the app.  Runs with other values write to files of their own.",
     )
     run.add_argument(
         "--compact-json",

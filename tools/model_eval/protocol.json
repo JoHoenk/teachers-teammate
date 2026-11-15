@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "current": 2,
+  "current": 3,
   "versions": [
     {
       "version": 1,
@@ -13,6 +13,12 @@
       "date": "2026-11-14",
       "fingerprint": "c5d66dae736fd35834af32dfa9ce3be467febb2e34eb70ba6a76da06ac9effda",
       "why": "The proofreading exchange (corrected text, explanations, unclear check) joins review and text as an answer mode, and the fingerprint now covers its three requests per language and the knob that turns step 3 off. The request side of review and text mode is unchanged: their part of the fingerprint hashes to version 1's."
+    },
+    {
+      "version": 3,
+      "date": "2026-11-15",
+      "fingerprint": "9c319b9f708124e4619f951d0e9ebcc89941f8ee7450265698a8adfdc0f36c59",
+      "why": "Additive: the correct-only answer mode (step 1 of the exchange alone) joins the others, and a profile may carry sampling values (top_k, top_p, min_p, presence_penalty, frequency_penalty, repeat_penalty) besides the temperature; the fingerprint covers a sampled profile. Every request that existed in version 2 hashes as it did (review, text and exchange, every language, profile and text budget), so version 2 runs are re-stamped as version 3 after that check."
     }
   ]
 }

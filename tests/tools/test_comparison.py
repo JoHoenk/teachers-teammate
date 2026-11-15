@@ -984,3 +984,24 @@ def test_a_report_without_bands_prints_no_band_table() -> None:
     Then   it is empty, not a table with only a header
     """
     assert band_table(summarise([_result_row()])) == ""
+
+
+@pytest.mark.use_case("Model_Eval_Report")
+def test_the_report_says_how_much_of_the_time_step_one_took() -> None:
+    """
+    Given  a text whose requests are tagged: step one took 2 s, steps two and three 6 s
+    When   the performance is summarised and printed
+    Then   step one's share is 25 %, and a text without step tags has none
+    """
+    requests = (
+        RequestStats("gemma4:e4b", 200, 100, 0.0, 0.1, 2.0, 2.2, 2.0, "stop", step="correct"),
+        RequestStats("gemma4:e4b", 200, 100, 0.0, 0.1, 2.0, 2.2, 4.0, "stop", step="explain"),
+        RequestStats("gemma4:e4b", 200, 100, 0.0, 0.1, 2.0, 2.2, 2.0, "stop", step="unclear"),
+    )
+    tagged = _timed(performance=Performance(requests=requests))
+
+    summary = summarise_performance([tagged])[0]
+
+    assert summary.step_one_share == 0.25
+    assert "| 25% |" in performance_table([summary])
+    assert summarise_performance([_timed()])[0].step_one_share is None

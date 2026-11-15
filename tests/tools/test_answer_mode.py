@@ -44,14 +44,27 @@ def test_the_modes_are_the_three_ways_to_ask() -> None:
     Then   review and text are the ones the app's corrector answers in, two-step is not, and
            review is the default
     """
-    assert [mode.value for mode in AnswerMode] == ["review", "text", "exchange", "two-step"]
+    assert [mode.value for mode in AnswerMode] == [
+        "review",
+        "text",
+        "exchange",
+        "correct-only",
+        "two-step",
+    ]
     assert CORRECTOR_MODES == (AnswerMode.REVIEW, AnswerMode.TEXT)
     assert DEFAULT_MODE is AnswerMode.REVIEW
     assert AnswerMode.REVIEW.asks_corrector
     assert AnswerMode.TEXT.asks_corrector
     assert not AnswerMode.TWO_STEP.asks_corrector
-    assert not AnswerMode.EXCHANGE.asks_corrector  # it has its own factory, and no fingerprint
-    assert RUNNABLE_MODES == (AnswerMode.REVIEW, AnswerMode.TEXT, AnswerMode.EXCHANGE)
+    assert not AnswerMode.EXCHANGE.asks_corrector  # it has its own factory
+    assert AnswerMode.EXCHANGE.asks_exchange and AnswerMode.CORRECT_ONLY.asks_exchange
+    assert not AnswerMode.REVIEW.asks_exchange
+    assert RUNNABLE_MODES == (
+        AnswerMode.REVIEW,
+        AnswerMode.TEXT,
+        AnswerMode.EXCHANGE,
+        AnswerMode.CORRECT_ONLY,
+    )
 
 
 @pytest.mark.parametrize("value", ["Review", "two_step", "chat", ""])
@@ -61,7 +74,9 @@ def test_parse_mode_refuses_a_value_that_is_not_a_mode(value: str) -> None:
     When   it is parsed
     Then   a ValueError names the allowed values
     """
-    with pytest.raises(ValueError, match="use one of: review, text, exchange, two-step"):
+    with pytest.raises(
+        ValueError, match="use one of: review, text, exchange, correct-only, two-step"
+    ):
         parse_mode(value)
 
 
@@ -88,3 +103,12 @@ def test_a_row_with_an_unknown_mode_is_refused() -> None:
 
     with pytest.raises(ValueError, match="unknown answer mode 'chat'"):
         ResultRow.from_dict(stored)
+
+
+def test_only_review_and_exchange_have_explanations_to_count() -> None:
+    """
+    Given  the answer modes
+    When   they are asked whether a text carries explanations
+    Then   review and exchange say yes; text, correct-only and two-step say no
+    """
+    assert [mode.has_explanations for mode in AnswerMode] == [True, False, True, False, False]

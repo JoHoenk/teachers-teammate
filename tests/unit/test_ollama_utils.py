@@ -1894,3 +1894,16 @@ def test_a_client_without_a_sink_still_answers(monkeypatch) -> None:
     monkeypatch.setitem(sys.modules, "ollama", mock_ollama)
 
     assert OllamaClient("http://127.0.0.1:11434").chat("m", "hi") == "Hallo Welt"
+
+
+def test_sampling_values_join_the_proofreading_options_without_replacing_the_fixed_ones() -> None:
+    """
+    Given  sampling values that try to set the temperature and the window as well
+    When   proofreading_options() is called
+    Then   the values are sent, and the temperature and the window are the ones the caller gave
+    """
+    options = ollama_utils.proofreading_options(
+        0.3, 4096, {"presence_penalty": 0.0, "temperature": 9.0, "num_ctx": 1}
+    )
+
+    assert options == {"presence_penalty": 0.0, "temperature": 0.3, "num_ctx": 4096}

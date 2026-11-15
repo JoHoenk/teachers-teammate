@@ -95,7 +95,7 @@ py_binary(
         "//teachers_teammate:ocr_lib",
         "@ocr_test_dependencies//numpy:pkg",
         "@ocr_test_dependencies//ollama:pkg",
-        "@ocr_test_dependencies//opencv_python:pkg",
+        "@ocr_test_dependencies//opencv_python_headless:pkg",
         "@ocr_test_dependencies//pillow:pkg",
     ],
 )

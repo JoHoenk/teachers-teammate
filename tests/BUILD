@@ -90,7 +90,7 @@ _TESTS_TYPED_DEPS = [
     "@ocr_test_dependencies//markdown_it_py:pkg",
     "@ocr_test_dependencies//numpy:pkg",
     "@ocr_test_dependencies//ollama:pkg",
-    "@ocr_test_dependencies//opencv_python:pkg",
+    "@ocr_test_dependencies//opencv_python_headless:pkg",
     "@ocr_test_dependencies//pillow:pkg",
     "@ocr_test_dependencies//platformdirs:pkg",
     "@ocr_test_dependencies//psutil:pkg",
@@ -162,7 +162,7 @@ _PDF_DEPS = ["@ocr_test_dependencies//pypdfium2:pkg"]
 # pyyaml: the built-in reader reads its recogniser's character list with it.
 _CV_DEPS = [
     "@ocr_test_dependencies//numpy:pkg",
-    "@ocr_test_dependencies//opencv_python:pkg",
+    "@ocr_test_dependencies//opencv_python_headless:pkg",
     "@ocr_test_dependencies//pyyaml:pkg",
 ]
 
@@ -221,7 +221,7 @@ _GUI_DEPS = [
 ]
 
 # infrastructure/pipeline.py has module-level imports of docx_builder (→ python-docx),
-# preprocessing (→ opencv-python), correction (→ langchain-core),
+# preprocessing (→ opencv-python-headless), correction (→ langchain-core),
 # ocr_processor + ollama_utils (→ requests), and input_providers (→ pypdfium2).
 # Any test that imports from pipeline needs all of these.
 _PIPELINE_DEPS = (

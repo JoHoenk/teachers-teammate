@@ -1018,7 +1018,10 @@ def test_update_installs_the_addons_again_and_makes_the_folder_usable(
 
     monkeypatch.setattr(addon_manager, "install_packages_subprocess", fake_install)
 
-    addon_manager.update_installed_addons(lambda _line: None)
+    # The update evicts the add-ons' modules (clear_stale_modules); restore them afterwards so
+    # a later test file still sees the real langchain_core (one pytest process for everything).
+    with patch.dict(sys.modules):
+        addon_manager.update_installed_addons(lambda _line: None)
 
     assert installs == [(["spacy>=3.7"], pkg_dir)]
     assert str(pkg_dir) in sys.path
@@ -1039,7 +1042,8 @@ def test_update_removes_a_stale_copy_pip_did_not_replace(
     monkeypatch.setattr(addon_manager, "get_packages_dir", lambda: pkg_dir)
     monkeypatch.setattr(addon_manager, "install_packages_subprocess", lambda *_a, **_k: None)
 
-    addon_manager.update_installed_addons(lambda _line: None)
+    with patch.dict(sys.modules):
+        addon_manager.update_installed_addons(lambda _line: None)
 
     assert not (pkg_dir / "numpy-2.4.0.dist-info").exists()
     assert addon_manager.addons_outdated() is False

@@ -39,6 +39,8 @@ The built-in reader's model tests (`//tests:test_ppocr_models`, the multi-page P
 
 You can also invoke pytest directly (without Bazel) for quick ad-hoc runs, but Bazel is preferred in CI and for coverage because it applies the correct sandbox and dependency isolation.
 
+Bazel gives every test file its own process, which hides a test that changes global state (`sys.modules`, `sys.path`, environment) and leaves it changed. A single `pytest tests` run puts all files in one process and is how such a leak between files shows up. A test that evicts or replaces modules must restore them (`with patch.dict(sys.modules):`).
+
 ### Coverage report
 
 ```bash

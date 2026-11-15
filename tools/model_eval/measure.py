@@ -554,7 +554,7 @@ def tool_revision(run: Callable[..., Any] = subprocess.run) -> str:
             done = run(
                 ["git", *args], cwd=here, capture_output=True, text=True, timeout=15, check=False
             )
-        except (OSError, subprocess.SubprocessError):
+        except OSError, subprocess.SubprocessError:
             return None
         return done.stdout.strip() if getattr(done, "returncode", 1) == 0 else None
 

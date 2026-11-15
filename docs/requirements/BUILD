@@ -18,8 +18,10 @@ trlc_requirements(
     spec = [":qualification_spec"],
 )
 
+# trlc locks cvc5 and pyvcg for Python 3.9 - 3.12 only; the repository is on 3.14.
 trlc_requirements_test(
     name = "use_cases_validate",
+    python_version = "3.12",
     reqs = [":use_cases"],
 )
 

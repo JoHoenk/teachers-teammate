@@ -30,11 +30,17 @@ bazel_dep(
 bazel_dep(name = "rules_jvm_external", version = "7.2")
 bazel_dep(name = "rules_java", version = "9.9.0")
 
+# One Python version for the whole repository: `.python-version` holds the full patch, and
+# rules_python reads it here.  CI's setup-python reads the same file, so the Bazel tests and the
+# bundles cannot drift apart.  Bumped by hand (a weekly job that reports a newer patch is still
+# to be written: plans/ci-build-fixes.md, C6).  `python.defaults` alone would register the
+# toolchain without the coverage tool, so the same patch is named again below for
+# `bazel coverage`: change both together.
 python = use_extension("@rules_python//python/extensions:python.bzl", "python")
+python.defaults(python_version_file = "//:.python-version")
 python.toolchain(
     configure_coverage_tool = True,
-    is_default = True,
-    python_version = "3.12",
+    python_version = "3.14.10",
 )
 
 # Dev-only pip hub: tools required for linting (pylint and deps).
@@ -45,7 +51,7 @@ pip_dev = use_extension(
 )
 pip_dev.parse(
     hub_name = "ocr_dev_dependencies",
-    python_version = "3.12",
+    python_version = "3.14",
     requirements_lock = "//:requirements_dev_lock.txt",
 )
 use_repo(pip_dev, "ocr_dev_dependencies")
@@ -58,7 +64,7 @@ pip_test = use_extension(
 )
 pip_test.parse(
     hub_name = "ocr_test_dependencies",
-    python_version = "3.12",
+    python_version = "3.14",
     requirements_lock = "//:requirements_test_lock.txt",
 )
 use_repo(pip_test, "ocr_test_dependencies")
@@ -77,6 +83,11 @@ bazel_dep(name = "trlc", version = "0.0.0")
 git_override(
     module_name = "trlc",
     commit = "08ff8c7d6c362153392003c671a9799a446b0db5",
+    # trlc locks its pip packages (cvc5, pyvcg, sphinx) for Python 3.9 - 3.12 only, while the
+    # repository is on 3.14: the patch runs its `trlc_rst` tool on 3.12 and lets its Sphinx
+    # extension use the Sphinx of `//docs:sphinx-build`.  Drop it once trlc locks 3.14.
+    patch_strip = 1,
+    patches = ["//third_party/trlc:python.patch"],
     remote = "https://github.com/bmw-software-engineering/trlc.git",
 )
 

@@ -454,7 +454,7 @@ def _keep_foreign_file(path: Path) -> None:
     """
     try:
         data = _as_object(json.loads(path.read_text(encoding="utf-8") or "{}"))
-    except (OSError, ValueError):
+    except OSError, ValueError:
         return
     if data is None or data.get("schema") == SCHEMA:
         return
@@ -562,7 +562,7 @@ def _record_from_json(entry: object) -> SpeedRecord | None:
             for record in (_step_from_json(item) for item in data.get("steps", []))
             if record is not None
         )
-    except (KeyError, TypeError, ValueError):
+    except KeyError, TypeError, ValueError:
         return None
     on_battery = data.get("on_battery")
     return SpeedRecord(
@@ -583,7 +583,7 @@ def _step_from_json(entry: object) -> StepRecord | None:
     try:
         step = SpeedStep(str(data["step"]))
         outcome = StepOutcome(str(data["outcome"]))
-    except (KeyError, ValueError):
+    except KeyError, ValueError:
         return None
     speed = data.get("speed")
     return StepRecord(
@@ -610,7 +610,7 @@ def _speed_from_json(entry: object) -> ModelSpeed | None:
                 None if data.get("chars_per_token") is None else float(data["chars_per_token"])
             ),
         )
-    except (KeyError, TypeError, ValueError):
+    except KeyError, TypeError, ValueError:
         return None
 
 
@@ -640,7 +640,7 @@ def _samples_from_json(entry: object) -> tuple[SampleKey, list[RunSample]] | Non
             step=SpeedStep(str(data["step"])),
             mode=str(data.get("mode", "")),
         )
-    except (KeyError, ValueError):
+    except KeyError, ValueError:
         return None
     entries = data.get("samples")
     if not isinstance(entries, list):
@@ -665,5 +665,5 @@ def _sample_from_json(entry: object) -> RunSample | None:
             pieces=int(data.get("pieces", 1)),
             at=str(data.get("at", "")),
         )
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return None

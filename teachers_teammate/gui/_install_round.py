@@ -496,6 +496,6 @@ class InstallRound(QObject):
         ):
             try:
                 signal.disconnect(slot)
-            except (RuntimeError, TypeError):
+            except RuntimeError, TypeError:
                 pass  # already disconnected
         self._pull_connected = False

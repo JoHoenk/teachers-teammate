@@ -4,8 +4,8 @@
 # Why a dedicated venv (not the active one)?
 #   PyInstaller freezes whatever is importable in the running interpreter. If the
 #   build runs inside a dev venv that also has the optional extras installed
-#   (langchain, spaCy, PyMuPDF, PyQt6, …), those get swept into the
-#   binary — bloating it and, worse, pulling in AGPL/GPL code (PyMuPDF, PyQt6).
+#   (langchain, spaCy, …), those get swept into the binary — bloating it and,
+#   worse, pulling in code whose licence the bundle does not carry.
 #   Building in a fresh venv with ONLY the base runtime deps (pip install -e .)
 #   guarantees the bundle matches third_party_licenses/ (the same set that
 #   tools/release/update_licenses.py enumerates). Optional OCR/LLM/privacy
@@ -28,10 +28,10 @@ CONSTRAINTS="$REPO_ROOT/pyinstaller-work/constraints.txt"
 
 cd "$REPO_ROOT"
 
-PYTHON="${PYTHON:-python3.12}"
+PYTHON="${PYTHON:-python3.14}"
 if ! command -v "$PYTHON" >/dev/null 2>&1; then
     echo "ERROR: $PYTHON not found." >&2
-    echo "       The bundle is built with Python 3.12 (see .python-version)." >&2
+    echo "       The bundle is built with Python 3.14 (see .python-version)." >&2
     exit 1
 fi
 

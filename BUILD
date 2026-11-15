@@ -2,9 +2,11 @@ load("@rules_python//python:defs.bzl", "py_library")
 load("@rules_python//python:pip.bzl", "compile_pip_requirements")
 load("//third_party/lint:linters.bzl", "pylint_test", "ruff_test", "ty_test")
 
-# pyproject.toml is needed by pylint/ty via rules_lint.
+# pyproject.toml is needed by pylint/ty via rules_lint.  `.python-version` is the one place the
+# Python version is written down; //tests:test_python_version holds the interpreter to it.
 exports_files(
     [
+        ".python-version",
         "CLAUDE.md",
         "pyproject.toml",
         "README.md",

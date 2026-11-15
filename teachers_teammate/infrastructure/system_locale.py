@@ -25,7 +25,7 @@ def system_locale_code() -> str:
     """
     try:
         code, _encoding = locale.getlocale()
-    except (ValueError, TypeError):  # a broken locale setting must not stop a run
+    except ValueError, TypeError:  # a broken locale setting must not stop a run
         code = None
     if code:
         return code
@@ -49,7 +49,7 @@ def _macos_locale() -> str:
             timeout=2,
             check=False,
         )
-    except (OSError, subprocess.SubprocessError):
+    except OSError, subprocess.SubprocessError:
         return ""
     return result.stdout.strip() if result.returncode == 0 else ""
 

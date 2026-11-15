@@ -323,7 +323,7 @@ def _retire_thread(thread: QThread | None) -> None:
             continue
         try:
             signal.disconnect()
-        except (RuntimeError, TypeError):
+        except RuntimeError, TypeError:
             pass  # nothing was connected
     _RETIRED_THREADS.add(thread)
 

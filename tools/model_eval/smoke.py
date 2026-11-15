@@ -500,7 +500,7 @@ class SmokeCheck:
             return ()
         try:
             loaded = self._probe.loaded()
-        except (OSError, ValueError):
+        except OSError, ValueError:
             return ()
         return loaded_warnings(loaded, tag, self._check.window)
 

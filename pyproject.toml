@@ -5,7 +5,7 @@ name = "teachers-teammate"
 dynamic = ["version"]
 description = "OCR pipeline for handwritten documents"
 readme = "README.md"
-requires-python = ">=3.12"
+requires-python = ">=3.14"
 license = { text = "Apache-2.0" }
 dependencies = [
     # Only the Essentials half of PySide6. The `PySide6` meta package would also pull
@@ -44,10 +44,6 @@ llm = [
 ]
 privacy = [
     "spacy>=3.7",
-    # GPU acceleration for spaCy NER via cupy — install one matching your CUDA version:
-    #   pip install "spacy[cuda12x]"   # CUDA 12.x
-    #   pip install "spacy[cuda11x]"   # CUDA 11.x
-    # Or set SPACY_GPU=1 and CUDA_VER=12x when running tools/build/build.sh.
 ]
 
 # ── Tooling extras ──────────────────────────────────────────────────────────
@@ -60,7 +56,7 @@ test = [
     "pytest-mock>=3.14",
     "pytest-qt>=4.4",
     # Optional runtime deps the unit/correction tests exercise directly.
-    "langchain-core>=0.3",
+    "langchain-core>=1.4.7",
 ]
 dev = [
     # Lint / static analysis
@@ -110,7 +106,7 @@ version = { attr = "teachers_teammate.__version__" }
 
 [tool.ruff]
 line-length = 100
-target-version = "py312"
+target-version = "py314"
 # The memory agent is copied alone to other machines, which may run Python 3.9, so ruff flags
 # newer syntax in that one file.
 per-file-target-version = { "tools/model_eval/gpu_agent.py" = "py39" }
@@ -172,7 +168,7 @@ docstring-code-format = true
 # ── pylint ────────────────────────────────────────────────────────────────
 
 [tool.pylint.main]
-py-version = "3.12"
+py-version = "3.14"
 jobs = 0                         # auto-detect CPU count
 recursive = true
 source-roots = ["."]
@@ -275,7 +271,7 @@ ignore-imports = true
 # https://docs.astral.sh/ty/
 
 [tool.ty.environment]
-python-version = "3.12"
+python-version = "3.14"
 
 [tool.ty.rules]
 # The runtime packages ARE resolved under Bazel (see //teachers_teammate:*_typed),

@@ -198,7 +198,7 @@ def _pooled_profiles(cache: Path) -> list[str]:
     for path in sorted(cache.glob("*.header.json")):
         try:
             sessions = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
+        except OSError, json.JSONDecodeError:
             continue
         for header in sessions if isinstance(sessions, list) else [sessions]:
             if not isinstance(header, dict) or "request_profile" not in header:

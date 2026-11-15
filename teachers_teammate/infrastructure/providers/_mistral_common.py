@@ -338,7 +338,7 @@ def list_chat_models_checked(base_url: str, fallback: list[str]) -> ModelListing
         return ModelListing(list(fallback), "failed", problem)
     except OSError:  # URLError, timeout: no connection
         return ModelListing(list(fallback), "failed", "no connection to Mistral")
-    except (ValueError, AttributeError, TypeError, KeyError):
+    except ValueError, AttributeError, TypeError, KeyError:
         return ModelListing(list(fallback), "failed", "Mistral answered unexpectedly")
     if not curated.offered:
         return ModelListing(list(fallback), "failed", "Mistral returned no chat models")

@@ -11,7 +11,7 @@ clone to a passing check run. The detailed developer documentation lives in `doc
 
 ## Prerequisites
 
-- Python 3.12
+- Python 3.14
 - [Bazel](https://bazel.build/) — build, lint, test, and docs harness
 - [uv](https://docs.astral.sh/uv/) (optional — faster venv creation)
 

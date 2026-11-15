@@ -73,7 +73,7 @@ def _run(cmd: list[str], timeout: int = 5) -> str | None:
             **no_console_window_kwargs(),
         )
         return result.stdout.strip() if result.returncode == 0 else None
-    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+    except FileNotFoundError, subprocess.TimeoutExpired, OSError:
         return None
 
 
@@ -283,7 +283,7 @@ def detect_system_memory_gb() -> float | None:
         if sys.platform == "win32":
             return _windows_total_memory_bytes() / 2**30
         return os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES") / 2**30
-    except (AttributeError, OSError, ValueError):
+    except AttributeError, OSError, ValueError:
         return None
 
 
@@ -446,7 +446,7 @@ def _read_sysfs_adapters(root: Path = _SYSFS_DRM) -> list[GpuInfo]:
         device = card / "device"
         try:
             vendor = _VENDOR_IDS.get(int((device / "vendor").read_text().strip(), 16))
-        except (OSError, ValueError):
+        except OSError, ValueError:
             continue
         if vendor is None:
             continue
@@ -454,7 +454,7 @@ def _read_sysfs_adapters(root: Path = _SYSFS_DRM) -> list[GpuInfo]:
         if vendor == "amd":
             try:
                 vram = _bytes_to_mb(int((device / "mem_info_vram_total").read_text()))
-            except (OSError, ValueError):
+            except OSError, ValueError:
                 vram = None
         name = _generic_name(vendor)
         try:

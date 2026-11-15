@@ -79,7 +79,7 @@ class PpOcrProcessor(OCRProcessor):
                         words.append(text.strip())
                 if words:
                     lines.append(" ".join(words))
-        except (RunStoppedError, OCRError):
+        except RunStoppedError, OCRError:
             raise
         except Exception as exc:  # cv2.error and shape errors from the models
             raise OCRError(str(exc)) from exc

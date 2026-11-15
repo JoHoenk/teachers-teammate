@@ -1,0 +1,26 @@
+diff --git a/tools/sphinx/extensions/trlc/BUILD b/tools/sphinx/extensions/trlc/BUILD
+index 829f380..0791c33 100644
+--- a/tools/sphinx/extensions/trlc/BUILD
++++ b/tools/sphinx/extensions/trlc/BUILD
+@@ -1,9 +1,6 @@
+-load("@trlc_sphinx_dependencies//:requirements.bzl", "requirement")
+-
+ py_library(
+     name = "trlc",
+     srcs = ["trlc.py"],
+     imports = ["."],
+     visibility = ["//visibility:public"],
+-    deps = [requirement("sphinx")],
+ )
+diff --git a/tools/trlc_rst/BUILD b/tools/trlc_rst/BUILD
+index 438e1a9..539aa85 100644
+--- a/tools/trlc_rst/BUILD
++++ b/tools/trlc_rst/BUILD
+@@ -14,6 +14,7 @@ py_library(
+ py_binary(
+     name = "trlc_rst",
+     srcs = ["trlc_rst.py"],
++    python_version = "3.12",
+     visibility = ["//visibility:public"],
+     deps = [
+         "//trlc",

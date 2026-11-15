@@ -264,7 +264,7 @@ class BenchmarkRunStore:
                     display = json.loads(meta.read_text(encoding="utf-8")).get(
                         "display_name", doc_dir.name
                     )
-                except (OSError, json.JSONDecodeError):
+                except OSError, json.JSONDecodeError:
                     pass
             result.append((doc_dir.name, display))
         return result
@@ -285,7 +285,7 @@ class BenchmarkRunStore:
         try:
             raw = json.loads(path.read_text(encoding="utf-8"))
             run = StoredRun.from_json_dict(raw)
-        except (OSError, json.JSONDecodeError, KeyError, TypeError):
+        except OSError, json.JSONDecodeError, KeyError, TypeError:
             return None
         if run.schema_version != _SCHEMA_VERSION:
             return None

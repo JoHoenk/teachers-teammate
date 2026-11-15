@@ -78,7 +78,7 @@ def _get_json(url: str, timeout: float) -> Any:
             if response.status != 200:
                 return None
             return json.loads(response.read(_MAX_REPLY_BYTES))
-    except (OSError, ValueError, http.client.HTTPException, urllib.error.URLError):
+    except OSError, ValueError, http.client.HTTPException, urllib.error.URLError:
         return None
 
 

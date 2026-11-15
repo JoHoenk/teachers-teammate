@@ -78,7 +78,7 @@ def model_info(probe: ServerProbe, tag: str) -> dict:
     """
     try:
         return probe.model_info(tag)
-    except (OSError, ValueError):
+    except OSError, ValueError:
         return {}
 
 

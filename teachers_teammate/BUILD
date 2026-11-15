@@ -323,7 +323,7 @@ py_wheel(
     },
     license = "Apache-2.0",
     platform = "any",
-    python_requires = ">=3.12",
+    python_requires = ">=3.14",
     python_tag = "py3",
     requires_file = ":wheel_requires",
     summary = "OCR pipeline for handwritten documents",

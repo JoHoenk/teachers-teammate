@@ -241,7 +241,7 @@ class CorrectionReview:
                     for raw_note in record.get("unclear", [])
                 ),
             )
-        except (KeyError, TypeError, ValueError, AttributeError):
+        except KeyError, TypeError, ValueError, AttributeError:
             return None
 
 

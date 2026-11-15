@@ -239,7 +239,7 @@ def pinned_num_ctx(setting: str) -> int | None:
     """
     try:
         fixed = int(setting)
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return None
     return fixed if fixed in CONTEXT_STEPS else None
 

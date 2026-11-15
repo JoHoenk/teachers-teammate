@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
+
 import pytest
 
 from teachers_teammate.domain.correction_review import (
@@ -33,6 +35,14 @@ from tools.model_eval.report import (
 )
 from tools.model_eval import results as results_module
 from tools.model_eval.results import ResultRow
+
+
+def _single(rows: Iterable[ResultRow]) -> ResultRow:
+    """Return the one row of a run (astroid cannot follow ``(row,) = run(...)`` on 3.14)."""
+    found = list(rows)
+    assert len(found) == 1
+    return found[0]
+
 
 _RECORD = results_module.TestRecord(
     id="de-01",
@@ -203,8 +213,10 @@ def test_a_fix_wrapped_in_marks_is_one_true_positive_and_no_false_positive() -> 
     When   the comparison scores it
     Then   the fix counts as found and nothing as invented, while the row keeps the raw output
     """
-    (row,) = _comparison(_ScriptedCorrector("Der Hund **läuft** schnell.")).run(
-        [_MARKED], model="gemma4:e4b", temperature=0.2
+    row = _single(
+        _comparison(_ScriptedCorrector("Der Hund **läuft** schnell.")).run(
+            [_MARKED], model="gemma4:e4b", temperature=0.2
+        )
     )
 
     assert (row.true_positives, row.false_positives, row.false_negatives) == (1, 0, 0)
@@ -219,8 +231,10 @@ def test_a_correct_sentence_that_only_gained_marks_is_unchanged() -> None:
     When   the comparison counts the unchanged sentences
     Then   both sentences count as unchanged, because the marks are not part of the text
     """
-    (row,) = _comparison(_ScriptedCorrector("Das ist ein Test. Der Hund **läuft** schnell.")).run(
-        [_CORRECT], model="gemma4:e4b", temperature=0.2
+    row = _single(
+        _comparison(_ScriptedCorrector("Das ist ein Test. Der Hund **läuft** schnell.")).run(
+            [_CORRECT], model="gemma4:e4b", temperature=0.2
+        )
     )
 
     assert row.unchanged == 2
@@ -265,8 +279,10 @@ def test_the_row_carries_the_band_and_the_numbers_of_its_text() -> None:
     When   the comparison runs
     Then   the row names the band and stores the GLEU, the halves, left alone and coverage
     """
-    (row,) = _comparison(_ScriptedCorrector(_BANDED.reference)).run(
-        [_BANDED], model="gemma4:e4b", temperature=0.2
+    row = _single(
+        _comparison(_ScriptedCorrector(_BANDED.reference)).run(
+            [_BANDED], model="gemma4:e4b", temperature=0.2
+        )
     )
 
     assert row.band == "page"
@@ -282,9 +298,11 @@ def test_a_review_mode_fallback_counts_its_changes_as_unexplained() -> None:
     When   the comparison runs
     Then   the changes need an explanation and none is explained, so the fallback costs the share
     """
-    (row,) = _comparison(
-        _ScriptedCorrector(_RECORD.reference, warning=FALLBACK_WARNING), mode="review"
-    ).run([_RECORD], model="gemma4:e4b", temperature=0.2)
+    row = _single(
+        _comparison(
+            _ScriptedCorrector(_RECORD.reference, warning=FALLBACK_WARNING), mode="review"
+        ).run([_RECORD], model="gemma4:e4b", temperature=0.2)
+    )
 
     assert row.fallback
     assert row.needed > 0
@@ -301,9 +319,11 @@ def test_scoring_the_stored_row_again_gives_the_numbers_the_run_wrote() -> None:
     """
     from tools.model_eval.results import rescore  # noqa: PLC0415
 
-    (row,) = _comparison(
-        _ScriptedCorrector(_RECORD.reference, warning=FALLBACK_WARNING), mode="review"
-    ).run([_RECORD], model="gemma4:e4b", temperature=0.2)
+    row = _single(
+        _comparison(
+            _ScriptedCorrector(_RECORD.reference, warning=FALLBACK_WARNING), mode="review"
+        ).run([_RECORD], model="gemma4:e4b", temperature=0.2)
+    )
 
     again = rescore(row, count_marks=False)
 
@@ -326,8 +346,10 @@ def test_a_text_mode_row_needs_no_explanations() -> None:
     When   the comparison runs
     Then   no change needs an explanation, because text mode never promised one
     """
-    (row,) = _comparison(_ScriptedCorrector(_RECORD.reference), mode="text").run(
-        [_RECORD], model="gemma4:e4b", temperature=0.2
+    row = _single(
+        _comparison(_ScriptedCorrector(_RECORD.reference), mode="text").run(
+            [_RECORD], model="gemma4:e4b", temperature=0.2
+        )
     )
 
     assert row.needed == 0
@@ -561,7 +583,9 @@ def test_the_rows_carry_the_mode_the_comparison_runs_in() -> None:
     """
     corrector = ChunkingCorrector(_BudgetedCorrector(_RECORD.reference, max_chars=10_000))
 
-    (row,) = _comparison(corrector, mode="text").run([_RECORD], model="gemma4:e4b", temperature=0.2)
+    row = _single(
+        _comparison(corrector, mode="text").run([_RECORD], model="gemma4:e4b", temperature=0.2)
+    )
 
     assert row.mode == "text"
 
@@ -573,8 +597,10 @@ def test_a_comparison_given_no_mode_records_review() -> None:
     When   it runs
     Then   the row is a review row, the app's default
     """
-    (row,) = _comparison(_ScriptedCorrector(_RECORD.reference)).run(
-        [_RECORD], model="gemma4:e4b", temperature=0.2
+    row = _single(
+        _comparison(_ScriptedCorrector(_RECORD.reference)).run(
+            [_RECORD], model="gemma4:e4b", temperature=0.2
+        )
     )
 
     assert row.mode == "review"
@@ -589,7 +615,7 @@ def test_a_text_over_the_budget_is_sent_in_pieces_and_the_row_says_how_many() ->
     """
     corrector = ChunkingCorrector(_BudgetedCorrector(_RECORD.reference, max_chars=20))
 
-    (row,) = _comparison(corrector).run([_RECORD], model="gemma4:e4b", temperature=0.2)
+    row = _single(_comparison(corrector).run([_RECORD], model="gemma4:e4b", temperature=0.2))
 
     assert row.pieces == len(corrector.inner.calls) > 1
 
@@ -603,7 +629,7 @@ def test_a_text_within_the_budget_is_one_piece() -> None:
     """
     corrector = ChunkingCorrector(_BudgetedCorrector(_RECORD.reference, max_chars=10_000))
 
-    (row,) = _comparison(corrector).run([_RECORD], model="gemma4:e4b", temperature=0.2)
+    row = _single(_comparison(corrector).run([_RECORD], model="gemma4:e4b", temperature=0.2))
 
     assert (row.pieces, len(corrector.inner.calls)) == (1, 1)
 
@@ -637,7 +663,7 @@ def test_a_piece_that_fell_back_flags_the_row_although_the_warnings_are_joined()
         _FallingBackCorrector(_RECORD.reference, max_chars=20, review=_review("grammar"))
     )
 
-    (row,) = _comparison(corrector).run([_RECORD], model="gemma4:e4b", temperature=0.2)
+    row = _single(_comparison(corrector).run([_RECORD], model="gemma4:e4b", temperature=0.2))
 
     assert MISSING_REVIEW_WARNING in row.warning, "the warnings of the pieces are joined"
     assert row.fallback is True
@@ -653,7 +679,7 @@ def test_the_category_of_a_fixed_error_is_compared_with_its_corpus_label() -> No
     """
     corrector = _ScriptedCorrector(_LABELLED.reference, review=_review("grammar"))
 
-    (row,) = _comparison(corrector).run([_LABELLED], model="gemma4:e4b", temperature=0.2)
+    row = _single(_comparison(corrector).run([_LABELLED], model="gemma4:e4b", temperature=0.2))
 
     assert (row.category_checked, row.category_agreed) == (1, 1)
 
@@ -667,7 +693,7 @@ def test_no_category_is_checked_for_a_record_without_labels() -> None:
     """
     corrector = _ScriptedCorrector(_RECORD.reference, review=_review("grammar"))
 
-    (row,) = _comparison(corrector).run([_RECORD], model="gemma4:e4b", temperature=0.2)
+    row = _single(_comparison(corrector).run([_RECORD], model="gemma4:e4b", temperature=0.2))
 
     assert (row.category_checked, row.category_agreed) == (0, 0)
 
@@ -797,7 +823,7 @@ def test_the_instrumentation_wraps_each_text_and_its_record_lands_on_the_row() -
         lambda model, temperature: corrector, clock=lambda: 0.0, instrumentation=instrument
     )
 
-    (row,) = comparison.run([_RECORD], model="gemma4:e4b", temperature=0.2)
+    row = _single(comparison.run([_RECORD], model="gemma4:e4b", temperature=0.2))
 
     assert instrument.events == ["begin", "correct", "end"]
     assert row.performance == record
@@ -810,8 +836,10 @@ def test_without_an_instrumentation_the_row_has_no_performance() -> None:
     When   it runs
     Then   the row has no performance record
     """
-    (row,) = _comparison(_ScriptedCorrector(_RECORD.reference)).run(
-        [_RECORD], model="gemma4:e4b", temperature=0.2
+    row = _single(
+        _comparison(_ScriptedCorrector(_RECORD.reference)).run(
+            [_RECORD], model="gemma4:e4b", temperature=0.2
+        )
     )
 
     assert row.performance is None

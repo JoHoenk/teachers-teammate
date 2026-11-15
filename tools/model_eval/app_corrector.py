@@ -13,13 +13,21 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 from teachers_teammate.infrastructure.ollama_utils import PROOFREADING_NUM_CTX
+from teachers_teammate.interfaces import Corrector
 
 from .answer_mode import AnswerMode
 
 if TYPE_CHECKING:
+    from teachers_teammate.domain.context_budget import ContextBudget
+    from teachers_teammate.domain.correction_review import CorrectionOutcome
+    from teachers_teammate.domain.formatted_text import TextFormat
     from teachers_teammate.domain.model_catalog import RequestProfile
     from teachers_teammate.infrastructure.ollama_utils import OllamaClient
-    from teachers_teammate.interfaces import Corrector
+    from teachers_teammate.infrastructure.proofreading.port import (
+        ModelPort,
+        PortAnswer,
+        StepRequest,
+    )
 
 
 CorrectorFactory = Callable[[str, float], "Corrector"]
@@ -92,6 +100,7 @@ def exchange_corrector_factory(
     timeout: float,
     num_ctx: int = PROOFREADING_NUM_CTX,
     profile: RequestProfile | None = None,
+    steps: frozenset[str] | None = None,
 ) -> CorrectorFactory:
     """Return a factory building the exchange's corrector on *client*.
 
@@ -106,6 +115,8 @@ def exchange_corrector_factory(
         timeout: Seconds one request may take.
         num_ctx: The context window the port asks for.
         profile: The request profile; the default for a model the catalog does not know.
+        steps: The steps to send, or ``None`` for all of them.  ``{"correct"}`` asks step ① alone
+            (the ``correct-only`` mode): the other steps fail at the port without a request.
     """
     from teachers_teammate.domain.model_catalog import (  # noqa: PLC0415
         DEFAULT_REQUEST_PROFILE,
@@ -114,17 +125,100 @@ def exchange_corrector_factory(
     from teachers_teammate.infrastructure.proofreading.corrector import (  # noqa: PLC0415
         build_exchange_corrector,
     )
+    from teachers_teammate.infrastructure.proofreading.port import OllamaPort  # noqa: PLC0415
 
     chosen = DEFAULT_REQUEST_PROFILE if profile is None else profile
 
     def build(model: str, temperature: float) -> Corrector:  # noqa: ARG001  # see the docstring
+        if steps is None:
+            return ChunkingCorrector(
+                build_exchange_corrector(
+                    client, model, timeout=timeout, num_ctx=num_ctx, profile=chosen
+                )
+            )
+        port = OnlyStepsPort(OllamaPort(client, model, timeout=timeout, num_ctx=num_ctx), steps)
         return ChunkingCorrector(
-            build_exchange_corrector(
-                client, model, timeout=timeout, num_ctx=num_ctx, profile=chosen
+            CorrectOnlyCorrector(
+                build_exchange_corrector(
+                    client,
+                    model,
+                    timeout=timeout,
+                    num_ctx=num_ctx,
+                    profile=chosen,
+                    port=port,  # ty: ignore[invalid-argument-type]  # a ModelPort by shape
+                )
             )
         )
 
     return build
+
+
+SKIPPED_STEP = "step skipped by the evaluation"
+"""The reason the port gives for a step a correct-only run does not send; never reaches a row."""
+
+
+class OnlyStepsPort:
+    """A model port that sends the requests of some steps and fails the others at once.
+
+    Step ① of the exchange needs nothing from the later steps, and the exchange treats a failed
+    step ② or ③ as "no explanations, no unclear list" without failing the file.  So a port that
+    refuses those two steps gives the exchange's own corrected text for the time of step ① alone:
+    the code path, the prompt, the cut-off handling and the text budget are the exchange's, none
+    of them is copied here.
+    """
+
+    def __init__(self, port: ModelPort, steps: frozenset[str]) -> None:
+        self._port = port
+        self._steps = steps
+
+    def window(self) -> ContextBudget | None:
+        """Return the window of the real port, so a text is split exactly as in the exchange."""
+        return self._port.window()
+
+    def ask_text(self, req: StepRequest) -> PortAnswer:
+        """Send *req* when its step is asked for, else fail it without a request."""
+        return self._port.ask_text(req) if req.step in self._steps else self._skipped()
+
+    def ask_structured(self, req: StepRequest) -> PortAnswer:
+        """Send *req* when its step is asked for, else fail it without a request."""
+        return self._port.ask_structured(req) if req.step in self._steps else self._skipped()
+
+    @staticmethod
+    def _skipped() -> PortAnswer:
+        from teachers_teammate.infrastructure.proofreading.port import (  # noqa: PLC0415
+            PortAnswer,
+        )
+
+        return PortAnswer(failure="transport", error=SKIPPED_STEP)
+
+
+class CorrectOnlyCorrector(Corrector):
+    """The exchange's corrector as a run of step ① alone sees it: text, no review, no warnings.
+
+    What the skipped steps leave behind (unexplained edits, a warning that explanations are
+    missing) is not part of the answer to "what does step ① correct", so it is dropped; a file
+    whose step ① failed keeps its failure and its warning.
+    """
+
+    def __init__(self, inner: Corrector) -> None:
+        self._inner = inner
+
+    def correct(
+        self, raw_text: str, language: str, *, text_format: TextFormat = "plain"
+    ) -> CorrectionOutcome:
+        """Return the corrected text of step ① with nothing from the steps that did not run."""
+        from teachers_teammate.domain.correction_review import (  # noqa: PLC0415
+            CorrectionOutcome,
+        )
+
+        outcome = self._inner.correct(raw_text, language, text_format=text_format)
+        if outcome.failed:
+            return outcome
+        return CorrectionOutcome(text=outcome.text)
+
+    def max_text_chars(self, language: str, *, text_format: TextFormat = "plain") -> int | None:
+        """Return the budget of the exchange, so the pieces are the exchange's pieces."""
+        return self._inner.max_text_chars(language, text_format=text_format)
 
 
 def innermost(corrector: Corrector) -> Corrector:

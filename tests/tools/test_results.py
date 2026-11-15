@@ -562,3 +562,37 @@ def test_rescoring_that_counts_the_marks_without_the_record_drops_the_stored_num
 
     assert updated.scores == {}
     assert updated.band == "page"
+
+
+@pytest.mark.use_case("Model_Eval_Results")
+def test_a_run_with_sampling_values_writes_a_file_of_its_own() -> None:
+    """
+    Given  the same model, temperature, mode and repeat, with and without sampling values
+    When   the file names are built
+    Then   the plain name is unchanged and the sampled ones differ from it and from each other,
+           whatever the order the values were given in
+    """
+    plain = result_file_name("qwen3.5:9b", 0.7, AnswerMode.CORRECT_ONLY, 1)
+    penalty_off = result_file_name(
+        "qwen3.5:9b", 0.7, AnswerMode.CORRECT_ONLY, 1, (("presence_penalty", 0.0),)
+    )
+    both = result_file_name(
+        "qwen3.5:9b", 0.7, AnswerMode.CORRECT_ONLY, 1, (("top_p", 0.9), ("presence_penalty", 0.0))
+    )
+
+    assert plain == "qwen3.5_9b__T0.7__correct-only__r1.jsonl"
+    assert penalty_off == "qwen3.5_9b__T0.7__correct-only__presence_penalty-0__r1.jsonl"
+    assert both == "qwen3.5_9b__T0.7__correct-only__presence_penalty-0__top_p-0.9__r1.jsonl"
+
+
+@pytest.mark.use_case("Model_Eval_Results")
+def test_two_close_sampling_values_write_two_files() -> None:
+    """
+    Given  two runs whose top_p differs in the eighth digit
+    When   the file names are built
+    Then   they differ, so one run does not resume from the other's file
+    """
+    first = result_file_name("m", 0.7, AnswerMode.CORRECT_ONLY, None, (("top_p", 0.9),))
+    second = result_file_name("m", 0.7, AnswerMode.CORRECT_ONLY, None, (("top_p", 0.90000001),))
+
+    assert first != second

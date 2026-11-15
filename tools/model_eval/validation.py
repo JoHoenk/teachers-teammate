@@ -20,6 +20,8 @@ from pathlib import Path
 import re
 from typing import Any
 
+from teachers_teammate.domain.model_catalog import SAMPLING_OPTIONS
+
 from . import protocol
 from . import testset as testset_module
 from .answer_mode import AnswerMode
@@ -234,9 +236,31 @@ def _check_profile(path: Path, profile: Any) -> list[str]:
     temperature = profile.get("temperature")
     if temperature is not None and not is_number(temperature):
         found.append(f"{path.name}: request_profile.temperature is neither null nor a number")
-    extra = sorted(set(profile) - {"compact_json", "temperature"})
+    if "options" in profile:
+        found.extend(_check_options(path, profile["options"]))
+    extra = sorted(set(profile) - {"compact_json", "temperature", "options"})
     if extra:
         found.append(f"{path.name}: request_profile has unknown fields {', '.join(extra)}")
+    return found
+
+
+def _check_options(path: Path, options: Any) -> list[str]:
+    """Return what is wrong with the sampling values a header's request profile lists.
+
+    Only a run that set values lists them: a non-empty object of names the app allows
+    (:data:`~teachers_teammate.domain.model_catalog.SAMPLING_OPTIONS`) with numbers as values.
+    """
+    if not isinstance(options, dict) or not options:
+        return [f"{path.name}: request_profile.options is not a non-empty object"]
+    found = [
+        f"{path.name}: request_profile.options has unknown name {name!r}"
+        for name in sorted(set(options) - SAMPLING_OPTIONS)
+    ]
+    found.extend(
+        f"{path.name}: request_profile.options.{name} is not a number"
+        for name, value in sorted(options.items())
+        if not is_number(value)
+    )
     return found
 
 

@@ -30,7 +30,11 @@ def default_ollama_url() -> str:
 
 
 def request_profile_for(
-    model: str, *, compact_json: str = "catalog", temperature: float | None = None
+    model: str,
+    *,
+    compact_json: str = "catalog",
+    temperature: float | None = None,
+    options: tuple[tuple[str, float], ...] = (),
 ) -> RequestProfile:
     """Return the profile *model* is asked with, as the app would ask it.
 
@@ -43,6 +47,8 @@ def request_profile_for(
         model: The tag the request goes to.
         compact_json: ``catalog`` (the model's own choice), ``on`` or ``off``.
         temperature: The temperature to send, or ``None`` for the model's own.
+        options: Sampling values for step ① besides the temperature (``--option``); empty leaves
+            the model's tag in charge.
     """
     profile = request_profile(model)
     if compact_json == "on":
@@ -53,6 +59,8 @@ def request_profile_for(
         # ``--temperature`` is the temperature of step ① (the one that rewrites the text); the
         # JSON-answering steps ② and ③ keep their own.
         profile = replace(profile, correct=replace(profile.correct, temperature=temperature))
+    if options:
+        profile = replace(profile, correct=replace(profile.correct, options=options))
     return profile
 
 

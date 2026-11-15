@@ -59,8 +59,15 @@ class RequestStats:
     failed: bool = False
     """The request raised instead of answering (a timeout, a refused window)."""
 
+    step: str = ""
+    """The step of the exchange the request belongs to (``correct``, ``explain``, ``unclear``);
+    empty for a request of the one-request review or of text mode, and in rows written before the
+    tag existed."""
+
     @classmethod
-    def from_stats(cls, model: str, stats: ChatStats, wall_s: float) -> RequestStats:
+    def from_stats(
+        cls, model: str, stats: ChatStats, wall_s: float, step: str = ""
+    ) -> RequestStats:
         """Build the record of a finished request from Ollama's statistics."""
         return cls(
             model=model,
@@ -72,12 +79,13 @@ class RequestStats:
             total_s=stats.total_duration / _NS,
             wall_s=wall_s,
             done_reason=stats.done_reason,
+            step=step,
         )
 
     @classmethod
-    def failure(cls, model: str, wall_s: float) -> RequestStats:
+    def failure(cls, model: str, wall_s: float, step: str = "") -> RequestStats:
         """Build the record of a request that raised: only the waiting time is known."""
-        return cls(model, 0, 0, 0.0, 0.0, 0.0, 0.0, wall_s, failed=True)
+        return cls(model, 0, 0, 0.0, 0.0, 0.0, 0.0, wall_s, failed=True, step=step)
 
 
 @dataclass(frozen=True)
@@ -164,8 +172,12 @@ class Performance:
         return None
 
     def to_dict(self) -> dict:
-        """Return a JSON-serialisable form."""
-        return asdict(self)
+        """Return a JSON-serialisable form (a request without a step tag does not list one)."""
+        record = asdict(self)
+        for request in record["requests"]:
+            if not request["step"]:
+                del request["step"]
+        return record
 
     @classmethod
     def from_dict(cls, record: dict) -> Performance:

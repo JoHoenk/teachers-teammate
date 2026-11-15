@@ -44,7 +44,7 @@ def test_a_run_of_another_test_set_is_refused():
     [
         {"model": fixtures.OTHER},
         {"machine": "other-machine"},
-        {"eval_version": 3},
+        {"eval_version": 4},
         {"mode": "text"},
         {"temperature": 0.7},
         {"num_ctx": 4096},

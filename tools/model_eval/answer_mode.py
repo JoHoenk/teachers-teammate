@@ -22,6 +22,14 @@ class AnswerMode(StrEnum):
     EXCHANGE = "exchange"
     """The proofreading exchange: ① the corrected text, ② the explanations, ③ the unclear check."""
 
+    CORRECT_ONLY = "correct-only"
+    """Step ① of the exchange alone: the same request, the same text, and none of the time of ② and ③.
+
+    The corrections of the exchange come from step ① (the edits are the word diff of the source
+    against its corrected text), so a run that asks nothing else scores exactly the corrections
+    the exchange would, for about a quarter of the time.  It has no explanations and no unclear
+    check.
+    """
     TWO_STEP = "two-step"
     """Step 1 in text mode, step 2 explains (planned; nothing writes it yet)."""
 
@@ -30,13 +38,23 @@ class AnswerMode(StrEnum):
         """Whether the app's corrector can be asked in this mode (review and text)."""
         return self in CORRECTOR_MODES
 
+    @property
+    def asks_exchange(self) -> bool:
+        """Whether the proofreading exchange answers in this mode (all of it, or step ① alone)."""
+        return self in EXCHANGE_MODES
+
+    @property
+    def has_explanations(self) -> bool:
+        """Whether a text in this mode carries explanations that are counted (review, exchange)."""
+        return self in (AnswerMode.REVIEW, AnswerMode.EXCHANGE)
+
 
 CORRECTOR_MODES: tuple[AnswerMode, ...] = (AnswerMode.REVIEW, AnswerMode.TEXT)
 """The modes the app's corrector answers in; the fingerprint covers these."""
 
-EXCHANGE_MODES: tuple[AnswerMode, ...] = (AnswerMode.EXCHANGE,)
-"""The modes asked through the exchange.  They are **not** in the fingerprint: see
-:data:`CORRECTOR_MODES`, which is what ``protocol.json`` hashes."""
+EXCHANGE_MODES: tuple[AnswerMode, ...] = (AnswerMode.EXCHANGE, AnswerMode.CORRECT_ONLY)
+"""The modes asked through the proofreading exchange (all of it, or step ① alone), not through the
+app's one-request corrector.  The fingerprint covers them like every runnable mode."""
 
 RUNNABLE_MODES: tuple[AnswerMode, ...] = (*CORRECTOR_MODES, *EXCHANGE_MODES)
 """Every mode ``compare_writing_models run`` can ask in."""

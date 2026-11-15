@@ -25,6 +25,7 @@ from tools.model_eval.measure import (
     run_identity,
     same_model,
     session_header,
+    step_of,
     tool_revision,
 )
 from tools.model_eval.performance import LoadedModel, Performance, RequestStats
@@ -917,3 +918,44 @@ def test_the_agent_sampler_refuses_a_card_that_is_still_moving() -> None:
     """
     with pytest.raises(RuntimeError, match="did not settle"):
         AgentSampler(_Agent([8600, 300, 300])).start()
+
+
+@pytest.mark.use_case("Model_Eval_Measure")
+def test_a_request_is_tagged_with_the_exchange_step_its_system_prompt_names() -> None:
+    """
+    Given  requests carrying the system prompt of each step of the exchange and another prompt
+    When   they are recorded
+    Then   the first three carry their step and the other none, so a run of the exchange can say
+           how much of its time step one took
+    """
+    from teachers_teammate.domain.correction_prompts import (  # noqa: PLC0415
+        CORRECT_SYSTEM,
+        EXPLAIN_SYSTEM,
+        UNCLEAR_SYSTEM,
+    )
+
+    client = RecordingClient("http://x:11434")
+    for system in (CORRECT_SYSTEM, EXPLAIN_SYSTEM, UNCLEAR_SYSTEM, "a review prompt"):
+        _recorded(client, system=system)
+
+    assert [request.step for request in client.drain()] == ["correct", "explain", "unclear", ""]
+    assert step_of("") == ""
+
+
+@pytest.mark.use_case("Model_Eval_Measure")
+def test_the_step_tag_is_stored_only_when_there_is_one() -> None:
+    """
+    Given  a performance record with a tagged and an untagged request
+    When   it is turned into a dict and back
+    Then   the untagged request lists no step (as rows always did), the tagged one keeps it, and
+           it comes back equal
+    """
+    tagged = RequestStats("m", 1, 1, 0.0, 0.0, 1.0, 1.0, 2.5, "stop", step="correct")
+    plain = RequestStats("m", 1, 1, 0.0, 0.0, 1.0, 1.0, 4.0, "stop")
+    performance = Performance(requests=(tagged, plain))
+
+    record = performance.to_dict()
+
+    assert "step" not in record["requests"][1]
+    assert record["requests"][0]["step"] == "correct"
+    assert Performance.from_dict(record) == performance

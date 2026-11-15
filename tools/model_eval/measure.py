@@ -69,6 +69,24 @@ class ServerBusyError(RuntimeError):
 # ── the app's client, recording ───────────────────────────────────────────────
 
 
+def step_of(system: str) -> str:
+    """Return the exchange step a request with this system prompt belongs to, or ``""``.
+
+    The three prompts of the exchange are fixed, so the system message says which step a request
+    is; a request of the review or of text mode carries another prompt and has no step.  The
+    client does not need to be told by the exchange, which would change the app for the tool.
+    """
+    from teachers_teammate.domain.correction_prompts import (  # noqa: PLC0415
+        CORRECT_SYSTEM,
+        EXPLAIN_SYSTEM,
+        UNCLEAR_SYSTEM,
+    )
+
+    return {CORRECT_SYSTEM: "correct", EXPLAIN_SYSTEM: "explain", UNCLEAR_SYSTEM: "unclear"}.get(
+        system, ""
+    )
+
+
 class RecordingClient(OllamaClient):
     """The app's Ollama client that keeps the statistics of every request it sends.
 
@@ -112,6 +130,7 @@ class RecordingClient(OllamaClient):
         if self._seed is not None:
             repeat = self._repeat_of(model, prompt, system, format, options)
             options = {**(options or {}), "seed": self._seed + repeat}
+        step = step_of(system)
         started = self._clock()
         try:
             content, stats = super().chat_with_stats(
@@ -126,9 +145,9 @@ class RecordingClient(OllamaClient):
                 total_timeout=total_timeout,
             )
         except Exception:
-            self._requests.append(RequestStats.failure(model, self._clock() - started))
+            self._requests.append(RequestStats.failure(model, self._clock() - started, step))
             raise
-        self._requests.append(RequestStats.from_stats(model, stats, self._clock() - started))
+        self._requests.append(RequestStats.from_stats(model, stats, self._clock() - started, step))
         return content, stats
 
     def _repeat_of(

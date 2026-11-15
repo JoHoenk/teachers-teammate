@@ -57,6 +57,8 @@ class StepRequest:
     """The answer shape of a structured step; ``None`` asks for plain text."""
     temperature: float = 0.0
     think: bool | str = False
+    options: tuple[tuple[str, float], ...] = ()
+    """Sampling values besides the temperature (the step's profile); empty: the tag decides."""
     answer_factor: float = 1.0
     """How long the answer is compared with the request: the window check and the timeout."""
     repairable: bool = True
@@ -135,7 +137,7 @@ class OllamaPort:
             text = self._client.chat(
                 self._model,
                 req.user,
-                options=proofreading_options(req.temperature, self._num_ctx),
+                options=proofreading_options(req.temperature, self._num_ctx, dict(req.options)),
                 think=req.think,
                 timeout=self._timeout_of(req),
                 format=schema,

@@ -140,3 +140,22 @@ def test_the_typed_header_refuses_a_header_without_a_field_readers_need():
 
     with pytest.raises(KeyError):
         run_format.RunHeader.from_dict(header)
+
+
+def test_a_request_profile_with_sampling_values_can_be_a_dict_key():
+    """
+    Given  a header's request profile that lists sampling values, as an object inside the object
+    When   it is turned into items
+    Then   the items are sorted, equal for equal profiles and hashable, so runs can be grouped by them
+    """
+    profile = {"temperature": 0.7, "options": {"top_p": 0.9, "presence_penalty": 0.0}}
+    same = {"options": {"presence_penalty": 0.0, "top_p": 0.9}, "temperature": 0.7}
+
+    items = run_format.profile_items(profile)
+
+    assert items == run_format.profile_items(same)
+    assert items == (
+        ("options", (("presence_penalty", 0.0), ("top_p", 0.9))),
+        ("temperature", 0.7),
+    )
+    assert {items: 1}[items] == 1

@@ -248,6 +248,7 @@ class TExchange:
                 notes=ctx.teacher_notes,
             ),
             temperature=ctx.profile.correct.temperature,
+            options=ctx.profile.correct.options,
             think=ctx.profile.correct.think,
             answer_factor=ANSWER_FACTOR,
         )
@@ -323,6 +324,7 @@ class TExchange:
             user=self._explain_head(ctx, explain_body(source, corrected, spans, batch, hunks)),
             schema=explain_schema(ids),
             temperature=ctx.profile.explain.temperature,
+            options=ctx.profile.explain.options,
             think=ctx.profile.explain.think,
             answer_factor=ANSWER_FACTOR,
         )
@@ -402,6 +404,7 @@ class TExchange:
             ),
             schema=UnclearAnswer,
             temperature=ctx.profile.unclear.temperature,
+            options=ctx.profile.unclear.options,
             think=ctx.profile.unclear.think,
             answer_factor=ANSWER_FACTOR,
         )

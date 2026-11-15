@@ -86,13 +86,20 @@ def ensure_prompt_fits(
         raise ResponseTruncatedError()
 
 
-def proofreading_options(temperature: float, num_ctx: int = PROOFREADING_NUM_CTX) -> dict:
+def proofreading_options(
+    temperature: float,
+    num_ctx: int = PROOFREADING_NUM_CTX,
+    sampling: Mapping[str, float] | None = None,
+) -> dict:
     """Return the Ollama options of a proofreading or content-review request.
 
     The one place that decides what such a request sends, so the model check
-    (``tools/verify_model_catalog.py``) exercises the same options as the app.
+    (``tools/verify_model_catalog.py``) exercises the same options as the app.  *sampling* is the
+    step's extra sampling values (:attr:`~teachers_teammate.domain.model_catalog.StepProfile.
+    options`); without it the request carries nothing but the temperature and the window, and
+    the model's own tag decides the rest.
     """
-    return {"temperature": temperature, "num_ctx": num_ctx}
+    return {**(sampling or {}), "temperature": temperature, "num_ctx": num_ctx}
 
 
 def normalize_ollama_url(url: str) -> str:

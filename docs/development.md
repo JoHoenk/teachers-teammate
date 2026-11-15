@@ -1109,6 +1109,28 @@ no explanations, so "Explained", orphans and "Same category" stay empty for them
 questions: what the JSON format costs in correction quality, and (since step 1 of a two-step design
 *is* text mode) what the corrections of a two-step design would be before anyone builds it.
 
+`run --mode exchange` asks the proofreading exchange (corrected text, explanations, unclear check)
+and `run --mode correct-only` asks **step ① of the exchange alone**.  The edits of the exchange are
+the word diff of the source against step ①'s text, and steps ② and ③ change none of them, so
+correct-only scores exactly the exchange's corrections for about a quarter of its time (step ① is
+16 to 26 % of it).  It is the exchange's own code: the port refuses the requests of steps ② and ③
+(`OnlyStepsPort`) and the exchange treats that as "no explanations, no unclear list", so the prompt,
+the cut-off handling and the text budget (hence the pieces of a long text) are the exchange's, and
+a test pins that its request hashes like the exchange's first one.  Its rows have no review, no
+warning and no explanations, like text mode's.  Use it for every question about the corrections
+(temperature, sampling values, prompts, passes, thinking, budgets); use `exchange` for the
+explanations, the unclear flags and the time of a whole page.
+
+`run --option NAME=VALUE` (repeatable) sends sampling values with step ①, besides the temperature:
+`top_k`, `top_p`, `min_p`, `presence_penalty`, `frequency_penalty`, `repeat_penalty`
+(`SAMPLING_OPTIONS`).  Without it the request carries the temperature and the window only and the
+model's own tag decides the rest, as in the app.  A run with options writes files of its own
+(`…__presence_penalty-0__r1.jsonl`), lists them in its header's `request_profile`, and
+`report --cache` refuses a folder that pools runs asked with different values: keep one folder per
+set of sampling values.  Every request of the exchange is tagged with its step in the performance
+record (`step`, derived from its system prompt), and `--performance` prints step ①'s share of the
+time.
+
 **The request per model, and a second try.**  The request the app sends is not the same for every
 model.  `RequestProfile` (`domain/model_catalog.py`) holds the two knobs that differ, the catalog
 carries one per model, and `request_profile(tag)` resolves it — the default for a model the catalog
@@ -1142,7 +1164,10 @@ level and the long-text budget — is versioned in `tools/model_eval/protocol.js
 `run` computes the fingerprint of that request side (captured from the app's own corrector: system
 and user message, answer schema, options, text budgets, repair message) before the first request
 and stops with exit code 2 when it differs from the entry of `current`, so an uncommitted prompt edit is caught like a
-committed one.  Raising the version means adding an entry with the new fingerprint, the date and a
+committed one.  A version that only *adds* something (a mode, a profile variant) leaves every
+earlier request hash as it was; the entry then says so, and the results of the earlier version are
+re-stamped after a comparison of the two fingerprints per mode, language and profile showed that
+(version 3 did this for the correct-only mode and the sampled profile).  Raising the version means adding an entry with the new fingerprint, the date and a
 line saying why, and setting `current` to it; do it when the check refuses, and also when the
 scoring, the caps or the edit extraction change (the fingerprint stays the same then, but the golden
 numbers of the tests fail).  Old entries are never edited or removed.  A run resumed after a tool,

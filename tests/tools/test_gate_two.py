@@ -614,7 +614,7 @@ def test_a_worse_page_band_stops_better():
     "change",
     [
         {"testset_id": "other-2026-11"},
-        {"eval_version": 3},
+        {"eval_version": 4},
         {"machine": "other-machine"},
         {"num_ctx": 4096},
         {"mode": "text"},

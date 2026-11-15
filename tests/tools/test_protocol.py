@@ -44,20 +44,21 @@ def test_a_changed_prompt_stops_a_run_with_the_message_that_says_what_to_do(monk
     assert "undo the change" in str(refused.value)
 
 
-def test_the_protocol_file_holds_both_versions_and_the_current_one_is_what_the_tool_computes() -> (
+def test_the_protocol_file_holds_every_version_and_the_current_one_is_what_the_tool_computes() -> (
     None
 ):
     """
     Given  the version file of the request side
     When   the current stamp is asked for
-    Then   it is version 2, version 1 is still recorded (its runs stay checkable), and the
-           current fingerprint is the one the tool computes
+    Then   it is version 3, versions 1 and 2 are still recorded (their runs stay checkable), and
+           the current fingerprint is the one the tool computes
     """
     stamp = protocol.current_stamp()
 
-    assert stamp.eval_version == 2
-    assert [v["version"] for v in protocol.read_protocol()["versions"]] == [1, 2]
-    assert protocol.entry(2)["fingerprint"] == stamp.fingerprint
+    assert stamp.eval_version == 3
+    assert [v["version"] for v in protocol.read_protocol()["versions"]] == [1, 2, 3]
+    assert protocol.entry(3)["fingerprint"] == stamp.fingerprint
+    assert protocol.is_recorded(2, protocol.entry(2)["fingerprint"])
     assert protocol.is_recorded(1, protocol.entry(1)["fingerprint"])
 
 
@@ -193,7 +194,7 @@ def test_the_fingerprint_names_what_it_covers() -> None:
     """
     side = protocol.fingerprint()
 
-    assert set(side["requests"]) == {"review", "text", "exchange"}
+    assert set(side["requests"]) == {"review", "text", "exchange", "correct-only"}
     assert set(side["requests"]["review"]) == set(protocol.FINGERPRINT_LANGUAGES)
     assert side["requests"]["review"]["de"] != side["requests"]["text"]["de"]
     assert all(
@@ -361,3 +362,62 @@ def test_the_exchange_instructions_hash_follows_its_prompts_and_does_not_move_th
     assert exchange != protocol.instructions_sha256(["de", "en"], mode=AnswerMode.TEXT)
     assert exchange != protocol.instructions_sha256(["de", "en"], mode=AnswerMode.EXCHANGE)
     assert protocol.fingerprint_sha256() == before
+
+
+@pytest.mark.use_case("Model_Eval_Measure")
+def test_a_correct_only_run_sends_exactly_the_first_request_of_the_exchange() -> None:
+    """
+    Given  the request side of the exchange and of the correct-only mode
+    When   their requests for the probe text are compared, per language and profile
+    Then   correct-only sends one request, and it hashes like the exchange's first one, so a
+           correct-only run measures the corrections of the exchange and nothing else
+    """
+    side = protocol.fingerprint()["requests"]
+
+    for code in protocol.FINGERPRINT_LANGUAGES:
+        for label in ("plain", "no-unclear", "sampled"):
+            only = side["correct-only"][code][label]
+            assert len(only) == 1
+            assert only[0] == side["exchange"][code][label][0]
+        assert len(side["exchange"][code]["plain"]) == 3
+        assert len(side["exchange"][code]["no-unclear"]) == 2
+
+
+@pytest.mark.use_case("Model_Eval_Measure")
+def test_sampling_values_change_the_request_of_their_own_step_only() -> None:
+    """
+    Given  the plain and the sampled profile of the exchange
+    When   their requests are compared
+    Then   the sampled profile changes the requests it sets values for and not the third, and the
+           plain profile's requests are the ones version 2 recorded
+    """
+    side = protocol.fingerprint()["requests"]["exchange"]["de"]
+
+    assert side["plain"][0] != side["sampled"][0]  # step ①: presence_penalty and top_p
+    assert side["plain"][1] != side["sampled"][1]  # step ②: top_k
+    assert side["plain"][2] == side["sampled"][2]  # step ③: nothing set
+
+
+@pytest.mark.use_case("Model_Eval_Measure")
+def test_the_correct_only_instructions_hash_covers_step_one_alone(monkeypatch) -> None:
+    """
+    Given  the correct-only mode
+    When   the instructions are hashed and the prompt of step two or of step one changes
+    Then   the hash differs from the exchange's, ignores a change of step two's prompt, and
+           follows a change of step one's
+    """
+    from teachers_teammate.domain import correction_prompts  # noqa: PLC0415
+    from tools.model_eval.answer_mode import AnswerMode  # noqa: PLC0415
+
+    only = protocol.instructions_sha256(["de"], mode=AnswerMode.CORRECT_ONLY)
+    assert only != protocol.instructions_sha256(["de"], mode=AnswerMode.EXCHANGE)
+
+    monkeypatch.setattr(
+        correction_prompts, "EXPLAIN_SYSTEM", correction_prompts.EXPLAIN_SYSTEM + " x"
+    )
+    assert protocol.instructions_sha256(["de"], mode=AnswerMode.CORRECT_ONLY) == only
+
+    monkeypatch.setattr(
+        correction_prompts, "CORRECT_SYSTEM", correction_prompts.CORRECT_SYSTEM + " x"
+    )
+    assert protocol.instructions_sha256(["de"], mode=AnswerMode.CORRECT_ONLY) != only

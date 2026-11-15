@@ -408,3 +408,24 @@ def test_an_empty_correction_fails_the_file() -> None:
     assert result.failed is True
     assert result.text == SOURCE
     assert result.warnings == (CORRECT_FAILED,)
+
+
+def test_the_sampling_values_of_a_step_reach_its_request_only() -> None:
+    """
+    Given  a profile with sampling values on step one and on step two, and none on step three
+    When   the exchange proofreads the text
+    Then   every request carries the values of its own step and no other
+    """
+    profile = RequestProfile(
+        correct=StepProfile(options=(("presence_penalty", 0.0),)),
+        explain=StepProfile(options=(("top_k", 20.0),)),
+    )
+    port = FakePort(answer(CORRECTED), answer(_notes((1, "grammar", "x"))), answer(_unclear()))
+
+    TExchange(port).proofread(SOURCE, _ctx(profile=profile))
+
+    assert [request.options for request in port.requests] == [
+        (("presence_penalty", 0.0),),
+        (("top_k", 20.0),),
+        (),
+    ]

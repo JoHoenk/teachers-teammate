@@ -1,0 +1,14 @@
+Secure Hash Algorithm SHA-1
+Used in: QtCore  |  Platforms: all
+License: Public Domain (LicenseRef-SHA1-Public-Domain)
+Homepage: http://www.dominik-reichl.de/projects/csha1/
+
+Copyright:
+Copyright (C) Dominik Reichl <dominik.reichl@t-online.de>
+Copyright (C) 2016 The Qt Company Ltd
+
+--- LicenseRef-SHA1-Public-Domain.txt ---
+
+100% free public domain implementation of the SHA-1 algorithm
+by Dominik Reichl <dominik.reichl@t-online.de>
+Web: http://www.dominik-reichl.de/

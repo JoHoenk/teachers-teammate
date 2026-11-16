@@ -12,10 +12,13 @@ name: Add-on resolution
 # No --platform and no marker emulation: pip's markers see the real system here, which is what
 # check_pins.py has to work around for its cross-platform checks.
 #
-# The same run keeps the add-on lock and the add-on license list honest: the lock is what the
-# installed app gives to pip, so every add-on is resolved twice, against the newest releases and
-# against the lock (a pin that conflicts with the bundle, or has no wheel on one system, is red
-# here instead of in a teacher's Add-ons window); the license list is what the Add-ons page shows.
+# The same run keeps the add-on lock honest: the lock is what the installed app gives to pip, so
+# every add-on is resolved twice, against the newest releases and against the lock (a pin that
+# conflicts with the bundle, or has no wheel on one system, is red here instead of in a teacher's
+# Add-ons window).  The licenses need no weekly run against PyPI: the lock pins the versions, so
+# the offline inventory test covers them.  What does need one is the platform side: the lock is
+# resolved on Linux, so a dependency that only exists on Windows or macOS is checked here, by
+# holding what pip would install on this runner against the license inventory.
 
 on:
   schedule:
@@ -62,11 +65,12 @@ jobs:
           python tools/build/check_addon_resolution.py \
             --python python \
             --constraints teachers_teammate/_build/addon_constraints.txt \
-            --lock teachers_teammate/_build/addon_lock.txt
+            --lock teachers_teammate/_build/addon_lock.txt \
+            --report addon-reports
 
-      # The license list is the same on every system (it comes from the lock and PyPI), so one
-      # runner is enough. A new release of an add-on's package that changes its license, or one
-      # that turns up under a license we must not ship, is a red run here.
-      - name: Check the add-on licenses
-        if: matrix.os == 'ubuntu-24.04'
-        run: python tools/build/addon_licenses.py --check
+      # The add-on lock is resolved on Linux, so a dependency that only exists on Windows or
+      # macOS never appears in it.  This holds what pip would install here against the license
+      # inventory, which is where such a package has to be listed (or accepted) to ship.
+      - name: Check the resolved add-ons against the license inventory
+        shell: bash
+        run: python tools/licenses/inventory.py --check-resolved addon-reports

@@ -19,14 +19,34 @@ from PyInstaller.utils.hooks import collect_all, collect_submodules, copy_metada
 ROOT = Path(SPECPATH).resolve().parent.parent
 ASSETS = ROOT / "teachers_teammate" / "assets"
 
+# Qt modules that Qt offers only under the GPL-3.0 or a commercial license. The rest of Qt is
+# LGPL-3.0, which lets an Apache-2.0 application link it; one of these in the bundle would make
+# the whole application GPL-3.0, so a future import must never drag one in. The smoke test
+# (teachers_teammate/frozen_modes.py) checks the finished bundle, and a unit test keeps this
+# list equal to its GPL_ONLY_QT_MODULES.
+GPL_ONLY_QT_MODULES = (
+    "Charts",
+    "DataVisualization",
+    "Graphs",
+    "HttpServer",
+    "Lottie",
+    "NetworkAuth",
+    "Quick3D",
+    "QuickTimeline",
+    "VirtualKeyboard",
+    "WaylandCompositor",
+)
+
 # Qt plugins and libraries that must not ship. libqgtk3 pulls GTK3, cairo, pango and glib
 # from the build machine; the desktop-portal plugin (kept) gives file dialogs without it.
 # The rest is a defensive net: a future import must not drag Chromium or FFmpeg back in.
 _DROPPED = (
     "platformthemes/libqgtk3",
     "WebEngine",
-    "Qt6Quick3D",
     "Qt6Multimedia",
+    # The GPL-only modules: the library "Qt6<name>" and the Python module "Qt<name>" of each.
+    *(f"Qt6{module}" for module in GPL_ONLY_QT_MODULES),
+    *(f"Qt{module}" for module in GPL_ONLY_QT_MODULES),
     # Platform plugins for devices without a desktop (framebuffer, KMS, VNC, test stubs): the
     # app runs under X11 (xcb) or Wayland, and the smoke test under offscreen.
     "platforms/libqeglfs",
@@ -50,6 +70,13 @@ _DROPPED = (
     # The app never loads a QTranslator, so Qt's own translations are never read.
     "Qt/translations/",
 )
+
+# Dropped on Windows only. On Linux and macOS the OpenCV wheel carries FFmpeg as shared
+# libraries that ship with the app; on Windows it is one opencv_videoio_ffmpeg*.dll that
+# PyInstaller's cv2 hook bundles, and nothing in the app plays video. NOTICE says FFmpeg ships
+# on Linux and macOS only.  The image codecs the reader uses live in OpenCV's own library, not in
+# this DLL.
+_DROPPED_ON_WINDOWS = ("opencv_videoio_ffmpeg",)
 
 # Dropping the libqgtk3 plugin does not drop what it linked against: PyInstaller had already
 # walked its dependencies, so the whole GTK3 stack stayed in the bundle with nothing loading
@@ -119,6 +146,8 @@ _DROPPED_LIBS = (
 def _keep(entry):
     name = entry[0].replace("\\", "/")
     if any(part in name for part in _DROPPED):
+        return False
+    if sys.platform == "win32" and any(part in name for part in _DROPPED_ON_WINDOWS):
         return False
     # Only the top level of the bundle holds host libraries; a Python extension module with
     # a similar name must never be caught by this.
@@ -239,8 +268,9 @@ a = Analysis(
     runtime_hooks=[],
     # setuptools is a build tool, not a runtime dependency: pip uses its own vendored copy.
     # readline would bundle the build machine's GPL-licensed libreadline; nothing in a windowed
-    # app has a terminal to complete in.
-    excludes=["setuptools", "_distutils_hack", "pkg_resources", "readline"],
+    # app has a terminal to complete in.  dbm.gnu is the same story with libgdbm, and nothing
+    # opens a gdbm database.
+    excludes=["setuptools", "_distutils_hack", "pkg_resources", "readline", "dbm.gnu"],
     noarchive=False,
     optimize=0,
 )

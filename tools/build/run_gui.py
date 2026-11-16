@@ -78,34 +78,17 @@ if "--_forget_keys" in sys.argv:
 
 # ── spaCy model download dispatch ─────────────────────────────────────────────
 # spaCy models live on GitHub Releases, not PyPI.  spaCy's own download command
-# knows how to resolve the correct wheel URL — but it uses run_command() which
-# spawns [sys.executable, "-m", "pip", "install", ...].  In a frozen build that
+# knows how to resolve the wheel URL — but it uses run_command() which spawns
+# [sys.executable, "-m", "pip", "install", ...].  In a frozen build that
 # subprocess re-enters the frozen exe without a recognised flag, which triggers
 # a full GUI import and fails on modules not bundled (e.g. timeit).
 #
-# Fix: use spaCy's URL-resolution helpers directly, then call pip internally
-# via pip._internal.cli.main — exactly as the --_pip_install_mode path does.
+# Fix: the caller passes the pinned wheel URL, and pip runs internally via
+# pip._internal.cli.main — exactly as the --_pip_install_mode path does.
 if "--_spacy_download_mode" in sys.argv:
     _idx = sys.argv.index("--_spacy_download_mode")
-    _model = sys.argv[_idx + 1]
+    _download_url = sys.argv[_idx + 1]
     _pip_args = list(sys.argv[_idx + 2 :])
-
-    from urllib.parse import urljoin  # noqa: PLC0415, E402
-
-    from spacy import about as _spacy_about  # noqa: PLC0415, E402
-    from spacy.cli.download import (  # noqa: PLC0415, E402
-        get_compatibility,
-        get_model_filename,
-        get_version,
-    )
-
-    _compat = get_compatibility()
-    _ver = get_version(_model, _compat)
-    _filename = get_model_filename(_model, _ver, sdist=False)
-    _base = _spacy_about.__download_url__
-    if not _base.endswith("/"):
-        _base += "/"
-    _download_url = urljoin(_base, _filename)
 
     # Apply the same distlib / PyInstaller loader workaround as --_pip_install_mode.
     try:

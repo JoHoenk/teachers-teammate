@@ -1540,9 +1540,10 @@ SHA-256.  `READER_MODELS` are the reader's two sets (31,191,354 bytes, "31 MB").
   `domain/local_models.py` *and* the matching `http_file` urls and hashes in `MODULE.bazel`,
   then run `//tests:test_ppocr_models` (it checks the numbers in the new `inference.yml`) and
   bump `READER_VERSION` if the output changes.  The models are Apache-2.0 (PaddlePaddle) and are
-  shipped inside the bundle, so `NOTICE` names them and their license; they are not pip
-  packages, so `third_party_licenses/` (generated from installed distributions) has no entry for
-  them.  The **page models** of the automatic image preparation (`PAGE_MODELS`) are pinned the
+  shipped inside the bundle, so they are `bundle` rows of `third_party_licenses/inventory.csv`
+  and their attribution and license text live in
+  `third_party_licenses/curated/paddlepaddle-models/` — no wheel carries them.  The **page
+  models** of the automatic image preparation (`PAGE_MODELS`) are pinned the
   same way; their four `http_file`s are `doc_ori_*` and `uvdoc_*`, their test helpers
   `conftest.page_models_store()` and `fake_page_models_store()`, and a new revision means a
   bump of `AUTO_VERSION` (`preprocessing/identity.py`) and a look at `test_page_models.py`.
@@ -2654,18 +2655,22 @@ The constraints file says what an add-on may **not** change.  What it *gets* is 
   clicks *Install* gets the versions this release was tested with instead of whatever is newest
   that day.  The smoke test (`addon lock`, frozen only) proves the file is in the bundle and pins
   every package `addon_manager.addon_package_names()` lists.
-- **`addon_licenses.csv`.** `tools/build/addon_licenses.py` reads the lock, follows pip-compile's
-  `# via` comments from the add-ons' own packages down to what they pull in, and asks PyPI's JSON
-  API for each package's license — no install, no wheel download.  The result is committed at
-  `teachers_teammate/assets/addon_licenses.csv` (bundled, and a diff in a pull request when a
-  license changes).  The script refuses a license the add-ons must not have (AGPL, GPL-only,
-  non-commercial); an `OR` expression is fine as soon as one alternative is.  The Add-ons page
-  shows a package's license as the tooltip of its row
-  (`infrastructure/addon_licenses.py`).  `--check` fails when the committed list is stale, and
-  `.github/workflows/addon_resolution.yml` runs it weekly.
+- **`third_party_licenses/inventory.csv`.** One list for everything the app ships or installs —
+  the bundle's packages, the add-ons', the models, the build tools.  `tools/licenses/inventory.py`
+  writes it: it reads the app's own lists (`[project] dependencies`,
+  `addon_manager.addon_package_names()`, the `LocalModel`s, `SPACY_MODEL_PINS`), takes every
+  version from the two locks, and downloads each locked wheel for its license text.  The same run
+  compiles `third_party_licenses/third_party_license.txt` and the copy the GUI shows,
+  `teachers_teammate/assets/third_party_licenses.md`.  `tools/licenses/policy.toml` holds the
+  denied licenses (AGPL, GPL-only, non-commercial), the display names and the accepted
+  exceptions; an `OR` expression is fine as soon as one alternative is.  The Add-ons page shows a
+  package's license as the tooltip of its row (`infrastructure/addon_licenses.py`, reading the
+  bundled copy of the inventory).  `--compile`, `--check-env` and `--check-resolved` run offline
+  and are what the tests and the builds call; only the maintainer refresh touches the network.
+  `docs/deployment.md` "Third-party licenses" has the flow.
 
-Both files are written at build time and are git-ignored (`teachers_teammate/_build/`); the CSV
-is committed because it is a reviewable fact, not a build artifact.
+`addon_lock.txt` is written at build time and is git-ignored (`teachers_teammate/_build/`); the
+inventory is committed because it is a reviewable fact, not a build artifact.
 
 ### pip package install (frozen builds)
 
@@ -2729,24 +2734,32 @@ spaCy NER models (e.g. `en_core_web_sm`) are distributed as Python wheels on
 **GitHub Releases**, not on PyPI.  A plain `pip install en_core_web_sm` fails because PyPI
 does not host them.
 
-`addon_manager.download_spacy_model_subprocess()` handles the download in two steps:
+**The version is pinned, not resolved.**  `infrastructure/spacy_models.py` holds the model of
+each language and, next to it, the version that model is pinned to (`SPACY_MODEL_PINS`).
+`spacy_model_url()` builds the wheel URL from that pin, so the model a teacher gets is the one
+this release names — not whatever spaCy's compatibility table would pick for the spaCy that
+happens to be installed.  A unit test holds each pin's major.minor to the locked spaCy, so a
+spaCy bump is a model bump.
 
-1. **URL resolution** — `spacy.cli.download.get_compatibility()`, `get_version()`, and
-   `get_model_filename()` compute the exact wheel URL for the installed spaCy version.
-2. **Wheel install** — `pip install --target <packages_dir> --only-binary :all: --no-cache-dir
-   -c <constraints> <url>` (frozen builds; `--prefer-binary <url>` from source) downloads
-   and unpacks the wheel into the addon packages directory.
+`addon_manager.download_spacy_model_subprocess()` then installs it:
+`pip install --target <packages_dir> --only-binary :all: --no-cache-dir -c <constraints> <url>`
+(frozen builds; `--prefer-binary <url>` from source) downloads and unpacks the wheel into the
+addon packages directory.
 
-In frozen builds, URL resolution must happen inside the frozen Python interpreter
-(which has spaCy bundled), so the exe is re-invoked with `--_spacy_download_mode <model>
---target <packages_dir>`:
+In frozen builds pip must run inside the frozen Python interpreter, so the exe is re-invoked
+with `--_spacy_download_mode <url> --target <packages_dir>`:
 
 ```python
 # tools/build/run_gui.py
 if "--_spacy_download_mode" in sys.argv:
-    _model = sys.argv[idx + 1]
-    # resolve URL, then call pip._internal.cli.main(["install", "--target", ..., url])
+    _download_url = sys.argv[idx + 1]
+    # call pip._internal.cli.main(["install", "--target", ..., _download_url])
 ```
+
+**Two languages have no model.**  `es_core_news_sm` is GPL-3.0 and `it_core_news_sm` is
+CC BY-NC-SA (non-commercial); the license policy refuses both, so Spanish and Italian documents
+are anonymized with the multilingual model like any other language without one.  The language
+stays in `domain/language.py` — only the model is gone.
 
 After a model download, `inject_packages_dir()` ensures the model is immediately usable.
 `spacy.load("en_core_web_sm")` finds the model because `packages_dir` is on `sys.path`.

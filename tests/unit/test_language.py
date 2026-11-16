@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+import os
 from pathlib import Path
 
 import pytest
@@ -17,7 +18,13 @@ from teachers_teammate.infrastructure.anonymizer import (
     AnonymizerConfig,
     resolve_anonymizer_config,
 )
-from teachers_teammate.infrastructure.spacy_models import spacy_model_for
+from teachers_teammate.infrastructure.spacy_models import (
+    FALLBACK_SPACY_MODEL,
+    SPACY_MODEL_PINS,
+    SPACY_MODELS,
+    spacy_model_for,
+    spacy_model_url,
+)
 from teachers_teammate.infrastructure.system_locale import system_language, system_locale_code
 from tests.conftest import make_config
 
@@ -282,6 +289,65 @@ def test_spacy_model_for_unknown_language_falls_back() -> None:
     Then   it returns the multilingual model
     """
     assert spacy_model_for("Klingon") == "xx_ent_wiki_sm"
+
+
+def test_every_offered_spacy_model_has_a_pin() -> None:
+    """
+    Given  the models the app offers
+    When   their pins are looked up
+    Then   each has one, and the fallback is among them
+    """
+    offered = {*SPACY_MODELS.values(), FALLBACK_SPACY_MODEL}
+
+    assert offered <= set(SPACY_MODEL_PINS)
+
+
+def _addon_lock() -> Path:
+    """Return the add-on lock from the Bazel runfiles, or from the source checkout."""
+    root = os.environ.get("TEST_SRCDIR", "")
+    relative = os.environ.get("ADDON_LOCK", "")
+    if root and relative:
+        return Path(root) / relative
+    return Path(__file__).resolve().parents[2] / "requirements_addons_lock.txt"
+
+
+def test_every_spacy_pin_matches_the_locked_spacy() -> None:
+    """
+    Given  the pinned model versions and the add-on lock
+    When   the locked spaCy version is read
+    Then   every pin's major.minor is the same — a spaCy bump is a model bump
+    """
+    locked = next(
+        line.split("==")[1].strip().rstrip("\\")
+        for line in _addon_lock().read_text(encoding="utf-8").splitlines()
+        if line.startswith("spacy==")
+    )
+
+    assert {version.rsplit(".", 1)[0] for version in SPACY_MODEL_PINS.values()} == {
+        locked.rsplit(".", 1)[0]
+    }
+
+
+def test_a_spacy_model_url_names_the_pinned_wheel() -> None:
+    """
+    Given  a model the app offers
+    When   its download URL is built
+    Then   it is the GitHub release of the pinned version, with the wheel name spaCy publishes
+    """
+    assert spacy_model_url("en_core_web_sm") == (
+        "https://github.com/explosion/spacy-models/releases/download/"
+        "en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl"
+    )
+
+
+def test_a_model_without_a_pin_cannot_be_downloaded() -> None:
+    """
+    Given  a model name the app does not offer
+    When   its download URL is built
+    Then   it raises instead of guessing a version
+    """
+    with pytest.raises(KeyError):
+        spacy_model_url("es_core_news_sm")
 
 
 # ── Windows and macOS locale names ─────────────────────────────────────────

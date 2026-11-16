@@ -139,7 +139,7 @@ on a non-zero exit, and uploads `smoke.json` as an artifact. The Linux job also 
 file in the `.app` (every architecture slice of a universal2 one) and fails when one needs a newer
 macOS than 14.4. The PySide6 6.12.0 wheel is tagged `macosx_14_0`, but its Qt libraries say 14.4 and
 its binding modules (`PySide6/*.abi3.so`, `libpyside6`, `shiboken6`) say 26.0, so those are exempt
-(`--ignore`); the `install-macos` job on macOS 14 is what shows that they load there. After the smoke test the Linux job runs
+(`--ignore`); no runner older than macOS 15 is available any more, so that they load on 14 stays on the VM list. After the smoke test the Linux job runs
 `tools/build/check_addon_resolution.py`: the built app's own pip resolves every add-on's requirement
 (`--dry-run`, nothing is installed) against the bundle's versions, so a new release of
 `langchain-openai` or spaCy that needs another numpy or pydantic fails the build instead of a
@@ -153,7 +153,7 @@ checks out, because it runs the installer test script from the repository.
 | Job | Runs on | What it proves |
 |-----|---------|----------------|
 | `install-linux` | `ubuntu:24.04`, `ubuntu:26.04`, `debian:13` containers | apt resolves the `.deb`'s `Depends:`, the app starts headless, the xcb platform plugin finds its libraries |
-| `install-macos` | `macos-14`, `macos-15`, `macos-26` | the dmg mounts, the app copied to `/Applications` starts |
+| `install-macos` | `macos-15`, `macos-26` | the dmg mounts, the app copied to `/Applications` starts |
 | `install-windows` | `windows-2022`, `windows-2025` | `tools/packaging/test_windows_installer.ps1` passes: install, update, uninstall, both scopes |
 
 None of them is a real desktop (no window, no X11/Wayland, no fonts, no Gatekeeper): that stays on
@@ -216,7 +216,7 @@ of this table is in `docs/index.md` → "System requirements".
 |---|---|---|---|
 | **What sets the floor** | Qt 6.12 (its supported platforms name Windows 10 1809 as the oldest target) and Python 3.14 | the PySide6 wheel (tagged `macosx_14_0`, its Qt libraries ask for 14.4) | the build image's glibc |
 | **Built on** | `windows-2025` | `macos-26` | `ubuntu-24.04` (glibc 2.39) |
-| **Tested on** | the installer test and the app start on Server 2022 and Server 2025 | the dmg installed and the app started on macOS 14, 15 and 26 (not Gatekeeper) | the package installed and the app started headless in Ubuntu 24.04, 26.04 and Debian 13 |
+| **Tested on** | the installer test and the app start on Server 2022 and Server 2025 | the dmg installed and the app started on macOS 15 and 26 (not Gatekeeper) | the package installed and the app started headless in Ubuntu 24.04, 26.04 and Debian 13 |
 | **What guards it** | the installer's own check (`${AtLeastBuild} 17763`, exit code 15) | `tools/build/check_macos_bundle.py --max-minos 14.4` | `tools/build/check_linux_bundle.py --max-glibc 2.39` |
 
 A real desktop on each system — a window, X11/Wayland, fonts, Gatekeeper, a Windows 10 1809
@@ -263,33 +263,75 @@ bazel build //teachers_teammate:teachers_teammate_wheel
 ls bazel-bin/teachers_teammate/*.whl
 ```
 
-### Third-party license report
+### Third-party licenses
 
-Before cutting a release, regenerate the license documentation and commit both
-the per-package store and the GUI asset:
+One file lists every third-party part the app ships or installs:
+`third_party_licenses/inventory.csv`. Nothing else lists licenses — not the add-on
+asset, not a summary, not a manual-review list. `tools/licenses/inventory.py` owns
+it: it reads the app's own lists (`[project] dependencies`, the add-ons'
+`addon_package_names()`, the `LocalModel`s, `SPACY_MODEL_PINS`), takes every
+version from the two locks, and writes the rows, the texts and the compiled
+outputs.
 
 ```bash
-bash tools/release/update_licenses.sh
+# Maintainer refresh: needs the network, downloads the wheels, rewrites the rows
+python tools/licenses/inventory.py
 git add third_party_licenses/ teachers_teammate/assets/third_party_licenses.md
+
+# Offline, what the tests and the builds run
+python tools/licenses/inventory.py --compile          # rebuild the outputs from the store
+python tools/licenses/inventory.py --check-env        # this environment vs the inventory
+python tools/licenses/inventory.py --check-resolved R # a pip --dry-run report vs the inventory
 ```
 
-The script creates an isolated venv (`.venv-licenses/`) containing only the base
-runtime dependencies (`pip install -e .`) plus `pip-licenses`, so dev/test
-packages are never included. The enumerated set (base + transitive) matches
-exactly what PyInstaller bundles into the standalone binary.
+| Path | Owner | Purpose |
+|------|-------|---------|
+| `third_party_licenses/inventory.csv` | tool | Every bundle, add-on, build and model row: component, version, scope, license, text |
+| `third_party_licenses/texts/<component>/` | tool | The license texts, taken from the locked wheel |
+| `third_party_licenses/curated/<component>/` | by hand | Texts no wheel carries (Qt, CPython, the PaddleOCR models), each with a `STAMP.toml` |
+| `third_party_licenses/third_party_license.txt` | tool | The compiled text every download carries |
+| `teachers_teammate/assets/third_party_licenses.md` | tool | The same, shown in **Help → Third-Party Licenses** |
+| `NOTICE` | by hand | The attributions and the source pointers; a test checks its versions |
 
-Outputs:
+The tool never writes into `curated/`. A stamp records the versions it was
+refreshed for, so a Qt or Python minor bump leaves the stamp test red until
+someone refreshes that folder by hand.
 
-| Path | Purpose |
-|------|---------|
-| `third_party_licenses/packages.md` | Table of all runtime packages and their license types |
-| `third_party_licenses/summary.md` | Aggregated count per license type |
-| `third_party_licenses/licenses/<pkg>/` | Copied LICENSE / NOTICE files per package |
-| `third_party_licenses/manual_review.md` | Packages where no license file was found in the wheel |
-| `teachers_teammate/assets/third_party_licenses.md` | Single bundled file shown in **Help → Third-Party Licenses** |
+The checks run offline in `bazel test //tests:unit_tests`; only the maintainer
+refresh touches the network. `--check-env` runs in each OS build and fails on an
+installed distribution the inventory does not list; `--check-resolved` runs in the
+weekly add-on job and does the same for what an add-on's requirement resolves to.
 
-Both `third_party_licenses/` and `teachers_teammate/assets/third_party_licenses.md` are
-committed; only the throwaway `.venv-licenses/` is ignored.
+#### What a bump does
+
+| Event | What happens |
+|---|---|
+| Dependabot or a lock bump (test lock or add-on lock) | inventory test red → `python tools/licenses/inventory.py` → commit; the diff shows any license change |
+| New dependency, add-on, model, spaCy language | same red test (row missing) |
+| Platform-only dependency appears | `--check-env` red in that OS build (or `--check-resolved` in the weekly job) → pin it in `requirements_platform.txt` or accept it → run the tool |
+| Qt or Python minor bump | rows update by themselves; the stamp test stays red until the curated folder is refreshed by hand |
+| Qt patch or OpenCV bump | the NOTICE source test is red until its entry and the sources release name the new version (see below) |
+| A license turns denied | the tool fails; drop the part, or `[accepted]` with a reason |
+
+#### The sources release
+
+LGPL-3 and LGPL-2.1 oblige us to pass on the source of what we ship. The Qt and
+FFmpeg sources live in a separate GitHub release, `third-party-sources-qt<version>`,
+holding qtbase, qtsvg, qtimageformats, qtwayland and `pyside-setup` of the shipped
+Qt version plus the FFmpeg tarball of the version inside the shipped OpenCV (about
+90 MB). A maintainer creates it by hand once per Qt or OpenCV bump:
+
+```bash
+gh release create third-party-sources-qt<version> --latest=false \
+  --notes "<what it holds, for which app versions>"
+gh release upload third-party-sources-qt<version> <archives>
+```
+
+`--latest=false` is not optional: the app's update check and `release.yml` read
+`/releases/latest`, so a sources release marked latest would be offered to teachers
+as an update. Never delete a sources release while an app release that ships that
+version is still up. `NOTICE` names the release next to the upstream link, and a
+test keeps that tag on the locked Qt version.
 
 ### Standalone binary
 
@@ -497,5 +539,5 @@ removes them.
 | `tools/packaging/make_dmg.sh` | Creates `.dmg` installer for macOS |
 | `tools/packaging/windows.nsi` | NSIS script for the Windows installer |
 | `tools/release/stamp_versions.py` | Stamps version into `pyproject.toml` and Bazel `BUILD` |
-| `tools/release/update_licenses.py` | Generates third-party license report and GUI asset |
-| `tools/release/update_licenses.sh` | Creates isolated venv and runs `update_licenses.py` |
+| `tools/licenses/inventory.py` | Writes the license inventory, its texts and the compiled outputs; `--compile`, `--check-env`, `--check-resolved` |
+| `tools/licenses/policy.toml` | The denied licenses, the display names and the accepted exceptions |

@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import ast
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -12,6 +14,13 @@ from teachers_teammate.gui import _credential_store
 from teachers_teammate.gui._credential_store import KEYRING_SERVICE
 
 from ..gui._settings_stubs import FakeKeyring
+
+#: The build spec, as Bazel's runfiles see it or in the source tree when the test runs directly.
+_SPEC = (
+    Path(os.environ["TEST_SRCDIR"]) / os.environ["BUILD_SPEC"]
+    if os.environ.get("TEST_SRCDIR") and os.environ.get("BUILD_SPEC")
+    else Path(__file__).resolve().parents[2] / "tools" / "build" / "teachers-teammate.spec"
+)
 
 
 @pytest.fixture(name="keychain")
@@ -170,3 +179,64 @@ def test_bundled_models_check_ignores_models_downloaded_earlier(
     assert result is not None
     assert "not in the bundle" in result
     assert READER_MODELS[0].key in result
+
+
+def test_gpl_only_qt_files_names_the_library_and_the_python_module() -> None:
+    """Given file names of a bundle, When they are checked, Then only GPL-only Qt modules are named."""
+    names = [
+        "libQt6Core.so.6",
+        "libQt6Charts.so.6",
+        "Qt6Graphs.dll",
+        "Qt6GraphsWidgets.dll",
+        "QtCharts.abi3.so",
+        "QtQuick3D.pyd",
+        "libQt6Svg.so.6",
+        "QtWidgets.abi3.so",
+        "libqjpeg.so",
+    ]
+
+    assert frozen_modes.gpl_only_qt_files(names) == [
+        "Qt6Graphs.dll",
+        "Qt6GraphsWidgets.dll",
+        "QtCharts.abi3.so",
+        "QtQuick3D.pyd",
+        "libQt6Charts.so.6",
+    ]
+
+
+def test_qt_license_check_fails_on_a_gpl_only_module(tmp_path: Path, monkeypatch) -> None:
+    """Given a bundle folder with QtCharts, When the license check runs, Then it names the file."""
+    lib = tmp_path / "PySide6" / "Qt" / "lib"
+    lib.mkdir(parents=True)
+    (lib / "libQt6Core.so.6").write_bytes(b"")
+    (lib / "libQt6Charts.so.6").write_bytes(b"")
+    monkeypatch.setattr(frozen_modes, "_root", lambda: tmp_path)
+
+    problem = frozen_modes._check_qt_licenses()
+
+    assert problem is not None
+    assert "libQt6Charts.so.6" in problem
+    assert "libQt6Core" not in problem
+
+
+def test_qt_license_check_passes_on_an_lgpl_bundle(tmp_path: Path, monkeypatch) -> None:
+    """Given a bundle folder with only LGPL Qt modules, When the license check runs, Then it passes."""
+    (tmp_path / "libQt6Core.so.6").write_bytes(b"")
+    (tmp_path / "QtWidgets.abi3.so").write_bytes(b"")
+    monkeypatch.setattr(frozen_modes, "_root", lambda: tmp_path)
+
+    assert frozen_modes._check_qt_licenses() is None
+
+
+def test_spec_drops_the_same_gpl_only_modules_as_the_smoke_test() -> None:
+    """Given the build spec, When its GPL-only list is read, Then it equals the smoke test's list."""
+    spec = _SPEC
+    tree = ast.parse(spec.read_text(encoding="utf-8"))
+    listed = next(
+        ast.literal_eval(node.value)
+        for node in tree.body
+        if isinstance(node, ast.Assign)
+        and any(isinstance(t, ast.Name) and t.id == "GPL_ONLY_QT_MODULES" for t in node.targets)
+    )
+
+    assert tuple(listed) == frozen_modes.GPL_ONLY_QT_MODULES

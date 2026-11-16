@@ -6,9 +6,10 @@ before the splash screen and before any heavy import.
 
 ``run_smoke_test`` is what proves a build is complete: the modules the app loads lazily,
 Qt's image plugins, the reader's OpenCV runtime, PDF and DOCX writing, the provider list,
-the bundled assets, the model files the app carries itself, the pip dispatch and the add-on
-constraints and lock. CI runs it on every build (see ``.github/workflows/build_artifacts.yml``)
-and the Windows installer test runs it again on the installed copy.
+the bundled assets, the model files the app carries itself, the absence of GPL-only Qt
+modules, the pip dispatch and the add-on constraints and lock. CI runs it on every build
+(see ``.github/workflows/build_artifacts.yml``) and the Windows installer test runs it again
+on the installed copy.
 
 ``forget_keys`` is what the uninstaller calls before it removes the program files: the API
 keys sit in the system keychain, which no uninstaller can enumerate.
@@ -16,7 +17,7 @@ keys sit in the system keychain, which no uninstaller can enumerate.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 import importlib
 import importlib.metadata
 from io import BytesIO
@@ -55,7 +56,7 @@ _MIN_CV_MAJOR = 5
 # splash image. A missing one is silent in the GUI (an empty tab, no picture), so check it.
 _ASSETS: tuple[str, ...] = (
     "teachers_teammate/assets/third_party_licenses.md",
-    "teachers_teammate/assets/addon_licenses.csv",
+    "teachers_teammate/assets/third_party_inventory.csv",
     "teachers_teammate/assets/teachers_teammate.png",
     "teachers_teammate/assets/teachers_teammate_icon.png",
     "docs/using_the_app.md",
@@ -66,6 +67,23 @@ _ASSETS: tuple[str, ...] = (
 # Packages whose copy in the add-on folder would shadow the bundled one and break the app, which
 # is why the constraints file must pin them to what the bundle carries.
 _CONSTRAINED_RUNTIME_PACKAGES: tuple[str, ...] = ("numpy", "pydantic", "requests", "pillow")
+
+# Qt modules that Qt offers only under the GPL-3.0 or a commercial license. The rest of Qt is
+# LGPL-3.0, which lets an Apache-2.0 application link it; one of these in the bundle would make
+# the whole application GPL-3.0. ``tools/build/teachers-teammate.spec`` drops the same names
+# (a unit test keeps the two lists equal); the smoke test is the check on the finished bundle.
+GPL_ONLY_QT_MODULES: tuple[str, ...] = (
+    "Charts",
+    "DataVisualization",
+    "Graphs",
+    "HttpServer",
+    "Lottie",
+    "NetworkAuth",
+    "Quick3D",
+    "QuickTimeline",
+    "VirtualKeyboard",
+    "WaylandCompositor",
+)
 
 # A check returns ``None`` when it passes and a short description of the problem when it fails.
 Check = Callable[[], "str | None"]
@@ -170,6 +188,32 @@ def _check_assets() -> str | None:
     licenses = root / _ASSETS[0]
     if licenses.stat().st_size == 0:
         return f"{_ASSETS[0]} is empty"
+    return None
+
+
+def gpl_only_qt_files(names: Iterable[str]) -> list[str]:
+    """Return the file or folder names (without their folder) that belong to a GPL-only Qt module.
+
+    Matches the library (``libQt6Charts.so.6``, ``Qt6Charts.dll``) and the Python module
+    (``QtCharts.abi3.so``, ``QtCharts.pyd``) of each module in :data:`GPL_ONLY_QT_MODULES`.
+    """
+    prefixes = tuple(
+        f"{lib}{qt}{module}"
+        for module in GPL_ONLY_QT_MODULES
+        for qt in ("Qt6", "Qt")
+        for lib in ("lib", "")
+    )
+    return sorted(name for name in names if name.startswith(prefixes))
+
+
+def _check_qt_licenses() -> str | None:
+    """Check that no GPL-only Qt module is in the bundle (frozen builds only)."""
+    found: list[str] = []
+    for folder, folders, files in os.walk(_root()):
+        names = [*folders, *files]
+        found += [str(Path(folder, name)) for name in gpl_only_qt_files(names)]
+    if found:
+        return "GPL-only Qt modules in the bundle: " + ", ".join(sorted(found))
     return None
 
 
@@ -278,6 +322,7 @@ def _checks() -> list[tuple[str, Check]]:
         checks += [
             ("assets", _check_assets),
             ("models", _check_bundled_models),
+            ("qt licenses", _check_qt_licenses),
             ("pip", _check_pip),
             ("addon constraints", _check_addon_constraints),
             ("addon lock", _check_addon_lock),

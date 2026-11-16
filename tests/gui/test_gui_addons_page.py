@@ -19,6 +19,7 @@ from teachers_teammate.domain.model_catalog import (
 )
 from teachers_teammate.domain.model_listing import ModelListing
 from teachers_teammate.gui import _user_text as txt
+from teachers_teammate.gui._constants import _SPACY_MODEL_CHOICES
 from teachers_teammate.gui._install_round import PAGE_MODELS_ITEM, READER_ITEM
 from teachers_teammate.gui.settings import _addons_page
 from teachers_teammate.gui.settings._addons_page import AddonsPage
@@ -29,6 +30,7 @@ from teachers_teammate.gui.settings._page import (
     FOCUS_READING_MODELS,
     SettingsPage,
 )
+from teachers_teammate.infrastructure.spacy_models import FALLBACK_SPACY_MODEL, SPACY_MODELS
 
 from ._gui_harness import settings_context
 from ._service_stubs import RecommendationServiceStub
@@ -416,6 +418,18 @@ def test_provider_preselect_is_not_mistaken_for_an_ollama_model(qtbot) -> None:
 
     assert "provider:mistral" not in dlg._model_items
     assert dlg._group_items["other"].childCount() == 0
+
+
+def test_the_name_detection_models_are_the_ones_the_app_offers() -> None:
+    """
+    Given  the model table and the label list the Add-ons page shows
+    When   both are read
+    Then   the labels are exactly the table's models plus the multilingual fallback, in order
+    """
+    assert [model for _label, model in _SPACY_MODEL_CHOICES] == [
+        *SPACY_MODELS.values(),
+        FALLBACK_SPACY_MODEL,
+    ]
 
 
 def test_spacy_preselect_ticks_the_model_and_spacy_itself(qtbot) -> None:

@@ -8,9 +8,20 @@ exports_files(
     [
         ".python-version",
         "CLAUDE.md",
+        "NOTICE",
         "pyproject.toml",
         "README.md",
+        "requirements_addons_lock.txt",
+        "requirements_test_lock.txt",
     ],
+    visibility = ["//visibility:public"],
+)
+
+# The license store: the inventory, the texts the tool collects, the curated folders a person
+# owns, and the compiled outputs.  One filegroup so the offline store test can read all of it.
+filegroup(
+    name = "license_store",
+    srcs = glob(["third_party_licenses/**"]),
     visibility = ["//visibility:public"],
 )
 
@@ -31,6 +42,7 @@ py_library(
         "//tests:all_sources",
         "//tools:all_sources",
         "//tools/build:all_sources",
+        "//tools/licenses:all_sources",
     ],
     tags = ["manual"],
 )
@@ -51,6 +63,7 @@ ruff_test(
         "//tools:prepare_gec_testset",
         "//tools:proofreading_store",
         "//tools:verify_model_catalog",
+        "//tools/licenses:licenses_lib",
     ],
 )
 
@@ -65,6 +78,7 @@ ty_test(
         "//tools:prepare_gec_testset",
         "//tools:proofreading_store",
         "//tools:verify_model_catalog",
+        "//tools/licenses:licenses_lib",
     ],
 )
 
@@ -111,7 +125,7 @@ compile_pip_requirements(
 # The pip add-ons the app installs at runtime (Settings → Add-ons), with their whole closure and
 # hashes.  The build turns it into the flat ``addon_lock.txt`` the installed app gives to pip
 # (tools/build/addon_lock.py), so a release installs the add-on versions it was tested with, and
-# tools/build/addon_licenses.py reads the same lock for the license list.
+# tools/licenses/inventory.py reads the same lock for the license inventory.
 compile_pip_requirements(
     name = "requirements_addons",
     src = "pyproject.toml",

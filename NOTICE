@@ -12,13 +12,64 @@ and notice texts for all bundled third-party components are reproduced in:
 Qt / PySide6 (LGPL-3.0)
 -----------------------
 The bundled GUI toolkit (Qt, via PySide6) is used under the terms of the
-GNU Lesser General Public License, version 3 (LGPL-3.0). The Qt libraries are
-separate files in the application folder (_internal/PySide6/Qt/lib), not
-compiled into the program, and the application loads them at runtime, so they
-can be replaced with a compatible build. The complete source code of Teacher's
-Teammate is publicly available at
-https://github.com/JoHoenk/teachers-teammate, satisfying the LGPL relink
-requirement.
+GNU Lesser General Public License, version 3 (LGPL-3.0); the license texts are in
+the "Third-Party Licenses" dialog and in third_party_license.txt. The Qt libraries
+are separate files in the application folder (the PySide6 folder inside _internal,
+or inside the macOS app bundle), not compiled into the program, and the
+application loads them at runtime, so they can be replaced with a compatible build
+of the same Qt version. Nothing in the license of Teacher's Teammate restricts
+changing the application for your own use or reverse engineering it to debug such
+changes. The complete source code of Teacher's Teammate is publicly available at
+https://github.com/JoHoenk/teachers-teammate.
+
+Only Qt modules that the LGPL covers are bundled. The build leaves out the modules
+that Qt offers only under the GPL-3.0 or a commercial license (for example Qt
+Charts), and the smoke test fails if one is still in the finished bundle.
+
+FFmpeg inside OpenCV (LGPL-2.1)
+-------------------------------
+The OpenCV package (opencv-python-headless) carries FFmpeg. It is used under the GNU Lesser
+General Public License, version 2.1, whose text is in the OpenCV entry of the third-party
+license list. The application never reads video. FFmpeg ships in the Linux and macOS bundles
+only: the Windows bundle leaves out the separate DLL that OpenCV's Windows build carries.
+
+Source code
+-----------
+The LGPL and MPL components above are open source, and this section says where their source
+is. Each entry names the version it was written for; a version bump turns the license test
+red until the entry and the sources release below name the new one.
+
+Qt 6.12.0 and PySide6 6.12.0, the versions the bundle carries:
+  https://download.qt.io/archive/qt/6.12/6.12.0/submodules/
+      (qtbase, qtsvg, qtimageformats, qtwayland)
+  https://download.qt.io/archive/qt/6.12/6.12.0/single/qt-everywhere-src-6.12.0.tar.xz
+  https://download.qt.io/official_releases/QtForPython/pyside6/PySide6-6.12.0-src/
+
+FFmpeg 8.1.1, inside opencv-python-headless 5.0.0.93 (Linux and macOS):
+  https://ffmpeg.org/releases/ffmpeg-8.1.1.tar.gz
+  The wheel's build recipe: https://github.com/opencv/opencv-python (tag 93)
+
+certifi 2026.10.23 (MPL-2.0):
+  https://github.com/certifi/python-certifi
+  https://pypi.org/project/certifi/2026.10.23/
+
+The same sources, as one download, are published with this release:
+  https://github.com/JoHoenk/teachers-teammate/releases/tag/third-party-sources-qt6.12.0
+It holds the Qt modules above, pyside-setup at the matching tag and the FFmpeg tarball. It is
+never the "latest" release, so the app's update check does not see it.
+
+Written offer
+-------------
+The sources release named above is the offer of corresponding source from the same place as the
+download (GPL-3.0 section 6(d), as used through LGPL-3.0). In addition, for three years after we
+last distributed a version, we send the corresponding source of any LGPL component in this
+product on request, on a medium customary for software interchange, for no more than our cost of
+physically performing the source distribution (LGPL-2.1 section 6(c), GPL-3.0 section 6(b)). Ask at
+https://github.com/JoHoenk/teachers-teammate/issues.
+
+The macOS OpenCV libraries and the Linux host libraries are covered by this offer. The Linux
+download's third_party_host_libraries.txt names the Ubuntu source package and version of every
+library the bundle took from the build machine.
 
 Optional components
 -------------------
@@ -26,19 +77,12 @@ Optional OCR, LLM, and privacy features (LangChain, spaCy, ...) are
 not bundled. They are installed on demand and are governed by their own
 licenses.
 
-Model files (Apache-2.0)
------------------------
-The built-in reader and the automatic image preparation run neural network models
-published by PaddlePaddle under the Apache License, Version 2.0: PP-OCRv6 small text
-detection and recognition, PP-LCNet_x1_0_doc_ori (page orientation) and UVDoc (flattening
-of photographed pages), in their ONNX exports on huggingface.co/PaddlePaddle. They are
-bundled with the installed app (teachers_teammate/_models/), fetched at build time at a pinned
-revision and checked against a SHA-256 sum (see teachers_teammate/domain/local_models.py). A
-build that does not carry them downloads each once, only when the user asks for it.
-
+PaddleOCR algorithms
+--------------------
 The built-in reader's text-box post-processing and line cropping re-implement the published
 algorithms of PaddleOCR (Apache-2.0, https://github.com/PaddlePaddle/PaddleOCR). No PaddleOCR
-source code is included in this product.
+source code is included in this product. The model files the reader runs are third-party
+components; their attribution and license text are in the third-party license report.
 
 Installer artifacts
 -------------------

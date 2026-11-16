@@ -24,6 +24,7 @@ from teachers_teammate.infrastructure.addon_manager import (
     is_addon_importable,
     remove_retired_addons,
 )
+from teachers_teammate.infrastructure.spacy_models import spacy_model_url
 
 
 # ── get_packages_dir ──────────────────────────────────────────────────────────
@@ -323,7 +324,7 @@ def test_download_spacy_model_uses_spacy_download_mode_flag(tmp_path: Path) -> N
     """
     Given  a spaCy model name and a frozen build
     When   download_spacy_model_subprocess() is called
-    Then   the subprocess argv includes --_spacy_download_mode and the model name
+    Then   the subprocess argv includes --_spacy_download_mode and the pinned wheel URL
     """
     captured: list[list[str]] = []
 
@@ -340,7 +341,7 @@ def test_download_spacy_model_uses_spacy_download_mode_flag(tmp_path: Path) -> N
     assert len(captured) == 1
     assert sys.executable == captured[0][0]
     assert "--_spacy_download_mode" in captured[0]
-    assert "en_core_web_sm" in captured[0]
+    assert spacy_model_url("en_core_web_sm") in captured[0]
     assert "--target" in captured[0]
 
 

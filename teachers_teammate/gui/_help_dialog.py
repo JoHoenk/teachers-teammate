@@ -23,6 +23,9 @@ _ROOT = Path(_MEIPASS) if _MEIPASS is not None else Path(__file__).resolve().par
 _DOCS = _ROOT / "docs"
 _IMG_PATH = _ROOT / "teachers_teammate" / "assets" / "teachers_teammate.png"
 _LICENSES_PATH = _ROOT / "teachers_teammate" / "assets" / "third_party_licenses.md"
+#: The Linux build's host libraries, written into ``_internal/`` by the build.  No other platform
+#: has one: Windows and macOS take every library from a wheel.
+_HOST_LIBRARIES_PATH = _ROOT / "third_party_host_libraries.txt"
 
 _USER_GUIDE_PAGES: list[tuple[str, str]] = [
     ("Overview", "index.md"),
@@ -138,11 +141,14 @@ class ThirdPartyLicensesDialog(QDialog):
         browser = QTextBrowser()
         browser.setOpenExternalLinks(True)
         if _LICENSES_PATH.exists():
-            browser.setMarkdown(_LICENSES_PATH.read_text(encoding="utf-8"))
+            text = _LICENSES_PATH.read_text(encoding="utf-8")
+            if _HOST_LIBRARIES_PATH.exists():
+                text += "\n" + _HOST_LIBRARIES_PATH.read_text(encoding="utf-8")
+            browser.setMarkdown(text)
         else:
             browser.setPlainText(
                 "Third-party license information is not available in this installation.\n\n"
-                "Run tools/release/update_licenses.py to generate it."
+                "Run tools/licenses/inventory.py --compile to generate it."
             )
         layout.addWidget(browser)
 

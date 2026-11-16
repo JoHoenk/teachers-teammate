@@ -259,6 +259,8 @@ py_test(
     size = "small",
     srcs = _COMMON_SRCS + ["unit/test_language.py"],
     args = ["unit/test_language.py"],
+    data = ["//:requirements_addons_lock.txt"],
+    env = {"ADDON_LOCK": "$(rlocationpath //:requirements_addons_lock.txt)"},
     main = "run_test.py",
     deps = _COMMON_DEPS,
 )
@@ -690,12 +692,35 @@ py_test(
 )
 
 py_test(
-    name = "test_addon_licenses",
+    name = "test_inventory_tool",
     size = "small",
-    srcs = _COMMON_SRCS + ["unit/test_addon_licenses.py"],
-    args = ["unit/test_addon_licenses.py"],
+    srcs = _COMMON_SRCS + ["unit/test_inventory_tool.py"],
+    args = ["unit/test_inventory_tool.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS + ["//tools/build:build_tools_lib"],
+    deps = _COMMON_DEPS + ["//tools/licenses:licenses_lib"],
+)
+
+# The committed store, checked offline: the rows are the closures of the locks, every license
+# passes the deny rules, every bundle row has a text, and the compiled outputs are fresh.  A
+# Dependabot bump of either lock is red here until tools/licenses/inventory.py runs.
+py_test(
+    name = "test_license_inventory",
+    size = "small",
+    srcs = _COMMON_SRCS + ["unit/test_license_inventory.py"],
+    args = ["unit/test_license_inventory.py"],
+    data = [
+        "//:.python-version",
+        "//:NOTICE",
+        "//:license_store",
+        "//:pyproject.toml",
+        "//:requirements_addons_lock.txt",
+        "//:requirements_test_lock.txt",
+        "//teachers_teammate:assets",
+        "//tools/build:requirements_platform.txt",
+    ],
+    env = {"LICENSE_PYPROJECT": "$(rlocationpath //:pyproject.toml)"},
+    main = "run_test.py",
+    deps = _COMMON_DEPS + ["//tools/licenses:licenses_lib"],
 )
 
 py_test(
@@ -830,6 +855,8 @@ py_test(
         "unit/test_frozen_modes.py",
     ],
     args = ["unit/test_frozen_modes.py"],
+    data = ["//tools/build:teachers-teammate.spec"],
+    env = {"BUILD_SPEC": "$(rlocationpath //tools/build:teachers-teammate.spec)"},
     main = "run_test.py",
     deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + [
         "//teachers_teammate:gui_lib",
@@ -2219,7 +2246,6 @@ test_suite(
     name = "unit_tests",
     tests = [
         ":test_addon_constraints",
-        ":test_addon_licenses",
         ":test_addon_lock",
         ":test_addon_manager",
         ":test_anonymization_mask",
@@ -2260,7 +2286,9 @@ test_suite(
         ":test_input_provider_factory",
         ":test_input_providers",
         ":test_interfaces",
+        ":test_inventory_tool",
         ":test_language",
+        ":test_license_inventory",
         ":test_llm_factory",
         ":test_local_models",
         ":test_make_constraints",

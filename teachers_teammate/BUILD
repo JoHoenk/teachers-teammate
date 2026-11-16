@@ -274,6 +274,14 @@ filegroup(
     visibility = ["//visibility:public"],
 )
 
+# The bundled assets: the icon, the user-facing license texts and the copy of the license
+# inventory the Add-ons page reads.  The spec bundles the folder; the store test reads the copy.
+filegroup(
+    name = "assets",
+    srcs = glob(["assets/**"]),
+    visibility = ["//visibility:public"],
+)
+
 # Lint-only mirrors of ocr_lib/gui_lib that additionally depend on the runtime
 # pip packages, so the rules_lint ty/pylint aspects resolve real types. Tagged
 # "manual" and never referenced by the wheel — keep them out of //:ocr_pkg.

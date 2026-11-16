@@ -1,0 +1,5 @@
+# CPython's license and the licenses of the software it includes, split out of `Doc/license.rst`
+# of the 3.14 branch (without the two test-suite entries).  The interpreter is not a wheel, and
+# the `LICENSE.txt` it installs has no list of included software, so this folder is hand-owned.
+rows = ["python"]
+valid_for = "3.14"

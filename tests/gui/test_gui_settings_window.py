@@ -204,13 +204,15 @@ def test_general_is_the_first_page_and_its_value_is_in_the_result(qtbot) -> None
     """
     Given  the Settings window opened on General
     When   its result is read
-    Then   General comes first in the page order, and keep_awake is part of the result
+    Then   General comes first in the page order, and keep_awake and check_for_updates are part
+           of the result
     """
     window = _window(qtbot, SettingsPage.GENERAL)
 
     assert next(iter(SettingsPage)) is SettingsPage.GENERAL
     assert window._sidebar.currentRow() == 0
     assert window.values().settings["keep_awake"] is True
+    assert window.values().settings["check_for_updates"] is True
 
 
 @pytest.mark.gui

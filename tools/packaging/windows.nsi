@@ -1,5 +1,7 @@
 ; NSIS installer script for Teacher's Teammate
-; Build from repo root:
+; Build from repo root, in two passes (the second one needs the first one's output):
+;   makensis /DBUILD_UNINSTALLER tools/packaging/windows.nsi   ; writes Uninstall.exe
+;   Start-Process pyinstaller-work\uninstaller-helper.exe -Wait ; ... by running the helper
 ;   makensis /DAPP_VERSION="1.2.3" /DAPP_VERSION_WIN="1.2.3.0" tools/packaging/windows.nsi
 ;
 ; Prerequisites:
@@ -33,8 +35,38 @@ SetCompressor /SOLID lzma
 !define REG_KEY       "Software\TeachersTeammate"
 !define UNINST_KEY    "Software\Microsoft\Windows\CurrentVersion\Uninstall\TeachersTeammate"
 
+; What the Welcome page says about the one thing the app sends on its own: the update check.
+; The signing terms want the disclosure shown during installation, with the way to turn it off.
+!define PRIVACY_NOTE "$\r$\n$\r$\nThe app asks GitHub once at every start whether a newer version exists; you can switch that off under Settings > General. What it sends, and when:$\r$\n${APP_URL}/blob/main/docs/code_signing_policy.md"
+
 Name    "${APP_NAME} ${APP_VERSION}"
-OutFile "..\..\dist\teachers-teammate-${APP_VERSION}-w64-setup.exe"
+
+; ── Two passes: the uninstaller is a file of its own ─────────────────────────
+; A remote signer cannot sign inside makensis (!uninstfinalize needs a local signing tool), so
+; Uninstall.exe has to exist before the setup is compiled and be packed with File instead of
+; being written by WriteUninstaller.  Pass 1 (/DBUILD_UNINSTALLER) compiles a helper that only
+; writes the uninstaller and quits; pass 2 compiles the setup.  Nothing is signed yet, so the
+; setup packs the unsigned helper output: the flow is the same with and without signing.
+; https://nsis.sourceforge.io/Signing_an_Uninstaller
+; Where the helper writes itself, where it puts the uninstaller, and where the setup packs
+; that file from.  The first two are runtime paths ($EXEDIR is the helper's own folder, so a
+; hand-run does not depend on the folder it is started from); the third is a compile-time
+; path, relative to this script, and both passes need it: pass 1 for the helper, pass 2 for
+; File.  The defaults name the same file; the workflow passes one absolute path for pass 1.
+!ifndef UNINSTALLER_OUT
+  !define UNINSTALLER_OUT "..\..\pyinstaller-work\Uninstall.exe"
+!endif
+!ifdef BUILD_UNINSTALLER
+  !ifndef UNINSTALLER_HELPER
+    !define UNINSTALLER_HELPER "..\..\pyinstaller-work\uninstaller-helper.exe"
+  !endif
+  !ifndef UNINSTALLER_TARGET
+    !define UNINSTALLER_TARGET "$EXEDIR\Uninstall.exe"
+  !endif
+  OutFile "${UNINSTALLER_HELPER}"
+!else
+  OutFile "..\..\dist\teachers-teammate-${APP_VERSION}-w64-setup.exe"
+!endif
 
 ; Default install directory: a sentinel. NSIS puts /D=<folder> into $INSTDIR before .onInit and
 ; removes it from the command line, so the only way to know whether the caller gave a folder
@@ -121,8 +153,12 @@ Function ${FUNC}
   ${EndIf}
 FunctionEnd
 !macroend
-!insertmacro DefineIsElevated "IsElevated"
-!insertmacro DefineIsElevated "un.IsElevated"
+; One variant per pass: the setup asks the question in .onInit, the uninstaller in un.onInit.
+!ifdef BUILD_UNINSTALLER
+  !insertmacro DefineIsElevated "un.IsElevated"
+!else
+  !insertmacro DefineIsElevated "IsElevated"
+!endif
 
 ; A running exe cannot be opened for writing on Windows, and that holds for every version,
 ; including the shipped ones, which have no instance lock. $CheckDir is the folder to test.
@@ -148,8 +184,11 @@ Function ${FUNC}
   Quit
 FunctionEnd
 !macroend
-!insertmacro DefineCheckAppClosed "CheckAppClosed" "I"
-!insertmacro DefineCheckAppClosed "un.CheckAppClosed" "U"
+!ifdef BUILD_UNINSTALLER
+  !insertmacro DefineCheckAppClosed "un.CheckAppClosed" "U"
+!else
+  !insertmacro DefineCheckAppClosed "CheckAppClosed" "I"
+!endif
 
 ; Remove the files this installer put there, and the folder only when nothing else is in it.
 ; A teacher's own file in the install folder survives an update and an uninstall.
@@ -179,6 +218,7 @@ FunctionEnd
 
 ; ── Installer pages ──────────────────────────────────────────────────────────
 
+!ifndef BUILD_UNINSTALLER
 !define MUI_PAGE_CUSTOMFUNCTION_PRE WelcomePagePre
 ; .onInit works out the text: fresh install, update, reinstall or downgrade.
 !define MUI_WELCOMEPAGE_TEXT "$WelcomeText"
@@ -196,29 +236,49 @@ Page custom ScopePageCreate ScopePageLeave
 !define MUI_FINISHPAGE_RUN_TEXT "Start Teacher's Teammate"
 !define MUI_FINISHPAGE_RUN_FUNCTION StartAppUnelevated
 !insertmacro MUI_PAGE_FINISH
+!endif
 
 ; ── Uninstaller pages ────────────────────────────────────────────────────────
 
+!ifdef BUILD_UNINSTALLER
 !insertmacro MUI_UNPAGE_CONFIRM
 UninstPage custom un.UnDataPageCreate un.UnDataPageLeave
 !insertmacro MUI_UNPAGE_INSTFILES
 !insertmacro MUI_UNPAGE_FINISH
+!endif
 
 !insertmacro MUI_LANGUAGE "English"
 
 ; ── Version info embedded in the exe ────────────────────────────────────────
+; Both passes carry this block: NSIS copies the installer it runs into the uninstaller and
+; replaces only the icon and the installation data, so the uninstaller gets these keys from
+; the helper that wrote it.  ProductName and ProductVersion are the ones the app exe's version
+; resource carries (tools/build/make_version_resource.py), which a code-signing service checks.
 
 VIProductVersion "${APP_VERSION_WIN}"
 VIAddVersionKey "ProductName"     "${APP_NAME}"
 VIAddVersionKey "ProductVersion"  "${APP_VERSION}"
 VIAddVersionKey "CompanyName"     "${APP_PUBLISHER}"
 VIAddVersionKey "FileVersion"     "${APP_VERSION}"
-VIAddVersionKey "FileDescription" "Installer for ${APP_NAME}"
+!ifdef BUILD_UNINSTALLER
+  VIAddVersionKey "FileDescription" "Uninstaller for ${APP_NAME}"
+!else
+  VIAddVersionKey "FileDescription" "Installer for ${APP_NAME}"
+!endif
 VIAddVersionKey "LegalCopyright"  "${U+00A9} 2026 Teacher's Teammate contributors ${U+00B7} Apache-2.0"
 
 ; ── Initialisation ───────────────────────────────────────────────────────────
 
 Function .onInit
+!ifdef BUILD_UNINSTALLER
+  ; Pass 1: write the uninstaller and quit.  Nothing else of this script is compiled into the
+  ; helper, so it stays small and cannot touch the build machine.
+  SetSilent silent
+  WriteUninstaller "${UNINSTALLER_TARGET}"
+  SetErrorLevel 0
+  Quit
+!else
+
   ; Windows 10 (1809) is the floor: Qt 6.12 and Python 3.14 need it. ${AtLeastWin10} would let
   ; 1507-1803 through, so the build number is checked. A silent run exits 15.
   ${IfNot} ${AtLeastBuild} 17763
@@ -451,9 +511,15 @@ Function .onInit
       StrCpy $WelcomeText "$PrevLabel is installed. This updates it to ${APP_VERSION}. Your settings, add-ons and downloaded models stay."
     ${EndIf}
   ${EndIf}
+
+  ; The disclosure the signing terms ask for: shown during installation, with the switch that
+  ; turns the check off.  One sentence for every case, so an update says it too.
+  StrCpy $WelcomeText "$WelcomeText${PRIVACY_NOTE}"
+!endif
 FunctionEnd
 
 ; Cut a version string at its first "-": 0.6.0-beta.1 → 0.6.0. In: $R0. Out: $R0.
+!ifndef BUILD_UNINSTALLER
 Function StripPrerelease
   StrCpy $R7 0
   ${Do}
@@ -599,9 +665,11 @@ FunctionEnd
 Function StartAppUnelevated
   Exec '"$WINDIR\explorer.exe" "$INSTDIR\teachers-teammate.exe"'
 FunctionEnd
+!endif
 
 ; ── Install sections ─────────────────────────────────────────────────────────
 
+!ifndef BUILD_UNINSTALLER
 Section "Core (required)" SecCore
   SectionIn RO
 
@@ -630,8 +698,9 @@ Section "Core (required)" SecCore
     WriteRegStr HKCU "${REG_KEY}" "Scope"      "user"
   ${EndIf}
 
-  ; Create uninstaller
-  WriteUninstaller "$INSTDIR\Uninstall.exe"
+  ; The uninstaller pass 1 wrote, packed as a file: a remote signer can sign it before the
+  ; setup is built, and the setup is the same whether or not it was signed.
+  File /oname=Uninstall.exe "${UNINSTALLER_OUT}"
 
   ; Add/Remove Programs entry — scope-aware registry hive.
   ${If} $InstallScope == "all"
@@ -679,8 +748,14 @@ Section "Desktop shortcut" SecDesktop
     CreateShortcut "$DESKTOP\Teacher's Teammate.lnk" "$INSTDIR\teachers-teammate.exe"
   ${EndIf}
 SectionEnd
+!endif
 
 ; ── Uninstaller data-cleanup page ────────────────────────────────────────────
+
+!ifdef BUILD_UNINSTALLER
+; NSIS refuses a script without an install section, although .onInit quits before one runs.
+Section "-Helper"
+SectionEnd
 
 Function un.UnDataPageCreate
   nsDialogs::Create 1018
@@ -833,3 +908,4 @@ Section "Uninstall"
     !insertmacro RemoveInstallValues HKCU
   ${EndIf}
 SectionEnd
+!endif

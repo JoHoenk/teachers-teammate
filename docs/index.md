@@ -67,7 +67,7 @@ unpack it anywhere and run `./teachers-teammate`.
 :::
 
 :::{note}
-**Windows — security notice:** Windows may show a "Windows protected your PC" message when running the installer. Click **More info**, then **Run anyway**. This warning appears only because the installer does not carry a paid security certificate — not because anything is wrong with the app. The full build process is publicly visible on [GitHub](https://github.com/JoHoenk/teachers-teammate), so you can inspect every step yourself.
+**Windows — security notice:** Windows may show a "Windows protected your PC" message when running the installer. Click **More info**, then **Run anyway**. This warning appears only because the installer does not carry a paid security certificate — not because anything is wrong with the app. The full build process is publicly visible on [GitHub](https://github.com/JoHoenk/teachers-teammate), so you can inspect every step yourself. What is signed, where the files come from and what the app does with your data is written down in the {doc}`code signing policy <code_signing_policy>`.
 :::
 
 :::{note}
@@ -82,7 +82,7 @@ Your settings are saved automatically and restored every time you start the app.
 
 | | Windows | macOS | Linux |
 |---|---|---|---|
-| **Version** | 10 (version 1809 or newer) or 11 | 14 Sonoma or newer | Ubuntu 24.04+, Debian 13+, Mint 22+ (glibc 2.39 or newer); other distributions with glibc 2.39 or newer: the `.tar.gz` |
+| **Version** | 10 (version 1809 or newer) or 11 | 14.4 Sonoma or newer | Ubuntu 24.04+, Debian 13+, Mint 22+ (glibc 2.39 or newer); other distributions with glibc 2.39 or newer: the `.tar.gz` |
 | **Processor** | x64 (Windows 11 on ARM: x64 emulation, not tested) | Apple Silicon (M1 or newer) | x86_64 |
 | **Download** | setup `.exe` | `.dmg` | `.deb`, `.tar.gz` |
 
@@ -166,4 +166,5 @@ testing
 
 requirements/use_cases_rst
 test_specs
+code_signing_policy
 ```

@@ -208,6 +208,7 @@ PAGE_ONLINE_SERVICES = "Online services"
 PAGE_ADDONS = "Add-ons"
 
 #: The one place every message names when it says where a setting is changed.
+WHERE_GENERAL = f"Settings → {PAGE_GENERAL}"
 WHERE_AI_MODELS = f"Settings → {PAGE_AI_MODELS}"
 WHERE_SCAN_QUALITY = f"Settings → {PAGE_SCAN_QUALITY}"
 WHERE_PRIVACY = f"Settings → {PAGE_PRIVACY}"

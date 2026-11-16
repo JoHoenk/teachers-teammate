@@ -622,9 +622,13 @@ class MainWindow(QMainWindow):
         QTimer.singleShot(500, self, self._start_readiness_check)
 
         # No parent: the thread outlives the window if it is closed during the request.
-        self._update_thread = UpdateCheckThread()
-        self._update_thread.update_available.connect(self._show_update_banner)
-        QTimer.singleShot(0, self._update_thread.start)
+        # The switch is read once, at start: turning it off takes effect at the next start.
+        if self._config_panel.get_settings_dict().get(
+            "check_for_updates", DEFAULTS["check_for_updates"]
+        ):
+            self._update_thread = UpdateCheckThread()
+            self._update_thread.update_available.connect(self._show_update_banner)
+            QTimer.singleShot(0, self._update_thread.start)
 
     def _build_menu_bar(self) -> None:
         bar = self.menuBar()
@@ -2805,6 +2809,7 @@ class MainWindow(QMainWindow):
             lbl.setText(
                 f"Version <b>{version}</b> is available — "
                 f'<a href="{url}" style="color:#ffd966;">Download</a>'
+                f" · turn this check off under {txt.WHERE_GENERAL}"
             )
         self._update_banner.show()
 

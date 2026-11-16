@@ -26,6 +26,7 @@ from teachers_teammate.domain.model_catalog import (
     HardwareDetection,
 )
 from teachers_teammate.gui import _main_window as main_window_module
+from teachers_teammate.gui._config_panel import ConfigPanel
 from teachers_teammate.gui._export_menu import ExportKind
 from teachers_teammate.gui._main_window import MainWindow
 from teachers_teammate.gui._types import FileDoneEvent
@@ -4916,3 +4917,81 @@ def test_the_time_left_is_estimated_for_the_steps_the_run_really_runs(
     assert choices.reading_model == "glm-ocr:q8_0"
     assert choices.writing_model == ""
     assert choices.review_model == ""
+
+
+# ── The update check switch ──────────────────────────────────────────────────
+
+
+class _RecordingUpdateThread(_DummyUpdateThread):
+    """A stand-in that records every construction, so a test can count the checks."""
+
+    built: ClassVar[list[_RecordingUpdateThread]] = []
+
+    def __init__(self, _parent=None) -> None:
+        super().__init__(_parent)
+        _RecordingUpdateThread.built.append(self)
+
+
+def _window_with_update_setting(qtbot, monkeypatch, value: bool | None) -> MainWindow:
+    """Build a MainWindow whose panel reports *value* for ``check_for_updates``.
+
+    ``None`` leaves the key out of the settings dict, which is what an ``ocr.toml``
+    written before the switch existed looks like.
+    """
+    _RecordingUpdateThread.built = []
+    monkeypatch.setattr(main_window_module, "UpdateCheckThread", _RecordingUpdateThread)
+    monkeypatch.setattr(MainWindow, "_load_toml_if_present", lambda self: None)
+    monkeypatch.setattr(MainWindow, "_start_readiness_check", lambda self, **_kw: None)
+    real = ConfigPanel.get_settings_dict
+
+    def settings_dict(self) -> dict:
+        settings = real(self)
+        if value is None:
+            settings.pop("check_for_updates", None)
+        else:
+            settings["check_for_updates"] = value
+        return settings
+
+    monkeypatch.setattr(ConfigPanel, "get_settings_dict", settings_dict)
+    win = MainWindow(worker_factory=_DummyWorker)
+    qtbot.addWidget(win)
+    return win
+
+
+@pytest.mark.gui
+def test_the_update_check_runs_when_the_switch_is_on(qtbot, monkeypatch) -> None:
+    """
+    Given  settings with check_for_updates on
+    When   the main window is built
+    Then   one UpdateCheckThread is created and kept on the window
+    """
+    win = _window_with_update_setting(qtbot, monkeypatch, True)
+
+    assert len(_RecordingUpdateThread.built) == 1
+    assert win._update_thread is _RecordingUpdateThread.built[0]
+
+
+@pytest.mark.gui
+def test_no_update_check_runs_when_the_switch_is_off(qtbot, monkeypatch) -> None:
+    """
+    Given  settings with check_for_updates off
+    When   the main window is built
+    Then   no UpdateCheckThread is created and the window holds none
+    """
+    win = _window_with_update_setting(qtbot, monkeypatch, False)
+
+    assert _RecordingUpdateThread.built == []
+    assert win._update_thread is None
+
+
+@pytest.mark.gui
+def test_an_old_config_without_the_key_still_checks(qtbot, monkeypatch) -> None:
+    """
+    Given  settings written before the switch existed (no check_for_updates key)
+    When   the main window is built
+    Then   the check runs, because the default is on
+    """
+    win = _window_with_update_setting(qtbot, monkeypatch, None)
+
+    assert len(_RecordingUpdateThread.built) == 1
+    assert win._update_thread is not None

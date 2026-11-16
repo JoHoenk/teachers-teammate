@@ -99,7 +99,12 @@ jobs:
           # A draft, so a half-uploaded release is never visible and the update check
           # (`/releases/latest`) never offers it. The tag exists already, so `--verify-tag`
           # is the check and no target commit is needed.
-          args=(--draft --verify-tag --generate-notes --title "Release $TAG")
+          #
+          # The body starts with the link to the code signing policy: the signing service asks
+          # for it on every download page. GitHub puts `--notes` in front of the generated
+          # notes, so both are kept.
+          notes="**What is signed, where the files come from and what the app does with your data:** [code signing policy](https://github.com/${REPO}/blob/main/docs/code_signing_policy.md)"
+          args=(--draft --verify-tag --generate-notes --notes "$notes" --title "Release $TAG")
           if [[ "$TAG" == *-* ]]; then
             args+=(--prerelease)
           fi

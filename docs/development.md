@@ -1739,7 +1739,7 @@ privacy add-on is installed.
 
 One modal window (`gui/settings/_window.py:SettingsWindow`) holds everything set up once;
 the main window only holds what changes per batch.  The sidebar lists seven pages
-(`SettingsPage`): General (`GENERAL`: `keep_awake`), AI models, This computer (`AI_SETUP`: computer profile, local server) and Online services (`ONLINE_SERVICES`: the list of API keys), both drawn indented under AI models because they hold no choice of their own (`SUB_PAGES`), Scan quality, Privacy and Add-ons.  The main window
+(`SettingsPage`): General (`GENERAL`: `keep_awake`, `check_for_updates`), AI models, This computer (`AI_SETUP`: computer profile, local server) and Online services (`ONLINE_SERVICES`: the list of API keys), both drawn indented under AI models because they hold no choice of their own (`SUB_PAGES`), Scan quality, Privacy and Add-ons.  The main window
 opens it through the single entry point `MainWindow.open_settings(page, focus=..., preselect=...)`
 and, on OK, applies the result once (`_apply_settings_result`: update the panel, the
 anonymizer rules and the "hide names" view setting, save, check the services, refresh the

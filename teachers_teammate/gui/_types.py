@@ -81,6 +81,7 @@ class SettingsDict(TypedDict, total=False):
     ocr_timeout: int
     recognition_enabled: bool
     keep_awake: bool
+    check_for_updates: bool
     preprocess_method: str
     pdf_render_dpi: int
     pdf_text_layer: str

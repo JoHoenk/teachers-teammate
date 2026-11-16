@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "current": 3,
+  "current": 4,
   "versions": [
     {
       "version": 1,
@@ -19,6 +19,12 @@
       "date": "2026-11-15",
       "fingerprint": "9c319b9f708124e4619f951d0e9ebcc89941f8ee7450265698a8adfdc0f36c59",
       "why": "Additive: the correct-only answer mode (step 1 of the exchange alone) joins the others, and a profile may carry sampling values (top_k, top_p, min_p, presence_penalty, frequency_penalty, repeat_penalty) besides the temperature; the fingerprint covers a sampled profile. Every request that existed in version 2 hashes as it did (review, text and exchange, every language, profile and text budget), so version 2 runs are re-stamped as version 3 after that check."
+    },
+    {
+      "version": 4,
+      "date": "2026-11-16",
+      "fingerprint": "e8a10985fdabf9006e03cf3c1d369c1e39c361e7853ad3077a6de10914b375d9",
+      "why": "Additive: step 1 of the exchange may send a named variant of its system prompt (keep, find, shot; StepProfile.prompt, run --prompt), and the fingerprint covers each variant's text in the exchange and correct-only modes. Every request that existed in version 3 hashes as it did (the version 3 fingerprint is the hash of this one without the three prompt variants, checked on 2026-11-16), so version 3 runs are re-stamped as version 4 after that check."
     }
   ]
 }

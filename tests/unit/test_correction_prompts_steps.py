@@ -2,18 +2,23 @@
 
 from __future__ import annotations
 
+import pytest
+
 from teachers_teammate.domain.correction_prompts import (
     CORRECT_SYSTEM,
+    CORRECT_VARIANTS,
     EXPLAIN_SYSTEM,
     NOTES_HEADING,
     NOTES_LIMIT,
     PROMPT_VERSION,
     UNCLEAR_SYSTEM,
+    correct_system,
     correct_user,
     explain_body,
     explain_user,
     notes_block,
     parameters,
+    prompt_identity,
     unclear_user,
 )
 from teachers_teammate.domain.proofreading.edits import batches, edits, sentence_groups
@@ -157,3 +162,108 @@ def test_the_notes_limit_is_a_short_block() -> None:
     Then   it is short enough to stay context, not a second instruction
     """
     assert 0 < NOTES_LIMIT <= 1000
+
+
+def test_the_standard_prompt_is_the_default_and_a_variant_is_chosen_by_its_id() -> None:
+    """
+    Given  the standard prompt of step one and its named variants
+    When   the prompt is asked for with no id and with each id
+    Then   no id gives the standard prompt and each id gives its own text, different from the
+           standard one and from the others
+    """
+    assert correct_system() == CORRECT_SYSTEM
+    assert correct_system("") == CORRECT_SYSTEM
+    texts = [correct_system(variant) for variant in CORRECT_VARIANTS]
+
+    assert set(CORRECT_VARIANTS) == {"keep", "find", "shot"}
+    assert len({CORRECT_SYSTEM, *texts}) == len(texts) + 1
+
+
+def test_an_unknown_variant_is_refused_and_the_message_lists_the_known_ones() -> None:
+    """
+    Given  an id that names no variant
+    When   the prompt is asked for
+    Then   a ValueError names the id and the ids that exist
+    """
+    with pytest.raises(ValueError, match="no step ① prompt variant 'banana'") as refused:
+        correct_system("banana")
+
+    assert "find, keep, shot" in str(refused.value)
+
+
+@pytest.mark.parametrize("variant", sorted(CORRECT_VARIANTS))
+def test_a_variant_keeps_the_rules_about_the_answer_the_standard_prompt_has(variant: str) -> None:
+    """
+    Given  each variant of the step-one prompt
+    When   its text is read
+    Then   it ends as the standard prompt ends (the answer is the text, no lead-in, no remark), has
+           no placeholder a message would have to fill, and asks for no answer format of its own
+    """
+    text = correct_system(variant)
+
+    assert text.endswith(CORRECT_SYSTEM[CORRECT_SYSTEM.index("Keep the shape of the text") :])
+    assert "{" not in text
+    assert "json" not in text.lower()
+
+
+@pytest.mark.parametrize("variant", sorted(CORRECT_VARIANTS))
+def test_a_variant_applies_to_every_language_it_is_sent_with(variant: str) -> None:
+    """
+    Given  each variant of the step-one prompt, which a model gets for every text language
+    When   its text is read
+    Then   the variants with rules of German and English name them as examples and ask for the
+           same kinds of check in the language of the text
+    """
+    text = correct_system(variant)
+
+    if variant == "find":
+        assert "look for the same kinds of mistake in the language of the text" in text
+    if variant == "keep":
+        assert "whether the student wrote it or left it out" in text
+
+
+def test_the_examples_of_the_shot_variant_cannot_be_copied_as_a_label() -> None:
+    """
+    Given  the variant with two worked examples
+    When   its text is read
+    Then   the examples are labelled in a way that is not the "Text:" the message ends with or a
+           "Corrected:" a model could put in front of its answer, and they say they are not the
+           student's text
+    """
+    text = correct_system("shot")
+
+    assert "never copy them into your answer" in text
+    assert "\nText:" not in text
+    assert "Corrected:" not in text
+    assert text.count("your answer:") == 2
+
+
+def test_the_keep_variant_forbids_adding_an_optional_comma_and_not_only_keeping_one() -> None:
+    """
+    Given  the variant for models that over-edit
+    When   its text is read
+    Then   an optional comma is no mistake whether it is there or missing, and a sentence with a
+           mistake is changed only in the words of the mistake
+    """
+    text = correct_system("keep")
+
+    assert "do not add them either" in text
+    assert "change only the words the mistake is in" in text
+
+
+def test_a_variant_has_an_identity_that_follows_its_text(monkeypatch) -> None:
+    """
+    Given  the identity a cache key and a fingerprint carry for a variant
+    When   the text of a variant changes under the same id
+    Then   the standard prompt has none, each variant has its own, and a changed text is another one
+    """
+    assert prompt_identity("") == ""
+    assert prompt_identity("keep").startswith("keep-")
+    assert len({prompt_identity(variant) for variant in CORRECT_VARIANTS}) == 3
+    before = prompt_identity("keep")
+
+    monkeypatch.setitem(CORRECT_VARIANTS, "keep", CORRECT_VARIANTS["keep"] + " Another rule.")
+
+    assert prompt_identity("keep") != before
+    with pytest.raises(ValueError, match="no step"):
+        prompt_identity("banana")

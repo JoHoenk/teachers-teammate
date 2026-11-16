@@ -223,7 +223,9 @@ def text_request(language: str, text_format: TextFormat, text: str) -> tuple[str
     return request_messages(text, language, text_format=text_format, mode="text")
 
 
-def step_one_request(language: str, text_format: TextFormat, text: str) -> tuple[str, str]:
+def step_one_request(
+    language: str, text_format: TextFormat, text: str, variant: str = ""
+) -> tuple[str, str]:
     """Return ``(system, user)`` of step ① of the proofreading exchange for *text*.
 
     The exchange asks for the corrected text with its own fixed system prompt, so a run of
@@ -234,15 +236,16 @@ def step_one_request(language: str, text_format: TextFormat, text: str) -> tuple
         language: The language *name*, as the exchange is asked for it.
         text_format: The notation of the text (the exchange's step ① takes it as it comes).
         text: The text the message carries.
+        variant: The step-① prompt variant a run asks with; empty: the standard prompt.
     """
     from teachers_teammate.domain.correction_policy import DEFAULT_LEVEL  # noqa: PLC0415
     from teachers_teammate.domain.correction_prompts import (  # noqa: PLC0415
-        CORRECT_SYSTEM,
+        correct_system,
         correct_user,
     )
 
     del text_format
-    return CORRECT_SYSTEM, correct_user(text, language=language, level=DEFAULT_LEVEL)
+    return correct_system(variant), correct_user(text, language=language, level=DEFAULT_LEVEL)
 
 
 def fixture_named(name: str) -> Fixture:

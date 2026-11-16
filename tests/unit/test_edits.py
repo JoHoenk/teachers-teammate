@@ -456,3 +456,21 @@ def test_a_batch_names_the_sentence_groups_it_shows() -> None:
 
     assert batch.groups == ((3, 4),)
     assert batch.whole_group is True
+
+
+def test_a_label_in_front_of_the_text_on_its_first_line_is_a_lead_in() -> None:
+    """
+    Given  answers that start with "Corrected:" on the text's own first line, and texts that
+           start with a label of their own
+    When   the answers are checked for framing
+    Then   the added label fails, while a label the source has too (even one the model spelled
+           better) and a time of day pass
+    """
+    source = "Yesterday I goes to school. It was fun."
+
+    assert framing_problem(source, "Corrected: Yesterday I went to school. It was fun.")
+    assert framing_problem(source, "Corrected text: Yesterday I went to school. It was fun.")
+    assert framing_problem(source, "Yesterday I went to school. It was fun.") is None
+    assert framing_problem("Tipp: Er ging heim.", "Tipp: Er ging heim.") is None
+    assert framing_problem("Dear Ana: I was there.", "Dear Anna: I was there.") is None
+    assert framing_problem("Ich habe 12:30 gegessen.", "Ich habe 12:30 gegessen.") is None

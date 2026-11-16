@@ -43,6 +43,7 @@ import shlex
 import sys
 from typing import cast
 
+from teachers_teammate.domain.correction_prompts import CORRECT_VARIANTS
 from teachers_teammate.domain.model_catalog import SAMPLING_OPTIONS, RequestProfile
 from teachers_teammate.infrastructure.ollama_utils import OllamaClient
 from tools.model_eval import defaults, protocol, results, run_log, runner, text_loss
@@ -97,6 +98,11 @@ def _option_problem(args: argparse.Namespace) -> str | None:
     if repeated:
         return f"--option {repeated[0]} is given more than once"
     elsewhere = [mode.value for mode in args.mode if not mode.asks_exchange]
+    if args.prompt and elsewhere:
+        return (
+            "--prompt reaches the proofreading exchange only; it would be ignored in "
+            f"{', '.join(elsewhere)} mode.  Ask with --mode exchange or --mode correct-only."
+        )
     if names and elsewhere:
         return (
             "--option reaches the proofreading exchange only; it would be ignored in "
@@ -128,6 +134,7 @@ def _matrix(args: argparse.Namespace) -> runner.Matrix:
         machine=args.machine,
         compact_json=args.compact_json,
         options=tuple(args.option),
+        prompt=args.prompt,
     )
 
 
@@ -164,6 +171,7 @@ def _seams(args: argparse.Namespace) -> runner.Seams:
         )
 
     def smoke(model: str, mode: AnswerMode, temperature: float) -> Smoke:
+        variant = defaults.request_profile_for(model, prompt=args.prompt).correct.prompt
         # The setup, not the session: one pass covers every repeat and every language of it.
         port = OllamaChatPort(args.ollama_url, num_ctx=protocol.NUM_CTX)
         if mode is AnswerMode.REVIEW:
@@ -180,7 +188,9 @@ def _seams(args: argparse.Namespace) -> runner.Seams:
             return TextSmokeCheck(
                 port,
                 timeout=SMOKE_TIMEOUT,
-                request=step_one_request,
+                request=lambda language, text_format, text: step_one_request(
+                    language, text_format, text, variant
+                ),
                 fixtures=STEP_ONE_SMOKE_FIXTURES,
             ).run(model, temperature)
         return TextSmokeCheck(port, timeout=SMOKE_TIMEOUT).run(model, temperature)
@@ -507,6 +517,15 @@ def main() -> int:
         "presence_penalty=0 or top_p=0.9 (repeatable).  The names are those of Ollama in "
         f"{', '.join(sorted(SAMPLING_OPTIONS))}.  Without it the model's own tag decides, as in "
         "the app.  Runs with other values write to files of their own.",
+    )
+    run.add_argument(
+        "--prompt",
+        choices=[defaults.STANDARD_PROMPT, *sorted(CORRECT_VARIANTS)],
+        default="",
+        help="Ask step ① with this variant of its system prompt (the proofreading exchange "
+        "only).  Without it a model is asked with its own: the standard prompt unless a variant "
+        "was adopted for it.  'standard' sends the standard prompt to such a model too.  A run "
+        "with a variant writes files of its own.",
     )
     run.add_argument(
         "--compact-json",

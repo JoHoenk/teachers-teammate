@@ -1265,6 +1265,33 @@ set of sampling values.  Every request of the exchange is tagged with its step i
 record (`step`, derived from its system prompt), and `--performance` prints step ①'s share of the
 time.
 
+`run --prompt NAME` asks step ① with a named variant of its system prompt (`keep`, `find` or
+`shot`, `CORRECT_VARIANTS` in `domain/correction_prompts.py`) instead of the model's own;
+`--prompt standard` sends the standard `CORRECT_SYSTEM` to a model that has an adopted variant
+(to measure the two against each other).  Only the exchange and correct-only modes send it, so
+another mode refuses.  The variants are written from what the evaluation showed and never from a
+test text: `keep` for the models that over-edit (the false alarms of those models are mostly extra
+edits inside sentences that have a mistake, so a sentence with a mistake changes only the words of
+the mistake; a short list says what is no mistake and is not to be added either, an optional comma
+included), `find` for the models that leave mistakes alone (a checklist of what to look at in every
+sentence, its comma rule per language), `shot` with two invented worked examples (labelled so that
+no label can start an answer; the exchange refuses an answer that starts with a `Word:` label the
+text does not start with: `framing_problem`).  A variant's rules and examples come from German and
+English, the languages that were measured, and say so: a model's variant is sent for every text
+language.  A variant is part of the request profile (`StepProfile.prompt`,
+step ① only; `STEP_ONE_PROMPTS` in `model_catalog.py` is the table of the models that are sent one,
+empty until a measurement on both test sets adopts a variant; another quantisation of a listed
+model is sent the same one).  A run with a variant writes files of its own
+(`…__prompt-keep__r1.jsonl`; the name follows the prompt the requests carry, so a model with an
+adopted variant writes that file without a flag and `--prompt standard` writes the plain one),
+lists it in its header's `request_profile`, and is refused by `report --cache` when it is pooled
+with a run of another prompt.  The fingerprint hashes the text of every variant, so a changed
+variant needs a new protocol version once a version has been merged or measured (version 4 added
+them; its requests are version 3's with three more entries, which the recorded fingerprint of
+version 3 proves); a variant that a measurement used is never edited, another text is another id.
+The cache key of the correction stage carries the variant (id and hash of its text,
+`prompt_identity()`) only for a model that has one.
+
 **The request per model, and a second try.**  The request the app sends is not the same for every
 model.  `RequestProfile` (`domain/model_catalog.py`) holds the two knobs that differ, the catalog
 carries one per model, and `request_profile(tag)` resolves it — the default for a model the catalog

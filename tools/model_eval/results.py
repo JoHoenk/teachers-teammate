@@ -319,14 +319,18 @@ def result_file_name(
     mode: AnswerMode = DEFAULT_MODE,
     repeat: int | None = None,
     options: Sequence[tuple[str, float]] = (),
+    prompt: str = "",
 ) -> str:
     """Return the name of the results file of one model, temperature, mode, options and repeat.
 
     The default mode and a single run keep the names earlier runs used, so those files still
     resume; only a second answer mode, sampling options and the repeats of a repeated run get a
-    suffix.  A run with other sampling values is another measurement, so it must not share a file.
+    suffix.  A run with other sampling values or another step-① prompt is another measurement, so it
+    must not share a file.
     """
     sampling = "".join(f"__{name}-{sampling_text(value)}" for name, value in sorted(options))
+    if prompt:
+        sampling += f"__prompt-{prompt}"
     suffix = (
         ("" if mode == DEFAULT_MODE else f"__{mode.value}")
         + sampling

@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from tests.tools import gate_fixtures as fixtures
-from tools.model_eval import grouping, run_format
+from tools.model_eval import grouping, protocol, run_format
 
 
 def _manifest(*texts: fixtures.Text) -> dict:
@@ -44,7 +44,7 @@ def test_a_run_of_another_test_set_is_refused():
     [
         {"model": fixtures.OTHER},
         {"machine": "other-machine"},
-        {"eval_version": 4},
+        {"eval_version": protocol.current_stamp().eval_version + 1},
         {"mode": "text"},
         {"temperature": 0.7},
         {"num_ctx": 4096},

@@ -499,3 +499,23 @@ def test_format_mode_accepts_the_sampling_values_a_run_lists_and_refuses_bad_one
     assert any("unknown name 'seed'" in problem for problem in asked({"seed": 1}))
     assert any("top_p is not a number" in problem for problem in asked({"top_p": "high"}))
     assert any("non-empty object" in problem for problem in asked({}))
+
+
+def test_format_mode_accepts_a_prompt_variant_a_run_lists_and_refuses_an_unknown_one(tmp_path):
+    """
+    Given  a committed run whose request profile names a step-one prompt variant, then one that
+           names a variant that does not exist
+    When   each is validated in format mode
+    Then   the first passes and the second is refused
+    """
+    written = one(workspace(tmp_path))
+
+    def asked(prompt):
+        def change(header, items):
+            header["request_profile"]["prompt"] = prompt
+
+        rewrite(written.path, change)
+        return validation.validate_run(written.path)
+
+    assert not any("prompt" in problem for problem in asked("keep"))
+    assert any("is not a step ① prompt variant" in problem for problem in asked("banana"))

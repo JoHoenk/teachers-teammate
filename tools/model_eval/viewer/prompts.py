@@ -13,10 +13,10 @@ from typing import Any
 
 from teachers_teammate.domain.correction_policy import DEFAULT_LEVEL
 from teachers_teammate.domain.correction_prompts import (
-    CORRECT_SYSTEM,
     EXPLAIN_SYSTEM,
     PROMPT_VERSION,
     UNCLEAR_SYSTEM,
+    correct_system,
     parameters,
 )
 from teachers_teammate.domain.formatted_text import PLAIN
@@ -27,19 +27,26 @@ from ..answer_mode import AnswerMode
 from ..languages import LANGUAGE_NAMES
 from .variants import Variant
 
-_EXCHANGE_STEPS = (
-    ("correct", "Step ①: the corrected text", CORRECT_SYSTEM),
-    ("explain", "Step ②: the explanations", EXPLAIN_SYSTEM),
-    ("unclear", "Step ③: unclear passages", UNCLEAR_SYSTEM),
-)
+
+def _exchange_steps(variant: str) -> tuple[tuple[str, str], ...]:
+    """Return the title and system prompt of each step of the exchange; step ① is *variant*'s."""
+    return (
+        ("Step ①: the corrected text", correct_system(variant)),
+        ("Step ②: the explanations", EXPLAIN_SYSTEM),
+        ("Step ③: unclear passages", UNCLEAR_SYSTEM),
+    )
 
 
-def prompt_text(mode: AnswerMode, language: str, *, compact_json: bool) -> str:
-    """Return the instructions of *mode* for the language called *language* (``German``)."""
+def prompt_text(mode: AnswerMode, language: str, *, compact_json: bool, prompt: str = "") -> str:
+    """Return the instructions of *mode* for the language called *language* (``German``).
+
+    *prompt* is the step-① prompt variant the run was asked with (``""``: the standard prompt).
+    """
     if mode.asks_exchange:
-        steps = _EXCHANGE_STEPS[:1] if mode is AnswerMode.CORRECT_ONLY else _EXCHANGE_STEPS
+        steps = _exchange_steps(prompt)
+        steps = steps[:1] if mode is AnswerMode.CORRECT_ONLY else steps
         parts = [f"prompt version {PROMPT_VERSION}"]
-        parts.extend(f"── {title} ──\n{system}" for _, title, system in steps)
+        parts.extend(f"── {title} ──\n{system}" for title, system in steps)
         parts.append(
             f"── Sent with the text ({language}) ──\n{parameters(language, level=DEFAULT_LEVEL)}"
         )
@@ -74,8 +81,11 @@ def prompts_of(built: Sequence[Variant], codes: Sequence[str]) -> dict[str, dict
             mode = AnswerMode(variant.facts["mode"])
             compact = variant.facts.get("profile") == "compact"
             name = sorted(LANGUAGE_NAMES[code] for code in languages)[0]
-            text = prompt_text(mode, name, compact_json=compact)
-            built_hash = protocol.instructions_sha256(languages, mode=mode, compact_json=compact)
+            asked = variant.facts.get("step1_prompt", "")
+            text = prompt_text(mode, name, compact_json=compact, prompt=asked)
+            built_hash = protocol.instructions_sha256(
+                languages, mode=mode, compact_json=compact, prompt=asked
+            )
         except ValueError, KeyError:
             continue
         found[key] = {"text": text, "exact": built_hash.startswith(key)}

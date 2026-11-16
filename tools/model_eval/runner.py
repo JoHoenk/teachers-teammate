@@ -63,6 +63,9 @@ class Matrix:
     """``catalog`` (each model's own choice), ``on`` or ``off``; see ``--compact-json``."""
     options: tuple[tuple[str, float], ...] = ()
     """Sampling values sent with step ① besides the temperature (``--option``); empty: the tag."""
+    prompt: str = ""
+    """The step-① prompt variant (``--prompt``); empty: the model's own (the standard prompt unless
+    a variant was adopted for it), ``standard``: the standard prompt whatever the model has."""
 
     def seed_of(self, repeat: int) -> int | None:
         """Return the seed of *repeat* (1-based), or ``None`` when no seed is sent."""
@@ -71,7 +74,11 @@ class Matrix:
     def profile_of(self, model: str, temperature: float | None) -> RequestProfile:
         """Return the request profile *model* is asked with in this run."""
         return defaults.request_profile_for(
-            model, compact_json=self.compact_json, temperature=temperature, options=self.options
+            model,
+            compact_json=self.compact_json,
+            temperature=temperature,
+            options=self.options,
+            prompt=self.prompt,
         )
 
     def temperature_of(self, model: str, temperature: float | None) -> float:
@@ -143,6 +150,9 @@ def as_dict(profile: RequestProfile) -> dict:
     if profile.correct.options:
         # Only a run that sets sampling values says so: earlier headers stay as they were.
         record["options"] = profile.correct.sampling()
+    if profile.correct.prompt:
+        # Likewise: a run of the standard prompt writes the header it always wrote.
+        record["prompt"] = profile.correct.prompt
     return record
 
 
@@ -191,6 +201,10 @@ def plan(
         for model in matrix.models:
             for asked in matrix.temperatures:
                 temperature = matrix.temperature_of(model, asked)
+                # The file is named by the prompt the requests carry, not by the flag: a model
+                # with an adopted variant writes the variant's file without one, and
+                # ``--prompt standard`` writes the plain one.
+                sent = matrix.profile_of(model, asked).correct.prompt
                 for repeat in range(1, matrix.repeats + 1):
                     name = results.result_file_name(
                         model,
@@ -198,6 +212,7 @@ def plan(
                         mode,
                         repeat if matrix.repeats > 1 else None,
                         matrix.options,
+                        sent,
                     )
                     path = matrix.out / name
                     done = results.read_done_ids(path)

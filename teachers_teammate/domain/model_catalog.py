@@ -24,6 +24,7 @@ from dataclasses import dataclass, replace
 from enum import StrEnum
 from typing import TYPE_CHECKING, Literal
 
+from .correction_prompts import correct_system, prompt_identity
 from .proofreading.result import ExchangeKind, StepName
 
 if TYPE_CHECKING:
@@ -157,6 +158,15 @@ not measured itself: its card says "below 0.1" and its family falls with every s
 keeps the family's value.
 """
 
+STEP_ONE_PROMPTS: dict[str, str] = {}
+"""The step-① prompt variant (``CORRECT_VARIANTS``) a model is sent, by tag.
+
+Empty until a measurement on two test sets shows a variant helps a model: the standard
+``CORRECT_SYSTEM`` goes to every other model.  Adopting one is a line here, a changed cache key
+for that model only, and nothing else.  Another quantisation of a listed model (``…:9b-q8_0`` of
+``…:9b``) is sent the same variant, as it is run at the same temperature.
+"""
+
 STEP_ONE_DEFAULT_TEMPERATURE = 0.4
 """The measured temperature of step ① for every model not in :data:`STEP_ONE_TEMPERATURES`.
 
@@ -223,9 +233,14 @@ class StepProfile:
     #: values of the model's Modelfile), which is what every request sent until a measurement
     #: shows that a model needs another value.
     options: tuple[tuple[str, float], ...] = ()
+    #: The id of the system-prompt variant the step sends (``CORRECT_VARIANTS``), or ``""`` for
+    #: the standard prompt.  Only step ① has variants; the profile refuses one on ② or ③.
+    prompt: str = ""
 
     def __post_init__(self) -> None:
-        """Refuse an option no request may carry, and keep the pairs in one order."""
+        """Refuse an option or a prompt no request may carry, and keep the pairs in one order."""
+        if self.prompt:
+            correct_system(self.prompt)  # raises for an unknown variant
         unknown = sorted({name for name, _ in self.options} - SAMPLING_OPTIONS)
         if unknown:
             allowed = ", ".join(sorted(SAMPLING_OPTIONS))
@@ -267,6 +282,11 @@ class RequestProfile:
     #: does not send that request; the evaluation tools still measure it.
     compact_json: bool = False
 
+    def __post_init__(self) -> None:
+        """Refuse a prompt variant on a step that has none: only step ① rewrites the text."""
+        if self.explain.prompt or self.unclear.prompt:
+            raise ValueError("only step ① has prompt variants")
+
     @property
     def temperature(self) -> float:
         """Return the temperature of step ①, the step that rewrites the text."""
@@ -304,6 +324,9 @@ class RequestProfile:
         steps = "|".join(
             f"{step.temperature:g}/{step.think}"
             + "".join(f"/{name}={sampling_text(value)}" for name, value in step.options)
+            # Only a step with a prompt variant gets an element, so every other fingerprint
+            # stays what it was; the text's hash makes an edited variant another request.
+            + (f"/prompt={prompt_identity(step.prompt)}" if step.prompt else "")
             for step in (self.correct, self.explain, self.unclear)
         )
         return "|".join(
@@ -675,7 +698,7 @@ def licence_note(tag: str) -> str:
     return spec.licence.note if spec is not None and spec.licence is not None else ""
 
 
-def _table_value(table: Mapping[str, float], tag: str) -> float | None:
+def _table_value[T](table: Mapping[str, T], tag: str) -> T | None:
     """Return the value *tag* has in *table*, or ``None`` when it has none.
 
     A tag written with ``:latest`` names the same model, so both spellings are looked up.
@@ -699,11 +722,20 @@ def step_one_temperature(tag: str) -> float | None:
     has its model's value, because the models in :data:`STEP_ONE_TEMPERATURES` fall with every
     step up and a variant that fell through to the default would run at 0.4.
     """
-    exact = _table_value(STEP_ONE_TEMPERATURES, tag)
+    return _measured_value(STEP_ONE_TEMPERATURES, tag)
+
+
+def _measured_value[T](table: Mapping[str, T], tag: str) -> T | None:
+    """Return the value of *tag* in *table*, or of the model it is a variant of.
+
+    ``qwen3.5:4b-q8_0`` is the same model in another quantisation, so it has the value of
+    ``qwen3.5:4b``; a tag that is neither in the table nor a variant of a tag in it has none.
+    """
+    exact = _table_value(table, tag)
     if exact is not None:
         return exact
     normalized = normalize_tag(tag)
-    for measured, value in STEP_ONE_TEMPERATURES.items():
+    for measured, value in table.items():
         if normalized.startswith(f"{measured}-"):
             return value
     return None
@@ -729,6 +761,13 @@ def _step_one_temperature(tag: str, provider: str) -> float:
     return STEP_ONE_DEFAULT_TEMPERATURE if measured is None else measured
 
 
+def _step_one_prompt(tag: str, provider: str) -> str:
+    """Return the step-① prompt variant of a local model, ``""`` for the standard prompt."""
+    if provider != "ollama":
+        return ""
+    return _measured_value(STEP_ONE_PROMPTS, tag) or ""
+
+
 def request_profile(tag: str, provider: str = "ollama") -> RequestProfile:
     """Return how the app asks *tag* to proofread: the exchange, its steps and their settings.
 
@@ -744,7 +783,11 @@ def request_profile(tag: str, provider: str = "ollama") -> RequestProfile:
     maker = _temperature(tag, provider, DEFAULT_CORRECTION_TEMPERATURE)
     return replace(
         base,
-        correct=StepProfile(temperature=_step_one_temperature(tag, provider), think=level or False),
+        correct=StepProfile(
+            temperature=_step_one_temperature(tag, provider),
+            think=level or False,
+            prompt=_step_one_prompt(tag, provider),
+        ),
         explain=StepProfile(temperature=maker, think=level or False),
         unclear=StepProfile(temperature=maker, think=level or False),
     )

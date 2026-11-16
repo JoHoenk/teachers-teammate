@@ -2605,7 +2605,10 @@ only part of a package, so putting the folder last is wrong too).  Two things pr
   and pins the numpy, pydantic, requests and Pillow the bundle really carries.  In CI,
   `tools/build/check_addon_resolution.py` runs the built app's pip in `--dry-run` mode once per
   add-on (Linux job), which is the only place the newest `langchain-openai` & co. are held
-  against the bundled versions (they are not in the test lock on purpose).
+  against the bundled versions (they are not in the test lock on purpose).  The same check runs
+  weekly on all three build runners without a built app (`--python … --constraints
+  addon_constraints.txt`, `.github/workflows/addon_resolution.yml`), so a new release of an
+  add-on's package shows up as a red run, not on release day.
 
 ### pip package install (frozen builds)
 

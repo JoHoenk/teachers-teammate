@@ -76,9 +76,43 @@ def test_dry_run_command_installs_nothing_and_follows_the_apps_policy(tmp_path: 
 
     assert command[:3] == [str(tmp_path / "app"), "--_pip_install_mode", "install"]
     assert "--dry-run" in command
+    assert "--upgrade" in command
     assert command[command.index("--only-binary") + 1] == ":all:"
     assert command[command.index("-c") + 1] == str(tmp_path / "c.txt")
     assert command[-1] == "spacy>=3.7"
+
+
+def test_python_dry_run_command_is_the_same_question_without_the_app(tmp_path: Path) -> None:
+    """
+    Given  an interpreter, a constraints file and an add-on's requirement
+    When   the check's command is built for a build environment
+    Then   it is that interpreter's pip in dry-run mode, wheels only, with the constraints
+    """
+    command = check_addon_resolution.python_dry_run_command(
+        tmp_path / "python", tmp_path / "c.txt", tmp_path / "t", ["spacy>=3.7"]
+    )
+
+    assert command[:4] == [str(tmp_path / "python"), "-m", "pip", "install"]
+    assert "--dry-run" in command
+    assert "--ignore-installed" in command
+    assert command[command.index("--only-binary") + 1] == ":all:"
+    assert command[command.index("-c") + 1] == str(tmp_path / "c.txt")
+    assert command[-1] == "spacy>=3.7"
+
+
+def test_addons_to_check_leaves_the_amd_addon_to_linux() -> None:
+    """
+    Given  the add-ons the app installs
+    When   the list for macOS and for Linux is worked out
+    Then   pyamdgpuinfo is checked on Linux only, and every other add-on on both
+    """
+    macos = check_addon_resolution.addons_to_check("darwin")
+    linux = check_addon_resolution.addons_to_check("linux")
+
+    assert "amd" not in macos
+    assert macos["privacy"] == ["spacy>=3.7"]
+    assert linux["amd"] == ["pyamdgpuinfo"]
+    assert set(macos) == set(linux) - {"amd"}
 
 
 def test_check_addon_reports_the_end_of_pips_output_when_it_fails(

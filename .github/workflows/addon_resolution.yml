@@ -1,0 +1,56 @@
+name: Add-on resolution
+
+# Weekly, and on dispatch: the newest langchain-openai, spaCy, ... are held against the
+# versions the bundle ships, on each build runner natively. A red run is the signal, so release
+# day is not the first time a new release of an add-on's package meets the bundle.
+#
+# The add-ons' packages are not in the test lock on purpose, so nothing else checks them. The
+# constraints are the build environment's own freeze (tools/build/addon_constraints.py), not
+# pyinstaller-work/constraints.txt: the latter is the whole test lock and pins langchain-core
+# and spacy, so the run would never see a new release of the very packages it exists for.
+#
+# No --platform and no marker emulation: pip's markers see the real system here, which is what
+# check_pins.py has to work around for its cross-platform checks.
+
+on:
+  schedule:
+    # Monday, 05:00 UTC.
+    - cron: "0 5 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  resolve:
+    name: Resolve the add-ons (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # The three runners the bundles are built on, so a conflict shows on the system whose
+        # bundle it would break.
+        os: [ubuntu-24.04, windows-2025, macos-26]
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version-file: .python-version
+
+      # The same venv steps as the bundle build (one composite action, so the two cannot
+      # drift). No PyInstaller run: the check only needs the packages the bundle ships.
+      - name: Create the build environment
+        uses: ./.github/actions/build-venv
+
+      - name: Write the bundle's constraints
+        run: python tools/build/addon_constraints.py
+
+      - name: Check that the add-ons resolve against the bundle
+        shell: bash
+        run: |
+          python tools/build/check_addon_resolution.py \
+            --python python \
+            --constraints teachers_teammate/_build/addon_constraints.txt

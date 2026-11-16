@@ -35,16 +35,20 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # glibc 2.35: Ubuntu 22.04+, Debian 12+, Mint 21+. Building on a newer image
-          # silently raises that floor, which check_linux_bundle.py then catches.
-          # If GitHub drops the 22.04 image, run the build in an ubuntu:22.04 container
-          # on ubuntu-latest instead of moving to a newer runner.
+          # glibc 2.39: Ubuntu 24.04+, Debian 13+, Mint 22+. PyInstaller bundles the libraries
+          # of the machine it builds on, so the floor follows this image on purpose — a newer
+          # runner would silently raise it, which check_linux_bundle.py then catches. The next
+          # move is when 24.04 leaves standard support (2029), and it is a decision, not a
+          # runner default. Users on Ubuntu 22.04, Mint 21 and Debian 12 stay on v0.5.x
+          # (docs/index.md).
           - artifact: linux
-            os: ubuntu-22.04
+            os: ubuntu-24.04
+          # Pinned, not `-latest`: a moving label changes the Windows and macOS the bundle is
+          # built and tested on without a commit saying so.
           - artifact: windows
-            os: windows-latest
+            os: windows-2025
           - artifact: macos
-            os: macos-latest
+            os: macos-26
 
     steps:
       - uses: actions/checkout@v7
@@ -91,33 +95,11 @@ jobs:
             libxcb-xkb1 libxkbcommon-x11-0
 
       - name: Create the build environment
-        shell: bash
-        run: |
-          # A clean venv, as tools/build/build.sh and build.bat make: PyInstaller freezes what
-          # is importable in the running interpreter, and the runners' own Python carries tools
-          # (pipx and its dependencies on Windows) that are not ours to pin, which
-          # check_pins.py rightly reports. Later steps find this python first on the PATH.
-          python -m venv "$RUNNER_TEMP/build-venv"
-          if [[ "$RUNNER_OS" == "Windows" ]]; then
-            cygpath -w "$RUNNER_TEMP/build-venv/Scripts" >> "$GITHUB_PATH"
-          else
-            echo "$RUNNER_TEMP/build-venv/bin" >> "$GITHUB_PATH"
-          fi
+        uses: ./.github/actions/build-venv
 
-      - name: Install Python dependencies
+      - name: Check the pins
         shell: bash
         run: |
-          # Base runtime deps only — optional providers (langchain/spacy)
-          # are downloaded at runtime by the in-app addon manager, so they are
-          # intentionally not bundled into the standalone binary.
-          #
-          # Every version comes from requirements_test_lock.txt (plus the
-          # platform-only pins in tools/build/requirements_platform.txt), and
-          # check_pins.py fails the build if pip installed anything else.
-          python tools/build/make_constraints.py
-          python -m pip install --upgrade -c pyinstaller-work/constraints.txt pip
-          python -m pip install -c pyinstaller-work/constraints.txt \
-            -e . pyinstaller pyinstaller-hooks-contrib
           python tools/build/check_pins.py
           # pip's markers hide Windows-only and macOS-only dependencies of PyInstaller from a
           # Linux resolver, so check them here, once, instead of on the runner that needs them.
@@ -150,6 +132,24 @@ jobs:
         if: runner.os == 'macOS'
         shell: bash
         run: ./dist/teachers-teammate.app/Contents/MacOS/teachers-teammate --_smoke_test smoke.json
+
+      # PyInstaller bundles the libraries of the machine it builds on, so a newer macOS runner
+      # silently raises the floor. The check reads the minimum macOS of every Mach-O file in
+      # the .app, every architecture slice of a universal2 one included.
+      #
+      # The PySide6 6.12.0 wheel is tagged macosx_14_0, but its Qt libraries say minos 14.4 and
+      # its Python binding modules (QtCore.abi3.so, libpyside6, shiboken6, ...) say 26.0 in both
+      # slices: upstream built them without a deployment target. The floor is therefore 14.4 for
+      # everything else, the bindings are exempt, and the install-macos job on macos-14 is what
+      # proves that they load there. Drop --ignore when a PySide6 wheel fixes its binaries.
+      - name: Check the macOS bundle
+        if: runner.os == 'macOS'
+        run: |
+          python tools/build/check_macos_bundle.py --max-minos 14.4 \
+            --ignore '*/PySide6/*.abi3.so' \
+            --ignore '*/PySide6/libpyside6*.dylib' \
+            --ignore '*/shiboken6/*'
+
 
       # `.python-version` is the one place the version is written down: rules_python builds the
       # Bazel tests with it, setup-python installs it here, and the smoke test reports what
@@ -187,7 +187,7 @@ jobs:
       - name: Check the Linux bundle
         if: runner.os == 'Linux'
         run: |
-          python tools/build/check_linux_bundle.py --max-glibc 2.35
+          python tools/build/check_linux_bundle.py --max-glibc 2.39
           python tools/build/check_linux_bundle.py --unused
 
       - name: Create .deb package (Linux)
@@ -201,32 +201,6 @@ jobs:
           else
             bash tools/packaging/make_deb.sh
           fi
-
-      # apt resolves Depends, so a library missing from the control file fails here rather
-      # than on a user's machine. The smoke test then proves the app starts, and ldd on the
-      # real-display plugin proves it has every library it links against.
-      - name: Install the .deb in clean containers (Linux)
-        if: runner.os == 'Linux'
-        shell: bash
-        run: |
-          for image in ubuntu:22.04 ubuntu:24.04 debian:12; do
-            echo "==> $image"
-            docker run --rm -v "$PWD/dist:/dist:ro" "$image" bash -c '
-              set -euo pipefail
-              apt-get update -qq
-              apt-get install -y -qq --no-install-recommends /dist/teachers-teammate_*_amd64.deb
-              QT_QPA_PLATFORM=offscreen teachers-teammate --_smoke_test /tmp/out.json
-              cat /tmp/out.json
-              # The bootloader puts _internal on LD_LIBRARY_PATH, which is how the libraries the
-              # bundle carries are found; a bare ldd would report them as missing.
-              if LD_LIBRARY_PATH=/opt/teachers-teammate/_internal \
-                  ldd /opt/teachers-teammate/_internal/PySide6/Qt/plugins/platforms/libqxcb.so \
-                  | grep "not found"; then
-                echo "the xcb platform plugin is missing libraries" >&2
-                exit 1
-              fi
-            '
-          done
 
       - name: Create the portable tarball (Linux)
         if: runner.os == 'Linux'
@@ -242,7 +216,9 @@ jobs:
           VERSION: ${{ steps.version.outputs.value }}
           WIN_VERSION: ${{ steps.version.outputs.win }}
         run: |
-          choco install nsis --no-progress -y
+          # Pinned: Chocolatey's newest NSIS is a moving target, and the installer script is
+          # compiled by it. 3.13.0 is what the last green build installed.
+          choco install nsis --version=3.13.0 --no-progress -y
           # Chocolatey does not update the current process PATH — prepend NSIS manually
           $env:PATH = "C:\Program Files (x86)\NSIS;$env:PATH"
           $ver    = $env:VERSION
@@ -250,22 +226,6 @@ jobs:
           if ([string]::IsNullOrEmpty($ver))    { $ver    = "0.1.0" }
           if ([string]::IsNullOrEmpty($winVer)) { $winVer = "0.1.0" }
           makensis /DAPP_VERSION="$ver" "/DAPP_VERSION_WIN=$winVer.0" tools/packaging/windows.nsi
-
-      # The runner is elevated, so the per-user runs inside the script pass /SCOPE=user.
-      - name: Test the installer (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        env:
-          # Step 9 of the test downloads the shipped v0.5.6 installer with `gh`, which refuses
-          # to run in Actions without a token.
-          GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ steps.version.outputs.value }}
-        run: |
-          $ver = $env:VERSION
-          if ([string]::IsNullOrEmpty($ver)) { $ver = "0.1.0" }
-          $setup = Get-ChildItem dist -Filter 'teachers-teammate-*-w64-setup.exe' | Select-Object -First 1
-          if ($null -eq $setup) { throw "no installer in dist/" }
-          pwsh -File tools/packaging/test_windows_installer.ps1 -Setup $setup.FullName -Version $ver
 
       - name: Create .dmg installer (macOS)
         if: runner.os == 'macOS'
@@ -306,3 +266,151 @@ jobs:
           name: ${{ inputs.artifact_prefix }}-${{ matrix.artifact }}
           retention-days: ${{ inputs.retention_days }}
           path: dist/teachers-teammate-*-macos.dmg
+
+  # ── Install the built packages on the systems we support ──────────────────
+  # Build once, install in a matrix: the build job makes the file, these jobs prove it
+  # installs and starts on each system. Read-only, like the build; only the Windows job checks
+  # out, because it runs the installer test script from the repository.
+
+  install-linux:
+    name: Install the .deb (${{ matrix.image }})
+    needs: [build-package]
+    # Not skipped when another platform's build fails: each job downloads its own artifact and
+    # fails by itself if that one is missing, so one red build cannot hide the others.
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        # The floor, the next LTS, and the Debian the floor's glibc covers.
+        image: [ubuntu:24.04, ubuntu:26.04, debian:13]
+    steps:
+      - name: Download the Linux artifacts
+        uses: actions/download-artifact@v8
+        with:
+          name: ${{ inputs.artifact_prefix }}-linux
+          path: dist
+
+      # apt resolves Depends, so a library missing from the control file fails here rather
+      # than on a user's machine. The smoke test then proves the app starts, and ldd on the
+      # real-display plugin proves it has every library it links against. Not a real desktop
+      # (no window, no X11/Wayland, no fonts): that stays on the VM list.
+      - name: Install the .deb in a clean container
+        shell: bash
+        env:
+          IMAGE: ${{ matrix.image }}
+        run: |
+          echo "==> $IMAGE"
+          docker run --rm -v "$PWD/dist:/dist:ro" "$IMAGE" bash -c '
+            set -euo pipefail
+            apt-get update -qq
+            apt-get install -y -qq --no-install-recommends /dist/teachers-teammate_*_amd64.deb
+            QT_QPA_PLATFORM=offscreen teachers-teammate --_smoke_test /tmp/out.json
+            cat /tmp/out.json
+            # The bootloader puts _internal on LD_LIBRARY_PATH, which is how the libraries the
+            # bundle carries are found; a bare ldd would report them as missing.
+            if LD_LIBRARY_PATH=/opt/teachers-teammate/_internal \
+                ldd /opt/teachers-teammate/_internal/PySide6/Qt/plugins/platforms/libqxcb.so \
+                | grep "not found"; then
+              echo "the xcb platform plugin is missing libraries" >&2
+              exit 1
+            fi
+          '
+
+  install-macos:
+    name: Install the dmg (${{ matrix.os }})
+    needs: [build-package]
+    # Not skipped when another platform's build fails: each job downloads its own artifact and
+    # fails by itself if that one is missing, so one red build cannot hide the others.
+    if: ${{ !cancelled() }}
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        # The floor, the middle one, and the build's own. If GitHub retires one, the oldest
+        # left takes its place and the "tested on" line in docs/deployment.md follows.
+        os: [macos-14, macos-15, macos-26]
+    steps:
+      - name: Download the dmg
+        uses: actions/download-artifact@v8
+        with:
+          name: ${{ inputs.artifact_prefix }}-macos
+          path: dist
+
+      # A teacher copies the app to /Applications and starts it there, not from the mounted
+      # volume. This tests the dmg, not Gatekeeper: a downloaded artifact carries no quarantine
+      # flag, so the "cannot be verified" dialog never appears here (that stays on the VM list).
+      - name: Mount the dmg and copy the app to /Applications
+        id: mount
+        shell: bash
+        run: |
+          dmg=$(ls dist/*-macos.dmg)
+          mount="$RUNNER_TEMP/dmg"
+          mkdir -p "$mount"
+          hdiutil attach "$dmg" -nobrowse -mountpoint "$mount"
+          echo "mount=$mount" >> "$GITHUB_OUTPUT"
+          cp -R "$mount/teachers-teammate.app" /Applications/
+
+      - name: Start the installed app
+        shell: bash
+        run: /Applications/teachers-teammate.app/Contents/MacOS/teachers-teammate --_smoke_test smoke.json
+
+      - name: Detach the dmg
+        if: always()
+        shell: bash
+        env:
+          MOUNT: ${{ steps.mount.outputs.mount }}
+        run: |
+          if [[ -n "$MOUNT" && -d "$MOUNT" ]]; then
+            hdiutil detach "$MOUNT" || true
+          fi
+
+  install-windows:
+    name: Install the setup (${{ matrix.os }})
+    needs: [build-package]
+    # Not skipped when another platform's build fails: each job downloads its own artifact and
+    # fails by itself if that one is missing, so one red build cannot hide the others.
+    if: ${{ !cancelled() }}
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        # Server 2022 is Windows 10 21H2-era (build 20348), the nearest thing CI has to the
+        # floor; Server 2025 is the build's own. Neither can reach the installer's Windows 10
+        # 1809 branch, and no runner can run 1809 itself (windows-2019 is retired): that is
+        # the Windows 10 1809 VM on the VM list.
+        os: [windows-2022, windows-2025]
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Download the installer
+        uses: actions/download-artifact@v8
+        with:
+          name: ${{ inputs.artifact_prefix }}-windows
+          path: dist
+
+      # The runner is elevated, so the per-user runs inside the script pass /SCOPE=user. The
+      # script starts the installed app with --_smoke_test, so a missing runtime DLL on a clean
+      # image shows here too.
+      - name: Test the installer
+        shell: pwsh
+        env:
+          # Step 9 of the test downloads the shipped v0.5.6 installer with `gh`, which refuses
+          # to run in Actions without a token.
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $setup = Get-ChildItem dist -Filter 'teachers-teammate-*-w64-setup.exe' | Select-Object -First 1
+          if ($null -eq $setup) { throw "no installer in dist/" }
+          # The installer's own name carries the version it was built with
+          # (teachers-teammate-<version>-w64-setup.exe), so the test needs no second copy of
+          # the version logic.
+          $ver = $setup.BaseName -replace '^teachers-teammate-', '' -replace '-w64-setup$', ''
+          pwsh -File tools/packaging/test_windows_installer.ps1 -Setup $setup.FullName -Version $ver

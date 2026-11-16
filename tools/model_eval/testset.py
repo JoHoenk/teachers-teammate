@@ -240,11 +240,14 @@ def resolve(item: Mapping[str, Any], corpora: Corpora) -> ResolvedItem:
     return adapter.resolve(item)
 
 
-def to_record(resolved: ResolvedItem, *, band: str = "") -> TestRecord:
+def to_record(resolved: ResolvedItem, *, band: str = "", with_level: bool = False) -> TestRecord:
     """Return *resolved* as the typed record the tools read and write.
 
     *band* is the band the recipe drew the text for (``short``, ``page``, ``pages``); ``""`` for a
-    recipe that has none.
+    recipe that has none.  *with_level* says whether the recipe records the text's CEFR level; the
+    level itself is always the one the corpus gives (``resolved.level``), the value the manifest
+    holds too.  A recipe that records none leaves the level out, so a set built before levels
+    existed keeps its records.
     """
     return TestRecord(
         id=resolved.id,
@@ -256,6 +259,7 @@ def to_record(resolved: ResolvedItem, *, band: str = "") -> TestRecord:
         sentences=resolved.sentences,
         labels=resolved.labels,
         band=band,
+        level=resolved.level if with_level else "",
         sentence_spans=resolved.sentence_spans,
         unchanged_sentences=resolved.unchanged_sentences,
     )
@@ -292,6 +296,8 @@ def build_manifest(
         }
         if item.get("band"):
             entry["band"] = item["band"]
+        if "level" in item:
+            entry["level"] = resolved.level
         entry["pointer"] = item["pointer"]
         entry["source"] = {
             "sha256": sha256_text(resolved.source),
@@ -403,6 +409,8 @@ def check_items(manifest: dict, corpora: Corpora) -> list[str]:
             problems.append(f"{entry['id']}: reference has hash {found[:12]}, the manifest another")
         elif (found := edit_hashes(resolved)) != entry["edits"]:
             problems.append(f"{entry['id']}: the reference edits are not the ones stored")
+        elif "level" in entry and resolved.level != entry["level"]:
+            problems.append(f"{entry['id']}: the level is {resolved.level!r}, the manifest another")
         elif "sentence_spans" in entry and (
             [list(span) for span in resolved.sentence_spans] != entry["sentence_spans"]
             or list(resolved.unchanged_sentences) != entry["unchanged_sentences"]

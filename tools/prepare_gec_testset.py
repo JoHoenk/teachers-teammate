@@ -160,7 +160,11 @@ def main() -> int:
             by_language.setdefault(item["language"], []).append(item)
         built = {
             language: [
-                testset.to_record(testset.resolve(item, corpora), band=item.get("band", ""))
+                testset.to_record(
+                    testset.resolve(item, corpora),
+                    band=item.get("band", ""),
+                    with_level="level" in item,
+                )
                 for item in language_items
             ]
             for language, language_items in by_language.items()

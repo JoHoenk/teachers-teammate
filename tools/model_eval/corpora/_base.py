@@ -75,6 +75,13 @@ class ResolvedItem:
     untouched_spans`).
     """
 
+    level: str = ""
+    """The CEFR level the corpus gives the text (``B1``), or ``""`` when it gives none.
+
+    W&I names the level of every essay; Falko-MERLIN's files carry none.  A test set's recipe
+    decides whether the level goes into the manifest.
+    """
+
 
 def pointers(item: Mapping[str, Any]) -> list[Any]:
     """Return the pointers of *item* as a list, whether the manifest holds one or several.
@@ -200,7 +207,7 @@ class CorpusAdapter(ABC):
             ValueError: if the pointer does not fit the corpus.
         """
 
-    def make(
+    def make(  # noqa: PLR0913  # one keyword per fact of a resolved item an adapter may fill
         self,
         item: Mapping[str, Any],
         *,
@@ -211,6 +218,7 @@ class CorpusAdapter(ABC):
         labels: Collection[ReferenceLabel] = (),
         sentence_chars: Collection[Span] = (),
         corpus_unchanged: Collection[bool] = (),
+        level: str = "",
     ) -> ResolvedItem:
         """Fill id, language, kind, corpus and restricted from *item* and the class.
 
@@ -238,6 +246,7 @@ class CorpusAdapter(ABC):
             labels=tuple(labels),
             sentence_spans=spans,
             unchanged_sentences=unchanged,
+            level=level,
         )
 
     @staticmethod

@@ -90,7 +90,17 @@ def essay_item(  # one keyword per reading the essay needs
         labels=labels_of(row["text"], reference, sentences[level], block),
         sentence_chars=_sentence_chars(block),
         corpus_unchanged=_corpus_unchanged(sentences[level], block),
+        level=cefr_level(row["cefr"]),
     )
+
+
+def cefr_level(cefr: str) -> str:
+    """Return the CEFR level of a W&I ``cefr`` field (``B1``), or ``""`` when it names none.
+
+    The corpus writes ``B1.ii`` or ``C2``: the level and, after a dot, a sub-level.
+    """
+    found = re.match(r"([ABC][12])(?![0-9A-Za-z])", cefr or "")
+    return found.group(1) if found else ""
 
 
 def _sentence_chars(block: tuple[int, list] | None) -> list[tuple[int, int]]:

@@ -21,10 +21,11 @@ that goes out whole and 1 that is split.
 
 **The two "pages" texts.**  ``SPLIT_CHARS`` and ``ONE_REQUEST_CHARS`` are constants of this
 recipe, not read from ``protocol``: a recipe never changes once its manifest is committed, while
-the budget belongs to an eval version.  At eval version 1 the budget at window 8192 is 6,026
-characters for German and 6,091 for English, so a text of 6,400 or more is split and one of 5,800
-or less goes out as one long request.  A CI test checks the committed manifest against the current
-budget instead.
+the budget belongs to an eval version.  At eval version 1 the budget at window 8192 was 6,026
+characters for German and 6,091 for English, so a text of 6,400 or more was split and one of 5,800
+or less went out as one long request.  Today's budget is lower (about 2,800 characters), so every
+"pages" text of the set is split now; a CI test checks the committed manifest against the current
+budget instead of these two constants.
 
 **Three of the four "pages" texts are forced by the corpora, not by the seed.**  In the default
 splits there is exactly one German text above 6,400 characters (``sa009``) and exactly two English
@@ -43,19 +44,12 @@ before ``rng.sample``.
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Sequence
-import contextlib
-from dataclasses import dataclass
-import io
-import random
 from typing import cast
 
 from .. import testset
-from ..corpora.falko_merlin import FalkoMerlin
 from ..corpora.invented_fr import InventedFrench
-from ..corpora.wi import WriteAndImprove
-from ..quality import ordered_edits
 from . import Recipe
+from ._bands import Candidate, Rules, Slot, select_texts
 
 TESTSET = "gec-2026-12"
 SEED = 20261110
@@ -68,10 +62,10 @@ BANDS = {"short": (80, 150), "page": (200, 400), "pages": (600, 1200)}
 """The bands in whitespace words, and the order the ids run in."""
 
 SPLIT_CHARS = 6400
-"""A "pages" text of at least this many characters is split by the app at window 8192."""
+"""A "pages" text of at least this many characters was split by the app at window 8192."""
 
 ONE_REQUEST_CHARS = 5800
-"""A "pages" text of at most this many characters goes out as one request at window 8192."""
+"""A "pages" text of at most this many characters went out as one request at window 8192."""
 
 MIN_EDITS = 3
 """Fewer reference changes than this and a text measures nothing."""
@@ -79,28 +73,15 @@ MIN_EDITS = 3
 MAX_EDITS_PER_100_WORDS = 40
 """More changes than this per 100 words and the text is a rewrite, not a correction."""
 
-_words = testset.words
-
-
-@dataclass(frozen=True)
-class Slot:
-    """One draw of the selection: how many texts of which band, from which origins."""
-
-    language: str
-    band: str
-    source: tuple[str, ...]
-    """The MERLIN / Falko origins, or the W&I levels, a text may come from."""
-
-    count: int
-    chars: str = "any"
-    """``"any"``, ``"split"`` (at least :data:`SPLIT_CHARS`) or ``"whole"`` (at most
-    :data:`ONE_REQUEST_CHARS`)."""
-
-    @property
-    def name(self) -> str:
-        """Return the slot as the refusal names it: ``de page falko any``."""
-        return f"{self.language} {self.band} {'+'.join(self.source)} {self.chars}"
-
+RULES = Rules(
+    bands=BANDS,
+    split_chars=SPLIT_CHARS,
+    one_request_chars=ONE_REQUEST_CHARS,
+    min_edits=MIN_EDITS,
+    max_edits_per_100_words=MAX_EDITS_PER_100_WORDS,
+)
+"""The numbers of this recipe.  They are written out here, not imported, so no other recipe's
+change can move what this one selects (``test_recipe_gec_2026_12`` pins the draw)."""
 
 SLOTS = (
     Slot("de", "short", ("merlin",), 4),
@@ -116,202 +97,10 @@ SLOTS = (
 )
 
 
-@dataclass(frozen=True)
-class Candidate:
-    """One text of a corpus that could be chosen, with what the filters look at."""
-
-    key: str
-    """The text's own id: ``falko:sa009`` for German, the essay id for English."""
-
-    language: str
-    source: str
-    """The origin (``falko``, ``merlin``) or the W&I level (``A``, ``B``, ``C``)."""
-
-    pointer: dict
-    band: str
-    words: int
-    chars: int
-    edits: int
-
-
 def select(corpora: testset.Corpora) -> list[dict]:
     """Return the items of ``gec-2026-12``, in the order the records are written."""
-    candidates = _candidates(corpora)
-    chosen = _draw(candidates)
-    return _items(chosen) + _french_items(corpora)
-
-
-# ── the candidates ───────────────────────────────────────────────────────────
-
-
-def _candidates(corpora: testset.Corpora) -> list[Candidate]:
-    """Return every text of the default splits that fits a band and the filters."""
-    found = _german_candidates(corpora) + _english_candidates(corpora)
-    return sorted(found, key=lambda candidate: candidate.key)
-
-
-def _german_candidates(corpora: testset.Corpora) -> list[Candidate]:
-    """Return the German texts of the Falko-MERLIN test split that could be chosen."""
-    german = cast(FalkoMerlin, corpora.adapter("falko-merlin"))
-    pointers = [
-        (
-            key,
-            {
-                "id": f"de-{key}",
-                "language": "de",
-                "kind": "errors",
-                "corpus": "falko-merlin",
-                "pointer": {
-                    "origin": origin,
-                    "text": key.split(":", 1)[1],
-                    "sentences": [0, len(pairs)],
-                },
-            },
-        )
-        for origin, by_id in german.texts().items()
-        for key, pairs in by_id.items()
-    ]
-    return _scan(pointers, corpora, source_of=lambda item: item["pointer"]["origin"])
-
-
-def _english_candidates(corpora: testset.Corpora) -> list[Candidate]:
-    """Return the English essays of the W&I dev split that could be chosen."""
-    english = cast(WriteAndImprove, corpora.adapter("wi"))
-    pointers = [
-        (
-            row["id"],
-            {
-                "id": f"en-{row['id']}",
-                "language": "en",
-                "kind": "errors",
-                "corpus": "wi",
-                "pointer": {"level": level, "document": row["id"]},
-            },
-        )
-        for level, rows in english.rows().items()
-        for row in rows
-        if row["edits"]
-    ]
-    return _scan(pointers, corpora, source_of=lambda item: item["pointer"]["level"])
-
-
-def _scan(
-    pointers: Iterable[tuple[str, dict]], corpora: testset.Corpora, *, source_of
-) -> list[Candidate]:
-    """Resolve every pointer and keep the texts that fit a band and the filters.
-
-    The resolver's "no labels" lines are swallowed: a text that is dropped is not a problem.
-    """
-    found: list[Candidate] = []
-    with contextlib.redirect_stdout(io.StringIO()):
-        for key, item in pointers:
-            try:
-                resolved = testset.resolve(item, corpora)
-            except testset.RESOLVE_ERRORS:
-                continue
-            candidate = _candidate(key, item, resolved, source_of(item))
-            if candidate is not None:
-                found.append(candidate)
-    return found
-
-
-def _candidate(key: str, item: dict, resolved, source: str) -> Candidate | None:
-    """Return the candidate of a resolved text, or ``None`` when it fails a filter."""
-    words = _words(resolved.source)
-    band = _band_of(words)
-    if band is None or not resolved.sentence_spans or not resolved.labels:
-        return None
-    edits = len(ordered_edits(resolved.source, resolved.reference))
-    if edits < MIN_EDITS or edits * 100 > MAX_EDITS_PER_100_WORDS * words:
-        return None
-    return Candidate(
-        key=key,
-        language=resolved.language,
-        source=source,
-        pointer=item["pointer"],
-        band=band,
-        words=words,
-        chars=len(resolved.source),
-        edits=edits,
-    )
-
-
-def _band_of(words: int) -> str | None:
-    """Return the band *words* falls in, or ``None`` when it falls in none."""
-    for band, (low, high) in BANDS.items():
-        if low <= words <= high:
-            return band
-    return None
-
-
-# ── the draw ─────────────────────────────────────────────────────────────────
-
-
-def _draw(candidates: Sequence[Candidate]) -> list[Candidate]:
-    """Return the chosen texts, in the order the ids run.
-
-    Raises:
-        ValueError: if a slot has fewer candidates than it needs; the message names the slot.
-    """
-    chosen: list[Candidate] = []
-    for slot in SLOTS:
-        pool = sorted(
-            (
-                candidate
-                for candidate in candidates
-                if candidate.language == slot.language
-                and candidate.band == slot.band
-                and candidate.source in slot.source
-                and _fits_chars(candidate, slot.chars)
-                and candidate not in chosen
-            ),
-            key=lambda candidate: candidate.key,
-        )
-        if len(pool) < slot.count:
-            raise ValueError(f"{TESTSET}: {slot.name}: {len(pool)} candidates for {slot.count}")
-        rng = random.Random(
-            f"{SEED}/{slot.language}/{slot.band}/{'+'.join(slot.source)}/{slot.chars}"
-        )
-        chosen.extend(rng.sample(pool, slot.count))
-    return chosen
-
-
-def _fits_chars(candidate: Candidate, rule: str) -> bool:
-    """Return whether *candidate* meets the character rule of its slot."""
-    if rule == "split":
-        return candidate.chars >= SPLIT_CHARS
-    if rule == "whole":
-        return candidate.chars <= ONE_REQUEST_CHARS
-    return True
-
-
-# ── the items ────────────────────────────────────────────────────────────────
-
-
-def _items(chosen: Sequence[Candidate]) -> list[dict]:
-    """Return the manifest items of the chosen texts, numbered per language in band order."""
-    items: list[dict] = []
-    for language in ("de", "en"):
-        ordered = sorted(
-            (candidate for candidate in chosen if candidate.language == language),
-            key=lambda candidate: (
-                list(BANDS).index(candidate.band),
-                candidate.words,
-                candidate.key,
-            ),
-        )
-        for number, candidate in enumerate(ordered, start=1):
-            items.append(
-                {
-                    "id": f"{language}-{number:02d}",
-                    "language": language,
-                    "kind": "errors",
-                    "corpus": "falko-merlin" if language == "de" else "wi",
-                    "band": candidate.band,
-                    "pointer": candidate.pointer,
-                }
-            )
-    return items
+    items = select_texts(corpora, testset_id=TESTSET, rules=RULES, slots=SLOTS, seed=SEED)
+    return items + _french_items(corpora)
 
 
 def _french_items(corpora: testset.Corpora) -> list[dict]:
@@ -337,11 +126,13 @@ __all__ = [
     "MAX_EDITS_PER_100_WORDS",
     "MIN_EDITS",
     "ONE_REQUEST_CHARS",
+    "RULES",
     "SEED",
     "SLOTS",
     "SPLIT_CHARS",
     "TESTSET",
     "Candidate",
+    "Rules",
     "Slot",
     "select",
 ]

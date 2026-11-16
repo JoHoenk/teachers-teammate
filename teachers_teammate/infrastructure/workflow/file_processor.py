@@ -628,6 +628,11 @@ class FileProcessor:
                     correction_text=corrected_text,
                     correction_review=review.to_dict() if review is not None else None,
                     correction_warning=outcome.warning or "",
+                    # The text the proofreading was made from, stored with its result so the
+                    # window can show what really went out.  With hiding off it is the
+                    # extracted text itself, so nothing is duplicated.
+                    sent_text=text_for_correction if anon_map else "",
+                    sent_map=dict(anon_map) if anon_map else None,
                 )
             except OSError as exc:
                 _logger.warning("Could not save correction state for %s: %s", file.name, exc)
@@ -720,7 +725,9 @@ class FileProcessor:
         eval_warnings: list[str] = [eval_warning] if eval_warning else []
         if eval_text:
             try:
-                self._cache_service.record_evaluation(file, ctx, evaluation_text=eval_text)
+                self._cache_service.record_evaluation(
+                    file, ctx, evaluation_text=eval_text, names_hidden=len(anon_map)
+                )
             except OSError as exc:
                 _logger.warning("Could not save evaluation state for %s: %s", file.name, exc)
         return eval_text or "", eval_warnings

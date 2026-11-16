@@ -28,6 +28,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..application.sent_text import SentText, SentTexts
+from . import _user_text as txt
 from ._data_flow_summary import level_color, level_text
 from ._formatted_text import chip_placeholders
 from ._preview_panel import DiffWidget
@@ -151,6 +152,15 @@ class WhatIsSentDialog(QDialog):
         """Return the tab with one section per step."""
         page = QWidget()
         outer = QVBoxLayout(page)
+        stored = self.stored_lines()
+        if stored:
+            # What the results that are already stored were sent with, next to what the next
+            # run would send: a settings change does not send anything again by itself.
+            block = QLabel("\n".join(stored))
+            block.setObjectName("stored_results")
+            block.setWordWrap(True)
+            block.setStyleSheet("color: #888;")
+            outer.addWidget(block)
         if not self._report.leaves_computer:
             note = QLabel(NOTHING_LEAVES)
             note.setWordWrap(True)
@@ -202,6 +212,12 @@ class WhatIsSentDialog(QDialog):
     def sections(self) -> tuple[SentText, ...]:
         """Return the steps shown, in the order they run."""
         return self._report.sections
+
+    def stored_lines(self) -> list[str]:
+        """Return one line per stored result, saying how it was sent (empty when none is)."""
+        return [
+            txt.stored_result_line(stage, status) for stage, status in self._report.stored.items()
+        ]
 
     def section_widgets(self) -> list[_SentSection]:
         """Return the section widgets shown, top to bottom."""

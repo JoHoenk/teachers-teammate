@@ -25,7 +25,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 import dataclasses
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 import hashlib
 import json
@@ -35,6 +35,7 @@ import tempfile
 import time
 
 from ..domain.correction_review import CorrectionReview
+from ..domain.data_location import STAGE_CORRECTION, STAGE_EVALUATION, SentRecord, SentStatus
 from ..domain.freshness import (
     StageHashes,
     first_stale_stage_for_hashes,
@@ -83,7 +84,18 @@ class DocumentState:
     # Why ``correction_review`` is missing or incomplete (e.g. the fallback to corrections only,
     # or suggestions that could not be placed); replayed when the cached correction is reused.
     correction_warning: str = ""
+    # The text the stored proofreading was made from, with its placeholder map, and how it was
+    # sent (``SentRecord.to_dict()``).  Only when names were hidden: with hiding off the text
+    # that was sent is ``raw_text`` itself, and an edit of ``raw_text`` clears the result, so
+    # the two cannot drift apart.  Stored with the result and never overwritten while it
+    # exists, so the window can show what really went out after the settings changed.
+    correction_sent_text: str = ""
+    correction_sent_map: dict[str, str] | None = None
+    correction_sent: dict | None = None
     evaluation_text: str = ""
+    # How the stored content review was sent (``SentRecord.to_dict()``).  Its text is not
+    # stored: the content review is being redesigned, and what it sends is stored with that.
+    evaluation_sent: dict | None = None
     # Notation of ``raw_text`` and ``correction_text`` (the corrector answers in the notation
     # it was given): "plain" (verbatim) or "markdown".  The default keeps state written
     # before this field existed rendering as plain text.
@@ -137,6 +149,10 @@ class DocumentStateView:
     """Explanations and unclear expressions; ``None`` when the file has no review."""
     correction_warning: str = ""
     """Why the file has no (or only a partial) review; empty when there is nothing to say."""
+    sent: dict[str, SentStatus] = field(default_factory=dict)
+    """How each stored result was sent, keyed by stage (``correction``, ``evaluation``).
+
+    Empty for a record written before the app kept this, and for a file with no result."""
 
 
 @dataclass(frozen=True)
@@ -189,6 +205,44 @@ def _replace_file(source: Path, target: Path) -> None:
             time.sleep(_REPLACE_WAIT_S)
 
 
+def _inconsistent(state: DocumentState) -> bool:
+    """Return whether *state* contradicts itself, so it must not be served as a result.
+
+    A stage marked done without its text, or a downstream stage done without its prerequisite:
+    each means the file has to be read (and sent) again rather than shown as finished.  A
+    record of what was sent without its result is *not* in this list: it is only dropped
+    (:func:`_without_orphan_sent`), because the expensive text recognition is still good.
+    """
+    if state.ocr_done and not state.raw_text:
+        return True
+    if state.correction_done and not state.correction_text:
+        return True
+    if state.evaluation_done and not state.evaluation_text:
+        return True
+    # Downstream stages cannot be done if their prerequisite isn't.
+    return (state.correction_done or state.evaluation_done) and not state.ocr_done
+
+
+def _without_orphan_sent(state: DocumentState) -> DocumentState:
+    """Return *state* without the sent text and records whose result is not stored.
+
+    The text that was sent and the record of how it was sent belong to their result.  Without
+    it they say nothing true, so they are dropped on load; the recognised text next to them
+    stays valid and is not read (or sent) again.
+    """
+    updates: dict[str, object] = {}
+    if not state.correction_done:
+        if state.correction_sent_text:
+            updates["correction_sent_text"] = ""
+        if state.correction_sent_map is not None:
+            updates["correction_sent_map"] = None
+        if state.correction_sent is not None:
+            updates["correction_sent"] = None
+    if not state.evaluation_done and state.evaluation_sent is not None:
+        updates["evaluation_sent"] = None
+    return dataclasses.replace(state, **updates) if updates else state
+
+
 class StateRepository:
     """Persistence service for loading, validating, and invalidating state records."""
 
@@ -234,7 +288,30 @@ class StateRepository:
             raw_text_format=state.raw_text_format,
             correction_review=state.review,
             correction_warning=state.correction_warning,
+            sent=self._sent_statuses(state),
         )
+
+    @staticmethod
+    def _sent_statuses(state: DocumentState) -> dict[str, SentStatus]:
+        """Return how each stored result of *state* was sent, keyed by stage name.
+
+        A stage that is not done has no stored result, so it has no line — also when the caller
+        marked it stale on top of a loaded state (``load_views_reconciled``).
+
+        The comparison with the current privacy settings is not made here: this module does
+        not know the settings.  The application layer adds it.
+        """
+        statuses: dict[str, SentStatus] = {}
+        for stage, done, raw in (
+            (STAGE_CORRECTION, state.correction_done, state.correction_sent),
+            (STAGE_EVALUATION, state.evaluation_done, state.evaluation_sent),
+        ):
+            if not done:
+                continue
+            record = SentRecord.from_dict(raw)
+            if record is not None:
+                statuses[stage] = SentStatus(record)
+        return statuses
 
     def load_view(self, input_file: Path) -> DocumentStateView | None:
         """Return normalized view data for *input_file* if valid state exists."""
@@ -367,12 +444,16 @@ class StateRepository:
             correction_text="",
             correction_review=None,
             correction_warning="",
+            correction_sent_text="",
+            correction_sent_map=None,
+            correction_sent=None,
             evaluation_text="",
+            evaluation_sent=None,
         )
         self.save(input_file, new_state)
         return new_state
 
-    def record_correction_result(
+    def record_correction_result(  # noqa: PLR0913  # one keyword per fact of the result
         self,
         input_file: Path,
         state: DocumentState,
@@ -382,6 +463,9 @@ class StateRepository:
         correction_config_hash: str,
         correction_review: dict | None = None,
         correction_warning: str = "",
+        sent_text: str = "",
+        sent_map: dict[str, str] | None = None,
+        sent: SentRecord | None = None,
     ) -> DocumentState:
         """Persist correction output and invalidate evaluation output.
 
@@ -389,6 +473,9 @@ class StateRepository:
         shares the state's ``raw_text_format``.  *correction_review* is the review payload of
         a structured proofreading answer, or ``None`` in corrections-only mode;
         *correction_warning* says why a file has no review or an incomplete one.
+
+        *sent_text* and *sent_map* are the text the proofreading was made from and its
+        placeholder map (only when names were hidden); *sent* says how it was sent.
         """
         new_state = dataclasses.replace(
             state,
@@ -397,12 +484,16 @@ class StateRepository:
             correction_text=correction_text,
             correction_review=correction_review,
             correction_warning=correction_warning,
+            correction_sent_text=sent_text,
+            correction_sent_map=sent_map,
+            correction_sent=sent.to_dict() if sent is not None else None,
             correction_prompt=correction_prompt,
             correction_config_hash=correction_config_hash,
             evaluation_done=False,
             evaluation_invalidated=state.evaluation_done,
             eval_config_hash="",
             evaluation_text="",
+            evaluation_sent=None,
         )
         self.save(input_file, new_state)
         return new_state
@@ -415,13 +506,18 @@ class StateRepository:
         evaluation_text: str,
         evaluate_prompt: str,
         eval_config_hash: str,
+        sent: SentRecord | None = None,
     ) -> DocumentState:
-        """Persist evaluation output without changing earlier stages."""
+        """Persist evaluation output without changing earlier stages.
+
+        *sent* says how the reviewed text was sent; it is stored with the result.
+        """
         new_state = dataclasses.replace(
             state,
             evaluation_done=bool(evaluation_text),
             evaluation_invalidated=False,
             evaluation_text=evaluation_text,
+            evaluation_sent=sent.to_dict() if sent is not None else None,
             evaluate_prompt=evaluate_prompt,
             eval_config_hash=eval_config_hash,
         )
@@ -462,7 +558,11 @@ class StateRepository:
             correction_text="",
             correction_review=None,
             correction_warning="",
+            correction_sent_text="",
+            correction_sent_map=None,
+            correction_sent=None,
             evaluation_text="",
+            evaluation_sent=None,
         )
         self.save(input_file, new_state)
         return new_state
@@ -490,11 +590,17 @@ class StateRepository:
             # so an edit only loses the explanations of the changes the teacher reverted.
             correction_review=state.correction_review if correction_text else None,
             correction_warning=state.correction_warning if correction_text else "",
+            # The text that was sent belongs to the proofreading, which the edit keeps; only a
+            # dropped proofreading takes it with it.
+            correction_sent_text=state.correction_sent_text if correction_text else "",
+            correction_sent_map=state.correction_sent_map if correction_text else None,
+            correction_sent=state.correction_sent if correction_text else None,
             correction_config_hash=correction_config_hash,
             evaluation_done=False,
             evaluation_invalidated=state.evaluation_done,
             eval_config_hash="",
             evaluation_text="",
+            evaluation_sent=None,
         )
         self.save(input_file, new_state)
         return new_state
@@ -591,6 +697,9 @@ class StateRepository:
                 correction_text="",
                 correction_review=None,
                 correction_warning="",
+                correction_sent_text="",
+                correction_sent_map=None,
+                correction_sent=None,
             )
         if policy.clear_evaluation:
             updates.update(
@@ -598,6 +707,7 @@ class StateRepository:
                 evaluation_invalidated=False,
                 eval_config_hash="",
                 evaluation_text="",
+                evaluation_sent=None,
             )
 
         new_state = dataclasses.replace(state, **updates)
@@ -614,17 +724,9 @@ class StateRepository:
         except OSError:
             return None
 
-        if state.ocr_done and not state.raw_text:
+        if _inconsistent(state):
             return None
-        if state.correction_done and not state.correction_text:
-            return None
-        if state.evaluation_done and not state.evaluation_text:
-            return None
-        # Consistency: downstream stages cannot be done if their prerequisite isn't.
-        if state.correction_done and not state.ocr_done:
-            return None
-        if state.evaluation_done and not state.ocr_done:
-            return None
+        state = _without_orphan_sent(state)
 
         preview_img = (
             state.preview_img if not state.preview_img or Path(state.preview_img).exists() else ""

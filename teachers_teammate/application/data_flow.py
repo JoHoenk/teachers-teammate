@@ -23,12 +23,14 @@ from ..domain.data_location import (
     DataFlowStage,
     DataLocation,
     DataRegion,
+    SentRecord,
     StageLocation,
     anonymization_badge,
     classify_ollama,
     llm_stage_location,
     online_ocr_reason,
 )
+from ..infrastructure.llm_factory import get_provider_info
 from ..infrastructure.ollama_utils import is_local_ollama_url, ollama_host
 
 ProviderInfo = Callable[[str], Mapping[str, Any]]
@@ -113,6 +115,28 @@ def llm_location(
         # An Ollama cloud model keeps its own, more telling name.
         return replace(location, region=region, vendor_country=country)
     return replace(location, service=name)
+
+
+def sent_location(record: SentRecord) -> StageLocation:
+    """Return where a stored result was made, from the inputs its record kept.
+
+    The record holds the inputs of the classification, not the classification, so a changed
+    rule changes the wording and not the stored data.  Its ``endpoint`` is the Ollama host,
+    which is all :func:`llm_location` needs to tell this computer from another one.
+    """
+    return llm_location(record.provider, record.model, _endpoint_url(record), get_provider_info)
+
+
+def _endpoint_url(record: SentRecord) -> str:
+    """Return the record's endpoint as a URL: a bare IPv6 host (``::1``) gets its brackets.
+
+    Without them the host cannot be read back out of the URL, and a run on this computer
+    would be shown as one on another computer.
+    """
+    endpoint = record.endpoint
+    if ":" in endpoint and "://" not in endpoint and not endpoint.startswith("["):
+        return f"[{endpoint}]"
+    return endpoint
 
 
 def llm_steps(correction_enabled: bool, evaluation_enabled: bool) -> tuple[str, ...]:

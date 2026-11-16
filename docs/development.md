@@ -758,7 +758,9 @@ does the service read?* — without spaCy, a model or a widget:
   preview anonymizer, `None` when removal is off) and builds the prompts with the same code
   the stages use (`_sent_correction_prompt` / `_sent_evaluation_prompt`), so the dialog cannot
   drift from what a run sends.  `SentTexts` carries the sections, `flow.level`, the raw text
-  and the anonymized raw text.
+  and the anonymized raw text.  Its `stored` argument is the file's `DocumentStateView.sent`
+  (see *How a stored result was sent*), so the dialog can put what is already stored next to
+  what the next run would send.
 
 `gui/_what_is_sent_dialog.py` only presents that report: one `_SentSection` per step (title
 and badge, the names note, the text with placeholders highlighted by
@@ -778,9 +780,48 @@ The results table shows where a stage's text went without adding a column:
 
 A cell can already carry its own message (an unclear count, a warning, an error).  That text
 lives in `_ROLE_NOTE` and is written through `_set_note()`; `_compose_tooltip()` joins the
-stage line and the cell's note with a blank line, so neither replaces the other.
-`_refresh_cell_tooltips()` recomposes every proofreading and content-review cell after the
-tooltips change and at the end of `set_queue()`.
+stage line, how the stored result was sent (`_ROLE_SENT`) and the cell's note with blank
+lines, so none replaces another.  `_refresh_cell_tooltips()` recomposes every proofreading
+and content-review cell after the tooltips change and at the end of `set_queue()`.
+
+### How a stored result was sent
+
+The tooltip and the dialog answer two different questions: *where would the text go now*
+(`DataFlow`, from the current settings) and *where did the stored result really go*
+(`SentRecord`, from the run that made it).  The second one has to survive a settings change,
+so it is stored with the result:
+
+- `domain/data_location.py:SentRecord` holds the **inputs** of the classification, not the
+  verdict: `provider`, `model`, `endpoint` (the Ollama host; empty for a provider, none of
+  which has a base-URL setting today), `names_hidden` (the number of placeholders), `hiding_on` (whether hiding was switched on,
+  which tells "nothing found to hide" from "names as written") and `privacy` (the fingerprint
+  of the anonymizer settings).  A changed rule therefore changes
+  the wording, not the stored data.  `from_dict()` returns `None` for anything that is not
+  one of ours — including a record without a provider, which would otherwise read as an
+  unnamed online service.
+- `SentStatus` pairs the record with `other_privacy_settings`, the comparison with today's
+  `privacy_fingerprint(config)`.  The comparison is by settings, not by text: working out the
+  text would need a spaCy pass per document.
+- `cache_service.py:sent_record(config, stage, *, names_hidden)` builds it (it holds the
+  `Config`); `application/data_flow.py:sent_location(record)` classifies it through the same
+  `llm_location()` the box uses, so the two cannot disagree.
+- `DocumentState` keeps `correction_sent_text`, `correction_sent_map`, `correction_sent` and
+  `evaluation_sent`; `DocumentStateView.sent` exposes them keyed by stage name.
+  `ProcessingApplicationService._sent_verdict()` adds the comparison in `load_views()`,
+  `load_views_reconciled()` and `load_view()` — the state repository does not know the
+  settings.  The current fingerprint is computed lazily, only for a view that has a record.
+  `sent_location()` writes a bare IPv6 host (`::1`) in brackets before it asks `llm_location()`.
+- The record belongs to its result: every path that clears a result clears its record too
+  (`record_ocr_result`, `record_manual_ocr_edit`, `invalidate_from_stage`,
+  `record_correction_result` for the review, `record_manual_correction_edit` for the review
+  only — an edit keeps the proofreading it was made from).  `load_valid()` drops sent fields
+  whose result is not stored (`_without_orphan_sent`) and keeps the recognised text, so a
+  stray record never costs a new reading; `DocumentStateView.sent` only lists stages that are
+  done, so a stage `load_views_reconciled()` marks stale shows no line.
+- The wording lives in `gui/_user_text.py` (`_how_sent` builds the phrase once; `sent_lines`
+  and `stored_result_line` frame it for the tooltip and the dialog);
+  `GUI` writes the cells' lines from `view.sent` after every load, including `_on_file_done`; the dialog shows one line per stored result in a grey block at the
+  top of the *What is sent* tab (`stored_lines()`, `objectName="stored_results"`).
 
 ### Stopping a run and run outcomes
 
@@ -1744,15 +1785,18 @@ settings switch removes `ocr.toml`, `benchmark\` and `speed\` there.
   `READER_VERSION` does. A test pins an Ollama key, so the Ollama shape cannot drift.
   The models themselves live in the user data folder (`models/`), not in the cache. Used by the cache to detect stale stages and by the benchmark store to label
   runs.
-- `compute_correction_config_hash` / `compute_eval_config_hash` include an
-  `"anonymized"` part while anonymisation is on (both stages see its text), so
-  switching it on or off re-runs proofreading and content review for cached files.
-  The part is absent while it is off, so results cached before the flag was hashed stay
-  valid.  While it is on, the part also holds the resolved anonymizer settings —
-  primary and secondary spaCy model plus every regex pattern (`tag=pattern`) — so a
-  changed pattern no longer leaves a proofreading in place that was made with the old
-  placeholders.  `installed_models` is deliberately not part of it: the hash is
-  computed without importing spaCy.
+- `compute_correction_config_hash` / `compute_eval_config_hash` deliberately leave the
+  anonymizer settings out: a text proofread with names hidden is the same text, so
+  switching *Remove personal information* on or off does not send it again.  What was sent
+  is recorded with the result instead (`SentRecord`, see *How a stored result was sent*),
+  and `privacy_fingerprint(config)` — the hash of the anonymizer settings alone, computed
+  without importing spaCy — says whether a stored result was made with other settings than
+  today's.  The resolved anonymizer settings (primary and secondary spaCy model plus every
+  regex pattern, `tag=pattern`) are part of that fingerprint, so a changed pattern shows up
+  as "other privacy settings" without a run.  `installed_models` is deliberately not part of
+  it.  Removing the anonymizer part changed these two hashes once for everyone who had
+  *Remove personal information* on: after that update their cached proofreading and content
+  review count as stale and are made again (documents with it off are untouched).
 - `compute_cache_key(value)` (`storage_root.py`) — a short (16-char) stable key
   used to map a path (output dir / source file) to an on-disk file name.
 
@@ -1776,9 +1820,11 @@ whichever came first fills the cache for the others.  `FileProcessor` no longer 
 per-file memo: it anonymizes the extracted text once, right after recognition, and hands
 that result to proofreading and to the `_anonymized.txt` output.
 
-Nothing anonymized is written to disk.  `clear_anonymizer_cache()` empties both caches
-(switching the privacy settings or the language invalidates the entries anyway, because
-the settings are part of the key).  The GUI's `OCRWorker` receives the main window's
+The caches are memory only.  What a run sent is written to disk with its result — the text
+and its placeholder map, and only when names were hidden — so the window can show it later
+without a spaCy pass (see *How a stored result was sent*).  `clear_anonymizer_cache()` empties
+both caches (switching the privacy settings or the language invalidates the entries anyway,
+because the settings are part of the key).  The GUI's `OCRWorker` receives the main window's
 service, so a run fills the cache that the window's previews and exports read; a worker
 created without one builds its own service and shares nothing.
 

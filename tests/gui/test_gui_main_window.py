@@ -834,6 +834,72 @@ def test_main_window_file_done_refreshes_preview_for_selected_row(main_window, m
 
 
 @pytest.mark.gui
+def test_main_window_file_done_shows_how_the_finished_results_were_sent(
+    main_window, monkeypatch, tmp_path: Path
+) -> None:
+    """
+    Given  a file whose proofreading was just started (its cell was reset) and whose finished
+           state records that it went to an online service with two names hidden
+    When   _on_file_done reports it
+    Then   the proofreading cell says how the result was sent, not only after a reload
+    """
+    from teachers_teammate.domain.data_location import (  # noqa: PLC0415
+        STAGE_CORRECTION,
+        SentRecord,
+        SentStatus,
+    )
+    from teachers_teammate.infrastructure.state_repository import (  # noqa: PLC0415
+        DocumentStateView,
+    )
+
+    source = tmp_path / "page.png"
+    source.write_bytes(b"x")
+    source_id = str(source)
+    main_window._results_table.set_queue(["page.png"], source_ids=[source_id])
+    main_window._results_table.mark_correcting(source_id)
+    view = DocumentStateView(
+        source_id=source_id,
+        name="page.png",
+        preview_img="",
+        raw_text="",
+        correction_text="",
+        evaluation_text="",
+        ocr_done=True,
+        correction_done=True,
+        evaluation_done=False,
+        cache_status_label="",
+        loaded_at="",
+        sent={
+            STAGE_CORRECTION: SentStatus(
+                SentRecord(provider="mistral_eu", model="m", names_hidden=2, privacy="p")
+            )
+        },
+    )
+    cfg = make_config(tmp_path)
+    monkeypatch.setattr(main_window._config_panel, "to_config", lambda: cfg)
+    monkeypatch.setattr(main_window._app_service, "load_view", lambda *_a, **_k: view)
+
+    main_window._on_file_done(
+        FileDoneEvent(
+            source_id=source_id,
+            name="page.png",
+            ok=True,
+            message="saved",
+            ocr_s=0.1,
+            correction_s=0.1,
+            preview_img="",
+            raw_txt="",
+            corr_txt="",
+            eval_txt="",
+        )
+    )
+
+    item = main_window._results_table.item(0, main_window._results_table._COL_CORRECTION)
+    assert item is not None
+    assert "Sent to Mistral (EU) with 2 names hidden" in item.toolTip()
+
+
+@pytest.mark.gui
 def test_main_window_file_done_clears_stale_preprocessing_info(main_window, monkeypatch) -> None:
     """
     Given  a row that still holds preprocessing info from an earlier run

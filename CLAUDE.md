@@ -119,8 +119,12 @@ root** `resolve_config_root()` (`ocr.toml`) and the **data root** `resolve_data_
 version left in the cache). Anything a teacher cannot rebuild goes to the config or data root,
 never the cache; the Windows uninstaller's "Settings…" box deletes those files too. Identity/fingerprint helpers:
 `compute_file_hash` (document content), `compute_ocr_config_hash` (OCR stage
-fingerprint), `compute_cache_key` (path → short key). Two distinct stores: the
-pipeline **cache** (`StateRepository`, one overwritten `DocumentState` per
+fingerprint), `compute_cache_key` (path → short key). The privacy settings are
+deliberately **not** part of the proofreading and review fingerprints: what a run sent is
+stored with its result instead (`SentRecord` in `domain/data_location.py`, the text and its
+placeholder map in `DocumentState`), so switching *Remove personal information* on or off
+does not send a text again and the window can still say how the stored result was sent.
+Two distinct stores: the pipeline **cache** (`StateRepository`, one overwritten `DocumentState` per
 `(output_dir, path)`, **no expiry**) and the benchmark **run store**
 (`BenchmarkRunStore`, append-only per document-hash, keep-last-N + manual
 delete). See `docs/development.md` → "Storage, hashing & caching".

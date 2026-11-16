@@ -6,6 +6,7 @@ from collections.abc import Callable, Collection, Mapping, Sequence
 import dataclasses
 from dataclasses import dataclass
 from enum import StrEnum
+import functools
 import importlib.util
 import os
 from pathlib import Path
@@ -19,7 +20,13 @@ from ..config import DEFAULTS, Config, OcrConfig
 from ..domain.context_budget import RunWindows, memory_at_context_gb
 from ..domain.correction_policy import DEFAULT_LEVEL, normalize_output_mode
 from ..domain.correction_review import CorrectionReview
-from ..domain.data_location import ENGINE_PPOCR, DataFlow, StageLocation, is_ollama_cloud_model
+from ..domain.data_location import (
+    ENGINE_PPOCR,
+    DataFlow,
+    SentStatus,
+    StageLocation,
+    is_ollama_cloud_model,
+)
 from ..domain.formatted_text import TextFormat
 from ..domain.local_models import (
     PAGE_MODELS,
@@ -113,6 +120,7 @@ from ..infrastructure.workflow.cache_service import (
     compute_correction_config_hash,
     compute_eval_config_hash,
     compute_ocr_config_hash,
+    privacy_fingerprint,
 )
 from ..interfaces import SUPPORTED_SUFFIXES, SleepBlocker
 from .commands import ApplicationCommands
@@ -429,7 +437,9 @@ class ProcessingApplicationService:
         return self._discovery.collect_input_files(config)
 
     def load_views(self, config: Config, files: list[Path]) -> dict[str, DocumentStateView]:
-        return self._state_store(config).load_views(files)
+        views = self._state_store(config).load_views(files)
+        current = functools.cache(lambda: privacy_fingerprint(config))
+        return {key: self._sent_verdict(view, current) for key, view in views.items()}
 
     def get_document_state(self, config: Config, source: Path) -> DocumentState | None:
         """Return the raw persisted state for *source*, or None if not found."""
@@ -450,6 +460,7 @@ class ProcessingApplicationService:
 
         from ..domain.freshness import StageHashes, first_stale_stage_for_hashes  # noqa: PLC0415
 
+        current_privacy = functools.cache(lambda: privacy_fingerprint(config))
         views: dict[str, DocumentStateView] = {}
         for file in files:
             state = store.load_valid(file)
@@ -478,12 +489,41 @@ class ProcessingApplicationService:
                 state = dataclasses.replace(state, correction_done=False, evaluation_done=False)
             elif stale_stage == "evaluation":
                 state = dataclasses.replace(state, evaluation_done=False)
-            view = store.to_view(file, state)
+            view = self._sent_verdict(store.to_view(file, state), current_privacy)
             views[view.source_id] = view
         return views
 
     def load_view(self, config: Config, source: Path) -> DocumentStateView | None:
-        return self._state_store(config).load_view(source)
+        view = self._state_store(config).load_view(source)
+        if view is None:
+            return None
+        return self._sent_verdict(view, lambda: privacy_fingerprint(config))
+
+    @staticmethod
+    def _sent_verdict(
+        view: DocumentStateView, current_privacy: Callable[[], str]
+    ) -> DocumentStateView:
+        """Add whether each stored result was made with other privacy settings than today's.
+
+        The comparison is by settings, not by text: working out the text would need a spaCy
+        pass per document.  So a changed pattern that hides nothing new in a document still
+        says "other privacy settings" — the wording says *settings*, not *text*.
+
+        *current_privacy* is called only when the view has a stored result, so a file without
+        one costs no fingerprint.
+        """
+        if not view.sent:
+            return view
+        current = current_privacy()
+        return dataclasses.replace(
+            view,
+            sent={
+                stage: dataclasses.replace(
+                    status, other_privacy_settings=status.record.privacy != current
+                )
+                for stage, status in view.sent.items()
+            },
+        )
 
     def list_providers(self) -> list[str]:
         """Return available LLM providers."""
@@ -1480,6 +1520,7 @@ class ProcessingApplicationService:
         correction_text: str = "",
         *,
         text_format: TextFormat = "plain",
+        stored: Mapping[str, SentStatus] | None = None,
     ) -> SentTexts:
         """Return what every step that leaves this computer receives, exactly as sent.
 
@@ -1492,6 +1533,8 @@ class ProcessingApplicationService:
             raw_text: The extracted text of the file.
             correction_text: Its proofread text (empty when there is none yet).
             text_format: Notation of the texts (``"plain"`` or ``"markdown"``).
+            stored: How the results that are already stored were sent (``DocumentStateView.sent``),
+                so the dialog can say what really went out next to what would go next.
         """
         flow = self.describe_data_flow(config)
         return describe_sent_texts(
@@ -1502,6 +1545,7 @@ class ProcessingApplicationService:
             preview_extracted=config.anonymization_enabled,
             correction_prompt=self._sent_correction_prompt(config, text_format),
             evaluation_prompt=self._sent_evaluation_prompt(config, text_format),
+            stored=stored,
         )
 
     def _sent_text_anonymizer(self, config: Config) -> Anonymize | None:

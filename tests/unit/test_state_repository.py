@@ -10,6 +10,7 @@ import pytest
 import dataclasses
 
 from teachers_teammate.domain.correction_review import CorrectionReview, SentenceNote
+from teachers_teammate.domain.data_location import STAGE_CORRECTION, STAGE_EVALUATION, SentRecord
 from teachers_teammate.infrastructure.state_repository import (
     DocumentState,
     OcrResultRecord,
@@ -31,6 +32,34 @@ def _source_file(tmp_path: Path, name: str = "doc.txt", content: str = "content"
     path = tmp_path / name
     path.write_text(content, encoding="utf-8")
     return path
+
+
+def _sent(provider: str = "ollama", names_hidden: int = 2) -> SentRecord:
+    return SentRecord(
+        provider=provider,
+        model="qwen3.5:9b",
+        endpoint="http://127.0.0.1:11434",
+        names_hidden=names_hidden,
+        hiding_on=names_hidden > 0,
+        privacy="privacy-hash",
+    )
+
+
+def _processed_state(repo: StateRepository, source: Path, source_hash: str) -> DocumentState:
+    """Return a state with both text stages done and a sent record for each."""
+    return dataclasses.replace(
+        repo.create(source, source_hash),
+        ocr_done=True,
+        raw_text="raw",
+        correction_done=True,
+        correction_text="corrected",
+        correction_sent_text="raw with <PERSON_1>",
+        correction_sent_map={"<PERSON_1>": "Anna"},
+        correction_sent=_sent().to_dict(),
+        evaluation_done=True,
+        evaluation_text="evaluated",
+        evaluation_sent=_sent(names_hidden=0).to_dict(),
+    )
 
 
 # ── compute_file_hash ──────────────────────────────────────────────────────
@@ -709,6 +738,308 @@ def test_record_manual_correction_edit_with_empty_text(tmp_path: Path) -> None:
     assert loaded is not None
     assert loaded.correction_done is False
     assert loaded.correction_text == ""
+
+
+# ── How a stored result was sent ──────────────────────────────────────────
+
+
+def test_record_correction_result_stores_the_text_that_was_sent(tmp_path: Path) -> None:
+    """
+    Given  a state whose text was recognised
+    When   record_correction_result() is called with the sent text, its map and the record
+    Then   all three are stored with the proofreading and the view reports how it was sent
+    """
+    source = _source_file(tmp_path)
+    source_hash = compute_file_hash(source)
+    repo = _repo(tmp_path)
+    state = dataclasses.replace(repo.create(source, source_hash), ocr_done=True, raw_text="raw")
+
+    repo.record_correction_result(
+        source,
+        state,
+        correction_text="corrected",
+        correction_prompt="",
+        correction_config_hash="c-hash",
+        sent_text="raw with <PERSON_1>",
+        sent_map={"<PERSON_1>": "Anna"},
+        sent=_sent(),
+    )
+
+    loaded = repo.load(source)
+    assert loaded is not None
+    assert loaded.correction_sent_text == "raw with <PERSON_1>"
+    assert loaded.correction_sent_map == {"<PERSON_1>": "Anna"}
+    assert loaded.correction_sent == _sent().to_dict()
+
+    view = repo.to_view(source, loaded)
+    assert view is not None
+    assert view.sent[STAGE_CORRECTION].record == _sent()
+    assert view.sent[STAGE_CORRECTION].other_privacy_settings is False
+
+
+def test_record_evaluation_result_stores_how_it_was_sent(tmp_path: Path) -> None:
+    """
+    Given  a corrected state
+    When   record_evaluation_result() is called with a sent record
+    Then   the record is stored with the review and the view reports it
+    """
+    source = _source_file(tmp_path)
+    source_hash = compute_file_hash(source)
+    repo = _repo(tmp_path)
+    state = dataclasses.replace(
+        repo.create(source, source_hash),
+        ocr_done=True,
+        raw_text="raw",
+        correction_done=True,
+        correction_text="corrected",
+    )
+
+    repo.record_evaluation_result(
+        source,
+        state,
+        evaluation_text="evaluated",
+        evaluate_prompt="",
+        eval_config_hash="e-hash",
+        sent=_sent(names_hidden=0),
+    )
+
+    loaded = repo.load(source)
+    assert loaded is not None
+    assert loaded.evaluation_sent == _sent(names_hidden=0).to_dict()
+
+    view = repo.to_view(source, loaded)
+    assert view is not None
+    assert view.sent[STAGE_EVALUATION].record == _sent(names_hidden=0)
+
+
+def test_a_state_without_a_sent_record_reports_none(tmp_path: Path) -> None:
+    """
+    Given  a state whose results were stored before the record existed
+    When   the view is built
+    Then   it reports no sent status for either stage, so the window says nothing
+    """
+    source = _source_file(tmp_path)
+    source_hash = compute_file_hash(source)
+    repo = _repo(tmp_path)
+    state = dataclasses.replace(
+        repo.create(source, source_hash),
+        ocr_done=True,
+        raw_text="raw",
+        correction_done=True,
+        correction_text="corrected",
+    )
+
+    view = repo.to_view(source, state)
+
+    assert view is not None
+    assert view.sent == {}
+
+
+@pytest.mark.use_case("Stage_Specific_Rerun")
+def test_record_ocr_result_clears_the_sent_records(tmp_path: Path) -> None:
+    """
+    Given  a fully processed state with a sent record for both text stages
+    When   record_ocr_result() is called with new OCR text
+    Then   the sent text, its map and both records are gone with the results
+    """
+    source = _source_file(tmp_path)
+    source_hash = compute_file_hash(source)
+    repo = _repo(tmp_path)
+    state = _processed_state(repo, source, source_hash)
+
+    repo.record_ocr_result(
+        source,
+        state,
+        OcrResultRecord(
+            source_hash=source_hash,
+            raw_text="new ocr",
+            preview_img="",
+            source_image="",
+            ocr_prompt="",
+            correction_prompt="",
+            evaluate_prompt="",
+            ocr_config_hash="",
+            preview_config_hash="",
+        ),
+    )
+
+    loaded = repo.load(source)
+    assert loaded is not None
+    assert loaded.correction_sent_text == ""
+    assert loaded.correction_sent_map is None
+    assert loaded.correction_sent is None
+    assert loaded.evaluation_sent is None
+
+
+@pytest.mark.use_case("Manual_Text_Editing")
+def test_record_manual_ocr_edit_clears_the_sent_records(tmp_path: Path) -> None:
+    """
+    Given  a fully processed state with a sent record for both text stages
+    When   the recognised text is edited
+    Then   the sent text, its map and both records are gone with the results
+    """
+    source = _source_file(tmp_path)
+    source_hash = compute_file_hash(source)
+    repo = _repo(tmp_path)
+    state = _processed_state(repo, source, source_hash)
+
+    repo.record_manual_ocr_edit(source, state, raw_text="anders", preview_img="")
+
+    loaded = repo.load(source)
+    assert loaded is not None
+    assert loaded.correction_sent_text == ""
+    assert loaded.correction_sent_map is None
+    assert loaded.correction_sent is None
+    assert loaded.evaluation_sent is None
+
+
+@pytest.mark.use_case("Stage_Specific_Rerun")
+def test_invalidate_from_stage_correction_clears_the_sent_records(tmp_path: Path) -> None:
+    """
+    Given  a fully processed state with a sent record for both text stages
+    When   invalidate_from_stage('correction') is called
+    Then   the sent text, its map and both records are gone with the results
+    """
+    source = _source_file(tmp_path)
+    source_hash = compute_file_hash(source)
+    repo = _repo(tmp_path)
+    repo.save(source, _processed_state(repo, source, source_hash))
+
+    repo.invalidate_from_stage(source, "correction")
+
+    loaded = repo.load(source)
+    assert loaded is not None
+    assert loaded.correction_sent_text == ""
+    assert loaded.correction_sent_map is None
+    assert loaded.correction_sent is None
+    assert loaded.evaluation_sent is None
+
+
+def test_record_correction_result_clears_the_review_sent_record(tmp_path: Path) -> None:
+    """
+    Given  a fully processed state with a sent record for both text stages
+    When   a new proofreading result is recorded
+    Then   the review's record is gone with the review, and the new one is stored
+    """
+    source = _source_file(tmp_path)
+    source_hash = compute_file_hash(source)
+    repo = _repo(tmp_path)
+    state = _processed_state(repo, source, source_hash)
+
+    repo.record_correction_result(
+        source,
+        state,
+        correction_text="corrected again",
+        correction_prompt="",
+        correction_config_hash="c-hash",
+        sent=_sent(names_hidden=0),
+    )
+
+    loaded = repo.load(source)
+    assert loaded is not None
+    assert loaded.correction_sent == _sent(names_hidden=0).to_dict()
+    assert loaded.evaluation_sent is None
+
+
+@pytest.mark.use_case("Manual_Text_Editing")
+def test_manual_correction_edit_keeps_the_proofreading_sent_record(tmp_path: Path) -> None:
+    """
+    Given  a fully processed state with a sent record for both text stages
+    When   the proofread text is edited
+    Then   the proofreading keeps its record (it was sent as recorded) and the review loses its
+    """
+    source = _source_file(tmp_path)
+    source_hash = compute_file_hash(source)
+    repo = _repo(tmp_path)
+    state = _processed_state(repo, source, source_hash)
+
+    repo.record_manual_correction_edit(source, state, correction_text="edited")
+
+    loaded = repo.load(source)
+    assert loaded is not None
+    assert loaded.correction_sent_text == "raw with <PERSON_1>"
+    assert loaded.correction_sent_map == {"<PERSON_1>": "Anna"}
+    assert loaded.correction_sent == _sent().to_dict()
+    assert loaded.evaluation_sent is None
+
+
+@pytest.mark.parametrize(
+    "field",
+    ["correction_sent", "evaluation_sent"],
+    ids=["proofreading", "review"],
+)
+def test_load_valid_drops_a_sent_record_without_its_result_and_keeps_the_rest(
+    tmp_path: Path, field: str
+) -> None:
+    """
+    Given  a state that carries a sent record for a stage whose result is missing, next to
+           recognised text
+    When   load_valid() is called
+    Then   the state is still served (the recognised text is not read again) without the
+           orphan record
+    """
+    source = _source_file(tmp_path)
+    source_hash = compute_file_hash(source)
+    repo = _repo(tmp_path)
+    state = dataclasses.replace(
+        repo.create(source, source_hash),
+        ocr_done=True,
+        raw_text="raw",
+        **{field: _sent().to_dict()},
+    )
+    repo.save(source, state)
+
+    loaded = repo.load_valid(source)
+
+    assert loaded is not None
+    assert loaded.ocr_done is True
+    assert loaded.raw_text == "raw"
+    assert getattr(loaded, field) is None
+
+
+def test_load_valid_drops_the_sent_text_without_its_result_and_keeps_the_rest(
+    tmp_path: Path,
+) -> None:
+    """
+    Given  a state that carries the text a proofreading was made from, but no proofreading
+    When   load_valid() is called
+    Then   the text and its map are dropped, because they belong to a result that is not
+           there, and the recognised text stays
+    """
+    source = _source_file(tmp_path)
+    source_hash = compute_file_hash(source)
+    repo = _repo(tmp_path)
+    state = dataclasses.replace(
+        repo.create(source, source_hash),
+        ocr_done=True,
+        raw_text="raw",
+        correction_sent_text="raw with <PERSON_1>",
+        correction_sent_map={"<PERSON_1>": "Anna"},
+    )
+    repo.save(source, state)
+
+    loaded = repo.load_valid(source)
+
+    assert loaded is not None
+    assert loaded.raw_text == "raw"
+    assert loaded.correction_sent_text == ""
+    assert loaded.correction_sent_map is None
+
+
+def test_the_view_has_no_sent_line_for_a_stage_that_is_not_done(tmp_path: Path) -> None:
+    """
+    Given  a state with both results and records, of which the caller marks the review stale
+           (evaluation_done turned off on top of the loaded state)
+    When   to_view() is called
+    Then   the proofreading keeps its line and the review, which has no result now, has none
+    """
+    source = _source_file(tmp_path)
+    repo = _repo(tmp_path)
+    state = _processed_state(repo, source, compute_file_hash(source))
+
+    view = repo.to_view(source, dataclasses.replace(state, evaluation_done=False))
+
+    assert set(view.sent) == {STAGE_CORRECTION}
 
 
 # ── schema version ────────────────────────────────────────────────────────

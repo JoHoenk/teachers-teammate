@@ -10,7 +10,16 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
+from ..application.data_flow import sent_location
 from ..domain.correction_review import CHANGE_CATEGORIES, AlignedReview
+from ..domain.data_location import (
+    STAGE_CORRECTION,
+    STAGE_EVALUATION,
+    DataLocation,
+    SentRecord,
+    SentStatus,
+    stage_title,
+)
 from ..domain.local_models import PAGE_MODELS_SIZE_LABEL, READER_SIZE_LABEL
 from ..exceptions import RECOGNITION_OFF_MESSAGE
 
@@ -378,6 +387,68 @@ def suggestion_note(is_suggestion: bool) -> str:
 WHAT_IS_SENT_TITLE = "What is sent for this file"
 WHAT_IS_SENT_WORKING = "Working out what is sent…"
 NO_TEXT_YET = "No text recognized for this file yet."
+
+
+# ── How a stored result was sent ──────────────────────────────────────────────
+
+NAMES_AS_WRITTEN = "names as written"
+NO_NAMES_FOUND = "no names found to hide"
+NAMES_HIDDEN = "{count} names hidden"
+ONE_NAME_HIDDEN = "1 name hidden"
+OTHER_PRIVACY_SETTINGS = (
+    "made with other privacy settings — {action} again to send with the current ones"
+)
+STORED_RESULT = "The stored {stage} was {how}."
+#: What the "other privacy settings" line tells the teacher to do, per step.
+_AGAIN = {STAGE_CORRECTION: "proofread", STAGE_EVALUATION: "review"}
+
+
+def names_note(count: int, *, hiding_on: bool = False) -> str:
+    """Return ``3 names hidden``, ``1 name hidden``, ``no names found to hide`` or ``names as written``.
+
+    *hiding_on* tells a text where hiding found nothing from a text sent as written.
+    """
+    if count <= 0:
+        return NO_NAMES_FOUND if hiding_on else NAMES_AS_WRITTEN
+    return ONE_NAME_HIDDEN if count == 1 else NAMES_HIDDEN.format(count=count)
+
+
+def _how_sent(record: SentRecord) -> tuple[str, str]:
+    """Return ``(verb, how)`` for a stored result: ``("Sent", "to Mistral with 3 names hidden")``.
+
+    The one place that words where a result was made and what it was made from; the tooltip
+    and the dialog only put a frame around it.  *verb* is ``Sent`` when the text left this
+    computer and ``Made`` when it did not.
+    """
+    location = sent_location(record)
+    if location.location is DataLocation.THIS_COMPUTER:
+        return "Made", f"on this computer ({location.service})"
+    if location.location is DataLocation.OTHER_COMPUTER:
+        host = f" ({location.host})" if location.host else ""
+        place = f"to another computer{host}"
+    else:
+        place = f"to {location.service}"
+    names = names_note(record.names_hidden, hiding_on=record.hiding_on)
+    return "Sent", f"{place} with {names}"
+
+
+def sent_lines(status: SentStatus, stage: str) -> tuple[str, ...]:
+    """Return the tooltip lines saying how a stored result was sent.
+
+    *stage* is the step the result belongs to; it only decides the wording of the "other
+    privacy settings" line ("proofread again" / "review again").
+    """
+    verb, how = _how_sent(status.record)
+    lines = [f"{verb} {how}"]
+    if status.other_privacy_settings:
+        lines.append(OTHER_PRIVACY_SETTINGS.format(action=_AGAIN.get(stage, "run")))
+    return tuple(lines)
+
+
+def stored_result_line(stage: str, status: SentStatus) -> str:
+    """Return the line saying how a stored result was sent, for the "What is sent" dialog."""
+    verb, how = _how_sent(status.record)
+    return STORED_RESULT.format(stage=stage_title(stage).lower(), how=f"{verb.lower()} {how}")
 
 
 # ── Pieces counter after OCR ──────────────────────────────────────────────────

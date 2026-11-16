@@ -8,7 +8,7 @@ them in.  The GUI and CLI only render the result.
 from __future__ import annotations
 
 from collections.abc import Iterable
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from enum import StrEnum
 
 #: OCR engines that read pages on a computer the user controls, with the name shown for
@@ -35,6 +35,11 @@ _STAGE_TITLES = {
     STAGE_CORRECTION: "Proofreading",
     STAGE_EVALUATION: "Content review",
 }
+
+
+def stage_title(stage: str) -> str:
+    """Return the name of a pipeline step as the user knows it."""
+    return _STAGE_TITLES.get(stage, stage)
 
 
 class DataLocation(StrEnum):
@@ -249,7 +254,7 @@ class DataFlowStage:
     @property
     def title(self) -> str:
         """The step's name as the user knows it."""
-        return _STAGE_TITLES.get(self.stage, self.stage)
+        return stage_title(self.stage)
 
     @property
     def leaves_computer(self) -> bool:
@@ -372,6 +377,76 @@ class DataFlow:
 
 
 _FINGERPRINT_V2_PREFIX = "v2"
+
+
+# ── How a stored result was sent ──────────────────────────────────────────────
+
+
+@dataclass(frozen=True)
+class SentRecord:
+    """How one stored result was sent: the inputs of its classification, not the verdict.
+
+    Stored with the result it belongs to and never overwritten while that result exists, so
+    the window can always say what really went out — even after the privacy settings changed.
+    The inputs are kept rather than the classification, so a changed rule changes the wording
+    and not the stored data.
+    """
+
+    #: Provider id the step ran on (``"ollama"``, ``"mistral"``, …).
+    provider: str = ""
+    #: Model tag the step ran with.
+    model: str = ""
+    #: What decides the location besides provider and model: the Ollama host (this computer or
+    #: another computer; a cloud model is in the model tag), or the base URL / regional
+    #: endpoint a provider's ``data_region(**settings)`` reads.  Empty where neither applies.
+    endpoint: str = ""
+    #: Number of placeholders the text was sent with; 0 when names went as written.
+    names_hidden: int = 0
+    #: Whether hiding names was switched on, so ``names_hidden == 0`` can be told apart:
+    #: nothing found to hide (on) versus names sent as written (off).
+    hiding_on: bool = False
+    #: Hash of the anonymizer settings the text was made with (on/off, resolved models,
+    #: patterns), so "made with other privacy settings" needs no run to answer.
+    privacy: str = ""
+
+    def to_dict(self) -> dict:
+        """Return the record as the JSON-ready dict the state stores."""
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, data: object) -> SentRecord | None:
+        """Return the record stored in *data*, or ``None`` when it is not one of ours.
+
+        A record without a provider says nothing about where its result was made, so it is
+        treated as no record at all rather than shown as an unnamed online service.
+        """
+        if not isinstance(data, dict):
+            return None
+        texts = [data.get(key, "") for key in ("provider", "model", "endpoint", "privacy")]
+        if not all(isinstance(value, str) for value in texts):
+            return None
+        names_hidden = data.get("names_hidden", 0)
+        if not isinstance(names_hidden, int) or isinstance(names_hidden, bool):
+            return None
+        hiding_on = data.get("hiding_on", False)
+        if not isinstance(hiding_on, bool):
+            return None
+        provider, model, endpoint, privacy = texts
+        if not provider:
+            return None
+        # A record from before ``hiding_on`` existed, with names hidden, was made with it on.
+        return cls(provider, model, endpoint, names_hidden, hiding_on or names_hidden > 0, privacy)
+
+
+@dataclass(frozen=True)
+class SentStatus:
+    """How a stored result was sent, and whether today's settings would send it differently."""
+
+    record: SentRecord
+    #: The record's privacy fingerprint differs from the current settings', so the result was
+    #: made with other privacy settings.  A fact the window shows; sending again is the
+    #: teacher's choice, because what was already sent cannot be unsent.
+    other_privacy_settings: bool = False
 
 
 def describe_fingerprint(fingerprint: str) -> str:

@@ -83,12 +83,12 @@ The built-in reader runs on this computer without a server and without an AI mod
 
 It is a good choice for printed pages and for computers that cannot run an AI vision model. It reads handwriting less well than the vision models above. Pages are read one column at a time, top to bottom; two columns are read as rows across both.
 
-The model files (about 31 MB) are downloaded **only when you ask for them**:
+The model files (about 31 MB) come with the installed app, so the reader works as soon as it is chosen. A build that does not carry them — a source checkout — downloads them **only when you ask**:
 
 - in the app: choose *Built-in reader (PP-OCR)* as the recognition method and press **Download built-in reader (31 MB)**, or tick the reader under **Settings → Add-ons… → Reading models**;
 - on the command line: `teachers-teammate --download-reader`, once, then `--ocr-engine ppocr`.
 
-They are kept in the app's data folder (shown under *Reading models*) and checked against a fixed checksum, so a damaged download is refused. The only host contacted is `huggingface.co`; if a school network blocks it, ask whoever looks after the network to allow it.
+A download is kept in the app's data folder (shown under *Reading models*) and checked against a fixed checksum, so a damaged download is refused. The only host contacted is `huggingface.co`; if a school network blocks it, ask whoever looks after the network to allow it.
 
 Settings files that still name `tesseract` or `paddleocr` (removed engines) now use the built-in reader; the app says so when it loads such a file. The Paddle add-on's old packages are removed from the add-on folder automatically.
 
@@ -142,7 +142,7 @@ In the preview and under each result, the app says in words what was done: "Prep
 
 ### Page models
 
-*Turn* and *flatten* need two small models from PaddlePaddle (Apache-2.0; 39 MB together, from huggingface.co). They are downloaded only when you ask for them:
+*Turn* and *flatten* need two small models from PaddlePaddle (Apache-2.0; 39 MB together, from huggingface.co). The installed app carries them; a build without them downloads them only when you ask:
 
 - in the app: under *Automatic* on **Settings → Scan quality…** press **Download…**, or tick **Page models** under **Settings → Add-ons… → Reading models**;
 - on the command line: `teachers-teammate --download-page-models`, once.

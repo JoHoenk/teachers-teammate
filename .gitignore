@@ -25,6 +25,8 @@ coverage_html/
 pyinstaller-work/
 # Written by tools/build/addon_constraints.py, bundled as data
 teachers_teammate/_build/
+# Fetched by tools/build/fetch_models.py (the reader and the page models), bundled as data
+teachers_teammate/_models/
 
 # IDE
 .vscode/

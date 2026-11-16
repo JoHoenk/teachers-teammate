@@ -37,6 +37,7 @@ from teachers_teammate.domain.model_catalog import (
     disk_verdict,
     find_spec,
     is_very_slow,
+    licence_note,
     memory_for_models_gb,
     models_for,
     normalize_tag,
@@ -65,6 +66,29 @@ def test_catalog_tags_are_unique_and_normalised() -> None:
     assert len(tags) == len(set(tags))
     for tag in tags:
         assert tag == normalize_tag(tag)
+
+
+def test_every_catalog_entry_names_its_licence_and_where_to_read_it() -> None:
+    """
+    Given  the Ollama model catalog
+    When   the licence of every entry is inspected
+    Then   each names its terms and links to them, so the app can say what a teacher agrees to
+    """
+    for spec in OLLAMA_CATALOG:
+        assert spec.licence is not None, spec.tag
+        assert spec.licence.name, spec.tag
+        assert spec.licence.url.startswith("https://"), spec.tag
+
+
+def test_only_a_licence_that_restricts_use_gets_a_sentence() -> None:
+    """
+    Given  the default reading model (modified OpenRAIL-M) and a model under Apache-2.0
+    When   the sentence for a model's row is asked for
+    Then   the restrictive one has one, the permissive one and an unknown tag have none
+    """
+    assert "commercial licence" in licence_note(DEFAULT_OCR_MODEL)
+    assert licence_note(DEFAULT_WRITING_MODEL) == ""
+    assert licence_note("a-model-the-app-does-not-know:latest") == ""
 
 
 def test_catalog_memory_and_download_sizes_are_plausible() -> None:

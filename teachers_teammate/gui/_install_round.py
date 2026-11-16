@@ -17,19 +17,21 @@ from typing import Any, Protocol
 
 from PySide6.QtCore import QObject, QThread, Signal
 
+from ..application.service import PAGE_MODELS_STATUS_KEY, READER_STATUS_KEY
 from ._model_guidance import SPACY_PREFIX
 
 #: How an item is named in :attr:`InstallRound.item_started` and ``item_done``.
 PACKAGE_PREFIX = "package:"
 #: The built-in reader's model files (``reader:ppocr``); also the Add-ons "preselect" entry.
 READER_PREFIX = "reader:"
-READER_ITEM = f"{READER_PREFIX}ppocr"
+#: Equal to the status key of the application service, which the Add-ons page looks the row up by.
+READER_ITEM = READER_STATUS_KEY
 #: The status line the round sends with the reader's download progress.
 READER_PROGRESS_STATUS = "Built-in reader"
 #: The page models of the automatic image preparation (``page_models:all``); also the Add-ons
 #: "preselect" entry.
 PAGE_MODELS_PREFIX = "page_models:"
-PAGE_MODELS_ITEM = f"{PAGE_MODELS_PREFIX}all"
+PAGE_MODELS_ITEM = PAGE_MODELS_STATUS_KEY
 PAGE_MODELS_PROGRESS_STATUS = "Page models"
 #: The add-ons installed again after an app update (``update:addons``).
 UPDATE_ADDONS_ITEM = "update:addons"

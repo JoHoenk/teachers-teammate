@@ -146,7 +146,7 @@ The app rates each model for your computer. Models marked **Slower** or **Very s
 
 ### Other recognition methods
 
-The **Built-in reader (PP-OCR)** reads pages on any computer without an AI model or a server — a good choice for printed pages, and for computers that cannot run a vision model. It reads handwriting less well. Choose it under *Recognition method* in **Settings → AI models…**; the first time, press **Download built-in reader (31 MB)** (the files are fetched only when you ask, and the pages never leave your computer). For details, see the {doc}`Advanced User Guide <advanced_user_guide>`.
+The **Built-in reader (PP-OCR)** reads pages on any computer without an AI model or a server — a good choice for printed pages, and for computers that cannot run a vision model. It reads handwriting less well. Choose it under *Recognition method* in **Settings → AI models…**; its files come with the app, and the pages never leave your computer. For details, see the {doc}`Advanced User Guide <advanced_user_guide>`.
 
 ### Recognition always stays on computers you control
 
@@ -162,7 +162,7 @@ Ollama on another computer that you or your school run (see **Settings → This 
 
 Before reading the text, the app prepares each image to improve accuracy. **Automatic (recommended)** looks at every page and does only what it needs: it straightens and turns photographed pages, flattens curved ones, evens out shadows and corrects a tilt. Clean scans pass unchanged. **Original page** sends each page as it is, to check what the preparation changes.
 
-Turning sideways pages and flattening curved ones need two small page models (39 MB). Under *Automatic* on **Settings → Scan quality…** a line with **Download…** offers them while they are missing; *Automatic* still works without them, it skips those two steps. The files are fetched only when you ask.
+Turning sideways pages and flattening curved ones need two small page models (39 MB), which come with the app. *Automatic* still works without them, it skips those two steps.
 
 To compare settings before processing a large folder, open **Settings → Scan quality…** and use the **Preview…** — it shows the original and prepared image side by side, and says what was done ("Prepared: page turned, shadows evened out"). Use Ctrl + mouse wheel to zoom.
 
@@ -498,8 +498,8 @@ Extra features can be installed from inside the app — no external downloads or
 |---|---|---|
 | **Privacy add-on** | *Install Privacy Add-on* button (shown when the feature is missing) | Removes personal information before proofreading |
 | **Language model for anonymization** | **Settings → Add-ons…** → *Name detection* | Choose your document language; the multilingual model is a safe default |
-| **Built-in reader** | **Settings → AI models…** when *Built-in reader (PP-OCR)* is selected, or **Settings → Add-ons… → Reading models** | A recognition method that needs no server and runs on any computer; best for printed pages (31 MB download, only when you ask for it) |
-| **Page models** | **Settings → Scan quality…** under *Automatic*, or **Settings → Add-ons… → Reading models** | Two small models (39 MB, only when you ask for them) that let *Automatic* image preparation turn sideways pages and flatten curved ones; it works without them, skipping those two steps |
+| **Built-in reader** | **Settings → AI models…** when *Built-in reader (PP-OCR)* is selected, or **Settings → Add-ons… → Reading models** | A recognition method that needs no server and runs on any computer; best for printed pages (31 MB, included with the app) |
+| **Page models** | **Settings → Scan quality…** under *Automatic*, or **Settings → Add-ons… → Reading models** | Two small models (39 MB, included with the app) that let *Automatic* image preparation turn sideways pages and flatten curved ones; it works without them, skipping those two steps |
 | **Graphics card monitoring** | Offered automatically when a compatible card is found (**Tools → System Monitor**) | NVIDIA or AMD/Linux graphics card stats |
 
 ---

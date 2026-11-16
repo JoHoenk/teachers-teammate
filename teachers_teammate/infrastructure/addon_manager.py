@@ -2,7 +2,7 @@
 
 Manages optional feature groups that are not bundled in the base installer:
   - privacy  (spacy)
-  - nvidia / amd  (live GPU monitoring; installed automatically when a GPU is found)
+  - the LangChain provider packages of the online AI services
 
 The frozen binary re-invokes itself with ``--_pip_install_mode`` to run pip
 inside the same Python interpreter that was bundled by PyInstaller, then
@@ -16,11 +16,15 @@ one, and a folder left by an older app version is recognised (:func:`outdated_sh
 and kept off ``sys.path`` until the teacher updates the add-ons.  A folder built for another
 Python is treated the same way (:func:`foreign_python_packages`): its compiled modules cannot be
 imported here, so the app asks for *Update add-ons* instead of failing on the first import.
+
+Next to it the bundle carries ``addon_lock.txt`` (``tools/build/addon_lock.py``): the versions of
+the add-ons' own packages and their dependencies that this release was tested with, passed as a
+second ``-c``.  Without it a teacher would get whatever is newest on the day they click *Install*.
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable
+from collections.abc import Callable
 import importlib
 import importlib.util
 import logging
@@ -37,16 +41,10 @@ from .subprocess_utils import no_console_window_kwargs
 _logger = logging.getLogger(__name__)
 
 ADDON_PRIVACY = "privacy"
-ADDON_NVIDIA = "nvidia"
-ADDON_AMD = "amd"
 
-#: pip runs one at a time: two installs into the same ``--target`` directory (the
-#: automatic GPU-monitoring install and Settings → Add-ons) would corrupt each other.
+#: pip runs one at a time: two installs into the same ``--target`` directory would
+#: corrupt each other.
 _PIP_LOCK = threading.Lock()
-
-#: Per-connection network timeout (seconds) for installs nobody is watching, so a
-#: network that silently drops traffic cannot hold a background thread for minutes.
-BACKGROUND_PIP_TIMEOUT_S = 15
 
 # LangChain provider addons — one constant per installable package.
 ADDON_LLM_CORE = "llm_core"
@@ -60,6 +58,9 @@ ADDON_LLM_COHERE = "llm_cohere"
 #: Where the build puts the constraints file, relative to the folder the bundle's files sit in.
 ADDON_CONSTRAINTS_RELATIVE = Path("teachers_teammate") / "_build" / "addon_constraints.txt"
 
+#: Where the build puts the add-on lock, next to the constraints file.
+ADDON_LOCK_RELATIVE = Path("teachers_teammate") / "_build" / "addon_lock.txt"
+
 #: What every pip call of the installed app adds (see :func:`pip_policy_arguments`).
 _PIP_UPGRADE = "--upgrade"
 _PIP_ONLY_BINARY = ("--only-binary", ":all:")
@@ -67,11 +68,6 @@ _PIP_NO_CACHE = "--no-cache-dir"
 
 _ADDON_PACKAGES: dict[str, list[str]] = {
     ADDON_PRIVACY: ["spacy>=3.7"],
-    # nvidia-ml-py is the maintained replacement for the deprecated pyvnml package.
-    # It installs the pynvml Python module (NVIDIA Management Library bindings).
-    ADDON_NVIDIA: ["nvidia-ml-py"],
-    # pyamdgpuinfo provides AMD GPU monitoring via the sysfs/DRM interface (Linux only).
-    ADDON_AMD: ["pyamdgpuinfo"],
     # LangChain packages — not bundled by PyInstaller; installed at runtime via Add-ons.
     ADDON_LLM_CORE: ["langchain-core>=1.4.7"],
     ADDON_LLM_OLLAMA: ["langchain-ollama>=0.2"],
@@ -85,8 +81,6 @@ _ADDON_PACKAGES: dict[str, list[str]] = {
 # Top-level module name used to check importability for each addon.
 _ADDON_CHECK_MODULE: dict[str, str] = {
     ADDON_PRIVACY: "spacy",
-    ADDON_NVIDIA: "pynvml",
-    ADDON_AMD: "pyamdgpuinfo",
     ADDON_LLM_CORE: "langchain_core",
     ADDON_LLM_OLLAMA: "langchain_ollama",
     ADDON_LLM_OPENAI: "langchain_openai",
@@ -100,8 +94,6 @@ _ADDON_CHECK_MODULE: dict[str, str] = {
 # importlib.util.find_spec() performs a fresh filesystem probe.
 _ADDON_STALE_PREFIXES: dict[str, list[str]] = {
     ADDON_PRIVACY: ["spacy"],
-    ADDON_NVIDIA: ["pynvml"],
-    ADDON_AMD: ["pyamdgpuinfo"],
     ADDON_LLM_CORE: ["langchain_core"],
     ADDON_LLM_OLLAMA: ["langchain_ollama"],
     ADDON_LLM_OPENAI: ["langchain_openai"],
@@ -115,6 +107,15 @@ _ADDON_STALE_PREFIXES: dict[str, list[str]] = {
 def addon_requirements() -> dict[str, list[str]]:
     """Return the pip requirements of every add-on, by add-on name (a copy)."""
     return {addon: list(packages) for addon, packages in _ADDON_PACKAGES.items()}
+
+
+def addon_package_names() -> list[str]:
+    """Return the normalised name of every package an add-on installs, without its version."""
+    return [
+        _normalise(re.split(r"[<>=!~\[;,\s]", requirement, maxsplit=1)[0])
+        for packages in _ADDON_PACKAGES.values()
+        for requirement in packages
+    ]
 
 
 def get_packages_dir() -> Path:
@@ -148,10 +149,21 @@ def _packages_dir_readable(pkg_dir: Path) -> bool:
         return False
 
 
-#: Packages the retired Paddle Add-on put into the packages folder.  ``opencv-contrib-python`` is
-#: among them because it shadowed the app's own OpenCV (``pip --target`` folders come first on
-#: ``sys.path``); numpy is deliberately not: spaCy may need the copy there.
-_RETIRED_PACKAGES = frozenset({"paddlepaddle", "paddleocr", "paddlex", "opencv-contrib-python"})
+#: Packages an earlier app version installed into the packages folder and no longer uses.
+#: ``opencv-contrib-python`` is among them because it shadowed the app's own OpenCV
+#: (``pip --target`` folders come first on ``sys.path``); numpy is deliberately not: spaCy may
+#: need the copy there.  The two GPU-monitoring packages are gone because the app now reads the
+#: card itself (``nvidia-ml-py`` is bundled, AMD comes from sysfs).
+_RETIRED_PACKAGES = frozenset(
+    {
+        "paddlepaddle",
+        "paddleocr",
+        "paddlex",
+        "opencv-contrib-python",
+        "nvidia-ml-py",
+        "pyamdgpuinfo",
+    }
+)
 
 
 def _normalise(name: str) -> str:
@@ -255,7 +267,7 @@ def _remove_stale(pkg_dir: Path, stale: list[tuple[str, str, Path]]) -> list[str
 
 
 def remove_retired_addons(pkg_dir: Path) -> list[str]:
-    """Delete the retired Paddle Add-on's files from *pkg_dir*; return the packages removed.
+    """Delete the files of retired add-ons from *pkg_dir*; return the packages removed.
 
     Goes strictly by each package's ``RECORD`` file (see :func:`_remove_distribution`).  A package
     without a readable ``RECORD`` is left alone, and so is everything else.
@@ -274,6 +286,18 @@ def remove_retired_addons(pkg_dir: Path) -> list[str]:
 # ── The constraints of the installed app ────────────────────────────────────────────────────
 
 
+def _bundled_build_file(relative: Path) -> Path | None:
+    """Return a file the build put into the bundle, or ``None`` outside a frozen build."""
+    meipass = getattr(sys, "_MEIPASS", None)
+    if not getattr(sys, "frozen", False) or meipass is None:
+        return None
+    path = Path(meipass) / relative
+    if path.is_file():
+        return path
+    _logger.warning("The bundled file %s is missing", path)
+    return None
+
+
 def addon_constraints_path() -> Path | None:
     """Return the constraints file the installed app ships, or ``None``.
 
@@ -281,14 +305,17 @@ def addon_constraints_path() -> Path | None:
     versions an add-on could clash with.  A frozen build without the file (the smoke test
     reports that) is logged and treated like a source run.
     """
-    meipass = getattr(sys, "_MEIPASS", None)
-    if not getattr(sys, "frozen", False) or meipass is None:
-        return None
-    path = Path(meipass) / ADDON_CONSTRAINTS_RELATIVE
-    if path.is_file():
-        return path
-    _logger.warning("The add-on constraints file %s is missing", path)
-    return None
+    return _bundled_build_file(ADDON_CONSTRAINTS_RELATIVE)
+
+
+def addon_lock_path() -> Path | None:
+    """Return the add-on lock the installed app ships, or ``None``.
+
+    The lock holds the versions of the add-ons' packages and their dependencies that this
+    release was tested with (``tools/build/addon_lock.py``).  Without it pip would install
+    whatever is newest on the day a teacher clicks *Install*, which is a version nobody ran.
+    """
+    return _bundled_build_file(ADDON_LOCK_RELATIVE)
 
 
 def read_constraints(path: Path) -> dict[str, str]:
@@ -527,6 +554,8 @@ def pip_policy_arguments(*, upgrade: bool = True) -> list[str]:
       cleaned; nothing here installs the same wheel twice.
     * ``-c <constraints>``: every package the app bundles stays at the bundled version, or pip
       says why the add-on cannot be installed.
+    * ``-c <lock>``: the add-ons' own packages and their dependencies stay at the versions this
+      release was tested with, instead of whatever is newest that day.
 
     Args:
         upgrade: ``False`` for a language model, whose install must leave alone what is there.
@@ -536,9 +565,9 @@ def pip_policy_arguments(*, upgrade: bool = True) -> list[str]:
     arguments = [*_PIP_ONLY_BINARY, _PIP_NO_CACHE]
     if upgrade:
         arguments.insert(0, _PIP_UPGRADE)
-    constraints = addon_constraints_path()
-    if constraints is not None:
-        arguments += ["-c", str(constraints)]
+    for path in (addon_constraints_path(), addon_lock_path()):
+        if path is not None:
+            arguments += ["-c", str(path)]
     return arguments
 
 
@@ -601,25 +630,6 @@ def can_install_addons() -> bool:
     if not getattr(sys, "frozen", False):
         return False
     return importlib.util.find_spec("pip") is not None
-
-
-def gpu_monitoring_addon(vendors: Iterable[str], platform_name: str | None = None) -> str | None:
-    """Return the add-on that gives live GPU/VRAM readings for *vendors*, or None.
-
-    NVIDIA wins when both vendors are present (same order as the GPU dialog).
-    ``pyamdgpuinfo`` reads the Linux ``amdgpu`` sysfs interface, so an AMD GPU on
-    another platform has no add-on.
-
-    Args:
-        vendors: ``GpuInfo.vendor`` values of the detected GPUs.
-        platform_name: ``sys.platform`` value; defaults to the running platform.
-    """
-    found = set(vendors)
-    if "nvidia" in found:
-        return ADDON_NVIDIA
-    if "amd" in found and (platform_name or sys.platform).startswith("linux"):
-        return ADDON_AMD
-    return None
 
 
 def clear_stale_modules(addon: str) -> None:

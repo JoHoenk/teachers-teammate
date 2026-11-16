@@ -18,6 +18,8 @@ from teachers_teammate.domain.model_catalog import (
     ModelUses,
 )
 from teachers_teammate.domain.model_listing import ModelListing
+from teachers_teammate.gui import _user_text as txt
+from teachers_teammate.gui._install_round import PAGE_MODELS_ITEM, READER_ITEM
 from teachers_teammate.gui.settings import _addons_page
 from teachers_teammate.gui.settings._addons_page import AddonsPage
 from teachers_teammate.gui.settings._page import (
@@ -147,6 +149,27 @@ def test_groups_contain_catalog_models_and_other_is_hidden(qtbot) -> None:
     assert set(_group_tags(dlg, "general")) == writing
     assert dlg._group_items["other"].isHidden() is True
     assert dlg._group_items["other"].childCount() == 0
+
+
+# ── licence column ──────────────────────────────────────────────────────────
+
+
+@pytest.mark.use_case("Model_Category_Guidance")
+def test_only_a_model_whose_licence_restricts_use_says_so_in_its_row(qtbot) -> None:
+    """
+    Given  the Add-ons page with the catalog
+    When   the licence column is inspected
+    Then   the default reading model names its terms with the sentence as tooltip,
+           and a model under Apache-2.0 leaves the column empty
+    """
+    dlg = _make_dialog(qtbot)
+    reading = dlg._model_items[DEFAULT_OCR_MODEL]
+    assert reading.text(4) == "Modified OpenRAIL-M"
+    assert "commercial licence" in reading.toolTip(4)
+    assert "https://" in reading.toolTip(4)
+    assert dlg._model_items[DEFAULT_WRITING_MODEL].text(4) == ""
+    # Every model's terms are one hover away, even when the row says nothing.
+    assert "Apache-2.0" in dlg._model_items[DEFAULT_WRITING_MODEL].toolTip(0)
 
 
 # ── suitability column ──────────────────────────────────────────────────────
@@ -874,6 +897,68 @@ def test_a_new_server_address_starts_a_new_detection(qtbot) -> None:
     qtbot.waitUntil(lambda: service.status_calls == calls + 1, timeout=5000)
 
 
+# ── what the app carries itself ─────────────────────────────────────────────
+
+
+@pytest.mark.use_case("Runtime_Addon_Installation")
+def test_a_model_the_app_carries_itself_says_included(qtbot) -> None:
+    """
+    Given  a detection that finds the reader and the page models, carried by the app
+    When   the reading-models tab is shown
+    Then   both rows say "included" and cannot be ticked: there is nothing to download
+    """
+    dlg = _make_dialog(qtbot)
+    results = _detection_results(dlg, set())
+    results.update(
+        {
+            "reader:ppocr": True,
+            "page_models:all": True,
+            "bundled:reader:ppocr": True,
+            "bundled:page_models:all": True,
+        }
+    )
+
+    dlg._on_detection_done(results)
+
+    for item in (READER_ITEM, PAGE_MODELS_ITEM):
+        assert dlg._dl_checkboxes[item].text().endswith(txt.INCLUDED)
+        assert dlg._dl_checkboxes[item].isEnabled() is False
+
+
+@pytest.mark.use_case("Runtime_Addon_Installation")
+def test_a_model_that_had_to_be_downloaded_still_says_downloaded(qtbot) -> None:
+    """
+    Given  a detection that finds the reader, in a build that does not carry it
+    When   the reading-models tab is shown
+    Then   the row says "downloaded", not "included"
+    """
+    dlg = _make_dialog(qtbot)
+    results = _detection_results(dlg, set())
+    results.update({"reader:ppocr": True, "bundled:reader:ppocr": False})
+
+    dlg._on_detection_done(results)
+
+    assert dlg._dl_checkboxes[READER_ITEM].text().endswith(txt.READER_DOWNLOADED)
+
+
+def test_the_install_items_are_named_like_the_service_status_keys() -> None:
+    """
+    Given  the Add-ons rows, which are looked up in the service's status map by their item name
+    When   the item names and the service's keys are compared
+    Then   they are the same strings, and the bundled key is the item's key behind one prefix
+    """
+    from teachers_teammate.application.service import (  # noqa: PLC0415
+        PAGE_MODELS_STATUS_KEY,
+        READER_STATUS_KEY,
+        bundled_status_key,
+    )
+
+    assert READER_ITEM == READER_STATUS_KEY == "reader:ppocr"
+    assert PAGE_MODELS_ITEM == PAGE_MODELS_STATUS_KEY == "page_models:all"
+    assert bundled_status_key(READER_ITEM) == "bundled:reader:ppocr"
+    assert bundled_status_key(PAGE_MODELS_ITEM) == "bundled:page_models:all"
+
+
 # ── deep links and closing ───────────────────────────────────────────────────
 
 
@@ -884,7 +969,6 @@ def test_a_new_server_address_starts_a_new_detection(qtbot) -> None:
         ("reading_models", AddonsPage.TAB_READING_MODELS),
         ("online_services", AddonsPage.TAB_ONLINE_SERVICES),
         ("name_detection", AddonsPage.TAB_NAME_DETECTION),
-        ("gpu", AddonsPage.TAB_GPU),
     ],
 )
 def test_focus_shows_the_matching_tab(qtbot, focus: str, tab: int) -> None:
@@ -1334,7 +1418,6 @@ def test_tab_constants_point_at_the_matching_tabs(qtbot) -> None:
     assert tabs.tabText(AddonsPage.TAB_ONLINE_SERVICES) == "Online AI services"
     assert tabs.tabText(AddonsPage.TAB_NAME_DETECTION) == "Name detection"
     assert tabs.tabText(AddonsPage.TAB_READING_MODELS) == "Reading models"
-    assert tabs.tabText(AddonsPage.TAB_GPU) == "Performance monitoring"
 
 
 @pytest.mark.use_case("Model_Category_Guidance")

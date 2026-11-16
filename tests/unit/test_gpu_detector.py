@@ -13,6 +13,7 @@ import pytest
 from teachers_teammate.infrastructure import gpu_detector
 from teachers_teammate.infrastructure.gpu_detector import (
     GpuInfo,
+    GpuUsage,
     _parse_amd_smi,
     _parse_amd_smi_vram,
     _parse_rocm_smi,
@@ -25,6 +26,9 @@ from teachers_teammate.infrastructure.gpu_detector import (
     detect_apple_unified_memory_gb,
     detect_gpus,
     detect_nvidia,
+    read_amd_usage,
+    read_gpu_usage,
+    read_nvidia_usage,
 )
 
 # ── _parse_rocm_smi ────────────────────────────────────────────────────────
@@ -692,6 +696,114 @@ def test_read_sysfs_adapters_missing_directory_gives_empty(tmp_path) -> None:
     Then   an empty list is returned
     """
     assert _read_sysfs_adapters(tmp_path / "nope") == []
+
+
+# ── read_amd_usage / read_gpu_usage (the System Monitor's gauges) ───────────
+
+
+def _make_usage_card(
+    root, name: str, vendor: str, busy: int | None, used: int | None, total: int | None
+) -> None:
+    device = root / name / "device"
+    device.mkdir(parents=True)
+    (device / "vendor").write_text(f"{vendor}\n")
+    for file_name, value in (
+        ("gpu_busy_percent", busy),
+        ("mem_info_vram_used", used),
+        ("mem_info_vram_total", total),
+    ):
+        if value is not None:
+            (device / file_name).write_text(f"{value}\n")
+
+
+@pytest.mark.use_case("System_Resource_Monitoring")
+def test_read_amd_usage_reads_load_and_memory_from_sysfs(tmp_path) -> None:
+    """
+    Given  an AMD card whose driver publishes load and memory in sysfs
+    When   read_amd_usage is called
+    Then   the load and both memory figures come back in MB
+    """
+    _make_usage_card(tmp_path, "card0", "0x1002", 30, 2 * 2**30, 4 * 2**30)
+
+    assert read_amd_usage(tmp_path) == GpuUsage(30, vram_used_mb=2048, vram_total_mb=4096)
+
+
+def test_read_amd_usage_skips_a_card_without_the_load_file(tmp_path) -> None:
+    """
+    Given  an AMD card whose driver has no gpu_busy_percent (an older kernel)
+    When   read_amd_usage is called
+    Then   None is returned: there is nothing to show
+    """
+    _make_usage_card(tmp_path, "card0", "0x1002", None, 2 * 2**30, 4 * 2**30)
+
+    assert read_amd_usage(tmp_path) is None
+
+
+def test_read_amd_usage_keeps_the_load_when_memory_is_unreadable(tmp_path) -> None:
+    """
+    Given  an AMD card with a load figure but no memory files
+    When   read_amd_usage is called
+    Then   the load is reported and the memory stays unknown
+    """
+    _make_usage_card(tmp_path, "card0", "0x1002", 7, None, None)
+
+    assert read_amd_usage(tmp_path) == GpuUsage(7, vram_used_mb=None, vram_total_mb=None)
+
+
+def test_read_amd_usage_ignores_an_nvidia_card(tmp_path) -> None:
+    """
+    Given  sysfs with only an NVIDIA card (its load comes from NVML, not sysfs)
+    When   read_amd_usage is called
+    Then   None is returned
+    """
+    _make_usage_card(tmp_path, "card0", "0x10de", 50, 2**30, 8 * 2**30)
+
+    assert read_amd_usage(tmp_path) is None
+
+
+def test_read_nvidia_usage_reports_load_and_memory(monkeypatch) -> None:
+    """
+    Given  NVML answers with 42% utilisation and half the memory used
+    When   read_nvidia_usage is called
+    Then   the readings come back in MB and NVML is shut down again
+    """
+    fake = MagicMock()
+    fake.nvmlDeviceGetHandleByIndex.return_value = object()
+    fake.nvmlDeviceGetUtilizationRates.return_value = SimpleNamespace(gpu=42)
+    fake.nvmlDeviceGetMemoryInfo.return_value = SimpleNamespace(used=4 * 2**30, total=8 * 2**30)
+    monkeypatch.setitem(sys.modules, "pynvml", fake)
+
+    assert read_nvidia_usage() == GpuUsage(42, vram_used_mb=4096, vram_total_mb=8192)
+    fake.nvmlInit.assert_called_once()
+    fake.nvmlShutdown.assert_called_once()
+
+
+def test_read_nvidia_usage_is_none_without_a_driver(monkeypatch) -> None:
+    """
+    Given  pynvml is bundled but no NVIDIA driver answers nvmlInit
+    When   read_nvidia_usage is called
+    Then   None is returned instead of an error
+    """
+    fake = MagicMock()
+    fake.nvmlInit.side_effect = RuntimeError("no driver")
+    monkeypatch.setitem(sys.modules, "pynvml", fake)
+
+    assert read_nvidia_usage() is None
+
+
+def test_read_gpu_usage_prefers_nvml_and_falls_back_to_sysfs(monkeypatch) -> None:
+    """
+    Given  NVML answers on one call and nothing on the next
+    When   read_gpu_usage is called twice
+    Then   the first answer is NVML's and the second comes from the AMD sysfs files
+    """
+    monkeypatch.setattr(gpu_detector, "read_nvidia_usage", lambda: GpuUsage(11))
+    monkeypatch.setattr(gpu_detector, "read_amd_usage", lambda: GpuUsage(22))
+
+    assert read_gpu_usage() == GpuUsage(11)
+
+    monkeypatch.setattr(gpu_detector, "read_nvidia_usage", lambda: None)
+    assert read_gpu_usage() == GpuUsage(22)
 
 
 # ── _read_windows_adapters ──────────────────────────────────────────────────

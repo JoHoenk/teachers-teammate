@@ -787,6 +787,28 @@ def test_the_summary_puts_every_download_on_its_own_line() -> None:
     assert [item.name for item in rows.downloads()] == ["gemma4:12b", "qwen3:8b"]
 
 
+def test_a_download_whose_licence_restricts_use_says_so_in_its_tooltip() -> None:
+    """
+    Given  a plan that pulls the default reading model and a model under Apache-2.0
+    When   the download boxes are drawn
+    Then   the reading model's tooltip carries its terms, the other one only its name
+    """
+    rows = SummaryRows()
+    rows.set_rows(
+        _rows(
+            _plan(
+                _step("ocr"),
+                downloads=(
+                    _download("ocr", DEFAULT_OCR_MODEL),
+                    _download("ocr", "gemma4:12b"),
+                ),
+            )
+        )
+    )
+    assert "commercial licence" in rows._boxes[DEFAULT_OCR_MODEL].toolTip()
+    assert rows._boxes["gemma4:12b"].toolTip() == "gemma4:12b"
+
+
 def test_the_summary_hands_back_only_the_ticked_downloads() -> None:
     """
     Given  a plan with two downloads

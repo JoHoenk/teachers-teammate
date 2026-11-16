@@ -530,3 +530,21 @@ def fake_reader_store(tmp_path: Path, *, installed: bool = True):
                 handle.truncate(file.size)
         (folder / ".verified").write_text(json.dumps({}), encoding="utf-8")
     return store
+
+
+def fake_bundle(folder: Path, models) -> Path:
+    """Write *models* into *folder* the way the build's fetch script does (sparse, no content).
+
+    The files have the pinned sizes but no content, so ``is_installed`` is true and nothing can
+    run: for tests of what the app carries itself.  Returns *folder*, for ``bundled_root``.
+    """
+    import json  # noqa: PLC0415
+
+    for model in models:
+        target = folder / model.repo.split("/")[-1] / model.revision
+        target.mkdir(parents=True, exist_ok=True)
+        for file in model.files:
+            with (target / file.name).open("wb") as handle:
+                handle.truncate(file.size)
+        (target / ".verified").write_text(json.dumps({}), encoding="utf-8")
+    return folder

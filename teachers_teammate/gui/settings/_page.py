@@ -59,7 +59,6 @@ FOCUS_LOCAL_MODELS = "local_models"
 FOCUS_READING_MODELS = "reading_models"
 FOCUS_ONLINE_SERVICES = "online_services"
 FOCUS_NAME_DETECTION = "name_detection"
-FOCUS_GPU = "gpu"
 #: The banner above the tabs that offers *Update add-ons* (not a tab).
 FOCUS_ADDON_UPDATE = "addon_update"
 

@@ -690,6 +690,33 @@ py_test(
 )
 
 py_test(
+    name = "test_addon_licenses",
+    size = "small",
+    srcs = _COMMON_SRCS + ["unit/test_addon_licenses.py"],
+    args = ["unit/test_addon_licenses.py"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS + ["//tools/build:build_tools_lib"],
+)
+
+py_test(
+    name = "test_fetch_models",
+    size = "small",
+    srcs = _COMMON_SRCS + ["unit/test_fetch_models.py"],
+    args = ["unit/test_fetch_models.py"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS + _REQUESTS_DEPS + ["//tools/build:build_tools_lib"],
+)
+
+py_test(
+    name = "test_addon_lock",
+    size = "small",
+    srcs = _COMMON_SRCS + ["unit/test_addon_lock.py"],
+    args = ["unit/test_addon_lock.py"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS + ["//tools/build:build_tools_lib"],
+)
+
+py_test(
     name = "test_check_pins",
     size = "small",
     srcs = _COMMON_SRCS + ["unit/test_check_pins.py"],
@@ -2103,6 +2130,8 @@ test_suite(
     name = "unit_tests",
     tests = [
         ":test_addon_constraints",
+        ":test_addon_licenses",
+        ":test_addon_lock",
         ":test_addon_manager",
         ":test_anonymization_mask",
         ":test_anonymizer",
@@ -2135,6 +2164,7 @@ test_suite(
         ":test_exchange_schemas",
         ":test_exchange_t",
         ":test_fallback_exchange",
+        ":test_fetch_models",
         ":test_file_processor",
         ":test_frozen_modes",
         ":test_gpu_detector",

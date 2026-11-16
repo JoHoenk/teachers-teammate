@@ -794,111 +794,132 @@ def test_stats_widget_disabled_without_psutil(qtbot, monkeypatch) -> None:
 
 @pytest.mark.gui
 @pytest.mark.use_case("System_Resource_Monitoring")
-def test_stats_widget_refreshes_nvidia_metrics(qtbot, monkeypatch) -> None:
+def test_stats_widget_shows_the_gpu_rows_when_the_card_answers(qtbot, monkeypatch) -> None:
     """
-    Given  pynvml reports a GPU at 42% utilisation and half its VRAM used
-    When   a SystemStatsWidget is built and refreshed
-    Then   the GPU bar reflects the reported utilisation
+    Given  the graphics card reports 42% load and half its memory used
+    When   a SystemStatsWidget is built
+    Then   the GPU and VRAM rows appear with those readings, read off the GUI thread
     """
-    from types import SimpleNamespace  # noqa: PLC0415
-
     from teachers_teammate.gui import _stats_widget as sw  # noqa: PLC0415
+    from teachers_teammate.infrastructure.gpu_detector import GpuUsage  # noqa: PLC0415
 
-    fake_nvml = MagicMock()
-    fake_nvml.nvmlDeviceGetHandleByIndex.return_value = object()
-    fake_nvml.nvmlDeviceGetUtilizationRates.return_value = SimpleNamespace(gpu=42)
-    fake_nvml.nvmlDeviceGetMemoryInfo.return_value = SimpleNamespace(
-        used=4 * 2**30, total=8 * 2**30
+    monkeypatch.setattr(
+        sw, "read_gpu_usage", lambda: GpuUsage(42, vram_used_mb=4096, vram_total_mb=8192)
     )
-    monkeypatch.setattr(sw, "_NVML_AVAILABLE", True)
-    monkeypatch.setattr(sw, "_AMDGPU_AVAILABLE", False)
-    monkeypatch.setattr(sw, "_nvml", fake_nvml)
+
+    w = sw.SystemStatsWidget()
+    qtbot.addWidget(w)
+    qtbot.waitUntil(lambda: w._gpu_bar is not None and w._gpu_bar.value() == 42)
+
+    assert w._vram_bar is not None
+    assert w._vram_bar.value() == 50
+
+
+@pytest.mark.gui
+def test_stats_widget_shows_only_cpu_and_ram_without_a_readable_card(qtbot, monkeypatch) -> None:
+    """
+    Given  no graphics card the app can read (no NVIDIA driver, no AMD sysfs files)
+    When   a SystemStatsWidget is built and its reading has come back
+    Then   it shows CPU and RAM only, and asks nothing of the network or a package
+    """
+    from teachers_teammate.gui import _stats_widget as sw  # noqa: PLC0415
+
+    monkeypatch.setattr(sw, "read_gpu_usage", lambda: None)
+
+    w = sw.SystemStatsWidget()
+    qtbot.addWidget(w)
+    qtbot.waitUntil(lambda: not w._gpu_read_pending)
+
+    assert w._gpu_bar is None
+    assert w._vram_bar is None
+    w._refresh()  # no GPU rows: the refresh must not raise
+
+
+@pytest.mark.gui
+def test_stats_widget_creates_the_gpu_rows_when_the_first_reading_failed(
+    qtbot, monkeypatch
+) -> None:
+    """
+    Given  a card that gives no reading at start-up (driver busy, card waking up) and answers later
+    When   the widget refreshes again
+    Then   the GPU and VRAM rows appear then, not only when the first reading succeeded
+    """
+    from teachers_teammate.gui import _stats_widget as sw  # noqa: PLC0415
+    from teachers_teammate.infrastructure.gpu_detector import GpuUsage  # noqa: PLC0415
+
+    readings: list[GpuUsage] = []
+    monkeypatch.setattr(sw, "read_gpu_usage", lambda: readings[0] if readings else None)
+
+    w = sw.SystemStatsWidget()
+    qtbot.addWidget(w)
+    qtbot.waitUntil(lambda: not w._gpu_read_pending)
+    assert w._gpu_bar is None
+
+    readings.append(GpuUsage(30, vram_used_mb=1024, vram_total_mb=4096))
+    w._refresh()
+    qtbot.waitUntil(lambda: w._gpu_bar is not None and w._gpu_bar.value() == 30)
+
+    assert w._vram_bar is not None
+    assert w._vram_bar.value() == 25
+
+
+@pytest.mark.gui
+def test_stats_widget_reads_the_card_off_the_gui_thread(qtbot, monkeypatch) -> None:
+    """
+    Given  a card whose reading takes a while
+    When   the widget refreshes several times meanwhile
+    Then   the reading runs in another thread than the GUI's, and only one runs at a time
+    """
+    import threading  # noqa: PLC0415
+
+    from teachers_teammate.gui import _stats_widget as sw  # noqa: PLC0415
+    from teachers_teammate.infrastructure.gpu_detector import GpuUsage  # noqa: PLC0415
+
+    gui_thread = threading.get_ident()
+    release = threading.Event()
+    threads: list[int] = []
+
+    def slow_read() -> GpuUsage:
+        threads.append(threading.get_ident())
+        release.wait(timeout=5)
+        return GpuUsage(10, vram_used_mb=None, vram_total_mb=None)
+
+    monkeypatch.setattr(sw, "read_gpu_usage", slow_read)
 
     w = sw.SystemStatsWidget()
     qtbot.addWidget(w)
     w._refresh()
+    w._refresh()
+    release.set()
+    qtbot.waitUntil(lambda: w._gpu_bar is not None)
 
-    assert w._gpu_bar is not None
+    assert threads
+    assert gui_thread not in threads
+    assert len(threads) == 1
+
+
+@pytest.mark.gui
+def test_stats_widget_keeps_the_last_reading_when_the_driver_skips_one(qtbot, monkeypatch) -> None:
+    """
+    Given  a card that answered once and then gave no reading (a reset, a busy device)
+    When   the widget refreshes
+    Then   the last value stays on the gauge instead of an error
+    """
+    from teachers_teammate.gui import _stats_widget as sw  # noqa: PLC0415
+    from teachers_teammate.infrastructure.gpu_detector import GpuUsage  # noqa: PLC0415
+
+    readings = [GpuUsage(42, vram_used_mb=4096, vram_total_mb=8192)]
+    monkeypatch.setattr(sw, "read_gpu_usage", lambda: readings[0] if readings else None)
+
+    w = sw.SystemStatsWidget()
+    qtbot.addWidget(w)
+    qtbot.waitUntil(lambda: w._gpu_bar is not None and w._gpu_bar.value() == 42)
+
+    readings.clear()  # the driver stops answering
+    w._refresh()
+    qtbot.waitUntil(lambda: not w._gpu_read_pending)
+
     assert w._gpu_bar.value() == 42
-    assert w._vram_bar is not None
-    assert w._vram_bar.value() == 50
-
-
-@pytest.mark.gui
-def test_stats_widget_refreshes_amd_metrics(qtbot, monkeypatch) -> None:
-    """
-    Given  pyamdgpuinfo reports a GPU at 30% load and half its VRAM used
-    When   a SystemStatsWidget is built and refreshed
-    Then   the GPU bar reflects the reported load
-    """
-    from teachers_teammate.gui import _stats_widget as sw  # noqa: PLC0415
-
-    fake_gpu = MagicMock()
-    fake_gpu.query_load.return_value = 0.30
-    fake_gpu.query_vram_usage.return_value = 2 * 2**30
-    fake_gpu.query_vram_size.return_value = 4 * 2**30
-    monkeypatch.setattr(sw, "_NVML_AVAILABLE", False)
-    monkeypatch.setattr(sw, "_AMDGPU_AVAILABLE", True)
-    monkeypatch.setattr(sw, "_AMD_GPU", fake_gpu)
-
-    w = sw.SystemStatsWidget()
-    qtbot.addWidget(w)
-    w._refresh()
-
-    assert w._gpu_bar is not None
-    assert w._gpu_bar.value() == 30
-    assert w._vram_bar is not None
-    assert w._vram_bar.value() == 50
-
-
-@pytest.mark.gui
-@pytest.mark.use_case("System_Resource_Monitoring")
-def test_stats_widget_shows_gpu_rows_after_package_is_installed(qtbot, monkeypatch) -> None:
-    """
-    Given  a SystemStatsWidget without GPU monitoring (button shown)
-    When   the package becomes usable and refresh_gpu_monitoring is called
-    Then   the GPU and VRAM rows replace the button without a restart (True is returned)
-    """
-    from teachers_teammate.gui import _stats_widget as sw  # noqa: PLC0415
-
-    monkeypatch.setattr(sw, "_NVML_AVAILABLE", False)
-    monkeypatch.setattr(sw, "_AMDGPU_AVAILABLE", False)
-    w = sw.SystemStatsWidget()
-    qtbot.addWidget(w)
-    assert w._gpu_bar is None
-    assert w._gpu_button is not None
-
-    def fake_probe() -> None:
-        monkeypatch.setattr(sw, "_NVML_AVAILABLE", True)
-        monkeypatch.setattr(sw, "_nvml", MagicMock())
-
-    monkeypatch.setattr(sw, "_probe_gpu_monitoring", fake_probe)
-    assert w.refresh_gpu_monitoring() is True
-
-    assert w._gpu_bar is not None
-    assert w._vram_bar is not None
-    assert w._gpu_button is None
-
-
-@pytest.mark.gui
-def test_stats_widget_keeps_button_when_package_still_unusable(qtbot, monkeypatch) -> None:
-    """
-    Given  a SystemStatsWidget without GPU monitoring
-    When   refresh_gpu_monitoring finds nothing usable
-    Then   False is returned, the button stays and no GPU rows are added
-    """
-    from teachers_teammate.gui import _stats_widget as sw  # noqa: PLC0415
-
-    monkeypatch.setattr(sw, "_NVML_AVAILABLE", False)
-    monkeypatch.setattr(sw, "_AMDGPU_AVAILABLE", False)
-    monkeypatch.setattr(sw, "_probe_gpu_monitoring", lambda: None)
-    w = sw.SystemStatsWidget()
-    qtbot.addWidget(w)
-
-    assert w.refresh_gpu_monitoring() is False
-
-    assert w._gpu_bar is None
-    assert w._gpu_button is not None
 
 
 # ── HelpDialog ────────────────────────────────────────────────────────────

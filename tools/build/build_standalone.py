@@ -5,7 +5,8 @@ Usage (run from the repo root):
     python tools/build/build_standalone.py
 
 The bundle's contents live in the committed spec next to this file
-(``teachers-teammate.spec``); this script generates the platform icons and runs it.
+(``teachers-teammate.spec``); this script generates the platform icons, writes the add-on
+constraints, fetches the model files the app carries itself and runs the spec.
 
 Outputs:
     dist/teachers-teammate/teachers-teammate      (Linux folder)
@@ -100,6 +101,24 @@ def _write_addon_constraints() -> None:
     )
 
 
+def _write_addon_lock() -> None:
+    """Write the add-on versions this release was tested with (the spec adds it)."""
+    subprocess.run(
+        [sys.executable, str(Path(__file__).resolve().parent / "addon_lock.py")],
+        check=True,
+        cwd=ROOT,
+    )
+
+
+def _fetch_models() -> None:
+    """Fetch the model files the app carries itself (the spec adds them)."""
+    subprocess.run(
+        [sys.executable, str(Path(__file__).resolve().parent / "fetch_models.py")],
+        check=True,
+        cwd=ROOT,
+    )
+
+
 def _run() -> None:
     env = os.environ.copy()
     # PySide6 needs a display driver even at analysis time on Linux
@@ -135,6 +154,8 @@ def main() -> None:
 
     _ensure_icons()
     _write_addon_constraints()
+    _write_addon_lock()
+    _fetch_models()
     print("==> Building standalone binary…")
     _run()
     if sys.platform == "darwin":

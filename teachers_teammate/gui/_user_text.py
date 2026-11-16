@@ -141,6 +141,8 @@ OCR_ENGINE_HINTS = {
 READER_DOWNLOAD_LABEL = f"Download built-in reader ({READER_SIZE_LABEL})"
 READER_NOT_DOWNLOADED = "Not downloaded yet."
 READER_DOWNLOADED = "✓ Downloaded"
+INCLUDED = "✓ Included"
+"""What a row says when the app carries the files itself: nothing to download."""
 
 # ── Image preparation: the two choices, the page models, the preview caption ──
 

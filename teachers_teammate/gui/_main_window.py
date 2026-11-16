@@ -46,11 +46,8 @@ from PySide6.QtWidgets import (
 )
 import qdarkstyle
 
-from .. import __version__
 from ..application.sent_text import SentTexts
 from ..application.service import (
-    ADDON_AMD,
-    ADDON_NVIDIA,
     ADDON_PRIVACY,
     DocxExport,
     IssueKind,
@@ -129,7 +126,7 @@ from .settings import (
     SettingsWindow,
     last_page,
 )
-from .settings._page import FOCUS_DETECTION, FOCUS_GPU
+from .settings._page import FOCUS_DETECTION
 
 if TYPE_CHECKING:
     from .benchmark._benchmark_window import BenchmarkWindow
@@ -427,7 +424,6 @@ class MainWindow(QMainWindow):
 
         self._load_credentials_from_settings()
         self._load_toml_if_present()
-        self._install_gpu_monitoring_in_background()
 
     def _init_menu_state(self) -> None:
         """Declare what the menu bar fills in and the tools open later."""
@@ -901,9 +897,6 @@ class MainWindow(QMainWindow):
         self._monitor = SystemMonitorWindow()
         self._chart = self._monitor.chart
         self._stats = self._monitor.stats
-        self._stats.open_downloads_requested.connect(
-            lambda: self.open_settings(SettingsPage.ADDONS, focus=FOCUS_GPU)
-        )
 
         return self._tabs
 
@@ -995,75 +988,6 @@ class MainWindow(QMainWindow):
             )
         self._log.append_text(f"NOTICE: {message}\n")
         QMessageBox.information(self, "Text recognition changed", message)
-
-    #: QSettings: "yes"/"no" once the user answered the GPU-monitoring download question.
-    _GPU_MONITORING_CHOICE_KEY = "gpu_monitoring/download"
-    #: QSettings: app version in which the automatic download last failed.
-    _GPU_MONITORING_FAILED_KEY = "gpu_monitoring/failed_in_version"
-
-    def _install_gpu_monitoring_in_background(self) -> None:
-        """Offer the live GPU monitoring package for this computer's GPU, if missing.
-
-        Looks for the need in the background; does nothing in source checkouts,
-        without a supported GPU, or when the package is already installed.
-        """
-        run_in_background(
-            self._app_service.pending_gpu_monitoring_addon,
-            self._on_gpu_monitoring_needed,
-            owner=self,
-        )
-
-    def _on_gpu_monitoring_needed(self, addon: object, error: BaseException | None) -> None:
-        """Ask once before downloading the monitoring package, then install it."""
-        if error is not None or not isinstance(addon, str):
-            return
-        qs = QSettings(self._QSETTINGS_ORG, self._QSETTINGS_APP)
-        choice = str(qs.value(self._GPU_MONITORING_CHOICE_KEY, "") or "")
-        if choice == "no":
-            return
-        if str(qs.value(self._GPU_MONITORING_FAILED_KEY, "") or "") == __version__:
-            return  # it failed before; Add-ons installs it on request
-        if choice != "yes":
-            answer = QMessageBox.question(
-                self,
-                "Show GPU usage?",
-                "Teacher's Teammate can show how busy your graphics card is in the "
-                "System Monitor.\n\n"
-                "This downloads one small package from the Python Package Index "
-                "(PyPI); no documents or personal data are sent.\n\n"
-                f"Download it now? You can also do this later under {txt.WHERE_ADDONS}.",
-            )
-            choice = "yes" if answer == QMessageBox.StandardButton.Yes else "no"
-            qs.setValue(self._GPU_MONITORING_CHOICE_KEY, choice)
-            if choice == "no":
-                return
-        self._log.append_text("Downloading the GPU monitoring package for the System Monitor…\n")
-        service = self._app_service
-        run_in_background(
-            lambda: service.install_gpu_monitoring(addon),
-            lambda _result, err: self._on_gpu_monitoring_installed(addon, err),
-            owner=self,
-        )
-
-    def _on_gpu_monitoring_installed(self, addon: object, error: BaseException | None) -> None:
-        if error is not None:
-            QSettings(self._QSETTINGS_ORG, self._QSETTINGS_APP).setValue(
-                self._GPU_MONITORING_FAILED_KEY, __version__
-            )
-            self._log.append_text(
-                f"NOTICE: GPU monitoring could not be installed: {error}\n"
-                f"It can be installed later under {txt.WHERE_ADDONS}.\n"
-            )
-            return
-        if addon is None:
-            return
-        if self._stats.refresh_gpu_monitoring():
-            self._log.append_text("Installed GPU monitoring for the System Monitor.\n")
-        else:
-            self._log.append_text(
-                "NOTICE: GPU monitoring was installed, but the driver gives no readings "
-                "for this graphics card.\n"
-            )
 
     def _open_setup_assistant_first_start(self) -> None:
         """Open the assistant on a first start, on top of the window that just appeared."""
@@ -2937,7 +2861,6 @@ class MainWindow(QMainWindow):
         )
         window.packages_changed.connect(self._start_readiness_check)
         window.packages_changed.connect(self._on_packages_changed)
-        window.packages_changed.connect(self._stats.refresh_gpu_monitoring)
         window.addon_installed.connect(self._on_addon_installed)
         # What the Privacy page showed: its checkbox was usable only if hiding was possible
         # when the window opened (later changes to the panel must not decide that).
@@ -3003,8 +2926,6 @@ class MainWindow(QMainWindow):
             self._log.append_text("The built-in reader is downloaded.\n")
         elif addon == PAGE_MODELS_ADDON_ID:
             self._log.append_text("The page models are downloaded.\n")
-        elif addon in (ADDON_NVIDIA, ADDON_AMD):
-            self._stats.refresh_gpu_monitoring()
         self._start_readiness_check()
 
     def _on_preprocess_preview_requested(

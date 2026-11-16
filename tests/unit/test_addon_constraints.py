@@ -7,6 +7,7 @@ import subprocess
 
 import pytest
 
+from teachers_teammate.infrastructure.addon_manager import addon_requirements
 from tools.build import addon_constraints, check_addon_resolution
 
 
@@ -100,19 +101,17 @@ def test_python_dry_run_command_is_the_same_question_without_the_app(tmp_path: P
     assert command[-1] == "spacy>=3.7"
 
 
-def test_addons_to_check_leaves_the_amd_addon_to_linux() -> None:
+def test_addons_to_check_is_the_list_the_app_offers() -> None:
     """
     Given  the add-ons the app installs
-    When   the list for macOS and for Linux is worked out
-    Then   pyamdgpuinfo is checked on Linux only, and every other add-on on both
+    When   the list to check is worked out
+    Then   it is exactly the app's own list, with no platform exception left
     """
-    macos = check_addon_resolution.addons_to_check("darwin")
-    linux = check_addon_resolution.addons_to_check("linux")
+    checked = check_addon_resolution.addons_to_check()
 
-    assert "amd" not in macos
-    assert macos["privacy"] == ["spacy>=3.7"]
-    assert linux["amd"] == ["pyamdgpuinfo"]
-    assert set(macos) == set(linux) - {"amd"}
+    assert checked == addon_requirements()
+    assert checked["privacy"] == ["spacy>=3.7"]
+    assert "nvidia" not in checked and "amd" not in checked
 
 
 def test_check_addon_reports_the_end_of_pips_output_when_it_fails(
@@ -138,3 +137,73 @@ def test_check_addon_reports_the_end_of_pips_output_when_it_fails(
     assert "line 29" in failed
     assert "line 5" not in failed
     assert passed == ""
+
+
+def test_the_dry_run_passes_the_add_on_lock_as_a_second_constraints_file(tmp_path: Path) -> None:
+    """
+    Given  an app, the bundle's constraints and the add-on lock
+    When   the check's commands are built with and without the lock
+    Then   with it pip gets both files as ``-c``, in the order the app uses; without it only one
+    """
+    for command in (
+        check_addon_resolution.dry_run_command(
+            tmp_path / "app", tmp_path / "c.txt", tmp_path / "t", ["spacy"], tmp_path / "l.txt"
+        ),
+        check_addon_resolution.python_dry_run_command(
+            tmp_path / "py", tmp_path / "c.txt", tmp_path / "t", ["spacy"], tmp_path / "l.txt"
+        ),
+    ):
+        constraint_files = [command[i + 1] for i, word in enumerate(command) if word == "-c"]
+        assert constraint_files == [str(tmp_path / "c.txt"), str(tmp_path / "l.txt")]
+        assert command[-1] == "spacy"
+
+    without = check_addon_resolution.dry_run_command(
+        tmp_path / "app", tmp_path / "c.txt", tmp_path / "t", ["spacy"]
+    )
+    assert without.count("-c") == 1
+
+
+def test_find_lock_looks_next_to_the_constraints(tmp_path: Path) -> None:
+    """
+    Given  a PyInstaller folder build with the add-on lock under _internal
+    When   the lock is looked for from the executable
+    Then   it is found, and a bundle without it raises
+    """
+    app = tmp_path / "teachers-teammate"
+    with pytest.raises(FileNotFoundError, match="add-on lock"):
+        check_addon_resolution.find_lock(app)
+    target = tmp_path / "_internal" / "teachers_teammate" / "_build" / "addon_lock.txt"
+    target.parent.mkdir(parents=True)
+    target.write_text("spacy==3.8.18\n", encoding="utf-8")
+
+    assert check_addon_resolution.find_lock(app) == target
+
+
+def test_main_resolves_every_add_on_against_the_newest_and_the_lock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """
+    Given  a constraints file, an add-on lock and a pip that fails only for the locked run
+    When   the check runs for a build environment
+    Then   each add-on is tried without and with the lock, and a failing lock makes the run red
+    """
+    constraints = tmp_path / "c.txt"
+    constraints.write_text("numpy==2.5.4\n", encoding="utf-8")
+    lock = tmp_path / "l.txt"
+    lock.write_text("spacy==3.8.18\n", encoding="utf-8")
+    seen: list[int] = []
+
+    def fake_run(command, **_kwargs):
+        seen.append(command.count("-c"))
+        return subprocess.CompletedProcess(command, 1 if command.count("-c") == 2 else 0, "", "")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    monkeypatch.setattr(check_addon_resolution, "addons_to_check", lambda: {"privacy": ["spacy"]})
+    arguments = ["--python", "python", "--constraints", str(constraints)]
+
+    assert check_addon_resolution.main([*arguments, "--lock", str(lock)]) == 1
+    assert seen == [1, 2]
+
+    seen.clear()
+    assert check_addon_resolution.main(arguments) == 0
+    assert seen == [1]

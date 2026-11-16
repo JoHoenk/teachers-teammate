@@ -108,3 +108,65 @@ def test_addon_constraints_check_compares_the_bundle_with_what_is_running(
 
     pins.unlink()
     assert "is not in the bundle" in (frozen_modes._check_addon_constraints() or "")
+
+
+def test_addon_lock_check_wants_every_addon_pinned(tmp_path: Path, monkeypatch) -> None:
+    """
+    Given  a frozen bundle whose add-on lock pins the add-ons' own packages
+    When   the add-on lock check runs, and again with spaCy left out
+    Then   the first passes and the second names spacy; a bundle without the file fails too
+    """
+    import sys  # noqa: PLC0415
+
+    from teachers_teammate.infrastructure import addon_manager  # noqa: PLC0415
+
+    bundle = tmp_path / "bundle"
+    lock = bundle / addon_manager.ADDON_LOCK_RELATIVE
+    lock.parent.mkdir(parents=True)
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "_MEIPASS", str(bundle), raising=False)
+    names = addon_manager.addon_package_names()
+    lock.write_text("".join(f"{name}==1.0\n" for name in names), encoding="utf-8")
+
+    assert frozen_modes._check_addon_lock() is None
+
+    lock.write_text(
+        "".join(f"{name}==1.0\n" for name in names if name != "spacy"), encoding="utf-8"
+    )
+    assert "spacy" in (frozen_modes._check_addon_lock() or "")
+
+    lock.unlink()
+    assert "is not in the bundle" in (frozen_modes._check_addon_lock() or "")
+
+
+def test_bundled_models_check_ignores_models_downloaded_earlier(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """
+    Given  a frozen bundle without its model files, on a computer that downloaded them earlier
+    When   the bundled-models check runs
+    Then   it fails and names the models, instead of passing on the downloaded copy
+    """
+    import sys  # noqa: PLC0415
+
+    from teachers_teammate.domain.local_models import PAGE_MODELS, READER_MODELS  # noqa: PLC0415
+    from teachers_teammate.infrastructure.onnx.store import MODELS_DIR_ENV  # noqa: PLC0415
+
+    downloads = tmp_path / "downloads"
+    for model in (*READER_MODELS, *PAGE_MODELS):
+        folder = downloads / model.repo.split("/")[-1] / model.revision
+        folder.mkdir(parents=True)
+        (folder / ".verified").write_text(model.revision, encoding="utf-8")
+        for file in model.files:
+            (folder / file.name).write_bytes(b"x" * file.size)
+    bundle = tmp_path / "bundle"
+    (bundle / "teachers_teammate" / "_models").mkdir(parents=True)
+    monkeypatch.setenv(MODELS_DIR_ENV, str(downloads))
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "_MEIPASS", str(bundle), raising=False)
+
+    result = frozen_modes._check_bundled_models()
+
+    assert result is not None
+    assert "not in the bundle" in result
+    assert READER_MODELS[0].key in result

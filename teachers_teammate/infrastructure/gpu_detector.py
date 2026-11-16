@@ -1,4 +1,4 @@
-"""Cross-platform GPU detection for NVIDIA and AMD GPUs.
+"""Cross-platform GPU detection for NVIDIA and AMD GPUs, and their live load.
 
 Uses what the operating system and the drivers already provide rather than any
 Python package so that detection works before any addon is installed.  Sources,
@@ -8,13 +8,16 @@ in the order they are tried:
   - Linux:   sysfs ``/sys/class/drm`` (vendor of every card, VRAM of AMD)
   - NVIDIA:  nvidia-smi  (needed on Linux for name and memory; Windows fallback; also
              looked up at its usual install paths when it is not on PATH), then the
-             optional ``pynvml`` package when it is installed
+             bundled ``pynvml`` package (``nvidia-ml-py``)
   - AMD:     rocm-smi    (ROCm < 5.7) / amd-smi (ROCm 5.7+): the marketing name on
              Linux, and the fallback when the operating system has no answer
 
 AMD integrated graphics (a small slice of system RAM) is not reported: it cannot run
 a model and would otherwise hide a discrete card whose memory is unknown.
   - Apple:   unified memory via psutil (Apple Silicon shares RAM between CPU/GPU)
+
+The live load of the System Monitor (:func:`read_gpu_usage`) needs no add-on either:
+NVML for NVIDIA, and the ``amdgpu`` driver's own sysfs files for AMD.
 """
 
 from __future__ import annotations
@@ -41,6 +44,18 @@ class GpuInfo:
     name: str
     #: Dedicated graphics memory in MB, or None when it could not be read.
     vram_mb: int | None = None
+
+
+@dataclass
+class GpuUsage:
+    """How busy one graphics card is right now, and how much of its memory it uses."""
+
+    #: Share of the card's computing units in use, 0 to 100.
+    busy_percent: int
+    #: Dedicated graphics memory in use, in MB, or None when it could not be read.
+    vram_used_mb: int | None = None
+    #: Dedicated graphics memory in total, in MB, or None when it could not be read.
+    vram_total_mb: int | None = None
 
 
 _VENDOR_IDS = {0x10DE: "nvidia", 0x1002: "amd"}
@@ -428,6 +443,24 @@ def _read_windows_adapters() -> list[GpuInfo] | None:
     return gpus
 
 
+def _sysfs_cards(root: Path = _SYSFS_DRM) -> list[tuple[str, Path]]:
+    """Return ``(vendor, device folder)`` of every NVIDIA/AMD card in *root*, in card order."""
+    try:
+        cards = sorted(path for path in root.iterdir() if re.fullmatch(r"card\d+", path.name))
+    except OSError:
+        return []
+    found: list[tuple[str, Path]] = []
+    for card in cards:
+        device = card / "device"
+        try:
+            vendor = _VENDOR_IDS.get(int((device / "vendor").read_text().strip(), 16))
+        except OSError, ValueError:
+            continue
+        if vendor is not None:
+            found.append((vendor, device))
+    return found
+
+
 def _read_sysfs_adapters(root: Path = _SYSFS_DRM) -> list[GpuInfo]:
     """Return NVIDIA/AMD cards from Linux sysfs (no process started).
 
@@ -437,19 +470,8 @@ def _read_sysfs_adapters(root: Path = _SYSFS_DRM) -> list[GpuInfo]:
     exists on some AMD cards), so the generic ``"NVIDIA GPU"``/``"AMD GPU"`` is used
     until a vendor tool supplies one (see :func:`_prefer_complete`).
     """
-    try:
-        cards = sorted(path for path in root.iterdir() if re.fullmatch(r"card\d+", path.name))
-    except OSError:
-        return []
     gpus: list[GpuInfo] = []
-    for card in cards:
-        device = card / "device"
-        try:
-            vendor = _VENDOR_IDS.get(int((device / "vendor").read_text().strip(), 16))
-        except OSError, ValueError:
-            continue
-        if vendor is None:
-            continue
+    for vendor, device in _sysfs_cards(root):
         vram: int | None = None
         if vendor == "amd":
             try:
@@ -532,3 +554,78 @@ def detect_gpus() -> list[GpuInfo]:
         gpus,
     )
     return gpus
+
+
+# ── live load (System Monitor) ────────────────────────────────────────────────
+
+
+def read_nvidia_usage() -> GpuUsage | None:
+    """Return the live load of the first NVIDIA card through NVML, or ``None``.
+
+    ``nvidia-ml-py`` is bundled (60 KB, pure Python), so this needs no add-on; without
+    an NVIDIA driver ``nvmlInit`` fails and the answer is ``None``.
+    """
+    try:
+        import pynvml  # noqa: PLC0415
+    except ImportError:
+        return None
+    try:
+        pynvml.nvmlInit()
+        try:
+            handle = pynvml.nvmlDeviceGetHandleByIndex(0)
+            utilisation = pynvml.nvmlDeviceGetUtilizationRates(handle)
+            memory = pynvml.nvmlDeviceGetMemoryInfo(handle)
+        finally:
+            pynvml.nvmlShutdown()
+    except Exception as exc:  # noqa: BLE001  # NVML raises its own error type per failure (no driver, no device); the gauge must degrade, not fail
+        _logger.info("NVML could not read the GPU's load: %s", exc)
+        return None
+    return GpuUsage(
+        busy_percent=int(utilisation.gpu),
+        vram_used_mb=_bytes_to_mb(int(memory.used)),
+        vram_total_mb=_bytes_to_mb(int(memory.total)),
+    )
+
+
+def read_amd_usage(root: Path = _SYSFS_DRM) -> GpuUsage | None:
+    """Return the live load of the first AMD card from sysfs, or ``None``.
+
+    The ``amdgpu`` driver publishes ``gpu_busy_percent`` and the two
+    ``mem_info_vram_*`` files (bytes) per card, so no package is needed.  A card whose
+    driver does not provide them (an older kernel, a virtual machine) gives ``None``.
+    """
+    for vendor, device in _sysfs_cards(root):
+        if vendor != "amd":
+            continue
+        busy = _read_int(device / "gpu_busy_percent")
+        if busy is None:
+            continue
+        return GpuUsage(
+            busy_percent=max(0, min(100, busy)),
+            vram_used_mb=_read_mb(device / "mem_info_vram_used"),
+            vram_total_mb=_read_mb(device / "mem_info_vram_total"),
+        )
+    return None
+
+
+def read_gpu_usage() -> GpuUsage | None:
+    """Return the live load of the first graphics card, or ``None`` when none answers.
+
+    NVIDIA through NVML, AMD through sysfs.  Cheap enough for the System Monitor's
+    one-second refresh, and it starts no process.
+    """
+    return read_nvidia_usage() or read_amd_usage()
+
+
+def _read_int(path: Path) -> int | None:
+    """Return the integer in *path*, or ``None`` when it is missing or not a number."""
+    try:
+        return int(path.read_text().strip())
+    except OSError, ValueError:
+        return None
+
+
+def _read_mb(path: Path) -> int | None:
+    """Return the byte count in *path* as MB, or ``None`` when it is missing."""
+    value = _read_int(path)
+    return _bytes_to_mb(value) if value is not None else None

@@ -6,9 +6,9 @@ before the splash screen and before any heavy import.
 
 ``run_smoke_test`` is what proves a build is complete: the modules the app loads lazily,
 Qt's image plugins, the reader's OpenCV runtime, PDF and DOCX writing, the provider list,
-the bundled assets, the pip dispatch and the add-on constraints. CI runs it on every build (see
-``.github/workflows/build_artifacts.yml``) and the Windows installer test runs it again on
-the installed copy.
+the bundled assets, the model files the app carries itself, the pip dispatch and the add-on
+constraints and lock. CI runs it on every build (see ``.github/workflows/build_artifacts.yml``)
+and the Windows installer test runs it again on the installed copy.
 
 ``forget_keys`` is what the uninstaller calls before it removes the program files: the API
 keys sit in the system keychain, which no uninstaller can enumerate.
@@ -55,6 +55,7 @@ _MIN_CV_MAJOR = 5
 # splash image. A missing one is silent in the GUI (an empty tab, no picture), so check it.
 _ASSETS: tuple[str, ...] = (
     "teachers_teammate/assets/third_party_licenses.md",
+    "teachers_teammate/assets/addon_licenses.csv",
     "teachers_teammate/assets/teachers_teammate.png",
     "teachers_teammate/assets/teachers_teammate_icon.png",
     "docs/using_the_app.md",
@@ -217,6 +218,41 @@ def _check_addon_constraints() -> str | None:
     return "; ".join(problems) or None
 
 
+def _check_addon_lock() -> str | None:
+    """Check that the add-on lock ships and pins the add-ons themselves (frozen only).
+
+    The installed app gives this file to pip as a second ``-c``; a bundle without it would
+    install whatever version of spaCy or langchain-openai is newest that day.
+    """
+    from teachers_teammate.infrastructure import addon_manager  # noqa: PLC0415
+
+    path = addon_manager.addon_lock_path()
+    if path is None:
+        return f"{addon_manager.ADDON_LOCK_RELATIVE} is not in the bundle"
+    pins = addon_manager.read_constraints(path)
+    if not pins:
+        return f"{path.name} lists no package"
+    missing = [name for name in addon_manager.addon_package_names() if name not in pins]
+    return f"not pinned: {', '.join(missing)}" if missing else None
+
+
+def _check_bundled_models() -> str | None:
+    """Check that the reader and the page models ship with the app (frozen only).
+
+    They are what makes the default setup work without a download; a bundle without them would
+    still start, and only ask a teacher for files the installer was supposed to bring.
+    """
+    from teachers_teammate.domain.local_models import PAGE_MODELS, READER_MODELS  # noqa: PLC0415
+    from teachers_teammate.infrastructure.onnx.store import ModelStore  # noqa: PLC0415
+
+    # The bundle alone: a model downloaded earlier into the user's folder must not hide a build
+    # that left its own copy out.
+    missing = ModelStore().bundled_missing((*READER_MODELS, *PAGE_MODELS))
+    if missing:
+        return "not in the bundle: " + ", ".join(model.key for model in missing)
+    return None
+
+
 def _check_keychain() -> str | None:
     """Check that a real keychain backend is available (Windows and macOS only)."""
     import keyring  # noqa: PLC0415
@@ -241,8 +277,10 @@ def _checks() -> list[tuple[str, Check]]:
     if frozen:
         checks += [
             ("assets", _check_assets),
+            ("models", _check_bundled_models),
             ("pip", _check_pip),
             ("addon constraints", _check_addon_constraints),
+            ("addon lock", _check_addon_lock),
         ]
     if sys.platform in ("win32", "darwin"):
         checks.append(("keychain", _check_keychain))

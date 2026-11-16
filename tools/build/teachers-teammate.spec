@@ -146,6 +146,39 @@ if not _ADDON_CONSTRAINTS.is_file():
         "(or run tools/build/addon_constraints.py first)"
     )
 datas.append((str(_ADDON_CONSTRAINTS), "teachers_teammate/_build"))
+
+# The add-on versions this release was tested with, written by build_standalone.py next to the
+# constraints file.  The installed app gives it to pip as a second `-c`, so an add-on install
+# gets the versions the weekly resolution check ran, not whatever is newest that day.
+_ADDON_LOCK = ROOT / "teachers_teammate" / "_build" / "addon_lock.txt"
+if not _ADDON_LOCK.is_file():
+    raise SystemExit(
+        f"{_ADDON_LOCK} is missing: build with tools/build/build_standalone.py "
+        "(or run tools/build/addon_lock.py first)"
+    )
+datas.append((str(_ADDON_LOCK), "teachers_teammate/_build"))
+
+# The model files the app carries itself: the built-in reader and the page models, fetched by
+# tools/build/fetch_models.py.  Without them the app would ask a teacher to download what the
+# installer was supposed to bring, so a build without them is refused here rather than shipped.
+_MODELS = ROOT / "teachers_teammate" / "_models"
+if not _MODELS.is_dir():
+    raise SystemExit(
+        f"{_MODELS} is missing: build with tools/build/build_standalone.py "
+        "(or run tools/build/fetch_models.py first)"
+    )
+# A folder that exists is not enough: a cancelled fetch or an older revision pin leaves one that
+# holds nothing, or the wrong files, and the app would then ask for a download after all.
+sys.path.insert(0, str(ROOT))
+from tools.build.fetch_models import incomplete as _incomplete_models  # noqa: E402
+
+_INCOMPLETE = _incomplete_models(_MODELS)
+if _INCOMPLETE:
+    raise SystemExit(
+        f"{_MODELS} does not hold every pinned model file: {', '.join(_INCOMPLETE)}. "
+        "Run tools/build/fetch_models.py again."
+    )
+datas.append((str(_MODELS), "teachers_teammate/_models"))
 binaries = []
 hiddenimports = [
     # Providers are discovered at runtime from the providers folder (bundled as data above);

@@ -37,7 +37,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ...application.service import ProcessingApplicationService
+from ...application.service import ProcessingApplicationService, bundled_status_key
 from ...config import DEFAULTS
 from ...domain.local_models import READER_SIZE_LABEL
 from ...domain.model_catalog import (
@@ -45,12 +45,14 @@ from ...domain.model_catalog import (
     ModelCategory,
     ModelRating,
     ModelUses,
+    OllamaModelSpec,
     Suitability,
     best_model,
     find_spec,
     normalize_tag,
     suitability_rank,
 )
+from ...infrastructure.addon_licenses import license_tooltip
 from .. import _user_text as txt
 from .._background import LatestTask
 from .._constants import _SPACY_MODEL_CHOICES as _SPACY_MODEL_DOWNLOAD_CHOICES
@@ -82,7 +84,6 @@ from .._model_wording import (
 )
 from ._page import (
     FOCUS_ADDON_UPDATE,
-    FOCUS_GPU,
     FOCUS_LOCAL_MODELS,
     FOCUS_NAME_DETECTION,
     FOCUS_ONLINE_SERVICES,
@@ -102,7 +103,6 @@ TAB_LOCAL_MODELS = "AI models for this computer"
 TAB_READING_MODELS = txt.TAB_READING_MODELS
 TAB_ONLINE_SERVICES = "Online AI services"
 TAB_NAME_DETECTION = "Name detection"
-TAB_GPU = "Performance monitoring"
 CLOSE_BLOCKED = (
     "An installation is still running. Please wait until it has finished — the new package "
     "must be set up before the app can use it."
@@ -116,17 +116,6 @@ _OLLAMA_GROUPS: dict[str, tuple[str, ModelCategory | None]] = {
 }
 
 _GREY = QColor("#888888")
-
-_GPU_DL_PACKAGES: dict[str, str] = {
-    "gpu:nvidia": "nvidia-ml-py",
-    "gpu:amd": "pyamdgpuinfo",
-}
-
-# Importable module names for detection (pip package names differ for nvidia)
-_GPU_MODULE_NAMES: dict[str, str] = {
-    "gpu:nvidia": "pynvml",
-    "gpu:amd": "pyamdgpuinfo",
-}
 
 _PROVIDER_LABELS: dict[str, str] = {
     "openai": "OpenAI  (langchain-openai)",
@@ -152,6 +141,22 @@ def _human_size(n: int) -> str:
     return str(n)  # unreachable but keeps type-checker happy
 
 
+def _installed_mark(key: str, results: dict[str, object]) -> str:
+    """Return what an installed row says: *included* when the app carries the files itself."""
+    if results.get(bundled_status_key(key)):
+        return txt.INCLUDED
+    if key in (READER_ITEM, PAGE_MODELS_ITEM):
+        return txt.READER_DOWNLOADED
+    return "✓ Installed"
+
+
+def _model_tooltip(spec: OllamaModelSpec) -> str:
+    """Return the tooltip of a model row: what it is for, and the terms it comes under."""
+    if spec.licence is None:
+        return spec.note
+    return f"{spec.note}\n\nLicence: {spec.licence.name} — {spec.licence.url}"
+
+
 def _detect_installed(
     svc: ProcessingApplicationService, ollama_url: str, models: list[str]
 ) -> dict[str, object]:
@@ -162,7 +167,6 @@ def _detect_installed(
             name: module for name, (module, _pip) in svc.list_provider_packages().items()
         },
         spacy_models=spacy_models,
-        gpu_packages=_GPU_MODULE_NAMES,
         ollama_models=list(models),
         ollama_url=ollama_url,
     )
@@ -198,14 +202,12 @@ class AddonsPage(SettingsPageBase):
     TAB_ONLINE_SERVICES = 1
     TAB_NAME_DETECTION = 2
     TAB_READING_MODELS = 3
-    TAB_GPU = 4
 
     _FOCUS_TABS: ClassVar[dict[str, int]] = {
         FOCUS_LOCAL_MODELS: TAB_LOCAL_MODELS,
         FOCUS_READING_MODELS: TAB_READING_MODELS,
         FOCUS_ONLINE_SERVICES: TAB_ONLINE_SERVICES,
         FOCUS_NAME_DETECTION: TAB_NAME_DETECTION,
-        FOCUS_GPU: TAB_GPU,
     }
 
     def __init__(self, context: SettingsContext, parent: QWidget | None = None) -> None:
@@ -259,7 +261,6 @@ class AddonsPage(SettingsPageBase):
         self._tabs.addTab(self._build_providers_tab(), TAB_ONLINE_SERVICES)
         self._tabs.addTab(self._build_spacy_tab(), TAB_NAME_DETECTION)
         self._tabs.addTab(self._build_reading_models_tab(), TAB_READING_MODELS)
-        self._tabs.addTab(self._build_gpu_tab(), TAB_GPU)
 
         self._build_status_and_actions(main)
         self._refresh_update_banner()
@@ -351,8 +352,7 @@ class AddonsPage(SettingsPageBase):
         intro = QLabel(
             "The built-in reader reads pages on this computer, without a server. "
             f"{txt.OCR_ENGINE_HINTS['ppocr']} Its model files, and the page models of the "
-            "automatic image preparation, come from PaddlePaddle (Apache-2.0) and are "
-            "downloaded once, only when you ask for them."
+            "automatic image preparation, come from PaddlePaddle (Apache-2.0)."
         )
         intro.setWordWrap(True)
         group_layout.addWidget(intro)
@@ -387,6 +387,7 @@ class AddonsPage(SettingsPageBase):
         for prov, (_, pip_pkg) in self._provider_packages.items():
             lbl = _PROVIDER_LABELS.get(prov) or f"{self._provider_name(prov)}  ({pip_pkg})"
             cb = QCheckBox(lbl)
+            cb.setToolTip(license_tooltip(pip_pkg))
             self._dl_checkboxes[f"{PROVIDER_PREFIX}{prov}"] = cb
             group_layout.addWidget(cb)
         layout.addWidget(group)
@@ -474,8 +475,8 @@ class AddonsPage(SettingsPageBase):
         """Build the grouped model tree and populate it from the catalog."""
         tree = QTreeWidget()
         tree.setMinimumHeight(320)
-        tree.setColumnCount(4)
-        tree.setHeaderLabels(["Model", "Suitability", "Memory", "Size"])
+        tree.setColumnCount(5)
+        tree.setHeaderLabels(["Model", "Suitability", "Memory", "Size", "License"])
         hdr = tree.header()
         # The model name is what the user needs most: it takes the free width and can
         # never shrink below a readable minimum, the other columns fit their content.
@@ -483,7 +484,7 @@ class AddonsPage(SettingsPageBase):
         hdr.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         hdr.setMinimumSectionSize(70)
         tree.setColumnWidth(0, 300)
-        for col in (1, 2, 3):
+        for col in (1, 2, 3, 4):
             hdr.setSectionResizeMode(col, QHeaderView.ResizeMode.ResizeToContents)
         for key, (label, _category) in _OLLAMA_GROUPS.items():
             group_item = QTreeWidgetItem([label])
@@ -511,7 +512,12 @@ class AddonsPage(SettingsPageBase):
         if spec is not None:
             item.setText(2, memory_text(spec.memory_gb))
             item.setText(3, f"{spec.download_gb:g} GB")
-            item.setToolTip(0, spec.note)
+            item.setToolTip(0, _model_tooltip(spec))
+            if spec.licence is not None and spec.licence.note:
+                # Only a licence that restricts use gets a word in the row; the terms of every
+                # model are in the name's tooltip.
+                item.setText(4, spec.licence.name)
+                item.setToolTip(4, f"{spec.licence.note}\n{spec.licence.url}")
         else:
             item.setText(2, "—")
             item.setText(3, "—")
@@ -751,6 +757,7 @@ class AddonsPage(SettingsPageBase):
         intro.setStyleSheet("color: #aaa; font-size: 9pt;")
         install_layout.addWidget(intro)
         cb_spacy = QCheckBox("spaCy  (spacy)")
+        cb_spacy.setToolTip(license_tooltip("spacy"))
         self._dl_checkboxes["spacy"] = cb_spacy
         install_layout.addWidget(cb_spacy)
         layout.addWidget(install_group)
@@ -762,22 +769,6 @@ class AddonsPage(SettingsPageBase):
             self._dl_checkboxes[f"spacy:{model_id}"] = cb
             model_layout.addWidget(cb)
         layout.addWidget(model_group)
-        layout.addStretch(1)
-        return self._scrolled(content)
-
-    def _build_gpu_tab(self) -> QScrollArea:
-        content = QWidget()
-        layout = QVBoxLayout(content)
-        group = QGroupBox("Performance monitoring")
-        group_layout = QVBoxLayout(group)
-        for key, lbl in [
-            ("gpu:nvidia", "NVIDIA monitoring  (nvidia-ml-py)"),
-            ("gpu:amd", "AMD monitoring  (pyamdgpuinfo — Linux only)"),
-        ]:
-            cb = QCheckBox(lbl)
-            self._dl_checkboxes[key] = cb
-            group_layout.addWidget(cb)
-        layout.addWidget(group)
         layout.addStretch(1)
         return self._scrolled(content)
 
@@ -903,10 +894,7 @@ class AddonsPage(SettingsPageBase):
             installed = results.get(key, False)
             base = cb.text().split("  ✓")[0]
             if installed:
-                cb.setText(
-                    f"{base}  "
-                    f"{txt.READER_DOWNLOADED if key in (READER_ITEM, PAGE_MODELS_ITEM) else '✓ Installed'}"
-                )
+                cb.setText(f"{base}  {_installed_mark(key, results)}")
                 cb.setChecked(True)
                 cb.setEnabled(False)
             else:
@@ -998,10 +986,6 @@ class AddonsPage(SettingsPageBase):
             cb = self._dl_checkboxes.get(f"{PROVIDER_PREFIX}{provider}")
             if cb and cb.isChecked() and cb.isEnabled():
                 packages.append(pip_pkg)
-        for key, pkg in _GPU_DL_PACKAGES.items():
-            cb = self._dl_checkboxes.get(key)
-            if cb and cb.isChecked() and cb.isEnabled():
-                packages.append(pkg)
         return packages
 
     def _on_download_install(self) -> None:

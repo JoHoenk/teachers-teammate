@@ -138,6 +138,12 @@ class Text:
     tp: int = 90
     fp: int = 10
     fn: int = 10
+    located: int | None = None
+    """Reference changes the model touched at all; the exact ones when ``None``."""
+    ref_edits: int | None = None
+    """Reference changes of the text; ``tp + fn`` when ``None``."""
+    stores_located: bool = True
+    """``False`` writes the text like a run of an earlier version: no located count, no ref_edits."""
     alone: int = 50
     alone_of: int = 100
     cover: int = 90
@@ -184,6 +190,9 @@ class Text:
             "cover_of": self.cover_of,
             **(self.counts if self.counts is not None else gleu_scores()),
         }
+        if self.stores_located:
+            scores["located"] = self.tp if self.located is None else self.located
+            scores["ref_edits"] = self.tp + self.fn if self.ref_edits is None else self.ref_edits
         record: dict = {
             "item": self.id,
             "scores": scores,

@@ -17,7 +17,7 @@ from .answer_mode import AnswerMode
 from .error_labels import UNLABELLED, ReferenceLabel
 from .languages import name as language_name
 from .languages import ordered
-from .performance import Spread, per_100_words
+from .performance import Spread, per_100_words, step_one_share
 from .quality import match_edits
 from .results import ResultRow
 from .scoring import ScoredItem
@@ -67,6 +67,23 @@ def _halves_cell(summary: ModelSummary) -> str:
     return f"{_share(summary.recall_h1)} / {_share(summary.recall_h2)}"
 
 
+def _located_cell(summary: ModelSummary) -> str:
+    """Return the second recall and, in brackets, the share noticed but fixed differently."""
+    if summary.recall_located is None:
+        return "—"
+    gap = summary.noticed_gap
+    return (
+        f"{_share(summary.recall_located)} (+{gap:.2f})"
+        if gap is not None
+        else _share(summary.recall_located)
+    )
+
+
+def _per_page_cell(value: float | None) -> str:
+    """Return a per-page figure as one decimal, or a dash when the texts have no words."""
+    return "—" if value is None else f"{value:.1f}"
+
+
 def _fallback_cell(summary: ModelSummary) -> str:
     """Return the fallbacks of a row, and how many of them the window cut off."""
     if not summary.cut_off:
@@ -90,20 +107,24 @@ def table(summaries: Iterable[ModelSummary]) -> str:
     """
     rows = [summary for summary in summaries if not summary.band]
     lines = [
-        "| Model | T | Mode | Language | P | R | F0.5 | GLEU | Left alone | Coverage "
-        "| Recall 1st / 2nd half | Failed | Fallback | Lost / added | Added marks | Explained "
-        "| Orphans/text | s/text |",
-        "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- "
-        "| --- | --- | --- |",
+        "| Model | T | Mode | Language | P | R | Found the spot | F0.5 | GLEU | Left alone "
+        "| Coverage | Recall 1st / 2nd half | Fixed/page | Wrong/page | Missed/page | Failed "
+        "| Fallback | Lost / added | Added marks | Explained | Orphans/text | s/text |",
+        "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- "
+        "| --- | --- | --- | --- | --- | --- | --- | --- |",
     ]
     for summary in rows:
         lines.append(
             f"| `{summary.model}` | {summary.temperature:g} | {summary.mode} "
             f"| {language_name(summary.language)} "
-            f"| {_share(summary.precision)} | {_share(summary.recall)} | {_share(summary.f_beta)} "
+            f"| {_share(summary.precision)} | {_share(summary.recall)} "
+            f"| {_located_cell(summary)} | {_share(summary.f_beta)} "
             f"| {_gleu_cell(summary)} "
             f"| {summary.alone}/{summary.alone_of} | {_coverage_cell(summary)} "
             f"| {_halves_cell(summary)} "
+            f"| {_per_page_cell(summary.fixed_per_page)} "
+            f"| {_per_page_cell(summary.wrong_per_page)} "
+            f"| {_per_page_cell(summary.missed_per_page)} "
             f"| {summary.failed}/{summary.rows} | {_fallback_cell(summary)} "
             f"| {_loss_cell(summary)} "
             f"| {summary.added_marks}/{summary.rows} "
@@ -410,7 +431,7 @@ def summarise_performance(items: Sequence[ScoredItem]) -> list[PerformanceSummar
                     if clean
                     else None
                 ),
-                step_one_share=_step_one_share(clean),
+                step_one_share=step_one_share(clean),
                 lost_text=sum(1 for row in measured if text_loss.is_lost(row.scores)),
                 added_text=sum(1 for row in measured if text_loss.is_added(row.scores)),
                 loss_checked=sum(
@@ -421,20 +442,6 @@ def summarise_performance(items: Sequence[ScoredItem]) -> list[PerformanceSummar
             )
         )
     return summaries
-
-
-def _step_one_share(rows: Sequence[ScoredItem]) -> float | None:
-    """Return the share of the waiting time that went to step ①, or ``None`` without step tags."""
-    first = other = 0.0
-    for row in rows:
-        if row.performance is None:
-            continue
-        for request in row.performance.requests:
-            if request.step == "correct":
-                first += request.wall_s
-            elif request.step:
-                other += request.wall_s
-    return first / (first + other) if first else None
 
 
 def _spread_cell(spread: Spread | None) -> str:

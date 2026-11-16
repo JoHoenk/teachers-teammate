@@ -885,17 +885,31 @@ def test_a_card_under_seven_gigabytes_is_reported_although_the_profile_is_cpu() 
 # ── the request profile ────────────────────────────────────────────────────
 
 
-def test_unknown_models_get_the_default_profile() -> None:
+def test_unknown_models_get_the_default_profile_and_the_measured_step_one_temperature() -> None:
     """
     Given  a tag the catalog does not know
     When   its request profile is asked for
-    Then   it is the default: no compact-JSON rule, and the app's own temperature 0.2
+    Then   it is the default apart from step ①, which runs at the measured 0.4
     """
     profile = request_profile("some-model:7b")
 
-    assert profile == DEFAULT_REQUEST_PROFILE
     assert profile.compact_json is False
-    assert profile.temperature == 0.2
+    assert profile.exchange == DEFAULT_REQUEST_PROFILE.exchange
+    assert profile.explain == DEFAULT_REQUEST_PROFILE.explain
+    assert profile.unclear == DEFAULT_REQUEST_PROFILE.unclear
+    assert profile.temperature == 0.4
+
+
+def test_a_variant_of_a_low_temperature_model_keeps_its_models_step_one_temperature() -> None:
+    """
+    Given  a quantised tag of a model that falls with every step up in temperature
+    When   its request profile is asked for
+    Then   step ① runs at that model's 0.05, not at the default 0.4, and a longer name that only
+           starts like a measured tag does not
+    """
+    assert request_profile("qwen3.5:4b-q8_0").temperature == 0.05
+    assert request_profile("ministral-3:8b-instruct-2512-q4_K_M").temperature == 0.05
+    assert request_profile("qwen3.5:40b").temperature == 0.4
 
 
 def test_every_catalog_model_starts_on_the_default_profile() -> None:
@@ -923,33 +937,37 @@ def test_a_catalog_profile_is_found_by_its_tag() -> None:
         assert request_profile("gemma4").compact_json is False
 
 
-def test_a_model_gets_the_temperature_its_maker_recommends() -> None:
+def test_step_one_gets_the_measured_temperature_and_the_other_steps_the_makers() -> None:
     """
-    Given  models with and without a recommended temperature, with and without ``:latest``
+    Given  models with and without a measured step-① temperature, with and without ``:latest``
     When   their request profile and review temperature are asked for
-    Then   a recommended model gets it, the rest the defaults 0.2 and 0.7
+    Then   step ① gets the measured value (0.4 where none was measured), steps ② and ③ the
+           maker's, and the review the maker's or 0.7
     """
     from teachers_teammate.domain.model_catalog import review_temperature  # noqa: PLC0415
 
-    assert request_profile("gemma4:e4b").temperature == 1.0
-    assert request_profile("qwen3:4b").temperature == 0.7
-    assert request_profile("ministral-3:8b").temperature == 0.05
-    assert request_profile("gemma4:e4b:latest").temperature == 1.0
-    assert request_profile("gpt-oss:20b").temperature == 0.2
-    assert request_profile("hf.co/some/candidate:Q4").temperature == 0.2
+    assert request_profile("gemma4:e4b").correct.temperature == 0.4
+    assert request_profile("gemma4:e4b").explain.temperature == 1.0
+    assert request_profile("qwen3.5:9b").correct.temperature == 0.05
+    assert request_profile("qwen3.5:9b").explain.temperature == 0.7
+    assert request_profile("ministral-3:8b").correct.temperature == 0.05
+    assert request_profile("gemma4:e4b:latest").correct.temperature == 0.4
+    assert request_profile("gpt-oss:20b").correct.temperature == 0.4
+    assert request_profile("hf.co/some/candidate:Q4").correct.temperature == 0.4
     assert review_temperature("gemma4:e4b") == 1.0
     assert review_temperature("gpt-oss:20b") == 0.7
 
 
-def test_the_recommended_temperatures_apply_to_ollama_only() -> None:
+def test_the_temperature_tables_apply_to_ollama_only() -> None:
     """
     Given  an online provider asked about a name that is also a recommended Ollama tag
     When   the request profile and review temperature are asked for
-    Then   the table does not apply
+    Then   neither table applies: every step gets 0.2, the review 0.7
     """
     from teachers_teammate.domain.model_catalog import review_temperature  # noqa: PLC0415
 
-    assert request_profile("gemma4:e4b", "google").temperature == 0.2
+    assert request_profile("gemma4:e4b", "google").correct.temperature == 0.2
+    assert request_profile("gemma4:e4b", "google").explain.temperature == 0.2
     assert review_temperature("gemma4:e4b", "google") == 0.7
 
 

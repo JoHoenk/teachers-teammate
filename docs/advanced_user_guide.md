@@ -196,12 +196,17 @@ want the best quality, choose a higher quant level.
 ### Temperature
 
 **Temperature** controls how predictable a model's output is: low values make it
-consistent and literal, high values allow more variation. There is nothing to set. The
-app sends each model the temperature its maker recommends on the model's card (for
-example `1.0` for the Gemma models and `0.7` for Qwen), because a model works best the
-way it was tuned. A model whose maker names no value, and every online service, gets
-`0.2` for proofreading and `0.7` for the content review. Reading handwriting always uses
-`0.0`: a page has one right transcription, so the model should not invent wording.
+consistent and literal, high values allow more variation. There is nothing to set. At the
+moment the app proofreads in one request per piece of text, which runs at the temperature the
+model's maker recommends on the model's card. The newer three-step proofreading, once it is
+switched on, is different: the step that corrects the text runs at a low temperature measured
+for each model: `0.4` for most, `0.05` for the Qwen 3.5, Ministral and Mistral NeMo models,
+which get worse with every step up. The steps that explain the changes and look for unclear wording run at the
+temperature the model's maker recommends on the model's card (for example `1.0` for the
+Gemma models and `0.7` for Qwen), because a model works best the way it was tuned. A model
+whose maker names no value, and every online service, gets `0.2` for proofreading and `0.7`
+for the content review. Reading handwriting always uses `0.0`: a page has one right
+transcription, so the model should not invent wording.
 
 ### Models from Hugging Face
 
@@ -299,8 +304,8 @@ The answer is a *review*, not just a text: the corrected text plus a short expla
 (it was `qwen3.5:9b`). Saved settings are not changed, so an installation that never touched the
 model keeps what the file says; an installation that used the defaults gets the new one. The
 temperature keys of an older `ocr.toml` (`ocr_temperature`, `correction_temperature`,
-`evaluate_temperature`) are ignored: the app now sends the temperature each model's maker
-recommends. Files that were proofread with the default settings are proofread again once, because
+`evaluate_temperature`) are ignored: the app now sends the temperatures described under
+*Temperature* above. Files that were proofread with the default settings are proofread again once, because
 the model and the temperature are part of what the result cache compares.
 
 Long texts are proofread in pieces: the text is split at paragraph, then sentence boundaries, each piece is proofread on its own and the answers are joined back into one review. A correction that would need to see two pieces at once — a sentence split across the boundary, or a change that only makes sense together with an earlier one — cannot be made. If one piece falls back to corrections only, the file keeps the explanations it has and a warning says that explanations are missing for part of the text. If a piece fails outright the whole file counts as failed and is retried on the next run.

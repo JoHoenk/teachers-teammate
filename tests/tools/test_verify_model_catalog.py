@@ -419,35 +419,35 @@ def test_the_profile_is_recorded_in_header_and_answers(
     assert {saved.request_profile["temperature"] for saved in answers} == {0.0}
 
 
-def test_the_gate_tests_use_the_temperature_the_vendor_recommends() -> None:
+def test_the_gate_tests_use_the_measured_step_one_temperature() -> None:
     """
-    Given  a catalogued model whose vendor recommends a temperature, and one whose vendor does not
+    Given  models with and without a measured step-① temperature
     When   the gate tests resolve the temperature they send
-    Then   the vendor's value is used — the card's non-thinking row for Qwen, "below 0.1" for
-           Ministral — and the app's 0.2 for a model without a recommendation
+    Then   the measured value is used — 0.05 for the models that fall with every step up, 0.4
+           for every other model, catalogued or not
     """
-    assert defaults.temperature_for("gemma4:e4b") == 1.0
-    assert defaults.temperature_for("qwen3:4b") == 0.7
-    assert defaults.temperature_for("qwen3.5:9b") == 0.7
+    assert defaults.temperature_for("gemma4:e4b") == 0.4
+    assert defaults.temperature_for("qwen3:4b") == 0.4
+    assert defaults.temperature_for("qwen3.5:9b") == 0.05
     assert defaults.temperature_for("ministral-3:8b") == 0.05
-    assert defaults.temperature_for("mistral-nemo:12b") == 0.3
-    assert defaults.temperature_for("lfm2.5:8b") == 0.2
-    assert defaults.temperature_for("lfm2.5:24b") == 0.1
-    assert defaults.temperature_for("gpt-oss:20b") == 0.2
-    assert defaults.temperature_for(CANDIDATE) == 0.2
+    assert defaults.temperature_for("mistral-nemo:12b") == 0.05
+    assert defaults.temperature_for("lfm2.5:8b") == 0.4
+    assert defaults.temperature_for("lfm2.5:24b") == 0.4
+    assert defaults.temperature_for("gpt-oss:20b") == 0.4
+    assert defaults.temperature_for(CANDIDATE) == 0.4
 
 
-def test_the_request_carries_the_recommended_temperature() -> None:
+def test_the_request_carries_the_measured_temperature() -> None:
     """
-    Given  a model whose vendor recommends a temperature, and a tag written with ``:latest``
+    Given  a model with a measured step-① temperature, and a tag written with ``:latest``
     When   the profile of the request is built without ``--temperature``
-    Then   the request carries the recommended value, and an explicit temperature still wins
+    Then   the request carries the measured value, and an explicit temperature still wins
     """
-    assert defaults.request_profile_for("gemma4:e4b").temperature == 1.0
-    assert defaults.request_profile_for("gemma4:e4b:latest").temperature == 1.0
+    assert defaults.request_profile_for("gemma4:e4b").temperature == 0.4
+    assert defaults.request_profile_for("gemma4:e4b:latest").temperature == 0.4
     assert defaults.request_profile_for("gemma4:e4b", temperature=0.2).temperature == 0.2
-    assert defaults.request_profile_for(CANDIDATE).temperature == 0.2
-    assert defaults.temperature_for("gemma4:e4b", 0.4) == 0.4
+    assert defaults.request_profile_for(CANDIDATE).temperature == 0.4
+    assert defaults.temperature_for("gemma4:e4b", 0.7) == 0.7
 
 
 # ── fit: measure once, decide later ──────────────────────────────────────────

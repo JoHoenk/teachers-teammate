@@ -14,7 +14,7 @@ the time: it competes for the card, so its timing says little about the model.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from dataclasses import asdict, dataclass
 from statistics import median
 from typing import TYPE_CHECKING
@@ -24,6 +24,8 @@ from teachers_teammate.domain.performance_estimate import percentile
 
 if TYPE_CHECKING:
     from teachers_teammate.infrastructure.ollama_utils import ChatStats
+
+    from .scoring import ScoredItem
 
 _NS = 1e9
 """Nanoseconds per second: Ollama reports its durations in nanoseconds."""
@@ -196,6 +198,24 @@ class Performance:
 def per_100_words(seconds: float, words: int) -> float:
     """Return *seconds* scaled to 100 words of student text (0 when there are no words)."""
     return seconds / words * 100 if words else 0.0
+
+
+def step_one_share(rows: Iterable[ScoredItem]) -> float | None:
+    """Return the share of the waiting time that went to step ①, or ``None`` without step tags.
+
+    A correct-only run shows 100 %, because step ① is the whole exchange; a review or text run has
+    no steps and shows ``None``, as does a row written before the tag existed.
+    """
+    first = other = 0.0
+    for row in rows:
+        if row.performance is None:
+            continue
+        for request in row.performance.requests:
+            if request.step == "correct":
+                first += request.wall_s
+            elif request.step:
+                other += request.wall_s
+    return first / (first + other) if first else None
 
 
 @dataclass(frozen=True)

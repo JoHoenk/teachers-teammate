@@ -184,3 +184,33 @@ def test_a_correct_text_that_lost_a_sentence_is_measured() -> None:
 
     assert scores["words_out"] < scores["words_ref"]
     assert scores["cut_run"] > 0
+
+
+@pytest.mark.use_case("Model_Eval_Report")
+def test_a_change_of_the_right_words_with_another_replacement_is_located_not_exact() -> None:
+    """
+    Given  a reference that fixes "laufen" to "läuft"
+    When   the model changes the same word to "rennt"
+    Then   the change is located but not exact, so the second recall counts it and the F-score
+           does not
+    """
+    scores = item_scores(SOURCE, f"Der Hund rennt schnell . {SECOND} {THIRD}", REFERENCE)
+
+    assert scores["located"] == 1
+    assert scores["ref_edits"] == 1
+    assert scores["tp_h1"] == 0
+    assert scores["fn_h1"] == 1
+
+
+@pytest.mark.use_case("Model_Eval_Report")
+def test_the_reference_change_the_model_makes_exactly_is_located_too() -> None:
+    """
+    Given  a reference that fixes "laufen" to "läuft"
+    When   the model makes that very change
+    Then   it is located and exact, so the two recalls agree
+    """
+    scores = item_scores(SOURCE, f"{FIXED_FIRST} {SECOND} {THIRD}", REFERENCE)
+
+    assert scores["located"] == 1
+    assert scores["ref_edits"] == 1
+    assert scores["tp_h1"] == 1

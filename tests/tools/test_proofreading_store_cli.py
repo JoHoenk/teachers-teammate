@@ -683,24 +683,24 @@ def test_against_uses_the_machine_and_testset_of_the_model(tmp_path, capsys):
     assert "→ within the spread" in captured.out
 
 
-def test_each_model_is_read_at_its_own_recommended_temperature(tmp_path, capsys):
+def test_each_model_is_read_at_its_own_measured_temperature(tmp_path, capsys):
     """
-    Given  gemma4:e2b run at its recommended 1.0 and qwen3:4b run at its recommended 0.7
+    Given  gemma4:e2b run at its measured 0.4 and qwen3.5:4b run at its measured 0.05
     When   `compare` runs without --temperature
     Then   each model is read at its own starting point and the comparison is made, with both
            temperatures in its figures; 0.2 is not looked for
     """
     space = workspace(tmp_path, reviews=_reviews())
     for repeat in (1, 2, 3):
-        _export(space, f"first-r{repeat}", repeat=repeat, temperature=1.0)
-        _export(space, f"other-r{repeat}", model="qwen3:4b", repeat=repeat, temperature=0.7)
+        _export(space, f"first-r{repeat}", repeat=repeat, temperature=0.4)
+        _export(space, f"other-r{repeat}", model="qwen3.5:4b", repeat=repeat, temperature=0.05)
 
-    code = proofreading_store._compare(_gate_args(space, against="qwen3:4b", temperature=None))
+    code = proofreading_store._compare(_gate_args(space, against="qwen3.5:4b", temperature=None))
 
     captured = capsys.readouterr()
     assert code in (0, 1), captured.err
-    assert "temperature 1," in captured.out
-    assert "temperature 0.7," in captured.out
+    assert "temperature 0.4," in captured.out
+    assert "temperature 0.05," in captured.out
     assert "→ within the spread" in captured.out or "→ better" in captured.out
 
 

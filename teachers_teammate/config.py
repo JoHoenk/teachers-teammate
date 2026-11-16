@@ -334,18 +334,23 @@ class Config:
 
     @property
     def correction_profile(self) -> RequestProfile:
-        """Return how the proofreading requests are built: the compact rule and the temperature.
+        """Return how the proofreading requests are built: the compact rule and the temperatures.
 
-        The model's own profile, resolved for the provider.  Teachers set no temperature; the
-        value is the one the model's maker recommends (see
-        :data:`~.domain.model_catalog.RECOMMENDED_TEMPERATURES`).
+        The model's own profile, resolved for the provider.  Teachers set no temperature; step ①
+        runs at the value measured for it and steps ② and ③ at the one the model's maker
+        recommends (see :data:`~.domain.model_catalog.STEP_ONE_TEMPERATURES` and
+        :data:`~.domain.model_catalog.MAKER_TEMPERATURES`).
         """
         return request_profile(self.effective_correction_model, self.correction_provider)
 
     @property
     def correction_temperature(self) -> float:
-        """Return the temperature the proofreading requests are sent at."""
-        return self.correction_profile.temperature
+        """Return the temperature the single review request is sent at (the maker's value).
+
+        Step ① of the exchange has its own, measured one (``correction_profile.temperature``);
+        the exchange is not wired yet, so the request teachers run keeps the maker's.
+        """
+        return self.correction_profile.review_temperature
 
     @property
     def evaluate_think(self) -> bool | str:

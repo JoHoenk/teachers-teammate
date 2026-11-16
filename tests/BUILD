@@ -383,6 +383,15 @@ py_test(
 )
 
 py_test(
+    name = "test_text_loss",
+    size = "small",
+    srcs = _COMMON_SRCS + ["unit/test_text_loss.py"],
+    args = ["unit/test_text_loss.py"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS,
+)
+
+py_test(
     name = "test_edits",
     size = "small",
     srcs = _COMMON_SRCS + ["unit/test_edits.py"],
@@ -1458,6 +1467,48 @@ py_test(
     deps = _TOOL_DEPS,
 )
 
+# The figures a report is made of: per page of 300 words, found the spot, and the mean over texts.
+# The fixtures build the runs in memory, so one number can be moved and one figure seen.
+py_test(
+    name = "test_model_eval_summary",
+    size = "small",
+    srcs = _COMMON_SRCS + [
+        "tools/gate_fixtures.py",
+        "tools/test_summary.py",
+    ],
+    args = ["tools/test_summary.py"],
+    main = "run_test.py",
+    deps = _TOOL_DEPS,
+)
+
+# The sweep: one row per temperature, the difference against a reference row, and the best row with
+# the rows that are a tie with it.
+py_test(
+    name = "test_model_eval_sweep",
+    size = "small",
+    srcs = _COMMON_SRCS + [
+        "tools/gate_fixtures.py",
+        "tools/test_sweep.py",
+    ],
+    args = ["tools/test_sweep.py"],
+    main = "run_test.py",
+    deps = _TOOL_DEPS,
+)
+
+# The passes: what a vote over the repeats of one configuration would keep, and what the passes
+# would cost.  The rows are hand-made, so every count is arithmetic a reader can follow.
+py_test(
+    name = "test_model_eval_passes",
+    size = "small",
+    srcs = _COMMON_SRCS + [
+        "tools/gate_fixtures.py",
+        "tools/test_passes.py",
+    ],
+    args = ["tools/test_passes.py"],
+    main = "run_test.py",
+    deps = _TOOL_DEPS,
+)
+
 # The explanation check: the sample of a run, the marks without text, and the sheet whose source
 # sentences come from a local cache.
 py_test(
@@ -1631,6 +1682,7 @@ test_suite(
         ":test_model_eval_layout",
         ":test_model_eval_measure",
         ":test_model_eval_model_fit",
+        ":test_model_eval_passes",
         ":test_model_eval_progress",
         ":test_model_eval_protocol",
         ":test_model_eval_quality",
@@ -1647,6 +1699,8 @@ test_suite(
         ":test_model_eval_spot_check",
         ":test_model_eval_store_cli",
         ":test_model_eval_structured_check",
+        ":test_model_eval_summary",
+        ":test_model_eval_sweep",
         ":test_model_eval_testset",
         ":test_model_eval_text_loss",
         ":test_model_eval_validation",
@@ -2391,6 +2445,7 @@ test_suite(
         ":test_step_runner",
         ":test_storage_policy",
         ":test_text_chunks",
+        ":test_text_loss",
         ":test_windows_installer_floor",
         ":test_word_diff",
     ],

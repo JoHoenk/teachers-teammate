@@ -185,6 +185,9 @@ def compute_correction_config_hash(config: Config, windows: RunWindows | None = 
         review_format,
         text_format,
         format(profile.temperature, "g"),
+        # Steps ② and ③ have their own temperatures; a change of either changes the answers.
+        format(profile.explain.temperature, "g"),
+        format(profile.unclear.temperature, "g"),
         str(profile.think),
         # Review settings change the answer itself, so they belong in the key.
         config.correction_level,

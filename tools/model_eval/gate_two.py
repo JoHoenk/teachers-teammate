@@ -850,6 +850,15 @@ def rate_pair(
     )
 
 
+def comparable(a: grouping.RunGroup, b: grouping.RunGroup, *, corrections: bool = False) -> bool:
+    """Whether a paired difference of *a* and *b* can be taken at all.
+
+    The two were measured alike and hold the same texts.  The repeats are not asked for: whether
+    there are enough of them is a question of the verdict, not of the number.
+    """
+    return a.key.measured_alike(b.key, corrections=corrections) and _same_texts(a, b)
+
+
 def compare(
     a: grouping.RunGroup,
     b: grouping.RunGroup,
@@ -1398,11 +1407,90 @@ def side_by_side(a: grouping.RunGroup, b: grouping.RunGroup) -> tuple[Check, ...
         _side("left alone", a, b, "alone", "alone_of"),
         _side("coverage", a, b, "cover", "cover_of"),
         _side("explained share", a, b, "explained", "needed"),
+        _side_per_page("fixed per page", a, b, "true_positives"),
+        _side_per_page("wrong per page", a, b, "false_positives"),
+        _side_per_page("missed per page", a, b, "false_negatives"),
         _side_count("cut-offs the second try absorbed", a, b),
         _side_speed(a, b),
         _side_memory(a, b),
     ]
+    return (*checks, *_by_texts(a, b))
+
+
+def _side_per_page(name: str, a: grouping.RunGroup, b: grouping.RunGroup, count: str) -> Check:
+    """Return one per-page figure of both models, side by side."""
+    return Check(
+        name,
+        None,
+        f"{_per_page_of(a, count)} / {_per_page_of(b, count)}",
+        "",
+        kind=CheckKind.DIAGNOSTIC,
+    )
+
+
+def _per_page_of(group: grouping.RunGroup, count: str) -> str:
+    """Return one count per page of 300 words, pooled over the deciding languages and repeats."""
+    value = summary.pooled_per_page(group.summaries(), count, DECIDING_LANGUAGES)
+    return "—" if value is None else f"{value:.1f}"
+
+
+def _by_texts(a: grouping.RunGroup, b: grouping.RunGroup) -> tuple[Check, ...]:
+    """Return the mean over texts of both models, and a warning when the two views disagree.
+
+    The pooled figures weight a long text more than a short one; the mean over texts weights every
+    text alike.  When the two order the pair differently by at least :data:`MIN_EFFECT`, the
+    comparison says so: the choice then depends on whether a page or a text is the unit.
+    """
+    left = _mean_over_repeats(a, _deciding_mean_text_f_beta)
+    right = _mean_over_repeats(b, _deciding_mean_text_f_beta)
+    pooled_left = _mean_over_repeats(a, grouping.deciding_mean_f_beta)
+    pooled_right = _mean_over_repeats(b, grouping.deciding_mean_f_beta)
+    if left is None or right is None:
+        value = "—"
+    else:
+        value = f"{left:.2f} / {right:.2f} (Δ {left - right:+.3f})"
+    checks = [Check("F0.5 by texts", None, value, "", kind=CheckKind.DIAGNOSTIC)]
+    if _views_disagree(pooled_left, pooled_right, left, right):
+        checks.append(
+            Check(
+                "by texts against pooled",
+                None,
+                "the two views order the pair differently",
+                "",
+                kind=CheckKind.DIAGNOSTIC,
+            )
+        )
     return tuple(checks)
+
+
+def _mean_over_repeats(group: grouping.RunGroup, measure) -> float | None:
+    """Return the mean of *measure* over the repeats that have a value, or ``None``."""
+    values = [value for part in group.summaries() if (value := measure(part)) is not None]
+    return sum(values) / len(values) if values else None
+
+
+def _deciding_mean_text_f_beta(part: Sequence[summary.ModelSummary]) -> float | None:
+    """Return the mean over the deciding languages of the per-text F-score of one repeat."""
+    values = [
+        row.mean_text_f_beta
+        for row in grouping.deciding_rows(part).values()
+        if row.mean_text_f_beta is not None
+    ]
+    return sum(values) / len(values) if values else None
+
+
+def _views_disagree(
+    pooled_left: float | None,
+    pooled_right: float | None,
+    text_left: float | None,
+    text_right: float | None,
+) -> bool:
+    """Whether the pooled counts and the mean over texts order the pair differently."""
+    if pooled_left is None or pooled_right is None or text_left is None or text_right is None:
+        return False
+    pooled = pooled_left - pooled_right
+    by_text = text_left - text_right
+    return pooled * by_text < 0 and abs(pooled) >= MIN_EFFECT and abs(by_text) >= MIN_EFFECT
 
 
 def _side(

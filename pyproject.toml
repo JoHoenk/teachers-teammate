@@ -30,6 +30,10 @@ dependencies = [
     # API keys of the online AI services: the system keychain (macOS Keychain, Windows
     # Credential Manager, Linux Secret Service); without one the keys stay in the settings file.
     "keyring>=24",
+    # The System Monitor's GPU and VRAM gauges (module ``pynvml``). 60 KB, pure Python, BSD:
+    # bundled rather than downloaded, so nothing asks for a package at start-up.  Without an
+    # NVIDIA driver it imports and reports nothing; AMD needs no package at all (sysfs).
+    "nvidia-ml-py>=12",
 ]
 
 [project.optional-dependencies]
@@ -214,7 +218,6 @@ ignored-modules = [
     "langchain_cohere",
     "openai",
     "pynvml",
-    "pyamdgpuinfo",
 ]
 
 [tool.pylint.messages_control]

@@ -311,6 +311,29 @@ class ReferenceSpeed:
 
 
 @dataclass(frozen=True)
+class ModelLicence:
+    """The terms a catalogued model's weights come under.
+
+    The values are taken from each model's card.  No date of the last check is recorded: re-read
+    the card (and write the date here) when a licence is added or changed.  ``gemma4`` is
+    Apache-2.0 since Gemma 4; the Gemma Terms of Use cover the older models.
+
+    The app never ships a model: the teacher pulls it from Ollama, so the licence only matters
+    for *use*, not for redistribution.  A permissive licence (MIT, Apache-2.0) therefore gets no
+    sentence — it adds duties for whoever passes the file on, and that is not us.  A licence that
+    restricts use gets one, in :attr:`note`, shown next to the model in Settings → Add-ons and in
+    the Setup Assistant.
+    """
+
+    #: The licence's name, as its authors write it.
+    name: str
+    #: Where the terms can be read.
+    url: str
+    #: One sentence for the model's row; empty when the licence does not restrict use.
+    note: str = ""
+
+
+@dataclass(frozen=True)
 class OllamaModelSpec:
     """One catalogued Ollama model with approximate resource needs."""
 
@@ -351,6 +374,9 @@ class OllamaModelSpec:
     #: model that is not installed here can still get an expected speed band.  ``None`` — not
     #: measured.
     reference_speed: ReferenceSpeed | None = None
+    #: The terms the model's weights come under.  ``None`` — a model the user added, whose
+    #: licence the app does not know.
+    licence: ModelLicence | None = None
 
 
 # Download sizes (decimal GB) were checked against the Ollama registry manifests
@@ -370,6 +396,12 @@ OLLAMA_CATALOG: tuple[OllamaModelSpec, ...] = (
         memory_gb=6.5,
         download_gb=5.5,
         note="Built for full pages with tables and handwriting. Keeps the page layout.",
+        licence=ModelLicence(
+            name="Modified OpenRAIL-M",
+            url="https://huggingface.co/datalab-to/chandra-ocr-2/blob/main/LICENSE",
+            note="Free for research and personal use only: a school or company that uses "
+            "it institutionally needs a commercial licence from Datalab.",
+        ),
     ),
     OllamaModelSpec(
         tag="glm-ocr:q8_0",
@@ -377,6 +409,7 @@ OLLAMA_CATALOG: tuple[OllamaModelSpec, ...] = (
         memory_gb=2.5,
         download_gb=1.6,
         note="Small and fast. Good for printed and mixed-language pages.",
+        licence=ModelLicence(name="MIT", url="https://huggingface.co/zai-org/GLM-OCR"),
     ),
     OllamaModelSpec(
         tag="qwen3-vl:8b",
@@ -384,6 +417,9 @@ OLLAMA_CATALOG: tuple[OllamaModelSpec, ...] = (
         memory_gb=7.0,
         download_gb=6.1,
         note="Best overall for handwriting.",
+        licence=ModelLicence(
+            name="Apache-2.0", url="https://huggingface.co/Qwen/Qwen3-VL-8B-Instruct"
+        ),
     ),
     OllamaModelSpec(
         tag="deepseek-ocr:latest",
@@ -391,6 +427,7 @@ OLLAMA_CATALOG: tuple[OllamaModelSpec, ...] = (
         memory_gb=7.0,
         download_gb=6.7,
         note="Strong on dense, structured pages.",
+        licence=ModelLicence(name="MIT", url="https://huggingface.co/deepseek-ai/DeepSeek-OCR"),
     ),
     OllamaModelSpec(
         tag="qwen2.5vl:7b",
@@ -398,6 +435,9 @@ OLLAMA_CATALOG: tuple[OllamaModelSpec, ...] = (
         memory_gb=7.0,
         download_gb=6.0,
         note="Older version of qwen3-vl.",
+        licence=ModelLicence(
+            name="Apache-2.0", url="https://huggingface.co/Qwen/Qwen2.5-VL-7B-Instruct"
+        ),
     ),
     OllamaModelSpec(
         tag="qwen3:4b",
@@ -408,6 +448,7 @@ OLLAMA_CATALOG: tuple[OllamaModelSpec, ...] = (
         # six, so the explanations badge stays off.
         note="Small writing model for computers without a graphics card. Slow: it thinks for "
         "several minutes per page.",
+        licence=ModelLicence(name="Apache-2.0", url="https://huggingface.co/Qwen/Qwen3-4B"),
         context_gb_per_8k=1.23,
         answer_length=AnswerLength(low=791, typical=1086, high=1828),
         reference_speed=ReferenceSpeed(write_tps=131.0),
@@ -418,6 +459,7 @@ OLLAMA_CATALOG: tuple[OllamaModelSpec, ...] = (
         memory_gb=7.2,
         download_gb=6.6,
         note="Writing model for 8 GB and 16 GB graphics cards. Can also read scanned pages.",
+        licence=ModelLicence(name="Apache-2.0", url="https://huggingface.co/Qwen/Qwen3.5-9B"),
         also_uses=frozenset({"ocr"}),
         structured_output=True,
         context_gb_per_8k=0.28,
@@ -428,6 +470,9 @@ OLLAMA_CATALOG: tuple[OllamaModelSpec, ...] = (
         memory_gb=5.0,
         download_gb=6.6,
         note="Fast writing model that fits an 8 GB graphics card.",
+        licence=ModelLicence(
+            name="Apache-2.0", url="https://ai.google.dev/gemma/docs/gemma_4_license"
+        ),
         structured_output=True,
         context_gb_per_8k=0.14,
         answer_length=AnswerLength(low=549, typical=1068, high=1824),
@@ -439,6 +484,9 @@ OLLAMA_CATALOG: tuple[OllamaModelSpec, ...] = (
         memory_gb=9.5,
         download_gb=8.0,
         note="Best writing model for a 16 GB graphics card.",
+        licence=ModelLicence(
+            name="Apache-2.0", url="https://ai.google.dev/gemma/docs/gemma_4_license"
+        ),
         structured_output=True,
         context_gb_per_8k=0.17,
         answer_length=AnswerLength(low=380, typical=1017, high=1879),
@@ -450,6 +498,9 @@ OLLAMA_CATALOG: tuple[OllamaModelSpec, ...] = (
         memory_gb=5.5,
         download_gb=4.4,
         note="General-purpose writing model. It does not reliably follow the review format.",
+        licence=ModelLicence(
+            name="Apache-2.0", url="https://huggingface.co/mistralai/Mistral-7B-v0.3"
+        ),
     ),
     OllamaModelSpec(
         tag="mistral-nemo:12b",
@@ -457,6 +508,9 @@ OLLAMA_CATALOG: tuple[OllamaModelSpec, ...] = (
         memory_gb=8.5,
         download_gb=7.1,
         note="General-purpose writing model. It does not reliably follow the review format.",
+        licence=ModelLicence(
+            name="Apache-2.0", url="https://huggingface.co/mistralai/Mistral-Nemo-Base-2407"
+        ),
     ),
     OllamaModelSpec(
         tag="gpt-oss:20b",
@@ -467,6 +521,7 @@ OLLAMA_CATALOG: tuple[OllamaModelSpec, ...] = (
         # (``THINK_LEVELS``, read through ``request_profile``); at its default level it reasoned past the window on a full page.
         note="Large model for a 16 GB graphics card. The app asks it to think as little as "
         "possible, which suits proofreading.",
+        licence=ModelLicence(name="Apache-2.0", url="https://huggingface.co/openai/gpt-oss-20b"),
         structured_output=True,
         answer_length=AnswerLength(low=581, typical=1075, high=1897),
         reference_speed=ReferenceSpeed(write_tps=104.0),
@@ -566,6 +621,16 @@ def find_spec(tag: str) -> OllamaModelSpec | None:
         if spec.tag == wanted:
             return spec
     return None
+
+
+def licence_note(tag: str) -> str:
+    """Return the sentence a model's licence needs in its row, or ``""`` when it needs none.
+
+    Only a licence that restricts *use* gets one (see :class:`ModelLicence`); a model the app
+    does not know, or one under a permissive licence, says nothing.
+    """
+    spec = find_spec(tag)
+    return spec.licence.note if spec is not None and spec.licence is not None else ""
 
 
 def recommended_temperature(tag: str) -> float | None:

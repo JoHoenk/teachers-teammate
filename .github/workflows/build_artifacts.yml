@@ -108,6 +108,16 @@ jobs:
             python tools/build/check_pins.py --platform macosx_14_0_arm64
           fi
 
+      # The model files the app carries itself (the reader and the page models, 70 MB), pinned by
+      # revision and SHA-256 in teachers_teammate/domain/local_models.py.  fetch_models.py skips a
+      # file that is already there and correct, so a hit costs nothing; the key changes when a pin
+      # does.  Per runner, so three jobs never race to save the same key.
+      - name: Cache the bundled model files
+        uses: actions/cache@v4
+        with:
+          path: teachers_teammate/_models
+          key: bundled-models-${{ runner.os }}-${{ hashFiles('teachers_teammate/domain/local_models.py') }}
+
       - name: Build standalone binaries
         run: python tools/build/build_standalone.py
         env:

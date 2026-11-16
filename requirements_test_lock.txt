@@ -1119,6 +1119,10 @@ numpy==2.5.4 \
     #   spacy
     #   teachers-teammate (pyproject.toml)
     #   thinc
+nvidia-ml-py==13.615.71 \
+    --hash=sha256:959bf4adf6fe1308e4bd739e722236b0d1ec8392e2cefad33ff70c311380b9b6 \
+    --hash=sha256:bebe4e48f51b1dc75028c0815cb7bfa14a31a5bb80be70c9d980c6036953fc3d
+    # via teachers-teammate (pyproject.toml)
 ollama==0.6.3 \
     --hash=sha256:41fc49a8095c4a75939c4c1f8582e4d0671692fb6eac2a5a7ede8c9872b67096 \
     --hash=sha256:6a20bc42c1a5f889295d7ec490d35e5132fc31f339561530f43a8abd4dbfe508

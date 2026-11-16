@@ -11,6 +11,11 @@ name: Add-on resolution
 #
 # No --platform and no marker emulation: pip's markers see the real system here, which is what
 # check_pins.py has to work around for its cross-platform checks.
+#
+# The same run keeps the add-on lock and the add-on license list honest: the lock is what the
+# installed app gives to pip, so every add-on is resolved twice, against the newest releases and
+# against the lock (a pin that conflicts with the bundle, or has no wheel on one system, is red
+# here instead of in a teacher's Add-ons window); the license list is what the Add-ons page shows.
 
 on:
   schedule:
@@ -48,9 +53,20 @@ jobs:
       - name: Write the bundle's constraints
         run: python tools/build/addon_constraints.py
 
+      - name: Write the add-on lock
+        run: python tools/build/addon_lock.py
+
       - name: Check that the add-ons resolve against the bundle
         shell: bash
         run: |
           python tools/build/check_addon_resolution.py \
             --python python \
-            --constraints teachers_teammate/_build/addon_constraints.txt
+            --constraints teachers_teammate/_build/addon_constraints.txt \
+            --lock teachers_teammate/_build/addon_lock.txt
+
+      # The license list is the same on every system (it comes from the lock and PyPI), so one
+      # runner is enough. A new release of an add-on's package that changes its license, or one
+      # that turns up under a license we must not ship, is a red run here.
+      - name: Check the add-on licenses
+        if: matrix.os == 'ubuntu-24.04'
+        run: python tools/build/addon_licenses.py --check

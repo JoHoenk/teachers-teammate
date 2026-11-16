@@ -11,7 +11,6 @@ window's wiring.  The keys of the online services are on *Online services*.
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
-import sys
 from typing import Any
 
 from PySide6.QtCore import QTimer, Signal
@@ -69,7 +68,6 @@ DETECT_GPU_TOOLTIP = (
     "Check whether a graphics card is available —\n"
     "this can significantly speed up text recognition."
 )
-INSTALL_GPU_ADDON = "Install GPU Addon…"
 DETECTING = "Detecting…"
 NO_GPU = "No NVIDIA or AMD GPU detected."
 
@@ -85,8 +83,6 @@ class AiSetupPage(SettingsPageBase):
     ollama_url_changed = Signal(str)
     #: The computer profile was changed.
     hardware_setting_changed = Signal(str)
-    #: A GPU add-on was installed from this page.
-    addon_installed = Signal(str)
     #: A speed test finished and stored its measurement.
     speed_measured = Signal()
 
@@ -94,7 +90,6 @@ class AiSetupPage(SettingsPageBase):
         super().__init__(context, parent)
         self._app_service = context.app_service
         self._gpu_detect_thread: _GpuDetectThread | None = None
-        self._detected_gpus: list = []
         self._speed_settings_provider: Callable[[], Mapping[str, Any]] | None = None
         settings = context.settings
         # Known before any widget is built: "My computer" must detect for the
@@ -235,10 +230,6 @@ class AiSetupPage(SettingsPageBase):
         gdr.addWidget(self._gpu_status_lbl, stretch=1)
         form.addRow("GPU:", gpu_detect_row)
 
-        self._gpu_install_btn = QPushButton(INSTALL_GPU_ADDON)
-        self._gpu_install_btn.setVisible(False)
-        self._gpu_install_btn.clicked.connect(self._on_install_gpu_addon)
-        form.addRow("", self._gpu_install_btn)
         return group
 
     # ── settings ──────────────────────────────────────────────────────────────
@@ -313,27 +304,16 @@ class AiSetupPage(SettingsPageBase):
     def _on_detect_gpu(self) -> None:
         self._gpu_detect_btn.setEnabled(False)
         self._gpu_status_lbl.setText(DETECTING)
-        self._gpu_install_btn.setVisible(False)
         self._gpu_detect_thread = _GpuDetectThread(self._app_service)
         self._gpu_detect_thread.detect_done.connect(self._on_gpu_detected)
         self._gpu_detect_thread.finished.connect(lambda: self._gpu_detect_btn.setEnabled(True))
         _start_thread(self._gpu_detect_thread)
 
     def _on_gpu_detected(self, gpus: list) -> None:
-        self._detected_gpus = gpus
         # The probe was just repeated: let "My computer" describe the new result.
         self._hardware_selector.refresh_status()
         if not gpus:
             self._gpu_status_lbl.setText(NO_GPU)
-            self._gpu_install_btn.setVisible(False)
             return
         names = ", ".join(f"{g.name} ({g.vendor.upper()})" for g in gpus)
         self._gpu_status_lbl.setText(names)
-        self._gpu_install_btn.setVisible(getattr(sys, "frozen", False))
-
-    def _on_install_gpu_addon(self) -> None:
-        from .._addon_installer_dialog import GpuAddonDialog  # noqa: PLC0415
-
-        dlg = GpuAddonDialog(self._detected_gpus, self.window())
-        dlg.installed.connect(self.addon_installed)
-        dlg.exec()

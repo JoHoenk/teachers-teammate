@@ -28,8 +28,8 @@ from teachers_teammate.gui.settings._ai_setup_page import AiSetupPage
 from teachers_teammate.gui.settings._page import (
     FOCUS_API_KEYS,
     FOCUS_DETECTION,
-    FOCUS_GPU,
     FOCUS_PATTERNS,
+    FOCUS_READING_MODELS,
     FOCUS_SENDING,
 )
 
@@ -739,15 +739,15 @@ def test_privacy_deep_links_land_on_their_tab(qtbot, focus: str) -> None:
 def test_a_deep_link_into_an_open_window_switches_page_and_tab(qtbot) -> None:
     """
     Given  the window open on AI models
-    When   show_page is called for Add-ons with the GPU focus
-    Then   Add-ons is built and shown on the performance-monitoring tab
+    When   show_page is called for Add-ons with the reading-models focus
+    Then   Add-ons is built and shown on the reading-models tab
     """
     window = _window(qtbot, SettingsPage.AI_MODELS)
 
-    window.show_page(SettingsPage.ADDONS, FOCUS_GPU)
+    window.show_page(SettingsPage.ADDONS, FOCUS_READING_MODELS)
 
     assert window.current_page() is SettingsPage.ADDONS
-    assert window.page(SettingsPage.ADDONS)._tabs.currentIndex() == AddonsPage.TAB_GPU
+    assert window.page(SettingsPage.ADDONS)._tabs.currentIndex() == AddonsPage.TAB_READING_MODELS
     assert window._sidebar.currentRow() == 6
 
 

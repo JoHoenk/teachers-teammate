@@ -107,6 +107,22 @@ compile_pip_requirements(
     requirements_txt = "requirements_test_lock.txt",
 )
 
+# Run: bazel run //:requirements_addons.update
+# The pip add-ons the app installs at runtime (Settings → Add-ons), with their whole closure and
+# hashes.  The build turns it into the flat ``addon_lock.txt`` the installed app gives to pip
+# (tools/build/addon_lock.py), so a release installs the add-on versions it was tested with, and
+# tools/build/addon_licenses.py reads the same lock for the license list.
+compile_pip_requirements(
+    name = "requirements_addons",
+    src = "pyproject.toml",
+    data = ["//teachers_teammate:__init__.py"],
+    extra_args = [
+        "--extra=llm",
+        "--extra=privacy",
+    ],
+    requirements_txt = "requirements_addons_lock.txt",
+)
+
 alias(
     name = "format.check",
     actual = "//third_party/format:format.check",

@@ -32,7 +32,12 @@ from teachers_teammate.infrastructure.onnx.store import ModelStore
 from teachers_teammate.infrastructure.power import KEEP_AWAKE_REASON
 from teachers_teammate.infrastructure.state_repository import DocumentState
 from teachers_teammate.interfaces import SleepBlocker
-from tests.conftest import fake_page_models_store, fake_reader_store, make_config
+from tests.conftest import (
+    fake_bundle,
+    fake_page_models_store,
+    fake_reader_store,
+    make_config,
+)
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────
@@ -914,6 +919,30 @@ def test_get_installation_status_reports_the_built_in_reader(tmp_path: Path) -> 
 
     assert with_models.get_installation_status()["reader:ppocr"] is True
     assert without.get_installation_status()["reader:ppocr"] is False
+
+
+@pytest.mark.unit
+def test_get_installation_status_says_which_models_the_app_carries_itself(
+    tmp_path: Path,
+) -> None:
+    """
+    Given  a store whose bundle holds the reader and the page models, and one whose bundle is empty
+    When   get_installation_status() is called
+    Then   the bundled flags say so, and a bundled model counts as installed without a download
+    """
+    from teachers_teammate.domain.local_models import PAGE_MODELS, READER_MODELS  # noqa: PLC0415
+
+    bundle = fake_bundle(tmp_path / "bundle", (*READER_MODELS, *PAGE_MODELS))
+    carried = _make_svc(model_store=ModelStore(tmp_path / "downloads", bundled_root=bundle))
+    plain = _make_svc(model_store=ModelStore(tmp_path / "downloads"))
+
+    status = carried.get_installation_status()
+
+    assert status["bundled:reader:ppocr"] is True
+    assert status["bundled:page_models:all"] is True
+    assert status["reader:ppocr"] is True
+    assert status["page_models:all"] is True
+    assert plain.get_installation_status()["bundled:reader:ppocr"] is False
 
 
 @pytest.mark.unit
@@ -2433,107 +2462,6 @@ def test_unreachable_server_is_asked_again_on_the_next_check(tmp_path: Path) -> 
         assert svc.check_run_preflight(cfg).blocked is False
 
 
-# ── GPU monitoring add-on ─────────────────────────────────────────────────────
-
-_AM = "teachers_teammate.infrastructure.addon_manager"
-
-
-@pytest.mark.unit
-def test_pending_gpu_monitoring_addon_names_the_missing_package() -> None:
-    """
-    Given  a frozen build, an NVIDIA GPU and no pynvml
-    When   pending_gpu_monitoring_addon is called
-    Then   the NVIDIA add-on is returned and nothing is installed
-    """
-    from teachers_teammate.infrastructure.gpu_detector import GpuInfo  # noqa: PLC0415
-
-    svc = _make_svc()
-    with (
-        patch(f"{_AM}.can_install_addons", return_value=True),
-        patch.object(svc, "detect_gpus", return_value=[GpuInfo("nvidia", "RTX", 8188)]),
-        patch(f"{_AM}.is_addon_importable", return_value=False),
-        patch(f"{_AM}.install_addon_subprocess") as install,
-    ):
-        assert svc.pending_gpu_monitoring_addon() == "nvidia"
-    install.assert_not_called()
-
-
-@pytest.mark.unit
-def test_pending_gpu_monitoring_addon_is_none_outside_frozen_builds() -> None:
-    """
-    Given  a source checkout (add-ons cannot be installed)
-    When   pending_gpu_monitoring_addon is called
-    Then   None is returned and the hardware is not even probed
-    """
-    svc = _make_svc()
-    with (
-        patch(f"{_AM}.can_install_addons", return_value=False),
-        patch.object(svc, "detect_gpus", side_effect=AssertionError("no probe expected")),
-    ):
-        assert svc.pending_gpu_monitoring_addon() is None
-
-
-@pytest.mark.unit
-def test_pending_gpu_monitoring_addon_is_none_when_present_or_no_gpu() -> None:
-    """
-    Given  a frozen build where the package already imports, or no GPU is found
-    When   pending_gpu_monitoring_addon is called
-    Then   None is returned
-    """
-    from teachers_teammate.infrastructure.gpu_detector import GpuInfo  # noqa: PLC0415
-
-    svc = _make_svc()
-    with patch(f"{_AM}.can_install_addons", return_value=True):
-        with (
-            patch.object(svc, "detect_gpus", return_value=[GpuInfo("nvidia", "RTX", 8188)]),
-            patch(f"{_AM}.is_addon_importable", return_value=True),
-        ):
-            assert svc.pending_gpu_monitoring_addon() is None
-        with patch.object(svc, "detect_gpus", return_value=[]):
-            assert svc.pending_gpu_monitoring_addon() is None
-
-
-@pytest.mark.unit
-def test_install_gpu_monitoring_installs_with_timeout_and_refreshes_imports(
-    tmp_path: Path,
-) -> None:
-    """
-    Given  the NVIDIA add-on is to be installed unattended
-    When   install_gpu_monitoring is called
-    Then   pip runs with the background network timeout and the import caches are refreshed
-    """
-    svc = _make_svc()
-    with (
-        patch(f"{_AM}.get_packages_dir", return_value=tmp_path),
-        patch(f"{_AM}.install_addon_subprocess") as install,
-        patch(f"{_AM}.inject_packages_dir") as inject,
-        patch(f"{_AM}.clear_stale_modules") as clear,
-    ):
-        svc.install_gpu_monitoring("nvidia")
-
-    assert install.call_args.args[:2] == ("nvidia", tmp_path)
-    assert install.call_args.kwargs["network_timeout"] > 0
-    inject.assert_called_once()
-    clear.assert_called_once_with("nvidia")
-
-
-@pytest.mark.unit
-def test_install_gpu_monitoring_propagates_pip_failure() -> None:
-    """
-    Given  pip fails (for example offline)
-    When   install_gpu_monitoring is called
-    Then   the RuntimeError reaches the caller, which reports it
-    """
-    svc = _make_svc()
-    with (
-        patch(f"{_AM}.install_addon_subprocess", side_effect=RuntimeError("pip exited")),
-        patch(f"{_AM}.inject_packages_dir") as inject,
-        pytest.raises(RuntimeError, match="pip exited"),
-    ):
-        svc.install_gpu_monitoring("nvidia")
-    inject.assert_not_called()
-
-
 # ── export_text / is_in_input_folder ──────────────────────────────────────
 
 
@@ -2984,29 +2912,6 @@ def test_an_outdated_folder_without_the_needed_add_on_changes_nothing(
         issues = _make_svc().check_stage_requirements(cfg, "correction")
 
     assert [i.kind for i in issues] == [IssueKind.PACKAGE_MISSING]
-
-
-@pytest.mark.unit
-def test_the_gpu_add_on_is_not_installed_again_while_the_folder_waits_for_an_update(
-    monkeypatch,
-) -> None:
-    """
-    Given  the installed app, an NVIDIA card without its package, and outdated add-ons
-    When   the pending GPU add-on is asked for
-    Then   none is pending: the update brings it back, a second copy would not
-    """
-    from teachers_teammate.infrastructure import addon_manager  # noqa: PLC0415
-
-    svc = _make_svc()
-    monkeypatch.setattr(addon_manager, "can_install_addons", lambda: True)
-    monkeypatch.setattr(addon_manager, "is_addon_importable", lambda _addon: False)
-    monkeypatch.setattr(svc, "detect_gpus", lambda **_k: [SimpleNamespace(vendor="nvidia")])
-    monkeypatch.setattr(addon_manager, "addons_outdated", lambda: False)
-    assert svc.pending_gpu_monitoring_addon() == "nvidia"
-
-    monkeypatch.setattr(addon_manager, "addons_outdated", lambda: True)
-
-    assert svc.pending_gpu_monitoring_addon() is None
 
 
 @pytest.mark.unit

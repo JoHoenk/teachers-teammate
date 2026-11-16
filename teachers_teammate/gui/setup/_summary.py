@@ -23,6 +23,7 @@ from ...domain.data_location import (
     STAGE_EVALUATION,
     STAGE_OCR,
 )
+from ...domain.model_catalog import licence_note
 from .. import _user_text as txt
 
 #: The step names the summary uses; the same words as the "uses" lines in the main window.
@@ -180,6 +181,16 @@ def _note(step: PlannedStep, downloads: Sequence[PlannedDownload]) -> str:
     return ROW_DOWNLOADED if step.installed else ""
 
 
+def _download_tooltip(download: PlannedDownload) -> str:
+    """Return the tooltip of a download's checkbox: its name, and the terms when they restrict use.
+
+    A model the teacher pulls from Ollama comes under its own licence; only one that restricts
+    *use* says so here (see :class:`...domain.model_catalog.ModelLicence`).
+    """
+    note = licence_note(download.name) if download.kind is DownloadKind.OLLAMA_MODEL else ""
+    return f"{download.name}\n{note}" if note else download.name
+
+
 class SummaryRows(QWidget):
     """The summary page's lines, with a checkbox for every download."""
 
@@ -227,7 +238,7 @@ class SummaryRows(QWidget):
         for offset, download in enumerate(row.downloads):
             box = QCheckBox(size_text(download))
             box.setChecked(True)
-            box.setToolTip(download.name)
+            box.setToolTip(_download_tooltip(download))
             self._boxes[download.name] = box
             self._downloads[download.name] = download
             self._grid.addWidget(box, line + offset, 2)

@@ -1,0 +1,95 @@
+Package,Version,License
+annotated-doc,0.0.6,MIT
+annotated-types,0.8.0,MIT
+anthropic,2.8.0,Apache Software License
+anyio,4.16.0,MIT
+blis,1.3.4,BSD License
+catalogue,2.0.10,MIT License
+certifi,2026.10.23,Mozilla Public License 2.0 (MPL 2.0)
+cffi,2.1.1,MIT-0
+charset-normalizer,3.5.2,MIT
+click,8.5.1,BSD-3-Clause
+cloudpathlib,0.26.0,MIT License
+cohere,5.21.1,MIT License
+confection,1.3.4,MIT License
+cryptography,50.0.2,Apache-2.0 OR BSD-3-Clause
+cymem,2.0.16,MIT License
+distro,1.9.0,Apache Software License
+docstring-parser,0.18.0,MIT License
+fastavro,1.13.1,MIT
+filelock,4.2.10,MIT
+filetype,1.2.0,MIT License
+fsspec,2026.9.0,BSD-3-Clause
+google-auth,2.62.2,Apache Software License
+google-genai,3.3.0,Apache-2.0
+h11,0.16.0,MIT License
+hf-xet,1.8.0,Apache-2.0
+httpcore,1.0.9,BSD-3-Clause
+httpcore2,2.16.1,BSD-3-Clause
+httpx,0.28.1,BSD License
+httpx-sse,0.4.3,MIT
+httpx2,2.16.1,BSD-3-Clause
+huggingface-hub,2.4.0,Apache Software License
+idna,3.20,BSD-3-Clause
+jinja2,3.1.6,BSD License
+jiter,0.19.0,MIT
+jsonpatch,1.47,BSD-3-Clause
+jsonpointer,3.12,BSD-3-Clause
+langchain-anthropic,1.7.10,MIT License
+langchain-cohere,0.6.0,MIT License
+langchain-core,1.8.1,MIT License
+langchain-google-genai,4.5.0,MIT
+langchain-mistralai,1.2.0,MIT License
+langchain-ollama,1.1.0,MIT License
+langchain-openai,1.8.0,MIT License
+langchain-protocol,0.0.21,MIT License
+langsmith,0.14.17,MIT License
+markdown-it-py,4.3.0,MIT License
+markupsafe,3.0.4,BSD-3-Clause
+mdurl,0.1.2,MIT License
+murmurhash,1.0.16,MIT License
+numpy,2.5.5,BSD-3-Clause AND 0BSD AND MIT AND Zlib AND CC0-1.0
+ollama,0.6.3,MIT
+openai,3.51.0,Apache-2.0
+opentelemetry-api,1.45.2,Apache-2.0
+orjson,3.13.0,MPL-2.0 AND (Apache-2.0 OR MIT)
+packaging,26.3,Apache-2.0 OR BSD-2-Clause
+preshed,3.0.15,MIT License
+pyasn1,0.6.5,BSD-2-Clause
+pyasn1-modules,0.4.2,BSD License
+pycparser,3.12,BSD-3-Clause
+pydantic,2.14.3,MIT
+pydantic-core,2.50.4,MIT
+pygments,2.21.0,BSD-2-Clause
+pyyaml,6.0.3,MIT License
+regex,2026.11.15,Apache-2.0 AND CNRI-Python
+requests,2.34.2,Apache Software License
+requests-toolbelt,1.0.0,Apache Software License
+rich,15.0.0,MIT License
+setuptools,84.2.1,MIT
+shellingham,1.5.4,ISC License (ISCL)
+smart-open,9.0.4,MIT
+sniffio,1.3.1,Apache Software License
+spacy,3.8.18,MIT License
+spacy-legacy,3.0.12,MIT License
+spacy-loggers,1.0.5,MIT
+srsly,2.5.6,MIT License
+tenacity,9.1.4,Apache Software License
+thinc,8.3.14,MIT License
+tiktoken,0.14.0,MIT License
+tokenizers,0.23.3,Apache Software License
+tqdm,4.70.1,MPL-2.0 AND MIT
+truststore,0.10.5,MIT
+typer,0.29.1,MIT
+types-pyyaml,6.0.12.20261113,Apache-2.0
+types-requests,2.33.0.20261030,Apache-2.0
+typing-extensions,4.16.0,PSF-2.0
+typing-inspection,0.4.5,MIT
+urllib3,2.8.0,MIT
+uuid-utils,0.19.0,BSD-3-Clause
+wasabi,1.1.3,MIT
+weasel,1.0.1,MIT License
+websockets,17.4,BSD-3-Clause
+wrapt,2.5.2,BSD-2-Clause
+xxhash,4.1.0,BSD-2-Clause
+zstandard,0.25.0,BSD-3-Clause

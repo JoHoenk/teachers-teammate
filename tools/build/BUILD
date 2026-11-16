@@ -1,8 +1,9 @@
 """Bazel targets for the standalone-build tools.
 
 The other scripts in this folder run as programs (build_standalone.py, check_pins.py,
-run_gui.py); addon_constraints.py, check_addon_resolution.py, make_constraints.py, check_pins.py,
-check_linux_bundle.py and check_macos_bundle.py are also libraries, so a unit test can drive them.
+run_gui.py); addon_constraints.py, addon_licenses.py, addon_lock.py, check_addon_resolution.py,
+fetch_models.py, make_constraints.py, check_pins.py, check_linux_bundle.py and check_macos_bundle.py are also
+libraries, so a unit test can drive them.
 """
 
 load("@rules_python//python:defs.bzl", "py_library")
@@ -12,10 +13,13 @@ py_library(
     srcs = [
         "__init__.py",
         "addon_constraints.py",
+        "addon_licenses.py",
+        "addon_lock.py",
         "check_addon_resolution.py",
         "check_linux_bundle.py",
         "check_macos_bundle.py",
         "check_pins.py",
+        "fetch_models.py",
         "make_constraints.py",
     ],
     visibility = ["//visibility:public"],

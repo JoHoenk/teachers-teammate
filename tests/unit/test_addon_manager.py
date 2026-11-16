@@ -12,15 +12,13 @@ import pytest
 
 from teachers_teammate.infrastructure import addon_manager
 from teachers_teammate.infrastructure.addon_manager import (
-    ADDON_AMD,
-    ADDON_NVIDIA,
+    ADDON_LLM_OPENAI,
     ADDON_PRIVACY,
     _packages_dir_readable,
     can_install_addons,
     clear_stale_modules,
     download_spacy_model_subprocess,
     get_packages_dir,
-    gpu_monitoring_addon,
     inject_packages_dir,
     install_addon_subprocess,
     is_addon_importable,
@@ -501,28 +499,7 @@ def test_inject_packages_dir_skips_when_unreadable(tmp_path: Path, monkeypatch) 
         sys.path[:] = original
 
 
-# ── gpu_monitoring_addon / can_install_addons ─────────────────────────────────
-
-
-@pytest.mark.parametrize(
-    ("vendors", "platform_name", "expected"),
-    [
-        (["nvidia"], "win32", ADDON_NVIDIA),
-        (["nvidia"], "linux", ADDON_NVIDIA),
-        (["amd"], "linux", ADDON_AMD),
-        (["amd"], "win32", None),
-        (["amd"], "darwin", None),
-        (["amd", "nvidia"], "linux", ADDON_NVIDIA),
-        ([], "linux", None),
-    ],
-)
-def test_gpu_monitoring_addon_follows_vendor_and_platform(vendors, platform_name, expected) -> None:
-    """
-    Given  detected GPU vendors on a platform
-    When   gpu_monitoring_addon is called
-    Then   NVIDIA wins, AMD only counts on Linux, and no GPU means no add-on
-    """
-    assert gpu_monitoring_addon(vendors, platform_name) == expected
+# ── can_install_addons ────────────────────────────────────────────────────────
 
 
 def test_can_install_addons_false_in_source_checkout(monkeypatch) -> None:
@@ -576,12 +553,14 @@ def test_install_addon_subprocess_passes_network_timeout_to_pip(tmp_path: Path) 
         patch.object(sys, "frozen", True, create=True),
         patch("subprocess.Popen", side_effect=fake_popen),
     ):
-        install_addon_subprocess(ADDON_NVIDIA, tmp_path / "pkg", lambda _: None, network_timeout=15)
+        install_addon_subprocess(
+            ADDON_LLM_OPENAI, tmp_path / "pkg", lambda _: None, network_timeout=15
+        )
 
     cmd = captured[0]
     assert cmd[cmd.index("--timeout") + 1] == "15"
     assert cmd[cmd.index("--retries") + 1] == "1"
-    assert cmd.index("--timeout") < cmd.index("nvidia-ml-py")
+    assert cmd.index("--timeout") < cmd.index("langchain-openai>=0.2")
 
 
 def test_install_addon_subprocess_keeps_pip_defaults_without_timeout(tmp_path: Path) -> None:
@@ -597,7 +576,7 @@ def test_install_addon_subprocess_keeps_pip_defaults_without_timeout(tmp_path: P
         return _FakeProc()
 
     with patch("subprocess.Popen", side_effect=fake_popen):
-        install_addon_subprocess(ADDON_NVIDIA, tmp_path / "pkg", lambda _: None)
+        install_addon_subprocess(ADDON_LLM_OPENAI, tmp_path / "pkg", lambda _: None)
 
     assert "--timeout" not in captured[0]
 
@@ -635,7 +614,7 @@ def test_pip_installs_run_one_at_a_time(tmp_path: Path) -> None:
         return _SlowProc(next(labels))
 
     def run() -> None:
-        install_addon_subprocess(ADDON_NVIDIA, tmp_path / "pkg", lambda _: None)
+        install_addon_subprocess(ADDON_LLM_OPENAI, tmp_path / "pkg", lambda _: None)
 
     with patch("subprocess.Popen", side_effect=fake_popen):
         t1 = threading.Thread(target=run)
@@ -718,6 +697,22 @@ def test_remove_retired_addons_deletes_exactly_the_recorded_files(tmp_path: Path
     assert not (tmp_path / "paddleocr-3.0.0.dist-info").exists()
     assert (tmp_path / "spacy" / "__init__.py").exists()
     assert (tmp_path / "spacy-3.7.0.dist-info" / "RECORD").exists()
+
+
+def test_remove_retired_addons_deletes_the_gpu_monitoring_packages(tmp_path: Path) -> None:
+    """
+    Given  a packages folder with the GPU-monitoring packages an earlier version installed
+    When   remove_retired_addons() runs
+    Then   both go: the app reads the card itself now (NVML is bundled, AMD comes from sysfs)
+    """
+    _plant_package(tmp_path, "nvidia_ml_py-12.560.30", ["pynvml.py"])
+    _plant_package(tmp_path, "pyamdgpuinfo-2.1.7", ["pyamdgpuinfo/__init__.py"])
+
+    removed = remove_retired_addons(tmp_path)
+
+    assert sorted(removed) == ["nvidia-ml-py", "pyamdgpuinfo"]
+    assert not (tmp_path / "pynvml.py").exists()
+    assert not (tmp_path / "pyamdgpuinfo").exists()
 
 
 def test_remove_retired_addons_leaves_a_package_without_record(tmp_path: Path) -> None:
@@ -985,7 +980,7 @@ def test_installed_addon_requirements_lists_what_is_in_the_folder(tmp_path: Path
         "langchain-openai>=0.2",
     ]
     assert addon_manager.addon_in_folder("spaCy", pkg_dir)
-    assert not addon_manager.addon_in_folder("pyamdgpuinfo", pkg_dir)
+    assert not addon_manager.addon_in_folder("langchain-cohere", pkg_dir)
 
 
 def test_drop_outdated_shared_packages_removes_by_record(
@@ -1227,12 +1222,12 @@ def test_update_cleans_up_when_one_add_on_fails_to_install(
     """
     pkg_dir = tmp_path / "packages"
     _dist_info(pkg_dir, "spacy", "3.8.0", tags=("cp312-cp312-linux_x86_64",))
-    _dist_info(pkg_dir, "pyamdgpuinfo", "2.1.7", tags=("cp312-cp312-linux_x86_64",))
+    _dist_info(pkg_dir, "langchain_core", "1.4.7", tags=("cp312-cp312-linux_x86_64",))
     monkeypatch.setattr(addon_manager, "get_packages_dir", lambda: pkg_dir)
     monkeypatch.setattr(addon_manager, "inject_packages_dir", lambda: None)
 
     def _install(packages: list[str], _target: Path, _cb: object, **_kw: object) -> None:
-        if packages[0].startswith("pyamdgpuinfo"):
+        if packages[0].startswith("langchain-core"):
             raise RuntimeError("no matching distribution")
 
     monkeypatch.setattr(addon_manager, "install_packages_subprocess", _install)

@@ -329,7 +329,6 @@ class SettingsWindow(QDialog):
         if isinstance(page, AiSetupPage):
             page.hardware_setting_changed.connect(self._on_hardware_setting_changed)
             page.ollama_url_changed.connect(self._on_ollama_url_changed)
-            page.addon_installed.connect(self.addon_installed.emit)
             page.set_speed_settings_provider(self._speed_settings)
             page.speed_measured.connect(self._on_speed_measured)
         elif isinstance(page, AddonsPage):

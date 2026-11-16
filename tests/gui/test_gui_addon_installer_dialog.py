@@ -9,19 +9,13 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from teachers_teammate.application.service import (
-    ADDON_AMD,
-    ADDON_NVIDIA,
-    ADDON_PRIVACY,
-    GpuInfo,
-)
+from teachers_teammate.application.service import ADDON_PRIVACY
 from teachers_teammate.exceptions import ModelDownloadCancelledError, ModelDownloadError
 from teachers_teammate.gui import _addon_installer_dialog as mod
 from teachers_teammate.gui._addon_installer_dialog import (
     PageModelsDownloadDialog,
     ReaderDownloadDialog,
     AddonInstallerDialog,
-    GpuAddonDialog,
     SpacyModelDownloadDialog,
 )
 
@@ -148,86 +142,6 @@ def test_spacy_dialog_on_err_reenables_controls(qtbot) -> None:
     assert "boom" in dlg._log.toPlainText()
     assert dlg._download_btn.isEnabled() is True
     assert dlg._model_combo.isEnabled() is True
-
-
-# ── GpuAddonDialog._build_header ─────────────────────────────────────────────
-
-
-@pytest.mark.gui
-def test_gpu_dialog_selects_nvidia_addon(qtbot) -> None:
-    """Given an NVIDIA GpuInfo / When the dialog is built / Then it targets the nvidia addon."""
-    dlg = GpuAddonDialog([GpuInfo("nvidia", "RTX 4090")])
-    qtbot.addWidget(dlg)
-    assert dlg._addon == ADDON_NVIDIA
-
-
-@pytest.mark.gui
-def test_gpu_dialog_selects_amd_addon(qtbot) -> None:
-    """Given an AMD GpuInfo / When the dialog is built / Then it targets the amd addon."""
-    dlg = GpuAddonDialog([GpuInfo("amd", "RX 7900")])
-    qtbot.addWidget(dlg)
-    assert dlg._addon == ADDON_AMD
-
-
-@pytest.mark.gui
-def test_gpu_dialog_no_gpu_disables_install(qtbot) -> None:
-    """Given an empty GPU list / When the dialog is built / Then no addon is set and Install is disabled."""
-    dlg = GpuAddonDialog([])
-    qtbot.addWidget(dlg)
-    assert dlg._addon is None
-    assert dlg._install_btn.isEnabled() is False
-
-
-@pytest.mark.gui
-def test_gpu_dialog_start_install_noop_without_addon(qtbot) -> None:
-    """Given a GpuAddonDialog with no detected GPU / When _start_install runs / Then no thread starts."""
-    dlg = GpuAddonDialog([])
-    qtbot.addWidget(dlg)
-
-    dlg._start_install()
-
-    assert dlg._thread is None
-
-
-@pytest.mark.gui
-def test_gpu_dialog_start_install_launches_thread(qtbot) -> None:
-    """Given a GpuAddonDialog with a detected GPU / When _start_install runs / Then a thread starts."""
-    dlg = GpuAddonDialog([GpuInfo("nvidia", "RTX 4090")])
-    qtbot.addWidget(dlg)
-
-    with patch(_SVC) as svc, patch.object(mod, "_InstallThread", _FakeThread):
-        svc.return_value.addon_packages_dir.return_value = "/tmp/pkg"
-        dlg._start_install()
-
-    assert isinstance(dlg._thread, _FakeThread)
-    assert dlg._thread.started is True
-
-
-@pytest.mark.gui
-def test_gpu_dialog_on_ok_emits_installed(qtbot) -> None:
-    """Given a GpuAddonDialog targeting an addon / When _on_install_ok fires / Then 'installed' is emitted."""
-    dlg = GpuAddonDialog([GpuInfo("amd", "RX 7900")])
-    qtbot.addWidget(dlg)
-    received: list[str] = []
-    dlg.installed.connect(received.append)
-
-    with patch(_SVC):
-        dlg._on_install_ok()
-
-    assert received == [ADDON_AMD]
-    assert dlg._install_btn.text() == "Installed ✓"
-
-
-@pytest.mark.gui
-def test_gpu_dialog_on_err_offers_retry(qtbot) -> None:
-    """Given a GpuAddonDialog / When _on_install_err fires / Then the button becomes 'Retry'."""
-    dlg = GpuAddonDialog([GpuInfo("nvidia", "RTX 4090")])
-    qtbot.addWidget(dlg)
-
-    dlg._on_install_err("disk full")
-
-    assert "disk full" in dlg._log.toPlainText()
-    assert dlg._install_btn.text() == "Retry"
 
 
 # ── worker threads + pip-missing ────────────────────────────

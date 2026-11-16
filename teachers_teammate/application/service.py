@@ -57,8 +57,6 @@ from ..domain.pdf_text_layer import PdfTextLayerMode, normalize_pdf_text_layer
 from ..domain.performance_estimate import MachineFactors, TimeRange
 from ..domain.run_summary import RunSummary
 from ..infrastructure import power
-from ..infrastructure.addon_manager import ADDON_AMD as ADDON_AMD  # noqa: PLC0414
-from ..infrastructure.addon_manager import ADDON_NVIDIA as ADDON_NVIDIA  # noqa: PLC0414
 from ..infrastructure.addon_manager import ADDON_PRIVACY as ADDON_PRIVACY  # noqa: PLC0414
 from ..infrastructure.anonymizer import (
     DEFAULT_PATTERNS as DEFAULT_ANONYMIZER_PATTERNS,  # noqa: F401
@@ -293,6 +291,19 @@ class RecognitionPlan:
     """Text files, PDFs with a usable text layer, and files whose recognised text is stored."""
     skipped: tuple[Path, ...] = ()
     """Scans: images and PDFs that have to be read from page images."""
+
+
+#: Keys of :meth:`ProcessingApplicationService.get_installation_status` for the two model sets the
+#: app can carry itself; the Add-ons page names its rows (and its install items) the same way.
+READER_STATUS_KEY = "reader:ppocr"
+PAGE_MODELS_STATUS_KEY = "page_models:all"
+#: In front of a status key: whether the bundle itself carries that item (``bundled:reader:ppocr``).
+BUNDLED_PREFIX = "bundled:"
+
+
+def bundled_status_key(key: str) -> str:
+    """Return the status key that says whether the app carries *key*'s files itself."""
+    return f"{BUNDLED_PREFIX}{key}"
 
 
 class ProcessingApplicationService:
@@ -2106,7 +2117,6 @@ class ProcessingApplicationService:
         *,
         provider_modules: dict[str, str] | None = None,
         spacy_models: list[str] | None = None,
-        gpu_packages: dict[str, str] | None = None,
         ollama_models: list[str] | None = None,
         ollama_url: str = "",
         langchain_packages: dict[str, str] | None = None,
@@ -2116,16 +2126,20 @@ class ProcessingApplicationService:
         Keys produced (all optional — only those whose *inputs* are supplied):
         - ``"reader:ppocr"`` — always checked (the built-in reader's model files)
         - ``"page_models:all"`` — always checked (the page models of the automatic preparation)
+        - ``"bundled:reader:ppocr"``, ``"bundled:page_models:all"`` — always checked: whether
+          the app carries those files itself, so the Add-ons rows say *included* not *downloaded*
         - ``"provider:{name}"`` — for each entry in *provider_modules*
         - ``"spacy:{model_id}"`` — for each id in *spacy_models*
-        - ``"gpu:nvidia"`` — when *gpu_packages* contains ``"gpu:nvidia"``
-        - ``"gpu:amd"`` — when *gpu_packages* contains ``"gpu:amd"``
         - ``"ollama:{model}"`` — for each model in *ollama_models*
         - ``"langchain:{key}"`` — for each entry in *langchain_packages*
         """
         result: dict[str, bool] = {}
-        result["reader:ppocr"] = self.reader_installed()
-        result["page_models:all"] = self.page_models_installed()
+        result[READER_STATUS_KEY] = self.reader_installed()
+        result[PAGE_MODELS_STATUS_KEY] = self.page_models_installed()
+        result[bundled_status_key(READER_STATUS_KEY)] = self._model_store.is_bundled(READER_MODELS)
+        result[bundled_status_key(PAGE_MODELS_STATUS_KEY)] = self._model_store.is_bundled(
+            PAGE_MODELS
+        )
 
         if provider_modules:
             for name, module_name in provider_modules.items():
@@ -2135,10 +2149,6 @@ class ProcessingApplicationService:
             installed_spacy = set(self.list_installed_spacy_models())
             for model_id in spacy_models:
                 result[f"spacy:{model_id}"] = model_id in installed_spacy
-
-        if gpu_packages:
-            for key, pkg_module in gpu_packages.items():
-                result[key] = importlib.util.find_spec(pkg_module) is not None
 
         if ollama_models:
             from ..domain.model_catalog import normalize_tag  # noqa: PLC0415
@@ -2265,58 +2275,6 @@ class ProcessingApplicationService:
         )
 
         install_packages_subprocess(packages, get_packages_dir(), progress_cb)
-
-    def pending_gpu_monitoring_addon(self) -> str | None:
-        """Return the live-GPU-monitoring add-on this computer needs but lacks, or None.
-
-        ``None`` unless the app can install add-ons (frozen build), a supported GPU is
-        present and its package is missing.  Installs nothing.  Slow (hardware probe):
-        call from a background thread.
-
-        Returns:
-            ``"nvidia"`` or ``"amd"``, or ``None``.
-        """
-        from ..infrastructure.addon_manager import (  # noqa: PLC0415
-            can_install_addons,
-            gpu_monitoring_addon,
-            is_addon_importable,
-        )
-
-        # After an app update the add-on waits for "Update add-ons"; installing it again
-        # here would add a second copy to a folder the app does not use yet.
-        if not can_install_addons() or self.addons_outdated():
-            return None
-        addon = gpu_monitoring_addon(gpu.vendor for gpu in self.detect_gpus())
-        if addon is None or is_addon_importable(addon):
-            return None
-        return addon
-
-    def install_gpu_monitoring(self, addon: str) -> None:
-        """Install the GPU-monitoring *addon* unattended and make it importable.
-
-        Uses a short network timeout so a network that drops traffic fails instead of
-        hanging.  Slow: call from a background thread.
-
-        Raises:
-            OSError: if the packages directory cannot be written.
-            RuntimeError: if pip fails (offline, blocked, …).
-        """
-        from ..infrastructure.addon_manager import (  # noqa: PLC0415
-            BACKGROUND_PIP_TIMEOUT_S,
-            clear_stale_modules,
-            get_packages_dir,
-            inject_packages_dir,
-            install_addon_subprocess,
-        )
-
-        install_addon_subprocess(
-            addon,
-            get_packages_dir(),
-            lambda _line: None,
-            network_timeout=BACKGROUND_PIP_TIMEOUT_S,
-        )
-        inject_packages_dir()
-        clear_stale_modules(addon)
 
     def download_spacy_model(
         self,

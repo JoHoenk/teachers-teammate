@@ -89,8 +89,8 @@ Your settings are saved automatically and restored every time you start the app.
 **Main memory:** 8 GB. A model needs 2.5 to 7.2 GB while it runs; with a graphics card it runs
 there instead, and the app shows what fits your computer before anything is downloaded.
 
-**Free disk space:** about 600 MB for the app, plus the models you choose — the built-in reader
-31 MB, the page models 39 MB, and 1.6 to 7.2 GB per model that runs in Ollama. The app names the
+**Free disk space:** about 700 MB for the app, which brings the built-in reader (31 MB) and the
+page models (39 MB) with it, plus 1.6 to 7.2 GB per model that runs in Ollama. The app names the
 size of every download before it starts.
 
 **Python wheel:** Python 3.14.
@@ -123,9 +123,9 @@ commit the file came from.
 
 The first time you start the app, the **Setup Assistant** opens and asks three plain questions: the language of your class, what your students hand in (handwritten pages or typed texts), and where the proofreading may run. It then shows you what it will set and what it will download, and you press **Set up** once. The downloads run in the background and the main window shows how far they are.
 
-Teacher's Teammate reads handwriting in one of two ways. The **built-in reader** (about 31 MB) runs inside the app and needs no extra program; choose it under **Settings → AI models**, and the assistant downloads its files for you. The default is a reading model that runs in a local AI program called **Ollama**, which runs on your computer and never sends data anywhere without your permission. If Ollama is not installed yet, the assistant says so and offers **Get Ollama…**, which opens [ollama.com/download](https://ollama.com/download); run its installer like any other program. Once Ollama is running, the assistant's line turns green by itself — no click needed — and it downloads the right reading and writing models for your computer. Ollama is also what runs AI proofreading on your own computer.
+Teacher's Teammate reads handwriting in one of two ways. The **built-in reader** (about 31 MB) runs inside the app and needs no extra program; choose it under **Settings → AI models**, and its files are already there. The default is a reading model that runs in a local AI program called **Ollama**, which runs on your computer and never sends data anywhere without your permission. If Ollama is not installed yet, the assistant says so and offers **Get Ollama…**, which opens [ollama.com/download](https://ollama.com/download); run its installer like any other program. Once Ollama is running, the assistant's line turns green by itself — no click needed — and it downloads the right reading and writing models for your computer. Ollama is also what runs AI proofreading on your own computer.
 
-For photographed pages, **Automatic** image preparation can turn a sideways page upright and flatten a curved one. This needs two small **page models** (about 39 MB). The assistant lists them as their own line and downloads them with the rest, whichever way the pages are read.
+For photographed pages, **Automatic** image preparation can turn a sideways page upright and flatten a curved one. This needs two small **page models** (about 39 MB), which come with the app, whichever way the pages are read.
 
 You can run the assistant again at any time from **Tools → Setup Assistant…**. It starts from your saved answers and keeps a model that already works, so running it a second time changes nothing you did not ask for. Everything it sets can also be changed by hand in the Settings window.
 

@@ -350,6 +350,16 @@ whose tag starts with `hf.co/` are pulled from Hugging Face, so
 `tools/verify_model_catalog.py` checks them against the Hugging Face file list instead
 of the Ollama registry.
 
+Every entry also names the terms its weights come under (`OllamaModelSpec.licence`, a
+`ModelLicence` with the name, a link and — only when the licence restricts *use* — one sentence).
+The app never ships a model, so a permissive licence (MIT, Apache-2.0) adds nothing a teacher has
+to know; a restrictive one does.  Today that is the default reading model only: Chandra OCR 2's
+weights are under a modified OpenRAIL-M licence, free for research and personal use, and a school
+that uses it institutionally needs Datalab's commercial licence.  `licence_note(tag)` returns the
+sentence; the Add-ons model tree shows it in its *License* column and the Setup Assistant in the
+tooltip of the download box.  The facts were read from each model's card on 2026-11-20 — check
+them again when a model is added or a tag moves to a new version.
+
 ### Model sizes: what a model needs on the card
 
 `OllamaModelSpec.memory_gb` and `context_gb_per_8k` say how much a model needs at 8,192 tokens and
@@ -1482,9 +1492,20 @@ SHA-256.  `READER_MODELS` are the reader's two sets (31,191,354 bytes, "31 MB").
 `<user data>/models/<repo name>/<revision>/` (`TEACHERS_TEAMMATE_MODELS_DIR` moves the root;
 `conftest.py` points it at an empty temporary folder for every test).
 
-- **A download happens only when the teacher asks**: the reader's Download button, Add-ons →
-  Reading models, the Setup Assistant's *Set up*, or `--download-reader`.  Never at start-up,
-  never silently, and nothing about the user is sent (User-Agent `teachers-teammate/<version>`).
+- **The installed app carries the reader and the page models.**  `tools/build/fetch_models.py`
+  fetches `READER_MODELS` and `PAGE_MODELS` into `teachers_teammate/_models/` (git-ignored) with
+  the same pins and the same SHA-256 check, through `ModelStore` itself; the spec adds the folder
+  and refuses to build without it.  `ModelStore(bundled_root=…)` reads the bundle first — the
+  default is `sys._MEIPASS/teachers_teammate/_models`, so only a frozen build has one — and the
+  download folder second, so a damaged bundled file falls back to a download instead of being
+  read.  A bundled model counts as installed: nothing is downloaded and nothing is written next
+  to the program files.  The smoke test's `models` check (frozen only) proves the files are
+  complete, and the Add-ons rows say *included* rather than *downloaded*
+  (`get_installation_status()` reports `bundled:reader:ppocr` / `bundled:page_models:all`).
+- **A download happens only when the teacher asks**, and only for what the app does not carry:
+  the reader's Download button, Add-ons → Reading models, the Setup Assistant's *Set up*, or
+  `--download-reader`.  Never at start-up, never silently, and nothing about the user is sent
+  (User-Agent `teachers-teammate/<version>`).
 - Each file streams into `<name>.part`, hashing as it is written; size and SHA-256 must match
   before `os.replace` gives it its name, and a `.verified` marker is written once all files of a
   model are in.  `is_installed` checks the marker and the sizes only (no hashing), so the
@@ -1508,8 +1529,9 @@ SHA-256.  `READER_MODELS` are the reader's two sets (31,191,354 bytes, "31 MB").
 - **Pinning a new revision**: change `revision` and the per-file size/sha256 in
   `domain/local_models.py` *and* the matching `http_file` urls and hashes in `MODULE.bazel`,
   then run `//tests:test_ppocr_models` (it checks the numbers in the new `inference.yml`) and
-  bump `READER_VERSION` if the output changes.  The models are Apache-2.0 (PaddlePaddle) and
-  are not shipped with the app, so they have no entry in `third_party_licenses/`; `NOTICE` names
+  bump `READER_VERSION` if the output changes.  The models are Apache-2.0 (PaddlePaddle) and are
+  shipped inside the bundle, so `NOTICE` names them and their license; they are not pip
+  packages, so `third_party_licenses/` (generated from installed distributions) has no entry for
   them.  The **page models** of the automatic image preparation (`PAGE_MODELS`) are pinned the
   same way; their four `http_file`s are `doc_ori_*` and `uvdoc_*`, their test helpers
   `conftest.page_models_store()` and `fake_page_models_store()`, and a new revision means a
@@ -2526,9 +2548,9 @@ models, and how those installations survive application restarts.
 
 ### Addon packages directory
 
-Optional packages that are installed at runtime — spaCy, LLM provider connectors,
-GPU monitoring libraries — all land in a **persistent user-writable directory** that is separate
-from the application bundle or the development venv:
+Optional packages that are installed at runtime — spaCy, LLM provider connectors — all land in
+a **persistent user-writable directory** that is separate from the application bundle or the
+development venv:
 
 ```
 Windows:  %LOCALAPPDATA%\teachers_teammate\packages\
@@ -2586,9 +2608,8 @@ only part of a package, so putting the folder last is wrong too).  Two things pr
   banner with **Update add-ons**.  Nothing downloads before that click.  `update_addons()` →
   `addon_manager.update_installed_addons()` installs every add-on in the folder again with the
   constraints, removes the outdated shared copies pip did not replace (by `RECORD`), and
-  injects the folder.  `pending_gpu_monitoring_addon()` is `None` while the folder waits, so the
-  automatic GPU install never adds a second copy.  Language models are separate packages that
-  share nothing with the app and are not touched.
+  injects the folder.  Language models are separate packages that share nothing with the app
+  and are not touched.
 - **Another Python.** The folder is not versioned by Python, so an app update that changes
   `.python-version` leaves compiled add-on packages behind that cannot be imported.
   `foreign_python_packages(pkg_dir)` reads the `Tag:` lines of every `.dist-info/WHEEL` at every
@@ -2609,6 +2630,32 @@ only part of a package, so putting the folder last is wrong too).  Two things pr
   weekly on all three build runners without a built app (`--python … --constraints
   addon_constraints.txt`, `.github/workflows/addon_resolution.yml`), so a new release of an
   add-on's package shows up as a red run, not on release day.
+
+### The add-on lock and the license list
+
+The constraints file says what an add-on may **not** change.  What it *gets* is the lock:
+
+- **`addon_lock.txt`.** `requirements_addons_lock.txt` is the pip-compile lock of the `llm` and
+  `privacy` extras (`bazel run //:requirements_addons.update`, the same tooling as the test
+  lock).  `tools/build/addon_lock.py` (run by `build_standalone.py`, bundled by the spec) turns
+  it into the flat `teachers_teammate/_build/addon_lock.txt` — the lock minus the packages
+  `addon_constraints.txt` already pins, because two constraints files that disagree make pip
+  refuse the install.  `pip_policy_arguments()` passes it as a second `-c`, so a teacher who
+  clicks *Install* gets the versions this release was tested with instead of whatever is newest
+  that day.  The smoke test (`addon lock`, frozen only) proves the file is in the bundle and pins
+  every package `addon_manager.addon_package_names()` lists.
+- **`addon_licenses.csv`.** `tools/build/addon_licenses.py` reads the lock, follows pip-compile's
+  `# via` comments from the add-ons' own packages down to what they pull in, and asks PyPI's JSON
+  API for each package's license — no install, no wheel download.  The result is committed at
+  `teachers_teammate/assets/addon_licenses.csv` (bundled, and a diff in a pull request when a
+  license changes).  The script refuses a license the add-ons must not have (AGPL, GPL-only,
+  non-commercial); an `OR` expression is fine as soon as one alternative is.  The Add-ons page
+  shows a package's license as the tooltip of its row
+  (`infrastructure/addon_licenses.py`).  `--check` fails when the committed list is stale, and
+  `.github/workflows/addon_resolution.yml` runs it weekly.
+
+Both files are written at build time and are git-ignored (`teachers_teammate/_build/`); the CSV
+is committed because it is a reviewable fact, not a build artifact.
 
 ### pip package install (frozen builds)
 
@@ -2631,33 +2678,34 @@ if "--_pip_install_mode" in sys.argv:
 ```
 
 `addon_manager.install_addon_subprocess()` uses this mechanism for the addon packages
-(spaCy, GPU monitoring).  `_PipInstallThread` in `settings/_addons_page.py` also
+(spaCy, the provider connectors).  `_PipInstallThread` in `settings/_addons_page.py` also
 uses it when `sys.frozen` is `True`.
 
 In development (non-frozen) builds, both code paths fall back to the standard
 `[sys.executable, "-m", "pip", "install", "--upgrade", ...]` without `--target`, so packages
 land in the active venv as usual.
 
-All pip installs run one at a time (`_PIP_LOCK` in `addon_manager.py`), so the automatic
-install below and Settings → Add-ons never write to the packages directory together.
+All pip installs run one at a time (`_PIP_LOCK` in `addon_manager.py`), so Settings → Add-ons
+never writes to the packages directory twice at once.
 
-### GPU monitoring package (automatic, with consent)
+### GPU monitoring (bundled, no package to install)
 
-The System Monitor needs `pynvml` (NVIDIA) or `pyamdgpuinfo` (AMD, Linux only).  In a
-frozen build the main window asks the service (`pending_gpu_monitoring_addon`, background
-thread) whether this computer has a GPU whose package is missing.  If so, it asks the user
-**once** before downloading it (answer kept in QSettings under `gpu_monitoring/download`),
-then installs it with a short network timeout (`install_gpu_monitoring`) and refreshes the
-panel without a restart.  A failed install is remembered per app version
-(`gpu_monitoring/failed_in_version`) and is not retried automatically; Settings → Add-ons
-remains the manual path.  Source checkouts are never touched (`can_install_addons`).
+The System Monitor's GPU and VRAM gauges need no add-on.  `nvidia-ml-py` (the `pynvml` module,
+60 KB, BSD) is a runtime dependency in `pyproject.toml`, so it is in the bundle; AMD needs no
+package at all — `gpu_detector.read_amd_usage()` reads the `amdgpu` driver's sysfs files
+(`gpu_busy_percent`, `mem_info_vram_used`, `mem_info_vram_total`).  `read_gpu_usage()` answers
+`None` when neither source does, and `_stats_widget.py` then shows CPU and RAM only.
 
-GPU *detection* (`infrastructure/gpu_detector.py`) does not need that package: it reads the
-Windows display-adapter registry keys or Linux sysfs first and runs `nvidia-smi` /
-`rocm-smi` / `amd-smi` only to complete a name or memory size.  `nvidia-smi` is tried on
-`PATH` first and then at its usual Windows locations (a packaged app's `PATH` can lack the
-driver folder); if it still gives no answer, the optional `pynvml` package is asked.  AMD integrated graphics
-(under 1 GB of dedicated memory) is never reported.
+There is no start-up question and no QSettings key for it any more: the old GPU add-ons
+(`nvidia`, `amd`) and their packages (`nvidia-ml-py`, `pyamdgpuinfo`) are in
+`addon_manager._RETIRED_PACKAGES`, so an add-on folder written by an older version is cleaned
+up at the next start.
+
+GPU *detection* (`infrastructure/gpu_detector.py`) reads the Windows display-adapter registry
+keys or Linux sysfs first and runs `nvidia-smi` / `rocm-smi` / `amd-smi` only to complete a name
+or memory size.  `nvidia-smi` is tried on `PATH` first and then at its usual Windows locations
+(a packaged app's `PATH` can lack the driver folder); if it still gives no answer, `pynvml` is
+asked.  AMD integrated graphics (under 1 GB of dedicated memory) is never reported.
 
 ### spaCy library
 

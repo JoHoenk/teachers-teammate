@@ -4,6 +4,10 @@ Downloads happen only when the teacher asks for them (Add-ons, the fix button, t
 Assistant, ``--download-reader``); nothing here is called at start-up.  Every file is checked
 against the size and SHA-256 pinned in :mod:`teachers_teammate.domain.local_models` before it
 becomes visible under its final name.
+
+The installed app carries the reader and the page models itself (``teachers_teammate/_models``,
+fetched at build time by ``tools/build/fetch_models.py``).  A model the bundle holds counts as
+installed, so nothing is downloaded and nothing is written next to the program files.
 """
 
 from __future__ import annotations
@@ -14,6 +18,7 @@ import hashlib
 import logging
 import os
 from pathlib import Path
+import sys
 import threading
 from typing import Any
 
@@ -63,16 +68,36 @@ def default_models_dir() -> Path:
         return Path.home() / ".local" / "share" / "teachers_teammate" / "models"
 
 
+def default_bundled_models_dir() -> Path | None:
+    """Return the folder of the model files that ship with the app, or ``None``.
+
+    Only a frozen build has them: the spec adds ``teachers_teammate/_models`` to the bundle, and
+    a source checkout downloads its models like any other.
+    """
+    meipass = getattr(sys, "_MEIPASS", None)
+    if meipass is None:
+        return None
+    return Path(meipass) / "teachers_teammate" / "_models"
+
+
 class ModelStore:
-    """Keeps model sets under ``root / <repo name> / <revision>``."""
+    """Keeps model sets under ``root / <repo name> / <revision>``.
+
+    A model the bundle carries is read from there instead; the download folder is only used for
+    what the app does not ship.
+    """
 
     def __init__(
         self,
         root: Path | None = None,
         *,
         http_get: Callable[..., Any] | None = None,
+        bundled_root: Path | None = None,
     ) -> None:
         self._root = root if root is not None else default_models_dir()
+        self._bundled_root = (
+            bundled_root if bundled_root is not None else default_bundled_models_dir()
+        )
         # ``None`` = ``requests.get``, imported when a download starts: asking whether a model
         # is installed (the cache key does, for every page) must not need the package.
         self._http_get = http_get
@@ -82,16 +107,57 @@ class ModelStore:
         """Return the folder that holds all model sets."""
         return self._root
 
+    @staticmethod
+    def _relative(model: LocalModel) -> Path:
+        """Return where *model* sits below a models folder."""
+        return Path(model.repo.split("/")[-1]) / model.revision
+
     def folder(self, model: LocalModel) -> Path:
-        """Return the folder of *model* (it may not exist yet)."""
-        return self._root / model.repo.split("/")[-1] / model.revision
+        """Return the download folder of *model* (it may not exist yet)."""
+        return self._root / self._relative(model)
+
+    def bundled_folder(self, model: LocalModel) -> Path | None:
+        """Return the folder *model* ships in, or ``None`` when the app does not carry it."""
+        if self._bundled_root is None:
+            return None
+        folder = self._bundled_root / self._relative(model)
+        return folder if folder.is_dir() else None
+
+    def bundled_missing(self, models: Iterable[LocalModel]) -> list[LocalModel]:
+        """Return the models of *models* the app's own bundle does not carry completely.
+
+        Only the bundle counts, never the download folder: a build that lost its models is
+        found out even on a computer where they were downloaded earlier.  A folder that exists
+        but lacks the marker or a file at its pinned size is as missing as no folder.
+        """
+        missing: list[LocalModel] = []
+        for model in models:
+            folder = self.bundled_folder(model)
+            if folder is None or not self._complete(folder, model):
+                missing.append(model)
+        return missing
+
+    def is_bundled(self, models: Iterable[LocalModel]) -> bool:
+        """Return whether the app carries *models* itself, so they need no download."""
+        return not self.bundled_missing(models)
 
     def is_installed(self, model: LocalModel) -> bool:
         """Return whether *model* is complete: the marker is there and every file has its size.
 
         Cheap on purpose (no hashing): the readiness line asks it every few seconds.
         """
-        folder = self.folder(model)
+        return self._installed_folder(model) is not None
+
+    def _installed_folder(self, model: LocalModel) -> Path | None:
+        """Return the folder *model* is complete in (the bundle first), or ``None``."""
+        for folder in (self.bundled_folder(model), self.folder(model)):
+            if folder is not None and self._complete(folder, model):
+                return folder
+        return None
+
+    @staticmethod
+    def _complete(folder: Path, model: LocalModel) -> bool:
+        """Return whether *folder* holds every file of *model* at its pinned size."""
         if not (folder / _MARKER).is_file():
             return False
         for file in model.files:
@@ -122,9 +188,10 @@ class ModelStore:
         Raises:
             ModelMissingError: if *model* is not installed.
         """
-        if not self.is_installed(model):
+        folder = self._installed_folder(model)
+        if folder is None:
             raise ModelMissingError(f"The model files of {model.repo} are not downloaded yet.")
-        return self.folder(model) / name
+        return folder / name
 
     # ── download ──────────────────────────────────────────────────────────
 

@@ -40,9 +40,9 @@ Prefer Python? Each release also ships a wheel (Python 3.14):
 pip install teachers_teammate-<version>-py3-none-any.whl
 ```
 
-Optional components — privacy protection (spaCy) and its language models, GPU
-monitoring, and the built-in reader's model files (31 MB) — can be installed from inside
-the app; no terminal required.
+The built-in reader's model files (31 MB) and the page models (39 MB) come with the app.
+Optional components — privacy protection (spaCy) and its language models, and the AI models
+that run in Ollama — can be installed from inside the app; no terminal required.
 
 ## Set up text recognition
 
@@ -172,3 +172,8 @@ third-party components, including the Qt toolkit (via PySide6) under the LGPL v3
 [NOTICE](https://github.com/JoHoenk/teachers-teammate/blob/main/NOTICE) for details. The full
 license texts are also available in the app under **Help → Third-Party
 Licenses**.
+
+The AI models are not part of this repository: the app downloads them from their authors, so each
+model comes under its own license. Most are Apache-2.0 or MIT; the default reading model
+(Chandra OCR 2) is under a modified OpenRAIL-M license that is free for research and personal use
+only, and the app says so next to the model before it is downloaded.

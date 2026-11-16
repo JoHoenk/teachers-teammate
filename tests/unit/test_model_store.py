@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 from pathlib import Path
+import sys
 import threading
 from typing import Any
 
@@ -19,6 +20,7 @@ from teachers_teammate.exceptions import (
 from teachers_teammate.infrastructure.onnx.store import (
     MODELS_DIR_ENV,
     ModelStore,
+    default_bundled_models_dir,
     default_models_dir,
 )
 
@@ -298,3 +300,123 @@ def test_env_var_moves_the_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch)
 
     assert default_models_dir() == tmp_path / "elsewhere"
     assert ModelStore().root == tmp_path / "elsewhere"
+
+
+# ── the model files the app carries itself ────────────────────────────────
+
+
+def _bundle(folder: Path, model: LocalModel) -> Path:
+    """Write *model* into *folder* the way the build's fetch script does."""
+    target = folder / model.repo.split("/")[-1] / model.revision
+    target.mkdir(parents=True)
+    for name, body in _BODIES.items():
+        (target / name).write_bytes(body)
+    (target / ".verified").write_text(model.revision, encoding="utf-8")
+    return target
+
+
+def test_a_bundled_model_is_installed_without_a_download(tmp_path: Path) -> None:
+    """
+    Given  a model the app carries itself and an empty download folder
+    When   the store is asked whether it is installed and where its files are
+    Then   it is installed, the files are read from the bundle, and nothing is downloaded
+    """
+    model = _model()
+    bundled = _bundle(tmp_path / "bundle", model)
+    calls: list[str] = []
+    store = ModelStore(
+        tmp_path / "downloads",
+        http_get=_getter(_BODIES, calls),
+        bundled_root=tmp_path / "bundle",
+    )
+
+    assert store.is_bundled([model])
+    assert store.is_installed(model)
+    assert store.missing([model]) == []
+    assert store.file(model, "a.bin") == bundled / "a.bin"
+
+    store.download([model])
+
+    assert calls == []
+    assert not store.folder(model).exists()
+
+
+def test_a_damaged_bundled_file_falls_back_to_the_download_folder(tmp_path: Path) -> None:
+    """
+    Given  a bundle whose copy of one file is truncated, and a complete download
+    When   the store is asked where the model is
+    Then   the download folder answers, so a damaged bundle file is not read
+    """
+    model = _model()
+    bundled = _bundle(tmp_path / "bundle", model)
+    (bundled / "a.bin").write_bytes(b"short")
+    store = ModelStore(
+        tmp_path / "downloads", http_get=_getter(_BODIES), bundled_root=tmp_path / "bundle"
+    )
+    store.download([model])
+
+    assert store.is_installed(model)
+    assert store.file(model, "a.bin") == store.folder(model) / "a.bin"
+
+
+def test_an_empty_or_damaged_bundle_folder_is_not_bundled(tmp_path: Path) -> None:
+    """
+    Given  a bundle whose folder for the model exists but is empty, and one with a short file
+    When   the store is asked what the bundle is missing
+    Then   the model is missing in both, though a folder is there
+    """
+    model = _model()
+    empty = tmp_path / "empty"
+    (empty / "Test_Model" / model.revision).mkdir(parents=True)
+    assert ModelStore(tmp_path / "d1", bundled_root=empty).bundled_missing([model]) == [model]
+    assert not ModelStore(tmp_path / "d1", bundled_root=empty).is_bundled([model])
+
+    damaged = _bundle(tmp_path / "damaged", model)
+    (damaged / "a.bin").write_bytes(b"short")
+    assert ModelStore(tmp_path / "d2", bundled_root=tmp_path / "damaged").bundled_missing(
+        [model]
+    ) == [model]
+
+
+def test_bundled_missing_ignores_what_was_downloaded(tmp_path: Path) -> None:
+    """
+    Given  a model that sits complete in the download folder and not in the bundle
+    When   the store is asked what the bundle is missing
+    Then   the model is still missing from the bundle, though it counts as installed
+    """
+    model = _model()
+    store = ModelStore(
+        tmp_path / "downloads", http_get=_getter(_BODIES), bundled_root=tmp_path / "bundle"
+    )
+    store.download([model])
+
+    assert store.is_installed(model)
+    assert store.bundled_missing([model]) == [model]
+
+
+def test_a_model_the_bundle_does_not_carry_is_not_bundled(tmp_path: Path) -> None:
+    """
+    Given  a bundle folder that holds another model
+    When   the store is asked about this one
+    Then   it is not bundled and not installed, so the app offers the download
+    """
+    store = ModelStore(tmp_path / "downloads", bundled_root=tmp_path / "bundle")
+
+    assert not store.is_bundled([_model()])
+    assert not store.is_installed(_model())
+    assert store.missing([_model()]) == [_model()]
+
+
+def test_the_bundle_folder_is_only_read_in_a_frozen_build(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """
+    Given  a source checkout, and then a frozen build
+    When   the default bundle folder is worked out
+    Then   a checkout has none (it downloads its models) and a build reads its own
+    """
+    monkeypatch.delattr(sys, "_MEIPASS", raising=False)
+    assert default_bundled_models_dir() is None
+
+    monkeypatch.setattr(sys, "_MEIPASS", str(tmp_path), raising=False)
+    assert default_bundled_models_dir() == tmp_path / "teachers_teammate" / "_models"

@@ -20,6 +20,7 @@ from pathlib import Path
 import re
 from typing import Any
 
+from teachers_teammate.domain.correction_prompts import CORRECT_VARIANTS
 from teachers_teammate.domain.model_catalog import SAMPLING_OPTIONS
 
 from . import protocol
@@ -238,7 +239,9 @@ def _check_profile(path: Path, profile: Any) -> list[str]:
         found.append(f"{path.name}: request_profile.temperature is neither null nor a number")
     if "options" in profile:
         found.extend(_check_options(path, profile["options"]))
-    extra = sorted(set(profile) - {"compact_json", "temperature", "options"})
+    if "prompt" in profile and profile["prompt"] not in CORRECT_VARIANTS:
+        found.append(f"{path.name}: request_profile.prompt is not a step ① prompt variant")
+    extra = sorted(set(profile) - {"compact_json", "temperature", "options", "prompt"})
     if extra:
         found.append(f"{path.name}: request_profile has unknown fields {', '.join(extra)}")
     return found

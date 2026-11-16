@@ -688,3 +688,33 @@ def test_an_outage_keeps_its_message_when_the_unload_would_fail(tmp_path: Path) 
     assert result.refused and "cannot be reached" in result.refused[0]
     assert probe.unloaded == []
     assert "sampler.stop" in harness.log
+
+
+@pytest.mark.use_case("Model_Eval_Measure")
+def test_the_file_of_a_run_is_named_by_the_prompt_its_requests_carry(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """
+    Given  a model that has an adopted step-one prompt variant
+    When   the run is planned without --prompt, with --prompt standard and with another variant
+    Then   the first writes the adopted variant's file, the second the plain one, the third its
+           own, so a file never holds answers of two prompts
+    """
+    from teachers_teammate.domain import model_catalog  # noqa: PLC0415
+
+    monkeypatch.setitem(model_catalog.STEP_ONE_PROMPTS, MODEL, "keep")
+    harness = _Harness()
+
+    def planned(prompt: str) -> str:
+        matrix = _matrix(tmp_path, modes=(AnswerMode.CORRECT_ONLY,), prompt=prompt)
+        return runner.plan(matrix, _records(), STAMP, harness.probe).sessions[0].rows_path.name
+
+    assert planned("") == results.result_file_name(
+        MODEL, 0.2, AnswerMode.CORRECT_ONLY, None, (), "keep"
+    )
+    assert planned("standard") == results.result_file_name(MODEL, 0.2, AnswerMode.CORRECT_ONLY)
+    assert planned("find") == results.result_file_name(
+        MODEL, 0.2, AnswerMode.CORRECT_ONLY, None, (), "find"
+    )
+    standard = _matrix(tmp_path, prompt="standard").profile_of(MODEL, 0.2)
+    assert standard.correct.prompt == ""

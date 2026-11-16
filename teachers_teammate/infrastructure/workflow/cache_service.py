@@ -9,6 +9,7 @@ from pathlib import Path
 
 from ...config import Config, OcrConfig
 from ...domain.context_budget import RunWindows, window_from_setting
+from ...domain.correction_prompts import prompt_identity
 from ...domain.data_location import ENGINE_PPOCR
 from ...domain.local_models import reader_fingerprint
 from ..correction import instruction_parts
@@ -189,6 +190,9 @@ def compute_correction_config_hash(config: Config, windows: RunWindows | None = 
         format(profile.explain.temperature, "g"),
         format(profile.unclear.temperature, "g"),
         str(profile.think),
+        # The step-① prompt variant, by id and text hash: only a model that has one gets an
+        # element, so the key of every other model stays what it was.
+        *((f"prompt-{prompt_identity(profile.correct.prompt)}",) if profile.correct.prompt else ()),
         # Review settings change the answer itself, so they belong in the key.
         config.correction_level,
         config.explanation_language,

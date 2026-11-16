@@ -6,6 +6,7 @@ from dataclasses import replace
 
 import pytest
 
+from teachers_teammate.domain import model_catalog
 from teachers_teammate.domain.model_catalog import (
     DEFAULT_REQUEST_PROFILE,
     RequestProfile,
@@ -189,3 +190,72 @@ def test_two_close_sampling_values_have_two_fingerprints() -> None:
     near = replace(RequestProfile(), correct=StepProfile(options=(("top_p", 0.90000001),)))
 
     assert low.fingerprint() != near.fingerprint()
+
+
+def test_only_step_one_can_carry_a_prompt_variant_and_only_a_known_one() -> None:
+    """
+    Given  a step profile with a variant, an unknown id, and a profile with a variant on step two
+    When   each is built
+    Then   the first is kept, the unknown id is refused, and step two refuses a variant
+    """
+    assert StepProfile(prompt="keep").prompt == "keep"
+    assert StepProfile().prompt == ""
+    with pytest.raises(ValueError, match="no step ① prompt variant"):
+        StepProfile(prompt="banana")
+    with pytest.raises(ValueError, match="only step ① has prompt variants"):
+        RequestProfile(explain=StepProfile(prompt="keep"))
+
+
+def test_no_model_gets_a_prompt_variant_until_one_is_adopted(monkeypatch) -> None:
+    """
+    Given  the table of adopted variants, empty today
+    When   the profile of a model is asked for, then a variant is adopted for one tag
+    Then   every model has the standard prompt first; afterwards only that tag has the variant
+           (also written with :latest), and an online service never does
+    """
+    assert model_catalog.STEP_ONE_PROMPTS == {}
+    assert request_profile("gemma4:12b").correct.prompt == ""
+
+    monkeypatch.setitem(model_catalog.STEP_ONE_PROMPTS, "qwen3.5:4b", "keep")
+
+    assert request_profile("qwen3.5:4b").correct.prompt == "keep"
+    assert request_profile("qwen3.5:4b").explain.prompt == ""
+    assert request_profile("gemma4:12b").correct.prompt == ""
+    assert request_profile("qwen3.5:4b", "openai").correct.prompt == ""
+
+
+def test_a_variant_of_a_model_has_the_prompt_of_the_model(monkeypatch) -> None:
+    """
+    Given  a prompt variant adopted for "qwen3.5:9b"
+    When   the profile of its other quantisation and of another model is asked for
+    Then   the quantisation has the variant, as it has the model's temperature, and the other
+           model has the standard prompt
+    """
+    monkeypatch.setitem(model_catalog.STEP_ONE_PROMPTS, "qwen3.5:9b", "keep")
+
+    assert request_profile("qwen3.5:9b-q8_0").correct.prompt == "keep"
+    assert request_profile("qwen3.5:9b").correct.prompt == "keep"
+    assert request_profile("qwen3.5:4b-q8_0").correct.prompt == ""
+
+
+def test_the_fingerprint_of_a_profile_follows_the_prompt_variant_and_its_text(monkeypatch) -> None:
+    """
+    Given  profiles that differ in the step-one prompt variant, and a variant whose text changes
+    When   the fingerprints are compared
+    Then   the standard prompt keeps the fingerprint it had, each variant has its own, and the
+           same id with another text is another fingerprint
+    """
+    from teachers_teammate.domain import correction_prompts  # noqa: PLC0415
+
+    standard = RequestProfile().fingerprint()
+    keep = RequestProfile(correct=StepProfile(prompt="keep")).fingerprint()
+    find = RequestProfile(correct=StepProfile(prompt="find")).fingerprint()
+
+    assert standard == RequestProfile(correct=StepProfile(prompt="")).fingerprint()
+    assert len({standard, keep, find}) == 3
+
+    monkeypatch.setitem(
+        correction_prompts.CORRECT_VARIANTS, "keep", correction_prompts.KEEP_SYSTEM + " More."
+    )
+
+    assert RequestProfile(correct=StepProfile(prompt="keep")).fingerprint() != keep

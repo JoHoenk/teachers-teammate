@@ -503,6 +503,8 @@ def framing_problem(source: str, corrected: str, hunks: Sequence[Hunk] | None = 
         own = similarity(first.rstrip().removesuffix(":").rstrip(), source_first.rstrip())
         if own < _SAME_LINE:
             return "the answer starts with a lead-in line, not with the text"
+    if _starts_with_label(source, corrected):
+        return "the answer starts with a label (a lead-in on the first line of the text)"
     found = word_diff(source, corrected) if hunks is None else hunks
     if not found:
         return None
@@ -516,6 +518,26 @@ def framing_problem(source: str, corrected: str, hunks: Sequence[Hunk] | None = 
     ):
         return "the answer ends with words that are not in the text (a remark)"
     return None
+
+
+_LABEL = re.compile(r"^\W*(\w+(?:[ \t]+\w+){0,2}):[ \t]+\S", re.UNICODE)
+"""A first line that starts with one to three words and a colon, then text on the same line."""
+
+
+def _starts_with_label(source: str, corrected: str) -> bool:
+    """Whether *corrected* starts with a ``Word:`` label that the text does not start with.
+
+    A model that was shown ``Text: … / Corrected: …`` may write ``Corrected: <the text>`` on one
+    line, which the lead-in checks above do not see: the label is one or two words, and the first
+    line does not end in a colon.  A label the source starts with too (``Notes: …``, even one the
+    model spelled better) is the text's own.
+    """
+    found = _LABEL.match(corrected)
+    if found is None:
+        return False
+    label = found.group(1).lower().split()
+    start = source.lower().split()[: len(label)]
+    return similarity(" ".join(label), " ".join(start).rstrip(":")) < _SAME_LINE
 
 
 def _added_words(hunk: Hunk) -> int:

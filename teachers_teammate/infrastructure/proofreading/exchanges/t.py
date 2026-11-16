@@ -27,9 +27,9 @@ from dataclasses import replace
 
 from ....domain.correction_policy import DEFAULT_LEVEL
 from ....domain.correction_prompts import (
-    CORRECT_SYSTEM,
     EXPLAIN_SYSTEM,
     UNCLEAR_SYSTEM,
+    correct_system,
     correct_user,
     explain_body,
     explain_user,
@@ -251,7 +251,7 @@ class TExchange:
         """Return the request of step ① for *text*."""
         return StepRequest(
             step="correct",
-            system=CORRECT_SYSTEM,
+            system=correct_system(ctx.profile.correct.prompt),
             user=correct_user(
                 text,
                 language=ctx.language,

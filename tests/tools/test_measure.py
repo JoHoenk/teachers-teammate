@@ -959,3 +959,15 @@ def test_the_step_tag_is_stored_only_when_there_is_one() -> None:
     assert "step" not in record["requests"][1]
     assert record["requests"][0]["step"] == "correct"
     assert Performance.from_dict(record) == performance
+
+
+@pytest.mark.use_case("Model_Eval_Measure")
+def test_a_request_with_a_step_one_prompt_variant_is_tagged_as_step_one() -> None:
+    """
+    Given  the system prompts of every variant of step one
+    When   the step of a request with each of them is asked for
+    Then   every one is step one, so a run with --prompt still has its steps counted
+    """
+    from teachers_teammate.domain.correction_prompts import CORRECT_VARIANTS  # noqa: PLC0415
+
+    assert {step_of(system) for system in CORRECT_VARIANTS.values()} == {"correct"}

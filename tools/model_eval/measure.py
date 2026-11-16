@@ -78,13 +78,14 @@ def step_of(system: str) -> str:
     """
     from teachers_teammate.domain.correction_prompts import (  # noqa: PLC0415
         CORRECT_SYSTEM,
+        CORRECT_VARIANTS,
         EXPLAIN_SYSTEM,
         UNCLEAR_SYSTEM,
     )
 
-    return {CORRECT_SYSTEM: "correct", EXPLAIN_SYSTEM: "explain", UNCLEAR_SYSTEM: "unclear"}.get(
-        system, ""
-    )
+    steps = {CORRECT_SYSTEM: "correct", EXPLAIN_SYSTEM: "explain", UNCLEAR_SYSTEM: "unclear"}
+    steps.update(dict.fromkeys(CORRECT_VARIANTS.values(), "correct"))
+    return steps.get(system, "")
 
 
 class RecordingClient(OllamaClient):
@@ -605,7 +606,10 @@ def run_identity(  # noqa: PLR0913  # a record of many independent facts
         "eval_version": stamp.eval_version,
         "fingerprint": stamp.fingerprint,
         "instructions_sha256": protocol.instructions_sha256(
-            languages, mode=mode, compact_json=bool(request_profile.get("compact_json"))
+            languages,
+            mode=mode,
+            compact_json=bool(request_profile.get("compact_json")),
+            prompt=str(request_profile.get("prompt", "")),
         ),
         "answer_format_version": ANSWER_FORMAT_VERSION,
         "provider": provider,

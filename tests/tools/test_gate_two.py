@@ -7,7 +7,7 @@ from dataclasses import replace
 import pytest
 
 from tests.tools import gate_fixtures as fixtures
-from tools.model_eval import gate_two, spot_check
+from tools.model_eval import gate_two, protocol, spot_check
 
 
 def _judge(group, marks=None) -> gate_two.Judgement:
@@ -733,7 +733,7 @@ def test_a_worse_page_band_stops_better():
     "change",
     [
         {"testset_id": "other-2026-11"},
-        {"eval_version": 4},
+        {"eval_version": protocol.current_stamp().eval_version + 1},
         {"machine": "other-machine"},
         {"num_ctx": 4096},
         {"mode": "text"},

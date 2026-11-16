@@ -50,14 +50,15 @@ def test_the_protocol_file_holds_every_version_and_the_current_one_is_what_the_t
     """
     Given  the version file of the request side
     When   the current stamp is asked for
-    Then   it is version 3, versions 1 and 2 are still recorded (their runs stay checkable), and
+    Then   it is version 4, versions 1 to 3 are still recorded (their runs stay checkable), and
            the current fingerprint is the one the tool computes
     """
     stamp = protocol.current_stamp()
 
-    assert stamp.eval_version == 3
-    assert [v["version"] for v in protocol.read_protocol()["versions"]] == [1, 2, 3]
-    assert protocol.entry(3)["fingerprint"] == stamp.fingerprint
+    assert stamp.eval_version == 4
+    assert [v["version"] for v in protocol.read_protocol()["versions"]] == [1, 2, 3, 4]
+    assert protocol.entry(4)["fingerprint"] == stamp.fingerprint
+    assert protocol.is_recorded(3, protocol.entry(3)["fingerprint"])
     assert protocol.is_recorded(2, protocol.entry(2)["fingerprint"])
     assert protocol.is_recorded(1, protocol.entry(1)["fingerprint"])
 
@@ -340,14 +341,14 @@ def test_the_instructions_hash_of_a_compact_run_differs_from_a_plain_one():
     ) == protocol.instructions_sha256(["de"], mode="text")
 
 
-def test_the_exchange_instructions_hash_follows_its_prompts_and_does_not_move_the_fingerprint(
+def test_the_exchange_instructions_hash_and_the_fingerprint_follow_its_prompts(
     monkeypatch,
 ) -> None:
     """
     Given  the exchange answer mode
     When   the instructions are hashed, and one of the exchange's prompts changes
-    Then   the hash differs from that of review and text mode and follows the prompt, while the
-           fingerprint of the protocol, which does not cover the exchange, stays as it was
+    Then   the hash differs from that of review and text mode and follows the prompt, and so does
+           the fingerprint of the protocol, because the requests it hashes carry that prompt
     """
     from teachers_teammate.domain import correction_prompts  # noqa: PLC0415
     from tools.model_eval.answer_mode import AnswerMode  # noqa: PLC0415
@@ -361,7 +362,7 @@ def test_the_exchange_instructions_hash_follows_its_prompts_and_does_not_move_th
 
     assert exchange != protocol.instructions_sha256(["de", "en"], mode=AnswerMode.TEXT)
     assert exchange != protocol.instructions_sha256(["de", "en"], mode=AnswerMode.EXCHANGE)
-    assert protocol.fingerprint_sha256() == before
+    assert protocol.fingerprint_sha256() != before
 
 
 @pytest.mark.use_case("Model_Eval_Measure")
@@ -375,7 +376,14 @@ def test_a_correct_only_run_sends_exactly_the_first_request_of_the_exchange() ->
     side = protocol.fingerprint()["requests"]
 
     for code in protocol.FINGERPRINT_LANGUAGES:
-        for label in ("plain", "no-unclear", "sampled"):
+        for label in (
+            "plain",
+            "no-unclear",
+            "sampled",
+            "prompt-keep",
+            "prompt-find",
+            "prompt-shot",
+        ):
             only = side["correct-only"][code][label]
             assert len(only) == 1
             assert only[0] == side["exchange"][code][label][0]

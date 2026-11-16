@@ -29,12 +29,17 @@ def default_ollama_url() -> str:
     return normalize_ollama_url(os.environ.get("OLLAMA_HOST", ""))
 
 
+STANDARD_PROMPT = "standard"
+"""``--prompt standard``: send the standard step-① prompt even to a model that has a variant."""
+
+
 def request_profile_for(
     model: str,
     *,
     compact_json: str = "catalog",
     temperature: float | None = None,
     options: tuple[tuple[str, float], ...] = (),
+    prompt: str = "",
 ) -> RequestProfile:
     """Return the profile *model* is asked with, as the app would ask it.
 
@@ -49,6 +54,10 @@ def request_profile_for(
         temperature: The temperature to send, or ``None`` for the model's own.
         options: Sampling values for step ① besides the temperature (``--option``); empty leaves
             the model's tag in charge.
+        prompt: The step-① prompt variant (``--prompt``); empty keeps the model's own, which is the
+            standard prompt until a measurement adopts a variant for it, and ``standard`` sends
+            the standard prompt to a model that has a variant (to measure the two against each
+            other).
     """
     profile = request_profile(model)
     if compact_json == "on":
@@ -61,6 +70,9 @@ def request_profile_for(
         profile = replace(profile, correct=replace(profile.correct, temperature=temperature))
     if options:
         profile = replace(profile, correct=replace(profile.correct, options=options))
+    if prompt:
+        chosen = "" if prompt == STANDARD_PROMPT else prompt
+        profile = replace(profile, correct=replace(profile.correct, prompt=chosen))
     return profile
 
 

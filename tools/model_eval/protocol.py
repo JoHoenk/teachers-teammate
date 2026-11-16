@@ -38,6 +38,7 @@ from typing import Any
 from teachers_teammate.domain.answer_format import ANSWER_FORMAT_VERSION
 from teachers_teammate.domain.context_budget import ContextBudget, answers_with_the_same_text
 from teachers_teammate.domain.correction_policy import DEFAULT_LEVEL
+from teachers_teammate.domain.correction_prompts import CORRECT_VARIANTS
 from teachers_teammate.domain.formatted_text import PLAIN, TextFormat
 from teachers_teammate.domain.model_catalog import (
     DEFAULT_REQUEST_PROFILE,
@@ -82,6 +83,10 @@ or to a further knob changes the fingerprint and needs a new eval version.
 EXCHANGE_PROFILE_VARIANTS: tuple[tuple[str, RequestProfile], ...] = (
     ("plain", DEFAULT_REQUEST_PROFILE),
     ("no-unclear", RequestProfile(unclear_check=False)),
+    *(
+        (f"prompt-{variant}", RequestProfile(correct=StepProfile(prompt=variant)))
+        for variant in sorted(CORRECT_VARIANTS)
+    ),
     (
         "sampled",
         RequestProfile(
@@ -94,7 +99,8 @@ EXCHANGE_PROFILE_VARIANTS: tuple[tuple[str, RequestProfile], ...] = (
 requests it sends are whether step ③ runs and the sampling values of a step.  Temperature and
 thinking are the run's, in its header, and ``compact_json`` is a knob of the review request only.
 The sampled profile stands for every set of values: it proves the values reach the request of the
-step they belong to, and only that one."""
+step they belong to, and only that one.  Each step-① prompt variant is covered by its own entry,
+so its text is part of the fingerprint: changing a variant needs a new version."""
 
 _HEX64 = re.compile(r"^[0-9a-f]{64}$")
 
@@ -118,6 +124,7 @@ def instructions_sha256(
     level: str = DEFAULT_LEVEL,
     text_format: TextFormat = PLAIN,
     compact_json: bool = False,
+    prompt: str = "",
 ) -> str:
     """Return the hash of the instructions a run's requests carried, one part per language.
 
@@ -138,9 +145,9 @@ def instructions_sha256(
             raise ValueError(f"no language name for {code!r}; the instructions cannot be hashed")
         names.append(LANGUAGE_NAMES[code])
     if mode is AnswerMode.EXCHANGE:
-        return _exchange_instructions_sha256(names, level)
+        return _exchange_instructions_sha256(names, level, prompt=prompt)
     if mode is AnswerMode.CORRECT_ONLY:
-        return _exchange_instructions_sha256(names, level, steps=("correct",))
+        return _exchange_instructions_sha256(names, level, steps=("correct",), prompt=prompt)
     parts: list[str] = []
     for name in sorted(names):
         policy, fixed = instruction_parts(
@@ -157,7 +164,11 @@ def instructions_sha256(
 
 
 def _exchange_instructions_sha256(
-    names: Iterable[str], level: str, *, steps: tuple[str, ...] = ("correct", "explain", "unclear")
+    names: Iterable[str],
+    level: str,
+    *,
+    steps: tuple[str, ...] = ("correct", "explain", "unclear"),
+    prompt: str = "",
 ) -> str:
     """Return the hash of the exchange's system prompts of *steps* and its parameter lines.
 
@@ -168,14 +179,18 @@ def _exchange_instructions_sha256(
     ``eval_version`` is the fingerprint's job.
     """
     from teachers_teammate.domain.correction_prompts import (  # noqa: PLC0415
-        CORRECT_SYSTEM,
         EXPLAIN_SYSTEM,
         PROMPT_VERSION,
         UNCLEAR_SYSTEM,
+        correct_system,
         parameters,
     )
 
-    prompts = {"correct": CORRECT_SYSTEM, "explain": EXPLAIN_SYSTEM, "unclear": UNCLEAR_SYSTEM}
+    prompts = {
+        "correct": correct_system(prompt),
+        "explain": EXPLAIN_SYSTEM,
+        "unclear": UNCLEAR_SYSTEM,
+    }
     parts = [f"prompt version {PROMPT_VERSION}", *(prompts[step] for step in steps)]
     parts.extend(f"## {name}\n{parameters(name, level=level)}" for name in sorted(names))
     return sha256_text("\n\n---\n\n".join(parts))

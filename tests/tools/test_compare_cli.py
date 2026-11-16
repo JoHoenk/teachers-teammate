@@ -95,6 +95,7 @@ def _args(tmp_path: Path) -> argparse.Namespace:
         repeat=1,
         no_seed=False,
         seed=20261109,
+        prompt="",
         timeout=5.0,
         isolate=False,
         gpu_sampler=None,
@@ -699,3 +700,44 @@ def test_an_option_is_refused_where_it_would_be_ignored_or_given_twice(tmp_path,
         with pytest.raises(argparse.ArgumentTypeError):
             compare_writing_models._sampling_option(bad)
     assert compare_writing_models._sampling_option("top_k=20") == ("top_k", 20.0)
+
+
+def test_the_prompt_of_a_run_reaches_the_profile_the_header_and_the_file_name(tmp_path) -> None:
+    """
+    Given  a run asked for correct-only mode with the step-one prompt variant "keep"
+    When   its matrix is built and the header facts of a session are read
+    Then   step one's profile names the variant (and no other step does), the header's request
+           profile lists it, a plain run's header does not, and the file name says so
+    """
+    args = _args(tmp_path)
+    args.prompt = "keep"
+    args.gpu_agent_record = None
+    args.mode = [AnswerMode.CORRECT_ONLY]
+
+    matrix = compare_writing_models._matrix(args)
+    profile = matrix.profile_of(MODEL, 0.2)
+
+    assert profile.correct.prompt == "keep"
+    assert profile.explain.prompt == "" == profile.unclear.prompt
+    assert runner.as_dict(profile)["prompt"] == "keep"
+    plain = replace(matrix, prompt="").profile_of(MODEL, 0.2)
+    assert "prompt" not in runner.as_dict(plain)
+    assert results.result_file_name(
+        MODEL, 0.2, AnswerMode.CORRECT_ONLY, None, (), matrix.prompt
+    ) != results.result_file_name(MODEL, 0.2, AnswerMode.CORRECT_ONLY)
+
+
+def test_a_prompt_variant_is_refused_where_it_would_be_ignored(tmp_path, capsys) -> None:
+    """
+    Given  `--prompt keep` with review mode, then with correct-only mode
+    When   the run is started
+    Then   the first is refused before anything is sent (exit code 2), and the second is not
+    """
+    args = _args(tmp_path)
+    args.prompt = "keep"
+    args.mode = [AnswerMode.REVIEW]
+    assert compare_writing_models._run(args) == 2
+    assert "--prompt reaches the proofreading exchange only" in capsys.readouterr().err
+
+    args.mode = [AnswerMode.CORRECT_ONLY]
+    assert compare_writing_models._option_problem(args) is None

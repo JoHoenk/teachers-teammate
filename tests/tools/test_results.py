@@ -623,3 +623,21 @@ def test_two_close_sampling_values_write_two_files() -> None:
     second = result_file_name("m", 0.7, AnswerMode.CORRECT_ONLY, None, (("top_p", 0.90000001),))
 
     assert first != second
+
+
+@pytest.mark.use_case("Model_Eval_Results")
+def test_a_run_with_a_prompt_variant_writes_a_file_of_its_own() -> None:
+    """
+    Given  the same model, temperature, mode and repeat, with and without a step-one prompt variant
+    When   the file names are built
+    Then   the plain name is unchanged, the variant's differs, and it sits after any sampling value
+    """
+    plain = result_file_name("qwen3.5:9b", 0.4, AnswerMode.CORRECT_ONLY, 1)
+    keep = result_file_name("qwen3.5:9b", 0.4, AnswerMode.CORRECT_ONLY, 1, (), "keep")
+    both = result_file_name(
+        "qwen3.5:9b", 0.4, AnswerMode.CORRECT_ONLY, 1, (("presence_penalty", 0.0),), "keep"
+    )
+
+    assert plain == "qwen3.5_9b__T0.4__correct-only__r1.jsonl"
+    assert keep == "qwen3.5_9b__T0.4__correct-only__prompt-keep__r1.jsonl"
+    assert both == "qwen3.5_9b__T0.4__correct-only__presence_penalty-0__prompt-keep__r1.jsonl"

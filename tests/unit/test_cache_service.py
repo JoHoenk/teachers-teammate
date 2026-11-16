@@ -1233,3 +1233,49 @@ def test_a_changed_temperature_of_steps_two_and_three_changes_the_correction_key
     monkeypatch.setitem(model_catalog.MAKER_TEMPERATURES, "qwen3.5:9b", 0.5)
 
     assert compute_correction_config_hash(cfg) != before
+
+
+def test_correction_config_hash_changes_with_a_prompt_variant_and_only_then(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """
+    Given  a service, then the same service for a model that is sent a step-one prompt variant
+    When   the correction hashes are compared
+    Then   they differ, so results made with another prompt are not served as fresh, while a model
+           without a variant keeps the hash it always had
+    """
+    from teachers_teammate.domain import model_catalog  # noqa: PLC0415
+
+    svc, _, _ = _make_svc(
+        tmp_path, correction_enabled=True, correction_provider="ollama", correction_model="x:1"
+    )
+    plain = svc._correction_config_hash()
+
+    monkeypatch.setitem(model_catalog.STEP_ONE_PROMPTS, "x:1", "keep")
+
+    assert svc._correction_config_hash() != plain
+    monkeypatch.delitem(model_catalog.STEP_ONE_PROMPTS, "x:1")
+    assert svc._correction_config_hash() == plain
+
+
+def test_correction_config_hash_follows_the_text_of_a_variant_not_only_its_id(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """
+    Given  a model that is sent the variant "keep"
+    When   the text of that variant changes under the same id
+    Then   the correction hash changes, so results made with the old text are not served as fresh
+    """
+    from teachers_teammate.domain import correction_prompts, model_catalog  # noqa: PLC0415
+
+    svc, _, _ = _make_svc(
+        tmp_path, correction_enabled=True, correction_provider="ollama", correction_model="x:1"
+    )
+    monkeypatch.setitem(model_catalog.STEP_ONE_PROMPTS, "x:1", "keep")
+    before = svc._correction_config_hash()
+
+    monkeypatch.setitem(
+        correction_prompts.CORRECT_VARIANTS, "keep", correction_prompts.KEEP_SYSTEM + " More."
+    )
+
+    assert svc._correction_config_hash() != before

@@ -451,3 +451,39 @@ def test_a_reference_error_the_version_missed_is_marked_in_its_sentence(tmp_path
                 assert row.text[mark.start : mark.end] == "".join(
                     text.tokens[edit.start : edit.end]
                 )
+
+
+def test_the_instructions_of_a_run_with_a_prompt_variant_are_that_variants(tmp_path):
+    """
+    Given  the facts of a correct-only variant that was asked with the step-one prompt "keep",
+           and the same facts without a variant
+    When   the instructions of each are built
+    Then   the first shows the variant's text, marked exact against its own hash, the second
+           shows the standard text, and neither is marked exact for the other's hash
+    """
+    from types import SimpleNamespace  # noqa: PLC0415
+
+    from teachers_teammate.domain.correction_prompts import (  # noqa: PLC0415
+        CORRECT_SYSTEM,
+        correct_system,
+    )
+    from tools.model_eval import protocol  # noqa: PLC0415
+    from tools.model_eval.answer_mode import AnswerMode  # noqa: PLC0415
+    from tools.model_eval.viewer import prompts  # noqa: PLC0415
+
+    mode = AnswerMode.CORRECT_ONLY
+
+    def variant(asked: str):
+        key = protocol.instructions_sha256(["de"], mode=mode, prompt=asked)[:8]
+        facts = {"prompt8": key, "mode": mode.value, "profile": "full", "step1_prompt": asked}
+        return key, SimpleNamespace(facts=facts)
+
+    keep_key, keep = variant("keep")
+    plain_key, plain = variant("")
+
+    found = prompts.prompts_of([keep, plain], ["de"])
+
+    assert correct_system("keep") in found[keep_key]["text"]
+    assert correct_system("keep") not in found[plain_key]["text"]
+    assert CORRECT_SYSTEM in found[plain_key]["text"]
+    assert found[keep_key]["exact"] and found[plain_key]["exact"]

@@ -5,7 +5,11 @@ from __future__ import annotations
 import json
 
 from teachers_teammate.domain.context_budget import ContextBudget, answers_with_the_same_text
-from teachers_teammate.domain.correction_prompts import EXPLAIN_SYSTEM
+from teachers_teammate.domain.correction_prompts import (
+    CORRECT_SYSTEM,
+    EXPLAIN_SYSTEM,
+    correct_system,
+)
 from teachers_teammate.domain.model_catalog import RequestProfile, StepProfile
 from teachers_teammate.infrastructure.proofreading.exchanges import TExchange
 from teachers_teammate.infrastructure.proofreading.exchanges.base import ProofreadContext
@@ -506,3 +510,25 @@ def test_the_sampling_values_of_a_step_reach_its_request_only() -> None:
         (("top_k", 20.0),),
         (),
     ]
+
+
+def test_step_one_sends_the_prompt_variant_of_its_profile_and_no_other_step_does() -> None:
+    """
+    Given  a profile that names a prompt variant for step one, and the default profile
+    When   the exchange proofreads the text with each
+    Then   step one's system prompt is the variant's, or the standard one without a variant, and
+           steps two and three keep their own prompts
+    """
+    profile = RequestProfile(correct=StepProfile(prompt="find"))
+    port = FakePort(answer(CORRECTED), answer(_notes((1, "grammar", "x"))), answer(_unclear()))
+
+    TExchange(port).proofread(SOURCE, _ctx(profile=profile))
+
+    assert port.requests[0].system == correct_system("find")
+    assert port.requests[0].system != CORRECT_SYSTEM
+    assert port.requests[1].system == EXPLAIN_SYSTEM
+
+    plain = FakePort(answer(CORRECTED), answer(_notes((1, "grammar", "x"))), answer(_unclear()))
+    TExchange(plain).proofread(SOURCE, _ctx())
+
+    assert plain.requests[0].system == CORRECT_SYSTEM

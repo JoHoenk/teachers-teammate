@@ -108,6 +108,14 @@ jobs:
             python tools/build/check_pins.py --platform macosx_14_0_arm64
           fi
 
+      # check_pins.py proves every installed distribution is pinned; this proves every one of
+      # them is a bundle or build row of the license inventory, at the same version.  A
+      # platform-only dependency the Linux lock cannot show (pywin32-ctypes on Windows,
+      # macholib on macOS) fails here, on the runner that would have shipped it.
+      - name: Check the license inventory against the build environment
+        shell: bash
+        run: python tools/licenses/inventory.py --check-env
+
       # The model files the app carries itself (the reader and the page models, 70 MB), pinned by
       # revision and SHA-256 in teachers_teammate/domain/local_models.py.  fetch_models.py skips a
       # file that is already there and correct, so a hit costs nothing; the key changes when a pin
@@ -150,8 +158,8 @@ jobs:
       # The PySide6 6.12.0 wheel is tagged macosx_14_0, but its Qt libraries say minos 14.4 and
       # its Python binding modules (QtCore.abi3.so, libpyside6, shiboken6, ...) say 26.0 in both
       # slices: upstream built them without a deployment target. The floor is therefore 14.4 for
-      # everything else, the bindings are exempt, and the install-macos job on macos-14 is what
-      # proves that they load there. Drop --ignore when a PySide6 wheel fixes its binaries.
+      # everything else and the bindings are exempt. GitHub retired the macos-14 runner, so no job
+      # proves that they load on 14 any more: the install-macos job starts on macos-15 and up. Drop --ignore when a PySide6 wheel fixes its binaries.
       - name: Check the macOS bundle
         if: runner.os == 'macOS'
         run: |
@@ -159,6 +167,9 @@ jobs:
             --ignore '*/PySide6/*.abi3.so' \
             --ignore '*/PySide6/libpyside6*.dylib' \
             --ignore '*/shiboken6/*'
+          # The license files travel beside the app (make_dmg.sh), never inside it: a file added
+          # after PyInstaller signed the bundle would break the signature.
+          codesign --verify --deep --strict dist/teachers-teammate.app
 
 
       # `.python-version` is the one place the version is written down: rules_python builds the
@@ -199,6 +210,11 @@ jobs:
         run: |
           python tools/build/check_linux_bundle.py --max-glibc 2.39
           python tools/build/check_linux_bundle.py --unused
+          # The libraries the bundle took from the runner image, with their Debian copyright
+          # files.  A denied one, or one no package owns, fails here; the file goes into
+          # _internal/ for the help dialog, and make_deb.sh and make_tarball.sh copy it out.
+          python tools/build/check_linux_bundle.py --host-libs \
+            dist/teachers-teammate/_internal/third_party_host_libraries.txt
 
       - name: Create .deb package (Linux)
         if: runner.os == 'Linux'
@@ -217,7 +233,12 @@ jobs:
         shell: bash
         env:
           VERSION: ${{ steps.version.outputs.value }}
-        run: bash tools/packaging/make_tarball.sh "${VERSION:-0.1.0}"
+        run: |
+          bash tools/packaging/make_tarball.sh "${VERSION:-0.1.0}"
+          # The LGPL needs the notice and the license texts in every download.
+          listing=$(tar -tzf dist/teachers-teammate-*-linux-x86_64.tar.gz)
+          grep -E '/NOTICE$' <<<"$listing"
+          grep -E '/third_party_license\.txt$' <<<"$listing"
 
       - name: Install NSIS and create installer (Windows)
         if: runner.os == 'Windows'
@@ -315,8 +336,14 @@ jobs:
           echo "==> $IMAGE"
           docker run --rm -v "$PWD/dist:/dist:ro" "$IMAGE" bash -c '
             set -euo pipefail
+            # The Ubuntu images drop /usr/share/doc (all but copyright) at install time, which
+            # would hide the notice files this job checks for; a desktop install keeps them.
+            rm -f /etc/dpkg/dpkg.cfg.d/excludes
             apt-get update -qq
             apt-get install -y -qq --no-install-recommends /dist/teachers-teammate_*_amd64.deb
+            # The LGPL needs the notice and the license texts in every download.
+            test -s /usr/share/doc/teachers-teammate/NOTICE
+            test -s /usr/share/doc/teachers-teammate/third_party_license.txt
             QT_QPA_PLATFORM=offscreen teachers-teammate --_smoke_test /tmp/out.json
             cat /tmp/out.json
             # The bootloader puts _internal on LD_LIBRARY_PATH, which is how the libraries the
@@ -341,9 +368,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # The floor, the middle one, and the build's own. If GitHub retires one, the oldest
-        # left takes its place and the "tested on" line in docs/deployment.md follows.
-        os: [macos-14, macos-15, macos-26]
+        # The oldest runner GitHub still offers and the build's own (macos-14 is retired, so the
+        # 14.4 floor is on the VM list). If GitHub retires one, the oldest left takes its place
+        # and the "tested on" line in docs/deployment.md follows.
+        os: [macos-15, macos-26]
     steps:
       - name: Download the dmg
         uses: actions/download-artifact@v8
@@ -363,6 +391,9 @@ jobs:
           mkdir -p "$mount"
           hdiutil attach "$dmg" -nobrowse -mountpoint "$mount"
           echo "mount=$mount" >> "$GITHUB_OUTPUT"
+          # The LGPL needs the notice and the license texts in every download.
+          test -s "$mount/Licenses/NOTICE.txt"
+          test -s "$mount/Licenses/third_party_license.txt"
           cp -R "$mount/teachers-teammate.app" /Applications/
 
       - name: Start the installed app

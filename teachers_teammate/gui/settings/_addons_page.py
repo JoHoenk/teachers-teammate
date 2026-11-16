@@ -766,6 +766,7 @@ class AddonsPage(SettingsPageBase):
         model_layout = QVBoxLayout(model_group)
         for lbl, model_id in _SPACY_MODEL_DOWNLOAD_CHOICES:
             cb = QCheckBox(lbl)
+            cb.setToolTip(license_tooltip(model_id))
             self._dl_checkboxes[f"spacy:{model_id}"] = cb
             model_layout.addWidget(cb)
         layout.addWidget(model_group)

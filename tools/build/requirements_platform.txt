@@ -11,7 +11,7 @@
 # test of the next release dry run is its check.
 
 # pip itself: the bundle carries it for the in-app add-on installer, so its version is part
-# of what ships and must match third_party_licenses/packages.csv.
+# of what ships and must match its row in third_party_licenses/inventory.csv.
 pip==26.1.2
 
 # PyInstaller and what it needs that the lock does not carry.

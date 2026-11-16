@@ -30,6 +30,12 @@ Two modes:
       python tools/build/check_addon_resolution.py --python .venv/bin/python \\
           --constraints teachers_teammate/_build/addon_constraints.txt \\
           --lock teachers_teammate/_build/addon_lock.txt
+
+With ``--report DIR`` pip writes what the *locked* install would bring, one JSON file per
+add-on.  ``tools/licenses/inventory.py --check-resolved DIR`` then holds that against the license
+inventory: the add-on lock is resolved on Linux, so a dependency that only exists on Windows or
+macOS never appears in it, and this is the check that finds one.  The *newest* run is not
+reported: its versions are newer than the lock by design.
 """
 
 from __future__ import annotations
@@ -37,6 +43,7 @@ from __future__ import annotations
 import argparse
 from functools import partial
 from pathlib import Path
+import re
 import subprocess
 import sys
 import tempfile
@@ -72,6 +79,11 @@ def find_lock(app: Path) -> Path:
     return _find_in_bundle(app, "addon_lock.txt", "add-on lock")
 
 
+def _report_arguments(report: Path | None) -> list[str]:
+    """Return the ``--report`` argument, or nothing when the caller wants no report."""
+    return [] if report is None else ["--report", str(report)]
+
+
 def _constraint_arguments(constraints: Path, lock: Path | None) -> list[str]:
     """Return the ``-c`` arguments the app passes: the bundle's constraints, then the lock."""
     arguments = ["-c", str(constraints)]
@@ -86,13 +98,15 @@ def dry_run_command(
     target: Path,
     requirements: list[str],
     lock: Path | None = None,
+    report: Path | None = None,
 ) -> list[str]:
     """Return the command that resolves *requirements* with the app's pip and installs nothing.
 
     The arguments are the ones the app uses for a real install
     (``addon_manager.pip_policy_arguments``, ``--upgrade`` included: the newest release is
     what the weekly job exists to try), plus ``--dry-run``.  With *lock* the add-on lock is a
-    second ``-c``, as in the installed app.
+    second ``-c``, as in the installed app.  With *report* pip writes what it would install as
+    JSON, which ``tools/licenses/inventory.py --check-resolved`` reads.
     """
     return [
         str(app),
@@ -106,6 +120,7 @@ def dry_run_command(
         "--only-binary",
         ":all:",
         "--no-cache-dir",
+        *_report_arguments(report),
         *_constraint_arguments(constraints, lock),
         *requirements,
     ]
@@ -117,6 +132,7 @@ def python_dry_run_command(
     target: Path,
     requirements: list[str],
     lock: Path | None = None,
+    report: Path | None = None,
 ) -> list[str]:
     """Return the same dry run without a built app: *interpreter*'s own pip.
 
@@ -136,16 +152,26 @@ def python_dry_run_command(
         "--only-binary",
         ":all:",
         "--no-cache-dir",
+        *_report_arguments(report),
         *_constraint_arguments(constraints, lock),
         *requirements,
     ]
 
 
-def _run(command_for: Callable[[Path], list[str]], name: str, requirements: list[str]) -> str:
-    """Return ``""`` when the command succeeds, else the end of pip's output."""
+def _run(
+    command_for: Callable[[Path, Path | None], list[str]],
+    name: str,
+    requirements: list[str],
+    report: Path | None = None,
+) -> str:
+    """Return ``""`` when the command succeeds, else the end of pip's output.
+
+    With *report* pip writes what it would install to that path, which
+    ``tools/licenses/inventory.py --check-resolved`` then reads.
+    """
     with tempfile.TemporaryDirectory(prefix="addon_resolution_") as target:
         result = subprocess.run(
-            command_for(Path(target)),
+            command_for(Path(target), report),
             capture_output=True,
             text=True,
             timeout=TIMEOUT_S,
@@ -163,12 +189,14 @@ def check_addon(
     name: str,
     requirements: list[str],
     lock: Path | None = None,
+    report: Path | None = None,
 ) -> str:
     """Return ``""`` when *requirements* resolve against the bundle, else pip's last lines."""
     return _run(
-        lambda target: dry_run_command(app, constraints, target, requirements, lock),
+        lambda target, path: dry_run_command(app, constraints, target, requirements, lock, path),
         name,
         requirements,
+        report,
     )
 
 
@@ -178,13 +206,22 @@ def check_addon_with_python(
     name: str,
     requirements: list[str],
     lock: Path | None = None,
+    report: Path | None = None,
 ) -> str:
     """The same check without a built app, with *interpreter*'s own pip."""
     return _run(
-        lambda target: python_dry_run_command(interpreter, constraints, target, requirements, lock),
+        lambda target, path: python_dry_run_command(
+            interpreter, constraints, target, requirements, lock, path
+        ),
         name,
         requirements,
+        report,
     )
+
+
+def _slug(name: str) -> str:
+    """Return *name* as a file name: the add-on's label, without spaces or punctuation."""
+    return re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
 
 
 def addons_to_check() -> dict[str, list[str]]:
@@ -224,6 +261,14 @@ def main(argv: list[str] | None = None) -> int:
         help="the add-on lock for --python (teachers_teammate/_build/addon_lock.txt); "
         "without it only the newest releases are tried, not what the app installs",
     )
+    parser.add_argument(
+        "--report",
+        type=Path,
+        default=None,
+        metavar="DIR",
+        help="write what the locked install would bring, one JSON file per add-on, into DIR; "
+        "tools/licenses/inventory.py --check-resolved reads them (needs --lock)",
+    )
     args = parser.parse_args(argv)
 
     lock: Path | None = None
@@ -250,6 +295,11 @@ def main(argv: list[str] | None = None) -> int:
             return 1
         check = partial(check_addon, args.app, constraints)
 
+    if args.report is not None:
+        if lock is None:
+            parser.error("--report needs --lock: only the locked install is what the app brings")
+        args.report.mkdir(parents=True, exist_ok=True)
+
     problems = []
     for name, requirements in addons_to_check().items():
         # "newest": the bundle's constraints alone, to meet a release the lock does not know yet.
@@ -258,7 +308,13 @@ def main(argv: list[str] | None = None) -> int:
         if lock is not None:
             modes.append(("locked", lock))
         for mode, mode_lock in modes:
-            problem = check(f"{name} [{mode}]", requirements, mode_lock)
+            # Only the locked run is reported: it is what the installed app brings, so its
+            # versions are the inventory's.  The newest run exists to meet a release the lock
+            # does not know yet, and its versions are newer by design.
+            report = None
+            if args.report is not None and mode_lock is not None:
+                report = args.report / f"{_slug(name)}.json"
+            problem = check(f"{name} [{mode}]", requirements, mode_lock, report)
             print(f"{'FAIL' if problem else 'ok  '} {name} [{mode}]: {' '.join(requirements)}")
             if problem:
                 problems.append(problem)

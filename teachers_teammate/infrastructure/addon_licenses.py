@@ -1,9 +1,10 @@
-"""The licenses of the add-on packages, read from the list the build ships.
+"""The licenses of the add-on packages, read from the inventory the build ships.
 
-``tools/build/addon_licenses.py`` writes ``assets/addon_licenses.csv`` from PyPI when the release
-is built, so the Add-ons page can say under which terms a package arrives without asking the
-network.  The list holds the add-ons' own packages and what they pull in, not the bundle's: those
-are in ``assets/third_party_licenses.md``.
+``tools/licenses/inventory.py`` writes ``third_party_licenses/inventory.csv`` and the copy of it
+at ``assets/third_party_inventory.csv``, so the Add-ons page can say under which terms a package
+arrives without asking the network.  The inventory holds every third-party part the app ships or
+installs — the bundle's packages, the add-ons', the models — and this module is the name lookup
+into it.
 
 The app is not the distributor of an add-on — the teacher downloads it from its authors — but it
 loads that code into its own process, so the terms are worth one hover.
@@ -16,8 +17,8 @@ from functools import lru_cache
 from pathlib import Path
 import sys
 
-#: Where the build puts the list, relative to the folder the bundle's files sit in.
-LICENSES_RELATIVE = Path("teachers_teammate") / "assets" / "addon_licenses.csv"
+#: Where the build puts the inventory, relative to the folder the bundle's files sit in.
+LICENSES_RELATIVE = Path("teachers_teammate") / "assets" / "third_party_inventory.csv"
 
 
 def _root() -> Path:
@@ -28,13 +29,13 @@ def _root() -> Path:
 
 @lru_cache(maxsize=1)
 def _licenses() -> dict[str, str]:
-    """Return ``{normalised package name: license}``; empty when the list is not there."""
+    """Return ``{normalised component name: license}``; empty when the list is not there."""
     try:
         with (_root() / LICENSES_RELATIVE).open(encoding="utf-8", newline="") as handle:
             return {
-                row["Package"].strip().lower(): row["License"].strip()
+                row["Component"].strip().lower(): row["License"].strip()
                 for row in csv.DictReader(handle)
-                if row.get("Package") and row.get("License")
+                if row.get("Component") and row.get("License")
             }
     except OSError, KeyError, csv.Error:
         return {}

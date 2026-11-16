@@ -8,7 +8,7 @@
 #   worse, pulling in code whose licence the bundle does not carry.
 #   Building in a fresh venv with ONLY the base runtime deps (pip install -e .)
 #   guarantees the bundle matches third_party_licenses/ (the same set that
-#   tools/release/update_licenses.py enumerates). Optional OCR/LLM/privacy
+#   tools/licenses/inventory.py enumerates). Optional OCR/LLM/privacy
 #   features are installed by users at runtime via the in-app addon installer
 #   (which is why pip is bundled with --collect-all).
 #

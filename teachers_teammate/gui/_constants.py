@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from ..domain.language import LANGUAGES
+from ..infrastructure.spacy_models import FALLBACK_SPACY_MODEL, SPACY_MODELS
 
 _COLOUR_ERROR = "#c0392b"
 _COLOUR_WARNING = "#e67e22"
@@ -18,14 +19,8 @@ _COLOUR_EVAL_BAR = "#8e44ad"
 _LANGUAGES = LANGUAGES
 
 # spaCy NER models offered for download, as (display label, package name) pairs.
-# Shared by the addon installer and downloads dialogs.
+# Shared by the addon installer and downloads dialogs.  Built from the one table in
+# `infrastructure/spacy_models.py`, so a language that leaves it leaves this list too.
 _SPACY_MODEL_CHOICES: list[tuple[str, str]] = [
-    ("English (en_core_web_sm)", "en_core_web_sm"),
-    ("German (de_core_news_sm)", "de_core_news_sm"),
-    ("French (fr_core_news_sm)", "fr_core_news_sm"),
-    ("Spanish (es_core_news_sm)", "es_core_news_sm"),
-    ("Italian (it_core_news_sm)", "it_core_news_sm"),
-    ("Portuguese (pt_core_news_sm)", "pt_core_news_sm"),
-    ("Dutch (nl_core_news_sm)", "nl_core_news_sm"),
-    ("Multilingual (xx_ent_wiki_sm)", "xx_ent_wiki_sm"),
-]
+    (f"{language.title()} ({model})", model) for language, model in SPACY_MODELS.items()
+] + [(f"Multilingual ({FALLBACK_SPACY_MODEL})", FALLBACK_SPACY_MODEL)]

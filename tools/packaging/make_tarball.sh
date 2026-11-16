@@ -50,11 +50,18 @@ libraries it links against are missing; on Debian and Ubuntu:
 
 The Qt libraries are separate files under _internal/PySide6/Qt/lib and can be
 replaced with a compatible build. The licenses of everything bundled here are in
-third_party_license.txt and in the application's "Third-Party Licenses" dialog.
+third_party_license.txt and in the application's "Third-Party Licenses" dialog;
+third_party_host_libraries.txt names the libraries that came from the build
+machine, with their Debian copyright files.
 EOF
 
 cp "${ROOT}/NOTICE" "${STAGE}/${TOP}/NOTICE"
 cp "${ROOT}/third_party_licenses/third_party_license.txt" "${STAGE}/${TOP}/third_party_license.txt"
+# The libraries the bundle took from the build machine, written by check_linux_bundle.py
+# --host-libs into _internal/.  It sits next to NOTICE too, where a reader looks for it.
+if [[ -f "${BUILD}/_internal/third_party_host_libraries.txt" ]]; then
+    cp "${BUILD}/_internal/third_party_host_libraries.txt" "${STAGE}/${TOP}/"
+fi
 
 tar -C "${STAGE}" -czf "${OUT}" "${TOP}"
 echo "Created: ${OUT}"

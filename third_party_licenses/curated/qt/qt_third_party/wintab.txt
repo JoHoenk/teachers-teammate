@@ -1,0 +1,11 @@
+Wintab API
+Used in: QtGui  |  Platforms: Windows
+License: LCS-Telegraphics License (LicenseRef-Lcs-Telegraphics)
+
+Copyright:
+Copyright 1991-1998 by LCS/Telegraphics.
+
+--- LicenseRef-Lcs-Telegraphics.txt ---
+
+The text and information contained in this file may be freely used,
+copied, or distributed without compensation or licensing restrictions.

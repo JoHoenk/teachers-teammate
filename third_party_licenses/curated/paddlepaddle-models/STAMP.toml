@@ -1,0 +1,5 @@
+# The attribution of the model files the app runs itself.  No wheel carries it: the models are
+# ONNX exports on huggingface.co, so this folder is hand-owned.  `valid_for = ""` means the text
+# does not change with a model revision.
+rows = ["ppocr-small-det", "ppocr-small-rec", "doc-ori", "uvdoc"]
+valid_for = ""

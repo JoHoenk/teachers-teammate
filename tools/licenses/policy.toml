@@ -1,0 +1,128 @@
+# The policy of the license inventory.
+#
+# Read by tools/licenses/inventory.py and by nothing else.  Every table here is a fact a person
+# has to state: what we refuse, which spellings mean one license, and the few components whose
+# license PyPI cannot tell us.  Versions never appear here — they come from the locks.
+
+# Licenses we must not ship or install.  Applied to every row of every scope: a package inside
+# our download, a package the teacher downloads on our click, and a build tool alike.  An `OR`
+# expression passes as soon as one alternative does; an `AND` only if every part does.
+[[deny]]
+pattern = '\bAGPL'
+reason = "AGPL: the app would have to offer its own source to anyone using it over a network"
+
+[[deny]]
+pattern = '\bGPL|(?<!Lesser )(?<!Library )General Public License'
+reason = "GPL-only: loading it into the app's process is the argument we avoid (LGPL is not matched)"
+
+[[deny]]
+pattern = 'non[- ]commercial|CC[- ]BY[- ]NC'
+reason = "non-commercial: a teacher may be paid for tutoring"
+
+# Spellings that mean one license.  PyPI's `License ::` classifiers are not SPDX ids, and the
+# column is read by people and by the deny patterns above, so the ones that would otherwise read
+# as two different licenses are folded here.
+[names]
+"MIT License" = "MIT"
+"Apache Software License" = "Apache-2.0"
+"ISC License (ISCL)" = "ISC"
+"Mozilla Public License 2.0 (MPL 2.0)" = "MPL-2.0"
+
+# A component's license where PyPI's answer is ambiguous or absent, with the reason.  `BSD
+# License` is the classifier for both BSD-2-Clause and BSD-3-Clause, so it says nothing.
+[license]
+pyside6-essentials = "LGPL-3.0-only"
+shiboken6 = "LGPL-3.0-only"
+# `BSD License` in the classifier, and the free text says only "BSD": read from the LICENSE file
+# in each wheel.
+blis = "BSD-3-Clause"
+httpx = "BSD-3-Clause"
+jinja2 = "BSD-3-Clause"
+pyasn1-modules = "BSD-2-Clause"
+# `BSD License` in the classifier and "BSD" in the free text; the header of `pynvml.py` in the
+# wheel is the three-clause text.
+nvidia-ml-py = "BSD-3-Clause"
+# The classifier says only "GNU General Public License v2 (GPLv2)"; PyInstaller's own metadata is
+# `GPL-2.0-or-later WITH Bootloader-exception`, and the exception is what lets the bootloader ship.
+pyinstaller = "GPL-2.0-or-later WITH Bootloader-exception"
+
+# A row the deny rules or an `unknown` license refuse, with the reason a person accepted it.
+# Empty on purpose: the gate is closed exactly where it has no information.
+[accepted]
+# The bootloader is the only GPL part of PyInstaller, and its exception is exactly the permission
+# to ship it inside a bundled application.  The rest of PyInstaller is not in the bundle.
+pyinstaller = "GPL-2.0-or-later WITH Bootloader-exception: the exception permits shipping the bootloader in a bundled app"
+
+# A license text for a bundle row whose wheel carries none.  The two components without a wheel
+# of their own (Qt, the interpreter) are covered by a folder under `curated/` instead, because
+# their texts are many files.
+[text]
+# nvidia-ml-py ships no license file at all: the text below is the header of `pynvml.py` in the
+# wheel, reproduced verbatim.
+nvidia-ml-py = """
+Copyright (c) 2011-2025, NVIDIA Corporation.  All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+   * Redistributions of source code must retain the above copyright notice,
+     this list of conditions and the following disclaimer.
+   * Redistributions in binary form must reproduce the above copyright
+     notice, this list of conditions and the following disclaimer in the
+     documentation and/or other materials provided with the distribution.
+   * Neither the name of the NVIDIA Corporation nor the names of its
+     contributors may be used to endorse or promote products derived from
+     this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
+LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+POSSIBILITY OF SUCH DAMAGE.
+"""
+
+# Packages whose other platform wheels carry notices the Linux one does not.  The extra files are
+# stored beside the Linux ones and compiled as one union with a "Windows only" / "macOS only"
+# heading.
+[variants]
+# numpy's Windows and macOS wheels carry different vendored texts than the Linux one.
+numpy = ["win_amd64", "macosx_arm64"]
+# Pillow's Windows wheel bundles the libraries the Linux build links against.
+pillow = ["win_amd64"]
+
+# The pins of tools/build/requirements_platform.txt, and locked build tools such as setuptools,
+# that the build needs and the bundle does not carry.  Listed so the build check can tell "allowed" from "forgotten".
+[build_only]
+packages = [
+    "pyinstaller-hooks-contrib",
+    "altgraph",
+    "pefile",
+    "macholib",
+    "setuptools",
+]
+
+# Linux host libraries that must never be in the bundle: the build machine's own copies, which
+# would make us the distributor of a library we did not choose.
+[host_deny]
+patterns = [
+    "libreadline",
+    "libhistory",
+    "libgdbm",
+    "libncurses",
+    "libtinfo",
+    "libpanel",
+    "libform",
+    "libmenu",
+]
+
+# Host libraries that belong to a row instead of a Debian package.  The key is a prefix, so a
+# Python minor bump (3.14 -> 3.15) does not turn the Linux build red for nothing: the row's
+# version comes from .python-version, not from here.
+[host_rows]
+"libpython3" = "python"

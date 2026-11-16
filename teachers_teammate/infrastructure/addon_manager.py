@@ -36,6 +36,7 @@ import subprocess
 import sys
 import threading
 
+from .spacy_models import spacy_model_url
 from .subprocess_utils import no_console_window_kwargs
 
 _logger = logging.getLogger(__name__)
@@ -744,49 +745,33 @@ def download_spacy_model_subprocess(
     """Download a spaCy model into *target* using pip.
 
     spaCy models are hosted on GitHub Releases, not PyPI, so a plain
-    ``pip install <model>`` fails.  In frozen builds the executable is
-    re-invoked with ``--_spacy_download_mode`` to resolve the model URL inside
-    the frozen Python.  In non-frozen builds the URL is resolved in-process
-    using spaCy's own helpers before calling pip via subprocess.
+    ``pip install <model>`` fails.  The URL comes from the pin in
+    :mod:`teachers_teammate.infrastructure.spacy_models`, not from spaCy's
+    compatibility table, so the model a teacher gets is the one this release
+    names.  In frozen builds the executable is re-invoked with
+    ``--_spacy_download_mode`` to run pip inside the frozen Python.
 
     *model* is a spaCy model name such as ``en_core_web_sm`` or ``xx_ent_wiki_sm``.
     Output lines are streamed to *progress_cb* in real time.
 
     Raises:
         OSError: if *target* cannot be created (permissions, disk full).
-        RuntimeError: if spaCy is not installed or the download fails.
+        KeyError: if *model* has no pin.
+        RuntimeError: if the download fails.
     """
     target.mkdir(parents=True, exist_ok=True)
+    download_url = spacy_model_url(model)
 
     if getattr(sys, "frozen", False):
         cmd = [
             sys.executable,
             "--_spacy_download_mode",
-            model,
+            download_url,
             "--target",
             str(target),
             *pip_policy_arguments(upgrade=False),
         ]
     else:
-        try:
-            from urllib.parse import urljoin  # noqa: PLC0415
-
-            from spacy import about as _spacy_about  # noqa: PLC0415
-            from spacy.cli.download import (  # noqa: PLC0415
-                get_compatibility,
-                get_model_filename,
-                get_version,
-            )
-        except ImportError as exc:
-            raise RuntimeError(f"spaCy is not installed; cannot download model: {exc}") from exc
-
-        compat = get_compatibility()
-        ver = get_version(model, compat)
-        filename = get_model_filename(model, ver, sdist=False)
-        base = _spacy_about.__download_url__
-        if not base.endswith("/"):
-            base += "/"
-        download_url = urljoin(base, filename)
         cmd = [
             sys.executable,
             "-m",

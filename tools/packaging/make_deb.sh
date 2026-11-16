@@ -108,7 +108,9 @@ EOF
 
  The bundled third-party components and their license texts are listed in
  third_party_license.txt next to this file, and in the application's
- "Third-Party Licenses" dialog. The Qt libraries are separate files in
+ "Third-Party Licenses" dialog. third_party_host_libraries.txt names the
+ libraries that came from the build machine, with their Debian copyright
+ files. The Qt libraries are separate files in
  /opt/${PKG_NAME}/_internal/PySide6/Qt/lib and can be replaced with a
  compatible build.
 EOF
@@ -116,6 +118,11 @@ EOF
 
 cp "${ROOT}/NOTICE" "${DOC_DIR}/NOTICE"
 cp "${ROOT}/third_party_licenses/third_party_license.txt" "${DOC_DIR}/third_party_license.txt"
+# The libraries the bundle took from the build machine, written by check_linux_bundle.py
+# --host-libs into _internal/.
+if [[ -f "${BUILD}/_internal/third_party_host_libraries.txt" ]]; then
+    cp "${BUILD}/_internal/third_party_host_libraries.txt" "${DOC_DIR}/"
+fi
 
 # ── DEBIAN/control ───────────────────────────────────────────────────────────
 

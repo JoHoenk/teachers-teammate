@@ -12,7 +12,7 @@
 
 # pip itself: the bundle carries it for the in-app add-on installer, so its version is part
 # of what ships and must match its row in third_party_licenses/inventory.csv.
-pip==26.1.2
+pip==26.2
 
 # PyInstaller and what it needs that the lock does not carry.
 pyinstaller==6.22.3

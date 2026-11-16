@@ -920,8 +920,8 @@ def test_the_performance_table_shows_a_dash_for_what_could_not_be_measured() -> 
     rendered = performance_table(summarise_performance([row]))
 
     assert (
-        "| `gemma4:e4b` | 0.2 | review | 1 (1) | 50.0 | 50 | 1000 / 1000 / 1000 | 1.00 | - | - |"
-        in rendered
+        "| `gemma4:e4b` | 0.2 | review | 1 (1) | 50.0 | 50 | 1000 / 1000 / 1000 | 1.00 | - | — "
+        "| - | - |" in rendered
     )
 
 

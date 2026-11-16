@@ -17,7 +17,7 @@ from typing import Any
 from teachers_teammate.domain.correction_review import CorrectionReview
 from teachers_teammate.domain.model_catalog import sampling_text
 
-from . import languages
+from . import languages, text_loss
 from .answer_mode import DEFAULT_MODE, AnswerMode, parse_mode
 from .error_labels import ReferenceLabel
 from .item_scores import item_scores
@@ -434,14 +434,21 @@ def rescore(row: ResultRow, *, count_marks: bool, record: TestRecord | None = No
             and the numbers of :func:`~.item_scores.item_scores` are recomputed from the record's
             spans; without it the stored ones are kept, because a row alone does not know the
             sentence spans of its text (but dropped when *count_marks* is set, as they were
-            computed on the text without the marks).
+            computed on the text without the marks).  The words of the answer against the
+            reference's are measured either way: they need no spans.
     """
     from dataclasses import replace  # noqa: PLC0415  # keeps the import list small
 
     output = row.output if count_marks else without_added_marks(row)
     updated = replace(row, output=output, raw_output=row.raw_output or row.output)
+    # The words of the answer against the reference's need no test record, so every row carries
+    # them: a dropped sentence is a defect of the answer, and a ``correct`` text has no other
+    # number to show it.
+    loss = text_loss.measure(row.source, output, row.reference)
     if row.kind != "errors":
-        return replace(updated, unchanged=unchanged_sentences(list(row.sentences), output))
+        return replace(
+            updated, unchanged=unchanged_sentences(list(row.sentences), output), scores=loss
+        )
     score = edit_score(row.kind, row.source, output, row.reference)
     updated = replace(
         updated,
@@ -464,8 +471,8 @@ def rescore(row: ResultRow, *, count_marks: bool, record: TestRecord | None = No
         if count_marks:
             # The stored numbers were computed on the text without the marks; next to scores
             # that count them they would contradict each other, so they are not shown.
-            return replace(updated, scores={})
-        return updated
+            return replace(updated, scores=loss)
+        return replace(updated, scores={**row.scores, **loss})
     return replace(
         updated,
         band=record.band,

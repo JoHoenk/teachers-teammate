@@ -13,6 +13,8 @@ import pytest
 from teachers_teammate.domain.correction_review import ChangeNote
 from tests.tools import gate_fixtures as fixtures
 from tests.tools import invented_corpus
+from tests.tools import store_workspace
+from tests.tools import viewer_fixtures
 from tests.tools.store_workspace import (
     MACHINE,
     MODEL,
@@ -28,6 +30,7 @@ from tools import proofreading_store
 from tools.model_eval import export as export_module
 from tools.model_eval import layout, protocol, report, results, selection, spot_check, testset
 from tools.model_eval.cli_paths import workspace_path
+from tools.model_eval.viewer import load
 
 
 def _corpus_options(corpora) -> list[str]:
@@ -416,8 +419,14 @@ def _export(  # noqa: PLR0913  # one keyword per part of a header a test may var
     testset_id: str = TESTSET,
     temperature: float | None = None,
     date: str | None = None,
+    testset_sha256: str | None = None,
 ):
-    """Export one more run of the workspace's cache, with the header a test describes."""
+    """Export one more run of the workspace's cache, with the header a test describes.
+
+    With *testset_sha256*, the copied folder names the hash of the test records it was asked
+    about, so the folder can be read back as a local cache; the workspace's own header carries a
+    placeholder there.
+    """
     cache = space.root / f"results-{name}"
     shutil.copytree(space.cache, cache)
     path = cache / "run.header.json"
@@ -435,6 +444,8 @@ def _export(  # noqa: PLR0913  # one keyword per part of a header a test may var
             entry["request_profile"] = {**entry["request_profile"], "temperature": temperature}
         if date is not None:
             entry["date"] = date
+        if testset_sha256 is not None:
+            entry["testset_sha256"] = testset_sha256
     path.write_text(json.dumps(entries), encoding="utf-8")
     return export_module.export(
         cache,
@@ -489,7 +500,10 @@ def _reviews() -> dict:
 
 
 def _gate_args(space, **changes) -> Namespace:
-    """Return the arguments ``gate`` gets for the workspace's runs."""
+    """Return the arguments ``gate`` gets for the workspace's runs.
+
+    Without a *space* the command reads local result folders, so ``--out`` stays empty.
+    """
     values = {
         "model": MODEL,
         "mode": "review",
@@ -498,10 +512,25 @@ def _gate_args(space, **changes) -> Namespace:
         "testset": None,
         "digest": None,
         "compact_json": None,
-        "out": str(space.out),
+        "out": None if space is None else str(space.out),
+        "against_temperature": None,
+        "against_mode": None,
+        "corrections": False,
+        "cache": [],
     }
     values.update(changes)
     return Namespace(**values)
+
+
+def _cache_args(testset_dir, folders, **changes) -> Namespace:
+    """Return the arguments ``compare`` gets when it reads local result folders."""
+    values = {
+        "cache": [str(folder) for folder in folders],
+        "testset": None if testset_dir is None else str(testset_dir),
+        "mode": None,
+    }
+    values.update(changes)
+    return _gate_args(None, **values)
 
 
 def test_the_gate_command_prints_every_check_and_exits_0(tmp_path, capsys):
@@ -561,8 +590,8 @@ def test_the_compare_command_prints_every_check_and_uses_its_exit_code(tmp_path,
     """
     Given  two models measured the same way, one of them worse
     When   `compare` runs over them
-    Then   it prints the four tests and the side-by-side figures, and exits 0 for the better one
-           and 1 for the tie of two equal models
+    Then   it prints the checks, the table of the measures and the side-by-side figures, and exits
+           0 for the better one and 1 for the tie of two equal models
     """
     space = workspace(tmp_path, reviews=_reviews())
     _repeats(space)
@@ -577,7 +606,9 @@ def test_the_compare_command_prints_every_check_and_uses_its_exit_code(tmp_path,
 
     captured = capsys.readouterr()
     assert better == 0, captured.err
-    assert "✓ F0.5, repeats:" in captured.out
+    assert "✓ F0.5:" in captured.out
+    assert "· F0.5, repeats:" in captured.out
+    assert "Per measure:" in captured.out
     assert "Side by side, never decisive:" in captured.out
     assert "→ better" in captured.out
     assert tie == 1
@@ -983,3 +1014,120 @@ def test_a_cache_that_pools_runs_with_other_sampling_values_is_refused(tmp_path,
 
     assert code == 2
     assert "qwen3.5:9b" in capsys.readouterr().err
+
+
+def test_the_compare_command_reads_local_result_folders(tmp_path, capsys):
+    """
+    Given  two folders of local result rows, one model answering with the reference and one
+           changing nothing
+    When   `compare` runs over them with --cache
+    Then   it prints the same checks as for committed runs and exits 0 for the better one
+    """
+    testset_dir = viewer_fixtures.write_testset(tmp_path / viewer_fixtures.TESTSET)
+    good = viewer_fixtures.cache(tmp_path / "good", repeats=3)
+    bad = viewer_fixtures.cache(
+        tmp_path / "bad", model=viewer_fixtures.OTHER_MODEL, repeats=3, unchanged=True
+    )
+
+    code = proofreading_store._compare(
+        _cache_args(
+            testset_dir,
+            [good, bad],
+            model=viewer_fixtures.MODEL,
+            temperature=1.0,
+            against=viewer_fixtures.OTHER_MODEL,
+        )
+    )
+
+    captured = capsys.readouterr()
+    assert code == 0, captured.err
+    assert "✓ F0.5:" in captured.out
+    assert "Per measure:" in captured.out
+    assert "Side by side, never decisive:" in captured.out
+    assert "→ better" in captured.out
+
+
+def test_a_cache_comparison_needs_the_test_set(tmp_path, capsys):
+    """
+    Given  a folder of local result rows and no --testset
+    When   `compare` runs over it
+    Then   it refuses and names the missing option, because every row is scored again
+    """
+    folder = viewer_fixtures.cache(tmp_path / "rows", repeats=3)
+
+    code = proofreading_store._compare(_cache_args(None, [folder]))
+
+    captured = capsys.readouterr()
+    assert code == 2
+    assert "--cache needs --testset" in captured.err
+
+
+def test_a_cache_comparison_takes_the_mode_the_folders_hold(tmp_path, capsys):
+    """
+    Given  folders that hold runs of two answer modes
+    When   `compare` runs over them without --mode, and then with it
+    Then   it refuses and names the modes, and judges the one it is asked for
+    """
+    testset_dir = viewer_fixtures.write_testset(tmp_path / viewer_fixtures.TESTSET)
+    reviewed = viewer_fixtures.cache(tmp_path / "review", mode="review", repeats=3)
+    exchange = viewer_fixtures.cache(tmp_path / "exchange", repeats=3)
+
+    refused = proofreading_store._compare(_cache_args(testset_dir, [reviewed, exchange]))
+    chosen = proofreading_store._compare(
+        _cache_args(
+            testset_dir,
+            [reviewed, exchange],
+            model=viewer_fixtures.MODEL,
+            temperature=1.0,
+            mode="review",
+            against=viewer_fixtures.MODEL,
+        )
+    )
+
+    captured = capsys.readouterr()
+    assert refused == 2
+    assert "--mode is needed" in captured.err
+    assert "exchange, review" in captured.err
+    assert chosen in (0, 1), captured.err
+    assert "review, temperature 1," in captured.out
+
+
+def test_the_cache_and_the_repository_are_exclusive():
+    """
+    Given  the `compare` command line
+    When   it is given both --out and --cache
+    Then   it refuses to parse, because a comparison reads one source or the other
+    """
+    parser = proofreading_store.build_parser()
+
+    with pytest.raises(SystemExit):
+        parser.parse_args(
+            ["compare", "--model", MODEL, "--out", "evaluations", "--cache", "results"]
+        )
+
+
+def test_the_cache_path_gives_the_same_verdict_as_the_committed_path(tmp_path, capsys):
+    """
+    Given  three repeats of one model exported into a repository, and the folders they were
+           exported from
+    When   `compare` runs over the committed runs and over the folders
+    Then   both print the same comparison, so a folder is judged as its exported run is
+    """
+    space = workspace(tmp_path, reviews=_reviews())
+    testset_dir = store_workspace.write_testset(space)
+    sha = load.read_testset(testset_dir).sha256
+    folders = []
+    for repeat in (1, 2, 3):
+        _export(space, f"r{repeat}", repeat=repeat, testset_sha256=sha)
+        _export(space, f"other-r{repeat}", model="qwen3:4b", repeat=repeat, testset_sha256=sha)
+        folders.append(space.root / f"results-r{repeat}")
+        folders.append(space.root / f"results-other-r{repeat}")
+
+    committed = proofreading_store._compare(_gate_args(space, against="qwen3:4b"))
+    from_committed = capsys.readouterr().out
+    cached = proofreading_store._compare(_cache_args(testset_dir, folders, against="qwen3:4b"))
+    from_cache = capsys.readouterr().out
+
+    assert committed == cached
+    assert from_cache == from_committed
+    assert "→ within the spread" in from_committed

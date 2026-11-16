@@ -268,15 +268,45 @@ def write_cache(
     return path
 
 
-def cache(directory: Path, *, model: str = MODEL, mode: str = "exchange", repeats: int = 1) -> Path:
-    """Write a whole cache of one model and mode, every text answered with the reference."""
+def cache(
+    directory: Path,
+    *,
+    model: str = MODEL,
+    mode: str = "exchange",
+    temperature: float = 1.0,
+    repeats: int = 1,
+    unchanged: bool = False,
+    explainer: str | None = None,
+    compact_json: bool = False,
+) -> Path:
+    """Write a whole cache of one model and mode, every text answered with the reference.
+
+    With *unchanged*, the model corrects nothing, so the cache is clearly worse than one that
+    answers with the reference.
+    """
     texts = records()
     for repeat in range(1, repeats + 1):
         write_cache(
             directory,
-            f"{model.replace(':', '_')}__T1__{mode}__r{repeat}",
-            header(model=model, mode=mode, repeat=repeat),
-            [row(text, model=model, mode=mode) for text in texts],
+            f"{model.replace(':', '_')}__T{temperature:g}__{mode}__r{repeat}",
+            header(
+                model=model,
+                mode=mode,
+                repeat=repeat,
+                temperature=temperature,
+                explainer=explainer,
+                compact_json=compact_json,
+            ),
+            [
+                row(
+                    text,
+                    model=model,
+                    mode=mode,
+                    temperature=temperature,
+                    output=text.source if unchanged else None,
+                )
+                for text in texts
+            ],
         )
     return directory
 

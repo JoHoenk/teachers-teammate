@@ -932,6 +932,18 @@ bazel run //tools:proofreading_store -- sheet --run RUN_ID --cache ~/gec-testset
     > spotcheck.md
 ```
 
+**A run that is checked before it starts, and read afterwards.**  `run --dry-run` makes the same
+plan the run makes and prints it: one line per session (model, temperature, mode, repeat, how many
+texts it would send), the results files that already hold every text, the refusals, and the number
+of requests.  It sends nothing but the server probe, which reads the version and the model's
+details, so a night's work can be checked in a second; a refusal exits 2, as the run would.
+`run --log FILE` appends one JSON line per event — `complete`, `session`, `smoke`, `row` (with the
+row's seconds and whether it lost text) — and closes with `finished`, `refused` or `interrupted`.
+Ctrl-C is how a night is paused, so a paused run still says where it stopped.  At the end a run
+that lost a setup says so: `N of M planned sessions did not run:` and one line per session with the
+reason the smoke check gave.  The exit code stays 0 — a script that chains runs decides for itself
+what a skipped setup means, and a run that wrote most of its rows is not a failure.
+
 **Evaluation report.** `bazel run //tools:eval_report -- build --testset ~/gec-testset/set-2026-12
 --cache ~/gec-testset/results --out ~/gec-testset/reports/NAME [--zip] [--single-file]
 [--model TAG] [--languages de,en]` writes one static page (opens from `file://`, no server) with the
@@ -1005,6 +1017,15 @@ text, at run time and again when the report re-scores a stored row, so the two c
   fallbacks the window cut off (`done_reason: "length"`).  A review-mode fallback keeps its
   corrections in F0.5 and GLEU, because the teacher gets them, but its changes count as
   unexplained, so falling back cannot improve the table.
+* *Lost / added*: texts whose answer kept much less of the text than the reference has, or much more
+  (`tools/model_eval/text_loss.py`).  Two rules, because one alone misses a case: the words of the
+  answer against the reference's (below 80 % or above 125 %), and the longest stretch of words the
+  model deleted or inserted that no reference change overlaps (20 tokens or more), which catches a
+  dropped sentence in a text that was otherwise corrected heavily.  The reference is the yardstick,
+  so a text whose reference cuts a sentence is a text and not a defect.  A `correct` text is
+  measured against its source, because it has no other number.  The report prints one line per
+  flagged text and repeat below the table, so a flag is read at once; a row written before the words
+  were stored shows "—", which is not the same as clean.
 * *Explained*: changes that need an explanation and carry one.
 
 A language where nothing was scored at all (no reference edit and no model edit) has no F0.5: the
@@ -1031,13 +1052,17 @@ are two tools (`tools/model_eval/gate_two.py`):
   | Cut-offs that cost the explanations | ✓ | ✓ | `cut_off` per language over all runs: a fallback whose requests include a `length`, so both tries were cut | 0 |
   | Other fallbacks | ✓ | — | `fallback − cut_off` per language over all runs | ≤ 1 per language |
   | Added marks | ✓ | ✓ | `added_marks` per language over all runs | 0 |
+  | Texts that lost text in 2 or more repeats | ✓ | ✓ | per text id across the repeats, per language | 0 |
   | Coverage | ✓ | ✓ | Σ`cover` / Σ`cover_of` per language, pooled over the repeats | ≥ 0.90 |
   | Explained share | ✓ | — | Σ`explained` / Σ`needed` per language, pooled | ≥ 0.85 |
   | GLEU above the source | ✓ | ✓ | per language, in every run | strict |
   | Left alone | ✓ | ✓ | Σ`alone` / Σ`alone_of` per language, pooled | ≥ 0.50 |
 
   Events count over all runs, rates are pooled over the repeats (a rate on one repeat is noisy), and
-  the GLEU guard holds in every run.  *Left alone* is the share of the sentences the reference leaves
+  the GLEU guard holds in every run.  The lost-text floor is the exception: it counts a text once
+  per repeat, so a sentence dropped in one of three repeats is shown by the report and not marked
+  here.  A group whose rows were written before the words were stored passes it with the value
+  saying "not measured".  *Left alone* is the share of the sentences the reference leaves
   unchanged that the model leaves untouched too: a model that rewrites correct sentences costs the
   teacher a check per sentence.  It pairs with coverage — a model that changes nothing leaves
   everything alone and fails coverage, one that rewrites everything covers everything and fails this
@@ -1056,15 +1081,21 @@ are two tools (`tools/model_eval/gate_two.py`):
   words.
 * **The comparison** (`compare(a, b)`) — is model *a* better than model *b* beyond the noise?  It is
   used once, at the end of the screen, to fill each tier's places, and it is not a gate.  `BETTER`
-  needs all four: the range of the deciding mean F0.5 per repeat lies entirely above the other's
-  (with three repeats each that is a proper test at 5 %), a paired bootstrap over the texts rejects a
-  zero difference at 5 % (2,000 draws, `random.Random(20261111)`, so every machine gets the same
-  answer), and GLEU and the `page` band are not worse.  The two groups may differ in model, digest,
-  request profile and temperature — each model starts at its vendor's temperature, and a refinement
-  compares one model at two — and in nothing else; both temperatures are printed.  It is split the
-  same way: `measure_pair(a, b)` builds the per-language ranges and bootstraps (French's too, a real
+  needs three things: the interval of the deciding mean F0.5 over the texts excludes zero on the
+  right **and** the gap is at least `MIN_EFFECT` (0.01), and GLEU and the `page` band are not below
+  the other's by more than that same 0.01.  The interval is a paired bootstrap over the texts (2,000
+  draws, `random.Random(20261111)`, so every machine gets the same answer); the two guards read the
+  means over the repeats, not their ranges, because at a low temperature the repeats collapse and a
+  range test then passes on a gap of 0.001.  The spread of the repeats is printed next to the
+  verdict and decides nothing.  The two groups may differ in model, digest, request profile and
+  temperature — each model starts at its vendor's temperature, and a refinement compares one model
+  at two — and in nothing else; both temperatures are printed.  It is split the same way:
+  `measure_pair(a, b)` builds the per-language figures and the intervals (French's too, a real
   figure), `rate_pair` combines them with the deciding mean, and the per-language figures are
-  printed above the verdict and never decide.
+  printed above the verdict and never decide.  Under the verdict, one line per measure — F0.5,
+  recall, precision, left alone, coverage — with its own interval and its own `better` / `tie` /
+  `worse` by the same rule, then a dominance line: a model dominates the other when it is worse on
+  no measure, better on one, and not more than 5 % slower per 100 words (`TIME_TOLERANCE`).
 
 ```bash
 # the floors and the explanations of one model
@@ -1073,6 +1104,10 @@ bazel run //tools:proofreading_store -- gate --model ministral-3:14b \
     --out evaluations/proofreading
 # one model against another
 bazel run //tools:proofreading_store -- compare --model ministral-3:14b --against gemma4:e4b
+# the same comparison on the rows of local result folders
+bazel run //tools:proofreading_store -- compare --cache ~/gec-testset/results-correct-only \
+    --testset ~/gec-testset/set-2026-12 --model qwen3.5:4b --temperature 0.05 \
+    --against qwen3.5:4b --against-temperature 0.7
 ```
 
 A command names a model, not a file: the runs are found below `--out`, and the parts of the key the
@@ -1087,6 +1122,18 @@ prose, so the flag is set by hand).  One line per check (`✓`, `✗`, `·` for 
 outcome.  Exit codes: `gate` 0 for `PASS` / `PASS_PENDING`, 1 for `FAIL`, 2 for `INCOMPLETE`;
 `compare` 0 for `BETTER`, 1 for `TIE` / `WORSE`, 2 for `NOT_COMPARABLE` or an incomplete group.  The
 output is the record: `evaluations/writing-models-2026-11/gate2-<date>.md`, numbers only.
+
+**Comparing local result folders.**  `compare --cache DIR [--cache DIR] --testset DIR` judges the
+rows a run wrote instead of a committed run: every folder is read with the test set, every row is
+scored again, and the groups are formed from the headers, so a folder that lost a repeat says so
+(`skipped <file>: <reason>`) instead of comparing two runs.  `--cache` and `--out` are exclusive,
+and `--testset` is required, because the rows are scored against the texts on disk.  `--mode`
+defaults to the mode the folders hold, and is refused when they hold several.  A refinement of one
+model names both temperatures (`--against-temperature`), and a comparison of the two exchange modes
+names both modes (`--against-mode correct-only --corrections`): with `--corrections` the exchange
+and correct-only modes count as one measurement and the explainer is ignored, because step ① writes
+the corrections of both.  Any other pair of modes stays not comparable, and the comparison prints
+"corrections only" when the flag is used.
 
 **The explanation check.**  Before a model takes a star place, a teacher marks a sample of its
 explanations.  The sample is defined by the *committed* run, not by the cache: from the run of repeat

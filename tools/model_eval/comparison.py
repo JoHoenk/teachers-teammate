@@ -173,16 +173,12 @@ class WritingModelComparison:
             sentences=tuple(record.sentences),
             unchanged=unchanged_sentences(list(record.sentences), corrected),
             band=record.band,
-            scores=(
-                item_scores(
-                    record.source,
-                    corrected,
-                    record.reference,
-                    sentence_spans=record.sentence_spans,
-                    unchanged_sentences=record.unchanged_sentences,
-                )
-                if record.kind == "errors"
-                else {}
+            scores=item_scores(
+                record.source,
+                corrected,
+                record.reference,
+                sentence_spans=record.sentence_spans,
+                unchanged_sentences=record.unchanged_sentences,
             ),
             # The mode is the one the factory was built for: the caller passes both.
             mode=self._mode,

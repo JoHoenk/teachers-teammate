@@ -35,6 +35,7 @@ run.  The work itself lives in :mod:`tools.model_eval`; this file only parses ar
 from __future__ import annotations
 
 import argparse
+from collections.abc import Callable
 from datetime import UTC, datetime
 import math
 from pathlib import Path
@@ -44,7 +45,7 @@ from typing import cast
 
 from teachers_teammate.domain.model_catalog import SAMPLING_OPTIONS, RequestProfile
 from teachers_teammate.infrastructure.ollama_utils import OllamaClient
-from tools.model_eval import defaults, protocol, results, runner
+from tools.model_eval import defaults, protocol, results, run_log, runner, text_loss
 from tools.model_eval.answer_mode import DEFAULT_MODE, RUNNABLE_MODES, AnswerMode, parse_mode
 from tools.model_eval.app_corrector import (
     CorrectorFactory,
@@ -297,23 +298,166 @@ def _run(args: argparse.Namespace) -> int:
     if languages is None:
         return 2
     args.language = languages
+    records = results.read_testset(args.testset, languages)
+    if args.dry_run:
+        # A dry run sends nothing but the server probe: the memory agent is not asked.
+        args.gpu_agent_client = None
+        args.gpu_agent_record = None
+        return _dry_run(args, records, stamp)
     if _use_gpu_agent(args) is not None:
         return 2
-    records = results.read_testset(args.testset, languages)
-    result = runner.run_matrix(
-        _matrix(args),
-        records,
-        stamp,
-        _seams(args),
-        on_complete=_announce_complete,
-        on_session=_announce,
-        on_row=_print_row,
-        on_smoke=lambda item, smoke: _announce_smoke(item, smoke, args.compact_json),
-        new_progress=lambda total: Progress(total, style=args.progress),
-    )
+    log = None if args.log is None else run_log.RunLog(args.log)
+    outcome = "interrupted"
+    result: runner.RunResult | None = None
+    try:
+        result = runner.run_matrix(
+            _matrix(args),
+            records,
+            stamp,
+            _seams(args),
+            on_complete=_logged(log, "complete", _announce_complete, _complete_fields),
+            on_session=_logged(log, "session", _announce, _session_fields),
+            on_row=_logged(log, "row", _print_row, _row_fields),
+            on_smoke=_logged(
+                log,
+                "smoke",
+                lambda item, smoke: _announce_smoke(item, smoke, args.compact_json),
+                _smoke_fields,
+            ),
+            new_progress=lambda total: Progress(total, style=args.progress),
+        )
+        outcome = "refused" if result.refused else "finished"
+    finally:
+        if log is not None:
+            log.write(outcome, **_result_fields(result))
+    _announce_skipped(result)
     if result.refused:
         return _refuse("\n\n".join(result.refused))
     return 0
+
+
+def _dry_run(
+    args: argparse.Namespace, records: list[results.TestRecord], stamp: protocol.Stamp
+) -> int:
+    """Print what the run would do, without sending a request.
+
+    The plan is the same one the run makes, so the sessions, the files already complete and the
+    refusals are the ones the run would meet — only the server probe is sent, which reads the
+    version and the model's details and nothing else.
+    """
+    decided = runner.plan(_matrix(args), records, stamp, _seams(args).probe)
+    for path in decided.complete:
+        _announce_complete(path)
+    for item in decided.sessions:
+        missing = len(records) - len(item.done)
+        print(
+            f"  {runner.session_label(item)}: {missing} of {len(records)} texts to send",
+            flush=True,
+        )
+    if decided.refused:
+        return _refuse("\n\n".join(decided.refused))
+    requests = sum(len(records) - len(item.done) for item in decided.sessions)
+    print(
+        f"{len(decided.sessions)} sessions, {requests} requests, "
+        f"{len(decided.complete)} files already complete",
+        flush=True,
+    )
+    return 0
+
+
+def _announce_skipped(result: runner.RunResult) -> None:
+    """Say which planned sessions did not run, and why, after the run.
+
+    The exit code stays 0: a script that chains runs decides for itself what a skipped setup
+    means, and a run that wrote most of its rows is not a failure.
+    """
+    if not result.skipped:
+        return
+    print(
+        f"{len(result.skipped)} of {result.planned} planned sessions did not run:",
+        file=sys.stderr,
+        flush=True,
+    )
+    for line in result.skipped:
+        print(f"  {line}", file=sys.stderr, flush=True)
+
+
+def _logged(
+    log: run_log.RunLog | None,
+    event: str,
+    announce: Callable[..., None],
+    *builders: Callable[..., dict],
+) -> Callable[..., None]:
+    """Return a callback that prints as before and, with a log, writes one line for it.
+
+    Each of *builders* takes the callback's own arguments and returns the fields it adds, so the
+    log says what the screen says and nothing has to be worked out twice.
+    """
+    if log is None:
+        return announce
+
+    def both(*args) -> None:
+        announce(*args)
+        fields: dict = {}
+        for build in builders:
+            fields.update(build(*args))
+        log.write(event, **fields)
+
+    return both
+
+
+def _complete_fields(path: Path) -> dict:
+    """Return the fields of a results file that already holds every text."""
+    return {"file": path.name}
+
+
+def _session_fields(item: runner.Session) -> dict:
+    """Return the fields of a session that starts."""
+    return {
+        "model": item.model,
+        "temperature": item.temperature,
+        "mode": str(item.mode),
+        "repeat": item.repeat,
+        "texts": len(item.done),
+    }
+
+
+def _smoke_fields(item: runner.Session, smoke: Smoke) -> dict:
+    """Return the fields of a smoke check: the setup, whether it passed and why."""
+    return {
+        "model": item.model,
+        "temperature": item.temperature,
+        "mode": str(item.mode),
+        "passed": smoke.passed,
+        "reason": smoke.reason,
+    }
+
+
+def _row_fields(item: runner.Session, row: results.ResultRow) -> dict:
+    """Return the fields of one written row: what it cost and whether it lost text."""
+    return {
+        "model": item.model,
+        "temperature": item.temperature,
+        "mode": str(item.mode),
+        "repeat": item.repeat,
+        "item": row.id,
+        "seconds": row.seconds,
+        "lost": text_loss.is_lost(row.scores),
+        "failed": row.failed,
+        "fallback": row.fallback,
+    }
+
+
+def _result_fields(result: runner.RunResult | None) -> dict:
+    """Return the fields of the closing line: what the run finished, or nothing when it was cut."""
+    if result is None:
+        return {}
+    return {
+        "sessions": result.sessions,
+        "rows": result.rows,
+        "planned": result.planned,
+        "skipped": len(result.skipped),
+    }
 
 
 def _detail(row: results.ResultRow) -> str:
@@ -455,6 +599,21 @@ def main() -> int:
         "--no-smoke",
         action="store_true",
         help="Skip the smoke check that screens each setup before its first session.",
+    )
+    run.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Print the sessions the run would write, the files already complete and the "
+        "refusals, and send nothing but the server probe.  Exit code 2 on a refusal.",
+    )
+    run.add_argument(
+        "--log",
+        type=workspace_path,
+        default=None,
+        metavar="FILE",
+        help="Append one JSON line per event to FILE: each session, each smoke check, each row "
+        "with its seconds and whether it lost text, and how the run ended (finished, refused or "
+        "interrupted).  A run that is paused with Ctrl-C still says where it stopped.",
     )
     run.add_argument("--ollama-url", default=defaults.default_ollama_url())
 

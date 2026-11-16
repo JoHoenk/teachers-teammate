@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from tools.model_eval import results as results_module
+from tools.model_eval import text_loss
 from tools.model_eval.answer_mode import AnswerMode
 from tools.model_eval.error_labels import ReferenceLabel
 from tools.model_eval.performance import Performance, RequestStats
@@ -265,6 +266,29 @@ def test_rescoring_a_correct_text_counts_the_untouched_sentences() -> None:
 
 
 @pytest.mark.use_case("Model_Eval_Results")
+def test_rescoring_a_correct_text_measures_the_words_of_its_answer() -> None:
+    """
+    Given  a row of an already-correct text whose answer dropped its second sentence
+    When   it is re-scored
+    Then   the words of the answer against the source's are there, so the loss is visible even
+           though the text has no reference and no other number
+    """
+    row = _row(
+        kind="correct",
+        source="Ein Satz. Noch einer.",
+        reference="",
+        output="Ein Satz.",
+        sentences=("Ein Satz.", "Noch einer."),
+    )
+
+    updated = rescore(row, count_marks=False)
+
+    assert set(updated.scores) == set(text_loss.KEYS)
+    assert updated.scores["words_out"] < updated.scores["words_ref"]
+    assert text_loss.is_lost(updated.scores) is True
+
+
+@pytest.mark.use_case("Model_Eval_Results")
 def test_rescoring_with_the_record_recomputes_the_band_and_the_numbers() -> None:
     """
     Given  a row and the test record of its text, with a band and sentence spans
@@ -324,14 +348,16 @@ def test_rescoring_without_the_record_keeps_the_stored_numbers() -> None:
     """
     Given  a row that already carries a band and numbers
     When   it is re-scored without its test record
-    Then   both are kept, because a row alone does not know the spans of its text
+    Then   both are kept, because a row alone does not know the spans of its text, and the words
+           of the answer are measured on top of them
     """
     row = _row(band="page", scores={"gleu_c": 7})
 
     updated = rescore(row, count_marks=False)
 
     assert updated.band == "page"
-    assert updated.scores == {"gleu_c": 7}
+    assert updated.scores["gleu_c"] == 7
+    assert set(text_loss.KEYS) <= set(updated.scores)
 
 
 @pytest.mark.use_case("Model_Eval_Results")
@@ -554,13 +580,14 @@ def test_rescoring_that_counts_the_marks_without_the_record_drops_the_stored_num
     """
     Given  a row whose stored numbers were computed on the text without the marks
     When   it is re-scored with the marks counted and without its test record
-    Then   the stored numbers are dropped, so they cannot contradict the scores that count marks
+    Then   the stored numbers are dropped, so they cannot contradict the scores that count marks,
+           and only the words of the answer are left
     """
     row = _row(band="page", scores={"gleu_c": 7, "tp_h1": 1})
 
     updated = rescore(row, count_marks=True)
 
-    assert updated.scores == {}
+    assert set(updated.scores) == set(text_loss.KEYS)
     assert updated.band == "page"
 
 

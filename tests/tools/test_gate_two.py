@@ -436,7 +436,7 @@ def test_adding_french_to_the_deciding_languages_makes_the_comparison_use_it():
     """
     Given  two models that differ only in French, the first being better there
     When   they are compared with French among the deciding languages
-    Then   the bootstrap of the verdict reads French too, so the calibration changes a value
+    Then   the interval of the verdict reads French too, so the calibration changes a value
     """
     texts = fixtures.baseline_texts()
     first = fixtures.group_of(
@@ -450,8 +450,10 @@ def test_adding_french_to_the_deciding_languages_makes_the_comparison_use_it():
     )
 
     only_french = gate_two.compare(first, second, deciding=("fr",))
+    german_and_english = gate_two.compare(first, second)
 
-    assert _check(only_french.checks, "F0.5, texts").value == "P(Δ ≤ 0) = 0.000"
+    assert _check(only_french.checks, "F0.5").passed is True
+    assert _check(german_and_english.checks, "F0.5").passed is False
 
 
 def test_a_group_without_a_deciding_language_is_incomplete_and_not_a_pass():
@@ -532,12 +534,12 @@ def test_compare_beyond_the_spread_is_better():
     assert gate_two.compare(second, first).comparison is gate_two.Comparison.WORSE
 
 
-def test_the_bootstrap_stops_a_consistent_small_gap():
+def test_the_interval_stops_a_gap_the_choice_of_texts_could_make():
     """
     Given  a model that is better on two texts and worse on two, and better pooled
     When   it is compared with the other
-    Then   the ranges are apart but the paired bootstrap is not, so the answer is a tie: a gap
-           the choice of texts could make is not shown
+    Then   the repeats are apart but the interval over the texts is not, so the answer is a tie:
+           a gap the choice of texts could make is not shown
     """
     texts = [fixtures.Text(id=f"de-{number:02d}", language="de", band="short") for number in (1, 2)]
     first = fixtures.group(
@@ -561,9 +563,126 @@ def test_the_bootstrap_stops_a_consistent_small_gap():
 
     result = gate_two.compare(first, second)
 
-    assert _named_check(result, "F0.5, repeats").passed is True
-    assert _named_check(result, "F0.5, texts").passed is False
+    assert _named_check(result, "F0.5, repeats").passed is None
+    assert _named_check(result, "F0.5").passed is False
     assert result.comparison is gate_two.Comparison.TIE
+
+
+def test_identical_groups_are_a_tie_with_an_interval_around_zero():
+    """
+    Given  two groups of the same numbers
+    When   they are compared
+    Then   every measure's interval is zero and the answer is a tie
+    """
+    texts = fixtures.minimal_texts()
+    first = fixtures.group(*texts)
+    second = fixtures.group(*texts, model=fixtures.OTHER, digest=fixtures.OTHER_DIGEST)
+
+    result = gate_two.compare(first, second)
+
+    assert result.comparison is gate_two.Comparison.TIE
+    assert [measure.name for measure in result.measures] == [
+        "F0.5",
+        "recall",
+        "precision",
+        "left alone",
+        "coverage",
+    ]
+    assert all(measure.interval.delta == 0.0 for measure in result.measures)
+    assert all(measure.verdict is gate_two.Verdict.TIE for measure in result.measures)
+
+
+def test_a_gap_below_the_minimum_effect_is_a_tie():
+    """
+    Given  two models whose F0.5 differs by less than the minimum effect, on every text alike
+    When   they are compared
+    Then   the interval excludes zero but the gap is too small to matter, so the answer is a tie
+    """
+    texts = [
+        fixtures.Text(id=f"de-{number:02d}", language="de", band="short") for number in range(1, 21)
+    ]
+    first = fixtures.group(*texts)
+    second = fixtures.group(
+        *_worse(texts, fp=11, fn=11), model=fixtures.OTHER, digest=fixtures.OTHER_DIGEST
+    )
+
+    result = gate_two.compare(first, second)
+
+    interval = _measure(result, "F0.5").interval
+    assert interval.low > 0
+    assert interval.delta < gate_two.MIN_EFFECT
+    assert result.comparison is gate_two.Comparison.TIE
+
+
+def test_a_collapsed_repeat_and_a_tiny_gleu_deficit_still_make_better():
+    """
+    Given  a model that is clearly better on F0.5, whose repeats are identical, and whose GLEU is
+           two thousandths below the other's
+    When   it is compared with the other
+    Then   it is better: the repeats decide nothing, and a GLEU deficit under the minimum effect
+           does not stop it
+    """
+    texts = fixtures.minimal_texts()
+    first = fixtures.group(*_worse(texts, counts=fixtures.gleu_scores(possible=(100, 99, 98, 98))))
+    second = fixtures.group(
+        *_worse(texts, tp=80, fp=20, fn=20),
+        model=fixtures.OTHER,
+        digest=fixtures.OTHER_DIGEST,
+    )
+
+    result = gate_two.compare(first, second)
+
+    assert _named_check(result, "F0.5, repeats").passed is None
+    assert _named_check(result, "GLEU").passed is True
+    assert result.comparison is gate_two.Comparison.BETTER
+
+
+def test_a_real_gleu_deficit_stops_better():
+    """
+    Given  a model that is better on F0.5 and two hundredths worse on GLEU
+    When   it is compared with the other
+    Then   it is not better, because a model that rewrites more than it should is no improvement
+    """
+    texts = fixtures.minimal_texts()
+    first = fixtures.group(*_worse(texts, counts=fixtures.gleu_scores(matched=(90, 80, 70, 54))))
+    second = fixtures.group(
+        *_worse(texts, tp=80, fp=20, fn=20),
+        model=fixtures.OTHER,
+        digest=fixtures.OTHER_DIGEST,
+    )
+
+    result = gate_two.compare(first, second)
+
+    assert _named_check(result, "F0.5").passed is True
+    assert _named_check(result, "GLEU").passed is False
+    assert result.comparison is gate_two.Comparison.TIE
+
+
+@pytest.mark.parametrize(
+    ("first", "second", "expected"),
+    [
+        ({}, {"tp": 80, "fp": 20, "fn": 20}, f"`{fixtures.MODEL}` dominates `{fixtures.OTHER}`"),
+        ({"cover": 50}, {"tp": 80, "fp": 20, "fn": 20}, "neither dominates"),
+        ({"seconds": 2.0}, {"tp": 80, "fp": 20, "fn": 20}, "neither dominates"),
+        ({"tp": 80, "fp": 20, "fn": 20}, {}, f"`{fixtures.OTHER}` dominates `{fixtures.MODEL}`"),
+    ],
+)
+def test_the_dominance_line(first, second, expected):
+    """
+    Given  two models that differ in one way each
+    When   they are compared
+    Then   the dominance line names the model that is better somewhere, worse nowhere and not
+           slower, and says "neither dominates" otherwise
+    """
+    texts = fixtures.minimal_texts()
+    one = fixtures.group(*[replace(text, **first) for text in texts])
+    other = fixtures.group(
+        *[replace(text, **second) for text in texts],
+        model=fixtures.OTHER,
+        digest=fixtures.OTHER_DIGEST,
+    )
+
+    assert gate_two.compare(one, other).dominance == expected
 
 
 def test_the_bootstrap_is_reproducible():
@@ -605,7 +724,7 @@ def test_a_worse_page_band_stops_better():
 
     result = gate_two.compare(first, second)
 
-    assert _named_check(result, "F0.5, repeats").passed is True
+    assert _named_check(result, "F0.5").passed is True
     assert _named_check(result, "page band, F0.5").passed is False
     assert result.comparison is gate_two.Comparison.TIE
 
@@ -691,6 +810,11 @@ def _named_check(result: gate_two.ComparisonResult, name: str) -> gate_two.Check
     return next(check for check in result.checks if check.name == name)
 
 
+def _measure(result: gate_two.ComparisonResult, name: str) -> gate_two.MeasureVerdict:
+    """Return the measure called *name* of a comparison."""
+    return next(measure for measure in result.measures if measure.name == name)
+
+
 def test_a_deciding_floor_nobody_measured_is_incomplete_not_a_pass():
     """
     Given  a group whose German texts have no sentence spans, so coverage has nothing to measure
@@ -746,3 +870,17 @@ def test_a_failed_floor_beats_an_unmeasured_one():
     ]
 
     assert _judge(fixtures.group(*texts)).outcome is gate_two.Outcome.FAIL
+
+
+@pytest.mark.use_case("Model_Eval_Report")
+def test_a_negated_interval_counts_the_draws_at_or_above_zero() -> None:
+    """
+    Given  an interval whose draws are all exactly zero
+    When   it is read the other way round
+    Then   the share of draws not worse is still 1, the share not better is too
+    """
+    interval = gate_two.Interval(delta=0.0, low=0.0, high=0.0, p_not_better=1.0, p_not_worse=1.0)
+
+    swapped = interval.negated()
+
+    assert (swapped.p_not_better, swapped.p_not_worse) == (1.0, 1.0)

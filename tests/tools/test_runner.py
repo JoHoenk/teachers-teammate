@@ -337,6 +337,31 @@ def test_a_failed_smoke_skips_only_its_own_setup(tmp_path: Path) -> None:
     )
 
 
+@pytest.mark.use_case("Model_Eval_Measure")
+def test_a_failed_smoke_lists_the_sessions_that_did_not_run(tmp_path: Path) -> None:
+    """
+    Given  a run of one model at two temperatures, where the arm at 0.7 fails the smoke check
+    When   it runs
+    Then   the two sessions of that arm are listed with the reason, and the planned count says
+           how many there were, so a night that lost a setup says so at the end
+    """
+    harness = _Harness()
+
+    def smoke(_model: str, _mode: AnswerMode, temperature: float) -> Smoke:
+        return Smoke(temperature == 0.2, "the answer was cut off twice")
+
+    matrix = _matrix(tmp_path, temperatures=(0.2, 0.7), repeats=2)
+
+    result = runner.run_matrix(matrix, _records(), STAMP, replace(harness.seams(), smoke=smoke))
+
+    assert result.planned == 4
+    assert result.sessions == 2
+    assert result.skipped == (
+        f"{MODEL} @ 0.7 (review), repeat 1: the answer was cut off twice",
+        f"{MODEL} @ 0.7 (review), repeat 2: the answer was cut off twice",
+    )
+
+
 # ── what a run writes ─────────────────────────────────────────────────────────
 
 

@@ -1,10 +1,14 @@
 """The groups gate 2 reads: runs that may be compared, and the numbers of each repeat.
 
-Gate 2 asks two questions of committed runs: whether one model meets the floors on its own
-numbers, and whether one model is better than another beyond the noise.  Both need runs that were
-measured the same way, and both need the numbers :func:`~.summary.summarise` prints for one repeat.
-This module is that grouping: a :class:`GroupKey` names what has to agree, a :class:`RunGroup`
-holds the runs that do, and :class:`Range` is the spread of one number over the repeats.
+Gate 2 asks two questions of runs: whether one model meets the floors on its own numbers, and
+whether one model is better than another beyond the noise.  Both need runs that were measured the
+same way, and both need the numbers :func:`~.summary.summarise` prints for one repeat.  This module
+is that grouping: a :class:`GroupKey` names what has to agree, a :class:`RunGroup` holds the runs
+that do, and :class:`Range` is the spread of one number over the repeats.
+
+A run is read from a committed file (:class:`~.run_format.StoredRun`) or from a local result folder
+(:class:`~.viewer.load.CacheRun`); :class:`RunLike` is what a group needs from either, so the
+comparison reads both and only the explanation sample insists on a committed one.
 
 This is the contract gate 2 needs from the report and the grouping of a screen.  It must not import :mod:`.validation`, :mod:`.export`, :mod:`.index` or the command
 line.
@@ -14,7 +18,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Protocol, cast
 
 from . import scoring, summary
 from .answer_mode import AnswerMode
@@ -31,6 +35,14 @@ PAGES_BAND = "pages"
 
 REPEATS = 3
 """How many repeats a group needs before gate 2 judges it."""
+
+
+class RunLike(Protocol):
+    """What a group needs from one run, whether it is committed or in a local result folder."""
+
+    @property
+    def meta(self) -> RunHeader:
+        """The typed header of the run: what it was measured under, and its repeat number."""
 
 
 @dataclass(frozen=True)
@@ -98,28 +110,37 @@ class GroupKey:
         """
         return cls.of_header(RunHeader.from_dict(header))
 
-    def measured_alike(self, other: GroupKey) -> bool:
+    def measured_alike(self, other: GroupKey, *, corrections: bool = False) -> bool:
         """Whether *other* was measured the same way, apart from the model and its request.
 
         That is what :func:`~.gate_two.compare` allows: each model is run with its own request, so
         its digest, its profile and its temperature may differ, and nothing else may.  Every model
         starts at the temperature its vendor recommends, which differs between models, and
         a refinement compares one model at two temperatures; the comparison prints both.
+
+        With *corrections*, the two exchange modes count as one and the explainer is ignored: step
+        ① of the exchange writes the corrections of both, so a correct-only run and an exchange
+        run of one model are the same corrections for about a quarter of the time.  Any other pair
+        of modes stays not comparable, because review and text mode answer another question.
         """
+        if corrections:
+            if not (self.mode.asks_exchange and other.mode.asks_exchange):
+                return False
+            return self._measurement(corrections=True) == other._measurement(corrections=True)
         return self._measurement() == other._measurement()
 
-    def _measurement(self) -> tuple[object, ...]:
+    def _measurement(self, *, corrections: bool = False) -> tuple[object, ...]:
         """Return the parts of the key that a comparison may not vary."""
-        return (
+        shared = (
             self.testset,
             self.manifest_sha256,
             self.eval_version,
             self.provider,
             self.machine,
-            self.mode,
-            self.explainer,
-            self.num_ctx,
         )
+        if corrections:
+            return (*shared, self.num_ctx)
+        return (*shared, self.mode, self.explainer, self.num_ctx)
 
     def order(self) -> tuple[object, ...]:
         """Return a sort key, so a list of groups prints in the same order on every machine."""
@@ -184,11 +205,11 @@ def within_the_spread(a: Range, b: Range) -> bool:
 
 @dataclass(frozen=True)
 class RunGroup:
-    """The runs of one key, with their typed items, one entry per repeat."""
+    """The runs of one key, with their scored items, one entry per repeat."""
 
     key: GroupKey
-    runs: tuple[StoredRun, ...]
-    items: tuple[tuple[StoredItem, ...], ...]
+    runs: Sequence[RunLike]
+    items: tuple[tuple[scoring.ScoredItem, ...], ...]
 
     @property
     def repeats(self) -> tuple[int, ...]:
@@ -208,11 +229,18 @@ class RunGroup:
         """Return the run of repeat 1 and its items: the one the explanation sample is drawn from.
 
         Raises:
-            ValueError: if the group has no run of repeat 1.
+            ValueError: if the group has no run of repeat 1, or comes from a local result folder:
+                the sample is drawn from a committed run, whose items keep the notes.
         """
         for run, items in zip(self.runs, self.items, strict=True):
-            if run.meta.repeat == 1:
-                return run, items
+            if run.meta.repeat != 1:
+                continue
+            if not isinstance(run, StoredRun):
+                raise ValueError(
+                    f"{self.key.model}: the explanation sample is drawn from a committed run, "
+                    "and this group comes from a local result folder"
+                )
+            return run, cast(tuple[StoredItem, ...], items)
         raise ValueError(f"{self.key.model}: the group has no run of repeat 1")
 
 
@@ -323,6 +351,7 @@ __all__ = [
     "GroupKey",
     "Range",
     "RunGroup",
+    "RunLike",
     "band_mean_f_beta",
     "beyond",
     "deciding_mean_f_beta",

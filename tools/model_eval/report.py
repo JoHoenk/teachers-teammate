@@ -12,7 +12,7 @@ from collections import defaultdict
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 
-from . import scoring
+from . import scoring, text_loss
 from .answer_mode import AnswerMode
 from .error_labels import UNLABELLED, ReferenceLabel
 from .languages import name as language_name
@@ -31,6 +31,7 @@ __all__ = [
     "band_table",
     "catalog_lines",
     "error_table",
+    "loss_lines",
     "performance_table",
     "summarise",
     "summarise_performance",
@@ -73,6 +74,13 @@ def _fallback_cell(summary: ModelSummary) -> str:
     return f"{summary.fallback} ({summary.cut_off} cut)"
 
 
+def _loss_cell(summary: ModelSummary) -> str:
+    """Return the texts that lost or added text, or a dash when the run was not measured for it."""
+    if not summary.loss_checked:
+        return "—"
+    return f"{summary.lost_text} / {summary.added_text}"
+
+
 def table(summaries: Iterable[ModelSummary]) -> str:
     """Return the results table as markdown: one row per configuration and language.
 
@@ -83,10 +91,10 @@ def table(summaries: Iterable[ModelSummary]) -> str:
     rows = [summary for summary in summaries if not summary.band]
     lines = [
         "| Model | T | Mode | Language | P | R | F0.5 | GLEU | Left alone | Coverage "
-        "| Recall 1st / 2nd half | Failed | Fallback | Added marks | Explained | Orphans/text "
-        "| s/text |",
+        "| Recall 1st / 2nd half | Failed | Fallback | Lost / added | Added marks | Explained "
+        "| Orphans/text | s/text |",
         "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- "
-        "| --- | --- |",
+        "| --- | --- | --- |",
     ]
     for summary in rows:
         lines.append(
@@ -97,6 +105,7 @@ def table(summaries: Iterable[ModelSummary]) -> str:
             f"| {summary.alone}/{summary.alone_of} | {_coverage_cell(summary)} "
             f"| {_halves_cell(summary)} "
             f"| {summary.failed}/{summary.rows} | {_fallback_cell(summary)} "
+            f"| {_loss_cell(summary)} "
             f"| {summary.added_marks}/{summary.rows} "
             f"| {summary.explained}/{summary.needed} "
             f"| {summary.orphans_per_text:.1f} | {summary.seconds_per_text:.0f} |"
@@ -160,6 +169,31 @@ def _deciding_lines(summaries: Sequence[ModelSummary]) -> list[str]:
         )
     lines += ["", "French is reported only: it has no band and does not decide."]
     return lines
+
+
+def loss_lines(items: Iterable[ScoredItem]) -> str:
+    """Return one line per text that lost or added text, or an empty string when none did.
+
+    The table counts them; this says which texts they are, so a run can be looked at without
+    reading every row.  A row written before the words were stored is not listed: it was not
+    measured, which is not the same as clean.
+    """
+    lines: list[str] = []
+    for item in items:
+        lost = text_loss.is_lost(item.scores)
+        added = text_loss.is_added(item.scores)
+        if not lost and not added:
+            continue
+        run = int(item.scores[text_loss.CUT_RUN if lost else text_loss.ADDED_RUN])
+        lines.append(
+            f"- `{item.model}` at {item.temperature:g} ({item.mode}) {item.item}: "
+            f"{int(item.scores[text_loss.WORDS_REF])} → "
+            f"{int(item.scores[text_loss.WORDS_OUT])} words, "
+            f"{'cut' if lost else 'added'} {run}"
+        )
+    if not lines:
+        return ""
+    return "\n".join(["Texts that lost or added text (words in → out, longest run):", "", *lines])
 
 
 # ── which kinds of error a model finds ────────────────────────────────────────
@@ -311,6 +345,13 @@ class PerformanceSummary:
     texts whose requests carry a step tag.  A correct-only run shows 100 %; ``None`` for review and
     text mode, which have no steps, and for rows written before the tag existed."""
 
+    lost_text: int
+    """Texts whose answer kept much less of the text than the reference has."""
+    added_text: int
+    """Texts whose answer added much more than the reference has."""
+    loss_checked: int
+    """Texts whose words were measured; 0 for a run written before they were stored."""
+
     vram_used_mb: int | None
     """Highest memory the model added on the card, over the comparable texts."""
 
@@ -370,6 +411,11 @@ def summarise_performance(items: Sequence[ScoredItem]) -> list[PerformanceSummar
                     else None
                 ),
                 step_one_share=_step_one_share(clean),
+                lost_text=sum(1 for row in measured if text_loss.is_lost(row.scores)),
+                added_text=sum(1 for row in measured if text_loss.is_added(row.scores)),
+                loss_checked=sum(
+                    1 for row in measured if text_loss.is_lost(row.scores) is not None
+                ),
                 vram_used_mb=max(used) if used else None,
                 on_card_share=min(shares) if shares else None,
             )
@@ -412,11 +458,12 @@ def performance_table(summaries: Iterable[PerformanceSummary]) -> str:
     lines = [
         "| Model | T | Mode | Texts (comparable) | s per 100 words | Answer tokens/s "
         "| Answer tokens per 100 words (10th / median / 90th) | Requests/text "
-        "| Step ① share of time | Graphics memory MB | On the card |",
-        "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+        "| Step ① share of time | Lost / added | Graphics memory MB | On the card |",
+        "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
     ]
     for item in summaries:
         share = "-" if item.on_card_share is None else f"{item.on_card_share:.0%}"
+        loss = "—" if not item.loss_checked else f"{item.lost_text} / {item.added_text}"
         lines.append(
             f"| `{item.model}` | {item.temperature:g} | {item.mode} "
             f"| {item.texts} ({item.comparable}) "
@@ -425,6 +472,7 @@ def performance_table(summaries: Iterable[PerformanceSummary]) -> str:
             f"| {_spread_cell(item.answer_tokens_spread)} "
             f"| {number(item.requests_per_text, '.2f')} "
             f"| {'-' if item.step_one_share is None else format(item.step_one_share, '.0%')} "
+            f"| {loss} "
             f"| {number(item.vram_used_mb, 'd')} | {share} |"
         )
     lines += [

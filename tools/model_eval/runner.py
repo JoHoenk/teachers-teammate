@@ -131,6 +131,10 @@ class RunResult:
     refused: tuple[str, ...]
     sessions: int
     rows: int
+    skipped: tuple[str, ...] = ()
+    """Sessions that did not run, each with the reason: a setup that failed its smoke check."""
+    planned: int = 0
+    """How many sessions the run planned; the ones that ran and ``skipped`` add up to it."""
 
 
 def as_dict(profile: RequestProfile) -> dict:
@@ -254,12 +258,14 @@ def run_matrix(  # noqa: PLR0913  # one callback per thing the command line says
     matrix.out.mkdir(parents=True, exist_ok=True)
     for path in decided.complete:
         on_complete(path)
+    planned = len(decided.sessions)
     if decided.refused:
-        return RunResult(refused=decided.refused, sessions=0, rows=0)
+        return RunResult(refused=decided.refused, sessions=0, rows=0, planned=planned)
     missing = sum(len(records) - len(item.done) for item in decided.sessions)
     progress = Progress(0, style="off") if new_progress is None else new_progress(missing)
     finished = 0
-    smoked: dict[tuple[str, AnswerMode, float], bool] = {}
+    skipped: list[str] = []
+    smoked: dict[tuple[str, AnswerMode, float], Smoke] = {}
     output = _Output(on_row, progress)
     try:
         for item in decided.sessions:
@@ -268,8 +274,9 @@ def run_matrix(  # noqa: PLR0913  # one callback per thing the command line says
                 if setup not in smoked:
                     smoke = seams.smoke(item.model, item.mode, item.temperature)
                     on_smoke(item, smoke)
-                    smoked[setup] = smoke.passed
-                if not smoked[setup]:
+                    smoked[setup] = smoke
+                if not smoked[setup].passed:
+                    skipped.append(f"{session_label(item)}: {smoked[setup].reason}")
                     progress.skip(len(records) - len(item.done))
                     continue
             on_session(item)
@@ -278,7 +285,13 @@ def run_matrix(  # noqa: PLR0913  # one callback per thing the command line says
             done = results.read_done_ids(item.rows_path)
             problem = sessions.resume_problem(item.rows_path, item.header_path, current, done=done)
             if problem:
-                return RunResult(refused=(problem,), sessions=finished, rows=output.rows)
+                return RunResult(
+                    refused=(problem,),
+                    sessions=finished,
+                    rows=output.rows,
+                    skipped=tuple(skipped),
+                    planned=planned,
+                )
             _run_session(matrix, item, records, current, done, seams, output)
             finished += 1
     except ServerUnavailableError as error:
@@ -287,8 +300,17 @@ def run_matrix(  # noqa: PLR0913  # one callback per thing the command line says
             refused=(f"the server cannot be reached ({error}); nothing was judged, run again",),
             sessions=finished,
             rows=output.rows,
+            skipped=tuple(skipped),
+            planned=planned,
         )
-    return RunResult(refused=(), sessions=finished, rows=output.rows)
+    return RunResult(
+        refused=(), sessions=finished, rows=output.rows, skipped=tuple(skipped), planned=planned
+    )
+
+
+def session_label(item: Session) -> str:
+    """Return one session as a line names it: the model, its temperature, the mode and the repeat."""
+    return f"{item.model} @ {item.temperature:g} ({item.mode}), repeat {item.repeat}"
 
 
 @dataclass

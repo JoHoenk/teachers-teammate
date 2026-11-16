@@ -1447,6 +1447,89 @@ py_test(
     deps = _TOOL_DEPS + ["//tools:compare_writing_models"],
 )
 
+# The evaluation report's reading: the test set, the local caches, what was skipped and why, and
+# the variants the runs make.  The fixtures write a real test set and real caches to a temporary
+# directory, so the format is the one a run writes.
+py_test(
+    name = "test_model_eval_viewer_load",
+    size = "small",
+    srcs = _COMMON_SRCS + [
+        "tools/test_viewer_load.py",
+        "tools/viewer_fixtures.py",
+    ],
+    args = ["tools/test_viewer_load.py"],
+    main = "run_test.py",
+    deps = _TOOL_DEPS,
+)
+
+# What each edit of a version came to: exact, located or extra for the model's, fixed, located or
+# missed for the reference's, and the sentence rows both are shown in.
+py_test(
+    name = "test_model_eval_viewer_outcomes",
+    size = "small",
+    srcs = _COMMON_SRCS + [
+        "tools/test_viewer_outcomes.py",
+        "tools/viewer_fixtures.py",
+    ],
+    args = ["tools/test_viewer_outcomes.py"],
+    main = "run_test.py",
+    deps = _TOOL_DEPS,
+)
+
+# The scorecard: one row per variant, language and band, per repeat, with the mean and the range
+# from the same functions the report and gate 2 use.
+py_test(
+    name = "test_model_eval_viewer_numbers",
+    size = "small",
+    srcs = _COMMON_SRCS + [
+        "tools/test_viewer_numbers.py",
+        "tools/viewer_fixtures.py",
+    ],
+    args = ["tools/test_viewer_numbers.py"],
+    main = "run_test.py",
+    deps = _TOOL_DEPS,
+)
+
+# The report as one model: the rows of a text, the complete sentence of every version with its
+# changes marked, the counts of each version and the scorecard of each variant.
+py_test(
+    name = "test_model_eval_viewer_model",
+    size = "small",
+    srcs = _COMMON_SRCS + [
+        "tools/test_viewer_model.py",
+        "tools/viewer_fixtures.py",
+    ],
+    args = ["tools/test_viewer_model.py"],
+    main = "run_test.py",
+    deps = _TOOL_DEPS,
+)
+
+# The report folder: the page, the script and style, one data file per text, the zip, and the
+# refusal to write inside a git work tree.
+py_test(
+    name = "test_model_eval_viewer_page",
+    size = "small",
+    srcs = _COMMON_SRCS + [
+        "tools/test_viewer_page.py",
+        "tools/viewer_fixtures.py",
+    ],
+    args = ["tools/test_viewer_page.py"],
+    main = "run_test.py",
+    deps = _TOOL_DEPS + ["//tools:eval_report"],
+)
+
+py_test(
+    name = "test_model_eval_viewer_schema",
+    size = "small",
+    srcs = _COMMON_SRCS + [
+        "tools/test_viewer_schema.py",
+        "tools/viewer_fixtures.py",
+    ],
+    args = ["tools/test_viewer_schema.py"],
+    main = "run_test.py",
+    deps = _TOOL_DEPS,
+)
+
 test_suite(
     name = "tools_tests",
     tests = [
@@ -1486,6 +1569,12 @@ test_suite(
         ":test_model_eval_structured_check",
         ":test_model_eval_testset",
         ":test_model_eval_validation",
+        ":test_model_eval_viewer_load",
+        ":test_model_eval_viewer_model",
+        ":test_model_eval_viewer_numbers",
+        ":test_model_eval_viewer_outcomes",
+        ":test_model_eval_viewer_page",
+        ":test_model_eval_viewer_schema",
         ":test_no_plan_references",
         ":test_no_retired_engines",
         ":test_ocr_page_tokens",

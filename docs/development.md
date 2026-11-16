@@ -932,6 +932,16 @@ bazel run //tools:proofreading_store -- sheet --run RUN_ID --cache ~/gec-testset
     > spotcheck.md
 ```
 
+**Evaluation report.** `bazel run //tools:eval_report -- build --testset ~/gec-testset/set-2026-12
+--cache ~/gec-testset/results --out ~/gec-testset/reports/NAME [--zip] [--single-file]
+[--model TAG] [--languages de,en]` writes one static page (opens from `file://`, no server) with the
+scorecard, a heat map, the sentences of every variant next to the reference, and the error types.
+Python computes every number with the report's own functions; the page only displays. A run it
+cannot use (no header, another test set, sessions that disagree, an older header) is listed in the
+footer with the reason. The output must lie outside a git work tree (a report holds corpus text)
+and be a new or earlier-report folder. Reading a cache scores every row again, which takes minutes
+on long texts; the tool prints each file as it goes. Code: `tools/model_eval/viewer/`.
+
 **Test set.** Per language eleven whole texts with reference corrections, in three bands of
 whitespace words: `short` 80 to 150, `page` 200 to 400, `pages` 600 to 1,200 — four short, five page
 and two pages.  German: Falko-MERLIN GEC corpus (test split; Falko CC BY 3.0, MERLIN CC BY-SA 4.0),

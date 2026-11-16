@@ -1,0 +1,930 @@
+/* The evaluation report: one page, no framework, no network. */
+
+:root {
+  --bg: #fbfaf8;
+  --panel: #ffffff;
+  --ink: #1d1d1f;
+  --muted: #6b6b70;
+  --line: #dcd8d2;
+  --fixed: #cfe8d4;
+  --fixed-ink: #1d5c2e;
+  --located: #f6e2b8;
+  --located-ink: #7a5200;
+  --extra: #d9e4f5;
+  --extra-ink: #1f3f6e;
+  --missed: #f3d2d2;
+  --missed-ink: #7d1f1f;
+  --ref: #e6e1d8;
+  --accent: #2f5d8a;
+  /* One solid colour per outcome: the underline of a highlight and the fill of a bar. */
+  --fixed-bar: #2e9e57;
+  --located-bar: #e09a10;
+  --missed-bar: #d64545;
+  --extra-bar: #3f7fd6;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font: 14px/1.45 -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+}
+
+a {
+  color: var(--accent);
+}
+
+button,
+select {
+  font: inherit;
+  color: inherit;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 2px 8px;
+  cursor: pointer;
+}
+
+button:hover,
+select:hover {
+  border-color: var(--accent);
+}
+
+button.on {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+/* ── top bar ─────────────────────────────────────────────────────────── */
+
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+  padding: 8px 16px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+}
+
+.topbar h1 {
+  font-size: 15px;
+  font-weight: 600;
+  margin: 0 12px 0 0;
+}
+
+.topbar .group {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.topbar .group > span {
+  color: var(--muted);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.topbar .spacer {
+  flex: 1;
+}
+
+main {
+  padding: 16px;
+}
+
+h2 {
+  font-size: 15px;
+  margin: 24px 0 8px;
+}
+
+h2:first-child {
+  margin-top: 0;
+}
+
+.hint {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+/* ── tables ──────────────────────────────────────────────────────────── */
+
+table {
+  border-collapse: collapse;
+  background: var(--panel);
+}
+
+th,
+td {
+  border-bottom: 1px solid var(--line);
+  padding: 4px 8px;
+  text-align: left;
+  vertical-align: middle;
+}
+
+th {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  white-space: nowrap;
+  cursor: pointer;
+  user-select: none;
+}
+
+th.static {
+  cursor: default;
+}
+
+td.num,
+th.num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.scorecard td.label {
+  white-space: nowrap;
+}
+
+.scorecard tr.dominated td.label {
+  color: var(--muted);
+}
+
+.scorecard tr.dominated td.label::after {
+  content: " ⊘";
+}
+
+.scorecard tr.robust td.label::after {
+  content: " ⚠";
+  color: var(--located-ink);
+}
+
+/* ── range bar ───────────────────────────────────────────────────────── */
+
+.range {
+  position: relative;
+  display: inline-block;
+  width: 54px;
+  height: 10px;
+  margin-left: 6px;
+  vertical-align: middle;
+  background: #f0ede8;
+  border-radius: 5px;
+}
+
+.range .bar {
+  position: absolute;
+  top: 3px;
+  height: 4px;
+  background: var(--accent);
+  opacity: 0.35;
+  border-radius: 2px;
+}
+
+.range .dot {
+  position: absolute;
+  top: 1px;
+  width: 8px;
+  height: 8px;
+  margin-left: -4px;
+  background: var(--accent);
+  border-radius: 50%;
+}
+
+/* ── heat map ────────────────────────────────────────────────────────── */
+
+.heatmap td {
+  padding: 0;
+  border: 1px solid var(--bg);
+}
+
+.heatmap td.cell {
+  width: 26px;
+  height: 20px;
+  text-align: center;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  color: #222;
+}
+
+.heatmap td.cell.missing {
+  background: repeating-linear-gradient(45deg, #eee, #eee 3px, #f8f8f8 3px, #f8f8f8 6px);
+  cursor: default;
+}
+
+.heatmap td.cell.kept {
+  background: var(--fixed);
+  color: var(--fixed-ink);
+}
+
+.heatmap td.cell.changed {
+  background: var(--extra);
+  color: var(--extra-ink);
+}
+
+.heatmap td.cell.failed {
+  outline: 2px solid var(--missed-ink);
+  outline-offset: -2px;
+}
+
+.heatmap th.text {
+  font-size: 10px;
+  writing-mode: vertical-rl;
+  text-orientation: mixed;
+  height: 54px;
+  padding: 2px;
+}
+
+/* ── text view ───────────────────────────────────────────────────────── */
+
+.textbar,
+.sentencebar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.sentencebar {
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--line);
+}
+
+.textbar .title,
+.sentencebar .title {
+  font-weight: 600;
+}
+
+.versions {
+  display: grid;
+  gap: 0;
+  /* The sentence column is capped, so the marks stay next to the sentence they judge instead of
+   * drifting to the far right of a wide window. */
+  max-width: 1280px;
+}
+
+/* Original and reference stay under the top bar while the variants below them scroll. */
+.pinned {
+  position: sticky;
+  top: var(--topbar-h, 48px);
+  z-index: 10;
+  padding-top: 6px;
+  background: var(--bg);
+  border-bottom: 2px solid var(--line);
+  box-shadow: 0 4px 6px -4px rgba(0, 0, 0, 0.18);
+}
+
+.stackhead {
+  display: grid;
+  grid-template-columns: 300px minmax(0, 1fr) 190px;
+  padding: 0 0 4px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+
+.stackhead .name {
+  padding: 0 10px 0 6px;
+  text-align: right;
+}
+
+.stackhead .sentence {
+  padding: 0 10px;
+  border-left: 2px solid #cfc9bf;
+  border-right: 2px solid #cfc9bf;
+}
+
+.stackhead .marks {
+  padding: 0 6px 0 10px;
+}
+
+/* One block per model: a thick rule above it, a light one between its variants. */
+.modelgroup {
+  border-top: 2px solid var(--line);
+  margin-top: 10px;
+  padding-top: 2px;
+}
+
+.modelname {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  padding: 6px 6px 4px;
+  font-size: 13px;
+}
+
+.modelname .model {
+  font-weight: 600;
+}
+
+.modelname .facts,
+.modelname .count {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.modelname .count {
+  margin-left: auto;
+}
+
+.version {
+  display: grid;
+  grid-template-columns: 300px minmax(0, 1fr) 190px;
+  align-items: baseline;
+  padding: 3px 0;
+  border-bottom: 1px solid #efece7;
+}
+
+.version:hover {
+  background: #f4f1ec;
+}
+
+.version > .name {
+  padding: 0 10px 0 6px;
+  color: var(--muted);
+  font-size: 12px;
+  text-align: right;
+  /* Wrapped, not cut: the facts that tell two variants apart are the point of the column. */
+  overflow-wrap: anywhere;
+}
+
+.version > .name.strong {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.version > .sentence {
+  padding: 0 10px;
+  border-left: 2px solid #cfc9bf;
+  border-right: 2px solid #cfc9bf;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 15px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.version > .marks {
+  padding: 0 6px 0 10px;
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.version > .marks b {
+  font-weight: 600;
+}
+
+mark {
+  border-radius: 2px;
+  padding: 0 1px;
+  cursor: pointer;
+  color: inherit;
+}
+
+mark.fixed {
+  background: var(--fixed);
+  box-shadow: inset 0 -3px 0 var(--fixed-bar);
+}
+
+mark.located {
+  background: var(--located);
+  box-shadow: inset 0 -3px 0 var(--located-bar);
+}
+
+mark.extra {
+  background: var(--extra);
+  box-shadow: inset 0 -3px 0 var(--extra-bar);
+}
+
+mark.missed {
+  background: var(--missed);
+  box-shadow: inset 0 -3px 0 var(--missed-bar);
+}
+
+/* An edit both of two compared versions made the same way: there is nothing to judge in it. */
+mark.same {
+  background: transparent;
+  box-shadow: inset 0 -1px 0 var(--muted);
+  opacity: 0.55;
+}
+
+mark.ref {
+  background: transparent;
+  box-shadow: inset 0 -2px 0 var(--muted);
+}
+
+mark.gone {
+  background: transparent;
+  box-shadow: none;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+/* A word the reference adds and the version did not: a mark at the place it is missing. */
+mark.missed.gone {
+  color: var(--missed-bar);
+  font-weight: 700;
+  box-shadow: inset 0 -3px 0 var(--missed-bar);
+}
+
+del {
+  background: var(--missed);
+  color: var(--missed-ink);
+  text-decoration: line-through;
+}
+
+ins {
+  background: var(--fixed);
+  color: var(--fixed-ink);
+  text-decoration: none;
+}
+
+b.changed {
+  font-weight: 700;
+}
+
+/* ── drawer ──────────────────────────────────────────────────────────── */
+
+.drawer {
+  position: fixed;
+  z-index: 15;
+  top: var(--topbar-h, 56px);
+  right: 0;
+  bottom: 0;
+  width: 360px;
+  overflow: auto;
+  padding: 12px 16px;
+  background: var(--panel);
+  border-left: 1px solid var(--line);
+  box-shadow: -4px 0 12px rgba(0, 0, 0, 0.06);
+  font-size: 13px;
+}
+
+.drawer h3 {
+  font-size: 13px;
+  margin: 0 0 8px;
+}
+
+.drawer .pair {
+  font-family: Georgia, serif;
+  font-size: 15px;
+  margin-bottom: 8px;
+}
+
+.drawer .row {
+  margin: 6px 0;
+}
+
+.drawer h3.section {
+  margin: 14px 0 6px;
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+}
+
+.drawer .fact {
+  display: grid;
+  grid-template-columns: 110px 1fr;
+  gap: 8px;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.errcount {
+  display: inline-block;
+  padding: 0 6px;
+  border-radius: 8px;
+  background: var(--missed);
+  color: var(--missed-ink);
+  font-family: -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.5;
+}
+
+.errcount.none {
+  background: #eee;
+  color: var(--muted);
+}
+
+.errline {
+  margin-bottom: 3px;
+}
+
+.drawer .muted {
+  color: var(--muted);
+}
+
+.drawer .close {
+  position: absolute;
+  top: 8px;
+  right: 10px;
+}
+
+/* ── grid and page ───────────────────────────────────────────────────── */
+
+/* The grid scrolls inside its own frame: the header row and the two text columns stay in view in
+   both directions.  Column widths are fixed (set on the table), so a long label wraps. */
+.gridframe {
+  overflow: auto;
+  max-height: calc(100vh - var(--topbar-h, 48px) - 110px);
+  border: 1px solid var(--line);
+  background: var(--panel);
+}
+
+table.grid {
+  table-layout: fixed;
+  border-collapse: separate;
+  border-spacing: 0;
+}
+
+table.grid th,
+table.grid td {
+  border-right: 1px solid #efece7;
+  border-bottom: 1px solid var(--line);
+  overflow-wrap: anywhere;
+}
+
+table.grid th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--bg);
+  white-space: normal;
+  vertical-align: bottom;
+  font-size: 11px;
+  line-height: 1.3;
+}
+
+table.grid td {
+  vertical-align: top;
+  background: var(--panel);
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+table.grid th:nth-child(1),
+table.grid td:nth-child(1) {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+}
+
+table.grid th:nth-child(2),
+table.grid td:nth-child(2) {
+  position: sticky;
+  left: 40px;
+  z-index: 1;
+}
+
+table.grid th:nth-child(3),
+table.grid td:nth-child(3) {
+  position: sticky;
+  left: 300px;
+  z-index: 1;
+  border-right: 3px solid #b9b2a6;
+}
+
+table.grid th:nth-child(1),
+table.grid th:nth-child(2),
+table.grid th:nth-child(3) {
+  z-index: 3;
+}
+
+.grid td.number {
+  font-family: inherit;
+  color: var(--muted);
+  font-size: 12px;
+  text-align: right;
+}
+
+.grid tr.hidden {
+  display: none;
+}
+
+/* The page view: one table row per sentence, so the columns stay level and one scroll bar
+   serves all of them. */
+table.pagegrid {
+  width: 100%;
+  table-layout: fixed;
+  border-collapse: separate;
+  border-spacing: 8px 0;
+}
+
+table.pagegrid th {
+  position: sticky;
+  top: var(--topbar-h, 48px);
+  z-index: 1;
+  background: var(--bg);
+  padding: 6px 4px;
+  text-align: left;
+  font-size: 12px;
+  line-height: 1.3;
+  color: var(--muted);
+  white-space: normal;
+  overflow-wrap: anywhere;
+  vertical-align: bottom;
+  border-bottom: 2px solid var(--line);
+  cursor: default;
+}
+
+table.pagegrid td {
+  vertical-align: top;
+  padding: 4px 8px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 14px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+
+table.pagegrid tr:hover td {
+  background: #f4f1ec;
+}
+
+/* ── footer ──────────────────────────────────────────────────────────── */
+
+footer {
+  margin-top: 32px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 12px;
+}
+
+footer ul {
+  margin: 4px 0;
+  padding-left: 18px;
+}
+
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  margin: 10px 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.legend span::before {
+  content: "";
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  margin-right: 5px;
+  border-radius: 2px;
+  vertical-align: -1px;
+}
+
+.legend .fixed::before {
+  background: var(--fixed);
+  box-shadow: inset 0 -3px 0 var(--fixed-bar);
+}
+
+.legend .located::before {
+  background: var(--located);
+  box-shadow: inset 0 -3px 0 var(--located-bar);
+}
+
+.legend .extra::before {
+  background: var(--extra);
+  box-shadow: inset 0 -3px 0 var(--extra-bar);
+}
+
+.legend .missed::before {
+  background: var(--missed);
+  box-shadow: inset 0 -3px 0 var(--missed-bar);
+}
+
+/* A legend line that explains a symbol rather than showing a colour. */
+.legend .note::before {
+  display: none;
+}
+
+tr.unticked td {
+  opacity: 0.5;
+}
+
+.version > .marks .repeats {
+  cursor: pointer;
+  text-decoration: underline dotted;
+}
+
+.drawer .small {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.drawer hr {
+  border: 0;
+  border-top: 1px solid var(--line);
+  margin: 12px 0;
+}
+
+/* ── variant menu ────────────────────────────────────────────────────── */
+
+.variantmenu {
+  position: relative;
+}
+
+.variantmenu summary {
+  cursor: pointer;
+  padding: 3px 10px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--panel);
+  font-size: 13px;
+  list-style: none;
+}
+
+.variantmenu .panel {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  z-index: 30;
+  width: 460px;
+  max-height: 70vh;
+  margin-top: 4px;
+  padding: 10px;
+  overflow: auto;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.15);
+}
+
+.variantmenu .quick {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.variantmenu .modelname {
+  margin-top: 8px;
+  font-weight: 600;
+}
+
+.variantmenu .choice {
+  display: block;
+  padding: 1px 0 1px 8px;
+  font-size: 13px;
+}
+
+/* ── about panel ─────────────────────────────────────────────────────── */
+
+.info {
+  max-width: 880px;
+  margin-bottom: 16px;
+  padding: 4px 16px 12px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+
+.info dt {
+  margin-top: 10px;
+  font-weight: 600;
+}
+
+.info dd {
+  margin: 2px 0 0 0;
+}
+
+.info ul {
+  margin: 4px 0 0;
+  padding-left: 18px;
+}
+
+/* ── error types: how each variant did ───────────────────────────────── */
+
+.errtile {
+  min-width: 120px;
+}
+
+.vbars {
+  display: inline-flex;
+  gap: 3px;
+  align-items: flex-end;
+  width: auto;
+  height: 22px;
+  margin: 2px 8px 0 0;
+  vertical-align: middle;
+}
+
+.vbars.spark {
+  height: 16px;
+  margin: 0 0 0 8px;
+  gap: 2px;
+}
+
+.vbar {
+  display: block;
+  width: 7px;
+  background: var(--accent);
+  border-radius: 1px 1px 0 0;
+}
+
+.vbars.spark .vbar {
+  width: 4px;
+  opacity: 0.55;
+}
+
+.vbar.fixed {
+  background: var(--fixed-bar);
+}
+
+.vbar.located {
+  background: var(--located-bar);
+}
+
+.vbar.missed {
+  background: var(--missed-bar);
+}
+
+/* one bar per error in a sentence, in the marks column */
+.tick {
+  display: inline-block;
+  width: 5px;
+  height: 14px;
+  margin-right: 2px;
+  vertical-align: middle;
+  border-radius: 1px;
+}
+
+.tick.fixed {
+  background: var(--fixed-bar);
+}
+
+.tick.located {
+  height: 10px;
+  background: var(--located-bar);
+}
+
+.tick.missed {
+  height: 5px;
+  background: var(--missed-bar);
+}
+
+
+.tick.ref {
+  background: transparent;
+  box-shadow: inset 0 -2px 0 var(--muted);
+}
+
+pre.prompt {
+  max-height: 340px;
+  margin: 6px 0;
+  padding: 8px;
+  overflow: auto;
+  font: 12px/1.4 ui-monospace, Menlo, Consolas, monospace;
+  white-space: pre-wrap;
+  background: #f4f1ec;
+  border-radius: 4px;
+}
+
+.split {
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+  font-size: 12px;
+}
+
+.split b {
+  font-weight: 500;
+}
+
+.split .fixed {
+  color: var(--fixed-ink);
+}
+
+.split .located {
+  color: var(--located-ink);
+}
+
+.split .missed {
+  color: var(--missed-ink);
+}
+
+/* The +n of the edits the reference does not have reads like their highlight. */
+.version > .marks b.extra {
+  padding: 0 4px;
+  color: var(--extra-ink);
+  background: var(--extra);
+  box-shadow: inset 0 -3px 0 var(--extra-bar);
+  border-radius: 2px;
+}

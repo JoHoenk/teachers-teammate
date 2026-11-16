@@ -29,6 +29,10 @@ py_library(
     data = [
         "gec_fr_invented.jsonl",
         "model_eval/protocol.json",
+        # The report's page: the script and the style are copied into the report folder as they
+        # are, so they sit next to the module that writes them.
+        "model_eval/viewer/viewer.css",
+        "model_eval/viewer/viewer.js",
     ],
     visibility = ["//visibility:public"],
     deps = ["//teachers_teammate:ocr_lib"],
@@ -118,6 +122,25 @@ py_library(
     srcs = ["prepare_gec_testset.py"],
     visibility = ["//visibility:public"],
     deps = [":model_eval"],
+)
+
+# Developer tool that writes the evaluation report: one static page with the texts, the variants
+# and the numbers, built from a test set and one or more local run caches.  It imports the viewer,
+# which reads run_format and protocol (they hash the prompts the app sends), so it needs the same
+# dependencies as proofreading_store.
+py_binary(
+    name = "eval_report",
+    srcs = ["eval_report.py"],
+    main = "eval_report.py",
+    visibility = ["//visibility:public"],
+    deps = [
+        ":model_eval",
+        "//teachers_teammate:ocr_lib",
+        "@ocr_test_dependencies//lxml:pkg",
+        "@ocr_test_dependencies//markdown_it_py:pkg",
+        "@ocr_test_dependencies//ollama:pkg",
+        "@ocr_test_dependencies//pydantic:pkg",
+    ],
 )
 
 # Developer tool that turns a local run cache into the committed run files below

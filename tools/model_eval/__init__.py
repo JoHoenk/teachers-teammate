@@ -46,6 +46,15 @@ Ollama, so they live next to the CLIs rather than in ``teachers_teammate/``.
 * :mod:`.selection` — which committed runs a gate-2 command reads.
 * :mod:`.spot_check` — the sample of explanations a teacher marks, the marks, the sheet.
 
+**The evaluation report (pure, then one page)**
+
+* :mod:`.viewer.load` — the test set and the run caches, read once, with what was skipped and why.
+* :mod:`.viewer.variants` — the variants of a report: one per group key, labelled by what differs.
+* :mod:`.viewer.outcomes` — every edit judged: exact, located, extra, and the sentence it sits in.
+* :mod:`.viewer.numbers` — the scorecard per variant, language and band, per repeat, with a range.
+* :mod:`.viewer.model` — the whole report as one object: texts, rows, versions, numbers, errors.
+* :mod:`.viewer.page` — the report folder: one page, one script, one data file per text.
+
 **The repository format**
 
 * :mod:`.results` — typed, versioned rows and their JSONL format.

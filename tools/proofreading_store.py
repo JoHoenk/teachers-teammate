@@ -78,6 +78,7 @@ from tools.model_eval.testset import (
     names,
     read_manifest,
 )
+from tools.model_eval.viewer import load
 
 
 def _corpora(args) -> Corpora | None:
@@ -244,6 +245,9 @@ def _report_cache(args) -> int:
     if bands := report.band_table(summaries):
         print()
         print(bands)
+    if losses := report.loss_lines(rows):
+        print()
+        print(losses)
     if args.performance:
         print()
         print(report.performance_table(report.summarise_performance(rows)))
@@ -344,6 +348,9 @@ def _report(args) -> int:
         if bands := report.band_table(summaries):
             print()
             print(bands)
+        if losses := report.loss_lines(items):
+            print()
+            print(losses)
         if args.performance:
             print()
             print(report.performance_table(report.summarise_performance(items)))
@@ -422,17 +429,24 @@ def _manifest(args) -> int:
 # ── gate 2: the floors, the comparison and the marks ──────────────────────────
 
 
-def _selection(args) -> selection.Selection:
-    """Return what a gate-2 command asks for, from its arguments."""
+def _selection(args, *, mode: str | None = None) -> selection.Selection:
+    """Return what a gate-2 command asks for, from its arguments.
+
+    *mode* overrides ``--mode``, which a cache comparison resolves from the folders it reads.
+    """
+    against_mode = getattr(args, "against_mode", None)
+    chosen = mode if mode is not None else args.mode
     return selection.Selection(
         model=args.model,
         against=getattr(args, "against", None),
-        mode=parse_mode(args.mode),
+        mode=parse_mode(chosen or AnswerMode.REVIEW.value),
         temperature=args.temperature,
         machine=args.machine,
         testset=args.testset,
         digest=args.digest,
         compact_json=None if args.compact_json is None else args.compact_json == "on",
+        against_temperature=getattr(args, "against_temperature", None),
+        against_mode=None if against_mode is None else parse_mode(against_mode),
     )
 
 
@@ -528,19 +542,77 @@ def _compare(args) -> int:
     """Compare two models beyond the noise; return the exit code.
 
     The comparison is not a gate: it is used once, at the end of the screen, to fill each tier's
-    places.  A model that is not better than the incumbent keeps its place.
+    places.  A model that is not better than the incumbent keeps its place.  With ``--cache`` the
+    two groups come from local result folders instead of committed runs (:func:`_compare_cache`).
     """
+    if getattr(args, "cache", None):
+        return _compare_cache(args)
     out = workspace_path(args.out)
     try:
         first, second = selection.select(out, _selection(args))  # pylint: disable=unbalanced-tuple-unpacking  # one group per model
     except ValueError as error:
         print(f"refused: {error}", file=sys.stderr)
         return 2
+    return _print_comparison(first, second, corrections=args.corrections)
+
+
+def _compare_cache(args) -> int:
+    """Compare two groups of local result folders; return the exit code.
+
+    The same comparison as :func:`_compare`, on the rows a run wrote instead of on a committed run
+    file: every folder is read with the test set, every row is scored again, and the groups are
+    formed from the headers.  A file that could not be read is named with its reason, so a folder
+    that lost a repeat says so instead of comparing two runs.
+    """
+    if not args.testset:
+        print(
+            "refused: --cache needs --testset, the test set the rows were asked about",
+            file=sys.stderr,
+        )
+        return 2
+    try:
+        testset = load.read_testset(workspace_path(args.testset))
+        caches = [load.read_cache(workspace_path(folder), testset) for folder in args.cache]
+    except ValueError as error:
+        print(f"refused: {error}", file=sys.stderr)
+        return 2
+    for cache in caches:
+        for skip in cache.skipped:
+            print(f"skipped {skip.file}: {skip.reason}", file=sys.stderr)
+    mode = args.mode
+    if mode is None:
+        held = sorted({run.meta.mode.value for cache in caches for run in cache.runs})
+        if len(held) != 1:
+            print(
+                "refused: --mode is needed: the folders hold "
+                + (", ".join(held) if held else "no run"),
+                file=sys.stderr,
+            )
+            return 2
+        mode = held[0]
+    try:
+        first, second = selection.select_cache(caches, _selection(args, mode=mode))  # pylint: disable=unbalanced-tuple-unpacking  # one group per model
+    except ValueError as error:
+        print(f"refused: {error}", file=sys.stderr)
+        return 2
+    return _print_comparison(first, second, corrections=args.corrections)
+
+
+def _print_comparison(
+    first: grouping.RunGroup, second: grouping.RunGroup, *, corrections: bool
+) -> int:
+    """Print the comparison of two groups and return its exit code."""
     print(f"# Gate 2: `{first.key.model}` against `{second.key.model}`")
+    if corrections:
+        print()
+        print(
+            "corrections only: the exchange and correct-only modes count as one, and the "
+            "explainer is ignored"
+        )
     print()
     print(_group_line(first))
     print(_group_line(second))
-    result = gate_two.compare(first, second)
+    result = gate_two.compare(first, second, corrections=corrections)
     print()
     for line in result.lines():
         print(line)
@@ -607,13 +679,18 @@ def _validate_marks(out: Path) -> int:
 def _gate_commands(sub) -> None:
     """Add the gate-2 subcommands, which share the options that select the runs of a model."""
 
-    def gate_arguments(target) -> None:
-        """Add the options that select the runs of one model to *target*."""
+    def gate_arguments(target, *, cache: bool = False) -> None:
+        """Add the options that select the runs of one model to *target*.
+
+        With *cache*, ``--out`` and ``--cache`` are exclusive: a gate-2 command reads either the
+        committed runs of a repository or the rows of local result folders, never both.
+        """
         target.add_argument("--model", required=True, help="the model tag to judge")
         target.add_argument(
             "--mode",
-            default=AnswerMode.REVIEW.value,
-            help="the answer mode of the runs (default: %(default)s)",
+            default=None,
+            help="the answer mode of the runs (default: review, or the mode the folders hold "
+            "with --cache)",
         )
         target.add_argument(
             "--temperature",
@@ -628,7 +705,9 @@ def _gate_commands(sub) -> None:
             "shows it (default: the newest run of --model)",
         )
         target.add_argument(
-            "--testset", help="the test set of the runs (default: the newest run of --model)"
+            "--testset",
+            help="the test set of the runs (default: the newest run of --model); with --cache, "
+            "the directory the test records are in, which is required there",
         )
         target.add_argument("--digest", help="the model digest, when two are committed")
         target.add_argument(
@@ -637,19 +716,45 @@ def _gate_commands(sub) -> None:
             default=None,
             help="the compact-JSON rule of the request profile, when two are committed",
         )
-        target.add_argument(
+        where = target.add_mutually_exclusive_group() if cache else target
+        where.add_argument(
             "--out",
             default="evaluations/proofreading",
             help="the repository directory (default: %(default)s)",
         )
+        if cache:
+            where.add_argument(
+                "--cache",
+                action="append",
+                default=[],
+                metavar="DIR",
+                help="a local result folder to read instead of the committed runs, repeatable",
+            )
 
     gate = sub.add_parser("gate", help="judge one model against the floors of gate 2")
     gate_arguments(gate)
     gate.set_defaults(handler=_gate)
 
     compared = sub.add_parser("compare", help="compare two models beyond the noise")
-    gate_arguments(compared)
+    gate_arguments(compared, cache=True)
     compared.add_argument("--against", required=True, help="the model to compare against")
+    compared.add_argument(
+        "--against-temperature",
+        type=float,
+        default=None,
+        help="the temperature of the runs of --against (default: the rule of --temperature)",
+    )
+    compared.add_argument(
+        "--against-mode",
+        default=None,
+        help="the answer mode of the runs of --against (default: the one --mode names)",
+    )
+    compared.add_argument(
+        "--corrections",
+        action="store_true",
+        help="compare the corrections only: the exchange and correct-only modes count as one, "
+        "and the explainer is ignored",
+    )
     compared.set_defaults(handler=_compare)
 
     marked = sub.add_parser("marks", help="write the marks of a filled-in spot-check sheet")

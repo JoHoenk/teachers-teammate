@@ -23,7 +23,7 @@ from teachers_teammate.domain.formatted_text import TextFormat
 from teachers_teammate.interfaces import Corrector as CorrectorPort
 from tests.tools import invented_corpus
 from tools.model_eval import export as export_module
-from tools.model_eval import protocol, run_format, testset
+from tools.model_eval import protocol, results, run_format, testset
 from tools.model_eval.answer_mode import DEFAULT_MODE, AnswerMode
 from tools.model_eval.comparison import WritingModelComparison
 from tools.model_eval.export import ExportedRun
@@ -264,6 +264,31 @@ def entry(space: Workspace, item: str) -> dict:
     """Return the manifest entry of item *item*."""
     pinned = testset.read_manifest(space.manifest)
     return next(entry for entry in pinned["items"] if entry["id"] == item)
+
+
+def records_of(space: Workspace) -> tuple[results.TestRecord, ...]:
+    """Return the test records of the workspace's manifest, as the run asked them."""
+    pinned = testset.read_manifest(space.manifest)
+    return tuple(
+        testset.to_record(testset.resolve(entry, space.corpora), band=entry.get("band", ""))
+        for entry in pinned["items"]
+    )
+
+
+def write_testset(space: Workspace) -> Path:
+    """Write the workspace's test records into a directory named as the test set, and return it.
+
+    A local cache is read against the records on disk, so a test that reads one back needs them
+    where ``--testset`` points.
+    """
+    directory = space.root / TESTSET
+    directory.mkdir(parents=True, exist_ok=True)
+    by_language: dict[str, list[results.TestRecord]] = {}
+    for record in records_of(space):
+        by_language.setdefault(record.language, []).append(record)
+    for language, part in by_language.items():
+        results.write_records(directory / f"{language}.jsonl", part)
+    return directory
 
 
 def review(*changes: ChangeNote, original: str, corrected: str) -> CorrectionReview:

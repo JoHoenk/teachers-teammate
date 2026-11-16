@@ -16,7 +16,7 @@ import pytest
 from teachers_teammate.infrastructure import correction
 from tests.tools import invented_corpus
 from tests.tools.store_workspace import MODEL, one, workspace
-from tools.model_eval import report, results, run_format, testset
+from tools.model_eval import report, results, run_format, testset, text_loss
 from tools.model_eval.performance import LoadedModel, Performance, RequestStats
 from tools.model_eval.scoring import ScoredItem
 
@@ -139,6 +139,21 @@ def test_the_performance_table_is_the_same_from_both_sources(tmp_path: Path) -> 
 
     assert f"| `{MODEL}` |" in local, local
     assert local == stored
+
+
+@pytest.mark.use_case("Model_Eval_Report")
+def test_the_loss_lines_are_the_same_from_both_sources(tmp_path: Path) -> None:
+    """
+    Given  a run whose texts were measured for the words of their answer
+    When   the lines below the table are built from the local rows and from the exported items
+    Then   every row was measured in both, and the two sets of lines are the same string
+    """
+    space = _space(tmp_path)
+    rows = _local_rows(space)
+    items = _stored_items(space)
+
+    assert all(text_loss.is_lost(row.scores) is not None for row in rows)
+    assert report.loss_lines(rows) == report.loss_lines(items)
 
 
 @pytest.mark.use_case("Model_Eval_Report")

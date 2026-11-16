@@ -108,6 +108,8 @@ def _args(tmp_path: Path) -> argparse.Namespace:
         option=[],
         no_smoke=True,
         progress="off",
+        dry_run=False,
+        log=None,
     )
 
 
@@ -510,6 +512,126 @@ def test_the_agent_and_the_shell_sampler_are_not_combined(tmp_path, monkeypatch,
     assert compare_writing_models._run(args) == 2
 
     assert "pass one" in capsys.readouterr().err
+
+
+def test_a_dry_run_prints_the_sessions_and_sends_no_request(tmp_path, capsys):
+    """
+    Given  a run of one model over two texts, asked for as a dry run
+    When   it starts
+    Then   it prints the session, the texts it would send and the number of requests, and sends
+           nothing: the offline fixture fails the test on any request
+    """
+    args = _args(tmp_path)
+    args.dry_run = True
+
+    assert compare_writing_models._run(args) == 0
+
+    out = capsys.readouterr().out
+    assert f"{MODEL} @ 0.2 (review), repeat 1: 2 of 2 texts to send" in out
+    assert "1 sessions, 2 requests, 0 files already complete" in out
+    assert not args.out.exists(), "a dry run writes nothing"
+
+
+def test_a_dry_run_names_a_file_that_is_already_complete(tmp_path, capsys):
+    """
+    Given  a results file that already holds every text
+    When   the run is asked for as a dry run
+    Then   it says the file is complete and plans no session for it
+    """
+    args = _args(tmp_path)
+    args.dry_run = True
+    path = _results_file(args, rows=True)
+    results.write_rows(path, [*results.read_rows(path), _second_row(args)])
+
+    assert compare_writing_models._run(args) == 0
+
+    out = capsys.readouterr().out
+    assert f"{path.name}: already complete" in out
+    assert "0 sessions, 0 requests, 1 files already complete" in out
+
+
+def test_a_dry_run_refuses_what_the_run_would_refuse(tmp_path, capsys):
+    """
+    Given  a results file whose last session was made with another model digest
+    When   the run is asked for as a dry run
+    Then   it exits with code 2 and names the conflict, before anything is sent
+    """
+    args = _args(tmp_path)
+    args.dry_run = True
+    path = _results_file(args, rows=True)
+    _write_session(args, path, model_info={"digest": "sha256:" + "f" * 32})
+
+    assert compare_writing_models._run(args) == 2
+
+    assert "model_info.digest" in capsys.readouterr().err
+
+
+def _second_row(args: argparse.Namespace) -> results.ResultRow:
+    """Return the row of the second text of the set, as a finished run would have written it."""
+    return replace(
+        results.read_rows(_results_file(args, rows=True))[0],
+        id="de/de-02",
+        source="Der Hund laufen schnell.",
+        output="Der Hund läuft schnell.",
+    )
+
+
+def test_an_interrupted_run_writes_the_log_line(tmp_path, monkeypatch):
+    """
+    Given  a run with --log that is paused with Ctrl-C
+    When   the interrupt reaches the command line
+    Then   the log's last line says "interrupted", so a night that was paused reads as one
+    """
+
+    def _interrupted(*args, **kwargs) -> runner.RunResult:
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(runner, "run_matrix", _interrupted)
+    args = _args(tmp_path)
+    args.log = tmp_path / "run.log"
+
+    with pytest.raises(KeyboardInterrupt):
+        compare_writing_models._run(args)
+
+    lines = [json.loads(line) for line in args.log.read_text(encoding="utf-8").splitlines()]
+    assert [line["event"] for line in lines] == ["interrupted"]
+    assert lines[0]["time"]
+
+
+def test_a_log_has_one_line_per_row_and_says_how_the_run_ended(tmp_path, monkeypatch):
+    """
+    Given  a run with --log that resumes a file holding one of two texts
+    When   it finishes
+    Then   the log holds the session, one line per written row with its seconds, and the closing
+           "finished" line with what the run did
+    """
+    from teachers_teammate.domain.correction_review import CorrectionOutcome  # noqa: PLC0415
+    from teachers_teammate.interfaces import Corrector  # noqa: PLC0415
+
+    class _Echo(Corrector):
+        def correct(self, raw_text, language, *, text_format="plain"):
+            return CorrectionOutcome(text="Der Hund läuft schnell.")
+
+    monkeypatch.setattr(measure, "MeasuredRun", _StubMeasured)
+    monkeypatch.setattr(measure, "RecordingClient", lambda url, seed=None: object())
+    monkeypatch.setattr(
+        compare_writing_models, "app_corrector_factory", lambda *a, **k: lambda m, t: _Echo()
+    )
+    args = _args(tmp_path)
+    args.log = tmp_path / "run.log"
+    path = _results_file(args, rows=True)
+    _write_session(args, path)
+
+    assert compare_writing_models._run(args) == 0
+
+    lines = [json.loads(line) for line in args.log.read_text(encoding="utf-8").splitlines()]
+    events = [line["event"] for line in lines]
+    assert events == ["session", "row", "finished"]
+    assert lines[1]["item"] == "de/de-02"
+    assert lines[1]["seconds"] == 0.0
+    assert lines[1]["lost"] is False, "the answer kept the words of the source"
+    assert lines[2]["sessions"] == 1
+    assert lines[2]["rows"] == 1
 
 
 def test_an_option_names_a_sampling_value_and_a_number() -> None:

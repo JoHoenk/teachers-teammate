@@ -1,4 +1,4 @@
-"""The numbers of one item: GLEU, recall by half, left alone and coverage.
+"""The numbers of one item: GLEU, recall by half, left alone, coverage and lost text.
 
 One pure function computes everything a run stores about a text, and the report recomputes it from
 the stored texts through the same function, so the run and the report cannot drift apart.  The
@@ -7,6 +7,10 @@ computed per text and then averaged would not be the same number.
 
 The unit of the halves is the text, not the pieces a long text was sent in, so text mode, review
 mode and every budget compare alike.
+
+The words of the answer against the reference's are measured for every text, a ``correct`` one
+included: a model that drops a sentence is a defect of the answer, not of the scoring, and a
+``correct`` text has no other number to carry it.
 """
 
 from __future__ import annotations
@@ -15,6 +19,7 @@ from collections.abc import Sequence
 
 from teachers_teammate.domain.correction_review import tokenize
 
+from . import text_loss
 from .gleu import SOURCE_PREFIX, gleu_counts, to_scores
 from .quality import (
     Span,
@@ -37,19 +42,22 @@ def item_scores(
     Args:
         source: The text before proofreading, in plain text.
         corrected: What the model produced, without the marks it added.
-        reference: The reference correction; empty for a ``correct`` text, which has no numbers.
+        reference: The reference correction; empty for a ``correct`` text, whose yardstick is
+            then the source itself.
         sentence_spans: The token span of every sentence of the corpus's segmentation, whitespace
             tokens included; empty when the set has none.
         unchanged_sentences: Indices into *sentence_spans* of the sentences the reference leaves
             alone.
 
     Returns:
-        The GLEU counts of the model and of the source, the recall by half, and — when the text
-        has spans — left alone and coverage.  Empty for a ``correct`` text.
+        The words of the answer against the reference's, the GLEU counts of the model and of the
+        source, the recall by half, and — when the text has spans — left alone and coverage.  A
+        ``correct`` text gets the words only, because it has nothing else to score.
     """
+    scores = text_loss.measure(source, corrected, reference)
     if not reference.strip():
-        return {}
-    scores = to_scores(gleu_counts(source, corrected, reference))
+        return scores
+    scores |= to_scores(gleu_counts(source, corrected, reference))
     scores |= to_scores(
         gleu_counts(source, source, reference), SOURCE_PREFIX, reference_length=False
     )

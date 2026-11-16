@@ -10,7 +10,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 
-from . import scoring
+from . import scoring, text_loss
 from .gleu import SOURCE_PREFIX, add, from_scores, gleu
 from .languages import ordered
 from .quality import DEFAULT_BETA, EditScore
@@ -61,6 +61,12 @@ class ModelSummary:
     fallback: int
     cut_off: int
     """Fallbacks whose answer the window cut off (``done_reason: "length"``)."""
+    lost_text: int
+    """Texts whose answer kept much less of the text than the reference has."""
+    added_text: int
+    """Texts whose answer added much more than the reference has."""
+    loss_checked: int
+    """Texts whose words were measured; 0 for a run written before they were stored."""
     added_marks: int
     rows: int
     explained: int
@@ -152,6 +158,9 @@ def _summary(
         failed=sum(row.failed for row in sent),
         fallback=sum(row.fallback for row in sent),
         cut_off=sum(1 for row in sent if row.fallback and _cut_off(row)),
+        lost_text=sum(1 for row in sent if text_loss.is_lost(row.scores)),
+        added_text=sum(1 for row in sent if text_loss.is_added(row.scores)),
+        loss_checked=sum(1 for row in sent if text_loss.is_lost(row.scores) is not None),
         added_marks=sum(row.marks_added for row in sent),
         rows=len(sent),
         explained=sum(row.explained for row in rows),

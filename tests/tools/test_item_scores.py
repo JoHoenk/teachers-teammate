@@ -158,10 +158,29 @@ def test_an_output_equal_to_the_source_has_the_sources_gleu_counts() -> None:
 
 
 @pytest.mark.use_case("Model_Eval_Report")
-def test_a_correct_text_has_no_numbers() -> None:
+def test_a_correct_text_has_only_the_words_of_its_answer() -> None:
     """
     Given  a text without a reference correction, as a ``correct`` item has
     When   its numbers are computed
-    Then   there are none, because nothing was scored
+    Then   it carries the words of the answer against the source's, and nothing else, because
+           nothing was scored
     """
-    assert item_scores("Ein guter Satz .", "Ein guter Satz .", "") == {}
+    assert item_scores("Ein guter Satz .", "Ein guter Satz .", "") == {
+        "words_out": 4,
+        "words_ref": 4,
+        "cut_run": 0,
+        "added_run": 0,
+    }
+
+
+@pytest.mark.use_case("Model_Eval_Report")
+def test_a_correct_text_that_lost_a_sentence_is_measured() -> None:
+    """
+    Given  a ``correct`` text whose answer dropped its second sentence
+    When   its numbers are computed
+    Then   the words of the answer are fewer than the source's, so the loss is visible
+    """
+    scores = item_scores(SOURCE, FIRST, "")
+
+    assert scores["words_out"] < scores["words_ref"]
+    assert scores["cut_run"] > 0

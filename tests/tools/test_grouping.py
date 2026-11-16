@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from tests.tools import gate_fixtures as fixtures
-from tools.model_eval import grouping
+from tools.model_eval import grouping, run_format
 
 
 def _manifest(*texts: fixtures.Text) -> dict:
@@ -134,3 +134,74 @@ def test_a_repeat_without_a_number_has_no_range():
     )
 
     assert grouping.ranges(group.summaries(), grouping.deciding_mean_f_beta) is None
+
+
+def test_the_exchange_modes_count_as_one_for_corrections():
+    """
+    Given  an exchange run and a correct-only run of one model
+    When   their keys are asked whether they were measured alike
+    Then   they were with corrections, and not without, because only step ① is the same request
+    """
+    texts = fixtures.minimal_texts()
+    exchange = fixtures.group(*texts, mode="exchange").key
+    correct_only = fixtures.group(*texts, mode="correct-only").key
+
+    assert not exchange.measured_alike(correct_only)
+    assert exchange.measured_alike(correct_only, corrections=True)
+
+
+def test_review_and_exchange_stay_not_comparable_with_corrections():
+    """
+    Given  a review run and an exchange run of one model
+    When   their keys are asked whether they were measured alike with corrections
+    Then   they were not, because review answers another question than step ①
+    """
+    texts = fixtures.minimal_texts()
+    review = fixtures.group(*texts, mode="review").key
+    exchange = fixtures.group(*texts, mode="exchange").key
+
+    assert not review.measured_alike(exchange, corrections=True)
+
+
+def test_the_explainer_is_ignored_with_corrections():
+    """
+    Given  two exchange runs that differ in the explainer only
+    When   their keys are asked whether they were measured alike
+    Then   they were with corrections, and not without, because step ① asks no explanation
+    """
+    texts = fixtures.minimal_texts()
+    first = fixtures.group(*texts, mode="exchange").key
+    second = fixtures.group(*texts, mode="exchange", explainer=fixtures.OTHER).key
+
+    assert not first.measured_alike(second)
+    assert first.measured_alike(second, corrections=True)
+
+
+def test_the_explanation_sample_of_a_local_folder_is_refused():
+    """
+    Given  a group whose runs come from a local result folder
+    When   the run the explanation sample is drawn from is asked for
+    Then   it is refused, because the sample needs the notes a committed run keeps
+    """
+    texts = fixtures.minimal_texts()
+    stored = fixtures.run(*texts)
+    group = grouping.RunGroup(
+        key=grouping.GroupKey.of(stored),
+        runs=(_LocalRun(stored.meta),),
+        items=((),),
+    )
+
+    with pytest.raises(ValueError, match="comes from a local result folder"):
+        group.first()
+
+
+class _LocalRun:
+    """A run of a local result folder: a header, and no committed item lines."""
+
+    def __init__(self, meta: run_format.RunHeader) -> None:
+        self._meta = meta
+
+    @property
+    def meta(self) -> run_format.RunHeader:
+        """The typed header of the run."""
+        return self._meta

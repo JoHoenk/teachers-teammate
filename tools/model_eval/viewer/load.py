@@ -22,6 +22,7 @@ from .. import results, session
 from ..grouping import GroupKey
 from ..redaction import word_count
 from ..results import ResultRow, TestRecord
+from ..run_format import RunHeader
 
 HEADER_SUFFIX = ".header.json"
 """What a run's header file is called, next to its rows."""
@@ -52,6 +53,16 @@ class CacheRun:
     def repeat(self) -> int:
         """Return the repeat number the header records."""
         return int(self.header["repeat"])
+
+    @property
+    def meta(self) -> RunHeader:
+        """Return the typed header, so a cache run reads like a committed one.
+
+        Raises:
+            KeyError: if the header lacks a field the readers need.
+            ValueError: if a field has a value of the wrong kind.
+        """
+        return RunHeader.from_dict(self.header)
 
 
 @dataclass(frozen=True)

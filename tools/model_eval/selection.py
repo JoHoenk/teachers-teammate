@@ -24,7 +24,9 @@ from teachers_teammate.domain.model_catalog import normalize_tag
 
 from . import grouping, layout, protocol, run_format, validation
 from .answer_mode import AnswerMode
+from .cache_groups import cache_groups
 from .testset import read_manifest
+from .viewer import load
 
 
 @dataclass(frozen=True)
@@ -48,6 +50,11 @@ class Selection:
     eval_version: int | None = None
     """The eval version; ``None`` takes the current one, because older runs measured another
     request."""
+    against_temperature: float | None = None
+    """The temperature of the runs of ``against``; ``None`` applies the rule of ``temperature`` to
+    it too, so a refinement of one model at two temperatures names both."""
+    against_mode: AnswerMode | None = None
+    """The answer mode of the runs of ``against``; ``None`` takes ``mode``."""
 
     def temperature_of(self, model: str) -> float:
         """Return the temperature the runs of *model* are read at.
@@ -61,10 +68,22 @@ class Selection:
 
         return defaults.temperature_for(model, self.temperature)
 
-    @property
-    def models(self) -> tuple[str, ...]:
-        """Return the models the selection names, the one to judge first."""
-        return (self.model,) if self.against is None else (self.model, self.against)
+    def sides(self) -> tuple[tuple[str, float, AnswerMode], ...]:
+        """Return the model, temperature and mode of each side, the one to judge first.
+
+        The second side takes its own temperature and mode when the command names them, and the
+        first side's otherwise: a comparison of two models at their own starting points names
+        neither, and a refinement of one model at two temperatures names both.
+        """
+        first = (self.model, self.temperature_of(self.model), self.mode)
+        if self.against is None:
+            return (first,)
+        temperature = (
+            self.temperature_of(self.against)
+            if self.against_temperature is None
+            else self.against_temperature
+        )
+        return (first, (self.against, temperature, self.against_mode or self.mode))
 
 
 def select(out: Path, wanted: Selection) -> list[grouping.RunGroup]:
@@ -88,15 +107,74 @@ def select(out: Path, wanted: Selection) -> list[grouping.RunGroup]:
     version = wanted.eval_version if wanted.eval_version is not None else _current_version()
     chosen: list[grouping.RunGroup] = []
     anchor: tuple[str, str] | None = None
-    for model in wanted.models:
+    for model, temperature, mode in wanted.sides():
         mine = [run for run in runs if _tag(run) == normalize_tag(model)]
         if not mine:
             raise ValueError(f"no run of {model!r} below {out}")
-        temperature = wanted.temperature_of(model)
         if anchor is None:
-            anchor = _anchor(mine, wanted, version, temperature)
-        chosen.extend(_groups(out, _narrow(mine, wanted, version, anchor, temperature), model))
+            anchor = _anchor(mine, wanted, version, model, temperature, mode)
+        chosen.extend(
+            _groups(
+                out,
+                _narrow(mine, wanted, version, anchor, model, temperature, mode),
+                model,
+            )
+        )
     return chosen
+
+
+def select_cache(caches: Sequence[load.Cache], wanted: Selection) -> list[grouping.RunGroup]:
+    """Return one group per side *wanted* names, from the local result folders *caches*.
+
+    The same narrowing as :func:`select`, on the runs a folder holds instead of on committed files:
+    the test set is the one the folders were read with, so ``wanted.testset`` is not read, and a
+    side that leaves two groups (two digests, or two request profiles) is refused rather than
+    guessed, as it is for committed runs.
+
+    Args:
+        caches: The folders, already read against one test set.
+        wanted: The model or models, and the parts of the key the command fixed.
+
+    Raises:
+        ValueError: if no run matches, or the runs of one side make more than one group.
+    """
+    found = [group for group in cache_groups(caches) if _cache_wanted(group.key, wanted)]
+    chosen: list[grouping.RunGroup] = []
+    for model, temperature, mode in wanted.sides():
+        mine = [
+            group
+            for group in found
+            if normalize_tag(group.key.model) == normalize_tag(model)
+            and group.key.temperature == temperature
+            and group.key.mode is mode
+        ]
+        if not mine:
+            raise ValueError(
+                f"no run of {model!r} at temperature {temperature:g}, {mode.value} mode"
+            )
+        if len(mine) > 1:
+            raise ValueError(
+                f"{model!r}: the folders hold {len(mine)} groups at temperature "
+                f"{temperature:g}, {mode.value} mode (they differ in the digest or the request "
+                "profile); keep one folder per set of sampling values"
+            )
+        chosen.append(mine[0])
+    return chosen
+
+
+def _cache_wanted(key: grouping.GroupKey, wanted: Selection) -> bool:
+    """Whether a cache group's *key* agrees with the parts of the key the command fixed."""
+    if wanted.digest is not None and not key.digest.removeprefix("sha256:").startswith(
+        wanted.digest
+    ):
+        return False
+    if wanted.machine is not None and wanted.machine not in (key.machine, key.provider):
+        return False
+    if wanted.compact_json is not None:
+        profile = dict(key.request_profile)
+        if bool(profile.get("compact_json")) != wanted.compact_json:
+            return False
+    return True
 
 
 def _read(out: Path) -> list[run_format.StoredRun]:
@@ -125,7 +203,12 @@ def _tag(run: run_format.StoredRun) -> str:
 
 
 def _anchor(
-    runs: Sequence[run_format.StoredRun], wanted: Selection, version: int, temperature: float
+    runs: Sequence[run_format.StoredRun],
+    wanted: Selection,
+    version: int,
+    model: str,
+    temperature: float,
+    mode: AnswerMode,
 ) -> tuple[str, str]:
     """Return the test set and the machine of the newest run that matches *wanted*.
 
@@ -139,14 +222,14 @@ def _anchor(
         run
         for run in runs
         if run.meta.eval_version == version
-        and run.meta.mode is wanted.mode
+        and run.meta.mode is mode
         and run.meta.temperature == temperature
         and (wanted.testset is None or run.meta.testset == wanted.testset)
         and (wanted.machine is None or run.meta.host == wanted.machine)
     ]
     if not matching:
         raise ValueError(
-            f"no run of {wanted.model!r} at eval version {version}, {wanted.mode.value} mode, "
+            f"no run of {model!r} at eval version {version}, {mode.value} mode, "
             f"temperature {temperature:g}"
         )
     newest = max(matching, key=lambda run: run.meta.date)
@@ -158,7 +241,9 @@ def _narrow(
     wanted: Selection,
     version: int,
     anchor: tuple[str, str],
+    model: str,
     temperature: float,
+    mode: AnswerMode,
 ) -> list[run_format.StoredRun]:
     """Return the runs of one model that match *wanted* on the evaluation *anchor* names.
 
@@ -172,13 +257,13 @@ def _narrow(
         if str(run.header["testset"]) == testset
         and run.meta.host == machine
         and int(run.header["eval_version"]) == version
-        and str(run.header["mode"]) == wanted.mode.value
+        and str(run.header["mode"]) == mode.value
         and float(run.header["temperature"]) == temperature
     ]
     if not kept:
         raise ValueError(
-            f"no run of {wanted.model!r} on {testset} at {machine}, eval version {version}, "
-            f"{wanted.mode.value} mode, temperature {temperature:g}"
+            f"no run of {model!r} on {testset} at {machine}, eval version {version}, "
+            f"{mode.value} mode, temperature {temperature:g}"
         )
     kept = _one_digest(kept, wanted)
     return _one_profile(kept, wanted)
@@ -263,4 +348,4 @@ def _groups(out: Path, runs: Iterable[run_format.StoredRun], model: str) -> list
     return found
 
 
-__all__ = ["Selection", "select"]
+__all__ = ["Selection", "select", "select_cache"]

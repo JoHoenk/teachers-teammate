@@ -1172,6 +1172,19 @@ py_test(
     deps = _TOOL_DEPS,
 )
 
+# The words an answer keeps and adds against the reference, and the floor that reads them.
+py_test(
+    name = "test_model_eval_text_loss",
+    size = "small",
+    srcs = _COMMON_SRCS + [
+        "tools/gate_fixtures.py",
+        "tools/test_text_loss.py",
+    ],
+    args = ["tools/test_text_loss.py"],
+    main = "run_test.py",
+    deps = _TOOL_DEPS,
+)
+
 # test_testset and test_store build their corpus from tests/tools/invented_corpus.py, which is a
 # source of those two targets only.
 py_test(
@@ -1322,6 +1335,18 @@ py_test(
     deps = _TOOL_DEPS,
 )
 
+# The log of one run: one JSON line per event, so a night that was paused can be read afterwards.
+py_test(
+    name = "test_model_eval_run_log",
+    size = "small",
+    srcs = _COMMON_SRCS + [
+        "tools/test_run_log.py",
+    ],
+    args = ["tools/test_run_log.py"],
+    main = "run_test.py",
+    deps = _TOOL_DEPS,
+)
+
 py_test(
     name = "test_model_eval_run_format",
     size = "small",
@@ -1345,6 +1370,7 @@ py_test(
         "tools/invented_corpus.py",
         "tools/store_workspace.py",
         "tools/test_proofreading_store_cli.py",
+        "tools/viewer_fixtures.py",
     ],
     args = ["tools/test_proofreading_store_cli.py"],
     main = "run_test.py",
@@ -1390,6 +1416,20 @@ py_test(
         "tools/test_grouping.py",
     ],
     args = ["tools/test_grouping.py"],
+    main = "run_test.py",
+    deps = _TOOL_DEPS,
+)
+
+# The groups a local result folder makes, so gate 2 reads one like a committed run.  The fixtures
+# write a real test set and real caches to a temporary directory, so the format is a run's.
+py_test(
+    name = "test_model_eval_cache_groups",
+    size = "small",
+    srcs = _COMMON_SRCS + [
+        "tools/test_cache_groups.py",
+        "tools/viewer_fixtures.py",
+    ],
+    args = ["tools/test_cache_groups.py"],
     main = "run_test.py",
     deps = _TOOL_DEPS,
 )
@@ -1562,6 +1602,7 @@ test_suite(
     tests = [
         ":test_model_eval_answer_mode",
         ":test_model_eval_app_corrector",
+        ":test_model_eval_cache_groups",
         ":test_model_eval_check_rule",
         ":test_model_eval_compare_cli",
         ":test_model_eval_comparison",
@@ -1587,6 +1628,7 @@ test_suite(
         ":test_model_eval_report_sources",
         ":test_model_eval_results",
         ":test_model_eval_run_format",
+        ":test_model_eval_run_log",
         ":test_model_eval_runner",
         ":test_model_eval_scoring",
         ":test_model_eval_session",
@@ -1595,6 +1637,7 @@ test_suite(
         ":test_model_eval_store_cli",
         ":test_model_eval_structured_check",
         ":test_model_eval_testset",
+        ":test_model_eval_text_loss",
         ":test_model_eval_validation",
         ":test_model_eval_viewer_load",
         ":test_model_eval_viewer_model",

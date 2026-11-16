@@ -14,12 +14,20 @@ from teachers_teammate.infrastructure.proofreading.exchanges.t import (
     CORRECT_FAILED,
     EXPLAIN_FAILED,
     FRAMING_WARNING,
+    ADDED_TEXT_WARNING,
+    LOST_TEXT_WARNING,
     UNCLEAR_FAILED,
 )
 from tests.fakes.fake_port import FakePort, answer, cut_off, invalid, transport
 
 SOURCE = "Ich habe ein grosse Hund. Er ist nett."
 CORRECTED = "Ich habe einen großen Hund. Er ist nett."
+
+
+LONG_SOURCE = "Ich habe ein grosse Hund. Er ist nett und spielt gern im Garten mit meinem Bruder."
+LONG_CORRECTED = (
+    "Ich habe einen großen Hund. Er ist nett und spielt gern im Garten mit meinem Bruder."
+)
 
 
 def _notes(*notes: tuple[int, str, str]) -> str:
@@ -170,6 +178,75 @@ def test_a_lead_in_twice_fails_the_file() -> None:
 
     assert result.failed is True
     assert result.warnings == (FRAMING_WARNING,)
+
+
+def test_a_dropped_paragraph_is_asked_for_once_more() -> None:
+    """
+    Given  a model that first answers with the end of the text missing and then with the whole text
+    When   the exchange proofreads the text
+    Then   the second answer is used and the file is corrected
+    """
+    port = FakePort(
+        answer("Ich habe einen großen Hund."),
+        answer(LONG_CORRECTED),
+        answer(_notes((1, "grammar", "x"))),
+        answer(_unclear()),
+    )
+
+    result = TExchange(port).proofread(LONG_SOURCE, _ctx())
+
+    assert result.failed is False
+    assert result.text == LONG_CORRECTED
+    assert [request.step for request in port.requests].count("correct") == 2
+
+
+def test_a_dropped_paragraph_twice_fails_the_file() -> None:
+    """
+    Given  a model that answers with the end of the text missing twice
+    When   the exchange proofreads the text
+    Then   the file fails with the dropped-text warning, and the source is kept
+    """
+    port = FakePort(answer("Ich habe einen großen Hund."), answer("Ich habe einen großen Hund."))
+
+    result = TExchange(port).proofread(LONG_SOURCE, _ctx())
+
+    assert result.failed is True
+    assert result.text == LONG_SOURCE
+    assert result.warnings == (LOST_TEXT_WARNING,)
+
+
+def test_text_the_model_added_twice_fails_the_file_with_its_own_warning() -> None:
+    """
+    Given  a model that answers twice with the text and a sentence of its own in the middle
+    When   the exchange proofreads the text
+    Then   the file fails, and the warning says text was added, not that text was dropped
+    """
+    padded = LONG_CORRECTED.replace(
+        "Er ist nett", "Er ist nett. Der Hund heißt Bello und ist drei Jahre alt. Er ist nett"
+    )
+    port = FakePort(answer(padded), answer(padded))
+
+    result = TExchange(port).proofread(LONG_SOURCE, _ctx())
+
+    assert result.failed is True
+    assert result.warnings == (ADDED_TEXT_WARNING,)
+
+
+def test_a_short_text_that_gains_a_full_stop_is_not_a_dropped_or_added_text() -> None:
+    """
+    Given  a three-word text and a model that answers with a capital letter and a full stop
+    When   the exchange proofreads the text
+    Then   the answer is used at once, without a second request for step ①
+    """
+    port = FakePort(
+        answer("Ich bin müde."), answer(_notes((1, "grammar", "x"))), answer(_unclear())
+    )
+
+    result = TExchange(port).proofread("ich bin müde", _ctx())
+
+    assert result.failed is False
+    assert result.text == "Ich bin müde."
+    assert [request.step for request in port.requests].count("correct") == 1
 
 
 def test_an_unusable_explanation_only_warns() -> None:

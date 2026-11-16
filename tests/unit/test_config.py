@@ -523,15 +523,18 @@ def test_ocr_temperature_default_is_zero() -> None:
     assert cfg.ocr.temperature == 0.0
 
 
-def test_the_correction_temperature_is_the_makers_recommendation() -> None:
+def test_the_review_request_keeps_the_makers_temperature_not_step_ones() -> None:
     """
-    Given  Configs for a model whose maker recommends a temperature and for one that does not
-    When   the proofreading temperature is read
-    Then   the first gets the recommended value and the second the app's 0.2
+    Given  Configs for models whose step ① has a measured temperature
+    When   the temperature of the single review request the app sends today is read
+    Then   it is the maker's value, and step ① of the exchange keeps the measured one
     """
     local = {"correction_provider": "ollama"}
-    assert _cfg(correction_model="gemma4:e4b", **local).correction_temperature == 1.0
-    assert _cfg(correction_model="gpt-oss:20b", **local).correction_temperature == 0.2
+    qwen = _cfg(correction_model="qwen3.5:9b", **local)
+    gemma = _cfg(correction_model="gemma4:e4b", **local)
+
+    assert (qwen.correction_temperature, qwen.correction_profile.temperature) == (0.7, 0.05)
+    assert (gemma.correction_temperature, gemma.correction_profile.temperature) == (1.0, 0.4)
 
 
 def test_an_online_provider_gets_the_default_temperature() -> None:

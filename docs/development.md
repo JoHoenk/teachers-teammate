@@ -194,11 +194,12 @@ mismatch against the catalog counts as a failure. A model without the flag (`gpt
 offered and used like any other model, but has no badge and is not recommended.
 
 The check sends the app's request — `proofreading_options()` (see *Soft failures and per-file
-warnings*) — at the temperature the app sends that model: the value its maker recommends, which is
-the card's value for Gemma (1.0), Qwen's non-thinking row (0.7, because the app sends
-`think=False`), Ministral's "below 0.1" (0.05), Mistral NeMo's 0.3. A model whose maker states
-nothing gets 0.2. The table is `RECOMMENDED_TEMPERATURES` in `teachers_teammate/domain/model_catalog.py`
-(teachers set no temperature; the app reads that table), and `--temperature` overrides it for every
+warnings*) — at the temperature the app sends that model: step ① at its measured value
+(`STEP_ONE_TEMPERATURES`, 0.4 for every model not listed there), steps ② and ③ at the value the
+model's maker recommends (`MAKER_TEMPERATURES`: the card's value for Gemma, Qwen's non-thinking
+row, Ministral's "below 0.1", Mistral NeMo's 0.3, and 0.2 where a maker states nothing). Both
+tables are in `teachers_teammate/domain/model_catalog.py` (teachers set no temperature; the app
+reads them), and `--temperature` overrides step ① for every
 model named, to compare one model at two temperatures with `compare`. It covers six fixture texts — plain English, plain German,
 plain French, Markdown with formatting marks, one invented full page of dense German prose (~350
 words), and one invented German page of 6,500 characters that is sent as the longest prefix of
@@ -901,7 +902,7 @@ structured-output check above (`verify_model_catalog.py`): can it fill in the re
 reliably?  Its first stage is the smoke check (see above): a setup that fails it is not sent the
 eighteen runs, and one that passes it is continued from its own answers.  **Gate 2**
 (`compare_writing_models.py`) asks how good its corrections are.  Both tools send what the app
-sends, at the temperature the model's vendor recommends (see above; gate 2 goes through
+sends, at the temperatures the app sends that model (see above; gate 2 goes through
 `NativeOllamaCorrector` itself, inside the app's `ChunkingCorrector`, with the app's own tokeniser
 and word diff), so a result describes the real request — including the app's long-text path: a
 text longer than the window's budget is proofread in pieces, one request each, and the row records
@@ -1088,8 +1089,8 @@ are two tools (`tools/model_eval/gate_two.py`):
   means over the repeats, not their ranges, because at a low temperature the repeats collapse and a
   range test then passes on a gap of 0.001.  The spread of the repeats is printed next to the
   verdict and decides nothing.  The two groups may differ in model, digest, request profile and
-  temperature — each model starts at its vendor's temperature, and a refinement compares one model
-  at two — and in nothing else; both temperatures are printed.  It is split the same way:
+  temperature — each model starts at its own step-① temperature, and a refinement compares one
+  model at two — and in nothing else; both temperatures are printed.  It is split the same way:
   `measure_pair(a, b)` builds the per-language figures and the intervals (French's too, a real
   figure), `rate_pair` combines them with the deciding mean, and the per-language figures are
   printed above the verdict and never decide.  Under the verdict, one line per measure — F0.5,
@@ -1108,6 +1109,14 @@ bazel run //tools:proofreading_store -- compare --model ministral-3:14b --agains
 bazel run //tools:proofreading_store -- compare --cache ~/gec-testset/results-correct-only \
     --testset ~/gec-testset/set-2026-12 --model qwen3.5:4b --temperature 0.05 \
     --against qwen3.5:4b --against-temperature 0.7
+# one table per model over its temperatures, with the best row and its ties
+bazel run //tools:proofreading_store -- sweep --cache ~/gec-testset/results-correct-only \
+    --testset ~/gec-testset/set-2026-12 [--reference qwen3.5:4b@0.05] [--corrections]
+# what a second and a third pass of each configuration would add, and what they would cost
+# (the exchange folder gives step ①'s share of the time, but only a run written with step tags;
+# the baseline of 2026-11-14 has none, so its cost column is a dash)
+bazel run //tools:proofreading_store -- passes --cache ~/gec-testset/results-correct-only \
+    --cache ~/gec-testset/results-exchange --testset ~/gec-testset/set-2026-12
 ```
 
 A command names a model, not a file: the runs are found below `--out`, and the parts of the key the
@@ -1134,6 +1143,35 @@ names both modes (`--against-mode correct-only --corrections`): with `--correcti
 and correct-only modes count as one measurement and the explainer is ignored, because step ① writes
 the corrections of both.  Any other pair of modes stays not comparable, and the comparison prints
 "corrections only" when the flag is used.
+
+**A sweep of temperatures.**  `sweep --cache DIR [--cache DIR] --testset DIR` prints one table per
+model over its temperatures: the deciding mean F0.5 with German and English beside it, recall and
+precision, the share of the sentences the reference leaves alone that the model left alone, the
+share of the touched sentences it looked at, the false alarms per text, the spread of the repeats
+(the highest minus the lowest F0.5, the sampler's own noise), the texts that lost or added text, the
+seconds per 100 words, the answer tokens per text, and the fixes, wrong changes and misses per page
+of 300 words.  The last column is the difference of the deciding mean F0.5 against a reference row
+with its 95 % interval: `--reference MODEL@TEMPERATURE[:MODE]` names it, and without the flag the
+first row of each model is the reference.  Below each table the best row is named — the highest
+F0.5 — together with every row that is not worse than it beyond the noise, because a tie goes to the
+cheaper configuration and that is a choice, not a number.  A reference in another answer mode is
+refused unless `--corrections` is given, which compares the corrections only.  A row is only
+measured against a reference it can be compared with — the same test set, window, machine and eval
+version, the same texts, and (without `--corrections`) the same answer mode; otherwise its Δ column
+says "not comparable".  `--corrections` also reaches the ties below each table.
+
+**Passes.**  `passes --cache DIR [--cache DIR] --testset DIR` asks what a second and a third pass of
+one configuration would buy if the passes were merged by a vote.  An edit is a word-diff change of
+the source, and its *votes* are how many of the repeats made it.  The table shows the single pass
+(the mean of the repeats), the edits at least two of three made, and the edits every repeat made;
+then the flag — if a single pass's edits that not every repeat made were shown as uncertain, what
+share of its edits that is, and how many of its false alarms and how many of its real fixes it would
+catch; then the precision of an edit made by one, two and three passes.  The last column is the time
+the passes cost against one pass, `1 + (k - 1) × step ①'s share`, because a second and a third pass
+repeat only step ①: a correct-only run shows `3.00x`, and a run without step tags shows a dash.  A
+group of one repeat has no vote to take and is left out, and a committed run is refused, because it
+keeps no texts to diff.  A repeat that lacks a text another has (an interrupted run) is refused
+with the repeat's number.
 
 **The explanation check.**  Before a model takes a star place, a teacher marks a sample of its
 explanations.  The sample is defined by the *committed* run, not by the cache: from the run of repeat
@@ -1213,10 +1251,17 @@ does not know:
 * `compact_json` (default **off**) adds `COMPACT_ANSWER_RULE` to the fixed part of a review request.
   It saves `gemma4` 25 to 30 % of its answer tokens, leaves `mistral` alone, and collapsed
   `qwen3.5:9b` to one sentence in 9 of 10 runs, so it is a per-model decision and not a global one.
-* `temperature` is the model's proofreading temperature: the one its maker recommends
-  (`RECOMMENDED_TEMPERATURES`), else `DEFAULT_CORRECTION_TEMPERATURE` (0.2), and always 0.2 for an
-  online provider.  Teachers set none; the content review resolves its own the same way
-  (`review_temperature`, default 0.7) and text recognition is fixed at 0.0.
+* `temperature` is the model's proofreading temperature, and it differs by step.  Step ① runs at
+  the value measured for it (`STEP_ONE_TEMPERATURES`: 0.05 for `qwen3.5:4b` / `:9b`, the Ministral
+  models and `mistral-nemo:12b`, 0.4 for every other model), because a grid of 0.05, 0.4, 0.7 and
+  1.0 over twelve models found no model better above 0.4 and those six falling with every step up.
+  Steps ② and ③ run at the value the model's maker recommends (`MAKER_TEMPERATURES`), else
+  `DEFAULT_CORRECTION_TEMPERATURE` (0.2); no measurement has compared their temperatures yet.  An
+  online provider gets 0.2 in every step.  Until the exchange is wired, the single review request
+  the app sends (`Config.correction_temperature`, `RequestProfile.review_temperature`) keeps the
+  maker's value, because step ①'s measurement was a plain-text rewrite.  The correction cache key
+  holds the temperature of all three steps.  Teachers set none; the content review resolves its own
+  the same way (`review_temperature`, default 0.7) and text recognition is fixed at 0.0.
 
 Sampling is *not* in the profile: top-k, top-p and the penalties come from the tag, which is where
 the vendors put their recommendations, and the app already uses them.  The three readers of the
@@ -1254,9 +1299,10 @@ protocol from the run header and refuses a run whose version pair `protocol.json
 
 **Early results (2026-11-07) are gone.**  The first comparison of writing models ran on
 `gec-2026-11`, a set of eight short texts per language that is retired, and its numbers were
-deleted with it.  The catalog's alternatives (`gemma4:e4b` on 8 GB, `gemma4:12b` on 16 GB) and
-the temperatures follow that exploratory comparison and have not yet been confirmed on
-`gec-2026-12`: the first gate-2 run there is the evidence the recommendations stand on.
+deleted with it.  The catalog's alternatives (`gemma4:e4b` on 8 GB, `gemma4:12b` on 16 GB) follow
+that exploratory comparison and have not yet been confirmed on `gec-2026-12`: the first gate-2 run
+there is the evidence the recommendations stand on.  The step-① temperatures no longer do: they
+were measured on `gec-2026-12` (see *The request per model*).
 
 **Does a model fit the graphics card at the base window (`PROOFREADING_NUM_CTX`, 8192), and how
 fast is it?**  Measured with `nvidia-smi`, `ollama ps` and Windows' own memory counters on one
@@ -2247,6 +2293,7 @@ running app is unchanged.
 | `domain/proofreading/review.py` | `CorrectionReview` v2 (`EditNote` with parts, `UnclearNote`), `align()` for display |
 | `domain/proofreading/quotes.py` | `find_spans()` for the quotes of step ③, `map_back()` through the hunks |
 | `domain/proofreading/markdown_shield.py` | `shield()` / `restore()`: strip the notation before the request, put it back after it |
+| `domain/proofreading/text_loss.py` | `measure()` / `dropped_text()`: what an answer kept of the text it was sent, for the guard of step ① |
 | `domain/correction_prompts.py` | the fixed English system prompts of the three steps, the parameter and notes blocks, the batch body of step ②, `PROMPT_VERSION` |
 | `infrastructure/proofreading/port.py` | `ModelPort` (Bridge): `OllamaPort`, `LangChainPort` |
 | `infrastructure/proofreading/runner.py` | `StepRunner`: cut-off tries, one repair, window check, timeout |
@@ -2262,6 +2309,21 @@ expressions a reader cannot tell, with a reason and a suggestion. ② and ③ de
 and never fail the file: a failed batch leaves its edits unexplained with a warning, a failed
 ③ leaves the unclear list empty with a warning. Only ① can fail a file, and then the source
 is kept.
+
+**A dropped text is not a correction.** A model can answer with a well-formed text that is
+missing a sentence or a whole paragraph, and nothing in the answer says so. Step ① therefore
+compares its answer with the text it sent (`domain/proofreading/text_loss.py`): an answer that
+keeps less than `LOST_RATIO` (0.80) of the words, writes more than `ADDED_RATIO` (1.25) of them,
+or deletes a run of `RUN_WORDS` (50) words without writing as many in their place is asked for
+once more, and a second such answer fails the piece like a cut-off, with a warning that says
+whether text was dropped or added.  Marks are not words, and a text under `MIN_RATIO_WORDS` (10)
+words is not judged by the ratio: correcting "ich bin müde" into "Ich bin müde." changes its
+length by a third. The run threshold is much
+higher than the one the evaluation tools use against a reference, because the app has no
+reference: a text whose own correction cuts a paragraph looks exactly like a dropped one, so the
+guard only fires on a cut no correction of that text would make. On the saved runs of the
+official test set it fires on the four models that drop text and on no text where most models
+agree.
 
 **Edits and ids.** `edits()` groups consecutive hunks into one edit, never across a sentence
 group: a deleted token run that reappears as an inserted run in the same group is one edit

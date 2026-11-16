@@ -59,14 +59,17 @@ from tools.model_eval import (
     grouping,
     index,
     layout,
+    passes,
     report,
     results,
     run_format,
     selection,
     spot_check,
+    sweep,
     validation,
 )
 from tools.model_eval.answer_mode import AnswerMode, parse_mode
+from tools.model_eval.cache_groups import cache_groups
 from tools.model_eval.cli_paths import workspace_path
 from tools.model_eval.testset import (
     Corpora,
@@ -619,6 +622,113 @@ def _print_comparison(
     return _compare_code(result.comparison)
 
 
+def _read_groups(args) -> list[grouping.RunGroup] | None:
+    """Return the groups of the local result folders *args* names, or ``None`` after a refusal.
+
+    Every folder is read against the test set, every row is scored again, and the groups are formed
+    from the headers, as ``compare --cache`` does.  A file that could not be read is named with its
+    reason, so a folder that lost a repeat says so instead of being read as a smaller sweep.
+    """
+    if not args.testset:
+        print(
+            "refused: --cache needs --testset, the test set the rows were asked about",
+            file=sys.stderr,
+        )
+        return None
+    try:
+        testset = load.read_testset(workspace_path(args.testset))
+        caches = [load.read_cache(workspace_path(folder), testset) for folder in args.cache]
+    except ValueError as error:
+        print(f"refused: {error}", file=sys.stderr)
+        return None
+    for cache in caches:
+        for skip in cache.skipped:
+            print(f"skipped {skip.file}: {skip.reason}", file=sys.stderr)
+    try:
+        return cache_groups(caches)
+    except ValueError as error:
+        print(f"refused: {error}", file=sys.stderr)
+        return None
+
+
+def _reference_group(groups: list[grouping.RunGroup], wanted: str) -> grouping.RunGroup | None:
+    """Return the group *wanted* names as ``MODEL@TEMPERATURE[:MODE]``, or ``None`` after a refusal.
+
+    The mode is optional because a sweep of one folder holds one mode; naming it is how a reader
+    says which of two folders they mean.
+    """
+    model, _, rest = wanted.partition("@")
+    temperature, _, mode = rest.partition(":")
+    try:
+        value = float(temperature)
+    except ValueError:
+        print(
+            f"refused: --reference wants MODEL@TEMPERATURE[:MODE], not {wanted!r}",
+            file=sys.stderr,
+        )
+        return None
+    found = [
+        group
+        for group in groups
+        if model_catalog.normalize_tag(group.key.model) == model_catalog.normalize_tag(model)
+        and group.key.temperature == value
+        and (not mode or group.key.mode.value == mode)
+    ]
+    if not found:
+        print(f"refused: no run of {model!r} at temperature {value:g}", file=sys.stderr)
+        return None
+    if len(found) > 1:
+        print(
+            f"refused: {len(found)} groups of {model!r} at {value:g}; they differ in the request "
+            "profile, so name the mode or keep one folder per set of sampling values",
+            file=sys.stderr,
+        )
+        return None
+    return found[0]
+
+
+def _sweep(args) -> int:
+    """Print one table per model over its temperatures; return the exit code."""
+    groups = _read_groups(args)
+    if groups is None:
+        return 2
+    reference = None
+    if args.reference:
+        reference = _reference_group(groups, args.reference)
+        if reference is None:
+            return 2
+        other = sorted(
+            {group.key.mode.value for group in groups if group.key.mode is not reference.key.mode}
+        )
+        if other and not args.corrections:
+            print(
+                f"refused: the reference is {reference.key.mode.value} and the folders hold "
+                f"{', '.join(other)}; give --corrections to compare the corrections only",
+                file=sys.stderr,
+            )
+            return 2
+    rows = sweep.sweep_rows(groups, reference, corrections=args.corrections)
+    print(sweep.sweep_table(rows, reference=args.reference or "", corrections=args.corrections))
+    return 0
+
+
+def _passes(args) -> int:
+    """Print what a second and a third pass of each configuration would add; return the exit code."""
+    groups = _read_groups(args)
+    if groups is None:
+        return 2
+    try:
+        rows = passes.pass_rows(groups)
+    except ValueError as error:
+        print(f"refused: {error}", file=sys.stderr)
+        return 2
+    if not rows:
+        print("no configuration has two repeats: there is no vote to take", file=sys.stderr)
+        return 1
+    print(passes.passes_table(rows))
+    return 0
+
+
 def _run_of(out: Path, run_id: str) -> run_format.StoredRun | None:
     """Return the committed run called *run_id* below *out*, or ``None`` when there is none."""
     found = sorted((out / layout.RUNS_DIR).glob(f"*/{run_id}.jsonl"))
@@ -772,6 +882,49 @@ def _gate_commands(sub) -> None:
     marked.set_defaults(handler=_marks)
 
 
+def _sweep_commands(sub) -> None:
+    """Add the subcommands that read a sweep of local result folders."""
+
+    def cache_arguments(target) -> None:
+        """Add the folders and the test set every sweep command needs."""
+        target.add_argument(
+            "--cache",
+            action="append",
+            required=True,
+            metavar="DIR",
+            help="a local results directory (what `compare_writing_models run` wrote); repeat "
+            "the option for several folders",
+        )
+        target.add_argument(
+            "--testset",
+            required=True,
+            help="the test set the results were made from; every row is scored again from it",
+        )
+
+    sweeper = sub.add_parser(
+        "sweep", help="print one table per model over its temperatures, and the best row"
+    )
+    cache_arguments(sweeper)
+    sweeper.add_argument(
+        "--reference",
+        default=None,
+        metavar="MODEL@TEMPERATURE[:MODE]",
+        help="the row every difference is measured against (default: the first row of each model)",
+    )
+    sweeper.add_argument(
+        "--corrections",
+        action="store_true",
+        help="compare the corrections only, so a reference in another answer mode is allowed",
+    )
+    sweeper.set_defaults(handler=_sweep)
+
+    passer = sub.add_parser(
+        "passes", help="print what a second and a third pass of each configuration would add"
+    )
+    cache_arguments(passer)
+    passer.set_defaults(handler=_passes)
+
+
 def build_parser():
     """Return the argument parser of the tool."""
     import argparse  # noqa: PLC0415
@@ -900,6 +1053,7 @@ def build_parser():
     sheeter.set_defaults(handler=_sheet)
 
     _gate_commands(sub)
+    _sweep_commands(sub)
 
     manifests = sub.add_parser("manifest", help="print what a manifest pins, and check it")
     manifests.add_argument("--manifest", required=True, help="the manifest to read")

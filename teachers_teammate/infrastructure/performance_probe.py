@@ -602,4 +602,4 @@ def _writing_request(
         mode="review",
         compact_json=profile.compact_json,
     )
-    return system, prompt, schema_json(), profile.temperature, profile.think
+    return system, prompt, schema_json(), profile.review_temperature, profile.think

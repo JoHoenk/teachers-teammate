@@ -65,16 +65,17 @@ def test_the_temperature_and_thinking_of_the_profile_are_the_first_step() -> Non
     assert profile.think == "low"
 
 
-def test_a_model_gets_its_recommended_temperature_in_every_step() -> None:
+def test_step_one_gets_the_measured_temperature_and_the_others_the_makers() -> None:
     """
-    Given  a catalog model with a recommended temperature
+    Given  a catalog model with a measured step-① temperature and a maker's value
     When   its request profile is asked for
-    Then   all three steps carry that temperature
+    Then   step ① carries the measured value and steps ② and ③ the maker's
     """
-    profile = request_profile("qwen3:8b")
+    profile = request_profile("qwen3.5:9b")
 
-    assert profile.correct.temperature == profile.explain.temperature
-    assert profile.correct.temperature == profile.unclear.temperature
+    assert profile.correct.temperature == 0.05
+    assert profile.explain.temperature == 0.7
+    assert profile.unclear.temperature == 0.7
 
 
 def test_a_reasoning_family_is_asked_for_its_lowest_level_in_every_step() -> None:

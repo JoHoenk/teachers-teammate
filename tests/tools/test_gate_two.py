@@ -884,3 +884,80 @@ def test_a_negated_interval_counts_the_draws_at_or_above_zero() -> None:
     swapped = interval.negated()
 
     assert (swapped.p_not_better, swapped.p_not_worse) == (1.0, 1.0)
+
+
+def _page_per_language(**fields) -> list[fixtures.Text]:
+    """Return one page text of 300 words per deciding language, with the numbers *fields* names."""
+    return [
+        fixtures.Text(id="de-01", language="de", words=300, **fields),
+        fixtures.Text(id="en-01", language="en", words=300, **fields),
+    ]
+
+
+def test_the_comparison_shows_the_per_page_figures_of_both_models():
+    """
+    Given  two groups whose texts have known counts and lengths
+    When   they are compared
+    Then   the side-by-side figures say how many mistakes each fixes, gets wrong and misses per
+           page of 300 words
+    """
+    first = fixtures.group(*_page_per_language(tp=30, fp=10, fn=20))
+    second = fixtures.group(
+        *_page_per_language(tp=15, fp=5, fn=35),
+        model=fixtures.OTHER,
+        digest=fixtures.OTHER_DIGEST,
+    )
+
+    side = {check.name: check.value for check in gate_two.compare(first, second).side_by_side}
+
+    assert side["fixed per page"] == "30.0 / 15.0"
+    assert side["wrong per page"] == "10.0 / 5.0"
+    assert side["missed per page"] == "20.0 / 35.0"
+
+
+def test_the_comparison_warns_when_the_pooled_counts_and_the_mean_over_texts_disagree():
+    """
+    Given  a model that nearly gets a long text right and a short one wrong, against one that is
+           middling on both
+    When   the two are compared
+    Then   the pooled counts put the first ahead and the mean over texts puts it behind, and the
+           comparison says so instead of leaving the reader with one of the two views
+    """
+    first = fixtures.group(
+        fixtures.Text(id="de-01", language="de", words=1000, tp=90, fp=10, fn=10),
+        fixtures.Text(id="de-02", language="de", words=100, tp=1, fp=9, fn=9),
+        fixtures.Text(id="en-01", language="en", words=1000, tp=90, fp=10, fn=10),
+        fixtures.Text(id="en-02", language="en", words=100, tp=1, fp=9, fn=9),
+    )
+    second = fixtures.group(
+        fixtures.Text(id="de-01", language="de", words=1000, tp=60, fp=40, fn=40),
+        fixtures.Text(id="de-02", language="de", words=100, tp=6, fp=4, fn=4),
+        fixtures.Text(id="en-01", language="en", words=1000, tp=60, fp=40, fn=40),
+        fixtures.Text(id="en-02", language="en", words=100, tp=6, fp=4, fn=4),
+        model=fixtures.OTHER,
+        digest=fixtures.OTHER_DIGEST,
+    )
+
+    side = {check.name: check.value for check in gate_two.compare(first, second).side_by_side}
+
+    assert side["F0.5 by texts"] == "0.50 / 0.60 (Δ -0.100)"
+    assert side["by texts against pooled"] == "the two views order the pair differently"
+
+
+def test_the_comparison_stays_quiet_when_the_two_views_agree():
+    """
+    Given  a model that is better than the other on every text
+    When   the two are compared
+    Then   the mean over texts is shown and no warning is printed, because the two views agree
+    """
+    first = fixtures.group(*_page_per_language(tp=30, fp=10, fn=20))
+    second = fixtures.group(
+        *_page_per_language(tp=15, fp=5, fn=35),
+        model=fixtures.OTHER,
+        digest=fixtures.OTHER_DIGEST,
+    )
+
+    side = {check.name: check.value for check in gate_two.compare(first, second).side_by_side}
+
+    assert side["F0.5 by texts"] == "0.71 / 0.58 (Δ +0.137)"
+    assert "by texts against pooled" not in side

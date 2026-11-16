@@ -486,13 +486,14 @@ _SAME_LINE = 0.7
 """A first line this similar to the source's first line, bar a colon, is that line."""
 
 
-def framing_problem(source: str, corrected: str) -> str | None:
+def framing_problem(source: str, corrected: str, hunks: Sequence[Hunk] | None = None) -> str | None:
     """Return why *corrected* is *source* with something written around it, else ``None``.
 
     Step ① must answer the corrected text and nothing else.  The window check does not see a short
     lead-in, so it is looked for here, on plain text: a first line that ends in a colon where the
     source's does not, or :data:`FRAMING_WORDS` or more new words before the first (or after the
-    last) word of the source.
+    last) word of the source.  A caller that has the word diff of the two stripped texts passes it
+    as *hunks*.
     """
     source, corrected = source.strip(), corrected.strip()
     first = next((line for line in corrected.splitlines() if line.strip()), "")
@@ -502,7 +503,7 @@ def framing_problem(source: str, corrected: str) -> str | None:
         own = similarity(first.rstrip().removesuffix(":").rstrip(), source_first.rstrip())
         if own < _SAME_LINE:
             return "the answer starts with a lead-in line, not with the text"
-    found = word_diff(source, corrected)
+    found = word_diff(source, corrected) if hunks is None else hunks
     if not found:
         return None
     head, tail = found[0], found[-1]

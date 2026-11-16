@@ -19,6 +19,9 @@ from .scoring import ScoredItem
 BAND_ORDER: tuple[str, ...] = ("short", "page", "pages")
 """The bands of the recipe, in the order of the table; a band it does not know comes last."""
 
+WORDS_PER_PAGE = 300
+"""The page the per-page figures are counted for: a page of a student's text, not a band."""
+
 _HALF_KEYS: tuple[str, ...] = ("tp_h1", "fn_h1", "tp_h2", "fn_h2")
 """The exact matches and the misses of each half of a text."""
 
@@ -39,8 +42,26 @@ class ModelSummary:
     """Share of the model's changes the reference agrees with; ``None`` when it made none."""
     recall: float | None
     """Share of the reference's changes the model found; ``None`` when there are none."""
+    located: int
+    """Reference changes the model touched at all, with the same or another replacement."""
+    ref_edits: int
+    """Reference changes of the scored texts."""
     f_beta: float | None
     """The weighted mean of the two; ``None`` when nothing was scored."""
+    mean_text_f_beta: float | None
+    """The F-score of each text, averaged over the texts; ``None`` when nothing was scored.
+
+    The pooled figures above weight a long text more than a short one, which is what a language's
+    score should do; this one weights every text alike, so a few long texts cannot carry a model.
+    """
+    mean_text_precision: float | None
+    """The precision of each text, averaged over the texts that made a change."""
+    mean_text_recall: float | None
+    """The recall of each text, averaged over the texts whose reference has a change."""
+    words: int
+    """Words and marks of the scored error texts, as the manifest counts them."""
+    texts: int
+    """The scored error texts; the ``correct`` ones of the language are not among them."""
     gleu: float | None
     """GLEU of the model's texts, from the summed counts; ``None`` when none was scored."""
     gleu_source: float | None
@@ -73,6 +94,44 @@ class ModelSummary:
     needed: int
     orphans_per_text: float
     seconds_per_text: float
+    located_fixed: int = 0
+    """Reference changes fixed exactly, counted over the rows that store ``located`` only.
+
+    :attr:`noticed_gap` subtracts it from ``located``: both must come from the same rows, or a
+    report that pools older rows (no ``located``) with newer ones gets a negative gap.
+    """
+
+    @property
+    def recall_located(self) -> float | None:
+        """Share of the reference's changes the model touched at all: "found the spot".
+
+        The second recall of the report.  The gap to :attr:`recall` is what the model noticed and
+        fixed differently, which the F-score counts as a miss; ``None`` for a run written before
+        the count was stored.
+        """
+        return share_of(self.located, self.ref_edits)
+
+    @property
+    def noticed_gap(self) -> float | None:
+        """Share of the reference's changes the model noticed but did not fix as the reference did."""
+        if not self.ref_edits:
+            return None
+        return (self.located - self.located_fixed) / self.ref_edits
+
+    @property
+    def fixed_per_page(self) -> float | None:
+        """Mistakes fixed per page of 300 words, from the pooled counts."""
+        return _per_page(self.score.true_positives, self.words)
+
+    @property
+    def wrong_per_page(self) -> float | None:
+        """Wrong or unneeded changes per page of 300 words, from the pooled counts."""
+        return _per_page(self.score.false_positives, self.words)
+
+    @property
+    def missed_per_page(self) -> float | None:
+        """Mistakes missed per page of 300 words, from the pooled counts."""
+        return _per_page(self.score.false_negatives, self.words)
 
 
 def summarise(items: Sequence[ScoredItem], beta: float = DEFAULT_BETA) -> list[ModelSummary]:
@@ -145,7 +204,14 @@ def _summary(
         score=score,
         precision=precision,
         recall=recall,
+        located=sum(_count(row, "located") for row in rows),
+        ref_edits=sum(_count(row, "ref_edits") for row in rows),
         f_beta=scoring.f_beta(score, beta),
+        mean_text_f_beta=_mean_over_texts(rows, lambda row: _text_f_beta(row, beta)),
+        mean_text_precision=_mean_over_texts(rows, _text_precision),
+        mean_text_recall=_mean_over_texts(rows, _text_recall),
+        words=sum(row.words for row in rows),
+        texts=len(rows),
         gleu=model_gleu,
         gleu_source=source_gleu,
         alone=sum(_count(row, "alone") for row in rows) + sum(row.unchanged for row in correct),
@@ -167,12 +233,68 @@ def _summary(
         needed=sum(row.needed for row in rows),
         orphans_per_text=sum(row.orphans for row in rows) / len(rows),
         seconds_per_text=sum(row.seconds for row in sent) / len(sent),
+        located_fixed=sum(row.true_positives for row in rows if "located" in row.scores),
     )
 
 
 def _count(row: ScoredItem, key: str) -> int:
     """Return one stored count of *row*, or 0 when the row was written before it was stored."""
     return int(row.scores.get(key, 0))
+
+
+def _text_precision(row: ScoredItem) -> float | None:
+    """Return one text's precision, or ``None`` when the model made no change in it."""
+    made = row.true_positives + row.false_positives
+    return row.true_positives / made if made else None
+
+
+def _text_recall(row: ScoredItem) -> float | None:
+    """Return one text's recall, or ``None`` when its reference has no change."""
+    expected = row.true_positives + row.false_negatives
+    return row.true_positives / expected if expected else None
+
+
+def _text_f_beta(row: ScoredItem, beta: float) -> float | None:
+    """Return one text's F-score, or ``None`` when nothing was scored in it."""
+    score = EditScore(
+        true_positives=row.true_positives,
+        false_positives=row.false_positives,
+        false_negatives=row.false_negatives,
+    )
+    return scoring.f_beta(score, beta)
+
+
+def _mean_over_texts(rows: Sequence[ScoredItem], measure) -> float | None:
+    """Return the mean of *measure* over the texts that have a value, or ``None`` when none has.
+
+    A text without a value is skipped rather than counted as 0: a text the model left untouched
+    has no precision, and counting it as 0.00 would drag the mean down as if it had failed.
+    """
+    values = [value for row in rows if (value := measure(row)) is not None]
+    return sum(values) / len(values) if values else None
+
+
+def pooled_per_page(
+    parts: Sequence[Sequence[ModelSummary]], count: str, languages: Sequence[str]
+) -> float | None:
+    """Return one count of the score per page of 300 words, pooled over repeats and languages.
+
+    The one rule of the per-page figures: band rows are skipped, only *languages* count, and the
+    counts and words of every repeat are summed.  *count* names a field of ``ModelSummary.score``.
+    """
+    total = words = 0
+    for part in parts:
+        for row in part:
+            if row.band or row.language not in languages:
+                continue
+            total += getattr(row.score, count)
+            words += row.words
+    return _per_page(total, words)
+
+
+def _per_page(count: int, words: int) -> float | None:
+    """Return *count* per page of 300 words, or ``None`` when the texts have no words."""
+    return count / words * WORDS_PER_PAGE if words else None
 
 
 def _gleu_pair(rows: Sequence[ScoredItem]) -> tuple[float | None, float | None]:

@@ -54,6 +54,7 @@ _OCR_SRCS = [
     "domain/proofreading/result.py",
     "domain/proofreading/review.py",
     "domain/proofreading/sentences.py",
+    "domain/proofreading/text_loss.py",
     "domain/proofreading/word_diff.py",
     "domain/run_summary.py",
     "domain/stages.py",

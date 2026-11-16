@@ -478,9 +478,9 @@ def test_preview_hash_changes_with_preprocessing_field(tmp_path: Path) -> None:
     assert h_auto != h_none
 
 
-def test_correction_config_hash_changes_with_the_recommended_temperature(tmp_path: Path) -> None:
+def test_correction_config_hash_changes_with_the_step_one_temperature(tmp_path: Path) -> None:
     """
-    Given  a model whose recommended temperature changes between two app versions
+    Given  a model whose measured step-① temperature changes between two app versions
     When   _correction_config_hash() is called before and after
     Then   the two hashes differ (the temperature is part of what is sent)
     """
@@ -493,7 +493,7 @@ def test_correction_config_hash_changes_with_the_recommended_temperature(tmp_pat
         correction_model="gemma4:e4b",
     )
     before = svc._correction_config_hash()
-    with patch.dict(model_catalog.RECOMMENDED_TEMPERATURES, {"gemma4:e4b": 0.5}):
+    with patch.dict(model_catalog.STEP_ONE_TEMPERATURES, {"gemma4:e4b": 0.5}):
         assert svc._correction_config_hash() != before
 
 
@@ -512,7 +512,7 @@ def test_eval_config_hash_changes_with_the_recommended_temperature(tmp_path: Pat
         evaluate_model="gemma4:e4b",
     )
     before = svc._eval_config_hash()
-    with patch.dict(model_catalog.RECOMMENDED_TEMPERATURES, {"gemma4:e4b": 0.5}):
+    with patch.dict(model_catalog.MAKER_TEMPERATURES, {"gemma4:e4b": 0.5}):
         assert svc._eval_config_hash() != before
 
 
@@ -1207,3 +1207,29 @@ def test_the_cache_service_keys_the_window_it_was_given(tmp_path: Path) -> None:
     )
 
     assert base._correction_config_hash() != larger._correction_config_hash()
+
+
+def test_a_changed_temperature_of_steps_two_and_three_changes_the_correction_key(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """
+    Given  an Ollama config and a release that changes the maker's temperature of its model
+    When   the correction fingerprint is computed before and after
+    Then   the key differs, though step ①'s measured temperature is the same
+    """
+    from teachers_teammate.domain import model_catalog  # noqa: PLC0415
+    from teachers_teammate.infrastructure.workflow.cache_service import (  # noqa: PLC0415
+        compute_correction_config_hash,
+    )
+
+    cfg = make_config(
+        tmp_path,
+        correction_enabled=True,
+        correction_provider="ollama",
+        correction_model="qwen3.5:9b",
+    )
+    before = compute_correction_config_hash(cfg)
+
+    monkeypatch.setitem(model_catalog.MAKER_TEMPERATURES, "qwen3.5:9b", 0.5)
+
+    assert compute_correction_config_hash(cfg) != before

@@ -651,9 +651,9 @@ def test_only_a_model_that_is_not_billed_is_asked_again_after_a_cut_off(
 
 def test_the_request_profile_reaches_every_kind_of_corrector(tmp_path: Path) -> None:
     """
-    Given  a catalog model at its recommended temperature, proofread locally and through LangChain
+    Given  a catalog model proofread locally and an online model
     When   the correction stage is built for each path
-    Then   both builders receive the model's profile and its temperature
+    Then   both builders receive the model's profile and the temperature of its first step
     """
     from teachers_teammate.domain.model_catalog import request_profile  # noqa: PLC0415
 
@@ -678,7 +678,7 @@ def test_the_request_profile_reaches_every_kind_of_corrector(tmp_path: Path) -> 
     StageBuilder(config=local, factory=factory).build_correction_and_anonymizer(MagicMock())
     StageBuilder(config=online, factory=factory).build_correction_and_anonymizer()
 
-    assert native.call_args.args[4] == 1.0
+    assert native.call_args.args[4] == request_profile("gemma4:e4b").review_temperature
     assert native.call_args.args[6] == request_profile("gemma4:e4b")
     assert llm.call_args.args[3] == 0.2
     assert langchain.call_args.args[3] == request_profile("gpt-4o", "openai")

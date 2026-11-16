@@ -19,7 +19,7 @@ widgets only render the results.
 
 from __future__ import annotations
 
-from collections.abc import Collection, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass, replace
 from enum import StrEnum
 from typing import TYPE_CHECKING, Literal
@@ -96,7 +96,10 @@ APPLE_GPU_MEMORY_SHARE = 0.66
 
 
 DEFAULT_CORRECTION_TEMPERATURE = 0.2
-"""The proofreading temperature of a model whose maker states none: the app's long-time value."""
+"""The proofreading temperature of a step whose model has no measured or recommended value.
+
+The app's long-time value, and what every online service gets in every step.
+"""
 
 DEFAULT_REVIEW_TEMPERATURE = 0.7
 """The content-review temperature of a model whose maker states none."""
@@ -104,7 +107,7 @@ DEFAULT_REVIEW_TEMPERATURE = 0.7
 OCR_TEMPERATURE = 0.0
 """Text recognition is deterministic: reading a page has one right answer."""
 
-RECOMMENDED_TEMPERATURES: dict[str, float] = {
+MAKER_TEMPERATURES: dict[str, float] = {
     "gemma4:e4b": 1.0,
     "gemma4:12b": 1.0,
     "gemma4:e2b": 1.0,
@@ -121,7 +124,11 @@ RECOMMENDED_TEMPERATURES: dict[str, float] = {
 }
 """The temperature each model's maker recommends (model cards read on 2026-11-11).
 
-Teachers cannot set a temperature: the app sends this value, so a model is used the way its
+Steps ② and ③ run at this value, and so does the content review: they answer a small JSON
+object, and no measurement has compared their temperatures yet.  Step ① does not — it rewrites
+the text, and its temperature is measured (:data:`STEP_ONE_TEMPERATURES`).
+
+Teachers cannot set a temperature: the app sends these values, so a model is used the way its
 maker tuned it and the evaluation tools measure exactly what a teacher's run sends.  Qwen's value
 is the card's *non-thinking* row, because the app sends ``think=False``; the tags ship the
 thinking value.  Ministral's card says "below 0.1", so 0.05.  Liquid's cards say 0.2 for
@@ -130,6 +137,31 @@ the 8B entry equals the default and is listed so the table says the card states 
 maker states nothing, or states 0.2, is absent and gets the default: ``gpt-oss:20b``,
 ``mistral:latest``, the Granite, Apertus and EuroLLM builds.  The table also covers models the
 catalog does not list, because the evaluation tools check candidates before they are catalogued.
+"""
+
+STEP_ONE_TEMPERATURES: dict[str, float] = {
+    "qwen3.5:4b": 0.05,
+    "qwen3.5:9b": 0.05,
+    "ministral-3:8b": 0.05,
+    "ministral-3:14b": 0.05,
+    "ministral-3:3b": 0.05,
+    "mistral-nemo:12b": 0.05,
+}
+"""The measured temperature of step ① for the models that want a low one.
+
+Step ① rewrites the text, so its temperature is measured rather than taken from the card: 0.05,
+0.4, 0.7 and 1.0 over twelve models, three repeats each, on the official test set.  No model was
+better above 0.4, and these six fall with every step up, so they keep 0.05.  Every other model is
+tied with its best value and gets :data:`STEP_ONE_DEFAULT_TEMPERATURE`.  ``ministral-3:3b`` was
+not measured itself: its card says "below 0.1" and its family falls with every step up, so it
+keeps the family's value.
+"""
+
+STEP_ONE_DEFAULT_TEMPERATURE = 0.4
+"""The measured temperature of step ① for every model not in :data:`STEP_ONE_TEMPERATURES`.
+
+0.4 rather than 0.05 although both are tied with the best value: one model lost text at 0.05, and
+the one runaway loop seen so far was at a low temperature.
 """
 
 
@@ -239,6 +271,16 @@ class RequestProfile:
     def temperature(self) -> float:
         """Return the temperature of step ①, the step that rewrites the text."""
         return self.correct.temperature
+
+    @property
+    def review_temperature(self) -> float:
+        """Return the temperature of the single JSON-answering review request the app sends today.
+
+        That request writes the corrected text and the explanations in one answer, which is the
+        kind of answer steps ② and ③ give, so it keeps the maker's value; step ①'s measured value
+        belongs to a plain-text rewrite and has not been measured for it.
+        """
+        return self.explain.temperature
 
     @property
     def think(self) -> bool | str:
@@ -633,15 +675,37 @@ def licence_note(tag: str) -> str:
     return spec.licence.note if spec is not None and spec.licence is not None else ""
 
 
-def recommended_temperature(tag: str) -> float | None:
-    """Return the temperature the maker of *tag* recommends, or ``None`` when it states none.
+def _table_value(table: Mapping[str, float], tag: str) -> float | None:
+    """Return the value *tag* has in *table*, or ``None`` when it has none.
 
     A tag written with ``:latest`` names the same model, so both spellings are looked up.
     """
     normalized = normalize_tag(tag)
     for candidate in (normalized, normalized.removesuffix(":latest")):
-        if candidate in RECOMMENDED_TEMPERATURES:
-            return RECOMMENDED_TEMPERATURES[candidate]
+        if candidate in table:
+            return table[candidate]
+    return None
+
+
+def recommended_temperature(tag: str) -> float | None:
+    """Return the temperature the maker of *tag* recommends, or ``None`` when it states none."""
+    return _table_value(MAKER_TEMPERATURES, tag)
+
+
+def step_one_temperature(tag: str) -> float | None:
+    """Return the measured temperature of step ① for *tag*, ``None`` when it was not measured.
+
+    A variant of a measured tag (``qwen3.5:4b-q8_0``: the same model in another quantisation)
+    has its model's value, because the models in :data:`STEP_ONE_TEMPERATURES` fall with every
+    step up and a variant that fell through to the default would run at 0.4.
+    """
+    exact = _table_value(STEP_ONE_TEMPERATURES, tag)
+    if exact is not None:
+        return exact
+    normalized = normalize_tag(tag)
+    for measured, value in STEP_ONE_TEMPERATURES.items():
+        if normalized.startswith(f"{measured}-"):
+            return value
     return None
 
 
@@ -657,23 +721,33 @@ def _temperature(tag: str, provider: str, default: float) -> float:
     return default if recommended is None else recommended
 
 
+def _step_one_temperature(tag: str, provider: str) -> float:
+    """Return the temperature step ① is sent at: measured for a local model, else the default."""
+    if provider != "ollama":
+        return DEFAULT_CORRECTION_TEMPERATURE
+    measured = step_one_temperature(tag)
+    return STEP_ONE_DEFAULT_TEMPERATURE if measured is None else measured
+
+
 def request_profile(tag: str, provider: str = "ollama") -> RequestProfile:
     """Return how the app asks *tag* to proofread: the exchange, its steps and their settings.
 
     The one place the app, the instructions dialog, the cache key and the evaluation tools ask,
     so a profile change reaches all of them and no two can disagree about the request that is
-    sent.  A model the catalog does not know gets the default request.  All three steps start
-    from the model's own temperature and thinking level; per-step values come with a tuning
-    decision.
+    sent.  A model the catalog does not know gets the default request.  Step ① runs at its
+    measured temperature (:data:`STEP_ONE_TEMPERATURES`), steps ② and ③ at the maker's
+    (:data:`MAKER_TEMPERATURES`), because no measurement has compared theirs yet.
     """
     spec = find_spec(tag) if provider == "ollama" else None
     base = DEFAULT_REQUEST_PROFILE if spec is None else spec.request_profile
     level = think_level(tag) if provider == "ollama" else None
-    step = StepProfile(
-        temperature=_temperature(tag, provider, DEFAULT_CORRECTION_TEMPERATURE),
-        think=level or False,
+    maker = _temperature(tag, provider, DEFAULT_CORRECTION_TEMPERATURE)
+    return replace(
+        base,
+        correct=StepProfile(temperature=_step_one_temperature(tag, provider), think=level or False),
+        explain=StepProfile(temperature=maker, think=level or False),
+        unclear=StepProfile(temperature=maker, think=level or False),
     )
-    return replace(base, correct=step, explain=step, unclear=step)
 
 
 def review_temperature(tag: str, provider: str = "ollama") -> float:

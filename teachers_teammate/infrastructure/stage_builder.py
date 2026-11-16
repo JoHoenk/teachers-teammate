@@ -358,7 +358,7 @@ class StageBuilder:
                 client,
                 cfg.correction_prompt,
                 float(cfg.ocr_timeout),
-                profile.temperature,
+                cfg.correction_temperature,
                 settings,
                 profile,
             )
@@ -367,7 +367,7 @@ class StageBuilder:
             cfg.correction_provider,
             cfg.effective_correction_model,
             cfg.ollama_url,
-            profile.temperature,
+            cfg.correction_temperature,
         )
         return factory.build_corrector(llm, cfg.correction_prompt, settings, profile)
 

@@ -14,8 +14,8 @@ change, and a teacher who edits the text afterwards still sees the notes that st
 
 What a failure means:
 
-* ① cut off after its tries, a transport error, or framing twice — the file **fails** and the
-  source is kept.  A half-corrected text is never stored.
+* ① cut off after its tries, a transport error, framing twice, or much less or much more of the
+  text twice — the file **fails** and the source is kept.  A half-corrected text is never stored.
 * ② a batch that fails leaves its edits unexplained and warns; it never fails the file.
 * ③ no answer leaves the unclear list empty and warns; it never fails the file.
 """
@@ -52,6 +52,7 @@ from ....domain.proofreading.quotes import find_spans, map_back
 from ....domain.proofreading.result import ExchangeKind, StepReport
 from ....domain.proofreading.review import CorrectionReview, UnclearNote, edit_note
 from ....domain.proofreading.sentences import sentence_spans
+from ....domain.proofreading.text_loss import dropped_text
 from ....domain.proofreading.word_diff import Hunk, word_diff
 from ...ocr_formats import (
     MarkdownRenderer,
@@ -76,6 +77,12 @@ CORRECT_FAILED = "Proofreading failed; keeping original text."
 
 FRAMING_WARNING = "The model answered with a remark around the text; keeping original text."
 """Warning of a file whose step ① twice answered with a lead-in or a closing remark."""
+
+LOST_TEXT_WARNING = "The model dropped part of the text; keeping original text."
+"""Warning of a file whose step ① twice answered with much less of the text than it was sent."""
+
+ADDED_TEXT_WARNING = "The model added text of its own; keeping original text."
+"""Warning of a file whose step ① twice answered with much more text than it was sent."""
 
 EXPLAIN_FAILED = "Explanations are missing for part of the text."
 """Warning of a file whose step ② left edits unexplained."""
@@ -215,9 +222,9 @@ class TExchange:
     ) -> tuple[str | None, str]:
         """Return the corrected text, or ``None`` and the warning that says why not.
 
-        A lead-in or a closing remark is asked for once more: the model answered, it just wrote
-        around the text.  Twice is a failure, because the file must not be stored with a remark
-        in it.
+        An answer that is not the text is asked for once more: a lead-in or a closing remark
+        around it, or much less of the text than was sent.  Twice is a failure, because the file
+        must not be stored with a remark in it or with a paragraph missing.
         """
         request = self._correct_request(request_text, ctx)
         outcome = self._runner.run(request, _plain_answer)
@@ -226,14 +233,18 @@ class TExchange:
             return None, outcome.error or CORRECT_FAILED
         if not outcome.value.strip():
             return None, CORRECT_FAILED
-        if framing_problem(request_text, outcome.value) is None:
+        problem = _answer_problem(request_text, outcome.value)
+        if problem is None:
             return outcome.value, ""
         retry = self._runner.run(request, _plain_answer)
         reports.extend(retry.reports)
         if retry.value is None:
             return None, retry.error or CORRECT_FAILED
-        if not retry.value.strip() or framing_problem(request_text, retry.value) is not None:
-            return None, FRAMING_WARNING
+        if not retry.value.strip():
+            return None, CORRECT_FAILED
+        problem = _answer_problem(request_text, retry.value)
+        if problem is not None:
+            return None, problem
         return retry.value, ""
 
     def _correct_request(self, text: str, ctx: ProofreadContext) -> StepRequest:
@@ -413,6 +424,17 @@ class TExchange:
 def _plain_answer(text: str) -> tuple[str, str]:
     """Return a plain-text answer as it is: step ① has no schema to validate."""
     return text, ""
+
+
+def _answer_problem(request_text: str, answer: str) -> str | None:
+    """Return the warning of an answer that must not be stored, ``None`` for a usable one."""
+    hunks = word_diff(request_text.strip(), answer.strip())
+    if framing_problem(request_text, answer, hunks) is not None:
+        return FRAMING_WARNING
+    measured = dropped_text(request_text, answer, hunks)
+    if measured is None:
+        return None
+    return LOST_TEXT_WARNING if measured.lost else ADDED_TEXT_WARNING
 
 
 def _shielded(source: str, text_format: TextFormat) -> tuple[str, ShieldMap | None, object | None]:

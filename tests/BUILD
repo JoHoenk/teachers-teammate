@@ -1249,6 +1249,21 @@ py_test(
     deps = _TOOL_DEPS + ["//tools:prepare_gec_testset_lib"],
 )
 
+# The recipe of gec-2026-12-heldout: the same bands and filters on the splits the first set never
+# reads, the CEFR level of an English item, and the committed manifest of the set.
+py_test(
+    name = "test_model_eval_recipe_gec_2026_12_heldout",
+    size = "medium",
+    srcs = _COMMON_SRCS + [
+        "tools/band_corpus.py",
+        "tools/test_recipe_gec_2026_12_heldout.py",
+    ],
+    args = ["tools/test_recipe_gec_2026_12_heldout.py"],
+    data = ["//evaluations/proofreading:all"],
+    main = "run_test.py",
+    deps = _TOOL_DEPS + ["//tools:prepare_gec_testset_lib"],
+)
+
 # A corpus whose adapter is defined in the test file itself goes through build,
 # check, export and both validation modes, and is named on the command line. Nothing else changes.
 py_test(
@@ -1687,6 +1702,7 @@ test_suite(
         ":test_model_eval_protocol",
         ":test_model_eval_quality",
         ":test_model_eval_recipe_gec_2026_12",
+        ":test_model_eval_recipe_gec_2026_12_heldout",
         ":test_model_eval_redaction",
         ":test_model_eval_report_sources",
         ":test_model_eval_results",

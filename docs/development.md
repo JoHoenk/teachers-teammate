@@ -970,6 +970,28 @@ glued group of correct sentences; the sentences the reference leaves alone sit i
 corpora are real learner text and licensed for research, so neither they nor the built set belong
 in the repository.
 
+**The held-out set.**  `gec-2026-12` is the set a prompt, a temperature or a text budget is tuned
+on, so a choice that wins there may only fit its 22 texts.  `gec-2026-12-heldout` has the same shape
+and filters from splits the first never reads — Falko-MERLIN `dev` and W&I `train` — and a choice
+is adopted only when it wins on both.  Build it like the first:
+`prepare_gec_testset --testset gec-2026-12-heldout --corpora ~/gec-testset/corpora.json --out
+~/gec-testset/set-2026-12-heldout`.  French is not part of it.  No text of those splits reaches
+the 6,400 characters the app split at in eval version 1, so the two `pages` slots take texts of at
+most 5,800 characters (3,272 to 4,444 in the committed set).  The current budget is about 2,800
+characters, so every `pages` text of both sets is split by the app now; a test checks each
+committed manifest against the budget, not against the two constants.  The recipes share their
+procedure (slots, filters, draw) in `tools/model_eval/recipes/_bands.py`, but each recipe writes out
+its own `Rules` (bands, character limits, edit filters): a recipe is frozen once its manifest is
+committed, so a change for one must not move the other, and a test per recipe pins its draw on the
+invented band corpus.  A pointer names its split only when it is not the corpus's default.  An
+English item of the held-out set records the text's CEFR level (`level`, `B1`: W&I's `B1.ii`
+without the sub-level) and the build copies it into `TestRecord.level`; the manifest and the record
+take it from the same place, the corpus.  **No run reads the level yet**: every text is asked at
+the default level, in both sets, so their results stay comparable.  Asking each text at its own
+level changes the instructions every run hashes, so it is a step for both sets at once.
+Falko-MERLIN carries no level.  A set whose recipe records no level (`gec-2026-12`) keeps its
+manifest and its records byte for byte.
+
 **Error labels.**  Both corpora come with an M2 file that gives every correction a label
 (`R:DET:FORM`, `M:PUNCT`…).  `prepare_gec_testset.py` finds the annotated tokens again in the text
 (`tools/model_eval/error_labels.py`) and stores, for every change the reference makes, the label

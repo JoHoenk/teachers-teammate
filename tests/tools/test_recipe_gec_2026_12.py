@@ -12,6 +12,7 @@ the set that the model screen runs on.
 
 from __future__ import annotations
 
+import hashlib
 import itertools
 import json
 import os
@@ -25,6 +26,9 @@ from tests.tools import band_corpus
 from tools import prepare_gec_testset
 from tools.model_eval import measure, protocol, recipes, results, testset
 from tools.model_eval.recipes import gec_2026_12
+
+_DRAW_SHA256 = "a7afdded101df3c5f276bf099524d9dd7442e9dc96c7cdf54f0397b873955d33"
+"""The sha256 of the items the recipe draws from the band corpus (sorted-key JSON)."""
 
 _COMMITTED = Path(__file__).resolve().parents[2] / "evaluations" / "proofreading"
 """The repository directory the committed manifests live in."""
@@ -340,6 +344,22 @@ def test_the_committed_new_set_records_the_sentences_of_every_text(committed):
         assert all(start < end for start, end in spans)
         assert all(end <= start for (_, end), (start, _) in itertools.pairwise(spans))
         assert all(0 <= index < len(spans) for index in item["unchanged_sentences"])
+
+
+def test_the_draw_is_pinned(tmp_path):
+    """
+    Given  the band corpus of gec-2026-12 and the items the recipe draws from it
+    When   the items are hashed
+    Then   the hash is the one written down, so a change of the code ``_bands`` shares with the
+           held-out recipe cannot move what this frozen recipe selects without a test failing
+    """
+    items = gec_2026_12.select(band_corpus.build_band_corpus(tmp_path))
+    digest = hashlib.sha256(json.dumps(items, sort_keys=True).encode()).hexdigest()
+
+    assert digest == _DRAW_SHA256, (
+        "gec-2026-12 now selects other texts from the band corpus; its committed manifest "
+        "would no longer be what the recipe builds"
+    )
 
 
 def test_every_pages_text_is_split_at_window_8192_and_a_page_text_is_not(committed):

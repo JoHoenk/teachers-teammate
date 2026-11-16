@@ -1,14 +1,17 @@
 """An invented corpus with the bands of ``gec-2026-12``, small enough to build in a test.
 
-The real set draws on Falko-MERLIN and W&I, which are not part of the repository, so the tests of
-the recipe build their own corpus in ``tmp_path``: a Falko-MERLIN ``test`` split and a W&I ``dev``
-split, in the corpora's own file formats, with invented sentences whose edits are known.  Every
-slot of the recipe gets one candidate more than it needs, so the seed has a choice, and the two
+The real sets draw on Falko-MERLIN and W&I, which are not part of the repository, so the tests of
+the recipes build their own corpus in ``tmp_path``: a Falko-MERLIN split and a W&I split, in the
+corpora's own file formats, with invented sentences whose edits are known.  The splits are the
+caller's choice (``test`` and ``dev`` for ``gec-2026-12``, ``dev`` and ``train`` for its held-out
+twin); only the two named are written, so a recipe that reads another split finds no file.  Every
+slot of the recipes gets one candidate more than it needs, so the seed has a choice, and the
 "pages" slots get two candidates each.
 
 The texts that must never be chosen are here too: one with too few reference edits, one that is a
 near-rewrite, one of 79 and one of 151 words (outside the short band), one of 1,250 words (outside
-the pages band) and four English essays that break the same filters (66 and 160 words) and one whose M2 sentences are missing, so it has no labels.
+the pages band) and four English essays that break the same filters (66 and 160 words), and one
+whose M2 sentences are missing, so it has no labels.
 
 Every generated word carries a running number: ``SequenceMatcher`` slows down when the same tokens
 recur hundreds of times, and a text of 700 words is built from a handful of shapes.
@@ -147,8 +150,8 @@ def _m2_sentence(source: list[str], reference: list[str], position: int | None) 
     return "\n".join(lines) + "\n\n"
 
 
-def _german(root: Path, texts: Collection[Text]) -> None:
-    """Write the two source files and the M2 file of the German test split."""
+def _german(root: Path, texts: Collection[Text], split: str) -> None:
+    """Write the two source files and the M2 file of one German split."""
     (root / "source").mkdir(parents=True, exist_ok=True)
     m2: list[str] = []
     for origin in GERMAN_ORIGINS:
@@ -159,9 +162,9 @@ def _german(root: Path, texts: Collection[Text]) -> None:
             for source, reference, position in _pairs(text):
                 lines.append(f"{text.id}\t{' '.join(source)}\t{' '.join(reference)}")
                 m2.append(_m2_sentence(source, reference, position))
-        path = root / "source" / f"{origin}-id-ctok-zh1.txt.test"
+        path = root / "source" / f"{origin}-id-ctok-zh1.txt.{split}"
         path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    (root / "fm-test.m2").write_text("".join(m2), encoding="utf-8")
+    (root / f"fm-{split}.m2").write_text("".join(m2), encoding="utf-8")
 
 
 def _essay(text: Text, pairs: list[tuple[list[str], list[str], int | None]]) -> dict:
@@ -177,15 +180,15 @@ def _essay(text: Text, pairs: list[tuple[list[str], list[str], int | None]]) -> 
         cursor += sum(len(token) + 1 for token in source)
     return {
         "id": text.id,
-        "cefr": text.origin,
+        "cefr": f"{text.origin}1.ii",
         "text": " ".join(tokens),
         "edits": [[0, edits]],
         "userid": "u-1",
     }
 
 
-def _english(root: Path, texts: Collection[Text]) -> None:
-    """Write the JSON and M2 files of the W&I dev split, one pair per level."""
+def _english(root: Path, texts: Collection[Text], split: str) -> None:
+    """Write the JSON and M2 files of one W&I split, one pair per level."""
     (root / "json").mkdir(parents=True, exist_ok=True)
     (root / "m2").mkdir(parents=True, exist_ok=True)
     for level in ENGLISH_LEVELS:
@@ -201,20 +204,28 @@ def _english(root: Path, texts: Collection[Text]) -> None:
                     _m2_sentence(source, reference, position)
                     for source, reference, position in pairs
                 )
-        (root / "json" / f"{level}.dev.json").write_text("".join(rows), encoding="utf-8")
-        (root / "m2" / f"{level}.dev.gold.bea19.m2").write_text("".join(m2), encoding="utf-8")
+        (root / "json" / f"{level}.{split}.json").write_text("".join(rows), encoding="utf-8")
+        (root / "m2" / f"{level}.{split}.gold.bea19.m2").write_text("".join(m2), encoding="utf-8")
 
 
-def build_band_corpus(root: Path, *, leave_out: Collection[str] = ()) -> Corpora:
+def build_band_corpus(
+    root: Path,
+    *,
+    leave_out: Collection[str] = (),
+    german_split: str = "test",
+    english_split: str = "dev",
+) -> Corpora:
     """Write the corpus below *root* and return the :class:`Corpora` that reads it.
 
-    *leave_out* names texts to omit, so a test can make a slot's pool too small.
+    *leave_out* names texts to omit, so a test can make a slot's pool too small.  The splits are
+    those the texts are written to: ``test`` and ``dev`` for ``gec-2026-12``, ``dev`` and ``train``
+    for its held-out twin.
     """
     texts = [text for text in TEXTS if text.id not in set(leave_out)]
     falko = root / "fm" / "data"
     english = root / "bea" / "wi+locness"
-    _german(falko, texts)
-    _english(english, texts)
+    _german(falko, texts, german_split)
+    _english(english, texts, english_split)
     return Corpora({"falko-merlin": falko, "wi": english})
 
 

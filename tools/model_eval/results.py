@@ -72,6 +72,10 @@ class TestRecord:
     unchanged_sentences: tuple[int, ...] = ()
     """Indices into :attr:`sentence_spans` of the sentences the reference leaves alone."""
 
+    level: str = ""
+    """The CEFR level the test set records for the text (``B1``); empty when its recipe records
+    none.  No run reads it yet: every text is asked about at the default level."""
+
     def to_dict(self) -> dict:
         """Return a JSON-serialisable record, tagged with :data:`SCHEMA_VERSION`.
 
@@ -79,7 +83,7 @@ class TestRecord:
         wrote before those fields existed, and keeps its ``records_sha256``.
         """
         record = {"schema_version": SCHEMA_VERSION, **asdict(self)}
-        for name in ("band", "sentence_spans", "unchanged_sentences"):
+        for name in ("band", "sentence_spans", "unchanged_sentences", "level"):
             if not record[name]:
                 del record[name]
         return record

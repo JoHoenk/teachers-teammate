@@ -35,8 +35,8 @@ DOC_DIR="${PKG_DIR}/usr/share/doc/${PKG_NAME}"
 # The libraries the bundle does not carry, measured from this build rather than written by
 # hand: every DT_NEEDED entry of every bundled ELF file that is not itself in the bundle,
 # mapped to Debian packages on this machine, plus libc6 at the glibc floor the bundle needs.
-# CI installs those libraries first (see the Qt system libraries step); the container install
-# test of build_artifacts.yml is what checks the package names on other releases.
+# CI installs those libraries first (see the Qt system libraries step); the `install-linux`
+# job of build_artifacts.yml is what checks the package names on the other releases.
 
 if [[ ! -x "${BUILD}/teachers-teammate" ]]; then
     echo "ERROR: ${BUILD}/teachers-teammate not found." >&2

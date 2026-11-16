@@ -111,14 +111,21 @@ The **build-standalone** job (`build_artifacts.yml`) runs in parallel on three G
 
 | Runner | Steps | Output |
 |--------|-------|--------|
-| `ubuntu-22.04` | pinned install → `tools/build/build_standalone.py` → smoke test → add-on resolution check → bundle checks → `tools/packaging/make_deb.sh` → container install test → `tools/packaging/make_tarball.sh` | `teachers-teammate_<ver>.deb`, `teachers-teammate-<ver>-linux-x86_64.tar.gz` |
-| `windows-latest` | pinned install → `tools/build/build_standalone.py` → smoke test → NSIS (`tools/packaging/windows.nsi`) | `teachers-teammate-<ver>-w64-setup.exe` |
-| `macos-latest` | pinned install → `tools/build/build_standalone.py` → smoke test → `tools/packaging/make_dmg.sh` | `teachers-teammate-<ver>-macos.dmg` |
+| `ubuntu-24.04` | pinned install → `tools/build/build_standalone.py` → smoke test → add-on resolution check → bundle checks → `tools/packaging/make_deb.sh` → `tools/packaging/make_tarball.sh` | `teachers-teammate_<ver>.deb`, `teachers-teammate-<ver>-linux-x86_64.tar.gz` |
+| `windows-2025` | pinned install → `tools/build/build_standalone.py` → smoke test → NSIS 3.13.0 (`tools/packaging/windows.nsi`) | `teachers-teammate-<ver>-w64-setup.exe` |
+| `macos-26` | pinned install → `tools/build/build_standalone.py` → smoke test → `tools/build/check_macos_bundle.py` → `tools/packaging/make_dmg.sh` | `teachers-teammate-<ver>-macos.dmg` |
 
-The Linux job builds on `ubuntu-22.04` on purpose: PyInstaller bundles the libraries of the
-machine it builds on, so a newer image would silently raise the minimum glibc. If GitHub drops
-that image, build in an `ubuntu:22.04` container on `ubuntu-latest` rather than moving to a newer
-runner.
+The runners are pinned, not `-latest`: a moving label would change the Windows and macOS the
+bundle is built and tested on without a commit saying so. NSIS comes from Chocolatey at a pinned
+version for the same reason.
+
+The Linux job builds on `ubuntu-24.04` on purpose: PyInstaller bundles the libraries of the
+machine it builds on, so the glibc floor follows the build image — 2.39, which is Ubuntu 24.04+,
+Debian 13+ and Mint 22+. A newer image would silently raise it, which `check_linux_bundle.py`
+then catches. The next move is when 24.04 leaves standard support (2029), and it is a decision,
+not a runner default. Users on Ubuntu 22.04, Mint 21 or Debian 12 stay on v0.5.x: the old app's
+update check offers the new release, apt refuses it (`libc6 (>= 2.39)`) and the tarball does not
+start. No code can help there — an old app cannot learn the new floor.
 
 Every job creates a clean venv and installs into it against `pyinstaller-work/constraints.txt` (see
 [Standalone binary](#standalone-binary)); the Linux job also runs
@@ -126,14 +133,49 @@ Every job creates a clean venv and installs into it against `pyinstaller-work/co
 evaluates PyInstaller's Windows-only (`pefile`) and macOS-only (`macholib`) dependencies against the
 Linux host and would never report them. Every job runs the app with `--_smoke_test smoke.json` and fails
 on a non-zero exit, and uploads `smoke.json` as an artifact. The Linux job also runs
-`tools/build/check_linux_bundle.py` twice: `--max-glibc 2.35` proves the bundle starts on Ubuntu
-22.04, `--unused` proves it carries no library that nothing loads. After the smoke test it runs
+`tools/build/check_linux_bundle.py` twice: `--max-glibc 2.39` proves the bundle starts on Ubuntu
+24.04, `--unused` proves it carries no library that nothing loads. The macOS job runs
+`tools/build/check_macos_bundle.py --max-minos 14.4`: it reads the minimum macOS of every Mach-O
+file in the `.app` (every architecture slice of a universal2 one) and fails when one needs a newer
+macOS than 14.4. The PySide6 6.12.0 wheel is tagged `macosx_14_0`, but its Qt libraries say 14.4 and
+its binding modules (`PySide6/*.abi3.so`, `libpyside6`, `shiboken6`) say 26.0, so those are exempt
+(`--ignore`); the `install-macos` job on macOS 14 is what shows that they load there. After the smoke test the Linux job runs
 `tools/build/check_addon_resolution.py`: the built app's own pip resolves every add-on's requirement
 (`--dry-run`, nothing is installed) against the bundle's versions, so a new release of
 `langchain-openai` or spaCy that needs another numpy or pydantic fails the build instead of a
-teacher's Add-ons window.
+teacher's Add-ons window. The same check runs weekly on all three runners
+(`addon_resolution.yml`, see *Add-on resolution (weekly)* below).
+
+Three further jobs install what the build made, one per system, so a broken package fails here
+rather than on a teacher's computer. They are read-only like the build; only the Windows one
+checks out, because it runs the installer test script from the repository.
+
+| Job | Runs on | What it proves |
+|-----|---------|----------------|
+| `install-linux` | `ubuntu:24.04`, `ubuntu:26.04`, `debian:13` containers | apt resolves the `.deb`'s `Depends:`, the app starts headless, the xcb platform plugin finds its libraries |
+| `install-macos` | `macos-14`, `macos-15`, `macos-26` | the dmg mounts, the app copied to `/Applications` starts |
+| `install-windows` | `windows-2022`, `windows-2025` | `tools/packaging/test_windows_installer.ps1` passes: install, update, uninstall, both scopes |
+
+None of them is a real desktop (no window, no X11/Wayland, no fonts, no Gatekeeper): that stays on
+the VM list.
 
 The **build-wheel** job stamps the version into `pyproject.toml` via `tools/release/stamp_versions.py`, then builds a pure-Python wheel with Bazel.
+
+### Add-on resolution (weekly)
+
+`addon_resolution.yml` runs every Monday and on dispatch, on the three build runners
+(`ubuntu-24.04`, `windows-2025`, `macos-26`), natively — no `--platform`, no marker emulation, so
+pip's markers see the real system. Per runner it builds the same venv as the bundle build (one
+composite action, `.github/actions/build-venv`, so the two cannot drift), writes the bundle's
+constraints with `tools/build/addon_constraints.py` and runs
+`tools/build/check_addon_resolution.py --python … --constraints …`: every add-on's requirement is
+resolved in dry-run mode against the versions the bundle ships. No PyInstaller run.
+
+The constraints are `addon_constraints.txt` (the build environment's freeze minus the build
+tools), not `pyinstaller-work/constraints.txt`: the latter is the whole test lock and pins
+`langchain-core` and spaCy, so the run would never see a new release of the very packages it
+exists for. A red weekly run is the signal, so release day is not the first time a new
+`langchain-openai` release meets the bundle.
 
 ### Checksums and provenance
 
@@ -162,6 +204,29 @@ never delayed.
 Two pins stay manual: the `trlc` `git_override` (a commit, not a release) and the PlantUML
 artifact of the Maven install. A proposal that needs Bazel 9 is ignored: every rule has to
 support Bazel 8 first, so moving to 9 is a decision, not a bump.
+
+---
+
+## Compatibility
+
+What each system needs, what sets that floor, and what keeps it honest. The user-facing version
+of this table is in `docs/index.md` → "System requirements".
+
+| | Windows | macOS | Linux |
+|---|---|---|---|
+| **What sets the floor** | Qt 6.12 (its supported platforms name Windows 10 1809 as the oldest target) and Python 3.14 | the PySide6 wheel (tagged `macosx_14_0`, its Qt libraries ask for 14.4) | the build image's glibc |
+| **Built on** | `windows-2025` | `macos-26` | `ubuntu-24.04` (glibc 2.39) |
+| **Tested on** | the installer test and the app start on Server 2022 and Server 2025 | the dmg installed and the app started on macOS 14, 15 and 26 (not Gatekeeper) | the package installed and the app started headless in Ubuntu 24.04, 26.04 and Debian 13 |
+| **What guards it** | the installer's own check (`${AtLeastBuild} 17763`, exit code 15) | `tools/build/check_macos_bundle.py --max-minos 14.4` | `tools/build/check_linux_bundle.py --max-glibc 2.39` |
+
+A real desktop on each system — a window, X11/Wayland, fonts, Gatekeeper, a Windows 10 1809
+machine — is the VM list, not CI.
+
+**When the floor moves.** A PySide6 bump that raises its wheel's macOS tag fails
+`check_macos_bundle.py` first, and a newer Linux build image fails `check_linux_bundle.py` first.
+Windows has no such check: **Qt 6.12 is the last Qt to support Windows 10**, so the PySide6 bump
+after it moves the Windows floor to 11 and nothing in CI will say so. Read the Qt release notes at
+every PySide6 major or minor bump.
 
 ---
 
@@ -275,9 +340,13 @@ Then check what was built:
 # The app starts and its imports resolve; writes a JSON report.
 QT_QPA_PLATFORM=offscreen ./dist/teachers-teammate/teachers-teammate --_smoke_test smoke.json
 
-# Linux only: the bundle runs on Ubuntu 22.04 (glibc 2.35) and carries no dead libraries.
-python tools/build/check_linux_bundle.py --max-glibc 2.35
+# Linux only: the bundle runs on Ubuntu 24.04 (glibc 2.39) and carries no dead libraries.
+python tools/build/check_linux_bundle.py --max-glibc 2.39
 python tools/build/check_linux_bundle.py --unused
+
+# macOS only: the .app asks for macOS 14.4 or older (the PySide6 bindings are exempt, see above).
+python tools/build/check_macos_bundle.py --max-minos 14.4 --ignore '*/PySide6/*.abi3.so'
+
 ```
 
 ### The Python version
@@ -292,8 +361,8 @@ the interpreter the tests run on differs from the file, and the bundle workflow 
 To bump the patch, change `.python-version` and `MODULE.bazel` and make sure the rules_python
 version in `MODULE.bazel` knows it (`python/versions.bzl`, `MINOR_MAPPING`); then relock with
 `bazel run //:requirements_test.update` and `//:requirements_dev.update`. Nothing reports a newer
-patch yet: the weekly add-on job that would (`addon_resolution.yml`) is not written, so check
-`actions/python-versions` by hand before a release.
+patch: the weekly add-on job does not look for one, so check `actions/python-versions` by hand
+before a release and bump `.python-version` when you decide to.
 
 ### Platform installers
 
@@ -312,9 +381,10 @@ The package installs the folder into `/opt/teachers-teammate`, symlinks
 `/usr/share`. Its `Depends:` line is measured from the build every time (`check_linux_bundle.py --depends`):
 every `DT_NEEDED` entry of every bundled ELF file that the bundle does not itself carry, mapped
 to Debian packages with `ldconfig` and `dpkg-query`, plus `libc6` at the glibc floor the bundle
-needs. The build machine must have those libraries installed; the CI job does. CI installs the `.deb` in `ubuntu:22.04`, `ubuntu:24.04` and
-`debian:12` containers, runs the smoke test there, and checks that the xcb platform plugin has
-no missing libraries.
+needs. The build machine must have those libraries installed; the CI job does. The
+`install-linux` job of `build_artifacts.yml` installs the `.deb` in `ubuntu:24.04`,
+`ubuntu:26.04` and `debian:13` containers, runs the smoke test there, and checks that the
+xcb platform plugin has no missing libraries.
 
 **Linux — portable tarball**
 
@@ -349,8 +419,9 @@ makensis /DAPP_VERSION="1.2.3" /DAPP_VERSION_WIN="1.2.3.0" tools/packaging/windo
 ```
 
 `tools/packaging/test_windows_installer.ps1` installs, updates and uninstalls that file and
-checks what is left behind; CI runs it on every Windows build. It needs an elevated shell
-(GitHub's `windows-latest` is one), which is why its per-user runs pass `/SCOPE=user`.
+checks what is left behind; the `install-windows` job of `build_artifacts.yml` runs it on
+`windows-2022` and `windows-2025` for every build. It needs an elevated shell (both runners
+are), which is why its per-user runs pass `/SCOPE=user`.
 
 ```powershell
 pwsh -File tools/packaging/test_windows_installer.ps1 `
@@ -394,6 +465,7 @@ for one to be removed in Windows Settings; a silent run needs `/SCOPE=` to pick 
 | 12 | the folder holds other files (silent runs; the folder page says so otherwise) |
 | 13 | would create a second copy in the other scope, or two copies exist and `/SCOPE=` is missing |
 | 14 | needs administrator rights |
+| 15 | Windows 10 (version 1809) or newer is required |
 
 A silent uninstall keeps all user data unless `/DELDATA` (add-ons and models) or
 `/DELSETTINGS` (settings file `ocr.toml`, benchmark history, speed data, Qt settings, saved API
@@ -415,6 +487,7 @@ removes them.
 | `tools/build/addon_constraints.py` | Writes the bundle's package versions (`teachers_teammate/_build/addon_constraints.txt`) that the installed app gives to pip |
 | `tools/build/check_addon_resolution.py` | Dry-runs every add-on's requirement against the built app's constraints |
 | `tools/build/check_linux_bundle.py` | Checks the Linux bundle's glibc floor and lists libraries nothing loads |
+| `tools/build/check_macos_bundle.py` | Checks the minimum macOS of every Mach-O file in the `.app` |
 | `tools/build/teachers-teammate.spec` | The committed PyInstaller spec: what the bundle contains |
 | `tools/build/run_gui.py` | PyInstaller entry point (pip dispatch, smoke test, addon injection) |
 | `tools/packaging/make_ico.py` | Generates `.ico` and welcome BMP for Windows |

@@ -661,6 +661,26 @@ py_test(
 )
 
 py_test(
+    name = "test_check_macos_bundle",
+    size = "small",
+    srcs = _COMMON_SRCS + ["unit/test_check_macos_bundle.py"],
+    args = ["unit/test_check_macos_bundle.py"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS + ["//tools/build:build_tools_lib"],
+)
+
+py_test(
+    name = "test_windows_installer_floor",
+    size = "small",
+    srcs = _COMMON_SRCS + ["unit/test_windows_installer_floor.py"],
+    args = ["unit/test_windows_installer_floor.py"],
+    data = ["//tools/packaging:windows.nsi"],
+    env = {"WINDOWS_NSI": "$(rlocationpath //tools/packaging:windows.nsi)"},
+    main = "run_test.py",
+    deps = _COMMON_DEPS,
+)
+
+py_test(
     name = "test_addon_constraints",
     size = "small",
     srcs = _COMMON_SRCS + ["unit/test_addon_constraints.py"],
@@ -2092,6 +2112,7 @@ test_suite(
         ":test_benchmark_service",
         ":test_cache_service",
         ":test_check_linux_bundle",
+        ":test_check_macos_bundle",
         ":test_check_pins",
         ":test_chunking_corrector",
         ":test_clean_answer",
@@ -2168,6 +2189,7 @@ test_suite(
         ":test_step_runner",
         ":test_storage_policy",
         ":test_text_chunks",
+        ":test_windows_installer_floor",
         ":test_word_diff",
     ],
 )

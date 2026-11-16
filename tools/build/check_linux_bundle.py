@@ -17,7 +17,7 @@ still drags its dependencies in.
 
 Usage (from the repo root, after build_standalone.py):
 
-    python tools/build/check_linux_bundle.py --max-glibc 2.35
+    python tools/build/check_linux_bundle.py --max-glibc 2.39
     python tools/build/check_linux_bundle.py --unused
     python tools/build/check_linux_bundle.py --depends
 """
@@ -188,8 +188,8 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument(
         "--max-glibc",
-        default="2.35",
-        help="the oldest glibc the bundle may need (default: 2.35, Ubuntu 22.04)",
+        default="2.39",
+        help="the oldest glibc the bundle may need (default: 2.39, Ubuntu 24.04)",
     )
     parser.add_argument(
         "--unused",

@@ -5,7 +5,7 @@
 ; Prerequisites:
 ;   * Binaries must already be in dist\ (run tools/build/build_standalone.py first)
 ;   * NSIS >= 3.0  (https://nsis.sourceforge.io/)
-;   * NSIS plugins (all bundled with NSIS): LogicLib, nsDialogs, System, FileFunc, WordFunc
+;   * NSIS plugins (all bundled with NSIS): LogicLib, nsDialogs, System, FileFunc, WinVer, WordFunc
 ;
 ; Two scopes, one script. A per-user install lives in %LOCALAPPDATA%\Programs and needs no
 ; rights; an all-users install lives in Program Files and needs administrator rights. The
@@ -54,6 +54,7 @@ RequestExecutionLevel user
 !include "FileFunc.nsh"
 !include "LogicLib.nsh"
 !include "nsDialogs.nsh"
+!include "WinVer.nsh"
 !include "WordFunc.nsh"
 
 !define MUI_ABORTWARNING
@@ -216,6 +217,18 @@ VIAddVersionKey "LegalCopyright"  "${U+00A9} 2026 Teacher's Teammate contributor
 ; ── Initialisation ───────────────────────────────────────────────────────────
 
 Function .onInit
+  ; Windows 10 (1809) is the floor: Qt 6.12 and Python 3.14 need it. ${AtLeastWin10} would let
+  ; 1507-1803 through, so the build number is checked. A silent run exits 15.
+  ${IfNot} ${AtLeastBuild} 17763
+    ${If} ${Silent}
+      SetErrorLevel 15
+      Quit
+    ${EndIf}
+    MessageBox MB_OK|MB_ICONSTOP "Teacher's Teammate needs Windows 10 (version 1809 or newer) or Windows 11."
+    SetErrorLevel 15
+    Quit
+  ${EndIf}
+
   Call IsElevated
 
   ${If} $INSTDIR == "${DEFAULT_DIR_SENTINEL}"

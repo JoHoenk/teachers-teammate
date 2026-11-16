@@ -107,7 +107,8 @@ _DROPPED_LIBS = (
     # Found by `check_linux_bundle.py --unused` on the ubuntu-22.04 runner. libbsd is what
     # libXdmcp pulls in there (dropped above), and libmd is what libbsd pulls in; Qt compiles its
     # own pcre2 and libjpeg into the libraries it ships, and Pillow carries its own libjpeg in
-    # pillow.libs/.
+    # pillow.libs/. The build image is ubuntu-24.04 now, whose sonames differ (the t64 rename);
+    # `--unused` re-measures the list on every build and fails when something new is dead weight.
     "libbsd.so",
     "libmd.so",
     "libjpeg.so",

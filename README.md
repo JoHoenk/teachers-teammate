@@ -27,7 +27,14 @@ Linux has two downloads: `teachers-teammate_<version>_amd64.deb` installs into
 `teachers-teammate-<version>-linux-x86_64.tar.gz` is the portable build — unpack it and run
 `./teachers-teammate`.
 
-Prefer Python? Each release also ships a wheel:
+**System requirements:** Windows 10 (version 1809 or newer) or 11 on x64; macOS 14 Sonoma or newer
+on Apple Silicon; Ubuntu 24.04+, Debian 13+ or Mint 22+ (glibc 2.39 or newer) on x86_64, or any
+distribution with glibc 2.39 or newer via the `.tar.gz`. 8 GB of main memory and about 600 MB of
+free disk space for the app, plus the models you download (1.6 to 7.2 GB each for the ones that
+run in Ollama). Ubuntu 22.04, Mint 21 and Debian 12 stay on v0.5.x. The full table is in the
+[overview](https://github.com/JoHoenk/teachers-teammate/blob/main/docs/index.md#system-requirements).
+
+Prefer Python? Each release also ships a wheel (Python 3.14):
 
 ```bash
 pip install teachers_teammate-<version>-py3-none-any.whl

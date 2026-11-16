@@ -78,6 +78,28 @@ Optional features — such as privacy protection (removing personal information 
 
 Your settings are saved automatically and restored every time you start the app.
 
+### System requirements
+
+| | Windows | macOS | Linux |
+|---|---|---|---|
+| **Version** | 10 (version 1809 or newer) or 11 | 14 Sonoma or newer | Ubuntu 24.04+, Debian 13+, Mint 22+ (glibc 2.39 or newer); other distributions with glibc 2.39 or newer: the `.tar.gz` |
+| **Processor** | x64 (Windows 11 on ARM: x64 emulation, not tested) | Apple Silicon (M1 or newer) | x86_64 |
+| **Download** | setup `.exe` | `.dmg` | `.deb`, `.tar.gz` |
+
+**Main memory:** 8 GB. A model needs 2.5 to 7.2 GB while it runs; with a graphics card it runs
+there instead, and the app shows what fits your computer before anything is downloaded.
+
+**Free disk space:** about 600 MB for the app, plus the models you choose — the built-in reader
+31 MB, the page models 39 MB, and 1.6 to 7.2 GB per model that runs in Ollama. The app names the
+size of every download before it starts.
+
+**Python wheel:** Python 3.14.
+
+:::{note}
+**Ubuntu 22.04, Mint 21 and Debian 12:** stay on v0.5.x. The app's update check offers the newer
+release, but apt refuses it (`libc6 (>= 2.39)`) and the portable tarball does not start.
+:::
+
 ### Check your download
 
 Every release ships a `SHA256SUMS` file next to the installers, and every installer carries a

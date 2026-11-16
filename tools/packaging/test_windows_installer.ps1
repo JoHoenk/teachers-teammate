@@ -10,6 +10,10 @@
     code, so a regression in tools/packaging/windows.nsi fails the build instead of a
     teacher's computer.
 
+    The first step also reads the version resource of the setup, the app exe and the
+    uninstaller: a code-signing service checks that the three carry one product name and one
+    product version, and the uninstaller is a file of its own (two-pass build).
+
     The runner must be elevated (GitHub's windows-latest is), which is why the per-user runs
     pass /SCOPE=user: without it an elevated installer would default to all users.
 
@@ -163,11 +167,24 @@ Assert-Equal 0 (Invoke-Setup @('/SCOPE=user')) 'the installer exits 0'
 Assert-Present (Join-Path $UserDir 'teachers-teammate.exe') 'the exe is under %LOCALAPPDATA%\Programs'
 Assert-Present (Join-Path $UserDir 'NOTICE.txt') 'the notice is installed next to the exe (LGPL)'
 Assert-Present (Join-Path $UserDir 'third_party_license.txt') 'the license list is installed next to the exe'
+Assert-Present (Join-Path $UserDir 'Uninstall.exe') 'the uninstaller is installed as its own file'
 Assert-Equal $Version (Get-UninstallValue "HKCU:\$UninstKey" 'DisplayVersion') 'the Apps entry has the version'
 Assert-Equal $UserDir (Get-UninstallValue "HKCU:\$RegKey" 'InstallDir') 'the install folder is recorded'
 Assert-Equal 'user' (Get-UninstallValue "HKCU:\$RegKey" 'Scope') 'the scope is recorded'
 Assert-Present (Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs\$AppName\Teacher's Teammate.lnk") 'the Start-menu shortcut exists'
 Assert-SmokeTestPasses $UserDir
+
+# The three files a code-signing service checks: one product name, one product version. The
+# uninstaller gets its keys from the helper that wrote it, the exe from its version resource.
+foreach ($file in @('teachers-teammate.exe', 'Uninstall.exe')) {
+    $info = (Get-Item -LiteralPath (Join-Path $UserDir $file)).VersionInfo
+    Assert-Equal $AppName $info.ProductName "$file carries the product name"
+    Assert-Equal $Version $info.ProductVersion "$file carries the product version"
+    Assert-Equal 'Teacher''s Teammate Contributors' $info.CompanyName "$file carries the publisher"
+}
+$setupInfo = (Get-Item -LiteralPath $Setup).VersionInfo
+Assert-Equal $AppName $setupInfo.ProductName 'the setup carries the product name'
+Assert-Equal $Version $setupInfo.ProductVersion 'the setup carries the product version'
 
 # ── 2. Markers that an update must not touch ────────────────────────────────
 

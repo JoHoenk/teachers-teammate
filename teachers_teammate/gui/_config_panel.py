@@ -235,6 +235,7 @@ class ConfigPanel(QScrollArea):
             "anonymization_enabled": DEFAULTS["anonymization_enabled"],
             "debug": DEFAULTS["debug"],
             "keep_awake": DEFAULTS["keep_awake"],
+            "check_for_updates": DEFAULTS["check_for_updates"],
         }
         self._settings_dict["anonymizer_primary_model"] = None
         # SECONDARY_MODEL_AUTO by default; SECONDARY_MODEL_NONE = the user chose "(none)".
@@ -1114,6 +1115,9 @@ class ConfigPanel(QScrollArea):
             recursive=True,
             debug=bool(self._settings_dict.get("debug", DEFAULTS["debug"])),
             keep_awake=bool(self._settings_dict.get("keep_awake", DEFAULTS["keep_awake"])),
+            check_for_updates=bool(
+                self._settings_dict.get("check_for_updates", DEFAULTS["check_for_updates"])
+            ),
             ocr=self._ocr_config_from_settings(),
             language=self._language.currentText().strip() or DEFAULTS["language"],
             ollama_url=self._settings_dict.get("ollama_url", DEFAULTS["ollama_url"]),
@@ -1310,6 +1314,7 @@ class ConfigPanel(QScrollArea):
         for key in (
             "debug",
             "keep_awake",
+            "check_for_updates",
             "docx_enabled",
             "text_enabled",
             "text_anonymized_enabled",

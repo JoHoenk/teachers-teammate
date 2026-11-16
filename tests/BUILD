@@ -760,6 +760,17 @@ py_test(
 )
 
 py_test(
+    name = "test_make_version_resource",
+    size = "small",
+    srcs = _COMMON_SRCS + ["unit/test_make_version_resource.py"],
+    args = ["unit/test_make_version_resource.py"],
+    data = ["//tools/packaging:windows.nsi"],
+    env = {"WINDOWS_NSI": "$(rlocationpath //tools/packaging:windows.nsi)"},
+    main = "run_test.py",
+    deps = _COMMON_DEPS + ["//tools/build:build_tools_lib"],
+)
+
+py_test(
     name = "test_release_stamp_versions",
     size = "small",
     srcs = _COMMON_SRCS + ["unit/test_release_stamp_versions.py"],
@@ -2335,6 +2346,7 @@ test_suite(
         ":test_llm_factory",
         ":test_local_models",
         ":test_make_constraints",
+        ":test_make_version_resource",
         ":test_markdown_shield",
         ":test_model_catalog",
         ":test_model_listing",

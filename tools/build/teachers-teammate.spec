@@ -286,6 +286,19 @@ elif sys.platform == "darwin":
 else:
     _icon = str(ASSETS / "teachers_teammate_icon.png")
 
+# The version resource Windows shows in the exe's properties, in Task Manager and in the
+# SmartScreen prompt, written by tools/build/make_version_resource.py just before this spec
+# runs.  Its product name and product version are the ones the setup and the uninstaller carry
+# (a code-signing service checks that they match), so a build without it is refused here.
+_VERSION_INFO = None
+if sys.platform == "win32":
+    _VERSION_INFO = ROOT / "teachers_teammate" / "_build" / "version_info.txt"
+    if not _VERSION_INFO.is_file():
+        raise SystemExit(
+            f"{_VERSION_INFO} is missing: build with tools/build/build_standalone.py "
+            "(or run tools/build/make_version_resource.py first)"
+        )
+
 # A folder on every platform, never a single file: the .deb installs it under /opt, the
 # portable tarball unpacks it, and the Qt libraries stay replaceable files instead of being
 # packed into an archive that unpacks to a temporary directory on every start.
@@ -306,6 +319,7 @@ exe = EXE(
     codesign_identity=None,
     entitlements_file=None,
     icon=[_icon],
+    version=str(_VERSION_INFO) if _VERSION_INFO is not None else None,
 )
 coll = COLLECT(
     exe,
@@ -317,9 +331,26 @@ coll = COLLECT(
     name="teachers-teammate",
 )
 if sys.platform == "darwin":
+    # The keys PyInstaller does not write itself.  The two version keys come from the stamped
+    # version, in the numeric form Apple asks for (0.5.7, never 0.5.7rc1); the minimum macOS is
+    # the one number check_macos_bundle.py checks the bundle against.  ROOT is on sys.path
+    # already (the spec put it there for fetch_models).
+    from teachers_teammate import __version__ as _pkg_version  # noqa: E402
+    from tools.build.check_macos_bundle import MACOS_MINIMUM  # noqa: E402
+    from tools.build.make_version_resource import numeric_version  # noqa: E402
+
+    _numbers = numeric_version(_pkg_version)
+    _short_version = ".".join(str(number) for number in _numbers[:3])
     app = BUNDLE(
         coll,
         name="teachers-teammate.app",
         icon=_icon,
         bundle_identifier="io.github.johoenk.teachers-teammate",
+        version=_short_version,
+        info_plist={
+            "CFBundleShortVersionString": _short_version,
+            "CFBundleVersion": ".".join(str(number) for number in _numbers),
+            "NSHighResolutionCapable": True,
+            "LSMinimumSystemVersion": MACOS_MINIMUM,
+        },
     )

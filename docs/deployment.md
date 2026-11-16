@@ -112,7 +112,7 @@ The **build-standalone** job (`build_artifacts.yml`) runs in parallel on three G
 | Runner | Steps | Output |
 |--------|-------|--------|
 | `ubuntu-24.04` | pinned install → `tools/build/build_standalone.py` → smoke test → add-on resolution check → bundle checks → `tools/packaging/make_deb.sh` → `tools/packaging/make_tarball.sh` | `teachers-teammate_<ver>.deb`, `teachers-teammate-<ver>-linux-x86_64.tar.gz` |
-| `windows-2025` | pinned install → `tools/build/build_standalone.py` → smoke test → NSIS 3.13.0 (`tools/packaging/windows.nsi`) | `teachers-teammate-<ver>-w64-setup.exe` |
+| `windows-2025` | pinned install → `tools/build/build_standalone.py` → smoke test → NSIS 3.13.0 (`tools/packaging/windows.nsi`, two passes: the uninstaller, then the setup) | `teachers-teammate-<ver>-w64-setup.exe` |
 | `macos-26` | pinned install → `tools/build/build_standalone.py` → smoke test → `tools/build/check_macos_bundle.py` → `tools/packaging/make_dmg.sh` | `teachers-teammate-<ver>-macos.dmg` |
 
 The runners are pinned, not `-latest`: a moving label would change the Windows and macOS the
@@ -135,7 +135,7 @@ Linux host and would never report them. Every job runs the app with `--_smoke_te
 on a non-zero exit, and uploads `smoke.json` as an artifact. The Linux job also runs
 `tools/build/check_linux_bundle.py` twice: `--max-glibc 2.39` proves the bundle starts on Ubuntu
 24.04, `--unused` proves it carries no library that nothing loads. The macOS job runs
-`tools/build/check_macos_bundle.py --max-minos 14.4`: it reads the minimum macOS of every Mach-O
+`tools/build/check_macos_bundle.py` (its floor is `MACOS_MINIMUM`, 14.4): it reads the minimum macOS of every Mach-O
 file in the `.app` (every architecture slice of a universal2 one) and fails when one needs a newer
 macOS than 14.4. The PySide6 6.12.0 wheel is tagged `macosx_14_0`, but its Qt libraries say 14.4 and
 its binding modules (`PySide6/*.abi3.so`, `libpyside6`, `shiboken6`) say 26.0, so those are exempt
@@ -217,7 +217,7 @@ of this table is in `docs/index.md` → "System requirements".
 | **What sets the floor** | Qt 6.12 (its supported platforms name Windows 10 1809 as the oldest target) and Python 3.14 | the PySide6 wheel (tagged `macosx_14_0`, its Qt libraries ask for 14.4) | the build image's glibc |
 | **Built on** | `windows-2025` | `macos-26` | `ubuntu-24.04` (glibc 2.39) |
 | **Tested on** | the installer test and the app start on Server 2022 and Server 2025 | the dmg installed and the app started on macOS 15 and 26 (not Gatekeeper) | the package installed and the app started headless in Ubuntu 24.04, 26.04 and Debian 13 |
-| **What guards it** | the installer's own check (`${AtLeastBuild} 17763`, exit code 15) | `tools/build/check_macos_bundle.py --max-minos 14.4` | `tools/build/check_linux_bundle.py --max-glibc 2.39` |
+| **What guards it** | the installer's own check (`${AtLeastBuild} 17763`, exit code 15) | `tools/build/check_macos_bundle.py` (`MACOS_MINIMUM`) | `tools/build/check_linux_bundle.py --max-glibc 2.39` |
 
 A real desktop on each system — a window, X11/Wayland, fonts, Gatekeeper, a Windows 10 1809
 machine — is the VM list, not CI.
@@ -376,6 +376,41 @@ portable tarball unpacks it, and the Qt libraries stay separate files that can b
 `tools/build/build.sh` (Linux/macOS) and `tools/build/build.bat` (Windows) do all of that in a
 fresh venv, so a local build matches CI.
 
+#### Version information in the files
+
+`tools/build/make_version_resource.py` writes `teachers_teammate/_build/version_info.txt`
+(git-ignored) before PyInstaller runs, and the spec hands it to `EXE(version=…)` on Windows. The
+version comes from `$VERSION` (what CI passes) and otherwise from
+`teachers_teammate.__version__`:
+
+```bash
+python tools/build/make_version_resource.py --version 1.2.3 --output teachers_teammate/_build/version_info.txt
+```
+
+The strings are the ones the installer and the uninstaller carry, so a signing service that
+compares the three files finds one product name and one product version:
+
+| Key | Value |
+|-----|-------|
+| `ProductName` | `Teacher's Teammate` (the `APP_NAME` of `windows.nsi`) |
+| `CompanyName` | `Teacher's Teammate Contributors` (`APP_PUBLISHER`) |
+| `ProductVersion`, `FileVersion` | the release string exactly as the tag reads it (`0.5.7`, `0.5.7-rc.1`) |
+| `FileDescription` | `Teacher's Teammate` |
+| `OriginalFilename` | `teachers-teammate.exe` |
+| `LegalCopyright` | `© 2026 Teacher's Teammate contributors · Apache-2.0` |
+
+Only the numeric fixed fields of the resource are derived: the pre-release suffix is stripped, so
+`0.5.7-rc.1` becomes `0.5.7.0` there. `//tests:test_make_version_resource` checks the fields for
+three versions and fails when the product name in the generator and in `windows.nsi` differ; it
+reads the signing service's artifact configuration (`tools/packaging/signpath/*.xml`) too, as
+soon as that file exists.
+
+On macOS the spec's `BUNDLE` sets the same version in the `.app`'s `Info.plist`:
+`CFBundleShortVersionString` and `CFBundleVersion` from the stamped version,
+`NSHighResolutionCapable`, and `LSMinimumSystemVersion` from `MACOS_MINIMUM` in
+`tools/build/check_macos_bundle.py` — one number for the bundle and the check, so they cannot
+disagree.
+
 Then check what was built:
 
 ```bash
@@ -386,8 +421,9 @@ QT_QPA_PLATFORM=offscreen ./dist/teachers-teammate/teachers-teammate --_smoke_te
 python tools/build/check_linux_bundle.py --max-glibc 2.39
 python tools/build/check_linux_bundle.py --unused
 
-# macOS only: the .app asks for macOS 14.4 or older (the PySide6 bindings are exempt, see above).
-python tools/build/check_macos_bundle.py --max-minos 14.4 --ignore '*/PySide6/*.abi3.so'
+# macOS only: the .app asks for no newer macOS than MACOS_MINIMUM (14.4); the PySide6
+# bindings are exempt, see above.
+python tools/build/check_macos_bundle.py --ignore '*/PySide6/*.abi3.so'
 
 ```
 
@@ -455,15 +491,36 @@ bash tools/packaging/make_dmg.sh [version]
 Requires [NSIS](https://nsis.sourceforge.io/) on `PATH`.
 Run `tools/packaging/make_ico.py` first (or let `build_standalone.py` do it automatically on Windows).
 
+The installer is built in **two passes**, because `Uninstall.exe` is a file of its own: NSIS
+cannot sign inside `makensis` when the signer is a remote service, so the uninstaller is written
+first, signed, and then packed into the setup. The first pass compiles a helper that only writes
+the uninstaller and quits; the second pass packs that file instead of writing it. Both passes get
+the same version, because the uninstaller carries the setup's version resource.
+
 ```powershell
+# Pass 1: the helper, then run it to write Uninstall.exe
+makensis /DBUILD_UNINSTALLER /DAPP_VERSION="1.2.3" /DAPP_VERSION_WIN="1.2.3.0" `
+    "/DUNINSTALLER_HELPER=$PWD\pyinstaller-work\uninstaller-helper.exe" `
+    "/DUNINSTALLER_TARGET=$PWD\pyinstaller-work\Uninstall.exe" `
+    "/DUNINSTALLER_OUT=$PWD\pyinstaller-work\Uninstall.exe" tools/packaging/windows.nsi
+Start-Process .\pyinstaller-work\uninstaller-helper.exe -Wait   # a GUI program: `&` would not wait
+
+# Pass 2: the setup, which packs pyinstaller-work\Uninstall.exe
 makensis /DAPP_VERSION="1.2.3" /DAPP_VERSION_WIN="1.2.3.0" tools/packaging/windows.nsi
 # Output: dist/teachers-teammate-1.2.3-w64-setup.exe
 ```
 
+The three defines default to `..\..\pyinstaller-work\…` relative to `tools/packaging/`, so a
+build from the repository root needs none of them. `UNINSTALLER_TARGET` is where the helper
+writes at run time (`$EXEDIR\Uninstall.exe` by default), `UNINSTALLER_OUT` is the file the setup
+packs at compile time.
+
 `tools/packaging/test_windows_installer.ps1` installs, updates and uninstalls that file and
 checks what is left behind; the `install-windows` job of `build_artifacts.yml` runs it on
 `windows-2022` and `windows-2025` for every build. It needs an elevated shell (both runners
-are), which is why its per-user runs pass `/SCOPE=user`.
+are), which is why its per-user runs pass `/SCOPE=user`. Its first step also reads the version
+resource of the setup, of `teachers-teammate.exe` and of the installed `Uninstall.exe`: one
+product name, one product version, one publisher in all three.
 
 ```powershell
 pwsh -File tools/packaging/test_windows_installer.ps1 `
@@ -529,7 +586,8 @@ removes them.
 | `tools/build/addon_constraints.py` | Writes the bundle's package versions (`teachers_teammate/_build/addon_constraints.txt`) that the installed app gives to pip |
 | `tools/build/check_addon_resolution.py` | Dry-runs every add-on's requirement against the built app's constraints |
 | `tools/build/check_linux_bundle.py` | Checks the Linux bundle's glibc floor and lists libraries nothing loads |
-| `tools/build/check_macos_bundle.py` | Checks the minimum macOS of every Mach-O file in the `.app` |
+| `tools/build/check_macos_bundle.py` | Checks the minimum macOS of every Mach-O file in the `.app`; `MACOS_MINIMUM` is the one floor |
+| `tools/build/make_version_resource.py` | Writes the Windows version resource the spec hands to `EXE(version=…)` |
 | `tools/build/teachers-teammate.spec` | The committed PyInstaller spec: what the bundle contains |
 | `tools/build/run_gui.py` | PyInstaller entry point (pip dispatch, smoke test, addon injection) |
 | `tools/packaging/make_ico.py` | Generates `.ico` and welcome BMP for Windows |
@@ -537,7 +595,7 @@ removes them.
 | `tools/packaging/make_deb.sh` | Creates `.deb` package for Debian/Ubuntu |
 | `tools/packaging/make_tarball.sh` | Creates the portable Linux `.tar.gz` |
 | `tools/packaging/make_dmg.sh` | Creates `.dmg` installer for macOS |
-| `tools/packaging/windows.nsi` | NSIS script for the Windows installer |
+| `tools/packaging/windows.nsi` | NSIS script for the Windows installer and, in its first pass, the uninstaller |
 | `tools/release/stamp_versions.py` | Stamps version into `pyproject.toml` and Bazel `BUILD` |
 | `tools/licenses/inventory.py` | Writes the license inventory, its texts and the compiled outputs; `--compile`, `--check-env`, `--check-resolved` |
 | `tools/licenses/policy.toml` | The denied licenses, the display names and the accepted exceptions |

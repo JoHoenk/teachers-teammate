@@ -27,12 +27,16 @@ Linux has two downloads: `teachers-teammate_<version>_amd64.deb` installs into
 `teachers-teammate-<version>-linux-x86_64.tar.gz` is the portable build — unpack it and run
 `./teachers-teammate`.
 
-**System requirements:** Windows 10 (version 1809 or newer) or 11 on x64; macOS 14 Sonoma or newer
-on Apple Silicon; Ubuntu 24.04+, Debian 13+ or Mint 22+ (glibc 2.39 or newer) on x86_64, or any
-distribution with glibc 2.39 or newer via the `.tar.gz`. 8 GB of main memory and about 600 MB of
-free disk space for the app, plus the models you download (1.6 to 7.2 GB each for the ones that
-run in Ollama). Ubuntu 22.04, Mint 21 and Debian 12 stay on v0.5.x. The full table is in the
-[overview](https://github.com/JoHoenk/teachers-teammate/blob/main/docs/index.md#system-requirements).
+**System requirements:** Windows 10 (version 1809 or newer) or 11 on x64; macOS 14.4 Sonoma or newer
+on Apple Silicon (M1 or newer); Ubuntu 24.04+, Debian 13+ or Mint 22+ (glibc 2.39 or newer) on
+x86_64, or any distribution with glibc 2.39 or newer via the `.tar.gz`. 8 GB of main memory and
+about 600 MB of free disk space for the app, plus the models you download (1.6 to 7.2 GB each for
+the ones that run in Ollama). Ubuntu 22.04, Mint 21 and Debian 12 stay on v0.5.x. The full table is
+in the [overview](https://github.com/JoHoenk/teachers-teammate/blob/main/docs/index.md#system-requirements).
+
+The Windows installers are signed once a certificate for open-source projects is in place. What is
+signed, where the files come from, who may request a signature and what the app does with your data
+is written down in the [code signing policy](https://github.com/JoHoenk/teachers-teammate/blob/main/docs/code_signing_policy.md).
 
 Prefer Python? Each release also ships a wheel (Python 3.14):
 
@@ -153,6 +157,7 @@ Without `--docx`, only the per-file processing state is written.
 | [Overview](https://github.com/JoHoenk/teachers-teammate/blob/main/docs/index.md) | What the app does, how it works, getting started |
 | [Using the app](https://github.com/JoHoenk/teachers-teammate/blob/main/docs/using_the_app.md) | Step-by-step guide to the desktop app |
 | [Advanced user guide](https://github.com/JoHoenk/teachers-teammate/blob/main/docs/advanced_user_guide.md) | OCR engines, preprocessing, correction/evaluation, model and provider selection |
+| [Code signing policy](https://github.com/JoHoenk/teachers-teammate/blob/main/docs/code_signing_policy.md) | What is signed, where the files come from, privacy statement |
 
 Want to help develop Teacher's Teammate? See
 [CONTRIBUTING.md](https://github.com/JoHoenk/teachers-teammate/blob/main/CONTRIBUTING.md).

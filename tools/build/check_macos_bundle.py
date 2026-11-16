@@ -12,7 +12,7 @@ slice; every slice counts, because the app has to start on the architecture the 
 
 Usage (from the repo root, after build_standalone.py, on macOS):
 
-    python tools/build/check_macos_bundle.py --max-minos 14.4
+    python tools/build/check_macos_bundle.py
 """
 
 from __future__ import annotations
@@ -43,6 +43,11 @@ _FAT_MAGIC = (
 #: file starts with the same 0xCAFEBABE, but its bytes 4-7 are the class file version (0x0000
 #: 0x0034 for Java 8), so the count is 0 or absurdly large and the file is not a Mach-O one.
 _MAX_ARCHITECTURES = 32
+
+#: The oldest macOS the bundle may need.  The PySide6 6.12.0 wheel's Qt libraries say 14.4, so
+#: the app's own floor follows them; the spec's ``LSMinimumSystemVersion`` reads this number, so
+#: the .app and this check cannot disagree.
+MACOS_MINIMUM = "14.4"
 
 #: The two load commands that carry a minimum macOS, and the line that holds it.
 _MINOS = re.compile(r"^\s*minos\s+(\d+(?:\.\d+)*)\s*$", re.MULTILINE)
@@ -193,8 +198,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--max-minos",
         type=parse_limit,
-        default=parse_limit("14.0"),
-        help="the oldest macOS the bundle may need (default: 14.0, Sonoma)",
+        default=parse_limit(MACOS_MINIMUM),
+        help=f"the oldest macOS the bundle may need (default: {MACOS_MINIMUM})",
     )
     parser.add_argument(
         "--ignore",

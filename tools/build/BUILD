@@ -31,6 +31,7 @@ py_library(
         "check_pins.py",
         "fetch_models.py",
         "make_constraints.py",
+        "make_version_resource.py",
     ],
     visibility = ["//visibility:public"],
     deps = ["@ocr_test_dependencies//packaging:pkg"],

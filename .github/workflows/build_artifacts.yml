@@ -130,6 +130,9 @@ jobs:
         run: python tools/build/build_standalone.py
         env:
           QT_API: pyside6
+          # The release string, not the PEP 440 form: the exe's version resource must carry the
+          # same product version as the setup and the uninstaller (make_version_resource.py).
+          VERSION: ${{ steps.version.outputs.value }}
 
       - name: Smoke-test the binary (Linux)
         if: runner.os == 'Linux'
@@ -160,10 +163,12 @@ jobs:
       # slices: upstream built them without a deployment target. The floor is therefore 14.4 for
       # everything else and the bindings are exempt. GitHub retired the macos-14 runner, so no job
       # proves that they load on 14 any more: the install-macos job starts on macos-15 and up. Drop --ignore when a PySide6 wheel fixes its binaries.
+      # The floor itself is MACOS_MINIMUM in check_macos_bundle.py, which the spec's
+      # LSMinimumSystemVersion reads too, so the .app and this check cannot disagree.
       - name: Check the macOS bundle
         if: runner.os == 'macOS'
         run: |
-          python tools/build/check_macos_bundle.py --max-minos 14.4 \
+          python tools/build/check_macos_bundle.py \
             --ignore '*/PySide6/*.abi3.so' \
             --ignore '*/PySide6/libpyside6*.dylib' \
             --ignore '*/shiboken6/*'
@@ -256,7 +261,26 @@ jobs:
           $winVer = $env:WIN_VERSION
           if ([string]::IsNullOrEmpty($ver))    { $ver    = "0.1.0" }
           if ([string]::IsNullOrEmpty($winVer)) { $winVer = "0.1.0" }
+
+          # Two passes: the uninstaller is a file of its own, so a remote signer can sign it
+          # before the setup is built (tools/packaging/windows.nsi says why). The helper writes
+          # it and quits; the setup packs it instead of writing it. Both passes get the same
+          # version, because the uninstaller carries the setup's version resource.
+          $work = Join-Path $PWD 'pyinstaller-work'
+          New-Item -ItemType Directory -Force -Path $work | Out-Null
+          $helper      = Join-Path $work 'uninstaller-helper.exe'
+          $uninstaller = Join-Path $work 'Uninstall.exe'
+          makensis /DBUILD_UNINSTALLER /DAPP_VERSION="$ver" "/DAPP_VERSION_WIN=$winVer.0" `
+            "/DUNINSTALLER_HELPER=$helper" "/DUNINSTALLER_TARGET=$uninstaller" `
+            "/DUNINSTALLER_OUT=$uninstaller" tools/packaging/windows.nsi
+          if ($LASTEXITCODE -ne 0) { throw "the uninstaller pass failed ($LASTEXITCODE)" }
+          # Start-Process -Wait: the helper is a GUI program, and `&` would not wait for it.
+          $run = Start-Process -FilePath $helper -Wait -PassThru
+          if ($run.ExitCode -ne 0) { throw "the uninstaller helper failed ($($run.ExitCode))" }
+          if (-not (Test-Path -LiteralPath $uninstaller)) { throw "the helper wrote no Uninstall.exe" }
+
           makensis /DAPP_VERSION="$ver" "/DAPP_VERSION_WIN=$winVer.0" tools/packaging/windows.nsi
+          if ($LASTEXITCODE -ne 0) { throw "the setup pass failed ($LASTEXITCODE)" }
 
       - name: Create .dmg installer (macOS)
         if: runner.os == 'macOS'

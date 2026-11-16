@@ -59,6 +59,10 @@ DEFAULTS: dict[str, Any] = {
     # Keep the computer from going to sleep while documents are processed (the screen may still
     # turn off).  Not part of any cache key.
     "keep_awake": True,
+    # Ask GitHub once at every start whether a newer version exists.  The only thing the app
+    # sends without being asked, so it can be switched off; a settings file without the key
+    # keeps the check on.
+    "check_for_updates": True,
     # ── Preprocessing (image preparation and PDF rendering) ───────────────────
     "pdf_render_dpi": 300,
     # "auto" | "always" | "never" — use a PDF's embedded text instead of OCR.
@@ -289,6 +293,11 @@ class Config:
     # run is carried out, not what it produces.
     keep_awake: bool = DEFAULTS["keep_awake"]
 
+    # ── Start ────────────────────────────────────────────────────────────────
+    # Whether the app asks GitHub for a newer version when it starts.  The GUI reads it; no
+    # pipeline step does, and it is in no fingerprint.
+    check_for_updates: bool = DEFAULTS["check_for_updates"]
+
     # ── Anonymizer ───────────────────────────────────────────────────────────
     # None = derive the spaCy model from the document language ("Auto")
     anonymizer_primary_model: str | None = None
@@ -450,6 +459,7 @@ def load_config_file(path: Path) -> dict:
         "ocr_timeout",
         "recognition_enabled",
         "keep_awake",
+        "check_for_updates",
         "correction_enabled",
         "anonymization_enabled",
         "correction_provider",

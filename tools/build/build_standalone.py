@@ -6,7 +6,8 @@ Usage (run from the repo root):
 
 The bundle's contents live in the committed spec next to this file
 (``teachers-teammate.spec``); this script generates the platform icons, writes the add-on
-constraints, fetches the model files the app carries itself and runs the spec.
+constraints, fetches the model files the app carries itself, writes the Windows version
+resource and runs the spec.
 
 Outputs:
     dist/teachers-teammate/teachers-teammate      (Linux folder)
@@ -120,6 +121,21 @@ def _fetch_models() -> None:
     )
 
 
+def _write_version_resource() -> None:
+    """Write the version resource the spec puts into the Windows exe.
+
+    The release version comes from ``$VERSION`` when the workflow sets it — the same string
+    ``makensis`` gets — and from the stamped ``__version__`` otherwise.
+    """
+    if sys.platform != "win32":
+        return
+    subprocess.run(
+        [sys.executable, str(Path(__file__).resolve().parent / "make_version_resource.py")],
+        check=True,
+        cwd=ROOT,
+    )
+
+
 def _run() -> None:
     env = os.environ.copy()
     # PySide6 needs a display driver even at analysis time on Linux
@@ -187,6 +203,7 @@ def main() -> None:
     _write_addon_constraints()
     _write_addon_lock()
     _fetch_models()
+    _write_version_resource()
     print("==> Building standalone binary…")
     _run()
     _add_license_files()

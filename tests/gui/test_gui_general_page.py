@@ -15,16 +15,16 @@ def _page(qtbot, **settings) -> GeneralPage:
 
 
 @pytest.mark.gui
-def test_keep_awake_is_on_by_default(qtbot) -> None:
+def test_defaults_are_on(qtbot) -> None:
     """
-    Given  settings without a keep_awake key
+    Given  settings without a keep_awake or check_for_updates key
     When   the General page is built
-    Then   the box is ticked and values() hands the key back as True
+    Then   both boxes are ticked and values() hands the keys back as True
     """
     page = _page(qtbot)
 
-    assert page.values() == {"keep_awake": True}
-    assert page.owned_keys() == frozenset({"keep_awake"})
+    assert page.values() == {"keep_awake": True, "check_for_updates": True}
+    assert page.owned_keys() == frozenset({"keep_awake", "check_for_updates"})
 
 
 @pytest.mark.gui
@@ -37,7 +37,37 @@ def test_keep_awake_follows_load_and_restore_defaults(qtbot) -> None:
     page = _page(qtbot)
 
     page.load({"keep_awake": False})
-    assert page.values() == {"keep_awake": False}
+    assert page.values()["keep_awake"] is False
 
     page.restore_defaults()
-    assert page.values() == {"keep_awake": True}
+    assert page.values()["keep_awake"] is True
+
+
+@pytest.mark.gui
+def test_check_for_updates_round_trips_through_load_and_values(qtbot) -> None:
+    """
+    Given  a page built from settings that turn the update check off
+    When   the page is built, then loaded with the key on, then restored to defaults
+    Then   values() reports off, then on, then on again
+    """
+    page = _page(qtbot, check_for_updates=False)
+    assert page.values()["check_for_updates"] is False
+
+    page.load({"check_for_updates": True})
+    assert page.values()["check_for_updates"] is True
+
+    page.load({"check_for_updates": False})
+    page.restore_defaults()
+    assert page.values()["check_for_updates"] is True
+
+
+@pytest.mark.gui
+def test_an_old_config_without_the_key_shows_the_check_on(qtbot) -> None:
+    """
+    Given  a settings dict written before the update check had a switch
+    When   the General page is built from it
+    Then   the box is ticked, so an existing installation keeps checking
+    """
+    page = _page(qtbot, keep_awake=False)
+
+    assert page.values()["check_for_updates"] is True

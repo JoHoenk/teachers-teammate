@@ -101,10 +101,13 @@ class _FakeService:
         *,
         hardware: HardwareDetection | None = None,
         cancel_event: threading.Event | None = None,
+        on_progress=None,
     ) -> ProbeResult:
         _ = hardware
         self.tested.append(choices)
         self.cancel_event = cancel_event
+        if on_progress is not None:
+            on_progress(SpeedStep.PROOFREADING, "gemma4:e4b", 2, 3)
         self.started.set()
         self.release.wait(5)
         if self.fail_with is not None:
@@ -375,12 +378,33 @@ def test_the_button_starts_the_test_and_turns_into_stop(qtbot) -> None:
     assert panel._button.text() == txt.SPEED_STOP
     assert panel.is_running()
     assert not panel._status.isHidden()
+    assert not panel._busy_bar.isHidden()
     assert service.tested == [service.choices]
 
     service.release.set()
     qtbot.waitUntil(lambda: panel._button.text() == txt.SPEED_TEST, timeout=5000)
     assert not panel.is_running()
     assert panel._status.isHidden()
+    assert panel._busy_bar.isHidden()
+
+
+@pytest.mark.gui
+def test_the_panel_says_which_step_the_test_is_on(qtbot) -> None:
+    """
+    Given  a running test that reports the start of its second step of three
+    When   the report arrives
+    Then   the status line names the step, its model and its number, in the normal text size
+    """
+    service = _FakeService(_summary(), _choices())
+    panel = _panel(qtbot, service)
+
+    panel._button.click()
+
+    assert service.started.wait(5)
+    qtbot.waitUntil(lambda: "Step 2 of 3" in panel._status.text(), timeout=5000)
+    assert "proofreading with gemma4:e4b" in panel._status.text()
+    assert panel._status.styleSheet() == ""
+    service.release.set()
 
 
 @pytest.mark.gui

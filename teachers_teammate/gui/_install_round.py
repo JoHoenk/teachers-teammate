@@ -128,7 +128,7 @@ class InstallRound(QObject):
     log_line = Signal(str)
     item_started = Signal(str)  # "package:<pip>", "spacy:<model>", "reader:ppocr", ..., "<tag>"
     item_done = Signal(str)
-    pull_progress = Signal(str, int, int)  # status, bytes done, bytes total
+    pull_progress = Signal(str, float, float)  # status, bytes done, bytes total
     finished = Signal(bool)  # True when anything was installed or pulled
     failed = Signal(str, str)  # item, message
 
@@ -416,11 +416,8 @@ class InstallRound(QObject):
         from ._addon_installer_dialog import _OllamaPullThread  # noqa: PLC0415
 
         thread = _OllamaPullThread(self._ollama_url, model)
-        # The thread reports bytes as floats; the round's own signal carries whole bytes, so
-        # the pages that show them need no second handler.
-        thread.progress.connect(
-            lambda status, done, total: self.pull_progress.emit(status, int(done), int(total))
-        )
+        # Bytes travel as floats: a Qt ``int`` is 32 bits and a model is often over 2 GB.
+        thread.progress.connect(self.pull_progress)
         thread.finished_ok.connect(self._on_pull_done)
         thread.finished_err.connect(self._on_error)
         self._thread = thread

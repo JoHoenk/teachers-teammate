@@ -452,6 +452,62 @@ def test_spacy_preselect_ticks_the_model_and_spacy_itself(qtbot) -> None:
     assert "spacy:de_core_news_sm" not in dlg._model_items
 
 
+def test_name_detection_fix_button_ticks_the_boxes_through_the_settings_window(qtbot) -> None:
+    """
+    Given  the fix button "Download…" of a missing name detection model, which opens the
+           Settings window on Add-ons with the model as preselect (the real path: the page
+           is built by the window and detects what is installed on a background thread)
+    When   the detection has finished
+    Then   the name detection tab is shown and both the model's box and spaCy's box are ticked
+    """
+    from PySide6.QtWidgets import QTabWidget  # noqa: PLC0415
+
+    from teachers_teammate.gui.settings import SettingsWindow  # noqa: PLC0415
+
+    window = SettingsWindow(
+        settings_context(
+            _StubService(set()),
+            settings={
+                "ollama_url": "http://127.0.0.1:11434",
+                "hardware_profile": "8gb",
+            },
+        ),
+        page=SettingsPage.ADDONS,
+        focus=FOCUS_NAME_DETECTION,
+        preselect=["spacy:de_core_news_sm"],
+    )
+    qtbot.addWidget(window)
+    page = window.page(SettingsPage.ADDONS)
+
+    qtbot.waitUntil(lambda: page._installed_ready, timeout=5000)
+
+    assert page.findChild(QTabWidget).currentIndex() == AddonsPage.TAB_NAME_DETECTION
+    assert page._dl_checkboxes["spacy:de_core_news_sm"].isChecked() is True
+    assert page._dl_checkboxes["spacy"].isChecked() is True
+
+
+def test_name_detection_boxes_are_ticked_before_the_detection_has_answered(qtbot) -> None:
+    """
+    Given  a page whose detection is still running (it asks the Ollama server too, which can
+           take long when Ollama is not there)
+    When   it is focused on name detection with preselect=["spacy:de_core_news_sm"]
+    Then   the model's box and spaCy's box are ticked at once, and still are after the
+           detection has answered
+    """
+    dlg = _make_dialog(qtbot)
+    assert dlg._installed_ready is False
+
+    dlg.focus(FOCUS_NAME_DETECTION, ["spacy:de_core_news_sm"])
+
+    assert dlg._dl_checkboxes["spacy:de_core_news_sm"].isChecked() is True
+    assert dlg._dl_checkboxes["spacy"].isChecked() is True
+
+    dlg._on_detection_done(_detection_results(dlg, set()))
+
+    assert dlg._dl_checkboxes["spacy:de_core_news_sm"].isChecked() is True
+    assert dlg._dl_checkboxes["spacy"].isChecked() is True
+
+
 def test_reader_preselect_opens_the_reading_models_tab_and_ticks_the_reader(qtbot) -> None:
     """
     Given  the page focused on the reading models with preselect=["reader:ppocr"] (the fix
@@ -1067,7 +1123,7 @@ def test_a_running_pull_keeps_going_when_the_page_shuts_down(qtbot) -> None:
     from PySide6.QtCore import QObject, Signal  # noqa: PLC0415
 
     class _Manager(QObject):
-        progress = Signal(str, int, int)
+        progress = Signal(str, float, float)
         finished = Signal(str)
         error = Signal(str)
         is_active = False
@@ -1095,6 +1151,59 @@ def test_a_running_pull_keeps_going_when_the_page_shuts_down(qtbot) -> None:
     assert dlg._dl_detect_lbl.text() != "Done."
 
 
+def test_a_page_opened_during_a_download_marks_the_models_that_are_coming(qtbot) -> None:
+    """
+    Given  a main-window pull manager that is downloading one model with another queued
+    When   the page is opened (a new page, as after closing the window) and shows the models
+    Then   the Size column says "downloading…" for the first and "queued" for the second, and
+           the first shows its progress when the manager reports it
+    """
+    from PySide6.QtCore import QObject, Signal  # noqa: PLC0415
+
+    class _Manager(QObject):
+        progress = Signal(str, float, float)
+        finished = Signal(str)
+        error = Signal(str)
+        is_active = True
+        current_model = ""
+        queued: ClassVar[list[str]] = []
+
+        def start(self, url: str, model: str, queue=()) -> None:
+            pass
+
+        def abort(self) -> None:
+            pass
+
+    manager = _Manager()
+    dlg = _make_dialog(qtbot, pull_manager=manager)
+    first, second = [tag for tag, _item in dlg._iter_model_items()][:2]
+    manager.current_model = first
+    type(manager).queued = [second]
+
+    dlg.on_shown()
+    dlg._on_detection_done(_detection_results(dlg, set()))
+
+    assert dlg._model_items[first].text(3) == "downloading…"
+    assert dlg._model_items[second].text(3) == "queued"
+
+    manager.progress.emit("pulling", 25.0, 100.0)
+
+    assert dlg._model_items[first].text(3) == "downloading… 25%"
+
+
+def test_the_size_column_is_named_for_what_it_shows(qtbot) -> None:
+    """
+    Given  the model list of the page
+    When   its header is read
+    Then   the column says "Download size" and has a tooltip that explains the ✓ and the marks
+    """
+    dlg = _make_dialog(qtbot)
+    tree = dlg._ollama_model_list
+
+    assert tree.headerItem().text(3) == "Download size"
+    assert "✓" in tree.headerItem().toolTip(3)
+
+
 def test_the_queue_of_models_is_handed_to_the_manager(qtbot) -> None:
     """
     Given  an install round of two models through the main window's pull manager
@@ -1105,7 +1214,7 @@ def test_the_queue_of_models_is_handed_to_the_manager(qtbot) -> None:
     from PySide6.QtCore import QObject, Signal  # noqa: PLC0415
 
     class _Manager(QObject):
-        progress = Signal(str, int, int)
+        progress = Signal(str, float, float)
         finished = Signal(str)
         error = Signal(str)
         is_active = False
@@ -1339,7 +1448,7 @@ def test_finished_pull_shows_model_as_downloaded_without_waiting_for_cache(
     import teachers_teammate.gui._addon_installer_dialog as installer  # noqa: PLC0415
 
     class _FakePullThread(QObject):
-        progress = Signal(str, int, int)
+        progress = Signal(str, float, float)
         finished_ok = Signal(str)
         finished_err = Signal(str)
 
@@ -1377,7 +1486,7 @@ def test_pulled_custom_models_stay_in_other_with_their_abilities(
     import teachers_teammate.gui._addon_installer_dialog as installer  # noqa: PLC0415
 
     class _FakePullThread(QObject):
-        progress = Signal(str, int, int)
+        progress = Signal(str, float, float)
         finished_ok = Signal(str)
         finished_err = Signal(str)
 

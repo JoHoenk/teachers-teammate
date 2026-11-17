@@ -812,7 +812,8 @@ def test_pip_policy_of_the_installed_app(frozen_bundle: Path) -> None:
     """
     Given  the installed app
     When   the pip policy is asked for
-    Then   it upgrades, takes wheels only, skips the cache and passes the bundle's constraints
+    Then   it upgrades, takes wheels only, skips the cache, asks pip for no version notice
+           ("run … -m pip install --upgrade pip") and passes the bundle's constraints
     """
     arguments = addon_manager.pip_policy_arguments()
 
@@ -821,6 +822,7 @@ def test_pip_policy_of_the_installed_app(frozen_bundle: Path) -> None:
         "--only-binary",
         ":all:",
         "--no-cache-dir",
+        "--disable-pip-version-check",
         "-c",
         str(frozen_bundle),
     ]

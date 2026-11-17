@@ -23,7 +23,7 @@ What you set up once lives in the Settings window, grouped by topic. Pick a page
 |---|---|
 | **General** | How the app behaves while it works, and what it does at start: **Keep the computer awake**, on by default (see [Keeping the computer awake](#keeping-the-computer-awake)), and **Check for updates when the app starts**, also on by default (see [The update check](#the-update-check)) |
 | **AI models** | Which method reads the handwriting (always on this computer), and which AI service and model proofreads and reviews. One model serves both steps unless you tick **Use a different model for content review**. Every service is listed, grouped by where it runs, and marked *key needed* while it has no key; choose an online service and its **key row appears right below it**: paste the key and the model list loads, which also checks that the key works. If text then goes to an online service with names in it, the page says **"Remove personal info" will be turned on** when you press OK (you can keep it off). The context window setting appears here only when it changes something |
-| **This computer** | Shown under AI models in the sidebar: what the AI models need from this computer. First how powerful it is (**My computer**; the model suggestions follow it) and its graphics card, then the address of the local AI server (usually this computer, or your school's own server) |
+| **This computer** | Shown under AI models in the sidebar (not in the Settings menu): what the AI models need from this computer. One box holds how powerful it is (**My computer**; the model suggestions follow it), its graphics card and the speed test; below it the address of the local AI server (usually this computer) |
 | **Online services** | Also under AI models: the access keys (API keys) of the online AI services. The same keys you enter under the service on AI models, all in one list where you can remove one or add one for another service. Not needed while everything runs on this computer. Keys are kept in your system's keychain (macOS Keychain, Windows Credential Manager, or the Linux desktop keyring); where there is none, the page says that the key is kept in the app's settings file, not encrypted |
 | **Scan quality** | How scans and photos are prepared before they are read: **Automatic** or **Original page**, with a **Preview…**, and a **Download…** line for the page models; under **Expert settings** the PDF resolution and the PDF text layer |
 | **Privacy** | What may leave this computer (the answers you chose not to be asked about again), and how names and other personal information are found and replaced |
@@ -166,7 +166,7 @@ Reading a page needs the whole page — the handwriting, the student's name at t
 
 If your saved settings from an older version used an online service for text recognition, the app tells you at start-up that it now uses Ollama on your computer instead.
 
-Ollama on another computer that you or your school run (see **Settings → This computer…**) is allowed; the box described below then shows it as "On another computer" with its name.
+Ollama on another computer that you use (see **Settings → This computer…**) is allowed; the box described below then shows it as "On another computer" with its name.
 
 ---
 
@@ -209,7 +209,7 @@ The box at the top of the workflow panel gives the verdict for the current setup
 | Dot | Meaning |
 |---|---|
 | Green — *On this computer* | Nothing leaves your computer for this step. |
-| Orange — *On another computer (name)* | The step runs on an Ollama server that is not this computer, for example a school server. |
+| Orange — *On another computer (name)* | The step runs on an Ollama server that is not this computer, for example another computer at home. |
 | Yellow — *Online service (name) · EU · names hidden* | Anonymized text goes to a service in the European Union. |
 | Orange — *Online service (name) · outside the EU · names hidden* | Anonymized text goes to a service outside the EU, or to one that does not say where it processes data. |
 | Red — *Online service (name) · EU or outside the EU · names as written* | The text is sent with the names in it. |

@@ -221,6 +221,7 @@ class AddonsPage(SettingsPageBase):
         # "provider:<name>" asks for an LLM provider package, not an Ollama model.
         self._preselect_providers: list[str] = []
         self._pull_connected = False  # subscribed to the pull manager's signals
+        self._pull_manager = context.pull_manager  # owned by the main window; outlives this page
         self._detect_task = LatestTask(self)
         self._detect_running = False
         self._detect_again = False  # a pull finished while a detection was running
@@ -476,7 +477,15 @@ class AddonsPage(SettingsPageBase):
         tree = QTreeWidget()
         tree.setMinimumHeight(320)
         tree.setColumnCount(5)
-        tree.setHeaderLabels(["Model", "Suitability", "Memory", "Size", "License"])
+        tree.setHeaderLabels(["Model", "Suitability", "Memory", "Download size", "License"])
+        header_item = tree.headerItem()
+        if header_item is not None:
+            header_item.setToolTip(
+                3,
+                "How much has to be downloaded for this model. A model that is already on "
+                "this computer shows ✓ and the space it takes. While a model downloads the "
+                "column shows how far it has come.",
+            )
         hdr = tree.header()
         # The model name is what the user needs most: it takes the free width and can
         # never shrink below a readable minimum, the other columns fit their content.
@@ -787,6 +796,7 @@ class AddonsPage(SettingsPageBase):
         if model:
             self._dl_log.appendPlainText(f"(pull of {model!r} already in progress…)")
             self._show_pull_progress()
+        self._mark_pulls()
 
     def focus(self, focus: str, preselect: Sequence[str] = ()) -> None:
         """Show the tab named *focus*; tick *preselect*.
@@ -831,6 +841,11 @@ class AddonsPage(SettingsPageBase):
             self._preselect_providers.append(READER_ITEM)
         if page_models:
             self._preselect_providers.append(PAGE_MODELS_ITEM)
+        # The boxes of packages and models files need no answer from the Ollama server, so they
+        # are ticked at once: the detection also asks that server, and with Ollama missing or
+        # stopped it can take long, while the teacher looks at an empty tab.  Detection ticks
+        # them again after it has reset the boxes (an installed one is then disabled instead).
+        self._tick_boxes_now(self._preselect_providers)
         if self._installed_ready and (tags or providers or spacy or reader or page_models):
             # Detection is done: tick now (otherwise it ticks once detection finished).
             self._tick_preselect_tags()
@@ -931,7 +946,34 @@ class AddonsPage(SettingsPageBase):
                 item.setFlags(
                     item.flags() | Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsUserCheckable
                 )
+        self._mark_pulls()
         return installed_by_category
+
+    def _mark_pulls(self, percent: int | None = None) -> None:
+        """Show in the Size column which models the main window is downloading or has queued.
+
+        The downloads go on after this page is closed, so a page opened later has to show them
+        again: the model that is coming now says how far it is, the ones behind it say "queued".
+        """
+        manager = self._pull_manager
+        if manager is None or not manager.is_active:
+            return
+        current = manager.current_model
+        queued = set(manager.queued)
+        for tag, item in self._iter_model_items():
+            if tag == current:
+                item.setText(
+                    3, f"downloading… {percent}%" if percent is not None else "downloading…"
+                )
+            elif tag in queued:
+                item.setText(3, "queued")
+
+    def _tick_boxes_now(self, keys: Sequence[str]) -> None:
+        """Tick the boxes named by *keys* that can be ticked; keep *keys* for after detection."""
+        for key in keys:
+            cb = self._dl_checkboxes.get(key)
+            if cb is not None and cb.isEnabled():
+                cb.setChecked(True)
 
     def _tick_preselect_providers(self) -> None:
         """Tick the requested provider packages that are not installed yet."""
@@ -1089,6 +1131,7 @@ class AddonsPage(SettingsPageBase):
         if item == UPDATE_ADDONS_ITEM or item.startswith((PACKAGE_PREFIX, SPACY_PREFIX)):
             return
         self._show_pull_progress()
+        self._mark_pulls()
 
     def _show_pull_progress(self) -> None:
         self._dl_progress.setValue(0)
@@ -1102,6 +1145,7 @@ class AddonsPage(SettingsPageBase):
             mb_total = total / 1_048_576
             self._dl_detect_lbl.setText(f"{status}: {mb_done:.1f} / {mb_total:.1f} MB")
             self._dl_progress.setValue(int(100 * completed / total))
+            self._mark_pulls(int(100 * completed / total))
         else:
             self._dl_detect_lbl.setText(status)
 

@@ -11,7 +11,6 @@ from __future__ import annotations
 from collections.abc import Mapping
 import dataclasses
 from pathlib import Path
-import sys
 from typing import Any, cast
 
 from PySide6.QtCore import Qt, Signal
@@ -647,10 +646,7 @@ class ConfigPanel(QScrollArea):
 
     def _on_browse_output_dir(self) -> None:
         start = self._output_dir.text().strip() or str(Path.home())
-        options = QFileDialog.Option(0)
-        if sys.platform == "win32":
-            options |= QFileDialog.Option.DontUseNativeDialog
-        chosen = QFileDialog.getExistingDirectory(self, "Select output folder", start, options)
+        chosen = QFileDialog.getExistingDirectory(self, "Select output folder", start)
         if chosen:
             self._output_dir.setText(chosen)
             self._on_output_dir_edited()
@@ -681,10 +677,7 @@ class ConfigPanel(QScrollArea):
 
     def _on_select_folder(self) -> None:
         start = str(self._selected_folder or Path.home())
-        options = QFileDialog.Option(0)
-        if sys.platform == "win32":
-            options |= QFileDialog.Option.DontUseNativeDialog
-        path = QFileDialog.getExistingDirectory(None, "Select Input Folder", start, options)
+        path = QFileDialog.getExistingDirectory(None, "Select Input Folder", start)
         if path:
             self._selected_folder = Path(path)
             self._selected_files = []
@@ -693,16 +686,12 @@ class ConfigPanel(QScrollArea):
 
     def _on_select_files(self) -> None:
         start = str(self._selected_folder or Path.home())
-        options = QFileDialog.Option(0)
-        if sys.platform == "win32":
-            options |= QFileDialog.Option.DontUseNativeDialog
         paths, _ = QFileDialog.getOpenFileNames(
             None,
             "Select Input Files",
             start,
             "Supported files (*.pdf *.PDF *.png *.PNG *.jpg *.JPG *.jpeg *.JPEG "
             "*.tiff *.TIFF *.tif *.TIF *.txt *.TXT);;All files (*)",
-            options=options,
         )
         if paths:
             self._selected_files = [Path(p) for p in paths]

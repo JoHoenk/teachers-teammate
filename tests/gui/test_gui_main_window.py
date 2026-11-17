@@ -37,6 +37,7 @@ from teachers_teammate.gui.settings._page import (
     FOCUS_ONLINE_SERVICES,
     FOCUS_PROOFREADING_KEY,
 )
+from teachers_teammate.gui.settings._window import SUB_PAGES
 from teachers_teammate.domain.run_summary import RunSummary
 from teachers_teammate.infrastructure.ollama_install import OLLAMA_DOWNLOAD_URL
 from teachers_teammate.infrastructure.reporting import KeepAwakeState
@@ -1718,7 +1719,8 @@ def test_settings_menu_lists_the_pages_then_all_settings(main_window) -> None:
     """
     Given  the main window
     When   the Settings menu is read
-    Then   it lists the seven pages by name, a separator and "All settings…" on Ctrl+,
+    Then   it lists the five main pages by name (not the two sub-pages that sit under AI models
+           in the Settings window), a separator and "All settings…" on Ctrl+,
     """
     menu = _menu(main_window, "Settings")
 
@@ -1727,8 +1729,6 @@ def test_settings_menu_lists_the_pages_then_all_settings(main_window) -> None:
     assert entries == [
         "General\u2026",
         "AI models\u2026",
-        "This computer\u2026",
-        "Online services\u2026",
         "Scan quality\u2026",
         "Privacy\u2026",
         "Add-ons\u2026",
@@ -1739,7 +1739,7 @@ def test_settings_menu_lists_the_pages_then_all_settings(main_window) -> None:
 
 
 @pytest.mark.gui
-@pytest.mark.parametrize("page", list(SettingsPage))
+@pytest.mark.parametrize("page", [p for p in SettingsPage if p not in SUB_PAGES])
 def test_each_settings_menu_entry_opens_its_page(main_window, monkeypatch, page) -> None:
     """
     Given  the Settings menu

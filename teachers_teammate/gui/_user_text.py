@@ -433,12 +433,19 @@ SPEED_NOTHING_TO_MEASURE = (
 )
 SPEED_CHANGE_MODELS = "Change models…"
 SPEED_CHANGE_MODELS_TOOLTIP = f"Opens {PAGE_AI_MODELS}, where the models are chosen."
-SPEED_HINT_MEASURE = "Measure…"
+SPEED_HINT_MEASURE = "Test speed…"
+SPEED_HINT_NEVER = (
+    "How long a class set takes is not known yet. "
+    f"Test the speed of this computer to find out ({PAGE_AI_SETUP})."
+)
 SPEED_HINT_DETAILS = "Details…"
 SPEED_HINT_TOOLTIP = f"Opens {PAGE_AI_SETUP}, where the speed of this computer is measured."
 SPEED_STOP_TOOLTIP = "Stop the test. Nothing is saved."
 SPEED_STOPPING = "Stopping…"
 SPEED_TESTING = "Testing… this takes up to a minute and a half per step."
+SPEED_TESTING_STEP = (
+    "Step {number} of {total}: {step} with {model}… (up to a minute and a half per step)"
+)
 SPEED_TEST_FAILED = "The test could not run: {reason}"
 SPEED_NEVER_MEASURED = "Not measured on this computer yet."
 SPEED_ON_CARD = "on the card ✓"
@@ -455,7 +462,7 @@ SPEED_CARD_NOT_USED = (
     "A smaller model fits on the card: {where}."
 )
 SPEED_SWAPS = (
-    "The reading and proofreading models don't fit in memory together: "
+    "The proofreading and review models don't fit in memory together: "
     "each file adds about {load} of loading."
 )
 SPEED_CLASS_SET = "{files} two-page essays: about {span}"
@@ -486,6 +493,13 @@ SPEED_BAND_NAMES: dict[str, str] = {
     "slow": "slow",
     "very_slow": "very slow",
 }
+
+
+def speed_testing_step(step: str, model: str, number: int, total: int) -> str:
+    """Return the line that says which step of the speed test is running now."""
+    return SPEED_TESTING_STEP.format(
+        step=speed_step_name(step).lower(), model=model, number=number, total=total
+    )
 
 
 def speed_step_name(step: str) -> str:

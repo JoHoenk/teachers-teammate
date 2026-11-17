@@ -932,7 +932,7 @@ def test_samples_win_over_a_stored_measurement(tmp_path: Path) -> None:
 
 def test_most_samples_paying_a_load_marks_the_models_as_swapping(tmp_path: Path) -> None:
     """
-    Given  three samples of which two paid a model load
+    Given  three samples of the review step of which two paid a model load
     When   the summary is asked for
     Then   it says the models evict each other, and how many seconds of loading a file pays
     """
@@ -940,11 +940,12 @@ def test_most_samples_paying_a_load_marks_the_models_as_swapping(tmp_path: Path)
     service, _store, _client = _service(tmp_path, samples=samples)
     _add_samples(
         samples,
-        SpeedStep.PROOFREADING,
+        SpeedStep.REVIEW,
         [_sample(load_s=3.0), _sample(load_s=3.0), _sample()],
+        tag="qwen3:8b",
     )
 
-    summary = service.speed_summary(_choices(reading_model=""))
+    summary = service.speed_summary(_choices(reading_model="", review_model="qwen3:8b"))
 
     assert summary.swaps is True
     assert summary.swap_load_s == pytest.approx(3.0)
@@ -952,7 +953,7 @@ def test_most_samples_paying_a_load_marks_the_models_as_swapping(tmp_path: Path)
 
 def test_a_minority_of_loads_does_not_mark_the_models_as_swapping(tmp_path: Path) -> None:
     """
-    Given  three samples of which one paid a model load
+    Given  three samples of the review step of which one paid a model load
     When   the summary is asked for
     Then   the models are not reported as evicting each other, because they mostly stay loaded
     """
@@ -960,11 +961,12 @@ def test_a_minority_of_loads_does_not_mark_the_models_as_swapping(tmp_path: Path
     service, _store, _client = _service(tmp_path, samples=samples)
     _add_samples(
         samples,
-        SpeedStep.PROOFREADING,
+        SpeedStep.REVIEW,
         [_sample(load_s=3.0), _sample(), _sample()],
+        tag="qwen3:8b",
     )
 
-    summary = service.speed_summary(_choices(reading_model=""))
+    summary = service.speed_summary(_choices(reading_model="", review_model="qwen3:8b"))
 
     assert summary.swaps is False
     assert summary.swap_load_s == 0.0

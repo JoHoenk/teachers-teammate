@@ -139,7 +139,7 @@ from .text_size import TextSizeEstimate, proofreading_pieces
 
 if TYPE_CHECKING:
     from ..infrastructure.anonymizer import SpacyAnonymizer
-    from ..infrastructure.performance_probe import ProbeResult
+    from ..infrastructure.performance_probe import ProbeResult, ProgressFn
     from ..interfaces import Anonymizer
 
 
@@ -745,9 +745,15 @@ class ProcessingApplicationService:
         *,
         hardware: HardwareDetection | None = None,
         cancel_event: threading.Event | None = None,
+        on_progress: ProgressFn | None = None,
     ) -> ProbeResult:
-        """Run the speed test for *choices* and store the result (background thread only)."""
-        return self._speeds.test_speed(choices, hardware=hardware, cancel_event=cancel_event)
+        """Run the speed test for *choices* and store the result (background thread only).
+
+        *on_progress* hears of each step as it starts (from the test's thread).
+        """
+        return self._speeds.test_speed(
+            choices, hardware=hardware, cancel_event=cancel_event, on_progress=on_progress
+        )
 
     def speed_summary(
         self,

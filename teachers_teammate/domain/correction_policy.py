@@ -41,7 +41,7 @@ def cut_off_tries(*, online: bool, temperature: float) -> int:
     """Return how often a cut-off review request is sent: :data:`CUT_OFF_TRIES`, or once.
 
     A second try costs money at an online service and is the same answer again at temperature 0,
-    so it is only worth sending to a model on this computer or the school's own server, with
+    so it is only worth sending to a model on this computer or another computer of yours, with
     some randomness in the sampling.
     """
     return 1 if online or temperature <= 0 else CUT_OFF_TRIES

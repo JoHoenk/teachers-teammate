@@ -27,7 +27,14 @@ import threading
 from typing import Protocol
 
 from PySide6.QtCore import Signal
-from PySide6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
+from PySide6.QtWidgets import (
+    QHBoxLayout,
+    QLabel,
+    QProgressBar,
+    QPushButton,
+    QVBoxLayout,
+    QWidget,
+)
 
 from ...application.speed_estimates import CLASS_SET_FILES, SpeedChoices, SpeedSummary
 from ...domain.model_catalog import HardwareDetection
@@ -67,6 +74,7 @@ class _SpeedService(Protocol):
         *,
         hardware: HardwareDetection | None = None,
         cancel_event: threading.Event | None = None,
+        on_progress: Callable[[SpeedStep, str, int, int], None] | None = None,
     ) -> ProbeResult: ...
 
     def refresh_speed_server_facts(self, ollama_url: str) -> None: ...
@@ -97,6 +105,8 @@ class SpeedPanel(QWidget):
 
     #: A test finished and stored its measurement (the figures elsewhere are out of date).
     measured = Signal()
+    #: A step of the running test starts (emitted from the test's thread, so it is queued).
+    _step_started = Signal(str, str, int, int)
 
     def __init__(
         self,
@@ -157,10 +167,19 @@ class SpeedPanel(QWidget):
         header.addWidget(self._button)
         layout.addLayout(header)
 
+        # What runs now, in the normal text size: a test takes minutes, and a grey hint line
+        # reads as "nothing happens".  The bar has no end because the test reports steps only.
         self._status = QLabel(txt.SPEED_TESTING)
-        self._status.setStyleSheet(_HINT_STYLE)
+        self._status.setWordWrap(True)
         self._status.setVisible(False)
         layout.addWidget(self._status)
+        self._busy_bar = QProgressBar()
+        self._busy_bar.setRange(0, 0)
+        self._busy_bar.setTextVisible(False)
+        self._busy_bar.setFixedHeight(10)
+        self._busy_bar.setVisible(False)
+        layout.addWidget(self._busy_bar)
+        self._step_started.connect(self._on_step_started)
 
         self._rows: dict[SpeedStep, _StepRow] = {}
         for step in SpeedStep:
@@ -259,7 +278,14 @@ class SpeedPanel(QWidget):
         hardware = self._hardware()
         self._set_running(True)
         self._test_task.submit(
-            lambda: self._service.test_speed(choices, hardware=hardware, cancel_event=cancel),
+            lambda: self._service.test_speed(
+                choices,
+                hardware=hardware,
+                cancel_event=cancel,
+                on_progress=lambda step, model, number, total: self._step_started.emit(
+                    step.value, model, number, total
+                ),
+            ),
             self._on_test_done,
         )
 
@@ -283,7 +309,14 @@ class SpeedPanel(QWidget):
         self._button.setEnabled(True)
         self._button.setText(txt.SPEED_STOP if running else txt.SPEED_TEST)
         self._button.setToolTip(txt.SPEED_STOP_TOOLTIP if running else txt.SPEED_TEST_TOOLTIP)
+        self._status.setText(txt.SPEED_TESTING)
         self._status.setVisible(running)
+        self._busy_bar.setVisible(running)
+
+    def _on_step_started(self, step: str, model: str, number: int, total: int) -> None:
+        """Say which step the running test is on."""
+        if self._running:
+            self._status.setText(txt.speed_testing_step(step, model, number, total))
 
     # ── server facts ───────────────────────────────────────────────────────
 

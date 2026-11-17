@@ -122,7 +122,10 @@ Var DirGiven            ; "1" when /D= was given, so $INSTDIR is not ours to set
 
 ; Pages
 Var WelcomeText
-Var SkipWelcome         ; "1" in the elevated copy: no Welcome, no Scope page
+Var WhereText           ; "for all users in <folder>" / "for you in <folder>"
+Var SkipWelcome         ; "1" in the elevated copy: no Welcome, no Scope page (it was shown before the prompt)
+Var NeedElevation       ; "1" when an update of an all-users copy needs rights this copy lacks:
+                        ; the Welcome page says so and starts the elevated copy when it is left
 Var DesktopShortcut     ; "1" when a desktop shortcut is wanted
 Var ScopeDialog
 Var ScopeAllUsers
@@ -132,6 +135,7 @@ Var ScopeDesktop
 ; The app-still-open check
 Var CheckDir
 Var CheckHandle
+Var CheckTries
 
 ; Uninstaller cleanup page variables
 Var UnDelPackages    ; checkbox control handle for packages directory
@@ -167,6 +171,7 @@ Function ${FUNC}
   ${IfNot} ${FileExists} "$CheckDir\teachers-teammate.exe"
     Return
   ${EndIf}
+  StrCpy $CheckTries 0
   retry${ID}:
   ClearErrors
   FileOpen $CheckHandle "$CheckDir\teachers-teammate.exe" a
@@ -175,6 +180,13 @@ Function ${FUNC}
     Return
   ${EndIf}
   ${If} ${Silent}
+    ; A virus scanner or the shell can hold the exe for a moment after the program ended (a
+    ; CI run updates a copy it started a second before): wait up to 10 s before saying "open".
+    ${If} $CheckTries < 20
+      IntOp $CheckTries $CheckTries + 1
+      Sleep 500
+      Goto retry${ID}
+    ${EndIf}
     SetErrorLevel 10
     Quit
   ${EndIf}
@@ -220,6 +232,7 @@ FunctionEnd
 
 !ifndef BUILD_UNINSTALLER
 !define MUI_PAGE_CUSTOMFUNCTION_PRE WelcomePagePre
+!define MUI_PAGE_CUSTOMFUNCTION_LEAVE WelcomePageLeave
 ; .onInit works out the text: fresh install, update, reinstall or downgrade.
 !define MUI_WELCOMEPAGE_TEXT "$WelcomeText"
 !insertmacro MUI_PAGE_WELCOME
@@ -304,6 +317,7 @@ Function .onInit
   StrCpy $CmdNoDesktop "0"
   StrCpy $CmdAllowDowngrade "0"
   StrCpy $SkipWelcome "0"
+  StrCpy $NeedElevation "0"
   StrCpy $DesktopShortcut "1"
   StrCpy $WelcomeText ""
   StrCpy $PreviousVersion ""
@@ -415,17 +429,10 @@ Function .onInit
           SetErrorLevel 14
           Quit
         ${EndIf}
-        MessageBox MB_OKCANCEL|MB_ICONINFORMATION \
-          "Teacher's Teammate is installed for all users. Updating it needs administrator rights.$\r$\n$\r$\nClick OK to continue with administrator rights, or Cancel to quit." \
-          /SD IDOK IDOK elevate_update
-        Quit
-        elevate_update:
-          StrCpy $R1 "/SCOPE=all /ELEVATED"
-          !insertmacro RelaunchElevated "$R1"
-          ${If} $0 <= 32
-            MessageBox MB_OK|MB_ICONSTOP "Teacher's Teammate needs administrator rights to update the all-users copy. Nothing was changed."
-          ${EndIf}
-          Quit
+        ; The Welcome page tells which copy is updated and where; administrator rights are
+        ; asked for when it is left (WelcomePageLeave), so the teacher sees what will happen
+        ; before Windows asks, and the elevated copy goes straight to the installation.
+        StrCpy $NeedElevation "1"
       ${EndIf}
       StrCpy $Mode "update"
       StrCpy $InstallScope "all"
@@ -475,10 +482,16 @@ Function .onInit
   ${If} $Mode == "fresh"
     StrCpy $WelcomeText "This installs ${APP_NAME} ${APP_VERSION} on this computer.$\r$\n$\r$\nIn the next step you choose whether it is installed for all users or only for you."
   ${Else}
-    ${If} $PreviousVersion == ""
-      StrCpy $PrevLabel "An earlier version of ${APP_NAME}"
+    ; Where the copy is: the text names its folder, so the teacher knows which one is meant.
+    ${If} $InstallScope == "all"
+      StrCpy $WhereText "for all users in $INSTDIR"
     ${Else}
-      StrCpy $PrevLabel "${APP_NAME} $PreviousVersion"
+      StrCpy $WhereText "for you in $INSTDIR"
+    ${EndIf}
+    ${If} $PreviousVersion == ""
+      StrCpy $PrevLabel "An earlier version of ${APP_NAME} is installed $WhereText."
+    ${Else}
+      StrCpy $PrevLabel "${APP_NAME} $PreviousVersion is installed $WhereText."
       StrCpy $R0 $PreviousVersion
       Call StripPrerelease
       StrCpy $PreviousVersionNum $R0
@@ -489,9 +502,9 @@ Function .onInit
     ${VersionCompare} "$PreviousVersionNum" "$R0" $R3
     ${If} $R3 == "0"
       ${If} $PreviousVersion == "${APP_VERSION}"
-        StrCpy $WelcomeText "${APP_NAME} ${APP_VERSION} is already installed. This reinstalls it. Your settings, add-ons and downloaded models stay."
+        StrCpy $WelcomeText "${APP_NAME} ${APP_VERSION} is already installed $WhereText. This reinstalls it. Your settings, add-ons and downloaded models stay."
       ${Else}
-        StrCpy $WelcomeText "$PrevLabel is installed. This replaces it with ${APP_VERSION}. Your settings, add-ons and downloaded models stay."
+        StrCpy $WelcomeText "$PrevLabel This replaces it with ${APP_VERSION}. Your settings, add-ons and downloaded models stay."
       ${EndIf}
     ${ElseIf} $R3 == "1"
       ${If} ${Silent}
@@ -499,16 +512,20 @@ Function .onInit
           SetErrorLevel 11
           Quit
         ${EndIf}
-      ${Else}
+      ${ElseIf} $SkipWelcome != "1"
+        ; The elevated copy was started after this question was answered.
         MessageBox MB_YESNO|MB_ICONEXCLAMATION \
-          "Version $PreviousVersion is installed, which is newer than ${APP_VERSION}. Install the older version?" \
+          "Version $PreviousVersion is installed $WhereText, which is newer than ${APP_VERSION}. Install the older version?" \
           /SD IDNO IDYES downgrade_ok
         Quit
         downgrade_ok:
       ${EndIf}
-      StrCpy $WelcomeText "Version $PreviousVersion is installed, which is newer than ${APP_VERSION}. This replaces it with the older version. Your settings, add-ons and downloaded models stay."
+      StrCpy $WelcomeText "Version $PreviousVersion is installed $WhereText, which is newer than ${APP_VERSION}. This replaces it with the older version. Your settings, add-ons and downloaded models stay."
     ${Else}
-      StrCpy $WelcomeText "$PrevLabel is installed. This updates it to ${APP_VERSION}. Your settings, add-ons and downloaded models stay."
+      StrCpy $WelcomeText "$PrevLabel This updates it to ${APP_VERSION}. Your settings, add-ons and downloaded models stay."
+    ${EndIf}
+    ${If} $NeedElevation == "1"
+      StrCpy $WelcomeText "$WelcomeText$\r$\n$\r$\nUpdating this copy needs administrator rights: Windows asks for them when you click Next."
     ${EndIf}
   ${EndIf}
 
@@ -540,6 +557,20 @@ FunctionEnd
 Function WelcomePagePre
   ${If} $SkipWelcome == "1"
     Abort
+  ${EndIf}
+FunctionEnd
+
+; Leaving Welcome is the click that agrees to the update: an all-users copy is updated by an
+; elevated copy of this installer, which skips the pages and installs at once.
+Function WelcomePageLeave
+  ${If} $NeedElevation == "1"
+    StrCpy $R1 "/SCOPE=all /ELEVATED"
+    !insertmacro RelaunchElevated "$R1"
+    ${If} $0 > 32
+      Quit
+    ${EndIf}
+    MessageBox MB_OK|MB_ICONSTOP "Teacher's Teammate needs administrator rights to update the all-users copy. Nothing was changed."
+    Abort ; stay on the Welcome page
   ${EndIf}
 FunctionEnd
 

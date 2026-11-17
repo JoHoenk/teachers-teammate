@@ -1,4 +1,8 @@
-"""Settings → Scan quality: how a page is prepared before it is read."""
+"""Settings → Scan quality: how a page is prepared before it is read.
+
+The ``debug`` key (keep the images of the preparation steps) is a tool for developers
+(``--debug``): the page shows no switch for it and leaves the key alone.
+"""
 
 from __future__ import annotations
 
@@ -6,7 +10,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from PySide6.QtCore import Signal
-from PySide6.QtWidgets import QCheckBox, QGroupBox, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QGroupBox, QVBoxLayout, QWidget
 
 from ...config import DEFAULTS, OcrConfig
 from .._collapsible_section import CollapsibleSection
@@ -20,11 +24,6 @@ DESCRIPTION = (
     "documents; Preview… shows the effect on one of your own."
 )
 GROUP_TITLE = "Preparing scans and photos"
-DEBUG_LABEL = "Keep processed images for inspection"
-DEBUG_TOOLTIP = (
-    "When enabled, the processed images used for text recognition are\n"
-    "kept in a temporary folder after the run."
-)
 
 #: The settings keys :class:`ScanQualityControls` shows (the temperature lives on AI models).
 SCAN_KEYS = (
@@ -35,7 +34,7 @@ SCAN_KEYS = (
 
 
 class ScanQualityPage(SettingsPageBase):
-    """Image preparation (Automatic or Original page); Expert: PDF handling, debug."""
+    """Image preparation (Automatic or Original page); Expert: PDF handling."""
 
     page = SettingsPage.SCAN_QUALITY
     title = TITLE
@@ -71,24 +70,17 @@ class ScanQualityPage(SettingsPageBase):
         expert_layout = QVBoxLayout(self._expert_section.content_widget)
         expert_layout.setContentsMargins(0, 0, 0, 0)
         expert_layout.addWidget(self._controls.pdf_options_widget())
-        self._debug = QCheckBox(DEBUG_LABEL)
-        self._debug.setToolTip(DEBUG_TOOLTIP)
-        expert_layout.addWidget(self._debug)
         layout.addWidget(self._expert_section)
         layout.addStretch(1)
         # Valid right after construction, as the old dialog was: unset keys show the defaults.
         self._controls.load(OcrConfig.from_settings(context.settings))
-        self._debug.setChecked(bool(context.settings.get("debug", DEFAULTS["debug"])))
 
     def load(self, values: Mapping[str, Any]) -> None:
         self._controls.load(OcrConfig.from_settings(values))
-        if "debug" in values:
-            self._debug.setChecked(bool(values["debug"]))
         # A setting the user chose is the reason to open "Expert settings" at all.
         saved = OcrConfig.from_settings(values)
         self._expert_section.set_expanded(
-            self._debug.isChecked() != DEFAULTS["debug"]
-            or saved.pdf_render_dpi != DEFAULTS["pdf_render_dpi"]
+            saved.pdf_render_dpi != DEFAULTS["pdf_render_dpi"]
             or saved.pdf_text_layer != DEFAULTS["pdf_text_layer"]
         )
 
@@ -98,11 +90,10 @@ class ScanQualityPage(SettingsPageBase):
             "preprocess_method": ocr.preprocess_method,
             "pdf_render_dpi": ocr.pdf_render_dpi,
             "pdf_text_layer": ocr.pdf_text_layer,
-            "debug": self._debug.isChecked(),
         }
 
     def owned_keys(self) -> frozenset[str]:
-        return frozenset((*SCAN_KEYS, "debug"))
+        return frozenset(SCAN_KEYS)
 
     def ocr_config(self, engine: str, model: str) -> OcrConfig:
         """Return the full :class:`OcrConfig` for *engine*/*model* with this page's choices."""

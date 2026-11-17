@@ -2693,6 +2693,26 @@ The convention is:
 - `print(f"ERROR: …")` — reserved for CLI user-facing status lines where the
   message is part of the normal output contract (not a log event).
 
+### Diagnosing a slow start or a window that freezes
+
+`infrastructure/diagnostics.py`; off unless asked for. Start the app with `--diagnose` (for the
+installed Windows app: a shortcut whose target ends in ` --diagnose`, or
+`set TEACHERS_TEAMMATE_DIAGNOSE=1` in a terminal) and `diagnostics.log` appears in the data
+folder (`resolve_data_root()`; on Windows `%LOCALAPPDATA%\teachers_teammate\data`). It holds
+
+- one line per phase of the start, with the seconds since the process began (imports and the
+  early splash are before the first line; `main_gui` writes the rest: the add-on folder, the
+  application, the theme, the window built and shown, the first turn of the event loop), and
+- a report whenever the GUI thread stays silent for more than 0.3 s: the calls it is in (module,
+  line, function) and where the other threads are, repeated at 1, 3, 10 and 30 s, then a line
+  when it answers again.
+
+A stall can only be explained while it lasts, so a thread watches a heartbeat that a 50 ms
+timer of the GUI thread sets (`Diagnostics.beat`). The file contains code places and times,
+never a document, a file name, a setting or a value. A new phase is `diagnostics.phase("…")`;
+it does nothing while the diagnostics are off. The file is cleared at the start of a session
+when it is over 1 MB.
+
 ### GUI error feedback
 
 Long-running background fetches (model lists, spaCy model availability) use Qt

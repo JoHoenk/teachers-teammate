@@ -66,6 +66,9 @@ ADDON_LOCK_RELATIVE = Path("teachers_teammate") / "_build" / "addon_lock.txt"
 _PIP_UPGRADE = "--upgrade"
 _PIP_ONLY_BINARY = ("--only-binary", ":all:")
 _PIP_NO_CACHE = "--no-cache-dir"
+#: pip would end its output with "a new release of pip is available… run <exe> -m pip install
+#: --upgrade pip" — advice a teacher must not follow, and one that cannot work in the bundle.
+_PIP_NO_VERSION_CHECK = "--disable-pip-version-check"
 
 _ADDON_PACKAGES: dict[str, list[str]] = {
     ADDON_PRIVACY: ["spacy>=3.7"],
@@ -551,6 +554,7 @@ def pip_policy_arguments(*, upgrade: bool = True) -> list[str]:
       old numpy copy would never be replaced.
     * ``--only-binary :all:``: a source build would start the GUI executable as its build
       interpreter, and a school computer has no compiler.
+    * ``--disable-pip-version-check``: no "a new release of pip is available" notice in the log.
     * ``--no-cache-dir``: pip's download cache is shared with other Python programs and never
       cleaned; nothing here installs the same wheel twice.
     * ``-c <constraints>``: every package the app bundles stays at the bundled version, or pip
@@ -563,7 +567,7 @@ def pip_policy_arguments(*, upgrade: bool = True) -> list[str]:
     """
     if not getattr(sys, "frozen", False):
         return []
-    arguments = [*_PIP_ONLY_BINARY, _PIP_NO_CACHE]
+    arguments = [*_PIP_ONLY_BINARY, _PIP_NO_CACHE, _PIP_NO_VERSION_CHECK]
     if upgrade:
         arguments.insert(0, _PIP_UPGRADE)
     for path in (addon_constraints_path(), addon_lock_path()):
@@ -696,7 +700,16 @@ def install_packages_subprocess(
             *packages,
         ]
     else:
-        cmd = [sys.executable, "-m", "pip", "install", "--upgrade", *network, *packages]
+        cmd = [
+            sys.executable,
+            "-m",
+            "pip",
+            "install",
+            "--upgrade",
+            _PIP_NO_VERSION_CHECK,
+            *network,
+            *packages,
+        ]
 
     kwargs: dict = {
         "stdout": subprocess.PIPE,
@@ -777,6 +790,7 @@ def download_spacy_model_subprocess(
             "-m",
             "pip",
             "install",
+            _PIP_NO_VERSION_CHECK,
             "--target",
             str(target),
             "--prefer-binary",

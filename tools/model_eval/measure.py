@@ -34,7 +34,6 @@ import time
 from typing import TYPE_CHECKING, Any, Protocol
 import urllib.request
 
-from teachers_teammate.domain.answer_format import ANSWER_FORMAT_VERSION
 from teachers_teammate.domain.model_catalog import normalize_tag
 from teachers_teammate.infrastructure.ollama_utils import OllamaClient
 
@@ -42,6 +41,7 @@ from . import protocol
 from .agent_client import MIB, SETTLE_TOLERANCE_BYTES, AgentClient, AgentError
 from .answer_mode import AnswerMode
 from .layout import OLLAMA
+from .one_request.answer_format import ANSWER_FORMAT_VERSION
 from .performance import LoadedModel, Performance, RequestStats
 from .ports import ProbePort, RequestRecorder
 

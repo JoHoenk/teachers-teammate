@@ -25,7 +25,6 @@ from .._llm_invoke import (
     invoke_langchain_chain,
     invoke_langchain_structured,
 )
-from ..correction_schema import escape_braces
 from ..ollama_utils import PROOFREADING_NUM_CTX
 
 if TYPE_CHECKING:
@@ -36,6 +35,11 @@ if TYPE_CHECKING:
 
 REVIEW_TIMEOUT_CAP = 600.0
 """Upper bound in seconds for a request whose answer is long, whatever the text length is."""
+
+
+def escape_braces(text: str) -> str:
+    """Escape every brace so *text* is safe inside a LangChain prompt template."""
+    return text.replace("{", "{{").replace("}", "}}")
 
 
 def _review_timeout(base_timeout: float, text: str) -> float:

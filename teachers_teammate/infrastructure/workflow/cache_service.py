@@ -9,7 +9,6 @@ from pathlib import Path
 
 from ...config import Config, OcrConfig
 from ...domain.context_budget import RunWindows, window_from_setting
-from ...domain.correction_prompts import prompt_identity
 from ...domain.data_location import (
     ENGINE_OLLAMA,
     ENGINE_PPOCR,
@@ -18,14 +17,13 @@ from ...domain.data_location import (
     SentRecord,
 )
 from ...domain.local_models import reader_fingerprint
-from ..correction import instruction_parts
-from ..correction_schema import CONTRACT_VERSION
 from ..input_provider_factory import InputOptions, input_settings_fingerprint
 from ..ocr_processor import get_ocr_prompt
 from ..ollama_utils import ollama_host
 from ..onnx.store import ModelStore
 from ..preprocessing.identity import auto_identity
 from ..preview_image_store import PreviewImageStore
+from ..proofreading.corrector import exchange_identity
 from ..state_repository import (
     DocumentState,
     OcrResultRecord,
@@ -199,49 +197,22 @@ def compute_correction_config_hash(config: Config, windows: RunWindows | None = 
     """Return the correction stage config hash for *config*, or '' when disabled."""
     if not config.correction_enabled:
         return ""
-    # What is sent, not the setting: "" means "the built-in text", which can change with the
-    # app, so the resolved instructions and answer formats are what must key the cache.  The
-    # model's request profile is resolved here too, so a profile change invalidates the cached
-    # corrections of that model and no other.
+    # What is sent, not the setting: the exchange's fixed prompts and the model's request
+    # profile are what decide the requests, so both key the cache.  The profile carries every
+    # temperature, the thinking and the sampling values of the steps, so a change of any of
+    # them invalidates the cached corrections of that model and no other.
     profile = config.correction_profile
-    policy, review_format = instruction_parts(
-        config.correction_prompt,
-        config.language,
-        level=config.correction_level,
-        text_format="plain",
-        mode="review",
-        answer_format=config.answer_format_review,
-        compact_json=profile.compact_json,
-    )
-    _, text_format = instruction_parts(
-        config.correction_prompt,
-        config.language,
-        level=config.correction_level,
-        text_format="plain",
-        mode="text",
-        answer_format=config.answer_format_text,
-    )
     return compute_config_hash(
         "correction",
         config.correction_provider,
         config.effective_correction_model,
         config.language,
-        policy,
-        review_format,
-        text_format,
-        format(profile.temperature, "g"),
-        # Steps ② and ③ have their own temperatures; a change of either changes the answers.
-        format(profile.explain.temperature, "g"),
-        format(profile.unclear.temperature, "g"),
-        str(profile.think),
-        # The step-① prompt variant, by id and text hash: only a model that has one gets an
-        # element, so the key of every other model stays what it was.
-        *((f"prompt-{prompt_identity(profile.correct.prompt)}",) if profile.correct.prompt else ()),
-        # Review settings change the answer itself, so they belong in the key.
+        exchange_identity(profile, corrections_only=config.correction_output == "text"),
+        # What the teacher set changes the answer itself, so it belongs in the key.
         config.correction_level,
         config.explanation_language,
         config.correction_output,
-        f"contract-{CONTRACT_VERSION}",
+        config.correction_notes.strip(),
         # The window decides how a long text is split into requests, so a changed window must
         # proofread again.  Only an Ollama corrector uses it (an online provider has its own),
         # and only the window it really gets counts: a setting above the cap changes nothing.
@@ -346,7 +317,6 @@ class CacheReconciliationService:
             RuntimeConfigSnapshot(
                 source_hash=source_hash,
                 ocr_prompt=ocr_prompt,
-                correction_prompt=cfg.correction_prompt,
                 evaluate_prompt=cfg.evaluate_prompt,
                 ocr_config_hash=ocr_config_hash,
                 correction_config_hash=correction_config_hash,
@@ -433,7 +403,6 @@ class CacheReconciliationService:
                 preview_img=preview_img,
                 source_image=source_image,
                 ocr_prompt=ctx.ocr_prompt,
-                correction_prompt=cfg.correction_prompt,
                 evaluate_prompt=cfg.evaluate_prompt,
                 ocr_config_hash=ctx.ocr_config_hash,
                 preview_config_hash=ctx.preview_config_hash,
@@ -464,7 +433,6 @@ class CacheReconciliationService:
             file,
             ctx.state,
             correction_text=correction_text,
-            correction_prompt=self._config.correction_prompt,
             correction_config_hash=ctx.correction_config_hash,
             correction_review=correction_review,
             correction_warning=correction_warning,

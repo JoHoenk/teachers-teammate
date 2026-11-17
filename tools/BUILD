@@ -50,7 +50,7 @@ py_binary(
 
 # Developer tool (needs network; not run in CI) that verifies the Ollama model catalog against
 # the real registry. Three subcommands: sizes, capabilities, structured-output.
-# pydantic is needed by teachers_teammate.infrastructure.correction_schema, which the
+# pydantic is needed by tools.model_eval.one_request.correction_schema, which the
 # structured-output check uses to build and validate the review schema; ollama is the client
 # the check sends its requests with; lxml and markdown_it are imported by ocr_formats, which
 # TextFormatter.plain_text() reaches for the Markdown fixture.
@@ -145,8 +145,8 @@ py_binary(
 
 # Developer tool that turns a local run cache into the committed run files below
 # evaluations/proofreading and checks them again: export, validate, index, manifest.
-# run_format.py and protocol.py import teachers_teammate.infrastructure.correction (they hash the
-# prompts the app sends), which needs pydantic (correction_schema) and, through ocr_formats, lxml
+# run_format.py and protocol.py import tools.model_eval.one_request (they hash the prompts of the
+# one-request baseline), which needs pydantic (correction_schema) and, through ocr_formats, lxml
 # and markdown_it.
 py_binary(
     name = "proofreading_store",

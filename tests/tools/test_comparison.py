@@ -13,8 +13,7 @@ from teachers_teammate.domain.correction_review import (
     SentenceNote,
 )
 from teachers_teammate.domain.formatted_text import TextFormat
-from teachers_teammate.infrastructure.correction import (
-    FALLBACK_WARNING,
+from teachers_teammate.infrastructure.proofreading.chunking import (
     MISSING_REVIEW_WARNING,
     ChunkingCorrector,
 )
@@ -23,6 +22,7 @@ from tools.model_eval.comparison import WritingModelComparison
 from tools.model_eval.error_labels import ReferenceLabel
 from tools.model_eval.performance import Performance, RequestStats, Spread
 from tools.model_eval.gleu import add, from_scores, gleu
+from tools.model_eval.one_request.correction import FALLBACK_WARNING
 from tools.model_eval.item_scores import item_scores
 from tools.model_eval.report import (
     band_table,

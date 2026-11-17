@@ -17,9 +17,8 @@ import tomllib
 from typing import Any
 
 from ._model_defaults import default_model_for_task
-from .domain.answer_format import ANSWER_FORMAT_VERSION, migrate_saved_formats
 from .domain.correction_policy import DEFAULT_LEVEL, normalize_level, normalize_output_mode
-from .domain.correction_prompts import migrate_saved_default, migrate_saved_prompt
+from .domain.correction_prompts import NOTES_LIMIT
 from .domain.data_location import ENGINE_PPOCR, LOCAL_OCR_ENGINES
 from .domain.model_catalog import (
     DEFAULT_OCR_MODEL,
@@ -36,6 +35,7 @@ from .domain.pdf_text_layer import (
     normalize_pdf_text_layer,
     parse_pdf_text_layer,
 )
+from .domain.prompt_text import migrate_saved_default
 from .exceptions import ConfigFileParseError
 from .interfaces import SUPPORTED_SUFFIXES as SUPPORTED_SUFFIXES  # noqa: PLC0414
 
@@ -75,18 +75,15 @@ DEFAULTS: dict[str, Any] = {
     "anonymization_enabled": False,
     "correction_provider": "ollama",
     "correction_model": DEFAULT_WRITING_MODEL,
-    "correction_prompt": "",
+    # What the teacher wants the model to know about this class or this text.  The instructions
+    # themselves are fixed by the app; the notes are the one place a teacher adds context.
+    "correction_notes": "",
     # CEFR level of the proofreading (A1-C2); language-neutral, so one setting for all languages.
     "correction_level": DEFAULT_LEVEL,
     # "" = same as the language of the text. Otherwise the language of the explanations.
     "explanation_language": "",
     # "review" = corrections + explanations + unclear list; "text" = corrections only.
     "correction_output": "review",
-    # The teacher's own answer format for the two modes ("" = built-in), and the answer-format
-    # version they were written for; an edit written for another version is dropped on load.
-    "answer_format_review": "",
-    "answer_format_text": "",
-    "answer_format_version": ANSWER_FORMAT_VERSION,
     # ── Evaluation ────────────────────────────────────────────────────────────
     "evaluation_enabled": False,
     "evaluate_provider": "ollama",
@@ -187,6 +184,22 @@ def normalize_preprocess_method(method: object) -> str:
     return "none" if str(method).strip().lower() == "none" else "auto"
 
 
+def normalize_notes(notes: object) -> str:
+    """Return the teacher's notes as a request carries them: stripped, at most ``NOTES_LIMIT``.
+
+    The same rule in the settings file, on the command line and in the dialog, so a request
+    never carries more than the limit.  A longer text is cut and says so on stderr.
+    """
+    text = str(notes or "").strip()
+    if len(text) <= NOTES_LIMIT:
+        return text
+    print(
+        f"WARNING: the notes for the AI are longer than {NOTES_LIMIT} characters and were cut.",
+        file=sys.stderr,
+    )
+    return text[:NOTES_LIMIT].rstrip()
+
+
 @dataclass
 class OcrConfig:
     """The OCR slice of the runtime configuration.
@@ -252,12 +265,10 @@ class Config:
     correction_enabled: bool
     correction_provider: str
     correction_model: str
-    correction_prompt: str = DEFAULTS["correction_prompt"]
+    correction_notes: str = DEFAULTS["correction_notes"]
     correction_level: str = DEFAULTS["correction_level"]
     explanation_language: str = DEFAULTS["explanation_language"]
     correction_output: str = DEFAULTS["correction_output"]
-    answer_format_review: str = DEFAULTS["answer_format_review"]
-    answer_format_text: str = DEFAULTS["answer_format_text"]
     anonymization_enabled: bool = DEFAULTS["anonymization_enabled"]
 
     # ── Evaluation ────────────────────────────────────────────────────────────
@@ -345,10 +356,12 @@ class Config:
 
     @property
     def correction_temperature(self) -> float:
-        """Return the temperature the single review request is sent at (the maker's value).
+        """Return the temperature the online model itself is built with.
 
-        Step ① of the exchange has its own, measured one (``correction_profile.temperature``);
-        the exchange is not wired yet, so the request teachers run keeps the maker's.
+        Every step of an online profile is sent at this value
+        (:data:`~.domain.model_catalog.DEFAULT_CORRECTION_TEMPERATURE`), so it is the model's own
+        temperature and not a request's.  A local model is asked per step instead
+        (``correction_profile``), because Ollama takes the temperature with each request.
         """
         return self.correction_profile.review_temperature
 
@@ -411,34 +424,6 @@ def unavailable_ocr_engine(path: Path) -> ReplacedEngine | None:
     return replaced_ocr_engine(engine)
 
 
-def migrate_answer_formats(values: dict) -> bool:
-    """Reset edited answer formats in *values* that were written for another version.
-
-    Works in place on a settings dict (config file or GUI settings); returns whether a
-    teacher's edit was dropped, after saying so on stderr.  Without a stored version the
-    current one is assumed, so a hand-written config file works.
-    """
-    try:
-        version = int(values.get("answer_format_version", ANSWER_FORMAT_VERSION))
-    except TypeError, ValueError:
-        version = -1
-    review, text, reset = migrate_saved_formats(
-        str(values.get("answer_format_review", "")),
-        str(values.get("answer_format_text", "")),
-        version,
-    )
-    values["answer_format_review"] = review
-    values["answer_format_text"] = text
-    values["answer_format_version"] = ANSWER_FORMAT_VERSION
-    if reset:
-        print(
-            "WARNING: your edited answer format was written for an older version of the app "
-            "and is not used. The built-in format is used instead.",
-            file=sys.stderr,
-        )
-    return reset
-
-
 def load_config_file(path: Path) -> dict:
     """Parse *path* as TOML and return a dict of recognised pipeline keys.
 
@@ -469,13 +454,10 @@ def load_config_file(path: Path) -> dict:
         "anonymization_enabled",
         "correction_provider",
         "correction_model",
-        "correction_prompt",
+        "correction_notes",
         "correction_level",
         "explanation_language",
         "correction_output",
-        "answer_format_review",
-        "answer_format_text",
-        "answer_format_version",
         "evaluation_enabled",
         "evaluate_provider",
         "evaluate_model",
@@ -558,13 +540,8 @@ def load_config_file(path: Path) -> dict:
     if "correction_output" in result:
         result["correction_output"] = normalize_output_mode(str(result["correction_output"]))
 
-    # Settings files from versions without the review window store the built-in prompt
-    # *text*.  Reset such copies to "" ("use the built-in prompt"); a copy would be sent
-    # as a custom policy next to answer-format rules that say the opposite.
-    if "correction_prompt" in result:
-        result["correction_prompt"] = migrate_saved_prompt(str(result["correction_prompt"]))
-    if "answer_format_review" in result or "answer_format_text" in result:
-        migrate_answer_formats(result)
+    if "correction_notes" in result:
+        result["correction_notes"] = normalize_notes(str(result["correction_notes"]))
     if "evaluate_prompt" in result:
         result["evaluate_prompt"] = migrate_saved_default(
             str(result["evaluate_prompt"]), DEFAULTS["evaluate_prompt"]

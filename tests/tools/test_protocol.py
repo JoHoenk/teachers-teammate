@@ -8,8 +8,8 @@ from pathlib import Path
 
 import pytest
 
-from teachers_teammate.infrastructure import correction, correction_schema
 from tools.model_eval import protocol
+from tools.model_eval.one_request import correction, correction_schema
 from tools.model_eval.languages import LANGUAGE_NAMES
 
 
@@ -429,3 +429,47 @@ def test_the_correct_only_instructions_hash_covers_step_one_alone(monkeypatch) -
         correction_prompts, "CORRECT_SYSTEM", correction_prompts.CORRECT_SYSTEM + " x"
     )
     assert protocol.instructions_sha256(["de"], mode=AnswerMode.CORRECT_ONLY) != only
+
+
+#: The request side of every mode, pinned as it was before the one-request path moved out of the
+#: app.  Saved evaluation runs are looked up by these hashes, so the move must not change a byte
+#: of them: a failure here means the move changed what a run sends, not that the pin is stale.
+_PINNED: dict[str, object] = {
+    "sha256": "e8a10985fdabf9006e03cf3c1d369c1e39c361e7853ad3077a6de10914b375d9",
+    "review": [
+        "5cee79f68176628d5db29b8c87cb462b020b50e183595071bbac0f015ef7ae39",
+        "5cee79f68176628d5db29b8c87cb462b020b50e183595071bbac0f015ef7ae39",
+    ],
+    "text": ["a415cfd5dac6d0939f34c7e299a6a1bc16345ac1d163c52c391f555c887a163c"],
+    "exchange": [
+        "f2c609ed873c9fe4f5f23d46c3ceb43da40e308525b15cd45b567d224bb2b8a3",
+        "56305d109118e175b206013dba229d1efd2e357be1339073279c392f7c82454c",
+        "d3472b62ae50d44668f53ad4c12464b7c8220304f3a6960a2184317b1e2b2e3f",
+    ],
+    "correct-only": ["f2c609ed873c9fe4f5f23d46c3ceb43da40e308525b15cd45b567d224bb2b8a3"],
+    "review_budget": 2796,
+    "text_budget": 2796,
+    "exchange_budget": 4749,
+    "correct-only_budget": 4749,
+    "repair": "cd4964a4f3f7e0afff0d82aa83607604b5d997921c35aa953b2b50a7437d46db",
+    "answer_format_version": 1,
+    "repair_answer_tokens": 4096,
+}
+
+
+def test_the_request_side_is_byte_identical_to_the_pinned_one() -> None:
+    """
+    Given  the request side of today's code, for every mode and the German plain profile
+    When   it is compared with the values pinned before the one-request path moved
+    Then   every hash, every text budget and the repair message are unchanged, so a saved run is
+           still found under the version it names
+    """
+    side = protocol.fingerprint()
+
+    assert protocol.fingerprint_sha256() == _PINNED["sha256"]
+    for mode in ("review", "text", "exchange", "correct-only"):
+        assert side["requests"][mode]["de"]["plain"] == _PINNED[mode], mode
+        assert side["text_budget"][mode]["de"]["plain"] == _PINNED[f"{mode}_budget"], mode
+    assert side["repair"] == _PINNED["repair"]
+    assert side["answer_format_version"] == _PINNED["answer_format_version"]
+    assert side["repair_answer_tokens"] == _PINNED["repair_answer_tokens"]

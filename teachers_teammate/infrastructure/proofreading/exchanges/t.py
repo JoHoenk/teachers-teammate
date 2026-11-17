@@ -36,6 +36,7 @@ from ....domain.correction_prompts import (
     unclear_user,
 )
 from ....domain.formatted_text import TextFormat
+from ....domain.model_catalog import RequestProfile
 from ....domain.proofreading.edits import (
     Batch,
     Edit,
@@ -49,7 +50,13 @@ from ....domain.proofreading.edits import (
 )
 from ....domain.proofreading.markdown_shield import ShieldMap, restore, shield
 from ....domain.proofreading.quotes import find_spans, map_back
-from ....domain.proofreading.result import ExchangeKind, StepReport
+from ....domain.proofreading.result import (
+    DEFAULT_EXCHANGE_COST,
+    ExchangeCost,
+    ExchangeKind,
+    StepName,
+    StepReport,
+)
 from ....domain.proofreading.review import CorrectionReview, UnclearNote, edit_note
 from ....domain.proofreading.sentences import sentence_spans
 from ....domain.proofreading.text_loss import dropped_text
@@ -70,7 +77,7 @@ from ..schemas import (
     parse_explain,
     parse_unclear,
 )
-from .base import ExchangeCost, ExchangeResult, ProofreadContext
+from .base import ExchangeResult, ProofreadContext
 
 CORRECT_FAILED = "Proofreading failed; keeping original text."
 """Warning of a file whose step ① did not produce a usable answer."""
@@ -141,6 +148,12 @@ class TExchange:
         corrected, unstyled = _restored(source, ctx.text_format, shield_map, document, answer)
         if unstyled:
             warnings.append(UNSTYLED_WARNING)
+        if ctx.corrections_only:
+            # The teacher asked for the corrected text alone: steps ② and ③ are not sent, so
+            # there is no review and nothing to explain.
+            return ExchangeResult(
+                text=corrected, review=None, warnings=tuple(warnings), reports=tuple(reports)
+            )
 
         raw_plain = plain_text_of(source, ctx.text_format)
         corrected_plain = plain_text_of(corrected, ctx.text_format)
@@ -174,11 +187,12 @@ class TExchange:
     def max_text_chars(self, ctx: ProofreadContext) -> int | None:
         """Return how many characters of text one request can carry, ``None`` for no limit.
 
-        The smallest limit of the three steps, each computed from its own request so the figure
-        cannot drift from what is sent: the system prompt and the fixed part of the user message
-        are overhead, the answer takes as much room as the text (:data:`ANSWER_FACTOR`), and step
-        ② carries the text twice (every sentence before and after) next to the edit list.  A text
-        this long passes every request check of the exchange.
+        The smallest limit of the steps that run, each computed from its own request so the
+        figure cannot drift from what is sent: the system prompt and the fixed part of the user
+        message are overhead, the answer takes as much room as the text (:data:`ANSWER_FACTOR`),
+        and step ② carries the text twice (every sentence before and after) next to the edit
+        list.  A text this long passes every request check of the exchange.  With corrections
+        only, step ① is the only request, so its own limit is the one that counts.
         """
         budget = self._port.window()
         if budget is None:
@@ -188,12 +202,16 @@ class TExchange:
             budget.max_text_chars(
                 len(correct.system) + len(correct.user), answer_factor=correct.answer_factor
             ),
+        ]
+        if ctx.corrections_only:
+            return min(limits)
+        limits.append(
             budget.max_text_chars(
                 len(EXPLAIN_SYSTEM) + len(self._explain_head(ctx)) + EXPLAIN_EDITS_CHARS,
                 answer_factor=ANSWER_FACTOR,
                 text_copies=2,
-            ),
-        ]
+            )
+        )
         if ctx.profile.unclear_check:
             unclear = self._unclear_request("", ctx)
             limits.append(
@@ -203,17 +221,21 @@ class TExchange:
             )
         return min(limits)
 
-    def cost_model(self) -> ExchangeCost:
-        """Return what this exchange costs per page and per 100 words.
+    def prompts(
+        self, profile: RequestProfile, *, corrections_only: bool = False
+    ) -> tuple[tuple[StepName, str], ...]:
+        """Return the system prompts of the steps that run for *profile*, in step order."""
+        prompts: list[tuple[StepName, str]] = [("correct", correct_system(profile.correct.prompt))]
+        if corrections_only:
+            return tuple(prompts)
+        prompts.append(("explain", EXPLAIN_SYSTEM))
+        if profile.unclear_check:
+            prompts.append(("unclear", UNCLEAR_SYSTEM))
+        return tuple(prompts)
 
-        Provisional figures from the proof-of-concept sweep; a measurement on the official test
-        set replaces them.  One request per step and page, and the answer lengths of the three
-        steps relative to the text.
-        """
-        return ExchangeCost(
-            requests_per_page={"correct": 1.0, "explain": 1.0, "unclear": 1.0},
-            answer_tokens_per_100_words={"correct": 100, "explain": 60, "unclear": 20},
-        )
+    def cost_model(self) -> ExchangeCost:
+        """Return what this exchange costs per page and per 100 words."""
+        return DEFAULT_EXCHANGE_COST
 
     # ── step ① ────────────────────────────────────────────────────────────────
 

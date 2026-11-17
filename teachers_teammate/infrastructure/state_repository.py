@@ -106,7 +106,6 @@ class DocumentState:
     correction_invalidated: bool = False
     evaluation_invalidated: bool = False
     ocr_prompt: str = ""
-    correction_prompt: str = ""
     evaluate_prompt: str = ""
     ocr_config_hash: str = ""
     correction_config_hash: str = ""
@@ -165,7 +164,6 @@ class RuntimeConfigSnapshot:
 
     source_hash: str
     ocr_prompt: str
-    correction_prompt: str
     evaluate_prompt: str
     ocr_config_hash: str
     correction_config_hash: str
@@ -182,7 +180,6 @@ class OcrResultRecord:
     preview_img: str
     source_image: str
     ocr_prompt: str
-    correction_prompt: str
     evaluate_prompt: str
     ocr_config_hash: str
     preview_config_hash: str
@@ -435,7 +432,6 @@ class StateRepository:
             correction_invalidated=state.correction_done,
             evaluation_invalidated=state.evaluation_done,
             ocr_prompt=record.ocr_prompt,
-            correction_prompt=record.correction_prompt,
             evaluate_prompt=record.evaluate_prompt,
             ocr_config_hash=record.ocr_config_hash,
             correction_config_hash="",
@@ -459,7 +455,6 @@ class StateRepository:
         state: DocumentState,
         *,
         correction_text: str,
-        correction_prompt: str,
         correction_config_hash: str,
         correction_review: dict | None = None,
         correction_warning: str = "",
@@ -487,7 +482,6 @@ class StateRepository:
             correction_sent_text=sent_text,
             correction_sent_map=sent_map,
             correction_sent=sent.to_dict() if sent is not None else None,
-            correction_prompt=correction_prompt,
             correction_config_hash=correction_config_hash,
             evaluation_done=False,
             evaluation_invalidated=state.evaluation_done,
@@ -640,7 +634,6 @@ class StateRepository:
         final_state = dataclasses.replace(
             state,
             ocr_prompt=snapshot.ocr_prompt,
-            correction_prompt=snapshot.correction_prompt,
             evaluate_prompt=snapshot.evaluate_prompt,
             preview_config_hash=snapshot.preview_config_hash,
         )

@@ -1,4 +1,4 @@
-"""Unit tests for teachers_teammate.correction."""
+"""Tests for the one-request correctors of the evaluation baseline."""
 
 from __future__ import annotations
 
@@ -7,12 +7,12 @@ import json
 import pytest
 from langchain_core.language_models.fake_chat_models import FakeListChatModel
 
-from teachers_teammate.domain.answer_format import REVIEW_FORMAT, TEXT_FORMAT
-from teachers_teammate.exceptions import TRUNCATED_MESSAGE
-from teachers_teammate.infrastructure.proofreading import port as port_module
-from teachers_teammate.infrastructure._llm_invoke import StructuredResult
 from teachers_teammate.domain.formatted_text import TextFormat
-from teachers_teammate.infrastructure.correction import (
+from teachers_teammate.exceptions import TRUNCATED_MESSAGE
+from teachers_teammate.infrastructure._llm_invoke import StructuredResult
+from teachers_teammate.infrastructure.proofreading import port as port_module
+from tools.model_eval.one_request.answer_format import REVIEW_FORMAT, TEXT_FORMAT
+from tools.model_eval.one_request.correction import (
     COMPACT_ANSWER_RULE,
     ENGLISH_PROMPT,
     FALLBACK_WARNING,
@@ -25,7 +25,7 @@ from teachers_teammate.infrastructure.correction import (
     _resolve_prompt,
     _review_timeout,
 )
-from teachers_teammate.infrastructure.correction_schema import (
+from tools.model_eval.one_request.correction_schema import (
     CorrectionAnswer,
     fill_placeholders,
     schema_json,
@@ -91,6 +91,20 @@ def test_resolve_prompt_case_insensitive_language() -> None:
     """
     assert _resolve_prompt("", "German") == GERMAN_PROMPT
     assert _resolve_prompt("", "GERMAN") == GERMAN_PROMPT
+
+
+def test_the_review_budget_of_the_real_prompt_is_a_page_and_a_half() -> None:
+    """
+    Given  the one-request review corrector at window 8192
+    When   its text budget is asked for
+    Then   it is between 2,000 and 3,000 characters: a page of 200 to 400 words goes out whole,
+           and a text of 3,714 characters (the length that was cut off in the smoke run) does not
+    """
+    from teachers_teammate.infrastructure.ollama_utils import OllamaClient  # noqa: PLC0415
+
+    corrector = NativeOllamaCorrector(model="m", client=OllamaClient("http://capture.invalid"))
+
+    assert 2_000 <= corrector.max_text_chars("German") <= 3_000
 
 
 # ── LangChainCorrector.correct: text mode ──────────────────────────────────
@@ -235,12 +249,12 @@ def _captured_ollama_prompt(mocker, text_format: str | None, **settings: object)
     corrector = NativeOllamaCorrector(
         model="m",
         client=_ollama_client(),
-        settings=CorrectionSettings(output_mode="text", **settings),  # ty: ignore[invalid-argument-type]  # parametrised settings
+        settings=CorrectionSettings(output_mode="text", **settings),  # parametrised settings
     )
     if text_format is None:
         corrector.correct("~~a~~ b", "English")
     else:
-        corrector.correct("~~a~~ b", "English", text_format=text_format)  # ty: ignore[invalid-argument-type]  # parametrised literal
+        corrector.correct("~~a~~ b", "English", text_format=text_format)  # parametrised literal
     return f"{mock_chat.call_args.kwargs['system']}\n\n{mock_chat.call_args.args[1]}"
 
 
@@ -306,7 +320,7 @@ def test_langchain_corrector_adds_notation_hint_to_system_message(monkeypatch) -
     )
     monkeypatch.setattr("langchain_core.output_parsers.StrOutputParser", lambda: object())
 
-    LangChainCorrector(object(), settings=_TEXT_ONLY).correct(  # ty: ignore[invalid-argument-type]  # stub llm
+    LangChainCorrector(object(), settings=_TEXT_ONLY).correct(  # stub llm
         "x", "English", text_format="markdown"
     )
 
@@ -340,7 +354,7 @@ def test_custom_prompt_with_braces_does_not_crash(monkeypatch) -> None:
     monkeypatch.setattr("langchain_core.output_parsers.StrOutputParser", lambda: object())
 
     corrector = LangChainCorrector(
-        object(),  # ty: ignore[invalid-argument-type]  # stub llm
+        object(),  # stub llm
         prompt="Fix {this} at {level}. Keep {unknown}.",
         settings=_TEXT_ONLY,
     )
@@ -407,7 +421,7 @@ def _review_request(monkeypatch, profile=None, **settings: object) -> dict:
     monkeypatch.setattr(port_module, "invoke_langchain_structured", fake)
     LangChainCorrector(
         FakeListChatModel(responses=[]),
-        settings=CorrectionSettings(**settings),  # ty: ignore[invalid-argument-type]  # parametrised settings
+        settings=CorrectionSettings(**settings),  # parametrised settings
         profile=profile or DEFAULT_REQUEST_PROFILE,
     ).correct("x", "German")
     return captured[0]
@@ -1235,7 +1249,7 @@ def test_request_messages_are_what_the_native_corrector_sends(mocker) -> None:
         StepProfile,
     )
     from teachers_teammate.exceptions import ResponseTruncatedError  # noqa: PLC0415
-    from teachers_teammate.infrastructure.correction import request_messages  # noqa: PLC0415
+    from tools.model_eval.one_request.correction import request_messages  # noqa: PLC0415
     from teachers_teammate.infrastructure.ollama_utils import OllamaClient  # noqa: PLC0415
 
     sent: list[tuple[str, str]] = []
@@ -1266,7 +1280,9 @@ def test_a_short_text_goes_out_whole_and_a_long_one_in_pieces() -> None:
     """
     from unittest.mock import MagicMock  # noqa: PLC0415
 
-    from teachers_teammate.infrastructure.correction import ChunkingCorrector  # noqa: PLC0415
+    from teachers_teammate.infrastructure.proofreading.chunking import (  # noqa: PLC0415
+        ChunkingCorrector,
+    )
 
     inner = MagicMock()
     inner.max_text_chars.return_value = 40

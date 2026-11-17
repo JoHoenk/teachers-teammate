@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import dataclasses
 from dataclasses import dataclass, field
+import json
 import threading
 from pathlib import Path
 from typing import Any
@@ -19,7 +20,12 @@ from teachers_teammate.domain.correction_review import (
 )
 from teachers_teammate.domain.formatted_text import TextFormat
 from teachers_teammate.domain.performance_estimate import SpeedStep
-from teachers_teammate.infrastructure.correction import ChunkingCorrector
+from teachers_teammate.infrastructure.proofreading.chunking import ChunkingCorrector
+from teachers_teammate.infrastructure.proofreading.corrector import (
+    ExchangeCorrector,
+    ProofreadingSettings,
+)
+from teachers_teammate.infrastructure.proofreading.exchanges import TExchange
 from teachers_teammate.infrastructure.ollama_utils import ChatStats
 from teachers_teammate.infrastructure.run_stats import RunStatsCollector
 from teachers_teammate.infrastructure.speed_store import RunSample, SampleKey
@@ -35,6 +41,8 @@ from teachers_teammate.infrastructure.workflow.file_processor import (
     FileProcessorConfig,
 )
 from teachers_teammate.interfaces import Corrector
+from teachers_teammate.infrastructure.proofreading.port import PortAnswer, StepRequest
+from tests.fakes.fake_port import FakePort, answer
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────
@@ -2258,3 +2266,156 @@ def test_a_sample_that_cannot_be_saved_does_not_fail_the_file(tmp_path: Path) ->
     result = fp.process(tmp_path / "doc.png")
 
     assert result.ok
+
+
+# ── The exchange, end to end ───────────────────────────────────────────────
+
+_RAW = "Anna Weber hat ein grosse Hund. Er ist nett."
+_CORRECTED = "[PERSON_1] hat einen großen Hund. Er ist nett."
+
+
+def _exchange_corrector(port: FakePort, *, corrections_only: bool = False) -> ExchangeCorrector:
+    """Return the corrector the pipeline runs, over a scripted port."""
+    return ExchangeCorrector(
+        TExchange(port),
+        settings=ProofreadingSettings(level="B1", corrections_only=corrections_only),
+    )
+
+
+class _MeasuredCorrector(Corrector):
+    """A corrector that tells the collector about the request it sends.
+
+    The real Ollama client reports every request's statistics to the collector; a scripted port
+    has none to report, so the test reports one per document.
+    """
+
+    def __init__(self, inner: Corrector, collector: RunStatsCollector) -> None:
+        self._inner = inner
+        self._collector = collector
+
+    def correct(
+        self, raw_text: str, language: str, *, text_format: TextFormat = "plain"
+    ) -> CorrectionOutcome:
+        """Report one request's statistics and return the exchange's outcome."""
+        self._collector.record("gemma4:e4b", _stats())
+        return self._inner.correct(raw_text, language, text_format=text_format)
+
+
+def _hiding_anonymizer() -> MagicMock:
+    """Return an anonymizer that hides one name behind ``[PERSON_1]``."""
+    anonymizer = MagicMock()
+    anonymizer.anonymize.side_effect = lambda text: (
+        text.replace("Anna Weber", "[PERSON_1]"),
+        {"[PERSON_1]": "Anna Weber"},
+    )
+    anonymizer.restore.side_effect = lambda text, mapping: text.replace(
+        "[PERSON_1]", mapping["[PERSON_1]"]
+    )
+    return anonymizer
+
+
+def test_the_exchange_sends_placeholders_and_stores_the_real_names(tmp_path: Path) -> None:
+    """
+    Given  a text with a name, an anonymizer that hides it, and a port that answers all three
+           steps
+    When   process() proofreads the file
+    Then   every request carries the placeholder and no real name, and the stored text and the
+           stored review carry the name again
+    """
+    port = FakePort(
+        answer(_CORRECTED),
+        answer(
+            json.dumps(
+                {
+                    "edits": [
+                        {
+                            "id": 1,
+                            "category": "grammar",
+                            "explanation": "[PERSON_1] braucht den Akkusativ.",
+                        }
+                    ]
+                }
+            )
+        ),
+        answer(json.dumps({"unclear": []})),
+    )
+    samples: list[tuple[SampleKey, RunSample]] = []
+    collector = _collector(samples)
+    fp, cache_svc, _, _ = _make_processor(
+        tmp_path,
+        returns=_StubReturns(ocr_return=([_RAW], None)),
+        corrector=_MeasuredCorrector(_exchange_corrector(port), collector),
+        anonymizer=_hiding_anonymizer(),
+        stats=collector,
+    )
+    cache_svc.record_correction.return_value = _make_ctx(
+        _make_state(correction_done=True, correction_text=_CORRECTED)
+    )
+
+    fp.process(tmp_path / "doc.png")
+
+    assert [request.step for request in port.requests] == ["correct", "explain", "unclear"]
+    for request in port.requests:
+        assert "[PERSON_1]" in request.user
+        assert "Anna Weber" not in request.user
+    stored = cache_svc.record_correction.call_args.kwargs
+    assert stored["correction_text"] == "Anna Weber hat einen großen Hund. Er ist nett."
+    assert "Anna Weber" in json.dumps(stored["correction_review"])
+    assert [key.mode for key, _sample in samples] == ["exchange"]
+
+
+def test_corrections_only_sends_one_request_and_is_stored_as_text(tmp_path: Path) -> None:
+    """
+    Given  a corrector set to corrections only, and a port that answers step ①
+    When   process() proofreads the file
+    Then   one request goes out and the sample is stored under the text mode
+    """
+    port = FakePort(answer(_CORRECTED))
+    samples: list[tuple[SampleKey, RunSample]] = []
+    collector = _collector(samples)
+    fp, cache_svc, _, _ = _make_processor(
+        tmp_path,
+        returns=_StubReturns(ocr_return=([_RAW], None)),
+        corrector=_MeasuredCorrector(_exchange_corrector(port, corrections_only=True), collector),
+        anonymizer=_hiding_anonymizer(),
+        stats=collector,
+    )
+    cache_svc.record_correction.return_value = _make_ctx(
+        _make_state(correction_done=True, correction_text=_CORRECTED)
+    )
+
+    fp.process(tmp_path / "doc.png")
+
+    assert [request.step for request in port.requests] == ["correct"]
+    assert [key.mode for key, _sample in samples] == ["text"]
+
+
+class _StoppingPort(FakePort):
+    """A port that answers step ① and then reports the run as stopped during step ②."""
+
+    def ask_structured(self, req: StepRequest) -> PortAnswer:
+        """Stop the run at the first structured step."""
+        if req.step == "explain":
+            raise RunStoppedError("stopped")
+        return super().ask_structured(req)
+
+
+def test_a_stop_during_step_two_leaves_the_file_stopped_and_stores_nothing(tmp_path: Path) -> None:
+    """
+    Given  a port that answers step ① and reports the run as stopped during step ②
+    When   process() proofreads the file
+    Then   the file is stopped, not failed, and nothing of the proofreading is stored
+    """
+    port = _StoppingPort(answer(_CORRECTED))
+    fp, cache_svc, _, _ = _make_processor(
+        tmp_path,
+        returns=_StubReturns(ocr_return=([_RAW], None)),
+        corrector=_exchange_corrector(port),
+    )
+
+    result = fp.process(tmp_path / "doc.png")
+
+    assert result.stopped is True
+    assert result.ok is False
+    assert [request.step for request in port.requests] == ["correct"]
+    cache_svc.record_correction.assert_not_called()

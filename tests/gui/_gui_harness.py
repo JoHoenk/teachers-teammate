@@ -96,23 +96,6 @@ class FakeGuiService(LocalDataFlowStub):
     def list_provider_packages(self) -> dict[str, tuple[str, str]]:
         return {}
 
-    def list_correction_prompt_presets(self) -> dict[str, str]:
-        return {}
-
-    def default_correction_prompt(self) -> str:
-        return ""
-
-    def default_answer_formats(self) -> tuple[str, str]:
-        from teachers_teammate.domain.answer_format import (  # noqa: PLC0415
-            REVIEW_FORMAT,
-            TEXT_FORMAT,
-        )
-
-        return REVIEW_FORMAT, TEXT_FORMAT
-
-    def correction_notation_hint(self) -> str:
-        return ""
-
     def evaluation_fixed_instructions(self, text_format: TextFormat = "plain") -> str:
         _ = text_format
         return ""

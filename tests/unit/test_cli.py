@@ -434,17 +434,30 @@ def test_parse_args_anonymize_flag() -> None:
 
 
 @pytest.mark.use_case("Headless_CLI_Batch")
-def test_parse_args_correction_prompt() -> None:
+def test_parse_args_correction_notes() -> None:
     """
-    Given  --correction-prompt 'my custom prompt'
+    Given  --correction-notes 'Year 9, second foreign language'
     When   _parse_args() is called
-    Then   correction_prompt is set to the supplied string
+    Then   correction_notes is set to the supplied string
     """
     from teachers_teammate.cli import _parse_args  # noqa: PLC0415
 
-    args = _parse_args(argv=["--correction-prompt", "my custom prompt"])
+    args = _parse_args(argv=["--correction-notes", "Year 9, second foreign language"])
 
-    assert args.correction_prompt == "my custom prompt"
+    assert args.correction_notes == "Year 9, second foreign language"
+
+
+@pytest.mark.use_case("Headless_CLI_Batch")
+def test_parse_args_rejects_the_removed_correction_prompt() -> None:
+    """
+    Given  --correction-prompt, which the app no longer has
+    When   _parse_args() is called
+    Then   it fails, so an old script does not silently send nothing
+    """
+    from teachers_teammate.cli import _parse_args  # noqa: PLC0415
+
+    with pytest.raises(SystemExit):
+        _parse_args(argv=["--correction-prompt", "my custom prompt"])
 
 
 @pytest.mark.use_case("Headless_CLI_Batch")

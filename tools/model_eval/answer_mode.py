@@ -1,4 +1,4 @@
-"""How a model is asked to proofread: the app's review answer, or the corrected text only.
+"""How a model is asked to proofread: the one-request review answer, or the corrected text only.
 
 A module of its own, so the offline parts (the protocol, the store) and the run share the values
 without one depending on the other.  A ``StrEnum`` serialises as its value, so result rows,
@@ -35,7 +35,7 @@ class AnswerMode(StrEnum):
 
     @property
     def asks_corrector(self) -> bool:
-        """Whether the app's corrector can be asked in this mode (review and text)."""
+        """Whether the one-request corrector can be asked in this mode (review and text)."""
         return self in CORRECTOR_MODES
 
     @property
@@ -50,7 +50,7 @@ class AnswerMode(StrEnum):
 
 
 CORRECTOR_MODES: tuple[AnswerMode, ...] = (AnswerMode.REVIEW, AnswerMode.TEXT)
-"""The modes the app's corrector answers in; the fingerprint covers these."""
+"""The modes the one-request corrector answers in; the fingerprint covers these."""
 
 EXCHANGE_MODES: tuple[AnswerMode, ...] = (AnswerMode.EXCHANGE, AnswerMode.CORRECT_ONLY)
 """The modes asked through the proofreading exchange (all of it, or step ① alone), not through the

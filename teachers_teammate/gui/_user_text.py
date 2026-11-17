@@ -11,6 +11,7 @@ from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
 from ..application.data_flow import sent_location
+from ..domain.correction_prompts import NOTES_LIMIT
 from ..domain.correction_review import CHANGE_CATEGORIES, AlignedReview
 from ..domain.data_location import (
     STAGE_CORRECTION,
@@ -74,8 +75,6 @@ CHANGE_CATEGORY_LABELS: dict[str, str] = {
 #: Fallback label for a category the catalog does not name.
 OTHER_CATEGORY = CHANGE_CATEGORY_LABELS[CHANGE_CATEGORIES[-1]]
 
-LEVEL_HINT = "These instructions don't use the level setting ({level})."
-
 CONFLICT_HINT = (
     'Your instructions seem to set the answer format ("return only", "JSON", "[unclear]"). '
     "The app already sets the format; such a line may confuse the model."
@@ -103,29 +102,29 @@ PROMPT_DIALOG_FIXED_TEXT = (
 YOUR_INSTRUCTIONS_HEADING = "Instructions"
 BUILTIN_STATUS = "Built-in instructions. They follow the language of the document."
 CUSTOM_STATUS = "Your own instructions. They are used for every language."
-CUSTOM_PROMPT_NOTE = CUSTOM_STATUS
 RESET_BUTTON = "Reset to default"
 RESET_BUTTON_TOOLTIP = (
     "Put the built-in instructions of the document language back. Your changes in the box are lost."
 )
-LEVEL_PLACEHOLDER_TOOLTIP = "{level} is replaced by the Level next to the document language."
 FIXED_HEADING = "Always added by the app"
-ANSWER_FORMAT_HEADING = "Answer format (advanced)"
-ANSWER_FORMAT_TOOLTIP = (
-    "How the model must fill in its reply. The app reads the reply in this format, so change "
-    "it only if you know what you are doing. The notation note for Markdown texts is added "
-    "after it and cannot be edited."
-)
-ANSWER_FORMAT_WARNING = (
-    "The app reads the model's reply in this format. If the model no longer follows it, "
-    "the files fall back to corrections only."
-)
-ANSWER_FORMAT_REVIEW_TITLE = "With explanations"
-ANSWER_FORMAT_TEXT_TITLE = "Corrections only"
-ANSWER_FORMAT_RESET_TOOLTIP = "Put the built-in answer format back."
 
 CORRECTION_PROMPT_DIALOG_TITLE = "Proofreading options"
 EVALUATION_PROMPT_DIALOG_TITLE = "Content review options"
+
+#: The proofreading dialog: what the teacher may add, and what the app sends regardless.
+NOTES_HEADING = "Notes for the AI (optional)"
+NOTES_PLACEHOLDER = (
+    "For example: Year 9, second foreign language; ignore missing capital letters in headings."
+)
+NOTES_TOOLTIP = (
+    "Anything the AI should know about this class or this text. Your notes are added to every "
+    "request of the proofreading."
+)
+PROMPTS_HEADING = "What the AI is asked"
+PROMPTS_TOOLTIP = (
+    "The fixed instructions the app sends, one per step. They cannot be edited; your notes "
+    "are added to each of them."
+)
 
 EXPLANATIONS_SUPPORTED = "explanations ✓"
 EXPLANATIONS_SUPPORTED_TOOLTIP = (
@@ -318,12 +317,9 @@ def formatted_text_note(hint: str) -> str:
     return f"{FORMATTED_TEXT_NOTE}\n{hint}" if hint else ""
 
 
-def answer_format_missing(fields: list[str]) -> str:
-    """Return the warning for an edited answer format that no longer names some *fields*."""
-    return (
-        f"This format no longer mentions: {', '.join(fields)}. "
-        "The app may not be able to read the model's reply."
-    )
+def notes_counter(length: int) -> str:
+    """Return the character counter under the notes box."""
+    return f"{length} / {NOTES_LIMIT}"
 
 
 def category_label(category: str) -> str:

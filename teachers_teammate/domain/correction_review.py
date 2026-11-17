@@ -5,9 +5,9 @@ expression — each carrying its own list of :class:`ChangeNote`.  This module t
 into (a) the full corrected text, by splicing the corrected sentences back into the source, and
 (b) a display model that attaches every note to a hunk of the local word diff.
 
-It is pure: no I/O, no Qt, no provider imports.  ``infrastructure/correction_schema.py`` holds
-the Pydantic mirror of these dataclasses; ``application/correction_review.py`` is the entry
-point the GUI uses.
+It is pure: no I/O, no Qt, no provider imports.  The Pydantic mirror of these dataclasses is
+``tools/model_eval/one_request/correction_schema.py``; ``application/correction_review.py`` is
+the entry point the GUI uses.
 """
 
 from __future__ import annotations
@@ -235,8 +235,12 @@ class CorrectionOutcome:
     """``True`` when the provider call failed and *text* is the unchanged source: such an
     outcome is reported but never stored as a finished correction."""
     fell_back: bool = False
-    """``True`` when review mode was asked for but its answer was unusable, so *text* comes from
-    the corrections-only call that followed (the failed review requests were sent as well)."""
+    """``True`` when the answer lacks part of what was asked.
+
+    A review came back, but a report of step ② or ③ failed, so the explanations or the unclear
+    list are missing for part of the text.  The file is corrected and stored; only the speed
+    sample is dropped, because it would undercount the answer length of a complete answer.
+    """
 
 
 # ── Splicing ──────────────────────────────────────────────────────────────────

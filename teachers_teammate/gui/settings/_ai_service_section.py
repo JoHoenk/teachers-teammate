@@ -4,7 +4,7 @@ Both steps ask the same thing -- which service, which model -- and differ only i
 settings keys.  :class:`AiServiceSpec` holds those keys, so a fix (such as asking the service
 again after the provider changed) exists once.
 
-The instructions (prompt, answer formats, explanation options) are not here: they describe
+The notes for the AI and the explanation options are not here: they describe
 *how a task behaves* and live in the main window's instructions dialog.  There is no
 temperature to set: the app sends the value each model's maker recommends.
 

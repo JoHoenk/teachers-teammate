@@ -17,6 +17,7 @@ from docx import Document
 from teachers_teammate.domain.correction_review import CorrectionOutcome
 from teachers_teammate.exceptions import OCRError
 from teachers_teammate.infrastructure.pipeline import OCRPipeline
+from teachers_teammate.infrastructure.stage_builder import StageBuilder
 from teachers_teammate.infrastructure.state_repository import StateRepository
 from teachers_teammate.infrastructure.storage_root import resolve_artifact_dir
 from tests.conftest import make_config, reader_store, skip_no_reader_models
@@ -27,13 +28,10 @@ def _state_for(cfg, source: Path):
 
 
 def _patch_correction(corrector: MagicMock):
-    """Patch the correction stage so build_llm + LangChainCorrector return doubles."""
+    """Patch the correction stage so the stage builder returns a double."""
     return (
         patch("teachers_teammate.infrastructure.stage_builder.build_llm", return_value=MagicMock()),
-        patch(
-            "teachers_teammate.infrastructure.stage_builder.LangChainCorrector",
-            return_value=corrector,
-        ),
+        patch.object(StageBuilder, "build_corrector", return_value=corrector),
     )
 
 
@@ -197,8 +195,8 @@ def test_second_run_reuses_cached_correction(tmp_path: Path) -> None:
 @pytest.mark.use_case("Config_Aware_Cache_Reuse")
 def test_changed_correction_config_recomputes(tmp_path: Path) -> None:
     """
-    Given  a file corrected and cached under one correction prompt
-    When   OCRPipeline.run() runs again with a different correction prompt
+    Given  a file corrected and cached with one set of notes for the AI
+    When   OCRPipeline.run() runs again with different notes
     Then   the correction stage is re-executed (cache is stale)
     """
     source_text = "original text"
@@ -209,7 +207,7 @@ def test_changed_correction_config_recomputes(tmp_path: Path) -> None:
         tmp_path,
         correction_enabled=True,
         correction_provider="openai",
-        correction_prompt="Fix spelling.",
+        correction_notes="Fix spelling.",
         docx_enabled=False,
     )
     source = cfg1.input_dir / "doc.txt"
@@ -220,14 +218,14 @@ def test_changed_correction_config_recomputes(tmp_path: Path) -> None:
         assert OCRPipeline(cfg1).run().exit_code == 0
     assert corrector.correct.call_count == 1
 
-    # Same input/output dirs, different correction prompt → stale correction stage.
+    # Same input/output dirs, different notes → stale correction stage.
     cfg2 = make_config(
         tmp_path,
         input_dir=cfg1.input_dir,
         output_dir=cfg1.output_dir,
         correction_enabled=True,
         correction_provider="openai",
-        correction_prompt="Rewrite formally.",
+        correction_notes="Rewrite formally.",
         docx_enabled=False,
     )
     build_llm_patch2, corrector_patch2 = _patch_correction(corrector)

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from teachers_teammate.domain.answer_format import ANSWER_FORMAT_VERSION
+from tools.model_eval.one_request.answer_format import ANSWER_FORMAT_VERSION
 from tools.model_eval import gate1_answers, gate_one, protocol
 
 

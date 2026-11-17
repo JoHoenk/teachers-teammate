@@ -79,7 +79,6 @@ import sys
 from typing import Any
 from urllib.parse import urlparse
 
-from teachers_teammate.domain.answer_format import ANSWER_FORMAT_VERSION
 from teachers_teammate.domain.context_budget import (
     BASE_NUM_CTX,
     CONTEXT_STEPS,
@@ -119,6 +118,7 @@ from tools.model_eval.model_fit import (
     within,
 )
 from tools.model_eval.model_fit import report_lines as fit_report_lines
+from tools.model_eval.one_request.answer_format import ANSWER_FORMAT_VERSION
 from tools.model_eval.ports import OllamaChatPort, ServerUnavailableError
 from tools.model_eval.progress import STYLES, Progress
 from tools.model_eval.smoke import (

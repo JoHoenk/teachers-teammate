@@ -14,7 +14,7 @@ import pytest
 
 from teachers_teammate.domain.correction_review import tokenize
 from teachers_teammate.domain.model_catalog import RequestProfile
-from teachers_teammate.infrastructure.correction import COMPACT_ANSWER_RULE
+from tools.model_eval.one_request.correction import COMPACT_ANSWER_RULE
 from teachers_teammate.infrastructure.ollama_utils import ChatStats
 from tools.model_eval.check_rule import CheckRun, Verdict
 from tools.model_eval.answer_mode import AnswerMode
@@ -373,12 +373,12 @@ def test_every_fixture_fits_the_review_budget(num_ctx: int) -> None:
         assert len(text_of(fixture).text) <= budget
 
 
-def test_the_gate_sends_the_apps_review_request() -> None:
+def test_the_gate_sends_the_one_request_correctors_review_request() -> None:
     """
-    Given  the app's own corrector, asked for a review of the same text
+    Given  the one-request corrector, asked for a review of the same text
     When   the gate builds its request
     Then   the system instructions and the message are the same, so the gate cannot quietly
-           check something the app does not send
+           check something the baseline does not send
     """
     fixture = _fixture("plain DE")
     sent = text_of(fixture)
@@ -414,8 +414,8 @@ def test_gate_one_sends_the_compact_rule_when_the_profile_asks() -> None:
     assert not any(COMPACT_ANSWER_RULE in system for _model, system, _prompt in plain.requests)
 
 
-def _app_budget(language: str, text_format, num_ctx: int, profile: RequestProfile) -> int:
-    """Return the review budget the app's own corrector reports for *profile*."""
+def _corrector_budget(language: str, text_format, num_ctx: int, profile: RequestProfile) -> int:
+    """Return the review budget the one-request corrector reports for *profile*."""
     corrector = app_corrector_factory(
         _RecordingClient(), timeout=5.0, mode=AnswerMode.REVIEW, num_ctx=num_ctx, profile=profile
     )("m", 0.2)
@@ -428,17 +428,17 @@ def test_the_budget_measures_the_request_that_is_sent() -> None:
     """
     Given  a model whose profile asks for the compact-JSON rule, and one whose profile does not
     When   the gate measures the budget and builds the request
-    Then   the budget is the one the app's corrector reports for the same profile, and the
+    Then   the budget is the one the one-request corrector reports for the same profile, and the
            longer system prompt of the compact rule leaves less room for the text
     """
     fixture = _fixture("plain DE")
     plain = RequestProfile()
     compact = RequestProfile(compact_json=True)
 
-    assert review_budget(fixture.language, fixture.text_format, 8192, plain) == _app_budget(
+    assert review_budget(fixture.language, fixture.text_format, 8192, plain) == _corrector_budget(
         fixture.language, fixture.text_format, 8192, plain
     )
-    assert review_budget(fixture.language, fixture.text_format, 8192, compact) == _app_budget(
+    assert review_budget(fixture.language, fixture.text_format, 8192, compact) == _corrector_budget(
         fixture.language, fixture.text_format, 8192, compact
     )
     assert review_budget(fixture.language, fixture.text_format, 8192, compact) < review_budget(

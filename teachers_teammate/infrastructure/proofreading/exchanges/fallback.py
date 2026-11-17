@@ -9,7 +9,8 @@ from __future__ import annotations
 
 from dataclasses import replace
 
-from ....domain.proofreading.result import ExchangeKind
+from ....domain.model_catalog import RequestProfile
+from ....domain.proofreading.result import ExchangeKind, StepName
 from .base import Exchange, ExchangeCost, ExchangeResult, ProofreadContext
 
 
@@ -56,3 +57,9 @@ class FallbackExchange:
     def cost_model(self) -> ExchangeCost:
         """Return the primary's cost: the fallback runs only when the primary failed."""
         return self._primary.cost_model()
+
+    def prompts(
+        self, profile: RequestProfile, *, corrections_only: bool = False
+    ) -> tuple[tuple[StepName, str], ...]:
+        """Return the primary's prompts: the fallback asks what the primary asks."""
+        return self._primary.prompts(profile, corrections_only=corrections_only)

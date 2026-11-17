@@ -29,7 +29,7 @@ What you set up once lives in the Settings window, grouped by topic. Pick a page
 | **Privacy** | What may leave this computer (the answers you chose not to be asked about again), and how names and other personal information are found and replaced |
 | **Add-ons** | Downloads of AI models for this computer and of optional parts: handwriting engines, online AI services, name detection models, performance monitoring |
 
-Changes on the pages are saved when you press **OK** and dropped when you press **Cancel**. A key you enter is used right away, so the model list can load, and saved on OK; Cancel forgets it. The exception is on **Add-ons**, where a download or installation starts right away and is not undone by Cancel. **Restore defaults…** at the bottom resets either the page you are on or all settings (the second choice asks again; it also forgets the answers you asked not to be asked about again, and keeps downloaded models and saved API keys). Which instructions the AI gets and how a step behaves stay in the main window, under each step's **Instructions…** button.
+Changes on the pages are saved when you press **OK** and dropped when you press **Cancel**. A key you enter is used right away, so the model list can load, and saved on OK; Cancel forgets it. The exception is on **Add-ons**, where a download or installation starts right away and is not undone by Cancel. **Restore defaults…** at the bottom resets either the page you are on or all settings (the second choice asks again; it also forgets the answers you asked not to be asked about again, and keeps downloaded models and saved API keys). Which instructions the AI gets and how a step behaves stay in the main window, under each step's **Options…** button.
 
 You can also **drag a folder directly onto the window** to set it as the input folder.
 
@@ -262,9 +262,11 @@ Each section names its destination and what the service gets to read:
 - the text exactly as it will be sent, including the stand-ins the anonymizer produced.
   Hidden items are highlighted, so you can see at a glance what the service cannot read.
 
-The instructions the app sends along with the text — your proofreading instructions, or the
-content-review question — are folded away under **Show the instructions sent**. They are part
-of what leaves the computer, so you can read them too.
+The instructions the app sends along with the text are folded away under **Show the
+instructions sent**: the fixed prompts of the proofreading requests that run (one heading per
+request, so **Corrections only** shows one), your **Notes for the AI** when you wrote any, and
+the content-review question. They are part of what leaves the computer, so you can read them
+too.
 
 The **Personal information** tab holds the original extracted text next to the anonymized
 version, for a line-by-line comparison — this is where the former *Personal Information
@@ -424,35 +426,31 @@ correct though simple wording alone. **Explanation language**, in the
 
 If you switch on **Corrections only (faster)**, proofreading returns the corrected text
 without explanations and without the unclear list — faster, and it works with every model.
-Every model is asked for explanations unless you tick **Corrections only**; models the app
-has checked show `explanations ✓`. When a model fails to answer in the explanation format
-(models without the `explanations ✓` badge are more likely to), that single file falls back to
-corrections only automatically; a short banner above the text then says so. With an older Ollama
-(before version 0.5) the app also uses corrections only and tells you that updating Ollama
-gives you the explanations.
+A full proofreading asks the model three times: once for the corrected text, once for the
+explanations and once for the unclear expressions. **Corrections only** sends the first request
+alone, so it is about three times faster and the time estimate in the panel shows it before you
+start. Every model is asked for explanations unless you tick **Corrections only**; models the app
+has checked show `explanations ✓`. When a model cannot answer the explanation or the unclear
+request (models without the `explanations ✓` badge are more likely to), the corrected text is
+kept and a short banner above it says which part is missing — the file is never lost. With an
+older Ollama (before version 0.5) the app also uses corrections only and tells you that updating
+Ollama gives you the explanations.
 
-### Your own instructions
+### Notes for the AI
 
-The **Options…** button of **Proofread** and of **Review content** shows what the AI is told. The **Instructions** box always holds the
-text that is really used: the built-in instructions of the document language, matched to the
-**Level** setting (`{level}` is replaced by it). You can change them right in the box.
-**Reset to default** puts the built-in text back. As long as the box holds the built-in text,
-it keeps following the document language; once you change it, your instructions are used for
-every language, and a one-line note under **Proofread** in the panel says so. If your own
-text sets an output format itself ("return only …", "JSON", "[unclear]"), a hint warns you
-that it may confuse the model, because the app sets the format.
+The **Options…** button of **Proofread** has a **Notes for the AI (optional)** box: what the
+model should know about this class or this text, for example "Year 9, second foreign language;
+ignore missing capital letters in headings". The notes go with every request of the
+proofreading, so they apply to the corrected text, the explanations and the unclear list alike.
+At most 500 characters are sent; the counter under the box shows how many you have used.
 
-**Answer format (advanced)**, collapsed below, is the part the app adds: it tells the model
-how to fill in its reply — corrected sentences with an explanation each, a list of unclear
-expressions, never markers in the text — and that corrections stay in the language of the
-document while explanations use the explanation language. There is one format for **With
-explanations** and one for **Corrections only**; both can be edited, each with its own
-**Reset to default**. The app reads the reply in this format, so change it only if you know
-what you are doing: a hint warns you when an edited format no longer names a field the app
-needs, and when the model does not follow it, the file falls back to corrections only. A format
-you edited is tied to the version of the app it was written for; after an update that changes
-the format, your edit is not used and the built-in one applies again. For Markdown texts a
-read-only note about crossed-out and inserted words is added as well.
+The instructions themselves are fixed: they are written and tested with the app, and a change
+would silently change what every model is asked. Below the notes, **What the AI is asked** shows
+them, one heading per request — with **Corrections only** only the first one is sent. The same
+texts appear in **What is sent for this file…**.
+
+The **Options…** button of **Review content** still has an **Instructions** box you can edit:
+that prompt is yours, and the app reads the reply as plain text.
 
 ---
 

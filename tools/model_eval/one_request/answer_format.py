@@ -1,21 +1,21 @@
-"""The answer format of the proofreading stage: what the app tells the model about its reply.
+"""The answer format of the one-request review: what the tool tells the model about its reply.
 
-Pure text, no I/O.  The **instructions** (``correction_prompts``) say *what* to correct; the
-**answer format** here says *how to fill in the reply*.  It is English for every language, names
-no language and has no placeholders -- the languages travel in the message that carries the text
--- so a teacher can read and edit it as plain text.
+Pure text, no I/O.  The **instructions** (:mod:`.presets`) say *what* to correct; the **answer
+format** here says *how to fill in the reply*.  It is English for every language, names no
+language and has no placeholders -- the languages travel in the message that carries the text --
+so it reads as plain text.
 
-The review format describes the same structure as ``infrastructure/correction_schema.py``.
-Providers that bind a schema send its field descriptions too; Ollama only constrains the keys,
-so the structure is spelled out here as well.  A unit test keeps :data:`REVIEW_FIELDS` and the
-schema in step.
+The review format describes the same structure as :mod:`.correction_schema`.  Providers that bind
+a schema send its field descriptions too; Ollama only constrains the keys, so the structure is
+spelled out here as well.  A test keeps :data:`REVIEW_FIELDS` and the schema in step.
 """
 
 from __future__ import annotations
 
 ANSWER_FORMAT_VERSION = 1
-"""Bumped whenever the built-in formats or the schema change: it is part of the cache key, and
-an edited format written for another version is not used (see :func:`migrate_saved_formats`)."""
+"""Bumped whenever the built-in formats or the schema change: it is part of the evaluation
+protocol, and an edited format written for another version is not used (see
+:func:`migrate_saved_formats`)."""
 
 REVIEW_FIELDS: tuple[str, ...] = (
     "sentences",

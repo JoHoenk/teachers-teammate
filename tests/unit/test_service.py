@@ -3360,64 +3360,66 @@ def test_hardware_detection_is_logged(monkeypatch, caplog) -> None:
     assert "Hardware profile" in text and "gpu_memory_unknown" in text
 
 
-def test_correction_instructions_matches_what_the_corrector_sends(monkeypatch) -> None:
+def test_proofreading_prompts_lists_the_steps_that_run(tmp_path: Path) -> None:
     """
-    Given  the service method that builds the dialog's "policy" and "fixed" parts
-    When   a review request is built with the same settings
-    Then   both parts are exactly the pieces of the system message the corrector sends
+    Given  a config whose model runs all three steps
+    When   proofreading_prompts() is called
+    Then   it returns one titled prompt per step, in step order
     """
-    from langchain_core.language_models.fake_chat_models import (  # noqa: PLC0415
-        FakeListChatModel,
+    svc = _make_svc()
+    config = dataclasses.replace(make_config(tmp_path), correction_enabled=True)
+
+    prompts = svc.proofreading_prompts(config)
+
+    assert [title for title, _prompt in prompts] == [
+        "Correct the text",
+        "Explain the corrections",
+        "List unclear expressions",
+    ]
+    assert all(prompt.strip() for _title, prompt in prompts)
+
+
+def test_proofreading_prompts_with_corrections_only_lists_step_one(tmp_path: Path) -> None:
+    """
+    Given  a config that asks for corrections only
+    When   proofreading_prompts() is called
+    Then   only step ① is listed, because the other two requests are not sent
+    """
+    svc = _make_svc()
+    config = dataclasses.replace(
+        make_config(tmp_path), correction_enabled=True, correction_output="text"
     )
 
-    from teachers_teammate.infrastructure import (  # noqa: PLC0415
-        correction as correction_module,
-    )
-    from teachers_teammate.infrastructure._llm_invoke import (  # noqa: PLC0415
-        StructuredResult,
-    )
-    from teachers_teammate.infrastructure.proofreading import (  # noqa: PLC0415
-        port as port_module,
-    )
-    from teachers_teammate.infrastructure.correction import (  # noqa: PLC0415
-        GERMAN_PROMPT,
-        CorrectionSettings,
-        LangChainCorrector,
-    )
-    from teachers_teammate.infrastructure.correction_schema import (  # noqa: PLC0415
-        fill_placeholders,
-    )
+    prompts = svc.proofreading_prompts(config)
 
-    captured: list[str] = []
+    assert [title for title, _prompt in prompts] == ["Correct the text"]
 
-    def fake(_llm, **kwargs):
-        captured.append(kwargs["system"])
-        return StructuredResult(error="(stop)", failure="transport")
 
-    monkeypatch.setattr(port_module, "invoke_langchain_structured", fake)
-    LangChainCorrector(
-        FakeListChatModel(responses=[]),
-        settings=CorrectionSettings(level="B2", explanation_language=""),
-    ).correct("x", "German")
-    system = correction_module._instructions(
-        "",
-        "German",
-        level="B2",
-        text_format="plain",
-        mode="review",
+def test_proofreading_prompts_leaves_out_the_unclear_step_of_a_model_without_it(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """
+    Given  a model whose request profile turns the unclear check off
+    When   proofreading_prompts() is called
+    Then   step ③ is not listed, because that request is not sent
+    """
+    from teachers_teammate import config as config_module  # noqa: PLC0415
+
+    original = config_module.request_profile
+    monkeypatch.setattr(
+        config_module,
+        "request_profile",
+        lambda model, provider: dataclasses.replace(original(model, provider), unclear_check=False),
     )
-    assert system == captured[0]
+    svc = _make_svc()
+    config = dataclasses.replace(make_config(tmp_path), correction_enabled=True)
 
-    policy, fixed = ProcessingApplicationService().correction_instructions(
-        prompt="",
-        language="German",
-        level="B2",
-        output_mode="review",
-        text_format="plain",
-    )
-    assert system == f"{policy}\n\n{fixed}"
-    assert "Answer with a JSON object" in fixed
-    assert fill_placeholders(GERMAN_PROMPT, level="B2") == policy
+    prompts = svc.proofreading_prompts(config)
+
+    assert [title for title, _prompt in prompts] == [
+        "Correct the text",
+        "Explain the corrections",
+    ]
 
 
 # ── Shared anonymization cache (Phase 3) ─────────────────────────────────────
@@ -3616,11 +3618,11 @@ def test_describe_sent_texts_without_anonymization_sends_names_as_written(
 
 
 @pytest.mark.unit
-def test_describe_sent_texts_carries_the_prompt_the_stage_sends(tmp_path: Path) -> None:
+def test_describe_sent_texts_carries_the_prompts_the_steps_send(tmp_path: Path) -> None:
     """
-    Given  a correction step with the built-in German prompt
+    Given  a proofreading step with the fixed prompts of the exchange
     When   describe_sent_texts() builds the report
-    Then   each section carries the same instructions the stage sends
+    Then   the section carries every step's prompt under its title
     """
     svc = _make_svc()
     config = dataclasses.replace(make_config(tmp_path, language="German"), correction_enabled=True)
@@ -3628,13 +3630,29 @@ def test_describe_sent_texts_carries_the_prompt_the_stage_sends(tmp_path: Path) 
     report = svc.describe_sent_texts(config, "Anna schrieb das.")
 
     sent = next(s for s in report.sections if s.stage.stage == "correction")
-    policy, fixed = svc.correction_instructions(
-        prompt=config.correction_prompt,
-        language=config.language,
-        level=config.correction_level,
-        output_mode=config.correction_output,
+    for title, prompt in svc.proofreading_prompts(config):
+        assert title in sent.prompt
+        assert prompt in sent.prompt
+
+
+@pytest.mark.unit
+def test_describe_sent_texts_adds_the_notes_for_the_ai(tmp_path: Path) -> None:
+    """
+    Given  a proofreading step with the teacher's notes
+    When   describe_sent_texts() builds the report
+    Then   the notes appear after the prompts, as the requests carry them
+    """
+    svc = _make_svc()
+    config = dataclasses.replace(
+        make_config(tmp_path),
+        correction_enabled=True,
+        correction_notes="Year 9, second foreign language.",
     )
-    assert sent.prompt == f"{policy}\n\n{fixed}"
+
+    report = svc.describe_sent_texts(config, "Anna wrote this.")
+
+    sent = next(s for s in report.sections if s.stage.stage == "correction")
+    assert sent.prompt.rstrip().endswith("Year 9, second foreign language.")
 
 
 @pytest.mark.unit
@@ -3695,30 +3713,6 @@ def test_provider_key_missing_follows_the_provider_info_and_environment(
     assert _make_svc().provider_key_missing("any") is missing
 
 
-@pytest.mark.unit
-def test_the_dialog_shows_the_request_of_the_chosen_model() -> None:
-    """
-    Given  a request profile that asks for compact JSON, and one that does not
-    When   the dialog's instructions are built for each
-    Then   only the first one ends with the compact-answer rule, so the dialog shows what is sent
-    """
-    from teachers_teammate.infrastructure.correction import COMPACT_ANSWER_RULE  # noqa: PLC0415
-
-    svc = ProcessingApplicationService()
-
-    def fixed_of(compact_json: bool) -> str:
-        return svc.correction_instructions(
-            prompt="",
-            language="German",
-            level="B2",
-            output_mode="review",
-            compact_json=compact_json,
-        )[1]
-
-    assert fixed_of(True).endswith(COMPACT_ANSWER_RULE)
-    assert COMPACT_ANSWER_RULE not in fixed_of(False)
-
-
 # ── estimate_text_size: the pieces counter after OCR (CW2) ─────────────────
 
 
@@ -3754,7 +3748,9 @@ def test_the_pieces_count_matches_the_requests_correct_really_makes(
     Then   the estimate equals the number of requests correct() really sends
     """
     from teachers_teammate.domain.correction_review import CorrectionOutcome  # noqa: PLC0415
-    from teachers_teammate.infrastructure.correction import NativeOllamaCorrector  # noqa: PLC0415
+    from teachers_teammate.infrastructure.proofreading.corrector import (  # noqa: PLC0415
+        ExchangeCorrector,
+    )
     from teachers_teammate.infrastructure.stage_builder import (  # noqa: PLC0415
         PipelineComponentFactory,
         StageBuilder,
@@ -3773,7 +3769,7 @@ def test_the_pieces_count_matches_the_requests_correct_really_makes(
         sent.append(raw_text)
         return CorrectionOutcome(text=raw_text)
 
-    monkeypatch.setattr(NativeOllamaCorrector, "correct", fake_correct)
+    monkeypatch.setattr(ExchangeCorrector, "correct", fake_correct)
     corrector = StageBuilder(cfg, PipelineComponentFactory()).build_corrector()
     assert corrector is not None
     corrector.correct(text, cfg.language)

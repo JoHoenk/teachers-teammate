@@ -7,9 +7,10 @@ import json
 from teachers_teammate.domain.correction_review import align
 from teachers_teammate.domain.proofreading.review import CorrectionReview, EditNote, UnclearNote
 from teachers_teammate.domain.proofreading.legacy_review import sentence_review
-from teachers_teammate.infrastructure.correction import ChunkingCorrector
+from teachers_teammate.infrastructure.proofreading.chunking import ChunkingCorrector
 from teachers_teammate.infrastructure.proofreading.corrector import (
     ExchangeCorrector,
+    ProofreadingSettings,
     build_exchange_corrector,
 )
 from teachers_teammate.infrastructure.proofreading.exchanges import TExchange
@@ -31,7 +32,9 @@ def _notes(*notes: tuple[int, str, str]) -> str:
 
 
 def _corrector(*script) -> ExchangeCorrector:
-    return ExchangeCorrector(TExchange(FakePort(*script)), level="B1")
+    return ExchangeCorrector(
+        TExchange(FakePort(*script)), settings=ProofreadingSettings(level="B1")
+    )
 
 
 def test_the_review_of_an_exchange_is_a_sentence_review_that_aligns_with_the_text() -> None:
@@ -144,10 +147,94 @@ def test_a_long_text_is_split_by_the_budget_of_the_exchange() -> None:
     from teachers_teammate.domain.context_budget import ContextBudget  # noqa: PLC0415
 
     port = FakePort(window=ContextBudget(8192))
-    corrector = build_exchange_corrector(None, "m", timeout=5.0, num_ctx=8192, port=port)  # ty: ignore[invalid-argument-type]
+    corrector = build_exchange_corrector(port)
     limit = corrector.max_text_chars("German")
     assert limit is not None and limit > 0
 
     chunks = ChunkingCorrector(corrector).split("Ein Satz. " * (limit // 5), "German")
 
     assert chunks is not None and len(chunks) > 1
+
+
+def test_corrections_only_sends_step_one_alone() -> None:
+    """
+    Given  a run set to corrections only
+    When   the corrector proofreads a text
+    Then   one request is sent, the corrected text comes back without a review, and the text
+           budget is the one of step ① alone, so a corrections-only text goes out in fewer pieces
+    """
+    from teachers_teammate.domain.context_budget import ContextBudget  # noqa: PLC0415
+
+    port = FakePort(answer(CORRECTED), window=ContextBudget(8192))
+    corrector = ExchangeCorrector(
+        TExchange(port), settings=ProofreadingSettings(corrections_only=True)
+    )
+
+    outcome = corrector.correct(SOURCE, "German")
+
+    assert [request.step for request in port.requests] == ["correct"]
+    assert outcome.text == CORRECTED
+    assert outcome.review is None
+    assert outcome.failed is False
+    full = build_exchange_corrector(FakePort(window=ContextBudget(8192))).max_text_chars("German")
+    limited = corrector.max_text_chars("German")
+    assert full is not None
+    assert limited is not None
+    assert limited >= full
+
+
+def test_a_failed_explain_batch_marks_the_answer_as_partial() -> None:
+    """
+    Given  a text with mistakes whose explanations the model never answers
+    When   the corrector proofreads it
+    Then   the corrected text is returned and the outcome says the answer is partial, so the
+           speed sample of this file is dropped
+    """
+    corrector = _corrector(
+        answer(CORRECTED), transport("no server"), answer(json.dumps({"unclear": []}))
+    )
+
+    outcome = corrector.correct(SOURCE, "German")
+
+    assert outcome.text == CORRECTED
+    assert outcome.failed is False
+    assert outcome.fell_back is True
+    assert outcome.warning is not None
+
+
+def test_a_stop_during_the_explanations_reaches_the_caller() -> None:
+    """
+    Given  a port that "Stop now" cuts off while step ② is asked
+    When   the corrector proofreads the text
+    Then   RunStoppedError reaches the caller, so the file is stopped and nothing is stored
+    """
+    import pytest  # noqa: PLC0415
+
+    from teachers_teammate.exceptions import RunStoppedError  # noqa: PLC0415
+
+    class _StoppingPort(FakePort):
+        """A port that refuses step ② as a stopped run does."""
+
+        def ask_structured(self, req):
+            """Raise for step ②, answer everything else from the script."""
+            if req.step == "explain":
+                raise RunStoppedError
+            return super().ask_structured(req)
+
+    corrector = ExchangeCorrector(TExchange(_StoppingPort(answer(CORRECTED))))
+
+    with pytest.raises(RunStoppedError):
+        corrector.correct(SOURCE, "German")
+
+
+def test_only_the_failure_warnings_of_steps_two_and_three_mark_an_answer_partial() -> None:
+    """Given the warnings an exchange can return,
+    When   they are checked for a missing part of the answer,
+    Then   only the failure warnings of steps ② and ③ count, not a formatting warning.
+    """
+    from teachers_teammate.infrastructure.proofreading.corrector import _partial  # noqa: PLC0415
+
+    assert _partial(()) is False
+    assert _partial(("Part of the text lost its formatting.",)) is False
+    assert _partial(("Unclear wording could not be checked for this text.",)) is True
+    assert _partial(("Explanations are missing for part of the text.",)) is True

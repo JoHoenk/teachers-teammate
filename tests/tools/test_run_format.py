@@ -6,8 +6,9 @@ from pathlib import Path
 
 import pytest
 
-from teachers_teammate.infrastructure import correction
+from teachers_teammate.infrastructure.proofreading import chunking
 from tools.model_eval import run_format
+from tools.model_eval.one_request import correction
 
 
 def test_a_joined_warning_takes_the_most_specific_code():
@@ -18,7 +19,7 @@ def test_a_joined_warning_takes_the_most_specific_code():
            over an unplaced correction, and anything else is other
     """
     fallback = correction.FALLBACK_WARNING
-    partial = correction.MISSING_REVIEW_WARNING
+    partial = chunking.MISSING_REVIEW_WARNING
     unplaced = "A correction could not be placed in the text."
 
     assert run_format.warning_code(f"{fallback} {partial}") == "review_partial"

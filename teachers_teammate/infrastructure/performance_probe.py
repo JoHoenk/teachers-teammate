@@ -583,11 +583,16 @@ def _is_installed(model: str, installed: Sequence[str]) -> bool:
 def _writing_request(
     step: SpeedStep, model: str, request: SpeedTestRequest
 ) -> tuple[str, str, dict | None, float, bool | str]:
-    """Return ``(system, prompt, schema, temperature, think)`` of the request a run would send."""
+    """Return ``(system, prompt, schema, temperature, think)`` of the request a run would send.
+
+    The proofreading step measures step ① of the exchange: a plain rewrite of the paragraph, at
+    the temperature and thinking that step runs at.  It is the request every run sends, and the
+    test measures rates, not answer lengths.
+    """
     from ..config import DEFAULTS  # noqa: PLC0415
+    from ..domain.correction_policy import DEFAULT_LEVEL  # noqa: PLC0415
+    from ..domain.correction_prompts import correct_system, correct_user  # noqa: PLC0415
     from ..domain.notation import with_notation_hint  # noqa: PLC0415
-    from .correction import request_messages  # noqa: PLC0415
-    from .correction_schema import schema_json  # noqa: PLC0415
 
     paragraph = sample_paragraph(request.language)
     if step is SpeedStep.REVIEW:
@@ -596,10 +601,6 @@ def _writing_request(
         prompt = f"{system}\n\nLanguage: {request.language}\n\nCorrected text:\n\n{paragraph}"
         return "", prompt, None, review_temperature(model), request_profile(model).think
     profile = request_profile(model)
-    system, prompt = request_messages(
-        paragraph,
-        request.language,
-        mode="review",
-        compact_json=profile.compact_json,
-    )
-    return system, prompt, schema_json(), profile.review_temperature, profile.think
+    system = correct_system(profile.correct.prompt)
+    prompt = correct_user(paragraph, language=request.language, level=DEFAULT_LEVEL)
+    return system, prompt, None, profile.temperature, profile.think

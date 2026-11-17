@@ -451,17 +451,18 @@ def warning_code(warning: str) -> str:
     repository.
 
     A text that was sent in pieces joins the warnings of its pieces
-    (:func:`~teachers_teammate.infrastructure.correction._join_warnings`), so the codes are
+    (:func:`~teachers_teammate.infrastructure.proofreading.chunking.join_warnings`), so the
+    codes are
     looked for inside the warning, and the more specific code wins.  A review that covers only
     part of the text (``review_partial``: some pieces fell back, the others kept their
     explanations) says more than ``fallback`` (the whole text fell back), because the chunking
     wrapper adds that warning only when some pieces did get a review.  Then comes a correction
     the model could not place.  A failed text stays ``failed`` whatever its warning says.
     """
-    from teachers_teammate.infrastructure.correction import (  # noqa: PLC0415
-        FALLBACK_WARNING,
+    from teachers_teammate.infrastructure.proofreading.chunking import (  # noqa: PLC0415
         MISSING_REVIEW_WARNING,
     )
+    from tools.model_eval.one_request.correction import FALLBACK_WARNING  # noqa: PLC0415
 
     if not warning:
         return ""

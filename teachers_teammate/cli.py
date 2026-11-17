@@ -33,7 +33,9 @@ from .config import (
     Config,
     OcrConfig,
     load_config_file,
+    normalize_notes,
 )
+from .domain.correction_prompts import NOTES_LIMIT
 from .domain.data_location import LOCAL_OCR_ENGINES, DataFlow, PrivacyLevel
 from .domain.local_models import (
     HUGGING_FACE_HOST,
@@ -153,14 +155,13 @@ def _add_correction_args(parser: argparse.ArgumentParser, providers: list[str] |
         ),
     )
     corr_grp.add_argument(
-        "--correction-prompt",
-        default=DEFAULTS["correction_prompt"],
-        metavar="PROMPT",
+        "--correction-notes",
+        default=DEFAULTS["correction_notes"],
+        metavar="TEXT",
         help=(
-            "System prompt for the correction LLM. "
-            "Built-in presets: english (default), german, french, spanish, italian, "
-            "portuguese, dutch, or a custom system prompt string. "
-            "A prompt without {level} ignores --correction-level."
+            "Notes for the AI about this class or this text, sent with every proofreading "
+            f"request (at most {NOTES_LIMIT} characters). The instructions themselves are "
+            "fixed by the app."
         ),
     )
     corr_grp.add_argument(
@@ -186,8 +187,7 @@ def _add_correction_args(parser: argparse.ArgumentParser, providers: list[str] |
         const="text",
         default=DEFAULTS["correction_output"],
         help=(
-            "Skip the explanations and the unclear table (faster); "
-            "only the corrected text is produced."
+            "Corrected text only: no explanations, no unclear list (one request instead of three)."
         ),
     )
     corr_grp.add_argument(
@@ -702,12 +702,10 @@ def run_cli(
         anonymizer_patterns=getattr(args, "anonymizer_patterns", None),
         correction_provider=args.correction_provider,
         correction_model=args.correction_model,
-        correction_prompt=args.correction_prompt,
+        correction_notes=normalize_notes(args.correction_notes),
         correction_level=args.correction_level,
         explanation_language=args.explanation_language,
         correction_output=args.correction_output,
-        answer_format_review=getattr(args, "answer_format_review", ""),
-        answer_format_text=getattr(args, "answer_format_text", ""),
         evaluation_enabled=args.evaluation_enabled,
         evaluate_provider=args.evaluate_provider,
         evaluate_model=args.evaluate_model,

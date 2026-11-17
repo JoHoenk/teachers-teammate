@@ -28,7 +28,7 @@ from ...exceptions import (
     stop_requested,
 )
 from ...interfaces import AnonymizationMap, Anonymizer, Corrector, DocumentCreator, Evaluator
-from ..correction import proofreading_pieces
+from ..proofreading.chunking import proofreading_pieces
 from ..reporting import OnOcrDoneFn, OnStageStartedFn, Reporter, StdoutReporter
 from ..run_stats import RunStatsCollector
 from .cache_service import CacheContext, CacheReconciliationService
@@ -603,11 +603,11 @@ class FileProcessor:
             )
         except RunStoppedError as exc:
             raise stopped() from exc
-        # The mode the answer was really written in: a review that fell back to corrections
-        # only answered in text mode, and its answer length is the text-mode one.
+        # The mode the answer was really written in: a run that came back without a review
+        # answered in text mode, and its answer length is the text-mode one.
         self._finish_sample(
             words=len(text_for_correction.split()),
-            mode="review" if outcome.review is not None else "text",
+            mode="exchange" if outcome.review is not None else "text",
             usable=not (outcome.failed or outcome.fell_back),
         )
         corrected_text = self._restore_pii(

@@ -259,3 +259,22 @@ def test_the_fingerprint_of_a_profile_follows_the_prompt_variant_and_its_text(mo
     )
 
     assert RequestProfile(correct=StepProfile(prompt="keep")).fingerprint() != keep
+
+
+def test_every_profile_names_an_exchange_the_app_can_build() -> None:
+    """
+    Given  the catalog's models and every provider module the app ships
+    When   their request profiles are read
+    Then   each names an exchange of ``EXCHANGES``, so no profile points at nothing
+    """
+    from teachers_teammate.domain.model_catalog import DEFAULT_WRITING_MODEL  # noqa: PLC0415
+    from teachers_teammate.infrastructure.llm_factory import list_providers  # noqa: PLC0415
+    from teachers_teammate.infrastructure.proofreading.exchanges import (  # noqa: PLC0415
+        EXCHANGES,
+    )
+
+    profiles = [spec.request_profile for spec in model_catalog.OLLAMA_CATALOG]
+    profiles += [request_profile(DEFAULT_WRITING_MODEL, provider) for provider in list_providers()]
+
+    assert profiles
+    assert {profile.exchange for profile in profiles} <= set(EXCHANGES)

@@ -164,9 +164,9 @@ class ResultRow:
     """How many non-blank pieces the text was sent in: one when it fitted one request.
 
     The app splits a text longer than the corrector's budget
-    (:class:`~teachers_teammate.infrastructure.correction.ChunkingCorrector`), so a long text
-    costs several requests and can lose the context across a cut.  A row written before the
-    field existed is a one-piece row.
+    (:class:`~teachers_teammate.infrastructure.proofreading.chunking.ChunkingCorrector`), so a
+    long text costs several requests and can lose the context across a cut.  A row written before
+    the field existed is a one-piece row.
     """
 
     category_checked: int = 0

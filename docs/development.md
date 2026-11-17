@@ -206,10 +206,11 @@ words), and one invented German page of 6,500 characters that is sent as the lon
 whole sentences the app's own budget allows. German tokenises longest of the three languages, so
 the two long fixtures are the worst case for the size the app sends.
 
-**The size is the app's, not half the window.** The check asks the app's own corrector how many
-characters one review request carries (`NativeOllamaCorrector.max_text_chars`, with the prompt
-taken out of the window first and the rest shared with an answer seven times the text), so the
-gate and the app cannot disagree about what fits. At 8192 tokens that is about 2,790 characters
+**The size is the app's, not half the window.** The check measures the request it sends itself
+(`structured_check.review_budget`, with the prompt taken out of the window first and the rest
+shared with an answer seven times the text), and a test pins that request to the one-request
+corrector's (`tools/model_eval/one_request/correction.py:NativeOllamaCorrector.max_text_chars`),
+so the gate and the baseline cannot disagree about what fits. At 8192 tokens that is about 2,790 characters
 of German, at 16384 about 5,860. A fixture that is longer than its budget is reported as too
 long instead of being sent; CI keeps the shipped fixtures within it.
 
@@ -541,9 +542,12 @@ out the steps the run switches off, so a re-run of text recognition alone is not
 proofreading.  An empty `review_model` means the content review does not run on Ollama; it never
 means "same as proofreading" (a review on the proofreading model names it).
 
-The proofreading estimate follows `Config.correction_output`: the rates are the same in both
-modes, the answer length is not, so only the samples of the configured mode (and, before there
-are three, the catalog's review length or `TEXT_MODE_ANSWER`) say how long an answer is.
+The proofreading estimate follows the exchange.  A full run sends three requests and every one
+of them reads the text again — step ② reads the student's text and the corrected one — so the
+reading time is the text times the copies the steps carry, and the writing time is the answers of
+all three together.  *Corrections only* sends step ① alone: one copy, one answer.  The figures
+come from the exchange's `cost_model()` until three samples of the mode the run is set to
+(`exchange` or `text`) say how long this class's answers are.
 
 #### What is measured, and with which request
 
@@ -552,8 +556,12 @@ The test sends the app's own requests, so a figure means what a run will cost:
 | Step | Request | Answer length |
 | --- | --- | --- |
 | Reading | the OCR prompt with a drawn A4 page | tokens per page |
-| Proofreading | the review request on a test text | tokens per 100 words |
+| Proofreading | step ① of the exchange on a test text | tokens per 100 words |
 | Review | the content-review request on the same text | tokens per 100 words |
+
+The proofreading step measures step ① because it is the request every run sends, and the test
+measures rates, not answer lengths: a plain rewrite of the paragraph, at that step's temperature
+and thinking, with no answer schema.
 
 `MEASURE_ANSWER_TOKENS` (200) caps the two writing steps: enough for a steady rate, short enough
 that the whole test stays under a minute and a half on a card.  `MEASURE_TIMEOUT_S` (90) is the
@@ -571,6 +579,8 @@ a run preprocesses a scan, because the image the model sees decides the image to
 | `ModelSpeed(read_tps, write_tps, image_tokens)` | one model on one machine: request tokens per second, answer tokens per second, tokens of one page image |
 | `TimeRange(low_s, high_s, typical_s)` | a duration as a range; `scaled` and `__add__` keep the three figures together |
 | `AnswerLength(low, typical, high)` | how long a model's answers are: per 100 words for a writing model, per page for a reading one |
+| `ExchangeCost(requests_per_page, answer_tokens_per_100_words, text_copies)` | what an exchange costs per step; `DEFAULT_EXCHANGE_COST` holds exchange `T`'s provisional figures (① 1 copy, ② 2, ③ 1) |
+| `proofreading_time(speed, words, cost, steps, *, answer=None)` | a proofreading run: the text times the copies of the steps that run, plus their answers |
 | `band(seconds_per_page)` | `SpeedBand`: `FAST` up to `FAST_LIMIT_S` (30 s), `OK` up to `OK_LIMIT_S` (90), `SLOW` up to `SLOW_LIMIT_S` (300), else `VERY_SLOW` |
 | `machine_factor(measured, reference)` | how much slower this computer is than the reference machine; `None` when either figure is missing, so "unknown" is never read as "the same" |
 | `median_factor`, `percentile` | the middle of several models' factors; the 10th and 90th percentile of a set of figures |
@@ -602,9 +612,10 @@ Two files, both `SCHEMA` 1, both keyed by what makes a figure go out of date:
 | `SpeedStore` | `SpeedKey`: server, tag, digest, Ollama version, graphics card | the test's result per step, with its outcome and message |
 | `SampleStore` | `SampleKey`: server, tag, step, mode | the last `KEEP_SAMPLES` (20) samples of real runs |
 
-The mode is part of the sample key because it decides how long the answer is: a review answer
-repeats the text and explains every change, a text-mode answer is about the text's length.  Mixing
-the two would make the answer length meaningless.
+The mode is part of the sample key because it decides how long the answer is: `exchange` is the
+three steps' answers together, `text` is step ① alone, which is about the text's length.  Mixing
+the two would make the answer length meaningless.  Samples of the old one-request review are
+still in the file under `review`; nothing reads them any more.
 
 Both files are read once per change: the parsed content is kept with the file's modification
 time, size and inode, so a model list that asks for fifty tags does not parse them fifty times
@@ -617,9 +628,10 @@ the Ollama client as `stats_sink`, so every request of a run is seen.  It sums t
 page or one document into one `RunSample`, and counts a load only from `LOAD_THRESHOLD_S` (1 s) up,
 so a model that was in memory does not look like one that had to be loaded.  Collecting statistics
 never fails a document: a sink that cannot write (full or read-only disk) is logged and skipped.
-A step that failed, or whose review fell back to corrections only (`CorrectionOutcome.fell_back`),
-is discarded: the requests of the failed attempt would be counted into the answer length of the
-mode that finally answered.
+A step that failed, or whose answer came back without a review (`CorrectionOutcome.fell_back`: a
+report of step ② or ③ failed, so the answer lacks part of what was asked), is discarded: the
+requests of the failed attempt would be counted into the answer length of the mode that finally
+answered.
 
 #### Real runs win over the test
 
@@ -945,7 +957,7 @@ eighteen runs, and one that passes it is continued from its own answers.  **Gate
 (`compare_writing_models.py`) asks how good its corrections are.  Both tools send what the app
 sends, at the temperatures the app sends that model (see above; gate 2 goes through
 `NativeOllamaCorrector` itself, inside the app's `ChunkingCorrector`, with the app's own tokeniser
-and word diff), so a result describes the real request — including the app's long-text path: a
+and word diff), so a result describes the one-request baseline — including the app's long-text path: a
 text longer than the window's budget is proofread in pieces, one request each, and the row records
 how many (`outcome.pieces`).
 
@@ -1000,7 +1012,7 @@ on long texts; the tool prints each file as it goes. Code: `tools/model_eval/vie
 whitespace words: `short` 80 to 150, `page` 200 to 400, `pages` 600 to 1,200 — four short, five page
 and two pages.  German: Falko-MERLIN GEC corpus (test split; Falko CC BY 3.0, MERLIN CC BY-SA 4.0),
 MERLIN letters and Falko essays whole.  English: W&I+LOCNESS v2.1 (BEA-2019 dev split, levels A, B,
-C; non-commercial use only), whole essays.  Every `pages` text is longer than the app's review
+C; non-commercial use only), whole essays.  Every `pages` text is longer than the one-request review
 budget at 8192 (about 2,800 characters) and is proofread in pieces, while at
 least one `page` text still fits one request, so both paths are measured on real texts.  French: **no public learner
 corpus with corrections exists**, so
@@ -1370,7 +1382,7 @@ that fails another test gets that test's verdict.
 
 **Protocol version.**  What a run measured and how — the prompts, the answer format, the window, the
 level and the long-text budget — is versioned in `tools/model_eval/protocol.json`, not by commit.
-`run` computes the fingerprint of that request side (captured from the app's own corrector: system
+`run` computes the fingerprint of that request side (captured from the one-request corrector: system
 and user message, answer schema, options, text budgets, repair message) before the first request
 and stops with exit code 2 when it differs from the entry of `current`, so an uncommitted prompt edit is caught like a
 committed one.  A version that only *adds* something (a mode, a profile variant) leaves every
@@ -1488,7 +1500,7 @@ Things to know when reading the figures:
 
 | Module | Job |
 | --- | --- |
-| `answer_mode` | How a model is asked to proofread: `review`, `text`, `two-step`. |
+| `answer_mode` | How a model is asked to proofread: `review`, `text` (the one-request baseline), `exchange`, `correct-only` (step ① alone), `two-step`. |
 | `languages` | The language codes of the test set and the names the corrector is asked in. |
 | `redaction` | The caps that keep corpus text out of the repository, and what a "word" is. |
 | `performance` | What one text cost: requests, tokens, seconds, memory. |
@@ -1502,7 +1514,8 @@ Things to know when reading the figures:
 | `index` | `INDEX.md`, one row per run. |
 | `protocol` | The version file of the request side and its fingerprint. |
 | `session` | The sessions of one run and whether it may be resumed. |
-| `app_corrector` | The app's own corrector, as the tools build it. |
+| `app_corrector` | The one-request corrector, as the tools build it — the baseline the exchange is measured against. |
+| `one_request/` | The one-request path itself: `correction.py` (the correctors), `correction_schema.py` (the answer model), `answer_format.py`, `presets.py` (the per-language policy presets). Nothing under `teachers_teammate/` imports it. |
 | `comparison` | Runs a test set through that corrector and turns the answers into rows. |
 | `measure` | The requests, the server and the graphics memory of a measured run. |
 | `runner` | The run loop: plan, resume, warm-up, header, sampler. |
@@ -2251,56 +2264,59 @@ Proofreading answers with a *review*, not a text: the corrected sentence plus on
 explanation per edit, and a table of unclear or ambiguous expressions. Three pieces
 make it work.
 
-**Schema, answer format, message** (`infrastructure/correction_schema.py`,
-`domain/answer_format.py`). `CorrectionAnswer` (sentences → changes, plus `unclear`) is the
-Pydantic model both provider paths are bound to: Ollama through
+**This is the one-request path, and the app no longer runs it.**  The pipeline proofreads
+through the exchange (see *Proofreading exchange*), which asks three times and builds its review
+from the diff.  What stays in use here is `splice` and the v1 review: the readers of a stored
+result and `domain/proofreading/legacy_review.py` turn the exchange's review into it.  The
+one-request correctors, the answer schema, the answer formats and the policy presets live in
+`tools/model_eval/one_request/` — the evaluation baseline, not the app.  Nothing under
+`teachers_teammate/` imports them; `tests/tools/test_session.py` keeps it that way.
+
+**Schema, answer format, message** (`tools/model_eval/one_request/correction_schema.py`,
+`tools/model_eval/one_request/answer_format.py`). `CorrectionAnswer` (sentences → changes, plus
+`unclear`) is the Pydantic model both provider paths are bound to: Ollama through
 `OllamaClient.chat(format=CorrectionAnswer.model_json_schema())`, online providers through
 `with_structured_output(..., include_raw=True)`. The system message has two parts. The
-*instructions* (the seven presets in `domain/correction_prompts.py`) say what to correct and
-are per language. The *answer format* (`REVIEW_FORMAT` / `TEXT_FORMAT`) says how to fill in the
-reply: one English text per mode, **no language names, no placeholders**. It describes the
-structure field by field, because Ollama's `format=` only constrains the keys and never shows
-the model the schema's field descriptions (online providers see them as well). The languages
-travel in the message that carries the text (`Text language: …`, `Explanation language: …`;
-`correction.py:_human_template`), so the answer format is plain text a teacher can edit.
-Never put output-format rules into a preset. A test keeps `REVIEW_FIELDS` and the schema in
-step: every field name must appear in `REVIEW_FORMAT`. On the native Ollama path
+*instructions* (the seven presets in `tools/model_eval/one_request/presets.py`) say what to
+correct and are per language. The *answer format* (`REVIEW_FORMAT` / `TEXT_FORMAT`) says how to
+fill in the reply: one English text per mode, **no language names, no placeholders**. It
+describes the structure field by field, because Ollama's `format=` only constrains the keys and
+never shows the model the schema's field descriptions (online providers see them as well). The
+languages travel in the message that carries the text (`Text language: …`,
+`Explanation language: …`; `one_request/correction.py:_human_template`), so the answer format is
+plain text. Never put output-format rules into a preset. A test keeps `REVIEW_FIELDS` and the
+schema in step: every field name must appear in `REVIEW_FORMAT`. On the native Ollama path
 `OllamaClient.chat(system=...)` sends the instructions as a real `system` message (it used to
-send everything as one user message). `ANSWER_FORMAT_VERSION` (= `CONTRACT_VERSION`) is part
-of the correction cache hash and is bumped with every change of the formats or the schema.
+send everything as one user message). `ANSWER_FORMAT_VERSION` (= `CONTRACT_VERSION`) is part of
+the evaluation protocol fingerprint (`tools/model_eval/protocol.py`), so a saved run is looked up
+by the format it was made with; the app's correction cache no longer reads it.
 
-**Editable answer format.** `answer_format_review` / `answer_format_text` (`""` = built-in)
-are settings in `DEFAULTS`, `Config`, the config file and the GUI settings dict, stored with
-the `answer_format_version` they were written for. `config.py:migrate_answer_formats()` —
-called by `load_config_file` and `ConfigPanel.load_from_dict` — drops an edit written for
-another version (with a warning on stderr), so an old edit never describes another structure
-than the one the app asks for. The editor (`gui/_prompt_editor.py:_FormatBox`) shows a hint
-when an edited review format no longer names a field (`domain/answer_format.py:missing_fields`).
-There is no CLI flag; set them in the config file.
+**The answer format is fixed.**  The formats are no longer settings: `answer_format_review`,
+`answer_format_text` and `answer_format_version` were removed with the one-request path, and an
+old key in `ocr.toml` is ignored on load and not written again.  The exchange's steps carry their
+own answer shape (a plain text for ①, a schema for ② and ③), so there is nothing for a teacher to
+edit.
 
-**What the cache is keyed on.** `compute_correction_config_hash()` hashes the *resolved*
-instructions and answer formats (from `instruction_parts()`), not the settings: `""` means
-"the built-in text", which can change with the app, and editing a preset must not serve results
-made with the old text.
+**What the cache is keyed on.** `compute_correction_config_hash()` hashes
+`exchange_identity(profile, corrections_only=…)` — the exchange kind, `PROMPT_VERSION`, the first
+twelve hex digits of the SHA-256 over the system prompts of the steps that run, and
+`RequestProfile.fingerprint()` (every step's temperature, thinking and sampling values) — plus the
+provider, the effective model, the language, the level, the explanation language, the output mode,
+the notes and the window.  The prompts are hashed, not the settings, so a changed built-in prompt
+re-runs proofreading and a teacher's notes are part of the key.
 
-**Storing prompts as references** (`domain/correction_prompts.py`, `config.py`,
-`gui/_config_panel.py`). A saved `correction_prompt` of `""` means "the built-in prompt of
-the document language" — the GUI never stores preset *text*. Copies that older versions
-saved are recognised by `is_preset_prompt_text()` (against `PRESET_PROMPTS` and
-`LEGACY_PRESET_PROMPTS`, the presets of every released version, compared after whitespace
-normalisation) and reset to `""` on load, in `ConfigPanel.load_from_dict` and in the CLI's
-`load_config_file`; `evaluate_prompt` gets the same check against its default. The dialog
-policy and the answer format come from `instruction_parts()` via
-`ProcessingApplicationService.correction_instructions()` — the same code path the
-corrector uses, so what the dialog shows is what is sent. The prompt editor is **one editable
-box that always shows the text in use** (`prompt or builtin`); *Reset to default* puts the
-built-in text back, and leaving the editor with the built-in text unchanged stores `""`, not a
-copy (`PromptEditor.prompt()`). The unreleased texts of the review window
-(`SUPERSEDED_PRESET_PROMPTS`) are recognised like the released ones. `normalize_output_mode()` / `normalize_level()` in
+**The teacher's notes** (`domain/correction_prompts.py`, `config.py`, `gui/_config_panel.py`).
+`correction_notes` (`""` by default, at most `NOTES_LIMIT` = 500 characters, cut on load and in the
+dialog with a warning) travels as the notes block of every step's user message
+(`notes_block()`), never as a prompt: the prompts are fixed and versioned.  A custom prompt of an
+older version is not migrated — it was a whole policy and would contradict the fixed prompt if it
+were sent as notes.  `ProcessingApplicationService.proofreading_prompts()` returns the prompts of
+the steps that run, for the dialog's read-only section and for *What is sent*.
+`normalize_output_mode()` / `normalize_level()` in
 `domain/correction_policy.py` give an unknown setting the same meaning in every layer, and
 the saved output mode is used as it is for every model: there is no per-model block, because
-Ollama's `format=` is enforced by the engine and works with all local models (a model that
-still fails falls back to corrections only per file). `structured_output` in the catalog only
+Ollama's `format=` is enforced by the engine and works with all local models (a model that still
+fails keeps the corrected text and warns). `structured_output` in the catalog only
 decides the `explanations ✓` badge; to earn it, run
 `tools/verify_model_catalog.py --structured-output` against the model and enter the result.
 The same run decides whether a model's answers are cut off at the context size, so a badge
@@ -2367,19 +2383,21 @@ Link tooltips in the diff are shown from a `ToolTip` event handler, not through 
 `title` attribute: Qt does not decode entities in attribute values, so a quote in an
 explanation would show as `&quot;`.
 
-`pydantic` is imported by `correction_schema.py`, so it is declared in `pyproject.toml`
-(it already arrives with `ollama`).
+`pydantic` is imported by `infrastructure/proofreading/schemas.py` (and by the tools'
+`one_request/correction_schema.py`), so it is declared in `pyproject.toml` (it already arrives
+with `ollama`).
 
 Both functions are pure and table-tested in `tests/unit/test_correction_review.py`; the
 review views are tested with pytest-qt in `tests/gui/test_gui_review_views.py`.
 
 ## Proofreading exchange
 
-The exchange is the newer shape of the proofreading and lives next to the review path
-described above: three requests instead of one, and the edits are always the diff of the
-student's text against the corrected text, so the model explains edits but never places
-them. The modules exist and are tested; the pipeline still runs the review path, so the
-running app is unchanged.
+The exchange is the shape of the proofreading the app runs: three requests instead of one, and
+the edits are always the diff of the student's text against the corrected text, so the model
+explains edits but never places them.  `ExchangeCorrector`
+(`infrastructure/proofreading/corrector.py`) is the pipeline's `Corrector`: it runs exchange `T`
+over a `ModelPort` and returns the sentence-based review (v1) through
+`domain/proofreading/legacy_review.py`, so the readers of a stored result are unchanged.
 
 | Module | Role |
 |---|---|
@@ -2394,6 +2412,7 @@ running app is unchanged.
 | `infrastructure/proofreading/runner.py` | `StepRunner`: cut-off tries, one repair, window check, timeout |
 | `infrastructure/proofreading/schemas.py` | the answer schemas of steps ② and ③ with their parsers |
 | `infrastructure/proofreading/exchanges/` | `Exchange` protocol, `EXCHANGES` registry, `TExchange`, `FallbackExchange` |
+| `infrastructure/proofreading/chunking.py` | `ChunkingCorrector` and `proofreading_pieces()`: a text longer than one request is proofread in pieces and the results joined |
 
 **The three steps.** ① *Correct* sends the shielded text and gets plain text back; its answer
 is restored into the source notation and stored. ② *Explain* sends the sentences of a batch
@@ -2440,6 +2459,27 @@ inside one styled span takes that style, a replacement across style boundaries l
 counted, an insertion takes a style only when both neighbours share it, and crossed-out words
 are put back exactly where they were. Block boundaries are always the source's. Plain-text
 sources skip the shield.
+
+**Corrections only.**  *Corrections only (faster)* sends step ① alone, whatever the model's
+profile says: `ProofreadContext.corrections_only` makes `TExchange.proofread` return after ① with
+`review=None`, and `max_text_chars` then reports ①'s limit, because a corrections-only text goes
+out in fewer pieces.  The flag is `Config.correction_output == "text"`; there is no separate key
+and no automatic fallback — a run that cannot answer ② or ③ keeps the corrected text and warns.
+
+**A partial answer is not a sample.**  When a review comes back but a report of step ② or ③
+failed, the answer lacks part of what was asked, so `ExchangeCorrector` sets
+`CorrectionOutcome.fell_back` and the file processor drops the speed sample of that document: its
+requests would be counted into the answer length of a mode that answered in full.
+
+**The stage builder** (`infrastructure/stage_builder.py:build_corrector`) builds the corrector
+from the run's settings: on Ollama an `OllamaPort` with the run's proofreading window and
+`ocr_timeout`, on an online provider a `LangChainPort` over the provider's chat model (strict
+schema for `openai`), always wrapped in `ChunkingCorrector` so a long text goes out in pieces.
+`PipelineComponentFactory.build_corrector(port, settings, profile, cut_off_tries)` is the seam a
+test replaces; the cut-off tries come from step ①'s temperature, because ① is the step whose
+answer is as long as the text.  `ProofreadingSettings` carries what the teacher set (level,
+explanation language, notes, corrections only); the connection's own settings (`num_ctx`,
+`strict_schema`) belong to the port.
 
 **Adding an exchange.** Implement `Exchange` (`proofread`, `max_text_chars`, `cost_model`),
 register it in `EXCHANGES` under its `ExchangeKind`, and build it through `build_exchange()`
@@ -2531,14 +2571,11 @@ one of them is visible afterwards:
   set `num_ctx` and carry no image; the estimate errs towards refusing.
 
 `_llm_invoke.py` turns the error into the failure kind `"truncated"`, with the warning
-`TRUNCATED_MESSAGE` (*"The text was too long for the model's working memory."*). In text mode
-the original text is kept. In review mode a cut-off answer — the first one, or a **repair**
-request that is cut off or that `_ReviewCorrector._repair_fits()` already knows will not fit —
-only gives up on the structured answer: `_correct_review()` returns `None` and the caller falls
-back to text mode, which needs less room (shorter system prompt, and an answer about as long as
-the text, where a review answer is longer). The file fails only if text mode is cut off too. The
-fit of a repair is checked *before* sending, so the doomed round trip is skipped. A provider
-error (`"transport"`) still fails the file at once: text mode would meet the same server.
+`TRUNCATED_MESSAGE` (*"The text was too long for the model's working memory."*). What it costs
+depends on the step: a cut-off ① fails the file and the source is kept (a half-corrected text is
+never stored), while a cut-off ② or ③ only costs that part of the review — the corrected text is
+stored and a warning says what is missing. A provider error (`"transport"`) fails the file at
+once, because ① would meet the same server.
 
 #### The context-budget rule
 
@@ -2559,15 +2596,17 @@ class ContextBudget:
 - **Proofreading in text mode** answers with the text again, so the request may take half of the
   window (`answer_factor=1.0`, `answers_with_the_same_text()`); that is the check
   `ensure_prompt_fits()` makes before every request.
-- **Proofreading in review mode** answers with several times the text: per changed sentence the
-  original, the corrected wording and a list of changes with explanations, plus the JSON keys.
-  `NativeOllamaCorrector.max_text_chars()` therefore sizes the pieces with
-  `answer_factor=REVIEW_ANSWER_FACTOR` (7.0, measured on 2026-11-10 with the compact answer
-  format: 5.7 and 6.5 times the text's tokens on `gemma4:e4b`). The answer grows with the text,
-  not with the request, so the fixed part of the request is taken out of the window first and
-  only the rest is shared: `text_tokens = (num_ctx − overhead_tokens) / (1 + answer_factor)`.
-  At 8192 that is about 2,800 characters of text per review request, about 5,870 at 16384; a
-  page of 200 to 400 words goes out whole, a longer text in page-sized pieces.
+- **Proofreading** is sized by the exchange, not by one request: `T.max_text_chars()` takes the
+  smallest limit of the steps that run, each computed from its own request. Step ① answers with
+  the text again (`answer_factor=1.0`), step ② carries the text twice — every sentence before and
+  after — next to the edit list (`text_copies=2`, plus `EXPLAIN_EDITS_CHARS` for the fixed part),
+  and step ③ answers short. The answer grows with the text, not with the request, so the fixed
+  part of the request is taken out of the window first and only the rest is shared:
+  `text_tokens = (num_ctx − overhead_tokens) / (text_copies + answer_factor)`. With corrections
+  only, step ① is the only request, so its own limit is the one that counts and a text goes out
+  in fewer pieces. The one-request baseline's own figure
+  (`one_request/correction.py:NativeOllamaCorrector.max_text_chars`, `answer_factor=7.0`) is what
+  the evaluation gate measures against; the app no longer uses it.
 - **Content review** answers short and of a known length, so it passes
   `answer_tokens=EVALUATION_ANSWER_TOKENS` (1536, an estimate, measured not yet). That removes
   the artificial half — a review can use about (8192 − 1536) × 3 ≈ 19 900 characters minus its
@@ -2615,7 +2654,7 @@ window that changes between files makes Ollama reload the model for every file.
   file. That is an accepted cost (decided 2026-11-12), the same one `ollama_utils.py` already
   names for a small card: nothing slows down or fails, the models only swap.
 
-The resolved window is passed down (`CorrectionSettings.num_ctx`, `StageBuilder.resolved_windows()`)
+The resolved window is passed down (`OllamaPort(num_ctx=…)`, `StageBuilder.resolved_windows()`)
 and used by `proofreading_options()`, `ContextBudget`, the chunk budget below, the correction
 cache fingerprint and the memory rating and run-start warning (`memory_at_context_gb`, per
 model via `stage_builder.window_of_model()`). It is not a module constant any more. The
@@ -2635,12 +2674,12 @@ window probes in a background task and shows the queue again.
 
 #### Long texts are proofread in pieces
 
-`ChunkingCorrector` (`infrastructure/correction.py`) decorates the native Ollama corrector in
-`stage_builder.py`; LangChain providers (online, large windows) are not wrapped. On **every call**
-it asks its inner corrector for `max_text_chars(language, text_format=…)` — computed from that
-corrector's own system prompt and the fixed part of the human message, so the figure cannot drift
-from what is really sent, and per call because the Markdown notation hint makes the system prompt
-longer — and:
+`ChunkingCorrector` (`infrastructure/proofreading/chunking.py`) decorates the exchange corrector
+in `stage_builder.py`; an online provider's port has no window, so `_chunked` leaves it unwrapped. On
+**every call** it asks its inner corrector for `max_text_chars(language, text_format=…)` —
+computed from the exchange's own prompts and the fixed part of the request, so the figure cannot
+drift from what is really sent, and per call because the Markdown notation hint makes the system
+prompt longer — and:
 
 - a text within that budget goes to the inner corrector unchanged, one request, as before;
 - a longer text is split by `domain/text_chunks.py` and each piece corrected on its own. The

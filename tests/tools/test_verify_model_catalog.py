@@ -17,7 +17,7 @@ import re
 
 import pytest
 
-from teachers_teammate.domain.answer_format import ANSWER_FORMAT_VERSION
+from tools.model_eval.one_request.answer_format import ANSWER_FORMAT_VERSION
 from teachers_teammate.domain.context_budget import BASE_NUM_CTX
 from teachers_teammate.exceptions import OCRError
 from teachers_teammate.infrastructure.ollama_utils import ChatStats

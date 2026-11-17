@@ -256,8 +256,9 @@ _RESTRICTED = {
     "compare_writing_models": "no module of model_eval imports a command line",
     "proofreading_store": "no module of model_eval imports a command line",
 }
-_ALLOWED = {"measure": {"runner", "gate_one", "model_fit"}}
-"""The exceptions: the runner, gate 1 and the size measurement talk to a server."""
+_ALLOWED = {"measure": {"runner", "gate_one", "model_fit"}, "runner": {"protocol"}}
+"""The exceptions: the runner, gate 1 and the size measurement talk to a server, and the protocol
+hashes the repair message the runner sends."""
 
 
 def _module_names() -> list[str]:

@@ -12,7 +12,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from teachers_teammate.domain.answer_format import ANSWER_FORMAT_VERSION
+from tools.model_eval.one_request.answer_format import ANSWER_FORMAT_VERSION
 from teachers_teammate.domain.correction_review import (
     ChangeNote,
     CorrectionOutcome,

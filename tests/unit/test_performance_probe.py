@@ -8,6 +8,8 @@ from typing import cast
 import pytest
 
 from teachers_teammate.config import OcrConfig
+from teachers_teammate.domain.correction_prompts import correct_system
+from teachers_teammate.domain.model_catalog import request_profile
 from teachers_teammate.domain.performance_estimate import SpeedStep, StepOutcome
 from teachers_teammate.exceptions import (
     OCRDeadlineError,
@@ -314,11 +316,12 @@ def test_measuring_request_caps_the_answer_and_the_time() -> None:
     assert measuring["total_timeout"] == MEASURE_TIMEOUT_S
 
 
-def test_writing_request_sends_the_apps_own_options() -> None:
+def test_writing_request_sends_step_one_of_the_exchange() -> None:
     """
     Given  a request for a writing model at a window of 4096
     When   the probe runs
-    Then   the measuring request carries the model's temperature, the window and the schema
+    Then   the measuring request carries the model's temperature, the window and step ①'s
+           request: a plain rewrite of the paragraph, with no answer schema
     """
     client = _FakeClient()
 
@@ -327,8 +330,9 @@ def test_writing_request_sends_the_apps_own_options() -> None:
     measuring = client.calls[1]
     assert measuring["options"]["num_ctx"] == 4096
     assert 0.0 <= measuring["options"]["temperature"] <= 1.0
-    assert measuring["format"] is not None
-    assert measuring["system"]
+    assert measuring["format"] is None
+    assert measuring["system"] == correct_system(request_profile("gemma4:e4b").correct.prompt)
+    assert sample_paragraph("English") in measuring["prompt"]
 
 
 def test_reading_request_sends_the_page_image_and_the_ocr_prompt() -> None:

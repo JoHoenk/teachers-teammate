@@ -1,7 +1,8 @@
-"""Text correction implementations.
+"""The one-request correctors: the evaluation baseline of the proofreading stage.
 
 :class:`LangChainCorrector` — accepts any LangChain ``BaseChatModel``; provider-agnostic.
-:class:`NativeOllamaCorrector` — uses :class:`~.ollama_utils.OllamaClient` directly; no LangChain.
+:class:`NativeOllamaCorrector` — uses :class:`~teachers_teammate.infrastructure.ollama_utils.
+OllamaClient` directly; no LangChain.
 
 Both implement :class:`~teachers_teammate.interfaces.Corrector` and return a
 :class:`~teachers_teammate.domain.correction_review.CorrectionOutcome`, which carries the
@@ -12,10 +13,14 @@ structured answer of :mod:`.correction_schema`; ``text`` is the older behaviour 
 corrected text only.  When a review answer cannot be produced, the corrector falls back to
 ``text`` mode for that file and says so in the warning.
 
-The **instructions** (the *policy*, the presets below) say what to correct; the **answer
-format** (``domain/answer_format.py``) says how to fill in the reply.  Both can be edited by the
-teacher.  The message that carries the text names the text language and the explanation
-language, so neither instructions nor answer format contain a language placeholder.
+The **instructions** (the *policy*, the presets of :mod:`.presets`) say what to correct; the
+**answer format** (:mod:`.answer_format`) says how to fill in the reply.  The message that
+carries the text names the text language and the explanation language, so neither instructions
+nor answer format contain a language placeholder.
+
+The app no longer runs this path: it proofreads through the exchange
+(:class:`~teachers_teammate.infrastructure.proofreading.corrector.ExchangeCorrector`).  These
+correctors are what the evaluation tools measure, so a saved run stays comparable.
 """
 
 from __future__ import annotations
@@ -28,12 +33,36 @@ if TYPE_CHECKING:
 
     from langchain_core.language_models import BaseChatModel
 
-    from .ollama_utils import OllamaClient
+    from teachers_teammate.infrastructure.ollama_utils import OllamaClient
 
-from ..domain.answer_format import resolve_format
-from ..domain.context_budget import REVIEW_ANSWER_FACTOR, ContextBudget
-from ..domain.correction_policy import CUT_OFF_TRIES, normalize_output_mode
-from ..domain.correction_prompts import (  # noqa: F401  # re-exported for callers and tests
+from teachers_teammate.domain.context_budget import REVIEW_ANSWER_FACTOR, ContextBudget
+from teachers_teammate.domain.correction_policy import CUT_OFF_TRIES, normalize_output_mode
+from teachers_teammate.domain.correction_review import CorrectionOutcome, splice
+from teachers_teammate.domain.formatted_text import TextFormat
+from teachers_teammate.domain.model_catalog import DEFAULT_REQUEST_PROFILE, RequestProfile
+from teachers_teammate.domain.notation import with_notation_hint
+from teachers_teammate.infrastructure.ollama_utils import PROOFREADING_NUM_CTX
+from teachers_teammate.infrastructure.proofreading.port import (
+    REVIEW_TIMEOUT_CAP,  # noqa: F401  # re-exported for the tests that pin the timeout
+    LangChainPort,
+    ModelPort,
+    OllamaPort,
+    StepRequest,
+    _review_timeout,  # noqa: F401  # re-exported for the tests that pin the timeout
+)
+from teachers_teammate.infrastructure.proofreading.runner import StepRunner
+from teachers_teammate.interfaces import Corrector
+
+from .answer_format import resolve_format
+from .correction_schema import (
+    DEFAULT_LEVEL,
+    CorrectionAnswer,
+    clean_answer,
+    fill_placeholders,
+    to_review,
+    validate_answer,
+)
+from .presets import (  # noqa: F401  # re-exported for callers and tests
     DUTCH_PROMPT,
     ENGLISH_PROMPT,
     FRENCH_PROMPT,
@@ -46,38 +75,7 @@ from ..domain.correction_prompts import (  # noqa: F401  # re-exported for calle
     SPANISH_PROMPT,
     is_preset_prompt_text,
     migrate_saved_prompt,
-    normalize_prompt_text,
 )
-from ..domain.correction_review import (
-    CorrectionOutcome,
-    CorrectionReview,
-    SentenceNote,
-    UnclearNote,
-    splice,
-)
-from ..domain.formatted_text import TextFormat
-from ..domain.model_catalog import DEFAULT_REQUEST_PROFILE, RequestProfile
-from ..domain.notation import with_notation_hint
-from ..domain.text_chunks import Chunk, split_for_budget
-from ..interfaces import Corrector
-from .correction_schema import (
-    DEFAULT_LEVEL,
-    CorrectionAnswer,
-    clean_answer,
-    fill_placeholders,
-    to_review,
-    validate_answer,
-)
-from .ollama_utils import PROOFREADING_NUM_CTX
-from .proofreading.port import (
-    REVIEW_TIMEOUT_CAP,  # noqa: F401  # re-exported for the tests that pin the timeout
-    LangChainPort,
-    ModelPort,
-    OllamaPort,
-    StepRequest,
-    _review_timeout,  # noqa: F401  # re-exported for the tests that pin the timeout
-)
-from .proofreading.runner import StepRunner
 
 FALLBACK_WARNING = (
     "Explanations could not be produced for this file; only the corrections are shown."
@@ -139,7 +137,9 @@ def _tidy_answer(raw_text: str, text_format: TextFormat) -> Callable[[str], str]
     """Return the function that brings a proofreading answer into the notation of *raw_text*."""
 
     def tidy(answer: str) -> str:
-        from .ocr_formats import normalize_llm_answer  # noqa: PLC0415
+        from teachers_teammate.infrastructure.ocr_formats import (  # noqa: PLC0415
+            normalize_llm_answer,
+        )
 
         return normalize_llm_answer(answer, text_format, source=raw_text)
 
@@ -152,7 +152,7 @@ def _plain_answer(text: str) -> tuple[str, str]:
 
 
 # ── Policy presets ────────────────────────────────────────────────────────────
-# The preset texts live in ``domain/correction_prompts.py`` (imported above).
+# The preset texts live in ``presets.py`` (imported above).
 
 
 def _resolve_prompt(prompt: str, language: str = "") -> str:
@@ -506,145 +506,3 @@ class NativeOllamaCorrector(_ReviewCorrector):
         return ContextBudget(self._num_ctx).max_text_chars(
             overhead, answer_factor=REVIEW_ANSWER_FACTOR
         )
-
-
-# ── Chunked proofreading ──────────────────────────────────────────────────────
-
-CHUNK_FAILURE = "Proofreading part of the text failed; keeping the original text."
-"""Warning of a chunked file whose one piece failed: no half-corrected text is ever stored."""
-
-MISSING_REVIEW_WARNING = "Explanations are missing for part of the text."
-"""Warning when only some pieces of a long text got a review answer (the rest fell back)."""
-
-
-class ChunkingCorrector(Corrector):
-    """Proofreads a text that is too long for one request in several pieces.
-
-    Wraps a corrector whose provider can only carry a limited amount of text per request.  The
-    wrapped corrector says how much that is (:meth:`Corrector.max_text_chars`), asked for each
-    call because the budget depends on the notation: Markdown adds a notation hint to the
-    system prompt.  A text that fits — and every text when the budget is not positive — goes to
-    the wrapped corrector unchanged, so the common case behaves exactly as before.  A longer
-    text is split by :func:`~teachers_teammate.domain.text_chunks.split_for_budget` at
-    paragraph, then sentence boundaries; each piece is corrected on its own and the answers are
-    merged back into one text, with the original whitespace between the pieces.
-
-    Splitting costs the context across a boundary: a change that depends on a sentence before
-    the cut cannot be made.  Cutting at paragraph and sentence ends keeps that rare.
-
-    Failure is all-or-nothing: one failed piece fails the file and keeps the original text,
-    because a half-corrected text must never be stored.  The pieces after a failed one are not
-    sent: their answers would be thrown away, and with an unreachable server each would wait
-    out the timeout.  A piece that fell back to text mode only costs the explanations of that
-    piece; the file is not failed and says so in the warning.
-    """
-
-    def __init__(self, inner: Corrector) -> None:
-        self._inner = inner
-
-    @property
-    def inner(self) -> Corrector:
-        """Return the corrector that handles one piece."""
-        return self._inner
-
-    def split(
-        self, raw_text: str, language: str, *, text_format: TextFormat = "plain"
-    ) -> tuple[Chunk, ...] | None:
-        """Return the pieces *raw_text* is proofread in, or ``None`` when it goes out whole.
-
-        A text goes out whole when the wrapped corrector has no budget, or the text fits it.
-        The one place that decides, so :meth:`correct` and a tool that counts the requests of a
-        text cannot disagree.
-        """
-        max_chars = self._inner.max_text_chars(language, text_format=text_format)
-        if max_chars is None or max_chars <= 0 or len(raw_text) <= max_chars:
-            return None
-        return tuple(split_for_budget(raw_text, max_chars, text_format))
-
-    def correct(
-        self, raw_text: str, language: str, *, text_format: TextFormat = "plain"
-    ) -> CorrectionOutcome:
-        """Return the proofread text, merging the reviews of all the pieces."""
-        chunks = self.split(raw_text, language, text_format=text_format)
-        if chunks is None:
-            return self._inner.correct(raw_text, language, text_format=text_format)
-        outcomes: list[CorrectionOutcome] = []
-        for chunk in chunks:
-            if not chunk.text.strip():
-                # Whitespace-only pieces carry nothing to proofread; a request would be wasted.
-                outcomes.append(CorrectionOutcome(text=chunk.text))
-                continue
-            outcome = self._inner.correct(chunk.text, language, text_format=text_format)
-            if outcome.failed:
-                return CorrectionOutcome(
-                    text=raw_text,
-                    review=None,
-                    warning=outcome.warning or CHUNK_FAILURE,
-                    failed=True,
-                )
-            outcomes.append(outcome)
-        answerable = [
-            outcome for outcome, chunk in zip(outcomes, chunks, strict=True) if chunk.text.strip()
-        ]
-        reviews = [outcome.review for outcome in answerable if outcome.review is not None]
-        incomplete = bool(reviews) and len(reviews) < len(answerable)
-        warning = _join_warnings(
-            *(outcome.warning for outcome in outcomes),
-            MISSING_REVIEW_WARNING if incomplete else None,
-        )
-        return CorrectionOutcome(
-            text=_join_text(outcomes, chunks),
-            review=_merged_review(reviews) if reviews else None,
-            warning=warning,
-            fell_back=any(outcome.fell_back for outcome in outcomes),
-        )
-
-
-def proofreading_pieces(
-    corrector: Corrector, text: str, language: str, *, text_format: TextFormat = "plain"
-) -> tuple[int | None, int | None]:
-    """Return how many requests proofreading *text* takes, and the characters one carries.
-
-    ``(None, None)`` for a corrector that sends any length in one request (an online
-    provider).  The count is the number of non-blank pieces, because
-    :meth:`ChunkingCorrector.correct` sends no request for a whitespace-only piece, and 1 when
-    the text goes out whole.  The one place that counts, so the GUI counter, the console line
-    and the run cannot disagree.
-    """
-    if not isinstance(corrector, ChunkingCorrector):
-        return None, None
-    max_chars = corrector.inner.max_text_chars(language, text_format=text_format)
-    if max_chars is None:
-        return None, None
-    chunks = corrector.split(text, language, text_format=text_format)
-    if chunks is None:
-        return 1, max_chars
-    return max(1, sum(1 for chunk in chunks if chunk.text.strip())), max_chars
-
-
-def _join_warnings(*warnings: str | None) -> str | None:
-    """Return the distinct warnings joined by a space, or ``None`` when there is none."""
-    seen = tuple(dict.fromkeys(warning for warning in warnings if warning))
-    return " ".join(seen) or None
-
-
-def _join_text(outcomes: list[CorrectionOutcome], chunks: tuple[Chunk, ...]) -> str:
-    """Return the corrected pieces joined with the separators of the source text."""
-    return "".join(
-        outcome.text + chunk.separator for outcome, chunk in zip(outcomes, chunks, strict=True)
-    )
-
-
-def _merged_review(reviews: list[CorrectionReview]) -> CorrectionReview:
-    """Return one review over the whole text from the reviews of its pieces."""
-    sentences: list[SentenceNote] = []
-    unclear: list[UnclearNote] = []
-    unplaced: list[int] = []
-    for review in reviews:
-        offset = len(sentences)
-        sentences.extend(review.sentences)
-        unclear.extend(review.unclear)
-        unplaced.extend(index + offset for index in review.unplaced)
-    return CorrectionReview(
-        sentences=tuple(sentences), unclear=tuple(unclear), unplaced=tuple(unplaced)
-    )

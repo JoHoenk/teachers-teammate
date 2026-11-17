@@ -6,9 +6,10 @@ import json
 
 import pytest
 
-from teachers_teammate.domain.answer_format import ANSWER_FORMAT_VERSION
+from tools.model_eval.one_request.answer_format import ANSWER_FORMAT_VERSION
 from teachers_teammate.domain.correction_review import ChangeNote
-from teachers_teammate.infrastructure import correction
+from teachers_teammate.infrastructure.proofreading import chunking
+from tools.model_eval.one_request import correction
 from tests.tools import invented_corpus
 from tests.tools.store_workspace import (
     DIGEST,
@@ -508,7 +509,7 @@ def test_a_text_whose_first_piece_fell_back_exports_as_a_partial_review(tmp_path
         workspace(tmp_path),
         fallback=True,
         has_review=True,
-        warning=f"{correction.FALLBACK_WARNING} {correction.MISSING_REVIEW_WARNING}",
+        warning=f"{correction.FALLBACK_WARNING} {chunking.MISSING_REVIEW_WARNING}",
         pieces=3,
     )
 

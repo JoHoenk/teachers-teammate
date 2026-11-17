@@ -239,7 +239,9 @@ def test_the_repair_check_measures_the_error_that_is_really_sent() -> None:
     When   the runner decides whether the repair fits
     Then   the error counts, so the repair is skipped before the server refuses it
     """
-    from teachers_teammate.infrastructure.correction_schema import repair_message  # noqa: PLC0415
+    from teachers_teammate.infrastructure.proofreading.runner import (  # noqa: PLC0415
+        repair_message,
+    )
 
     request = _request()
     raw = "not JSON at all"

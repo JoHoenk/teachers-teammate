@@ -22,7 +22,7 @@ from teachers_teammate.exceptions import (
     OCRTimeoutError,
     OllamaUnreachableError,
 )
-from teachers_teammate.infrastructure.correction import COMPACT_ANSWER_RULE
+from tools.model_eval.one_request.correction import COMPACT_ANSWER_RULE
 from teachers_teammate.infrastructure.ollama_utils import ChatStats
 from tools import verify_model_catalog
 from tools.model_eval import gate1_answers, gate_one, protocol, structured_check

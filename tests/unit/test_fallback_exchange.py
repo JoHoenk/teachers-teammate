@@ -3,7 +3,12 @@
 from __future__ import annotations
 
 from teachers_teammate.domain.model_catalog import RequestProfile
-from teachers_teammate.domain.proofreading.result import ExchangeKind, FailureKind, StepReport
+from teachers_teammate.domain.proofreading.result import (
+    ExchangeKind,
+    FailureKind,
+    StepName,
+    StepReport,
+)
 from teachers_teammate.infrastructure.proofreading.exchanges.base import (
     ExchangeCost,
     ExchangeResult,
@@ -33,6 +38,12 @@ class _Stub:
     def cost_model(self) -> ExchangeCost:
         """Return an empty cost."""
         return ExchangeCost(requests_per_page={}, answer_tokens_per_100_words={})
+
+    def prompts(
+        self, profile: RequestProfile, *, corrections_only: bool = False
+    ) -> tuple[tuple[StepName, str], ...]:
+        """Return one prompt, as an exchange that sends one request would."""
+        return (("correct", "Correct the text."),)
 
 
 def _ctx() -> ProofreadContext:

@@ -6,7 +6,7 @@ from __future__ import annotations
 import os
 from typing import Any
 
-from PySide6.QtWidgets import QDialog, QMessageBox, QWizard
+from PySide6.QtWidgets import QDialog, QWizard
 import pytest
 
 from teachers_teammate.application.setup_plan import (
@@ -17,9 +17,12 @@ from teachers_teammate.application.setup_plan import (
     SetupPlan,
 )
 from teachers_teammate.config import DEFAULTS
+from teachers_teammate.gui import _dialogs
 from teachers_teammate.gui.setup import SetupAssistant, SetupContext, SetupResult
-from teachers_teammate.gui.setup._assistant import CLOSE_BLOCKED, SET_UP
+from teachers_teammate.gui.setup._assistant import SET_UP
 from teachers_teammate.gui.setup._flow import ORDER, SetupPageId
+from teachers_teammate.texts import dialogs as dlg
+from teachers_teammate.texts._types import Notice
 
 from ._settings_stubs import FakeKeyring, SetupAppService
 
@@ -341,15 +344,13 @@ def test_closing_waits_while_a_package_installs(qtbot, keyring, no_keys, monkeyp
     """
     assistant = _assistant(qtbot, _context(SetupAppService()))
     monkeypatch.setattr(assistant.install_round(), "busy", lambda: True)
-    told: list[str] = []
-    monkeypatch.setattr(
-        QMessageBox, "information", staticmethod(lambda _p, _t, text: told.append(text))
-    )
+    told: list[Notice] = []
+    monkeypatch.setattr(_dialogs, "notify", lambda _parent, notice: told.append(notice))
     assistant.show()
 
     assistant.done(QDialog.DialogCode.Rejected)
 
-    assert told == [CLOSE_BLOCKED]
+    assert told == [dlg.installation_running()]
     assert assistant.isVisible()
 
 

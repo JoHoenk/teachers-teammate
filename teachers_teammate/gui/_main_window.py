@@ -24,15 +24,12 @@ from PySide6.QtGui import (
 )
 from PySide6.QtWidgets import (
     QApplication,
-    QCheckBox,
     QDialog,
     QDialogButtonBox,
-    QFileDialog,
     QFrame,
     QHBoxLayout,
     QLabel,
     QMainWindow,
-    QMessageBox,
     QProgressBar,
     QPushButton,
     QSizePolicy,
@@ -68,7 +65,7 @@ from ..config import (
     unavailable_ocr_engine,
 )
 from ..domain.data_location import OCR_ENGINE_NAMES, DataFlow, SentStatus
-from ..domain.local_models import PAGE_MODELS_ADDON_ID, READER_ADDON_ID, READER_SIZE_LABEL
+from ..domain.local_models import PAGE_MODELS_ADDON_ID, READER_ADDON_ID
 from ..domain.model_catalog import HardwareDetection
 from ..domain.ollama_discovery import DiscoveredServer, DiscoveryScope, ServerKind
 from ..domain.performance_estimate import TimeRange
@@ -79,6 +76,10 @@ from ..infrastructure.diagnostics import start_if_requested as start_diagnostics
 from ..infrastructure.ollama_install import OLLAMA_DOWNLOAD_URL
 from ..infrastructure.reporting import BATTERY_WARNING, KeepAwakeState
 from ..infrastructure.system_locale import system_language
+from ..texts import dialogs as dlg
+from ..texts import privacy
+from ..texts.settings import WHERE_ADDONS, WHERE_GENERAL
+from . import _dialogs
 from . import _user_text as txt
 from ._app_bootstrap import create_app, finish_process
 from ._background import LatestTask, run_in_background, wait_for_background_tasks
@@ -159,13 +160,9 @@ def _debounce_timer(parent: QWidget, interval_ms: int, slot: Callable[[], None])
 def _spacy_problem(exc: BaseException) -> str | None:
     """Explain a missing spaCy install / model (``None`` for any other error)."""
     if isinstance(exc, ImportError):
-        if getattr(sys, "frozen", False):
-            return (
-                f"spaCy is not installed.\n\nInstall it under {txt.WHERE_ADDONS} (Name detection)."
-            )
-        return f'spaCy not installed: {exc}\n\nInstall: pip install "teachers-teammate[privacy]"'
+        return privacy.spacy_missing(str(exc), installed_app=bool(getattr(sys, "frozen", False)))
     if isinstance(exc, OSError):
-        return f"spaCy model missing: {exc}\n\nRun: python -m spacy download <model>"
+        return privacy.spacy_model_missing(str(exc))
     return None
 
 
@@ -223,14 +220,6 @@ STOPPING_NOW_TEXT = "Stopping…"
 #: How long closing the window waits for a stopping run (milliseconds): enough for a cancelled
 #: Ollama request and a state write, never for the run itself.
 CLOSE_GRACE_MS = 3000
-CLOSE_RUN_TITLE = "Documents are still being processed"
-CLOSE_RUN_TEXT = (
-    "Stop now and close Teacher's Teammate?\n\n"
-    "Finished documents are kept. The document being processed is left unfinished; what is "
-    "already done is reused next time."
-)
-CLOSE_RUN_STOP = "Stop and close"
-CLOSE_RUN_KEEP = "Keep running"
 AWAKE_HELD_TEXT = (
     "Keeping the computer awake while documents are processed. The screen may turn off."
 )
@@ -1014,24 +1003,14 @@ class MainWindow(QMainWindow):
     def _show_engine_replaced(self, replaced: ReplacedEngine) -> None:
         """Tell the teacher which text-recognition engine was replaced, and by what."""
         if replaced.online:
-            message = (
-                f"Your saved settings used “{replaced.old}” for text recognition. Reading pages "
-                "online is no longer offered, because a page cannot be anonymised before it "
-                "is read, so the app now uses "
-                f"{DEFAULTS['ocr_engine']} on your computer instead "
-                f"({' and '.join(OCR_ENGINE_NAMES.values())} are available).\n\n"
-                "Proofreading and content review are not affected."
+            notice = dlg.text_recognition_changed_online(
+                replaced.old, DEFAULTS["ocr_engine"], list(OCR_ENGINE_NAMES.values())
             )
         else:
             name = RETIRED_ENGINE_NAMES.get(replaced.old.strip().lower(), replaced.old)
-            message = (
-                f"Your saved settings used {name} for text recognition. It was replaced by "
-                "the built-in reader, which also reads pages on this computer without a "
-                f"server. Download it once under {txt.WHERE_READING_MODELS} "
-                f"({READER_SIZE_LABEL})."
-            )
-        self._log.append_text(f"NOTICE: {message}\n")
-        QMessageBox.information(self, "Text recognition changed", message)
+            notice = dlg.text_recognition_changed_retired(name)
+        self._log.append_text(f"NOTICE: {notice.body}\n")
+        _dialogs.notify(self, notice)
 
     def _open_setup_assistant_first_start(self) -> None:
         """Open the assistant on a first start, on top of the window that just appeared."""
@@ -1146,7 +1125,7 @@ class MainWindow(QMainWindow):
         self._log.append_text(
             f"First start: chose reading model {ocr_model} and writing model "
             f"{general_model} for your computer ({profile_text(detection.profile)}). "
-            f"You can download them under {txt.WHERE_ADDONS}.\n"
+            f"You can download them under {WHERE_ADDONS}.\n"
         )
         self._save_settings(notify=False)
         self._start_readiness_check()
@@ -1169,7 +1148,7 @@ class MainWindow(QMainWindow):
                 self._log.append_text(f"Settings saved to {out.resolve()}\n")
         except OSError as exc:
             if not silent_on_error:
-                QMessageBox.warning(self, "Save failed", str(exc))
+                _dialogs.notify(self, dlg.save_failed(str(exc)))
 
     def _run_active(self) -> bool:
         """Return whether an OCR worker is running right now."""
@@ -1177,15 +1156,7 @@ class MainWindow(QMainWindow):
 
     def _confirm_close_during_run(self) -> bool:
         """Ask whether to stop the run and close; the default answer keeps the run going."""
-        box = QMessageBox(self)
-        box.setIcon(QMessageBox.Icon.Question)
-        box.setWindowTitle(CLOSE_RUN_TITLE)
-        box.setText(CLOSE_RUN_TEXT)
-        stop_btn = box.addButton(CLOSE_RUN_STOP, QMessageBox.ButtonRole.DestructiveRole)
-        keep_btn = box.addButton(CLOSE_RUN_KEEP, QMessageBox.ButtonRole.RejectRole)
-        box.setDefaultButton(keep_btn)
-        box.exec()
-        return box.clickedButton() is stop_btn
+        return _dialogs.ask(self, dlg.close_during_run())
 
     def _on_quit_requested(self) -> None:
         """File → Quit: ask first when a run is going, then close like the window's X."""
@@ -1362,11 +1333,7 @@ class MainWindow(QMainWindow):
         return self._preflight_running or self._run_active()
 
     def _warn_busy(self) -> None:
-        QMessageBox.information(
-            self,
-            "Please wait",
-            "A run or requirement check is still in progress. Try again when it has finished.",
-        )
+        _dialogs.notify(self, dlg.busy_with_run())
 
     def _on_run(self) -> None:
         if self._run_in_progress():
@@ -1374,7 +1341,7 @@ class MainWindow(QMainWindow):
         try:
             config = self._config_panel.to_config()
         except ValueError as exc:
-            QMessageBox.warning(self, "Configuration error", str(exc))
+            _dialogs.notify(self, dlg.configuration_error(str(exc)))
             return
         selected = self._results_table.selected_source_ids()
         self._check_requirements_then(
@@ -1404,11 +1371,7 @@ class MainWindow(QMainWindow):
         """
         refusal = self._app_service.output_refusal_for_run(config)
         if refusal:
-            QMessageBox.warning(
-                self,
-                "Choose another output folder",
-                f"{refusal}\n\nChange it under {txt.WHERE_RESULTS}.",
-            )
+            _dialogs.notify(self, dlg.output_folder_refused(refusal))
             return
         self._preflight_running = True
         self._run_btn.setEnabled(False)
@@ -1453,15 +1416,7 @@ class MainWindow(QMainWindow):
         there is no "don't ask again" here, and Cancel is the default button: Enter must not
         start a run that could make the computer swap.
         """
-        box = QMessageBox(self)
-        box.setIcon(QMessageBox.Icon.Warning)
-        box.setWindowTitle("Not enough free memory")
-        box.setText(warning)
-        run_anyway = box.addButton("Run anyway", QMessageBox.ButtonRole.AcceptRole)
-        cancel = box.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
-        box.setDefaultButton(cancel)
-        box.exec()
-        if box.clickedButton() is run_anyway:
+        if _dialogs.ask(self, dlg.not_enough_memory(warning)):
             on_ready()
 
     def _show_blocking_preflight(self, result: RunPreflight) -> None:
@@ -1477,9 +1432,9 @@ class MainWindow(QMainWindow):
         fix = fix_for(
             stage, issue, self._provider_display_name, language=self._config_panel.lookup_language()
         )
-        dlg = DependencyGuardDialog(txt.RUN_BLOCKED_TITLE, issues, fix.actions, self)
-        dlg.action_chosen.connect(self._run_fix)
-        dlg.exec()
+        guard = DependencyGuardDialog(txt.RUN_BLOCKED_TITLE, issues, fix.actions, self)
+        guard.action_chosen.connect(self._run_fix)
+        guard.exec()
         # The server may have been started while the dialog was open: look again.
         self._blocker = blocker
         self._update_readiness()
@@ -1499,27 +1454,15 @@ class MainWindow(QMainWindow):
         if not flow.leaves_computer or flow.fingerprint in self._acknowledgements().fingerprints():
             on_ready()
             return
-        lines = "\n".join(f"  • {stage.title} — {stage.badge}" for stage in flow.outbound)
-        advice = "".join(f"\n\n{advice_text(tip)}" for tip in flow.advice)
-        box = QMessageBox(self)
-        box.setIcon(QMessageBox.Icon.Warning)
-        box.setWindowTitle("Your documents will leave this computer")
-        box.setText(
-            f"{level_text(flow.level)}\n\nThese steps send content away from this "
-            f"computer:\n\n{lines}{advice}\n\n"
-            "Make sure your school's data protection rules allow this."
+        question = dlg.documents_leave_computer(
+            level_text(flow.level),
+            [(stage.title, stage.badge) for stage in flow.outbound],
+            [advice_text(tip) for tip in flow.advice],
         )
-        remember = QCheckBox(
-            f"Don't ask again for these settings (change under {txt.WHERE_PRIVACY})"
-        )
-        box.setCheckBox(remember)
-        go = box.addButton("Continue", QMessageBox.ButtonRole.AcceptRole)
-        cancel = box.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
-        box.setDefaultButton(cancel)
-        box.exec()
-        if box.clickedButton() is not go:
+        answer = _dialogs.choose(self, question)
+        if not answer.accepted:
             return
-        if remember.isChecked():
+        if answer.checked:
             self._acknowledgements().remember(flow)
         on_ready()
 
@@ -1537,26 +1480,14 @@ class MainWindow(QMainWindow):
             )
 
         if not queued_source_ids:
-            QMessageBox.information(
-                self,
-                "No files found",
-                (
-                    "No supported files found (PDF, images, or text files) in:\n"
-                    f"{config.input_dir}\n\n"
-                    "TIP: Plain text files (.txt) are read directly — no text extraction needed."
-                ),
-            )
+            _dialogs.notify(self, dlg.no_files_found(str(config.input_dir)))
             return
 
         selected_source_ids = self._results_table.selected_source_ids()
         if not selected_source_ids and queue_was_empty:
             selected_source_ids = queued_source_ids
         if not selected_source_ids:
-            QMessageBox.information(
-                self,
-                "No files selected",
-                "Select one or more rows in the queue, then press Run.",
-            )
+            _dialogs.notify(self, dlg.no_files_selected())
             return
 
         self._steps_per_file = 1 if not config.correction_enabled else 2
@@ -1653,7 +1584,7 @@ class MainWindow(QMainWindow):
         try:
             config = self._config_panel.to_config()
         except ValueError as exc:
-            QMessageBox.warning(self, "Configuration error", str(exc))
+            _dialogs.notify(self, dlg.configuration_error(str(exc)))
             return
 
         # Running a stage from the right-click menu is an explicit, per-entry action:
@@ -1693,23 +1624,15 @@ class MainWindow(QMainWindow):
             stage=stage,
         )
         if no_files:
-            QMessageBox.information(self, "No files found", "No files are available to re-run.")
+            _dialogs.notify(self, dlg.nothing_to_rerun())
             return
 
         if not run_source_ids:
-            QMessageBox.information(
-                self,
-                "Selection mismatch",
-                "Could not map selected queue rows to current input files.",
-            )
+            _dialogs.notify(self, dlg.selection_mismatch())
             return
 
         if failures:
-            QMessageBox.warning(
-                self,
-                "Cache invalidation failed",
-                "Could not reset cache for one or more files:\n\n" + "\n".join(failures),
-            )
+            _dialogs.notify(self, dlg.cache_invalidation_failed(failures))
             return
 
         self._steps_per_file = 1 if not config.correction_enabled else 2
@@ -1724,7 +1647,7 @@ class MainWindow(QMainWindow):
 
     def _on_export_requested(self, source_ids: list[str], kind: ExportKind) -> None:
         if kind.is_text and self._text_export_running:
-            QMessageBox.information(self, "Please wait", "A text export is still running.")
+            _dialogs.notify(self, dlg.busy_with_text_export())
             return
         targets = self._pick_export_targets(source_ids, kind)
         if not targets:
@@ -1753,14 +1676,12 @@ class MainWindow(QMainWindow):
         # For a single file show Save As; for multiple files show a folder picker.
         if len(source_ids) == 1:
             suggested = str(start_dir / (Path(source_ids[0]).stem + kind.file_suffix))
-            dest, _ = QFileDialog.getSaveFileName(
-                self, f"Save {kind.label.rstrip('…')}", suggested, kind.file_filter
+            dest = _dialogs.save_file(
+                self, dlg.save_export(kind.label, kind.file_filter, suggested)
             )
-            return [(source_ids[0], Path(dest))] if dest else []
-        folder = QFileDialog.getExistingDirectory(
-            self, f"Save {kind.label.rstrip('…')}s to folder", str(start_dir)
-        )
-        if not folder:
+            return [(source_ids[0], dest)] if dest else []
+        folder = _dialogs.pick_folder(self, dlg.save_export_to_folder(kind.label, str(start_dir)))
+        if folder is None:
             return []
         # Same-named documents from different subfolders keep their subfolders.
         input_dir = self._config_panel.get_input_dir()
@@ -1805,14 +1726,7 @@ class MainWindow(QMainWindow):
         root = Path(os.path.commonpath([out.parent for out in existing_paths]))
         existing = [out.relative_to(root).as_posix() for out in existing_paths]
         shown = "\n".join(existing[:10]) + ("\n…" if len(existing) > 10 else "")
-        answer = QMessageBox.question(
-            self,
-            "Replace existing files?",
-            f"{len(existing)} file(s) already exist and will be replaced:\n\n{shown}",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
-        )
-        return answer == QMessageBox.StandardButton.Yes
+        return _dialogs.ask(self, dlg.replace_existing_files(len(existing), shown))
 
     def _confirm_text_export_folder(self, targets: list[tuple[str, Path]]) -> bool:
         """Warn when text files would land in the input folder, where the next run reads them.
@@ -1830,15 +1744,7 @@ class MainWindow(QMainWindow):
             for _sid, out in targets
         ):
             return True
-        answer = QMessageBox.question(
-            self,
-            "Save into the input folder?",
-            "Text files in the input folder are read as new documents the next time you run.\n\n"
-            "Save here anyway?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
-        )
-        return answer == QMessageBox.StandardButton.Yes
+        return _dialogs.ask(self, dlg.save_into_input_folder())
 
     def _export_docx(self, targets: list[tuple[str, Path]], errors: list[str]) -> None:
         settings = self._config_panel.get_settings_dict()
@@ -1873,11 +1779,7 @@ class MainWindow(QMainWindow):
                 errors.append(f"{Path(source_id).name}: {exc}")
 
         if errors:
-            QMessageBox.warning(
-                self,
-                "Export Word Document",
-                "Could not export the following file(s):\n\n" + "\n".join(errors),
-            )
+            _dialogs.notify(self, dlg.word_export_failed(errors))
 
     def _export_text(
         self, targets: list[tuple[str, Path]], errors: list[str], *, anonymize: bool
@@ -1929,9 +1831,7 @@ class MainWindow(QMainWindow):
             self._text_export_running = False
             if error is not None:
                 message = (_spacy_problem(error) if anonymize else None) or str(error)
-                if preflight_errors:
-                    message += "\n\nAlso skipped:\n" + "\n".join(preflight_errors)
-                QMessageBox.warning(self, "Export Text", message)
+                _dialogs.notify(self, dlg.text_export_error(message, preflight_errors))
                 return
             if not isinstance(result, _TextExportOutcome):
                 return
@@ -1944,11 +1844,7 @@ class MainWindow(QMainWindow):
 
     def _show_text_export_errors(self, errors: list[str]) -> None:
         if errors:
-            QMessageBox.warning(
-                self,
-                "Export Text",
-                "Could not export the following file(s):\n\n" + "\n".join(errors),
-            )
+            _dialogs.notify(self, dlg.text_export_failed(errors))
 
     def _set_export_enabled(self, enabled: bool) -> None:
         """Enable the Export button and the File → Export entries together."""
@@ -2077,7 +1973,7 @@ class MainWindow(QMainWindow):
         self._set_export_enabled(True)
         # A skipped or stopped file is not an error: its row says why, the final line counts it.
         if not (event.skipped or event.stopped) and not ok and message:
-            QMessageBox.warning(self, "Processing error", f"{name}:\n\n{message}")
+            _dialogs.notify(self, dlg.processing_error(name, message))
         self._result_names.append(name)
         self._result_ocr_times.append(ocr_s)
         self._result_correction_times.append(correction_s)
@@ -2360,7 +2256,7 @@ class MainWindow(QMainWindow):
 
     def _on_pull_error(self, msg: str) -> None:
         self._end_download()
-        QMessageBox.warning(self, "Model download failed", msg)
+        _dialogs.notify(self, dlg.model_download_failed(msg))
 
     def _end_download(self) -> None:
         """Hand the line back and look again: the model that was missing may be there now."""
@@ -2469,7 +2365,7 @@ class MainWindow(QMainWindow):
                 correction_warning=self._results_table.correction_warning_for_source(source_id),
             )
         except Exception as exc:  # noqa: BLE001  # preview load may raise on missing/corrupt files; warn instead of crashing
-            QMessageBox.warning(self, "Preview", f"Could not load preview content:\n{exc}")
+            _dialogs.notify(self, dlg.preview_failed(str(exc)))
             return
         self._current_preview_source_id = source_id
         self._open_document_awaits_result = False
@@ -2647,7 +2543,7 @@ class MainWindow(QMainWindow):
 
         def _on_done(result: object, error: BaseException | None) -> None:
             if error is not None:
-                QMessageBox.warning(self, "Copy", _spacy_problem(error) or str(error))
+                _dialogs.notify(self, dlg.copy_failed(_spacy_problem(error) or str(error)))
                 return
             QApplication.clipboard().setText(str(result))
             self._check.show_copied()
@@ -2923,16 +2819,16 @@ class MainWindow(QMainWindow):
         """Open "What is sent for this file…" for one row of the results table."""
         _sid, name, _img, raw_txt, corr_txt, _eval = self._results_table.entry_for_source(source_id)
         if not raw_txt.strip():
-            QMessageBox.information(self, txt.WHAT_IS_SENT_TITLE, txt.NO_TEXT_YET)
+            _dialogs.notify(self, privacy.what_is_sent_without_text())
             return
 
         config = self._config_panel.lookup_config()
         text_format = self._results_table.text_format_for_source(source_id) or "plain"
 
         busy = QDialog(self)
-        busy.setWindowTitle(f"{txt.WHAT_IS_SENT_TITLE} — {name}")
+        busy.setWindowTitle(privacy.what_is_sent_title(name))
         busy_vbox = QVBoxLayout(busy)
-        busy_vbox.addWidget(QLabel(txt.WHAT_IS_SENT_WORKING))
+        busy_vbox.addWidget(QLabel(privacy.WHAT_IS_SENT_WORKING))
         service = self._app_service
 
         def _describe() -> object:
@@ -2946,12 +2842,12 @@ class MainWindow(QMainWindow):
         def _on_done(result: object, error: BaseException | None) -> None:
             busy.accept()
             if error is not None:
-                QMessageBox.warning(
-                    self, txt.WHAT_IS_SENT_TITLE, _spacy_problem(error) or str(error)
+                _dialogs.notify(
+                    self, privacy.what_is_sent_failed(_spacy_problem(error) or str(error))
                 )
                 return
             if not isinstance(result, SentTexts):
-                QMessageBox.warning(self, txt.WHAT_IS_SENT_TITLE, txt.NO_TEXT_YET)
+                _dialogs.notify(self, privacy.what_is_sent_unreadable())
                 return
             self._show_what_is_sent(result, name)
 
@@ -3021,7 +2917,9 @@ class MainWindow(QMainWindow):
         self._anonymize_key = None
         self._anonymize_running = False
         if error is not None or not isinstance(payload, tuple) or len(payload) != 2:
-            reason = (_spacy_problem(error) or str(error)) if error is not None else "unknown error"
+            reason = (
+                (_spacy_problem(error) or str(error)) if error is not None else dlg.UNKNOWN_ERROR
+            )
             self._preview.set_anonymization("", {}, raw_text=raw_text, error=reason)
             return
         anonymized, raw_mapping = payload
@@ -3076,7 +2974,7 @@ class MainWindow(QMainWindow):
             lbl.setText(
                 f"Version <b>{version}</b> is available — "
                 f'<a href="{url}" style="color:#ffd966;">Download</a>'
-                f" · turn this check off under {txt.WHERE_GENERAL}"
+                f" · turn this check off under {WHERE_GENERAL}"
             )
         self._update_banner.show()
 
@@ -3185,13 +3083,7 @@ class MainWindow(QMainWindow):
             self._privacy_availability.clear()  # spaCy may be available now
             self._config_panel.refresh_data_flow()
             self._refresh_privacy_availability()
-            QMessageBox.information(
-                self._dialog_parent(),
-                "Privacy Addon Installed",
-                "The Privacy add-on has been installed.\n\n"
-                f"Download a name detection model under {txt.WHERE_ADDONS}\n"
-                "before using personal information removal.",
-            )
+            _dialogs.notify(self._dialog_parent(), dlg.privacy_addon_installed())
         elif addon == READER_ADDON_ID:
             # The built-in reader's models arrived: the readiness line turns green on the
             # check below; nothing else to tell.
@@ -3236,12 +3128,10 @@ class MainWindow(QMainWindow):
             supported_glob = " ".join(
                 f"*{s}" for s in sorted(self._app_service.list_supported_suffixes() - {".txt"})
             )
-            path, _ = QFileDialog.getOpenFileName(
-                owner, "Select image or PDF", "", f"Images & PDFs ({supported_glob})"
-            )
-            if not path:
+            chosen = _dialogs.pick_file(owner, dlg.select_image_or_pdf(supported_glob))
+            if chosen is None:
                 return
-            source_path = Path(path)
+            source_path = chosen
 
         tmp_dir = self._app_service.resolve_preview_tmp_dir()
 
@@ -3275,7 +3165,7 @@ class MainWindow(QMainWindow):
         owner = parent if parent is not None and _is_shown(parent) else self
         if error:
             shutil.rmtree(tmp_dir, ignore_errors=True)
-            QMessageBox.warning(owner, "Preview failed", error)
+            _dialogs.notify(owner, dlg.preprocessing_preview_failed(error))
             return
         assert orig_path is not None
         assert proc_path is not None
@@ -3284,11 +3174,11 @@ class MainWindow(QMainWindow):
         orig_pix = load_pixmap(orig_path)
         proc_pix = load_pixmap(proc_path)
 
-        dlg = QDialog(owner)
-        dlg.setWindowTitle(f"Preprocessing Preview — {ocr_config.preprocess_method}")
-        dlg.resize(1000, 620)
+        preview = QDialog(owner)
+        preview.setWindowTitle(f"Preprocessing Preview — {ocr_config.preprocess_method}")
+        preview.resize(1000, 620)
 
-        vbox = QVBoxLayout(dlg)
+        vbox = QVBoxLayout(preview)
         hint = QLabel("Ctrl + scroll wheel to zoom")
         hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
         hint.setStyleSheet("color: #888; font-size: 8pt;")
@@ -3308,10 +3198,10 @@ class MainWindow(QMainWindow):
         vbox.addLayout(img_row, stretch=1)
 
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
-        buttons.rejected.connect(dlg.reject)
+        buttons.rejected.connect(preview.reject)
         vbox.addWidget(buttons)
-        dlg.finished.connect(lambda _: shutil.rmtree(tmp_dir, ignore_errors=True))
-        dlg.exec()
+        preview.finished.connect(lambda _: shutil.rmtree(tmp_dir, ignore_errors=True))
+        preview.exec()
 
 
 # ── Entry point ────────────────────────────────────────────────────────────

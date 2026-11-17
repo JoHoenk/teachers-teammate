@@ -6,9 +6,11 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from teachers_teammate.gui._anonymizer_config_widget import AnonymizerConfigWidget
 from teachers_teammate.config import SECONDARY_MODEL_AUTO
+from teachers_teammate.gui import _dialogs
+from teachers_teammate.gui._anonymizer_config_widget import AnonymizerConfigWidget
 from teachers_teammate.infrastructure.anonymizer import AnonymizerConfig, DEFAULT_PATTERNS
+from teachers_teammate.texts._types import Notice
 
 
 def _make_dialog(qtbot, config=None, app_service=None, sample_text=""):
@@ -613,16 +615,17 @@ def test_dialog_on_download_model_warns_when_addon_missing(qtbot) -> None:
     """
     Given  the privacy addon is not installed
     When   _open_download_dialog is invoked
-    Then   an information message box is shown and no download dialog opens
+    Then   the notice that spaCy is missing is shown and no download dialog opens
     """
     svc = MagicMock()
     svc.is_addon_available.return_value = False
     dlg = _make_dialog(qtbot, app_service=svc)
+    shown: list[Notice] = []
 
-    with patch("PySide6.QtWidgets.QMessageBox.information") as info:
+    with patch.object(_dialogs, "notify", lambda _parent, notice: shown.append(notice)):
         dlg._open_download_dialog("xx_ent_wiki_sm")
 
-    info.assert_called_once()
+    assert [notice.title for notice in shown] == ["spaCy not installed"]
 
 
 @pytest.mark.gui

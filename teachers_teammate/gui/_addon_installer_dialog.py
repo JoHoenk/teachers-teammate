@@ -27,6 +27,7 @@ from ..application.service import (
 )
 from ..domain.local_models import HUGGING_FACE_HOST, PAGE_MODELS_SIZE_LABEL, READER_SIZE_LABEL
 from ..exceptions import ModelDownloadCancelledError
+from ..texts.settings import WHERE_ADDONS
 from . import _user_text as txt
 from ._constants import _SPACY_MODEL_CHOICES
 
@@ -43,7 +44,7 @@ _ADDON_META: dict[str, dict] = {
         "description": (
             "This installs <b>spaCy</b>, the NLP library used for PII anonymization.<br><br>"
             "After installation, download a name detection model for your language under "
-            f"<i>{txt.WHERE_ADDONS}</i> before using anonymization."
+            f"<i>{WHERE_ADDONS}</i> before using anonymization."
         ),
         "size_warning": "",
     },

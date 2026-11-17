@@ -29,6 +29,7 @@ from teachers_teammate.domain.model_catalog import (
 from teachers_teammate.domain.proofreading.edits import EditPart
 from teachers_teammate.domain.proofreading.legacy_review import sentence_review
 from teachers_teammate.domain.proofreading.review import CorrectionReview, EditNote
+from teachers_teammate.gui import _dialogs
 from teachers_teammate.gui import _main_window as main_window_module
 from teachers_teammate.gui._config_panel import ConfigPanel
 from teachers_teammate.gui._export_menu import ExportKind
@@ -48,6 +49,8 @@ from teachers_teammate.infrastructure.ocr_formats import plain_text_of
 from teachers_teammate.infrastructure.ollama_install import OLLAMA_DOWNLOAD_URL
 from teachers_teammate.infrastructure.reporting import KeepAwakeState
 from teachers_teammate.infrastructure.storage_root import resolve_artifact_dir
+from teachers_teammate.texts import dialogs as dlg
+from teachers_teammate.texts._types import Answer, Notice, Question, StandardButton
 from tests.conftest import make_config
 
 from ._gui_harness import install_scripted_settings_window
@@ -99,55 +102,23 @@ class _DummyWorker:
         return True
 
 
-class _RecordingMessageBox:
-    """Stand-in for ``QMessageBox`` that records the buttons and answers with one.
+def _record_notices(monkeypatch) -> list[Notice]:
+    """Record every notice the window shows; return the list it appends to."""
+    shown: list[Notice] = []
+    monkeypatch.setattr(_dialogs, "notify", lambda _parent, notice: shown.append(notice))
+    return shown
 
-    ``clickedButton()`` returns the very object ``addButton`` returned, because the window
-    compares the two by identity.
-    """
 
-    class Icon:
-        Warning = "warning"
-        Information = "information"
-        Question = "question"
+def _answer_questions(monkeypatch, *, yes: bool) -> list[Question]:
+    """Answer every question with *yes*; return the questions asked."""
+    asked: list[Question] = []
 
-    class ButtonRole:
-        AcceptRole = "accept"
-        RejectRole = "reject"
-        ActionRole = "action"
-        DestructiveRole = "destructive"
+    def ask(_parent: object, question: Question) -> bool:
+        asked.append(question)
+        return yes
 
-    last: ClassVar[_RecordingMessageBox | None] = None
-
-    def __init__(self, _parent=None) -> None:
-        self.buttons: list[str] = []
-        self.default: str | None = None
-        self.title = ""
-        self.text = ""
-        self.answer_index = 0
-        _RecordingMessageBox.last = self
-
-    def setIcon(self, _icon) -> None: ...
-    def setCheckBox(self, _box) -> None: ...
-
-    def setWindowTitle(self, title) -> None:
-        self.title = title
-
-    def setText(self, text) -> None:
-        self.text = text
-
-    def addButton(self, text, _role):
-        self.buttons.append(text)
-        return text
-
-    def setDefaultButton(self, button) -> None:
-        self.default = button
-
-    def exec(self) -> int:
-        return 0
-
-    def clickedButton(self):
-        return self.buttons[self.answer_index]
+    monkeypatch.setattr(_dialogs, "ask", ask)
+    return asked
 
 
 @pytest.fixture(autouse=True)
@@ -235,16 +206,11 @@ def test_main_window_run_shows_error_for_invalid_config(main_window, monkeypatch
         "to_config",
         lambda: (_ for _ in ()).throw(ValueError("bad config")),
     )
-    seen: list[str] = []
-    monkeypatch.setattr(
-        main_window_module.QMessageBox,
-        "warning",
-        lambda *_args: seen.append("warning"),
-    )
+    shown = _record_notices(monkeypatch)
 
     main_window._on_run()
 
-    assert seen == ["warning"]
+    assert [notice.title for notice in shown] == ["Configuration error"]
     assert main_window._worker is None
 
 
@@ -260,16 +226,12 @@ def test_main_window_run_shows_info_when_no_files(
     cfg = make_config(tmp_path)
     monkeypatch.setattr(main_window._config_panel, "to_config", lambda: cfg)
     monkeypatch.setattr(main_window, "_get_file_names", lambda _cfg: [])
-    seen: list[str] = []
-    monkeypatch.setattr(
-        main_window_module.QMessageBox,
-        "information",
-        lambda *_args: seen.append("info"),
-    )
+    shown = _record_notices(monkeypatch)
 
     main_window._on_run()
-    qtbot.waitUntil(lambda: seen == ["info"], timeout=3000)
+    qtbot.waitUntil(lambda: bool(shown), timeout=3000)
 
+    assert [notice.title for notice in shown] == ["No files found"]
     assert main_window._worker is None
 
 
@@ -334,17 +296,13 @@ def test_main_window_run_shows_info_when_no_selection(
     cfg = make_config(tmp_path)
     monkeypatch.setattr(main_window._config_panel, "to_config", lambda: cfg)
     monkeypatch.setattr(main_window, "_get_file_names", lambda _cfg: ["a.png", "b.txt"])
-    seen: list[str] = []
-    monkeypatch.setattr(
-        main_window_module.QMessageBox,
-        "information",
-        lambda *_args: seen.append("info"),
-    )
+    shown = _record_notices(monkeypatch)
     main_window._results_table.set_queue(["a.png", "b.txt"])
 
     main_window._on_run()
-    qtbot.waitUntil(lambda: seen == ["info"], timeout=3000)
+    qtbot.waitUntil(lambda: bool(shown), timeout=3000)
 
+    assert [notice.title for notice in shown] == ["No files selected"]
     assert main_window._worker is None
 
 
@@ -427,10 +385,7 @@ def test_a_stopped_file_opens_no_error_dialog_and_shows_where_it_stopped(
     Then   no "Processing error" dialog opens, the recognition cell says "stopped", and the
            row is neither green nor red
     """
-    warned: list[str] = []
-    monkeypatch.setattr(
-        main_window_module.QMessageBox, "warning", lambda *a, **k: warned.append(str(a))
-    )
+    shown = _record_notices(monkeypatch)
     monkeypatch.setattr(main_window._app_service, "load_view", lambda *_a, **_k: None)
     source = "/tmp/scan.png"
     main_window._results_table.set_queue(["scan.png"], source_ids=[source])
@@ -448,7 +403,7 @@ def test_a_stopped_file_opens_no_error_dialog_and_shows_where_it_stopped(
         )
     )
 
-    assert warned == []
+    assert shown == []
     assert main_window._results_table.item(0, 1).text() == "stopped"
     assert "Stopped before the text was read." in main_window._results_table.item(0, 1).toolTip()
     assert main_window._results_table.item(0, 0).background().color().name() == "#2b2b2b"
@@ -739,14 +694,6 @@ def test_quit_asks_while_a_run_is_going(main_window, monkeypatch) -> None:
     assert worker.isRunning() is True
 
 
-class _KeepRunningBox(_RecordingMessageBox):
-    """The close question answered with its second button, "Keep running"."""
-
-    def __init__(self, _parent=None) -> None:
-        super().__init__(_parent)
-        self.answer_index = 1
-
-
 @pytest.mark.gui
 def test_the_close_question_defaults_to_keep_running(main_window, monkeypatch) -> None:
     """
@@ -754,14 +701,14 @@ def test_the_close_question_defaults_to_keep_running(main_window, monkeypatch) -
     When   it is shown and answered with "Stop and close", then with "Keep running"
     Then   "Keep running" is the default button; the first answer stops, the second does not
     """
-    monkeypatch.setattr(main_window_module, "QMessageBox", _RecordingMessageBox)
-    stop_and_close = main_window._confirm_close_during_run()
-    box = _RecordingMessageBox.last
-    assert box is not None
-    assert box.buttons == ["Stop and close", "Keep running"]
-    assert box.default == "Keep running"
+    question = dlg.close_during_run()
+    assert [choice.label for choice in question.choices] == ["Stop and close", "Keep running"]
+    assert [choice.default for choice in question.choices] == [False, True]
 
-    monkeypatch.setattr(main_window_module, "QMessageBox", _KeepRunningBox)
+    monkeypatch.setattr(_dialogs, "ask", lambda *_a, **_k: True)
+    stop_and_close = main_window._confirm_close_during_run()
+
+    monkeypatch.setattr(_dialogs, "ask", lambda *_a, **_k: False)
     keep_running = main_window._confirm_close_during_run()
 
     assert stop_and_close is True
@@ -1141,16 +1088,11 @@ def test_main_window_save_settings_shows_warning_on_error(main_window, monkeypat
     Then   a warning dialog is shown
     """
     main_window._config_path = Path("/nonexistent/dir/ocr.toml")
-    seen: list[str] = []
-    monkeypatch.setattr(
-        main_window_module.QMessageBox,
-        "warning",
-        lambda *_args: seen.append("warning"),
-    )
+    shown = _record_notices(monkeypatch)
 
     main_window._save_settings()
 
-    assert seen == ["warning"]
+    assert [notice.title for notice in shown] == ["Save failed"]
 
 
 @pytest.mark.gui
@@ -1359,7 +1301,7 @@ def test_restore_all_resets_the_panel_and_saves(main_window, monkeypatch) -> Non
     )
     saved: list[bool] = []
     monkeypatch.setattr(main_window, "_save_settings", lambda **_kw: saved.append(True))
-    monkeypatch.setattr(main_window_module.QMessageBox, "question", lambda *a, **k: 1 / 0)
+    monkeypatch.setattr(_dialogs, "ask", lambda *a, **k: 1 / 0)
 
     main_window.open_settings(SettingsPage.PRIVACY)
 
@@ -2113,11 +2055,8 @@ def test_a_failing_anonymizer_leaves_the_clipboard_alone(main_window, monkeypatc
     _queue_with_results(main_window, "a.png")
     main_window._open_check("/tmp/a.png")
     QApplication.clipboard().setText("before")
-    warned: list[str] = []
-    monkeypatch.setattr(
-        "teachers_teammate.gui._main_window.QMessageBox.warning",
-        lambda _parent, _title, text: warned.append(text),
-    )
+    warned: list[Notice] = []
+    monkeypatch.setattr(_dialogs, "notify", lambda _parent, notice: warned.append(notice))
 
     def _fail(*_args, **_kwargs):
         raise RuntimeError("no model")
@@ -2709,12 +2648,10 @@ def test_main_window_on_preprocess_preview_no_source_user_cancels(
     from teachers_teammate.config import OcrConfig  # noqa: PLC0415
 
     monkeypatch.setattr(main_window._config_panel, "get_input_dir", lambda: str(tmp_path))
-    with patch(
-        "teachers_teammate.gui._main_window.QFileDialog.getOpenFileName", return_value=("", "")
-    ):
-        main_window._on_preprocess_preview_requested(
-            OcrConfig(preprocess_method="none")
-        )  # should not raise
+    monkeypatch.setattr(_dialogs, "pick_file", lambda *_a, **_k: None)
+    main_window._on_preprocess_preview_requested(
+        OcrConfig(preprocess_method="none")
+    )  # should not raise
     assert main_window._preprocess_preview_thread is None
 
 
@@ -2742,12 +2679,11 @@ def test_main_window_on_preprocess_preview_preprocess_error(
         "preprocess_preview",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(ValueError("bad file")),
     )
-    with (
-        patch("teachers_teammate.gui._main_window.QMessageBox") as mock_mb,
-    ):
-        main_window._on_preprocess_preview_requested(OcrConfig(preprocess_method="none"))
-        qtbot.waitUntil(lambda: mock_mb.warning.called, timeout=2000)
-    mock_mb.warning.assert_called_once()
+    shown = _record_notices(monkeypatch)
+    main_window._on_preprocess_preview_requested(OcrConfig(preprocess_method="none"))
+    qtbot.waitUntil(lambda: bool(shown), timeout=2000)
+
+    assert [notice.title for notice in shown] == ["Preview failed"]
 
 
 @pytest.mark.gui
@@ -2778,15 +2714,15 @@ def test_main_window_on_preprocess_preview_ignores_concurrent_click(
 
     monkeypatch.setattr(main_window._app_service, "preprocess_preview", _slow_failing_preview)
 
-    with patch("teachers_teammate.gui._main_window.QMessageBox") as mock_mb:
-        main_window._on_preprocess_preview_requested(OcrConfig(preprocess_method="none"))
-        first_thread = main_window._preprocess_preview_thread
-        main_window._on_preprocess_preview_requested(OcrConfig(preprocess_method="none"))
-        assert main_window._preprocess_preview_thread is first_thread
+    shown = _record_notices(monkeypatch)
+    main_window._on_preprocess_preview_requested(OcrConfig(preprocess_method="none"))
+    first_thread = main_window._preprocess_preview_thread
+    main_window._on_preprocess_preview_requested(OcrConfig(preprocess_method="none"))
+    assert main_window._preprocess_preview_thread is first_thread
 
-        qtbot.waitUntil(lambda: mock_mb.warning.called, timeout=2000)
+    qtbot.waitUntil(lambda: bool(shown), timeout=2000)
     assert call_count["n"] == 1
-    mock_mb.warning.assert_called_once()
+    assert len(shown) == 1
 
 
 # ── _on_stage_run_requested branches ─────────────────────────────────────────
@@ -2809,10 +2745,10 @@ def test_stage_run_warns_on_config_error(main_window, monkeypatch) -> None:
     started: list = []
     monkeypatch.setattr(main_window, "_start_worker", lambda *a, **k: started.append(a))
 
-    with patch("teachers_teammate.gui._main_window.QMessageBox") as mb:
-        main_window._on_stage_run_requested(["/tmp/a.png"], "ocr")
+    shown = _record_notices(monkeypatch)
+    main_window._on_stage_run_requested(["/tmp/a.png"], "ocr")
 
-    mb.warning.assert_called_once()
+    assert [notice.title for notice in shown] == ["Configuration error"]
     assert started == []
 
 
@@ -2887,11 +2823,11 @@ def test_stage_run_informs_when_no_files(main_window, monkeypatch) -> None:
     started: list = []
     monkeypatch.setattr(main_window, "_start_worker", lambda *a, **k: started.append(a))
 
-    with patch("teachers_teammate.gui._main_window.QMessageBox") as mb:
-        main_window._on_stage_run_requested(["/tmp/a.png"], "ocr")
-        _wait_for(lambda: mb.information.called)
+    shown = _record_notices(monkeypatch)
+    main_window._on_stage_run_requested(["/tmp/a.png"], "ocr")
+    _wait_for(lambda: bool(shown))
 
-    mb.information.assert_called_once()
+    assert [notice.title for notice in shown] == ["No files found"]
     assert started == []
 
 
@@ -2914,11 +2850,11 @@ def test_stage_run_warns_on_invalidation_failure(main_window, monkeypatch) -> No
     started: list = []
     monkeypatch.setattr(main_window, "_start_worker", lambda *a, **k: started.append(a))
 
-    with patch("teachers_teammate.gui._main_window.QMessageBox") as mb:
-        main_window._on_stage_run_requested(["/tmp/a.png"], "ocr")
-        _wait_for(lambda: mb.warning.called)
+    shown = _record_notices(monkeypatch)
+    main_window._on_stage_run_requested(["/tmp/a.png"], "ocr")
+    _wait_for(lambda: bool(shown))
 
-    mb.warning.assert_called_once()
+    assert [notice.title for notice in shown] == ["Cache invalidation failed"]
     assert started == []
 
 
@@ -3617,20 +3553,19 @@ def test_insufficient_memory_runs_anyway_only_when_the_user_says_so(
         "check_run_preflight",
         lambda self, config, **_kw: RunPreflight(memory_warning="qwen3.5:9b needs about 7 GB."),
     )
-    monkeypatch.setattr(main_window_module, "QMessageBox", _RecordingMessageBox)
+    asked = _answer_questions(monkeypatch, yes=True)
     main_window._results_table.set_queue(["a.png"], [str(tmp_path / "a.png")])
     main_window._results_table.selectRow(0)
 
-    _RecordingMessageBox.last = None
     main_window._on_run()
     qtbot.waitUntil(lambda: main_window._worker is not None, timeout=3000)
 
-    box = _RecordingMessageBox.last
-    assert box is not None
-    assert box.title == "Not enough free memory"
-    assert box.text == "qwen3.5:9b needs about 7 GB."
-    assert box.buttons == ["Run anyway", "Cancel"]
-    assert box.default == "Cancel"  # Enter must not start a run that could swap
+    assert asked[0].title == "Not enough free memory"
+    assert asked[0].body == "qwen3.5:9b needs about 7 GB."
+    assert asked[0].choices[0].label == "Run anyway"
+    # Enter must not start a run that could swap: the default is the platform's Cancel.
+    assert asked[0].choices[1].standard is StandardButton.CANCEL
+    assert asked[0].choices[1].default is True
 
 
 @pytest.mark.gui
@@ -3649,27 +3584,12 @@ def test_cancelling_the_memory_warning_does_not_start_the_run(
         "check_run_preflight",
         lambda self, config, **_kw: RunPreflight(memory_warning="qwen3.5:9b needs about 7 GB."),
     )
-    monkeypatch.setattr(main_window_module, "QMessageBox", _RecordingMessageBox)
+    asked = _answer_questions(monkeypatch, yes=False)
     main_window._results_table.set_queue(["a.png"], [str(tmp_path / "a.png")])
     main_window._results_table.selectRow(0)
 
-    _RecordingMessageBox.last = None
-
-    class _CancellingBox(_RecordingMessageBox):
-        """Answers the question with its second button, "Cancel"."""
-
-        def __init__(self, _parent=None) -> None:
-            super().__init__(_parent)
-            self.answer_index = 1
-
-    monkeypatch.setattr(main_window_module, "QMessageBox", _CancellingBox)
-
-    def _cancel_shown() -> bool:
-        box = _RecordingMessageBox.last
-        return box is not None and box.buttons == ["Run anyway", "Cancel"]
-
     main_window._on_run()
-    qtbot.waitUntil(_cancel_shown, timeout=3000)
+    qtbot.waitUntil(lambda: bool(asked), timeout=3000)
     assert main_window._worker is None
     assert main_window._run_btn.isEnabled() is True
 
@@ -3704,62 +3624,34 @@ def _online_proofreading_config(tmp_path: Path):
     )
 
 
-class _ConfirmBox:
-    """Stand-in for the confirmation QMessageBox: records the text, clicks a chosen button."""
+class _Confirmations:
+    """Stand-in for the data-flow question: records the body, answers with a chosen button.
+
+    ``clicks`` is the label of the button to press; ``"Cancel"`` stands for the platform's
+    Cancel button, which carries no label of its own.
+    """
 
     clicks = "Continue"
     remember = False
     texts: ClassVar[list[str]] = []
 
-    class Icon:
-        Warning = 0
-
-    class ButtonRole:
-        AcceptRole = 0
-        RejectRole = 1
-
-    def __init__(self, _parent=None) -> None:
-        self._buttons: dict[str, object] = {}
-        self._checkbox = None
-        self._clicked = None
-
-    def setIcon(self, _icon) -> None:
-        pass
-
-    def setWindowTitle(self, _title) -> None:
-        pass
-
-    def setText(self, text) -> None:
-        self.texts.append(text)
-
-    def setCheckBox(self, box) -> None:
-        self._checkbox = box
-        box.setChecked(type(self).remember)
-
-    def addButton(self, label, _role):
-        button = object()
-        self._buttons[label] = button
-        return button
-
-    def setDefaultButton(self, _button) -> None:
-        pass
-
-    def exec(self) -> None:
-        self._clicked = self._buttons[type(self).clicks]
-
-    def clickedButton(self):
-        return self._clicked
-
 
 @pytest.fixture
 def confirm_box(monkeypatch):
-    """Replace the confirmation dialog and settings store; return the dialog class."""
-    _ConfirmBox.clicks, _ConfirmBox.remember, _ConfirmBox.texts = "Continue", False, []
+    """Replace the data-flow question and the settings store; return the recorder."""
+    _Confirmations.clicks, _Confirmations.remember, _Confirmations.texts = "Continue", False, []
     _MemorySettings.store = {}
     monkeypatch.setattr(MainWindow, "_confirm_data_flow_then", _REAL_CONFIRM_DATA_FLOW)
-    monkeypatch.setattr(main_window_module, "QMessageBox", _ConfirmBox)
+
+    def choose(_parent: object, question: Question) -> Answer:
+        _Confirmations.texts.append(question.body)
+        if _Confirmations.clicks == "Cancel":
+            return Answer(None, _Confirmations.remember)
+        return Answer(question.choices[0], _Confirmations.remember)
+
+    monkeypatch.setattr(_dialogs, "choose", choose)
     monkeypatch.setattr(main_window_module, "QSettings", _MemorySettings)
-    return _ConfirmBox
+    return _Confirmations
 
 
 @pytest.mark.gui
@@ -3813,18 +3705,13 @@ def test_run_with_text_files_in_the_input_folder_is_refused(
         "check_run_preflight",
         lambda self, config: preflight.append(config) or RunPreflight(),
     )
-    shown: list[tuple[str, str]] = []
-    monkeypatch.setattr(
-        main_window_module.QMessageBox,
-        "warning",
-        lambda _parent, title, text: shown.append((title, text)),
-    )
+    shown = _record_notices(monkeypatch)
 
     main_window._on_run()
 
-    assert shown[0][0] == "Choose another output folder"
-    assert "next run would read them as new documents" in shown[0][1]
-    assert "Results" in shown[0][1]
+    assert shown[0].title == "Choose another output folder"
+    assert "next run would read them as new documents" in shown[0].body
+    assert "Results" in shown[0].body
     assert preflight == []
     assert main_window._worker is None
     assert main_window._run_btn.isEnabled() is True
@@ -4007,23 +3894,18 @@ def test_online_ocr_engine_in_saved_settings_is_announced(
     """
     config_path = tmp_path / "ocr.toml"
     config_path.write_text('ocr_engine = "openai"\nocr_model = "gpt-4o"\n', encoding="utf-8")
-    shown: list[tuple[str, str]] = []
+    shown = _record_notices(monkeypatch)
     monkeypatch.setattr(MainWindow, "_start_readiness_check", lambda self, **_kw: None)
     monkeypatch.setattr(
         ProcessingApplicationService, "resolve_config_path", lambda self, _: config_path
-    )
-    monkeypatch.setattr(
-        main_window_module.QMessageBox,
-        "information",
-        lambda _parent, title, text: shown.append((title, text)),
     )
 
     win = MainWindow()
     qtbot.addWidget(win)
 
-    assert shown and shown[0][0] == "Text recognition changed"
-    assert "openai" in shown[0][1]
-    assert "ollama" in shown[0][1]
+    assert shown and shown[0].title == "Text recognition changed"
+    assert "openai" in shown[0].body
+    assert "ollama" in shown[0].body
 
 
 @pytest.mark.gui
@@ -4039,22 +3921,17 @@ def test_a_removed_local_engine_in_saved_settings_is_announced(
     """
     config_path = tmp_path / "ocr.toml"
     config_path.write_text(f'ocr_engine = "{old}"\n', encoding="utf-8")
-    shown: list[tuple[str, str]] = []
+    shown = _record_notices(monkeypatch)
     monkeypatch.setattr(MainWindow, "_start_readiness_check", lambda self, **_kw: None)
     monkeypatch.setattr(
         ProcessingApplicationService, "resolve_config_path", lambda self, _: config_path
-    )
-    monkeypatch.setattr(
-        main_window_module.QMessageBox,
-        "information",
-        lambda _parent, title, text: shown.append((title, text)),
     )
 
     win = MainWindow()
     qtbot.addWidget(win)
 
-    assert [title for title, _ in shown] == ["Text recognition changed"]
-    text = shown[0][1]
+    assert [notice.title for notice in shown] == ["Text recognition changed"]
+    text = shown[0].body
     assert f"used {name} for text recognition" in text
     assert "built-in reader" in text and "31 MB" in text
     assert "Settings → Add-ons → Reading models" in text
@@ -4072,20 +3949,15 @@ def test_local_ocr_engine_in_saved_settings_is_not_announced(
     """
     config_path = tmp_path / "ocr.toml"
     config_path.write_text('ocr_engine = "ppocr"\n', encoding="utf-8")
-    shown: list[str] = []
+    shown = _record_notices(monkeypatch)
     monkeypatch.setattr(MainWindow, "_start_readiness_check", lambda self, **_kw: None)
     monkeypatch.setattr(
         ProcessingApplicationService, "resolve_config_path", lambda self, _: config_path
     )
-    monkeypatch.setattr(
-        main_window_module.QMessageBox,
-        "information",
-        lambda _parent, title, _text: shown.append(title),
-    )
 
     qtbot.addWidget(MainWindow())
 
-    assert "Text recognition changed" not in shown
+    assert "Text recognition changed" not in [notice.title for notice in shown]
 
 
 # ── Run / re-run guards ──────────────────────────────────────────────────────
@@ -4153,16 +4025,13 @@ def test_run_pressed_while_requirements_are_checked_starts_nothing_twice(
         return RunPreflight()
 
     monkeypatch.setattr(ProcessingApplicationService, "check_run_preflight", _slow_preflight)
-    busy: list[str] = []
-    monkeypatch.setattr(
-        main_window_module.QMessageBox, "information", lambda _p, title, _t: busy.append(title)
-    )
+    busy = _record_notices(monkeypatch)
 
     main_window._on_run()
     main_window._on_stage_run_requested(["/tmp/a.png"], "ocr")
     main_window._on_run()
 
-    assert busy == ["Please wait"]
+    assert [notice.title for notice in busy] == ["Please wait"]
     release.set()
     qtbot.waitUntil(lambda: main_window._worker is not None, timeout=3000)
     first_worker = main_window._worker
@@ -4191,14 +4060,11 @@ def test_stage_rerun_is_refused_while_a_worker_runs(
         "invalidate_from_stage",
         lambda *a, **k: invalidated.append(a) or (["/tmp/a.png"], [], False),
     )
-    busy: list[str] = []
-    monkeypatch.setattr(
-        main_window_module.QMessageBox, "information", lambda _p, title, _t: busy.append(title)
-    )
+    busy = _record_notices(monkeypatch)
 
     main_window._on_stage_run_requested(["/tmp/a.png"], "ocr")
 
-    assert busy == ["Please wait"]
+    assert [notice.title for notice in busy] == ["Please wait"]
     assert invalidated == []
     assert main_window._preflight_running is False
 
@@ -4216,15 +4082,11 @@ def _queue_with_text(window: MainWindow, folder: Path, texts: dict[str, str]) ->
 
 
 def _pick_folder(monkeypatch, folder: Path) -> None:
-    monkeypatch.setattr(
-        main_window_module.QFileDialog, "getExistingDirectory", lambda *_a, **_k: str(folder)
-    )
+    monkeypatch.setattr(_dialogs, "pick_folder", lambda *_a, **_k: folder)
 
 
 def _pick_file(monkeypatch, path: Path) -> None:
-    monkeypatch.setattr(
-        main_window_module.QFileDialog, "getSaveFileName", lambda *_a, **_k: (str(path), "")
-    )
+    monkeypatch.setattr(_dialogs, "save_file", lambda *_a, **_k: path)
 
 
 @pytest.mark.gui
@@ -4258,10 +4120,7 @@ def test_export_text_writes_one_file_per_row_and_skips_rows_without_text(
         main_window, tmp_path / "scans", {"a.png": "alpha", "b.png": "beta", "c.png": ""}
     )
     _pick_folder(monkeypatch, out)
-    warnings: list[str] = []
-    monkeypatch.setattr(
-        main_window_module.QMessageBox, "warning", lambda _p, _t, msg: warnings.append(msg)
-    )
+    warnings = _record_notices(monkeypatch)
 
     main_window._on_export_requested(ids, ExportKind.TEXT)
     _wait_for(lambda: not main_window._text_export_running and bool(warnings))
@@ -4269,7 +4128,47 @@ def test_export_text_writes_one_file_per_row_and_skips_rows_without_text(
     assert (out / "a.txt").read_text(encoding="utf-8") == "alpha"
     assert (out / "b.txt").read_text(encoding="utf-8") == "beta"
     assert not (out / "c.txt").exists()
-    assert "c.png" in warnings[0]
+    assert "c.png" in warnings[0].body
+
+
+@pytest.mark.gui
+def test_export_to_a_folder_opens_the_picker_in_the_output_folder(
+    main_window, monkeypatch, tmp_path: Path
+) -> None:
+    """
+    Given  two rows and a results folder from the last run
+    When   the text export asks for a folder
+    Then   the folder picker starts in the results folder, as the Save As dialog does
+    """
+    results = tmp_path / "results"
+    monkeypatch.setattr(main_window._results_table, "get_output_dir", lambda: results)
+    ids = _queue_with_text(main_window, tmp_path / "scans", {"a.png": "alpha", "b.png": "beta"})
+    prompts = []
+    monkeypatch.setattr(_dialogs, "pick_folder", lambda _parent, prompt: prompts.append(prompt))
+
+    main_window._on_export_requested(ids, ExportKind.TEXT)
+
+    assert [prompt.start for prompt in prompts] == [str(results)]
+
+
+@pytest.mark.gui
+def test_export_of_one_file_proposes_a_name_in_the_output_folder(
+    main_window, monkeypatch, tmp_path: Path
+) -> None:
+    """
+    Given  one row and a results folder from the last run
+    When   the text export asks where to save
+    Then   the Save As dialog proposes <name>.txt in the results folder
+    """
+    results = tmp_path / "results"
+    monkeypatch.setattr(main_window._results_table, "get_output_dir", lambda: results)
+    ids = _queue_with_text(main_window, tmp_path / "scans", {"a.png": "alpha"})
+    prompts = []
+    monkeypatch.setattr(_dialogs, "save_file", lambda _parent, prompt: prompts.append(prompt))
+
+    main_window._on_export_requested(ids, ExportKind.TEXT)
+
+    assert [prompt.start for prompt in prompts] == [str(results / "a.txt")]
 
 
 @pytest.mark.gui
@@ -4288,10 +4187,7 @@ def test_export_anonymized_text_writes_the_anonymized_file(
     _pick_file(monkeypatch, out / "a_anonymized.txt")
     anonymizer = MagicMock()
     anonymizer.anonymize.return_value = ("Dear [PERSON_1]", {"[PERSON_1]": "Anna"})
-    warnings: list[str] = []
-    monkeypatch.setattr(
-        main_window_module.QMessageBox, "warning", lambda _p, _t, msg: warnings.append(msg)
-    )
+    warnings = _record_notices(monkeypatch)
 
     with patch(
         "teachers_teammate.infrastructure.anonymizer.SpacyAnonymizer", return_value=anonymizer
@@ -4317,10 +4213,7 @@ def test_export_anonymized_text_explains_a_missing_spacy_once(
     out = tmp_path / "out"
     ids = _queue_with_text(main_window, tmp_path / "scans", {"a.png": "x", "b.png": "y"})
     _pick_folder(monkeypatch, out)
-    warnings: list[str] = []
-    monkeypatch.setattr(
-        main_window_module.QMessageBox, "warning", lambda _p, _t, msg: warnings.append(msg)
-    )
+    warnings = _record_notices(monkeypatch)
 
     with patch(
         "teachers_teammate.infrastructure.anonymizer.SpacyAnonymizer",
@@ -4330,7 +4223,7 @@ def test_export_anonymized_text_explains_a_missing_spacy_once(
         _wait_for(lambda: bool(warnings))
 
     assert len(warnings) == 1
-    assert "spaCy" in warnings[0]
+    assert "spaCy" in warnings[0].body
     assert not out.exists()
 
 
@@ -4348,39 +4241,17 @@ def test_export_text_into_the_input_folder_can_be_declined(
     ids = _queue_with_text(main_window, scans, {"a.png": "alpha"})
     monkeypatch.setattr(main_window._config_panel, "get_input_dir", lambda: str(scans))
     _pick_file(monkeypatch, scans / "a.txt")
-    asked: list[str] = []
-
-    def _no(_parent, title, _text, *_a):
-        asked.append(title)
-        return main_window_module.QMessageBox.StandardButton.No
-
-    monkeypatch.setattr(main_window_module.QMessageBox, "question", _no)
+    asked = _answer_questions(monkeypatch, yes=False)
 
     main_window._on_export_requested(ids, ExportKind.TEXT)
 
-    assert asked == ["Save into the input folder?"]
+    assert [question.title for question in asked] == ["Save into the input folder?"]
     assert not (scans / "a.txt").exists()
     assert not main_window._text_export_running
 
 
-def _capture_warnings(monkeypatch) -> list[str]:
-    warnings: list[str] = []
-    monkeypatch.setattr(
-        main_window_module.QMessageBox, "warning", lambda _p, _t, msg: warnings.append(msg)
-    )
-    return warnings
-
-
-def _answer_questions(monkeypatch, answer) -> list[str]:
-    """Answer every QMessageBox.question with *answer*; return the titles asked."""
-    asked: list[str] = []
-
-    def _answer(_parent, title, _text, *_a):
-        asked.append(title)
-        return answer
-
-    monkeypatch.setattr(main_window_module.QMessageBox, "question", _answer)
-    return asked
+def _capture_warnings(monkeypatch) -> list[Notice]:
+    return _record_notices(monkeypatch)
 
 
 @pytest.mark.gui
@@ -4457,20 +4328,14 @@ def test_export_skips_documents_that_would_share_an_output_file(
     _wait_for(lambda: bool(warnings))
 
     assert written == [out / ("x" + kind.file_suffix)]
-    assert "x.pdf" in warnings[0]
-    assert "x.png" not in warnings[0]
+    assert "x.pdf" in warnings[0].body
+    assert "x.png" not in warnings[0].body
 
 
 @pytest.mark.gui
-@pytest.mark.parametrize(
-    ("answer", "expected"),
-    [
-        (main_window_module.QMessageBox.StandardButton.No, "old"),
-        (main_window_module.QMessageBox.StandardButton.Yes, "alpha"),
-    ],
-)
+@pytest.mark.parametrize(("answer", "expected"), [(False, "old"), (True, "alpha")])
 def test_export_into_a_folder_asks_before_replacing_existing_files(
-    main_window, monkeypatch, tmp_path: Path, answer, expected: str
+    main_window, monkeypatch, tmp_path: Path, answer: bool, expected: str
 ) -> None:
     """
     Given  a.txt already exists in the chosen folder and two rows are exported there
@@ -4482,12 +4347,12 @@ def test_export_into_a_folder_asks_before_replacing_existing_files(
     (out / "a.txt").write_text("old", encoding="utf-8")
     ids = _queue_with_text(main_window, tmp_path / "scans", {"a.png": "alpha", "b.png": "beta"})
     _pick_folder(monkeypatch, out)
-    asked = _answer_questions(monkeypatch, answer)
+    asked = _answer_questions(monkeypatch, yes=answer)
 
     main_window._on_export_requested(ids, ExportKind.TEXT)
     _wait_for(lambda: not main_window._text_export_running)
 
-    assert asked == ["Replace existing files?"]
+    assert [question.title for question in asked] == ["Replace existing files?"]
     assert (out / "a.txt").read_text(encoding="utf-8") == expected
     assert (out / "b.txt").exists() is (expected == "alpha")
 
@@ -4506,18 +4371,12 @@ def test_replace_question_names_files_by_their_subfolder(
         (out / name).mkdir(parents=True)
         (out / name / "a.txt").write_text("old", encoding="utf-8")
     targets = [("s1", out / "class1" / "a.txt"), ("s2", out / "class2" / "a.txt")]
-    texts: list[str] = []
-
-    def _question(_parent, _title, text, *_args):
-        texts.append(text)
-        return main_window_module.QMessageBox.StandardButton.No
-
-    monkeypatch.setattr(main_window_module.QMessageBox, "question", _question)
+    asked = _answer_questions(monkeypatch, yes=False)
 
     assert main_window._confirm_replace_existing(targets) is False
 
-    assert "class1/a.txt" in texts[0]
-    assert "class2/a.txt" in texts[0]
+    assert "class1/a.txt" in asked[0].body
+    assert "class2/a.txt" in asked[0].body
 
 
 @pytest.mark.gui
@@ -4540,8 +4399,8 @@ def test_export_text_never_replaces_another_input_document(
     _wait_for(lambda: bool(warnings))
 
     assert (scans / "a.txt").read_text(encoding="utf-8") == "original"
-    assert "a.png" in warnings[0]
-    assert "input document" in warnings[0]
+    assert "a.png" in warnings[0].body
+    assert "input document" in warnings[0].body
 
 
 @pytest.mark.gui
@@ -4557,12 +4416,12 @@ def test_export_text_into_the_input_folder_writes_after_confirming(
     ids = _queue_with_text(main_window, scans, {"a.png": "alpha"})
     monkeypatch.setattr(main_window._config_panel, "get_input_dir", lambda: str(scans))
     _pick_file(monkeypatch, scans / "sub" / "a.txt")
-    asked = _answer_questions(monkeypatch, main_window_module.QMessageBox.StandardButton.Yes)
+    asked = _answer_questions(monkeypatch, yes=True)
 
     main_window._on_export_requested(ids, ExportKind.TEXT)
     _wait_for(lambda: not main_window._text_export_running)
 
-    assert asked == ["Save into the input folder?"]
+    assert [question.title for question in asked] == ["Save into the input folder?"]
     assert (scans / "sub" / "a.txt").read_text(encoding="utf-8") == "alpha"
 
 
@@ -4585,7 +4444,7 @@ def test_input_folder_warning_only_applies_to_folder_and_text_exports(
         panel, "get_selected_files", lambda: None if folder_mode else [scans / "a.png"]
     )
     monkeypatch.setattr(main_window._app_service, "export_docx", lambda *_a, **_k: None)
-    asked = _answer_questions(monkeypatch, main_window_module.QMessageBox.StandardButton.No)
+    asked = _answer_questions(monkeypatch, yes=False)
     kind = ExportKind.DOCX if folder_mode else ExportKind.TEXT
     _pick_file(monkeypatch, scans / ("a" + kind.file_suffix))
 
@@ -4618,8 +4477,8 @@ def test_export_anonymized_text_with_missing_spacy_also_lists_skipped_rows(
         _wait_for(lambda: bool(warnings))
 
     assert len(warnings) == 1
-    assert "spaCy" in warnings[0]
-    assert "c.png" in warnings[0]
+    assert "spaCy" in warnings[0].body
+    assert "c.png" in warnings[0].body
 
 
 @pytest.mark.gui
@@ -5078,9 +4937,7 @@ def test_the_line_asks_for_a_results_folder_and_choose_opens_the_dialog(
     ready_window._update_readiness()
     assert "Choose where to save the results" in _line(ready_window)
     assert _buttons(ready_window) == ["Choose…"]
-    monkeypatch.setattr(
-        _config_panel.QFileDialog, "getExistingDirectory", lambda *_a, **_k: str(tmp_path)
-    )
+    monkeypatch.setattr(_dialogs, "pick_folder", lambda *_a, **_k: tmp_path)
 
     ready_window._readiness_line._buttons[0].click()
 
@@ -5473,10 +5330,7 @@ def test_a_skipped_file_opens_no_error_dialog_and_is_counted_apart(
     Then   no "Processing error" dialog opens, the row says "skipped", and the finished run
            names the skipped file
     """
-    warned: list[str] = []
-    monkeypatch.setattr(
-        main_window_module.QMessageBox, "warning", lambda *a, **k: warned.append(str(a))
-    )
+    shown = _record_notices(monkeypatch)
     monkeypatch.setattr(main_window._app_service, "load_view", lambda *_a, **_k: None)
     source = "/tmp/scan.png"
     main_window._results_table.set_queue(["scan.png"], source_ids=[source])
@@ -5493,7 +5347,7 @@ def test_a_skipped_file_opens_no_error_dialog_and_is_counted_apart(
         )
     )
 
-    assert warned == []
+    assert shown == []
     assert main_window._results_table.item(0, 1).text() == "skipped"
 
 

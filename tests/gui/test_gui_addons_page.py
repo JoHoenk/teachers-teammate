@@ -18,6 +18,7 @@ from teachers_teammate.domain.model_catalog import (
     HardwareDetection,
     ModelUses,
 )
+from teachers_teammate.gui import _dialogs
 from teachers_teammate.gui import _user_text as txt
 from teachers_teammate.gui._constants import _SPACY_MODEL_CHOICES
 from teachers_teammate.gui._install_round import PAGE_MODELS_ITEM, READER_ITEM
@@ -31,6 +32,7 @@ from teachers_teammate.gui.settings._page import (
     SettingsPage,
 )
 from teachers_teammate.infrastructure.spacy_models import FALLBACK_SPACY_MODEL, SPACY_MODELS
+from teachers_teammate.texts._types import Question
 
 from ..fakes.fake_ollama import FakeOllama
 from ._gui_harness import settings_context
@@ -694,7 +696,7 @@ def test_slow_models_are_listed_as_slower_not_greyed_out_and_need_no_confirmatio
     def no_question(*_a, **_k):
         raise AssertionError("a slow model must not ask for confirmation")
 
-    monkeypatch.setattr(_addons_page, "QMessageBox", no_question)
+    monkeypatch.setattr(_dialogs, "ask", no_question)
     assert dlg._confirm_too_large(["gpt-oss:20b"]) is True
 
 
@@ -754,42 +756,16 @@ def test_download_install_collects_ticked_child_rows(qtbot) -> None:
 # ── too-large confirmation ──────────────────────────────────────────────────
 
 
-class _FakeMessageBox:
-    """Stand-in for QMessageBox returning a chosen button."""
+def _answer(monkeypatch, *, download_anyway: bool) -> list[Question]:
+    """Answer the too-large question with *download_anyway*; return the questions asked."""
+    asked: list[Question] = []
 
-    class Icon:
-        Warning = None
+    def ask(_parent: object, question: Question) -> bool:
+        asked.append(question)
+        return download_anyway
 
-    class ButtonRole:
-        AcceptRole = None
-        RejectRole = None
-
-    clicked: object = "Cancel"
-    last_text: str = ""
-
-    def __init__(self, *_args, **_kwargs) -> None:
-        pass
-
-    def setWindowTitle(self, _title: str) -> None:
-        pass
-
-    def setIcon(self, _icon: object) -> None:
-        pass
-
-    def setText(self, text: str) -> None:
-        _FakeMessageBox.last_text = text
-
-    def addButton(self, text: str, _role: object) -> object:
-        return text
-
-    def setDefaultButton(self, _button: object) -> None:
-        pass
-
-    def exec(self) -> int:
-        return 0
-
-    def clickedButton(self) -> object:
-        return _FakeMessageBox.clicked
+    monkeypatch.setattr(_dialogs, "ask", ask)
+    return asked
 
 
 @pytest.mark.use_case("Model_Recommendation_By_Hardware")
@@ -809,12 +785,11 @@ def test_too_large_selection_cancel_aborts(qtbot, monkeypatch) -> None:
     dlg._model_items["gpt-oss:20b"].setCheckState(0, Qt.CheckState.Checked)
     start = MagicMock()
     dlg._round.start = start
-    _FakeMessageBox.clicked = "Cancel"
-    monkeypatch.setattr(_addons_page, "QMessageBox", _FakeMessageBox)
+    asked = _answer(monkeypatch, download_anyway=False)
     dlg._on_download_install()
     start.assert_not_called()
-    assert "needs about 14 GB of graphics memory" in _FakeMessageBox.last_text
-    assert "computers of this type have about 8 GB" in _FakeMessageBox.last_text
+    assert "needs about 14 GB of graphics memory" in asked[0].body
+    assert "computers of this type have about 8 GB" in asked[0].body
 
 
 @pytest.mark.use_case("Model_Recommendation_By_Hardware")
@@ -834,8 +809,7 @@ def test_too_large_selection_download_anyway_proceeds(qtbot, monkeypatch) -> Non
     dlg._model_items["gpt-oss:20b"].setCheckState(0, Qt.CheckState.Checked)
     start = MagicMock()
     dlg._round.start = start
-    _FakeMessageBox.clicked = "Download anyway"
-    monkeypatch.setattr(_addons_page, "QMessageBox", _FakeMessageBox)
+    _answer(monkeypatch, download_anyway=True)
     dlg._on_download_install()
     assert start.call_args.kwargs["ollama_models"] == ["gpt-oss:20b"]
 

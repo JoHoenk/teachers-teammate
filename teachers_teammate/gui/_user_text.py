@@ -24,6 +24,7 @@ from ..domain.data_location import (
 from ..domain.local_models import PAGE_MODELS_SIZE_LABEL, READER_SIZE_LABEL
 from ..domain.proofreading.review import CHANGE_CATEGORIES
 from ..exceptions import RECOGNITION_OFF_MESSAGE
+from ..texts.settings import PAGE_AI_MODELS, PAGE_AI_SETUP, WHERE_ADDONS, WHERE_AI_MODELS
 
 if TYPE_CHECKING:
     from ..application.text_size import TextSizeEstimate
@@ -207,29 +208,10 @@ def prepared_caption(steps: Sequence[str]) -> str:
 
 
 # ── Settings window: page names and "where to change it" ──────────────────────
-
-PAGE_GENERAL = "General"
-PAGE_AI_MODELS = "AI models"
-PAGE_SCAN_QUALITY = "Scan quality"
-PAGE_PRIVACY = "Privacy"
-PAGE_AI_SETUP = "This computer"
-PAGE_ONLINE_SERVICES = "Online services"
-PAGE_ADDONS = "Add-ons"
-
-#: The one place every message names when it says where a setting is changed.
-WHERE_GENERAL = f"Settings → {PAGE_GENERAL}"
-WHERE_AI_MODELS = f"Settings → {PAGE_AI_MODELS}"
-WHERE_SCAN_QUALITY = f"Settings → {PAGE_SCAN_QUALITY}"
-WHERE_PRIVACY = f"Settings → {PAGE_PRIVACY}"
-WHERE_AI_SETUP = f"Settings → {PAGE_AI_SETUP}"
-WHERE_ONLINE_SERVICES = f"Settings → {PAGE_ONLINE_SERVICES}"
-WHERE_ADDONS = f"Settings → {PAGE_ADDONS}"
-TAB_READING_MODELS = "Reading models"
-WHERE_READING_MODELS = f"{WHERE_ADDONS} → {TAB_READING_MODELS}"
-WHERE_RESULTS = "Results, in the main window"
-WHERE_STEPS = "What should happen, in the main window"
-WHERE_SETUP = "Tools → Setup Assistant…"
-OPEN_ADDONS = "Open Add-ons…"
+#
+# The page names and the "where to change it" phrases live in `texts/settings.py`, because
+# the dialogs in `texts/dialogs.py` name them too.  Import them from there; this module
+# uses only the few it needs itself.
 
 #: After an app update the add-ons wait for one click: the readiness line, the Add-ons page.
 ADDONS_OUTDATED_LINE = "Add-ons need an update after the app update"
@@ -380,10 +362,9 @@ def suggestion_note(is_suggestion: bool) -> str:
 
 
 # ── What is sent for this file ────────────────────────────────────────────────
-
-WHAT_IS_SENT_TITLE = "What is sent for this file"
-WHAT_IS_SENT_WORKING = "Working out what is sent…"
-NO_TEXT_YET = "No text recognized for this file yet."
+#
+# The title and the "no text yet" line live in `texts/privacy.py`, because the dialog that
+# shows them is described in `texts/dialogs.py`.  Import them from there.
 
 
 # ── How a stored result was sent ──────────────────────────────────────────────

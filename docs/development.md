@@ -91,6 +91,69 @@ The codebase is split into four layers. Each layer may only depend on layers bel
 :width: 100%
 ```
 
+### Where text lives
+
+Every sentence a teacher reads is *defined* in `teachers_teammate/texts/` and *used* by
+reference everywhere else. The package is Qt-free, so `gui/`, `cli.py`, `application/` and
+`infrastructure/` can all import it; one module per surface:
+
+| Module | Owns |
+|---|---|
+| `texts/_types.py` | The shapes: `Notice`, `Question`, `Choice`, `FilePrompt`, `Answer`. Text and nothing else. |
+| `texts/dialogs.py` | Every message box, question and file picker. |
+| `texts/settings.py` | Settings page titles, the `WHERE_*` "where do I change this" sentences, tab names. |
+| `texts/privacy.py` | The "what is sent for this file" wording. |
+
+`texts/__init__.py` is the map — a docstring naming which module owns what, no logic.
+
+Rules:
+
+- **Dependencies point inward.** `texts` may import `domain` ids and enums; `domain` and
+  `application` never import `texts`. Where a layer holds a sentence today, the sentence
+  moves out and the layer keeps the id.
+- **Dynamic parts are functions**, never `%`-formatting at the call site:
+  `dlg.no_files_found(folder)`, not `"No files found in %s" % folder`.
+- **One helper shows them.** `gui/_dialogs.py` is the only module that touches
+  `QMessageBox` or `QFileDialog`:
+
+  ```python
+  from ..texts import dialogs as dlg
+  from . import _dialogs
+
+  _dialogs.notify(self, dlg.no_files_found(str(folder)))
+  if _dialogs.ask(self, dlg.replace_existing_files(count, shown)):
+      ...
+  folder = _dialogs.pick_folder(self, dlg.select_output_folder(start))
+  ```
+
+  `notify(parent, notice)`, `choose(parent, question) -> Answer`,
+  `ask(parent, question) -> bool`, `pick_folder` / `pick_file` / `pick_files` /
+  `save_file(parent, prompt)`. A prompt carries where the dialog opens in `start` (for
+  `save_file`, the path it proposes); build it with that argument — `dlg.save_export_to_folder(label, start)` —
+  or the picker opens wherever Qt last was. A test patches this module once instead of every window.
+
+**The ratchet test.** `tests/unit/test_user_text_centralised.py` parses every module under
+`gui/` and `cli.py` with `ast` and fails on a string literal (or f-string) passed to a
+user-facing sink — `QMessageBox`/`QFileDialog` calls, `setText`/`setToolTip`/
+`setPlaceholderText`/`setWindowTitle`/`setTitle`, widget constructors, `addTab`/`addMenu`/
+`addAction`, `print` and argparse `help` in `cli.py`, `raise …Error("…")`, and a literal handed to a
+function of `dlg` / `privacy` (`dlg.copy_failed("Could not copy")` — the sentence belongs in
+the function). A sentence that is only *returned* or kept in a local variable is not a sink, so
+the test cannot see it: build it in `texts/` and call it. The
+allowlist is `tools/user_text/allowlist.py`, keyed by file and literal text (not line
+number, which shifts on every edit). It may only shrink: a second test fails on an entry
+whose literal is gone, so moving a text means deleting its entry in the same change.
+`tools/user_text/inventory.py` scans the same sources and writes a CSV of what it found
+(`bazel run //tools/user_text:inventory -- --out user_text.csv`); the allowlist itself is edited
+by hand.
+
+**Out of scope, and must stay where it is:** the LLM prompts in
+`domain/correction_prompts.py` (versioned and hashed into the protocol fingerprint and the
+cache key — moving text changes cache keys), log lines, `diagnostics.log`, developer
+exceptions that never reach a teacher, `tools/`, tests and docs. The Word output's en/de
+label tables follow the *document* language, not the UI language, and stay in
+`docx_builder.py` / `docx_comments.py`.
+
 ### Runtime sequence diagrams
 
 The diagrams below show the three main runtime flows.
@@ -678,7 +741,7 @@ the reference machine.  `tools/ocr_page_tokens.py` measures them, and
 |---|---|---|
 | Decisions (best model, suitability, hardware profile, `rate_model`) | `domain/model_catalog.py` | Pure functions, no I/O — table-test them. |
 | Caches (local hardware probe, model classification) | `application/model_recommendations.py` | One owner. Call `on_ollama_models_changed(url)` after every pull; it evicts the model list *and* the classifications. Only definite classifications are cached. |
-| Texts a teacher reads | `gui/_model_wording.py` | Qt-free; widgets never build these sentences themselves. |
+| Texts a teacher reads | `gui/_model_wording.py` (model wording), `teachers_teammate/texts/` (everything else) | Qt-free; widgets never build these sentences themselves. See "Where text lives" above. |
 | Widgets | `gui/_hardware_profile_selector.py`, `gui/_model_guidance.py`, `gui/settings/_addons_page.py` | Presentation only. They rate models through `rate_ollama_models(..., cached_only=True)` — never contacting Ollama on the GUI thread. |
 
 Two details that are easy to get wrong:

@@ -50,6 +50,7 @@ from ...domain.language import LANGUAGES
 from ...domain.local_models import PAGE_MODELS_ADDON_ID
 from ...domain.model_catalog import DiskVerdict, Suitability
 from ...infrastructure.ollama_utils import is_local_ollama_url
+from ...texts.settings import WHERE_SETUP
 from .. import _user_text as txt
 from .._background import LatestTask
 from .._data_flow_summary import short_place
@@ -86,7 +87,7 @@ WELCOME_POINTS = (
     "• You decide whether proofreading may use an online service."
 )
 WELCOME_FOOTNOTE = (
-    f"You can run it again under {txt.WHERE_SETUP}, and change everything under Settings."
+    f"You can run it again under {WHERE_SETUP}, and change everything under Settings."
 )
 
 # ── Your classes ──────────────────────────────────────────────────────────────

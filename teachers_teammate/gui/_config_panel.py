@@ -19,7 +19,6 @@ from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
     QDialogButtonBox,
-    QFileDialog,
     QFormLayout,
     QFrame,
     QGroupBox,
@@ -57,6 +56,9 @@ from ..domain.data_location import (
     DataFlow,
 )
 from ..domain.pdf_text_layer import normalize_pdf_text_layer
+from ..texts import dialogs as dlg
+from ..texts.settings import WHERE_ADDONS, WHERE_AI_MODELS
+from . import _dialogs
 from . import _user_text as txt
 from ._background import LatestTask
 from ._constants import _LANGUAGES
@@ -450,8 +452,8 @@ class ConfigPanel(QScrollArea):
                 "3  What should happen",
                 "The text is always read from the scans. The other steps are optional.\n"
                 "Removing personal info runs on this computer, before anything is sent\n"
-                f"(it needs name detection, see {txt.WHERE_ADDONS}). Proofreading and\n"
-                f"content review use the AI models set under {txt.WHERE_AI_MODELS}.",
+                f"(it needs name detection, see {WHERE_ADDONS}). Proofreading and\n"
+                f"content review use the AI models set under {WHERE_AI_MODELS}.",
             )
         )
         inner = QWidget()
@@ -480,7 +482,7 @@ class ConfigPanel(QScrollArea):
         self._correction_enabled.setChecked(True)
         self._correction_enabled.setToolTip(
             "Use an AI to fix spelling and grammar in the extracted text.\n"
-            f"Which AI: see {txt.WHERE_AI_MODELS}."
+            f"Which AI: see {WHERE_AI_MODELS}."
         )
         self._correction_enabled.toggled.connect(self._update_correction_visibility)
         self._correction_prompt_btn = QPushButton(txt.OPTIONS_BUTTON)
@@ -704,9 +706,9 @@ class ConfigPanel(QScrollArea):
 
     def _on_browse_output_dir(self) -> None:
         start = self._output_dir.text().strip() or str(Path.home())
-        chosen = QFileDialog.getExistingDirectory(self, "Select output folder", start)
-        if chosen:
-            self._output_dir.setText(chosen)
+        chosen = _dialogs.pick_folder(self, dlg.select_output_folder(start))
+        if chosen is not None:
+            self._output_dir.setText(str(chosen))
             self._on_output_dir_edited()
 
     # ── static helpers ────────────────────────────────────────────────────────────
@@ -735,24 +737,18 @@ class ConfigPanel(QScrollArea):
 
     def _on_select_folder(self) -> None:
         start = str(self._selected_folder or Path.home())
-        path = QFileDialog.getExistingDirectory(None, "Select Input Folder", start)
-        if path:
-            self._selected_folder = Path(path)
+        path = _dialogs.pick_folder(None, dlg.select_input_folder(start))
+        if path is not None:
+            self._selected_folder = path
             self._selected_files = []
             self._update_input_label()
             self.paths_changed.emit()
 
     def _on_select_files(self) -> None:
         start = str(self._selected_folder or Path.home())
-        paths, _ = QFileDialog.getOpenFileNames(
-            None,
-            "Select Input Files",
-            start,
-            "Supported files (*.pdf *.PDF *.png *.PNG *.jpg *.JPG *.jpeg *.JPEG "
-            "*.tiff *.TIFF *.tif *.TIF *.txt *.TXT);;All files (*)",
-        )
+        paths = _dialogs.pick_files(None, dlg.select_input_files(start))
         if paths:
-            self._selected_files = [Path(p) for p in paths]
+            self._selected_files = paths
             self._selected_folder = None
             self._update_input_label()
             self.paths_changed.emit()
@@ -790,7 +786,7 @@ class ConfigPanel(QScrollArea):
 
     def _on_configure_correction_prompt(self) -> None:
         settings = self._settings_dict
-        dlg = _ProofreadingDialog(
+        dialog = _ProofreadingDialog(
             txt.CORRECTION_PROMPT_DIALOG_TITLE,
             self._correction_notes_text,
             self._proofreading_prompts,
@@ -800,9 +796,9 @@ class ConfigPanel(QScrollArea):
                 str(settings.get("correction_output", DEFAULTS["correction_output"])),
             ),
         )
-        if dlg.exec() == QDialog.DialogCode.Accepted:
-            self.set_correction_notes(dlg.notes())
-            self.update_settings(dlg.explanation_values())
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            self.set_correction_notes(dialog.notes())
+            self.update_settings(dialog.explanation_values())
             self.instructions_changed.emit()
 
     def _evaluation_fixed_text(self) -> str:
@@ -815,15 +811,15 @@ class ConfigPanel(QScrollArea):
         return txt.formatted_text_note(str(service.evaluation_fixed_instructions("markdown")))
 
     def _on_configure_evaluation_prompt(self) -> None:
-        dlg = _PromptDialog(
+        dialog = _PromptDialog(
             txt.EVALUATION_PROMPT_DIALOG_TITLE,
             self._evaluation_prompt_text,
             self,
             builtin_text=str(DEFAULTS["evaluate_prompt"]),
             fixed_text=self._evaluation_fixed_text(),
         )
-        if dlg.exec() == QDialog.DialogCode.Accepted:
-            self._evaluation_prompt_text = dlg.prompt()
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            self._evaluation_prompt_text = dialog.prompt()
             self.instructions_changed.emit()
 
     # ── language change ───────────────────────────────────────────────────────────
@@ -1509,9 +1505,9 @@ class ConfigPanel(QScrollArea):
             lambda provider: str(service.get_provider_info(provider).get("display_name", provider)),
             language=self._language.currentText().strip(),
         )
-        dlg = DependencyGuardDialog(title, issues, fix.actions, self)
-        dlg.action_chosen.connect(self._open_fix)
-        dlg.exec()
+        dialog = DependencyGuardDialog(title, issues, fix.actions, self)
+        dialog.action_chosen.connect(self._open_fix)
+        dialog.exec()
 
     def _open_fix(self, action: FixAction) -> None:
         """Open the Settings place a fix button names."""

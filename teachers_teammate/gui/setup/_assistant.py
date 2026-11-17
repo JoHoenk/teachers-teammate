@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, TypeVar
 
 from PySide6.QtCore import Signal
 from PySide6.QtGui import QShowEvent
-from PySide6.QtWidgets import QMessageBox, QWidget, QWizard
+from PySide6.QtWidgets import QWidget, QWizard
 
 from ...application.setup_plan import (
     DownloadKind,
@@ -22,6 +22,8 @@ from ...application.setup_plan import (
     SetupAnswers,
     SetupPlan,
 )
+from ...texts import dialogs as dlg
+from .. import _dialogs
 from .._install_round import InstallRound
 from ..settings._credentials import ApiKeyDrafts, discard_key_drafts, store_key_drafts
 from ._context import SetupContext, SetupResult
@@ -41,11 +43,6 @@ if TYPE_CHECKING:
 
 TITLE = "Set up Teacher's Teammate"
 SET_UP = "Set up"
-CANNOT_CLOSE_TITLE = "Please wait"
-CLOSE_BLOCKED = (
-    "An installation is still running. Please wait until it has finished — the new package "
-    "must be set up before the app can use it."
-)
 
 #: The page class a caller asks for; :meth:`SetupAssistant._page` returns that type.
 _PageT = TypeVar("_PageT", bound=SetupPage)
@@ -176,7 +173,7 @@ class SetupAssistant(QWizard):
     def done(self, result: int) -> None:
         """Refuse while an install runs; otherwise stop the pages and put unused keys back."""
         if self._round.busy():
-            QMessageBox.information(self, CANNOT_CLOSE_TITLE, CLOSE_BLOCKED)
+            _dialogs.notify(self, dlg.installation_running())
             return
         for page in self._pages.values():
             page.shutdown()

@@ -28,8 +28,9 @@ teachers_teammate/_build/
 # Fetched by tools/build/fetch_models.py (the reader and the page models), bundled as data
 teachers_teammate/_models/
 
-# IDE
-.vscode/
+# IDE (the shared .vscode/settings.json is tracked; see CONTRIBUTING.md)
+.vscode/*
+!.vscode/settings.json
 .idea/
 
 # Type checking

@@ -76,7 +76,7 @@ WELCOME_TEXT = (
     "then download in the background (a few gigabytes)."
 )
 WELCOME_POINTS = (
-    "• Pages are always read on this computer, or on your school's own server — never online.\n"
+    "• Pages are always read on this computer — never online.\n"
     "• You decide whether proofreading may use an online service."
 )
 WELCOME_FOOTNOTE = (

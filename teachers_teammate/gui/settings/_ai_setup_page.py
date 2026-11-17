@@ -50,8 +50,8 @@ DESCRIPTION = (
 )
 SERVER_GROUP = "Local AI server (Ollama)"
 SERVER_NOTE = (
-    "Usually runs on this computer. If your school runs Ollama on its own server, enter that "
-    "server's address."
+    "Usually runs on this computer. Only change the address if Ollama runs on another "
+    "computer you use."
 )
 SERVER_URL_LABEL = "Server address:"
 FIND_SERVER = "Find…"
@@ -62,7 +62,7 @@ SERVER_URL_TOOLTIP = (
 )
 DOWNLOAD_MODEL = "Download a model…"
 DOWNLOAD_MODEL_TOOLTIP = "Opens Add-ons, where AI models for this computer are downloaded."
-PERFORMANCE_GROUP = "How powerful this computer is"
+PERFORMANCE_GROUP = "Power and speed of this computer"
 DETECT_GPU = "Detect GPU"
 DETECT_GPU_TOOLTIP = (
     "Check whether a graphics card is available —\n"
@@ -99,13 +99,13 @@ class AiSetupPage(SettingsPageBase):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(12)
-        layout.addWidget(
-            self._build_performance_group(
-                str(settings.get("hardware_profile", DEFAULTS["hardware_profile"]))
-            )
+        computer = self._build_performance_group(
+            str(settings.get("hardware_profile", DEFAULTS["hardware_profile"]))
         )
+        # The speed test is part of the same box: both are facts about this computer.
+        self._performance_form.addRow(self._build_speed_block(computer))
+        layout.addWidget(computer)
         layout.addWidget(self._build_server_group())
-        layout.addWidget(self._build_speed_group())
         layout.addStretch(1)
 
     def focus(self, focus: str, preselect: Sequence[str] = ()) -> None:
@@ -157,11 +157,17 @@ class AiSetupPage(SettingsPageBase):
         form.addRow("", row)
         return group
 
-    def _build_speed_group(self) -> QGroupBox:
-        """Build the speed test: it measures the models chosen on *AI models* on this computer."""
-        group = QGroupBox(txt.SPEED_HEADING)
+    def _build_speed_block(self, group: QGroupBox) -> QWidget:
+        """Build the speed test: it measures the models chosen on *AI models* on this computer.
+
+        It sits in the same box as the power of the computer: both are facts about it.
+        """
         self._speed_group = group
-        layout = QVBoxLayout(group)
+        block = QWidget()
+        layout = QVBoxLayout(block)
+        layout.setContentsMargins(0, 8, 0, 0)
+        heading = QLabel(f"<b>{txt.SPEED_HEADING}</b>")
+        layout.addWidget(heading)
         top = QHBoxLayout()
         note = QLabel(txt.SPEED_NOTE)
         note.setWordWrap(True)
@@ -183,7 +189,7 @@ class AiSetupPage(SettingsPageBase):
         self._speed_panel.measured.connect(self.speed_measured.emit)
         layout.addWidget(self._speed_panel)
         self._speed_panel.refresh()
-        return group
+        return block
 
     def set_speed_settings_provider(self, provider: Callable[[], Mapping[str, Any]]) -> None:
         """Take the settings the test measures from *provider* (the window hands the models
@@ -230,6 +236,7 @@ class AiSetupPage(SettingsPageBase):
         gdr.addWidget(self._gpu_status_lbl, stretch=1)
         form.addRow("GPU:", gpu_detect_row)
 
+        self._performance_form = form
         return group
 
     # ── settings ──────────────────────────────────────────────────────────────

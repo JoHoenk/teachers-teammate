@@ -548,6 +548,14 @@ Settings, downloaded models and add-ons are kept per Windows account, in
 | `/ALLOWDOWNGRADE` | silent: allow installing an older version |
 | `/D=<folder>` | install folder of a fresh install (NSIS, must be the last argument, not quoted); an update always stays in the folder of the copy it updates. The relaunch for administrator rights passes it on |
 
+Updating an all-users copy from an installer that is not elevated shows the **Welcome page first**:
+it names the installed version, whether the copy is for all users or for the current user, its
+folder, and the version it will be replaced with. Administrator rights are asked for when the teacher
+clicks **Next** (`WelcomePageLeave` starts the elevated copy with `/SCOPE=all /ELEVATED`); that copy
+skips the pages, because they were shown, and installs at once. A silent run still exits with
+code 14 instead. `tools/packaging/windows.nsi` can only be compiled and run on Windows, where the
+`install-windows` job tests the silent paths; the Welcome page text is checked by hand.
+
 An update never runs the old uninstaller: it removes the old program files itself and leaves
 every registry value and every piece of user data alone. A folder that already holds other
 files is refused rather than emptied. When a computer has a copy in both scopes (possible only
@@ -559,7 +567,7 @@ for one to be removed in Windows Settings; a silent run needs `/SCOPE=` to pick 
 |-----------|---------|
 | 0 | done |
 | 1 / 2 | cancelled / aborted (NSIS defaults) |
-| 10 | Teacher's Teammate is still open |
+| 10 | Teacher's Teammate is still open (a silent run waits up to 10 s for the file first) |
 | 11 | an older version was refused |
 | 12 | the folder holds other files (silent runs; the folder page says so otherwise) |
 | 13 | would create a second copy in the other scope, or two copies exist and `/SCOPE=` is missing |

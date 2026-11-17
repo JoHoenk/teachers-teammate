@@ -11,6 +11,7 @@ from datetime import date
 import os
 import threading
 
+from teachers_teammate.infrastructure.spacy_models import spacy_model_for
 from teachers_teammate.application.data_flow import llm_location
 from teachers_teammate.application.service import OllamaStatus
 from teachers_teammate.application.setup_plan import (
@@ -38,6 +39,10 @@ class DummyAppService(RecommendationServiceStub):
 
     def list_providers(self) -> list[str]:
         return ["ollama", "openai"]
+
+    def spacy_model_for_language(self, language: str) -> str:
+        """Answer with the real table: the model of a language, else the multilingual one."""
+        return spacy_model_for(language)
 
     def context_choice(self, settings: Mapping[str, object], card_gb: float | None):
         """Answer with the real rule: the page must not promise a window the run does not use."""

@@ -46,6 +46,7 @@ from PySide6.QtWidgets import (
 )
 import qdarkstyle
 
+from .. import __version__ as _APP_VERSION
 from ..application.sent_text import SentTexts
 from ..application.service import (
     ADDON_PRIVACY,
@@ -72,6 +73,8 @@ from ..domain.ollama_discovery import DiscoveredServer, DiscoveryScope, ServerKi
 from ..domain.performance_estimate import TimeRange
 from ..domain.run_summary import RunSummary
 from ..domain.stages import PROGRESS_STAGE_OCR, PROGRESS_STAGE_PREPROCESSING
+from ..infrastructure.diagnostics import phase as diagnostics_phase
+from ..infrastructure.diagnostics import start_if_requested as start_diagnostics_if_requested
 from ..infrastructure.ollama_install import OLLAMA_DOWNLOAD_URL
 from ..infrastructure.reporting import BATTERY_WARNING, KeepAwakeState
 from ..infrastructure.system_locale import system_language
@@ -127,6 +130,7 @@ from .settings import (
     last_page,
 )
 from .settings._page import FOCUS_DETECTION
+from .settings._window import SUB_PAGES
 
 if TYPE_CHECKING:
     from .benchmark._benchmark_window import BenchmarkWindow
@@ -681,7 +685,7 @@ class MainWindow(QMainWindow):
         file_menu.addAction(quit_act)
 
     def _build_settings_menu(self, bar: Any) -> None:
-        """Settings: one entry per page of the Settings window, and "All settings…"."""
+        """Settings: one entry per main page of the Settings window, and "All settings…"."""
         settings_menu = bar.addMenu("Settings")
         assert settings_menu is not None
         tooltips = {
@@ -705,6 +709,8 @@ class MainWindow(QMainWindow):
             SettingsPage.ADDONS: "Download AI models and install optional parts.",
         }
         for page in SettingsPage:
+            if page in SUB_PAGES:
+                continue  # reached from AI models and in the window's sidebar, not from here
             action = QAction(f"{PAGE_TITLES[page]}\u2026", self)
             action.setToolTip(tooltips[page])
             action.triggered.connect(lambda _checked=False, p=page: self.open_settings(p))
@@ -3087,9 +3093,15 @@ def main_gui(
                         so it is already visible during startup.  When provided the internal
                         splash-creation logic is skipped and the caller's splash is reused.
     """
+    # Opt-in (--diagnose): where the start and any freeze of the window spend their time.
+    diagnostics = start_diagnostics_if_requested(_APP_VERSION)
+    if diagnostics is not None:
+        diagnostics.phase("main_gui entered (imports and the early splash are done)")
+        diagnostics.start_watching()
     # Idempotent: run_gui.py and __main__.py did it already; a wheel install's entry point
     # did not, and a language model downloaded in a session would be lost after a restart.
     ProcessingApplicationService.inject_addon_packages_dir()
+    diagnostics_phase("add-on packages folder on sys.path")
     # Start the slow own-host-name lookup before any widget asks where a step runs.
     ProcessingApplicationService.warm_up_locality_checks()
     # Suppress Qt's D-Bus tray warning when org.kde.StatusNotifierWatcher is absent.
@@ -3102,6 +3114,12 @@ def main_gui(
     # _app_icon is passed as a factory: it builds a QPixmap, which must not run
     # before the QApplication exists.
     app = create_app(icon_factory=_app_icon, apply_theme=False)
+    diagnostics_phase("QApplication created")
+    if diagnostics is not None:
+        # The GUI thread's heartbeat: the watching thread reports when it stays silent.
+        heartbeat = QTimer(app)
+        heartbeat.timeout.connect(diagnostics.beat)
+        heartbeat.start(50)
 
     # ── Splash screen ──────────────────────────────────────────────────────
     # Reuse an early splash that was shown before the heavy imports when
@@ -3127,11 +3145,15 @@ def main_gui(
 
     assert isinstance(app, QApplication)
     app.setStyleSheet(qdarkstyle.load_stylesheet(qt_api="pyside6"))
+    diagnostics_phase("theme applied")
 
     factory = window_factory or build_main_window
     try:
         window = factory()
+        diagnostics_phase("main window built")
         window.show()
+        diagnostics_phase("main window shown")
+        QTimer.singleShot(0, lambda: diagnostics_phase("first turn of the event loop"))
     except BaseException:
         # Never leave the splash up behind an error dialog or a failed start.
         if _splash is not None:

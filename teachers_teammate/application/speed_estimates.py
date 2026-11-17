@@ -63,6 +63,7 @@ from ..infrastructure.ollama_utils import PROOFREADING_NUM_CTX, ServerFacts
 from ..infrastructure.performance_probe import (
     PerformanceProbe,
     ProbeResult,
+    ProgressFn,
     SpeedTestRequest,
 )
 from ..infrastructure.proofreading.corrector import exchange_cost
@@ -371,6 +372,7 @@ class SpeedEstimateService:
         *,
         hardware: HardwareDetection | None = None,
         cancel_event: threading.Event | None = None,
+        on_progress: ProgressFn | None = None,
     ) -> ProbeResult:
         """Measure the models *choices* names and store the result.
 
@@ -389,6 +391,7 @@ class SpeedEstimateService:
             cancel_event=cancel_event,
             gpu_found=hardware is not None and hardware.gpu_name is not None,
             on_battery=_on_battery(),
+            on_progress=on_progress,
         )
         result = probe.run(choices.request())
         if result.error:
@@ -492,7 +495,9 @@ class SpeedEstimateService:
                     sample_count=len(samples),
                 )
             )
-            run_samples.extend(samples)
+            if step is SpeedStep.REVIEW:
+                # Only the review step says whether the writing models evict each other.
+                run_samples.extend(samples)
             if step is SpeedStep.READING:
                 pages = max(pages, len(samples))
             else:
@@ -501,13 +506,18 @@ class SpeedEstimateService:
                 measured_at = max(measured_at, *(sample.at for sample in samples))
             # The load seconds belong to the speed, wherever it came from: a run whose models
             # evict each other pays them per file even when nothing was ever tested here.
-            if speed.load_s is not None and speed.load_s not in load_s:
+            # The reading model's load is left out: it is another model than the writing ones.
+            if (
+                step is not SpeedStep.READING
+                and speed.load_s is not None
+                and speed.load_s not in load_s
+            ):
                 load_s.append(speed.load_s)
             if stored is None:
                 continue
             measured_at = max(measured_at, stored.record.measured_at)
             shared = shared or stored.record.shared
-            swaps = swaps or stored.record.swaps
+            swaps = swaps or (step is not SpeedStep.READING and stored.record.swaps)
             # A sample carries no digest, so it cannot go out of date; only the test can.
             out_of_date = out_of_date or (
                 not from_runs and facts is not None and not stored.current

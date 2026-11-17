@@ -119,7 +119,7 @@ def service_groups(
 ) -> list[list[ModelItem]]:
     """Return every AI service, grouped by where it runs, each labelled with what is missing.
 
-    Order: services on this computer or the school's own server, then online services in the
+    Order: services on this computer (or the one Ollama computer you set), then online services in the
     EU, then every other online service ("outside the EU" also for a service that does not say
     where it processes data: a school can only rely on what is declared).  Inside a group the
     services are sorted by name.  A service that needs a package or a key says so after its

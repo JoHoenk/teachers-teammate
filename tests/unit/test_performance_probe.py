@@ -458,26 +458,59 @@ def test_a_server_holding_only_the_tested_models_is_not_shared() -> None:
     assert result.shared is False
 
 
-def test_evicting_the_reading_model_marks_the_result_swapping() -> None:
+def test_evicting_the_proofreading_model_marks_the_result_swapping() -> None:
     """
-    Given  a card too small to hold both models
-    When   the probe runs the reading step and then the writing step
+    Given  a card too small to hold both writing models
+    When   the probe runs the proofreading step and then the review step
     Then   the result is marked swapping, because every file pays both loads
     """
-    client = _FakeClient(keep_loaded=False)
+    client = _FakeClient(installed=("gemma4:e4b", "glm-ocr:q8_0", "qwen3:8b"), keep_loaded=False)
 
-    result = _probe(client).run(_request())
+    result = _probe(client).run(_request(review_model="qwen3:8b"))
 
     assert result.swaps is True
 
 
-def test_a_card_that_holds_both_models_is_not_swapping() -> None:
+def test_the_probe_reports_each_step_as_it_starts() -> None:
     """
-    Given  a card large enough to hold both models
+    Given  a request with a reading, a proofreading and a review model
+    When   the probe runs with a progress callback
+    Then   the callback hears of the three steps in order, with their models and numbers
+    """
+    heard: list[tuple] = []
+    client = _FakeClient(installed=("gemma4:e4b", "glm-ocr:q8_0", "qwen3:8b"), keep_loaded=True)
+
+    _probe(client, on_progress=lambda *args: heard.append(args)).run(
+        _request(review_model="qwen3:8b")
+    )
+
+    assert heard == [
+        (SpeedStep.READING, "glm-ocr:q8_0", 1, 3),
+        (SpeedStep.PROOFREADING, "gemma4:e4b", 2, 3),
+        (SpeedStep.REVIEW, "qwen3:8b", 3, 3),
+    ]
+
+
+def test_a_card_that_holds_both_writing_models_is_not_swapping() -> None:
+    """
+    Given  a card large enough to hold the proofreading and the review model
     When   the probe runs both steps
     Then   the result is not marked swapping
     """
-    client = _FakeClient(keep_loaded=True)
+    client = _FakeClient(installed=("gemma4:e4b", "glm-ocr:q8_0", "qwen3:8b"), keep_loaded=True)
+
+    result = _probe(client).run(_request(review_model="qwen3:8b"))
+
+    assert result.swaps is False
+
+
+def test_the_reading_model_leaving_memory_is_not_swapping() -> None:
+    """
+    Given  a card that holds one model at a time, and no separate review model
+    When   the probe runs the reading step and then the proofreading step
+    Then   the result is not marked swapping: reading is always another model
+    """
+    client = _FakeClient(keep_loaded=False)
 
     result = _probe(client).run(_request())
 

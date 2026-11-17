@@ -41,6 +41,7 @@ from ...application.correction_options import review_has_own_model
 from ...config import CONTEXT_SETTINGS, DEFAULTS, OcrConfig
 from .. import _user_text as txt
 from .._background import LatestTask
+from .._model_guidance import SPACY_PREFIX
 from .._ocr_config_selector import OcrModelPicker
 from . import _page
 from ._ai_service_section import CONTENT_REVIEW, PROOFREADING, AiServiceSection
@@ -55,7 +56,7 @@ DESCRIPTION = (
     "You set this once."
 )
 READING_GROUP = "Reading handwriting"
-READING_NOTE = "Always on this computer (or your school's own server): pages never go online."
+READING_NOTE = "Always on this computer: pages never go online."
 PROOFREADING_GROUP = "Proofreading and content review"
 PROOFREADING_NOTE = "On this computer, or at an online service you choose."
 OVERRIDE_LABEL = "Use a different model for content review"
@@ -571,7 +572,14 @@ class AiModelsPage(SettingsPageBase):
     def _on_privacy_button(self) -> None:
         state = self._privacy_state
         if state is PrivacyLineState.NEEDS_DETECTION:
-            self._navigate(SettingsPage.ADDONS, _page.FOCUS_NAME_DETECTION)
+            # The model of the document language is ticked there, as the main window's button does.
+            language = self._context.language
+            model = self._app_service.spacy_model_for_language(language) if language else ""
+            self._navigate(
+                SettingsPage.ADDONS,
+                _page.FOCUS_NAME_DETECTION,
+                (f"{SPACY_PREFIX}{model}",) if model else (),
+            )
             return
         if state is PrivacyLineState.WILL_TURN_ON:
             self._turn_on, self._kept_off = False, True

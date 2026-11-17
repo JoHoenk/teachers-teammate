@@ -136,7 +136,7 @@ The steps run in this order; each acts only where the page needs it:
 | `deskew` | the writing is tilted by 0.3° to 10° | straightens it; a page tilted more than 10° is left alone |
 | `grayscale` | the engine is Ollama | Ollama gets a gray page; the built-in reader gets colour |
 
-There is no denoising and no black-and-white conversion. A photo is recognised by camera tags in the file, a page-like region with the wrong shape, or uneven light. Enable `--debug` (or the *Keep processed images for inspection* toggle) to save a snapshot after every step that acted.
+There is no denoising and no black-and-white conversion. A photo is recognised by camera tags in the file, a page-like region with the wrong shape, or uneven light. Enable `--debug` to save a snapshot after every step that acted.
 
 In the preview and under each result, the app says in words what was done: "Prepared: page turned, shadows evened out, tilt corrected", or "Prepared: nothing needed".
 
@@ -423,3 +423,7 @@ The run history is **append-only** and bounded two ways so it cannot grow withou
 
 - **Automatic cap** — only the most recent runs per document are kept (the newest 20 by default); older ones are evicted automatically.
 - **Manual deletion** — **Delete** removes the selected run; **Clear all runs for this document** empties the history for the current document.
+
+## If the app starts slowly or stops answering
+
+Start it once with the switch `--diagnose` (Windows: copy the shortcut, add ` --diagnose` after the target; Linux and macOS: add it to the command; or set `TEACHERS_TEAMMATE_DIAGNOSE=1`). Do what was slow, then close the app and send the file `diagnostics.log` from the folder `%LOCALAPPDATA%\teachers_teammate\data` (Windows) to the developers. It lists how long each part of the start took and, for every moment the window did not answer, which part of the program it was busy with. It holds no documents, file names or settings. Without the switch nothing is written.

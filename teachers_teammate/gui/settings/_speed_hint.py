@@ -19,8 +19,6 @@ from ...domain.model_catalog import HardwareDetection
 from .. import _user_text as txt
 from .._hardware_profile_selector import HardwareProfileSelector
 
-_HINT_STYLE = "color: #888; font-size: 11px;"
-
 
 class _SpeedService(Protocol):
     """What the hint asks the application service."""
@@ -58,7 +56,6 @@ class SpeedHint(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         self._label = QLabel("")
         self._label.setWordWrap(True)
-        self._label.setStyleSheet(_HINT_STYLE)
         layout.addWidget(self._label, stretch=1)
         self._button = QPushButton(txt.SPEED_HINT_MEASURE)
         self._button.setFlat(True)
@@ -81,6 +78,6 @@ class SpeedHint(QWidget):
         self._label.setText(
             txt.speed_class_set(CLASS_SET_FILES, summary.class_set.low_s, summary.class_set.high_s)
             if summary.class_set is not None
-            else txt.SPEED_NEVER_MEASURED
+            else txt.SPEED_HINT_NEVER
         )
         self._button.setText(txt.SPEED_HINT_DETAILS if measured else txt.SPEED_HINT_MEASURE)

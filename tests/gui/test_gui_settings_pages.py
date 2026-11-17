@@ -174,7 +174,6 @@ def test_restore_defaults_resets_only_the_pages_own_keys(qtbot) -> None:
     changed = {
         "preprocess_method": "none",
         "pdf_render_dpi": 600,
-        "debug": True,
         "correction_model": "my-writer:7b",
     }
     scan.load(changed)
@@ -185,7 +184,6 @@ def test_restore_defaults_resets_only_the_pages_own_keys(qtbot) -> None:
     values = scan.values()
     assert values["preprocess_method"] == DEFAULTS["preprocess_method"]
     assert values["pdf_render_dpi"] == DEFAULTS["pdf_render_dpi"]
-    assert values["debug"] == DEFAULTS["debug"]
     assert models.values()["correction_model"] == "my-writer:7b"
 
 
@@ -495,13 +493,15 @@ def test_scan_quality_returns_its_keys_with_the_right_types(scan_page) -> None:
     """
     Given  the Scan quality page
     When   values() is called
-    Then   it returns the preparation keys including debug, none of the old switch keys, and
+    Then   it returns the preparation keys, no debug switch, none of the old switch keys, and
            nothing of the AI models page
     """
     values = scan_page.values()
 
-    for key in ("preprocess_method", "pdf_render_dpi", "pdf_text_layer", "debug"):
+    for key in ("preprocess_method", "pdf_render_dpi", "pdf_text_layer"):
         assert key in values
+    assert "debug" not in values
+    assert "debug" not in scan_page.owned_keys()
     assert isinstance(values["pdf_render_dpi"], int)
     for old in ("dewarp", "deskew", "border_crop", "denoise", "gamma"):
         assert f"preprocess_{old}" not in values
@@ -526,13 +526,12 @@ def test_scan_quality_round_trips_saved_values(scan_page) -> None:
     """
     Given  saved preparation settings
     When   they are loaded and read back
-    Then   the page returns them unchanged, and opens "Expert settings" for a debug choice
+    Then   the page returns them unchanged, and opens "Expert settings" for a PDF choice
     """
     saved = {
         "preprocess_method": "none",
         "pdf_render_dpi": 144,
         "pdf_text_layer": "never",
-        "debug": True,
     }
 
     scan_page.load(saved)
@@ -730,8 +729,8 @@ def test_this_computer_shows_the_computer_first_then_the_server(computer_page) -
     """
     Given  the This computer page
     When   it is created
-    Then   its groups read top to bottom: how powerful this computer is, the local AI server,
-           the speed test -- and no API keys, those are on Online services
+    Then   its groups read top to bottom: the power and the speed of this computer in one box,
+           then the local AI server -- and no API keys, those are on Online services
     """
     from teachers_teammate.gui.settings import _ai_setup_page  # noqa: PLC0415
 
@@ -742,7 +741,6 @@ def test_this_computer_shows_the_computer_first_then_the_server(computer_page) -
     assert groups == [
         _ai_setup_page.PERFORMANCE_GROUP,
         _ai_setup_page.SERVER_GROUP,
-        txt.SPEED_HEADING,
     ]
     assert not hasattr(computer_page, "_credentials")
 
@@ -800,8 +798,8 @@ def test_this_computer_tests_the_models_the_window_hands_it(computer_page) -> No
 def test_ai_models_has_no_test_button_but_a_line_that_opens_the_test(qtbot) -> None:
     """
     Given  the AI models page with a model on this computer
-    When   the "Measure…" button of its speed line is clicked
-    Then   the page has no Test speed button of its own, says nothing is measured yet, and
+    When   the "Test speed…" button of its speed line is clicked
+    Then   the page has no test of its own, says the class-set time is not known yet, and
            asks the window to open This computer at the speed test
     """
     context = settings_context(DummyAppService())
@@ -814,7 +812,7 @@ def test_ai_models_has_no_test_button_but_a_line_that_opens_the_test(qtbot) -> N
 
     assert not hasattr(page, "_speed_panel")
     assert not page._speed_hint.isHidden()
-    assert page._speed_hint._label.text() == txt.SPEED_NEVER_MEASURED
+    assert page._speed_hint._label.text() == txt.SPEED_HINT_NEVER
     page._speed_hint._button.click()
 
     assert asked == [(SettingsPage.AI_SETUP, FOCUS_SPEED)]
@@ -3369,8 +3367,8 @@ def test_without_name_detection_the_line_offers_the_install(qtbot, monkeypatch) 
     """
     Given  an online service chosen while name detection is missing for the language
     When   "Install…" is pressed, and the detection is installed meanwhile
-    Then   the page opens Add-ons on Name detection; after the install the planned turn-on
-           shows
+    Then   the page opens Add-ons on Name detection with the model of the language ticked;
+           after the install the planned turn-on shows
     """
     service = ProviderAppService()
     monkeypatch.setenv("MISTRAL_API_KEY", "k-test")
@@ -3388,12 +3386,41 @@ def test_without_name_detection_the_line_offers_the_install(qtbot, monkeypatch) 
     page.navigate_requested.connect(lambda *args: requests.append(args))
 
     page._privacy_button.click()
-    assert requests == [(SettingsPage.ADDONS, FOCUS_NAME_DETECTION, [])]
+    assert requests == [(SettingsPage.ADDONS, FOCUS_NAME_DETECTION, ["spacy:en_core_web_sm"])]
 
     service.anonymizer_ready = True
     page.on_packages_changed()
     qtbot.waitUntil(lambda: page._privacy_state is PrivacyLineState.WILL_TURN_ON, timeout=5000)
     assert page.turn_on_anonymization()
+
+
+@pytest.mark.gui
+def test_the_name_detection_line_preselects_the_model_of_the_document_language(
+    qtbot, monkeypatch
+) -> None:
+    """
+    Given  an online service chosen while name detection is missing for German
+    When   "Install…" is pressed
+    Then   Add-ons opens on Name detection with the German model ticked, as the main window's
+           button does
+    """
+    service = ProviderAppService()
+    monkeypatch.setenv("MISTRAL_API_KEY", "k-test")
+    service.anonymizer_ready = False
+    page = _models_page(
+        qtbot,
+        service,
+        {"correction_provider": "ollama", "anonymization_enabled": False},
+        privacy_available=False,
+        language="German",
+    )
+    select_provider(page._shared, "mistral_eu")
+    requests: list[tuple] = []
+    page.navigate_requested.connect(lambda *args: requests.append(args))
+
+    page._privacy_button.click()
+
+    assert requests == [(SettingsPage.ADDONS, FOCUS_NAME_DETECTION, ["spacy:de_core_news_sm"])]
 
 
 @pytest.mark.gui

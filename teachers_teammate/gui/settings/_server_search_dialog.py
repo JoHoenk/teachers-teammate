@@ -66,7 +66,7 @@ _KIND_NAMES = {
     ServerKind.NETWORK: "Another computer on your network",
 }
 _NETWORK_TOOLTIP = (
-    "Your documents would be sent to that computer. Only choose a server that your school runs."
+    "Your documents would be sent to that computer. Only choose a computer you trust."
 )
 
 

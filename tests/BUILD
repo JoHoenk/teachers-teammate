@@ -905,6 +905,15 @@ py_test(
 )
 
 py_test(
+    name = "test_diagnostics",
+    size = "small",
+    srcs = _COMMON_SRCS + ["unit/test_diagnostics.py"],
+    args = ["unit/test_diagnostics.py"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS,
+)
+
+py_test(
     name = "test_speed_estimates",
     size = "small",
     srcs = _COMMON_SRCS + ["unit/test_speed_estimates.py"],
@@ -2397,6 +2406,7 @@ test_suite(
         ":test_correction_prompts_steps",
         ":test_correction_review",
         ":test_data_location",
+        ":test_diagnostics",
         ":test_docx_builder",
         ":test_domain_policy",
         ":test_edits",

@@ -206,9 +206,10 @@ class LocalDataFlowStub:
         *,
         hardware: HardwareDetection | None = None,
         cancel_event: threading.Event | None = None,
+        on_progress=None,
     ) -> ProbeResult:
         """Refuse: a stub has no server to measure."""
-        _ = choices, hardware, cancel_event
+        _ = choices, hardware, cancel_event, on_progress
         raise RuntimeError("a stub has no server to measure")
 
 

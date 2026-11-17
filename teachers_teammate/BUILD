@@ -64,6 +64,7 @@ _OCR_SRCS = [
     "infrastructure/_llm_invoke.py",
     "infrastructure/addon_licenses.py",
     "infrastructure/addon_manager.py",
+    "infrastructure/diagnostics.py",
     "infrastructure/benchmark/__init__.py",
     "infrastructure/benchmark/run_store.py",
     "infrastructure/benchmark/runner.py",

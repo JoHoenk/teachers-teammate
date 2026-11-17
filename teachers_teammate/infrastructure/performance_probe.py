@@ -18,7 +18,7 @@ typical learner errors for the writing models.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 import logging
 from pathlib import Path
@@ -51,6 +51,9 @@ from .ollama_utils import (
 from .onnx.store import ModelStore
 
 _logger = logging.getLogger(__name__)
+
+#: ``(step, model, number of the step, number of steps)``: what the probe reports as it starts a step.
+ProgressFn = Callable[[SpeedStep, str, int, int], None]
 
 #: Seconds one measuring request may take.  A model that needs longer is reported as too slow
 #: for that step instead of holding the panel.
@@ -97,7 +100,7 @@ class ProbeResult:
     shared: bool = False
     """Another model was loaded when the test started: the times may be too long."""
     swaps: bool = False
-    """The reading model was evicted by the writing model, so every file pays both loads."""
+    """The proofreading model was evicted by the review model, so every file pays both loads."""
     gpu_found: bool = False
     """This computer has a graphics card, so a share of 0 means Ollama did not use it."""
     error: str = ""
@@ -292,6 +295,7 @@ class PerformanceProbe:
         gpu_found: bool = False,
         on_battery: bool | None = None,
         tmp_dir: Path | None = None,
+        on_progress: ProgressFn | None = None,
     ) -> None:
         """Create the probe.
 
@@ -304,12 +308,15 @@ class PerformanceProbe:
                 Ollama did not use the card.
             on_battery: Whether the computer runs on battery power, recorded with the result.
             tmp_dir: Where the test page is drawn; a temporary directory when ``None``.
+            on_progress: Called from the probe's thread before each step starts, with the step,
+                its model, its number and how many steps there are.
         """
         self._client = client
         self._cancel_event = cancel_event
         self._gpu_found = gpu_found
         self._on_battery = on_battery
         self._tmp_dir = tmp_dir
+        self._on_progress = on_progress
 
     # ── public API ─────────────────────────────────────────────────────────
 
@@ -365,21 +372,26 @@ class PerformanceProbe:
     ) -> tuple[list[StepResult], bool]:
         """Measure the reading, proofreading and review steps in that order.
 
-        Returns the results and whether the models swap: the reading model was loaded by its own
-        step and gone once the writing model was loaded.
+        Returns the results and whether the models swap: the proofreading model was loaded by
+        its own step and gone once the review model was loaded, so every file pays both loads.
+        The reading model is left out: it is always another model than the writing ones.
         """
         results: list[StepResult] = []
         swaps = False
+        has_review = bool(request.review_model and request.review_model != request.writing_model)
+        total = sum(map(bool, (request.reading_model, request.writing_model, has_review)))
         with tempfile.TemporaryDirectory(prefix="speed-test-") as tmp:
             tmp_dir = self._tmp_dir or Path(tmp)
             if request.reading_model:
+                self._announce(SpeedStep.READING, request.reading_model, 1, total)
                 results.append(
                     self._reading_step(request, tmp_dir, installed=installed, before=before)
                 )
-                reading_loaded = self._is_loaded(request.reading_model)
-            else:
-                reading_loaded = False
+            writing_loaded = False
             if request.writing_model:
+                self._announce(
+                    SpeedStep.PROOFREADING, request.writing_model, len(results) + 1, total
+                )
                 results.append(
                     self._writing_step(
                         SpeedStep.PROOFREADING,
@@ -389,9 +401,9 @@ class PerformanceProbe:
                         before=before,
                     )
                 )
-                if reading_loaded and request.reading_model != request.writing_model:
-                    swaps = not self._is_loaded(request.reading_model)
-            if request.review_model and request.review_model != request.writing_model:
+                writing_loaded = self._is_loaded(request.writing_model)
+            if has_review:
+                self._announce(SpeedStep.REVIEW, request.review_model, len(results) + 1, total)
                 results.append(
                     self._writing_step(
                         SpeedStep.REVIEW,
@@ -401,7 +413,13 @@ class PerformanceProbe:
                         before=before,
                     )
                 )
+                swaps = writing_loaded and not self._is_loaded(request.writing_model)
         return results, swaps
+
+    def _announce(self, step: SpeedStep, model: str, number: int, total: int) -> None:
+        """Tell the caller which step starts now (it has no other sign of life for a minute)."""
+        if self._on_progress is not None:
+            self._on_progress(step, model, number, total)
 
     def _reading_step(
         self,

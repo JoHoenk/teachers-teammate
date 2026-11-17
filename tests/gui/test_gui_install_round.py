@@ -43,7 +43,7 @@ class _Service(RecommendationServiceStub):
 class _Manager(QObject):
     """Stand-in for the main window's download manager."""
 
-    progress = Signal(str, int, int)
+    progress = Signal(str, float, float)
     finished = Signal(str)
     error = Signal(str)
 
@@ -108,7 +108,7 @@ class _FakeSpacyThread(QObject):
 class _FakePullThread(QObject):
     """Reports a pulled Ollama model at once."""
 
-    progress = Signal(str, int, int)
+    progress = Signal(str, float, float)
     finished_ok = Signal(str)
     finished_err = Signal(str)
 
@@ -620,6 +620,27 @@ def test_a_running_pull_can_be_followed(qtbot) -> None:
     assert seen["progress"] == [("pulling", 5, 10)]
     assert seen["done"] == ["a:1b"]
     assert seen["finished"] == [True]
+
+
+@pytest.mark.use_case("Runtime_Addon_Installation")
+def test_the_real_manager_can_be_followed_with_the_bytes_of_a_large_model(qtbot) -> None:
+    """
+    Given  the main window's own download manager (its progress signal carries floats) and a
+           model of 14 GB
+    When   the round follows a pull and the manager reports half of it
+    Then   the signals connect, and the byte counts arrive whole (a 32-bit Qt int would wrap
+           the total to a negative number and the progress bar would never move)
+    """
+    from teachers_teammate.gui._main_window import OllamaDownloadManager  # noqa: PLC0415
+
+    manager = OllamaDownloadManager()
+    round_, _service = _round(manager)
+    seen = _record(round_)
+    round_._connect_pull_manager()
+
+    manager.progress.emit("pulling", 7e9, 14e9)
+
+    assert seen["progress"] == [("pulling", 7e9, 14e9)]
 
 
 # ── failures ─────────────────────────────────────────────────────────────────

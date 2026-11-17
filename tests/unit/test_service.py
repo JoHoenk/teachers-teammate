@@ -2710,6 +2710,46 @@ def test_export_text_anonymizes_markdown_before_converting_it_to_plain_text(
 
 
 @pytest.mark.unit
+@pytest.mark.parametrize(
+    ("raw_text", "text_format", "anonymize"),
+    [
+        ("Grüße, Anna", "plain", False),
+        ("my **bold** bag", "markdown", False),
+        ("my **Anna** bag", "markdown", True),
+    ],
+)
+def test_text_for_copy_is_what_export_text_writes(
+    tmp_path: Path, raw_text: str, text_format: str, anonymize: bool
+) -> None:
+    """
+    Given  a text in a notation, with and without names to hide
+    When   text_for_copy() is asked for it and export_text() writes the same document
+    Then   the clipboard text and the file are the same string
+    """
+    anonymizer = MagicMock()
+    anonymizer.anonymize.side_effect = lambda text: (text.replace("Anna", "[PERSON_1]"), {})
+    out = tmp_path / "scan.txt"
+    svc = _make_svc()
+
+    with patch(
+        "teachers_teammate.infrastructure.anonymizer.SpacyAnonymizer", return_value=anonymizer
+    ):
+        copied = svc.text_for_copy(
+            raw_text, text_format=text_format, anonymize=anonymize, language="German"
+        )
+        svc.export_text(
+            tmp_path / "scan.png",
+            raw_text,
+            out,
+            text_format=text_format,
+            anonymize=anonymize,
+            language="German",
+        )
+
+    assert copied == out.read_text(encoding="utf-8")
+
+
+@pytest.mark.unit
 def test_anonymizer_is_never_used_by_two_threads_at_once() -> None:
     """
     Given  a shared anonymizer and several threads anonymizing through the service

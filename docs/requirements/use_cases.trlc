@@ -43,7 +43,7 @@ section "Functional Requirements" {
     }
 
     UseCase Manual_Text_Editing {
-        description = "As a user I want to edit the recognised and proofread text directly in the preview panel so that I can fix individual mistakes without reprocessing the document."
+        description = "As a user I want to edit the recognised and proofread text directly in the Check tab so that I can fix individual mistakes without reprocessing the document."
     }
 
     UseCase PII_Anonymization_Before_Correction {

@@ -114,6 +114,10 @@ class DocumentState:
     # Un-preprocessed page render kept next to ``preview_img`` so the GUI can toggle
     # between original and processed.  Empty when preprocessing changed nothing.
     original_img: str = ""
+    # Every prepared page of the document, in page order; the first entry is ``preview_img``.
+    # Empty for state written before the app kept more than one page: such a document has the
+    # one page it had.
+    page_images: list[str] = field(default_factory=list)
     # Preprocessing steps applied to produce ``preview_img``.  ``None`` means unknown
     # (state written before this field existed); ``[]`` means none were applied.
     preprocess_steps: list[str] | None = None
@@ -122,6 +126,11 @@ class DocumentState:
     def review(self) -> CorrectionReview | None:
         """Return the stored proofreading review, or ``None`` when there is none to show."""
         return CorrectionReview.from_dict(self.correction_review)
+
+    @property
+    def pages(self) -> tuple[str, ...]:
+        """Return the stored pages in page order, falling back to the one page there is."""
+        return tuple(self.page_images) or ((self.preview_img,) if self.preview_img else ())
 
 
 @dataclass(frozen=True)
@@ -152,6 +161,10 @@ class DocumentStateView:
     """How each stored result was sent, keyed by stage (``correction``, ``evaluation``).
 
     Empty for a record written before the app kept this, and for a file with no result."""
+
+    page_images: tuple[str, ...] = ()
+    """Every prepared page in page order (the first is ``preview_img``); one page when the
+    document was recognized before the app kept all of them."""
 
 
 @dataclass(frozen=True)
@@ -286,6 +299,7 @@ class StateRepository:
             correction_review=state.review,
             correction_warning=state.correction_warning,
             sent=self._sent_statuses(state),
+            page_images=state.pages,
         )
 
     @staticmethod
@@ -399,6 +413,7 @@ class StateRepository:
         preview_config_hash: str,
         original_img: str = "",
         preprocess_steps: Sequence[str] | None = None,
+        page_images: Sequence[str] = (),
     ) -> DocumentState:
         """Persist preview artifact paths without changing downstream stage data."""
         new_state = dataclasses.replace(
@@ -408,6 +423,7 @@ class StateRepository:
             preview_config_hash=preview_config_hash,
             original_img=original_img,
             preprocess_steps=None if preprocess_steps is None else list(preprocess_steps),
+            page_images=list(page_images),
         )
         self.save(input_file, new_state)
         return new_state
@@ -649,6 +665,7 @@ class StateRepository:
             preview_config_hash="",
             original_img="",
             preprocess_steps=None,
+            page_images=[],
         )
         self.save(input_file, new_state)
         return new_state
@@ -679,6 +696,7 @@ class StateRepository:
                 source_image="",
                 original_img="",
                 preprocess_steps=None,
+                page_images=[],
                 raw_text="",
                 raw_text_format="plain",
             )
@@ -738,11 +756,21 @@ class StateRepository:
             else ""
         )
         preprocess_steps = state.preprocess_steps if preview_img else None
+        # The pages only describe the preview: without it, or with one of them gone from disk,
+        # the document has the one page it had.
+        page_images = (
+            list(state.page_images)
+            if preview_img
+            and state.page_images
+            and all(Path(page).exists() for page in state.page_images)
+            else []
+        )
         if (
             preview_img != state.preview_img
             or source_image != state.source_image
             or original_img != state.original_img
             or preprocess_steps != state.preprocess_steps
+            or page_images != state.page_images
         ):
             state = dataclasses.replace(
                 state,
@@ -750,6 +778,7 @@ class StateRepository:
                 source_image=source_image,
                 original_img=original_img,
                 preprocess_steps=preprocess_steps,
+                page_images=page_images,
             )
         return state
 

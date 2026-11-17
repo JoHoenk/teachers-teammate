@@ -1756,3 +1756,143 @@ def test_pipeline_keeps_plain_reader_text_verbatim(tmp_path: Path) -> None:
     )
     assert state is not None
     assert (state.raw_text, state.raw_text_format) == (text, "plain")
+
+
+# ── every prepared page is kept ────────────────────────────────────────────
+
+
+def _run_scanned_pdf(cfg, *, pages: int = 3) -> None:
+    """Run the pipeline over a scanned PDF of *pages* pages with a stubbed reader."""
+    mock_ocr = MagicMock()
+    mock_ocr.process_image.return_value = "text"
+    with patch(
+        "teachers_teammate.infrastructure.stage_builder.PpOcrProcessor",
+        return_value=mock_ocr,
+    ):
+        assert OCRPipeline(cfg).run().exit_code == 0
+
+
+def _state_of(cfg, name: str):
+    return StateRepository(resolve_artifact_dir(cfg.output_dir) / "state").load(
+        cfg.input_dir / name
+    )
+
+
+@pytest.mark.use_case("Preview_Preprocessing")
+def test_a_scanned_pdf_keeps_every_prepared_page(tmp_path: Path, sample_multipage_pdf) -> None:
+    """
+    Given  a three-page scanned PDF
+    When   OCRPipeline.run() completes
+    Then   three page files exist, the first is the preview image, and the run's own
+           cleanup leaves them
+    """
+    pdf = sample_multipage_pdf("essay.pdf", pages=3)
+    cfg = make_config(tmp_path, ocr_engine="ppocr", correction_enabled=False, docx_enabled=False)
+    pdf.rename(cfg.input_dir / pdf.name)
+
+    _run_scanned_pdf(cfg)
+
+    state = _state_of(cfg, "essay.pdf")
+    assert state is not None
+    assert len(state.page_images) == 3
+    assert state.preview_img == state.page_images[0]
+    assert all(Path(page).exists() for page in state.page_images)
+    assert [Path(page).name for page in state.page_images] == [
+        "essay_preprocessed.png",
+        "essay_p2.png",
+        "essay_p3.png",
+    ]
+
+
+@pytest.mark.use_case("Preview_Preprocessing")
+def test_a_second_run_keeps_the_pages_of_the_first(tmp_path: Path, sample_multipage_pdf) -> None:
+    """
+    Given  a document already recognized with three pages
+    When   the pipeline runs again and takes the cached text
+    Then   the three pages are still there
+    """
+    pdf = sample_multipage_pdf("essay.pdf", pages=3)
+    cfg = make_config(tmp_path, ocr_engine="ppocr", correction_enabled=False, docx_enabled=False)
+    pdf.rename(cfg.input_dir / pdf.name)
+    _run_scanned_pdf(cfg)
+
+    second_ocr = MagicMock()
+    second_ocr.process_image.side_effect = OCRError("should not be called")
+    with patch(
+        "teachers_teammate.infrastructure.stage_builder.PpOcrProcessor",
+        return_value=second_ocr,
+    ):
+        assert OCRPipeline(cfg).run().exit_code == 0
+
+    state = _state_of(cfg, "essay.pdf")
+    assert state is not None
+    assert len(state.page_images) == 3
+    assert all(Path(page).exists() for page in state.page_images)
+
+
+@pytest.mark.use_case("Preview_Preprocessing")
+def test_a_shorter_document_drops_the_pages_it_no_longer_has(
+    tmp_path: Path, sample_multipage_pdf
+) -> None:
+    """
+    Given  a document recognized with three pages
+    When   the same name is recognized again with two pages
+    Then   the third page file is gone
+    """
+    pdf = sample_multipage_pdf("essay.pdf", pages=3)
+    cfg = make_config(tmp_path, ocr_engine="ppocr", correction_enabled=False, docx_enabled=False)
+    pdf.rename(cfg.input_dir / pdf.name)
+    _run_scanned_pdf(cfg)
+    artifact_dir = resolve_artifact_dir(cfg.output_dir)
+
+    shorter = sample_multipage_pdf("essay.pdf", pages=2)
+    shorter.replace(cfg.input_dir / shorter.name)
+    _run_scanned_pdf(cfg)
+
+    state = _state_of(cfg, "essay.pdf")
+    assert state is not None
+    assert len(state.page_images) == 2
+    assert not (artifact_dir / "essay_p3.png").exists()
+
+
+@pytest.mark.use_case("Preview_Preprocessing")
+def test_a_text_layer_pdf_and_an_image_keep_one_page(tmp_path: Path) -> None:
+    """
+    Given  a PDF read from its text layer and a single image
+    When   OCRPipeline.run() completes
+    Then   each document has exactly one page
+    """
+    from tests.conftest import write_text_pdf  # noqa: PLC0415
+
+    cfg = make_config(tmp_path, ocr_engine="ppocr", correction_enabled=False, docx_enabled=False)
+    typed = "The quick brown fox jumps over the lazy dog while the teacher grades essays."
+    write_text_pdf(cfg.input_dir / "typed.pdf", [typed, typed.upper()])
+    _place_image(cfg.input_dir, "page.png")
+
+    _run_scanned_pdf(cfg)
+
+    for name in ("typed.pdf", "page.png"):
+        state = _state_of(cfg, name)
+        assert state is not None
+        assert len(state.pages) == 1
+
+
+@pytest.mark.use_case("Preview_Preprocessing")
+def test_a_document_named_like_an_intermediate_keeps_its_pages(
+    tmp_path: Path, sample_multipage_pdf
+) -> None:
+    """
+    Given  a three-page document called 'week_page.pdf'
+    When   OCRPipeline.run() completes and cleans up its intermediates
+    Then   the stored pages are still there
+    """
+    pdf = sample_multipage_pdf("week_page.pdf", pages=3)
+    cfg = make_config(tmp_path, ocr_engine="ppocr", correction_enabled=False, docx_enabled=False)
+    pdf.rename(cfg.input_dir / pdf.name)
+
+    _run_scanned_pdf(cfg)
+
+    state = _state_of(cfg, "week_page.pdf")
+    assert state is not None
+    assert len(state.page_images) == 3
+    assert all(Path(page).exists() for page in state.page_images)

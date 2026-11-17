@@ -1014,6 +1014,31 @@ class ProcessingApplicationService:
             review=chosen.review,
         )
 
+    def text_for_copy(
+        self,
+        raw_text: str,
+        *,
+        text_format: str = "plain",
+        anonymize: bool = False,
+        language: str = "English",
+        anonymizer_config: object | None = None,
+    ) -> str:
+        """Return *raw_text* as plain text, the way a text export writes it.
+
+        One function for the clipboard and for the saved file, so a copy and an export of the
+        same document never differ.  With *anonymize* the personal data is replaced by
+        placeholders (``[PERSON_1]``, ...) on the text in its stored notation, as the pipeline
+        and the privacy preview do.
+
+        Raises:
+            ImportError: *anonymize* is set and spacy is not installed.
+            OSError: a required spacy model is not downloaded.
+        """
+        text = raw_text
+        if anonymize:
+            text, _mapping = self.anonymize_preview(text, language, anonymizer_config)
+        return TextFormatter.plain_text(text, text_format)
+
     def export_text(
         self,
         source: Path,
@@ -1048,10 +1073,13 @@ class ProcessingApplicationService:
                 f"{out_path.name} is an input document and would be overwritten; "
                 "choose another name or folder."
             )
-        text = raw_text
-        if anonymize:
-            text, _mapping = self.anonymize_preview(text, language, anonymizer_config)
-        text = TextFormatter.plain_text(text, text_format)
+        text = self.text_for_copy(
+            raw_text,
+            text_format=text_format,
+            anonymize=anonymize,
+            language=language,
+            anonymizer_config=anonymizer_config,
+        )
         out_path.parent.mkdir(parents=True, exist_ok=True)
         out_path.write_text(text, encoding="utf-8")
 

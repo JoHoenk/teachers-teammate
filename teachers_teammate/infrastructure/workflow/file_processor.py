@@ -360,6 +360,7 @@ class FileProcessor:
                     preview_source,
                     original_path=original_path,
                     preprocess_steps=prep_steps if ocr_inputs else None,
+                    pages=ocr_inputs,
                 )
             except OSError as exc:
                 raise _StageAbort(

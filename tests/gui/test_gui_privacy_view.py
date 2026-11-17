@@ -508,6 +508,10 @@ def main_window(qtbot, monkeypatch, settings) -> MainWindow:
     )
     win = MainWindow(worker_factory=_DummyWorker)
     qtbot.addWidget(win)
+    # The Check tab is disabled while no document can be opened, and these tests drive the
+    # preview panel that lives in it, so they open the tab themselves.
+    win._tabs.setTabEnabled(1, True)
+    win._tabs.setCurrentIndex(1)
     return win
 
 
@@ -682,7 +686,6 @@ def test_clicking_the_lock_note_makes_the_texts_editable(
     )
     main_window.show()
     preview = main_window._preview
-    main_window._tabs.setCurrentWidget(preview)  # where the app shows a file's texts
     preview.load(_pixmap(), RAW, "", "")  # the names are hidden by default
     _wait_for(lambda: preview._anon_ready)
     assert preview._ocr_text.isReadOnly()

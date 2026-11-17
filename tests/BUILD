@@ -1856,6 +1856,15 @@ py_test(
 )
 
 py_test(
+    name = "test_gui_check_page",
+    size = "small",
+    srcs = _COMMON_SRCS + ["gui/test_gui_check_page.py"],
+    args = ["gui/test_gui_check_page.py"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_lib"],
+)
+
+py_test(
     name = "test_gui_results_table",
     size = "small",
     srcs = _COMMON_SRCS + ["gui/test_gui_results_table.py"],
@@ -2493,6 +2502,7 @@ test_suite(
         ":test_gui_anonymizer_widget",
         ":test_gui_bootstrap",
         ":test_gui_chart_widget",
+        ":test_gui_check_page",
         ":test_gui_config_panel",
         ":test_gui_formatted_text",
         ":test_gui_general_page",

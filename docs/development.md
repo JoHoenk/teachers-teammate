@@ -1769,7 +1769,8 @@ settings switch removes `ocr.toml`, `benchmark\` and `speed\` there.
 <storage_root>/                                    # the cache
 ├── artifacts/
 │   └── <output_dir_key>/                          # key = sha256(output_dir.resolve())[:16]
-│       ├── <stem>_preprocessed.png                # preview image (one per source stem)
+│       ├── <stem>_preprocessed.png                # prepared page 1 (the preview image)
+│       ├── <stem>_p<N>.png                        # prepared pages 2..N, listed in DocumentState.page_images
 │       ├── <stem>_original.<ext>                  # page before preprocessing (only if steps changed it)
 │       └── state/<stem>_<source_key>.json         # CACHE: one DocumentState per (output_dir, path)
 <config_root>/ocr.toml                             # configuration (the pipeline config)
@@ -2039,6 +2040,60 @@ Tests: `tests/gui/test_gui_main_window.py` (menus, readiness, tools),
 `tests/gui/test_gui_readiness.py` (fix table, `readiness()`, the line, the dialog),
 `tests/gui/test_gui_config_panel.py` (steps, review rule, uses lines).
 
+### The window tabs and the Check page
+
+`MainWindow._tabs` is the window's `QTabWidget`, built by `_build_tabs()`: index 0 is
+*Documents* (`_main_splitter`, the workflow panel next to the results list and the log), index 1
+is *Check* (`gui/check/_page.py:CheckPage`, which owns the `PreviewPanel` as `_check.preview`).
+The names `_tabs` and `_preview` are kept from the old right-half tab widget, so the preview's
+tests and every caller of `_preview` stay as they were.  `_check` is disabled while no document
+has a result (`ResultsTable.checkable_source_ids()`), and the tab labels carry the state:
+*Documents · 12 of 28* and *Check — Anna_Mueller.pdf*.
+
+**Only the teacher or a run start switches tabs.**  `_load_check()` fills the page and never
+calls `setCurrentIndex`; `_open_check()` does.  `_on_file_done()` reloads the open document and
+leaves the tab alone, `_on_run_finished()` switches nothing, and `_start_worker()` goes to
+*Documents* only because the run's progress lives there.  The reason: a batch of 28 essays must
+not pull the teacher out of the essay they are reading when the next file finishes.  A run that redoes the open document
+empties its panel but keeps it the open one (`_open_document_awaits_result`): its result reloads
+it without a tab switch, and a run that ends before reaching it (stopped, failed) reloads it in
+`_on_run_finished()`.
+
+**Edits go to the open document, not to the selected row.**  `_open_source_for_edit()` reads
+`_current_preview_source_id`; the selection is how rows are chosen for a run, and the two must
+not drift apart.  Opening a document from the queue (`check_requested`) selects its row, so the
+queue shows where the teacher is; clicking the *Check* tab does not (below).
+
+**Clicking *Check* with nothing open** opens the current queue row when it has a result, else
+the first row that has one (`_check_target()`), again without touching the selection.  A rebuilt
+queue that no longer holds the open document closes *Check* and shows *Documents*
+(`_sync_check_with_queue()`).
+
+**Keys.**  Esc leaves *Check* unless the focus is in a text field, a line edit, an editable
+combo box or an open popup (`_escape_is_for_the_focus()` in `gui/check/_page.py`); Ctrl+1 and
+Ctrl+2 are `QShortcut`s on the window, so they work from anywhere (Ctrl+2 only while *Check* is
+enabled).  The arrows in the header step through `checkable_source_ids()` and select the row
+they land on.
+
+**Copy.**  `Copy ▾` takes the text from the table row, not from the preview widget, through
+`ProcessingApplicationService.text_for_copy()` -- the same function *Export text* uses, so a
+copy and an export never disagree.  `flush_pending_edit()` runs first, so a half-typed edit is
+saved before it is copied.  The menu's "names hidden" entries follow
+`_refresh_privacy_availability()` (`_refresh_copy_state()`), so installing the Privacy add-on or
+changing the language updates the open document's menu at once.  The two *Save* entries go
+through the window's export path (`_on_export_requested`), not a second one.
+
+**Every prepared page is kept.**  `PreviewImageStore.persist_page_images()` writes page 1 as
+`<stem>_preprocessed.png` (the `preview_img` the preview shows) and pages 2..N as
+`<stem>_p<N>.png`, listed in `DocumentState.page_images`; `prune_page_images()` removes the ones
+a shorter document no longer has, and `cleanup_intermediate_images()` treats them as
+intermediate.  `DocumentState.load_valid()` drops the list when a file is missing, so a deleted
+cache costs a re-run, never a broken page.  The old preview still shows page 1 only.
+
+Tests: `tests/gui/test_gui_check_page.py` (the page on its own),
+`tests/gui/test_gui_main_window.py` (tabs, opening, arrows, shortcuts, copy, run start),
+`tests/unit/test_preview_image_store.py` (the page files).
+
 ### Setup Assistant
 
 `gui/setup/` is a `QWizard` that asks what only the teacher knows and then writes the settings
@@ -2246,7 +2301,7 @@ is recorded only where counting from 1 would be wrong).
 | Corrector / evaluator | the stored text; for Markdown the system prompt gains a notation hint (`domain/notation.py`): crossed-out words are context, not to be corrected; inserted words belong to the sentence |
 | Diff tab, benchmark similarity/word counts | `PlainTextRenderer` output — formatting marks never count as differences, crossed-out words are kept |
 | DOCX | Word runs (bold, italic, underline, strikethrough, super-/subscript), headings, indented lists, nested tables |
-| Preview panel | formatted rich text (`gui/_formatted_text.py`); the **Source** toggle shows the stored Markdown |
+| Check tab (preview panel) | formatted rich text (`gui/_formatted_text.py`); the **Source** toggle shows the stored Markdown |
 
 **Editing.** The formatted view is editable (Ctrl+B / I / U, Ctrl+Shift+X crossed out,
 Ctrl+Shift+= inserted above the line). Edits are converted back to Markdown

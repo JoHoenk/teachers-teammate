@@ -1242,6 +1242,200 @@ def test_load_valid_drops_original_and_steps_when_preview_missing(tmp_path: Path
     assert loaded.preprocess_steps is None
 
 
+# ── every prepared page (page_images) ─────────────────────────────────────
+
+
+def _pages(tmp_path: Path, count: int = 3) -> list[Path]:
+    """Write *count* page files and return their paths."""
+    pages = []
+    for number in range(1, count + 1):
+        page = tmp_path / ("doc_preprocessed.png" if number == 1 else f"doc_p{number}.png")
+        page.write_bytes(b"png")
+        pages.append(page)
+    return pages
+
+
+def test_record_preview_artifact_persists_every_page(tmp_path: Path) -> None:
+    """
+    Given  a repository and a fresh state
+    When   record_preview_artifact stores three pages
+    Then   they survive a save/load round trip and appear on the UI view in order
+    """
+    repo = _repo(tmp_path)
+    src = _source_file(tmp_path)
+    pages = _pages(tmp_path)
+    state = repo.create(src, compute_file_hash(src))
+
+    repo.record_preview_artifact(
+        src,
+        state,
+        preview_img=str(pages[0]),
+        source_image=str(pages[0]),
+        preview_config_hash="ph",
+        page_images=[str(page) for page in pages],
+    )
+
+    loaded = repo.load_valid(src)
+    assert loaded is not None
+    assert loaded.page_images == [str(page) for page in pages]
+    assert loaded.pages == tuple(str(page) for page in pages)
+    assert repo.to_view(src, loaded).page_images == tuple(str(page) for page in pages)
+
+
+def test_state_without_pages_has_the_one_page_it_had(tmp_path: Path) -> None:
+    """
+    Given  a state file written before page_images existed
+    When   it is loaded
+    Then   pages is the preview image alone
+    """
+    repo = _repo(tmp_path)
+    src = _source_file(tmp_path)
+    preview = tmp_path / "doc_preprocessed.png"
+    preview.write_bytes(b"png")
+    state = dataclasses.replace(repo.create(src, compute_file_hash(src)), preview_img=str(preview))
+    data = dataclasses.asdict(state)
+    del data["page_images"]
+    repo.state_path_for_input(src).write_text(json.dumps(data), encoding="utf-8")
+
+    loaded = repo.load_valid(src)
+
+    assert loaded is not None
+    assert loaded.page_images == []
+    assert loaded.pages == (str(preview),)
+    assert repo.to_view(src, loaded).page_images == (str(preview),)
+
+
+def test_a_page_missing_on_disk_leaves_the_one_page_it_had(tmp_path: Path) -> None:
+    """
+    Given  a state whose second page file is gone
+    When   load_valid is called
+    Then   the pages are dropped and the document has its first page
+    """
+    repo = _repo(tmp_path)
+    src = _source_file(tmp_path)
+    pages = _pages(tmp_path)
+    repo.save(
+        src,
+        dataclasses.replace(
+            repo.create(src, compute_file_hash(src)),
+            preview_img=str(pages[0]),
+            page_images=[str(page) for page in pages],
+        ),
+    )
+    pages[1].unlink()
+
+    loaded = repo.load_valid(src)
+
+    assert loaded is not None
+    assert loaded.page_images == []
+    assert loaded.pages == (str(pages[0]),)
+
+
+def test_a_missing_preview_leaves_no_pages(tmp_path: Path) -> None:
+    """
+    Given  a state whose preview image is gone
+    When   load_valid is called
+    Then   pages is empty
+    """
+    repo = _repo(tmp_path)
+    src = _source_file(tmp_path)
+    pages = _pages(tmp_path)
+    repo.save(
+        src,
+        dataclasses.replace(
+            repo.create(src, compute_file_hash(src)),
+            preview_img=str(pages[0]),
+            page_images=[str(page) for page in pages],
+        ),
+    )
+    pages[0].unlink()
+
+    loaded = repo.load_valid(src)
+
+    assert loaded is not None
+    assert loaded.pages == ()
+
+
+def test_invalidate_preview_artifact_clears_the_pages(tmp_path: Path) -> None:
+    """
+    Given  a state with three pages
+    When   invalidate_preview_artifact is called
+    Then   the pages are cleared with the preview paths
+    """
+    repo = _repo(tmp_path)
+    src = _source_file(tmp_path)
+    pages = _pages(tmp_path)
+    state = dataclasses.replace(
+        repo.create(src, compute_file_hash(src)),
+        preview_img=str(pages[0]),
+        source_image=str(pages[0]),
+        page_images=[str(page) for page in pages],
+    )
+
+    cleared = repo.invalidate_preview_artifact(src, state)
+
+    assert cleared.page_images == []
+
+
+def test_resetting_from_ocr_clears_the_pages(tmp_path: Path) -> None:
+    """
+    Given  a state with OCR text and three pages
+    When   invalidate_from_stage("ocr") runs
+    Then   the pages are cleared with the preview paths
+    """
+    repo = _repo(tmp_path)
+    src = _source_file(tmp_path)
+    pages = _pages(tmp_path)
+    repo.save(
+        src,
+        dataclasses.replace(
+            repo.create(src, compute_file_hash(src)),
+            raw_text="text",
+            ocr_done=True,
+            preview_img=str(pages[0]),
+            page_images=[str(page) for page in pages],
+        ),
+    )
+
+    cleared = repo.invalidate_from_stage(src, "ocr")
+
+    assert cleared is not None
+    assert cleared.page_images == []
+
+
+def test_a_new_ocr_result_keeps_the_pages(tmp_path: Path) -> None:
+    """
+    Given  a state with three pages
+    When   record_ocr_result stores the text of the same pages
+    Then   the pages are kept
+    """
+    repo = _repo(tmp_path)
+    src = _source_file(tmp_path)
+    pages = _pages(tmp_path)
+    state = dataclasses.replace(
+        repo.create(src, compute_file_hash(src)),
+        preview_img=str(pages[0]),
+        page_images=[str(page) for page in pages],
+    )
+
+    recorded = repo.record_ocr_result(
+        src,
+        state,
+        OcrResultRecord(
+            source_hash=compute_file_hash(src),
+            raw_text="text",
+            preview_img=str(pages[0]),
+            source_image=str(pages[0]),
+            ocr_prompt="",
+            evaluate_prompt="",
+            ocr_config_hash="ocr-hash",
+            preview_config_hash="ph",
+        ),
+    )
+
+    assert recorded.page_images == [str(page) for page in pages]
+
+
 # ── Text notation (raw_text_format) ───────────────────────────────────────
 
 

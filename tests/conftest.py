@@ -46,6 +46,29 @@ def sample_pdf(tmp_path: Path, sample_png: Path) -> Path:  # pylint: disable=red
     return pdf_path
 
 
+@pytest.fixture
+def sample_multipage_pdf(tmp_path: Path, sample_png: Path):  # pylint: disable=redefined-outer-name
+    """A factory for a scanned PDF of *pages* pages, each one the sample PNG.
+
+    A scanned PDF has no text layer, so every page is rendered and prepared — the case in
+    which the app keeps more than one page image.
+    """
+    from PIL import Image  # noqa: PLC0415
+
+    def write(name: str = "sample.pdf", *, pages: int = 3) -> Path:
+        pdf_path = tmp_path / name
+        page = Image.open(sample_png).convert("RGB")
+        page.save(
+            str(pdf_path),
+            "PDF",
+            save_all=True,
+            append_images=[page.copy() for _ in range(pages - 1)],
+        )
+        return pdf_path
+
+    return write
+
+
 _ANNOTATIONS: dict[str, bytes] = {
     "Ink": (
         b"<< /Type /Annot /Subtype /Ink /Rect [100 100 200 200] "

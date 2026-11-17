@@ -20,7 +20,7 @@ from PySide6.QtGui import (
     QDropEvent,
     QIcon,
     QKeySequence,
-    QPixmap,
+    QShortcut,
 )
 from PySide6.QtWidgets import (
     QApplication,
@@ -121,6 +121,7 @@ from ._types import FileDoneEvent, PreprocessInfo
 from ._update_check import UpdateCheckThread
 from ._what_is_sent_dialog import WhatIsSentDialog
 from ._worker import OCRWorker, detach_running_worker
+from .check import CheckPage, CopyKind, CopyState
 from .settings import (
     PAGE_TITLES,
     SettingsContext,
@@ -383,6 +384,9 @@ class OllamaDownloadManager(QObject):
         self.error.emit(msg)
 
 
+#: How much of a document's name the Check tab label shows before it is shortened.
+_CHECK_TAB_NAME_CHARS = 28
+
 #: Whose computer a found server is on, as the readiness line says it.
 _SERVER_PLACES = {
     ServerKind.THIS_COMPUTER: "this computer",
@@ -454,6 +458,8 @@ class MainWindow(QMainWindow):
         self._pace = RunPace()
         #: Pages of the files of the current run, by source id; filled in the background.
         self._run_pages: dict[str, int] = {}
+        #: The documents of the running batch, for the progress on the Documents tab label.
+        self._run_source_ids: list[str] = []
         self._pages_task = LatestTask(self)
         #: Under the progress bar; built in ``_build_left_panel``.
         self._awake_note: QLabel
@@ -502,7 +508,10 @@ class MainWindow(QMainWindow):
         self._result_correction_times: list[float] = []
         self._init_queue_state()
         self._steps_per_file: int = 1
+        #: The document the Check tab shows; empty when none is open.
         self._current_preview_source_id: str = ""
+        #: The open document was emptied at a run start and has not been shown again yet.
+        self._open_document_awaits_result = False
 
         # Declared here; assigned in _build_left_panel / _build_right_panel.
         self._config_panel: ConfigPanel
@@ -537,6 +546,10 @@ class MainWindow(QMainWindow):
         # The same for the expected cache keys of the queue: they depend on the card.
         self._cache_state_task = LatestTask(self)
         self._update_thread: UpdateCheckThread | None = None
+        self._declare_widgets()
+
+    def _declare_widgets(self) -> None:
+        """Declare the widgets ``_build_ui`` assigns, so the type checker sees them."""
         self._update_banner: QFrame
         self._monitor: SystemMonitorWindow
         self._stats: SystemStatsWidget
@@ -548,6 +561,7 @@ class MainWindow(QMainWindow):
         self._log: LogWidget
         self._results_table: ResultsTable
         self._chart: ChartWidget
+        self._check: CheckPage
         self._preview: PreviewPanel
         self._main_splitter: QSplitter
 
@@ -586,18 +600,9 @@ class MainWindow(QMainWindow):
         self._update_banner = self._build_update_banner()
         root.addWidget(self._update_banner)
 
-        content_row = QHBoxLayout()
-        content_row.setContentsMargins(0, 0, 0, 0)
-        content_row.setSpacing(6)
-        self._main_splitter = QSplitter(Qt.Orientation.Horizontal)
-        self._main_splitter.addWidget(self._build_left_panel())
-        self._main_splitter.addWidget(self._build_right_panel())
-        self._main_splitter.setStretchFactor(0, 0)
-        self._main_splitter.setStretchFactor(1, 1)
-        content_row.addWidget(self._main_splitter)
-        root.addLayout(content_row, 1)
+        root.addWidget(self._build_tabs(), 1)
 
-        self._results_table.preview_requested.connect(self._on_preview_requested)
+        self._results_table.check_requested.connect(self._open_check)
         self._results_table.stage_run_requested.connect(self._on_stage_run_requested)
         self._results_table.what_is_sent_requested.connect(self._on_what_is_sent_requested)
         self._config_panel.data_flow_changed.connect(self._on_data_flow_changed)
@@ -619,6 +624,7 @@ class MainWindow(QMainWindow):
         self._preview.run_stage_requested.connect(self._on_preview_stage_run_requested)
         self._preview.display_anonymized_changed.connect(self._apply_display_anonymized)
         self._preview.anonymization_needed.connect(self._on_anonymization_needed)
+        self._connect_check_page()
         self._refresh_privacy_availability()
         self._preview.set_display_anonymized(self._display_anonymized)
         # Kick off the first readiness check once the window is laid out.
@@ -633,6 +639,42 @@ class MainWindow(QMainWindow):
             self._update_thread = UpdateCheckThread()
             self._update_thread.update_available.connect(self._show_update_banner)
             QTimer.singleShot(0, self._update_thread.start)
+
+    def _build_tabs(self) -> QTabWidget:
+        """The two tabs of the window: the work, and one document to check.
+
+        The Check tab holds the preview panel full width, so the queue keeps its own tab.
+        """
+        self._tabs = QTabWidget()
+        self._tabs.setDocumentMode(True)
+        _tab_bar_font = self._tabs.tabBar().font()
+        _tab_bar_font.setPointSize(14)
+        self._tabs.tabBar().setFont(_tab_bar_font)
+
+        self._main_splitter = QSplitter(Qt.Orientation.Horizontal)
+        self._main_splitter.addWidget(self._build_left_panel())
+        self._main_splitter.addWidget(self._build_right_panel())
+        self._main_splitter.setStretchFactor(0, 0)
+        self._main_splitter.setStretchFactor(1, 1)
+        self._tabs.addTab(self._main_splitter, "Documents")
+
+        self._check = CheckPage()
+        self._preview = self._check.preview
+        self._tabs.addTab(self._check, "Check")
+        self._tabs.setTabEnabled(1, False)  # nothing to check before a document has a result
+        self._tabs.currentChanged.connect(self._on_tab_changed)
+        return self._tabs
+
+    def _connect_check_page(self) -> None:
+        """Wire the Check tab's header to the window, and the two tab shortcuts."""
+        self._check.previous_requested.connect(self._on_check_previous)
+        self._check.next_requested.connect(self._on_check_next)
+        self._check.copy_requested.connect(self._on_check_copy)
+        self._check.save_requested.connect(self._on_check_save)
+        self._check.back_requested.connect(self._show_documents_tab)
+        # Ctrl+1 / Ctrl+2 reach the tabs from anywhere in the window; Esc is the Check page's.
+        QShortcut(QKeySequence("Ctrl+1"), self, self._show_documents_tab)
+        QShortcut(QKeySequence("Ctrl+2"), self, self._show_check_tab)
 
     def _build_menu_bar(self) -> None:
         bar = self.menuBar()
@@ -882,11 +924,6 @@ class MainWindow(QMainWindow):
         return left
 
     def _build_right_panel(self) -> QWidget:
-        self._tabs = QTabWidget()
-        _tab_bar_font = self._tabs.tabBar().font()
-        _tab_bar_font.setPointSize(14)
-        self._tabs.tabBar().setFont(_tab_bar_font)
-
         results_splitter = QSplitter(Qt.Orientation.Vertical)
         self._results_table = ResultsTable()
         self._log = LogWidget()
@@ -894,10 +931,6 @@ class MainWindow(QMainWindow):
         results_splitter.addWidget(self._log)
         results_splitter.setStretchFactor(0, 3)
         results_splitter.setStretchFactor(1, 1)
-        self._tabs.addTab(results_splitter, "Document Queue")
-
-        self._preview = PreviewPanel()
-        self._tabs.addTab(self._preview, "Preview")
 
         # Built now and kept hidden, so the chart collects the data of every run.  Parentless on
         # purpose (see SystemMonitorWindow): closeEvent closes it with this window.
@@ -905,7 +938,7 @@ class MainWindow(QMainWindow):
         self._chart = self._monitor.chart
         self._stats = self._monitor.stats
 
-        return self._tabs
+        return results_splitter
 
     # ── Settings persistence ──────────────────────────────────────────────
 
@@ -1302,6 +1335,8 @@ class MainWindow(QMainWindow):
             self._progress.setRange(0, 100)
             self._progress.setValue(0)
             self._progress.setFormat("Idle")
+        self._sync_check_with_queue()
+        self._update_check_tab()
         self._update_readiness()
         # Other documents may need another engine (text files need none, recognised ones
         # no more recognition): ask again what a run over them requires.
@@ -1529,7 +1564,14 @@ class MainWindow(QMainWindow):
         self._save_settings(notify=False)
         self._results_table.set_output_dir(config.output_dir)
         self._chart.clear_data()
-        self._preview.clear_preview()
+        self._run_source_ids = list(selected_source_ids)
+        # A document the run redoes is emptied: what the tab shows would be stale until the
+        # result arrives. It stays the open document, so its result reloads it (without a tab
+        # switch), and a run that ends before reaching it reloads it too. Documents the run
+        # leaves alone stay open for work.
+        if self._current_preview_source_id in selected_source_ids:
+            self._preview.clear_preview()
+            self._open_document_awaits_result = True
         self._result_names = []
         self._result_ocr_times = []
         self._result_correction_times = []
@@ -1538,6 +1580,7 @@ class MainWindow(QMainWindow):
         self._start_pace(config, selected_source_ids)
         self._set_progress_text(f"Selected {len(selected_source_ids)} file(s) — Starting…")
         self._tabs.setCurrentIndex(0)
+        self._update_check_tab()
 
         worker_factory = self._worker_factory or OCRWorker
         self._worker = worker_factory(
@@ -2024,10 +2067,6 @@ class MainWindow(QMainWindow):
         message = event.message
         ocr_s = event.ocr_s
         correction_s = event.correction_s
-        preview_img = event.preview_img
-        raw_txt = event.raw_txt
-        corr_txt = event.corr_txt
-        eval_txt = event.eval_txt
         self._results_table.add_result(event)
         # Refresh from the persisted state even on failure/stop, when on_ocr_done never fired.
         self._refresh_preprocessing_info(source_id, text_format=event.text_format)
@@ -2047,16 +2086,11 @@ class MainWindow(QMainWindow):
             self._result_correction_times,
         )
 
-        selected_source_id, selected_name, preview_path, raw_path, corr_path, eval_path = (
-            self._results_table.selected_entry()
-        )
-        if selected_source_id == source_id and selected_name == name:
-            pix = load_pixmap(preview_path)
-            self._on_preview_requested(pix, raw_path, corr_path, eval_path)
-        elif not selected_source_id:
-            pix = load_pixmap(preview_img)
-            self._current_preview_source_id = source_id
-            self._on_preview_requested(pix, raw_txt, corr_txt, eval_txt)
+        # Only the open document is reloaded: a finished file never takes the tab away from
+        # the document the teacher is working on, and never switches tabs.
+        if source_id == self._current_preview_source_id:
+            self._load_check(source_id)
+        self._update_check_tab()
 
     def _refresh_preprocessing_info(self, source_id: str, *, text_format: str = "plain") -> None:
         """Re-read how *source_id*'s preview was produced and its results were sent.
@@ -2342,8 +2376,12 @@ class MainWindow(QMainWindow):
         self._progress.setFormat(text.progress)
         self._progress.setToolTip("")
         self._pace = RunPace()
-        if self._result_names:
-            self._tabs.setCurrentIndex(0)
+        self._run_source_ids = []
+        if self._open_document_awaits_result and self._current_preview_source_id:
+            # The run ended (stopped, failed) before it reached the open document: show what
+            # it still has instead of leaving the tab empty.
+            self._load_check(self._current_preview_source_id)
+        self._update_check_tab()
         icon = (
             QSystemTrayIcon.MessageIcon.Warning
             if text.tone is RunTone.WARNING
@@ -2399,24 +2437,24 @@ class MainWindow(QMainWindow):
         else:
             self._config_panel.set_input_dir(str(paths[0].parent))
 
-    def _on_preview_requested(
-        self,
-        pixmap: QPixmap,
-        raw_txt: str,
-        correction_txt: str,
-        evaluation_txt: str,
-    ) -> None:
-        # Determine which source is being previewed (drives preprocessing info and badges).
-        source_id, *_ = self._results_table.selected_entry()
-        if not source_id:
-            source_id = self._current_preview_source_id
+    # ── The Check tab ─────────────────────────────────────────────────────
+
+    def _load_check(self, source_id: str) -> None:
+        """Show *source_id* in the Check tab, with its texts and stage badges.
+
+        The loader never switches tabs. A finished file reloads the open document, and only
+        the teacher (or a run start, which goes to Documents) decides which tab is in front.
+        """
+        _sid, name, preview_img, raw_txt, corr_txt, eval_txt = self._results_table.entry_for_source(
+            source_id
+        )
         info = self._results_table.preprocessing_for_source(source_id)
         try:
             self._preview.load(
-                pixmap,
+                load_pixmap(preview_img),
                 raw_txt,
-                correction_txt,
-                evaluation_txt,
+                corr_txt,
+                eval_txt,
                 preprocess=info,
                 text_format=self._results_table.text_format_for_source(source_id),
                 correction_review=self._results_table.review_for_source(source_id),
@@ -2425,10 +2463,197 @@ class MainWindow(QMainWindow):
         except Exception as exc:  # noqa: BLE001  # preview load may raise on missing/corrupt files; warn instead of crashing
             QMessageBox.warning(self, "Preview", f"Could not load preview content:\n{exc}")
             return
-        self._tabs.setCurrentIndex(1)
         self._current_preview_source_id = source_id
+        self._open_document_awaits_result = False
         self._update_preview_stage_statuses(source_id)
         self._refresh_text_size_estimate(source_id)
+        self._show_check_header(source_id, name, raw_txt, corr_txt)
+        self._update_check_tab()
+
+    def _open_check(self, source_id: str) -> None:
+        """Show *source_id* in the Check tab: what a double-click, Enter or the menu asks for.
+
+        The row is selected too, so the queue shows the document that is open.  Clicking the
+        tab itself does not do this: a selection is how rows are chosen for a run, and reading
+        it on every tab click would swap the essay under the teacher.
+        """
+        self._load_check(source_id)
+        self._results_table.select_source(source_id)
+        self._tabs.setCurrentIndex(1)
+
+    def _show_check_header(self, source_id: str, name: str, raw_txt: str, corr_txt: str) -> None:
+        """Say in the header which document is open, where it sits and what can be copied."""
+        openable = self._results_table.checkable_source_ids()
+        position = openable.index(source_id) + 1 if source_id in openable else 0
+        self._check.show_document(name, source_id, position, len(openable))
+        self._set_copy_state(raw_txt, corr_txt)
+
+    def _set_copy_state(self, raw_txt: str, corr_txt: str) -> None:
+        """Say what the Copy menu may offer for a document with these texts."""
+        self._check.set_copy_state(
+            CopyState(
+                has_raw=bool(raw_txt.strip()),
+                has_corrected=bool(corr_txt.strip()),
+                can_hide_names=self._privacy_available,
+            )
+        )
+
+    def _refresh_copy_state(self) -> None:
+        """Bring the Copy menu of the open document up to date (names may now be hideable)."""
+        source_id = self._current_preview_source_id
+        if not source_id:
+            return
+        _sid, _name, _img, raw_txt, corr_txt, _eval = self._results_table.entry_for_source(
+            source_id
+        )
+        self._set_copy_state(raw_txt, corr_txt)
+
+    def _update_check_tab(self) -> None:
+        """Label both tabs and enable Check only while a document can be opened."""
+        self._tabs.setTabEnabled(1, bool(self._results_table.checkable_source_ids()))
+        self._tabs.setTabText(0, self._documents_tab_label())
+        self._tabs.setTabText(1, self._check_tab_label())
+        self._tabs.setTabToolTip(0, "Documents (Ctrl+1)")
+        self._tabs.setTabToolTip(1, self._check_tab_tooltip())
+
+    def _documents_tab_label(self) -> str:
+        """``Documents``, or how far the running batch has got."""
+        if not self._run_in_progress() or not self._run_source_ids:
+            return "Documents"
+        return f"Documents \u00b7 {len(self._result_names)} of {len(self._run_source_ids)}"
+
+    def _check_tab_label(self) -> str:
+        """``Check``, or the name of the open document."""
+        name = self._open_document_name()
+        if not name:
+            return "Check"
+        if len(name) > _CHECK_TAB_NAME_CHARS:
+            name = name[: _CHECK_TAB_NAME_CHARS - 1] + "\u2026"
+        return f"Check \u2014 {name}"
+
+    def _check_tab_tooltip(self) -> str:
+        """The full name of the open document above the shortcut, so a short label stays clear."""
+        name = self._open_document_name()
+        return f"{name}\nCheck (Ctrl+2)" if name else "Check (Ctrl+2)"
+
+    def _open_document_name(self) -> str:
+        """The name of the document the Check tab shows, or ``""`` when none is open."""
+        if not self._current_preview_source_id:
+            return ""
+        return self._results_table.entry_for_source(self._current_preview_source_id)[1]
+
+    def _sync_check_with_queue(self) -> None:
+        """Close the Check tab when its document is no longer in the queue."""
+        if not self._current_preview_source_id:
+            return
+        if self._results_table.entry_for_source(self._current_preview_source_id)[0]:
+            return
+        self._close_check()
+
+    def _close_check(self) -> None:
+        """Forget the open document and go back to Documents."""
+        self._current_preview_source_id = ""
+        self._open_document_awaits_result = False
+        self._preview.clear_preview()
+        self._check.clear()
+        self._tabs.setCurrentIndex(0)
+
+    def _on_tab_changed(self, index: int) -> None:
+        """Opening the Check tab with nothing open shows a document; the tab is never empty."""
+        if index != 1 or self._current_preview_source_id:
+            return
+        target = self._check_target()
+        if target:
+            self._load_check(target)
+
+    def _check_target(self) -> str:
+        """The document Check opens when none is open: the current row, else the first."""
+        openable = self._results_table.checkable_source_ids()
+        current = self._results_table.selected_entry()[0]
+        if current in openable:
+            return current
+        return openable[0] if openable else ""
+
+    def _show_documents_tab(self) -> None:
+        """Go back to the queue: Ctrl+1, or Esc in the Check tab."""
+        self._tabs.setCurrentIndex(0)
+
+    def _show_check_tab(self) -> None:
+        """Go to the Check tab, opening a document when none is open (Ctrl+2)."""
+        if self._tabs.isTabEnabled(1):
+            self._tabs.setCurrentIndex(1)  # _on_tab_changed opens a document when none is
+
+    def _on_check_previous(self) -> None:
+        """Show the document before the open one in the queue."""
+        self._step_check(-1)
+
+    def _on_check_next(self) -> None:
+        """Show the document after the open one in the queue."""
+        self._step_check(1)
+
+    def _step_check(self, step: int) -> None:
+        """Move *step* documents on and select the row that is now shown.
+
+        The selection follows the open document, because a run takes its documents from the
+        selected rows: the teacher moving through the set keeps the queue in step.
+        """
+        openable = self._results_table.checkable_source_ids()
+        if self._current_preview_source_id not in openable:
+            return
+        index = openable.index(self._current_preview_source_id) + step
+        if not 0 <= index < len(openable):
+            return
+        target = openable[index]
+        self._load_check(target)
+        self._results_table.select_source(target)
+
+    def _on_check_copy(self, kind: CopyKind) -> None:
+        """Put the open document's text on the clipboard, as the Copy menu asked."""
+        source_id = self._current_preview_source_id
+        if not source_id:
+            return
+        self._preview.flush_pending_edit()  # a typed edit must be in the text that is copied
+        _sid, _name, _img, raw_txt, corr_txt, _eval = self._results_table.entry_for_source(
+            source_id
+        )
+        text = corr_txt if kind.is_corrected else raw_txt
+        text_format = self._results_table.text_format_for_source(source_id) or "plain"
+        if not kind.is_anonymized:
+            QApplication.clipboard().setText(
+                self._app_service.text_for_copy(text, text_format=text_format)
+            )
+            self._check.show_copied()
+            return
+        language = self._config_panel.lookup_language()
+        anon_config = self._config_panel.build_anonymizer_config()
+        service = self._app_service
+
+        def _copy() -> object:
+            return service.text_for_copy(
+                text,
+                text_format=text_format,
+                anonymize=True,
+                language=language,
+                anonymizer_config=anon_config,
+            )
+
+        def _on_done(result: object, error: BaseException | None) -> None:
+            if error is not None:
+                QMessageBox.warning(self, "Copy", _spacy_problem(error) or str(error))
+                return
+            QApplication.clipboard().setText(str(result))
+            self._check.show_copied()
+
+        # Hiding names runs spaCy, which is not a job for the GUI thread.
+        run_in_background(_copy, _on_done, owner=self)
+
+    def _on_check_save(self, kind: ExportKind) -> None:
+        """Save the open document's text through the window's own export path."""
+        source_id = self._current_preview_source_id
+        if not source_id:
+            return
+        self._preview.flush_pending_edit()
+        self._on_export_requested([source_id], kind)
 
     def _on_preview_stage_run_requested(self, source_id: str, stage: str) -> None:
         """Forward a per-stage run request from the preview panel to the normal handler."""
@@ -2546,10 +2771,14 @@ class MainWindow(QMainWindow):
             return
         self._preview.set_text_size(estimate)
 
-    def _selected_source_for_edit(self) -> tuple[Path, str, str, str, str] | None:
-        """Resolve selected source row to its input path and current payloads."""
+    def _open_source_for_edit(self) -> tuple[Path, str, str, str, str] | None:
+        """Resolve the open document to its input path and current payloads.
+
+        An edit belongs to the document the Check tab shows, not to the selected row: the
+        selection is how a run picks its documents, and the two may differ.
+        """
         source_id, _name, preview_img, raw_txt, corr_txt, eval_txt = (
-            self._results_table.selected_entry()
+            self._results_table.entry_for_source(self._current_preview_source_id)
         )
         if not source_id:
             return None
@@ -2559,7 +2788,7 @@ class MainWindow(QMainWindow):
         return source, preview_img, raw_txt, corr_txt, eval_txt
 
     def _on_ocr_text_edited(self, edited_text: str) -> None:
-        selected = self._selected_source_for_edit()
+        selected = self._open_source_for_edit()
         if selected is None:
             return
         source, preview_img, _raw_txt, _corr_txt, _eval_txt = selected
@@ -2615,10 +2844,10 @@ class MainWindow(QMainWindow):
         )
         self._update_preview_stage_statuses(source_id)
         self._text_size_timer.start()  # the edited text may need other parts
-        self._tabs.setCurrentIndex(1)
+        self._update_check_tab()
 
     def _on_correction_text_edited(self, edited_text: str) -> None:
-        selected = self._selected_source_for_edit()
+        selected = self._open_source_for_edit()
         if selected is None:
             return
         source, preview_img, raw_txt, _corr_txt, _eval_txt = selected
@@ -2676,7 +2905,7 @@ class MainWindow(QMainWindow):
             correction_warning=state.correction_warning,
         )
         self._update_preview_stage_statuses(source_id)
-        self._tabs.setCurrentIndex(1)
+        self._update_check_tab()
 
     def _on_what_is_sent_requested(self, source_id: str) -> None:
         """Open "What is sent for this file…" for one row of the results table."""
@@ -2745,6 +2974,7 @@ class MainWindow(QMainWindow):
         changed = available != self._privacy_available
         self._privacy_available = available
         self._preview.set_display_anonymized_available(available)
+        self._refresh_copy_state()
         if changed and available and self._display_anonymized:
             # The setting was on but could not be applied; it can now.
             self._preview.set_display_anonymized(True)

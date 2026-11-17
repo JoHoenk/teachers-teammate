@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any, ClassVar
 
 from PySide6.QtCore import QEvent, QObject, QPoint, Qt, Signal
-from PySide6.QtGui import QBrush, QColor, QFont, QPixmap
+from PySide6.QtGui import QBrush, QColor, QFont
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
@@ -36,7 +36,6 @@ from ._constants import (
     _COLOUR_OK,
 )
 from ._export_menu import build_export_menu
-from ._image_utils import load_pixmap
 from ._types import FileDoneEvent, PreprocessInfo, StageStatus
 
 _PENDING_SYMBOL = "-"  # hyphen-minus pending indicator
@@ -97,7 +96,7 @@ class ResultsTable(QTableWidget):
     Cached stages start at ``✓`` (muted green) before the worker runs.
     """
 
-    preview_requested = Signal(QPixmap, str, str, str)
+    check_requested = Signal(str)  # source_id: open this document in the Check tab
     stage_run_requested = Signal(list, str)
     what_is_sent_requested = Signal(str)  # source_id
     export_requested = Signal(list, object)  # list[str] source_ids, ExportKind
@@ -111,7 +110,6 @@ class ResultsTable(QTableWidget):
     _ROLE_IMAGE = Qt.ItemDataRole.UserRole
     _ROLE_RAW = Qt.ItemDataRole.UserRole + 1
     _ROLE_CORR = Qt.ItemDataRole.UserRole + 2
-    _ROLE_PIXMAP = Qt.ItemDataRole.UserRole + 3
     _ROLE_EVAL = Qt.ItemDataRole.UserRole + 4
     _ROLE_SOURCE = Qt.ItemDataRole.UserRole + 5
     _ROLE_PREPROCESS = Qt.ItemDataRole.UserRole + 6  # PreprocessInfo
@@ -177,6 +175,12 @@ class ResultsTable(QTableWidget):
 
     def _row_for_source(self, source_id: str) -> int | None:
         return self._row_by_source.get(source_id)
+
+    def select_source(self, source_id: str) -> None:
+        """Select the row of *source_id*, so the queue shows the document that is open."""
+        row = self._row_for_source(source_id)
+        if row is not None:
+            self.selectRow(row)
 
     def get_stage_statuses_for_source(
         self, source_id: str
@@ -281,7 +285,7 @@ class ResultsTable(QTableWidget):
                     self._compose_tooltip(item, col)
 
     def _add_preview_button(self, row: int, source_id: str) -> None:
-        btn = QPushButton("Open Preview")
+        btn = QPushButton("Open")
         f = btn.font()
         f.setPointSize(11)
         btn.setFont(f)
@@ -289,14 +293,15 @@ class ResultsTable(QTableWidget):
             "QPushButton { border: 1px solid #555; border-radius: 4px; padding: 2px 6px; margin: 2px; }"
             "QPushButton:hover { border-color: #aaa; background: #2c3e50; }"
         )
-        btn.clicked.connect(lambda _=False, sid=source_id: self._emit_preview_for(sid))
+        btn.clicked.connect(lambda _=False, sid=source_id: self._emit_check_for(sid))
         self.setCellWidget(row, self._COL_PREVIEW, btn)
 
-    def _emit_preview_for(self, source_id: str) -> None:
+    def _emit_check_for(self, source_id: str) -> None:
+        """Select *source_id*'s row and ask for it to be opened in the Check tab."""
         row = self._row_for_source(source_id)
         if row is not None:
             self.selectRow(row)
-            self._on_cell_double_clicked(row, self._COL_FILE)
+            self.check_requested.emit(source_id)
 
     def _set_warning_info_widget(self, row: int, col: int, message: str) -> None:
         widget = QWidget()
@@ -456,7 +461,6 @@ class ResultsTable(QTableWidget):
         file_item = self.item(row, self._COL_FILE)
         if file_item is not None:
             file_item.setData(self._ROLE_IMAGE, preview_img)
-            file_item.setData(self._ROLE_PIXMAP, load_pixmap(preview_img))
             file_item.setData(self._ROLE_RAW, raw_txt)
             file_item.setData(self._ROLE_CORR, corr_txt)
             file_item.setData(self._ROLE_EVAL, eval_txt)
@@ -493,7 +497,6 @@ class ResultsTable(QTableWidget):
         if file_item is None:
             return
         file_item.setData(self._ROLE_IMAGE, preview_img)
-        file_item.setData(self._ROLE_PIXMAP, load_pixmap(preview_img))
         file_item.setData(self._ROLE_RAW, raw_txt)
         file_item.setData(self._ROLE_CORR, corr_txt)
         file_item.setData(self._ROLE_EVAL, eval_txt)
@@ -634,7 +637,6 @@ class ResultsTable(QTableWidget):
         if file_item is not None:
             file_item.setData(self._ROLE_SOURCE, event.source_id)
             file_item.setData(self._ROLE_IMAGE, event.preview_img)
-            file_item.setData(self._ROLE_PIXMAP, load_pixmap(event.preview_img))
             file_item.setData(self._ROLE_RAW, event.raw_txt)
             file_item.setData(self._ROLE_CORR, event.corr_txt)
             file_item.setData(self._ROLE_EVAL, event.eval_txt)
@@ -716,19 +718,39 @@ class ResultsTable(QTableWidget):
         self._row_by_source.clear()
 
     def _on_cell_double_clicked(self, row: int, _col: int) -> None:
+        source_id = self.source_id_for_row(row)
+        if source_id and self._has_result(row):
+            self.check_requested.emit(source_id)
+
+    def _has_result(self, row: int) -> bool:
+        """Whether *row*'s document has something to show: text that was read or a page."""
         item = self.item(row, self._COL_FILE)
         if item is None:
-            return
-        pix = item.data(self._ROLE_PIXMAP)
-        raw = item.data(self._ROLE_RAW) or ""
-        corr = item.data(self._ROLE_CORR) or ""
-        eval_txt = item.data(self._ROLE_EVAL) or ""
-        self.preview_requested.emit(
-            pix if isinstance(pix, QPixmap) else QPixmap(),
-            raw,
-            corr,
-            eval_txt,
-        )
+            return False
+        return bool(item.data(self._ROLE_RAW) or item.data(self._ROLE_IMAGE))
+
+    def checkable_source_ids(self) -> list[str]:
+        """Return the documents that can be opened in the Check tab, in queue order.
+
+        A row without a result (waiting, failed, skipped, running) does not open: there would
+        be nothing to check.
+        """
+        ids: list[str] = []
+        for row in range(self.rowCount()):
+            source_id = self.source_id_for_row(row)
+            if source_id and self._has_result(row):
+                ids.append(source_id)
+        return ids
+
+    def keyPressEvent(self, event: Any) -> None:
+        """Open the current row on Enter or Return (the table itself is not editable)."""
+        if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            row = self.currentRow()
+            source_id = self.source_id_for_row(row) if row >= 0 else ""
+            if source_id and self._has_result(row):
+                self.check_requested.emit(source_id)
+                return
+        super().keyPressEvent(event)
 
     def _on_context_menu_requested(self, pos: QPoint) -> None:
         rows = sorted(index.row() for index in self.selectionModel().selectedRows())
@@ -748,6 +770,13 @@ class ResultsTable(QTableWidget):
             return
 
         menu = QMenu(self)
+        check = menu.addAction("Check")
+        # The first entry is the one a teacher reaches for; it is bold like a default action.
+        _check_font = check.font()
+        _check_font.setBold(True)
+        check.setFont(_check_font)
+        check.setEnabled(len(selected_source_ids) == 1 and self._has_result(rows[0]))
+        menu.addSeparator()
         rerun_ocr = menu.addAction("Re-run Text Recognition")
         rerun_correction = menu.addAction("Re-run Proofreading")
         rerun_evaluation = menu.addAction("Run Content Review")
@@ -761,7 +790,9 @@ class ResultsTable(QTableWidget):
         action = menu.exec(self.viewport().mapToGlobal(pos))
         if action is None:
             return
-        if action is rerun_ocr:
+        if action is check:
+            self.check_requested.emit(selected_source_ids[0])
+        elif action is rerun_ocr:
             self.stage_run_requested.emit(selected_source_ids, "ocr")
         elif action is rerun_correction:
             self.stage_run_requested.emit(selected_source_ids, "correction")
@@ -790,18 +821,7 @@ class ResultsTable(QTableWidget):
     def selected_entry(self) -> tuple[str, str, str, str, str, str]:
         """Return selected row payload as (source_id, name, preview_img, raw_txt, corr_txt, eval_txt)."""
         row = self.currentRow()
-        if row < 0:
-            return "", "", "", "", "", ""
-        item = self.item(row, self._COL_FILE)
-        if item is None:
-            return "", "", "", "", "", ""
-        source_id = self.source_id_for_row(row)
-        name = item.text()
-        preview_img = item.data(self._ROLE_IMAGE) or ""
-        raw_txt = item.data(self._ROLE_RAW) or ""
-        corr_txt = item.data(self._ROLE_CORR) or ""
-        eval_txt = item.data(self._ROLE_EVAL) or ""
-        return source_id, name, preview_img, raw_txt, corr_txt, eval_txt
+        return self.entry_for_source(self.source_id_for_row(row) if row >= 0 else "")
 
     def selected_paths(self) -> tuple[str, str, str, str, str]:
         """Return selected row paths as (name, preview_img, raw_txt, corr_txt, eval_txt)."""

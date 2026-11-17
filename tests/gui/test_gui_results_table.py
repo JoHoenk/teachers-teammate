@@ -5,8 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from PySide6.QtCore import QPoint, QItemSelectionModel
-from PySide6.QtGui import QPixmap
+from PySide6.QtCore import QItemSelectionModel, QPoint, Qt
 from PySide6.QtWidgets import QMenu
 
 from teachers_teammate.domain.correction_review import CorrectionReview, UnclearNote
@@ -103,46 +102,118 @@ def test_results_table_selected_source_ids_returns_multiple_rows(qtbot) -> None:
     assert table.selected_source_ids() == ["/tmp/a.png", "/tmp/c.png"]
 
 
-@pytest.mark.gui
-def test_results_table_emits_preview_requested_on_double_click(qtbot, tmp_path: Path) -> None:
-    """
-    Given  a ResultsTable row with raw/correction/evaluation artifact paths
-    When   the file cell is double-clicked
-    Then   preview_requested is emitted with a pixmap and the artifact paths
-    """
-    raw = tmp_path / "preview_ocr.txt"
-    corr = tmp_path / "preview_correction.txt"
-    eval_txt = tmp_path / "preview_evaluation.txt"
-    raw.write_text("raw", encoding="utf-8")
-    corr.write_text("corr", encoding="utf-8")
-    eval_txt.write_text("eval", encoding="utf-8")
-
-    table = ResultsTable()
-    qtbot.addWidget(table)
-    table.set_queue(["preview.png"], source_ids=["/tmp/preview.png"])
+def _row_with_result(table: ResultsTable, source_id: str = "/tmp/preview.png") -> None:
+    """Queue one document and give it a result, so it can be opened."""
+    table.set_queue(["preview.png"], source_ids=[source_id])
     table.add_result(
         FileDoneEvent(
-            source_id="/tmp/preview.png",
+            source_id=source_id,
             name="preview.png",
             ok=True,
             message="saved",
             ocr_s=1.0,
             correction_s=0.0,
             preview_img="",
-            raw_txt=str(raw),
-            corr_txt=str(corr),
-            eval_txt=str(eval_txt),
+            raw_txt="what was read",
+            corr_txt="",
+            eval_txt="",
         )
     )
 
-    with qtbot.waitSignal(table.preview_requested, timeout=1000) as sig:
+
+@pytest.mark.gui
+def test_results_table_asks_for_the_check_tab_on_double_click(qtbot) -> None:
+    """
+    Given  a ResultsTable row whose document has a result
+    When   the file cell is double-clicked
+    Then   check_requested is emitted with that document's source id
+    """
+    table = ResultsTable()
+    qtbot.addWidget(table)
+    _row_with_result(table)
+
+    with qtbot.waitSignal(table.check_requested, timeout=1000) as sig:
         table.cellDoubleClicked.emit(0, ResultsTable._COL_FILE)
 
-    args = sig.args
-    assert isinstance(args[0], QPixmap)
-    assert args[1] == str(raw)
-    assert args[2] == str(corr)
-    assert args[3] == str(eval_txt)
+    assert sig.args == ["/tmp/preview.png"]
+
+
+@pytest.mark.gui
+def test_results_table_does_not_open_a_row_without_a_result(qtbot) -> None:
+    """
+    Given  a queued row that has not been processed
+    When   the file cell is double-clicked and Enter is pressed
+    Then   nothing is opened: there would be nothing to check
+    """
+    table = ResultsTable()
+    qtbot.addWidget(table)
+    table.set_queue(["waiting.png"], source_ids=["/tmp/waiting.png"])
+    table.selectRow(0)
+    seen: list[str] = []
+    table.check_requested.connect(seen.append)
+
+    table.cellDoubleClicked.emit(0, ResultsTable._COL_FILE)
+    qtbot.keyClick(table, Qt.Key.Key_Return)
+
+    assert seen == []
+    assert table.checkable_source_ids() == []
+
+
+@pytest.mark.gui
+def test_results_table_opens_the_current_row_on_enter(qtbot) -> None:
+    """
+    Given  two rows, only the second with a result
+    When   Enter is pressed on it
+    Then   check_requested is emitted for that document
+    """
+    table = ResultsTable()
+    qtbot.addWidget(table)
+    table.set_queue(["a.png", "b.png"], source_ids=["/tmp/a.png", "/tmp/b.png"])
+    table.add_result(
+        FileDoneEvent(
+            source_id="/tmp/b.png",
+            name="b.png",
+            ok=True,
+            message="saved",
+            ocr_s=1.0,
+            correction_s=0.0,
+            preview_img="",
+            raw_txt="what was read",
+            corr_txt="",
+            eval_txt="",
+        )
+    )
+    table.selectRow(1)
+
+    with qtbot.waitSignal(table.check_requested, timeout=1000) as sig:
+        qtbot.keyClick(table, Qt.Key.Key_Return)
+
+    assert sig.args == ["/tmp/b.png"]
+    assert table.checkable_source_ids() == ["/tmp/b.png"]
+
+
+@pytest.mark.gui
+def test_results_table_context_menu_opens_the_check_tab(qtbot, monkeypatch) -> None:
+    """
+    Given  a selected row whose document has a result
+    When   the first entry of the context menu is chosen
+    Then   check_requested is emitted for it
+    """
+    table = ResultsTable()
+    qtbot.addWidget(table)
+    _row_with_result(table)
+    table.selectRow(0)
+
+    class _NonBlockingMenu(QMenu):
+        def exec(self, *args, **kwargs):  # Qt naming: overrides QMenu.exec
+            return self.actions()[0]  # "Check"
+
+    monkeypatch.setattr("teachers_teammate.gui._results_table.QMenu", _NonBlockingMenu)
+
+    with qtbot.waitSignal(table.check_requested, timeout=1000) as sig:
+        table._on_context_menu_requested(QPoint(1, 1))
+
+    assert sig.args == ["/tmp/preview.png"]
 
 
 @pytest.mark.gui
@@ -162,7 +233,7 @@ def test_results_table_context_menu_emits_stage_run_requested(qtbot, monkeypatch
     # immediately (no blocking modal dialog).
     class _NonBlockingMenu(QMenu):
         def exec(self, *args, **kwargs):  # Qt naming: overrides QMenu.exec
-            return self.actions()[1]  # "Re-run Correction"
+            return self.actions()[3]  # "Re-run Proofreading": Check, separator, OCR, this
 
     monkeypatch.setattr("teachers_teammate.gui._results_table.QMenu", _NonBlockingMenu)
 

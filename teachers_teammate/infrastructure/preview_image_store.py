@@ -1,16 +1,16 @@
 """Stable storage for preprocessed preview images.
 
-`PreviewImageStore` manages one kind of derived file: the preprocessed image
-created during OCR preprocessing that is shown in the GUI preview panel.
+`PreviewImageStore` manages one kind of derived file: the preprocessed images
+created during OCR preprocessing that are shown in the GUI preview panel.
 
 Responsibilities
 ----------------
 - `PreviewImageStore` — owns the canonical on-disk location for preview images:
-  - computes stable paths (one image per source-document stem)
-  - copies a freshly preprocessed image into its canonical location so that its
-    path can be stored in `DocumentState` and survive across runs
+  - computes stable paths (one image per source-document stem and page)
+  - copies freshly preprocessed images into their canonical location so that
+    their paths can be stored in `DocumentState` and survive across runs
   - deletes debug step images (`*_step*.jpg`) and intermediate PDF page images
-    (`*_page*.png`) when debug mode is off
+    (`*_page<digits>.png`) when debug mode is off
 
 Why a separate store?
 ---------------------
@@ -32,11 +32,18 @@ What this module does NOT do
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 import glob
 import os
 from pathlib import Path
+import re
 import shutil
+
+#: The run's own intermediate page images: ``<anything>_page<digits>[_preprocessed].png``.
+#: Matched on the whole file name, so a document whose stem ends in ``_page`` keeps its
+#: stored pages (``week_page_preprocessed.png`` has no digits after ``_page``).
+_INTERMEDIATE_PAGE = re.compile(r".*_page\d+(_preprocessed)?\.png")
 
 
 @dataclass(frozen=True)
@@ -62,6 +69,17 @@ class PreviewImageStore:
             preview_img=self._root / f"{stem}_preprocessed.png",
         )
 
+    def paths_for_page(self, stem: str, number: int) -> Path:
+        """Return the canonical path of page *number* (1-based) of *stem*.
+
+        Page 1 keeps the name it always had (``<stem>_preprocessed.png``): the benchmark, the
+        results table and the Word builder read it, and a document recognized before this
+        existed has only that page.
+        """
+        if number == 1:
+            return self.paths_for_stem(stem).preview_img
+        return self._root / f"{stem}_p{number}.png"
+
     def persist_preview_image(self, *, stem: str, source_path: Path) -> Path:
         """Copy *source_path* to the canonical preview path for *stem* and return it."""
         target = self.paths_for_stem(stem).preview_img
@@ -69,6 +87,46 @@ class PreviewImageStore:
         if source_path.resolve() != target.resolve():
             shutil.copy2(source_path, target)
         return target
+
+    def persist_page_images(self, *, stem: str, sources: Sequence[Path]) -> list[Path]:
+        """Store every prepared page of *stem* in page order and return their paths.
+
+        Page 1 goes through :meth:`persist_preview_image`, so a failure there is the error it
+        always was.  A later page that cannot be stored is not worth failing the file over:
+        the pages written so far are removed again and only page 1 is returned, so the state
+        never lists a page that is not on disk.
+        """
+        if not sources:
+            return []
+        first = self.persist_preview_image(stem=stem, source_path=sources[0])
+        stored = [first]
+        try:
+            for number, source in enumerate(sources[1:], start=2):
+                stored.append(self._link_or_copy(source, self.paths_for_page(stem, number)))
+        except OSError:
+            for extra in stored[1:]:
+                extra.unlink(missing_ok=True)
+            self.prune_page_images(stem, keep=1)
+            return [first]
+        self.prune_page_images(stem, keep=len(stored))
+        return stored
+
+    def prune_page_images(self, stem: str, *, keep: int) -> None:
+        """Delete stored pages of *stem* beyond *keep* (best-effort).
+
+        Matched with a full-name regex rather than a glob: the stem ``Anna_p1`` has its own
+        ``Anna_p1_preprocessed.png`` and ``Anna_p1_p2.png``, which must survive when the pages
+        of ``Anna`` are pruned.
+        """
+        pattern = re.compile(rf"{re.escape(stem)}_p(\d+)\.png")
+        for candidate in self._root.iterdir():
+            match = pattern.fullmatch(candidate.name)
+            if match is None or int(match.group(1)) <= keep:
+                continue
+            try:
+                candidate.unlink(missing_ok=True)
+            except OSError:
+                pass
 
     def persist_original_image(self, *, stem: str, source_path: Path) -> Path:
         """Store the un-preprocessed page *source_path* next to the preview image.
@@ -82,13 +140,19 @@ class PreviewImageStore:
         target = self._root / f"{stem}_original{source_path.suffix.lower() or '.png'}"
         target.parent.mkdir(parents=True, exist_ok=True)
         if not (target.exists() and source_path.resolve() == target.resolve()):
-            # Unlink first: copying onto a hard link would write through to the source file.
-            target.unlink(missing_ok=True)
-            try:
-                os.link(source_path, target)
-            except OSError:  # unsupported filesystem or cross-device link
-                shutil.copy2(source_path, target)
+            self._link_or_copy(source_path, target)
         self.prune_original_images(stem, keep=target)
+        return target
+
+    @staticmethod
+    def _link_or_copy(source: Path, target: Path) -> Path:
+        """Hard-link *source* to *target*, copying when the filesystem cannot link."""
+        # Unlink first: copying onto a hard link would write through to the source file.
+        target.unlink(missing_ok=True)
+        try:
+            os.link(source, target)
+        except OSError:  # unsupported filesystem or cross-device link
+            shutil.copy2(source, target)
         return target
 
     def prune_original_images(self, stem: str, *, keep: Path | None = None) -> None:
@@ -103,14 +167,18 @@ class PreviewImageStore:
                 pass
 
     def delete_preview_artifacts(
-        self, preview_img: str, source_image: str, original_img: str = ""
+        self,
+        preview_img: str,
+        source_image: str,
+        original_img: str = "",
+        page_images: Sequence[str] = (),
     ) -> None:
         """Delete preview image files that were recorded in a now-invalidated state.
 
         Only deletes files that are non-empty paths and actually exist.
         Safe to call with empty strings.
         """
-        for file_path in {preview_img, source_image, original_img}:
+        for file_path in {preview_img, source_image, original_img, *page_images}:
             if file_path:
                 Path(file_path).unlink(missing_ok=True)
 
@@ -118,6 +186,8 @@ class PreviewImageStore:
         """Delete step snapshots and intermediate PDF page images unless *keep_debug* is set."""
         if keep_debug:
             return
-        for pattern in ("*_step*.jpg", "*_page*.png"):
-            for file in self._root.glob(pattern):
+        for file in self._root.glob("*_step*.jpg"):
+            file.unlink(missing_ok=True)
+        for file in self._root.iterdir():
+            if _INTERMEDIATE_PAGE.fullmatch(file.name):
                 file.unlink(missing_ok=True)

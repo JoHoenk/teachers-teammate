@@ -310,6 +310,7 @@ class CacheReconciliationService:
         old_preview_img = state.preview_img
         old_source_image = state.source_image
         old_original_img = state.original_img
+        old_page_images = state.page_images
 
         state = self._repo.reconcile_runtime_config(
             file,
@@ -328,7 +329,7 @@ class CacheReconciliationService:
         # If reconciliation cleared the preview artifacts, delete the actual files.
         if old_preview_img and not state.preview_img:
             self._artifacts.delete_preview_artifacts(
-                old_preview_img, old_source_image, old_original_img
+                old_preview_img, old_source_image, old_original_img, old_page_images
             )
 
         return CacheContext(
@@ -349,15 +350,25 @@ class CacheReconciliationService:
         *,
         original_path: Path | None = None,
         preprocess_steps: Sequence[str] | None = None,
+        pages: Sequence[Path] = (),
     ) -> tuple[str, CacheContext]:
         """Copy *source_path* to the stable artifact location; return (preview_img, updated_ctx).
 
         *original_path* is the un-preprocessed page; when given it is stored alongside the
         preview so the GUI can toggle between both.  *preprocess_steps* records which steps
         produced the preview (``None`` = unknown, ``[]`` = none applied).
+
+        *pages* are all prepared pages of the document in page order; page 1 is
+        *source_path*.  Without it only that one page is stored.
         """
-        stable = self._artifacts.persist_preview_image(stem=file.stem, source_path=source_path)
-        preview_img = str(stable)
+        page_images: list[str] = []
+        if pages:
+            stored = self._artifacts.persist_page_images(stem=file.stem, sources=pages)
+            preview_img = str(stored[0])
+            page_images = [str(page) for page in stored]
+        else:
+            stable = self._artifacts.persist_preview_image(stem=file.stem, source_path=source_path)
+            preview_img = str(stable)
         original_img = ""
         if original_path is not None:
             # The original is only for the GUI comparison toggle: never fail the file over it.
@@ -379,6 +390,7 @@ class CacheReconciliationService:
             preview_config_hash=ctx.preview_config_hash,
             original_img=original_img,
             preprocess_steps=preprocess_steps,
+            page_images=page_images,
         )
         return preview_img, dataclasses.replace(ctx, state=new_state)
 

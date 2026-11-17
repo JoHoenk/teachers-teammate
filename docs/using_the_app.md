@@ -2,13 +2,16 @@
 
 ## The app window
 
-The app is divided into two main areas, plus a separate **Settings** window:
+The app has two tabs under the menu bar, plus a separate **Settings** window:
+
+- **Documents** — the work: the workflow panel on the left, the results list and the log on the right.
+- **Check** — one document at a time, full width: the scan next to its text, with the file name, its position in the queue and the arrows to move through the documents at the top. It is greyed out until at least one document has a result. Double-click a row in the results list (or press Enter on it) to open it here; **Esc** or **Ctrl+1** goes back to **Documents**, **Ctrl+2** returns to the document you had open. The **Copy** menu in the header puts the text of the open document on the clipboard — what was read, or the corrected text, each also with names hidden when the Privacy add-on is installed — and its two **Save** entries write what was read as a text file (also with names hidden).
+
+The **Documents** tab holds:
 
 - **Workflow panel (left side)** — everything that changes from batch to batch, in four steps: **1 Documents**, **2 Language** (with the **Level** of the students' writing), **3 What should happen** (recognize text, remove personal info, proofread, review content — each one a box you can tick) and **4 Results** (where the results go). Under each part of step 3 a grey line says which AI model does it and where it runs (for example *mistral-small-latest · Mistral (EU) · EU*); **change…** opens the place in Settings where you choose it. A step you have not ticked keeps its line in grey, so you see what ticking it would use. At the top, a box called **Where your documents are processed** gives the verdict for all steps at once — green: everything stays on this computer; yellow, orange or red: something is sent elsewhere — see *Where your documents are processed* below. Directly above the action buttons — **Run Selected**, **Stop**, **Export** — one line says whether a run can start. If something is missing it says what, with a button that opens the place that fixes it (**Download…**, **Install…**, **Enter key…**, **Choose…**, **Find server…**, **Turn on** or **Check again**); otherwise it shows *Ready* and how many documents will run. Ollama gets two lines of its own: **Ollama wasn't found on this computer** with **Get Ollama…**, and **Ollama isn't running** with **Start Ollama** (on Linux, where the app may not start it, the button's tooltip names the service command instead). Both check again every few seconds, so the line turns green by itself once the server answers. The line never blocks **Run**: the requirements are checked again when you press it.
 
-- **Work area (right side)** — two tabs:
-  - **Document Queue** — a list of your files (one row per document) with status indicators and a live activity log below it.
-  - **Preview** — the original document image next to the extracted and corrected text for the selected file.
+- **Results list (right side)** — a list of your files (one row per document) with status indicators and a live activity log below it.
 
 - **Menu bar** at the top:
   - **File** — Open Folder…, Open Files…, Export ▸ (the same choices as the **Export** button), Quit
@@ -98,7 +101,7 @@ A stopped run is not an error. The document that was cut short shows **stopped**
 
 ### Editing the result by hand
 
-After processing, click any row in the results list to open the **Preview** tab. The text shown on the right side is fully editable — click into it and type to correct anything. Your changes are saved automatically. You do not need to re-run the file.
+After processing, double-click any row in the results list to open it in the **Check** tab. The text shown next to the scan is fully editable — click into it and type to correct anything. Your changes are saved automatically. You do not need to re-run the file. The arrows in the header move to the previous and next document that has a result, in the order of the list, so you can work through a whole class set without going back to **Documents**.
 
 ### Re-running a specific step
 
@@ -107,6 +110,8 @@ If you want to redo just one part — for example, run proofreading again with a
 ### How the app remembers your results
 
 The app stores the result for every file it has processed. If you change only the proofreading settings and click **Run Selected** again, the app reuses the text it already read — it does not read your documents a second time. If you change the reading method or the image preparation setting, any affected files are re-read from scratch automatically.
+
+Next to the text, the app keeps every prepared page of a document as an image, not only the first one. That takes roughly one to three megabytes per page of a scan in the app's cache folder, so a class set of four-page essays can take a few hundred megabytes. Deleting the cache costs nothing but a re-run, which makes the images again. The **Check** tab still shows the first page; documents that were read before this version keep only that page until they are read again, and a page file that has gone missing is not made again by itself.
 
 ---
 
@@ -472,7 +477,7 @@ Lighter AI models work well for content review:
 
 ## Your results
 
-The **Processing** tab shows one row per document with its current status — `done`, `error`, `skipped` (already up to date), `processing`, or `correcting` while running — and a short preview of the extracted and corrected text. Double-click a row to open the full text in the **Preview** tab.
+The results list on the **Documents** tab shows one row per document with its current status — `done`, `error`, `skipped` (already up to date), `processing`, or `correcting` while running — and a short preview of the extracted and corrected text. Double-click a row to open the full text in the **Check** tab.
 
 Right-click a row for more options:
 

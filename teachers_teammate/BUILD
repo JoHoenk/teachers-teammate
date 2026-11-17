@@ -197,6 +197,8 @@ _GUI_SRCS = [
     "gui/benchmark/_compare_view.py",
     "gui/benchmark/_runs_list.py",
     "gui/benchmark/composition.py",
+    "gui/check/__init__.py",
+    "gui/check/_page.py",
     "gui/composition.py",
     "gui/settings/__init__.py",
     "gui/settings/_addons_page.py",

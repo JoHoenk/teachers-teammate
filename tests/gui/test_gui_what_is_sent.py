@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+from PySide6.QtGui import QAction
 from PySide6.QtWidgets import QLabel
 
 from teachers_teammate.application.sent_text import SentText, SentTexts, describe_sent_texts
@@ -476,9 +477,9 @@ def test_the_context_menu_asks_what_is_sent(qtbot, monkeypatch) -> None:
         def __init__(self, *_args) -> None:
             self._entries: list[str] = []
 
-        def addAction(self, text: str) -> object:
+        def addAction(self, text: str) -> QAction:
             self._entries.append(text)
-            return text
+            return QAction(text)
 
         def addMenu(self, menu: object) -> None:
             self._entries.append(getattr(menu, "title", lambda: "")())

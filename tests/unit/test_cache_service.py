@@ -839,6 +839,7 @@ def test_persist_preview_artifact_copies_and_records(tmp_path: Path) -> None:
         preview_config_hash=ctx.preview_config_hash,
         original_img="",
         preprocess_steps=None,
+        page_images=[],
     )
     assert preview_img == str(stable_path)
     assert new_ctx.state is new_state
@@ -883,6 +884,7 @@ def test_persist_preview_artifact_stores_original_and_steps(tmp_path: Path) -> N
         preview_config_hash=ctx.preview_config_hash,
         original_img=str(stable_original),
         preprocess_steps=["grayscale", "deskew"],
+        page_images=[],
     )
 
 
@@ -917,6 +919,42 @@ def test_persist_preview_artifact_original_copy_failure_is_not_fatal(tmp_path: P
         preview_config_hash=ctx.preview_config_hash,
         original_img="",
         preprocess_steps=["grayscale"],
+        page_images=[],
+    )
+
+
+def test_persist_preview_artifact_stores_every_page(tmp_path: Path) -> None:
+    """
+    Given  three prepared pages
+    When   persist_preview_artifact() is called with them
+    Then   the store keeps all three, the first is the preview image, and all are recorded
+    """
+    file = tmp_path / "doc.png"
+    pages = [tmp_path / f"page{number}.png" for number in (1, 2, 3)]
+    stored = [
+        tmp_path / "artifacts" / name
+        for name in ("doc_preprocessed.png", "doc_p2.png", "doc_p3.png")
+    ]
+
+    svc, repo, artifacts = _make_svc(tmp_path)
+    artifacts.persist_page_images.return_value = stored
+    repo.record_preview_artifact.return_value = _make_state()
+
+    ctx = _make_ctx()
+    preview_img, _ = svc.persist_preview_artifact(file, ctx, pages[0], pages=pages)
+
+    artifacts.persist_page_images.assert_called_once_with(stem=file.stem, sources=pages)
+    artifacts.persist_preview_image.assert_not_called()
+    assert preview_img == str(stored[0])
+    repo.record_preview_artifact.assert_called_once_with(
+        file,
+        ctx.state,
+        preview_img=str(stored[0]),
+        source_image=str(stored[0]),
+        preview_config_hash=ctx.preview_config_hash,
+        original_img="",
+        preprocess_steps=None,
+        page_images=[str(page) for page in stored],
     )
 
 

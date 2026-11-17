@@ -303,3 +303,198 @@ def test_prune_original_images_leaves_other_stems_alone(tmp_path: Path) -> None:
 
     assert not mine.exists()
     assert other.exists()
+
+
+# ── pages ──────────────────────────────────────────────────────────────────
+
+
+def test_paths_for_page_keeps_the_first_page_name(tmp_path: Path) -> None:
+    """
+    Given  a stem 'my_doc'
+    When   paths_for_page is asked for pages 1, 2 and 3
+    Then   page 1 is the preview image and the others are numbered
+    """
+    store = PreviewImageStore(tmp_path / "root")
+
+    assert store.paths_for_page("my_doc", 1).name == "my_doc_preprocessed.png"
+    assert store.paths_for_page("my_doc", 2).name == "my_doc_p2.png"
+    assert store.paths_for_page("my_doc", 3).name == "my_doc_p3.png"
+
+
+def test_persist_page_images_stores_every_page_in_order(tmp_path: Path) -> None:
+    """
+    Given  three prepared pages
+    When   persist_page_images is called
+    Then   three files exist and the returned paths are in page order
+    """
+    store = PreviewImageStore(tmp_path / "store")
+    sources = []
+    for number in (1, 2, 3):
+        source = tmp_path / f"page{number}.png"
+        source.write_bytes(f"page {number}".encode())
+        sources.append(source)
+
+    stored = store.persist_page_images(stem="essay", sources=sources)
+
+    assert [path.name for path in stored] == [
+        "essay_preprocessed.png",
+        "essay_p2.png",
+        "essay_p3.png",
+    ]
+    assert [path.read_bytes() for path in stored] == [b"page 1", b"page 2", b"page 3"]
+
+
+def test_persist_page_images_drops_pages_of_an_earlier_longer_document(tmp_path: Path) -> None:
+    """
+    Given  a document stored with three pages
+    When   it is stored again with two
+    Then   the third page file is gone
+    """
+    store = PreviewImageStore(tmp_path / "store")
+    sources = []
+    for number in (1, 2, 3):
+        source = tmp_path / f"page{number}.png"
+        source.write_bytes(b"x")
+        sources.append(source)
+    store.persist_page_images(stem="essay", sources=sources)
+
+    store.persist_page_images(stem="essay", sources=sources[:2])
+
+    assert not (tmp_path / "store" / "essay_p3.png").exists()
+    assert (tmp_path / "store" / "essay_p2.png").exists()
+
+
+def test_pruning_a_stem_leaves_the_pages_of_a_similar_stem(tmp_path: Path) -> None:
+    """
+    Given  the pages of the documents 'Anna' and 'Anna_p1'
+    When   the pages of 'Anna' are pruned to one
+    Then   the pages of 'Anna_p1' are untouched
+    """
+    root = tmp_path / "store"
+    store = PreviewImageStore(root)
+    for name in (
+        "Anna_preprocessed.png",
+        "Anna_p2.png",
+        "Anna_p1_preprocessed.png",
+        "Anna_p1_p2.png",
+    ):
+        (root / name).write_bytes(b"x")
+
+    store.prune_page_images("Anna", keep=1)
+
+    assert not (root / "Anna_p2.png").exists()
+    assert (root / "Anna_p1_preprocessed.png").exists()
+    assert (root / "Anna_p1_p2.png").exists()
+
+
+def test_persist_page_images_links_instead_of_copying(tmp_path: Path) -> None:
+    """
+    Given  a prepared second page on a filesystem that supports hard links
+    When   persist_page_images is called
+    Then   the stored page shares the source's data
+    """
+    store = PreviewImageStore(tmp_path / "store")
+    first = tmp_path / "page1.png"
+    second = tmp_path / "page2.png"
+    first.write_bytes(b"one")
+    second.write_bytes(b"two")
+
+    stored = store.persist_page_images(stem="essay", sources=[first, second])
+
+    assert os.path.samefile(second, stored[1])
+
+
+def test_persist_page_images_falls_back_to_copy_when_link_fails(tmp_path: Path) -> None:
+    """
+    Given  a filesystem where os.link raises OSError
+    When   persist_page_images is called with two pages
+    Then   the second page is copied and survives deleting the source
+    """
+    store = PreviewImageStore(tmp_path / "store")
+    first = tmp_path / "page1.png"
+    second = tmp_path / "page2.png"
+    first.write_bytes(b"one")
+    second.write_bytes(b"two")
+
+    with patch("os.link", side_effect=OSError("cross-device")):
+        stored = store.persist_page_images(stem="essay", sources=[first, second])
+
+    second.unlink()
+    assert stored[1].read_bytes() == b"two"
+
+
+def test_a_later_page_that_cannot_be_stored_leaves_only_the_first(tmp_path: Path) -> None:
+    """
+    Given  three prepared pages and a filesystem that refuses the third
+    When   persist_page_images is called
+    Then   only page 1 is returned and no second page file is left behind
+    """
+    store = PreviewImageStore(tmp_path / "store")
+    sources = []
+    for number in (1, 2, 3):
+        source = tmp_path / f"page{number}.png"
+        source.write_bytes(b"x")
+        sources.append(source)
+
+    real_link_or_copy = PreviewImageStore._link_or_copy
+    calls: list[int] = []
+
+    def link_or_copy(source: Path, target: Path) -> Path:
+        calls.append(1)
+        if len(calls) == 2:  # the third page
+            raise OSError("disk full")
+        return real_link_or_copy(source, target)
+
+    with patch.object(PreviewImageStore, "_link_or_copy", side_effect=link_or_copy):
+        stored = store.persist_page_images(stem="essay", sources=sources)
+
+    assert [path.name for path in stored] == ["essay_preprocessed.png"]
+    assert not (tmp_path / "store" / "essay_p2.png").exists()
+    assert not (tmp_path / "store" / "essay_p3.png").exists()
+
+
+def test_delete_preview_artifacts_removes_every_page(tmp_path: Path) -> None:
+    """
+    Given  a document stored with three pages
+    When   delete_preview_artifacts is called with them
+    Then   every page file is gone
+    """
+    root = tmp_path / "store"
+    store = PreviewImageStore(root)
+    pages = [root / name for name in ("a_preprocessed.png", "a_p2.png", "a_p3.png")]
+    for page in pages:
+        page.write_bytes(b"x")
+
+    store.delete_preview_artifacts(str(pages[0]), str(pages[0]), "", [str(p) for p in pages])
+
+    assert not any(page.exists() for page in pages)
+
+
+def test_cleanup_deletes_the_runs_own_page_images_only(tmp_path: Path) -> None:
+    """
+    Given  the run's intermediate page images and stored pages of documents whose names
+           contain '_page'
+    When   cleanup_intermediate_images(keep_debug=False) is called
+    Then   only the run's own intermediates are deleted
+    """
+    root = tmp_path / "store"
+    root.mkdir()
+    deleted = [
+        "x_page0.png",
+        "x_page0_preprocessed.png",
+        "x_step1.jpg",
+        # Known and pinned: a stem ending in '_page<digits>' looks like an intermediate.
+        "week_page2_preprocessed.png",
+    ]
+    kept = [
+        "week_page_preprocessed.png",
+        "week_page_p2.png",
+        "scan_page_original.png",
+    ]
+    for name in deleted + kept:
+        (root / name).write_bytes(b"x")
+
+    PreviewImageStore(root).cleanup_intermediate_images(keep_debug=False)
+
+    assert [name for name in deleted if (root / name).exists()] == []
+    assert [name for name in kept if not (root / name).exists()] == []

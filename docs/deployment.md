@@ -147,17 +147,38 @@ teacher's Add-ons window. The same check runs weekly on all three runners
 (`addon_resolution.yml`, see *Add-on resolution (weekly)* below).
 
 Three further jobs install what the build made, one per system, so a broken package fails here
-rather than on a teacher's computer. They are read-only like the build; only the Windows one
-checks out, because it runs the installer test script from the repository.
+rather than on a teacher's computer. They are read-only like the build, and all three check out,
+because they run the packaging helpers from the repository and download the newest published
+release with `gh` — the version a teacher has today, which is the one path a fresh install never
+takes. A missing release or a failed download fails the job on purpose: a renamed asset must not
+switch the test off silently.
 
 | Job | Runs on | What it proves |
 |-----|---------|----------------|
-| `install-linux` | `ubuntu:24.04`, `ubuntu:26.04`, `debian:13` containers | apt resolves the `.deb`'s `Depends:`, the app starts headless, the xcb platform plugin finds its libraries |
-| `install-macos` | `macos-15`, `macos-26` | the dmg mounts, the app copied to `/Applications` starts |
-| `install-windows` | `windows-2022`, `windows-2025` | `tools/packaging/test_windows_installer.ps1` passes: install, update, uninstall, both scopes |
+| `install-linux` | `ubuntu:24.04`, `ubuntu:26.04`, `debian:13` containers | apt resolves the `.deb`'s `Depends:`, the upgrade from the newest release leaves no file of the old one behind, the app starts headless, the xcb platform plugin finds its libraries, the launcher passes `desktop-file-validate` with its `Exec`/`Icon` resolving and the icon in the folder of its real size, and `apt-get remove` and `purge` leave nothing behind |
+| `install-macos` | `macos-15`, `macos-26` | the dmg mounts, the newest release's app is replaced by the new one and the copy in `/Applications` is the dmg's bundle, the installed `Info.plist` carries the build's version, identifier, floor and icon, and the app starts |
+| `install-windows` | `windows-2022`, `windows-2025` | `tools/packaging/test_windows_installer.ps1` passes: install, update, uninstall, both scopes, the shortcuts, the Apps entry, `/DELDATA` and `/DELSETTINGS` one at a time, and an update from the newest release |
 
-None of them is a real desktop (no window, no X11/Wayland, no fonts, no Gatekeeper): that stays on
-the VM list.
+Each job uploads the smoke result of the **installed** copy (`<prefix>-<system>-installed-smoke`),
+next to the build job's own `<prefix>-<system>-smoke`.
+
+What no runner can reach is the VM list. Each row names the path, what covers it in CI, and what
+is left for a person:
+
+| Path | Covered by | What is left |
+|------|-----------|--------------|
+| Install, update, uninstall, both scopes | `install-windows` (silent runs of the real setup) | the interactive pages: the scope radio buttons, the folder page, the downgrade question, the 1809 box |
+| Shortcuts | `install-windows` (reads every `.lnk` with `WScript.Shell`) | that Explorer draws them |
+| Apps entry | `install-windows` (`DisplayIcon`, `UninstallString`, `EstimatedSize`, `Publisher`) | that Windows Settings shows it |
+| Update from the newest release | `install-windows`, `install-linux`, `install-macos` | — |
+| UAC relaunch, all-users uninstall elevation | — | both, on a machine with a real UAC prompt |
+| Finish page's "Start Teacher's Teammate" | — | one `Exec` line, on a real desktop |
+| Welcome text wording | — | read by hand |
+| `.deb` launcher, remove and purge | `install-linux` | that a desktop draws the icon and the menu entry |
+| dmg, `Info.plist`, copy over an older app | `install-macos` | Gatekeeper's first-launch prompt |
+| Signing (`codesign`, `spctl`) | — | not before signing is switched on |
+| A window, fonts, X11/Wayland | — | a real desktop on each system |
+| Windows 10 1809, macOS 14.4 | — | a VM of each |
 
 The **build-wheel** job stamps the version into `pyproject.toml` via `tools/release/stamp_versions.py`, then builds a pure-Python wheel with Bazel.
 
@@ -216,11 +237,12 @@ of this table is in `docs/index.md` → "System requirements".
 |---|---|---|---|
 | **What sets the floor** | Qt 6.12 (its supported platforms name Windows 10 1809 as the oldest target) and Python 3.14 | the PySide6 wheel (tagged `macosx_14_0`, its Qt libraries ask for 14.4) | the build image's glibc |
 | **Built on** | `windows-2025` | `macos-26` | `ubuntu-24.04` (glibc 2.39) |
-| **Tested on** | the installer test and the app start on Server 2022 and Server 2025 | the dmg installed and the app started on macOS 15 and 26 (not Gatekeeper) | the package installed and the app started headless in Ubuntu 24.04, 26.04 and Debian 13 |
+| **Tested on** | the installer test and the app start on Server 2022 and Server 2025, including an update from the newest release | the dmg installed, copied over the newest release, and the app started on macOS 15 and 26 (not Gatekeeper) | the package installed, upgraded from the newest release, and the app started headless in Ubuntu 24.04, 26.04 and Debian 13 |
 | **What guards it** | the installer's own check (`${AtLeastBuild} 17763`, exit code 15) | `tools/build/check_macos_bundle.py` (`MACOS_MINIMUM`) | `tools/build/check_linux_bundle.py --max-glibc 2.39` |
 
 A real desktop on each system — a window, X11/Wayland, fonts, Gatekeeper, a Windows 10 1809
-machine — is the VM list, not CI.
+machine — is the VM list, not CI; the table under *Install jobs* names each path and what is
+left for a person.
 
 **When the floor moves.** A PySide6 bump that raises its wheel's macOS tag fails
 `check_macos_bundle.py` first, and a newer Linux build image fails `check_linux_bundle.py` first.
@@ -456,13 +478,18 @@ bash tools/packaging/make_deb.sh [version]
 
 The package installs the folder into `/opt/teachers-teammate`, symlinks
 `/usr/bin/teachers-teammate` to it, and puts the desktop entry, the icon and the licenses under
-`/usr/share`. Its `Depends:` line is measured from the build every time (`check_linux_bundle.py --depends`):
+`/usr/share`. The icon goes into the `hicolor` folder that names its real size, measured from the
+PNG rather than written by hand, and the entry carries exactly one main category: both are what
+`desktop-file-validate` and `tools/packaging/check_desktop_entry.py` hold it to. Its `Depends:`
+line is measured from the build every time (`check_linux_bundle.py --depends`):
 every `DT_NEEDED` entry of every bundled ELF file that the bundle does not itself carry, mapped
 to Debian packages with `ldconfig` and `dpkg-query`, plus `libc6` at the glibc floor the bundle
 needs. The build machine must have those libraries installed; the CI job does. The
 `install-linux` job of `build_artifacts.yml` installs the `.deb` in `ubuntu:24.04`,
-`ubuntu:26.04` and `debian:13` containers, runs the smoke test there, and checks that the
-xcb platform plugin has no missing libraries.
+`ubuntu:26.04` and `debian:13` containers, upgrades it from the newest published release (no
+file of the old package may survive), runs the smoke test there, checks that the xcb platform
+plugin has no missing libraries, checks the launcher, and then removes and purges the package
+and asserts that nothing is left under `/opt`, `/usr/share/applications` and the icon theme.
 
 **Linux — portable tarball**
 
@@ -485,6 +512,14 @@ bash tools/packaging/make_dmg.sh [version]
 # e.g.  bash tools/packaging/make_dmg.sh 1.2.3
 # Output: dist/teachers-teammate-1.2.3-macos.dmg
 ```
+
+The `install-macos` job of `build_artifacts.yml` mounts that dmg, copies the app to
+`/Applications`, and checks the installed `Info.plist` with
+`tools/build/check_macos_bundle.py --plist`: the version the build was stamped with, the bundle
+identifier, `LSMinimumSystemVersion` equal to `MACOS_MINIMUM` (the same number the Mach-O check
+uses) and the icon the plist names. It also installs the newest published release first and
+copies the new app over it, the way a teacher replaces an older copy, and asserts that no file of
+the old bundle survives.
 
 **Windows — NSIS installer**
 
@@ -521,6 +556,23 @@ checks what is left behind; the `install-windows` job of `build_artifacts.yml` r
 are), which is why its per-user runs pass `/SCOPE=user`. Its first step also reads the version
 resource of the setup, of `teachers-teammate.exe` and of the installed `Uninstall.exe`: one
 product name, one product version, one publisher in all three.
+
+The shortcuts are read with the `WScript.Shell` COM object, which works on a runner without a
+desktop session: both Start-menu entries and the desktop one, their targets, which Start menu
+they land in for each scope, that `/NODESKTOP` leaves the desktop alone, that an update keeps an
+existing shortcut and does not recreate a deleted one, and that an uninstall removes them all.
+Windows may hand back an 8.3 name (`GITHUB~1`), so every target is expanded before it is
+compared, and the comparison is case-insensitive. The Apps entry is checked beyond its version:
+`DisplayIcon` names a file that exists, `EstimatedSize` is above zero, `Publisher` equals the
+company in the version resource, and `UninstallString` is run as the registry holds it — quoted,
+through a shell, the way Windows Settings runs it.
+
+The last steps install the newest published release (`tools/packaging/latest_release.py`, which
+asks `gh release view` for the tag and downloads one asset by pattern) and update it in place.
+A missing release or a failed download fails the job; it never skips, so a renamed asset cannot
+switch the test off silently. A build older than that release is refused with exit 11 and then
+installed with `/ALLOWDOWNGRADE`, exactly as the v0.5.6 step does; a build equal to it is a
+reinstall, which is a valid case rather than a skip.
 
 ```powershell
 pwsh -File tools/packaging/test_windows_installer.ps1 `
@@ -577,9 +629,12 @@ for one to be removed in Windows Settings; a silent run needs `/SCOPE=` to pick 
 A silent uninstall keeps all user data unless `/DELDATA` (add-ons and models) or
 `/DELSETTINGS` (settings file `ocr.toml`, benchmark history, speed data, Qt settings, saved API
 keys, results cache) is given. Settings, benchmark history and speed data live in
-`%LOCALAPPDATA%\teachers_teammate` beside `packages\` and `models\`, not in the cache folder;
-the installer test checks that an update and a plain uninstall keep them and `/DELSETTINGS`
-removes them.
+`%LOCALAPPDATA%\teachers_teammate` beside `packages\` and `models\`, not in the cache folder.
+The two flags stand alone: the installer test runs each one without the other and asserts
+exactly what it removes, and that neither removes the other's data. The uninstaller's dialog
+starts from `UN_DEFAULT_PACKAGES` (ticked) and `UN_DEFAULT_SETTINGS` (not ticked); a silent run
+is the "nothing asked for" case and ignores both, which `tests/unit/test_windows_installer_script.py`
+holds the script to.
 
 ---
 
@@ -604,6 +659,9 @@ removes them.
 | `tools/packaging/make_tarball.sh` | Creates the portable Linux `.tar.gz` |
 | `tools/packaging/make_dmg.sh` | Creates `.dmg` installer for macOS |
 | `tools/packaging/windows.nsi` | NSIS script for the Windows installer and, in its first pass, the uninstaller |
+| `tools/packaging/test_windows_installer.ps1` | Installs, updates and uninstalls the setup and asserts on what is left behind |
+| `tools/packaging/latest_release.py` | Prints the newest published release's tag, or downloads one of its assets by pattern |
+| `tools/packaging/check_desktop_entry.py` | Checks the installed `.desktop` file, its `Exec`/`Icon` and the icon's folder |
 | `tools/release/stamp_versions.py` | Stamps version into `pyproject.toml` and Bazel `BUILD` |
 | `tools/licenses/inventory.py` | Writes the license inventory, its texts and the compiled outputs; `--compile`, `--check-env`, `--check-resolved` |
 | `tools/licenses/policy.toml` | The denied licenses, the display names and the accepted exceptions |

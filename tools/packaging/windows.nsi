@@ -253,6 +253,13 @@ Page custom ScopePageCreate ScopePageLeave
 
 ; ── Uninstaller pages ────────────────────────────────────────────────────────
 
+; What the data page starts with.  The dialog ticks the add-ons, because a teacher who removes
+; the program usually wants the downloads gone too, and leaves the settings, because a reinstall
+; should find them.  A silent uninstall is the "nothing asked for" case and ignores both (see
+; un.onInit); /DELDATA and /DELSETTINGS are the only way to ask for one.
+!define UN_DEFAULT_PACKAGES ${BST_CHECKED}
+!define UN_DEFAULT_SETTINGS ${BST_UNCHECKED}
+
 !ifdef BUILD_UNINSTALLER
 !insertmacro MUI_UNPAGE_CONFIRM
 UninstPage custom un.UnDataPageCreate un.UnDataPageLeave
@@ -386,17 +393,7 @@ Function .onInit
         ${EndIf}
         ; Interactive: the scope page offers the relaunch (see ScopePageLeave).
       ${EndIf}
-      ${If} $InstallScope == "all"
-        SetShellVarContext all
-        ${If} $DirGiven == "0"
-          StrCpy $INSTDIR "$PROGRAMFILES64\TeachersTeammate"
-        ${EndIf}
-      ${Else}
-        SetShellVarContext current
-        ${If} $DirGiven == "0"
-          StrCpy $INSTDIR "$LOCALAPPDATA\Programs\TeachersTeammate"
-        ${EndIf}
-      ${EndIf}
+      Call ApplyScope
     ${Else}
       ; Only a personal copy: update it in place.
       ${If} $CmdScope == "all"
@@ -580,6 +577,26 @@ Function DirectoryPagePre
   ${EndIf}
 FunctionEnd
 
+; ── Scope → folder and shell context ─────────────────────────────────────────
+; The one place that turns $InstallScope into a folder and a shell context.  Two callers:
+; .onInit (a silent run, and the default the scope page starts from) and ScopePageLeave (the
+; radio buttons).  $DirGiven is the second input: /D= wins over the default folder, and an
+; update keeps the folder of the copy it updates, so it never calls this.  The registry hive
+; follows $InstallScope in the install section.
+Function ApplyScope
+  ${If} $InstallScope == "all"
+    SetShellVarContext all
+    ${If} $DirGiven == "0"
+      StrCpy $INSTDIR "$PROGRAMFILES64\TeachersTeammate"
+    ${EndIf}
+  ${Else}
+    SetShellVarContext current
+    ${If} $DirGiven == "0"
+      StrCpy $INSTDIR "$LOCALAPPDATA\Programs\TeachersTeammate"
+    ${EndIf}
+  ${EndIf}
+FunctionEnd
+
 ; Is $INSTDIR ours to install into? $0 = "1" when it is missing, empty, or already holds
 ; teachers-teammate.exe; "0" when it holds somebody else's files.
 Function FolderIsOurs
@@ -678,17 +695,10 @@ Function ScopePageLeave
       Abort
     ${EndIf}
     StrCpy $InstallScope "all"
-    SetShellVarContext all
-    ${If} $DirGiven == "0"
-      StrCpy $INSTDIR "$PROGRAMFILES64\TeachersTeammate"
-    ${EndIf}
   ${Else}
     StrCpy $InstallScope "user"
-    SetShellVarContext current
-    ${If} $DirGiven == "0"
-      StrCpy $INSTDIR "$LOCALAPPDATA\Programs\TeachersTeammate"
-    ${EndIf}
   ${EndIf}
+  Call ApplyScope
 FunctionEnd
 
 ; Explorer starts the app as the signed-in user, never elevated, even after an
@@ -805,7 +815,7 @@ Function un.UnDataPageCreate
 
   ${NSD_CreateCheckBox} 10u 26u 270u 14u "Downloaded add-ons and model files"
   Pop $UnDelPackages
-  ${NSD_Check} $UnDelPackages
+  ${NSD_SetState} $UnDelPackages ${UN_DEFAULT_PACKAGES}
 
   ${NSD_CreateLabel} 22u 40u 258u 24u \
     "(built-in reader, page models, name detection, packages for online AI services)"
@@ -813,7 +823,7 @@ Function un.UnDataPageCreate
 
   ${NSD_CreateCheckBox} 10u 70u 270u 14u "Settings, API keys, benchmark history and results cache"
   Pop $UnDelCache
-  ; unchecked by default — user may want to keep settings if reinstalling
+  ${NSD_SetState} $UnDelCache ${UN_DEFAULT_SETTINGS}
 
   ${NSD_CreateLabel} 10u 94u 270u 40u \
     "AI models you downloaded in Ollama are kept: they belong to Ollama.$\r$\nRemove Ollama itself in Windows Settings > Apps."
@@ -870,7 +880,9 @@ Function un.onInit
     Quit
   ${EndIf}
 
-  ; A silent uninstall keeps every piece of user data unless it is asked for.
+  ; A silent uninstall is the "nothing asked for" case: both boxes unchecked, whatever the
+  ; dialog's defaults (UN_DEFAULT_PACKAGES / UN_DEFAULT_SETTINGS) are.  /DELDATA and
+  ; /DELSETTINGS are the only way to ask for one, and each one stands alone.
   ${If} ${Silent}
     StrCpy $DoDelPackages ${BST_UNCHECKED}
     StrCpy $DoDelCache    ${BST_UNCHECKED}

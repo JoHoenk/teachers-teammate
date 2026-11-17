@@ -2189,6 +2189,36 @@ pages, the summary rows and the done page), `tests/gui/test_gui_setup_assistant.
 Set up, Cancel, closing), `tests/test_setup_plan.py` (the setup plan's rules); the main window's side
 is tested in `tests/gui/test_gui_main_window.py`.
 
+**The walkthrough** (`tests/gui/test_gui_setup_walkthrough.py`) is the one test that runs the whole
+thing: the real `SetupAssistant` and every page, the real `ProcessingApplicationService`
+(`setup_facts`, `plan_setup`, the model listing and rating), the `LatestTask` pool, `InstallRound`,
+`OllamaDownloadManager`, the `ollama` client over loopback HTTP, the real `MainWindow` and
+`ocr.toml` on disk.  Replaced, each at the narrowest seam: Ollama by
+`tests/fakes/fake_ollama.py:FakeOllama` (one loopback port, so a server on the developer's computer
+cannot answer), pip, spaCy, the reader and the page models by recording stubs on the service, the
+model store by one under `tmp_path` with a `bundled_root` that does not exist, and the computer by
+`hardware_profile = "16gb"`, a fixed free disk and a fixed memory.  `SetupAssistant.exec` is
+replaced by a function that shows the wizard, runs the script and closes it — the same sequence
+without the nested modal loop, so a failed assertion is reported instead of swallowed by it.  The
+expected tags come from `best_model(...)`, never from literals, so a catalog update does not break
+the test.  `tests/unit/test_fake_ollama.py` keeps the fake honest: it drives it with the real
+`ollama` client, so a version bump that changes a response model fails there, with a readable
+message, instead of hanging the walkthrough.  `FakeOllama` is the **only** Ollama server in the
+tests: the Add-ons page tests and the discovery probe tests use it too, and what they need beyond
+the walkthrough (a model's size, say) became a parameter of it.  Its answers follow Ollama's own
+source — a list entry always has `modified_at`, `details.format` and `details.parent_model`, and a
+failing pull streams `pulling manifest` before the error line, all in a 200 stream.  Ollama's own
+repository tests the same boundary with `httptest` servers and, for integration, a real
+`ollama serve` on a free port (`integration/`, `OLLAMA_TEST_EXISTING`); we have no such run, so a
+server-side change is not seen until the fake is compared with its source again.
+
+**The packaged build** proves the same on all three systems: the `setup assistant` check in
+`frozen_modes.py` builds the wizard on the real service, clicks through to the summary and waits
+for the setup plan, and — frozen only — asserts that the bundle's page models are seen, so no
+`DownloadKind.PAGE_MODELS` download is planned.  It points the app at `http://127.0.0.1:9` and
+works in a temporary folder, so it answers the same on every machine and writes nothing into the
+user's folders.
+
 ### Cache vs benchmark store
 
 These two stores have deliberately opposite shapes:

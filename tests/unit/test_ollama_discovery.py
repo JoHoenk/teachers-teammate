@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from http.server import BaseHTTPRequestHandler, HTTPServer
 import json
 import threading
-from typing import ClassVar
 
 import pytest
 
@@ -25,6 +25,8 @@ from teachers_teammate.domain.ollama_discovery import (
 )
 from teachers_teammate.infrastructure import ollama_discovery
 from teachers_teammate.infrastructure.ollama_discovery import ServerInfo
+
+from ..fakes.fake_ollama import VERSION, FakeOllama
 
 _ROUTE = (
     "Iface\tDestination\tGateway\tFlags\tRefCnt\tUse\tMetric\tMask\tMTU\tWindow\tIRTT\n"
@@ -124,19 +126,18 @@ def test_scan_targets_stay_within_one_private_slash_24_without_the_own_address()
 # ── probe against a real (local) HTTP server ─────────────────────────────────
 
 
-class _Handler(BaseHTTPRequestHandler):
-    body_for: ClassVar[dict[str, object]] = {
-        "/api/version": {"version": "0.12.3"},
-        "/api/tags": {"models": [{"name": "a"}, {"name": "b"}]},
-    }
+@pytest.fixture(name="fake")
+def _fake() -> Iterator[FakeOllama]:
+    """The shared fake Ollama server, stopped when the test is over."""
+    with FakeOllama() as server:
+        yield server
+
+
+class _RouterLogin(BaseHTTPRequestHandler):
+    """A web server that is not Ollama: every address answers 200 with some other JSON."""
 
     def do_GET(self) -> None:
-        body = self.body_for.get(self.path)
-        if body is None:
-            self.send_response(404)
-            self.end_headers()
-            return
-        data = json.dumps(body).encode()
+        data = json.dumps({"hello": "router login"}).encode()
         self.send_response(200)
         self.send_header("Content-Length", str(len(data)))
         self.end_headers()
@@ -146,9 +147,9 @@ class _Handler(BaseHTTPRequestHandler):
         pass
 
 
-@pytest.fixture(name="fake_ollama")
-def _fake_ollama():
-    server = HTTPServer(("127.0.0.1", 0), _Handler)
+@pytest.fixture(name="router")
+def _router() -> Iterator[str]:
+    server = HTTPServer(("127.0.0.1", 0), _RouterLogin)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     yield f"http://127.0.0.1:{server.server_port}"
@@ -156,27 +157,29 @@ def _fake_ollama():
     server.server_close()
 
 
-def test_probe_reads_version_and_model_count_from_an_ollama_server(fake_ollama: str) -> None:
+def test_probe_reads_version_and_model_count_from_an_ollama_server(fake: FakeOllama) -> None:
     """
-    Given  a server that answers like Ollama
+    Given  a server that answers like Ollama and holds two models
     When   it is probed with and without counting models
-    Then   the version is read, and the model count only when asked
+    Then   the version is read, and the model list is only asked for when wanted
     """
-    assert ollama_discovery.probe_server(fake_ollama) == ServerInfo("0.12.3", 2)
-    assert ollama_discovery.probe_server(fake_ollama, count_models=False) == ServerInfo(
-        "0.12.3", None
-    )
+    fake.install("a")
+    fake.install("b")
+
+    assert ollama_discovery.probe_server(fake.url) == ServerInfo(VERSION, 2)
+    assert fake.paths() == ["/api/version", "/api/tags"]
+
+    assert ollama_discovery.probe_server(fake.url, count_models=False) == ServerInfo(VERSION, None)
+    assert fake.paths() == ["/api/version", "/api/tags", "/api/version"]
 
 
-def test_probe_ignores_a_server_that_is_not_ollama(fake_ollama: str, monkeypatch) -> None:
+def test_probe_ignores_a_server_that_is_not_ollama(router: str) -> None:
     """
     Given  a web server that answers 200 with something else, and an address nobody listens on
     When   each is probed
     Then   neither counts as Ollama
     """
-    monkeypatch.setitem(_Handler.body_for, "/api/version", {"hello": "router login"})
-
-    assert ollama_discovery.probe_server(fake_ollama) is None
+    assert ollama_discovery.probe_server(router) is None
     assert ollama_discovery.probe_server("http://127.0.0.1:1", timeout=0.2) is None
 
 

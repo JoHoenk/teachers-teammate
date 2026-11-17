@@ -4,6 +4,9 @@ The GUI test files each define a small app-service stub for the calls their
 widgets make.  The hardware-profile and model-rating methods are identical
 everywhere, so they live here once: mix :class:`RecommendationServiceStub` into
 a stub class instead of re-implementing them.
+
+:class:`FinishedThreadStub` is the same idea for a fake install thread: the few ``QThread``
+methods the app calls on a thread it has started.
 """
 
 from __future__ import annotations
@@ -346,3 +349,25 @@ class RecommendationServiceStub(LocalDataFlowStub):
 
     def inject_addon_packages_dir(self) -> None:
         self.injected_packages_dir = True
+
+
+class FinishedThreadStub:
+    """The ``QThread`` methods the app calls on a thread it started, for a fake that is done.
+
+    The app parks every thread it starts until it ends (``_model_fetch._start_thread``) and asks
+    it whether it is finished, so a fake ``QObject`` that does its work inside ``start()`` needs
+    these three.  Mix it in before ``QObject``; a fake that must look like a thread that is still
+    running overrides them.
+    """
+
+    def isRunning(self) -> bool:  # Qt's spelling
+        """Return ``False``: the fake's work was done inside ``start()``."""
+        return False
+
+    def isFinished(self) -> bool:  # Qt's spelling
+        """Return ``True``, so the thread is dropped from the parked ones at the next start."""
+        return True
+
+    def wait(self, _timeout: int = 0) -> bool:  # Qt's spelling
+        """Return ``True`` at once: there is nothing to wait for."""
+        return True

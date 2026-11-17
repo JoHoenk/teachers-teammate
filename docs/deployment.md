@@ -132,7 +132,10 @@ Every job creates a clean venv and installs into it against `pyinstaller-work/co
 `tools/build/check_pins.py --platform win_amd64` and `--platform macosx_14_0_arm64`, because pip
 evaluates PyInstaller's Windows-only (`pefile`) and macOS-only (`macholib`) dependencies against the
 Linux host and would never report them. Every job runs the app with `--_smoke_test smoke.json` and fails
-on a non-zero exit, and uploads `smoke.json` as an artifact. The Linux job also runs
+on a non-zero exit, and uploads `smoke.json` as an artifact. The checks are the ones in
+`teachers_teammate/frozen_modes.py`; the `setup assistant` one builds the wizard on the real service
+and works out a plan, so a bundle that lost a lazy import, a Qt widget module or the page models
+fails here rather than in a teacher's first start. The Linux job also runs
 `tools/build/check_linux_bundle.py` twice: `--max-glibc 2.39` proves the bundle starts on Ubuntu
 24.04, `--unused` proves it carries no library that nothing loads. The macOS job runs
 `tools/build/check_macos_bundle.py` (its floor is `MACOS_MINIMUM`, 14.4): it reads the minimum macOS of every Mach-O

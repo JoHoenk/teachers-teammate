@@ -47,13 +47,19 @@ from ...domain.data_location import (
     StageLocation,
 )
 from ...domain.language import LANGUAGES
+from ...domain.local_models import PAGE_MODELS_ADDON_ID
 from ...domain.model_catalog import DiskVerdict, Suitability
 from ...infrastructure.ollama_utils import is_local_ollama_url
 from .. import _user_text as txt
 from .._background import LatestTask
 from .._data_flow_summary import short_place
 from .._hardware_profile_selector import HardwareProfileSelector
-from .._install_round import PACKAGE_PREFIX, READER_PREFIX, READER_PROGRESS_STATUS
+from .._install_round import (
+    PACKAGE_PREFIX,
+    PAGE_MODELS_ITEM,
+    READER_PREFIX,
+    READER_PROGRESS_STATUS,
+)
 from .._model_guidance import PROVIDER_PREFIX, SPACY_PREFIX
 from .._ollama_status_line import OllamaStatusLine
 from ..settings._ai_service_section import PROOFREADING, AiServiceSection
@@ -1033,6 +1039,9 @@ class _DownloadRows(QWidget):
 
 def _item_name(item: str) -> str:
     """Return the download name behind an install round item key."""
+    if item == PAGE_MODELS_ITEM:
+        # The round says ``page_models:all``; the setup plan's row is named by the add-on id.
+        return PAGE_MODELS_ADDON_ID
     for prefix in (PACKAGE_PREFIX, SPACY_PREFIX, READER_PREFIX):
         if item.startswith(prefix):
             return item[len(prefix) :]

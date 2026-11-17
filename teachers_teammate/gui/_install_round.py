@@ -18,6 +18,7 @@ from typing import Any, Protocol
 from PySide6.QtCore import QObject, QThread, Signal
 
 from ..application.service import PAGE_MODELS_STATUS_KEY, READER_STATUS_KEY
+from ._model_fetch import _start_thread
 from ._model_guidance import SPACY_PREFIX
 
 #: How an item is named in :attr:`InstallRound.item_started` and ``item_done``.
@@ -142,6 +143,10 @@ class InstallRound(QObject):
         self._svc = app_service
         self._pull_manager = pull_manager  # owned by MainWindow; outlives this round
         self._pull_connected = False  # subscribed to the pull manager's signals
+        # Every thread starts through ``_start_thread``, which keeps it alive until it ends: this
+        # reference is dropped (set to ``None``, or replaced by the next step's thread) from the
+        # slot of the thread's own "done" signal, while that thread is still in its last lines —
+        # and Qt aborts the whole process when a running ``QThread`` is destroyed.
         self._thread: QThread | None = None
         # "update", "pip", "spacy", "reader", "page_models" or "pull" — what the running thread does
         self._phase = ""
@@ -262,7 +267,7 @@ class InstallRound(QObject):
         thread.finished_err.connect(self._on_error)
         self._thread = thread
         self._phase = "update"
-        thread.start()
+        _start_thread(thread)
 
     def _on_update_done(self) -> None:
         self.log_line.emit("✓ Add-ons updated.")
@@ -287,7 +292,7 @@ class InstallRound(QObject):
         # Set before start(): a thread that finishes at once must not be overwritten.
         self._thread = thread
         self._phase = "pip"
-        thread.start()
+        _start_thread(thread)
 
     def _on_pip_done(self, packages: list[str]) -> None:
         self.log_line.emit("✓ pip install complete.")
@@ -314,7 +319,7 @@ class InstallRound(QObject):
         thread.finished_err.connect(self._on_error)
         self._thread = thread
         self._phase = "spacy"
-        thread.start()
+        _start_thread(thread)
 
     def _on_spacy_done(self, _model: str) -> None:
         self.log_line.emit("✓ spaCy model downloaded.")
@@ -351,7 +356,7 @@ class InstallRound(QObject):
         thread.finished_err.connect(self._on_reader_error)
         self._thread = thread
         self._phase = "reader"
-        thread.start()
+        _start_thread(thread)
 
     def pull_progress_from_reader(self, done: int, total: int) -> None:
         """Forward the reader's download progress as a pull progress line."""
@@ -385,7 +390,7 @@ class InstallRound(QObject):
         thread.finished_err.connect(self._on_error)
         self._thread = thread
         self._phase = "page_models"
-        thread.start()
+        _start_thread(thread)
 
     def _on_page_models_done(self) -> None:
         self.log_line.emit("✓ Page models downloaded.")
@@ -421,7 +426,7 @@ class InstallRound(QObject):
         thread.finished_ok.connect(self._on_pull_done)
         thread.finished_err.connect(self._on_error)
         self._thread = thread
-        thread.start()
+        _start_thread(thread)
 
     def _on_pull_done(self, _model: str) -> None:
         self._pull_arrived(self._current)

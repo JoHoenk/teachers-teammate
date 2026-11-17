@@ -1,9 +1,8 @@
-"""GUI tests for miscellaneous widgets: CollapsibleSection, LogWidget, PreviewPanel, StatsWidget."""
+"""GUI tests for miscellaneous widgets: CollapsibleSection, LogWidget, StatsWidget."""
 # pylint: disable=W0613  # unused-argument — pytest injects fixtures by parameter name; not all are used in every test
 
 from __future__ import annotations
 
-from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
@@ -219,7 +218,7 @@ def test_diff_widget_set_texts_no_original(qtbot) -> None:
     When   set_texts() is called
     Then   widget shows '(no OCR text available for comparison)'
     """
-    from teachers_teammate.gui._preview_panel import DiffWidget  # noqa: PLC0415
+    from teachers_teammate.gui._diff_widget import DiffWidget  # noqa: PLC0415
 
     dw = DiffWidget()
     qtbot.addWidget(dw)
@@ -236,7 +235,7 @@ def test_diff_widget_set_texts_no_correction(qtbot) -> None:
     When   set_texts() is called
     Then   widget shows '(no correction available)'
     """
-    from teachers_teammate.gui._preview_panel import DiffWidget  # noqa: PLC0415
+    from teachers_teammate.gui._diff_widget import DiffWidget  # noqa: PLC0415
 
     dw = DiffWidget()
     qtbot.addWidget(dw)
@@ -254,7 +253,7 @@ def test_diff_widget_set_texts_with_diff(qtbot) -> None:
     When   set_texts() is called
     Then   HTML is set (contains deleted and inserted spans)
     """
-    from teachers_teammate.gui._preview_panel import DiffWidget  # noqa: PLC0415
+    from teachers_teammate.gui._diff_widget import DiffWidget  # noqa: PLC0415
 
     dw = DiffWidget()
     qtbot.addWidget(dw)
@@ -272,7 +271,7 @@ def test_diff_widget_preserves_structure_for_multiline_text(qtbot) -> None:
     When   set_texts() is called
     Then   resulting plain text keeps both lines and corrected content is visible
     """
-    from teachers_teammate.gui._preview_panel import DiffWidget  # noqa: PLC0415
+    from teachers_teammate.gui._diff_widget import DiffWidget  # noqa: PLC0415
 
     dw = DiffWidget()
     qtbot.addWidget(dw)
@@ -293,7 +292,7 @@ def test_diff_widget_clear_diff(qtbot) -> None:
     When   clear_diff() is called
     Then   the widget content is empty
     """
-    from teachers_teammate.gui._preview_panel import DiffWidget  # noqa: PLC0415
+    from teachers_teammate.gui._diff_widget import DiffWidget  # noqa: PLC0415
 
     dw = DiffWidget()
     qtbot.addWidget(dw)
@@ -307,6 +306,12 @@ def test_diff_widget_clear_diff(qtbot) -> None:
 # ── ZoomableImageView ─────────────────────────────────────────────────────
 
 
+def _solid_pixmap(width: int, height: int) -> QPixmap:
+    pix = QPixmap(width, height)
+    pix.fill()
+    return pix
+
+
 @pytest.mark.gui
 def test_zoomable_image_view_set_valid_pixmap(qtbot) -> None:
     """
@@ -314,7 +319,7 @@ def test_zoomable_image_view_set_valid_pixmap(qtbot) -> None:
     When   set_pixmap() is called
     Then   the pixmap item is set and not null
     """
-    from teachers_teammate.gui._preview_panel import ZoomableImageView  # noqa: PLC0415
+    from teachers_teammate.gui._image_view import ZoomableImageView  # noqa: PLC0415
 
     view = ZoomableImageView()
     qtbot.addWidget(view)
@@ -334,7 +339,7 @@ def test_zoomable_image_view_set_null_pixmap(qtbot) -> None:
     When   set_pixmap() is called
     Then   pix_item is None and the scene shows '(image unavailable)' text
     """
-    from teachers_teammate.gui._preview_panel import ZoomableImageView  # noqa: PLC0415
+    from teachers_teammate.gui._image_view import ZoomableImageView  # noqa: PLC0415
 
     view = ZoomableImageView()
     qtbot.addWidget(view)
@@ -351,7 +356,7 @@ def test_zoomable_image_view_show_message(qtbot) -> None:
     When   show_message('test msg') is called
     Then   pix_item is None (scene was cleared)
     """
-    from teachers_teammate.gui._preview_panel import ZoomableImageView  # noqa: PLC0415
+    from teachers_teammate.gui._image_view import ZoomableImageView  # noqa: PLC0415
 
     view = ZoomableImageView()
     qtbot.addWidget(view)
@@ -368,7 +373,7 @@ def test_zoomable_image_view_clear(qtbot) -> None:
     When   clear() is called
     Then   pix_item is None
     """
-    from teachers_teammate.gui._preview_panel import ZoomableImageView  # noqa: PLC0415
+    from teachers_teammate.gui._image_view import ZoomableImageView  # noqa: PLC0415
 
     view = ZoomableImageView()
     qtbot.addWidget(view)
@@ -381,104 +386,6 @@ def test_zoomable_image_view_clear(qtbot) -> None:
     assert view._pix_item is None
 
 
-# ── PreviewPanel ──────────────────────────────────────────────────────────
-
-
-@pytest.mark.gui
-def test_preview_panel_load_with_valid_paths(qtbot, tmp_path: Path) -> None:
-    """
-    Given  a PreviewPanel and text payloads for OCR and correction
-    When   load() is called
-    Then   the OCR text and correction text appear in the respective tabs
-    """
-    from teachers_teammate.gui._preview_panel import PreviewPanel  # noqa: PLC0415
-
-    panel = PreviewPanel()
-    qtbot.addWidget(panel)
-
-    pix = QPixmap(100, 100)
-    pix.fill()
-    panel.load(pix, "raw OCR text", "corrected text", "")
-
-    assert panel._ocr_text.toPlainText() == "raw OCR text"
-    assert panel._correction_text.toPlainText() == "corrected text"
-
-
-def _solid_pixmap(width: int, height: int) -> QPixmap:
-    pix = QPixmap(width, height)
-    pix.fill()
-    return pix
-
-
-def _solid_png(path: Path, width: int, height: int) -> str:
-    assert _solid_pixmap(width, height).save(str(path), "PNG")
-    return str(path)
-
-
-@pytest.mark.gui
-def test_preview_panel_shows_steps_caption_and_original_toggle(qtbot, tmp_path: Path) -> None:
-    """
-    Given  a loaded PreviewPanel and preprocessing info with an original page
-    When   set_preprocessing() is called and the Original toggle is clicked
-    Then   the caption says in words what the steps did, the toggle becomes visible, and toggling switches
-           the shown image between processed and original
-    """
-    from teachers_teammate.gui._preview_panel import PreviewPanel  # noqa: PLC0415
-
-    panel = PreviewPanel()
-    qtbot.addWidget(panel)
-    panel.show()
-    processed = _solid_pixmap(100, 100)
-    panel.load(processed, "raw", "", "")
-
-    panel.set_preprocessing(_solid_png(tmp_path / "orig.png", 200, 300), ["light", "deskew"])
-
-    assert panel._prep_lbl.isVisible()
-    assert panel._prep_lbl.text() == "Prepared: shadows evened out, tilt corrected"
-    assert panel._original_btn.isVisible()
-    assert panel._original_pixmap is None  # not loaded until first toggle
-
-    panel._original_btn.click()
-    assert panel._original_btn.isChecked()
-    assert panel._prep_lbl.text() == "Showing the original page"
-    assert panel._image_view._pix_item is not None
-    assert panel._image_view._pix_item.pixmap().width() == 200
-
-    panel._original_btn.click()
-    assert panel._image_view._pix_item is not None
-    assert panel._image_view._pix_item.pixmap().width() == 100
-    assert panel._prep_lbl.text() == "Prepared: shadows evened out, tilt corrected"
-
-
-@pytest.mark.gui
-def test_preview_panel_load_accepts_preprocessing_info(qtbot, tmp_path: Path) -> None:
-    """
-    Given  a PreviewPanel
-    When   load() is given a PreprocessInfo
-    Then   the caption and Original toggle are set up without a separate set_preprocessing call
-    """
-    from teachers_teammate.gui._preview_panel import PreviewPanel  # noqa: PLC0415
-    from teachers_teammate.gui._types import PreprocessInfo  # noqa: PLC0415
-
-    panel = PreviewPanel()
-    qtbot.addWidget(panel)
-    panel.show()
-
-    panel.load(
-        _solid_pixmap(100, 100),
-        "raw",
-        "",
-        "",
-        preprocess=PreprocessInfo(
-            original_img=_solid_png(tmp_path / "orig.png", 200, 300),
-            steps=("deskew",),
-        ),
-    )
-
-    assert panel._prep_lbl.text() == "Prepared: tilt corrected"
-    assert panel._original_btn.isVisible()
-
-
 @pytest.mark.gui
 def test_zoomable_view_swap_pixmap_keeps_zoom_and_visible_region(qtbot) -> None:
     """
@@ -486,7 +393,7 @@ def test_zoomable_view_swap_pixmap_keeps_zoom_and_visible_region(qtbot) -> None:
     When   swap_pixmap() replaces it with a 200x200 rendering of the same page
     Then   the same fraction of the page stays visible and the view is not re-fitted
     """
-    from teachers_teammate.gui._preview_panel import ZoomableImageView  # noqa: PLC0415
+    from teachers_teammate.gui._image_view import ZoomableImageView  # noqa: PLC0415
 
     view = ZoomableImageView()
     qtbot.addWidget(view)
@@ -513,7 +420,7 @@ def test_zoomable_view_swap_pixmap_refits_when_fitted(qtbot) -> None:
     When   swap_pixmap() is called
     Then   the new image is fitted as with set_pixmap()
     """
-    from teachers_teammate.gui._preview_panel import ZoomableImageView  # noqa: PLC0415
+    from teachers_teammate.gui._image_view import ZoomableImageView  # noqa: PLC0415
 
     view = ZoomableImageView()
     qtbot.addWidget(view)
@@ -525,198 +432,6 @@ def test_zoomable_view_swap_pixmap_refits_when_fitted(qtbot) -> None:
 
     assert view._fitted is True
     assert view.sceneRect().width() == 400
-
-
-@pytest.mark.gui
-def test_preview_panel_caption_states_when_nothing_was_applied(qtbot) -> None:
-    """
-    Given  a loaded PreviewPanel
-    When   set_preprocessing() reports an empty step list and no original
-    Then   the caption says no preprocessing was applied and the toggle stays hidden
-    """
-    from teachers_teammate.gui._preview_panel import PreviewPanel  # noqa: PLC0415
-
-    panel = PreviewPanel()
-    qtbot.addWidget(panel)
-    panel.show()
-    panel.load(_solid_pixmap(50, 50), "raw", "", "")
-
-    panel.set_preprocessing(None, [])
-
-    assert panel._prep_lbl.isVisible()
-    assert panel._prep_lbl.text() == "Prepared: nothing needed"
-    assert not panel._original_btn.isVisible()
-
-
-@pytest.mark.gui
-def test_preview_panel_hides_caption_when_steps_unknown_and_resets_on_load(
-    qtbot, tmp_path: Path
-) -> None:
-    """
-    Given  a PreviewPanel that showed preprocessing info for one document
-    When   another document is loaded without preprocessing info (legacy cache: steps None)
-    Then   the caption and Original toggle are hidden again
-    """
-    from teachers_teammate.gui._preview_panel import PreviewPanel  # noqa: PLC0415
-
-    panel = PreviewPanel()
-    qtbot.addWidget(panel)
-    panel.show()
-    panel.load(_solid_pixmap(50, 50), "raw", "", "")
-    panel.set_preprocessing(_solid_png(tmp_path / "orig.png", 60, 60), ["grayscale"])
-    assert panel._original_btn.isVisible()
-
-    panel.load(_solid_pixmap(70, 70), "other", "", "")
-
-    assert not panel._prep_lbl.isVisible()
-    assert not panel._original_btn.isVisible()
-
-
-@pytest.mark.gui
-def test_preview_panel_hides_original_toggle_when_original_file_is_missing(
-    qtbot, tmp_path: Path
-) -> None:
-    """
-    Given  a loaded PreviewPanel
-    When   set_preprocessing() points at an original file that no longer exists
-    Then   the Original toggle stays hidden while the steps caption is still shown
-    """
-    from teachers_teammate.gui._preview_panel import PreviewPanel  # noqa: PLC0415
-
-    panel = PreviewPanel()
-    qtbot.addWidget(panel)
-    panel.show()
-    panel.load(_solid_pixmap(50, 50), "raw", "", "")
-
-    panel.set_preprocessing(str(tmp_path / "gone.png"), ["grayscale"])
-
-    assert not panel._original_btn.isVisible()
-    assert panel._prep_lbl.isVisible()
-
-
-@pytest.mark.gui
-def test_preview_panel_load_with_empty_payloads_and_null_pixmap(qtbot, tmp_path: Path) -> None:
-    """
-    Given  a PreviewPanel and empty text payloads with a null QPixmap
-    When   load() is called
-    Then   the text widgets are empty (placeholders) and the image view shows the
-           'not found' state (pix_item is None) without raising
-    """
-    from teachers_teammate.gui._preview_panel import PreviewPanel  # noqa: PLC0415
-
-    panel = PreviewPanel()
-    qtbot.addWidget(panel)
-
-    panel.load(QPixmap(), "", "", "")
-
-    assert panel._ocr_text.toPlainText() == ""
-    assert panel._correction_text.toPlainText() == ""
-    assert panel._image_view._pix_item is None
-
-
-@pytest.mark.gui
-def test_preview_panel_load_with_evaluation_text(qtbot, tmp_path: Path) -> None:
-    """
-    Given  a PreviewPanel and an evaluation text payload
-    When   load() is called
-    Then   evaluation text appears in the evaluation tab
-    """
-    from teachers_teammate.gui._preview_panel import PreviewPanel  # noqa: PLC0415
-
-    panel = PreviewPanel()
-    qtbot.addWidget(panel)
-
-    panel.load(QPixmap(), "", "", "Score: 9/10")
-
-    assert panel._evaluation_text.toPlainText() == "Score: 9/10"
-
-
-@pytest.mark.gui
-def test_preview_panel_load_renders_markdown_in_evaluation(qtbot) -> None:
-    """
-    Given  a PreviewPanel and markdown evaluation content
-    When   load() is called
-    Then   the evaluation widget renders markdown and keeps readable plain text
-    """
-    from teachers_teammate.gui._preview_panel import PreviewPanel  # noqa: PLC0415
-
-    panel = PreviewPanel()
-    qtbot.addWidget(panel)
-
-    panel.load(QPixmap(), "", "", "# Summary\n\n- one\n- two")
-
-    assert "Summary" in panel._evaluation_text.toPlainText()
-    assert "one" in panel._evaluation_text.toPlainText()
-
-
-@pytest.mark.gui
-def test_preview_panel_clear_preview_empties_all(qtbot) -> None:
-    """
-    Given  a PreviewPanel with content loaded
-    When   clear_preview() is called
-    Then   all text widgets are cleared
-    """
-    from teachers_teammate.gui._preview_panel import PreviewPanel  # noqa: PLC0415
-
-    panel = PreviewPanel()
-    qtbot.addWidget(panel)
-
-    panel._ocr_text.setPlainText("some text")
-    panel._correction_text.setPlainText("corrected")
-    panel._evaluation_text.setPlainText("evaluated")
-    panel.clear_preview()
-
-    assert panel._ocr_text.toPlainText() == ""
-    assert panel._correction_text.toPlainText() == ""
-    assert panel._evaluation_text.toPlainText() == ""
-
-
-@pytest.mark.gui
-def test_clearing_the_preview_hides_the_size_counter(qtbot) -> None:
-    """
-    Given  a preview showing "… in 3 parts"
-    When   clear_preview() is called
-    Then   the counter is hidden, so it does not describe a text that is no longer shown
-    """
-    from teachers_teammate.application.text_size import TextSizeEstimate  # noqa: PLC0415
-    from teachers_teammate.gui._preview_panel import PreviewPanel  # noqa: PLC0415
-
-    panel = PreviewPanel()
-    qtbot.addWidget(panel)
-    panel.set_text_size(
-        TextSizeEstimate(words=900, pieces=3, words_per_piece=300, content_review_fits=None)
-    )
-    assert panel._ocr_nav._size_lbl.isVisible() or panel._ocr_nav._size_lbl.text()
-
-    panel.clear_preview()
-
-    assert panel._ocr_nav._size_lbl.text() == ""
-    assert not panel._ocr_nav._size_lbl.isVisible()
-
-
-@pytest.mark.gui
-def test_preview_panel_emits_edit_signals_for_user_changes(qtbot) -> None:
-    """
-    Given  a PreviewPanel with loaded OCR/correction text
-    When   the user edits OCR and correction fields
-    Then   edit signals emit the updated values
-    """
-    from teachers_teammate.gui._preview_panel import PreviewPanel  # noqa: PLC0415
-
-    panel = PreviewPanel()
-    qtbot.addWidget(panel)
-    panel.load(QPixmap(), "raw", "corr", "")
-
-    seen_ocr: list[str] = []
-    seen_corr: list[str] = []
-    panel.ocr_text_edited.connect(seen_ocr.append)
-    panel.correction_text_edited.connect(seen_corr.append)
-
-    panel._ocr_text.setPlainText("raw edited")
-    panel._correction_text.setPlainText("corr edited")
-
-    assert seen_ocr[-1] == "raw edited"
-    assert seen_corr[-1] == "corr edited"
 
 
 # ── SystemStatsWidget ─────────────────────────────────────────────────────
@@ -1358,76 +1073,6 @@ def test_every_advice_code_has_wording_for_the_teacher() -> None:
 
     for advice in Advice:
         assert advice_text(advice).strip()
-
-
-# ── Pieces counter ────────────────────────────────────────────────────────
-
-
-@pytest.mark.gui
-def test_preview_panel_shows_how_many_parts_the_text_takes(qtbot) -> None:
-    """
-    Given  a text that is proofread in three parts
-    When   the panel is told the size
-    Then   the nav bar shows the parts and a tooltip about the part boundary
-    """
-    from teachers_teammate.application.text_size import TextSizeEstimate  # noqa: PLC0415
-    from teachers_teammate.gui._preview_panel import PreviewPanel  # noqa: PLC0415
-
-    panel = PreviewPanel()
-    qtbot.addWidget(panel)
-
-    panel.set_text_size(
-        TextSizeEstimate(words=12_000, pieces=3, words_per_piece=4_000, content_review_fits=True)
-    )
-
-    label = panel._ocr_nav._size_lbl
-    assert not label.isHidden()
-    assert "12,000 words" in label.text()
-    assert "proofread in 3 parts" in label.text()
-    assert "4,000 words at once" in label.toolTip()
-
-
-@pytest.mark.gui
-def test_preview_panel_hides_the_counter_for_a_text_that_goes_out_whole(qtbot) -> None:
-    """
-    Given  a text that fits into one proofreading request
-    When   the panel is told the size
-    Then   the counter stays hidden: there is no part boundary to warn about
-    """
-    from teachers_teammate.application.text_size import TextSizeEstimate  # noqa: PLC0415
-    from teachers_teammate.gui._preview_panel import PreviewPanel  # noqa: PLC0415
-
-    panel = PreviewPanel()
-    qtbot.addWidget(panel)
-
-    panel.set_text_size(
-        TextSizeEstimate(words=900, pieces=1, words_per_piece=4_000, content_review_fits=True)
-    )
-
-    assert panel._ocr_nav._size_lbl.isHidden()
-
-
-@pytest.mark.gui
-def test_preview_panel_warns_when_the_content_review_cannot_read_the_text(qtbot) -> None:
-    """
-    Given  a text that is proofread in parts but too long for the content review
-    When   the panel is told the size
-    Then   the warning is shown in amber next to the parts, and explained in the tooltip
-    """
-    from teachers_teammate.application.text_size import TextSizeEstimate  # noqa: PLC0415
-    from teachers_teammate.gui._preview_panel import PreviewPanel  # noqa: PLC0415
-
-    panel = PreviewPanel()
-    qtbot.addWidget(panel)
-
-    panel.set_text_size(
-        TextSizeEstimate(words=40_000, pieces=10, words_per_piece=4_000, content_review_fits=False)
-    )
-
-    label = panel._ocr_nav._size_lbl
-    assert "too long for content review" in label.text()
-    assert "#e67e22" in label.text()  # the amber span, not a failure colour
-    assert "cannot be split" in label.toolTip()
 
 
 @pytest.mark.gui

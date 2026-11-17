@@ -9,6 +9,7 @@ Which module owns what:
 
 ===================  ==================================================================
 ``_types.py``        the shapes: :class:`Notice`, :class:`Question`, :class:`FilePrompt`
+``check.py``         what the Check tab's widgets say around its text
 ``dialogs.py``       every message box, question and file picker
 ``privacy.py``       what is sent for a file, and the data-flow wording
 ``settings.py``      the Settings window's page names and the "where to change it" phrases

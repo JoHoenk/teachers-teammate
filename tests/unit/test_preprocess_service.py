@@ -66,13 +66,13 @@ def test_preprocess_input_image_unit_calls_preprocessor(tmp_path: Path) -> None:
         preprocess_return=(proc_img, ["grayscale"]),
     )
 
-    paths, steps, source_image, raw_text_hint, _, _ = svc.preprocess_input(tmp_path / "doc.png")
+    prepared = svc.preprocess_input(tmp_path / "doc.png")
 
     preprocessor.preprocess.assert_called_once_with(img)
-    assert proc_img in paths
-    assert steps == ["grayscale"]
-    assert raw_text_hint is None
-    assert source_image == img
+    assert proc_img in prepared.ocr_inputs
+    assert prepared.steps == ["grayscale"]
+    assert prepared.raw_text_hint is None
+    assert prepared.source_image == img
 
 
 def test_preprocess_input_multiple_image_units_only_first_steps_kept(tmp_path: Path) -> None:
@@ -95,10 +95,10 @@ def test_preprocess_input_multiple_image_units_only_first_steps_kept(tmp_path: P
         provider_factory=lambda suffix, td: provider(),
     )
 
-    paths, steps, _, _, _, _ = svc.preprocess_input(tmp_path / "doc.pdf")
+    prepared = svc.preprocess_input(tmp_path / "doc.pdf")
 
-    assert paths == [proc1, proc2]
-    assert steps == ["step_a"]  # only first page steps
+    assert prepared.ocr_inputs == [proc1, proc2]
+    assert prepared.steps == ["step_a"]  # only first page steps
 
 
 # ── Text unit path ─────────────────────────────────────────────────────────
@@ -113,11 +113,11 @@ def test_preprocess_input_text_unit_returns_raw_text_hint(tmp_path: Path) -> Non
     payload = InputPayload(units=[_text_unit("hello world")], source_image=None)
     svc, _, preprocessor = _make_svc(tmp_path=tmp_path, payload=payload)
 
-    paths, steps, source_image, raw_text_hint, _, _ = svc.preprocess_input(tmp_path / "doc.txt")
+    prepared = svc.preprocess_input(tmp_path / "doc.txt")
 
-    assert paths == []
-    assert raw_text_hint == "hello world"
-    assert source_image is None
+    assert prepared.ocr_inputs == []
+    assert prepared.raw_text_hint == "hello world"
+    assert prepared.source_image is None
     preprocessor.preprocess.assert_not_called()
 
 
@@ -130,11 +130,54 @@ def test_preprocess_input_multiple_text_units_joined(tmp_path: Path) -> None:
     payload = InputPayload(units=[_text_unit("first"), _text_unit("second")], source_image=None)
     svc, _, _ = _make_svc(tmp_path=tmp_path, payload=payload)
 
-    _, _, _, raw_text_hint, _, _ = svc.preprocess_input(tmp_path / "doc.txt")
+    prepared = svc.preprocess_input(tmp_path / "doc.txt")
 
-    assert raw_text_hint is not None
-    assert "first" in raw_text_hint  # pylint: disable=unsupported-membership-test
-    assert "second" in raw_text_hint  # pylint: disable=unsupported-membership-test
+    assert prepared.raw_text_hint is not None
+    assert "first" in prepared.raw_text_hint  # pylint: disable=unsupported-membership-test
+    assert "second" in prepared.raw_text_hint  # pylint: disable=unsupported-membership-test
+
+
+def test_preprocess_input_keeps_each_page_as_it_was_loaded(tmp_path: Path) -> None:
+    """
+    Given  two image units
+    When   preprocess_input is called
+    Then   the pages as they were loaded are handed on, in the order of the prepared pages
+    """
+    img1 = tmp_path / "p1.png"
+    img2 = tmp_path / "p2.png"
+    proc1 = tmp_path / "p1_proc.png"
+    proc2 = tmp_path / "p2_proc.png"
+    payload = InputPayload(units=[_image_unit(img1), _image_unit(img2)], source_image=img1)
+    preprocessor = MagicMock()
+    preprocessor.preprocess.side_effect = [(proc1, ["step_a"]), (proc2, ["step_b"])]
+    provider = MagicMock(return_value=MagicMock(load=MagicMock(return_value=payload)))
+    svc = PreprocessService(
+        tmp_dir=tmp_path / "tmp",
+        preprocessor=preprocessor,
+        provider_factory=lambda suffix, td: provider(),
+    )
+
+    prepared = svc.preprocess_input(tmp_path / "doc.pdf")
+
+    assert prepared.ocr_inputs == [proc1, proc2]
+    assert prepared.original_pages == (img1, img2)
+
+
+def test_preprocess_input_keeps_the_pages_rendered_for_the_scan(tmp_path: Path) -> None:
+    """
+    Given  a text unit whose payload also carries the pages rendered for the scan
+    When   preprocess_input is called
+    Then   the pages are handed on, in page order
+    """
+    pages = [tmp_path / "typed_page0.png", tmp_path / "typed_page1.png"]
+    payload = InputPayload(
+        units=[_text_unit("typed essay")], source_image=pages[0], page_images=pages
+    )
+    svc, _, _ = _make_svc(tmp_path=tmp_path, payload=payload)
+
+    prepared = svc.preprocess_input(tmp_path / "typed.pdf")
+
+    assert prepared.page_images == tuple(pages)
 
 
 # ── Error paths ────────────────────────────────────────────────────────────

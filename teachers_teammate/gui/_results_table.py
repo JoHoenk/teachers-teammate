@@ -37,7 +37,7 @@ from ._constants import (
     _COLOUR_OK,
 )
 from ._export_menu import build_export_menu
-from ._types import FileDoneEvent, PreprocessInfo, StageStatus
+from ._types import FileDoneEvent, StageStatus
 
 _PENDING_SYMBOL = "-"  # hyphen-minus pending indicator
 _RUNNING_SYMBOL = "▶"  # ▶
@@ -113,7 +113,6 @@ class ResultsTable(QTableWidget):
     _ROLE_CORR = Qt.ItemDataRole.UserRole + 2
     _ROLE_EVAL = Qt.ItemDataRole.UserRole + 4
     _ROLE_SOURCE = Qt.ItemDataRole.UserRole + 5
-    _ROLE_PREPROCESS = Qt.ItemDataRole.UserRole + 6  # PreprocessInfo
     _ROLE_TEXT_FORMAT = Qt.ItemDataRole.UserRole + 7  # "plain" | "markdown"
     _ROLE_REVIEW = Qt.ItemDataRole.UserRole + 8  # CorrectionReview
     _ROLE_CORRECTION_WARNING = Qt.ItemDataRole.UserRole + 9  # str
@@ -488,7 +487,6 @@ class ResultsTable(QTableWidget):
         raw_txt: str,
         corr_txt: str,
         eval_txt: str,
-        preprocess: PreprocessInfo | None = None,
     ) -> None:
         """Attach artifact paths to an existing queued/result row identified by *source_id*."""
         row = self._row_for_source(source_id)
@@ -501,29 +499,6 @@ class ResultsTable(QTableWidget):
         file_item.setData(self._ROLE_RAW, raw_txt)
         file_item.setData(self._ROLE_CORR, corr_txt)
         file_item.setData(self._ROLE_EVAL, eval_txt)
-        # ``preprocess=None`` leaves the stored preprocessing info untouched (callers that
-        # only refresh text, e.g. after a manual edit, don't know it).
-        if preprocess is not None:
-            self._store_preprocess_info(file_item, preprocess)
-
-    def set_preprocessing(self, source_id: str, info: PreprocessInfo) -> None:
-        """Record how *source_id*'s preview image was produced (original page + steps)."""
-        row = self._row_for_source(source_id)
-        item = self.item(row, self._COL_FILE) if row is not None else None
-        if item is not None:
-            self._store_preprocess_info(item, info)
-
-    def _store_preprocess_info(self, item: QTableWidgetItem, info: PreprocessInfo) -> None:
-        item.setData(self._ROLE_PREPROCESS, info)
-
-    def preprocessing_for_source(self, source_id: str) -> PreprocessInfo:
-        """Return how *source_id*'s preview image was produced (unknown if not recorded)."""
-        row = self._row_for_source(source_id)
-        item = self.item(row, self._COL_FILE) if row is not None else None
-        if item is None:
-            return PreprocessInfo()
-        info = item.data(self._ROLE_PREPROCESS)
-        return info if isinstance(info, PreprocessInfo) else PreprocessInfo()
 
     def set_text_format(self, source_id: str, text_format: str) -> None:
         """Record the notation (plain / markdown) of *source_id*'s stored texts."""

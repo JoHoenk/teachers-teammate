@@ -60,3 +60,10 @@ class TextFormatter:
         from ..infrastructure.ocr_formats import MarkdownRenderer  # noqa: PLC0415
 
         return MarkdownRenderer().render(doc)
+
+    @staticmethod
+    def plain(doc: FormattedDocument) -> str:
+        """Return *doc* as plain text (what a plain-text document is stored as)."""
+        from ..infrastructure.ocr_formats import PlainTextRenderer  # noqa: PLC0415
+
+        return PlainTextRenderer().render(doc)

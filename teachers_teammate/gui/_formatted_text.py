@@ -45,15 +45,21 @@ _LINE_SEPARATOR = chr(0x2028)
 _NO_BREAK_SPACE = chr(0x00A0)
 
 STRIKE_COLOUR = "#c0392b"
+"""Colour of crossed-out words the model took out (the benchmark's and the Word files')."""
+
+STUDENT_STRIKE_COLOUR = "#999999"
+"""Colour of the student's own crossed-out words: grey, so they read as the page's history
+and not as something the model did."""
+
 INSERT_COLOUR = "#1f6feb"
 MUTED_COLOUR = "#888888"
 
 
-def _span_html(span: Span) -> str:
+def _span_html(span: Span, strike_colour: str) -> str:
     text = html.escape(span.text).replace("\n", "<br>")
     style = span.style
     if Style.STRIKE in style:
-        text = f'<span style="color:{STRIKE_COLOUR};"><s>{text}</s></span>'
+        text = f'<span style="color:{strike_colour};"><s>{text}</s></span>'
     if Style.SUPERSCRIPT in style:
         text = f'<span style="color:{INSERT_COLOUR};"><sup>{text}</sup></span>'
     if Style.SUBSCRIPT in style:
@@ -67,8 +73,8 @@ def _span_html(span: Span) -> str:
     return text
 
 
-def _spans_html(spans: tuple[Span, ...]) -> str:
-    return "".join(_span_html(span) for span in spans)
+def _spans_html(spans: tuple[Span, ...], strike_colour: str) -> str:
+    return "".join(_span_html(span, strike_colour) for span in spans)
 
 
 class _ListWriter:
@@ -106,29 +112,36 @@ class _ListWriter:
         return ("</li>" if li_open else "") + f"</{tag}>"
 
 
-def render_html(doc: FormattedDocument) -> str:
-    """Return Qt-compatible HTML for *doc* (no newlines in the markup: spacing is literal)."""
+def render_html(doc: FormattedDocument, *, strike_colour: str = STRIKE_COLOUR) -> str:
+    """Return Qt-compatible HTML for *doc* (no newlines in the markup: spacing is literal).
+
+    *strike_colour* colours the crossed-out words.  The benchmark and the Word files keep the
+    red of :data:`STRIKE_COLOUR`; the Check tab passes :data:`STUDENT_STRIKE_COLOUR`, because
+    there the crossed-out words are the student's own and must not read as the model's work.
+    """
     parts: list[str] = ['<html><body style="white-space: pre-wrap;">']
     lists = _ListWriter()
     for block, _marker in list_markers(doc.blocks):
         if block.kind == "list_item":
-            parts.append(lists.item(block, _spans_html(block.spans)))
+            parts.append(lists.item(block, _spans_html(block.spans, strike_colour)))
             continue
         parts.append(lists.close())
         if block.kind == "table":
-            parts.append(_table_html(block))
+            parts.append(_table_html(block, strike_colour))
         elif block.kind == "figure":
             alt = html.escape(block.text.strip() or "image")
             parts.append(f'<p><i style="color:{MUTED_COLOUR};">[{alt}]</i></p>')
         elif block.kind == "heading":
             level = min(max(block.level or 1, 1), 6)
-            parts.append(f"<h{level}>{_spans_html(block.spans)}</h{level}>")
+            parts.append(f"<h{level}>{_spans_html(block.spans, strike_colour)}</h{level}>")
         elif block.kind in ("page_header", "page_footer"):
-            parts.append(f'<p style="color:{MUTED_COLOUR};">{_spans_html(block.spans)}</p>')
+            parts.append(
+                f'<p style="color:{MUTED_COLOUR};">{_spans_html(block.spans, strike_colour)}</p>'
+            )
         elif block.kind == "caption":
-            parts.append(f"<p><i>{_spans_html(block.spans)}</i></p>")
+            parts.append(f"<p><i>{_spans_html(block.spans, strike_colour)}</i></p>")
         elif block.text.strip():
-            parts.append(f"<p>{_spans_html(block.spans)}</p>")
+            parts.append(f"<p>{_spans_html(block.spans, strike_colour)}</p>")
     parts.append(lists.close())
     parts.append("</body></html>")
     return "".join(parts)
@@ -170,11 +183,11 @@ def chip_placeholders(html_text: str, placeholders: Sequence[str]) -> str:
     return "".join(parts)
 
 
-def _table_html(block: Block) -> str:
+def _table_html(block: Block, strike_colour: str) -> str:
     rows: list[str] = []
     for row_index, row in enumerate(block.rows):
         tag = "th" if row_index == 0 else "td"
-        cells = "".join(f"<{tag}>{_spans_html(cell)}</{tag}>" for cell in row)
+        cells = "".join(f"<{tag}>{_spans_html(cell, strike_colour)}</{tag}>" for cell in row)
         rows.append(f"<tr>{cells}</tr>")
     return f'<table border="1" cellspacing="0" cellpadding="4">{"".join(rows)}</table>'
 

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 
-from teachers_teammate.domain.correction_review import (
+from tools.model_eval.one_request.sentence_review import (
     ChangeNote,
     CorrectionReview as SentenceReview,
     SentenceNote,

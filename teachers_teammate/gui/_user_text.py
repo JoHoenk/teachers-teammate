@@ -8,11 +8,9 @@ widgets import these names; they never build such sentences themselves.
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import TYPE_CHECKING
 
 from ..application.data_flow import sent_location
 from ..domain.correction_prompts import NOTES_LIMIT
-from ..domain.correction_review import AlignedReview
 from ..domain.data_location import (
     STAGE_CORRECTION,
     STAGE_EVALUATION,
@@ -26,44 +24,14 @@ from ..domain.proofreading.review import CHANGE_CATEGORIES
 from ..exceptions import RECOGNITION_OFF_MESSAGE
 from ..texts.settings import PAGE_AI_MODELS, PAGE_AI_SETUP, WHERE_ADDONS, WHERE_AI_MODELS
 
-if TYPE_CHECKING:
-    from ..application.text_size import TextSizeEstimate
+# ── The review's wording ──────────────────────────────────────────────────────
 
-# ── Tab title and filters ─────────────────────────────────────────────────────
-
-CHANGES_TAB = "Changes"
-
-FILTER_ALL = "All"
-FILTER_CHANGES = "Changes"
-FILTER_UNCLEAR = "Unclear"
-
-# ── Diff / notes wording ──────────────────────────────────────────────────────
-
-NO_OCR_TEXT = "(no OCR text available for comparison)"
-NO_CORRECTION_TEXT = "(no correction available - skipped or not yet generated)"
-
-NO_EXPLANATION = "no explanation"
 YOUR_CHANGE = "your change"
-
-ORPHAN_HEADING = "Not in the text"
-ORPHAN_HINT = "The AI suggested these changes, but they are not in the text."
-UNPLACED_HEADING = "Could not be placed in the text"
-UNPLACED_HINT = "The AI changed these sentences, but they could not be found in the text."
-
-COLUMN_EXPRESSION = "Original expression"
-COLUMN_WHY = "Why it is unclear"
-COLUMN_RECOMMENDED = "Recommended version"
 
 WHY_PREFIX = "Why:"
 RECOMMENDED_PREFIX = "Recommended:"
 SUGGESTION_PREFIX = "Suggestion:"
 MEANING_NOT_CERTAIN = "meaning not certain"
-
-NOT_IN_TEXT = "not in the text"
-
-NO_NOTES = "No changes and no unclear expressions for this file."
-NO_CHANGE_NOTES = "No changes for this file."
-NO_UNCLEAR_NOTES = "No unclear expressions for this file."
 
 CHANGE_CATEGORY_LABELS: dict[str, str] = {
     "grammar": "Grammar",
@@ -310,35 +278,7 @@ def category_label(category: str) -> str:
     return CHANGE_CATEGORY_LABELS.get(category, OTHER_CATEGORY)
 
 
-def trailing_toggle(count: int, *, expanded: bool) -> str:
-    """Return the link text that opens or closes the section of notes not in the text."""
-    return f"{'▾' if expanded else '▸'} {ORPHAN_HEADING} ({count})"
-
-
-def minor_toggle(count: int, *, expanded: bool) -> str:
-    """Return the link text that opens or closes the spelling and punctuation changes."""
-    noun = "correction" if count == 1 else "corrections"
-    return (
-        f"{'▾' if expanded else '▸'} {count} spelling and punctuation {noun} (marked in the text)"
-    )
-
-
-def changes_tab_title(aligned: AlignedReview | None) -> str:
-    """Return the tab title, with the change and unclear counts when there are any."""
-    if aligned is None:
-        return CHANGES_TAB
-    changes = aligned.listed_count
-    unclear = aligned.unclear_count
-    if not changes and not unclear:
-        return CHANGES_TAB
-    if unclear:
-        return f"{CHANGES_TAB} ({changes} · {unclear} ?)"
-    return f"{CHANGES_TAB} ({changes})"
-
-
-def filter_changes_label(count: int) -> str:
-    """Return the *Changes* filter button label for *count* changes."""
-    return f"{FILTER_CHANGES} {count}"
+FILTER_UNCLEAR = "Unclear"
 
 
 def filter_unclear_label(count: int) -> str:
@@ -427,39 +367,6 @@ def stored_result_line(stage: str, status: SentStatus) -> str:
     """Return the line saying how a stored result was sent, for the "What is sent" dialog."""
     verb, how = _how_sent(status.record)
     return STORED_RESULT.format(stage=stage_title(stage).lower(), how=f"{verb.lower()} {how}")
-
-
-# ── Pieces counter after OCR ──────────────────────────────────────────────────
-
-TEXT_SIZE_PARTS = "{words} words · proofread in {pieces} parts"
-TEXT_SIZE_TOO_LONG = "too long for content review"
-TEXT_SIZE_TOOLTIP = (
-    "Your model can read about {words_per_piece} words at once, so this text is proofread "
-    "in {pieces} parts. A change that spans two parts cannot be made."
-)
-TEXT_SIZE_TOO_LONG_TOOLTIP = (
-    "The content review cannot be split and needs the whole text at once; this text is "
-    "longer than the model can read."
-)
-
-
-def text_size_line(estimate: TextSizeEstimate | None) -> tuple[str, str, str]:
-    """Return ``(line, warning, tooltip)`` for the footer of the Extracted Text tab.
-
-    All three are empty when nothing is shown: the counter is only worth showing when the
-    text is proofread in several parts, because a change across a part boundary cannot be
-    made.  *warning* is the amber part, shown only together with the parts: a content review
-    reserves a fixed answer allowance, so a text that goes out whole for proofreading always
-    fits the review.
-    """
-    if estimate is None or estimate.pieces is None or estimate.pieces <= 1:
-        return "", "", ""
-    line = TEXT_SIZE_PARTS.format(words=f"{estimate.words:,}", pieces=estimate.pieces)
-    per_piece = f"{estimate.words_per_piece:,}" if estimate.words_per_piece else "?"
-    tooltip = TEXT_SIZE_TOOLTIP.format(words_per_piece=per_piece, pieces=estimate.pieces)
-    if estimate.content_review_fits is False:
-        return line, TEXT_SIZE_TOO_LONG, f"{tooltip}\n\n{TEXT_SIZE_TOO_LONG_TOOLTIP}"
-    return line, "", tooltip
 
 
 # ── Speed test and time estimates ─────────────────────────────────────────────
@@ -695,3 +602,65 @@ TURN_OFF_HIDING_TO_EDIT = (
 HIDE_PERSONAL_INFO_BUTTON = "👁"
 HIDE_PERSONAL_INFO_BUTTON_TIP = "Hide personal information in the texts shown here"
 SHOW_PERSONAL_INFO_BUTTON_TIP = "Show names again in the texts shown here"
+
+
+# ── The Check tab's side panel ────────────────────────────────────────────────
+
+TAKE_OUT = "Take out"
+TAKE_OUT_TOOLTIP = "Put the student's words back and take this correction out of the text"
+PUT_BACK = "Put back"
+PUT_BACK_TOOLTIP = "Put this correction back into the text"
+USE_SUGGESTION = "Use suggestion"
+USE_SUGGESTION_TOOLTIP = "Write the suggested wording into the text"
+CHANGE = "Change"
+CHANGE_TOOLTIP = "Go to these words in the final text and select them"
+TAKE_OUT_ALL = "Take out all"
+TAKE_OUT_ALL_TOOLTIP = "Put the student's words back for every one of these corrections"
+
+OPTIONAL_CHANGE = "optional"
+AI_NOT_SURE = "AI not sure"
+NO_EXPLANATION_MADE = "no explanation was made for this one"
+TAKEN_OUT = "taken out"
+MINOR_GROUP_NOTE = "marked in the text"
+SHOW_NAMES_TO_CHANGE = "Show the names to change the text"
+COULD_NOT_MARK = "The corrections could not be marked in this text."
+CONTENT_REVIEW_HEADING = "Content review"
+NO_ITEMS = "Nothing to correct in this text."
+
+
+def minor_group_label(count: int) -> str:
+    """Return the row of the spelling and punctuation changes, e.g. ``"9 spelling, punctuation"``."""
+    noun = "correction" if count == 1 else "corrections"
+    return f"{count} spelling, punctuation {noun}"
+
+
+def item_counts(corrections: int, unclear: int) -> str:
+    """Return the footer of the list: how many corrections and how many unclear passages."""
+    parts: list[str] = []
+    if corrections:
+        parts.append(
+            f"{corrections} correction" if corrections == 1 else f"{corrections} corrections"
+        )
+    if unclear:
+        parts.append(f"{unclear} unclear")
+    return " · ".join(parts)
+
+
+# ── The Check tab's header and banners ────────────────────────────────────────
+
+VIEW_READ = "What was read"
+VIEW_MARKED = "With corrections"
+VIEW_FINAL = "Final text"
+
+READING_FIX_WARNING = (
+    "Changing what was read removes the corrections of this document and your changes to them."
+)
+EDIT_ANYWAY = "Edit anyway"
+SHOW_NAMES = "Show names"
+SHOW_SCAN = "Show scan"
+PROOFREAD_THIS_DOCUMENT = "Proofread this document"
+PROOFREAD_AGAIN = "Proofread again"
+SHOW_MARKDOWN_SOURCE = "Show Markdown source"
+SOURCE_DIALOG_TITLE = "The stored text of this document"
+WAITING_FOR_RUN = "Waiting for this run"
+BEING_PROOFREAD = "Being proofread — you can edit it when it is done"

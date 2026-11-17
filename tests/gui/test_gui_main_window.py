@@ -27,10 +27,10 @@ from teachers_teammate.domain.model_catalog import (
     HardwareDetection,
 )
 from teachers_teammate.domain.proofreading.edits import EditPart
-from teachers_teammate.domain.proofreading.legacy_review import sentence_review
 from teachers_teammate.domain.proofreading.review import CorrectionReview, EditNote
 from teachers_teammate.gui import _dialogs
 from teachers_teammate.gui import _main_window as main_window_module
+from teachers_teammate.gui import _user_text as txt
 from teachers_teammate.gui._config_panel import ConfigPanel
 from teachers_teammate.gui._export_menu import ExportKind
 from teachers_teammate.gui._main_window import MainWindow
@@ -45,9 +45,12 @@ from teachers_teammate.gui.settings._page import (
 )
 from teachers_teammate.gui.settings._window import SUB_PAGES
 from teachers_teammate.domain.run_summary import RunSummary
-from teachers_teammate.infrastructure.ocr_formats import plain_text_of
 from teachers_teammate.infrastructure.ollama_install import OLLAMA_DOWNLOAD_URL
 from teachers_teammate.infrastructure.reporting import KeepAwakeState
+from teachers_teammate.infrastructure.state_repository import (
+    StateRepository,
+    compute_file_hash,
+)
 from teachers_teammate.infrastructure.storage_root import resolve_artifact_dir
 from teachers_teammate.texts import dialogs as dlg
 from teachers_teammate.texts._types import Answer, Notice, Question, StandardButton
@@ -845,40 +848,6 @@ def test_main_window_file_done_shows_how_the_finished_results_were_sent(
 
 
 @pytest.mark.gui
-def test_main_window_file_done_clears_stale_preprocessing_info(main_window, monkeypatch) -> None:
-    """
-    Given  a row that still holds preprocessing info from an earlier run
-    When   _on_file_done reports a failed run and no valid state exists any more
-    Then   the row's preprocessing info is reset instead of keeping the old original/steps
-    """
-    from teachers_teammate.gui._types import PreprocessInfo  # noqa: PLC0415
-
-    source = "/tmp/page.png"
-    main_window._results_table.set_queue(["page.png"], source_ids=[source])
-    main_window._results_table.set_preprocessing(
-        source, PreprocessInfo("/tmp/old.png", ("deskew",))
-    )
-    monkeypatch.setattr(main_window._app_service, "load_view", lambda *_a, **_k: None)
-
-    main_window._on_file_done(
-        FileDoneEvent(
-            source_id=source,
-            name="page.png",
-            ok=False,
-            message="",
-            ocr_s=0.0,
-            correction_s=0.0,
-            preview_img="",
-            raw_txt="",
-            corr_txt="",
-            eval_txt="",
-        )
-    )
-
-    assert main_window._results_table.preprocessing_for_source(source) == PreprocessInfo()
-
-
-@pytest.mark.gui
 def test_main_window_file_done_leaves_another_open_document_alone(main_window, monkeypatch) -> None:
     """
     Given  a document open in the Check tab and a run that finishes a different file
@@ -912,50 +881,140 @@ def test_main_window_file_done_leaves_another_open_document_alone(main_window, m
 
 
 @pytest.mark.gui
-def test_main_window_load_check_handles_a_row_without_artifacts(main_window) -> None:
+def test_main_window_load_check_warns_about_a_document_without_state(
+    main_window, monkeypatch
+) -> None:
     """
-    Given  a row that has no page and no text yet
+    Given  a row whose document has no stored state
     When   _load_check is called for it
-    Then   no exception is raised and the tab stays where it is
+    Then   the teacher is told, and the tab stays where it is
     """
     main_window._results_table.set_queue(["page.png"], source_ids=["/tmp/page.png"])
+    shown = _record_notices(monkeypatch)
 
     main_window._load_check("/tmp/page.png")
 
+    assert len(shown) == 1
+    assert "page.png" in shown[0].body
+    assert "/tmp" not in shown[0].body  # it names the document, not a path as the "reason"
     assert main_window._tabs.currentIndex() == 0
+
+
+@pytest.mark.gui
+def test_a_failed_load_does_not_leave_the_open_document_locked(
+    main_window, monkeypatch, stored
+) -> None:
+    """
+    Given  an open document that was locked for a run, and a run that has ended
+    When   its reload fails because nothing usable is stored any more
+    Then   the teacher is told and the lock of the finished run is lifted
+    """
+    [a] = stored("a.png")
+    main_window._open_check(a)
+    main_window._run_pending = {a}
+    main_window._apply_lock()
+    assert main_window._check.body.banner.text == txt.WAITING_FOR_RUN
+    main_window._run_pending = set()
+    monkeypatch.setattr(main_window._app_service, "check_document", lambda *_a, **_k: None)
+    shown = _record_notices(monkeypatch)
+
+    assert main_window._load_check(a) is False
+
+    assert len(shown) == 1
+    assert main_window._check.body.banner.isHidden()
+    assert main_window._current_preview_source_id == a
+
+
+@pytest.mark.gui
+def test_a_document_opens_although_the_settings_are_not_valid_yet(
+    main_window, monkeypatch, stored
+) -> None:
+    """
+    Given  a stored document and settings the window cannot turn into a run config yet
+    When   the document is opened in the Check tab
+    Then   it is shown, because reading stored results needs no valid run settings
+    """
+    [a] = stored("a.png", raw="what was read")
+    cfg = main_window._config_panel.to_config()
+
+    def _invalid():
+        raise ValueError("no output folder")
+
+    monkeypatch.setattr(main_window._config_panel, "to_config", _invalid)
+    monkeypatch.setattr(main_window._config_panel, "lookup_config", lambda: cfg)
+
+    assert main_window._load_check(a) is True
+    assert "what was read" in main_window._check.body.read_view.toPlainText()
+
+
+@pytest.mark.gui
+def test_a_typed_edit_is_stored_before_a_stage_run_clears_the_cache(
+    main_window, monkeypatch, stored
+) -> None:
+    """
+    Given  an open document with text typed but not yet stored
+    When   "Proofread again" invalidates the cache and starts the run
+    Then   the typed edit is stored first, then the cache is cleared, then the worker starts
+    """
+    [a] = stored("a.png")
+    main_window._open_check(a)
+    order: list[str] = []
+    monkeypatch.setattr(main_window._check, "flush_pending_edit", lambda: order.append("flush"))
+
+    def _invalidate(*_a, **_k):
+        order.append("invalidate")
+        return [a], [], False
+
+    monkeypatch.setattr(main_window._app_service, "invalidate_from_stage", _invalidate)
+    monkeypatch.setattr(main_window, "_start_worker", lambda *_a, **_k: order.append("start"))
+
+    main_window._run_stage(make_config(Path("/tmp")), [a], "correction")
+
+    assert order == ["flush", "invalidate", "start"]
+
+
+@pytest.mark.gui
+def test_a_stored_edit_reads_the_document_state_once(main_window, monkeypatch, stored) -> None:
+    """
+    Given  a document open in the Check tab
+    When   the teacher's edit of the final text is stored
+    Then   the stored state is read once for the row and the page together
+    """
+    [a] = stored("a.png", raw="raw text", corrected="corr old")
+    main_window._results_table.selectRow(0)
+    main_window._open_check(a)
+    real = main_window._app_service.load_view
+    calls: list[str] = []
+
+    def _counting(*args, **kwargs):
+        calls.append("load_view")
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(main_window._app_service, "load_view", _counting)
+
+    main_window._on_correction_text_edited("corr edited")
+
+    assert calls == ["load_view"]
 
 
 @pytest.mark.gui
 def test_main_window_ocr_edit_persists_and_invalidates_downstream(
     main_window,
-    monkeypatch,
-    tmp_path: Path,
+    stored,
 ) -> None:
     """
     Given  a document open in the Check tab with cached correction/evaluation
     When   OCR text is edited
     Then   OCR text is persisted and correction/evaluation are invalidated
     """
-    cfg = make_config(tmp_path)
-    source = cfg.input_dir / "page.png"
-    source.touch()
-    monkeypatch.setattr(main_window._config_panel, "to_config", lambda: cfg)
-
-    main_window._results_table.set_queue(["page.png"], source_ids=[str(source)])
-    main_window._results_table.set_row_artifacts(
-        str(source),
-        "",
-        "raw old",
-        "corr old",
-        "eval old",
-    )
+    [source_id] = stored("page.png", raw="raw old", corrected="corr old")
+    source = Path(source_id)
     main_window._results_table.selectRow(0)
-    main_window._open_check(str(source))
+    main_window._open_check(source_id)
 
     main_window._on_ocr_text_edited("raw edited")
 
-    from teachers_teammate.infrastructure.state_repository import StateRepository  # noqa: PLC0415
-
+    cfg = main_window._config_panel.to_config()
     state = StateRepository(resolve_artifact_dir(cfg.output_dir) / "state").load(source)
     assert state is not None
     assert state.raw_text == "raw edited"
@@ -973,34 +1032,21 @@ def test_main_window_ocr_edit_persists_and_invalidates_downstream(
 @pytest.mark.gui
 def test_main_window_correction_edit_persists_and_clears_evaluation(
     main_window,
-    monkeypatch,
-    tmp_path: Path,
+    stored,
 ) -> None:
     """
     Given  a document open in the Check tab with OCR/correction/evaluation payloads
     When   correction text is edited
     Then   correction is persisted and evaluation is invalidated
     """
-    cfg = make_config(tmp_path)
-    source = cfg.input_dir / "page.png"
-    source.touch()
-    monkeypatch.setattr(main_window._config_panel, "to_config", lambda: cfg)
-
-    main_window._results_table.set_queue(["page.png"], source_ids=[str(source)])
-    main_window._results_table.set_row_artifacts(
-        str(source),
-        "",
-        "raw text",
-        "corr old",
-        "eval old",
-    )
+    [source_id] = stored("page.png", raw="raw text", corrected="corr old")
+    source = Path(source_id)
     main_window._results_table.selectRow(0)
-    main_window._open_check(str(source))
+    main_window._open_check(source_id)
 
     main_window._on_correction_text_edited("corr edited")
 
-    from teachers_teammate.infrastructure.state_repository import StateRepository  # noqa: PLC0415
-
+    cfg = main_window._config_panel.to_config()
     state = StateRepository(resolve_artifact_dir(cfg.output_dir) / "state").load(source)
     assert state is not None
     assert state.correction_done is True
@@ -1017,25 +1063,18 @@ def test_main_window_correction_edit_persists_and_clears_evaluation(
 @pytest.mark.gui
 def test_main_window_correction_edit_keeps_the_stored_warning_banner(
     main_window,
-    monkeypatch,
-    tmp_path: Path,
+    stored,
 ) -> None:
     """
     Given  a file whose proofreading fell back to corrections only and stored a warning
-    When   the teacher edits the proofread text
-    Then   the warning banner above the changes view is still shown after the reload
+    When   the teacher edits the proofread text and dismisses the reading-fix banner
+    Then   the stored warning is still shown after the reload
     """
-    from teachers_teammate.infrastructure.state_repository import StateRepository  # noqa: PLC0415
-
-    cfg = make_config(tmp_path)
-    source = cfg.input_dir / "page.png"
-    source.touch()
-    monkeypatch.setattr(main_window._config_panel, "to_config", lambda: cfg)
-    main_window._results_table.set_queue(["page.png"], source_ids=[str(source)])
-    main_window._results_table.set_row_artifacts(str(source), "", "raw text", "corr old", "")
+    [source_id] = stored("page.png", raw="raw text", corrected="corr old")
+    source = Path(source_id)
     main_window._results_table.selectRow(0)
-    main_window._open_check(str(source))
-    main_window._on_correction_text_edited("corr first")  # creates the state record
+    main_window._open_check(source_id)
+    cfg = main_window._config_panel.to_config()
     repo = StateRepository(resolve_artifact_dir(cfg.output_dir) / "state")
     state = repo.load(source)
     assert state is not None
@@ -1043,8 +1082,9 @@ def test_main_window_correction_edit_keeps_the_stored_warning_banner(
 
     main_window._on_correction_text_edited("corr edited")
 
-    assert not main_window._preview._review_banner.isHidden()
-    assert main_window._preview._review_banner.text() == "No explanations."
+    assert main_window._check.body.banner.text == txt.READING_FIX_WARNING
+    main_window._check.body.banner.action_clicked.emit()
+    assert main_window._check.body.banner.text == "No explanations."
 
 
 # ── Additional coverage ─────────────────────────────────────────────────────
@@ -1096,57 +1136,46 @@ def test_main_window_save_settings_shows_warning_on_error(main_window, monkeypat
 
 
 @pytest.mark.gui
-def test_main_window_load_check_shows_the_text_of_the_document(main_window) -> None:
+def test_main_window_load_check_shows_the_text_of_the_document(main_window, stored) -> None:
     """
     Given  a row whose document has extracted text
     When   _load_check is called for it
-    Then   the preview panel shows that text and the header names the document
+    Then   the Check tab shows that text and the header names the document
     """
-    main_window._results_table.set_queue(["page.png"], source_ids=["/tmp/page.png"])
-    main_window._results_table.set_row_artifacts("/tmp/page.png", "", "ocr content", "", "")
+    [source_id] = stored("page.png", raw="ocr content")
 
-    main_window._load_check("/tmp/page.png")
+    main_window._load_check(source_id)
 
-    assert "ocr content" in main_window._preview._ocr_text.toPlainText()
+    assert "ocr content" in main_window._check.body.read_view.toPlainText()
     assert main_window._check._name_label.text() == "page.png"
     assert main_window._check._position_label.text() == "1 of 1"
 
 
 @pytest.mark.gui
-def test_main_window_load_check_hands_the_preview_the_sentence_review(
-    main_window, monkeypatch
-) -> None:
+def test_main_window_load_check_hands_the_page_the_stored_review(main_window, stored) -> None:
     """
     Given  a row whose document has a stored review
     When   _load_check is called for it
-    Then   the preview panel receives that review as the sentence-based one it reads
+    Then   the Check tab lists the correction that review explains
     """
-    raw = "She **have** a dog."
     review = CorrectionReview(
         edits=(
             EditNote(
                 id=1,
-                parts=(EditPart(6, 10, "have", "has"),),
+                parts=(EditPart(4, 8, "have", "has"),),
                 sentences=(),
                 category="grammar",
                 explanation='"she" is 3rd person singular.',
             ),
         )
     )
-    seen: list[Any] = []
-    monkeypatch.setattr(
-        main_window._preview,
-        "load",
-        lambda *_args, **kwargs: seen.append(kwargs),
+    [source_id] = stored(
+        "page.png", raw="She have a dog.", corrected="She has a dog.", review=review
     )
-    main_window._results_table.set_queue(["page.png"], source_ids=["/tmp/page.png"])
-    main_window._results_table.set_row_artifacts("/tmp/page.png", "", raw, "She **has** a dog.", "")
-    main_window._results_table.set_text_format("/tmp/page.png", "markdown")
-    main_window._results_table.set_correction_review("/tmp/page.png", review)
 
-    main_window._load_check("/tmp/page.png")
+    main_window._load_check(source_id)
 
-    assert seen[0]["correction_review"] == sentence_review(plain_text_of(raw, "markdown"), review)
+    assert main_window._check.body.panel.row_count == 1
 
 
 @pytest.mark.gui
@@ -1602,17 +1631,72 @@ def test_the_window_has_a_documents_tab_and_a_check_tab(main_window) -> None:
     assert tabs == ["Documents", "Check"]
     assert main_window._tabs.widget(0) is main_window._main_splitter
     assert main_window._tabs.widget(1) is main_window._check
-    assert main_window._check.preview is main_window._preview
 
 
-def _queue_with_results(main_window, *names: str) -> list[str]:
-    """Put *names* in the queue, each with extracted text, and return their source ids."""
-    source_ids = [f"/tmp/{name}" for name in names]
-    main_window._results_table.set_queue(list(names), source_ids=source_ids)
-    for source_id in source_ids:
-        main_window._results_table.set_row_artifacts(source_id, "", "what was read", "", "")
-    main_window._update_check_tab()
-    return source_ids
+def _store_document(
+    cfg,
+    source: Path,
+    *,
+    raw: str = "",
+    corrected: str = "",
+    review: CorrectionReview | None = None,
+    warning: str = "",
+    text_format: str = "plain",
+) -> None:
+    """Write a stored state for *source*, so the Check tab has something to read."""
+    repo = StateRepository(resolve_artifact_dir(cfg.output_dir) / "state")
+    state = repo.create(source, compute_file_hash(source))
+    repo.save(
+        source,
+        dataclasses.replace(
+            state,
+            raw_text=raw,
+            correction_text=corrected,
+            correction_review=review.to_dict() if review is not None else None,
+            correction_warning=warning,
+            raw_text_format=text_format,
+            ocr_done=bool(raw),
+            correction_done=bool(corrected),
+        ),
+    )
+
+
+@pytest.fixture
+def stored(main_window, monkeypatch, tmp_path: Path):
+    """Return a factory that makes real documents with a stored state and queues them."""
+
+    def _make(
+        *names: str,
+        raw: str = "what was read",
+        corrected: str = "",
+        review: CorrectionReview | None = None,
+        warning: str = "",
+        text_format: str = "plain",
+    ) -> list[str]:
+        cfg = make_config(tmp_path)
+        cfg.input_dir.mkdir(parents=True, exist_ok=True)
+        monkeypatch.setattr(main_window._config_panel, "to_config", lambda: cfg)
+        source_ids: list[str] = []
+        for name in names:
+            source = cfg.input_dir / name
+            source.write_text("page", encoding="utf-8")
+            _store_document(
+                cfg,
+                source,
+                raw=raw,
+                corrected=corrected,
+                review=review,
+                warning=warning,
+                text_format=text_format,
+            )
+            source_ids.append(str(source))
+        main_window._results_table.set_queue(list(names), source_ids=source_ids)
+        for source_id in source_ids:
+            main_window._results_table.set_row_artifacts(source_id, "", raw, corrected, "")
+        main_window._update_check_tab()
+        return source_ids
+
+    return _make
 
 
 @pytest.mark.gui
@@ -1634,15 +1718,15 @@ def test_check_tab_is_disabled_until_a_document_has_a_result(main_window) -> Non
 
 
 @pytest.mark.gui
-def test_opening_a_document_shows_the_check_tab_and_labels_it(main_window) -> None:
+def test_opening_a_document_shows_the_check_tab_and_labels_it(main_window, stored) -> None:
     """
     Given  a queue with two documents that have results
     When   the second one is opened
     Then   the Check tab is in front and its label names the document
     """
-    _queue_with_results(main_window, "a.png", "b.png")
+    _a, b = stored("a.png", "b.png")
 
-    main_window._open_check("/tmp/b.png")
+    main_window._open_check(b)
 
     assert main_window._tabs.currentIndex() == 1
     assert main_window._tabs.tabText(1) == "Check \u2014 b.png"
@@ -1651,16 +1735,16 @@ def test_opening_a_document_shows_the_check_tab_and_labels_it(main_window) -> No
 
 
 @pytest.mark.gui
-def test_the_check_tab_label_shortens_a_long_name(main_window) -> None:
+def test_the_check_tab_label_shortens_a_long_name(main_window, stored) -> None:
     """
     Given  a document with a name longer than the tab label holds
     When   it is opened
     Then   the label is shortened and the tooltip keeps the whole name
     """
     name = "a_very_long_document_name_that_does_not_fit.pdf"
-    _queue_with_results(main_window, name)
+    [source_id] = stored(name)
 
-    main_window._open_check(f"/tmp/{name}")
+    main_window._open_check(source_id)
 
     label = main_window._tabs.tabText(1)
     assert label.startswith("Check \u2014 ")
@@ -1670,18 +1754,18 @@ def test_the_check_tab_label_shortens_a_long_name(main_window) -> None:
 
 
 @pytest.mark.gui
-def test_clicking_the_check_tab_opens_the_current_row(main_window) -> None:
+def test_clicking_the_check_tab_opens_the_current_row(main_window, stored) -> None:
     """
     Given  a queue with two documents that have results, the second one selected
     When   the Check tab is clicked
     Then   it shows the selected document and leaves the selection alone
     """
-    _queue_with_results(main_window, "a.png", "b.png")
+    _a, b = stored("a.png", "b.png")
     main_window._results_table.selectRow(1)
 
     main_window._tabs.setCurrentIndex(1)
 
-    assert main_window._current_preview_source_id == "/tmp/b.png"
+    assert main_window._current_preview_source_id == b
     assert main_window._results_table.currentRow() == 1
 
 
@@ -1714,19 +1798,19 @@ def test_the_window_has_shortcuts_for_both_tabs(main_window) -> None:
 
 
 @pytest.mark.gui
-def test_ctrl_2_opens_a_document_when_none_is_open(main_window) -> None:
+def test_ctrl_2_opens_a_document_when_none_is_open(main_window, stored) -> None:
     """
     Given  a queue with a document that has a result and no open document
     When   the Check tab is asked for
     Then   it opens the current row and shows the tab
     """
-    _queue_with_results(main_window, "a.png")
+    [a] = stored("a.png")
     main_window._results_table.selectRow(0)
 
     main_window._show_check_tab()
 
     assert main_window._tabs.currentIndex() == 1
-    assert main_window._current_preview_source_id == "/tmp/a.png"
+    assert main_window._current_preview_source_id == a
 
 
 @pytest.mark.gui
@@ -1745,83 +1829,85 @@ def test_ctrl_2_does_nothing_while_no_document_can_be_opened(main_window) -> Non
 
 
 @pytest.mark.gui
-def test_escape_in_the_check_tab_goes_back_to_documents(main_window) -> None:
+def test_escape_in_the_check_tab_goes_back_to_documents(main_window, stored) -> None:
     """
     Given  a document open in the Check tab
     When   the page asks to go back
     Then   Documents is in front and the document stays open
     """
-    _queue_with_results(main_window, "a.png")
-    main_window._open_check("/tmp/a.png")
+    [a] = stored("a.png")
+    main_window._open_check(a)
 
     main_window._check.back_requested.emit()
 
     assert main_window._tabs.currentIndex() == 0
-    assert main_window._current_preview_source_id == "/tmp/a.png"
+    assert main_window._current_preview_source_id == a
 
 
 @pytest.mark.gui
-def test_the_arrows_move_through_the_documents_and_select_the_row(main_window) -> None:
+def test_the_arrows_move_through_the_documents_and_select_the_row(main_window, stored) -> None:
     """
     Given  three documents with results, the first one open
     When   the next arrow is used twice and then the previous one
     Then   the open document and the selected row follow, and stop at the ends
     """
-    _queue_with_results(main_window, "a.png", "b.png", "c.png")
-    main_window._open_check("/tmp/a.png")
+    a, b, c = stored("a.png", "b.png", "c.png")
+    main_window._open_check(a)
 
     main_window._on_check_next()
-    assert main_window._current_preview_source_id == "/tmp/b.png"
+    assert main_window._current_preview_source_id == b
     assert main_window._results_table.currentRow() == 1
 
     main_window._on_check_next()
     main_window._on_check_next()  # already at the end
-    assert main_window._current_preview_source_id == "/tmp/c.png"
+    assert main_window._current_preview_source_id == c
 
     main_window._on_check_previous()
-    assert main_window._current_preview_source_id == "/tmp/b.png"
+    assert main_window._current_preview_source_id == b
     assert main_window._results_table.currentRow() == 1
 
 
 @pytest.mark.gui
-def test_a_run_start_empties_the_document_it_redoes_and_keeps_it_open(
-    main_window, monkeypatch
+def test_a_run_start_locks_the_document_it_redoes_and_keeps_it_open(
+    main_window, monkeypatch, stored
 ) -> None:
     """
     Given  a document open in the Check tab
     When   a run starts that includes it
-    Then   Documents is in front and the document stays the open one, with its panel emptied
+    Then   Documents is in front, the document stays the open one, and it is read-only
+           until its own result arrives
     """
-    _queue_with_results(main_window, "a.png")
-    main_window._open_check("/tmp/a.png")
+    [a] = stored("a.png")
+    main_window._open_check(a)
     monkeypatch.setattr(main_window, "_start_pace", lambda *_a, **_kw: None)
     monkeypatch.setattr(main_window, "_save_settings", lambda **_kw: None)
 
-    main_window._start_worker(make_config(Path("/tmp")), ["/tmp/a.png"])
+    main_window._start_worker(make_config(Path("/tmp")), [a])
 
-    assert main_window._current_preview_source_id == "/tmp/a.png"
+    assert main_window._current_preview_source_id == a
     assert main_window._tabs.currentIndex() == 0
-    assert main_window._open_document_awaits_result is True
+    assert main_window._run_pending == {a}
+    assert main_window._check.body.banner.text == txt.WAITING_FOR_RUN
 
 
 @pytest.mark.gui
 def test_the_redone_document_is_shown_again_when_its_result_arrives(
-    main_window, monkeypatch
+    main_window, monkeypatch, stored
 ) -> None:
     """
     Given  an open document that a run has emptied
     When   the run reports the document done
     Then   it is loaded again, on the tab the teacher is on
     """
-    _queue_with_results(main_window, "a.png")
-    main_window._open_check("/tmp/a.png")
+    [a] = stored("a.png")
+    main_window._open_check(a)
     monkeypatch.setattr(main_window, "_start_pace", lambda *_a, **_kw: None)
     monkeypatch.setattr(main_window, "_save_settings", lambda **_kw: None)
-    main_window._start_worker(make_config(Path("/tmp")), ["/tmp/a.png"])
+    main_window._start_worker(make_config(Path("/tmp")), [a])
 
     main_window._on_file_done(
         FileDoneEvent(
-            source_id="/tmp/a.png",
+            source_id=a,
             name="a.png",
             ok=True,
             message="saved",
@@ -1834,40 +1920,44 @@ def test_the_redone_document_is_shown_again_when_its_result_arrives(
         )
     )
 
-    assert main_window._open_document_awaits_result is False
+    assert main_window._run_pending == set()
     assert main_window._tabs.currentIndex() == 0
 
 
 @pytest.mark.gui
-def test_a_run_that_ends_before_the_open_document_shows_it_again(main_window, monkeypatch) -> None:
+def test_a_run_that_ends_before_the_open_document_shows_it_again(
+    main_window, monkeypatch, stored
+) -> None:
     """
     Given  an open document that a run emptied and never reached
     When   the run finishes
     Then   the document is loaded again from what it has, so Check is not left empty
     """
-    _queue_with_results(main_window, "a.png")
-    main_window._open_check("/tmp/a.png")
+    [a] = stored("a.png")
+    main_window._open_check(a)
     monkeypatch.setattr(main_window, "_start_pace", lambda *_a, **_kw: None)
     monkeypatch.setattr(main_window, "_save_settings", lambda **_kw: None)
-    main_window._start_worker(make_config(Path("/tmp")), ["/tmp/a.png"])
+    main_window._start_worker(make_config(Path("/tmp")), [a])
     seen: list[str] = []
     monkeypatch.setattr(main_window, "_load_check", seen.append)
 
     main_window._on_run_finished(RunSummary())
 
-    assert seen == ["/tmp/a.png"]
+    assert seen == [a]
 
 
 @pytest.mark.gui
-def test_the_copy_menu_follows_the_privacy_add_on_for_the_open_document(main_window) -> None:
+def test_the_copy_menu_follows_the_privacy_add_on_for_the_open_document(
+    main_window, stored
+) -> None:
     """
     Given  a document open in the Check tab while names cannot be hidden
     When   the privacy availability turns true
     Then   the "names hidden" copy entries of the open document are enabled
     """
-    _queue_with_results(main_window, "a.png")
+    [a] = stored("a.png")
     main_window._privacy_available = False
-    main_window._open_check("/tmp/a.png")
+    main_window._open_check(a)
     kind = CopyKind.RAW_ANONYMIZED
     assert main_window._check._copy_actions[kind].isEnabled() is False
 
@@ -1879,31 +1969,34 @@ def test_the_copy_menu_follows_the_privacy_add_on_for_the_open_document(main_win
 
 
 @pytest.mark.gui
-def test_a_run_start_keeps_a_document_it_leaves_alone(main_window, monkeypatch) -> None:
+def test_a_run_start_keeps_a_document_it_leaves_alone(main_window, monkeypatch, stored) -> None:
     """
     Given  a document open in the Check tab
     When   a run starts over other documents
     Then   the open document stays open, so the teacher can go on working on it
     """
-    _queue_with_results(main_window, "a.png", "b.png")
-    main_window._open_check("/tmp/a.png")
+    a, b = stored("a.png", "b.png")
+    main_window._open_check(a)
     monkeypatch.setattr(main_window, "_start_pace", lambda *_a, **_kw: None)
     monkeypatch.setattr(main_window, "_save_settings", lambda **_kw: None)
 
-    main_window._start_worker(make_config(Path("/tmp")), ["/tmp/b.png"])
+    main_window._start_worker(make_config(Path("/tmp")), [b])
 
-    assert main_window._current_preview_source_id == "/tmp/a.png"
+    assert main_window._current_preview_source_id == a
+    assert main_window._check.body.banner.text != txt.WAITING_FOR_RUN
 
 
 @pytest.mark.gui
-def test_a_rebuilt_queue_without_the_open_document_closes_check(main_window, monkeypatch) -> None:
+def test_a_rebuilt_queue_without_the_open_document_closes_check(
+    main_window, monkeypatch, stored
+) -> None:
     """
     Given  a document open in the Check tab
     When   the queue is rebuilt without it
     Then   the tab is closed and Documents is in front
     """
-    _queue_with_results(main_window, "a.png", "b.png")
-    main_window._open_check("/tmp/b.png")
+    _a, b = stored("a.png", "b.png")
+    main_window._open_check(b)
     monkeypatch.setattr(main_window, "_scan_input_files", lambda: [])
 
     main_window._refresh_queue_from_inputs()
@@ -1913,16 +2006,16 @@ def test_a_rebuilt_queue_without_the_open_document_closes_check(main_window, mon
 
 
 @pytest.mark.gui
-def test_the_documents_tab_label_counts_the_run(main_window, monkeypatch) -> None:
+def test_the_documents_tab_label_counts_the_run(main_window, monkeypatch, stored) -> None:
     """
     Given  a run over three documents that has finished one
     When   the tab labels are read
     Then   Documents says how far the run has got
     """
-    _queue_with_results(main_window, "a.png", "b.png", "c.png")
+    a, b, c = stored("a.png", "b.png", "c.png")
     monkeypatch.setattr(main_window, "_start_pace", lambda *_a, **_kw: None)
     monkeypatch.setattr(main_window, "_save_settings", lambda **_kw: None)
-    main_window._start_worker(make_config(Path("/tmp")), ["/tmp/a.png", "/tmp/b.png", "/tmp/c.png"])
+    main_window._start_worker(make_config(Path("/tmp")), [a, b, c])
 
     main_window._result_names = ["a.png"]
     main_window._update_check_tab()
@@ -1931,14 +2024,14 @@ def test_the_documents_tab_label_counts_the_run(main_window, monkeypatch) -> Non
 
 
 @pytest.mark.gui
-def test_copy_puts_what_was_read_on_the_clipboard(main_window) -> None:
+def test_copy_puts_what_was_read_on_the_clipboard(main_window, stored) -> None:
     """
     Given  a document open in the Check tab
     When   the teacher copies what was read
     Then   the clipboard holds that text and the header confirms it
     """
-    _queue_with_results(main_window, "a.png")
-    main_window._open_check("/tmp/a.png")
+    [a] = stored("a.png")
+    main_window._open_check(a)
 
     main_window._on_check_copy(CopyKind.RAW)
 
@@ -1947,14 +2040,14 @@ def test_copy_puts_what_was_read_on_the_clipboard(main_window) -> None:
 
 
 @pytest.mark.gui
-def test_save_goes_through_the_export_path(main_window, monkeypatch) -> None:
+def test_save_goes_through_the_export_path(main_window, monkeypatch, stored) -> None:
     """
     Given  a document open in the Check tab
     When   the teacher saves what was read
     Then   the window's own export path is used, for that one document
     """
-    _queue_with_results(main_window, "a.png")
-    main_window._open_check("/tmp/a.png")
+    [a] = stored("a.png")
+    main_window._open_check(a)
     asked: list[tuple[list[str], ExportKind]] = []
     monkeypatch.setattr(
         main_window, "_on_export_requested", lambda ids, kind: asked.append((ids, kind))
@@ -1962,28 +2055,30 @@ def test_save_goes_through_the_export_path(main_window, monkeypatch) -> None:
 
     main_window._on_check_save(ExportKind.TEXT)
 
-    assert asked == [(["/tmp/a.png"], ExportKind.TEXT)]
+    assert asked == [([a], ExportKind.TEXT)]
 
 
 @pytest.mark.gui
-def test_a_double_click_in_the_queue_opens_the_document_in_the_check_tab(main_window) -> None:
+def test_a_double_click_in_the_queue_opens_the_document_in_the_check_tab(
+    main_window, stored
+) -> None:
     """
     Given  a queue with a document that has a result
     When   the queue asks for it to be checked
     Then   the Check tab is in front, shows that document and selects its row
     """
-    _queue_with_results(main_window, "a.png", "b.png")
+    _a, b = stored("a.png", "b.png")
 
-    main_window._results_table.check_requested.emit("/tmp/b.png")
+    main_window._results_table.check_requested.emit(b)
 
     assert main_window._tabs.currentIndex() == 1
-    assert main_window._current_preview_source_id == "/tmp/b.png"
+    assert main_window._current_preview_source_id == b
     assert main_window._results_table.currentRow() == 1
 
 
 @pytest.mark.gui
 def test_an_edit_goes_to_the_open_document_not_to_the_selected_row(
-    main_window, monkeypatch, tmp_path: Path
+    main_window, monkeypatch, stored
 ) -> None:
     """
     Given  document A open in the Check tab and document B selected in the queue
@@ -1992,24 +2087,13 @@ def test_an_edit_goes_to_the_open_document_not_to_the_selected_row(
 
     The selection is how rows are chosen for a run; the edit belongs to what is on screen.
     """
-    cfg = make_config(tmp_path)
-    source_a = cfg.input_dir / "a.png"
-    source_b = cfg.input_dir / "b.png"
-    source_a.touch()
-    source_b.touch()
-    monkeypatch.setattr(main_window._config_panel, "to_config", lambda: cfg)
-    main_window._results_table.set_queue(
-        ["a.png", "b.png"], source_ids=[str(source_a), str(source_b)]
-    )
-    for source in (source_a, source_b):
-        main_window._results_table.set_row_artifacts(str(source), "", "raw old", "", "")
+    source_a, source_b = (Path(sid) for sid in stored("a.png", "b.png", raw="raw old"))
     main_window._open_check(str(source_a))
     main_window._results_table.selectRow(1)
 
     main_window._on_ocr_text_edited("raw edited")
 
-    from teachers_teammate.infrastructure.state_repository import StateRepository  # noqa: PLC0415
-
+    cfg = main_window._config_panel.to_config()
     state_dir = resolve_artifact_dir(cfg.output_dir) / "state"
     state_a = StateRepository(state_dir).load(source_a)
     state_b = StateRepository(state_dir).load(source_b)
@@ -2020,15 +2104,15 @@ def test_an_edit_goes_to_the_open_document_not_to_the_selected_row(
 
 @pytest.mark.gui
 def test_copy_with_names_hidden_puts_the_anonymized_text_on_the_clipboard(
-    main_window, monkeypatch
+    main_window, monkeypatch, stored
 ) -> None:
     """
     Given  a document open in the Check tab and names that can be hidden
     When   the teacher copies it with names hidden
     Then   the clipboard holds the text the anonymizer produced
     """
-    _queue_with_results(main_window, "a.png")
-    main_window._open_check("/tmp/a.png")
+    [a] = stored("a.png")
+    main_window._open_check(a)
     main_window._privacy_available = True
     monkeypatch.setattr(
         main_window._app_service,
@@ -2046,14 +2130,14 @@ def test_copy_with_names_hidden_puts_the_anonymized_text_on_the_clipboard(
 
 
 @pytest.mark.gui
-def test_a_failing_anonymizer_leaves_the_clipboard_alone(main_window, monkeypatch) -> None:
+def test_a_failing_anonymizer_leaves_the_clipboard_alone(main_window, monkeypatch, stored) -> None:
     """
     Given  a document open in the Check tab and an anonymizer that fails
     When   the teacher copies it with names hidden
     Then   the failure is explained and the clipboard keeps what it had
     """
-    _queue_with_results(main_window, "a.png")
-    main_window._open_check("/tmp/a.png")
+    [a] = stored("a.png")
+    main_window._open_check(a)
     QApplication.clipboard().setText("before")
     warned: list[Notice] = []
     monkeypatch.setattr(_dialogs, "notify", lambda _parent, notice: warned.append(notice))
@@ -2084,16 +2168,16 @@ def _call_and_report(fn, on_done) -> None:
 
 
 @pytest.mark.gui
-def test_copy_saves_a_half_typed_edit_first(main_window, monkeypatch) -> None:
+def test_copy_saves_a_half_typed_edit_first(main_window, monkeypatch, stored) -> None:
     """
     Given  a document open in the Check tab with typing that is not saved yet
     When   the teacher copies it
     Then   the pending edit is flushed before the text is read
     """
-    _queue_with_results(main_window, "a.png")
-    main_window._open_check("/tmp/a.png")
+    [a] = stored("a.png")
+    main_window._open_check(a)
     flushed: list[bool] = []
-    monkeypatch.setattr(main_window._preview, "flush_pending_edit", lambda: flushed.append(True))
+    monkeypatch.setattr(main_window._check, "flush_pending_edit", lambda: flushed.append(True))
 
     main_window._on_check_copy(CopyKind.RAW)
 
@@ -2101,44 +2185,38 @@ def test_copy_saves_a_half_typed_edit_first(main_window, monkeypatch) -> None:
 
 
 @pytest.mark.gui
-def test_a_new_result_joins_the_arrows(main_window) -> None:
+def test_a_new_result_joins_the_arrows(main_window, stored) -> None:
     """
     Given  two documents with results, the second one open
     When   a third document finishes
     Then   the header counts it and the next arrow reaches it
     """
-    _queue_with_results(main_window, "a.png", "b.png")
-    main_window._open_check("/tmp/b.png")
+    _a, b = stored("a.png", "b.png")
+    main_window._open_check(b)
     assert main_window._check._position_label.text() == "2 of 2"
 
-    main_window._results_table.set_queue(
-        ["a.png", "b.png", "c.png"],
-        source_ids=["/tmp/a.png", "/tmp/b.png", "/tmp/c.png"],
-    )
-    for source_id in ("/tmp/a.png", "/tmp/b.png", "/tmp/c.png"):
-        main_window._results_table.set_row_artifacts(source_id, "", "what was read", "", "")
-    main_window._update_check_tab()
-    main_window._load_check("/tmp/b.png")
+    _a, b, c = stored("a.png", "b.png", "c.png")
+    main_window._load_check(b)
 
     assert main_window._check._position_label.text() == "2 of 3"
 
     main_window._on_check_next()
 
-    assert main_window._current_preview_source_id == "/tmp/c.png"
+    assert main_window._current_preview_source_id == c
 
 
 @pytest.mark.gui
-def test_the_header_follows_a_rename_of_the_row(main_window) -> None:
+def test_the_header_follows_a_rename_of_the_row(main_window, stored) -> None:
     """
     Given  a document open in the Check tab
     When   its row is renamed
     Then   the tab label and the header show the new name
     """
-    _queue_with_results(main_window, "a.png")
-    main_window._open_check("/tmp/a.png")
+    [a] = stored("a.png")
+    main_window._open_check(a)
 
-    main_window._results_table.set_queue(["renamed.png"], source_ids=["/tmp/a.png"])
-    main_window._results_table.set_row_artifacts("/tmp/a.png", "", "what was read", "", "")
+    main_window._results_table.set_queue(["renamed.png"], source_ids=[a])
+    main_window._results_table.set_row_artifacts(a, "", "what was read", "", "")
     main_window._update_check_tab()
 
     assert main_window._tabs.tabText(1) == "Check \u2014 renamed.png"
@@ -4570,186 +4648,11 @@ def test_a_pull_requested_while_one_runs_is_queued_not_dropped(qtbot, monkeypatc
     assert [t.model for t in threads] == ["a:1b", "b:1b"]
 
 
-# ── Pieces counter after OCR ──────────────────────────────────────────────
-
-
-def _three_parts() -> Any:
-    """Return the estimate of a text that is proofread in three parts."""
-    from teachers_teammate.application.text_size import TextSizeEstimate  # noqa: PLC0415
-
-    return TextSizeEstimate(words=12_000, pieces=3, words_per_piece=4_000, content_review_fits=True)
-
-
-def _one_part() -> Any:
-    """Return the estimate of a text that goes out in one proofreading request."""
-    from teachers_teammate.application.text_size import TextSizeEstimate  # noqa: PLC0415
-
-    return TextSizeEstimate(words=900, pieces=1, words_per_piece=4_000, content_review_fits=True)
-
-
 def _detection() -> HardwareDetection:
     """Return a detection of an 8 GB card, as a finished probe would."""
     return HardwareDetection(
         profile="8gb", reason=DetectionReason.GPU_DETECTED, gpu_name="Test GPU", memory_gb=8.0
     )
-
-
-def _already_checked(monkeypatch, window) -> None:
-    """Answer the hardware question at once: these tests are about the counter, not the probe."""
-    monkeypatch.setattr(
-        window._app_service, "cached_hardware_profile", lambda *_args, **_kwargs: _detection()
-    )
-
-
-@pytest.mark.gui
-def test_main_window_preview_shows_the_pieces_counter(
-    main_window, monkeypatch, tmp_path: Path
-) -> None:
-    """
-    Given  a row whose OCR text is proofread in three parts
-    When   the preview is requested
-    Then   the nav bar shows the parts counter
-    """
-    cfg = make_config(tmp_path)
-    source = cfg.input_dir / "page.png"
-    source.touch()
-    monkeypatch.setattr(main_window._config_panel, "to_config", lambda: cfg)
-    monkeypatch.setattr(
-        main_window._app_service, "estimate_text_size", lambda *_args, **_kwargs: _three_parts()
-    )
-    _already_checked(monkeypatch, main_window)
-    main_window._results_table.set_queue(["page.png"], source_ids=[str(source)])
-    main_window._results_table.set_row_artifacts(str(source), "", "raw text", "", "")
-    main_window._results_table.selectRow(0)
-
-    main_window._load_check(str(source))
-
-    label = main_window._preview._ocr_nav._size_lbl
-    assert not label.isHidden()
-    assert "proofread in 3 parts" in label.text()
-
-
-@pytest.mark.gui
-def test_main_window_preview_hides_the_counter_for_one_part(
-    main_window, monkeypatch, tmp_path: Path
-) -> None:
-    """
-    Given  a row whose OCR text goes out in one proofreading request
-    When   the preview is requested
-    Then   the counter stays hidden
-    """
-    cfg = make_config(tmp_path)
-    source = cfg.input_dir / "page.png"
-    source.touch()
-    monkeypatch.setattr(main_window._config_panel, "to_config", lambda: cfg)
-    monkeypatch.setattr(
-        main_window._app_service, "estimate_text_size", lambda *_args, **_kwargs: _one_part()
-    )
-    _already_checked(monkeypatch, main_window)
-    main_window._results_table.set_queue(["page.png"], source_ids=[str(source)])
-    main_window._results_table.set_row_artifacts(str(source), "", "raw text", "", "")
-    main_window._results_table.selectRow(0)
-
-    main_window._load_check(str(source))
-
-    assert main_window._preview._ocr_nav._size_lbl.isHidden()
-
-
-@pytest.mark.gui
-def test_main_window_hides_the_counter_until_this_computer_is_checked(
-    qtbot, main_window, monkeypatch, tmp_path: Path
-) -> None:
-    """
-    Given  a main window whose hardware has not been probed yet
-    When   a preview with text is shown
-    Then   the counter stays hidden, and it appears once the detection arrives
-    """
-    cfg = make_config(tmp_path)
-    source = cfg.input_dir / "page.png"
-    source.touch()
-    monkeypatch.setattr(main_window._config_panel, "to_config", lambda: cfg)
-    monkeypatch.setattr(
-        main_window._app_service, "estimate_text_size", lambda *_args, **_kwargs: _three_parts()
-    )
-    # The first question is answered "not probed yet", the second one with the detection.
-    answers: list[HardwareDetection | None] = [None]
-    monkeypatch.setattr(
-        main_window._app_service,
-        "cached_hardware_profile",
-        lambda *_args, **_kwargs: answers.pop(0) if answers else _detection(),
-    )
-    monkeypatch.setattr(
-        main_window._app_service, "detect_hardware", lambda *_args, **_kwargs: _detection()
-    )
-    main_window._results_table.set_queue(["page.png"], source_ids=[str(source)])
-    main_window._results_table.set_row_artifacts(str(source), "", "raw text", "", "")
-    main_window._results_table.selectRow(0)
-
-    main_window._load_check(str(source))
-
-    label = main_window._preview._ocr_nav._size_lbl
-    assert label.isHidden()
-
-    qtbot.waitUntil(lambda: not label.isHidden(), timeout=3000)
-    assert "proofread in 3 parts" in label.text()
-
-
-@pytest.mark.gui
-def test_main_window_ocr_edit_recounts_the_parts_after_the_debounce(
-    qtbot, main_window, monkeypatch, tmp_path: Path
-) -> None:
-    """
-    Given  a preview showing a text that is proofread in three parts
-    When   the OCR text is edited down to one part
-    Then   the counter disappears once the debounce has passed
-    """
-    cfg = make_config(tmp_path)
-    source = cfg.input_dir / "page.png"
-    source.touch()
-    monkeypatch.setattr(main_window._config_panel, "to_config", lambda: cfg)
-    monkeypatch.setattr(
-        main_window._app_service, "estimate_text_size", lambda *_args, **_kwargs: _three_parts()
-    )
-    _already_checked(monkeypatch, main_window)
-    main_window._results_table.set_queue(["page.png"], source_ids=[str(source)])
-    main_window._results_table.set_row_artifacts(str(source), "", "raw text", "", "")
-    main_window._results_table.selectRow(0)
-    main_window._load_check(str(source))
-    label = main_window._preview._ocr_nav._size_lbl
-    assert not label.isHidden()
-
-    monkeypatch.setattr(
-        main_window._app_service, "estimate_text_size", lambda *_args, **_kwargs: _one_part()
-    )
-    main_window._on_ocr_text_edited("short text")
-
-    qtbot.waitUntil(label.isHidden, timeout=3000)
-
-
-@pytest.mark.gui
-def test_main_window_hides_the_counter_when_the_settings_are_incomplete(
-    main_window, monkeypatch, tmp_path: Path
-) -> None:
-    """
-    Given  a row with OCR text and a config panel that cannot produce a config
-    When   the preview is requested
-    Then   the counter is hidden instead of the preview failing
-    """
-    cfg = make_config(tmp_path)
-    source = cfg.input_dir / "page.png"
-    source.touch()
-    monkeypatch.setattr(
-        main_window._config_panel,
-        "to_config",
-        lambda: (_ for _ in ()).throw(ValueError("bad config")),
-    )
-    main_window._results_table.set_queue(["page.png"], source_ids=[str(source)])
-    main_window._results_table.set_row_artifacts(str(source), "", "raw text", "", "")
-    main_window._results_table.selectRow(0)
-
-    main_window._load_check(str(source))
-
-    assert main_window._preview._ocr_nav._size_lbl.isHidden()
 
 
 @pytest.mark.gui
@@ -4794,17 +4697,14 @@ def test_main_window_probes_this_computer_in_the_background_for_the_cache_keys(
 
 @pytest.mark.gui
 def test_main_window_does_not_probe_again_and_again_when_the_probe_fails(
-    qtbot, main_window, monkeypatch, tmp_path: Path
+    qtbot, main_window, monkeypatch, stored
 ) -> None:
     """
     Given  a computer whose probe fails every time
-    When   the queue is refreshed and a preview with text is shown
+    When   the queue is refreshed and a document with text is opened
     Then   a failed probe is not retried by itself, so the calls stop instead of looping
     """
-    cfg = make_config(tmp_path)
-    source = cfg.input_dir / "page.png"
-    source.touch()
-    monkeypatch.setattr(main_window._config_panel, "to_config", lambda: cfg)
+    [source_id] = stored("page.png", raw="raw text")
     service = main_window._app_service
     calls: list[int] = []
 
@@ -4816,15 +4716,15 @@ def test_main_window_does_not_probe_again_and_again_when_the_probe_fails(
     monkeypatch.setattr(service, "detect_hardware", failing)
 
     main_window._refresh_queue_from_inputs()
-    main_window._results_table.set_queue(["page.png"], source_ids=[str(source)])
-    main_window._results_table.set_row_artifacts(str(source), "", "raw text", "", "")
+    main_window._results_table.set_queue(["page.png"], source_ids=[source_id])
+    main_window._results_table.set_row_artifacts(source_id, "", "raw text", "", "")
     main_window._results_table.selectRow(0)
-    main_window._load_check(str(source))
+    main_window._load_check(source_id)
     qtbot.wait(600)
     settled = len(calls)
     qtbot.wait(600)
 
-    assert 2 <= settled <= 4
+    assert settled == 1
     assert len(calls) == settled
 
 

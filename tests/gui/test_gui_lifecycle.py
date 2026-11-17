@@ -24,7 +24,8 @@ from teachers_teammate.gui._dependency_guard_dialog import DependencyGuardDialog
 from teachers_teammate.gui._help_dialog import AboutDialog, HelpDialog, ThirdPartyLicensesDialog
 from teachers_teammate.gui._log_widget import LogWidget
 from teachers_teammate.gui._ocr_config_selector import OcrConfigSelector
-from teachers_teammate.gui._preview_panel import DiffWidget, PreviewPanel, ZoomableImageView
+from teachers_teammate.gui._diff_widget import DiffWidget
+from teachers_teammate.gui._image_view import ZoomableImageView
 from teachers_teammate.gui._results_table import ResultsTable
 from teachers_teammate.gui._stats_widget import SystemStatsWidget
 from teachers_teammate.gui._system_monitor import SystemMonitorWindow
@@ -69,7 +70,6 @@ WIDGET_BUILDERS: list[tuple[str, Callable[[], QWidget]]] = [
     ("dependency_guard", lambda: DependencyGuardDialog("correction", [])),
     ("config_panel", lambda: ConfigPanel()),
     ("results_table", lambda: ResultsTable()),
-    ("preview_panel", lambda: PreviewPanel()),
     ("zoomable_image", lambda: ZoomableImageView()),
     ("diff_widget", lambda: DiffWidget()),
     ("log_widget", lambda: LogWidget()),

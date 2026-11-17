@@ -1,10 +1,9 @@
-"""The sentence-based review: notes per sentence, splicing, and its alignment with the text.
+"""The sentence-based review of the one-request baseline: notes per sentence and its alignment.
 
-This is the review of the one-request baseline and of the old Preview, nothing else.  The review
-the app stores and every reader reads is the edit-based one in
-:mod:`teachers_teammate.domain.proofreading.review`; the Preview reaches this module through
-:meth:`~teachers_teammate.application.correction_review.CorrectionReviewPresenter.for_preview`,
-and the evaluation baseline through ``tools/model_eval/one_request/``.
+This is the review of the evaluation baseline, nothing else.  The review the app stores and every
+reader reads is the edit-based one in :mod:`teachers_teammate.domain.proofreading.review`; the
+baseline reaches this module through ``tools/model_eval/one_request/``, and
+:mod:`.edit_review` converts its answer to the edit-based review at that edge.
 
 The baseline answers with *sentences* — the sentences it changed or that contain an unclear
 expression — each carrying its own list of :class:`ChangeNote`.  This module turns that answer
@@ -23,8 +22,14 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 import re
 
-from .proofreading.review import MINOR_CATEGORIES
-from .proofreading.word_diff import Hunk, Similarity, strip_marks, tokenize, word_diff
+from teachers_teammate.domain.proofreading.review import MINOR_CATEGORIES
+from teachers_teammate.domain.proofreading.word_diff import (
+    Hunk,
+    Similarity,
+    strip_marks,
+    tokenize,
+    word_diff,
+)
 
 REVIEW_VERSION = 1
 """Version of the sentence-based review; the stored review is version 2 and lives elsewhere."""

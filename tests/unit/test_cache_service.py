@@ -840,9 +840,9 @@ def test_persist_preview_artifact_copies_and_records(tmp_path: Path) -> None:
         preview_img=str(stable_path),
         source_image=str(stable_path),
         preview_config_hash=ctx.preview_config_hash,
-        original_img="",
         preprocess_steps=None,
         page_images=[],
+        original_images=[],
     )
     assert preview_img == str(stable_path)
     assert new_ctx.state is new_state
@@ -852,7 +852,7 @@ def test_persist_preview_artifact_copies_and_records(tmp_path: Path) -> None:
 def test_persist_preview_artifact_stores_original_and_steps(tmp_path: Path) -> None:
     """
     Given  an original page image and the preprocessing steps that produced the preview
-    When   persist_preview_artifact() is called with original_path and preprocess_steps
+    When   persist_preview_artifact() is called with original_paths and preprocess_steps
     Then   the original is persisted via the artifact store and both its path and the
            steps are recorded on the state
     """
@@ -864,7 +864,7 @@ def test_persist_preview_artifact_stores_original_and_steps(tmp_path: Path) -> N
 
     svc, repo, artifacts = _make_svc(tmp_path)
     artifacts.persist_preview_image.return_value = stable_path
-    artifacts.persist_original_image.return_value = stable_original
+    artifacts.persist_original_images.return_value = [stable_original]
     repo.record_preview_artifact.return_value = _make_state()
 
     ctx = _make_ctx()
@@ -872,12 +872,12 @@ def test_persist_preview_artifact_stores_original_and_steps(tmp_path: Path) -> N
         file,
         ctx,
         source_path,
-        original_path=original_path,
+        original_paths=[original_path],
         preprocess_steps=["grayscale", "deskew"],
     )
 
-    artifacts.persist_original_image.assert_called_once_with(
-        stem=document_stem(file), source_path=original_path
+    artifacts.persist_original_images.assert_called_once_with(
+        stem=document_stem(file), sources=[original_path]
     )
     repo.record_preview_artifact.assert_called_once_with(
         file,
@@ -885,23 +885,23 @@ def test_persist_preview_artifact_stores_original_and_steps(tmp_path: Path) -> N
         preview_img=str(stable_path),
         source_image=str(stable_path),
         preview_config_hash=ctx.preview_config_hash,
-        original_img=str(stable_original),
         preprocess_steps=["grayscale", "deskew"],
         page_images=[],
+        original_images=[str(stable_original)],
     )
 
 
 def test_persist_preview_artifact_original_copy_failure_is_not_fatal(tmp_path: Path) -> None:
     """
-    Given  an artifact store whose persist_original_image raises OSError
-    When   persist_preview_artifact() is called with an original_path
+    Given  an artifact store whose persist_original_images raises OSError
+    When   persist_preview_artifact() is called with original_paths
     Then   the preview is still recorded, with no original and the steps preserved
     """
     file = tmp_path / "doc.png"
     stable_path = tmp_path / "artifacts" / "doc_preprocessed.png"
     svc, repo, artifacts = _make_svc(tmp_path)
     artifacts.persist_preview_image.return_value = stable_path
-    artifacts.persist_original_image.side_effect = OSError("disk full")
+    artifacts.persist_original_images.side_effect = OSError("disk full")
     repo.record_preview_artifact.return_value = _make_state()
 
     ctx = _make_ctx()
@@ -909,7 +909,7 @@ def test_persist_preview_artifact_original_copy_failure_is_not_fatal(tmp_path: P
         file,
         ctx,
         tmp_path / "tmp_preview.png",
-        original_path=tmp_path / "page1.png",
+        original_paths=[tmp_path / "page1.png"],
         preprocess_steps=["grayscale"],
     )
 
@@ -920,9 +920,9 @@ def test_persist_preview_artifact_original_copy_failure_is_not_fatal(tmp_path: P
         preview_img=str(stable_path),
         source_image=str(stable_path),
         preview_config_hash=ctx.preview_config_hash,
-        original_img="",
         preprocess_steps=["grayscale"],
         page_images=[],
+        original_images=[],
     )
 
 
@@ -955,9 +955,9 @@ def test_persist_preview_artifact_stores_every_page(tmp_path: Path) -> None:
         preview_img=str(stored[0]),
         source_image=str(stored[0]),
         preview_config_hash=ctx.preview_config_hash,
-        original_img="",
         preprocess_steps=None,
         page_images=[str(page) for page in stored],
+        original_images=[],
     )
 
 
@@ -966,7 +966,7 @@ def test_persist_preview_artifact_prunes_stale_originals_when_none_recorded(
 ) -> None:
     """
     Given  a re-run that produces no original page
-    When   persist_preview_artifact() is called without original_path
+    When   persist_preview_artifact() is called without original_paths
     Then   leftover <stem>_original.* files from earlier runs are pruned
     """
     file = tmp_path / "doc.png"

@@ -7,7 +7,7 @@ import json
 import pytest
 
 from tools.model_eval.one_request.answer_format import ANSWER_FORMAT_VERSION
-from teachers_teammate.domain.correction_review import ChangeNote
+from tools.model_eval.one_request.sentence_review import ChangeNote
 from teachers_teammate.infrastructure.proofreading import chunking
 from tools.model_eval.one_request import correction
 from tests.tools import invented_corpus

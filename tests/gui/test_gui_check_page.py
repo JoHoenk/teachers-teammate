@@ -7,10 +7,39 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QKeyEvent
 from PySide6.QtWidgets import QComboBox, QLineEdit, QTextEdit
 
+from teachers_teammate.application.check_document import CheckDocument, check_document_of
 from teachers_teammate.gui import _user_text as txt
 from teachers_teammate.gui._export_menu import ExportKind
 from teachers_teammate.gui.check import CheckPage, CopyKind, CopyState
 from teachers_teammate.gui.check._page import _escape_is_for_the_focus
+from teachers_teammate.infrastructure.state_repository import DocumentStateView
+
+
+def _document(name: str, source_id: str) -> CheckDocument:
+    """Return the Check tab's data for a stored document that has no text yet."""
+    return check_document_of(
+        DocumentStateView(
+            source_id=source_id,
+            name=name,
+            preview_img="",
+            raw_text="",
+            correction_text="",
+            evaluation_text="",
+            ocr_done=False,
+            correction_done=False,
+            evaluation_done=False,
+            cache_status_label="",
+            loaded_at="",
+            original_img="",
+            preprocess_steps=(),
+            raw_text_format="plain",
+            correction_review=None,
+            correction_warning="",
+            sent={},
+            page_images=(),
+            original_images=(),
+        )
+    )
 
 
 def _press_escape(page: CheckPage) -> None:
@@ -44,7 +73,7 @@ def test_check_page_shows_name_position_and_arrows(qtbot) -> None:
     page = CheckPage()
     qtbot.addWidget(page)
 
-    page.show_document("Anna_Mueller.pdf", "/tmp/Anna_Mueller.pdf", 3, 12)
+    page.show_document(_document("Anna_Mueller.pdf", "/tmp/Anna_Mueller.pdf"), 3, 12)
 
     assert page._name_label.text() == "Anna_Mueller.pdf"
     assert page._name_label.toolTip() == "/tmp/Anna_Mueller.pdf"
@@ -70,7 +99,7 @@ def test_check_page_arrows_stop_at_the_ends(
     page = CheckPage()
     qtbot.addWidget(page)
 
-    page.show_document("a.pdf", "/tmp/a.pdf", position, total)
+    page.show_document(_document("a.pdf", "/tmp/a.pdf"), position, total)
 
     assert page._previous_btn.isEnabled() is previous
     assert page._next_btn.isEnabled() is next_enabled
@@ -87,7 +116,7 @@ def test_check_page_elides_a_long_name_and_keeps_the_path_in_the_tooltip(qtbot) 
     qtbot.addWidget(page)
     name = "a_very_long_document_name_that_does_not_fit_into_the_header_at_all.pdf"
 
-    page.show_document(name, f"/tmp/{name}", 1, 2)
+    page.show_document(_document(name, f"/tmp/{name}"), 1, 2)
 
     assert page._name_label.text() != name
     assert page._name_label.text().endswith(".pdf")
@@ -103,7 +132,7 @@ def test_check_page_clear_empties_the_header(qtbot) -> None:
     """
     page = CheckPage()
     qtbot.addWidget(page)
-    page.show_document("a.pdf", "/tmp/a.pdf", 2, 3)
+    page.show_document(_document("a.pdf", "/tmp/a.pdf"), 2, 3)
     page.set_copy_state(CopyState(has_raw=True, has_corrected=True, can_hide_names=True))
 
     page.clear()
@@ -125,7 +154,7 @@ def test_check_page_arrows_ask_for_the_neighbour(qtbot) -> None:
     """
     page = CheckPage()
     qtbot.addWidget(page)
-    page.show_document("b.pdf", "/tmp/b.pdf", 2, 3)
+    page.show_document(_document("b.pdf", "/tmp/b.pdf"), 2, 3)
     asked: list[str] = []
     page.previous_requested.connect(lambda: asked.append("previous"))
     page.next_requested.connect(lambda: asked.append("next"))

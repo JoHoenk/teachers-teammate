@@ -22,7 +22,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from contextlib import AbstractContextManager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar, Literal, Protocol, runtime_checkable
 
@@ -121,6 +121,12 @@ class InputPayload:
     """Set when the units hold text that replaces OCR; ``None`` for image payloads."""
     text_layer_note: str | None = None
     """For a PDF that fell back to OCR: why its text layer was not used (for the status log)."""
+    page_images: list[Path] = field(default_factory=list)
+    """Every page rendered for the scan, in page order, when the units are not images.
+
+    A PDF whose text layer is used has no image units, but the teacher still wants to see its
+    pages next to the text.  Empty for a payload whose units are the pages themselves.
+    """
 
 
 class ImagePreprocessor(ABC):

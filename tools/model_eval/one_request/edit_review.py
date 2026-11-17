@@ -17,9 +17,6 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from teachers_teammate.domain.correction_review import ChangeNote
-from teachers_teammate.domain.correction_review import CorrectionReview as SentenceReview
-from teachers_teammate.domain.correction_review import align as align_sentences
 from teachers_teammate.domain.formatted_text import TextFormat
 from teachers_teammate.domain.proofreading.edits import Edit, EditPart, edits_from_hunks
 from teachers_teammate.domain.proofreading.quotes import find_spans
@@ -30,6 +27,9 @@ from teachers_teammate.domain.proofreading.review import (
 )
 from teachers_teammate.domain.proofreading.sentences import sentence_spans
 from teachers_teammate.infrastructure.ocr_formats import plain_text_of
+from tools.model_eval.one_request.sentence_review import ChangeNote
+from tools.model_eval.one_request.sentence_review import CorrectionReview as SentenceReview
+from tools.model_eval.one_request.sentence_review import align as align_sentences
 
 
 def edit_review(

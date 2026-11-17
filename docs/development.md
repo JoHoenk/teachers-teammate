@@ -103,6 +103,7 @@ reference everywhere else. The package is Qt-free, so `gui/`, `cli.py`, `applica
 | `texts/dialogs.py` | Every message box, question and file picker. |
 | `texts/settings.py` | Settings page titles, the `WHERE_*` "where do I change this" sentences, tab names. |
 | `texts/privacy.py` | The "what is sent for this file" wording. |
+| `texts/check.py` | What the Check tab's widgets say around its text: the two editable views' tooltips, the ⋯ button, the source dialog's button. |
 
 `texts/__init__.py` is the map — a docstring naming which module owns what, no logic.
 
@@ -202,12 +203,11 @@ layering:
   `run_and_store` / `list_runs` / `delete_run` / `compare`. The GUI talks only to
   this service.
 - **Presentation** `gui/benchmark/` — a thin window reusing shared widgets
-  (`_ocr_config_selector.OcrConfigSelector`, `_preview_panel` `ZoomableImageView`
-  /`DiffWidget`, `_log_widget.LogWidget`, `_app_bootstrap.create_app`,
-  `_qt_stream.QtStream`). The main window's proofreading tab uses
-  `_review_views.ReviewDiffView` / `ReviewNotesView` instead (see *Correction review*
-  below); plain `DiffWidget` is still what the benchmark compare
-  view and the privacy preview dialog show.
+  (`_ocr_config_selector.OcrConfigSelector`, `_image_view.ZoomableImageView`,
+  `_diff_widget.DiffWidget`, `_log_widget.LogWidget`, `_app_bootstrap.create_app`,
+  `_qt_stream.QtStream`). The main window's Check tab has its own views
+  (`gui/check/_text_views.py`, see *The window tabs and the Check page* below); plain
+  `DiffWidget` is what the benchmark compare view and the privacy preview dialog show.
 
 The OCR-only fields live in the nested `Config.ocr` value object
 (`config.py:OcrConfig`), which both the pipeline and the benchmark vary.
@@ -1914,7 +1914,7 @@ because the settings are part of the key).  The GUI's `OCRWorker` receives the m
 service, so a run fills the cache that the window's previews and exports read; a worker
 created without one builds its own service and shares nothing.
 
-### Hiding names in the preview (`domain/anonymization.py`)
+### Hiding names in the Check tab (`domain/anonymization.py`)
 
 `domain/anonymization.py` is pure — no spaCy, no Qt, no I/O — and holds both directions of
 the placeholder map (placeholder → original surface text):
@@ -1928,32 +1928,36 @@ the placeholder map (placeholder → original surface text):
   `"+49 30 …"` still matches as a whole).  A name the proofreader respelled is not found;
   that is a documented limitation, not a guess.
 
-The panel (`gui/_preview_panel.py`) keeps the texts *unmasked* in `_stored_raw`,
-`_stored_correction`, `_stored_evaluation` and `_stored_review` and refills the views through
-`_refill_texts()` — masked when the setting is on, and read-only while it is (an edit would be
-saved with the stand-ins).  The note above the texts (`_PrivacyNote`) is clickable only in that
-locked state: a click emits `display_anonymized_changed(False)`, the eye button's route, so the
-window stores the choice and the Settings → Privacy checkbox follows.  `_on_ocr_text_changed` / `_on_correction_text_changed` also keep
-the stored text current, so switching the setting off shows the teacher's edits.  Placeholders
-are marked as chips: `gui/_formatted_text.py:chip_placeholders()` wraps them in the rendered
-Markdown HTML (markup is skipped, so a stand-in that reads like a tag cannot break the
-document), and `_placeholder_selections()` gives the plain-text views the same highlight via
-`setExtraSelections`.  No tooltip ever names the original.
+`gui/check/_masking.py:Masking` holds that state for the Check tab: the mapping, whether the
+stand-ins are ready, the failure, and the text they were asked for.  The page keeps the texts
+*unmasked* in the `CheckDocument` it was given and asks `Masking.mask(text)` for what it shows,
+so switching the setting off shows the stored text again without a reload.  The note above the
+text is clickable only while the setting locks the views: a click emits
+`display_anonymized_changed(False)`, the **Hide names** box's route, so the window stores the
+choice and the Settings → Privacy checkbox follows.  Placeholders are marked as chips:
+`gui/_formatted_text.py:chip_placeholders()` wraps them in the rendered Markdown HTML (markup is
+skipped, so a stand-in that reads like a tag cannot break the document).  No tooltip ever names
+the original.
 
-`PreviewPanel` asks for the stand-ins with `anonymization_needed(text)` — once per text
-(`_anon_requested`) — and the window answers through `_AnonymizePreviewThread`, which calls
+The marks of the review are carried to the masked text with `Masking.carry(span, text)`, which
+goes through the `OffsetMap` of `domain/anonymization.py:mask_with_offsets()` — the same map the
+notes are masked with, so a name is hidden in the card too and a mark still sits on the right
+words.
+
+The page asks for the stand-ins with `Masking.needs_request(raw_text)` — once per text — and the
+window answers through `_AnonymizePreviewThread`, which calls
 `ProcessingApplicationService.anonymize_preview()` off the GUI thread and therefore reuses the
 shared cache above (a run then needs no second spaCy pass, and vice versa).  A result that
-belongs to a text the panel no longer shows is dropped (`set_anonymization(..., raw_text=…)`),
+belongs to a text the page no longer shows is dropped (`set_anonymization(..., raw_text=…)`),
 and a failure keeps the names hidden behind a note instead of showing them.  Changing the
-anonymizer settings in the dialog calls `invalidate_anonymization()`.
+anonymizer settings in the dialog calls `forget_anonymization()`.
 
 The setting itself is a GUI preference, not part of `Config`: the checkbox under
 *Settings → Privacy → Personal info: detection* and the eye button both end in
 `MainWindow._apply_display_anonymized`,
 which stores `privacy/display_anonymized` (`gui/_privacy_settings.py`,
 `display_anonymized()` / `set_display_anonymized()`) and calls
-`PreviewPanel.set_display_anonymized()`.  It defaults to **on** (`DISPLAY_ANONYMIZED_DEFAULT`):
+`CheckPage.set_display_anonymized()`.  It defaults to **on** (`DISPLAY_ANONYMIZED_DEFAULT`):
 only a stored answer shows the names, and without the add-on the checkbox is greyed out and the
 setting takes effect once it is installed.  The checkbox is enabled only while
 `ProcessingApplicationService.anonymizer_available(language)` holds — spaCy importable and the
@@ -2116,20 +2120,80 @@ Tests: `tests/gui/test_gui_main_window.py` (menus, readiness, tools),
 
 `MainWindow._tabs` is the window's `QTabWidget`, built by `_build_tabs()`: index 0 is
 *Documents* (`_main_splitter`, the workflow panel next to the results list and the log), index 1
-is *Check* (`gui/check/_page.py:CheckPage`, which owns the `PreviewPanel` as `_check.preview`).
-The names `_tabs` and `_preview` are kept from the old right-half tab widget, so the preview's
-tests and every caller of `_preview` stay as they were.  `_check` is disabled while no document
-has a result (`ResultsTable.checkable_source_ids()`), and the tab labels carry the state:
+is *Check* (`gui/check/_page.py:CheckPage`).  `_check` is disabled while no document has a
+result (`ResultsTable.checkable_source_ids()`), and the tab labels carry the state:
 *Documents · 12 of 28* and *Check — Anna_Mueller.pdf*.
+
+**One query feeds the page.**  `ProcessingApplicationService.check_document(config, source)`
+(`application/check_document.py`) reads the stored state and returns a `CheckDocument`: both
+texts and their plain forms, the review aligned with them, the items the list numbers, the pages
+of the scan, how the results were sent.  The window asks for it once per document
+(`_load_check`) and once per stored edit (`_store_edit`), and never assembles that state itself.
+`CheckDocument.realigned(raw_text, corrected_text)` re-aligns after a typing pause without
+touching the disk, memoised on the two plain texts and the review.  The document also carries
+`sent` and `preprocess`, so the queue row's *sent* cells come from the same read; the queue
+keeps no preprocessing info of its own.
+
+**Showing a document again.**  `CheckBody.show_document` fills the scan and both texts from the
+`CheckDocument`, also for the document that is already open: a run may have read it again.  Only
+the store's answer to a typed transcription is passed with `typed=True`, which keeps the text
+being typed and the scan as they are (refilling would move the cursor, decode every page and send
+the scan to page one).  A stored edit of the final text goes through `update_document`, which
+never refills a text.  The list of items is rebuilt silently: `SidePanel` tells the page about a
+choice only when the teacher made it, because the page answers by selecting the words in a text
+that may be being typed in.  A typed edit that is waiting for its pause is stored **before** a
+stage run invalidates the cache (`_run_stage`), never after.  A zero-width edit (the student's
+words put back where the model deleted them) is placed with `PlainMap.insertion()`, which does
+not snap forward over a paragraph break.
+
+**Three views, two documents.**  `gui/check/_text_views.py` holds `ReadView` (*What was read*,
+editable), `FinalView` (*Final text*, editable) and `MarkedView` (*With corrections*,
+read-only), in a `QStackedWidget` of `CheckBody`.  *Final text* is loaded whenever a proofreading
+exists, even while *With corrections* is in front: every card action edits `FinalView`'s
+`QTextDocument` and the normal commit path stores it, and *With corrections* is rebuilt from the
+stored result after every commit.
+
+**Marks are overlays, never document formatting.**  In the two editable views a mark is a
+`QTextEdit.ExtraSelection` (background, underline), so `document_from_qt` stores the same
+Markdown with and without marks and typing can never write a mark into a text.  Only
+`MarkedView` carries formatting of its own — the student's words struck through in grey, the
+AI's taken-out words in red — and nothing is ever converted back from it.  A commit that changes
+nothing stores nothing (`markdown == the stored text` is checked before the write).
+
+**Positions come from `PlainMap`, never from arithmetic on a widget's text.**
+`gui/check/_plain_map.py:PlainMap` walks a `QTextDocument` the way `document_from_qt` does and
+records, per text run, `(qt_start, qt_end, plain_start)`; `position(offset)`, `offset(position)`
+and `cursor(document, start, end)` are bisects.  The invariant, tested on every Markdown fixture,
+is `PlainMap.text == TextFormatter.plain_text(stored)`.  List markers and the ` | ` and `\n` of
+tables are *virtual* text: they carry a plain range but no Qt range, so an offset inside one
+snaps to the next run.  Where a document breaks the invariant the view shows its text without
+marks and clicks and the card says so — a wrong mark is worse than none.
+
+**Every action is a text edit in plain offsets.**  `domain/teacher_work.py` holds
+`TextEdit(start, end, text)` and the four functions that build the edits of a card action
+(`take_out`, `put_back`, `use_suggestion`, `suggestion_is_wording`); `apply_edits` is what the
+tests use.  `CheckPage` computes them, `FinalView.apply_plain_edits()` maps them through
+`PlainMap` and applies them last to first in one `beginEditBlock`/`endEditBlock`, so one Ctrl+Z
+undoes one action and the stored text comes from the commit path of typing.  The whitespace rule
+is one function (`_fit_gap`): a replacement keeps the separators around it, an insertion into a
+gap gets one space on the side where the neighbour is a word, a removal takes one adjacent space
+with it, and words are never joined across a block boundary.
+
+**The lock.**  A document the run will redo is read-only from the run's start until its own
+result arrives (`MainWindow._run_pending`, `_run_current`, `_apply_lock`): between the start of
+the run and its file the tab would be stale and editable, and an edit stored then races the run.
+The tab keeps showing what is stored, with the banner *Waiting for this run* and then *Being
+proofread — you can edit it when it is done*.  Documents of the run that are done, and documents
+the run does not touch, stay editable.  `set_lock` calls `flush_pending_edit()` first, so a typed
+edit is stored before the lock takes the view.
 
 **Only the teacher or a run start switches tabs.**  `_load_check()` fills the page and never
 calls `setCurrentIndex`; `_open_check()` does.  `_on_file_done()` reloads the open document and
 leaves the tab alone, `_on_run_finished()` switches nothing, and `_start_worker()` goes to
 *Documents* only because the run's progress lives there.  The reason: a batch of 28 essays must
 not pull the teacher out of the essay they are reading when the next file finishes.  A run that redoes the open document
-empties its panel but keeps it the open one (`_open_document_awaits_result`): its result reloads
-it without a tab switch, and a run that ends before reaching it (stopped, failed) reloads it in
-`_on_run_finished()`.
+locks it but keeps it the open one (`_run_pending`): its result reloads it without a tab switch,
+and a run that ends before reaching it (stopped, failed) reloads it in `_on_run_finished()`.
 
 **Edits go to the open document, not to the selected row.**  `_open_source_for_edit()` reads
 `_current_preview_source_id`; the selection is how rows are chosen for a run, and the two must
@@ -2147,7 +2211,7 @@ Ctrl+2 are `QShortcut`s on the window, so they work from anywhere (Ctrl+2 only w
 enabled).  The arrows in the header step through `checkable_source_ids()` and select the row
 they land on.
 
-**Copy.**  `Copy ▾` takes the text from the table row, not from the preview widget, through
+**Copy.**  `Copy ▾` takes the text from the table row, not from the view, through
 `ProcessingApplicationService.text_for_copy()` -- the same function *Export text* uses, so a
 copy and an export never disagree.  `flush_pending_edit()` runs first, so a half-typed edit is
 saved before it is copied.  The menu's "names hidden" entries follow
@@ -2156,17 +2220,35 @@ changing the language updates the open document's menu at once.  The two *Save* 
 through the window's export path (`_on_export_requested`), not a second one.
 
 **Every prepared page is kept.**  `PreviewImageStore.persist_page_images()` writes page 1 as
-`<stem>_preprocessed.png` (the `preview_img` the preview shows) and pages 2..N as
+`<stem>_preprocessed.png` (the `preview_img` the scan shows) and pages 2..N as
 `<stem>_p<N>.png`, listed in `DocumentState.page_images`; the stem is `document_stem(file)`, the
 name of the document's state file, so two files of one name in different folders keep their own
 pages.  `prune_page_images()` removes the ones
 a shorter document no longer has, and `cleanup_intermediate_images()` treats them as
 intermediate.  `DocumentState.load_valid()` drops the list when a file is missing, so a deleted
-cache costs a re-run, never a broken page.  The old preview still shows page 1 only.
+cache costs a re-run, never a broken page.
+
+**The page as it was scanned** is kept too, when the image preparation changed the page:
+`persist_original_images()` writes page 1 as `<stem>_original.<ext>` (the `original_img` the
+benchmark and the Word builder read) and pages 2..N as `<stem>_o<N>.<ext>`, listed in
+`DocumentState.original_images` (first = `original_img`).  `prune_original_images()` matches
+`<stem>_original.*` and `re.fullmatch(rf"{re.escape(stem)}_o(\d+)\..+", name)` beyond the new
+count, so the files of a document called `Anna_o2` stay.  A page whose original is missing stays
+prepared when *Original* is on, and a state written before this field has the one original it
+had.  A PDF with a text layer stores every page for the scan as well: `PdfInputProvider` renders
+the pages it skips into `InputPayload.page_images` — at `SCAN_DPI` (150), not the OCR
+resolution, because nothing reads them — and `FileProcessor` hands them to
+`persist_preview_artifact(pages=…)` as it hands the prepared pages.  The scan's strip
+(`ScanPane` in `gui/check/_scan_view.py`) holds the *Original* toggle, offered only when a page
+has an original, and the caption of the steps that prepared the pages (`prepared_caption`).
 
 Tests: `tests/gui/test_gui_check_page.py` (the page on its own),
-`tests/gui/test_gui_main_window.py` (tabs, opening, arrows, shortcuts, copy, run start),
-`tests/unit/test_preview_image_store.py` (the page files).
+`tests/gui/test_gui_check_body.py` (the switch, the banners, the lock, the splitter),
+`tests/gui/test_gui_text_views.py` (the three views and their marks),
+`tests/gui/test_gui_side_panel.py` (the list and the card), `tests/gui/test_gui_plain_map.py`
+(the invariant), `tests/gui/test_gui_scan_view.py` (the pages in one scene),
+`tests/gui/test_gui_main_window.py` (tabs, opening, arrows, shortcuts, copy, run start, the
+lock), `tests/unit/test_preview_image_store.py` (the page files).
 
 ### Setup Assistant
 
@@ -2403,7 +2485,7 @@ is recorded only where counting from 1 would be wrong).
 | Corrector / evaluator | the stored text; for Markdown the system prompt gains a notation hint (`domain/notation.py`): crossed-out words are context, not to be corrected; inserted words belong to the sentence |
 | Diff tab, benchmark similarity/word counts | `PlainTextRenderer` output — formatting marks never count as differences, crossed-out words are kept |
 | DOCX | Word runs (bold, italic, underline, strikethrough, super-/subscript), headings, indented lists, nested tables |
-| Check tab (preview panel) | formatted rich text (`gui/_formatted_text.py`); the **Source** toggle shows the stored Markdown |
+| Check tab | formatted rich text (`gui/check/_text_views.py`); **⋯ → Show Markdown source** shows the stored Markdown of the view in front |
 
 **Editing.** The formatted view is editable (Ctrl+B / I / U, Ctrl+Shift+X crossed out,
 Ctrl+Shift+= inserted above the line). Edits are converted back to Markdown
@@ -2471,9 +2553,10 @@ layouts read `align()`.
   hunks is explained once, in the comment of its first hunk.  There is no diff and no text search
   of its own.
 
-**The old Preview** still reads the sentence-based review of `domain/correction_review.py`.
-`CorrectionReviewPresenter.for_preview(raw_text, text_format, review)` is the one seam that
-converts (`domain/proofreading/legacy_review.py`); it goes with the Preview.
+**The sentence-based review is the baseline's alone.**  `tools/model_eval/one_request/
+sentence_review.py` holds it: notes per sentence, `splice`, and its own `align`.  Nothing under
+`teachers_teammate/` imports it (`tests/tools/test_no_sentence_review_in_the_app.py` greps the
+package), and the app's one review is the edit-based one above.
 
 **The one-request path is the evaluation baseline, not the app.**
 `tools/model_eval/one_request/` holds the answer schema, the answer formats, the policy presets
@@ -2518,9 +2601,10 @@ with `ollama`).
 
 `align()`, `fits()`, `merge_reviews()`, `explained_sentences()` and the offset map are pure and
 table-tested in `tests/unit/test_review_v2.py`, `tests/unit/test_offset_map.py`,
-`tests/unit/test_quotes.py` and `tests/unit/test_anonymization_mask.py`; the review views are
-tested with pytest-qt in `tests/gui/test_gui_review_views.py`, the Word layouts in
-`tests/unit/test_docx_builder.py` and `tests/unit/test_docx_comments.py`.
+`tests/unit/test_quotes.py` and `tests/unit/test_anonymization_mask.py`; the Check tab's views
+and list are tested with pytest-qt in `tests/gui/test_gui_text_views.py` and
+`tests/gui/test_gui_side_panel.py`, the Word layouts in `tests/unit/test_docx_builder.py` and
+`tests/unit/test_docx_comments.py`.
 
 ## Proofreading exchange
 
@@ -3179,14 +3263,14 @@ can start.
 | Ollama models | Ollama HTTP API (`/api/pull`) | Ollama data dir | Ollama server running |
 | Built-in reader's model files (31 MB) | HTTPS from `huggingface.co`, only on request (`ModelStore.download`) | `<user data>/models/<repo>/<revision>/` | Never at start-up |
 
-**Focus in the Changes tab** (`gui/_review_views.py`). Choosing a change or an unclear
-expression — by clicking its words in the text or its number in the list — marks it in both
-views. The text uses Qt *extra selections* (`ReviewDiffView._apply_focus`, found through the
-anchor name of the links), not HTML, so a click neither re-renders the page nor loses the
-scroll position; the list marks the entry with the focus background and opens the collapsed
-minor-changes line when the entry is in it. List numbers run 1…n over the listed changes while
-the links keep the hunk number of the diff. Tests click with `qtbot.mouseClick` on a position
-found with `anchorAt()`; emitting `anchorClicked` by hand would not show what a person sees.
+**Focus in the Check tab** (`gui/check/_text_views.py`, `gui/check/_side_panel.py`). Choosing an
+item — by clicking its words in the text or its row in the list — marks it in both. The text
+uses Qt *extra selections* (`CheckTextView._apply_chosen`), not HTML, so a click neither
+re-renders the page nor loses the scroll position; the list marks the row with the focus
+background and opens the collapsed minor-changes row when the item is in it. A click on a mark
+is found with `cursorForPosition()` → `PlainMap.offset()` → the item whose span contains it,
+innermost first; tests click with `qtbot.mouseClick` on a position found that way, because
+emitting a signal by hand would not show what a person sees.
 
 
 ### Text recognition switch (`recognition_enabled`)

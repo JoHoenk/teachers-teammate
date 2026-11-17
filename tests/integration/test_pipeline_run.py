@@ -1897,11 +1897,11 @@ def test_two_documents_of_one_name_keep_their_own_pages(
 
 
 @pytest.mark.use_case("Preview_Preprocessing")
-def test_a_text_layer_pdf_and_an_image_keep_one_page(tmp_path: Path) -> None:
+def test_a_text_layer_pdf_keeps_every_page_and_an_image_one(tmp_path: Path) -> None:
     """
-    Given  a PDF read from its text layer and a single image
+    Given  a two-page PDF read from its text layer and a single image
     When   OCRPipeline.run() completes
-    Then   each document has exactly one page
+    Then   the PDF keeps both of its pages and the image keeps one
     """
     from tests.conftest import write_text_pdf  # noqa: PLC0415
 
@@ -1912,10 +1912,97 @@ def test_a_text_layer_pdf_and_an_image_keep_one_page(tmp_path: Path) -> None:
 
     _run_scanned_pdf(cfg)
 
-    for name in ("typed.pdf", "page.png"):
-        state = _state_of(cfg, name)
-        assert state is not None
-        assert len(state.pages) == 1
+    typed_state = _state_of(cfg, "typed.pdf")
+    assert typed_state is not None
+    assert len(typed_state.pages) == 2
+    assert all(Path(page).exists() for page in typed_state.pages)
+    image_state = _state_of(cfg, "page.png")
+    assert image_state is not None
+    assert len(image_state.pages) == 1
+
+
+@pytest.mark.use_case("Preview_Preprocessing")
+def test_a_scanned_pdf_keeps_the_original_of_every_page(
+    tmp_path: Path, sample_multipage_pdf
+) -> None:
+    """
+    Given  a three-page scanned PDF and a preprocessing method that changes the pages
+    When   OCRPipeline.run() completes
+    Then   the page as it was scanned is stored for each of the three pages
+    """
+    pdf = sample_multipage_pdf("essay.pdf", pages=3, shadow=True)
+    cfg = make_config(
+        tmp_path,
+        ocr_engine="ppocr",
+        correction_enabled=False,
+        docx_enabled=False,
+        preprocess_method="auto",
+    )
+    pdf.rename(cfg.input_dir / pdf.name)
+
+    _run_scanned_pdf(cfg)
+
+    state = _state_of(cfg, "essay.pdf")
+    assert state is not None
+    assert state.preprocess_steps
+    stem = document_stem(cfg.input_dir / "essay.pdf")
+    assert [Path(page).name for page in state.original_images] == [
+        f"{stem}_original.png",
+        f"{stem}_o2.png",
+        f"{stem}_o3.png",
+    ]
+    assert all(Path(page).exists() for page in state.original_images)
+    assert state.original_img == state.original_images[0]
+
+
+@pytest.mark.use_case("Preview_Preprocessing")
+def test_a_shorter_document_drops_the_originals_it_no_longer_has(
+    tmp_path: Path, sample_multipage_pdf
+) -> None:
+    """
+    Given  a document whose three pages were stored with their originals
+    When   the same name is recognized again with two pages
+    Then   the third page's original is gone
+    """
+    pdf = sample_multipage_pdf("essay.pdf", pages=3, shadow=True)
+    cfg = make_config(
+        tmp_path,
+        ocr_engine="ppocr",
+        correction_enabled=False,
+        docx_enabled=False,
+        preprocess_method="auto",
+    )
+    pdf.rename(cfg.input_dir / pdf.name)
+    _run_scanned_pdf(cfg)
+    artifact_dir = resolve_artifact_dir(cfg.output_dir)
+
+    shorter = sample_multipage_pdf("essay.pdf", pages=2, shadow=True)
+    shorter.replace(cfg.input_dir / shorter.name)
+    _run_scanned_pdf(cfg)
+
+    state = _state_of(cfg, "essay.pdf")
+    assert state is not None
+    assert len(state.original_images) == 2
+    stem = document_stem(cfg.input_dir / "essay.pdf")
+    assert not (artifact_dir / f"{stem}_o3.png").exists()
+
+
+@pytest.mark.use_case("Preview_Preprocessing")
+def test_a_document_without_preparation_keeps_no_original(tmp_path: Path, sample_pdf: Path) -> None:
+    """
+    Given  a scanned PDF and no preprocessing step
+    When   OCRPipeline.run() completes
+    Then   no original page is stored: the prepared page is the page as it was scanned
+    """
+    cfg = make_config(tmp_path, ocr_engine="ppocr", correction_enabled=False, docx_enabled=False)
+    sample_pdf.rename(cfg.input_dir / sample_pdf.name)
+
+    _run_scanned_pdf(cfg)
+
+    state = _state_of(cfg, sample_pdf.name)
+    assert state is not None
+    assert state.original_images == []
+    assert state.original_img == ""
 
 
 @pytest.mark.use_case("Preview_Preprocessing")

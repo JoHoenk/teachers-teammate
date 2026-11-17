@@ -168,9 +168,14 @@ def model_download_failed(message: str) -> Notice:
     return Notice("Model download failed", message, NoticeKind.WARNING)
 
 
-def preview_failed(reason: str) -> Notice:
-    """Tell the teacher that the preview of a document could not be loaded."""
-    return Notice("Preview", f"Could not load preview content:\n{reason}", NoticeKind.WARNING)
+def check_without_state(name: str) -> Notice:
+    """Tell the teacher that nothing usable is stored for a document the Check tab was asked for."""
+    return Notice(
+        "Check",
+        f"Nothing usable is stored for “{name}”.\n"
+        "The file may have changed since it was processed. Process it again to see it here.",
+        NoticeKind.WARNING,
+    )
 
 
 def preprocessing_preview_failed(reason: str) -> Notice:

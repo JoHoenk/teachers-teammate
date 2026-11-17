@@ -286,6 +286,176 @@ def test_persist_original_image_removes_stale_original_with_other_suffix(tmp_pat
     assert not stale.exists()
 
 
+def test_persist_original_images_stores_every_page_in_order(tmp_path: Path) -> None:
+    """
+    Given  three pages as they were scanned
+    When   persist_original_images is called
+    Then   page 1 keeps the name it always had and the others are numbered
+    """
+    store = PreviewImageStore(tmp_path / "store")
+    sources = [tmp_path / f"page{number}.png" for number in (1, 2, 3)]
+    for source in sources:
+        source.write_bytes(source.name.encode())
+
+    stored = store.persist_original_images(stem="essay", sources=sources)
+
+    assert [path.name for path in stored] == [
+        "essay_original.png",
+        "essay_o2.png",
+        "essay_o3.png",
+    ]
+    assert [path.read_bytes() for path in stored] == [b"page1.png", b"page2.png", b"page3.png"]
+
+
+def test_persist_original_images_keeps_the_suffix_of_each_page(tmp_path: Path) -> None:
+    """
+    Given  a JPEG second page
+    When   persist_original_images is called
+    Then   the stored page keeps its suffix
+    """
+    store = PreviewImageStore(tmp_path / "store")
+    first = tmp_path / "page1.png"
+    first.write_bytes(b"png")
+    second = tmp_path / "page2.jpg"
+    second.write_bytes(b"jpg")
+
+    stored = store.persist_original_images(stem="essay", sources=[first, second])
+
+    assert [path.name for path in stored] == ["essay_original.png", "essay_o2.jpg"]
+
+
+def test_persist_original_images_drops_the_pages_of_an_earlier_longer_document(
+    tmp_path: Path,
+) -> None:
+    """
+    Given  a document whose originals were stored for three pages
+    When   persist_original_images is called with two pages
+    Then   the third page's original is gone
+    """
+    store = PreviewImageStore(tmp_path / "store")
+    sources = [tmp_path / f"page{number}.png" for number in (1, 2, 3)]
+    for source in sources:
+        source.write_bytes(b"x")
+    store.persist_original_images(stem="essay", sources=sources)
+
+    stored = store.persist_original_images(stem="essay", sources=sources[:2])
+
+    assert [path.name for path in stored] == ["essay_original.png", "essay_o2.png"]
+    assert not (tmp_path / "store" / "essay_o3.png").exists()
+
+
+def test_persist_original_images_keeps_the_pages_stored_before_a_failing_one(
+    tmp_path: Path,
+) -> None:
+    """
+    Given  a third page that cannot be stored
+    When   persist_original_images is called
+    Then   the first two pages are kept and returned
+    """
+    store = PreviewImageStore(tmp_path / "store")
+    sources = [tmp_path / f"page{number}.png" for number in (1, 2, 3)]
+    for source in sources:
+        source.write_bytes(b"x")
+    real_link_or_copy = store._link_or_copy  # the failing page is the point
+
+    def fail_on_the_third(source: Path, target: Path) -> Path:
+        if target.name == "essay_o3.png":
+            raise OSError("disk full")
+        return real_link_or_copy(source, target)
+
+    with patch.object(store, "_link_or_copy", side_effect=fail_on_the_third):
+        stored = store.persist_original_images(stem="essay", sources=sources)
+
+    assert [path.name for path in stored] == ["essay_original.png", "essay_o2.png"]
+    assert not (tmp_path / "store" / "essay_o3.png").exists()
+
+
+def test_persist_original_images_links_instead_of_copying(tmp_path: Path) -> None:
+    """
+    Given  a page on a filesystem that supports hard links
+    When   persist_original_images is called
+    Then   the stored pages share the source's data
+    """
+    store = PreviewImageStore(tmp_path / "store")
+    sources = [tmp_path / f"page{number}.png" for number in (1, 2)]
+    for source in sources:
+        source.write_bytes(b"x")
+
+    stored = store.persist_original_images(stem="essay", sources=sources)
+
+    assert all(
+        os.path.samefile(source, target) for source, target in zip(sources, stored, strict=True)
+    )
+
+
+def test_persist_original_images_falls_back_to_copy_when_link_fails(tmp_path: Path) -> None:
+    """
+    Given  a filesystem where os.link raises OSError
+    When   persist_original_images is called with two pages
+    Then   both pages are copied instead
+    """
+    store = PreviewImageStore(tmp_path / "store")
+    sources = [tmp_path / f"page{number}.png" for number in (1, 2)]
+    for source in sources:
+        source.write_bytes(b"x")
+
+    with patch("os.link", side_effect=OSError("cross-device")):
+        stored = store.persist_original_images(stem="essay", sources=sources)
+
+    assert [path.read_bytes() for path in stored] == [b"x", b"x"]
+    assert not any(
+        os.path.samefile(source, target) for source, target in zip(sources, stored, strict=True)
+    )
+
+
+def test_prune_original_images_keeps_the_files_of_a_document_named_like_a_page(
+    tmp_path: Path,
+) -> None:
+    """
+    Given  a document 'Anna' with three originals and a document called 'Anna_o2'
+    When   the originals of 'Anna' are pruned to one page
+    Then   the files of 'Anna_o2' stay
+    """
+    root = tmp_path / "store"
+    store = PreviewImageStore(root)
+    for name in (
+        "Anna_original.png",
+        "Anna_o2.png",
+        "Anna_o3.png",
+        "Anna_o2_preprocessed.png",
+        "Anna_o2_original.png",
+        "Anna_o2_p2.png",
+    ):
+        (root / name).write_bytes(b"x")
+
+    store.prune_original_images("Anna", keep=[root / "Anna_original.png"])
+
+    assert (root / "Anna_original.png").exists()
+    assert not (root / "Anna_o2.png").exists()
+    assert not (root / "Anna_o3.png").exists()
+    assert (root / "Anna_o2_preprocessed.png").exists()
+    assert (root / "Anna_o2_original.png").exists()
+    assert (root / "Anna_o2_p2.png").exists()
+
+
+def test_delete_preview_artifacts_also_removes_every_original(tmp_path: Path) -> None:
+    """
+    Given  a document with three originals
+    When   delete_preview_artifacts is called with them
+    Then   all of them are deleted
+    """
+    store = PreviewImageStore(tmp_path / "store")
+    files = [tmp_path / name for name in ("a_original.png", "a_o2.png", "a_o3.png")]
+    for file in files:
+        file.write_bytes(b"x")
+
+    store.delete_preview_artifacts(
+        str(files[0]), str(files[0]), str(files[0]), (), [str(file) for file in files]
+    )
+
+    assert not any(file.exists() for file in files)
+
+
 def test_prune_original_images_leaves_other_stems_alone(tmp_path: Path) -> None:
     """
     Given  originals for two different stems

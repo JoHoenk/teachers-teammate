@@ -30,8 +30,8 @@ from PySide6.QtWidgets import (
 from ..application.sent_text import SentText, SentTexts
 from . import _user_text as txt
 from ._data_flow_summary import level_color, level_text
+from ._diff_widget import DiffWidget
 from ._formatted_text import chip_placeholders
-from ._preview_panel import DiffWidget
 
 TITLE = "What is sent for this file"
 TAB_SENT = "What is sent"

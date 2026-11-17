@@ -1,10 +1,10 @@
-"""Unit tests for teachers_teammate.domain.correction_review."""
+"""Unit tests for the one-request baseline's sentence-based review."""
 
 from __future__ import annotations
 
 import pytest
 
-from teachers_teammate.domain.correction_review import (
+from tools.model_eval.one_request.sentence_review import (
     AlignedChange,
     AlignedReview,
     AlignedUnclear,

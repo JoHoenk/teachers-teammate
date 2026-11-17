@@ -21,7 +21,7 @@ from tests.tools.store_workspace import one, review, workspace
 from tools import prepare_gec_testset, proofreading_store
 from tools.model_eval import corpora, run_format, testset, validation
 from tools.model_eval.corpora import CorpusAdapter, ResolvedItem, pointers
-from teachers_teammate.domain.correction_review import ChangeNote
+from tools.model_eval.one_request.sentence_review import ChangeNote
 
 TOY_SOURCE = "Das ist ein Toy ."
 TOY_REFERENCE = "Das ist ein Spielzeug ."

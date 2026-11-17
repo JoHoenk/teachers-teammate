@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field, replace
 import logging
 from pathlib import Path
@@ -307,7 +307,7 @@ class FileProcessor:
                     file,
                     ctx,
                     source_image,
-                    original_path=kept_original,
+                    original_paths=[kept_original] if kept_original is not None else (),
                     preprocess_steps=ctx.state.preprocess_steps,
                 )
             except OSError:
@@ -348,26 +348,30 @@ class FileProcessor:
             prepared.steps,
             prepared.source_image,
         )
+        # A PDF read through its text layer has no image units, but its pages are what the
+        # teacher compares the text with, so they are stored for the scan all the same.
+        pages: Sequence[Path] = ocr_inputs or prepared.page_images
         preview_img = ""
-        preview_source = ocr_inputs[0] if ocr_inputs else source_image
+        preview_source = pages[0] if pages else source_image
         if preview_source is not None:
-            # Keep the un-preprocessed page too, but only when preprocessing changed it.
-            original_path = (
-                source_image
+            # Keep the pages as they were scanned too, but only when preprocessing changed
+            # them: without a step the original is the prepared page.
+            original_paths = (
+                prepared.original_pages
                 if prep_steps
-                and source_image is not None
-                and source_image != preview_source
-                and source_image.exists()
-                else None
+                and prepared.original_pages
+                and prepared.original_pages[0] != preview_source
+                and prepared.original_pages[0].exists()
+                else ()
             )
             try:
                 preview_img, ctx = self._cache_service.persist_preview_artifact(
                     file,
                     ctx,
                     preview_source,
-                    original_path=original_path,
+                    original_paths=original_paths,
                     preprocess_steps=prep_steps if ocr_inputs else None,
-                    pages=ocr_inputs,
+                    pages=pages,
                 )
             except OSError as exc:
                 raise _StageAbort(

@@ -11,6 +11,7 @@ from __future__ import annotations
 from collections.abc import Iterator
 import ctypes
 import dataclasses
+import logging
 from pathlib import Path
 import unicodedata
 
@@ -27,6 +28,12 @@ from ..domain.pdf_text_layer import (
     use_text_layer,
 )
 from ..interfaces import InputPayload, InputProvider, InputUnit
+
+_logger = logging.getLogger(__name__)
+
+#: Resolution of the pages rendered only to be looked at (a text-layer PDF's scan).  The scan
+#: fits a page to the width of a pane, so the OCR resolution would only cost time and disk.
+SCAN_DPI = 150
 
 _UNPRINTABLE_CATEGORIES = frozenset({"Cc", "Cf", "Cs", "Co", "Cn"})
 
@@ -240,8 +247,8 @@ class PdfInputProvider(InputProvider):
     """Loads a PDF as embedded text when it has a complete text layer, else as page images.
 
     Page renders are written to *tmp_dir*.  The first page path is returned as the
-    source preview image for the output document — also for text-only PDFs, where
-    that is the only page rendered.
+    source preview image for the output document.  A text-only PDF has no image units,
+    but its pages are still rendered — the teacher compares the text with them.
     """
 
     def __init__(
@@ -261,10 +268,10 @@ class PdfInputProvider(InputProvider):
             file_path: Path to the PDF file.
 
         Returns:
-            :class:`InputPayload` with a single text unit (all pages) and the first
-            page as preview source image when the text layer is used; otherwise
-            image units for all rendered pages and the first page as preview source
-            image.  An empty payload for an empty PDF.
+            :class:`InputPayload` with a single text unit (all pages) and every page
+            rendered for the scan when the text layer is used; otherwise image units
+            for all rendered pages and the first page as preview source image.  An
+            empty payload for an empty PDF.
         """
         pdf = pdfium.PdfDocument(str(file_path))
         try:
@@ -290,11 +297,12 @@ class PdfInputProvider(InputProvider):
                 # Pages are measured on demand and only up to the first one that rules
                 # the text layer out, so scanned PDFs go straight on to rendering.
                 if use_text_layer(self._text_layer, measure_pages()):
-                    preview = self._render_page(pdf, 0, file_path)
+                    pages = self._render_pages(pdf, page_count, file_path)
                     return InputPayload(
                         units=[InputUnit.text_content(join_labelled_pages(texts))],
-                        source_image=preview,
+                        source_image=pages[0] if pages else None,
                         text_origin="pdf_text_layer",
+                        page_images=pages,
                     )
                 # The scan stops at the first page that rules the text layer out: the last one.
                 text_layer_note = (
@@ -315,16 +323,52 @@ class PdfInputProvider(InputProvider):
             pdf.close()
         return InputPayload(units=units, source_image=source_image, text_layer_note=text_layer_note)
 
-    def _render_page(self, pdf: pdfium.PdfDocument, page_num: int, file_path: Path) -> Path:
-        """Render page *page_num* of *pdf* to a PNG in the temp dir and return its path."""
+    def _render_page(
+        self,
+        pdf: pdfium.PdfDocument,
+        page_num: int,
+        file_path: Path,
+        *,
+        dpi: int | None = None,
+    ) -> Path:
+        """Render page *page_num* of *pdf* to a PNG in the temp dir and return its path.
+
+        *dpi* defaults to the OCR resolution; a page that is only shown asks for less.
+        """
         page = pdf[page_num]
         try:
-            bitmap = page.render(scale=self._pdf_dpi / 72.0)
+            bitmap = page.render(scale=(dpi or self._pdf_dpi) / 72.0)
             raw_path = self._tmp_dir / f"{file_path.stem}_page{page_num}.png"
             bitmap.to_pil().save(str(raw_path))
         finally:
             page.close()
         return raw_path
+
+    def _render_pages(
+        self, pdf: pdfium.PdfDocument, page_count: int, file_path: Path
+    ) -> list[Path]:
+        """Render every page of *pdf* for the scan, in page order.
+
+        A text-layer PDF has no image units, but its pages are what the teacher compares the
+        text with, so all of them are rendered, at the resolution of the scan (nothing reads
+        them, so the OCR resolution would only cost time and cache).  A page that cannot be rendered is logged and
+        left out; the pages rendered so far are kept, because a missing page is better than no
+        scan at all.
+        """
+        pages: list[Path] = []
+        for page_num in range(page_count):
+            try:
+                pages.append(
+                    self._render_page(pdf, page_num, file_path, dpi=min(self._pdf_dpi, SCAN_DPI))
+                )
+            except Exception:  # a broken page must not fail the document
+                _logger.warning(
+                    "Could not render page %d of %s for the scan",
+                    page_num + 1,
+                    file_path,
+                    exc_info=True,
+                )
+        return pages
 
 
 class ImageInputProvider(InputProvider):

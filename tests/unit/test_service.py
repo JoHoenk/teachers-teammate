@@ -917,6 +917,45 @@ def test_views_without_a_stored_result_cost_no_privacy_fingerprint(tmp_path: Pat
         assert svc.load_views(cfg, [source])
 
 
+@pytest.mark.unit
+def test_check_document_answers_for_a_stored_document_and_none_without_one(
+    tmp_path: Path,
+) -> None:
+    """
+    Given  a service over a state store holding one recognized document
+    When   check_document() is asked for that file and for a file without state
+    Then   the first gives the Check tab's data and the second gives None
+    """
+    from teachers_teammate.infrastructure.preview_image_store import (  # noqa: PLC0415
+        PreviewImageStore,
+    )
+    from teachers_teammate.infrastructure.state_repository import (  # noqa: PLC0415
+        StateRepository,
+    )
+    from teachers_teammate.infrastructure.workflow.cache_service import (  # noqa: PLC0415
+        CacheReconciliationService,
+    )
+
+    source = tmp_path / "note.txt"
+    source.write_text("hello")
+    cfg = make_config(tmp_path)
+    repo = StateRepository(tmp_path / "state")
+    recon = CacheReconciliationService(
+        state_repo=repo, artifact_store=PreviewImageStore(tmp_path / "art"), config=cfg
+    )
+    ctx = recon.prepare(source)
+    recon.record_ocr(source, ctx, raw_text="hello", preview_img="", source_image="")
+    svc = _make_svc(state_repository_factory=lambda _config: repo)
+
+    doc = svc.check_document(cfg, source)
+
+    assert doc is not None
+    assert doc.source_id == str(source.resolve())
+    assert doc.raw_text == "hello"
+    assert doc.has_proofreading is False
+    assert svc.check_document(cfg, tmp_path / "other.txt") is None
+
+
 # ── _invalidate_from_stage ValueError ────────────────────────────────────
 
 
@@ -3793,171 +3832,6 @@ def test_provider_key_missing_follows_the_provider_info_and_environment(
     monkeypatch.setattr(service_module, "get_provider_info", lambda _provider: info)
 
     assert _make_svc().provider_key_missing("any") is missing
-
-
-# ── estimate_text_size: the pieces counter after OCR (CW2) ─────────────────
-
-
-def _long_german_text(repeats: int = 400) -> str:
-    """Return a German text of about *repeats* sentences, long enough for several pieces."""
-    return "Dies ist ein Satz mit ein paar Wörtern. " * repeats
-
-
-@pytest.mark.unit
-def test_a_short_text_is_proofread_in_one_piece(tmp_path: Path, monkeypatch) -> None:
-    """
-    Given  a short text and a local model at the base window
-    When   the size is estimated
-    Then   it is one piece, so the GUI shows nothing
-    """
-    svc = _make_svc()
-    cfg = _ollama_config(tmp_path)
-    _computer(svc, monkeypatch, profile="cpu", free_gb=32.0)
-
-    estimate = svc.estimate_text_size(cfg, "Ein kurzer Satz.")
-
-    assert estimate.pieces == 1
-    assert estimate.words == 3
-
-
-@pytest.mark.unit
-def test_the_pieces_count_matches_the_requests_correct_really_makes(
-    tmp_path: Path, monkeypatch
-) -> None:
-    """
-    Given  a long German text and a local model at the base window
-    When   the size is estimated and the same corrector proofreads the text
-    Then   the estimate equals the number of requests correct() really sends
-    """
-    from teachers_teammate.domain.proofreading.result import (  # noqa: PLC0415
-        CorrectionOutcome,
-    )
-    from teachers_teammate.infrastructure.proofreading.corrector import (  # noqa: PLC0415
-        ExchangeCorrector,
-    )
-    from teachers_teammate.infrastructure.stage_builder import (  # noqa: PLC0415
-        PipelineComponentFactory,
-        StageBuilder,
-    )
-
-    svc = _make_svc()
-    cfg = _ollama_config(tmp_path)
-    _computer(svc, monkeypatch, profile="cpu", free_gb=32.0)
-    text = _long_german_text()
-
-    estimate = svc.estimate_text_size(cfg, text)
-
-    sent: list[str] = []
-
-    def fake_correct(self, raw_text, language, *, text_format="plain"):
-        sent.append(raw_text)
-        return CorrectionOutcome(text=raw_text)
-
-    monkeypatch.setattr(ExchangeCorrector, "correct", fake_correct)
-    corrector = StageBuilder(cfg, PipelineComponentFactory()).build_corrector()
-    assert corrector is not None
-    corrector.correct(text, cfg.language)
-
-    assert estimate.pieces is not None and estimate.pieces > 1
-    assert estimate.pieces == len(sent)
-
-
-@pytest.mark.unit
-def test_an_online_provider_has_no_piece_count(tmp_path: Path, monkeypatch) -> None:
-    """
-    Given  an online proofreading provider, which handles any length in one request
-    When   the size is estimated
-    Then   there is no piece count, because nothing is split
-    """
-    svc = _make_svc()
-    cfg = _ollama_config(tmp_path, correction_provider="openai", correction_model="gpt-4o-mini")
-    _computer(svc, monkeypatch, profile="cpu", free_gb=32.0)
-    fake_mod = MagicMock()
-    fake_mod.ChatOpenAI = MagicMock(return_value=MagicMock())
-
-    with patch.dict(sys.modules, {"langchain_openai": fake_mod}):
-        estimate = svc.estimate_text_size(cfg, _long_german_text())
-
-    assert estimate.pieces is None
-    assert estimate.words_per_piece is None
-
-
-@pytest.mark.unit
-def test_proofreading_off_has_no_piece_count(tmp_path: Path, monkeypatch) -> None:
-    """
-    Given  a config with proofreading switched off
-    When   the size is estimated
-    Then   there is no piece count, because nothing is proofread
-    """
-    svc = _make_svc()
-    cfg = _ollama_config(tmp_path, correction_enabled=False)
-    _computer(svc, monkeypatch, profile="cpu", free_gb=32.0)
-
-    estimate = svc.estimate_text_size(cfg, _long_german_text())
-
-    assert estimate.pieces is None
-    assert estimate.content_review_fits is None
-
-
-@pytest.mark.unit
-def test_markdown_words_are_counted_without_the_markup(tmp_path: Path, monkeypatch) -> None:
-    """
-    Given  a Markdown text with headings and emphasis
-    When   the size is estimated
-    Then   the word count is the words of the text, not of its markup
-    """
-    svc = _make_svc()
-    cfg = _ollama_config(tmp_path)
-    _computer(svc, monkeypatch, profile="cpu", free_gb=32.0)
-
-    estimate = svc.estimate_text_size(cfg, "# Titel\n\nEin **wichtiger** Satz.", "markdown")
-
-    assert estimate.words == 4
-
-
-@pytest.mark.unit
-def test_a_text_longer_than_the_review_window_does_not_fit_the_review(
-    tmp_path: Path, monkeypatch
-) -> None:
-    """
-    Given  a text longer than one content review can read, and a review switched on
-    When   the size is estimated
-    Then   the review is reported as not fitting, because it cannot be split
-    """
-    svc = _make_svc()
-    cfg = _ollama_config(tmp_path, evaluation_enabled=True, evaluate_provider="ollama")
-    _computer(svc, monkeypatch, profile="cpu", free_gb=32.0)
-
-    estimate = svc.estimate_text_size(cfg, "Ein Satz. " * 20_000)
-
-    assert estimate.content_review_fits is False
-
-
-@pytest.mark.unit
-def test_an_online_provider_is_not_built_to_estimate_the_size(tmp_path: Path, monkeypatch) -> None:
-    """
-    Given  an OpenAI proofreading config and a factory whose build_llm fails the test if called
-    When   the size is estimated
-    Then   the estimate has no piece count and no client was built: an online provider brings
-           its own request limit, and the GUI thread must not import LangChain for it
-    """
-    from teachers_teammate.infrastructure import stage_builder  # noqa: PLC0415
-
-    svc = _make_svc()
-    cfg = _ollama_config(tmp_path, correction_provider="openai", correction_model="gpt-4o-mini")
-    _computer(svc, monkeypatch, profile="cpu", free_gb=32.0)
-
-    def refuse(*_args, **_kwargs):
-        raise AssertionError("build_llm must not be called for an online provider")
-
-    monkeypatch.setattr(stage_builder, "build_llm", refuse)
-
-    estimate = svc.estimate_text_size(cfg, _long_german_text())
-
-    assert estimate.pieces is None
-    assert estimate.words_per_piece is None
-    assert estimate.content_review_fits is None
-    assert estimate.words > 0
 
 
 # ── Text recognition switched off ────────────────────────────────────────────

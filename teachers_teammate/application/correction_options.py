@@ -5,7 +5,19 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 
 from ..config import DEFAULTS
-from ..domain.correction_prompts import PROMPTS, migrate_saved_default, migrate_saved_prompt
+from ..domain.prompt_text import migrate_saved_default
+
+#: What each step of the proofreading exchange is called where a teacher reads it.
+PROMPT_STEP_TITLES: dict[str, str] = {
+    "correct": "Correct the text",
+    "explain": "Explain the corrections",
+    "unclear": "List unclear expressions",
+}
+
+
+def prompt_step_title(step: str) -> str:
+    """Return the teacher-facing name of a proofreading step."""
+    return PROMPT_STEP_TITLES.get(step, step)
 
 
 def review_has_own_model(
@@ -26,25 +38,6 @@ def review_has_own_model(
     return effective("evaluate_provider", "evaluate_model", "evaluation") != effective(
         "correction_provider", "correction_model", "correction"
     )
-
-
-def prompt_ignores_level(prompt: str) -> bool:
-    """Whether *prompt* is a custom instruction text that does not use the ``{level}`` setting.
-
-    Empty prompts and preset names resolve to a built-in preset, which always uses the level.
-    """
-    return bool(prompt.strip()) and prompt not in PROMPTS and "{level}" not in prompt
-
-
-def migrate_saved_correction_prompt(prompt: str) -> str:
-    """Reset a saved preset copy to ``""`` ("use the built-in prompt"), keep custom text.
-
-    Older versions stored the built-in preset text in the settings; on this version such
-    a text would be sent as a custom policy next to answer-format rules that say the
-    opposite.  Equal (after whitespace normalisation) to any current or released preset
-    means: the teacher never customised anything.
-    """
-    return migrate_saved_prompt(prompt)
 
 
 def migrate_saved_evaluation_prompt(prompt: str) -> str:

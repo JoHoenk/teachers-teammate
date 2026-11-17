@@ -141,11 +141,11 @@ class SampleKey:
     """The model tag as the app asked for it."""
     step: SpeedStep
     mode: str = ""
-    """``"review"`` or ``"text"`` for proofreading, ``""`` for the other steps.
+    """``"exchange"`` or ``"text"`` for proofreading, ``""`` for the other steps.
 
-    The mode is part of the key because it decides how long the answer is: a review answer
-    repeats the text and explains every change, a text-mode answer is about the text's length.
-    Mixing the two would make the answer length meaningless.
+    The mode is part of the key because it decides how long the answer is: the exchange answers
+    with the text and its explanations, a text-mode answer (corrections only) is about the
+    text's length.  Mixing the two would make the answer length meaningless.
     """
 
 

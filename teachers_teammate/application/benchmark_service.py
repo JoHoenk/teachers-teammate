@@ -144,18 +144,6 @@ class BenchmarkApplicationService:
     def missing_provider_package(self, provider: str) -> str | None:
         return self._processing.missing_provider_package(provider)
 
-    def list_correction_prompt_presets(self) -> dict[str, str]:
-        return self._processing.list_correction_prompt_presets()
-
-    def default_correction_prompt(self) -> str:
-        return self._processing.default_correction_prompt()
-
-    def default_answer_formats(self) -> tuple[str, str]:
-        return self._processing.default_answer_formats()
-
-    def correction_notation_hint(self) -> str:
-        return self._processing.correction_notation_hint()
-
     def evaluation_fixed_instructions(self, text_format: TextFormat = "plain") -> str:
         return self._processing.evaluation_fixed_instructions(text_format)
 

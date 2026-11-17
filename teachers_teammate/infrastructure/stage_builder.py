@@ -55,12 +55,6 @@ from .anonymizer import (
     anonymizer_config_from,
     resolve_anonymizer_config,
 )
-from .correction import (
-    ChunkingCorrector,
-    CorrectionSettings,
-    LangChainCorrector,
-    NativeOllamaCorrector,
-)
 from .docx_builder import DocxDocumentCreator
 from .evaluation import LangChainEvaluator, NativeOllamaEvaluator
 from .llm_factory import build_llm, get_provider_info
@@ -70,6 +64,9 @@ from .onnx.store import ModelStore
 from .ppocr.engine import PpOcrProcessor
 from .preprocessing.recipes import steps_for
 from .preprocessing.steps import StepPipeline
+from .proofreading.chunking import ChunkingCorrector
+from .proofreading.corrector import ProofreadingSettings, build_exchange_corrector
+from .proofreading.port import LangChainPort, ModelPort, OllamaPort
 from .reporting import Reporter, StdoutReporter
 from .spacy_models import installed_spacy_models
 from .system_locale import system_language
@@ -110,33 +107,16 @@ def _default_build_llm(
 
 
 def _default_build_corrector(
-    llm: BaseChatModel, prompt: str, settings: CorrectionSettings, profile: RequestProfile
+    port: ModelPort,
+    settings: ProofreadingSettings,
+    profile: RequestProfile,
+    tries: int,
 ) -> Corrector:
-    return LangChainCorrector(llm, prompt, settings=settings, profile=profile)
+    return build_exchange_corrector(port, profile=profile, settings=settings, cut_off_tries=tries)
 
 
 def _default_build_evaluator(llm: BaseChatModel, prompt: str) -> Evaluator:
     return LangChainEvaluator(llm, prompt)
-
-
-def _default_build_native_ollama_corrector(
-    model: str,
-    client: OllamaClient,
-    prompt: str,
-    timeout: float,
-    temperature: float,
-    settings: CorrectionSettings,
-    profile: RequestProfile,
-) -> Corrector:
-    return NativeOllamaCorrector(
-        model=model,
-        client=client,
-        prompt=prompt,
-        timeout=timeout,
-        temperature=temperature,
-        settings=settings,
-        profile=profile,
-    )
 
 
 def _default_build_native_ollama_evaluator(
@@ -251,13 +231,10 @@ class PipelineComponentFactory:
         _default_build_ollama_ocr
     )
     build_llm: Callable[[str, str, str, float], BaseChatModel] = _default_build_llm
-    build_corrector: Callable[
-        [BaseChatModel, str, CorrectionSettings, RequestProfile], Corrector
-    ] = _default_build_corrector
+    build_corrector: Callable[[ModelPort, ProofreadingSettings, RequestProfile, int], Corrector] = (
+        _default_build_corrector
+    )
     build_evaluator: Callable[[BaseChatModel, str], Evaluator] = _default_build_evaluator
-    build_native_ollama_corrector: Callable[
-        [str, OllamaClient, str, float, float, CorrectionSettings, RequestProfile], Corrector
-    ] = _default_build_native_ollama_corrector
     build_native_ollama_evaluator: Callable[
         [str, OllamaClient, str, float, float, int, bool | str], Evaluator
     ] = _default_build_native_ollama_evaluator
@@ -344,6 +321,11 @@ class StageBuilder:
         The one place that decides which corrector a run uses, so a run and the pieces
         estimate of the GUI build the same one.  Building is cheap: neither the Ollama client
         nor the corrector contacts the server, and no anonymizer is built here.
+
+        The corrector is the exchange over the connection of the chosen provider: a local
+        server is asked through its own API (which knows the window), an online provider
+        through its LangChain model.  Only a connection with a bounded window is wrapped in
+        the chunking corrector, so an online provider keeps handling any length in one request.
         """
         cfg = self.config
         factory = self.factory
@@ -351,25 +333,28 @@ class StageBuilder:
             return None
         profile = cfg.correction_profile
         settings = self._correction_settings()
+        # Step ① is the step whose answer is as long as the text, so its temperature decides
+        # how often a cut-off answer is asked again.
+        tries = cut_off_tries(online=self._correction_is_online(), temperature=profile.temperature)
         if cfg.correction_provider == "ollama":
             client = ollama_client or self._build_ollama_client()
-            corrector = factory.build_native_ollama_corrector(
-                cfg.effective_correction_model,
+            port: ModelPort = OllamaPort(
                 client,
-                cfg.correction_prompt,
-                float(cfg.ocr_timeout),
-                cfg.correction_temperature,
-                settings,
-                profile,
+                cfg.effective_correction_model,
+                timeout=float(cfg.ocr_timeout),
+                num_ctx=self.resolved_windows().proofreading,
             )
-            return _chunked(corrector, cfg.language)
-        llm = factory.build_llm(
-            cfg.correction_provider,
-            cfg.effective_correction_model,
-            cfg.ollama_url,
-            cfg.correction_temperature,
-        )
-        return factory.build_corrector(llm, cfg.correction_prompt, settings, profile)
+        else:
+            port = LangChainPort(
+                factory.build_llm(
+                    cfg.correction_provider,
+                    cfg.effective_correction_model,
+                    cfg.ollama_url,
+                    cfg.correction_temperature,
+                ),
+                strict=cfg.correction_provider == "openai",
+            )
+        return _chunked(factory.build_corrector(port, settings, profile, tries), cfg.language)
 
     def build_correction_and_anonymizer(
         self, ollama_client: OllamaClient | None = None
@@ -395,21 +380,14 @@ class StageBuilder:
 
         return correction, anonymizer
 
-    def _correction_settings(self) -> CorrectionSettings:
-        """Collect the review settings the corrector needs from the configuration."""
+    def _correction_settings(self) -> ProofreadingSettings:
+        """Collect what the teacher set for the proofreading of this run."""
         cfg = self.config
-        return CorrectionSettings(
-            prompt=cfg.correction_prompt,
+        return ProofreadingSettings(
             level=cfg.correction_level,
             explanation_language=cfg.explanation_language,
-            output_mode=cfg.correction_output,
-            answer_format_review=cfg.answer_format_review,
-            answer_format_text=cfg.answer_format_text,
-            strict_schema=cfg.correction_provider == "openai",
-            num_ctx=self.resolved_windows().proofreading,
-            cut_off_tries=cut_off_tries(
-                online=self._correction_is_online(), temperature=cfg.correction_temperature
-            ),
+            teacher_notes=cfg.correction_notes,
+            corrections_only=cfg.correction_output == "text",
         )
 
     def _correction_is_online(self) -> bool:

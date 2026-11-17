@@ -342,7 +342,9 @@ def profile_problem(sent: Sent, profile: RequestProfile) -> str | None:
     without noticing.  The check reads the system text that went to the port, not the
     profile it meant to send.
     """
-    from teachers_teammate.infrastructure.correction import COMPACT_ANSWER_RULE  # noqa: PLC0415
+    from tools.model_eval.one_request.correction import (  # noqa: PLC0415
+        COMPACT_ANSWER_RULE,
+    )
 
     carries = COMPACT_ANSWER_RULE in sent.system
     if carries == profile.compact_json:

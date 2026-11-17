@@ -82,7 +82,7 @@ class Sent:
     temperature: float
     sent_text: SentText
     language: str = ""
-    """The language *name*, as the app's corrector is asked for it."""
+    """The language *name*, as the one-request corrector is asked for it."""
     text_format: TextFormat = "plain"
     num_ctx: int = 0
     round: int = 1
@@ -157,15 +157,16 @@ def review_budget(
 ) -> int:
     """Return how many characters of text one review request carries at *num_ctx*.
 
-    The figure is measured on the request :func:`review_request` builds, which is the one the
-    app's own corrector sends (``test_the_gate_sends_the_apps_review_request`` pins that), so the
-    gate and the app cannot disagree about the size the app really sends: the system prompt and
+    The figure is measured on the request :func:`review_request` builds, which is the one
+    :class:`~tools.model_eval.one_request.correction.NativeOllamaCorrector` sends
+    (``test_the_gate_sends_the_one_request_correctors_review_request`` pins that), so the gate and
+    the baseline cannot disagree about the size the baseline really sends: the system prompt and
     the fixed part of the message come out of the window first, and what is left is shared with
     an answer :data:`~teachers_teammate.domain.context_budget.REVIEW_ANSWER_FACTOR` times the
     text.
 
     Args:
-        language: The language *name*, as the app's corrector is asked for it.
+        language: The language *name*, as the one-request corrector is asked for it.
         text_format: The notation of the text (Markdown adds a hint to the system prompt).
         num_ctx: The context window the request is sent at.
         profile: The request profile the request is built with; the default for a model the
@@ -190,16 +191,18 @@ def review_budget(
 def review_request(
     language: str, text_format: TextFormat, text: str, *, compact_json: bool = False
 ) -> tuple[str, str]:
-    """Return ``(system, user)`` of the request the app's corrector would send for *text*.
+    """Return ``(system, user)`` of the one-request review for *text*.
 
     Args:
-        language: The language *name*, as the app's corrector is asked for it.
+        language: The language *name*, as the one-request corrector is asked for it.
         text_format: The notation of the text.
         text: The text the message carries.
         compact_json: Whether the model's profile asks for the compact-JSON rule, which lengthens
             the system text (so a budget measured without it would send a text the app splits).
     """
-    from teachers_teammate.infrastructure.correction import request_messages  # noqa: PLC0415
+    from tools.model_eval.one_request.correction import (  # noqa: PLC0415
+        request_messages,
+    )
 
     return request_messages(
         text, language, text_format=text_format, mode="review", compact_json=compact_json
@@ -207,18 +210,20 @@ def review_request(
 
 
 def text_request(language: str, text_format: TextFormat, text: str) -> tuple[str, str]:
-    """Return ``(system, user)`` of the text-mode request the app's corrector sends for *text*.
+    """Return ``(system, user)`` of the text-mode request the one-request corrector sends for *text*.
 
     Text mode answers with the corrected text only, so it has no schema and the shorter system
     prompt.  The smoke check of that mode sends this request, which is the one a teacher's run
     sends when the review answer is not usable.
 
     Args:
-        language: The language *name*, as the app's corrector is asked for it.
+        language: The language *name*, as the one-request corrector is asked for it.
         text_format: The notation of the text.
         text: The text the message carries.
     """
-    from teachers_teammate.infrastructure.correction import request_messages  # noqa: PLC0415
+    from tools.model_eval.one_request.correction import (  # noqa: PLC0415
+        request_messages,
+    )
 
     return request_messages(text, language, text_format=text_format, mode="text")
 
@@ -263,7 +268,7 @@ def fixture_named(name: str) -> Fixture:
 
 def placeable(answer_json: str, source: str) -> tuple[int, int, str] | None:
     """Return ``(placed, total, corrected)`` for an answer; ``None`` if it does not validate."""
-    from teachers_teammate.infrastructure.correction_schema import (  # noqa: PLC0415
+    from tools.model_eval.one_request.correction_schema import (  # noqa: PLC0415
         validate_answer,
     )
 
@@ -274,7 +279,7 @@ def placeable(answer_json: str, source: str) -> tuple[int, int, str] | None:
 def _placed(answer, source: str) -> tuple[int, int, str]:
     """Return ``(placed, total, corrected)`` for a validated *answer*."""
     from teachers_teammate.domain.correction_review import splice  # noqa: PLC0415
-    from teachers_teammate.infrastructure.correction_schema import to_review  # noqa: PLC0415
+    from tools.model_eval.one_request.correction_schema import to_review  # noqa: PLC0415
 
     review = to_review(answer)
     total = len(review.sentences)
@@ -297,11 +302,11 @@ def judge(sent: Sent) -> CheckRun:
         sent: The request, the answer and the statistics Ollama reported for it.
     """
     from teachers_teammate.application.formatting import TextFormatter  # noqa: PLC0415
-    from teachers_teammate.infrastructure.correction_schema import (  # noqa: PLC0415
+    from teachers_teammate.infrastructure.ollama_utils import ChatStats  # noqa: PLC0415
+    from tools.model_eval.one_request.correction_schema import (  # noqa: PLC0415
         to_review,
         validate_answer,
     )
-    from teachers_teammate.infrastructure.ollama_utils import ChatStats  # noqa: PLC0415
 
     stats = sent.stats or ChatStats()
     answer, _error = validate_answer(sent.raw)
@@ -671,9 +676,11 @@ class StructuredOutputCheck:
             OCRTimeoutError,
             OllamaUnreachableError,
         )
-        from teachers_teammate.infrastructure.correction_schema import schema_json  # noqa: PLC0415
         from teachers_teammate.infrastructure.ollama_utils import (  # noqa: PLC0415
             proofreading_options,
+        )
+        from tools.model_eval.one_request.correction_schema import (  # noqa: PLC0415
+            schema_json,
         )
 
         system, user = review_request(

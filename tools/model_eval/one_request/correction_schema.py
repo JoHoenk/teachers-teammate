@@ -2,12 +2,12 @@
 
 The model answers with this schema; :func:`to_review` converts the validated answer to the
 pure domain model in :mod:`teachers_teammate.domain.correction_review`.  The **answer format**
-(:mod:`teachers_teammate.domain.answer_format`) tells the model how to fill in this structure;
-it is English for every language and names no language, because it addresses the model, not the
-teacher.
+(:mod:`.answer_format`) tells the model how to fill in this structure; it is English for every
+language and names no language, because it addresses the model, not the teacher.
 
 ``pydantic`` arrives with ``ollama`` and ``langchain-core``, so importing this module adds no
-dependency.  Only the infrastructure layer may import it; the domain stays pydantic-free.
+dependency.  It belongs to the evaluation baseline: the app's own steps carry their schemas in
+``teachers_teammate/infrastructure/proofreading/schemas.py``.
 """
 
 from __future__ import annotations
@@ -17,20 +17,24 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from ..domain.answer_format import ANSWER_FORMAT_VERSION
-from ..domain.correction_policy import DEFAULT_LEVEL, OUTPUT_MODES  # noqa: F401  # re-exported
-from ..domain.correction_review import (
+from teachers_teammate.domain.correction_policy import (
+    DEFAULT_LEVEL,
+    OUTPUT_MODES,  # noqa: F401  # re-exported
+)
+from teachers_teammate.domain.correction_review import (
     ChangeNote,
     CorrectionReview,
     SentenceNote,
     UnclearNote,
 )
-from ..domain.formatted_text import TextFormat
-from ..domain.proofreading.word_diff import similarity
+from teachers_teammate.domain.formatted_text import TextFormat
+from teachers_teammate.domain.proofreading.word_diff import similarity
+
+from .answer_format import ANSWER_FORMAT_VERSION
 
 CONTRACT_VERSION = ANSWER_FORMAT_VERSION
-"""Bumped (in ``domain/answer_format.py``) whenever the answer format or the schema changes:
-it is part of the cache key."""
+"""Bumped (in ``answer_format.py``) whenever the answer format or the schema changes: it is
+part of the evaluation protocol."""
 
 
 class Change(BaseModel):
@@ -86,11 +90,6 @@ def fill_placeholders(policy: str, *, level: str) -> str:
     return policy.replace("{level}", level or DEFAULT_LEVEL)
 
 
-def escape_braces(text: str) -> str:
-    """Escape every brace so *text* is safe inside a LangChain prompt template."""
-    return text.replace("{", "{{").replace("}", "}}")
-
-
 UNRELATED_RATIO = 0.5
 """Below this similarity a ``corrected`` is not a correction of its sentence.
 
@@ -131,7 +130,10 @@ def clean_answer(
     * A change whose ``original`` and ``corrected`` are the same words: dropped, because it
       explains nothing.
     """
-    from .ocr_formats import looks_like_markup, plain_text_of  # noqa: PLC0415
+    from teachers_teammate.infrastructure.ocr_formats import (  # noqa: PLC0415
+        looks_like_markup,
+        plain_text_of,
+    )
 
     marks = noop = junk = 0
     sentences: list[SentenceReview] = []
@@ -207,18 +209,6 @@ def validate_answer(raw: str) -> tuple[CorrectionAnswer | None, str]:
         return CorrectionAnswer.model_validate_json(raw), ""
     except Exception as exc:  # noqa: BLE001  # any pydantic validation error is a repairable answer
         return None, str(exc)
-
-
-def repair_message(previous: str, error: str) -> str:
-    """Return the message that asks the model to answer the same question again, validly."""
-    return (
-        "Your previous answer was not valid JSON for the structure described in the"
-        " instructions.\n\n"
-        f"Validation error:\n{error}\n\n"
-        f"Your previous answer was:\n{previous}\n\n"
-        "Answer again, in the same way, with only the JSON object described in the"
-        " instructions."
-    )
 
 
 def schema_json() -> dict:

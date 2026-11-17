@@ -1,7 +1,7 @@
-"""Run a test set through the app's own corrector and turn the answers into result rows.
+"""Run a test set through the one-request corrector and turn the answers into result rows.
 
 The runner keeps the app's real request path: the corrector a teacher's run uses
-(:class:`~teachers_teammate.infrastructure.correction.NativeOllamaCorrector`, wrapped in the
+(:class:`~tools.model_eval.one_request.correction.NativeOllamaCorrector`, wrapped in the
 chunking decorator), so a long text goes out in pieces exactly as it does in the app.  Only the
 factory is injected, so a test can run the same loop with a corrector that returns scripted
 answers; :func:`~.app_corrector.app_corrector_factory` builds the real one.
@@ -119,7 +119,9 @@ class WritingModelComparison:
         self, corrector: Corrector, record: TestRecord, key: str, model: str, temperature: float
     ) -> ResultRow:
         """Send one test record to *corrector* and return the row describing the answer."""
-        from teachers_teammate.infrastructure.correction import FALLBACK_WARNING  # noqa: PLC0415
+        from tools.model_eval.one_request.correction import (  # noqa: PLC0415
+            FALLBACK_WARNING,
+        )
 
         language = self._language_names[record.language]
         if self._instrumentation is not None:

@@ -28,7 +28,7 @@ class Fixture:
 
     name: str
     language: str
-    """The language *name*, as the app's corrector is asked for it."""
+    """The language *name*, as the one-request corrector is asked for it."""
     paragraphs: tuple[tuple[Sentence, ...], ...]
     text_format: TextFormat = "plain"
     long: bool = False

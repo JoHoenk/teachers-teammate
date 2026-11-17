@@ -20,8 +20,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from teachers_teammate.domain.answer_format import ANSWER_FORMAT_VERSION
 from teachers_teammate.infrastructure.ollama_utils import ChatStats
+from tools.model_eval.one_request.answer_format import ANSWER_FORMAT_VERSION
 
 from . import defaults, gate1_answers, protocol
 from .check_rule import CheckRule, CheckRun, FirstTry

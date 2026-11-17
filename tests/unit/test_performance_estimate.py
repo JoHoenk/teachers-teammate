@@ -36,8 +36,11 @@ from teachers_teammate.domain.performance_estimate import (
     proofreading_time,
     reading_page_time,
 )
+from teachers_teammate.domain.proofreading.result import DEFAULT_EXCHANGE_COST, StepName
 
 _ANSWER = AnswerLength(low=500, typical=1000, high=1500)
+
+_ALL_STEPS: tuple[StepName, ...] = ("correct", "explain", "unclear")
 
 
 def _speed(**overrides: object) -> ModelSpeed:
@@ -71,50 +74,56 @@ class TestReadingPageTime:
 class TestProofreadingTime:
     """Given a measured writing model, When a text is estimated, Then reading and writing add up."""
 
-    def test_review_mode_uses_the_answer_length(self) -> None:
-        """Given 100 words and 1000 chars per token, When review mode, Then the range is used."""
-        speed = _speed(chars_per_token=1000.0)
-
-        result = proofreading_time(speed, 100, _ANSWER)
-
-        # 100 words x 6 chars = 600 chars = 0.6 tokens of request at 1000 chars per token.
-        assert result.low_s == pytest.approx(0.0006 + 5.0)
-        assert result.high_s == pytest.approx(0.0006 + 15.0)
-
-    def test_text_mode_uses_the_text_mode_constant(self) -> None:
-        """Given text mode, When a text is estimated, Then the text-mode answer length applies."""
-        speed = _speed(chars_per_token=1000.0)
-
-        result = proofreading_time(speed, 100, _ANSWER, mode="text")
-
-        assert result.low_s == pytest.approx(0.0006 + TEXT_MODE_ANSWER.low / 100.0)
-        assert result.high_s == pytest.approx(0.0006 + TEXT_MODE_ANSWER.high / 100.0)
-
-    def test_text_mode_prefers_the_answer_length_runs_measured(self) -> None:
-        """Given measured text-mode lengths, When estimated in text mode, Then they replace the constant."""
+    def test_the_measured_answer_length_is_used(self) -> None:
+        """Given a measured answer length, When a text is estimated, Then its range is used."""
         speed = _speed(chars_per_token=1000.0)
         measured = AnswerLength(low=300, typical=350, high=400)
 
-        result = proofreading_time(speed, 100, _ANSWER, mode="text", text_answer=measured)
+        result = proofreading_time(speed, 100, DEFAULT_EXCHANGE_COST, _ALL_STEPS, answer=measured)
 
-        assert result.low_s == pytest.approx(0.0006 + 3.0)
-        assert result.high_s == pytest.approx(0.0006 + 4.0)
+        # 100 words x 6 chars x 4 copies = 2400 chars = 2.4 tokens at 1000 chars per token.
+        assert result.low_s == pytest.approx(0.0024 + 3.0)
+        assert result.high_s == pytest.approx(0.0024 + 4.0)
 
-    def test_the_text_answer_is_ignored_in_review_mode(self) -> None:
-        """Given a text-mode length, When estimated in review mode, Then the review length applies."""
+    def test_without_a_measurement_the_exchange_figures_are_summed(self) -> None:
+        """Given no measured length, When a text is estimated, Then the steps' answers add up."""
         speed = _speed(chars_per_token=1000.0)
 
-        with_text = proofreading_time(
-            speed, 100, _ANSWER, text_answer=AnswerLength(low=1, typical=1, high=1)
-        )
+        result = proofreading_time(speed, 100, DEFAULT_EXCHANGE_COST, _ALL_STEPS)
 
-        assert with_text == proofreading_time(speed, 100, _ANSWER)
+        # 141 + 60 + 20 tokens per 100 words, spread like TEXT_MODE_ANSWER.
+        typical = 221
+        low = round(typical * TEXT_MODE_ANSWER.low / TEXT_MODE_ANSWER.typical)
+        high = round(typical * TEXT_MODE_ANSWER.high / TEXT_MODE_ANSWER.typical)
+        assert result.low_s == pytest.approx(0.0024 + low / 100.0)
+        assert result.high_s == pytest.approx(0.0024 + high / 100.0)
+
+    def test_every_step_reads_the_text_again(self) -> None:
+        """Given the three steps, When a text is estimated, Then step ② reads it twice."""
+        speed = _speed(chars_per_token=1000.0)
+
+        full = proofreading_time(speed, 100, DEFAULT_EXCHANGE_COST, _ALL_STEPS)
+        once = proofreading_time(speed, 100, DEFAULT_EXCHANGE_COST, ("correct",))
+
+        assert full.low_s > once.low_s
+
+    def test_corrections_only_reads_the_text_once(self) -> None:
+        """Given step ① alone, When a text is estimated, Then one copy and one answer count."""
+        speed = _speed(chars_per_token=1000.0)
+
+        result = proofreading_time(speed, 100, DEFAULT_EXCHANGE_COST, ("correct",))
+
+        # 600 chars = 0.6 tokens of request; step ① answers like the measured text mode.
+        assert result.low_s == pytest.approx(0.0006 + TEXT_MODE_ANSWER.low / 100.0)
+        assert result.high_s == pytest.approx(0.0006 + TEXT_MODE_ANSWER.high / 100.0)
 
     def test_overhead_characters_are_read_too(self) -> None:
         """Given fixed instructions, When a text is estimated, Then their tokens are read."""
         speed = _speed(chars_per_token=1000.0)
 
-        result = proofreading_time(speed, 0, _ANSWER, overhead_chars=2000)
+        result = proofreading_time(
+            speed, 0, DEFAULT_EXCHANGE_COST, ("correct",), overhead_chars=2000
+        )
 
         # 2000 chars at 1000 chars per token = 2 tokens, read at 1000 tokens per second.
         assert result.low_s == pytest.approx(0.002)
@@ -123,10 +132,10 @@ class TestProofreadingTime:
         """Given no measured characters per token, When estimated, Then the default applies."""
         speed = _speed()
 
-        result = proofreading_time(speed, 100, _ANSWER)
+        result = proofreading_time(speed, 100, DEFAULT_EXCHANGE_COST, ("correct",))
 
         expected_read = 600 / DEFAULT_CHARS_PER_TOKEN / 1000.0
-        assert result.low_s == pytest.approx(expected_read + 5.0)
+        assert result.low_s == pytest.approx(expected_read + TEXT_MODE_ANSWER.low / 100.0)
 
 
 class TestContentReviewTime:

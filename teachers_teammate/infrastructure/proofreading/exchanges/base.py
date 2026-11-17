@@ -17,7 +17,7 @@ from typing import Protocol
 
 from ....domain.formatted_text import TextFormat
 from ....domain.model_catalog import RequestProfile
-from ....domain.proofreading.result import ExchangeKind, StepReport
+from ....domain.proofreading.result import ExchangeCost, ExchangeKind, StepName, StepReport
 from ....domain.proofreading.review import CorrectionReview
 from ..port import ModelPort
 
@@ -38,14 +38,12 @@ class ProofreadContext:
     """The notation of the text: Markdown is shielded before the request and restored after it."""
     profile: RequestProfile = field(default_factory=RequestProfile)
     """How this model is asked: the exchange, its steps and their settings."""
+    corrections_only: bool = False
+    """Stop after step ①: the corrected text alone, without explanations and unclear wording.
 
-
-@dataclass(frozen=True)
-class ExchangeCost:
-    """What an exchange costs, per step: requests per page and answer tokens per 100 words."""
-
-    requests_per_page: dict[str, float] = field(default_factory=dict)
-    answer_tokens_per_100_words: dict[str, int] = field(default_factory=dict)
+    The teacher's *Corrections only (faster)* choice.  It is a property of the run, not of the
+    exchange: the same exchange answers with one request instead of three.
+    """
 
 
 @dataclass(frozen=True)
@@ -76,6 +74,16 @@ class Exchange(Protocol):
 
     def max_text_chars(self, ctx: ProofreadContext) -> int | None:
         """Return how many characters of text one request can carry, ``None`` for no limit."""
+        ...
+
+    def prompts(
+        self, profile: RequestProfile, *, corrections_only: bool = False
+    ) -> tuple[tuple[StepName, str], ...]:
+        """Return the system prompts of the steps that run for *profile*, in step order.
+
+        The one place that knows what an exchange asks, so the cache key, the dialog and
+        *What is sent* cannot drift from the requests.
+        """
         ...
 
     def cost_model(self) -> ExchangeCost:

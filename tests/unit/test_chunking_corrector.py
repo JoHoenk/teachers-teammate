@@ -13,15 +13,17 @@ from teachers_teammate.domain.correction_review import (
 )
 from teachers_teammate.domain.formatted_text import TextFormat
 from teachers_teammate.domain.text_chunks import split_for_budget
-from teachers_teammate.infrastructure.correction import (
+from teachers_teammate.infrastructure.proofreading.chunking import (
     CHUNK_FAILURE,
-    FALLBACK_WARNING,
     MISSING_REVIEW_WARNING,
     ChunkingCorrector,
 )
 from teachers_teammate.interfaces import Corrector
 
 _SENTENCE = "Das ist ein deutscher Satz. "
+
+_FALLBACK = "Explanations could not be produced for this file; only the corrections are shown."
+"""What a piece that fell back to corrections only says; the wrapper joins it."""
 
 
 def _german_text(paragraphs: int = 25) -> str:
@@ -62,7 +64,7 @@ class _RecordingCorrector(Corrector):
         notation_overhead: int = 0,
         failing: frozenset[int] = frozenset(),
         without_review: frozenset[int] = frozenset(),
-        fallback_warning: str | None = FALLBACK_WARNING,
+        fallback_warning: str | None = _FALLBACK,
     ) -> None:
         self.calls: list[str] = []
         self._max_chars = max_chars

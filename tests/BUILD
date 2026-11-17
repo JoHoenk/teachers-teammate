@@ -145,8 +145,8 @@ _COMMON_SRCS = [
     "fakes/fake_port.py",
 ]
 
-# infrastructure/correction_schema.py builds the review's JSON schema with pydantic, which
-# every stage that reads a proofreading result imports (directly or through cache_service).
+# The proofreading steps' schemas (infrastructure/proofreading/schemas.py) are pydantic models,
+# which every stage that reads a proofreading result imports (directly or through cache_service).
 _COMMON_DEPS = [
     "//teachers_teammate:ocr_lib",
     "@ocr_test_dependencies//pydantic:pkg",
@@ -173,6 +173,13 @@ _FORMAT_DEPS = [
     "@ocr_test_dependencies//lxml:pkg",
     "@ocr_test_dependencies//markdown_it_py:pkg",
 ]
+
+# The developer tools' shared library. Its own suite, because `//tools:model_eval` pulls in the
+# whole OCR library: a tools test never runs quicker than the app tests, and it is not part of
+# the unit suite.
+# lxml and markdown_it: text mode tidies the answer through ocr_formats, and the protocol fingerprint
+# asks the app's corrector in both modes.
+_TOOL_DEPS = _COMMON_DEPS + _FORMAT_DEPS + ["//tools:model_eval"]
 
 # The built-in reader's pinned model files (MODULE.bazel), for the tests that run the real
 # models. conftest.reader_store() links them into a ModelStore; without them those tests skip.
@@ -319,13 +326,15 @@ py_test(
     deps = _COMMON_DEPS + _PIPELINE_DEPS,
 )
 
+# The one-request correctors of the evaluation baseline: the review and text modes, the
+# fallback, the cut-off retries and the request the tool measures.
 py_test(
     name = "test_correction",
     size = "small",
-    srcs = _COMMON_SRCS + ["unit/test_correction.py"],
-    args = ["unit/test_correction.py"],
+    srcs = _COMMON_SRCS + ["tools/test_correction.py"],
+    args = ["tools/test_correction.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS + _FORMAT_DEPS + _LANGCHAIN_DEPS,
+    deps = _TOOL_DEPS + _LANGCHAIN_DEPS,
 )
 
 py_test(
@@ -340,10 +349,10 @@ py_test(
 py_test(
     name = "test_clean_answer",
     size = "small",
-    srcs = _COMMON_SRCS + ["unit/test_clean_answer.py"],
-    args = ["unit/test_clean_answer.py"],
+    srcs = _COMMON_SRCS + ["tools/test_clean_answer.py"],
+    args = ["tools/test_clean_answer.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS + _FORMAT_DEPS,
+    deps = _TOOL_DEPS,
 )
 
 py_test(
@@ -469,16 +478,16 @@ py_test(
     srcs = _COMMON_SRCS + ["unit/test_request_profile.py"],
     args = ["unit/test_request_profile.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS,
+    deps = _COMMON_DEPS + _FORMAT_DEPS,
 )
 
 py_test(
     name = "test_correction_presets",
     size = "small",
-    srcs = _COMMON_SRCS + ["unit/test_correction_presets.py"],
-    args = ["unit/test_correction_presets.py"],
+    srcs = _COMMON_SRCS + ["tools/test_correction_presets.py"],
+    args = ["tools/test_correction_presets.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS + _PIPELINE_DEPS,
+    deps = _COMMON_DEPS + _PIPELINE_DEPS + ["//tools:model_eval"],
 )
 
 py_test(
@@ -901,7 +910,7 @@ py_test(
     srcs = _COMMON_SRCS + ["unit/test_speed_estimates.py"],
     args = ["unit/test_speed_estimates.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS,
+    deps = _COMMON_DEPS + _FORMAT_DEPS,
 )
 
 py_test(
@@ -966,13 +975,6 @@ py_test(
     main = "run_test.py",
     deps = _COMMON_DEPS,
 )
-
-# The developer tools' shared library. Its own suite, because `//tools:model_eval` pulls in the
-# whole OCR library: a tools test never runs quicker than the app tests, and it is not part of
-# the unit suite.
-# lxml and markdown_it: text mode tidies the answer through ocr_formats, and the protocol fingerprint
-# asks the app's corrector in both modes.
-_TOOL_DEPS = _COMMON_DEPS + _FORMAT_DEPS + ["//tools:model_eval"]
 
 # The metrics of a proofreading answer against a reference correction: edit agreement,
 # explanations, sentences left alone.  Pure, so no server and no corpus.
@@ -1758,7 +1760,7 @@ py_test(
     srcs = _COMMON_SRCS + ["unit/test_cache_service.py"],
     args = ["unit/test_cache_service.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS + _REQUESTS_DEPS,
+    deps = _COMMON_DEPS + _REQUESTS_DEPS + _FORMAT_DEPS,
 )
 
 py_test(

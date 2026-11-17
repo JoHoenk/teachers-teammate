@@ -41,8 +41,8 @@ def test_the_modes_are_the_three_ways_to_ask() -> None:
     """
     Given  the answer modes of the tools
     When   they are read
-    Then   review and text are the ones the app's corrector answers in, two-step is not, and
-           review is the default
+    Then   review and text are the ones the one-request corrector answers in, two-step is not,
+           and review is the default
     """
     assert [mode.value for mode in AnswerMode] == [
         "review",

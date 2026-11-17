@@ -90,9 +90,7 @@ class SettingsDict(TypedDict, total=False):
     correction_level: str
     explanation_language: str
     correction_output: str
-    answer_format_review: str
-    answer_format_text: str
-    answer_format_version: int
+    correction_notes: str
     evaluate_provider: str
     evaluate_model: str
     output_dir: str

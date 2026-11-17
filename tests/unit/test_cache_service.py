@@ -209,16 +209,14 @@ def test_correction_config_hash_ignores_anonymization(tmp_path: Path) -> None:
         {"correction_level": "C1"},
         {"explanation_language": "German"},
         {"correction_output": "text"},
-        {"correction_prompt": "Fix the text at {level}."},
-        {"answer_format_review": "Answer in JSON."},
-        {"answer_format_text": "Return the text."},
+        {"correction_notes": "Year 9, second foreign language."},
     ],
 )
 def test_correction_config_hash_changes_with_the_review_settings(
     tmp_path: Path, override: dict[str, str]
 ) -> None:
     """
-    Given  two services differing only in the level, explanation language or output mode
+    Given  two services differing only in the level, explanation language, output mode or notes
     When   _correction_config_hash() is called on each
     Then   the hashes differ, so a changed review setting re-runs the proofreading
     """
@@ -228,42 +226,76 @@ def test_correction_config_hash_changes_with_the_review_settings(
     assert base._correction_config_hash() != changed._correction_config_hash()
 
 
-def test_correction_config_hash_changes_with_the_contract_version(
+def test_correction_config_hash_ignores_surrounding_whitespace_of_the_notes(
+    tmp_path: Path,
+) -> None:
+    """
+    Given  two services whose notes differ only in surrounding whitespace
+    When   _correction_config_hash() is called on each
+    Then   the hashes are equal, because the request carries the stripped notes
+    """
+    plain, _, _ = _make_svc(tmp_path, correction_enabled=True, correction_notes="Year 9")
+    padded, _, _ = _make_svc(tmp_path, correction_enabled=True, correction_notes="  Year 9\n")
+
+    assert plain._correction_config_hash() == padded._correction_config_hash()
+
+
+def test_correction_config_hash_changes_with_the_prompt_version(
     tmp_path: Path, monkeypatch
 ) -> None:
     """
-    Given  a service and a bumped contract version
+    Given  a service and a bumped version of the exchange's fixed prompts
     When   _correction_config_hash() is called before and after the bump
-    Then   the hashes differ, so changing the answer format re-runs the proofreading
+    Then   the hashes differ, so results made with the old prompts are not served as fresh
     """
-    from teachers_teammate.infrastructure.workflow import cache_service  # noqa: PLC0415
+    from teachers_teammate.infrastructure.proofreading import corrector  # noqa: PLC0415
 
     svc, _, _ = _make_svc(tmp_path, correction_enabled=True)
     before = svc._correction_config_hash()
 
-    monkeypatch.setattr(cache_service, "CONTRACT_VERSION", cache_service.CONTRACT_VERSION + 1)
+    monkeypatch.setattr(corrector, "PROMPT_VERSION", int(corrector.PROMPT_VERSION) + 1)
 
     assert svc._correction_config_hash() != before
 
 
-def test_correction_config_hash_follows_the_built_in_prompt_text(
+def test_correction_config_hash_follows_the_text_of_a_step_prompt(
     tmp_path: Path, monkeypatch
 ) -> None:
     """
-    Given  a service that uses the built-in prompt (the setting is "")
-    When   the built-in preset text of its language changes
-    Then   the hash changes, so results made with the old text are not served as fresh
+    Given  a service and an edited system prompt of step ②
+    When   _correction_config_hash() is called before and after the edit
+    Then   the hashes differ, so an edited prompt invalidates the stored proofreadings
     """
-    from teachers_teammate.infrastructure import correction  # noqa: PLC0415
+    from teachers_teammate.infrastructure.proofreading.exchanges import t  # noqa: PLC0415
 
-    svc, _, _ = _make_svc(tmp_path, correction_enabled=True, correction_prompt="")
+    svc, _, _ = _make_svc(tmp_path, correction_enabled=True)
     before = svc._correction_config_hash()
 
-    monkeypatch.setattr(
-        correction,
-        "PROMPTS",
-        dict.fromkeys(correction.PROMPTS, "Changed preset at {level}."),
-    )
+    monkeypatch.setattr(t, "EXPLAIN_SYSTEM", t.EXPLAIN_SYSTEM + "\nBe brief.")
+
+    assert svc._correction_config_hash() != before
+
+
+def test_correction_config_hash_changes_with_a_step_temperature(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """
+    Given  a service and a model whose step ② runs at another temperature
+    When   _correction_config_hash() is called before and after the change
+    Then   the hashes differ, because the request profile carries every step's temperature
+    """
+    from teachers_teammate import config as config_module  # noqa: PLC0415
+
+    svc, _, _ = _make_svc(tmp_path, correction_enabled=True)
+    before = svc._correction_config_hash()
+
+    original = config_module.request_profile
+
+    def warmer(model: str, provider: str):
+        profile = original(model, provider)
+        return replace(profile, explain=replace(profile.explain, temperature=0.9))
+
+    monkeypatch.setattr(config_module, "request_profile", warmer)
 
     assert svc._correction_config_hash() != before
 
@@ -582,7 +614,6 @@ def test_record_ocr_delegates_to_repo_and_preserves_hashes(tmp_path: Path) -> No
             preview_img="prev.png",
             source_image="src.png",
             ocr_prompt=ctx.ocr_prompt,
-            correction_prompt="",
             evaluate_prompt=DEFAULTS["evaluate_prompt"],
             ocr_config_hash=ctx.ocr_config_hash,
             preview_config_hash=ctx.preview_config_hash,
@@ -616,7 +647,6 @@ def test_record_correction_delegates_to_repo(tmp_path: Path) -> None:
         file,
         ctx.state,
         correction_text="corrected",
-        correction_prompt="",  # make_config default
         correction_config_hash=ctx.correction_config_hash,
         correction_review=None,
         correction_warning="",
@@ -1083,15 +1113,12 @@ def test_the_window_setting_does_not_change_the_fingerprint_of_an_online_provide
 
 def test_a_profile_change_changes_the_cache_key_of_that_model_only(tmp_path: Path) -> None:
     """
-    Given  two catalog models, one of which gets a compact-JSON profile
+    Given  two catalog models, one of which gets a smaller explanation batch
     When   the correction fingerprint is computed for each model, before and after
     Then   only the changed model's key moves, because the profile is resolved per model
     """
     from teachers_teammate.domain import model_catalog  # noqa: PLC0415
-    from teachers_teammate.domain.model_catalog import (  # noqa: PLC0415
-        OLLAMA_CATALOG,
-        RequestProfile,
-    )
+    from teachers_teammate.domain.model_catalog import OLLAMA_CATALOG  # noqa: PLC0415
     from teachers_teammate.infrastructure.workflow.cache_service import (  # noqa: PLC0415
         compute_correction_config_hash,
     )
@@ -1099,7 +1126,7 @@ def test_a_profile_change_changes_the_cache_key_of_that_model_only(tmp_path: Pat
     changed = "gemma4:e4b"
     untouched = "qwen3:4b"
     catalog = tuple(
-        replace(spec, request_profile=RequestProfile(compact_json=True))
+        replace(spec, request_profile=replace(spec.request_profile, explain_batch=5))
         if spec.tag == changed
         else spec
         for spec in OLLAMA_CATALOG

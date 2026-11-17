@@ -10,7 +10,7 @@ Three versions are easy to mix up:
   by it or refuses because of it.
 
 Runs are grouped and compared by ``eval_version``, never by commit.  The *fingerprint* of a
-version is the SHA-256 of the request side, *captured* from the app's own corrector: what one
+version is the SHA-256 of the request side, *captured* from the one-request corrector: what one
 request per language and answer mode carries (system and user message, answer schema, options),
 the text budget per language, the repair message and the answer format version.  Building the
 corrector with the factory a run uses means a new request setting is covered without anyone
@@ -35,7 +35,6 @@ from pathlib import Path
 import re
 from typing import Any
 
-from teachers_teammate.domain.answer_format import ANSWER_FORMAT_VERSION
 from teachers_teammate.domain.context_budget import ContextBudget, answers_with_the_same_text
 from teachers_teammate.domain.correction_policy import DEFAULT_LEVEL
 from teachers_teammate.domain.correction_prompts import CORRECT_VARIANTS
@@ -45,15 +44,16 @@ from teachers_teammate.domain.model_catalog import (
     RequestProfile,
     StepProfile,
 )
-from teachers_teammate.infrastructure.correction import instruction_parts
-from teachers_teammate.infrastructure.correction_schema import repair_message
 from teachers_teammate.infrastructure.ollama_utils import PROOFREADING_NUM_CTX, OllamaClient
-from teachers_teammate.infrastructure.proofreading.corrector import build_exchange_corrector
+from teachers_teammate.infrastructure.proofreading.corrector import ollama_exchange_corrector
 from teachers_teammate.infrastructure.proofreading.port import PortAnswer, StepRequest
+from teachers_teammate.infrastructure.proofreading.runner import repair_message
 
 from .answer_mode import DEFAULT_MODE, RUNNABLE_MODES, AnswerMode
 from .app_corrector import OnlyStepsPort, app_corrector_factory, innermost
 from .languages import LANGUAGE_NAMES
+from .one_request.answer_format import ANSWER_FORMAT_VERSION
+from .one_request.correction import instruction_parts
 from .redaction import sha256_text
 
 PROTOCOL_PATH = Path(__file__).with_name("protocol.json")
@@ -260,7 +260,7 @@ class _CapturingClient(OllamaClient):
 def _captured(
     mode: AnswerMode, code: str, profile: RequestProfile
 ) -> tuple[list[dict[str, Any]], int]:
-    """Return the requests the app's corrector sends for the probe text, and its text budget.
+    """Return the requests the one-request corrector sends for the probe text, and its text budget.
 
     A review request is cut off once, so the corrector asks its second try: two requests, the
     same one twice.  Text mode has no retry, so it sends one.
@@ -347,7 +347,7 @@ def _captured_exchange(
     """
     port = _CapturingPort()
     sent_to = port if steps is None else OnlyStepsPort(port, steps)
-    corrector = build_exchange_corrector(
+    corrector = ollama_exchange_corrector(
         OllamaClient("http://capture.invalid"),
         "fingerprint",
         timeout=60.0,
@@ -371,7 +371,7 @@ def _captured_exchange(
 def fingerprint() -> dict:
     """Return the request side of a run: what the fingerprint hashes, as sorted JSON.
 
-    Captured from the app's own corrector (built by :func:`~.app_corrector.app_corrector_factory`,
+    Captured from the one-request corrector (built by :func:`~.app_corrector.app_corrector_factory`,
     the factory a run uses): for every answer mode, language and profile variant, a hash of every
     request the probe text produces (system and user message, answer schema, options) and the
     text budget the app splits a long text by; plus the repair message and the answer format

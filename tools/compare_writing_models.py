@@ -25,7 +25,8 @@ Run (results are appended, so an interrupted run resumes)::
 
 Each model starts at the temperature its maker recommends (``--temperature`` overrides it).
 ``run --mode text`` asks for the corrected text only (no JSON, no explanations) instead of the
-app's review answer, so the same texts show what the JSON format costs in correction quality;
+one-request review answer, so the same texts show what the JSON format costs in correction
+quality; ``--mode exchange`` and ``--mode correct-only`` ask the exchange the app runs instead;
 results of a mode other than ``review`` go to files of their own.  ``run`` refuses to start when
 the prompts, the answer format or the window changed since the current ``eval_version``
 (``tools/model_eval/protocol.json``), and refuses to resume a run whose sessions would not be one

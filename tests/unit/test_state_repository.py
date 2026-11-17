@@ -148,7 +148,6 @@ def test_load_or_create_returns_existing_state_after_save(tmp_path: Path) -> Non
             preview_img="",
             source_image="",
             ocr_prompt="",
-            correction_prompt="",
             evaluate_prompt="",
             ocr_config_hash="h1",
             preview_config_hash="",
@@ -182,7 +181,6 @@ def test_record_ocr_result_sets_ocr_done_and_persists(tmp_path: Path) -> None:
             preview_img="",
             source_image="",
             ocr_prompt="",
-            correction_prompt="",
             evaluate_prompt="",
             ocr_config_hash="ocr-hash",
             preview_config_hash="",
@@ -223,7 +221,6 @@ def test_record_ocr_result_clears_correction_and_evaluation(tmp_path: Path) -> N
             preview_img="",
             source_image="",
             ocr_prompt="",
-            correction_prompt="",
             evaluate_prompt="",
             ocr_config_hash="",
             preview_config_hash="",
@@ -256,7 +253,6 @@ def test_record_correction_result_sets_correction_done(tmp_path: Path) -> None:
         source,
         state,
         correction_text="corrected text",
-        correction_prompt="",
         correction_config_hash="c-hash",
     )
 
@@ -424,7 +420,6 @@ def test_reconcile_runtime_config_marks_stale_when_ocr_hash_changes(tmp_path: Pa
         RuntimeConfigSnapshot(
             source_hash=source_hash,
             ocr_prompt="",
-            correction_prompt="",
             evaluate_prompt="",
             ocr_config_hash="new-hash",
             correction_config_hash="",
@@ -465,7 +460,6 @@ def test_reconcile_runtime_config_leaves_state_unchanged_when_hashes_match(tmp_p
         RuntimeConfigSnapshot(
             source_hash=source_hash,
             ocr_prompt="",
-            correction_prompt="",
             evaluate_prompt="",
             ocr_config_hash="ocr-h",
             correction_config_hash="corr-h",
@@ -758,7 +752,6 @@ def test_record_correction_result_stores_the_text_that_was_sent(tmp_path: Path) 
         source,
         state,
         correction_text="corrected",
-        correction_prompt="",
         correction_config_hash="c-hash",
         sent_text="raw with <PERSON_1>",
         sent_map={"<PERSON_1>": "Anna"},
@@ -856,7 +849,6 @@ def test_record_ocr_result_clears_the_sent_records(tmp_path: Path) -> None:
             preview_img="",
             source_image="",
             ocr_prompt="",
-            correction_prompt="",
             evaluate_prompt="",
             ocr_config_hash="",
             preview_config_hash="",
@@ -930,7 +922,6 @@ def test_record_correction_result_clears_the_review_sent_record(tmp_path: Path) 
         source,
         state,
         correction_text="corrected again",
-        correction_prompt="",
         correction_config_hash="c-hash",
         sent=_sent(names_hidden=0),
     )
@@ -1261,7 +1252,6 @@ def _ocr_record(source_hash: str, **overrides: str) -> OcrResultRecord:
         "preview_img": "",
         "source_image": "",
         "ocr_prompt": "",
-        "correction_prompt": "",
         "evaluate_prompt": "",
         "ocr_config_hash": "ocr-hash",
         "preview_config_hash": "",
@@ -1402,7 +1392,6 @@ def test_correction_shares_the_raw_text_format_on_the_view(tmp_path: Path) -> No
         src,
         state,
         correction_text="~~a~~ fixed",
-        correction_prompt="",
         correction_config_hash="c",
     )
 

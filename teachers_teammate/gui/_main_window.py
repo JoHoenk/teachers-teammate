@@ -802,10 +802,7 @@ class MainWindow(QMainWindow):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(6)
 
-        self._config_panel = ConfigPanel(
-            preset_prompts=self._app_service.list_correction_prompt_presets(),
-            default_prompt=self._app_service.default_correction_prompt(),
-        )
+        self._config_panel = ConfigPanel()
         self._config_panel.set_service(self._app_service)
         self._config_panel.open_settings_requested.connect(
             lambda page, focus, preselect: self.open_settings(

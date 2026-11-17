@@ -10,7 +10,7 @@ Ollama, so they live next to the CLIs rather than in ``teachers_teammate/``.
 * :mod:`.answer_mode` — how a model is asked to proofread (review, text, two-step).
 * :mod:`.languages` — the language codes of the test set and the names the corrector is asked in.
 * :mod:`.defaults` — the defaults both command lines share: server address, request profile, temperature.
-* :mod:`.app_corrector` — the app's own corrector, as the tools build it.
+* :mod:`.app_corrector` — the one-request corrector, as the tools build it.
 * :mod:`.protocol` — the version file of the request side and its fingerprint.
 
 **Gate 1: does the model answer the review format?**
@@ -25,7 +25,7 @@ Ollama, so they live next to the CLIs rather than in ``teachers_teammate/``.
 
 **Gate 2: how good are the corrections?**
 
-* :mod:`.comparison` — runs a test set through the app's own corrector.
+* :mod:`.comparison` — runs a test set through the one-request corrector.
 * :mod:`.runner` — the run loop: plan, resume, warm-up, header, sampler.
 * :mod:`.measure` — the requests, the server and the graphics memory of a measured run.
 * :mod:`.session` — the sessions of one run and whether it may be resumed.

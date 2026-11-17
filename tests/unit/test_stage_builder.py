@@ -306,30 +306,39 @@ def test_anonymizer_keeps_custom_and_empty_pattern_lists(tmp_path: Path) -> None
         assert factory.build_anonymizer.call_args.args[1].patterns == tuple(patterns)
 
 
-@pytest.mark.parametrize(
-    ("provider", "model", "chosen"),
-    [
-        ("ollama", "gpt-oss:20b", "review"),
-        ("ollama", "qwen3.5:9b", "review"),
-        ("openai", "gpt-4o-mini", "review"),
-        ("ollama", "gpt-oss:20b", "text"),
-    ],
-)
-def test_correction_settings_keep_the_chosen_output_mode_for_every_model(
-    tmp_path: Path, provider: str, model: str, chosen: str
-) -> None:
+def test_correction_settings_carry_what_the_teacher_set(tmp_path: Path) -> None:
     """
-    Given  a configuration with any model, including one not checked for the review schema
+    Given  a configuration with a level, an explanation language, notes and corrections only
     When   the stage builder collects the corrector settings
-    Then   the output mode is the one the teacher chose; an unusable answer falls back per file
-           inside the corrector, not here
+    Then   all four reach the settings the exchange is built with
     """
     config = make_config(
-        tmp_path, correction_provider=provider, correction_model=model, correction_output=chosen
+        tmp_path,
+        correction_level="B2",
+        explanation_language="German",
+        correction_notes="Year 9, second foreign language.",
+        correction_output="text",
     )
     builder = StageBuilder(config=config, factory=PipelineComponentFactory())
 
-    assert builder._correction_settings().output_mode == chosen
+    settings = builder._correction_settings()
+
+    assert settings.level == "B2"
+    assert settings.explanation_language == "German"
+    assert settings.teacher_notes == "Year 9, second foreign language."
+    assert settings.corrections_only is True
+
+
+def test_correction_settings_ask_for_the_review_by_default(tmp_path: Path) -> None:
+    """
+    Given  a configuration that does not ask for corrections only
+    When   the stage builder collects the corrector settings
+    Then   the exchange runs all three steps
+    """
+    config = make_config(tmp_path, correction_output="review")
+    builder = StageBuilder(config=config, factory=PipelineComponentFactory())
+
+    assert builder._correction_settings().corrections_only is False
 
 
 def test_anonymizer_is_built_when_only_anonymization_is_on(tmp_path: Path) -> None:
@@ -432,16 +441,31 @@ def test_the_resolved_window_reaches_the_correction_request(tmp_path: Path) -> N
     """
     Given  a computer whose graphics card is known and an Ollama writing model
     When   the correction stage is built
-    Then   the correction settings carry the resolved proofreading window
+    Then   the port the exchange asks carries the resolved proofreading window
     """
-    config = make_config(tmp_path, correction_provider="ollama", correction_model="qwen3:4b")
+    from teachers_teammate.infrastructure.proofreading.chunking import (  # noqa: PLC0415
+        ChunkingCorrector,
+    )
+    from teachers_teammate.infrastructure.proofreading.port import OllamaPort  # noqa: PLC0415
+
+    config = make_config(
+        tmp_path,
+        correction_enabled=True,
+        correction_provider="ollama",
+        correction_model="qwen3:4b",
+    )
     builder = StageBuilder(config=config, factory=PipelineComponentFactory(), hardware=_hardware())
 
     windows = builder.resolved_windows()
-    settings = builder._correction_settings()
+    correction = builder.build_corrector(MagicMock())
 
-    assert settings.num_ctx == windows.proofreading
-    assert settings.num_ctx >= 8192
+    assert isinstance(correction, ChunkingCorrector)
+    port = correction.inner.exchange._port
+    assert isinstance(port, OllamaPort)
+    budget = port.window()
+    assert budget is not None
+    assert budget.num_ctx == windows.proofreading
+    assert windows.proofreading >= 8192
 
 
 def test_the_resolved_window_reaches_the_evaluator(tmp_path: Path) -> None:
@@ -578,45 +602,105 @@ def test_the_window_setting_reaches_a_local_review_behind_an_online_proofreader(
     assert windows.evaluation == 32768
 
 
-def test_a_local_corrector_is_wrapped_to_proofread_long_texts_in_pieces(tmp_path: Path) -> None:
+def test_a_local_corrector_runs_the_exchange_on_the_local_server(tmp_path: Path) -> None:
     """
     Given  a config with an Ollama proofreading provider
     When   the correction stage is built
-    Then   the corrector is wrapped in the chunking decorator
+    Then   the exchange runs on an Ollama port with the run's window and the OCR timeout, and
+           the chunking decorator wraps it so a long text goes out in pieces
     """
-    from teachers_teammate.infrastructure.correction import (  # noqa: PLC0415
+    from teachers_teammate.infrastructure.proofreading.chunking import (  # noqa: PLC0415
         ChunkingCorrector,
-        NativeOllamaCorrector,
     )
+    from teachers_teammate.infrastructure.proofreading.corrector import (  # noqa: PLC0415
+        ExchangeCorrector,
+    )
+    from teachers_teammate.infrastructure.proofreading.port import OllamaPort  # noqa: PLC0415
 
-    config = make_config(tmp_path, correction_enabled=True, correction_provider="ollama")
+    config = make_config(
+        tmp_path, correction_enabled=True, correction_provider="ollama", ocr_timeout=90
+    )
     builder = StageBuilder(config=config, factory=PipelineComponentFactory())
 
     correction, _ = builder.build_correction_and_anonymizer(MagicMock())
 
     assert isinstance(correction, ChunkingCorrector)
-    assert isinstance(correction.inner, NativeOllamaCorrector)
+    assert isinstance(correction.inner, ExchangeCorrector)
+    port = correction.inner.exchange._port
+    assert isinstance(port, OllamaPort)
+    assert port.window().num_ctx == builder.resolved_windows().proofreading
+    assert port._timeout == 90.0
 
 
-def test_an_online_corrector_is_not_wrapped(tmp_path: Path) -> None:
+def test_an_online_corrector_runs_the_exchange_on_the_provider(tmp_path: Path) -> None:
     """
     Given  a config with an online proofreading provider, whose window fits any text
     When   the correction stage is built
-    Then   the corrector is used as it is
+    Then   the exchange runs unwrapped on a LangChain port with the provider's strict schema
     """
-    from teachers_teammate.infrastructure.correction import ChunkingCorrector  # noqa: PLC0415
-
-    llm_corrector = MagicMock()
-    llm_corrector.max_text_chars.return_value = None
-    factory = PipelineComponentFactory(
-        build_llm=MagicMock(), build_corrector=MagicMock(return_value=llm_corrector)
+    from teachers_teammate.infrastructure.proofreading.chunking import (  # noqa: PLC0415
+        ChunkingCorrector,
     )
-    config = make_config(tmp_path, correction_enabled=True, correction_provider="openai")
+    from teachers_teammate.infrastructure.proofreading.corrector import (  # noqa: PLC0415
+        ExchangeCorrector,
+    )
+    from teachers_teammate.infrastructure.proofreading.port import LangChainPort  # noqa: PLC0415
 
-    correction, _ = StageBuilder(config=config, factory=factory).build_correction_and_anonymizer()
+    config = make_config(
+        tmp_path,
+        correction_enabled=True,
+        correction_provider="openai",
+        correction_model="gpt-4o-mini",
+    )
 
-    assert correction is llm_corrector
+    correction, _ = StageBuilder(
+        config=config, factory=PipelineComponentFactory(build_llm=MagicMock())
+    ).build_correction_and_anonymizer()
+
+    assert isinstance(correction, ExchangeCorrector)
     assert not isinstance(correction, ChunkingCorrector)
+    port = correction.exchange._port
+    assert isinstance(port, LangChainPort)
+    assert port._strict is True
+
+
+def test_a_provider_without_a_strict_schema_is_asked_without_one(tmp_path: Path) -> None:
+    """
+    Given  a config with an online provider that has no strict structured output
+    When   the correction stage is built
+    Then   the LangChain port is not strict, so the provider's own mechanism is used
+    """
+    from teachers_teammate.infrastructure.proofreading.port import LangChainPort  # noqa: PLC0415
+
+    config = make_config(
+        tmp_path,
+        correction_enabled=True,
+        correction_provider="anthropic",
+        correction_model="claude-sonnet-4-5",
+    )
+
+    correction, _ = StageBuilder(
+        config=config, factory=PipelineComponentFactory(build_llm=MagicMock())
+    ).build_correction_and_anonymizer()
+
+    port = correction.exchange._port
+    assert isinstance(port, LangChainPort)
+    assert port._strict is False
+
+
+def test_no_corrector_is_built_when_proofreading_is_off(tmp_path: Path) -> None:
+    """
+    Given  a config with proofreading switched off
+    When   the correction stage is built
+    Then   there is no corrector at all
+    """
+    config = make_config(tmp_path, correction_enabled=False)
+
+    correction, _ = StageBuilder(
+        config=config, factory=PipelineComponentFactory()
+    ).build_correction_and_anonymizer()
+
+    assert correction is None
 
 
 @pytest.mark.parametrize(
@@ -635,36 +719,41 @@ def test_only_a_model_that_is_not_billed_is_asked_again_after_a_cut_off(
     """
     Given  proofreading on a local model, the school's server, an Ollama cloud model, Ollama's
            hosted API and an online provider
-    When   the stage builder collects the corrector settings
+    When   the correction stage is built
     Then   only the first two are asked again after a cut-off answer; the others are billed
     """
-    config = make_config(
-        tmp_path, correction_provider=provider, correction_model=model, ollama_url=url
+    from teachers_teammate.infrastructure.proofreading.chunking import (  # noqa: PLC0415
+        ChunkingCorrector,
     )
 
-    settings = StageBuilder(
-        config=config, factory=PipelineComponentFactory()
-    )._correction_settings()
+    config = make_config(
+        tmp_path,
+        correction_enabled=True,
+        correction_provider=provider,
+        correction_model=model,
+        ollama_url=url,
+    )
 
-    assert settings.cut_off_tries == tries
+    correction, _ = StageBuilder(
+        config=config, factory=PipelineComponentFactory(build_llm=MagicMock())
+    ).build_correction_and_anonymizer(MagicMock())
+
+    assert correction is not None
+    corrector = correction.inner if isinstance(correction, ChunkingCorrector) else correction
+    assert corrector.exchange._runner._cut_off_tries == tries
 
 
 def test_the_request_profile_reaches_every_kind_of_corrector(tmp_path: Path) -> None:
     """
     Given  a catalog model proofread locally and an online model
     When   the correction stage is built for each path
-    Then   both builders receive the model's profile and the temperature of its first step
+    Then   both exchanges receive the model's profile, and the online model is built at the
+           temperature of its first step
     """
     from teachers_teammate.domain.model_catalog import request_profile  # noqa: PLC0415
 
-    native = MagicMock()
-    langchain = MagicMock()
     llm = MagicMock()
-    factory = PipelineComponentFactory(
-        build_native_ollama_corrector=native,
-        build_corrector=langchain,
-        build_llm=llm,
-    )
+    factory = PipelineComponentFactory(build_llm=llm)
     local = make_config(
         tmp_path,
         correction_enabled=True,
@@ -675,13 +764,43 @@ def test_the_request_profile_reaches_every_kind_of_corrector(tmp_path: Path) -> 
         tmp_path, correction_enabled=True, correction_provider="openai", correction_model="gpt-4o"
     )
 
-    StageBuilder(config=local, factory=factory).build_correction_and_anonymizer(MagicMock())
-    StageBuilder(config=online, factory=factory).build_correction_and_anonymizer()
+    local_corrector, _ = StageBuilder(
+        config=local, factory=factory
+    ).build_correction_and_anonymizer(MagicMock())
+    online_corrector, _ = StageBuilder(
+        config=online, factory=factory
+    ).build_correction_and_anonymizer()
 
-    assert native.call_args.args[4] == request_profile("gemma4:e4b").review_temperature
-    assert native.call_args.args[6] == request_profile("gemma4:e4b")
-    assert llm.call_args.args[3] == 0.2
-    assert langchain.call_args.args[3] == request_profile("gpt-4o", "openai")
+    assert local_corrector.inner._profile == request_profile("gemma4:e4b")
+    assert online_corrector._profile == request_profile("gpt-4o", "openai")
+    assert llm.call_args.args[3] == request_profile("gpt-4o", "openai").review_temperature
+
+
+def test_the_teacher_settings_reach_the_exchange(tmp_path: Path) -> None:
+    """
+    Given  a config with a level, an explanation language, notes and corrections only
+    When   the correction stage is built and asked for its context
+    Then   all four arrive in the context the exchange sends its requests with
+    """
+    config = make_config(
+        tmp_path,
+        correction_enabled=True,
+        correction_provider="ollama",
+        correction_level="B2",
+        explanation_language="German",
+        correction_notes="Year 9, second foreign language.",
+        correction_output="text",
+    )
+
+    correction, _ = StageBuilder(
+        config=config, factory=PipelineComponentFactory()
+    ).build_correction_and_anonymizer(MagicMock())
+
+    context = correction.inner._context("English", "plain")
+    assert context.level == "B2"
+    assert context.explanation_language == "German"
+    assert context.teacher_notes == "Year 9, second foreign language."
+    assert context.corrections_only is True
 
 
 # ── one rule for "this step runs online" ──────────────────────────────────────

@@ -350,14 +350,18 @@ def test_the_options_buttons_open_dialogs_with_the_new_titles(qtbot, monkeypatch
     """
     from PySide6.QtWidgets import QDialog  # noqa: PLC0415
 
-    from teachers_teammate.gui._config_panel import _PromptDialog  # noqa: PLC0415
+    from teachers_teammate.gui._config_panel import (  # noqa: PLC0415
+        _ProofreadingDialog,
+        _PromptDialog,
+    )
 
     titles: list[str] = []
 
-    def reject(dlg: _PromptDialog) -> QDialog.DialogCode:
+    def reject(dlg: QDialog) -> QDialog.DialogCode:
         titles.append(dlg.windowTitle())
         return QDialog.DialogCode.Rejected
 
+    monkeypatch.setattr(_ProofreadingDialog, "exec", reject)
     monkeypatch.setattr(_PromptDialog, "exec", reject)
     panel = ConfigPanel()
     qtbot.addWidget(panel)
@@ -1052,130 +1056,82 @@ def test_saved_online_ocr_engine_falls_back_to_the_local_default(qtbot) -> None:
 
 
 @pytest.mark.gui
-def test_config_panel_language_change_keeps_prompt_empty(qtbot) -> None:
+def test_config_panel_language_change_keeps_the_notes(qtbot) -> None:
     """
-    Given  a ConfigPanel with no custom correction prompt ("" = built-in)
-    When   the language is changed
-    Then   the prompt stays empty — "" is a reference to the built-in prompt
-           of the new language, not a stored copy — and no custom note shows
-    """
-    panel = ConfigPanel()
-    qtbot.addWidget(panel)
-
-    panel._language.setCurrentText("German")
-    assert panel.get_correction_prompt() == ""
-    assert not panel._custom_prompt_note.isVisibleTo(panel)
-
-    panel._language.setCurrentText("French")
-    assert panel.get_correction_prompt() == ""
-
-
-@pytest.mark.gui
-def test_config_panel_language_change_notes_custom_prompt(qtbot) -> None:
-    """
-    Given  a ConfigPanel with a custom correction prompt
-    When   the language is changed
-    Then   the "used for every language" note is shown
+    Given  a ConfigPanel with notes for the AI
+    When   the document language is changed
+    Then   the notes stay — they are the teacher's own words, not a language preset
     """
     panel = ConfigPanel()
     qtbot.addWidget(panel)
 
-    panel.set_correction_prompt("Fix my students' homework at {level}.")
+    panel.set_correction_notes("Year 9, second foreign language.")
     panel._language.setCurrentText("German")
 
-    assert panel._custom_prompt_note.isVisibleTo(panel)
+    assert panel.get_correction_notes() == "Year 9, second foreign language."
 
 
 @pytest.mark.gui
-def test_config_panel_load_resets_saved_preset_copy(qtbot) -> None:
+def test_config_panel_round_trips_the_notes(qtbot) -> None:
     """
-    Given  settings values holding the preset text saved by an older version
+    Given  notes for the AI typed into the panel
+    When   they are saved with to_dict() and loaded into a new panel
+    Then   the notes reach the Config the pipeline uses
+    """
+    panel = ConfigPanel()
+    qtbot.addWidget(panel)
+    panel.set_correction_notes("Ignore missing capital letters in headings.")
+
+    saved = panel.to_dict()
+    other = ConfigPanel()
+    qtbot.addWidget(other)
+    other.load_from_dict(saved)
+
+    assert other.to_config().correction_notes == "Ignore missing capital letters in headings."
+
+
+@pytest.mark.gui
+def test_config_panel_cuts_notes_longer_than_the_limit(qtbot, capsys) -> None:
+    """
+    Given  notes longer than the limit the request may carry
+    When   they are set on the panel
+    Then   they are cut to the limit and the cut is announced
+    """
+    from teachers_teammate.domain.correction_prompts import NOTES_LIMIT  # noqa: PLC0415
+
+    panel = ConfigPanel()
+    qtbot.addWidget(panel)
+
+    panel.set_correction_notes("x" * (NOTES_LIMIT + 40))
+
+    assert len(panel.get_correction_notes()) == NOTES_LIMIT
+    assert "longer than" in capsys.readouterr().err
+
+
+@pytest.mark.gui
+def test_config_panel_ignores_the_removed_proofreading_keys(qtbot) -> None:
+    """
+    Given  saved settings from a version that still had a prompt and answer formats
     When   load_from_dict() applies them
-    Then   the prompt is reset to "" (built-in), for correction and evaluation
+    Then   the notes stay empty and the removed keys are not written again
     """
-    from teachers_teammate.config import DEFAULTS  # noqa: PLC0415
-    from teachers_teammate.infrastructure.correction import LEGACY_PRESET_PROMPTS  # noqa: PLC0415
-
     panel = ConfigPanel()
     qtbot.addWidget(panel)
 
     panel.load_from_dict(
         {
             "language": "German",
-            "correction_prompt": LEGACY_PRESET_PROMPTS["german"],
-            "evaluate_prompt": DEFAULTS["evaluate_prompt"],
-        }
-    )
-
-    assert panel.get_correction_prompt() == ""
-    assert panel.get_evaluation_prompt() == ""
-    assert not panel._custom_prompt_note.isVisibleTo(panel)
-
-
-@pytest.mark.gui
-def test_config_panel_load_keeps_custom_prompt(qtbot) -> None:
-    """
-    Given  settings values holding a custom correction prompt
-    When   load_from_dict() applies them
-    Then   the custom text is kept and the custom note is shown
-    """
-    panel = ConfigPanel()
-    qtbot.addWidget(panel)
-
-    panel.load_from_dict(
-        {"language": "German", "correction_prompt": "Fix my students' homework at {level}."}
-    )
-
-    assert panel.get_correction_prompt() == "Fix my students' homework at {level}."
-    assert panel._custom_prompt_note.isVisibleTo(panel)
-
-
-@pytest.mark.gui
-def test_config_panel_round_trips_the_answer_formats(qtbot) -> None:
-    """
-    Given  a teacher's own answer formats
-    When   they are applied to the panel, saved with to_dict() and loaded into a new panel
-    Then   the formats reach the Config the pipeline uses
-    """
-    from teachers_teammate.domain.answer_format import ANSWER_FORMAT_VERSION  # noqa: PLC0415
-
-    panel = ConfigPanel()
-    qtbot.addWidget(panel)
-    panel.update_settings(
-        {
+            "correction_prompt": "Fix my students' homework at {level}.",
             "answer_format_review": "R",
             "answer_format_text": "T",
-            "answer_format_version": ANSWER_FORMAT_VERSION,
+            "answer_format_version": 2,
         }
     )
 
+    assert panel.get_correction_notes() == ""
     saved = panel.to_dict()
-    other = ConfigPanel()
-    qtbot.addWidget(other)
-    other.load_from_dict(saved)
-    config = other.to_config()
-
-    assert (config.answer_format_review, config.answer_format_text) == ("R", "T")
-
-
-@pytest.mark.gui
-def test_config_panel_drops_answer_formats_of_another_version(qtbot, capsys) -> None:
-    """
-    Given  saved settings whose answer formats were written for an older version
-    When   load_from_dict() applies them
-    Then   the built-in formats are used and the reset is announced
-    """
-    panel = ConfigPanel()
-    qtbot.addWidget(panel)
-
-    panel.load_from_dict(
-        {"answer_format_review": "old", "answer_format_text": "old", "answer_format_version": 0}
-    )
-
-    settings = panel.get_settings_dict()
-    assert settings["answer_format_review"] == ""
-    assert settings["answer_format_text"] == ""
-    assert "answer format" in capsys.readouterr().err
+    assert "correction_prompt" not in saved
+    assert "answer_format_review" not in saved
 
 
 @pytest.mark.gui
@@ -1196,14 +1152,14 @@ def test_lookup_config_carries_the_anonymizer_rules_and_instructions(qtbot) -> N
             "explanation_language": "German",
         }
     )
-    panel._correction_prompt_text = "Mein eigener Auftrag."
+    panel.set_correction_notes("Mein eigener Auftrag.")
 
     config = panel.lookup_config()
 
     assert config.anonymizer_primary_model == "de_core_news_sm"
     assert config.anonymizer_secondary_model == "none"
     assert config.anonymizer_patterns == []
-    assert config.correction_prompt == "Mein eigener Auftrag."
+    assert config.correction_notes == "Mein eigener Auftrag."
     assert config.explanation_language == "German"
 
 
@@ -1356,23 +1312,23 @@ def test_settings_from_the_settings_window_reach_the_results_step(qtbot, tmp_pat
     assert changes == []
 
 
-# ── Explanations in the proofreading instructions dialog ──────────────────────
+# ── The proofreading options dialog ───────────────────────────────────────────
 
 
 @pytest.mark.gui
-def test_prompt_dialog_returns_the_explanation_options_with_the_old_keys(qtbot) -> None:
+def test_proofreading_dialog_returns_the_explanation_options(qtbot) -> None:
     """
-    Given  the proofreading instructions dialog opened with German explanations and reviews
+    Given  the proofreading options opened with German explanations and reviews
     When   the user picks "Same as the text" and ticks "Corrections only"
     Then   explanation_values() returns explanation_language "" and correction_output "text"
     """
     from teachers_teammate.gui import _user_text as txt  # noqa: PLC0415
-    from teachers_teammate.gui._config_panel import _PromptDialog  # noqa: PLC0415
+    from teachers_teammate.gui._config_panel import _ProofreadingDialog  # noqa: PLC0415
 
-    dlg = _PromptDialog("Proofreading", "", explanations=("German", "review"))
+    dlg = _ProofreadingDialog(
+        "Proofreading", "", lambda corrections_only: (), explanations=("German", "review")
+    )
     qtbot.addWidget(dlg)
-    assert dlg._explanation_language is not None
-    assert dlg._corrections_only is not None
     assert dlg._explanation_language.currentText() == "German"
     assert not dlg._corrections_only.isChecked()
     assert dlg.explanation_values() == {
@@ -1390,16 +1346,17 @@ def test_prompt_dialog_returns_the_explanation_options_with_the_old_keys(qtbot) 
 def test_review_instructions_have_no_explanation_options(qtbot) -> None:
     """
     Given  the content review instructions dialog (no explanation options)
-    When   its values are read
-    Then   there is no Explanations group and explanation_values() is empty
+    When   it is shown
+    Then   there is no Explanations group and no notes box
     """
     from teachers_teammate.gui._config_panel import _PromptDialog  # noqa: PLC0415
 
     dlg = _PromptDialog("Content Review", "")
     qtbot.addWidget(dlg)
 
-    assert dlg._explanation_language is None
-    assert dlg.explanation_values() == {}
+    assert not hasattr(dlg, "_explanation_language")
+    assert not hasattr(dlg, "explanation_values")
+    assert not hasattr(dlg, "_notes")
 
 
 @pytest.mark.gui
@@ -1408,15 +1365,19 @@ def test_confirming_an_instructions_dialog_tells_the_main_window(
     qtbot, monkeypatch, button
 ) -> None:
     """
-    Given  the panel, so the main window can save what an Instructions dialog changed
-    When   the proofreading or the content review instructions dialog is accepted, or cancelled
+    Given  the panel, so the main window can save what an Options dialog changed
+    When   the proofreading or the content review dialog is accepted, or cancelled
     Then   instructions_changed is emitted only for the accepted one
     """
     from PySide6.QtWidgets import QDialog  # noqa: PLC0415
 
-    from teachers_teammate.gui._config_panel import _PromptDialog  # noqa: PLC0415
+    from teachers_teammate.gui._config_panel import (  # noqa: PLC0415
+        _ProofreadingDialog,
+        _PromptDialog,
+    )
 
     answers = [QDialog.DialogCode.Rejected, QDialog.DialogCode.Accepted]
+    monkeypatch.setattr(_ProofreadingDialog, "exec", lambda self: answers.pop(0))
     monkeypatch.setattr(_PromptDialog, "exec", lambda self: answers.pop(0))
     panel = ConfigPanel()
     qtbot.addWidget(panel)
@@ -1431,24 +1392,24 @@ def test_confirming_an_instructions_dialog_tells_the_main_window(
 
 
 @pytest.mark.gui
-def test_accepting_the_proofreading_instructions_saves_the_explanation_options(
+def test_accepting_the_proofreading_options_saves_the_notes_and_explanations(
     qtbot, monkeypatch
 ) -> None:
     """
     Given  the panel with explanations in French
-    When   the proofreading instructions dialog is accepted with "Corrections only" ticked
-    Then   the panel's settings hold correction_output "text" and the French language
+    When   the proofreading options are accepted with notes and "Corrections only" ticked
+    Then   the panel's settings hold the notes, correction_output "text" and the French language
     """
     from PySide6.QtWidgets import QDialog  # noqa: PLC0415
 
-    from teachers_teammate.gui._config_panel import _PromptDialog  # noqa: PLC0415
+    from teachers_teammate.gui._config_panel import _ProofreadingDialog  # noqa: PLC0415
 
-    def accept_with_corrections_only(dlg: _PromptDialog) -> QDialog.DialogCode:
-        assert dlg._corrections_only is not None
+    def accept_with_notes(dlg: _ProofreadingDialog) -> QDialog.DialogCode:
+        dlg._notes.setPlainText("Year 9, second foreign language.")
         dlg._corrections_only.setChecked(True)
         return QDialog.DialogCode.Accepted
 
-    monkeypatch.setattr(_PromptDialog, "exec", accept_with_corrections_only)
+    monkeypatch.setattr(_ProofreadingDialog, "exec", accept_with_notes)
     panel = ConfigPanel()
     qtbot.addWidget(panel)
     panel.update_settings({"explanation_language": "French", "correction_output": "review"})
@@ -1456,6 +1417,7 @@ def test_accepting_the_proofreading_instructions_saves_the_explanation_options(
     panel._correction_prompt_btn.click()
 
     settings = panel.get_settings_dict()
+    assert settings["correction_notes"] == "Year 9, second foreign language."
     assert settings["correction_output"] == "text"
     assert settings["explanation_language"] == "French"
 

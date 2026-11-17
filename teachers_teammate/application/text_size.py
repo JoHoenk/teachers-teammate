@@ -41,10 +41,12 @@ def proofreading_pieces(
 
     ``(None, None)`` when the corrector has no request limit (an online provider): it handles
     any length in one request.  The count comes from
-    :func:`~teachers_teammate.infrastructure.correction.proofreading_pieces`, the same place
-    the run and the console line ask; only the words are worked out here.
+    :func:`~teachers_teammate.infrastructure.proofreading.chunking.proofreading_pieces`, the
+    same place the run and the console line ask; only the words are worked out here.
     """
-    from ..infrastructure.correction import proofreading_pieces as count_pieces  # noqa: PLC0415
+    from ..infrastructure.proofreading.chunking import (  # noqa: PLC0415
+        proofreading_pieces as count_pieces,
+    )
     from .formatting import TextFormatter  # noqa: PLC0415
 
     pieces, max_chars = count_pieces(corrector, raw_text, language, text_format=text_format)

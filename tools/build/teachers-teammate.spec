@@ -228,7 +228,8 @@ hiddenimports = [
     # Pipeline modules the GUI reaches through a lazy import.
     "cv2",
     "pypdfium2",
-    "teachers_teammate.infrastructure.correction",
+    "teachers_teammate.infrastructure.proofreading.chunking",
+    "teachers_teammate.infrastructure.proofreading.corrector",
     "teachers_teammate.infrastructure.docx_builder",
     "teachers_teammate.infrastructure.preprocessing.recipes",
     # timeit and cProfile are stdlib but some pip/spaCy code paths import them;

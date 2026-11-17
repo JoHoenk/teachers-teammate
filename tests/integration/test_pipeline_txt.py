@@ -15,6 +15,7 @@ import pytest
 from teachers_teammate.domain.correction_review import CorrectionOutcome
 from teachers_teammate.infrastructure.pipeline import OCRPipeline, PipelineDependencies
 from teachers_teammate.infrastructure.reporting import FileDoneResult, ProgressCallbacks
+from teachers_teammate.infrastructure.stage_builder import StageBuilder
 from teachers_teammate.infrastructure.state_repository import StateRepository
 from teachers_teammate.infrastructure.storage_root import resolve_artifact_dir
 from tests.conftest import make_config
@@ -96,10 +97,7 @@ def test_pipeline_txt_input_enters_correction_pipeline(tmp_path: Path) -> None:
 
     with (
         patch("teachers_teammate.infrastructure.stage_builder.build_llm", return_value=MagicMock()),
-        patch(
-            "teachers_teammate.infrastructure.stage_builder.LangChainCorrector",
-            return_value=mock_corrector,
-        ),
+        patch.object(StageBuilder, "build_corrector", return_value=mock_corrector),
     ):
         rc = OCRPipeline(cfg).run().exit_code
 

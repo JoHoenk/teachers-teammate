@@ -22,11 +22,22 @@ from typing import TYPE_CHECKING, cast
 
 from ...domain.context_budget import answers_with_the_same_text
 from ...domain.proofreading.result import FailureKind, StepReport
-from ..correction_schema import repair_message
 from .port import ModelPort, PortAnswer, StepRequest
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+
+
+def repair_message(previous: str, error: str) -> str:
+    """Return the message that asks the model to answer the same question again, validly."""
+    return (
+        "Your previous answer was not valid JSON for the structure described in the"
+        " instructions.\n\n"
+        f"Validation error:\n{error}\n\n"
+        f"Your previous answer was:\n{previous}\n\n"
+        "Answer again, in the same way, with only the JSON object described in the"
+        " instructions."
+    )
 
 
 @dataclass(frozen=True)

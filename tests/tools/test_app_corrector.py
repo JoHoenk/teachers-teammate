@@ -1,4 +1,4 @@
-"""Tests of the app's own corrector as the tools build it: the factory, the pieces, the guard."""
+"""Tests of the one-request corrector as the tools build it: the factory, the pieces, the guard."""
 
 from __future__ import annotations
 
@@ -7,12 +7,13 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from teachers_teammate.infrastructure.correction import ChunkingCorrector, NativeOllamaCorrector
+from teachers_teammate.infrastructure.proofreading.chunking import ChunkingCorrector
 from teachers_teammate.infrastructure.ollama_utils import OllamaClient
 from teachers_teammate.infrastructure.stage_builder import PipelineComponentFactory, StageBuilder
 from teachers_teammate.interfaces import Corrector
 from tests.conftest import make_config
 from tools.model_eval.answer_mode import AnswerMode
+from tools.model_eval.one_request.correction import NativeOllamaCorrector
 from tools.model_eval.app_corrector import (
     app_corrector_factory,
     exchange_corrector_factory,
@@ -35,8 +36,8 @@ def test_the_app_corrector_factory_builds_the_chunking_wrapper_around_the_apps_c
     """
     Given  a client and a mode
     When   the factory builds a corrector
-    Then   it is the app's own corrector in the chunking wrapper, asking in that mode and at the
-           window it was given (the app's proofreading window by default)
+    Then   it is the one-request corrector in the chunking wrapper, asking in that mode and at
+           the window it was given (the app's proofreading window by default)
     """
     client = OllamaClient("http://x")
 
@@ -56,13 +57,17 @@ def test_the_app_corrector_factory_builds_the_chunking_wrapper_around_the_apps_c
 
 
 @pytest.mark.use_case("Model_Eval_Comparison")
-def test_the_factory_builds_the_same_chain_as_the_stage_builder(tmp_path: Path) -> None:
+def test_the_exchange_factory_builds_the_same_chain_as_the_stage_builder(tmp_path: Path) -> None:
     """
     Given  an Ollama proofreading config
-    When   the stage builder and the tools' factory each build a corrector
+    When   the stage builder and the tools' exchange factory each build a corrector
     Then   the chains of types agree, so a change of how the app wraps its corrector (a new
            decorator, another order) is found here instead of silently measuring something else
     """
+    from teachers_teammate.infrastructure.proofreading.corrector import (  # noqa: PLC0415
+        ExchangeCorrector,
+    )
+
     config = make_config(
         tmp_path,
         correction_enabled=True,
@@ -75,10 +80,10 @@ def test_the_factory_builds_the_same_chain_as_the_stage_builder(tmp_path: Path) 
     built, _ = StageBuilder(
         config=config, factory=PipelineComponentFactory()
     ).build_correction_and_anonymizer(ollama_client=client)
-    ours = app_corrector_factory(client, timeout=5.0, mode=AnswerMode.REVIEW)("gemma4:e4b", 0.2)
+    ours = exchange_corrector_factory(client, timeout=5.0)("gemma4:e4b", 0.2)
 
     assert built is not None
-    assert _chain(ours) == _chain(built) == [ChunkingCorrector, NativeOllamaCorrector]
+    assert _chain(ours) == _chain(built) == [ChunkingCorrector, ExchangeCorrector]
 
 
 def test_the_factory_refuses_a_mode_the_corrector_cannot_be_asked_in() -> None:

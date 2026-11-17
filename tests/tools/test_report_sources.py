@@ -13,10 +13,10 @@ from pathlib import Path
 
 import pytest
 
-from teachers_teammate.infrastructure import correction
 from tests.tools import invented_corpus
 from tests.tools.store_workspace import MODEL, one, workspace
 from tools.model_eval import report, results, run_format, testset, text_loss
+from tools.model_eval.one_request import correction
 from tools.model_eval.performance import LoadedModel, Performance, RequestStats
 from tools.model_eval.scoring import ScoredItem
 

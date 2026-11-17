@@ -125,24 +125,6 @@ def test_a_larger_overhead_lowers_the_text_budget_by_its_own_tokens_only() -> No
 
 
 @pytest.mark.use_case("Context_Budget")
-def test_the_review_budget_of_the_real_prompt_is_a_page_and_a_half() -> None:
-    """
-    Given  the app's own review corrector at window 8192
-    When   its text budget is asked for
-    Then   it is between 2,000 and 3,000 characters: a page of 200 to 400 words goes out whole,
-           and a text of 3,714 characters (the length that was cut off in the smoke run) does not
-    """
-    from teachers_teammate.infrastructure.correction import (  # noqa: PLC0415
-        NativeOllamaCorrector,
-    )
-    from teachers_teammate.infrastructure.ollama_utils import OllamaClient  # noqa: PLC0415
-
-    corrector = NativeOllamaCorrector(model="m", client=OllamaClient("http://capture.invalid"))
-
-    assert 2_000 <= corrector.max_text_chars("German") <= 3_000
-
-
-@pytest.mark.use_case("Context_Budget")
 def test_a_text_of_a_page_and_a_half_is_split_at_the_review_budget() -> None:
     """
     Given  a text of 2,555 characters (the German page that passed) and one of 3,714 (the one

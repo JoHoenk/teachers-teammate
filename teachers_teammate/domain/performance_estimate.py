@@ -30,6 +30,7 @@ import math
 from statistics import median
 
 from .model_catalog import OLLAMA_CATALOG, AnswerLength, ModelCategory, OllamaModelSpec
+from .proofreading.result import DEFAULT_EXCHANGE_COST, ExchangeCost, StepName
 
 #: Words on a typical page of a student's essay.  Used where a page has to be turned into a
 #: word count (a proofreading estimate for "one page").  An estimate: a handwritten A4 page of
@@ -48,6 +49,9 @@ DEFAULT_CHARS_PER_TOKEN = 4.0
 #: page at 300 DPI is what the app sends; how many tokens a vision model makes of it depends on
 #: its own image encoder.  An estimate.
 DEFAULT_IMAGE_TOKENS = 1500
+
+#: The steps a full proofreading run sends, in order: ① correct, ② explain, ③ unclear.
+PROOFREADING_STEPS: tuple[StepName, ...] = ("correct", "explain", "unclear")
 
 #: Answer tokens per 100 words of student text in **text mode** (corrections only).  Measured
 #: with ``gemma4:e2b`` over 9 texts on 2026-11-13: median 141, 10th to 90th percentile 120 to
@@ -186,35 +190,48 @@ def reading_page_time(speed: ModelSpeed, answer: AnswerLength) -> TimeRange:
 def proofreading_time(
     speed: ModelSpeed,
     words: int,
-    answer: AnswerLength,
-    mode: str = "review",
+    cost: ExchangeCost,
+    steps: Sequence[StepName],
     *,
-    text_answer: AnswerLength | None = None,
+    answer: AnswerLength | None = None,
     overhead_chars: int = 0,
 ) -> TimeRange:
     """Return how long proofreading a text of *words* words takes.
 
-    The request is the fixed instructions plus the text; the answer is the model's own length
-    per 100 words in review mode, and in text mode (corrections only, where the answer is about
-    as long as the text) the length real runs measured, or :data:`TEXT_MODE_ANSWER` before
-    there are any.
+    A proofreading run sends one request per step, and every request reads the text again: step
+    ② reads the student's text and the corrected one.  So the reading time is the text times the
+    copies the *steps* carry, and the writing time is the answer of all of them together.
 
     Args:
         speed: The model's measured rates on this computer.
         words: Words of the student text.
-        answer: The model's answer length per 100 words in review mode.
-        mode: ``"review"`` or ``"text"``.
-        text_answer: The answer length per 100 words measured in text mode; ``None`` takes
-            :data:`TEXT_MODE_ANSWER`.  Ignored in review mode.
-        overhead_chars: Characters of the fixed part of the request (instructions and answer
-            format), when the caller knows them.
+        cost: What the exchange costs per step (its requests, answer lengths and text copies).
+        steps: The steps the run sends — step ① alone for corrections only.
+        answer: The answer length per 100 words the runs measured for these *steps*; ``None``
+            sums the exchange's own figures, spread like :data:`TEXT_MODE_ANSWER`.
+        overhead_chars: Characters of the fixed part of the requests (instructions and notes),
+            when the caller knows them.
     """
-    read_s = _prompt_seconds(speed, overhead_chars + words * CHARS_PER_WORD)
-    per_100 = (text_answer or TEXT_MODE_ANSWER) if mode == "text" else answer
+    copies = sum(cost.text_copies.get(step, 0) for step in steps)
+    read_s = _prompt_seconds(speed, overhead_chars + copies * words * CHARS_PER_WORD)
+    per_100 = answer or _summed_answer(cost, steps)
     return TimeRange(
         low_s=read_s + words / 100 * per_100.low / speed.write_tps,
         high_s=read_s + words / 100 * per_100.high / speed.write_tps,
     )
+
+
+def _summed_answer(cost: ExchangeCost, steps: Sequence[StepName]) -> AnswerLength:
+    """Return the answer of all *steps* together, spread like :data:`TEXT_MODE_ANSWER`.
+
+    The exchange's figures are typical values; the range around them is the one real runs
+    measured for an answer that is about as long as the text, because no measurement has
+    compared the spread of the three steps yet.
+    """
+    typical = sum(cost.answer_tokens_per_100_words.get(step, 0) for step in steps)
+    low = round(typical * TEXT_MODE_ANSWER.low / TEXT_MODE_ANSWER.typical)
+    high = round(typical * TEXT_MODE_ANSWER.high / TEXT_MODE_ANSWER.typical)
+    return AnswerLength(low=low, typical=typical, high=high)
 
 
 def content_review_time(speed: ModelSpeed, words: int, *, overhead_chars: int = 0) -> TimeRange:
@@ -386,11 +403,15 @@ def expected_band(
     factor: float | None,
     *,
     words: int = TYPICAL_PAGE_WORDS,
+    cost: ExchangeCost = DEFAULT_EXCHANGE_COST,
+    steps: Sequence[StepName] = PROOFREADING_STEPS,
 ) -> SpeedBand | None:
     """Return the band *spec* is expected to reach on this computer, or ``None``.
 
     The band of the middle of the range: the range itself is three times wide, so its ends
-    would name two different bands for the same model.
+    would name two different bands for the same model.  A writing model is estimated with the
+    exchange's own figures: the catalog's answer length was measured for the one-request
+    review, which is no longer what a run sends.
     """
     speed = expected_speed(spec, factor)
     if speed is None:
@@ -399,5 +420,5 @@ def expected_band(
     if spec.category == "ocr":
         page = reading_page_time(speed, answer)
     else:
-        page = proofreading_time(speed, words, answer)
+        page = proofreading_time(speed, words, cost, steps)
     return band(page.typical_s)

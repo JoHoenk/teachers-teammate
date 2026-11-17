@@ -8,7 +8,7 @@ in ``_settings_dict`` alongside.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 import dataclasses
 from pathlib import Path
 import sys
@@ -27,16 +27,14 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QPlainTextEdit,
     QPushButton,
     QScrollArea,
     QVBoxLayout,
     QWidget,
 )
 
-from ..application.correction_options import (
-    migrate_saved_correction_prompt,
-    migrate_saved_evaluation_prompt,
-)
+from ..application.correction_options import migrate_saved_evaluation_prompt
 from ..application.data_flow import ticked_steps
 from ..application.service import RequirementIssue
 from ..config import (
@@ -44,13 +42,14 @@ from ..config import (
     SECONDARY_MODEL_NONE,
     Config,
     OcrConfig,
-    migrate_answer_formats,
+    normalize_notes,
     normalize_ocr_engine,
     normalize_ocr_model,
     normalize_preprocess_method,
     replaced_ocr_engine,
 )
 from ..domain.correction_policy import LEVELS, normalize_level, normalize_output_mode
+from ..domain.correction_prompts import NOTES_LIMIT
 from ..domain.data_location import (
     STAGE_ANONYMIZATION,
     STAGE_CORRECTION,
@@ -85,14 +84,9 @@ _STAGE_STEP_TITLES = {
 
 
 class _PromptDialog(QDialog):
-    """Modal dialog for the machine instructions, built around :class:`PromptEditor`.
+    """Modal dialog for the content review's instructions, built around :class:`PromptEditor`."""
 
-    For proofreading it also holds the "Explanations" options (*explanations* =
-    ``(explanation_language, correction_output)``): how the task behaves is set here, never
-    in the Settings window.
-    """
-
-    def __init__(  # noqa: PLR0913  # PromptEditor's options plus the explanations
+    def __init__(
         self,
         title: str,
         prompt: str,
@@ -100,28 +94,12 @@ class _PromptDialog(QDialog):
         *,
         builtin_text: str = "",
         fixed_text: str = "",
-        answer_formats: tuple[str, str] | None = None,
-        saved_formats: tuple[str, str] = ("", ""),
-        level_aware: bool = False,
-        explanations: tuple[str, str] | None = None,
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle(title)
         self.setMinimumSize(560, 420)
         vbox = QVBoxLayout(self)
-        self._explanation_language: QComboBox | None = None
-        self._corrections_only: QCheckBox | None = None
-        if explanations is not None:
-            vbox.addWidget(self._build_explanations_group(*explanations))
-        self._editor = PromptEditor(
-            prompt,
-            self,
-            builtin_text=builtin_text,
-            fixed_text=fixed_text,
-            answer_formats=answer_formats,
-            saved_formats=saved_formats,
-            level_aware=level_aware,
-        )
+        self._editor = PromptEditor(prompt, self, builtin_text=builtin_text, fixed_text=fixed_text)
         vbox.addWidget(self._editor, stretch=1)
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
@@ -131,11 +109,53 @@ class _PromptDialog(QDialog):
         vbox.addWidget(buttons)
 
     def prompt(self) -> str:
+        """Return the edited instructions; ``""`` means the built-in prompt is used."""
         return self._editor.prompt()
 
-    def answer_format_values(self) -> dict[str, object]:
-        """Return the answer-format settings the dialog edits (empty without editors)."""
-        return self._editor.answer_format_values()
+
+class _ProofreadingDialog(QDialog):
+    """Modal dialog for the proofreading options: the notes, and what the AI is asked.
+
+    The instructions themselves are fixed, so they are shown read-only, one heading per step;
+    the teacher's own words go into the notes, which every step carries.  *prompts* answers
+    the steps that run for a given *corrections only* choice, so the section follows the box.
+    """
+
+    def __init__(
+        self,
+        title: str,
+        notes: str,
+        prompts: Callable[[bool], tuple[tuple[str, str], ...]],
+        parent: QWidget | None = None,
+        *,
+        explanations: tuple[str, str],
+    ) -> None:
+        super().__init__(parent)
+        self.setWindowTitle(title)
+        self.setMinimumSize(560, 480)
+        self._prompts = prompts
+        vbox = QVBoxLayout(self)
+        vbox.addWidget(self._build_explanations_group(*explanations))
+        vbox.addWidget(self._build_notes_group(notes), stretch=1)
+        vbox.addWidget(self._build_prompts_section())
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        vbox.addWidget(buttons)
+        self._sync_prompts()
+
+    def notes(self) -> str:
+        """Return the notes as the dialog leaves them: stripped, at most ``NOTES_LIMIT``."""
+        return self._notes.toPlainText().strip()[:NOTES_LIMIT].rstrip()
+
+    def explanation_values(self) -> dict[str, object]:
+        """Return ``explanation_language`` and ``correction_output``."""
+        return {
+            "explanation_language": str(self._explanation_language.currentData() or ""),
+            "correction_output": "text" if self._corrections_only.isChecked() else "review",
+        }
 
     def _build_explanations_group(self, language: str, output_mode: str) -> QGroupBox:
         """Build the explanation language and the "corrections only" choice."""
@@ -155,17 +175,72 @@ class _PromptDialog(QDialog):
         self._corrections_only = QCheckBox(txt.CORRECTIONS_ONLY)
         self._corrections_only.setToolTip(txt.CORRECTIONS_ONLY_TOOLTIP)
         self._corrections_only.setChecked(output_mode == "text")
+        self._corrections_only.toggled.connect(self._sync_prompts)
         form.addRow("", self._corrections_only)
         return group
 
-    def explanation_values(self) -> dict[str, object]:
-        """Return ``explanation_language`` and ``correction_output`` (empty without the group)."""
-        if self._explanation_language is None or self._corrections_only is None:
-            return {}
-        return {
-            "explanation_language": str(self._explanation_language.currentData() or ""),
-            "correction_output": "text" if self._corrections_only.isChecked() else "review",
-        }
+    def _build_notes_group(self, notes: str) -> QGroupBox:
+        """Build the notes box with its character counter."""
+        group = QGroupBox(txt.NOTES_HEADING)
+        vbox = QVBoxLayout(group)
+        self._notes = QPlainTextEdit()
+        self._notes.setPlaceholderText(txt.NOTES_PLACEHOLDER)
+        self._notes.setToolTip(txt.NOTES_TOOLTIP)
+        self._notes.setPlainText(notes)
+        self._notes.setMaximumHeight(90)
+        vbox.addWidget(self._notes)
+        self._notes_counter = QLabel()
+        self._notes_counter.setStyleSheet("color: #888; font-size: 8pt;")
+        vbox.addWidget(self._notes_counter)
+        self._notes.textChanged.connect(self._on_notes_changed)
+        self._on_notes_changed()
+        return group
+
+    def _build_prompts_section(self) -> QWidget:
+        """Build the collapsed, read-only list of the prompts the steps send."""
+        box = QWidget()
+        vbox = QVBoxLayout(box)
+        vbox.setContentsMargins(0, 0, 0, 0)
+        self._prompts_toggle = QPushButton(f"▸ {txt.PROMPTS_HEADING}")
+        self._prompts_toggle.setFlat(True)
+        self._prompts_toggle.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._prompts_toggle.setStyleSheet("text-align: left; font-weight: bold;")
+        self._prompts_toggle.setToolTip(txt.PROMPTS_TOOLTIP)
+        self._prompts_toggle.clicked.connect(self._on_toggle_prompts)
+        vbox.addWidget(self._prompts_toggle)
+        self._prompts_view = QPlainTextEdit()
+        self._prompts_view.setReadOnly(True)
+        self._prompts_view.setStyleSheet("color: #aaa;")
+        self._prompts_view.setMinimumHeight(160)
+        self._prompts_view.setVisible(False)
+        vbox.addWidget(self._prompts_view)
+        return box
+
+    def _on_notes_changed(self) -> None:
+        """Keep the notes within the limit and the counter right."""
+        text = self._notes.toPlainText()
+        if len(text) > NOTES_LIMIT:
+            position = self._notes.textCursor().position()
+            self._notes.blockSignals(True)
+            self._notes.setPlainText(text[:NOTES_LIMIT])
+            self._notes.blockSignals(False)
+            cursor = self._notes.textCursor()
+            cursor.setPosition(min(position, NOTES_LIMIT))
+            self._notes.setTextCursor(cursor)
+            text = text[:NOTES_LIMIT]
+        self._notes_counter.setText(txt.notes_counter(len(text)))
+
+    def _on_toggle_prompts(self) -> None:
+        expanded = not self._prompts_view.isVisible()
+        self._prompts_view.setVisible(expanded)
+        self._prompts_toggle.setText(f"{'▾' if expanded else '▸'} {txt.PROMPTS_HEADING}")
+
+    def _sync_prompts(self) -> None:
+        """Show the prompts of the steps that run for the current *corrections only* choice."""
+        steps = self._prompts(self._corrections_only.isChecked())
+        self._prompts_view.setPlainText(
+            "\n\n".join(f"{title}\n\n{prompt}" for title, prompt in steps)
+        )
 
 
 class ConfigPanel(QScrollArea):
@@ -180,21 +255,13 @@ class ConfigPanel(QScrollArea):
     open_settings_requested = Signal(object, str, list)
     #: The user changed the Results step (folder, which files); the main window saves.
     results_changed = Signal()
-    #: The user confirmed an Instructions dialog (prompt, answer formats, explanations).
+    #: The user confirmed an Instructions dialog (notes, explanations).
     instructions_changed = Signal()
     #: The last rendered data flow, so cells elsewhere can say where a step's text goes.
     data_flow_changed = Signal(object)
 
-    def __init__(
-        self,
-        parent: QWidget | None = None,
-        *,
-        preset_prompts: dict[str, str] | None = None,
-        default_prompt: str = "",
-    ) -> None:
+    def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self._preset_prompts: dict[str, str] = preset_prompts or {}
-        self._default_prompt: str = default_prompt
         self._service: object | None = None  # ProcessingApplicationService, set via set_service()
         # One per stage: ticking a box must only make *its own* earlier check stale.
         self._guard_tasks: dict[str, LatestTask] = {}
@@ -221,9 +288,7 @@ class ConfigPanel(QScrollArea):
             "correction_model": DEFAULTS["correction_model"],
             "explanation_language": DEFAULTS["explanation_language"],
             "correction_output": DEFAULTS["correction_output"],
-            "answer_format_review": DEFAULTS["answer_format_review"],
-            "answer_format_text": DEFAULTS["answer_format_text"],
-            "answer_format_version": DEFAULTS["answer_format_version"],
+            "correction_notes": DEFAULTS["correction_notes"],
             "evaluate_provider": DEFAULTS["evaluate_provider"],
             "evaluate_model": DEFAULTS["evaluate_model"],
             "output_dir": "",
@@ -246,11 +311,11 @@ class ConfigPanel(QScrollArea):
         self._selected_folder: Path | None = None
         self._selected_files: list[Path] = []
 
-        # Prompt texts stored internally (not live QPlainTextEdits in the panel).
-        # "" means "use the built-in prompt" — the preset text is never copied here,
-        # so a code-side preset change keeps being recognised and the language
-        # setting keeps swapping the preset.
-        self._correction_prompt_text: str = ""
+        # The teacher's notes for the AI, and the content review's prompt, stored internally
+        # (not live QPlainTextEdits in the panel).  "" for the prompt means "use the built-in
+        # one" — the default text is never copied here, so a code-side change keeps being
+        # recognised and the language setting keeps swapping the preset.
+        self._correction_notes_text: str = ""
         self._evaluation_prompt_text: str = ""
 
         inner = QWidget()
@@ -421,20 +486,13 @@ class ConfigPanel(QScrollArea):
         self._correction_enabled.toggled.connect(self._update_correction_visibility)
         self._correction_prompt_btn = QPushButton(txt.OPTIONS_BUTTON)
         self._correction_prompt_btn.setToolTip(
-            "Change the explanations (their language, or corrections only), the instructions\n"
-            "sent to the AI for proofreading, and the answer format.\n"
-            "Until you change them, the built-in instructions of the document language are used."
+            "Change the explanations (their language, or corrections only) and add notes\n"
+            "for the AI. The instructions themselves are fixed; the dialog shows them."
         )
         self._correction_prompt_btn.clicked.connect(self._on_configure_correction_prompt)
         v.addLayout(self._checkbox_row(self._correction_enabled, self._correction_prompt_btn))
         self._correction_uses = self._uses_line(SettingsPage.AI_MODELS, FOCUS_PROOFREADING)
         v.addWidget(self._correction_uses)
-
-        self._custom_prompt_note = QLabel(txt.CUSTOM_PROMPT_NOTE)
-        self._custom_prompt_note.setWordWrap(True)
-        self._custom_prompt_note.setStyleSheet("color: #e67e22; font-size: 8pt;")
-        self._custom_prompt_note.setVisible(False)
-        v.addWidget(self._custom_prompt_note)
 
         # Content review reads the proofread text, so its rows sit under Proofread.
         review_rows = QWidget()
@@ -725,48 +783,37 @@ class ConfigPanel(QScrollArea):
 
     # ── prompt dialogs ────────────────────────────────────────────────────────────
 
-    def _correction_dialog_texts(self) -> tuple[str, str, tuple[str, str] | None]:
-        """Return the built-in prompt, the read-only note and the built-in answer formats.
+    def _proofreading_prompts(self, corrections_only: bool) -> tuple[tuple[str, str], ...]:
+        """Return the prompts the AI is asked for, for the dialog's read-only section.
 
-        Falls back to the panel's preset table when no service is injected (then there is
-        no answer-format editor either).
+        Empty without a service: the panel alone cannot say what the exchange sends.
         """
-        language = self._language.currentText().strip()
-        builtin = self._preset_prompts.get(language.lower(), self._default_prompt)
         if self._service is None:
-            return builtin, "", None
+            return ()
         from ..application.service import ProcessingApplicationService  # noqa: PLC0415
 
         service: ProcessingApplicationService = self._service  # ty: ignore[invalid-assignment]
-        return (
-            builtin,
-            txt.formatted_text_note(service.correction_notation_hint()),
-            service.default_answer_formats(),
+        config = dataclasses.replace(
+            self.lookup_config(),
+            correction_output="text" if corrections_only else "review",
         )
+        return service.proofreading_prompts(config)
 
     def _on_configure_correction_prompt(self) -> None:
-        builtin, fixed, formats = self._correction_dialog_texts()
         settings = self._settings_dict
-        dlg = _PromptDialog(
+        dlg = _ProofreadingDialog(
             txt.CORRECTION_PROMPT_DIALOG_TITLE,
-            self._correction_prompt_text,
+            self._correction_notes_text,
+            self._proofreading_prompts,
             self,
-            builtin_text=builtin,
-            fixed_text=fixed,
-            answer_formats=formats,
-            saved_formats=(
-                str(settings.get("answer_format_review", "")),
-                str(settings.get("answer_format_text", "")),
-            ),
-            level_aware=True,
             explanations=(
                 str(settings.get("explanation_language", DEFAULTS["explanation_language"])),
                 str(settings.get("correction_output", DEFAULTS["correction_output"])),
             ),
         )
         if dlg.exec() == QDialog.DialogCode.Accepted:
-            self.set_correction_prompt(dlg.prompt())
-            self.update_settings({**dlg.answer_format_values(), **dlg.explanation_values()})
+            self.set_correction_notes(dlg.notes())
+            self.update_settings(dlg.explanation_values())
             self.instructions_changed.emit()
 
     def _evaluation_fixed_text(self) -> str:
@@ -793,13 +840,7 @@ class ConfigPanel(QScrollArea):
     # ── language change ───────────────────────────────────────────────────────────
 
     def _on_language_changed(self, _language: str) -> None:
-        """Only update the custom-prompt note; the prompt itself is a reference now.
-
-        An empty prompt keeps meaning "the built-in prompt of the (new) document
-        language".  A custom prompt is used for every language, which the note says.
-        """
-        self._custom_prompt_note.setVisible(bool(self._correction_prompt_text.strip()))
-        # The language decides the detection models, so the box and the privacy setting change.
+        """Re-render what the language decides: the detection models and the data flow."""
         self.refresh_data_flow()
 
     # ── visibility updates ────────────────────────────────────────────────────────
@@ -1042,14 +1083,14 @@ class ConfigPanel(QScrollArea):
         self._update_input_label()
         self.paths_changed.emit()
 
-    def get_correction_prompt(self) -> str:
-        """Return the current correction system prompt text."""
-        return self._correction_prompt_text
+    def get_correction_notes(self) -> str:
+        """Return the notes the teacher added for the AI."""
+        return self._correction_notes_text
 
-    def set_correction_prompt(self, text: str) -> None:
-        """Update the correction system prompt (as the instructions dialog does on OK)."""
-        self._correction_prompt_text = text
-        self._custom_prompt_note.setVisible(bool(text.strip()))
+    def set_correction_notes(self, text: str) -> None:
+        """Update the notes for the AI (as the options dialog does on OK)."""
+        self._correction_notes_text = normalize_notes(text)
+        self._settings_dict["correction_notes"] = self._correction_notes_text
 
     def get_evaluation_prompt(self) -> str:
         """Return the current evaluation system prompt text."""
@@ -1140,7 +1181,7 @@ class ConfigPanel(QScrollArea):
             correction_model=self._settings_dict.get(
                 "correction_model", DEFAULTS["correction_model"]
             ),
-            correction_prompt=self._correction_prompt_text,
+            correction_notes=self._correction_notes_text,
             correction_level=self._correction_level.currentText(),
             explanation_language=str(
                 self._settings_dict.get("explanation_language", DEFAULTS["explanation_language"])
@@ -1148,8 +1189,6 @@ class ConfigPanel(QScrollArea):
             correction_output=str(
                 self._settings_dict.get("correction_output", DEFAULTS["correction_output"])
             ),
-            answer_format_review=str(self._settings_dict.get("answer_format_review", "")),
-            answer_format_text=str(self._settings_dict.get("answer_format_text", "")),
             evaluation_enabled=self.review_will_run(),
             evaluate_provider=self._settings_dict.get(
                 "evaluate_provider", DEFAULTS["evaluate_provider"]
@@ -1216,19 +1255,15 @@ class ConfigPanel(QScrollArea):
         self._sync_review_enabled()
 
     def _load_prompts_and_language(self, values: dict) -> None:
-        """Apply the correction/evaluation prompts and language combo from *values*.
+        """Apply the notes, the content review's prompt and the language combo from *values*.
 
-        Sets the prompts BEFORE the language so that when the language combo fires
-        ``currentTextChanged -> _on_language_changed``, it can correctly decide
-        whether to overwrite the prompt (empty / preset) or keep it (custom text).
+        Sets them BEFORE the language so that when the language combo fires
+        ``currentTextChanged -> _on_language_changed``, the panel already holds the new state.
         """
         self._language.currentTextChanged.disconnect(self._on_language_changed)
         try:
-            if "correction_prompt" in values:
-                # Reset preset copies saved by older versions; keep real custom text.
-                self._correction_prompt_text = migrate_saved_correction_prompt(
-                    str(values["correction_prompt"])
-                )
+            if "correction_notes" in values:
+                self._correction_notes_text = normalize_notes(values["correction_notes"])
             if "evaluate_prompt" in values:
                 # "" = the built-in default; a saved copy of it means the same.
                 self._evaluation_prompt_text = migrate_saved_evaluation_prompt(
@@ -1278,16 +1313,6 @@ class ConfigPanel(QScrollArea):
         ):
             if key in values:
                 self._settings_dict[key] = str(values[key])
-
-        if any(key.startswith("answer_format_") for key in values):
-            formats = {
-                key: values.get(key, self._settings_dict.get(key, DEFAULTS[key]))
-                for key in ("answer_format_review", "answer_format_text", "answer_format_version")
-            }
-            migrate_answer_formats(formats)
-            self._settings_dict["answer_format_review"] = str(formats["answer_format_review"])
-            self._settings_dict["answer_format_text"] = str(formats["answer_format_text"])
-            self._settings_dict["answer_format_version"] = int(formats["answer_format_version"])
 
         if "correction_level" in values:
             self._correction_level.setCurrentText(normalize_level(str(values["correction_level"])))
@@ -1424,14 +1449,12 @@ class ConfigPanel(QScrollArea):
             )
             or SECONDARY_MODEL_NONE,
             anonymizer_patterns=settings.get("anonymizer_patterns"),
-            correction_prompt=self._correction_prompt_text,
+            correction_notes=self._correction_notes_text,
             correction_level=self._correction_level.currentText(),
             explanation_language=str(
                 settings.get("explanation_language", DEFAULTS["explanation_language"])
             ),
             correction_output=str(settings.get("correction_output", DEFAULTS["correction_output"])),
-            answer_format_review=str(settings.get("answer_format_review", "")),
-            answer_format_text=str(settings.get("answer_format_text", "")),
             evaluate_prompt=self._evaluation_prompt_text,
         )
 
@@ -1523,7 +1546,7 @@ class ConfigPanel(QScrollArea):
             "recognition_enabled": self._recognition_enabled.isChecked(),
             "correction_enabled": self._correction_enabled.isChecked(),
             "anonymization_enabled": self._anonymization_enabled.isChecked(),
-            "correction_prompt": self._correction_prompt_text,
+            "correction_notes": self._correction_notes_text,
             "correction_level": self._correction_level.currentText(),
             "evaluate_prompt": self._evaluation_prompt_text,
             **self._settings_dict,

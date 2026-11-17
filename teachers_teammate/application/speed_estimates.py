@@ -30,7 +30,14 @@ import threading
 
 from ..config import DEFAULTS, Config, OcrConfig
 from ..domain.correction_policy import normalize_output_mode
-from ..domain.model_catalog import AnswerLength, HardwareDetection, ModelCategory, find_spec
+from ..domain.model_catalog import (
+    AnswerLength,
+    HardwareDetection,
+    ModelCategory,
+    RequestProfile,
+    find_spec,
+    request_profile,
+)
 from ..domain.performance_estimate import (
     TYPICAL_PAGE_WORDS,
     MachineFactors,
@@ -51,12 +58,14 @@ from ..domain.performance_estimate import (
     proofreading_time,
     reading_page_time,
 )
+from ..domain.proofreading.result import StepName
 from ..infrastructure.ollama_utils import PROOFREADING_NUM_CTX, ServerFacts
 from ..infrastructure.performance_probe import (
     PerformanceProbe,
     ProbeResult,
     SpeedTestRequest,
 )
+from ..infrastructure.proofreading.corrector import exchange_cost
 from ..infrastructure.speed_store import (
     RunSample,
     SampleKey,
@@ -464,9 +473,12 @@ class SpeedEstimateService:
                 continue
             # The rates do not depend on the mode, the answer length does: only the samples of the
             # mode this run is set to say how long its answers are.
-            mode = choices.correction_output if step is SpeedStep.PROOFREADING else ""
+            corrections_only = choices.correction_output == "text"
+            mode = _proofreading_mode(corrections_only) if step is SpeedStep.PROOFREADING else ""
             answer = _run_answer_length(step, by_mode.get(mode, ()) if mode else samples)
-            per_page = _page_time(step, speed, tag, answer=answer, mode=mode or "review")
+            per_page = _page_time(
+                step, speed, tag, answer=answer, corrections_only=corrections_only
+            )
             rows.append(
                 StepEstimate(
                     step=step,
@@ -579,7 +591,9 @@ class SpeedEstimateService:
                 continue
             mode = _newest_mode(by_mode) if step is SpeedStep.PROOFREADING else ""
             answer = _run_answer_length(step, by_mode.get(mode, ()) if mode else samples)
-            result[tag] = _page_time(step, speed, tag, answer=answer, mode=mode or "review")
+            result[tag] = _page_time(
+                step, speed, tag, answer=answer, corrections_only=mode == "text"
+            )
         return result
 
     # ── the machine factor ─────────────────────────────────────────────────
@@ -651,13 +665,13 @@ def _page_time(
     tag: str,
     *,
     answer: AnswerLength | None = None,
-    mode: str = "review",
+    corrections_only: bool = False,
 ) -> TimeRange:
     """Return how long one page takes *tag* for *step*, from its measured *speed*.
 
-    *answer* is the answer length the runs measured *in the given mode*; ``None`` keeps the
-    catalog's figure (review mode) or the text-mode constant.  *mode* is the proofreading mode
-    the figure is for.
+    *answer* is the answer length the runs measured for the steps this run sends; ``None``
+    keeps the exchange's own figures.  *corrections_only* is the teacher's *Corrections only*
+    choice: step ① alone, so the page is read once instead of four times.
     """
     spec = find_spec(tag)
     category: ModelCategory = "ocr" if step is SpeedStep.READING else "general"
@@ -665,17 +679,32 @@ def _page_time(
         return reading_page_time(speed, answer or answer_length_for(spec, category))
     if step is SpeedStep.REVIEW:
         return content_review_time(speed, TYPICAL_PAGE_WORDS)
-    if mode == "text":
-        return proofreading_time(
-            speed,
-            TYPICAL_PAGE_WORDS,
-            answer_length_for(spec, category),
-            "text",
-            text_answer=answer,
-        )
+    profile = request_profile(tag)
     return proofreading_time(
-        speed, TYPICAL_PAGE_WORDS, answer or answer_length_for(spec, category), "review"
+        speed,
+        TYPICAL_PAGE_WORDS,
+        exchange_cost(profile.exchange),
+        _proofreading_steps(profile, corrections_only=corrections_only),
+        answer=answer,
     )
+
+
+def _proofreading_mode(corrections_only: bool) -> str:
+    """Return the sample mode a proofreading run writes: ``"text"`` or ``"exchange"``."""
+    return "text" if corrections_only else "exchange"
+
+
+def _proofreading_steps(profile: RequestProfile, *, corrections_only: bool) -> tuple[StepName, ...]:
+    """Return the steps a proofreading run sends for *profile*.
+
+    *Corrections only* stops after step ①; a model whose profile has no unclear check skips
+    step ③.
+    """
+    if corrections_only:
+        return ("correct",)
+    if profile.unclear_check:
+        return ("correct", "explain", "unclear")
+    return ("correct", "explain")
 
 
 def _sample_speed(samples: Sequence[RunSample]) -> ModelSpeed | None:

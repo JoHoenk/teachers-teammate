@@ -18,7 +18,6 @@ import uuid
 
 from ..config import DEFAULTS, Config, OcrConfig
 from ..domain.context_budget import RunWindows, memory_at_context_gb
-from ..domain.correction_policy import DEFAULT_LEVEL, normalize_output_mode
 from ..domain.correction_review import CorrectionReview
 from ..domain.data_location import (
     ENGINE_PPOCR,
@@ -125,6 +124,7 @@ from ..infrastructure.workflow.cache_service import (
 from ..interfaces import SUPPORTED_SUFFIXES, SleepBlocker
 from .commands import ApplicationCommands
 from .context_choice import ContextChoice, context_choice
+from .correction_options import prompt_step_title
 from .data_flow import (
     describe_data_flow,
     llm_location,
@@ -826,61 +826,20 @@ class ProcessingApplicationService:
         """Return input file suffixes accepted by the pipeline."""
         return SUPPORTED_SUFFIXES
 
-    def list_correction_prompt_presets(self) -> dict[str, str]:
-        """Return language-name → prompt mapping for the built-in correction presets."""
-        from ..infrastructure.correction import PRESET_PROMPTS  # noqa: PLC0415
+    def proofreading_prompts(self, config: Config) -> tuple[tuple[str, str], ...]:
+        """Return ``(step title, system prompt)`` for the steps this config sends.
 
-        return dict(PRESET_PROMPTS)
-
-    def default_correction_prompt(self) -> str:
-        """Return the English (fallback) correction prompt."""
-        from ..infrastructure.correction import ENGLISH_PROMPT  # noqa: PLC0415
-
-        return ENGLISH_PROMPT
-
-    def correction_instructions(
-        self,
-        *,
-        prompt: str,
-        language: str,
-        level: str = DEFAULT_LEVEL,
-        output_mode: str = "review",
-        text_format: TextFormat = "plain",
-        answer_format: str = "",
-        compact_json: bool = False,
-    ) -> tuple[str, str]:
-        """Return ``(policy, fixed)``: the teacher's instructions and the answer format.
-
-        Built from the same code path the corrector uses, so what a dialog shows is exactly
-        what is sent.  *text_format* defaults to plain text; for Markdown texts the caller
-        passes ``"markdown"`` and the fixed part gains the notation hint.  *answer_format*
-        is the teacher's own text for *output_mode* (``""`` = the built-in one).
-        *compact_json* is the chosen model's request-profile choice, so the dialog shows the
-        request of that model and not another one's.
+        Taken from the exchange itself, so the *Options…* dialog and *What is sent* show the
+        requests a run really makes and cannot drift from them.  *Corrections only* leaves
+        step ① alone; a model without the unclear check leaves step ③ out.
         """
-        from ..infrastructure.correction import instruction_parts  # noqa: PLC0415
+        from ..infrastructure.proofreading.corrector import exchange_prompts  # noqa: PLC0415
 
-        return instruction_parts(
-            prompt,
-            language,
-            level=level,
-            text_format=text_format,
-            mode=normalize_output_mode(output_mode),
-            answer_format=answer_format,
-            compact_json=compact_json,
+        steps = exchange_prompts(
+            config.correction_profile,
+            corrections_only=config.correction_output == "text",
         )
-
-    def default_answer_formats(self) -> tuple[str, str]:
-        """Return the built-in answer formats ``(with explanations, corrections only)``."""
-        from ..domain.answer_format import REVIEW_FORMAT, TEXT_FORMAT  # noqa: PLC0415
-
-        return REVIEW_FORMAT, TEXT_FORMAT
-
-    def correction_notation_hint(self) -> str:
-        """Return what the app adds to the proofreading instructions for Markdown texts."""
-        from ..domain.notation import with_notation_hint  # noqa: PLC0415
-
-        return with_notation_hint("", "markdown", task="correction").strip()
+        return tuple((prompt_step_title(step), text) for step, text in steps)
 
     def evaluation_fixed_instructions(self, text_format: TextFormat = "plain") -> str:
         """Return what the app appends to an evaluation prompt: the notation hint, if any.
@@ -1424,9 +1383,9 @@ class ProcessingApplicationService:
         """Return how long *raw_text* is and how many proofreading requests it takes.
 
         The count comes from the corrector the run builds and from
-        :meth:`~teachers_teammate.infrastructure.correction.ChunkingCorrector.split`, so the
-        estimate and the run cannot disagree.  Building the corrector is cheap: neither the
-        Ollama client nor the corrector contacts the server.
+        :meth:`~teachers_teammate.infrastructure.proofreading.chunking.ChunkingCorrector.split`,
+        so the estimate and the run cannot disagree.  Building the corrector is cheap: neither
+        the Ollama client nor the corrector contacts the server.
 
         It is an estimate: the text really sent is anonymized when personal-info removal is
         on, and the content review reads the proofread text, not the OCR text.
@@ -1543,7 +1502,7 @@ class ProcessingApplicationService:
             correction_text=correction_text,
             anonymize=self._sent_text_anonymizer(config),
             preview_extracted=config.anonymization_enabled,
-            correction_prompt=self._sent_correction_prompt(config, text_format),
+            correction_prompt=self._sent_correction_prompt(config),
             evaluation_prompt=self._sent_evaluation_prompt(config, text_format),
             stored=stored,
         )
@@ -1562,21 +1521,19 @@ class ProcessingApplicationService:
         language = config.language
         return lambda text: self.anonymize_preview(text, language, anon_config)
 
-    def _sent_correction_prompt(self, config: Config, text_format: TextFormat) -> str:
-        """Return the instructions the corrector sends, or ``""`` when it sends none."""
-        mode = normalize_output_mode(config.correction_output)
-        policy, fixed = self.correction_instructions(
-            prompt=config.correction_prompt,
-            language=config.language,
-            level=config.correction_level,
-            output_mode=mode,
-            text_format=text_format,
-            answer_format=(
-                config.answer_format_review if mode == "review" else config.answer_format_text
-            ),
-            compact_json=config.correction_profile.compact_json,
-        )
-        return f"{policy}\n\n{fixed}"
+    def _sent_correction_prompt(self, config: Config) -> str:
+        """Return the instructions the corrector sends, or ``""`` when it sends none.
+
+        One heading per step that runs, then the teacher's notes when there are any: the
+        prompts are fixed, so this is the whole of what the model is told.
+        """
+        from ..domain.correction_prompts import notes_block  # noqa: PLC0415
+
+        parts = [f"{title}\n\n{prompt}" for title, prompt in self.proofreading_prompts(config)]
+        notes = notes_block(config.correction_notes).strip()
+        if notes:
+            parts.append(notes)
+        return "\n\n".join(parts)
 
     def _sent_evaluation_prompt(self, config: Config, text_format: TextFormat) -> str:
         """Return the instructions the evaluator sends, or ``""`` when it sends none."""

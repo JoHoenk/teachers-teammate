@@ -17,7 +17,11 @@ from teachers_teammate.application.speed_estimates import (
     SpeedEstimateService,
     SpeedSource,
 )
-from teachers_teammate.domain.model_catalog import HardwareDetection, DetectionReason
+from teachers_teammate.domain.model_catalog import (
+    HardwareDetection,
+    DetectionReason,
+    request_profile,
+)
 from teachers_teammate.domain.performance_estimate import (
     AnswerLength,
     ModelSpeed,
@@ -25,8 +29,11 @@ from teachers_teammate.domain.performance_estimate import (
     SpeedStep,
     StepOutcome,
     TYPICAL_PAGE_WORDS,
+    TimeRange,
     proofreading_time,
 )
+from teachers_teammate.domain.proofreading.result import StepName
+from teachers_teammate.infrastructure.proofreading.corrector import exchange_cost
 from teachers_teammate.infrastructure.ollama_utils import (
     PROOFREADING_NUM_CTX,
     ServerFacts,
@@ -147,11 +154,39 @@ def _add_samples(
     values: Sequence[RunSample],
     *,
     tag: str = "gemma4:e4b",
-    mode: str = "review",
+    mode: str = "exchange",
 ) -> None:
     """Store *values* as samples of *tag* for *step*."""
     for sample in values:
         samples.add(SampleKey(server=_URL, tag=tag, step=step, mode=mode), sample)
+
+
+def _exchange_time(
+    answer: AnswerLength | None = None,
+    *,
+    corrections_only: bool = False,
+    chars_per_token: float | None = None,
+) -> TimeRange:
+    """Return the estimate the panel makes for the default writing model.
+
+    The steps are the ones a run of that model sends: step ① alone for corrections only, and
+    step ③ only when the model's profile has an unclear check.  *chars_per_token* is the rate
+    the speed came with: a stored measurement carries one, a sample does not.
+    """
+    profile = request_profile("gemma4:e4b")
+    if corrections_only:
+        steps: tuple[StepName, ...] = ("correct",)
+    elif profile.unclear_check:
+        steps = ("correct", "explain", "unclear")
+    else:
+        steps = ("correct", "explain")
+    return proofreading_time(
+        ModelSpeed(read_tps=1000.0, write_tps=100.0, chars_per_token=chars_per_token),
+        TYPICAL_PAGE_WORDS,
+        exchange_cost(profile.exchange),
+        steps,
+        answer=answer,
+    )
 
 
 class _FakeClient:
@@ -769,18 +804,20 @@ def test_an_empty_store_gives_an_empty_summary(tmp_path: Path) -> None:
 # ── what real runs measured ────────────────────────────────────────────────
 
 
-def test_three_samples_replace_the_catalog_answer_length(tmp_path: Path) -> None:
+def test_three_samples_replace_the_exchange_answer_length(tmp_path: Path) -> None:
     """
-    Given  three samples of the proofreading step whose answers are shorter than the catalog's
+    Given  three samples of the proofreading step whose answers are shorter than the exchange's
+           own figures
     When   the summary is asked for
-    Then   the per-page range is shorter than the catalog's figure, because the run knows this
+    Then   the per-page range is shorter than the exchange's figure, because the run knows this
            class's error level and no test can
     """
     samples = SampleStore(tmp_path / "samples.json")
     service, _store, _client = _service(tmp_path, samples=samples)
-    _add_samples(samples, SpeedStep.PROOFREADING, [_sample(), _sample()])
+    short = [_sample(answer_tokens=300), _sample(answer_tokens=300)]
+    _add_samples(samples, SpeedStep.PROOFREADING, short)
     below = service.speed_summary(_choices(reading_model="")).step(SpeedStep.PROOFREADING)
-    _add_samples(samples, SpeedStep.PROOFREADING, [_sample()])
+    _add_samples(samples, SpeedStep.PROOFREADING, [_sample(answer_tokens=300)])
     at = service.speed_summary(_choices(reading_model="")).step(SpeedStep.PROOFREADING)
 
     assert below is not None
@@ -788,6 +825,39 @@ def test_three_samples_replace_the_catalog_answer_length(tmp_path: Path) -> None
     assert below.sample_count == 2
     assert at.sample_count == 3
     assert at.per_page.typical_s < below.per_page.typical_s
+
+
+def test_before_samples_the_estimate_comes_from_the_exchange_cost_model(tmp_path: Path) -> None:
+    """
+    Given  a stored measurement and no samples at all
+    When   the summary is asked for
+    Then   the per-page range is the exchange's own figures: one request per step, the text read
+           once by step ① and twice by step ②, and the three answers added up
+    """
+    service, store, _client = _service(tmp_path)
+    store.save(_record())
+
+    row = service.speed_summary(_choices(reading_model="")).step(SpeedStep.PROOFREADING)
+
+    assert row is not None
+    assert row.per_page.typical_s == pytest.approx(_exchange_time(chars_per_token=4.2).typical_s)
+
+
+def test_the_samples_of_the_old_review_mode_are_ignored(tmp_path: Path) -> None:
+    """
+    Given  four samples of the one-request review, which measured another request's answer
+    When   the summary is asked for
+    Then   their rates count but their answer length does not: the exchange's figures apply
+    """
+    samples = SampleStore(tmp_path / "samples.json")
+    service, _store, _client = _service(tmp_path, samples=samples)
+    _add_samples(samples, SpeedStep.PROOFREADING, [_sample(answer_tokens=1000)] * 4, mode="review")
+
+    row = service.speed_summary(_choices(reading_model="")).step(SpeedStep.PROOFREADING)
+
+    assert row is not None
+    assert row.sample_count == 4
+    assert row.per_page.typical_s == pytest.approx(_exchange_time().typical_s)
 
 
 def test_ten_samples_narrow_the_range_to_the_percentiles(tmp_path: Path) -> None:
@@ -807,78 +877,71 @@ def test_ten_samples_narrow_the_range_to_the_percentiles(tmp_path: Path) -> None
     assert nine is not None
     assert ten is not None
     assert nine.per_page.high_s == pytest.approx(
-        proofreading_time(
-            ModelSpeed(read_tps=1000.0, write_tps=100.0),
-            TYPICAL_PAGE_WORDS,
-            AnswerLength(low=400, typical=400, high=10000),
-        ).high_s
+        _exchange_time(AnswerLength(low=400, typical=400, high=10000)).high_s
     )
     assert ten.per_page.high_s < nine.per_page.high_s
 
 
-def test_text_mode_is_estimated_with_the_short_text_mode_answer(tmp_path: Path) -> None:
+def test_corrections_only_is_estimated_with_step_one_alone(tmp_path: Path) -> None:
     """
     Given  a measurement and no samples, and choices that ask for corrections only
-    When   the summary is asked for under each mode
-    Then   the text mode estimate is far below the review mode one: the answer is about as long
-           as the text, not as long as a review
+    When   the summary is asked for under each setting
+    Then   the corrections-only estimate is well below the full one: one request that reads the
+           text once and writes the text, instead of three that read it four times
     """
     service, store, _client = _service(tmp_path)
     store.save(_record())
 
-    review = service.speed_summary(_choices(reading_model="")).step(SpeedStep.PROOFREADING)
-    text = service.speed_summary(
+    full = service.speed_summary(_choices(reading_model="")).step(SpeedStep.PROOFREADING)
+    only = service.speed_summary(
         dataclasses.replace(_choices(reading_model=""), correction_output="text")
     ).step(SpeedStep.PROOFREADING)
 
-    assert review is not None
-    assert text is not None
-    assert text.per_page.typical_s < review.per_page.typical_s / 3
+    assert full is not None
+    assert only is not None
+    assert only.per_page.typical_s < full.per_page.typical_s * 0.6
 
 
-def test_text_mode_uses_the_answer_length_its_own_samples_measured(tmp_path: Path) -> None:
+def test_corrections_only_uses_the_answer_length_its_own_samples_measured(
+    tmp_path: Path,
+) -> None:
     """
-    Given  three text-mode samples whose answers are twice the text-mode constant, and three
-           review-mode samples with much longer answers
-    When   the summary is asked for under the text mode
-    Then   the estimate follows the text-mode samples, not the constant and not the review ones
+    Given  three corrections-only samples whose answers are twice the exchange's figure, and
+           three full-run samples with much longer answers
+    When   the summary is asked for with corrections only
+    Then   the estimate follows the corrections-only samples, not the exchange's figure and not
+           the full-run ones
     """
     samples = SampleStore(tmp_path / "samples.json")
     service, _store, _client = _service(tmp_path, samples=samples)
-    _add_samples(samples, SpeedStep.PROOFREADING, [_sample(answer_tokens=1000)] * 3, mode="review")
+    _add_samples(samples, SpeedStep.PROOFREADING, [_sample(answer_tokens=1000)] * 3)
     _add_samples(samples, SpeedStep.PROOFREADING, [_sample(answer_tokens=700)] * 3, mode="text")
     choices = dataclasses.replace(_choices(reading_model=""), correction_output="text")
 
     row = service.speed_summary(choices).step(SpeedStep.PROOFREADING)
 
-    expected = proofreading_time(
-        ModelSpeed(read_tps=1000.0, write_tps=100.0),
-        TYPICAL_PAGE_WORDS,
-        AnswerLength(low=1, typical=1, high=1),
-        "text",
-        text_answer=AnswerLength(low=280, typical=280, high=280),
-    )
+    expected = _exchange_time(AnswerLength(low=280, typical=280, high=280), corrections_only=True)
     assert row is not None
     assert row.per_page.typical_s == pytest.approx(expected.typical_s, rel=0.05)
 
 
-def test_review_mode_ignores_the_samples_of_text_mode(tmp_path: Path) -> None:
+def test_a_full_run_ignores_the_samples_of_corrections_only(tmp_path: Path) -> None:
     """
-    Given  only text-mode samples (short answers) and choices in review mode
+    Given  only corrections-only samples (short answers) and choices that proofread in full
     When   the summary is asked for
-    Then   the estimate keeps the catalog's review answer length: short text-mode answers say
-           nothing about a review
+    Then   the estimate keeps the exchange's own figures: one step's answer says nothing about
+           the three steps' answers together
     """
     samples = SampleStore(tmp_path / "samples.json")
     service, _store, _client = _service(tmp_path, samples=samples)
     _add_samples(samples, SpeedStep.PROOFREADING, [_sample(answer_tokens=350)] * 4, mode="text")
     only_text = service.speed_summary(_choices(reading_model="")).step(SpeedStep.PROOFREADING)
-    _add_samples(samples, SpeedStep.PROOFREADING, [_sample(answer_tokens=350)] * 4, mode="review")
-    with_review = service.speed_summary(_choices(reading_model="")).step(SpeedStep.PROOFREADING)
+    _add_samples(samples, SpeedStep.PROOFREADING, [_sample(answer_tokens=350)] * 4)
+    with_exchange = service.speed_summary(_choices(reading_model="")).step(SpeedStep.PROOFREADING)
 
     assert only_text is not None
-    assert with_review is not None
-    assert only_text.per_page.typical_s > with_review.per_page.typical_s
+    assert with_exchange is not None
+    assert only_text.per_page.typical_s > with_exchange.per_page.typical_s
 
 
 def test_the_rate_is_the_median_of_the_samples(tmp_path: Path) -> None:

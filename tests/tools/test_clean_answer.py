@@ -1,8 +1,8 @@
-"""Unit tests for the repair of a review answer (``infrastructure/correction_schema.py``)."""
+"""Tests for the repair of a review answer (``one_request/correction_schema.py``)."""
 
 from __future__ import annotations
 
-from teachers_teammate.infrastructure.correction_schema import (
+from tools.model_eval.one_request.correction_schema import (
     Change,
     CorrectionAnswer,
     SentenceReview,

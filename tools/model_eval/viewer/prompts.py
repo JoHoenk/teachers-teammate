@@ -20,11 +20,11 @@ from teachers_teammate.domain.correction_prompts import (
     parameters,
 )
 from teachers_teammate.domain.formatted_text import PLAIN
-from teachers_teammate.infrastructure.correction import instruction_parts
 
 from .. import protocol
 from ..answer_mode import AnswerMode
 from ..languages import LANGUAGE_NAMES
+from ..one_request.correction import instruction_parts
 from .variants import Variant
 
 

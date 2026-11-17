@@ -197,11 +197,12 @@ class DocumentFilter(ABC):
 class Corrector(ABC):
     """Proofreads and corrects extracted text.
 
-    Implementations: :class:`~infrastructure.correction.LangChainCorrector`
-    (provider-agnostic) and :class:`~infrastructure.correction.NativeOllamaCorrector`.
-    To add a non-LangChain corrector, implement this ABC, add a constructor field
-    to :class:`~infrastructure.stage_builder.PipelineComponentFactory`, and select it
-    in :meth:`~infrastructure.stage_builder.StageBuilder.build_correction_and_anonymizer`.
+    The app's implementation is
+    :class:`~infrastructure.proofreading.corrector.ExchangeCorrector`, which runs an exchange
+    over a model port; :class:`~infrastructure.proofreading.chunking.ChunkingCorrector` wraps it
+    so a long text goes out in pieces.  To add another corrector, implement this ABC, add a
+    constructor field to :class:`~infrastructure.stage_builder.PipelineComponentFactory`, and
+    select it in :meth:`~infrastructure.stage_builder.StageBuilder.build_corrector`.
     """
 
     @abstractmethod

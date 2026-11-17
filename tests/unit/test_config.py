@@ -156,14 +156,14 @@ def test_effective_evaluate_model_honours_explicit_model() -> None:
 # ── Field defaults ─────────────────────────────────────────────────────────
 
 
-def test_correction_prompt_default_is_empty() -> None:
+def test_correction_notes_default_is_empty() -> None:
     """
-    Given  a Config created with no correction_prompt argument
-    When   the correction_prompt field is read
+    Given  a Config created with no correction_notes argument
+    When   the correction_notes field is read
     Then   it is an empty string
     """
     cfg = _cfg()
-    assert cfg.correction_prompt == ""
+    assert cfg.correction_notes == ""
 
 
 def test_docx_format_default_is_table() -> None:
@@ -693,41 +693,58 @@ def test_ocr_config_from_settings_maps_flat_keys_and_defaults() -> None:
     assert ocr.pdf_render_dpi == DEFAULTS["pdf_render_dpi"]
 
 
-def test_load_config_file_resets_saved_preset_prompt_copy(tmp_path: Path) -> None:
+def test_load_config_file_ignores_the_removed_proofreading_keys(tmp_path: Path) -> None:
     """
-    Given  a settings file from a released version, which stored the built-in preset text
+    Given  a settings file from a released version, with the instructions and answer formats
     When   load_config_file() is called
-    Then   the preset copy is reset to "" ("use the built-in prompt");
-           and a custom prompt is kept as it is
-    """
-    from teachers_teammate.infrastructure.correction import (  # noqa: PLC0415
-        LEGACY_PRESET_PROMPTS,
-    )
-
-    cfg_file = tmp_path / "ocr.toml"
-    cfg_file.write_text(
-        'correction_prompt = """\n' + LEGACY_PRESET_PROMPTS["german"] + '"""\n'
-        'evaluate_prompt = """\n' + DEFAULTS["evaluate_prompt"] + '"""\n'
-    )
-    result = load_config_file(cfg_file)
-    assert result["correction_prompt"] == ""
-    assert result["evaluate_prompt"] == ""
-
-
-def test_load_config_file_keeps_custom_prompts(tmp_path: Path) -> None:
-    """
-    Given  a settings file with a teacher's own proofreading instructions
-    When   load_config_file() is called
-    Then   both custom prompts are kept unchanged
+    Then   the four removed keys are not in the result, and the file is not written again
     """
     cfg_file = tmp_path / "ocr.toml"
     cfg_file.write_text(
         'correction_prompt = "Fix my students\' homework at {level}."\n'
-        'evaluate_prompt = "Report in German."\n'
+        'answer_format_review = "Answer in JSON."\n'
+        'answer_format_text = "Return the text."\n'
+        "answer_format_version = 2\n"
+        'correction_notes = "Year 9."\n'
     )
     result = load_config_file(cfg_file)
-    assert result["correction_prompt"] == "Fix my students' homework at {level}."
+
+    assert "correction_prompt" not in result
+    assert "answer_format_review" not in result
+    assert "answer_format_text" not in result
+    assert "answer_format_version" not in result
+    assert result["correction_notes"] == "Year 9."
+    assert "correction_prompt" not in dump_config_file(result)
+
+
+def test_load_config_file_keeps_a_custom_evaluation_prompt(tmp_path: Path) -> None:
+    """
+    Given  a settings file with a teacher's own content-review instructions
+    When   load_config_file() is called
+    Then   the custom prompt is kept unchanged
+    """
+    cfg_file = tmp_path / "ocr.toml"
+    cfg_file.write_text('evaluate_prompt = "Report in German."\n')
+    result = load_config_file(cfg_file)
     assert result["evaluate_prompt"] == "Report in German."
+
+
+def test_load_config_file_cuts_notes_longer_than_the_limit(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """
+    Given  a settings file whose notes for the AI are longer than the limit
+    When   load_config_file() is called
+    Then   the notes are cut to the limit and a warning says so
+    """
+    from teachers_teammate.domain.correction_prompts import NOTES_LIMIT  # noqa: PLC0415
+
+    cfg_file = tmp_path / "ocr.toml"
+    cfg_file.write_text(f'correction_notes = "{"x" * (NOTES_LIMIT + 20)}"\n')
+    result = load_config_file(cfg_file)
+
+    assert result["correction_notes"] == "x" * NOTES_LIMIT
+    assert "longer than" in capsys.readouterr().err
 
 
 def test_load_config_file_gives_unknown_correction_settings_their_defaults(

@@ -35,6 +35,36 @@ back.
 
 
 @dataclass(frozen=True)
+class ExchangeCost:
+    """What an exchange costs, per step: requests per page, answer length and text copies."""
+
+    requests_per_page: dict[StepName, float] = field(default_factory=dict)
+    """Requests one page costs per step."""
+    answer_tokens_per_100_words: dict[StepName, int] = field(default_factory=dict)
+    """Answer tokens per 100 words of student text, per step."""
+    text_copies: dict[StepName, int] = field(default_factory=dict)
+    """How many times one request of a step carries the text.
+
+    Step ① sends the text once, step ② sends the student's text and the corrected one (two
+    copies, so it reads twice as much), step ③ sends the corrected text once.  The reading time
+    of a page is the sum over the steps that run.
+    """
+
+
+DEFAULT_EXCHANGE_COST = ExchangeCost(
+    requests_per_page={"correct": 1.0, "explain": 1.0, "unclear": 1.0},
+    answer_tokens_per_100_words={"correct": 141, "explain": 60, "unclear": 20},
+    text_copies={"correct": 1, "explain": 2, "unclear": 1},
+)
+"""What exchange ``T`` costs, until a measurement on the official test set replaces it.
+
+Provisional figures from the proof-of-concept sweep: one request per step and page, and the
+answer lengths of the three steps relative to the text.  Step ① is a plain rewrite, so its
+figure is the one measured for text mode (``TEXT_MODE_ANSWER``).
+"""
+
+
+@dataclass(frozen=True)
 class StepReport:
     """One request of one step: what it cost, how it ended, and what it counted."""
 

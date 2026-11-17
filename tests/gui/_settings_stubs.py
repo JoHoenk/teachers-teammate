@@ -106,29 +106,6 @@ class DummyAppService(RecommendationServiceStub):
     def start_ollama(self) -> None:
         pass
 
-    def list_correction_prompt_presets(self) -> dict[str, str]:
-        from teachers_teammate.infrastructure.correction import PRESET_PROMPTS  # noqa: PLC0415
-
-        return dict(PRESET_PROMPTS)
-
-    def default_correction_prompt(self) -> str:
-        from teachers_teammate.infrastructure.correction import ENGLISH_PROMPT  # noqa: PLC0415
-
-        return ENGLISH_PROMPT
-
-    def default_answer_formats(self) -> tuple[str, str]:
-        from teachers_teammate.domain.answer_format import (  # noqa: PLC0415
-            REVIEW_FORMAT,
-            TEXT_FORMAT,
-        )
-
-        return REVIEW_FORMAT, TEXT_FORMAT
-
-    def correction_notation_hint(self) -> str:
-        from teachers_teammate.domain.notation import with_notation_hint  # noqa: PLC0415
-
-        return with_notation_hint("", "markdown", task="correction").strip()
-
     def evaluation_fixed_instructions(self, text_format: TextFormat = "plain") -> str:
         _ = text_format
         return ""

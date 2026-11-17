@@ -7,20 +7,29 @@ between the two, so the stage builder, ``ChunkingCorrector`` (which splits a lon
 :meth:`ExchangeCorrector.max_text_chars`) and the evaluation tools do not know there is a new
 shape underneath.  The review it returns is the sentence-based one the readers still use
 (:func:`~teachers_teammate.domain.proofreading.legacy_review.sentence_review`).
+
+The three functions beside it answer what a run sends without sending anything:
+:func:`exchange_identity` is the cache-key part, :func:`exchange_prompts` is what the dialog and
+*What is sent* show, and :func:`exchange_cost` is what the time estimate is worked out from.
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import dataclass
+import hashlib
 from typing import TYPE_CHECKING
 
 from ...domain.correction_policy import DEFAULT_LEVEL
+from ...domain.correction_prompts import PROMPT_VERSION
 from ...domain.correction_review import CorrectionOutcome
 from ...domain.model_catalog import DEFAULT_REQUEST_PROFILE, RequestProfile
 from ...domain.proofreading.legacy_review import sentence_review
+from ...domain.proofreading.result import ExchangeKind, StepName
 from ...interfaces import Corrector
 from ..ocr_formats import plain_text_of
-from .exchanges import Exchange, ProofreadContext, build_exchange
+from .exchanges import Exchange, ExchangeCost, ProofreadContext, build_exchange
+from .exchanges.t import EXPLAIN_FAILED, UNCLEAR_FAILED
 from .port import ModelPort, OllamaPort
 
 if TYPE_CHECKING:
@@ -30,6 +39,23 @@ if TYPE_CHECKING:
 _FAILED = "Proofreading failed; keeping the original text."
 """Shown when an exchange failed the file without saying why."""
 
+_PARTIAL_WARNINGS: frozenset[str] = frozenset({EXPLAIN_FAILED, UNCLEAR_FAILED})
+"""The warnings of the steps whose failure costs part of the answer instead of the file."""
+
+
+@dataclass(frozen=True)
+class ProofreadingSettings:
+    """What the teacher set for this run, besides the model and the connection."""
+
+    level: str = DEFAULT_LEVEL
+    """The CEFR level of the student."""
+    explanation_language: str = ""
+    """The language of the explanations; empty means the language of the text."""
+    teacher_notes: str = ""
+    """What the teacher wants the model to know about this class or this text."""
+    corrections_only: bool = False
+    """Stop after step ①: the corrected text alone, without explanations."""
+
 
 class ExchangeCorrector(Corrector):
     """A :class:`~teachers_teammate.interfaces.Corrector` that proofreads through an exchange."""
@@ -38,15 +64,11 @@ class ExchangeCorrector(Corrector):
         self,
         exchange: Exchange,
         *,
-        level: str = DEFAULT_LEVEL,
-        explanation_language: str = "",
-        teacher_notes: str = "",
+        settings: ProofreadingSettings | None = None,
         profile: RequestProfile = DEFAULT_REQUEST_PROFILE,
     ) -> None:
         self._exchange = exchange
-        self._level = level
-        self._explanation_language = explanation_language
-        self._teacher_notes = teacher_notes
+        self._settings = settings or ProofreadingSettings()
         self._profile = profile
 
     @property
@@ -58,11 +80,12 @@ class ExchangeCorrector(Corrector):
         """Return what the exchange needs besides the text."""
         return ProofreadContext(
             language=language,
-            explanation_language=self._explanation_language,
-            level=self._level,
-            teacher_notes=self._teacher_notes,
+            explanation_language=self._settings.explanation_language,
+            level=self._settings.level,
+            teacher_notes=self._settings.teacher_notes,
             text_format=text_format,
             profile=self._profile,
+            corrections_only=self._settings.corrections_only,
         )
 
     def correct(
@@ -83,14 +106,99 @@ class ExchangeCorrector(Corrector):
             if result.review is not None
             else None
         )
-        return CorrectionOutcome(text=result.text, review=review, warning=warning)
+        return CorrectionOutcome(
+            text=result.text,
+            review=review,
+            warning=warning,
+            fell_back=_partial(result.warnings),
+        )
 
     def max_text_chars(self, language: str, *, text_format: TextFormat = "plain") -> int | None:
         """Return how many characters one request of the exchange can carry."""
         return self._exchange.max_text_chars(self._context(language, text_format))
 
 
-def build_exchange_corrector(  # noqa: PLR0913  # a request is many independent facts, keyword-only
+def _partial(warnings: tuple[str, ...]) -> bool:
+    """Whether step ② or ③ ended without its answer.
+
+    The answer then lacks what that step was asked for, so it is shorter than a complete one:
+    the speed sample of such a file would undercount the answer length and is dropped.  The
+    exchange's own warnings say so; a failed request that a retry recovered does not count.
+    """
+    return any(warning in _PARTIAL_WARNINGS for warning in warnings)
+
+
+class _NullPort:
+    """A port that sends nothing: for asking an exchange what it asks and what it costs."""
+
+    def ask_text(self, _req: object) -> object:
+        """Refuse: nothing is sent to ask an exchange about itself."""
+        raise RuntimeError("this port sends no request")
+
+    def ask_structured(self, _req: object) -> object:
+        """Refuse: nothing is sent to ask an exchange about itself."""
+        raise RuntimeError("this port sends no request")
+
+    def window(self) -> None:
+        """Return ``None``: an exchange asked about itself has no window to check."""
+        return None
+
+
+def _exchange_of(kind: ExchangeKind) -> Exchange:
+    """Return the exchange *kind* without a connection, for its prompts and its cost."""
+    return build_exchange(kind, _NullPort())  # ty: ignore[invalid-argument-type]
+
+
+def exchange_prompts(
+    profile: RequestProfile, *, corrections_only: bool = False
+) -> tuple[tuple[StepName, str], ...]:
+    """Return the system prompts of the steps that run, in step order.
+
+    What the *Options…* dialog shows read-only and what *What is sent* lists, taken from the
+    exchange itself so neither can drift from the requests.
+    """
+    return _exchange_of(profile.exchange).prompts(profile, corrections_only=corrections_only)
+
+
+def exchange_identity(profile: RequestProfile, *, corrections_only: bool) -> str:
+    """Return what names this exchange's requests in a cache key.
+
+    The exchange, the version of its fixed prompts, a hash of the system prompts of the steps
+    that run (so an edited prompt invalidates the stored results), and the model's request
+    profile (which carries every temperature, the thinking and the sampling values).
+    """
+    prompts = exchange_prompts(profile, corrections_only=corrections_only)
+    digest = hashlib.sha256("\n".join(text for _step, text in prompts).encode("utf-8")).hexdigest()
+    return "|".join(
+        [profile.exchange, f"prompts-{PROMPT_VERSION}", digest[:12], profile.fingerprint()]
+    )
+
+
+def exchange_cost(kind: ExchangeKind) -> ExchangeCost:
+    """Return what the exchange *kind* costs per page and per 100 words."""
+    return _exchange_of(kind).cost_model()
+
+
+def build_exchange_corrector(
+    port: ModelPort,
+    *,
+    profile: RequestProfile = DEFAULT_REQUEST_PROFILE,
+    settings: ProofreadingSettings | None = None,
+    cut_off_tries: int = 1,
+    clause_check: Callable[[str, str], bool] | None = None,
+) -> ExchangeCorrector:
+    """Return the corrector of the exchange *profile* names, on *port*.
+
+    The port is the connection: an :class:`~.port.OllamaPort` for a local server, a
+    :class:`~.port.LangChainPort` for an online provider, or a recording one in a test.
+    """
+    exchange = build_exchange(
+        profile.exchange, port, cut_off_tries=cut_off_tries, clause_check=clause_check
+    )
+    return ExchangeCorrector(exchange, settings=settings, profile=profile)
+
+
+def ollama_exchange_corrector(  # noqa: PLR0913  # a request is many independent facts, keyword-only
     client: OllamaClient,
     model: str,
     *,
@@ -100,6 +208,7 @@ def build_exchange_corrector(  # noqa: PLR0913  # a request is many independent 
     level: str = DEFAULT_LEVEL,
     explanation_language: str = "",
     teacher_notes: str = "",
+    corrections_only: bool = False,
     cut_off_tries: int = 1,
     clause_check: Callable[[str, str], bool] | None = None,
     port: ModelPort | None = None,
@@ -110,13 +219,15 @@ def build_exchange_corrector(  # noqa: PLR0913  # a request is many independent 
     its requests (the evaluation tools') records the exchange's too.  A test passes *port*.
     """
     the_port = port or OllamaPort(client, model, timeout=timeout, num_ctx=num_ctx)
-    exchange = build_exchange(
-        profile.exchange, the_port, cut_off_tries=cut_off_tries, clause_check=clause_check
-    )
-    return ExchangeCorrector(
-        exchange,
-        level=level,
-        explanation_language=explanation_language,
-        teacher_notes=teacher_notes,
+    return build_exchange_corrector(
+        the_port,
         profile=profile,
+        settings=ProofreadingSettings(
+            level=level,
+            explanation_language=explanation_language,
+            teacher_notes=teacher_notes,
+            corrections_only=corrections_only,
+        ),
+        cut_off_tries=cut_off_tries,
+        clause_check=clause_check,
     )

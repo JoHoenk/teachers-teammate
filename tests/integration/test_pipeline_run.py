@@ -30,6 +30,7 @@ from teachers_teammate.infrastructure.pipeline import (
     collect_files,
 )
 from teachers_teammate.infrastructure.reporting import ProgressCallbacks
+from teachers_teammate.infrastructure.stage_builder import StageBuilder
 from teachers_teammate.infrastructure.state_repository import StateRepository
 from teachers_teammate.infrastructure.storage_root import resolve_artifact_dir
 from teachers_teammate.infrastructure.workflow.preprocess_service import PreparedInput
@@ -696,10 +697,7 @@ def test_pipeline_run_with_correction_persists_correction_state(tmp_path: Path) 
             return_value=mock_ocr,
         ),
         patch("teachers_teammate.infrastructure.stage_builder.build_llm", return_value=MagicMock()),
-        patch(
-            "teachers_teammate.infrastructure.stage_builder.LangChainCorrector",
-            return_value=mock_corrector,
-        ),
+        patch.object(StageBuilder, "build_corrector", return_value=mock_corrector),
     ):
         rc = OCRPipeline(cfg).run().exit_code
 
@@ -1549,10 +1547,7 @@ def test_pipeline_ocr_and_correction_not_rerun_when_only_evaluation_config_chang
             return_value=first_ocr,
         ),
         patch("teachers_teammate.infrastructure.stage_builder.build_llm", return_value=MagicMock()),
-        patch(
-            "teachers_teammate.infrastructure.stage_builder.LangChainCorrector",
-            return_value=first_corrector,
-        ),
+        patch.object(StageBuilder, "build_corrector", return_value=first_corrector),
         patch(
             "teachers_teammate.infrastructure.stage_builder.LangChainEvaluator",
             return_value=first_evaluator,
@@ -1576,10 +1571,7 @@ def test_pipeline_ocr_and_correction_not_rerun_when_only_evaluation_config_chang
             return_value=second_ocr,
         ),
         patch("teachers_teammate.infrastructure.stage_builder.build_llm", return_value=MagicMock()),
-        patch(
-            "teachers_teammate.infrastructure.stage_builder.LangChainCorrector",
-            return_value=second_corrector,
-        ),
+        patch.object(StageBuilder, "build_corrector", return_value=second_corrector),
         patch(
             "teachers_teammate.infrastructure.stage_builder.LangChainEvaluator",
             return_value=second_evaluator,
@@ -1630,10 +1622,7 @@ def test_pipeline_run_with_different_providers_per_stage_produces_full_state(
             return_value=mock_ocr,
         ),
         patch("teachers_teammate.infrastructure.stage_builder.build_llm", return_value=MagicMock()),
-        patch(
-            "teachers_teammate.infrastructure.stage_builder.LangChainCorrector",
-            return_value=mock_corrector,
-        ),
+        patch.object(StageBuilder, "build_corrector", return_value=mock_corrector),
         patch(
             "teachers_teammate.infrastructure.stage_builder.LangChainEvaluator",
             return_value=mock_evaluator,
@@ -1721,10 +1710,7 @@ def test_pipeline_tells_corrector_the_text_is_markdown_and_formats_the_docx(
             "teachers_teammate.infrastructure.stage_builder.PpOcrProcessor",
             return_value=mock_proc,
         ),
-        patch(
-            "teachers_teammate.infrastructure.stage_builder.LangChainCorrector",
-            return_value=mock_corrector,
-        ),
+        patch.object(StageBuilder, "build_corrector", return_value=mock_corrector),
         patch("teachers_teammate.infrastructure.stage_builder.build_llm", return_value=MagicMock()),
     ):
         rc = OCRPipeline(cfg).run().exit_code

@@ -1,4 +1,4 @@
-"""Parity tests for the correction policy presets and the DOCX review labels.
+"""Parity tests for the one-request policy presets and the DOCX review labels.
 
 Every supported language must carry the same policy: one ``{level}`` placeholder, no
 left-over output-format instructions (they live in the answer format, not the preset), and a
@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from teachers_teammate.infrastructure.correction import PRESET_PROMPTS
+from tools.model_eval.one_request.presets import PRESET_PROMPTS
 from teachers_teammate.infrastructure.docx_builder import _LABELS, labels_for
 
 _FORMAT_PHRASES = (
@@ -164,7 +164,7 @@ def test_saved_legacy_preset_text_is_recognised() -> None:
     When   the migration checks it
     Then   the text is recognised as a built-in preset copy and reset to ""
     """
-    from teachers_teammate.infrastructure.correction import (  # noqa: PLC0415
+    from tools.model_eval.one_request.presets import (  # noqa: PLC0415
         LEGACY_PRESET_PROMPTS,
         migrate_saved_prompt,
     )
@@ -184,7 +184,7 @@ def test_saved_custom_prompt_is_kept() -> None:
     When   the migration checks it
     Then   the text is kept as a custom prompt
     """
-    from teachers_teammate.infrastructure.correction import (  # noqa: PLC0415
+    from tools.model_eval.one_request.presets import (  # noqa: PLC0415
         migrate_saved_prompt,
     )
 
@@ -217,7 +217,7 @@ def test_saved_copy_of_a_superseded_preset_is_reset() -> None:
     When   the migration checks it
     Then   it counts as a preset copy and is reset to "", while a real edit is kept
     """
-    from teachers_teammate.domain.correction_prompts import (  # noqa: PLC0415
+    from tools.model_eval.one_request.presets import (  # noqa: PLC0415
         SUPERSEDED_PRESET_PROMPTS,
         migrate_saved_prompt,
     )
@@ -233,7 +233,7 @@ def test_saved_copy_of_a_superseded_preset_is_reset() -> None:
 
 
 def _schema_field_names() -> set[str]:
-    from teachers_teammate.infrastructure.correction_schema import (  # noqa: PLC0415
+    from tools.model_eval.one_request.correction_schema import (  # noqa: PLC0415
         CorrectionAnswer,
     )
 
@@ -259,7 +259,7 @@ def test_review_format_names_every_field_of_the_schema() -> None:
     Then   it names every field of the schema (Ollama only constrains the keys, so the format
            is where the model learns what they mean) and REVIEW_FIELDS lists exactly those
     """
-    from teachers_teammate.domain.answer_format import (  # noqa: PLC0415
+    from tools.model_eval.one_request.answer_format import (  # noqa: PLC0415
         REVIEW_FIELDS,
         REVIEW_FORMAT,
     )
@@ -277,7 +277,7 @@ def test_answer_formats_name_no_language_and_have_no_placeholders() -> None:
     Then   they contain no language name and no braces: the languages travel in the message,
            so the text is plain text a teacher can edit
     """
-    from teachers_teammate.domain.answer_format import (  # noqa: PLC0415
+    from tools.model_eval.one_request.answer_format import (  # noqa: PLC0415
         REVIEW_FORMAT,
         TEXT_FORMAT,
     )
@@ -294,7 +294,7 @@ def test_custom_answer_format_is_used_and_blank_means_built_in() -> None:
     When   the format of a mode is resolved
     Then   the custom text wins and blank text falls back to the built-in format
     """
-    from teachers_teammate.domain.answer_format import (  # noqa: PLC0415
+    from tools.model_eval.one_request.answer_format import (  # noqa: PLC0415
         REVIEW_FORMAT,
         TEXT_FORMAT,
         resolve_format,
@@ -311,7 +311,7 @@ def test_missing_fields_reports_what_an_edited_format_dropped() -> None:
     When   it is checked
     Then   exactly those fields are reported, and an empty format (= built-in) reports none
     """
-    from teachers_teammate.domain.answer_format import (  # noqa: PLC0415
+    from tools.model_eval.one_request.answer_format import (  # noqa: PLC0415
         REVIEW_FORMAT,
         missing_fields,
     )
@@ -329,7 +329,7 @@ def test_saved_answer_formats_of_another_version_are_dropped() -> None:
     Then   the old edits are dropped with a reset flag, the current edits are kept, and a saved
            copy of a built-in text is stored as ""
     """
-    from teachers_teammate.domain.answer_format import (  # noqa: PLC0415
+    from tools.model_eval.one_request.answer_format import (  # noqa: PLC0415
         ANSWER_FORMAT_VERSION,
         REVIEW_FORMAT,
         migrate_saved_formats,
@@ -339,20 +339,3 @@ def test_saved_answer_formats_of_another_version_are_dropped() -> None:
     assert migrate_saved_formats("", "", ANSWER_FORMAT_VERSION - 1) == ("", "", False)
     assert migrate_saved_formats("mine", "", ANSWER_FORMAT_VERSION) == ("mine", "", False)
     assert migrate_saved_formats(REVIEW_FORMAT, "", ANSWER_FORMAT_VERSION) == ("", "", False)
-
-
-def test_config_file_with_an_outdated_answer_format_falls_back(tmp_path, capsys) -> None:
-    """
-    Given  a config file with an answer format written for an older version
-    When   the file is loaded
-    Then   the edit is dropped and a warning names it
-    """
-    from teachers_teammate.config import load_config_file  # noqa: PLC0415
-
-    path = tmp_path / "ocr.toml"
-    path.write_text('answer_format_review = "mine"\nanswer_format_version = 0\n', encoding="utf-8")
-
-    loaded = load_config_file(path)
-
-    assert loaded["answer_format_review"] == ""
-    assert "answer format" in capsys.readouterr().err

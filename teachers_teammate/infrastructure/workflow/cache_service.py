@@ -10,12 +10,19 @@ from pathlib import Path
 from ...config import Config, OcrConfig
 from ...domain.context_budget import RunWindows, window_from_setting
 from ...domain.correction_prompts import prompt_identity
-from ...domain.data_location import ENGINE_PPOCR
+from ...domain.data_location import (
+    ENGINE_OLLAMA,
+    ENGINE_PPOCR,
+    STAGE_CORRECTION,
+    STAGE_EVALUATION,
+    SentRecord,
+)
 from ...domain.local_models import reader_fingerprint
 from ..correction import instruction_parts
 from ..correction_schema import CONTRACT_VERSION
 from ..input_provider_factory import InputOptions, input_settings_fingerprint
 from ..ocr_processor import get_ocr_prompt
+from ..ollama_utils import ollama_host
 from ..onnx.store import ModelStore
 from ..preprocessing.identity import auto_identity
 from ..preview_image_store import PreviewImageStore
@@ -92,12 +99,17 @@ def compute_ocr_config_hash(
     )
 
 
-def _anonymization_fingerprint(config: Config) -> tuple[str, ...]:
-    """Return the hash parts for anonymisation: correction and evaluation both see its text.
+def anonymization_fingerprint(config: Config) -> tuple[str, ...]:
+    """Return the hash parts of the anonymizer settings: what a text is made with.
 
-    Empty when off, so results cached before the flag was hashed stay valid.  The resolved
-    models and patterns are included: they decide which spans become placeholders, so a
-    changed rule sends a different text and an older proofread of it must not be reused.
+    Empty when off.  The resolved models and patterns are included: they decide which spans
+    become placeholders, so two texts made with different rules are different texts.
+
+    Deliberately *not* part of a stage hash: a stored result is valid for the text it was
+    made from, not for the setting that produced that text.  Hashing the setting would send
+    every text again whenever a teacher turns names-hiding on or improves a pattern — and
+    what was already sent cannot be unsent.  The window compares the settings instead
+    (:func:`privacy_fingerprint`).
     """
     if not config.anonymization_enabled:
         return ()
@@ -117,6 +129,38 @@ def _anonymization_fingerprint(config: Config) -> tuple[str, ...]:
         resolved.primary_model or "",
         resolved.secondary_model or "",
         *(f"{tag}={pattern}" for tag, pattern in resolved.patterns),
+    )
+
+
+def privacy_fingerprint(config: Config) -> str:
+    """Return the hash of the anonymizer settings a text is made with.
+
+    Compared with the fingerprint a stored result recorded, so the window can say that a
+    result was made with other privacy settings.  Computed from the settings alone (no
+    spaCy), so the comparison needs no run.
+    """
+    return compute_config_hash(*anonymization_fingerprint(config))
+
+
+def sent_record(config: Config, stage: str, *, names_hidden: int = 0) -> SentRecord:
+    """Return how a result of *stage* is sent with *config*.
+
+    *names_hidden* is the number of placeholders the text was sent with (0 when names went
+    as written).  The endpoint is what decides the location besides provider and model: the
+    Ollama host.  A provider whose region depends on a setting (a custom base URL, a regional
+    endpoint) adds that setting here; none does today, so an online provider has no endpoint.
+    """
+    if stage == STAGE_EVALUATION:
+        provider, model = config.evaluate_provider, config.effective_evaluate_model
+    else:
+        provider, model = config.correction_provider, config.effective_correction_model
+    return SentRecord(
+        provider=provider,
+        model=model,
+        endpoint=ollama_host(config.ollama_url) if provider == ENGINE_OLLAMA else "",
+        names_hidden=names_hidden,
+        hiding_on=config.anonymization_enabled,
+        privacy=privacy_fingerprint(config),
     )
 
 
@@ -204,7 +248,6 @@ def compute_correction_config_hash(config: Config, windows: RunWindows | None = 
         # *windows* is the window the run resolved from the settings and the computer; without
         # it the settings alone decide, which is the base step for "auto".
         *_window_fingerprint(config, windows),
-        *_anonymization_fingerprint(config),
     )
 
 
@@ -221,7 +264,6 @@ def compute_eval_config_hash(config: Config, windows: RunWindows | None = None) 
         format(config.evaluate_temperature, "g"),
         str(config.evaluate_think),
         *_evaluation_window_fingerprint(config, windows),
-        *_anonymization_fingerprint(config),
     )
 
 
@@ -408,8 +450,16 @@ class CacheReconciliationService:
         correction_text: str,
         correction_review: dict | None = None,
         correction_warning: str = "",
+        sent_text: str = "",
+        sent_map: dict[str, str] | None = None,
     ) -> CacheContext:
-        """Persist correction result and return updated context."""
+        """Persist correction result and return updated context.
+
+        *sent_text* and *sent_map* are the text the proofreading was made from and its
+        placeholder map — only when names were hidden.  With hiding off both stay empty: the
+        text that was sent is the extracted text itself, and an edit of it clears the result,
+        so the two cannot drift apart.
+        """
         new_state = self._repo.record_correction_result(
             file,
             ctx.state,
@@ -418,6 +468,9 @@ class CacheReconciliationService:
             correction_config_hash=ctx.correction_config_hash,
             correction_review=correction_review,
             correction_warning=correction_warning,
+            sent_text=sent_text,
+            sent_map=sent_map,
+            sent=sent_record(self._config, STAGE_CORRECTION, names_hidden=len(sent_map or {})),
         )
         return dataclasses.replace(ctx, state=new_state)
 
@@ -427,13 +480,20 @@ class CacheReconciliationService:
         ctx: CacheContext,
         *,
         evaluation_text: str,
+        names_hidden: int = 0,
     ) -> CacheContext:
-        """Persist evaluation result and return updated context."""
+        """Persist evaluation result and return updated context.
+
+        *names_hidden* is the number of placeholders the reviewed text was sent with.  The
+        text itself is not stored: the content review is being redesigned, and what it sends
+        is stored with that design.
+        """
         new_state = self._repo.record_evaluation_result(
             file,
             ctx.state,
             evaluation_text=evaluation_text,
             evaluate_prompt=self._config.evaluate_prompt,
             eval_config_hash=ctx.eval_config_hash,
+            sent=sent_record(self._config, STAGE_EVALUATION, names_hidden=names_hidden),
         )
         return dataclasses.replace(ctx, state=new_state)

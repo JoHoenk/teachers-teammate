@@ -324,8 +324,10 @@ DEFAULT_CACHE_CAPACITY = 256
 class AnonymizationResultCache:
     """Remembers anonymized texts so spaCy runs once per text and settings.
 
-    Kept in memory only: the anonymized text is the very data the user wants hidden, so it
-    must not outlive the process.  Every access takes the cache's own lock: a run, a preview
+    Kept in memory only, and it is only a speed-up: it is not where a result's sent text
+    lives.  The text a proofreading was really made from (and its placeholder map) is stored
+    with that result (``DocumentState``, see ``SentRecord``), so a lost entry here costs one
+    more spaCy pass, never a different answer.  Every access takes the cache's own lock: a run, a preview
     and a dialog share one cache, and a lookup (which reorders the entries) must not meet an
     eviction half-way.  The spaCy pass itself is serialized separately by the callers.
     """

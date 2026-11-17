@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+from PySide6.QtWidgets import QLabel
 
 from teachers_teammate.application.sent_text import SentText, SentTexts, describe_sent_texts
 from teachers_teammate.domain.correction_review import CorrectionReview, UnclearNote
@@ -15,6 +16,8 @@ from teachers_teammate.domain.data_location import (
     DataLocation,
     DataRegion,
     PrivacyLevel,
+    SentRecord,
+    SentStatus,
     StageLocation,
 )
 from teachers_teammate.gui._data_flow_summary import level_text, stage_tooltip
@@ -38,6 +41,7 @@ def _report(
     correction_text: str = "",
     anonymized: str = "",
     placeholders: tuple[str, ...] = (),
+    stored: dict[str, SentStatus] | None = None,
 ) -> SentTexts:
     """Build a report from a flow, without spaCy: the text is anonymized the way we say."""
     flow = DataFlow(stages=stages)
@@ -52,6 +56,7 @@ def _report(
         preview_extracted=bool(anonymized),
         correction_prompt="Fix the spelling.",
         evaluation_prompt="Review the content.",
+        stored=stored,
     )
 
 
@@ -303,6 +308,151 @@ def test_results_table_keeps_its_own_message_below_the_stage_line(qtbot) -> None
     tooltip = correction.toolTip()
     assert tooltip.startswith("Sent to Mistral (EU), names hidden")
     assert "unclear" in tooltip.lower()
+
+
+# ── How a stored result was sent ────────────────────────────────────────────
+
+
+def _sent_status(
+    provider: str = "mistral_eu", names_hidden: int = 2, other: bool = False
+) -> SentStatus:
+    """Return a stored record of a result sent to *provider* with *names_hidden* names."""
+    return SentStatus(
+        SentRecord(provider=provider, model="m", names_hidden=names_hidden, privacy="p"),
+        other_privacy_settings=other,
+    )
+
+
+@pytest.mark.gui
+def test_the_tooltip_says_how_the_stored_result_was_sent(qtbot) -> None:
+    """
+    Given  a proofread file whose result went to an online service with two names hidden,
+           made with other privacy settings than today's
+    When   set_sent() is called and the stage tooltip is set
+    Then   the cell shows the stage line, how the result was sent and what to do about it
+    """
+    table = ResultsTable()
+    qtbot.addWidget(table)
+    table.set_queue(["a.pdf"])
+    table.mark_cached("a.pdf", "", "", "", "", ocr_done=True, correction_done=True)
+    table.set_stage_tooltips({"correction": "Sent to Mistral (EU), names hidden"})
+
+    table.set_sent("a.pdf", {STAGE_CORRECTION: _sent_status(other=True)})
+
+    correction = table.item(0, ResultsTable._COL_CORRECTION)
+    assert correction is not None
+    assert correction.toolTip() == (
+        "Sent to Mistral (EU), names hidden\n"
+        "\n"
+        "Sent to Mistral (EU) with 2 names hidden\n"
+        "made with other privacy settings — proofread again to send with the current ones"
+    )
+
+
+@pytest.mark.gui
+def test_the_tooltip_of_a_result_made_here_says_so(qtbot) -> None:
+    """
+    Given  a proofread file whose result was made on this computer
+    When   set_sent() is called
+    Then   the cell says it was made here, and nothing about sending
+    """
+    table = ResultsTable()
+    qtbot.addWidget(table)
+    table.set_queue(["a.pdf"])
+    table.mark_cached("a.pdf", "", "", "", "", ocr_done=True, correction_done=True)
+
+    table.set_sent("a.pdf", {STAGE_CORRECTION: _sent_status(provider="ollama")})
+
+    correction = table.item(0, ResultsTable._COL_CORRECTION)
+    assert correction is not None
+    assert correction.toolTip() == "Made on this computer (Ollama)"
+
+
+@pytest.mark.gui
+def test_a_stage_without_a_record_loses_its_sent_line(qtbot) -> None:
+    """
+    Given  a cell that shows how its result was sent
+    When   set_sent() is called without a record for that stage (a re-run or an edit)
+    Then   the line is gone and the stage line stays
+    """
+    table = ResultsTable()
+    qtbot.addWidget(table)
+    table.set_queue(["a.pdf"])
+    table.mark_cached("a.pdf", "", "", "", "", ocr_done=True, correction_done=True)
+    table.set_stage_tooltips({"correction": "Sent to Mistral (EU), names hidden"})
+    table.set_sent("a.pdf", {STAGE_CORRECTION: _sent_status()})
+
+    table.set_sent("a.pdf", {})
+
+    correction = table.item(0, ResultsTable._COL_CORRECTION)
+    assert correction is not None
+    assert correction.toolTip() == "Sent to Mistral (EU), names hidden"
+
+
+@pytest.mark.gui
+def test_the_tooltip_tells_hiding_that_found_nothing_from_hiding_that_was_off(qtbot) -> None:
+    """
+    Given  two results sent with no placeholders: one with hiding on, one with hiding off
+    When   set_sent() is called for each
+    Then   the first says no names were found, the second that names went as written
+    """
+    table = ResultsTable()
+    qtbot.addWidget(table)
+    table.set_queue(["a.pdf", "b.pdf"])
+    for name in ("a.pdf", "b.pdf"):
+        table.mark_cached(name, "", "", "", "", ocr_done=True, correction_done=True)
+    searched = SentStatus(SentRecord(provider="mistral_eu", model="m", hiding_on=True, privacy="p"))
+
+    table.set_sent("a.pdf", {STAGE_CORRECTION: searched})
+    table.set_sent("b.pdf", {STAGE_CORRECTION: _sent_status(names_hidden=0)})
+
+    first = table.item(0, ResultsTable._COL_CORRECTION)
+    second = table.item(1, ResultsTable._COL_CORRECTION)
+    assert first is not None
+    assert second is not None
+    assert first.toolTip() == "Sent to Mistral (EU) with no names found to hide"
+    assert second.toolTip() == "Sent to Mistral (EU) with names as written"
+
+
+@pytest.mark.gui
+def test_the_dialog_lists_how_each_stored_result_was_sent(qtbot) -> None:
+    """
+    Given  a report whose proofreading and review are stored, one with names hidden
+    When   the dialog is opened
+    Then   the "What is sent" tab starts with one line per stored result
+    """
+    report = _report(
+        DataFlowStage(STAGE_CORRECTION, _EU, "text", personal_info_hidden=True),
+        stored={
+            STAGE_CORRECTION: _sent_status(),
+            STAGE_EVALUATION: _sent_status(names_hidden=0),
+        },
+    )
+    dialog = WhatIsSentDialog(report)
+    qtbot.addWidget(dialog)
+
+    assert dialog.stored_lines() == [
+        "The stored proofreading was sent to Mistral (EU) with 2 names hidden.",
+        "The stored content review was sent to Mistral (EU) with names as written.",
+    ]
+    block = dialog.findChild(QLabel, "stored_results")
+    assert block is not None
+    assert block.text() == "\n".join(dialog.stored_lines())
+
+
+@pytest.mark.gui
+def test_the_dialog_says_nothing_about_stored_results_when_none_is_recorded(qtbot) -> None:
+    """
+    Given  a report for a file that has no stored result yet
+    When   the dialog is opened
+    Then   there is no stored-results block, so the tab only says what the next run sends
+    """
+    report = _report(DataFlowStage(STAGE_CORRECTION, _EU, "text"))
+    dialog = WhatIsSentDialog(report)
+    qtbot.addWidget(dialog)
+
+    assert dialog.stored_lines() == []
+    assert dialog.findChild(QLabel, "stored_results") is None
 
 
 # ── The context menu entry ──────────────────────────────────────────────────

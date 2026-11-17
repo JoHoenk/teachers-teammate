@@ -25,6 +25,7 @@ from teachers_teammate.application.service import (
     RequirementIssue,
     RunPreflight,
 )
+from teachers_teammate.domain.data_location import STAGE_CORRECTION
 from teachers_teammate.domain.model_listing import ModelListing
 from teachers_teammate.domain.ollama_discovery import OllamaState
 from teachers_teammate.domain.run_summary import RunSummary
@@ -790,6 +791,130 @@ def test_manual_ocr_edit_survives_reconcile(tmp_path: Path) -> None:
 
     assert ctx.state.ocr_done is True
     assert ctx.state.raw_text == "MANUAL"
+
+
+# ── What was sent ─────────────────────────────────────────────────────────
+
+
+@pytest.mark.unit
+def test_a_privacy_setting_change_keeps_the_proofreading_and_says_so(tmp_path: Path) -> None:
+    """
+    Given  a document proofread with personal info removal off
+    When   the setting is switched on and the views are reconciled
+    Then   the proofreading stays done (so the next run asks no corrector and runs no
+           anonymizer) and the view says it was made with other privacy settings
+    """
+    from teachers_teammate.infrastructure.preview_image_store import (  # noqa: PLC0415
+        PreviewImageStore,
+    )
+    from teachers_teammate.infrastructure.state_repository import (  # noqa: PLC0415
+        StateRepository,
+    )
+    from teachers_teammate.infrastructure.workflow.cache_service import (  # noqa: PLC0415
+        CacheReconciliationService,
+        sent_record,
+    )
+
+    source = tmp_path / "note.txt"
+    source.write_text("hello")
+    off = make_config(tmp_path, correction_enabled=True, anonymization_enabled=False)
+    on = make_config(tmp_path, correction_enabled=True, anonymization_enabled=True)
+
+    repo = StateRepository(tmp_path / "state")
+    artifacts = PreviewImageStore(tmp_path / "art")
+    recon = CacheReconciliationService(state_repo=repo, artifact_store=artifacts, config=off)
+    ctx = recon.prepare(source)
+    ctx = recon.record_ocr(source, ctx, raw_text="hello", preview_img="", source_image="")
+    recon.record_correction(source, ctx, correction_text="hello corrected")
+
+    svc = _make_svc(state_repository_factory=lambda _config: repo)
+    view = svc.load_views_reconciled(on, [source])[str(source.resolve())]
+
+    assert view.correction_done is True
+    assert view.sent[STAGE_CORRECTION].record == sent_record(off, STAGE_CORRECTION)
+    assert view.sent[STAGE_CORRECTION].other_privacy_settings is True
+
+    # The next run with the new settings: nothing is invalidated, so the corrector is skipped
+    # and the anonymizer is never asked for a text that is not sent again.
+    after = CacheReconciliationService(
+        state_repo=repo, artifact_store=artifacts, config=on
+    ).prepare(source)
+
+    assert after.state.correction_done is True
+    assert after.state.correction_text == "hello corrected"
+    assert after.state.correction_sent == sent_record(off, STAGE_CORRECTION).to_dict()
+
+
+@pytest.mark.unit
+def test_a_stale_stage_shows_no_line_about_how_it_was_sent(tmp_path: Path) -> None:
+    """
+    Given  a document proofread with one model
+    When   the views are reconciled with another model, so the proofreading is stale
+    Then   the view says it is not done and carries no record of how it was sent, since the
+           result it describes will be made again
+    """
+    from teachers_teammate.infrastructure.preview_image_store import (  # noqa: PLC0415
+        PreviewImageStore,
+    )
+    from teachers_teammate.infrastructure.state_repository import (  # noqa: PLC0415
+        StateRepository,
+    )
+    from teachers_teammate.infrastructure.workflow.cache_service import (  # noqa: PLC0415
+        CacheReconciliationService,
+    )
+
+    source = tmp_path / "note.txt"
+    source.write_text("hello")
+    made = make_config(tmp_path, correction_enabled=True, correction_model="qwen3.5:9b")
+    now = make_config(tmp_path, correction_enabled=True, correction_model="qwen3.5:4b")
+    repo = StateRepository(tmp_path / "state")
+    recon = CacheReconciliationService(
+        state_repo=repo, artifact_store=PreviewImageStore(tmp_path / "art"), config=made
+    )
+    ctx = recon.prepare(source)
+    ctx = recon.record_ocr(source, ctx, raw_text="hello", preview_img="", source_image="")
+    recon.record_correction(source, ctx, correction_text="hello corrected")
+
+    svc = _make_svc(state_repository_factory=lambda _config: repo)
+    view = svc.load_views_reconciled(now, [source])[str(source.resolve())]
+
+    assert view.correction_done is False
+    assert view.sent == {}
+
+
+@pytest.mark.unit
+def test_views_without_a_stored_result_cost_no_privacy_fingerprint(tmp_path: Path) -> None:
+    """
+    Given  a document that has recognised text but no proofreading or review
+    When   its view is loaded
+    Then   the privacy fingerprint is never computed, because nothing is there to compare
+    """
+    from teachers_teammate.infrastructure.preview_image_store import (  # noqa: PLC0415
+        PreviewImageStore,
+    )
+    from teachers_teammate.infrastructure.state_repository import (  # noqa: PLC0415
+        StateRepository,
+    )
+    from teachers_teammate.infrastructure.workflow.cache_service import (  # noqa: PLC0415
+        CacheReconciliationService,
+    )
+
+    source = tmp_path / "note.txt"
+    source.write_text("hello")
+    cfg = make_config(tmp_path)
+    repo = StateRepository(tmp_path / "state")
+    recon = CacheReconciliationService(
+        state_repo=repo, artifact_store=PreviewImageStore(tmp_path / "art"), config=cfg
+    )
+    ctx = recon.prepare(source)
+    recon.record_ocr(source, ctx, raw_text="hello", preview_img="", source_image="")
+    svc = _make_svc(state_repository_factory=lambda _config: repo)
+
+    with patch(
+        "teachers_teammate.application.service.privacy_fingerprint", side_effect=AssertionError
+    ):
+        assert svc.load_view(cfg, source) is not None
+        assert svc.load_views(cfg, [source])
 
 
 # ── _invalidate_from_stage ValueError ────────────────────────────────────

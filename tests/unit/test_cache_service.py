@@ -17,11 +17,14 @@ from teachers_teammate.infrastructure.input_provider_factory import (
 from teachers_teammate.infrastructure.onnx.store import ModelStore
 from teachers_teammate.infrastructure.preprocessing.identity import AUTO_VERSION
 from teachers_teammate.infrastructure.state_repository import DocumentState, OcrResultRecord
+from teachers_teammate.domain.data_location import STAGE_CORRECTION, STAGE_EVALUATION
 from teachers_teammate.infrastructure.workflow.cache_service import (
     CacheContext,
     CacheReconciliationService,
     _preprocess_fingerprint,
     compute_ocr_config_hash,
+    privacy_fingerprint,
+    sent_record,
 )
 from tests.conftest import fake_page_models_store, make_config
 
@@ -188,16 +191,16 @@ def test_correction_config_hash_independent_of_ocr_engine(tmp_path: Path) -> Non
     assert svc_a._correction_config_hash() == svc_b._correction_config_hash()
 
 
-def test_correction_config_hash_changes_with_anonymization(tmp_path: Path) -> None:
+def test_correction_config_hash_ignores_anonymization(tmp_path: Path) -> None:
     """
     Given  two services differing only in whether personal info is removed
     When   _correction_config_hash() is called on each
-    Then   the hashes differ, so a proofreading made on real names is not reused for hidden ones
+    Then   the hashes are equal, so a privacy setting change does not send the text again
     """
     plain, _, _ = _make_svc(tmp_path, correction_enabled=True, anonymization_enabled=False)
     hidden, _, _ = _make_svc(tmp_path, correction_enabled=True, anonymization_enabled=True)
 
-    assert plain._correction_config_hash() != hidden._correction_config_hash()
+    assert plain._correction_config_hash() == hidden._correction_config_hash()
 
 
 @pytest.mark.parametrize(
@@ -265,16 +268,16 @@ def test_correction_config_hash_follows_the_built_in_prompt_text(
     assert svc._correction_config_hash() != before
 
 
-def test_eval_config_hash_changes_with_anonymization(tmp_path: Path) -> None:
+def test_eval_config_hash_ignores_anonymization(tmp_path: Path) -> None:
     """
     Given  two services differing only in whether personal info is removed
     When   _eval_config_hash() is called on each
-    Then   the hashes differ, so a review made on real names is not reused for hidden ones
+    Then   the hashes are equal, so a privacy setting change does not send the text again
     """
     plain, _, _ = _make_svc(tmp_path, evaluation_enabled=True, anonymization_enabled=False)
     hidden, _, _ = _make_svc(tmp_path, evaluation_enabled=True, anonymization_enabled=True)
 
-    assert plain._eval_config_hash() != hidden._eval_config_hash()
+    assert plain._eval_config_hash() == hidden._eval_config_hash()
 
 
 def test_ocr_config_hash_independent_of_correction_provider(tmp_path: Path) -> None:
@@ -617,6 +620,9 @@ def test_record_correction_delegates_to_repo(tmp_path: Path) -> None:
         correction_config_hash=ctx.correction_config_hash,
         correction_review=None,
         correction_warning="",
+        sent_text="",
+        sent_map=None,
+        sent=sent_record(svc._config, STAGE_CORRECTION),
     )
     assert result.state is new_state
     assert result.correction_config_hash == ctx.correction_config_hash
@@ -668,8 +674,108 @@ def test_record_evaluation_delegates_to_repo(tmp_path: Path) -> None:
         evaluation_text="quality: good",
         evaluate_prompt=DEFAULTS["evaluate_prompt"],
         eval_config_hash=ctx.eval_config_hash,
+        sent=sent_record(svc._config, STAGE_EVALUATION),
     )
     assert result.state is new_state
+
+
+# ── How a result was sent ─────────────────────────────────────────────────
+
+
+def test_sent_record_names_the_step_and_where_it_ran(tmp_path: Path) -> None:
+    """
+    Given  a config that proofreads on the local Ollama and reviews on an online provider
+    When   sent_record() is asked for each stage
+    Then   each names its own provider and model, and only the Ollama one carries a host
+    """
+    cfg = make_config(
+        tmp_path,
+        correction_enabled=True,
+        correction_provider="ollama",
+        correction_model="qwen3.5:9b",
+        evaluation_enabled=True,
+        evaluate_provider="mistral_eu",
+        evaluate_model="mistral-large-latest",
+    )
+
+    proofreading = sent_record(cfg, STAGE_CORRECTION, names_hidden=3)
+    review = sent_record(cfg, STAGE_EVALUATION)
+
+    assert proofreading.provider == "ollama"
+    assert proofreading.model == "qwen3.5:9b"
+    assert proofreading.endpoint == "127.0.0.1"
+    assert proofreading.names_hidden == 3
+    assert proofreading.hiding_on is False
+    assert review.provider == "mistral_eu"
+    assert review.model == "mistral-large-latest"
+    assert review.endpoint == ""
+    assert review.names_hidden == 0
+
+
+def test_sent_record_says_whether_hiding_was_on_when_no_name_was_found(tmp_path: Path) -> None:
+    """
+    Given  a config with personal info removal on, and a text in which nothing was hidden
+    When   sent_record() is asked for the proofreading
+    Then   the record says hiding was on although it counts no names
+    """
+    cfg = make_config(tmp_path, correction_enabled=True, anonymization_enabled=True)
+
+    record = sent_record(cfg, STAGE_CORRECTION, names_hidden=0)
+
+    assert record.hiding_on is True
+    assert record.names_hidden == 0
+
+
+def test_the_privacy_fingerprint_follows_the_anonymizer_settings(tmp_path: Path) -> None:
+    """
+    Given  two configs that differ only in whether personal info is removed
+    When   privacy_fingerprint() is asked for each
+    Then   the fingerprints differ, and the same settings give the same fingerprint
+    """
+    plain = make_config(tmp_path, anonymization_enabled=False)
+    hidden = make_config(tmp_path, anonymization_enabled=True)
+
+    assert privacy_fingerprint(plain) != privacy_fingerprint(hidden)
+    assert privacy_fingerprint(hidden) == privacy_fingerprint(hidden)
+
+
+def test_record_correction_forwards_the_text_that_was_sent(tmp_path: Path) -> None:
+    """
+    Given  the text a proofreading was made from and its placeholder map
+    When   record_correction() is called with them
+    Then   both reach the repository, so the window can show what really went out
+    """
+    file = tmp_path / "doc.png"
+    svc, repo, _ = _make_svc(tmp_path)
+    repo.record_correction_result.return_value = _make_state()
+
+    svc.record_correction(
+        file,
+        _make_ctx(),
+        correction_text="corrected",
+        sent_text="raw with <PERSON_1>",
+        sent_map={"<PERSON_1>": "Anna"},
+    )
+
+    kwargs = repo.record_correction_result.call_args.kwargs
+    assert kwargs["sent_text"] == "raw with <PERSON_1>"
+    assert kwargs["sent_map"] == {"<PERSON_1>": "Anna"}
+
+
+def test_record_evaluation_forwards_the_number_of_hidden_names(tmp_path: Path) -> None:
+    """
+    Given  a review of a text that was sent with three placeholders
+    When   record_evaluation() is called with that count
+    Then   the record stored with the review says three names were hidden
+    """
+    file = tmp_path / "doc.png"
+    svc, repo, _ = _make_svc(tmp_path)
+    repo.record_evaluation_result.return_value = _make_state()
+
+    svc.record_evaluation(file, _make_ctx(), evaluation_text="good", names_hidden=3)
+
+    sent = repo.record_evaluation_result.call_args.kwargs["sent"]
+    assert sent.names_hidden == 3
 
 
 # ── persist_preview_artifact() ────────────────────────────────────────────
@@ -849,13 +955,13 @@ def test_pdf_text_layer_mode_changes_hash_only_for_pdfs(tmp_path: Path, mode: st
         ([("ID", r"\d+")], [("ID", r"\d+"), ("CODE", r"[A-Z]{3}")]),
     ],
 )
-def test_correction_config_hash_changes_with_the_anonymizer_patterns(
+def test_correction_config_hash_ignores_the_anonymizer_patterns(
     tmp_path: Path, first: list, second: list
 ) -> None:
     """
     Given  two services with anonymization on and different regex patterns
     When   _correction_config_hash() is called on each
-    Then   the hashes differ, so a changed pattern no longer keeps an old proofreading
+    Then   the hashes are equal, so a changed pattern keeps the stored proofreading
     """
     left, _, _ = _make_svc(
         tmp_path, correction_enabled=True, anonymization_enabled=True, anonymizer_patterns=first
@@ -864,14 +970,14 @@ def test_correction_config_hash_changes_with_the_anonymizer_patterns(
         tmp_path, correction_enabled=True, anonymization_enabled=True, anonymizer_patterns=second
     )
 
-    assert left._correction_config_hash() != right._correction_config_hash()
+    assert left._correction_config_hash() == right._correction_config_hash()
 
 
-def test_eval_config_hash_changes_with_the_anonymizer_patterns(tmp_path: Path) -> None:
+def test_eval_config_hash_ignores_the_anonymizer_patterns(tmp_path: Path) -> None:
     """
     Given  two services with anonymization on and different regex patterns
     When   _eval_config_hash() is called on each
-    Then   the hashes differ, so a changed pattern re-runs the content review
+    Then   the hashes are equal, so a changed pattern keeps the stored content review
     """
     left, _, _ = _make_svc(
         tmp_path,
@@ -888,7 +994,7 @@ def test_eval_config_hash_changes_with_the_anonymizer_patterns(tmp_path: Path) -
         anonymizer_patterns=[("ID", r"\d+")],
     )
 
-    assert left._eval_config_hash() != right._eval_config_hash()
+    assert left._eval_config_hash() == right._eval_config_hash()
 
 
 def test_the_fingerprint_changes_when_the_context_window_is_pinned(

@@ -11,6 +11,7 @@ from teachers_teammate.application.data_flow import (
     llm_location,
     llm_steps,
     ocr_location,
+    sent_location,
     text_goes_online,
 )
 from teachers_teammate.domain.data_location import (
@@ -24,6 +25,7 @@ from teachers_teammate.domain.data_location import (
     DataLocation,
     DataRegion,
     PrivacyLevel,
+    SentRecord,
     StageLocation,
     anonymization_badge,
     classify_ollama,
@@ -852,3 +854,116 @@ def test_text_goes_online_uses_the_same_steps_as_the_data_flow(tmp_path: Path) -
 
     assert not flow.leaves_computer
     assert not text_goes_online(values, _locate, _default_model)
+
+
+# ── How a stored result was sent ───────────────────────────────────────────
+
+
+def test_sent_record_round_trips_through_its_dict() -> None:
+    """
+    Given  a record of how a result was sent, with every field filled
+    When   it is turned into the dict the state stores and read back
+    Then   the record is the same one
+    """
+    record = SentRecord(
+        provider="ollama",
+        model="qwen3.5:9b",
+        endpoint="http://school-server:11434",
+        names_hidden=7,
+        hiding_on=True,
+        privacy="abc123",
+    )
+
+    assert SentRecord.from_dict(record.to_dict()) == record
+
+
+@pytest.mark.parametrize(
+    "stored",
+    [
+        None,
+        "correction:online:Mistral::0",
+        [],
+        {},
+        {"provider": 1},
+        {"model": None},
+        {"names_hidden": "3"},
+        {"names_hidden": True},
+        {"hiding_on": "yes"},
+    ],
+    ids=[
+        "nothing",
+        "a fingerprint",
+        "a list",
+        "an empty dict",
+        "a provider that is not text",
+        "a model that is not text",
+        "a count that is text",
+        "a count that is a flag",
+        "a switch that is text",
+    ],
+)
+def test_sent_record_from_dict_rejects_a_shape_that_is_not_ours(stored: object) -> None:
+    """
+    Given  something stored under a sent key that is not a record of ours
+    When   SentRecord.from_dict() reads it
+    Then   None is returned, so the window says nothing rather than something wrong
+    """
+    assert SentRecord.from_dict(stored) is None
+
+
+def test_sent_record_from_dict_fills_in_what_an_older_record_did_not_have() -> None:
+    """
+    Given  a stored record that holds only the provider and the model
+    When   SentRecord.from_dict() reads it
+    Then   the missing fields are empty and no names are counted as hidden
+    """
+    record = SentRecord.from_dict({"provider": "ollama", "model": "qwen3.5:9b"})
+
+    assert record == SentRecord(provider="ollama", model="qwen3.5:9b")
+
+
+def test_sent_record_from_dict_reads_hiding_from_the_count_of_an_older_record() -> None:
+    """
+    Given  a stored record from before the hiding switch was kept, with names hidden
+    When   SentRecord.from_dict() reads it
+    Then   hiding counts as on, since names can only have been hidden with it on
+    """
+    record = SentRecord.from_dict({"provider": "ollama", "names_hidden": 2})
+
+    assert record is not None
+    assert record.hiding_on is True
+
+
+def test_sent_location_reads_the_place_from_the_record() -> None:
+    """
+    Given  records of a local server, another computer, a cloud model and an online provider
+    When   sent_location() classifies them
+    Then   each is placed where the step really ran
+    """
+    here = sent_location(SentRecord(provider="ollama", endpoint="http://127.0.0.1:11434"))
+    there = sent_location(SentRecord(provider="ollama", endpoint="http://school-server:11434"))
+    cloud = sent_location(
+        SentRecord(provider="ollama", model="gpt-oss:120b-cloud", endpoint="http://127.0.0.1:11434")
+    )
+    vendor = sent_location(SentRecord(provider="mistral_eu", model="mistral-large-latest"))
+
+    assert here.location is DataLocation.THIS_COMPUTER
+    assert there.location is DataLocation.OTHER_COMPUTER
+    assert there.host == "school-server"
+    assert cloud.location is DataLocation.ONLINE
+    assert vendor.location is DataLocation.ONLINE
+    assert vendor.service == "Mistral (EU)"
+    assert vendor.data_region is DataRegion.EU
+
+
+@pytest.mark.parametrize("host", ["::1", "[::1]", "http://[::1]:11434"])
+def test_sent_location_places_an_ipv6_loopback_host_on_this_computer(host: str) -> None:
+    """
+    Given  a record of an Ollama run whose stored host is the IPv6 loopback address, bare as
+           the settings store it (``::1``) or already written as a URL
+    When   sent_location() classifies it
+    Then   it is this computer, not "another computer (::1)"
+    """
+    location = sent_location(SentRecord(provider="ollama", model="m", endpoint=host))
+
+    assert location.location is DataLocation.THIS_COMPUTER

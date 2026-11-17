@@ -184,7 +184,7 @@ For a full description of all image preparation options and when to use each one
 
 ## Protecting privacy (anonymization)
 
-When **Remove personal information** is turned on, the app finds names, email addresses, phone numbers, and bank account numbers in the text and replaces them with stand-ins — for example `[PERSON_1]` or `[EMAIL_1]`. This happens straight after text recognition, so it also works with **recognition only**: the run log notes how many items were hidden, and nothing leaves the computer to make it happen. Once the corrected text comes back from proofreading, the stand-ins are replaced with the original values, so the final Word document and text file contain the real text. The same protection applies to **content review**. Switching it on or off makes the app proofread and review already processed documents again, because their text is now sent in a different form.
+When **Remove personal information** is turned on, the app finds names, email addresses, phone numbers, and bank account numbers in the text and replaces them with stand-ins — for example `[PERSON_1]` or `[EMAIL_1]`. This happens straight after text recognition, so it also works with **recognition only**: the run log notes how many items were hidden, and nothing leaves the computer to make it happen. Once the corrected text comes back from proofreading, the stand-ins are replaced with the original values, so the final Word document and text file contain the real text. The same protection applies to **content review**. Switching it on or off does not send anything again by itself: a document that was already proofread keeps its result, and the app remembers what was sent with it. Hover over its **Proofreading** or **Content Review** cell, or open **What is sent for this file…**, to see that the result was made with other privacy settings — proofread again if you want it sent with the current ones.
 
 The anonymizer runs once per text and settings per session: what a run hid is reused by **What is sent for this file…**, by **Anonymized Text File…** and by the privacy view setting, so the app does not analyse the same text twice. Only the anonymized text file and that view keep the placeholders; Word documents and plain text files always hold the original names.
 
@@ -274,6 +274,12 @@ extracted text.
 The rest of the time, hover over a **Proofreading** or **Content Review** cell in the results
 list to read where that file's text went and whether its names were hidden — for example
 *Sent to Mistral (EU), names hidden* or *Sent to OpenAI, outside the EU, names written*.
+Below that line the cell says how the result that is stored was really sent — *Sent to
+Mistral (EU) with 2 names hidden*, or *Made on this computer (Ollama)* — and, when the
+privacy settings have changed since, that it was made with other privacy settings.
+
+The **What is sent** tab starts with the same lines for the results that are already stored,
+one per step, so you can compare what went out with what the next run would send.
 
 ---
 

@@ -8,7 +8,7 @@ send), so a dialog can show it and a test can prove it without spaCy or a model.
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from ..domain.data_location import (
     STAGE_CORRECTION,
@@ -16,6 +16,7 @@ from ..domain.data_location import (
     DataFlow,
     DataFlowStage,
     PrivacyLevel,
+    SentStatus,
 )
 
 #: Returns ``(anonymized_text, placeholders)`` for a text: one spaCy pass per text.
@@ -76,6 +77,9 @@ class SentTexts:
     anonymized_raw: str = ""
     #: The placeholder tokens of :attr:`anonymized_raw`.
     preview_placeholders: tuple[str, ...] = ()
+    #: How each stored result of this file was sent, keyed by stage name (``correction``,
+    #: ``evaluation``).  Empty when nothing is stored yet, or when the record predates it.
+    stored: dict[str, SentStatus] = field(default_factory=dict)
 
     @property
     def leaves_computer(self) -> bool:
@@ -97,6 +101,7 @@ def describe_sent_texts(
     preview_extracted: bool = False,
     correction_prompt: str = "",
     evaluation_prompt: str = "",
+    stored: Mapping[str, SentStatus] | None = None,
 ) -> SentTexts:
     """Return what every outbound step of *flow* receives, exactly as it is sent.
 
@@ -107,7 +112,8 @@ def describe_sent_texts(
     and the comparison view share one spaCy pass per text.
 
     *preview_extracted* asks for the anonymized extracted text even when no step needs it,
-    for the dialog's original-vs-anonymized comparison.
+    for the dialog's original-vs-anonymized comparison.  *stored* says how the results that
+    are already stored were sent; it is reported next to what the next run would send.
     """
     corpus = {STAGE_CORRECTION: raw_text, STAGE_EVALUATION: correction_text}
     prompts = {STAGE_CORRECTION: correction_prompt, STAGE_EVALUATION: evaluation_prompt}
@@ -144,4 +150,5 @@ def describe_sent_texts(
         raw_text=raw_text,
         anonymized_raw=anonymized_raw,
         preview_placeholders=preview_placeholders,
+        stored=dict(stored or {}),
     )

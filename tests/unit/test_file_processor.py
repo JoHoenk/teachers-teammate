@@ -963,6 +963,86 @@ def test_evaluation_text_is_unchanged_without_anonymizer(tmp_path: Path) -> None
     assert evaluator.evaluate.call_args.args[0] == "Anna Weber wrote this."
 
 
+# ── What was sent ─────────────────────────────────────────────────────────
+
+
+def test_the_text_that_was_sent_is_stored_with_the_proofreading(tmp_path: Path) -> None:
+    """
+    Given  anonymization is on and the extracted text holds a name
+    When   process() runs the proofreading
+    Then   the corrector receives the placeholder text, and exactly that text with its map
+           is stored with the result
+    """
+    corrector = MagicMock()
+    corrector.correct.return_value = CorrectionOutcome("[PERSON_1] wrote this.")
+    anonymizer = MagicMock()
+    anonymizer.anonymize.side_effect = lambda text: (
+        text.replace("Anna Weber", "[PERSON_1]"),
+        {"[PERSON_1]": "Anna Weber"},
+    )
+    anonymizer.restore.side_effect = lambda text, mapping: text.replace(
+        "[PERSON_1]", mapping["[PERSON_1]"]
+    )
+    fp, cache, _, _ = _make_processor(
+        tmp_path,
+        returns=_StubReturns(ocr_return=(["Anna Weber wrote this."], None)),
+        corrector=corrector,
+        anonymizer=anonymizer,
+    )
+
+    fp.process(tmp_path / "doc.png")
+
+    sent_to_corrector = corrector.correct.call_args.args[0]
+    kwargs = cache.record_correction.call_args.kwargs
+    assert kwargs["sent_text"] == sent_to_corrector
+    assert kwargs["sent_map"] == {"[PERSON_1]": "Anna Weber"}
+
+
+def test_nothing_is_copied_when_names_went_as_written(tmp_path: Path) -> None:
+    """
+    Given  no anonymizer is configured
+    When   process() runs the proofreading and the review
+    Then   no copy of the text is stored and both records count no hidden names
+    """
+    corrector = MagicMock()
+    corrector.correct.return_value = CorrectionOutcome("corrected")
+    evaluator = MagicMock()
+    evaluator.evaluate.return_value = ("fine", None)
+    fp, cache, _, _ = _make_processor(tmp_path, corrector=corrector, evaluator=evaluator)
+
+    fp.process(tmp_path / "doc.png")
+
+    correction = cache.record_correction.call_args.kwargs
+    assert correction["sent_text"] == ""
+    assert correction["sent_map"] is None
+    assert cache.record_evaluation.call_args.kwargs["names_hidden"] == 0
+
+
+def test_the_review_records_how_many_names_were_hidden(tmp_path: Path) -> None:
+    """
+    Given  anonymization is on and the proofread text holds two names
+    When   process() runs the content review
+    Then   the record stored with the review counts the two placeholders
+    """
+    corrector = MagicMock()
+    corrector.correct.return_value = CorrectionOutcome("Anna Weber and Ben wrote this.")
+    evaluator = MagicMock()
+    evaluator.evaluate.return_value = ("fine", None)
+    anonymizer = MagicMock()
+    anonymizer.anonymize.side_effect = lambda text: (
+        text.replace("Anna Weber", "[PERSON_1]").replace("Ben", "[PERSON_2]"),
+        {"[PERSON_1]": "Anna Weber", "[PERSON_2]": "Ben"},
+    )
+    anonymizer.restore.side_effect = lambda text, _mapping: text
+    fp, cache, _, _ = _make_processor(
+        tmp_path, corrector=corrector, evaluator=evaluator, anonymizer=anonymizer
+    )
+
+    fp.process(tmp_path / "doc.png")
+
+    assert cache.record_evaluation.call_args.kwargs["names_hidden"] == 2
+
+
 @pytest.mark.use_case("Automatic_Content_Evaluation")
 def test_fresh_evaluation_calls_evaluator(tmp_path: Path) -> None:
     """
@@ -1713,6 +1793,9 @@ def test_markdown_text_format_reaches_corrector_evaluator_and_docx(tmp_path: Pat
         "correction_text": "~~a~~ b!",
         "correction_review": None,
         "correction_warning": "",
+        # No anonymizer in this run: the text that was sent is the extracted text itself.
+        "sent_text": "",
+        "sent_map": None,
     }
 
 

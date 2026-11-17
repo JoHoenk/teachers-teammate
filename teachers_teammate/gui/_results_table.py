@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Collection
+from collections.abc import Collection, Mapping
 from pathlib import Path
 from typing import Any, ClassVar
 
@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..domain.correction_review import CorrectionReview
+from ..domain.data_location import STAGE_CORRECTION, STAGE_EVALUATION, SentStatus
 from ..domain.formatted_text import TextFormat
 from ..domain.stages import STAGE_ORDER
 from . import _user_text as txt
@@ -118,6 +119,7 @@ class ResultsTable(QTableWidget):
     _ROLE_REVIEW = Qt.ItemDataRole.UserRole + 8  # CorrectionReview
     _ROLE_CORRECTION_WARNING = Qt.ItemDataRole.UserRole + 9  # str
     _ROLE_NOTE = Qt.ItemDataRole.UserRole + 10  # str: the cell's own tooltip text
+    _ROLE_SENT = Qt.ItemDataRole.UserRole + 11  # SentStatus: how the stored result was sent
 
     _STAGE_ACTIVE_COLORS: ClassVar[dict[int, str]] = {
         _COL_OCR: _COLOUR_OCR_BAR,
@@ -203,6 +205,8 @@ class ResultsTable(QTableWidget):
         item = self.item(row, col)
         if item is not None:
             item.setText(symbol)
+            # A new status means the result is being made again: the old sent line is gone.
+            item.setData(self._ROLE_SENT, None)
             self._set_note(row, col, "")  # a new status drops the old ``?n`` badge's note
             item.setForeground(QColor(color))
             item.setFont(_STAGE_FONT)
@@ -223,7 +227,10 @@ class ResultsTable(QTableWidget):
 
     def _stage_key(self, col: int) -> str:
         """Return the pipeline stage a column stands for (empty for other columns)."""
-        return {self._COL_CORRECTION: "correction", self._COL_EVALUATION: "evaluation"}.get(col, "")
+        return {
+            self._COL_CORRECTION: STAGE_CORRECTION,
+            self._COL_EVALUATION: STAGE_EVALUATION,
+        }.get(col, "")
 
     def _set_note(self, row: int, col: int, note: str) -> None:
         """Replace the cell's own tooltip text with *note*, keeping the stage line."""
@@ -233,12 +240,32 @@ class ResultsTable(QTableWidget):
         item.setData(self._ROLE_NOTE, note)
         self._compose_tooltip(item, col)
 
+    def set_sent(self, source_id: str, sent: Mapping[str, SentStatus]) -> None:
+        """Record how each stored result of *source_id* was sent, and refresh its tooltips.
+
+        *sent* is keyed by stage name (``correction``, ``evaluation``); a stage without a
+        record loses its line, which is what a re-run or an edit leaves behind.
+        """
+        row = self._row_for_source(source_id)
+        if row is None:
+            return
+        for col in (self._COL_CORRECTION, self._COL_EVALUATION):
+            item = self.item(row, col)
+            if item is not None:
+                item.setData(self._ROLE_SENT, sent.get(self._stage_key(col)))
+                self._compose_tooltip(item, col)
+
     def _compose_tooltip(self, item: QTableWidgetItem, col: int) -> None:
-        """Set the item tooltip from the stage line and the cell's own note."""
+        """Set the item tooltip from the stage line, how the result was sent, and the note."""
+        status = item.data(self._ROLE_SENT)
+        sent = (
+            txt.sent_lines(status, self._stage_key(col)) if isinstance(status, SentStatus) else ()
+        )
         parts = [
             part
             for part in (
                 self._stage_tooltips.get(self._stage_key(col), ""),
+                "\n".join(sent),
                 item.data(self._ROLE_NOTE),
             )
             if part

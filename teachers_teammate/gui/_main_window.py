@@ -65,7 +65,7 @@ from ..config import (
     load_config_file,
     unavailable_ocr_engine,
 )
-from ..domain.data_location import OCR_ENGINE_NAMES, DataFlow
+from ..domain.data_location import OCR_ENGINE_NAMES, DataFlow, SentStatus
 from ..domain.local_models import PAGE_MODELS_ADDON_ID, READER_ADDON_ID, READER_SIZE_LABEL
 from ..domain.model_catalog import HardwareDetection
 from ..domain.ollama_discovery import DiscoveredServer, DiscoveryScope, ServerKind
@@ -1288,6 +1288,7 @@ class MainWindow(QMainWindow):
                 source_id, PreprocessInfo(view.original_img, view.preprocess_steps)
             )
             self._results_table.set_text_format(source_id, view.raw_text_format)
+            self._results_table.set_sent(source_id, view.sent)
             if view.ocr_done:
                 any_ocr_cached = True
         if any_ocr_cached:
@@ -2055,12 +2056,15 @@ class MainWindow(QMainWindow):
             self._on_preview_requested(pix, raw_txt, corr_txt, eval_txt)
 
     def _refresh_preprocessing_info(self, source_id: str, *, text_format: str = "plain") -> None:
-        """Re-read how *source_id*'s preview was produced; unknown when no valid state exists.
+        """Re-read how *source_id*'s preview was produced and its results were sent.
+
+        Both are unknown (empty) when no valid state exists.
 
         *text_format* is the notation the pipeline reported for the texts; it is kept when the
         persisted state cannot be read back (e.g. the output directory changed meanwhile).
         """
         info = PreprocessInfo()
+        sent: dict[str, SentStatus] = {}
         try:
             source = Path(source_id)
             if source.exists():
@@ -2068,10 +2072,14 @@ class MainWindow(QMainWindow):
                 if view is not None:
                     info = PreprocessInfo(view.original_img, view.preprocess_steps)
                     text_format = view.raw_text_format
+                    # The run that just finished stored how it sent its results; the cells
+                    # were reset when those steps started.
+                    sent = view.sent
         except OSError, ValueError:
             pass
         self._results_table.set_preprocessing(source_id, info)
         self._results_table.set_text_format(source_id, text_format)
+        self._results_table.set_sent(source_id, sent)
 
     # ── Readiness line ────────────────────────────────────────────────────
 
@@ -2363,6 +2371,7 @@ class MainWindow(QMainWindow):
                         preprocess=PreprocessInfo(view.original_img, view.preprocess_steps),
                     )
                     self._results_table.set_text_format(source_id, view.raw_text_format)
+                    self._results_table.set_sent(source_id, view.sent)
         except OSError, ValueError:
             # Non-fatal: preview metadata will be fully attached on file_done.
             pass
@@ -2587,6 +2596,10 @@ class MainWindow(QMainWindow):
         self._results_table.set_correction_review(source_id, state.review, state.correction_warning)
         info = self._results_table.preprocessing_for_source(source_id)
         self._results_table.set_text_format(source_id, state.raw_text_format)
+        # An edit drops the results it invalidates, and their sent lines with them.
+        view = self._app_service.load_view(config, source)
+        if view is not None:
+            self._results_table.set_sent(source_id, view.sent)
         self._preview.load(
             load_pixmap(state.preview_img),
             state.raw_text,
@@ -2645,6 +2658,10 @@ class MainWindow(QMainWindow):
         self._results_table.set_correction_review(source_id, state.review, state.correction_warning)
         info = self._results_table.preprocessing_for_source(source_id)
         self._results_table.set_text_format(source_id, state.raw_text_format)
+        # An edit drops the results it invalidates, and their sent lines with them.
+        view = self._app_service.load_view(config, source)
+        if view is not None:
+            self._results_table.set_sent(source_id, view.sent)
         self._preview.load(
             load_pixmap(state.preview_img),
             state.raw_text,
@@ -2675,7 +2692,12 @@ class MainWindow(QMainWindow):
         service = self._app_service
 
         def _describe() -> object:
-            return service.describe_sent_texts(config, raw_txt, corr_txt, text_format=text_format)
+            # The stored results say what really went out; the report says what would go next.
+            view = service.load_view(config, Path(source_id))
+            stored = view.sent if view is not None else {}
+            return service.describe_sent_texts(
+                config, raw_txt, corr_txt, text_format=text_format, stored=stored
+            )
 
         def _on_done(result: object, error: BaseException | None) -> None:
             busy.accept()

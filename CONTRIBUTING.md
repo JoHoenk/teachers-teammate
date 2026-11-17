@@ -5,7 +5,7 @@ clone to a passing check run. The detailed developer documentation lives in `doc
 
 | Guide | Contents |
 |---|---|
-| [docs/development.md](docs/development.md) | Architecture, storage/caching, error handling, extension points |
+| [docs/development.md](docs/development.md) | Architecture, model catalog, writing-model evaluation, storage/caching, GUI structure (Settings, Check tab, Setup Assistant), error handling, downloads |
 | [docs/testing.md](docs/testing.md) | Test stack, markers, coverage, Given-When-Then convention |
 | [docs/deployment.md](docs/deployment.md) | CI pipeline, building wheels/binaries/installers, license report |
 

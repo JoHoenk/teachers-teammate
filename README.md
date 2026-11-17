@@ -4,70 +4,16 @@
   <img src="https://raw.githubusercontent.com/JoHoenk/teachers-teammate/main/teachers_teammate/assets/teachers_teammate.png" alt="Teacher's Teammate Logo" width="400"/>
 </div>
 
-Teacher's Teammate reads your scanned documents — PDFs, photos, images, or plain text files —
-and turns handwriting or printed text into editable text, saved as proofread Word documents
-(DOCX). It handles the full digitization workflow: text recognition (OCR), optional removal of
-personal data before anything is sent to a cloud service, AI-based proofreading, and an
-evaluation of the corrections.
+Teacher's Teammate turns scanned and handwritten student work into proofread Word documents
+(DOCX). Give it a folder of PDFs, photos, images or text files. For each file it can:
 
-Everything can run locally on your computer. The app comes as a desktop application and a
-command-line tool.
+- **read** handwriting and printed text (OCR),
+- **hide** names and other personal data before anything goes to an online service,
+- **proofread** the text with AI and explain every correction,
+- **review the content** and report gaps and unclear passages.
 
----
-
-## Installation
-
-Download the installer for your platform from the
-[releases page](https://github.com/JoHoenk/teachers-teammate/releases) and run it. Then launch
-**Teacher's Teammate** from the Start menu (Windows), the Applications folder (macOS), or your
-application launcher (Linux).
-
-Linux has two downloads: `teachers-teammate_<version>_amd64.deb` installs into
-`/opt/teachers-teammate` and adds a launcher entry, and
-`teachers-teammate-<version>-linux-x86_64.tar.gz` is the portable build — unpack it and run
-`./teachers-teammate`.
-
-**System requirements:** Windows 10 (version 1809 or newer) or 11 on x64; macOS 14.4 Sonoma or newer
-on Apple Silicon (M1 or newer); Ubuntu 24.04+, Debian 13+ or Mint 22+ (glibc 2.39 or newer) on
-x86_64, or any distribution with glibc 2.39 or newer via the `.tar.gz`. 8 GB of main memory and
-about 600 MB of free disk space for the app, plus the models you download (1.6 to 7.2 GB each for
-the ones that run in Ollama). Ubuntu 22.04, Mint 21 and Debian 12 stay on v0.5.x. The full table is
-in the [overview](https://github.com/JoHoenk/teachers-teammate/blob/main/docs/index.md#system-requirements).
-
-The Windows installers are signed once a certificate for open-source projects is in place. What is
-signed, where the files come from, who may request a signature and what the app does with your data
-is written down in the [code signing policy](https://github.com/JoHoenk/teachers-teammate/blob/main/docs/code_signing_policy.md).
-
-Prefer Python? Each release also ships a wheel (Python 3.14):
-
-```bash
-pip install teachers_teammate-<version>-py3-none-any.whl
-```
-
-The built-in reader's model files (31 MB) and the page models (39 MB) come with the app.
-Optional components — privacy protection (spaCy) and its language models, and the AI models
-that run in Ollama — can be installed from inside the app; no terminal required.
-
-## Set up text recognition
-
-Teacher's Teammate uses [Ollama](https://ollama.com) for OCR by default — a local AI runtime
-that keeps your documents on your machine. Install it from
-[ollama.com/download](https://ollama.com/download) if it isn't running yet.
-
-Then open **Settings → Add-ons…** in the app, click **Select the best models for my
-computer**, and **Install / Download Selected**. Alternatively, pull a model yourself:
-
-```bash
-ollama pull deepseek-ocr:latest
-```
-
-Set your input and output folders and click **Run Selected**. Your settings are saved and
-restored on the next launch.
-
-**Always keep text recognition on your own computer.** To read a page, the AI needs the page
-itself: the handwriting, the student's name at the top, the grade in the margin. None of that can
-be hidden beforehand, because names can only be found once the text has been read. So even if you
-use an online service for proofreading, leave text recognition on Ollama.
+Everything can run on your computer, with nothing uploaded. The installers give you the desktop
+app; the Python wheel adds a command-line tool.
 
 ## Why local AI protects your students' privacy
 
@@ -133,12 +79,65 @@ flowchart LR
 Teacher's Teammate always shows where each step runs — a box at the top of the settings panel — and asks you to confirm before a run that sends anything away from your computer.
 
 This greatly reduces what leaves your computer, but no automatic tool catches every name.
-Check the result with **Personal Information Preview…** before sending sensitive documents, and
-follow your school's data protection guidelines. When in doubt, stay local.
+Select a row and choose **What is sent for this file…** to check the result before sending
+sensitive documents, and follow your school's data protection guidelines. When in doubt, stay local.
 
-## Command line
+---
+
+## Installation
+
+### Downloads
+
+Every file comes from the [releases page](https://github.com/JoHoenk/teachers-teammate/releases).
+
+| System | File | What it is |
+|---|---|---|
+| Windows | `teachers-teammate-<version>-w64-setup.exe` | Installer |
+| macOS | `teachers-teammate-<version>-macos.dmg` | Disk image with the app |
+| Linux | `teachers-teammate_<version>_amd64.deb` | Installs into `/opt/teachers-teammate` and adds a launcher entry |
+| Linux | `teachers-teammate-<version>-linux-x86_64.tar.gz` | Portable build |
+| Any | `teachers_teammate-<version>-py3-none-any.whl` | Python wheel with the command-line tool (see [Python and command line](#python-and-command-line)) |
+
+The app brings the built-in reader's model files (31 MB) and the page models (39 MB). Everything
+else is downloaded from inside the app, on request, after it names the size: privacy protection
+(spaCy) with its language models, and the AI models that run in Ollama. No terminal required.
+
+### System requirements
+
+| | Windows | macOS | Linux |
+|---|---|---|---|
+| **System** | 10 (version 1809 or newer) or 11 | 14.4 Sonoma or newer | Ubuntu 24.04+, Debian 13+ or Mint 22+ (glibc 2.39 or newer); other distributions with glibc 2.39 or newer: the `.tar.gz` |
+| **Processor** | x64 | Apple Silicon (M1 or newer) | x86_64 |
+| **Main memory** | 8 GB | 8 GB | 8 GB |
+| **Free disk space** | about 700 MB | about 700 MB | about 700 MB |
+
+Each model that runs in Ollama needs another 1.6 to 7.2 GB of disk space. The Python wheel needs
+Python 3.14. Ubuntu 22.04, Mint 21 and Debian 12 stay on v0.5.x. More detail is in the
+[overview](https://github.com/JoHoenk/teachers-teammate/blob/main/docs/index.md#system-requirements).
+
+### Windows
+
+Run the setup, then start **Teacher's Teammate** from the Start menu. If Windows warns about the
+installer, see [Code signing](#code-signing).
+
+### macOS
+
+Open the `.dmg`, drag the app into the Applications folder and start it from there. If macOS
+refuses to open it, see [Code signing](#code-signing).
+
+### Linux
+
+- `.deb`: `sudo apt install ./teachers-teammate_<version>_amd64.deb`, then start **Teacher's
+  Teammate** from your application launcher.
+- `.tar.gz`: unpack it anywhere and run `./teachers-teammate`.
+
+### Python and command line
+
+The installers do not contain the command-line tool; the wheel does:
 
 ```bash
+pip install teachers_teammate-<version>-py3-none-any.whl
+
 # Process a folder and write DOCX reports
 teachers-teammate -i scans/ -o output/ --docx
 
@@ -146,7 +145,51 @@ teachers-teammate -i scans/ -o output/ --docx
 teachers-teammate --help
 ```
 
-Without `--docx`, only the per-file processing state is written.
+Without `--docx`, no Word file is written; only the per-file processing state is kept.
+
+## Set up the program
+
+1. **Install [Ollama](https://ollama.com)**, the local AI runtime that reads your pages and
+   proofreads them without sending anything away. Download it from
+   [ollama.com/download](https://ollama.com/download), or on Windows run
+   
+   ```winget install Ollama.Ollama``` 
+   
+    Make sure Ollama is running.
+
+2. **Run the Setup Assistant.** It opens on the first start; later you find it under
+   **Tools → Setup Assistant…**.
+   - Answer three questions: the language of your class, what your students hand in (handwritten
+     pages or typed texts), and where proofreading may run.
+   - Read what it will set and download.
+   - Press **Set up**. The downloads run in the background and the main window shows the progress.
+   
+3. **Choose the input and output folders** and click **Run Selected**. Your settings are saved and
+   restored on the next launch.
+
+### How pages are read
+
+Choose the method under **Settings → AI models…**.
+
+| | Ollama (default) | Built-in reader |
+|---|---|---|
+| **Runs** | in Ollama, on your computer | inside the app |
+| **Needs** | Ollama and a downloaded model | nothing extra |
+| **Suits** | handwriting and full pages | printed pages; computers that cannot run a vision model |
+| **Limit** | the model needs 2.5 to 7.2 GB of memory while it runs | reads handwriting less well |
+
+### Change models later
+
+1. Open **Settings → Add-ons…**.
+2. Click **Select the best models for my computer**.
+3. Click **Install / Download Selected**.
+
+### Keep recognition local
+
+**Always keep text recognition on your own computer.** To read a page, the AI needs the page
+itself: the handwriting, the student's name at the top, the grade in the margin. None of that can
+be hidden beforehand, because names can only be found once the text has been read. So even if you
+use an online service for proofreading, keep text recognition on Ollama or the built-in reader.
 
 ---
 
@@ -161,6 +204,19 @@ Without `--docx`, only the per-file processing state is written.
 
 Want to help develop Teacher's Teammate? See
 [CONTRIBUTING.md](https://github.com/JoHoenk/teachers-teammate/blob/main/CONTRIBUTING.md).
+
+## Code signing
+
+- **Windows:** the installer is not signed yet; a certificate for open-source projects is not
+  applied for yet. Windows shows "Windows protected your PC": click **More info → Run anyway**.
+- **macOS:** not signed or notarized. Allow the app under **System Settings → Privacy & Security →
+  Open Anyway**.
+- **Linux:** not signed.
+
+Every release ships a `SHA256SUMS` file. What is signed, where the files come from, who may
+request a signature and what the app does with your data is written down in the
+[code signing policy](https://github.com/JoHoenk/teachers-teammate/blob/main/docs/code_signing_policy.md).
+
 
 ## Credits
 

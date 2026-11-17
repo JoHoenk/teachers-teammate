@@ -22,7 +22,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
-from teachers_teammate.domain.correction_review import tokenize
+from teachers_teammate.domain.proofreading.word_diff import tokenize
 
 from .quality import ordered_edits, spans_touch, word_positions
 from .redaction import word_count

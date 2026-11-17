@@ -22,9 +22,9 @@ from .answer_mode import AnswerMode
 
 if TYPE_CHECKING:
     from teachers_teammate.domain.context_budget import ContextBudget
-    from teachers_teammate.domain.correction_review import CorrectionOutcome
     from teachers_teammate.domain.formatted_text import TextFormat
     from teachers_teammate.domain.model_catalog import RequestProfile
+    from teachers_teammate.domain.proofreading.result import CorrectionOutcome
     from teachers_teammate.infrastructure.ollama_utils import OllamaClient
     from teachers_teammate.infrastructure.proofreading.port import (
         ModelPort,
@@ -214,7 +214,7 @@ class CorrectOnlyCorrector(Corrector):
         self, raw_text: str, language: str, *, text_format: TextFormat = "plain"
     ) -> CorrectionOutcome:
         """Return the corrected text of step ① with nothing from the steps that did not run."""
-        from teachers_teammate.domain.correction_review import (  # noqa: PLC0415
+        from teachers_teammate.domain.proofreading.result import (  # noqa: PLC0415
             CorrectionOutcome,
         )
 

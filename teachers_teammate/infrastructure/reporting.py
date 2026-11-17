@@ -18,7 +18,7 @@ import sys
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
-    from ..domain.correction_review import CorrectionReview
+    from ..domain.proofreading.review import CorrectionReview
 
 OnFileStartedFn = Callable[[str, str, int, int], None]  # (source_id, name, idx, total)
 OnStageStartedFn = Callable[[str, str], None]  # (source_id, stage)

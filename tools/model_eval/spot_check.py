@@ -25,7 +25,7 @@ import random
 import re
 from typing import Any
 
-from teachers_teammate.domain.correction_review import tokenize
+from teachers_teammate.domain.proofreading.word_diff import tokenize
 
 from . import grouping
 from .redaction import sha256_text

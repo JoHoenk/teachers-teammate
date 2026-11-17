@@ -20,7 +20,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from teachers_teammate.domain.correction_review import tokenize
+from teachers_teammate.domain.proofreading.word_diff import tokenize
 
 from .answer_mode import AnswerMode, parse_mode
 from .performance import Performance
@@ -481,7 +481,7 @@ def warning_code(warning: str) -> str:
 def apply_stored_edits(text: str, edits: Sequence[Sequence]) -> str:
     """Return *text* with ``[start, end, replacement]`` edits applied, tail first.
 
-    The positions are over :func:`~teachers_teammate.domain.correction_review.tokenize` of *text*,
+    The positions are over :func:`~teachers_teammate.domain.proofreading.word_diff.tokenize` of *text*,
     whitespace tokens included, exactly as :func:`~.quality.ordered_edits` numbers
     them, so the edits are spliced into the token list, not the characters.  The result then
     differs from the model's raw output only in whitespace, which the scoring ignores too.

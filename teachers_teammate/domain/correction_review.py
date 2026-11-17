@@ -1,29 +1,33 @@
-"""Structured proofreading review: notes per change, unclear expressions, splicing and alignment.
+"""The sentence-based review: notes per sentence, splicing, and its alignment with the text.
 
-The corrector answers with *sentences* — the sentences it changed or that contain an unclear
+This is the review of the one-request baseline and of the old Preview, nothing else.  The review
+the app stores and every reader reads is the edit-based one in
+:mod:`teachers_teammate.domain.proofreading.review`; the Preview reaches this module through
+:meth:`~teachers_teammate.application.correction_review.CorrectionReviewPresenter.for_preview`,
+and the evaluation baseline through ``tools/model_eval/one_request/``.
+
+The baseline answers with *sentences* — the sentences it changed or that contain an unclear
 expression — each carrying its own list of :class:`ChangeNote`.  This module turns that answer
 into (a) the full corrected text, by splicing the corrected sentences back into the source, and
 (b) a display model that attaches every note to a hunk of the local word diff.
 
 It is pure: no I/O, no Qt, no provider imports.  The Pydantic mirror of these dataclasses is
-``tools/model_eval/one_request/correction_schema.py``; ``application/correction_review.py`` is
-the entry point the GUI uses.
+``tools/model_eval/one_request/correction_schema.py``.
 """
 
 from __future__ import annotations
 
 from bisect import bisect_left
 from collections import Counter
-from collections.abc import Callable, Collection, Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 import re
-from typing import Any, cast
 
 from .proofreading.review import MINOR_CATEGORIES
-from .proofreading.word_diff import Hunk, Similarity, tokenize, word_diff
+from .proofreading.word_diff import Hunk, Similarity, strip_marks, tokenize, word_diff
 
 REVIEW_VERSION = 1
-"""Version written by :meth:`CorrectionReview.to_dict`; ``from_dict`` rejects any other."""
+"""Version of the sentence-based review; the stored review is version 2 and lives elsewhere."""
 
 CHANGE_CATEGORIES: tuple[str, ...] = (
     "grammar",
@@ -46,8 +50,6 @@ _SEGMENT_RE = re.compile(
 #: split sentences).
 _MAX_FUZZY_SEGMENTS = 4
 
-#: Markdown marks that a stored text may carry but an anchor string should not.
-_MARK_RE = re.compile(r"</?(?:sup|sub|u)>|~~|\*\*|__")
 _WORD_CHAR_RE = re.compile(r"\w", flags=re.UNICODE)
 
 
@@ -146,101 +148,6 @@ class CorrectionReview:
             ),
             unplaced=self.unplaced,
         )
-
-    def to_dict(self) -> dict[str, Any]:
-        """Return a JSON-serialisable record, tagged with :data:`REVIEW_VERSION`."""
-        return {
-            "version": REVIEW_VERSION,
-            "sentences": [
-                {
-                    "original": sentence.original,
-                    "corrected": sentence.corrected,
-                    "changes": [
-                        {
-                            "original": change.original,
-                            "corrected": change.corrected,
-                            "category": change.category,
-                            "explanation": change.explanation,
-                        }
-                        for change in sentence.changes
-                    ],
-                }
-                for sentence in self.sentences
-            ],
-            "unclear": [
-                {
-                    "expression": note.expression,
-                    "why": note.why,
-                    "recommendation": note.recommendation,
-                    "is_suggestion": note.is_suggestion,
-                }
-                for note in self.unclear
-            ],
-            "unplaced": list(self.unplaced),
-        }
-
-    @classmethod
-    def from_dict(cls, data: object) -> CorrectionReview | None:
-        """Return the review stored in *data*, or ``None`` when it is not one of ours.
-
-        An unknown :data:`REVIEW_VERSION` (an older record, or a record from a newer version)
-        yields ``None``: the caller then simply shows no review.
-        """
-        if not isinstance(data, dict):
-            return None
-        record = cast("dict[str, Any]", data)
-        if record.get("version") != REVIEW_VERSION:
-            return None
-        try:
-            return cls(
-                sentences=tuple(
-                    SentenceNote(
-                        original=str(raw_sentence["original"]),
-                        corrected=str(raw_sentence["corrected"]),
-                        changes=tuple(
-                            ChangeNote(
-                                original=str(raw_change.get("original", "")),
-                                corrected=str(raw_change.get("corrected", "")),
-                                category=str(raw_change.get("category", "other")),
-                                explanation=str(raw_change.get("explanation", "")),
-                            )
-                            for raw_change in raw_sentence.get("changes", [])
-                        ),
-                    )
-                    for raw_sentence in record.get("sentences", [])
-                ),
-                unclear=tuple(
-                    UnclearNote(
-                        expression=str(raw_note["expression"]),
-                        why=str(raw_note.get("why", "")),
-                        recommendation=str(raw_note.get("recommendation", "")),
-                        is_suggestion=bool(raw_note.get("is_suggestion", False)),
-                    )
-                    for raw_note in record.get("unclear", [])
-                ),
-                unplaced=tuple(int(i) for i in record.get("unplaced", [])),
-            )
-        except KeyError, TypeError, ValueError, AttributeError:
-            return None
-
-
-@dataclass(frozen=True)
-class CorrectionOutcome:
-    """Result of one proofreading call: the text, the optional review and a warning."""
-
-    text: str
-    review: CorrectionReview | None = None
-    warning: str | None = None
-    failed: bool = False
-    """``True`` when the provider call failed and *text* is the unchanged source: such an
-    outcome is reported but never stored as a finished correction."""
-    fell_back: bool = False
-    """``True`` when the answer lacks part of what was asked.
-
-    A review came back, but a report of step ② or ③ failed, so the explanations or the unclear
-    list are missing for part of the text.  The file is corrected and stored; only the speed
-    sample is dropped, because it would undercount the answer length of a complete answer.
-    """
 
 
 # ── Splicing ──────────────────────────────────────────────────────────────────
@@ -496,11 +403,6 @@ def review_summary(aligned: AlignedReview | None, *, separator: str = ", ") -> s
     return separator.join(parts)
 
 
-def strip_marks(text: str) -> str:
-    """Remove the Markdown notation marks from an anchor string."""
-    return _MARK_RE.sub("", text)
-
-
 def align(raw_plain: str, corrected_plain: str, review: CorrectionReview) -> AlignedReview:
     """Match *review*'s notes to the local word diff of *raw_plain* against *corrected_plain*.
 
@@ -650,32 +552,6 @@ def _in_model_version(placed: Sequence[SentenceNote], sentence: int, hunk: Hunk)
     if sentence < 0:
         return False
     return text_tokens(hunk.corrected) <= text_tokens(placed[sentence].corrected)
-
-
-def best_note_index(
-    notes: Sequence[ChangeNote],
-    used: Collection[int],
-    tokens: frozenset[str],
-) -> int:
-    """Return the index of the note that best explains *tokens*, or ``-1``.
-
-    The rule every view of a review uses when its own diff parts do not line up one-to-one
-    with the token hunks of :func:`align` (the DOCX comments compare whole words of a line):
-    the note whose own changed words are most covered by *tokens* wins (a note of one word that
-    the part contains beats a note of three words it only partly contains), and a note not yet
-    in *used* breaks ties, so a repeated edit gets its explanations in order.
-    """
-    best = -1
-    best_key: tuple[float, bool, int, int] | None = None
-    for index, note in enumerate(notes):
-        changed = change_tokens(note)
-        overlap = len(tokens & changed)
-        if not overlap:
-            continue
-        key = (overlap / len(changed), index not in used, overlap, -index)
-        if best_key is None or key > best_key:
-            best, best_key = index, key
-    return best
 
 
 def _best_note(

@@ -307,6 +307,7 @@ def judge(sent: Sent) -> CheckRun:
         to_review,
         validate_answer,
     )
+    from tools.model_eval.one_request.edit_review import edit_review  # noqa: PLC0415
 
     stats = sent.stats or ChatStats()
     answer, _error = validate_answer(sent.raw)
@@ -341,7 +342,9 @@ def judge(sent: Sent) -> CheckRun:
         return replace(run, verdict=Verdict.NO_SENTENCES)
     source_plain = TextFormatter.plain_text(sent.sent_text.text, sent.text_format)
     corrected_plain = TextFormatter.plain_text(corrected, sent.text_format)
-    explained = count_explained(source_plain, corrected_plain, to_review(answer))
+    explained = count_explained(
+        source_plain, corrected_plain, edit_review(source_plain, corrected_plain, to_review(answer))
+    )
     covered, late_covered = _coverage(sent.sent_text, source_plain, corrected_plain)
     if corrected_plain == source_plain:
         verdict = Verdict.UNCHANGED

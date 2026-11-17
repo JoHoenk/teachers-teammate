@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from teachers_teammate.domain.proofreading.quotes import find_spans, map_back
+from teachers_teammate.domain.proofreading.quotes import find_spans, map_back, map_forward
 from teachers_teammate.domain.proofreading.word_diff import word_diff
 
 
@@ -117,3 +117,82 @@ def test_a_span_after_a_deleted_word_maps_to_the_same_words() -> None:
         mapped = map_back((start, start + len(quote)), hunks)
         assert mapped is not None
         assert raw[mapped[0] : mapped[1]] == quote
+
+
+# ── A span of the student's text, quoted as the corrected text reads it ──────
+
+
+def test_a_span_in_an_equal_region_maps_one_to_one() -> None:
+    """
+    Given  a correction that changes the first word only
+    When   a span after the change is carried forward
+    Then   it moves by the length difference of the change
+    """
+    raw = "Ein Hund bellt."
+    corrected = "Der Hund bellt."
+    hunks = word_diff(raw, corrected)
+
+    assert map_forward((4, 14), hunks) == (4, 14)
+
+
+def test_a_span_that_holds_a_hunk_covers_its_replacement() -> None:
+    """
+    Given  a correction that replaces a word inside a span
+    When   the span is carried forward
+    Then   it covers what replaced the word
+    """
+    raw = "Ein Hund bellt."
+    corrected = "Der Hund bellt."
+    hunks = word_diff(raw, corrected)
+
+    assert map_forward((0, 8), hunks) == (0, 8)
+    assert corrected[slice(*map_forward((0, 8), hunks))] == "Der Hund"
+
+
+def test_a_span_that_starts_inside_a_hunk_widens_to_its_start() -> None:
+    """
+    Given  a correction that replaces a word the span starts in the middle of
+    When   the span is carried forward
+    Then   it begins where the replacement begins
+    """
+    raw = "Ein Hund bellt."
+    corrected = "Der Hund bellt."
+    hunks = word_diff(raw, corrected)
+
+    assert map_forward((1, 8), hunks) == (0, 8)
+
+
+def test_a_span_that_ends_inside_a_hunk_widens_to_its_end() -> None:
+    """
+    Given  a correction that replaces a word the span ends in the middle of
+    When   the span is carried forward
+    Then   it ends where the replacement ends
+    """
+    raw = "Ein Hund bellt."
+    corrected = "Der Hund bellt."
+    hunks = word_diff(raw, corrected)
+
+    assert map_forward((0, 2), hunks) == (0, 3)
+
+
+def test_an_insertion_at_the_end_of_a_span_is_included() -> None:
+    """
+    Given  a correction that inserts a word at the end of a span
+    When   the span is carried forward
+    Then   the inserted words are part of it
+    """
+    raw = "Er kam."
+    corrected = "Er kam heute."
+    hunks = word_diff(raw, corrected)
+
+    assert map_forward((0, 6), hunks) == (0, 12)
+    assert corrected[slice(*map_forward((0, 6), hunks))] == "Er kam heute"
+
+
+def test_a_span_of_an_unchanged_text_maps_to_itself() -> None:
+    """
+    Given  a text the correction did not change
+    When   a span of it is carried forward
+    Then   it stays where it was
+    """
+    assert map_forward((3, 9), ()) == (3, 9)

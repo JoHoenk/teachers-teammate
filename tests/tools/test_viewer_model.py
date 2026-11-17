@@ -366,7 +366,7 @@ def test_a_reference_edit_across_a_sentence_boundary_does_not_need_a_model_edit(
     When   the report is built
     Then   the two sentences are one row and the reference edit lies inside it
     """
-    from teachers_teammate.domain.correction_review import tokenize  # noqa: PLC0415
+    from teachers_teammate.domain.proofreading.word_diff import tokenize  # noqa: PLC0415
     from tools.model_eval import quality  # noqa: PLC0415
 
     source = "I like it.\n\nBut you not"

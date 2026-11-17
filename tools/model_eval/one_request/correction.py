@@ -5,7 +5,7 @@
 OllamaClient` directly; no LangChain.
 
 Both implement :class:`~teachers_teammate.interfaces.Corrector` and return a
-:class:`~teachers_teammate.domain.correction_review.CorrectionOutcome`, which carries the
+:class:`~teachers_teammate.domain.proofreading.result.CorrectionOutcome`, which carries the
 corrected text and, in *review* mode, the explanations and the unclear expressions.
 
 Two output modes exist (:data:`~.correction_schema.OUTPUT_MODES`). ``review`` asks for the
@@ -25,7 +25,7 @@ correctors are what the evaluation tools measure, so a saved run stays comparabl
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -37,10 +37,11 @@ if TYPE_CHECKING:
 
 from teachers_teammate.domain.context_budget import REVIEW_ANSWER_FACTOR, ContextBudget
 from teachers_teammate.domain.correction_policy import CUT_OFF_TRIES, normalize_output_mode
-from teachers_teammate.domain.correction_review import CorrectionOutcome, splice
+from teachers_teammate.domain.correction_review import splice
 from teachers_teammate.domain.formatted_text import TextFormat
 from teachers_teammate.domain.model_catalog import DEFAULT_REQUEST_PROFILE, RequestProfile
 from teachers_teammate.domain.notation import with_notation_hint
+from teachers_teammate.domain.proofreading.result import CorrectionOutcome
 from teachers_teammate.infrastructure.ollama_utils import PROOFREADING_NUM_CTX
 from teachers_teammate.infrastructure.proofreading.port import (
     REVIEW_TIMEOUT_CAP,  # noqa: F401  # re-exported for the tests that pin the timeout
@@ -62,6 +63,7 @@ from .correction_schema import (
     to_review,
     validate_answer,
 )
+from .edit_review import edit_review
 from .presets import (  # noqa: F401  # re-exported for callers and tests
     DUTCH_PROMPT,
     ENGLISH_PROMPT,
@@ -296,17 +298,20 @@ def _review_outcome(
     nothing would otherwise reach the teacher's text through the splice.
     """
     answer, _repairs = clean_answer(answer, text_format)
-    review = to_review(answer)
-    corrected, unplaced = splice(source, review.sentences)
-    if review.sentences and len(unplaced) == len(review.sentences):
+    sentences = to_review(answer)
+    corrected, unplaced = splice(source, sentences.sentences)
+    if sentences.sentences and len(unplaced) == len(sentences.sentences):
         return None
-    review = replace(review, unplaced=unplaced)
     warning = None
     if unplaced:
         count = len(unplaced)
         noun = "suggestion" if count == 1 else "suggestions"
         warning = f"{count} {noun} could not be placed in the text."
-    return CorrectionOutcome(text=corrected, review=review, warning=warning)
+    return CorrectionOutcome(
+        text=corrected,
+        review=edit_review(source, corrected, sentences, text_format),
+        warning=warning,
+    )
 
 
 def _with_fallback_warning(text: str, warning: str | None) -> CorrectionOutcome:

@@ -6,11 +6,8 @@ from pathlib import Path
 
 import pytest
 
-from teachers_teammate.domain.correction_review import (
-    ChangeNote,
-    CorrectionReview,
-    SentenceNote,
-)
+from teachers_teammate.domain.proofreading.edits import EditPart
+from teachers_teammate.domain.proofreading.review import CorrectionReview, EditNote
 from tools.model_eval.error_labels import (
     UNLABELLED,
     M2Edit,
@@ -260,11 +257,17 @@ def test_a_corpus_label_maps_to_the_apps_category(code: str, category: str, kind
 
 
 def _review(original: str, corrected: str, category: str) -> CorrectionReview:
-    """Return a review with one sentence that carries one change note."""
-    note = ChangeNote(original=original, corrected=corrected, category=category, explanation="x")
-    return CorrectionReview(
-        sentences=(SentenceNote(original=original, corrected=corrected, changes=(note,)),)
+    """Return a review of "Er gehen heim." with one edit that explains *original* → *corrected*."""
+    source = "Er gehen heim."
+    start = source.find(original)
+    note = EditNote(
+        id=1,
+        parts=(EditPart(start, start + len(original), original, corrected),),
+        sentences=(0,),
+        category=category,
+        explanation="x",
     )
+    return CorrectionReview(edits=(note,))
 
 
 @pytest.mark.use_case("Model_Eval_Labels")

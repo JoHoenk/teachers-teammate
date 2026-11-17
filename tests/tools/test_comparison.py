@@ -6,19 +6,16 @@ from collections.abc import Iterable
 
 import pytest
 
-from teachers_teammate.domain.correction_review import (
-    ChangeNote,
-    CorrectionOutcome,
-    CorrectionReview,
-    SentenceNote,
-)
+from teachers_teammate.domain.proofreading.edits import EditPart
+from teachers_teammate.domain.proofreading.result import CorrectionOutcome
+from teachers_teammate.domain.proofreading.review import CorrectionReview, EditNote
 from teachers_teammate.domain.formatted_text import TextFormat
 from teachers_teammate.infrastructure.proofreading.chunking import (
     MISSING_REVIEW_WARNING,
     ChunkingCorrector,
 )
 from teachers_teammate.interfaces import Corrector
-from tools.model_eval.comparison import WritingModelComparison
+from tools.model_eval.comparison import WritingModelComparison, notes_of
 from tools.model_eval.error_labels import ReferenceLabel
 from tools.model_eval.performance import Performance, RequestStats, Spread
 from tools.model_eval.gleu import add, from_scores, gleu
@@ -566,11 +563,38 @@ _LABELLED = results_module.TestRecord(
 )
 
 
-def _review(category: str) -> CorrectionReview:
-    """Return a review that explains "gehen → geht" with *category*."""
-    note = ChangeNote(original="gehen", corrected="geht", category=category, explanation="x")
-    return CorrectionReview(
-        sentences=(SentenceNote(original="gehen", corrected="geht", changes=(note,)),)
+def _review(source: str, original: str, corrected: str, category: str) -> CorrectionReview:
+    """Return a review of *source* that explains *original* → *corrected* with *category*."""
+    start = source.find(original)
+    note = EditNote(
+        id=1,
+        parts=(EditPart(start, start + len(original), original, corrected),),
+        sentences=(0,),
+        category=category,
+        explanation="x",
+    )
+    return CorrectionReview(edits=(note,))
+
+
+@pytest.mark.use_case("Model_Eval_Comparison")
+def test_the_notes_of_a_review_keep_the_keys_of_the_spot_check_sheet() -> None:
+    """
+    Given  a review that explains one change
+    When   its notes are turned into the dicts of the spot-check sheet
+    Then   every dict carries the sentence as the corrected text reads it, and the note's words
+    """
+    review = _review("Er gehen heim.", "gehen", "geht", "grammar")
+
+    notes = notes_of(review, "Er gehen heim.", "Er geht heim.")
+
+    assert notes == (
+        {
+            "sentence": "Er geht heim.",
+            "original": "gehen",
+            "corrected": "geht",
+            "category": "grammar",
+            "explanation": "x",
+        },
     )
 
 
@@ -660,7 +684,11 @@ def test_a_piece_that_fell_back_flags_the_row_although_the_warnings_are_joined()
     Then   the row is flagged as a fallback, which a strict equality check would have missed
     """
     corrector = ChunkingCorrector(
-        _FallingBackCorrector(_RECORD.reference, max_chars=20, review=_review("grammar"))
+        _FallingBackCorrector(
+            _RECORD.reference,
+            max_chars=20,
+            review=_review(_RECORD.source, "sein", "ihrer", "grammar"),
+        )
     )
 
     row = _single(_comparison(corrector).run([_RECORD], model="gemma4:e4b", temperature=0.2))
@@ -677,7 +705,9 @@ def test_the_category_of_a_fixed_error_is_compared_with_its_corpus_label() -> No
     When   the comparison runs
     Then   the row counts one checked error and one agreeing note
     """
-    corrector = _ScriptedCorrector(_LABELLED.reference, review=_review("grammar"))
+    corrector = _ScriptedCorrector(
+        _LABELLED.reference, review=_review(_LABELLED.source, "gehen", "geht", "grammar")
+    )
 
     row = _single(_comparison(corrector).run([_LABELLED], model="gemma4:e4b", temperature=0.2))
 
@@ -691,7 +721,9 @@ def test_no_category_is_checked_for_a_record_without_labels() -> None:
     When   the comparison runs
     Then   no category is checked
     """
-    corrector = _ScriptedCorrector(_RECORD.reference, review=_review("grammar"))
+    corrector = _ScriptedCorrector(
+        _RECORD.reference, review=_review(_RECORD.source, "sein", "ihrer", "grammar")
+    )
 
     row = _single(_comparison(corrector).run([_RECORD], model="gemma4:e4b", temperature=0.2))
 
@@ -1033,3 +1065,17 @@ def test_the_report_says_how_much_of_the_time_step_one_took() -> None:
     assert summary.step_one_share == 0.25
     assert "| 25% |" in performance_table([summary])
     assert summarise_performance([_timed()])[0].step_one_share is None
+
+
+@pytest.mark.use_case("Model_Eval_Comparison")
+def test_the_notes_of_a_spelling_edit_still_quote_their_sentence() -> None:
+    """
+    Given  a review whose one edit is a spelling edit, which the explained sentences leave out
+    When   its notes are turned into the dicts of the spot-check sheet
+    Then   the sentence is still the corrected text's sentence, so a reviewer sees the context
+    """
+    review = _review("Er geht hiem. Sie lacht.", "hiem", "heim", "spelling")
+
+    notes = notes_of(review, "Er geht hiem. Sie lacht.", "Er geht heim. Sie lacht.")
+
+    assert [note["sentence"] for note in notes] == ["Er geht heim."]

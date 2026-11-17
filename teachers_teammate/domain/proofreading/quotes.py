@@ -11,7 +11,8 @@ Two functions:
   what it read with its own spacing and occasionally with a word changed.
 * :func:`map_back` turns a span of the corrected text into the span of the student's text, and
   returns ``None`` when the span touches a hunk — there the two texts differ, so there is no
-  one-to-one offset.
+  one-to-one offset.  :func:`map_forward` is the other direction, for a span of the student's
+  text that has to be quoted as the corrected text reads it now.
 
 Pure: no I/O, no provider imports.
 """
@@ -81,6 +82,32 @@ def map_back(span: tuple[int, int], hunks: Sequence[Hunk]) -> tuple[int, int] | 
             continue
         return None
     return start - shift, end - shift
+
+
+def map_forward(span: tuple[int, int], hunks: Sequence[Hunk]) -> tuple[int, int]:
+    """Return *span* of the student's text as a span of the corrected text.
+
+    A span that lies in an equal region maps one to one, shifted by the length difference up to
+    the last hunk before it.  A span that reaches into a hunk is widened over it: the words that
+    stood there are gone, so the span covers what replaced them.  Never ``None`` — every stretch
+    of the student's text has a wording in the corrected text, possibly an empty one.
+    """
+    start, end = span
+    return _forward(start, hunks, start=True), _forward(end, hunks, start=False)
+
+
+def _forward(offset: int, hunks: Sequence[Hunk], *, start: bool) -> int:
+    """Return where *offset* of the student's text stands in the corrected text."""
+    shift = 0
+    for hunk in hunks:
+        if hunk.raw_end <= offset:
+            shift = hunk.offset_after
+            continue
+        if hunk.raw_start >= offset:
+            break
+        # The offset lies inside the hunk: widen to the replacement's own bounds.
+        return hunk.corrected_start if start else hunk.corrected_end
+    return offset + shift
 
 
 def _normalised_with_map(text: str) -> tuple[str, tuple[int, ...]]:

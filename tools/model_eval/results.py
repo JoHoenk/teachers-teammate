@@ -14,8 +14,8 @@ import json
 from pathlib import Path
 from typing import Any
 
-from teachers_teammate.domain.correction_review import CorrectionReview
 from teachers_teammate.domain.model_catalog import sampling_text
+from teachers_teammate.domain.proofreading.review import CorrectionReview
 
 from . import languages, text_loss
 from .answer_mode import DEFAULT_MODE, AnswerMode, parse_mode

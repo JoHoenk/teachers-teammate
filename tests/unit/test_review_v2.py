@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+from teachers_teammate.domain.anonymization import restore_with_offsets
 from teachers_teammate.domain.proofreading.edits import EditPart
+from teachers_teammate.domain.proofreading.edits import edits as find_edits
 from teachers_teammate.domain.proofreading.review import (
     REVIEW_VERSION,
     AlignedReview,
@@ -11,6 +13,10 @@ from teachers_teammate.domain.proofreading.review import (
     UnclearNote,
     align,
     edit_note,
+    explained_sentences,
+    fits,
+    merge_reviews,
+    note_sentence,
     review_summary,
 )
 
@@ -31,6 +37,29 @@ def _review() -> CorrectionReview:
                 sentences=(0,),
                 category="grammar",
                 explanation="The accusative needs the article and the ending.",
+            ),
+        )
+    )
+
+
+def _spelling_review(text: str, original: str, corrected: str) -> CorrectionReview:
+    """Return a review of one spelling edit of *text*."""
+    start = text.index(original)
+    return CorrectionReview(
+        edits=(
+            EditNote(
+                id=1,
+                parts=(
+                    EditPart(
+                        raw_start=start,
+                        raw_end=start + len(original),
+                        original=original,
+                        corrected=corrected,
+                    ),
+                ),
+                sentences=(0,),
+                category="spelling",
+                explanation="Tippfehler.",
             ),
         )
     )
@@ -200,9 +229,7 @@ def test_edit_note_takes_the_numbers_of_its_edit() -> None:
     When   it is turned into a stored note
     Then   the note carries the edit's id, parts and sentences
     """
-    from teachers_teammate.domain.proofreading.edits import edits  # noqa: PLC0415
-
-    edit = edits(SOURCE, CORRECTED)[0]
+    edit = find_edits(SOURCE, CORRECTED)[0]
 
     note = edit_note(edit, category="grammar", explanation="Case.")
 
@@ -255,3 +282,346 @@ def test_a_spelling_change_is_minor_and_not_listed() -> None:
     assert aligned.minor_count == 1
     assert aligned.listed_count == 0
     assert isinstance(aligned, AlignedReview)
+
+
+# ── Offsets: pieces, names, and what the Word file lists ─────────────────────
+
+
+def test_a_review_shifted_into_a_whole_text_points_at_the_same_words() -> None:
+    """
+    Given  a review of a piece that starts ten characters into the whole text
+    When   the review is shifted there
+    Then   every part and every unclear span moved, and an insertion stayed zero-width
+    """
+    review = CorrectionReview(
+        edits=(
+            EditNote(
+                id=1,
+                parts=(
+                    EditPart(raw_start=0, raw_end=0, original="", corrected="sehr "),
+                    EditPart(raw_start=4, raw_end=9, original="grose", corrected="große"),
+                ),
+                sentences=(0,),
+                category="spelling",
+                explanation="Tippfehler.",
+            ),
+        ),
+        unclear=(
+            UnclearNote(raw_start=2, raw_end=6, expression="Hund", why="?", recommendation="!"),
+        ),
+    )
+
+    shifted = review.shifted(10)
+
+    assert [(part.raw_start, part.raw_end) for part in shifted.edits[0].parts] == [
+        (10, 10),
+        (14, 19),
+    ]
+    assert (shifted.unclear[0].raw_start, shifted.unclear[0].raw_end) == (12, 16)
+
+
+def test_a_review_remapped_through_a_restored_name_points_at_the_same_words() -> None:
+    """
+    Given  a review of "[PERSON_1] go home" and the text with the name put back
+    When   the review is carried over through the offset map of the restore
+    Then   every part points at the same words and the review fits the restored text
+    """
+    sent = "[PERSON_1] go home"
+    restored, offsets = restore_with_offsets(sent, {"[PERSON_1]": "Anna Lena"})
+    review = CorrectionReview(
+        edits=(
+            EditNote(
+                id=1,
+                parts=(EditPart(raw_start=14, raw_end=18, original="home", corrected="home."),),
+                sentences=(0,),
+                category="punctuation",
+                explanation="Ein Satz endet mit einem Punkt.",
+            ),
+        ),
+        unclear=(
+            UnclearNote(
+                raw_start=0, raw_end=10, expression="[PERSON_1]", why="?", recommendation="!"
+            ),
+        ),
+    )
+
+    remapped = review.remapped(offsets)
+
+    assert restored == "Anna Lena go home"
+    assert (
+        restored[remapped.edits[0].parts[0].raw_start : remapped.edits[0].parts[0].raw_end]
+        == "home"
+    )
+    assert restored[remapped.unclear[0].raw_start : remapped.unclear[0].raw_end] == "Anna Lena"
+    assert fits(remapped, restored) is True
+
+
+def test_a_part_inside_a_placeholder_does_not_fit_the_restored_text() -> None:
+    """
+    Given  a review whose part points into the middle of a placeholder
+    When   it is carried over through the offset map of the restore
+    Then   the review no longer fits the restored text
+    """
+    sent = "[PERSON_1] go home"
+    restored, offsets = restore_with_offsets(sent, {"[PERSON_1]": "Anna Lena"})
+    review = CorrectionReview(
+        edits=(
+            EditNote(
+                id=1,
+                parts=(EditPart(raw_start=3, raw_end=8, original="ERSON", corrected="erson"),),
+                sentences=(0,),
+                category="spelling",
+                explanation="Tippfehler.",
+            ),
+        )
+    )
+
+    remapped = review.remapped(offsets)
+
+    assert restored == "Anna Lena go home"
+    assert fits(remapped, restored) is False
+
+
+def test_merged_pieces_are_numbered_in_text_order_and_fit_the_whole_text() -> None:
+    """
+    Given  three pieces of one text, each with its own review
+    When   the reviews are merged over the whole text
+    Then   the ids run 1..k in text order, the sentences are the whole text's, and every part
+           points at the words it quotes
+    """
+    whole = "Eins fehlerr. Zwei fehlerr. Drei fehlerr."
+    pieces = [
+        (0, _spelling_review(whole[0:13], "fehlerr", "Fehler")),
+        (14, _spelling_review(whole[14:27], "fehlerr", "Fehler")),
+        (28, _spelling_review(whole[28:], "fehlerr", "Fehler")),
+    ]
+
+    merged = merge_reviews(pieces, whole)
+
+    assert [note.id for note in merged.edits] == [1, 2, 3]
+    assert [note.sentences for note in merged.edits] == [(0,), (1,), (2,)]
+    assert fits(merged, whole) is True
+    assert [whole[note.raw_start : note.raw_end] for note in merged.edits] == ["fehlerr"] * 3
+
+
+def test_merged_pieces_agree_with_a_review_made_on_the_whole_text() -> None:
+    """
+    Given  a text whose three sentences each carry one edit
+    When   the reviews of its three pieces are merged
+    Then   the sentences of the merged edits are the ones a review of the whole text names
+    """
+    whole = "Eins fehlerr. Zwei fehlerr. Drei fehlerr."
+    pieces = [
+        (0, _spelling_review(whole[0:13], "fehlerr", "Fehler")),
+        (14, _spelling_review(whole[14:27], "fehlerr", "Fehler")),
+        (28, _spelling_review(whole[28:], "fehlerr", "Fehler")),
+    ]
+
+    merged = merge_reviews(pieces, whole)
+
+    assert [note.sentences for note in merged.edits] == [
+        (0,),
+        (1,),
+        (2,),
+    ]
+
+
+def test_a_review_that_does_not_fit_is_reported() -> None:
+    """
+    Given  a review whose part quotes words that are not at its offsets
+    When   it is checked against the text
+    Then   it does not fit
+    """
+    review = CorrectionReview(
+        edits=(
+            EditNote(
+                id=1,
+                parts=(EditPart(raw_start=0, raw_end=4, original="Eins", corrected="Eins,"),),
+                sentences=(0,),
+                category="punctuation",
+                explanation="Ein Komma fehlt.",
+            ),
+        )
+    )
+
+    assert fits(review, "Eins zwei") is True
+    assert fits(review, "Zwei eins") is False
+
+
+def test_an_insertion_fits_anywhere_inside_the_text() -> None:
+    """
+    Given  a review whose only part is an insertion
+    When   it is checked against a text of the right length
+    Then   it fits, because an insertion has no words to compare
+    """
+    review = CorrectionReview(
+        edits=(
+            EditNote(
+                id=1,
+                parts=(EditPart(raw_start=4, raw_end=4, original="", corrected=" sehr"),),
+                sentences=(0,),
+                category="word_choice",
+                explanation="Das Wort fehlt.",
+            ),
+        )
+    )
+
+    assert fits(review, "Eins zwei") is True
+    assert fits(review, "Eins zwei drei") is True
+    assert fits(review, "Ein") is False
+
+
+def test_an_explanation_of_a_change_in_the_text_is_listed_once_per_sentence() -> None:
+    """
+    Given  a review whose one edit is two hunks of the same sentence
+    When   the explained sentences are collected
+    Then   the sentence is listed once, with the edit's note, as the corrected text reads it
+    """
+    raw = "weil ich habe auf dich gewartet."
+    corrected = "weil ich auf dich gewartet habe."
+    found = find_edits(raw, corrected)
+    assert len(found) == 1 and len(found[0].parts) == 2
+    review = CorrectionReview(
+        edits=(edit_note(found[0], category="word_order", explanation="Das Verb steht am Ende."),)
+    )
+
+    listed = explained_sentences(align(raw, corrected, review), raw, corrected)
+
+    assert [entry.text for entry in listed] == [corrected]
+    assert [note.id for note in listed[0].notes] == [1]
+
+
+def test_minor_and_changed_edits_are_not_listed() -> None:
+    """
+    Given  a review with a spelling edit, a grammar edit and a grammar edit the teacher changed
+    When   the explained sentences are collected
+    Then   only the grammar edit that is still in the text is listed
+    """
+    raw = "Er hat ein Hund. Sie hat ein Katz."
+    corrected = "Er hat einen Hund. Sie hat ein Katze."
+    review = CorrectionReview(
+        edits=(
+            EditNote(
+                id=1,
+                parts=(EditPart(raw_start=7, raw_end=10, original="ein", corrected="einen"),),
+                sentences=(0,),
+                category="grammar",
+                explanation="Der Akkusativ.",
+            ),
+            EditNote(
+                id=2,
+                parts=(EditPart(raw_start=24, raw_end=28, original="Katz", corrected="Katze"),),
+                sentences=(1,),
+                category="spelling",
+                explanation="Tippfehler.",
+            ),
+        )
+    )
+
+    listed = explained_sentences(align(raw, corrected, review), raw, corrected)
+
+    assert [entry.text for entry in listed] == ["Er hat einen Hund."]
+    assert [note.id for note in listed[0].notes] == [1]
+
+
+def test_a_note_on_an_edit_the_teacher_changed_is_not_listed() -> None:
+    """
+    Given  a review whose edit the teacher changed afterwards
+    When   the explained sentences are collected
+    Then   nothing is listed, because the note explains words that are no longer there
+    """
+    raw = "Ich habe ein grosse Hund gesehen."
+    corrected = "Ich habe einen grossen Hund gesehen."
+    review = CorrectionReview(
+        edits=(
+            EditNote(
+                id=1,
+                parts=(EditPart(raw_start=13, raw_end=19, original="grosse", corrected="großen"),),
+                sentences=(0,),
+                category="grammar",
+                explanation="Das Adjektiv braucht die richtige Endung.",
+            ),
+        )
+    )
+
+    listed = explained_sentences(align(raw, corrected, review), raw, corrected)
+
+    assert listed == ()
+
+
+def test_the_listed_sentence_follows_the_teachers_edit_of_the_corrected_text() -> None:
+    """
+    Given  a review of a correction the teacher then edited further
+    When   the explained sentences are collected
+    Then   the sentence is quoted as the corrected text reads it now
+    """
+    raw = "Er hat ein Hund und ist nett."
+    corrected = "Er hat einen Hund und ist sehr nett."
+    review = CorrectionReview(
+        edits=(
+            EditNote(
+                id=1,
+                parts=(EditPart(raw_start=7, raw_end=10, original="ein", corrected="einen"),),
+                sentences=(0,),
+                category="grammar",
+                explanation="Der Akkusativ.",
+            ),
+        )
+    )
+
+    listed = explained_sentences(align(raw, corrected, review), raw, corrected)
+
+    assert [entry.text for entry in listed] == ["Er hat einen Hund und ist sehr nett."]
+
+
+def test_a_remapped_review_forgets_the_sentence_numbers_of_the_other_text() -> None:
+    """
+    Given  a review whose edits carry sentence numbers counted on the anonymized text
+    When   it is carried over through the offsets of the restore
+    Then   the edits no longer claim a sentence, so the restored text's own split decides
+    """
+    sent = "[PERSON_1] wohnt in der Str. 5. Er gehen heim."
+    _restored, offsets = restore_with_offsets(sent, {"[PERSON_1]": "Anna"})
+    review = _spelling_review(sent, "gehen", "geht")
+
+    assert review.edits[0].sentences == (0,)
+    assert review.remapped(offsets).edits[0].sentences == ()
+
+
+def test_an_explained_sentence_survives_a_sentence_number_the_text_does_not_have() -> None:
+    """
+    Given  a review whose note names sentence 5 of a text that has two sentences
+    When   the explained sentences are listed
+    Then   the note is placed by its offset instead of raising
+    """
+    raw = "Das ist gut. Er gehen heim."
+    corrected = "Das ist gut. Er geht heim."
+    start = raw.index("gehen")
+    note = EditNote(
+        id=1,
+        parts=(EditPart(raw_start=start, raw_end=start + 5, original="gehen", corrected="geht"),),
+        sentences=(5,),
+        category="grammar",
+        explanation="Der Verbform passt nicht zum Subjekt.",
+    )
+    aligned = align(raw, corrected, CorrectionReview(edits=(note,)))
+
+    sentences = explained_sentences(aligned, raw, corrected)
+
+    assert [sentence.text for sentence in sentences] == ["Er geht heim."]
+    assert note_sentence(aligned, raw, corrected, note) == "Er geht heim."
+
+
+def test_the_sentence_of_a_spelling_note_is_still_found() -> None:
+    """
+    Given  a review whose only note is a spelling edit
+    When   the sentence of that note is asked for
+    Then   it is the corrected sentence, although the explained sentences leave spelling out
+    """
+    raw = "Er geht hiem. Sie lacht."
+    corrected = "Er geht heim. Sie lacht."
+    review = _spelling_review(raw, "hiem", "heim")
+    aligned = align(raw, corrected, review)
+
+    assert explained_sentences(aligned, raw, corrected) == ()
+    assert note_sentence(aligned, raw, corrected, review.edits[0]) == "Er geht heim."

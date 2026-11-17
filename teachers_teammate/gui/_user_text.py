@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING
 
 from ..application.data_flow import sent_location
 from ..domain.correction_prompts import NOTES_LIMIT
-from ..domain.correction_review import CHANGE_CATEGORIES, AlignedReview
+from ..domain.correction_review import AlignedReview
 from ..domain.data_location import (
     STAGE_CORRECTION,
     STAGE_EVALUATION,
@@ -22,6 +22,7 @@ from ..domain.data_location import (
     stage_title,
 )
 from ..domain.local_models import PAGE_MODELS_SIZE_LABEL, READER_SIZE_LABEL
+from ..domain.proofreading.review import CHANGE_CATEGORIES
 from ..exceptions import RECOGNITION_OFF_MESSAGE
 
 if TYPE_CHECKING:

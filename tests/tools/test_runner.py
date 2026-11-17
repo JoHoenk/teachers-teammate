@@ -14,7 +14,7 @@ import time
 
 import pytest
 
-from teachers_teammate.domain.correction_review import CorrectionOutcome
+from teachers_teammate.domain.proofreading.result import CorrectionOutcome
 from teachers_teammate.domain.model_catalog import RequestProfile
 from teachers_teammate.interfaces import Corrector
 from tools.model_eval import measure, protocol, results, runner, session as sessions

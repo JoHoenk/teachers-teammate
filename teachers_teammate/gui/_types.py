@@ -7,7 +7,7 @@ from enum import StrEnum
 from typing import TYPE_CHECKING, TypedDict
 
 if TYPE_CHECKING:
-    from ..domain.correction_review import CorrectionReview
+    from ..domain.proofreading.review import CorrectionReview
 
 
 class StageStatus(StrEnum):

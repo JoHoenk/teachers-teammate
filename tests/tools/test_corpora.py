@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from teachers_teammate.domain.correction_review import tokenize
+from teachers_teammate.domain.proofreading.word_diff import tokenize
 
 from tests.tools import invented_corpus
 from tools.model_eval import corpora, recipes, testset

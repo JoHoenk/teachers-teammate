@@ -1,12 +1,12 @@
 """The exchange, seen as the corrector the pipeline and the evaluation tools already run.
 
 The pipeline asks a :class:`~teachers_teammate.interfaces.Corrector` for a
-:class:`~teachers_teammate.domain.correction_review.CorrectionOutcome`; the exchange answers with
-an :class:`~.exchanges.base.ExchangeResult`.  :class:`ExchangeCorrector` is the one adapter
+:class:`~teachers_teammate.domain.proofreading.result.CorrectionOutcome`; the exchange answers
+with an :class:`~.exchanges.base.ExchangeResult`.  :class:`ExchangeCorrector` is the one adapter
 between the two, so the stage builder, ``ChunkingCorrector`` (which splits a long text by
 :meth:`ExchangeCorrector.max_text_chars`) and the evaluation tools do not know there is a new
-shape underneath.  The review it returns is the sentence-based one the readers still use
-(:func:`~teachers_teammate.domain.proofreading.legacy_review.sentence_review`).
+shape underneath.  The review it returns is the exchange's own, unchanged: the edit-based review
+whose offsets are in the plain text of the raw text.
 
 The three functions beside it answer what a run sends without sending anything:
 :func:`exchange_identity` is the cache-key part, :func:`exchange_prompts` is what the dialog and
@@ -22,12 +22,9 @@ from typing import TYPE_CHECKING
 
 from ...domain.correction_policy import DEFAULT_LEVEL
 from ...domain.correction_prompts import PROMPT_VERSION
-from ...domain.correction_review import CorrectionOutcome
 from ...domain.model_catalog import DEFAULT_REQUEST_PROFILE, RequestProfile
-from ...domain.proofreading.legacy_review import sentence_review
-from ...domain.proofreading.result import ExchangeKind, StepName
+from ...domain.proofreading.result import CorrectionOutcome, ExchangeKind, StepName
 from ...interfaces import Corrector
-from ..ocr_formats import plain_text_of
 from .exchanges import Exchange, ExchangeCost, ProofreadContext, build_exchange
 from .exchanges.t import EXPLAIN_FAILED, UNCLEAR_FAILED
 from .port import ModelPort, OllamaPort
@@ -101,14 +98,9 @@ class ExchangeCorrector(Corrector):
             return CorrectionOutcome(
                 text=raw_text, review=None, warning=warning or _FAILED, failed=True
             )
-        review = (
-            sentence_review(plain_text_of(raw_text, text_format), result.review)
-            if result.review is not None
-            else None
-        )
         return CorrectionOutcome(
             text=result.text,
-            review=review,
+            review=result.review,
             warning=warning,
             fell_back=_partial(result.warnings),
         )

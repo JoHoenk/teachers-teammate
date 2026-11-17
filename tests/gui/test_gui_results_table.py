@@ -8,7 +8,7 @@ import pytest
 from PySide6.QtCore import QItemSelectionModel, QPoint, Qt
 from PySide6.QtWidgets import QMenu
 
-from teachers_teammate.domain.correction_review import CorrectionReview, UnclearNote
+from teachers_teammate.domain.proofreading.review import CorrectionReview, UnclearNote
 from teachers_teammate.gui._export_menu import ExportKind
 from teachers_teammate.gui._results_table import ResultsTable
 from teachers_teammate.gui._types import FileDoneEvent, PreprocessInfo, StageStatus
@@ -578,7 +578,7 @@ def test_unclear_badge_keeps_the_proofreading_stage_done(qtbot) -> None:
     table.mark_processing("a.pdf")
     table.mark_correcting("a.pdf")
     table.mark_evaluating("a.pdf")  # proofreading is done once evaluation starts
-    note = UnclearNote(expression="it", why="w", recommendation="r")
+    note = UnclearNote(raw_start=0, raw_end=2, expression="it", why="w", recommendation="r")
     cell = table.item(0, ResultsTable._COL_CORRECTION)
     assert cell is not None
 
@@ -593,6 +593,26 @@ def test_unclear_badge_keeps_the_proofreading_stage_done(qtbot) -> None:
     table.set_correction_review("a.pdf", CorrectionReview())
     assert cell.text() == "✓"
     assert table.get_stage_statuses_for_source("a.pdf")[1] is StageStatus.DONE
+
+
+@pytest.mark.gui
+def test_the_stored_review_is_handed_back_for_the_preview_and_the_export(qtbot) -> None:
+    """
+    Given  a row whose proofreading stored a review
+    When   the review is asked for
+    Then   the same review comes back, and a row without one gives None
+    """
+    review = CorrectionReview(
+        unclear=(UnclearNote(0, 3, "odd", "unclear", "rephrase"),),
+    )
+    table = ResultsTable()
+    qtbot.addWidget(table)
+    table.set_queue(["a.pdf", "b.pdf"])
+
+    table.set_correction_review("a.pdf", review)
+
+    assert table.review_for_source("a.pdf") is review
+    assert table.review_for_source("b.pdf") is None
 
 
 # ── skipped scans (text recognition switched off) ────────────────────────────
@@ -717,7 +737,7 @@ def test_a_stopped_file_keeps_its_stored_review_badge(qtbot) -> None:
     When   the stopped result carries the review
     Then   the row keeps its review and the unclear badge
     """
-    review = CorrectionReview(unclear=(UnclearNote("odd", "unclear", "rephrase"),))
+    review = CorrectionReview(unclear=(UnclearNote(0, 3, "odd", "unclear", "rephrase"),))
     table = ResultsTable()
     qtbot.addWidget(table)
     table.set_queue(["essay.png"], source_ids=["/e.png"])

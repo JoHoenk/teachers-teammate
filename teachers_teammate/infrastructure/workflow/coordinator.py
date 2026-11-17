@@ -7,7 +7,7 @@ import logging
 from pathlib import Path
 import threading
 
-from ...domain.correction_review import align, review_summary
+from ...domain.proofreading.review import align, review_summary
 from ...domain.run_summary import RunSummary
 from ..reporting import FileDoneResult, OnFileDoneFn, OnFileStartedFn, Reporter, StdoutReporter
 from .file_processor import ProcessingResult

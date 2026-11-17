@@ -15,6 +15,8 @@ from collections.abc import Mapping
 import re
 import unicodedata
 
+from .offset_map import OffsetMap
+
 #: A mapping from a placeholder token to the text it stands for.
 PlaceholderMap = Mapping[str, str]
 
@@ -23,13 +25,48 @@ def restore(text: str, mapping: PlaceholderMap) -> str:
     """Put the original values back in place of the placeholders of *text*.
 
     Every occurrence of a placeholder is replaced, so a name mentioned three times comes
-    back three times.  Replacement is literal: nothing in the originals is interpreted.
+    back three times.  Replacement is literal and made in one pass: nothing in the originals is
+    interpreted, and an original that looks like a placeholder is not replaced again.  This is
+    :func:`restore_with_offsets` without the offsets, so a text restored here is the same text
+    whose offsets that function carries over.
     """
-    result = text
-    for placeholder, original in mapping.items():
-        if placeholder:
-            result = result.replace(placeholder, original)
-    return result
+    return restore_with_offsets(text, mapping)[0]
+
+
+def restore_with_offsets(text: str, mapping: PlaceholderMap) -> tuple[str, OffsetMap]:
+    """Put the original values back, and say where every replaced run ended up.
+
+    The text :func:`restore` returns, in one pass over the placeholders, together with the
+    :class:`~.offset_map.OffsetMap` that carries a position of *text* over to the restored one.
+    A caller that holds offsets into *text* (a review anchored on the anonymized text) needs
+    both: the restored words, and where they now stand.
+
+    The placeholders are bracketed (``[PERSON_1]``), so none contains another and one pass finds
+    every occurrence of every one of them.
+    """
+    pairs = [(placeholder, original) for placeholder, original in mapping.items() if placeholder]
+    if not pairs or not text:
+        return text, OffsetMap()
+    # Longest first, so a placeholder that is a prefix of another cannot cut it in two.
+    pairs.sort(key=lambda pair: len(pair[0]), reverse=True)
+    by_placeholder = dict(pairs)
+    pattern = re.compile("|".join(re.escape(placeholder) for placeholder, _ in pairs))
+
+    runs: list[tuple[int, int, int, int]] = []
+    pieces: list[str] = []
+    position = 0
+    new_position = 0
+    for match in pattern.finditer(text):
+        start, end = match.span()
+        pieces.append(text[position:start])
+        new_position += start - position
+        replacement = by_placeholder[match.group(0)]
+        runs.append((start, end, new_position, new_position + len(replacement)))
+        pieces.append(replacement)
+        new_position += len(replacement)
+        position = end
+    pieces.append(text[position:])
+    return "".join(pieces), OffsetMap(tuple(runs))
 
 
 def mask(text: str, mapping: PlaceholderMap) -> str:

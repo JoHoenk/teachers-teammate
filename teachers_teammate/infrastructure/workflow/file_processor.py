@@ -9,7 +9,7 @@ from pathlib import Path
 import threading
 from typing import TYPE_CHECKING
 
-from ...domain.correction_review import CorrectionReview
+from ...domain.anonymization import restore_with_offsets
 from ...domain.formatted_text import TextFormat, join_labelled_pages, normalize_text_format
 from ...domain.output_files import (
     ANONYMIZED_TEXT_SUFFIX,
@@ -19,6 +19,7 @@ from ...domain.output_files import (
     output_path,
 )
 from ...domain.performance_estimate import SpeedStep
+from ...domain.proofreading.review import CorrectionReview, fits
 from ...domain.stages import PROGRESS_STAGE_OCR, PROGRESS_STAGE_PREPROCESSING, StageName
 from ...exceptions import (
     RECOGNITION_OFF_MESSAGE,
@@ -28,6 +29,7 @@ from ...exceptions import (
     stop_requested,
 )
 from ...interfaces import AnonymizationMap, Anonymizer, Corrector, DocumentCreator, Evaluator
+from ..ocr_formats import plain_text_of
 from ..proofreading.chunking import proofreading_pieces
 from ..reporting import OnOcrDoneFn, OnStageStartedFn, Reporter, StdoutReporter
 from ..run_stats import RunStatsCollector
@@ -75,6 +77,11 @@ STOPPED_BEFORE_RECOGNITION = "Stopped before the text was read."
 STOPPED_BEFORE_PROOFREADING = "Stopped before proofreading."
 STOPPED_BEFORE_REVIEW = "Stopped before the review."
 STOPPED_GENERIC = "Stopped by user."
+
+REVIEW_UNMATCHED = (
+    "The explanations could not be matched to the names in the text and were left out."
+)
+"""Warning when the review of an anonymized text could not be carried over to the real names."""
 
 
 @dataclass(frozen=True)
@@ -614,8 +621,17 @@ class FileProcessor:
         corrected_text = self._restore_pii(
             outcome.text or "", anon_map, preview_img=preview_img, raw_text=raw_text
         )
-        review = self._restore_review_pii(outcome.review, anon_map, file.name)
+        review, unmatched = self._restore_review_pii(
+            outcome.review,
+            anon_map,
+            sent_text=text_for_correction,
+            raw_text=raw_text,
+            text_format=text_format,
+            file_name=file.name,
+        )
         corr_warnings: list[str] = [outcome.warning] if outcome.warning else []
+        if unmatched:
+            corr_warnings.append(REVIEW_UNMATCHED)
 
         # A failed call returns the unchanged source; caching it would present that as a finished
         # correction and the next run would never try again.  (A corrections-only fallback
@@ -644,22 +660,40 @@ class FileProcessor:
         self,
         review: CorrectionReview | None,
         anon_map: AnonymizationMap,
+        *,
+        sent_text: str,
+        raw_text: str,
+        text_format: TextFormat,
         file_name: str,
-    ) -> CorrectionReview | None:
-        """Put the real personal data back into every text field of *review*.
+    ) -> tuple[CorrectionReview | None, bool]:
+        """Put the real personal data back into *review* and keep its offsets right.
 
-        The corrector answers about the anonymized text, so anchors and explanations quote
-        placeholders.  Failure is not fatal here: a review that cannot be restored is dropped,
-        which shows the plain diff and keeps the correction itself.
+        The corrector answers about the anonymized text, so the review's offsets are in the plain
+        text of what was sent and its words quote placeholders.  A name is rarely as long as its
+        placeholder, so every edit after a name would point at the wrong words: the review is
+        remapped through the offsets of the restore and then checked against the plain text of
+        the raw text.  A review that does not fit is dropped, which shows the plain diff and
+        keeps the correction itself; the caller says so in the warnings.
+
+        Returns:
+            The restored review (or ``None``) and whether it had to be dropped.
         """
         anonymizer = self._anonymizer
         if review is None or not anon_map or anonymizer is None:
-            return review
+            return review, False
         try:
-            return review.map_text(lambda value: anonymizer.restore(value, anon_map))
+            sent_plain = plain_text_of(sent_text, text_format)
+            restored_plain, offsets = restore_with_offsets(sent_plain, anon_map)
+            restored = review.map_text(lambda value: anonymizer.restore(value, anon_map))
         except (ValueError, KeyError) as exc:
             _logger.warning("Could not restore PII in the review of %s: %s", file_name, exc)
-            return None
+            return None, True
+        raw_plain = plain_text_of(raw_text, text_format)
+        remapped = restored.remapped(offsets)
+        if restored_plain != raw_plain or not fits(remapped, raw_plain):
+            _logger.warning("Could not match the review of %s to the names in the text", file_name)
+            return None, True
+        return remapped, False
 
     def _run_evaluation_or_cache(
         self,
@@ -874,8 +908,6 @@ class FileProcessor:
             jobs.append((targets[ANONYMIZED_TEXT_SUFFIX], anonymized_raw))
         if jobs and text_format == "markdown":
             # Only Markdown needs the parser (and its dependencies); plain text is written as is.
-            from ..ocr_formats import plain_text_of  # noqa: PLC0415
-
             jobs = [(target, plain_text_of(text, text_format)) for target, text in jobs]
         for target, text in jobs:
             target.parent.mkdir(parents=True, exist_ok=True)

@@ -9,7 +9,8 @@ import pytest
 
 import dataclasses
 
-from teachers_teammate.domain.correction_review import CorrectionReview, SentenceNote
+from teachers_teammate.domain.proofreading.edits import EditPart
+from teachers_teammate.domain.proofreading.review import CorrectionReview, EditNote
 from teachers_teammate.domain.data_location import STAGE_CORRECTION, STAGE_EVALUATION, SentRecord
 from teachers_teammate.infrastructure.state_repository import (
     DocumentState,
@@ -19,6 +20,7 @@ from teachers_teammate.infrastructure.state_repository import (
     compute_config_hash,
     compute_file_hash,
 )
+from teachers_teammate.infrastructure.storage_root import document_stem
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────
@@ -606,7 +608,15 @@ def test_record_manual_ocr_edit_clears_the_review(tmp_path: Path) -> None:
     source_hash = compute_file_hash(source)
     repo = _repo(tmp_path)
     review = CorrectionReview(
-        sentences=(SentenceNote(original="alt", corrected="neu", changes=()),),
+        edits=(
+            EditNote(
+                id=1,
+                parts=(EditPart(raw_start=0, raw_end=3, original="alt", corrected="neu"),),
+                sentences=(0,),
+                category="word_choice",
+                explanation="Deutlicher.",
+            ),
+        ),
     )
     state = dataclasses.replace(
         repo.create(source, source_hash),
@@ -1048,6 +1058,29 @@ def test_load_returns_none_when_schema_version_mismatches(tmp_path: Path) -> Non
         "schema_version": 1,
         "source_path": str(source.resolve()),
         "source_hash": "some-hash",
+    }
+    repo.state_path_for_input(source).parent.mkdir(parents=True, exist_ok=True)
+    repo.state_path_for_input(source).write_text(json.dumps(stale), encoding="utf-8")
+
+    assert repo.load(source) is None
+
+
+def test_a_state_of_the_previous_schema_loads_as_none(tmp_path: Path) -> None:
+    """
+    Given  a JSON state file on disk with schema_version=2, the one before the stored review
+           changed its offsets
+    When   load() is called
+    Then   None is returned, so the document is read again instead of showing a review whose
+           offsets belong to another text
+    """
+    source = _source_file(tmp_path)
+    repo = _repo(tmp_path)
+    stale = {
+        "schema_version": 2,
+        "source_path": str(source.resolve()),
+        "source_hash": "some-hash",
+        "ocr_done": True,
+        "raw_text": "stale ocr text",
     }
     repo.state_path_for_input(source).parent.mkdir(parents=True, exist_ok=True)
     repo.state_path_for_input(source).write_text(json.dumps(stale), encoding="utf-8")
@@ -1664,7 +1697,7 @@ def test_manual_correction_edit_keeps_the_review(tmp_path: Path) -> None:
     """
     source = _source_file(tmp_path)
     repo = _repo(tmp_path)
-    review = {"version": 1, "sentences": [], "unclear": [], "unplaced": []}
+    review = {"version": 2, "edits": [], "unclear": []}
     state = dataclasses.replace(
         repo.create(source, compute_file_hash(source)),
         ocr_done=True,
@@ -1695,7 +1728,7 @@ def test_manual_correction_edit_to_empty_text_drops_the_review(tmp_path: Path) -
         repo.create(source, compute_file_hash(source)),
         correction_done=True,
         correction_text="old",
-        correction_review={"version": 1},
+        correction_review={"version": 2},
     )
 
     repo.record_manual_correction_edit(source, state, correction_text="")
@@ -1831,3 +1864,35 @@ def test_two_saves_never_share_a_temporary_file(tmp_path: Path) -> None:
 
     assert errors == []
     assert repo.load(source).raw_text in {"a", "b"}
+
+
+def test_the_state_file_is_named_after_the_document_stem(tmp_path: Path) -> None:
+    """
+    Given  a document in a folder
+    When   its state path is asked for
+    Then   the file is named with the document stem, the same name the images carry
+    """
+    repo = _repo(tmp_path)
+    (tmp_path / "input").mkdir()
+    source = _source_file(tmp_path / "input", name="Anna.pdf")
+
+    assert repo.state_path_for_input(source).name == f"{document_stem(source)}.json"
+
+
+def test_two_documents_of_one_name_get_two_state_files(tmp_path: Path) -> None:
+    """
+    Given  two files called Anna.pdf in different folders
+    When   each is saved
+    Then   each keeps its own state, and neither overwrites the other
+    """
+    repo = _repo(tmp_path)
+    (tmp_path / "a").mkdir()
+    (tmp_path / "b").mkdir()
+    first = _source_file(tmp_path / "a", name="Anna.pdf", content="one")
+    second = _source_file(tmp_path / "b", name="Anna.pdf", content="two")
+
+    repo.save(first, dataclasses.replace(repo.load_or_create(first, "h1"), raw_text="first"))
+    repo.save(second, dataclasses.replace(repo.load_or_create(second, "h2"), raw_text="second"))
+
+    assert repo.load(first).raw_text == "first"
+    assert repo.load(second).raw_text == "second"

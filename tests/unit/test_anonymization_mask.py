@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from teachers_teammate.domain.anonymization import mask, restore
+from teachers_teammate.domain.anonymization import mask, restore, restore_with_offsets
 
 ANNA = {"[PERSON_1]": "Anna Müller"}
 TWO_PEOPLE = {"[PERSON_1]": "Anna", "[PERSON_2]": "Anna Müller"}
@@ -106,3 +106,59 @@ def test_mask_ignores_placeholders_without_an_original() -> None:
     Then   it is skipped instead of matching at every position
     """
     assert mask("Anna Müller", {"[PERSON_1]": ""}) == "Anna Müller"
+
+
+def test_restore_with_offsets_returns_the_text_restore_returns() -> None:
+    """
+    Given  a text naming two people, one of them three times
+    When   the names are put back with their offsets
+    Then   the text is the one restore() gives, and every replaced run is recorded
+    """
+    mapping = {"[PERSON_1]": "Anna Müller", "[PERSON_10]": "Bo"}
+    text = "[PERSON_1] und [PERSON_10] und [PERSON_1] und [PERSON_1]."
+
+    restored, offsets = restore_with_offsets(text, mapping)
+
+    assert restored == restore(text, mapping)
+    assert restored == "Anna Müller und Bo und Anna Müller und Anna Müller."
+    assert offsets.runs == ((0, 10, 0, 11), (15, 26, 16, 18), (31, 41, 23, 34), (46, 56, 39, 50))
+
+
+def test_restore_with_offsets_carries_a_position_past_a_name() -> None:
+    """
+    Given  a text whose first word is a placeholder
+    When   a position after the name is carried over
+    Then   it moves by the characters the name is longer than the placeholder
+    """
+    text = "[PERSON_1] go home"
+    restored, offsets = restore_with_offsets(text, ANNA)
+
+    assert restored == "Anna Müller go home"
+    assert offsets.start(11) == 12
+    assert restored[12:] == text[11:]
+
+
+def test_restore_with_offsets_without_a_map_changes_nothing() -> None:
+    """
+    Given  a text and no placeholders to put back
+    When   the names are restored with their offsets
+    Then   the text comes back unchanged and no run is recorded
+    """
+    restored, offsets = restore_with_offsets("Anna Müller", {})
+
+    assert restored == "Anna Müller"
+    assert offsets.runs == ()
+
+
+def test_restore_does_not_replace_a_placeholder_that_an_original_contains() -> None:
+    """
+    Given  a map whose first original looks like the second placeholder
+    When   restore() and restore_with_offsets() put the originals back
+    Then   both give the same text and the lookalike is left as the original wrote it
+    """
+    mapping = {"[PERSON_1]": "see [PERSON_2]", "[PERSON_2]": "Anna"}
+    text = "[PERSON_1] and [PERSON_2]"
+
+    restored, _offsets = restore_with_offsets(text, mapping)
+
+    assert restore(text, mapping) == restored == "see [PERSON_2] and Anna"

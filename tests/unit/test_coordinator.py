@@ -9,10 +9,10 @@ from unittest.mock import MagicMock, call
 
 import pytest
 
-from teachers_teammate.domain.correction_review import (
-    ChangeNote,
+from teachers_teammate.domain.proofreading.edits import EditPart
+from teachers_teammate.domain.proofreading.review import (
     CorrectionReview,
-    SentenceNote,
+    EditNote,
     UnclearNote,
 )
 from teachers_teammate.domain.run_summary import RunStatus, RunSummary
@@ -338,14 +338,24 @@ def test_run_files_reports_the_counts_of_the_diff_not_of_the_notes(tmp_path: Pat
     Then   the summary line counts the two hunks and the unclear expression
     """
     review = CorrectionReview(
-        sentences=(
-            SentenceNote(
-                "She met his friend.",
-                "She met her friends.",
-                (ChangeNote("his friend", "her friends", "word_choice", "Agreement."),),
+        edits=(
+            EditNote(
+                id=1,
+                parts=(
+                    EditPart(
+                        raw_start=8, raw_end=18, original="his friend", corrected="her friends"
+                    ),
+                ),
+                sentences=(0,),
+                category="word_choice",
+                explanation="Agreement.",
             ),
         ),
-        unclear=(UnclearNote("She", "Who?", "Anna"),),
+        unclear=(
+            UnclearNote(
+                raw_start=0, raw_end=3, expression="She", why="Who?", recommendation="Anna"
+            ),
+        ),
     )
     result = ProcessingResult(
         True,

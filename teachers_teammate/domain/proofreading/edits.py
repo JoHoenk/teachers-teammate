@@ -139,7 +139,7 @@ def edits_from_hunks(
         Edit(
             id=number,
             parts=tuple(_part(hunk) for hunk in group),
-            sentences=_touched(group, spans),
+            sentences=touched_sentences(group, spans),
         )
         for number, group in enumerate(_group(hunks, source, spans), 1)
     )
@@ -259,7 +259,9 @@ def _normal(text: str) -> str:
     return " ".join(_WORD.findall(text.casefold()))
 
 
-def _touched(group: Sequence[Hunk], spans: tuple[tuple[int, int], ...]) -> tuple[int, ...]:
+def touched_sentences(
+    group: Sequence[Hunk | EditPart], spans: tuple[tuple[int, int], ...]
+) -> tuple[int, ...]:
     """Return the indices of the sentences *group* touches, in order and without a gap.
 
     A hunk that runs across a whole sentence touches it too, and a sentence between two sentences

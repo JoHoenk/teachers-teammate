@@ -4,56 +4,50 @@ DOCX document creator: implements :class:`~teachers_teammate.interfaces.Document
 Produces a landscape Word document in one of two layouts:
 
 * ``table``    — three columns: Original Image | OCR Result | Correction Proposal
-* ``comments`` — two columns: Original Image | OCR Result, with Word diff-comments
+* ``comments`` — two columns: Original Image | OCR Result, with Word comments
 
-Text stored as Markdown (``text_format="markdown"``) keeps its formatting: bold, italic,
-underline, strikethrough, super-/subscript, headings, lists and tables become Word runs
-and paragraphs.  Plain text is written exactly as before.
+Text stored as Markdown (``text_format="markdown"``) keeps its formatting in the table layout:
+bold, italic, underline, strikethrough, super-/subscript, headings, lists and tables become Word
+runs and paragraphs.  The comments layout writes the plain text, because a comment has to sit on
+the words it is about and the offsets of the review are offsets in that plain text.
 """
 
 from __future__ import annotations
 
-import copy
+from collections.abc import Sequence
 from datetime import UTC, datetime
-from itertools import groupby, zip_longest
 import logging
 from pathlib import Path
-import re
 from typing import Any
 
 from docx import Document
 from docx.enum.section import WD_ORIENT
-from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_COLOR_INDEX
+from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.opc.packuri import PackURI
 from docx.opc.part import Part
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import Inches, Pt, RGBColor
-from docx.text.run import Run
 from lxml import etree
 
-from ..domain.correction_review import (
-    AlignedReview,
-    ChangeNote,
-    CorrectionReview,
-    UnclearNote,
-    align,
-    best_note_index,
-    strip_marks,
-    text_tokens,
-)
 from ..domain.formatted_text import (
     Block,
     FormattedDocument,
-    Span,
     Style,
     TextFormat,
-    flat_chunks,
     list_markers,
     normalize_text_format,
 )
-from ..domain.proofreading.word_diff import diff_opcodes
+from ..domain.proofreading.review import (
+    CorrectionReview,
+    EditNote,
+    ExplainedSentence,
+    align,
+    explained_sentences,
+)
 from ..interfaces import DocumentCreator
+from .docx_comments import BODY_PT, marks_for, write_marked_text
+from .ocr_formats import plain_text_of
 
 _logger = logging.getLogger(__name__)
 
@@ -68,16 +62,10 @@ _COMMENTS_CT = "application/vnd.openxmlformats-officedocument.wordprocessingml.c
 _COMMENTS_REL = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments"
 _W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 _COMMENTS_AUTHOR = "Teacher's Teammate"
-_BODY_PT = 10
+_BODY_PT = BODY_PT
 _HEADING_PT = 12
 _LIST_INDENT_PT = 14
 _MUTED_COLOUR = RGBColor(0x66, 0x66, 0x66)
-
-_Word = tuple[str, Style]
-"""A whitespace-free word and the style it was written in."""
-
-_WORD_RE = re.compile(r"[^\W_]+", re.UNICODE)
-"""Matches a run of word characters; used to compare wording without punctuation."""
 
 # Headings, column titles and category names of the review sections, per explanation language.
 # Keyed like the correction presets; ``_labels_for`` falls back to English for anything else.
@@ -220,42 +208,8 @@ def labels_for(explanation_language: str) -> dict[str, str]:
     return _LABELS.get(_LANGUAGE_ALIASES.get(key, key), _LABELS["english"])
 
 
-def _norm_key(text: str) -> str:
-    """Return *text* as a lookup key: notation marks stripped, whitespace collapsed."""
-    return " ".join(strip_marks(text).split())
-
-
-def _whole_word_pattern(expression: str) -> str:
-    """Return a regex matching *expression* word for word, never inside a longer word.
-
-    Whitespace in the expression matches any whitespace run; where the expression begins (ends)
-    with a letter or digit, the match must not be preceded (followed) by one, so ``"he"`` does not
-    match inside ``"then"``.
-    """
-    body = r"\s+".join(re.escape(word) for word in expression.split())
-    before = r"(?<![^\W_])" if expression[:1].isalnum() else ""
-    after = r"(?![^\W_])" if expression[-1:].isalnum() else ""
-    return f"{before}{body}{after}"
-
-
-def _contains_words(text: str, expression: str) -> bool:
-    """Whether *text* contains *expression* as a run of whole words.
-
-    Punctuation is ignored on both sides, so an expression that ends a sentence
-    (``"very nice"`` in ``"... very nice."``) is found as well as one in the middle.
-    """
-    haystack = _WORD_RE.findall(text)
-    needle = _WORD_RE.findall(expression)
-    if not needle or len(needle) > len(haystack):
-        return False
-    return any(
-        haystack[start : start + len(needle)] == needle
-        for start in range(len(haystack) - len(needle) + 1)
-    )
-
-
-def _change_summary(change: ChangeNote) -> str:
-    """Return one change as ``"old" → "new"``, dropping the empty side."""
+def _change_summary(change: EditNote) -> str:
+    """Return one change as ``"old" -> "new"``, dropping the empty side."""
     if not change.original:
         return f'\u2192 "{change.corrected}"'
     if not change.corrected:
@@ -263,100 +217,13 @@ def _change_summary(change: ChangeNote) -> str:
     return f'"{change.original}" \u2192 "{change.corrected}"'
 
 
-def _comment_text(base: str, note: ChangeNote | None, labels: dict[str, str]) -> str:
-    """Return *base* plus the note's category and explanation (``base`` when there is none)."""
-    if note is None or not note.explanation:
-        return base
-    category = labels.get(note.category, note.category.replace("_", " "))
-    return f"{base} \u00b7 {category}: {note.explanation}"
-
-
-def _explanation_line(change: ChangeNote, labels: dict[str, str]) -> str:
+def _explanation_line(change: EditNote, labels: dict[str, str]) -> str:
     """Return a change as one bullet of the explanations section."""
     summary = _change_summary(change)
     if not change.explanation:
         return summary
     category = labels.get(change.category, change.category.replace("_", " "))
     return f"{summary} \u00b7 {category}: {change.explanation}"
-
-
-class _NoteSource:
-    """The explanations of a review, looked up by the words of the diff part they explain.
-
-    The comments layout computes its own word diff, whose parts do not line up one-to-one with
-    the token hunks of ``align()`` (``his friend.`` is one part, ``his`` and ``friend`` two
-    hunks).  A part therefore asks the domain for the note that changes the most of its words
-    (:func:`~teachers_teammate.domain.correction_review.best_note_index`).
-    """
-
-    def __init__(self, aligned: AlignedReview | None, labels: dict[str, str]) -> None:
-        self._labels = labels
-        self._notes: list[ChangeNote] = []
-        self._used: set[int] = set()
-        seen: set[int] = set()
-        for entry in aligned.changes if aligned is not None else ():
-            if entry.note is not None and id(entry.note) not in seen:
-                seen.add(id(entry.note))
-                self._notes.append(entry.note)
-
-    def comment(self, base: str, original: str, corrected: str) -> str:
-        """Return the comment text for a diff part: *base*, plus its explanation if known."""
-        part = text_tokens(original) | text_tokens(corrected)
-        best = best_note_index(self._notes, self._used, part)
-        if best < 0:
-            return base
-        self._used.add(best)
-        return _comment_text(base, self._notes[best], self._labels)
-
-
-def _aligned_review(
-    review: CorrectionReview | None,
-    raw_text: str,
-    corrected_text: str | None,
-    text_format: TextFormat,
-) -> AlignedReview | None:
-    """Match *review*'s notes to the local word diff of *raw_text* against *corrected_text*.
-
-    ``None`` without a review or without a corrected text (nothing to explain then).
-    """
-    if review is None or not corrected_text:
-        return None
-    from .ocr_formats import plain_text_of  # noqa: PLC0415
-
-    return align(
-        plain_text_of(raw_text, text_format),
-        plain_text_of(corrected_text, text_format),
-        review,
-    )
-
-
-def _isolate_runs(para: Any, start: int, end: int) -> list[Any]:
-    """Split the runs of *para* at the character offsets *start* and *end*; return those between.
-
-    The split-off parts keep the formatting of the run they came from.  Offsets count the
-    characters of ``para.text``.
-    """
-    for offset in (end, start):  # the later cut first, so the earlier offset stays valid
-        position = 0
-        for run in para.runs:
-            length = len(run.text)
-            if position < offset < position + length:
-                tail = copy.deepcopy(run._r)  # noqa: SLF001  # python-docx has no public API to split a run
-                run._r.addnext(tail)  # noqa: SLF001
-                head_text = run.text[: offset - position]
-                tail_run = Run(tail, run._parent)  # noqa: SLF001
-                tail_run.text = run.text[offset - position :]
-                run.text = head_text
-                break
-            position += length
-    inside: list[Any] = []
-    position = 0
-    for run in para.runs:
-        length = len(run.text)
-        if length and position >= start and position + length <= end:
-            inside.append(run)
-        position += length
-    return inside
 
 
 def _apply_style(run: Any, style: Style) -> None:
@@ -373,55 +240,6 @@ def _apply_style(run: Any, style: Style) -> None:
         run.font.superscript = True
     if Style.SUBSCRIPT in style:
         run.font.subscript = True
-
-
-def _words(spans: tuple[Span, ...] | list[Span]) -> list[_Word]:
-    return [(word, span.style) for span in spans for word in span.text.split()]
-
-
-def _style_groups(words: list[_Word]) -> list[tuple[str, Style]]:
-    """Join consecutive words of one style into ``(text, style)`` runs."""
-    return [
-        (" ".join(word for word, _ in group), style)
-        for style, group in groupby(words, key=lambda word: word[1])
-    ]
-
-
-def _split_lines(spans: tuple[Span, ...]) -> list[tuple[Span, ...]]:
-    """Split *spans* at ``"\n"`` into one span tuple per line."""
-    lines: list[list[Span]] = [[]]
-    for span in spans:
-        pieces = span.text.split("\n")
-        for index, piece in enumerate(pieces):
-            if index:
-                lines.append([])
-            if piece:
-                lines[-1].append(Span(piece, span.style))
-    return [tuple(line) for line in lines]
-
-
-def _styled_lines(doc: FormattedDocument) -> list[tuple[Span, ...]]:
-    """Flatten *doc* to lines of styled spans, with a blank line between blocks."""
-    lines: list[tuple[Span, ...]] = []
-    for spans, tight in flat_chunks(doc):
-        if lines and not tight:
-            lines.append(())
-        lines.extend(_split_lines(spans))
-    return lines
-
-
-def _lines_of(text: str, text_format: TextFormat) -> list[tuple[Span, ...]]:
-    """Return stored *text* as lines of styled spans (plain text: one unstyled span per line)."""
-    if text_format != "markdown":
-        return [(Span(line),) if line else () for line in text.splitlines()]
-    from .ocr_formats import parse_stored_text  # noqa: PLC0415
-
-    return _styled_lines(parse_stored_text(text, "markdown"))
-
-
-def _line_key(line: tuple[Span, ...]) -> tuple[_Word, ...]:
-    """Return what makes a line "the same" for diffing: its words and how each is styled."""
-    return tuple(_words(line))
 
 
 class DocxDocumentCreator(DocumentCreator):
@@ -549,8 +367,13 @@ class DocxDocumentCreator(DocumentCreator):
 
         if review is not None:
             labels = labels_for(self._labels_language)
-            aligned = _aligned_review(review, raw_text, corrected_text, text_format)
-            self._add_explanations(doc, aligned, labels)
+            if corrected_text:
+                raw_plain = plain_text_of(raw_text, text_format)
+                corrected_plain = plain_text_of(corrected_text, text_format)
+                aligned = align(raw_plain, corrected_plain, review)
+                self._add_explanations(
+                    doc, explained_sentences(aligned, raw_plain, corrected_plain), labels
+                )
             self._add_unclear_table(doc, review, labels)
 
         doc.save(str(out_path))
@@ -569,18 +392,19 @@ class DocxDocumentCreator(DocumentCreator):
         """
         Write a landscape .docx to *out_path* (two-column: image + OCR text).
 
-        When *corrected_text* is provided, differences against the raw OCR are
-        highlighted in yellow and attached as Word comments so reviewers can
-        accept or reject each change directly in Word.
+        The column shows the extracted text as plain text, one paragraph per line.  When
+        *corrected_text* is provided, every change is highlighted in yellow and commented with
+        what it does to the words, and every unclear expression is commented on its own words,
+        so reviewers can accept or reject each change directly in Word.
 
         Args:
             raw_text:       Raw OCR output.
-            corrected_text: Proofread text used to compute diffs, or None.
+            corrected_text: Proofread text used to compute the changes, or None.
             out_path:       Destination path (parent directory must exist).
             title:          Document heading.
             image_path:     Source image embedded in column 1.
             review:         Explanations and unclear expressions, attached as comments and
-                            appended as a table; ``None`` writes the comments as before.
+                            appended as a table; ``None`` writes the text without comments.
         """
         doc = Document()
         section = doc.sections[0]
@@ -612,20 +436,15 @@ class DocxDocumentCreator(DocumentCreator):
 
         labels = labels_for(self._labels_language)
         pending: list[tuple[int, str]] = []
-        if corrected_text:
-            self._fill_cell_with_styled_diffs(
-                content[1],
-                _lines_of(raw_text, text_format),
-                _lines_of(corrected_text, text_format),
-                pending,
-                _NoteSource(_aligned_review(review, raw_text, corrected_text, text_format), labels),
-            )
-        elif text_format == "markdown":
-            self._fill_cell_formatted(content[1], raw_text)
-        else:
-            self._fill_cell(content[1], raw_text)
+        raw_plain = plain_text_of(raw_text, text_format)
+        # Without a corrected text the two texts are the same: there is no change to mark, but the
+        # unclear expressions of the review are still commented on their words.
+        corrected_plain = (
+            plain_text_of(corrected_text, text_format) if corrected_text else raw_plain
+        )
+        aligned = align(raw_plain, corrected_plain, review or CorrectionReview())
+        write_marked_text(content[1], raw_plain, marks_for(aligned, labels, raw_plain), pending)
         if review is not None:
-            self._add_unclear_comments(content[1], review, labels, pending)
             self._add_unclear_table(doc, review, labels)
         if pending:
             self._attach_comments_part(doc, pending)
@@ -727,189 +546,6 @@ class DocxDocumentCreator(DocumentCreator):
             run.bold = True
         return run
 
-    def _fill_cell_with_styled_diffs(
-        self,
-        cell: Any,
-        raw_lines: list[tuple[Span, ...]],
-        corr_lines: list[tuple[Span, ...]],
-        comments: list[tuple[int, str]],
-        notes: _NoteSource,
-    ) -> None:
-        """Fill *cell* with the styled *raw_lines*, commenting where *corr_lines* differ.
-
-        *notes* supplies the explanation for each commented word diff.
-
-        Lines are diffed by their words and styles; a word whose style the correction changed
-        (a crossed-out word that lost its strikethrough) is commented like a changed word.
-        """
-        opcodes = diff_opcodes(
-            [_line_key(line) for line in raw_lines],
-            [_line_key(line) for line in corr_lines],
-        )
-        first = True
-        for tag, i1, i2, j1, j2 in opcodes:
-            raw_block = raw_lines[i1:i2]
-            corr_block = corr_lines[j1:j2]
-            if tag == "equal":
-                for line in raw_block:
-                    para = cell.paragraphs[0] if first else cell.add_paragraph()
-                    first = False
-                    for span in line:
-                        self._add_plain_run(para, span.text, span.style)
-            else:
-                for raw_line, corr_line in zip_longest(raw_block, corr_block, fillvalue=()):
-                    para = cell.paragraphs[0] if first else cell.add_paragraph()
-                    first = False
-                    self._add_styled_line_with_word_diff(para, raw_line, corr_line, comments, notes)
-
-    def _add_styled_line_with_word_diff(
-        self,
-        para: Any,
-        raw_spans: tuple[Span, ...],
-        corr_spans: tuple[Span, ...],
-        comments: list[tuple[int, str]],
-        notes: _NoteSource,
-    ) -> None:
-        """Add the styled *raw_spans* to *para*, commenting word diffs against *corr_spans*."""
-        raw_words = _words(raw_spans)
-        corr_words = _words(corr_spans)
-        if not raw_words and not corr_words:
-            return
-        opcodes = diff_opcodes([word for word, _ in raw_words], [word for word, _ in corr_words])
-        parts: list[tuple[list[_Word], str | None, str, str]] = []
-        for tag, i1, i2, j1, j2 in opcodes:
-            raw_chunk = raw_words[i1:i2]
-            old_chunk = " ".join(word for word, _ in raw_chunk)
-            corr_chunk = " ".join(word for word, _ in corr_words[j1:j2])
-            if tag == "equal":
-                pairs = zip(raw_chunk, corr_words[j1:j2], strict=True)
-                for same_style, group in groupby(pairs, key=lambda pair: pair[0][1] == pair[1][1]):
-                    words = [raw for raw, _corr in group]
-                    if same_style:
-                        parts.append((words, None, "", ""))
-                    else:
-                        parts.append((words, "\u2192 (formatting changed)", "", ""))
-            elif tag == "replace":
-                parts.append((raw_chunk, f'\u2192 "{corr_chunk}"', old_chunk, corr_chunk))
-            elif tag == "delete":
-                parts.append((raw_chunk, "\u2192 (delete)", old_chunk, ""))
-            else:  # insert — no raw anchor; annotate as inline marker with a comment
-                parts.append(
-                    (
-                        [(f"[+{corr_chunk}]", Style.NONE)],
-                        f'\u2192 (insert "{corr_chunk}")',
-                        "",
-                        corr_chunk,
-                    )
-                )
-        for idx, (words, base, original, corrected) in enumerate(parts):
-            comment_text = None if base is None else notes.comment(base, original, corrected)
-            groups = _style_groups(words)
-            # Words of different styles are separate runs, so each run but the line's last
-            # carries the blank that separates it from the next word.
-            is_last_part = idx == len(parts) - 1
-            groups = [
-                (text if is_last_part and index == len(groups) - 1 else text + " ", style)
-                for index, (text, style) in enumerate(groups)
-            ]
-            if comment_text is None:
-                for text, style in groups:
-                    self._add_plain_run(para, text, style)
-            else:
-                self._add_commented_runs(para, groups, comments, comment_text)
-
-    @staticmethod
-    def _add_plain_run(para: Any, text: str, style: Style = Style.NONE) -> None:
-        run = para.add_run(text)
-        run.font.size = Pt(_BODY_PT)
-        _apply_style(run, style)
-
-    @classmethod
-    def _add_commented_runs(
-        cls,
-        para: Any,
-        groups: list[tuple[str, Style]],
-        comments: list[tuple[int, str]],
-        text: str,
-    ) -> None:
-        """Add yellow-highlighted runs in *para* and register *text* as their comment."""
-        if not groups:
-            return
-        runs = []
-        for group_text, style in groups:
-            run = para.add_run(group_text)
-            run.font.size = Pt(_BODY_PT)
-            run.font.highlight_color = WD_COLOR_INDEX.YELLOW
-            _apply_style(run, style)
-            runs.append(run)
-        cls._anchor_comment(runs, comments, text)
-
-    @staticmethod
-    def _anchor_comment(runs: list[Any], comments: list[tuple[int, str]], text: str) -> None:
-        """Wrap *runs* in a comment range and register *text* as the comment's body."""
-        if not runs:
-            return
-        comment_id = len(comments)
-        comments.append((comment_id, text))
-        range_start = OxmlElement("w:commentRangeStart")
-        range_start.set(qn("w:id"), str(comment_id))
-        runs[0]._r.addprevious(range_start)  # noqa: SLF001  # python-docx has no public API for OOXML comment range anchors; _r exposes the underlying lxml element
-        range_end = OxmlElement("w:commentRangeEnd")
-        range_end.set(qn("w:id"), str(comment_id))
-        runs[-1]._r.addnext(range_end)  # noqa: SLF001  # python-docx has no public API for OOXML comment range anchors; _r exposes the underlying lxml element
-        ref_r = OxmlElement("w:r")
-        ref_rpr = OxmlElement("w:rPr")
-        ref_style = OxmlElement("w:rStyle")
-        ref_style.set(qn("w:val"), "CommentReference")
-        ref_rpr.append(ref_style)
-        ref_r.append(ref_rpr)
-        ref_ref = OxmlElement("w:commentReference")
-        ref_ref.set(qn("w:id"), str(comment_id))
-        ref_r.append(ref_ref)
-        range_end.addnext(ref_r)
-
-    @classmethod
-    def _add_unclear_comments(
-        cls,
-        cell: Any,
-        review: CorrectionReview,
-        labels: dict[str, str],
-        comments: list[tuple[int, str]],
-    ) -> None:
-        """Attach one comment per unclear expression, anchored to the expression itself.
-
-        The paragraph that contains the expression is searched word for word; the runs around it
-        are split so the comment covers exactly those words.  An expression that is not found
-        word for word (it spans a line break, or the model changed punctuation) is anchored to
-        the whole paragraph that contains its words, as long as one does.
-        """
-        paragraphs = list(cell.paragraphs)
-        for note in review.unclear:
-            expression = _norm_key(note.expression)
-            if not expression:
-                continue
-            pattern = re.compile(_whole_word_pattern(expression))
-            for para in paragraphs:
-                found = pattern.search(para.text)
-                if found is not None:
-                    runs = _isolate_runs(para, found.start(), found.end())
-                elif _contains_words(_norm_key(para.text), expression):
-                    runs = list(para.runs)
-                else:
-                    continue
-                cls._anchor_comment(runs, comments, cls._unclear_comment(note, labels))
-                break
-
-    @staticmethod
-    def _unclear_comment(note: UnclearNote, labels: dict[str, str]) -> str:
-        """Return the comment text of one unclear expression."""
-        recommendation = (
-            f"{labels['suggestion_prefix']}: {note.recommendation}"
-            if note.is_suggestion
-            else f"{labels['recommended_prefix']}: {note.recommendation}"
-        )
-        return f"{labels['unclear_prefix']}: {note.why} \u2014 {recommendation}"
-
     def _add_unclear_table(
         self, doc: Any, review: CorrectionReview, labels: dict[str, str]
     ) -> None:
@@ -937,7 +573,7 @@ class DocxDocumentCreator(DocumentCreator):
             self._fill_cell(row[2], f"{prefix}: {note.recommendation}")
 
     def _add_explanations(
-        self, doc: Any, aligned: AlignedReview | None, labels: dict[str, str]
+        self, doc: Any, sentences: Sequence[ExplainedSentence], labels: dict[str, str]
     ) -> None:
         """Append the numbered *Explanations* list, one block per changed sentence.
 
@@ -946,31 +582,22 @@ class DocxDocumentCreator(DocumentCreator):
         quoted as it reads in the corrected text now.  Spelling and punctuation edits explain
         themselves and are not listed (the comments layout still carries their explanation).
         """
-        if aligned is None:
-            return
-        by_sentence: dict[int, list[ChangeNote]] = {}
-        for entry in aligned.changes:
-            if entry.note is None or entry.is_minor:
-                continue
-            notes = by_sentence.setdefault(entry.sentence, [])
-            if all(entry.note is not other for other in notes):
-                notes.append(entry.note)
-        if not by_sentence:
+        if not sentences:
             return
         heading = doc.add_heading(labels["explanations"], level=2)
         for run in heading.runs:
             run.font.color.rgb = _HEADING_COLOUR
-        for number, sentence in enumerate(sorted(by_sentence), start=1):
+        for number, sentence in enumerate(sentences, start=1):
             para = doc.add_paragraph()
             bold = para.add_run(f"{number}. ")
             bold.bold = True
             bold.font.size = Pt(_BODY_PT)
-            corrected = para.add_run(aligned.sentence_texts[sentence])
+            corrected = para.add_run(sentence.text)
             corrected.italic = True
             corrected.font.size = Pt(_BODY_PT)
-            for change in by_sentence[sentence]:
+            for note in sentence.notes:
                 bullet = doc.add_paragraph(style="List Bullet")
-                self._add_run(bullet, _explanation_line(change, labels))
+                self._add_run(bullet, _explanation_line(note, labels))
 
     @staticmethod
     def _attach_comments_part(doc: Any, comments: list[tuple[int, str]]) -> None:

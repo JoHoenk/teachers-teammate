@@ -1,9 +1,12 @@
-"""What a step of the proofreading exchange cost and how it ended.
+"""What a step of the proofreading exchange cost, how it ended, and what the file got.
 
 A step is one kind of request (correct, explain, unclear, review); it may take several requests
 (a cut-off answer is asked again, an invalid one is repaired).  Every request leaves a
 :class:`StepReport`, so a run can say what each step cost and where it failed, and the
 evaluation tools can compare two models on the same steps.
+
+:class:`CorrectionOutcome` is what a :class:`~teachers_teammate.interfaces.Corrector` returns:
+the corrected text, the review the exchange made, and what the teacher should know.
 
 Pure: no I/O, no provider imports.
 """
@@ -12,6 +15,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Literal
+
+from .review import CorrectionReview
 
 StepName = Literal["correct", "explain", "unclear", "review"]
 """The steps a request can belong to: ① correct, ② explain, ③ unclear, and R's review."""
@@ -78,3 +83,22 @@ class StepReport:
     failure: FailureKind = ""
     counters: dict[str, int] = field(default_factory=dict)
     """What the step counted while reading this answer (unknown ids, dropped quotes, ...)."""
+
+
+@dataclass(frozen=True)
+class CorrectionOutcome:
+    """Result of one proofreading call: the text, the optional review and a warning."""
+
+    text: str
+    review: CorrectionReview | None = None
+    warning: str | None = None
+    failed: bool = False
+    """``True`` when the provider call failed and *text* is the unchanged source: such an
+    outcome is reported but never stored as a finished correction."""
+    fell_back: bool = False
+    """``True`` when the answer lacks part of what was asked.
+
+    A review came back, but a report of step ② or ③ failed, so the explanations or the unclear
+    list are missing for part of the text.  The file is corrected and stored; only the speed
+    sample is dropped, because it would undercount the answer length of a complete answer.
+    """

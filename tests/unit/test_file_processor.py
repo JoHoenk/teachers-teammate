@@ -12,13 +12,10 @@ from unittest.mock import MagicMock, call
 
 import pytest
 
-from teachers_teammate.domain.correction_review import (
-    ChangeNote,
-    CorrectionOutcome,
-    CorrectionReview,
-    SentenceNote,
-)
 from teachers_teammate.domain.formatted_text import TextFormat
+from teachers_teammate.domain.proofreading.edits import EditPart
+from teachers_teammate.domain.proofreading.result import CorrectionOutcome
+from teachers_teammate.domain.proofreading.review import CorrectionReview, EditNote
 from teachers_teammate.domain.performance_estimate import SpeedStep
 from teachers_teammate.infrastructure.proofreading.chunking import ChunkingCorrector
 from teachers_teammate.infrastructure.proofreading.corrector import (
@@ -34,6 +31,7 @@ from teachers_teammate.infrastructure.workflow.cache_service import CacheContext
 from teachers_teammate.infrastructure.workflow.preprocess_service import PreparedInput
 from teachers_teammate.exceptions import RunStoppedError
 from teachers_teammate.infrastructure.workflow.file_processor import (
+    REVIEW_UNMATCHED,
     STOPPED_BEFORE_PROOFREADING,
     STOPPED_BEFORE_RECOGNITION,
     STOPPED_BEFORE_REVIEW,
@@ -503,7 +501,15 @@ def test_a_file_stopped_at_the_review_keeps_the_stored_review_and_warning(
            keeps its badge and explanations
     """
     review = CorrectionReview(
-        sentences=(SentenceNote("a", "b", (ChangeNote("a", "b", "grammar", "why"),)),)
+        edits=(
+            EditNote(
+                id=1,
+                parts=(EditPart(raw_start=0, raw_end=1, original="a", corrected="b"),),
+                sentences=(0,),
+                category="grammar",
+                explanation="why",
+            ),
+        )
     )
     corrector = MagicMock()
     corrector.correct.return_value = CorrectionOutcome("proofread", review, "only corrections")
@@ -1823,13 +1829,19 @@ def test_plain_text_is_corrected_with_plain_format(tmp_path: Path) -> None:
 
 
 def _anonymizing_review_processor(tmp_path: Path, restore):
-    """Return a processor whose corrector answers with a review quoting a placeholder name."""
+    """Return a processor whose corrector answers with a review quoting a placeholder name.
+
+    The name is shorter than its placeholder, so every offset after it moves when the names are
+    put back: a review that is not remapped would point at the wrong words.
+    """
     review = CorrectionReview(
-        sentences=(
-            SentenceNote(
-                "[PERSON_1] have gone.",
-                "[PERSON_1] has gone.",
-                (ChangeNote("have", "has", "grammar", "[PERSON_1] is third person."),),
+        edits=(
+            EditNote(
+                id=1,
+                parts=(EditPart(raw_start=11, raw_end=15, original="have", corrected="has"),),
+                sentences=(0,),
+                category="grammar",
+                explanation="[PERSON_1] is third person.",
             ),
         )
     )
@@ -1837,18 +1849,24 @@ def _anonymizing_review_processor(tmp_path: Path, restore):
     corrector.correct.return_value = CorrectionOutcome("[PERSON_1] has gone.", review)
     anonymizer = MagicMock()
     anonymizer.anonymize.side_effect = lambda text: (
-        text.replace("Anna Weber", "[PERSON_1]"),
-        {"[PERSON_1]": "Anna Weber"},
+        text.replace("Anna", "[PERSON_1]"),
+        {"[PERSON_1]": "Anna"},
     )
     anonymizer.restore.side_effect = restore
-    return _make_processor(tmp_path, corrector=corrector, anonymizer=anonymizer)
+    return _make_processor(
+        tmp_path,
+        returns=_StubReturns(ocr_return=(["Anna have gone."], None)),
+        corrector=corrector,
+        anonymizer=anonymizer,
+    )
 
 
 def test_names_are_restored_in_every_text_field_of_the_review(tmp_path: Path) -> None:
     """
-    Given  anonymization is on and the review quotes the placeholder in a sentence and a note
+    Given  anonymization is on and the review quotes the placeholder in a note
     When   process() runs the proofreading
-    Then   the review stored in the cache and returned has the real name in all of them
+    Then   the review stored in the cache and returned has the real name, and its offsets still
+           point at the words it quotes after the shorter name moved them
     """
     fp, cache, _, _ = _anonymizing_review_processor(
         tmp_path, lambda text, mapping: text.replace("[PERSON_1]", mapping["[PERSON_1]"])
@@ -1857,11 +1875,12 @@ def test_names_are_restored_in_every_text_field_of_the_review(tmp_path: Path) ->
     result = fp.process(tmp_path / "doc.png")
 
     assert result.correction_review is not None
-    sentence = result.correction_review.sentences[0]
-    assert sentence.original == "Anna Weber have gone."
-    assert sentence.changes[0].explanation == "Anna Weber is third person."
+    note = result.correction_review.edits[0]
+    assert note.explanation == "Anna is third person."
+    assert (note.parts[0].raw_start, note.parts[0].raw_end) == (5, 9)
+    assert result.raw_text[5:9] == note.parts[0].original
     stored = cache.record_correction.call_args.kwargs["correction_review"]
-    assert stored["sentences"][0]["corrected"] == "Anna Weber has gone."
+    assert stored["edits"][0]["parts"][0]["original"] == "have"
 
 
 def test_failed_review_restore_drops_the_review_and_never_logs_the_text(
@@ -1888,9 +1907,47 @@ def test_failed_review_restore_drops_the_review_and_never_logs_the_text(
 
     assert result.ok is True
     assert result.correction_review is None
-    assert result.correction_text == "Anna Weber has gone."
+    assert result.correction_text == "Anna has gone."
+    assert REVIEW_UNMATCHED in result.correction_warning
     assert "doc.png" in caplog.text
-    assert "Anna Weber" not in caplog.text
+    assert "Anna" not in caplog.text
+
+
+def test_a_review_that_does_not_fit_the_restored_text_is_dropped_and_says_so(
+    tmp_path: Path,
+) -> None:
+    """
+    Given  anonymization is on and the model changed the placeholder, so the review quotes words
+           the restored text does not have
+    When   process() runs the proofreading
+    Then   the corrected text is stored without a review and the warning says the explanations
+           were left out
+    """
+    fp, cache, _, _ = _anonymizing_review_processor(
+        tmp_path, lambda text, mapping: text.replace("[PERSON_1]", mapping["[PERSON_1]"])
+    )
+    fp._correction.correct.return_value = CorrectionOutcome(
+        "[PERSON_1] has gone.",
+        CorrectionReview(
+            edits=(
+                EditNote(
+                    id=1,
+                    parts=(EditPart(raw_start=11, raw_end=15, original="hve", corrected="has"),),
+                    sentences=(0,),
+                    category="grammar",
+                    explanation="[PERSON_1] is third person.",
+                ),
+            )
+        ),
+    )
+
+    result = fp.process(tmp_path / "doc.png")
+
+    assert result.ok is True
+    assert result.correction_review is None
+    assert result.correction_text == "Anna has gone."
+    assert REVIEW_UNMATCHED in result.correction_warning
+    assert cache.record_correction.call_args.kwargs["correction_review"] is None
 
 
 def test_failed_correction_is_reported_but_not_stored_as_done(tmp_path: Path) -> None:

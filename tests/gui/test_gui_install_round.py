@@ -9,10 +9,10 @@ from typing import Any, ClassVar
 import pytest
 from PySide6.QtCore import QObject, QThread, Signal
 
-from teachers_teammate.gui import _addon_installer_dialog, _install_round
+from teachers_teammate.gui import _addon_installer_dialog, _install_round, _model_fetch
 from teachers_teammate.gui._install_round import InstallRound
 
-from ._service_stubs import RecommendationServiceStub
+from ._service_stubs import FinishedThreadStub, RecommendationServiceStub
 
 
 class _Script:
@@ -65,7 +65,7 @@ class _Manager(QObject):
         self.aborted = True
 
 
-class _FakePipThread(QObject):
+class _FakePipThread(FinishedThreadStub, QObject):
     """Reports the package list back at once, as the real pip thread does."""
 
     log_line = Signal(str)
@@ -85,7 +85,7 @@ class _FakePipThread(QObject):
         self.finished_ok.emit(self._packages)
 
 
-class _FakeSpacyThread(QObject):
+class _FakeSpacyThread(FinishedThreadStub, QObject):
     """Reports a downloaded spaCy model at once."""
 
     log_line = Signal(str)
@@ -105,7 +105,7 @@ class _FakeSpacyThread(QObject):
         self.finished_ok.emit(self._model)
 
 
-class _FakePullThread(QObject):
+class _FakePullThread(FinishedThreadStub, QObject):
     """Reports a pulled Ollama model at once."""
 
     progress = Signal(str, float, float)
@@ -124,7 +124,7 @@ class _FakePullThread(QObject):
         self.finished_ok.emit(self._model)
 
 
-class _FakeReaderThread(QObject):
+class _FakeReaderThread(FinishedThreadStub, QObject):
     """Reports a downloaded built-in reader at once (or fails, or waits to be cancelled)."""
 
     progress = Signal(int, int)
@@ -148,7 +148,7 @@ class _FakeReaderThread(QObject):
         self.finished_ok.emit()
 
 
-class _FakeUpdateThread(QObject):
+class _FakeUpdateThread(FinishedThreadStub, QObject):
     """Runs the service's add-on update at once, as the real thread does in the background."""
 
     log_line = Signal(str)
@@ -709,3 +709,88 @@ def test_without_a_manager_the_round_pulls_by_itself(qtbot, fake_threads) -> Non
     assert seen["done"] == ["a:1b", "b:1b"]
     assert seen["finished"] == [True]
     assert service.changed_urls == ["http://127.0.0.1:11434", "http://127.0.0.1:11434"]
+
+
+def _still_running(fake: type[QObject]) -> type[QObject]:
+    """Return *fake* as a thread that was started and never ends: ``start()`` does nothing."""
+
+    class _StillRunning(fake):  # ty: ignore[unsupported-base]  # fake is one of the fakes above
+        def start(self) -> None:
+            pass
+
+        def isRunning(self) -> bool:
+            return True
+
+        def isFinished(self) -> bool:
+            return False
+
+    return _StillRunning
+
+
+@pytest.mark.parametrize(
+    ("module", "attribute", "fake", "start_kwargs"),
+    [
+        pytest.param(
+            _install_round,
+            "_AddonUpdateThread",
+            _FakeUpdateThread,
+            {"update_addons": True},
+            id="update",
+        ),
+        pytest.param(
+            _install_round, "_PipInstallThread", _FakePipThread, {"packages": ["spacy"]}, id="pip"
+        ),
+        pytest.param(
+            _addon_installer_dialog,
+            "_ModelDownloadThread",
+            _FakeSpacyThread,
+            {"spacy_models": ["en_core_web_sm"]},
+            id="spacy",
+        ),
+        pytest.param(
+            _addon_installer_dialog,
+            "_ReaderDownloadThread",
+            _FakeReaderThread,
+            {"reader": True},
+            id="reader",
+        ),
+        pytest.param(
+            _addon_installer_dialog,
+            "_ReaderDownloadThread",
+            _FakeReaderThread,
+            {"page_models": True},
+            id="page-models",
+        ),
+        pytest.param(
+            _addon_installer_dialog,
+            "_OllamaPullThread",
+            _FakePullThread,
+            {"ollama_models": ["a:1b"], "ollama_url": "http://host:11434"},
+            id="pull",
+        ),
+    ],
+)
+@pytest.mark.use_case("Runtime_Addon_Installation")
+def test_every_thread_a_round_starts_is_held_until_it_ends(
+    qtbot, monkeypatch, module, attribute, fake, start_kwargs
+) -> None:
+    """
+    Given  a round that starts a thread of one kind, a thread that is still running
+    When   the round has started it
+    Then   the thread is held until it ends, so the round's next step (it sets ``_thread`` to
+           ``None`` or to the next thread from the slot of this thread's own "done" signal,
+           while the thread is in its last lines) cannot drop the last reference to a running
+           QThread — Qt aborts the whole process when one is destroyed
+    """
+    held_before = set(_model_fetch._RETIRED_THREADS)
+    monkeypatch.setattr(module, attribute, _still_running(fake))
+    round_, _service = _round()
+
+    round_.start(**start_kwargs)
+
+    thread = round_._thread
+    try:
+        assert thread is not None
+        assert thread in _model_fetch._RETIRED_THREADS
+    finally:
+        _model_fetch._RETIRED_THREADS.intersection_update(held_before)

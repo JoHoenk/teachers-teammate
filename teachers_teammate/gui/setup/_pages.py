@@ -1040,7 +1040,7 @@ class _DownloadRows(QWidget):
 def _item_name(item: str) -> str:
     """Return the download name behind an install round item key."""
     if item == PAGE_MODELS_ITEM:
-        # The round says ``page_models:all``; the plan's row is named by the add-on id.
+        # The round says ``page_models:all``; the setup plan's row is named by the add-on id.
         return PAGE_MODELS_ADDON_ID
     for prefix in (PACKAGE_PREFIX, SPACY_PREFIX, READER_PREFIX):
         if item.startswith(prefix):

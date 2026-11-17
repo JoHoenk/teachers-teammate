@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 import threading
 from typing import Any, ClassVar
 from unittest.mock import MagicMock
@@ -17,7 +18,6 @@ from teachers_teammate.domain.model_catalog import (
     HardwareDetection,
     ModelUses,
 )
-from teachers_teammate.domain.model_listing import ModelListing
 from teachers_teammate.gui import _user_text as txt
 from teachers_teammate.gui._constants import _SPACY_MODEL_CHOICES
 from teachers_teammate.gui._install_round import PAGE_MODELS_ITEM, READER_ITEM
@@ -32,8 +32,9 @@ from teachers_teammate.gui.settings._page import (
 )
 from teachers_teammate.infrastructure.spacy_models import FALLBACK_SPACY_MODEL, SPACY_MODELS
 
+from ..fakes.fake_ollama import FakeOllama
 from ._gui_harness import settings_context
-from ._service_stubs import RecommendationServiceStub
+from ._service_stubs import FinishedThreadStub, RecommendationServiceStub
 
 _USER_ROLE = 0x0100  # Qt.ItemDataRole.UserRole
 
@@ -98,13 +99,14 @@ def _make_dialog(
     service: Any = None,
     wait_for_profile: bool = True,
     pull_manager: Any = None,
+    ollama_url: str = "http://127.0.0.1:11434",
 ) -> AddonsPage:
     """Build the page; *preselect* arrives as a deep link (``focus``) would bring it."""
     dlg = AddonsPage(
         settings_context(
             service or _StubService(installed),
             settings={
-                "ollama_url": "http://127.0.0.1:11434",
+                "ollama_url": ollama_url,
                 "hardware_profile": hardware_profile,
             },
             pull_manager=pull_manager,
@@ -1391,40 +1393,11 @@ def test_detection_runs_again_when_requested_during_a_running_check(qtbot) -> No
 # ── real service + fake Ollama server: the download → re-check → show flow ──
 
 
-class _FakeOllamaServer:
-    """In-memory Ollama server: installed models and per-model capabilities."""
-
-    def __init__(self) -> None:
-        self.installed: dict[str, int] = {}
-        self.capabilities: dict[str, set[str]] = {}
-
-
 @pytest.fixture
-def fake_ollama(monkeypatch):
-    """Patch the infrastructure seams of the *real* application service."""
-    import teachers_teammate.application.service as service_module  # noqa: PLC0415
-    from teachers_teammate.infrastructure import ollama_utils  # noqa: PLC0415
-
-    server = _FakeOllamaServer()
-
-    class _Client:
-        def __init__(self, url: str, *, timeout: float = 0.0) -> None:
-            _ = url, timeout
-
-        def list_models_with_size(self) -> list[tuple[str, int]]:
-            return list(server.installed.items())
-
-        def model_capabilities(self, tag: str):
-            caps = server.capabilities.get(tag)
-            return frozenset(caps) if caps is not None else None
-
-    monkeypatch.setattr(
-        service_module,
-        "list_provider_models_checked",
-        lambda _provider, **_kw: ModelListing(list(server.installed)),
-    )
-    monkeypatch.setattr(ollama_utils, "OllamaClient", _Client)
-    return server
+def fake_ollama() -> Iterator[FakeOllama]:
+    """The shared fake Ollama server: the *real* service and client talk to it over HTTP."""
+    with FakeOllama() as server:
+        yield server
 
 
 def _real_service():
@@ -1447,7 +1420,7 @@ def test_finished_pull_shows_model_as_downloaded_without_waiting_for_cache(
 
     import teachers_teammate.gui._addon_installer_dialog as installer  # noqa: PLC0415
 
-    class _FakePullThread(QObject):
+    class _FakePullThread(FinishedThreadStub, QObject):
         progress = Signal(str, float, float)
         finished_ok = Signal(str)
         finished_err = Signal(str)
@@ -1460,13 +1433,13 @@ def test_finished_pull_shows_model_as_downloaded_without_waiting_for_cache(
             self.finished_ok.emit(self._model)
 
     monkeypatch.setattr(installer, "_OllamaPullThread", _FakePullThread)
-    dlg = _make_dialog(qtbot, service=_real_service())
+    dlg = _make_dialog(qtbot, service=_real_service(), ollama_url=fake_ollama.url)
     dlg._start_detection()
     qtbot.waitUntil(lambda: dlg._installed_ready, timeout=5000)
     assert not dlg._model_items[DEFAULT_OCR_MODEL].text(3).startswith("✓")
 
-    fake_ollama.installed[DEFAULT_OCR_MODEL] = 6_000_000_000  # the pull arrived
-    dlg._round.start(ollama_models=[DEFAULT_OCR_MODEL], ollama_url="http://127.0.0.1:11434")
+    fake_ollama.install(DEFAULT_OCR_MODEL, size=6_000_000_000)  # the pull arrived
+    dlg._round.start(ollama_models=[DEFAULT_OCR_MODEL], ollama_url=fake_ollama.url)
 
     # Decimal GB, like the catalog sizes shown before the download; "✓" marks it downloaded.
     qtbot.waitUntil(lambda: dlg._model_items[DEFAULT_OCR_MODEL].text(3) == "✓ 6.0 GB", timeout=5000)
@@ -1485,7 +1458,7 @@ def test_pulled_custom_models_stay_in_other_with_their_abilities(
 
     import teachers_teammate.gui._addon_installer_dialog as installer  # noqa: PLC0415
 
-    class _FakePullThread(QObject):
+    class _FakePullThread(FinishedThreadStub, QObject):
         progress = Signal(str, float, float)
         finished_ok = Signal(str)
         finished_err = Signal(str)
@@ -1495,17 +1468,17 @@ def test_pulled_custom_models_stay_in_other_with_their_abilities(
             self._model = model
 
         def start(self) -> None:
-            fake_ollama.installed[self._model] = 1_000_000
+            fake_ollama.install(self._model, capabilities[self._model], size=1_000_000)
             self.finished_ok.emit(self._model)
 
     monkeypatch.setattr(installer, "_OllamaPullThread", _FakePullThread)
-    fake_ollama.capabilities = {
-        "reader-a:latest": {"vision", "completion"},
-        "writer-b:latest": {"completion"},
-        "reader-c:latest": {"vision"},
+    capabilities = {
+        "reader-a:latest": ("vision", "completion"),
+        "writer-b:latest": ("completion",),
+        "reader-c:latest": ("vision",),
     }
-    dlg = _make_dialog(qtbot, service=_real_service())
-    for tag in fake_ollama.capabilities:
+    dlg = _make_dialog(qtbot, service=_real_service(), ollama_url=fake_ollama.url)
+    for tag in capabilities:
         dlg._ollama_custom_input.setText(tag)
         dlg._on_add_custom_ollama_model()
 

@@ -566,7 +566,10 @@ py_test(
 py_test(
     name = "test_ollama_discovery",
     size = "small",
-    srcs = _COMMON_SRCS + ["unit/test_ollama_discovery.py"],
+    srcs = _COMMON_SRCS + [
+        "fakes/fake_ollama.py",
+        "unit/test_ollama_discovery.py",
+    ],
     args = ["unit/test_ollama_discovery.py"],
     main = "run_test.py",
     deps = _COMMON_DEPS + _REQUESTS_DEPS,
@@ -2285,12 +2288,16 @@ py_test(
     name = "test_gui_addons_page",
     size = "small",
     srcs = _COMMON_SRCS + [
+        "fakes/fake_ollama.py",
         "gui/_gui_harness.py",
         "gui/test_gui_addons_page.py",
     ],
     args = ["gui/test_gui_addons_page.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_lib"],
+    deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + [
+        "//teachers_teammate:gui_lib",
+        "@ocr_test_dependencies//ollama:pkg",
+    ],
 )
 
 py_test(

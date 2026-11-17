@@ -152,7 +152,8 @@ delete). See `docs/development.md` → "Storage, hashing & caching".
 - Fixtures: `sample_png`, `sample_pdf` in `tests/conftest.py`.
 - **Patch at the import site**, not at the origin:
   - `teachers_teammate.infrastructure.stage_builder.PpOcrProcessor` (the builder constructs it there; `make_config` defaults to the built-in reader, `engine="ppocr"`, and `conftest.py` points the model store at an empty temporary folder, so nothing downloads)
-  - For Ollama: `patch.dict(sys.modules, {"ollama": mock_ollama})` where `mock_ollama` exposes a mock `Client` (the `ollama` library is lazy-imported inside `OllamaClient`)
+  - For Ollama: `patch.dict(sys.modules, {"ollama": mock_ollama})` where `mock_ollama` exposes a mock `Client` (the `ollama` library is lazy-imported inside `OllamaClient`) — for a test of `OllamaClient`'s own handling of the library only
+  - A test that needs a *server* (real client, real threads, real pull stream) uses `tests/fakes/fake_ollama.py:FakeOllama` — the one Ollama stand-in. Need another answer? Teach `FakeOllama` a switch; do not write a second server or monkeypatch `OllamaClient`. Its shapes follow Ollama's own source (see its docstring); `tests/unit/test_fake_ollama.py` pins them
   - For lazy provider imports: `langchain_openai.ChatOpenAI`
 - Simulate missing optional packages: `patch.dict(sys.modules, {"langchain_anthropic": None})` → expect `RuntimeError` (message contains "is not installed"). Provider `create()` raises `RuntimeError`, and `build_llm()` converts any `SystemExit` from a provider into `RuntimeError` so it never propagates to callers.
 - The built-in reader's real models (`reader_store(tmp_path)` in `tests/conftest.py`, Bazel-fetched `http_file`s) run only in tests marked `needs_reader_models`; everything else uses `fake_reader_store` or patches the processor.

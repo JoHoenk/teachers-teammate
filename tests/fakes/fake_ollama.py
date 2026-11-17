@@ -12,8 +12,14 @@ single-threaded server would answer the second request only after the first had 
 What it records is what the tests assert on: :attr:`FakeOllama.requests` (every request, in
 order) and :attr:`FakeOllama.pulled` (the tags a pull really installed, in order).
 
+It is the one Ollama stand-in of the test suite: a test that needs a server over HTTP uses this,
+a test that needs another answer teaches this one a switch instead of writing a second server.
+
 It is not Ollama.  ``tests/unit/test_fake_ollama.py`` keeps it honest against the ``ollama``
-client the app is locked to; nothing here can say what a real server answers.
+client the app is locked to.  The shapes it sends were read off Ollama's own source (``api/types.go``,
+``server/routes.go``, ``server/images.go``, at commit ``b8db8d5b``): a list entry always carries
+``modified_at``, ``details.format`` and ``details.parent_model``, and a pull that fails says
+``pulling manifest`` before its error line.  Nothing here can say what a future server answers.
 """
 
 from __future__ import annotations
@@ -36,14 +42,18 @@ VISION_FAMILIES: tuple[str, ...] = ("clip",)
 #: The status lines a pull streams, as a real server words them.
 PULL_MANIFEST = "pulling manifest"
 PULL_SUCCESS = "success"
-#: The error line a tag in :attr:`FakeOllama.fail_pull` answers instead of a pull.
+#: The error line a tag in :attr:`FakeOllama.fail_pull` answers, after ``pulling manifest``.
 PULL_FAILED = "pull model manifest: file does not exist"
 #: The digest the fake reports for the layer it pretends to download.
 PULL_DIGEST = "sha256:" + "1" * 64
 #: The bytes the fake reports for a pull, so a progress line has something to show.
 PULL_TOTAL = 1_000_000
-#: The size the fake reports for an installed model.
+#: The size the fake reports for an installed model a test gives no size.
 MODEL_SIZE = 4_000_000_000
+#: When the fake says every model was last changed (the real server always sends the field).
+MODIFIED_AT = "2026-01-01T00:00:00Z"
+#: The file format of every installed model.
+MODEL_FORMAT = "gguf"
 
 
 @dataclass(frozen=True)
@@ -62,6 +72,7 @@ class _Model:
     tag: str
     capabilities: tuple[str, ...]
     families: tuple[str, ...]
+    size: int
 
 
 class FakeOllama:
@@ -104,8 +115,9 @@ class FakeOllama:
         capabilities: Iterable[str] = TEXT_CAPABILITIES,
         *,
         families: Iterable[str] | None = None,
+        size: int = MODEL_SIZE,
     ) -> None:
-        """Pretend *tag* is downloaded, with *capabilities* and *families*.
+        """Pretend *tag* is downloaded, with *capabilities*, *families* and *size* in bytes.
 
         The families default to the vision family for a model that can read images and to the
         text family otherwise, so a test only says what it cares about.
@@ -114,7 +126,9 @@ class FakeOllama:
         if families is None:
             families = VISION_FAMILIES if "vision" in caps else TEXT_FAMILIES
         with self._lock:
-            self._models[tag] = _Model(tag=tag, capabilities=caps, families=tuple(families))
+            self._models[tag] = _Model(
+                tag=tag, capabilities=caps, families=tuple(families), size=size
+            )
 
     def installed(self) -> list[str]:
         """Return the tags the fake holds, in the order they were installed."""
@@ -134,7 +148,8 @@ class FakeOllama:
             {
                 "name": model.tag,
                 "model": model.tag,
-                "size": MODEL_SIZE,
+                "modified_at": MODIFIED_AT,
+                "size": model.size,
                 "digest": PULL_DIGEST,
                 "details": _details(model),
             }
@@ -177,6 +192,8 @@ class FakeOllama:
 def _details(model: _Model) -> dict[str, Any]:
     """Return the ``details`` block of *model*, as ``/api/tags`` and ``/api/show`` send it."""
     return {
+        "parent_model": "",
+        "format": MODEL_FORMAT,
         "family": model.families[0] if model.families else "",
         "families": list(model.families),
         "parameter_size": "8B",
@@ -256,10 +273,12 @@ def _handler_for(fake: FakeOllama) -> type[BaseHTTPRequestHandler]:
             self.send_response(200)
             self.send_header("Content-Type", "application/x-ndjson")
             self.end_headers()
+            # A real server says it is pulling before it finds out it cannot, so the failure
+            # arrives as an error line in a stream that is already a 200.
+            self._line({"status": PULL_MANIFEST})
             if tag in fake.fail_pull:
                 self._line({"error": PULL_FAILED})
                 return
-            self._line({"status": PULL_MANIFEST})
             for completed in (PULL_TOTAL // 2, PULL_TOTAL):
                 self._line(
                     {

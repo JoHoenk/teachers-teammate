@@ -13,12 +13,20 @@ from __future__ import annotations
 
 import ollama
 from collections.abc import Iterator
+import json
+from urllib.request import urlopen
 
 import pytest
 
 from teachers_teammate.infrastructure.ollama_utils import OllamaClient
 
-from ..fakes.fake_ollama import PULL_FAILED, PULL_SUCCESS, FakeOllama
+from ..fakes.fake_ollama import (
+    MODEL_SIZE,
+    PULL_FAILED,
+    PULL_MANIFEST,
+    PULL_SUCCESS,
+    FakeOllama,
+)
 
 
 @pytest.fixture(name="fake")
@@ -144,3 +152,55 @@ def test_the_fake_records_every_request_in_order(fake: FakeOllama) -> None:
     assert fake.paths() == ["/api/tags", "/api/show"]
     assert fake.requests[1].method == "POST"
     assert fake.requests[1].body == {"model": "qwen3:8b"}
+
+
+def test_a_failing_pull_says_it_is_pulling_before_it_fails(fake: FakeOllama) -> None:
+    """
+    Given  a server that refuses to pull a tag
+    When   the app's own pull runs and reports what it is told
+    Then   the first thing it hears is "pulling manifest", as from a real server, and then
+           the error — so a row that failed shows the step it failed in
+    """
+    from teachers_teammate.exceptions import OCRError  # noqa: PLC0415
+
+    fake.fail_pull.add("broken:latest")
+    heard: list[str] = []
+
+    with pytest.raises(OCRError):
+        OllamaClient(fake.url).pull(
+            "broken:latest", lambda status, _done, _total: heard.append(status)
+        )
+
+    assert heard == [PULL_MANIFEST]
+
+
+def test_a_list_entry_carries_the_fields_a_real_server_always_sends(fake: FakeOllama) -> None:
+    """
+    Given  an installed model
+    When   /api/tags is read as raw JSON, past the client's models
+    Then   the entry has "modified_at", and its details "format" and "parent_model" — Ollama
+           sends all three on every entry, so a reader that needs one must find it here too
+    """
+    fake.install("qwen3:8b")
+
+    with urlopen(f"{fake.url}/api/tags", timeout=5) as reply:  # the fake answers on loopback
+        entry = json.load(reply)["models"][0]
+
+    assert entry["modified_at"]
+    assert entry["details"]["format"] == "gguf"
+    assert entry["details"]["parent_model"] == ""
+
+
+def test_the_size_of_an_installed_model_reaches_the_list(fake: FakeOllama) -> None:
+    """
+    Given  one model installed with a size and one without
+    When   the app's client lists them with their sizes
+    Then   the first has its own size and the second the default one
+    """
+    fake.install("small:latest", size=1_000_000)
+    fake.install("big:latest")
+
+    assert OllamaClient(fake.url).list_models_with_size() == [
+        ("small:latest", 1_000_000),
+        ("big:latest", MODEL_SIZE),
+    ]

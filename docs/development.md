@@ -2203,7 +2203,14 @@ without the nested modal loop, so a failed assertion is reported instead of swal
 expected tags come from `best_model(...)`, never from literals, so a catalog update does not break
 the test.  `tests/unit/test_fake_ollama.py` keeps the fake honest: it drives it with the real
 `ollama` client, so a version bump that changes a response model fails there, with a readable
-message, instead of hanging the walkthrough.
+message, instead of hanging the walkthrough.  `FakeOllama` is the **only** Ollama server in the
+tests: the Add-ons page tests and the discovery probe tests use it too, and what they need beyond
+the walkthrough (a model's size, say) became a parameter of it.  Its answers follow Ollama's own
+source — a list entry always has `modified_at`, `details.format` and `details.parent_model`, and a
+failing pull streams `pulling manifest` before the error line, all in a 200 stream.  Ollama's own
+repository tests the same boundary with `httptest` servers and, for integration, a real
+`ollama serve` on a free port (`integration/`, `OLLAMA_TEST_EXISTING`); we have no such run, so a
+server-side change is not seen until the fake is compared with its source again.
 
 **The packaged build** proves the same on all three systems: the `setup assistant` check in
 `frozen_modes.py` builds the wizard on the real service, clicks through to the summary and waits

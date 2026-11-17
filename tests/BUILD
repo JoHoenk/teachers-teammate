@@ -690,10 +690,39 @@ py_test(
 )
 
 py_test(
+    name = "test_check_desktop_entry",
+    size = "small",
+    srcs = _COMMON_SRCS + ["unit/test_check_desktop_entry.py"],
+    args = ["unit/test_check_desktop_entry.py"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS + ["//tools/packaging:packaging_tools_lib"],
+)
+
+py_test(
+    name = "test_latest_release",
+    size = "small",
+    srcs = _COMMON_SRCS + ["unit/test_latest_release.py"],
+    args = ["unit/test_latest_release.py"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS + ["//tools/packaging:packaging_tools_lib"],
+)
+
+py_test(
     name = "test_windows_installer_floor",
     size = "small",
     srcs = _COMMON_SRCS + ["unit/test_windows_installer_floor.py"],
     args = ["unit/test_windows_installer_floor.py"],
+    data = ["//tools/packaging:windows.nsi"],
+    env = {"WINDOWS_NSI": "$(rlocationpath //tools/packaging:windows.nsi)"},
+    main = "run_test.py",
+    deps = _COMMON_DEPS,
+)
+
+py_test(
+    name = "test_windows_installer_script",
+    size = "small",
+    srcs = _COMMON_SRCS + ["unit/test_windows_installer_script.py"],
+    args = ["unit/test_windows_installer_script.py"],
     data = ["//tools/packaging:windows.nsi"],
     env = {"WINDOWS_NSI": "$(rlocationpath //tools/packaging:windows.nsi)"},
     main = "run_test.py",
@@ -2399,6 +2428,7 @@ test_suite(
         ":test_benchmark_runner",
         ":test_benchmark_service",
         ":test_cache_service",
+        ":test_check_desktop_entry",
         ":test_check_linux_bundle",
         ":test_check_macos_bundle",
         ":test_check_pins",
@@ -2433,6 +2463,7 @@ test_suite(
         ":test_interfaces",
         ":test_inventory_tool",
         ":test_language",
+        ":test_latest_release",
         ":test_license_inventory",
         ":test_llm_factory",
         ":test_local_models",
@@ -2484,6 +2515,7 @@ test_suite(
         ":test_text_chunks",
         ":test_text_loss",
         ":test_windows_installer_floor",
+        ":test_windows_installer_script",
         ":test_word_diff",
     ],
 )

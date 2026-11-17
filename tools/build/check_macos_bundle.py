@@ -10,9 +10,15 @@ fails when one needs a newer macOS than ``--max-minos``.
 A universal2 file holds one slice per architecture, and ``vtool`` prints one build command per
 slice; every slice counts, because the app has to start on the architecture the teacher has.
 
+The ``Info.plist`` is checked too, and that part needs no ``vtool``: ``--plist`` runs only it,
+which is how the ``install-macos`` job checks the copy in ``/Applications`` — the version the
+build was stamped with, the bundle identifier, the floor (``MACOS_MINIMUM``, the same number
+this file checks the Mach-O files against) and the icon the plist names.
+
 Usage (from the repo root, after build_standalone.py, on macOS):
 
     python tools/build/check_macos_bundle.py
+    python tools/build/check_macos_bundle.py --plist --version 1.2.3 /Applications/teachers-teammate.app
 """
 
 from __future__ import annotations
@@ -20,6 +26,7 @@ from __future__ import annotations
 import argparse
 import fnmatch
 from pathlib import Path
+import plistlib
 import re
 import shutil
 import subprocess
@@ -48,6 +55,10 @@ _MAX_ARCHITECTURES = 32
 #: the app's own floor follows them; the spec's ``LSMinimumSystemVersion`` reads this number, so
 #: the .app and this check cannot disagree.
 MACOS_MINIMUM = "14.4"
+
+#: The identifier the spec hands to ``BUNDLE``.  A copy that carries another one is not this
+#: app: macOS keys the app's preferences, its saved state and its update identity on it.
+BUNDLE_IDENTIFIER = "io.github.johoenk.teachers-teammate"
 
 #: The two load commands that carry a minimum macOS, and the line that holds it.
 _MINOS = re.compile(r"^\s*minos\s+(\d+(?:\.\d+)*)\s*$", re.MULTILINE)
@@ -109,6 +120,64 @@ def parse_limit(text: str) -> tuple[int, int, int]:
         return normalise(tuple(int(part) for part in text.split(".")))
     except ValueError:
         raise argparse.ArgumentTypeError(f"not a version like 14.0: {text!r}") from None
+
+
+def version_numbers(text: str) -> tuple[int, ...]:
+    """Return the numbers of a dotted version, ignoring a ``v`` prefix and a pre-release suffix.
+
+    ``v1.2.3``, ``1.2.3`` and ``1.2.3-beta.1`` all give ``(1, 2, 3)``.
+    """
+    base = text.strip().lstrip("v").split("-")[0]
+    numbers: list[int] = []
+    for part in base.split("."):
+        if not part.isdigit():
+            break
+        numbers.append(int(part))
+    return tuple(numbers)
+
+
+def check_info_plist(app: Path, version: str | None = None) -> list[str]:
+    """Return a line per problem with *app*'s ``Info.plist``; an empty list means it is right.
+
+    Args:
+        app: the ``.app`` bundle.
+        version: the version the build was stamped with, when the caller knows it.
+    """
+    plist_path = app / "Contents" / "Info.plist"
+    if not plist_path.is_file():
+        return [f"{plist_path} is missing"]
+    try:
+        plist = plistlib.loads(plist_path.read_bytes())
+    except Exception as error:  # noqa: BLE001 — a plist that will not parse is a failed check
+        return [f"{plist_path} is not a property list: {error}"]
+
+    problems: list[str] = []
+    identifier = str(plist.get("CFBundleIdentifier", ""))
+    if identifier != BUNDLE_IDENTIFIER:
+        problems.append(f"CFBundleIdentifier is {identifier!r}, expected {BUNDLE_IDENTIFIER!r}")
+
+    floor = str(plist.get("LSMinimumSystemVersion", ""))
+    if normalise(version_numbers(floor)) != normalise(version_numbers(MACOS_MINIMUM)):
+        problems.append(f"LSMinimumSystemVersion is {floor!r}, expected {MACOS_MINIMUM!r}")
+
+    short = str(plist.get("CFBundleShortVersionString", ""))
+    numbers = version_numbers(short)
+    if len(numbers) != 3:
+        problems.append(f"CFBundleShortVersionString is {short!r}, expected three numbers")
+    elif version and numbers != version_numbers(version)[:3]:
+        problems.append(f"CFBundleShortVersionString is {short!r}, the build is {version!r}")
+
+    icon = str(plist.get("CFBundleIconFile", ""))
+    if not icon:
+        problems.append("CFBundleIconFile names no icon")
+    else:
+        resources = app / "Contents" / "Resources"
+        named = [resources / icon]
+        if not icon.endswith(".icns"):
+            named.append(resources / f"{icon}.icns")
+        if not any(candidate.is_file() for candidate in named):
+            problems.append(f"CFBundleIconFile {icon!r} names no file in {resources}")
+    return problems
 
 
 def highest_minos(path: Path) -> tuple[int, int, int] | None:
@@ -208,13 +277,35 @@ def main(argv: list[str] | None = None) -> int:
         metavar="GLOB",
         help="a file pattern allowed to need more (repeatable); the files are still counted",
     )
+    parser.add_argument(
+        "--plist",
+        action="store_true",
+        help="check only the Info.plist, which needs no vtool (the installed copy)",
+    )
+    parser.add_argument(
+        "--version",
+        default="",
+        metavar="X.Y.Z",
+        help="the version the build was stamped with, to hold CFBundleShortVersionString to",
+    )
     args = parser.parse_args(argv)
+
+    if not args.app.is_dir():
+        print(f"{args.app} is missing; run tools/build/build_standalone.py first")
+        return 1
+
+    plist_problems = check_info_plist(args.app, args.version or None)
+    if plist_problems:
+        print(f"The Info.plist of {args.app} is wrong:")
+        for problem in plist_problems:
+            print(f"  {problem}")
+        return 1
+    if args.plist:
+        print(f"{args.app}/Contents/Info.plist names the right version, identifier and floor.")
+        return 0
 
     if shutil.which("vtool") is None:
         print("vtool is missing; it comes with the Xcode command line tools")
-        return 1
-    if not args.app.is_dir():
-        print(f"{args.app} is missing; run tools/build/build_standalone.py first")
         return 1
 
     files = macho_files(args.app)

@@ -167,11 +167,14 @@ jobs:
       # LSMinimumSystemVersion reads too, so the .app and this check cannot disagree.
       - name: Check the macOS bundle
         if: runner.os == 'macOS'
+        env:
+          VERSION: ${{ steps.version.outputs.value }}
         run: |
           python tools/build/check_macos_bundle.py \
             --ignore '*/PySide6/*.abi3.so' \
             --ignore '*/PySide6/libpyside6*.dylib' \
-            --ignore '*/shiboken6/*'
+            --ignore '*/shiboken6/*' \
+            ${VERSION:+--version "$VERSION"}
           # The license files travel beside the app (make_dmg.sh), never inside it: a file added
           # after PyInstaller signed the bundle would break the signature.
           codesign --verify --deep --strict dist/teachers-teammate.app
@@ -324,8 +327,11 @@ jobs:
 
   # ── Install the built packages on the systems we support ──────────────────
   # Build once, install in a matrix: the build job makes the file, these jobs prove it
-  # installs and starts on each system. Read-only, like the build; only the Windows job checks
-  # out, because it runs the installer test script from the repository.
+  # installs, upgrades and starts on each system. Read-only, like the build. All three check
+  # out, because they run the packaging helpers from the repository and download the newest
+  # published release with `gh` — the version a teacher has today, which is the one path a
+  # fresh install never takes. A missing release or a failed download fails the job on
+  # purpose: a renamed asset must not switch the test off silently.
 
   install-linux:
     name: Install the .deb (${{ matrix.image }})
@@ -342,34 +348,81 @@ jobs:
         # The floor, the next LTS, and the Debian the floor's glibc covers.
         image: [ubuntu:24.04, ubuntu:26.04, debian:13]
     steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
       - name: Download the Linux artifacts
         uses: actions/download-artifact@v8
         with:
           name: ${{ inputs.artifact_prefix }}-linux
           path: dist
 
+      - name: Download the newest published release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 tools/packaging/latest_release.py download --pattern '*_amd64.deb' --dir old
+
       # apt resolves Depends, so a library missing from the control file fails here rather
-      # than on a user's machine. The smoke test then proves the app starts, and ldd on the
-      # real-display plugin proves it has every library it links against. Not a real desktop
-      # (no window, no X11/Wayland, no fonts): that stays on the VM list.
-      - name: Install the .deb in a clean container
+      # than on a user's machine. The upgrade from the newest release comes first, because it
+      # is the one path a fresh install never takes; then the launcher, the smoke test and the
+      # remove/purge pair. Not a real desktop (no window, no X11/Wayland, no fonts): that stays
+      # on the VM list.
+      - name: Install, upgrade, remove and purge the .deb in a clean container
         shell: bash
         env:
           IMAGE: ${{ matrix.image }}
         run: |
           echo "==> $IMAGE"
-          docker run --rm -v "$PWD/dist:/dist:ro" "$IMAGE" bash -c '
+          mkdir -p smoke
+          docker run --rm \
+            -v "$PWD/dist:/dist:ro" \
+            -v "$PWD/old:/old:ro" \
+            -v "$PWD/smoke:/smoke" \
+            -v "$PWD/tools/packaging/check_desktop_entry.py:/check_desktop_entry.py:ro" \
+            "$IMAGE" bash -c '
             set -euo pipefail
             # The Ubuntu images drop /usr/share/doc (all but copyright) at install time, which
             # would hide the notice files this job checks for; a desktop install keeps them.
             rm -f /etc/dpkg/dpkg.cfg.d/excludes
             apt-get update -qq
-            apt-get install -y -qq --no-install-recommends /dist/teachers-teammate_*_amd64.deb
+            # desktop-file-validate reads the launcher the package installs; python3 runs
+            # check_desktop_entry.py (the bare images have none, and the bundle needs none).
+            apt-get install -y -qq --no-install-recommends desktop-file-utils python3
+
+            # ── L3: the upgrade from the newest published release ──
+            old_deb=$(ls /old/teachers-teammate_*_amd64.deb)
+            apt-get install -y -qq --no-install-recommends "$old_deb"
+            # Every file and symlink the old package owns, so the upgrade can be checked for
+            # leftovers. Directories are left out on purpose: one the old package made can be
+            # shared with another package (hicolor-icon-theme owns the hicolor folders) and
+            # stay behind rightly.
+            dpkg-deb --fsys-tarfile "$old_deb" | tar -t | grep -v "/$" \
+              | sed -e "s|^\./|/|" | sort -u > /tmp/old-files
+            # A test build is 0.1.0, older than anything published: apt has to be told, as the
+            # Windows installer needs /ALLOWDOWNGRADE.
+            apt-get install -y -qq --no-install-recommends --allow-downgrades \
+              /dist/teachers-teammate_*_amd64.deb
+            dpkg -L teachers-teammate | sort -u > /tmp/new-files
+            left=0
+            while read -r path; do
+              [ -z "$path" ] && continue
+              if ! grep -qxF "$path" /tmp/new-files && { [ -e "$path" ] || [ -L "$path" ]; }; then
+                echo "left behind by the upgrade: $path" >&2
+                left=1
+              fi
+            done < /tmp/old-files
+            [ "$left" -eq 0 ]
+
             # The LGPL needs the notice and the license texts in every download.
             test -s /usr/share/doc/teachers-teammate/NOTICE
             test -s /usr/share/doc/teachers-teammate/third_party_license.txt
-            QT_QPA_PLATFORM=offscreen teachers-teammate --_smoke_test /tmp/out.json
-            cat /tmp/out.json
+
+            # The smoke result of the installed copy, kept for the artifact upload.
+            QT_QPA_PLATFORM=offscreen teachers-teammate --_smoke_test /smoke/smoke.json
+            cat /smoke/smoke.json
+
             # The bootloader puts _internal on LD_LIBRARY_PATH, which is how the libraries the
             # bundle carries are found; a bare ldd would report them as missing.
             if LD_LIBRARY_PATH=/opt/teachers-teammate/_internal \
@@ -378,7 +431,32 @@ jobs:
               echo "the xcb platform plugin is missing libraries" >&2
               exit 1
             fi
+
+            # ── L1: the launcher, its Exec, its Icon and the icon size ──
+            python3 /check_desktop_entry.py
+
+            # ── L2: remove and purge leave nothing behind ──
+            apt-get remove -y -qq teachers-teammate
+            test ! -e /opt/teachers-teammate
+            test ! -e /usr/share/applications/teachers-teammate.desktop
+            test ! -e /usr/bin/teachers-teammate
+            test -z "$(find /usr/share/icons/hicolor -name "teachers-teammate.*")"
+            apt-get install -y -qq --no-install-recommends /dist/teachers-teammate_*_amd64.deb
+            apt-get purge -y -qq teachers-teammate
+            test ! -e /opt/teachers-teammate
+            test ! -e /usr/share/applications/teachers-teammate.desktop
+            test ! -e /usr/bin/teachers-teammate
+            test -z "$(find /usr/share/icons/hicolor -name "teachers-teammate.*")"
+            echo "remove and purge leave nothing behind"
           '
+
+      - name: Upload the smoke test result
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ inputs.artifact_prefix }}-linux-installed-smoke
+          retention-days: ${{ inputs.retention_days }}
+          path: smoke/smoke.json
 
   install-macos:
     name: Install the dmg (${{ matrix.os }})
@@ -397,16 +475,41 @@ jobs:
         # and the "tested on" line in docs/deployment.md follows.
         os: [macos-15, macos-26]
     steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
       - name: Download the dmg
         uses: actions/download-artifact@v8
         with:
           name: ${{ inputs.artifact_prefix }}-macos
           path: dist
 
+      - name: Download the newest published release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 tools/packaging/latest_release.py download --pattern '*-macos.dmg' --dir old
+
+      # M2: a teacher who already has the app drags the new one over it. The newest release is
+      # installed first, so the replacement is what this job tests (Finder's "Replace" removes
+      # the old bundle and copies the new one, which is what the step after this one does). Its
+      # own smoke test is not run: an old build on a newer macOS is not what this job is about.
+      - name: Install the newest published release
+        shell: bash
+        run: |
+          mount="$RUNNER_TEMP/old-dmg"
+          mkdir -p "$mount"
+          hdiutil attach old/*-macos.dmg -nobrowse -mountpoint "$mount"
+          old_app=$(ls -d "$mount"/*.app | head -1)
+          rm -rf /Applications/teachers-teammate.app
+          cp -R "$old_app" /Applications/teachers-teammate.app
+          hdiutil detach "$mount"
+
       # A teacher copies the app to /Applications and starts it there, not from the mounted
       # volume. This tests the dmg, not Gatekeeper: a downloaded artifact carries no quarantine
       # flag, so the "cannot be verified" dialog never appears here (that stays on the VM list).
-      - name: Mount the dmg and copy the app to /Applications
+      - name: Mount the dmg and replace the app in /Applications
         id: mount
         shell: bash
         run: |
@@ -418,11 +521,34 @@ jobs:
           # The LGPL needs the notice and the license texts in every download.
           test -s "$mount/Licenses/NOTICE.txt"
           test -s "$mount/Licenses/third_party_license.txt"
+          # Finder replaces the bundle rather than merging into it. What stands in
+          # /Applications afterwards must be the dmg's bundle and nothing else. The lists are
+          # of paths (symlinks included, not followed), so a dropped file or link shows.
+          rm -rf /Applications/teachers-teammate.app
           cp -R "$mount/teachers-teammate.app" /Applications/
+          diff <(cd "$mount/teachers-teammate.app" && find . | sort) \
+               <(cd /Applications/teachers-teammate.app && find . | sort)
+
+      # M1: the version the build was stamped with, the bundle identifier, the floor
+      # (MACOS_MINIMUM, the same number the Mach-O check uses) and the icon the plist names.
+      - name: Check the installed bundle
+        shell: bash
+        run: |
+          version=$(basename dist/*-macos.dmg | sed -e 's/^teachers-teammate-//' -e 's/-macos\.dmg$//')
+          python3 tools/build/check_macos_bundle.py --plist --version "$version" \
+            /Applications/teachers-teammate.app
 
       - name: Start the installed app
         shell: bash
         run: /Applications/teachers-teammate.app/Contents/MacOS/teachers-teammate --_smoke_test smoke.json
+
+      - name: Upload the smoke test result
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ inputs.artifact_prefix }}-macos-installed-smoke
+          retention-days: ${{ inputs.retention_days }}
+          path: smoke.json
 
       - name: Detach the dmg
         if: always()
@@ -464,12 +590,12 @@ jobs:
 
       # The runner is elevated, so the per-user runs inside the script pass /SCOPE=user. The
       # script starts the installed app with --_smoke_test, so a missing runtime DLL on a clean
-      # image shows here too.
+      # image shows here too, and it keeps the result for the upload below.
       - name: Test the installer
         shell: pwsh
         env:
-          # Step 9 of the test downloads the shipped v0.5.6 installer with `gh`, which refuses
-          # to run in Actions without a token.
+          # Steps 9 and 10 download the shipped v0.5.6 and the newest published release with
+          # `gh`, which refuses to run in Actions without a token.
           GH_TOKEN: ${{ github.token }}
         run: |
           $setup = Get-ChildItem dist -Filter 'teachers-teammate-*-w64-setup.exe' | Select-Object -First 1
@@ -479,3 +605,11 @@ jobs:
           # the version logic.
           $ver = $setup.BaseName -replace '^teachers-teammate-', '' -replace '-w64-setup$', ''
           pwsh -File tools/packaging/test_windows_installer.ps1 -Setup $setup.FullName -Version $ver
+
+      - name: Upload the smoke test result
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ inputs.artifact_prefix }}-windows-installed-smoke
+          retention-days: ${{ inputs.retention_days }}
+          path: smoke.json

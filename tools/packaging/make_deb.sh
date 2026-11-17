@@ -58,7 +58,6 @@ mkdir -p "${PKG_DIR}/DEBIAN"
 mkdir -p "${PKG_DIR}/opt"
 mkdir -p "${PKG_DIR}/usr/bin"
 mkdir -p "${PKG_DIR}/usr/share/applications"
-mkdir -p "${PKG_DIR}/usr/share/icons/hicolor/256x256/apps"
 mkdir -p "${DOC_DIR}"
 
 # ── The application folder ───────────────────────────────────────────────────
@@ -68,13 +67,29 @@ ln -s "/opt/${PKG_NAME}/teachers-teammate" "${PKG_DIR}/usr/bin/teachers-teammate
 
 # ── Icon ─────────────────────────────────────────────────────────────────────
 
-if [[ -f "${ROOT}/teachers_teammate/assets/teachers_teammate_icon.png" ]]; then
-    cp "${ROOT}/teachers_teammate/assets/teachers_teammate_icon.png" \
-        "${PKG_DIR}/usr/share/icons/hicolor/256x256/apps/teachers-teammate.png"
+# The hicolor folder names the icon's size, so it is measured from the file rather than
+# written by hand: a 776x776 PNG in 256x256/apps is a lie the theme's cache believes, and
+# check_desktop_entry.py (the install-linux job) fails on it.
+ICON_SRC="${ROOT}/teachers_teammate/assets/teachers_teammate_icon.png"
+if [[ -f "${ICON_SRC}" ]]; then
+    ICON_SIZE="$(python3 - "${ICON_SRC}" <<'PY'
+import struct
+import sys
+
+with open(sys.argv[1], "rb") as handle:
+    header = handle.read(24)
+width, height = struct.unpack(">II", header[16:24])
+print(f"{width}x{height}")
+PY
+)"
+    mkdir -p "${PKG_DIR}/usr/share/icons/hicolor/${ICON_SIZE}/apps"
+    cp "${ICON_SRC}" "${PKG_DIR}/usr/share/icons/hicolor/${ICON_SIZE}/apps/teachers-teammate.png"
 fi
 
 # ── .desktop entry ───────────────────────────────────────────────────────────
 
+# Exactly one main category: desktop-file-validate rejects two, and the install-linux job runs
+# it on the installed file.
 cat > "${PKG_DIR}/usr/share/applications/teachers-teammate.desktop" <<'EOF'
 [Desktop Entry]
 Version=1.0
@@ -85,7 +100,7 @@ Comment=OCR pipeline for handwritten documents
 Exec=teachers-teammate
 Icon=teachers-teammate
 Terminal=false
-Categories=Office;Utility;
+Categories=Office;
 Keywords=OCR;handwriting;scan;
 EOF
 

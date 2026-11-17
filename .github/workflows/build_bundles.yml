@@ -62,7 +62,10 @@ jobs:
           for name in \
             "${ARTIFACT_PREFIX}-linux" "${ARTIFACT_PREFIX}-windows" "${ARTIFACT_PREFIX}-macos" \
             "${ARTIFACT_PREFIX}-linux-smoke" "${ARTIFACT_PREFIX}-windows-smoke" \
-            "${ARTIFACT_PREFIX}-macos-smoke"; do
+            "${ARTIFACT_PREFIX}-macos-smoke" \
+            "${ARTIFACT_PREFIX}-linux-installed-smoke" \
+            "${ARTIFACT_PREFIX}-windows-installed-smoke" \
+            "${ARTIFACT_PREFIX}-macos-installed-smoke"; do
             gh api --paginate \
               "repos/${{ github.repository }}/actions/artifacts?name=${name}&per_page=100" \
               --jq '.artifacts[] | select(.workflow_run.id != ${{ github.run_id }}) | .id' |

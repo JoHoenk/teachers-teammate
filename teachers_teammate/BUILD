@@ -5,27 +5,14 @@ load("@rules_python//python:packaging.bzl", "py_package", "py_wheel")
 # pip-compile expands the dynamic version (attr = teachers_teammate.__version__).
 exports_files(["__init__.py"])
 
-_OCR_SRCS = [
+# The package root and the exception types: what every layer below imports.
+_PKG_SRCS = [
     "__init__.py",
-    "__main__.py",
-    "_model_defaults.py",
-    "application/__init__.py",
-    "application/benchmark_service.py",
-    "application/check_document.py",
-    "application/check_items.py",
-    "application/commands.py",
-    "application/context_choice.py",
-    "application/correction_options.py",
-    "application/data_flow.py",
-    "application/formatting.py",
-    "application/model_recommendations.py",
-    "application/sent_text.py",
-    "application/speed_estimates.py",
-    "application/service.py",
-    "application/setup_plan.py",
-    "cli.py",
-    "cli_composition.py",
-    "config.py",
+    "exceptions.py",
+]
+
+# domain/: pure business concepts, no import from any other layer.
+_DOMAIN_SRCS = [
     "domain/__init__.py",
     "domain/anonymization.py",
     "domain/benchmark.py",
@@ -59,7 +46,27 @@ _OCR_SRCS = [
     "domain/stages.py",
     "domain/teacher_work.py",
     "domain/text_chunks.py",
-    "exceptions.py",
+]
+
+# The settings (config.py) and the stage interfaces: depend on domain/ only.
+_CORE_SRCS = [
+    "_model_defaults.py",
+    "config.py",
+    "interfaces.py",
+]
+
+# texts/: the sentences a teacher reads; depend on domain/ only.
+_TEXTS_SRCS = [
+    "texts/__init__.py",
+    "texts/_types.py",
+    "texts/check.py",
+    "texts/dialogs.py",
+    "texts/privacy.py",
+    "texts/settings.py",
+]
+
+# infrastructure/: concrete implementations; imports domain/ and the core modules.
+_INFRASTRUCTURE_SRCS = [
     "infrastructure/__init__.py",
     "infrastructure/_llm_invoke.py",
     "infrastructure/addon_licenses.py",
@@ -143,14 +150,43 @@ _OCR_SRCS = [
     "infrastructure/workflow/file_processor.py",
     "infrastructure/workflow/ocr_service.py",
     "infrastructure/workflow/preprocess_service.py",
-    "interfaces.py",
-    "texts/__init__.py",
-    "texts/_types.py",
-    "texts/check.py",
-    "texts/dialogs.py",
-    "texts/privacy.py",
-    "texts/settings.py",
 ]
+
+# application/: the service the adapters call; imports infrastructure/, domain/, core.
+_APPLICATION_SRCS = [
+    "application/__init__.py",
+    "application/benchmark_service.py",
+    "application/check_document.py",
+    "application/check_items.py",
+    "application/commands.py",
+    "application/context_choice.py",
+    "application/correction_options.py",
+    "application/data_flow.py",
+    "application/formatting.py",
+    "application/model_recommendations.py",
+    "application/sent_text.py",
+    "application/speed_estimates.py",
+    "application/service.py",
+    "application/setup_plan.py",
+]
+
+# The command-line adapter and the module entry point.
+_CLI_SRCS = [
+    "__main__.py",
+    "cli.py",
+    "cli_composition.py",
+]
+
+# Every non-GUI source, for the lint-only *_typed mirrors below.
+_OCR_SRCS = (
+    _PKG_SRCS +
+    _DOMAIN_SRCS +
+    _CORE_SRCS +
+    _TEXTS_SRCS +
+    _INFRASTRUCTURE_SRCS +
+    _APPLICATION_SRCS +
+    _CLI_SRCS
+)
 
 _GUI_SRCS = [
     "gui/__init__.py",
@@ -271,17 +307,117 @@ _TYPED_DEPS_GUI = [
     "@ocr_test_dependencies//shiboken6:pkg",
 ]
 
+# One library per layer, with the real import direction as `deps`, so a test lists the layer it
+# needs and Bazel reruns it only when that layer (or one below it) changes -- not on every edit
+# anywhere in the package.  The layers form a DAG (domain imports nothing above it, application
+# never imports gui, ...): a new import that points upwards is an ImportError in the tests of the
+# lower layer, which only depend on what is listed here.
 py_library(
-    name = "ocr_lib",
-    srcs = _OCR_SRCS,
+    name = "pkg_lib",
+    srcs = _PKG_SRCS,
     visibility = ["//visibility:public"],
 )
 
 py_library(
-    name = "gui_lib",
+    name = "domain_lib",
+    srcs = _DOMAIN_SRCS,
+    visibility = ["//visibility:public"],
+    deps = [":pkg_lib"],
+)
+
+py_library(
+    name = "core_lib",
+    srcs = _CORE_SRCS,
+    visibility = ["//visibility:public"],
+    deps = [
+        ":domain_lib",
+        ":pkg_lib",
+    ],
+)
+
+py_library(
+    name = "texts_lib",
+    srcs = _TEXTS_SRCS,
+    visibility = ["//visibility:public"],
+    deps = [
+        ":domain_lib",
+        ":pkg_lib",
+    ],
+)
+
+py_library(
+    name = "infrastructure_lib",
+    srcs = _INFRASTRUCTURE_SRCS,
+    visibility = ["//visibility:public"],
+    deps = [
+        ":core_lib",
+        ":domain_lib",
+        ":pkg_lib",
+    ],
+)
+
+py_library(
+    name = "application_lib",
+    srcs = _APPLICATION_SRCS,
+    visibility = ["//visibility:public"],
+    deps = [
+        ":core_lib",
+        ":domain_lib",
+        ":infrastructure_lib",
+        ":pkg_lib",
+    ],
+)
+
+py_library(
+    name = "cli_lib",
+    srcs = _CLI_SRCS,
+    visibility = ["//visibility:public"],
+    deps = [
+        ":application_lib",
+        ":core_lib",
+        ":domain_lib",
+        ":infrastructure_lib",
+        ":pkg_lib",
+    ],
+)
+
+py_library(
+    name = "gui_layer_lib",
     srcs = _GUI_SRCS,
     visibility = ["//visibility:public"],
-    deps = [":ocr_lib"],
+    deps = [
+        ":application_lib",
+        ":core_lib",
+        ":domain_lib",
+        ":infrastructure_lib",
+        ":pkg_lib",
+        ":texts_lib",
+    ],
+)
+
+# The whole non-GUI package and the whole package: what the wheel, the docs and the developer
+# tools use.  A test should list the layer it needs instead (above), or it reruns on every edit.
+py_library(
+    name = "ocr_lib",
+    visibility = ["//visibility:public"],
+    deps = [
+        ":application_lib",
+        ":cli_lib",
+        ":core_lib",
+        ":domain_lib",
+        ":infrastructure_lib",
+        ":pkg_lib",
+        ":texts_lib",
+    ],
+)
+
+py_library(
+    name = "gui_lib",
+    visibility = ["//visibility:public"],
+    deps = [
+        ":gui_layer_lib",
+        ":ocr_lib",
+    ],
 )
 
 # Every Python file of the package, for //:py_pylint (which lints the whole first-party tree in

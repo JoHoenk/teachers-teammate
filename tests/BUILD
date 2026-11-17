@@ -148,10 +148,28 @@ _COMMON_SRCS = [
     "fakes/fake_port.py",
 ]
 
+# The layers of //teachers_teammate (see the comment there). A test lists the layer it imports
+# and nothing above it, so an edit elsewhere in the package does not rerun it: gui_layer_lib for
+# the windows, infrastructure_lib for the pipeline stages, domain_lib for the pure rules, ...
+# Each one brings the layers below it. Never put //teachers_teammate:ocr_lib or :gui_lib here
+# again: they hold the whole package and every test would rerun on every edit.
+_PKG_LIB = ["//teachers_teammate:pkg_lib"]
+
+_DOMAIN_LIB = ["//teachers_teammate:domain_lib"]
+
+_CORE_LIB = ["//teachers_teammate:core_lib"]
+
+_TEXTS_LIB = ["//teachers_teammate:texts_lib"]
+
+_INFRASTRUCTURE_LIB = ["//teachers_teammate:infrastructure_lib"]
+
+_APPLICATION_LIB = ["//teachers_teammate:application_lib"]
+
+_CLI_LIB = ["//teachers_teammate:cli_lib"]
+
 # The proofreading steps' schemas (infrastructure/proofreading/schemas.py) are pydantic models,
 # which every stage that reads a proofreading result imports (directly or through cache_service).
 _COMMON_DEPS = [
-    "//teachers_teammate:ocr_lib",
     "@ocr_test_dependencies//pydantic:pkg",
     "@ocr_test_dependencies//pytest:pkg",
     "@ocr_test_dependencies//pytest_mock:pkg",
@@ -252,7 +270,7 @@ py_test(
     srcs = _COMMON_SRCS + ["unit/test_file_discovery.py"],
     args = ["unit/test_file_discovery.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS + _PIPELINE_DEPS,
+    deps = _COMMON_DEPS + _PIPELINE_DEPS + _INFRASTRUCTURE_LIB,
 )
 
 py_test(
@@ -261,7 +279,7 @@ py_test(
     srcs = _COMMON_SRCS + ["unit/test_config.py"],
     args = ["unit/test_config.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS,
+    deps = _COMMON_DEPS + _INFRASTRUCTURE_LIB,
 )
 
 py_test(
@@ -272,7 +290,7 @@ py_test(
     data = ["//:requirements_addons_lock.txt"],
     env = {"ADDON_LOCK": "$(rlocationpath //:requirements_addons_lock.txt)"},
     main = "run_test.py",
-    deps = _COMMON_DEPS,
+    deps = _COMMON_DEPS + _INFRASTRUCTURE_LIB,
 )
 
 py_test(
@@ -281,7 +299,7 @@ py_test(
     srcs = _COMMON_SRCS + ["unit/test_benchmark_domain.py"],
     args = ["unit/test_benchmark_domain.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS,
+    deps = _COMMON_DEPS + _DOMAIN_LIB,
 )
 
 py_test(
@@ -290,7 +308,7 @@ py_test(
     srcs = _COMMON_SRCS + ["unit/test_benchmark_run_store.py"],
     args = ["unit/test_benchmark_run_store.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS + _FORMAT_DEPS,
+    deps = _COMMON_DEPS + _FORMAT_DEPS + _INFRASTRUCTURE_LIB,
 )
 
 py_test(
@@ -299,7 +317,7 @@ py_test(
     srcs = _COMMON_SRCS + ["unit/test_benchmark_runner.py"],
     args = ["unit/test_benchmark_runner.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS + _PIPELINE_DEPS,
+    deps = _COMMON_DEPS + _PIPELINE_DEPS + _INFRASTRUCTURE_LIB,
 )
 
 py_test(
@@ -308,7 +326,7 @@ py_test(
     srcs = _COMMON_SRCS + ["unit/test_benchmark_service.py"],
     args = ["unit/test_benchmark_service.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS + _PIPELINE_DEPS,
+    deps = _COMMON_DEPS + _PIPELINE_DEPS + _APPLICATION_LIB,
 )
 
 py_test(
@@ -317,7 +335,7 @@ py_test(
     srcs = _COMMON_SRCS + ["unit/test_cli.py"],
     args = ["unit/test_cli.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS + _PIPELINE_DEPS,
+    deps = _COMMON_DEPS + _PIPELINE_DEPS + _CLI_LIB,
 )
 
 py_test(
@@ -326,7 +344,7 @@ py_test(
     srcs = _COMMON_SRCS + ["unit/test_cli_composition.py"],
     args = ["unit/test_cli_composition.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS + _PIPELINE_DEPS,
+    deps = _COMMON_DEPS + _PIPELINE_DEPS + _CLI_LIB,
 )
 
 # The one-request correctors of the evaluation baseline: the review and text modes, the
@@ -364,7 +382,7 @@ py_test(
     srcs = _COMMON_SRCS + ["unit/test_fallback_exchange.py"],
     args = ["unit/test_fallback_exchange.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS + _FORMAT_DEPS,
+    deps = _COMMON_DEPS + _FORMAT_DEPS + _INFRASTRUCTURE_LIB,
 )
 
 py_test(
@@ -373,7 +391,7 @@ py_test(
     srcs = _COMMON_SRCS + ["unit/test_step_runner.py"],
     args = ["unit/test_step_runner.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS,
+    deps = _COMMON_DEPS + _INFRASTRUCTURE_LIB,
 )
 
 py_test(
@@ -382,7 +400,7 @@ py_test(
     srcs = _COMMON_SRCS + ["unit/test_word_diff.py"],
     args = ["unit/test_word_diff.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS,
+    deps = _COMMON_DEPS + _DOMAIN_LIB,
 )
 
 py_test(
@@ -391,7 +409,7 @@ py_test(
     srcs = _COMMON_SRCS + ["unit/test_sentences.py"],
     args = ["unit/test_sentences.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS,
+    deps = _COMMON_DEPS + _DOMAIN_LIB,
 )
 
 py_test(
@@ -400,7 +418,7 @@ py_test(
     srcs = _COMMON_SRCS + ["unit/test_text_loss.py"],
     args = ["unit/test_text_loss.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS,
+    deps = _COMMON_DEPS + _DOMAIN_LIB,
 )
 
 py_test(
@@ -409,7 +427,7 @@ py_test(
     srcs = _COMMON_SRCS + ["unit/test_edits.py"],
     args = ["unit/test_edits.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS,
+    deps = _COMMON_DEPS + _DOMAIN_LIB,
 )
 
 py_test(
@@ -418,7 +436,7 @@ py_test(
     srcs = _COMMON_SRCS + ["unit/test_review_v2.py"],
     args = ["unit/test_review_v2.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS,
+    deps = _COMMON_DEPS + _DOMAIN_LIB,
 )
 
 py_test(
@@ -427,7 +445,7 @@ py_test(
     srcs = _COMMON_SRCS + ["unit/test_markdown_shield.py"],
     args = ["unit/test_markdown_shield.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS + _FORMAT_DEPS,
+    deps = _COMMON_DEPS + _FORMAT_DEPS + _INFRASTRUCTURE_LIB,
 )
 
 py_test(
@@ -436,7 +454,7 @@ py_test(
     srcs = _COMMON_SRCS + ["unit/test_offset_map.py"],
     args = ["unit/test_offset_map.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS,
+    deps = _COMMON_DEPS + _DOMAIN_LIB,
 )
 
 py_test(
@@ -445,7 +463,7 @@ py_test(
     srcs = _COMMON_SRCS + ["unit/test_check_items.py"],
     args = ["unit/test_check_items.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS,
+    deps = _COMMON_DEPS + _APPLICATION_LIB,
 )
 
 py_test(
@@ -454,7 +472,7 @@ py_test(
     srcs = _COMMON_SRCS + ["unit/test_check_document.py"],
     args = ["unit/test_check_document.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS + _FORMAT_DEPS,
+    deps = _COMMON_DEPS + _FORMAT_DEPS + _APPLICATION_LIB,
 )
 
 py_test(
@@ -463,7 +481,7 @@ py_test(
     srcs = _COMMON_SRCS + ["unit/test_teacher_work.py"],
     args = ["unit/test_teacher_work.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS,
+    deps = _COMMON_DEPS + _DOMAIN_LIB,
 )
 
 py_test(
@@ -472,7 +490,7 @@ py_test(
     srcs = _COMMON_SRCS + ["unit/test_quotes.py"],
     args = ["unit/test_quotes.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS,
+    deps = _COMMON_DEPS + _DOMAIN_LIB,
 )
 
 py_test(
@@ -481,7 +499,7 @@ py_test(
     srcs = _COMMON_SRCS + ["unit/test_correction_prompts_steps.py"],
     args = ["unit/test_correction_prompts_steps.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS,
+    deps = _COMMON_DEPS + _DOMAIN_LIB,
 )
 
 py_test(
@@ -490,7 +508,7 @@ py_test(
     srcs = _COMMON_SRCS + ["unit/test_exchange_schemas.py"],
     args = ["unit/test_exchange_schemas.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS,
+    deps = _COMMON_DEPS + _INFRASTRUCTURE_LIB,
 )
 
 py_test(
@@ -499,7 +517,7 @@ py_test(
     srcs = _COMMON_SRCS + ["unit/test_exchange_corrector.py"],
     args = ["unit/test_exchange_corrector.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS + _FORMAT_DEPS,
+    deps = _COMMON_DEPS + _FORMAT_DEPS + _INFRASTRUCTURE_LIB,
 )
 
 py_test(
@@ -508,7 +526,7 @@ py_test(
     srcs = _COMMON_SRCS + ["unit/test_exchange_t.py"],
     args = ["unit/test_exchange_t.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS + _FORMAT_DEPS,
+    deps = _COMMON_DEPS + _FORMAT_DEPS + _INFRASTRUCTURE_LIB,
 )
 
 py_test(
@@ -517,7 +535,7 @@ py_test(
     srcs = _COMMON_SRCS + ["unit/test_request_profile.py"],
     args = ["unit/test_request_profile.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS + _FORMAT_DEPS,
+    deps = _COMMON_DEPS + _FORMAT_DEPS + _INFRASTRUCTURE_LIB,
 )
 
 py_test(
@@ -535,7 +553,7 @@ py_test(
     srcs = _COMMON_SRCS + ["unit/test_evaluation.py"],
     args = ["unit/test_evaluation.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS + _FORMAT_DEPS + _LANGCHAIN_DEPS,
+    deps = _COMMON_DEPS + _FORMAT_DEPS + _LANGCHAIN_DEPS + _INFRASTRUCTURE_LIB,
 )
 
 py_test(
@@ -544,7 +562,7 @@ py_test(
     srcs = _COMMON_SRCS + ["unit/test_input_providers.py"],
     args = ["unit/test_input_providers.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS + _IMAGE_DEPS + _PDF_DEPS,
+    deps = _COMMON_DEPS + _IMAGE_DEPS + _PDF_DEPS + _INFRASTRUCTURE_LIB,
 )
 
 py_test(
@@ -553,7 +571,7 @@ py_test(
     srcs = _COMMON_SRCS + ["unit/test_llm_factory.py"],
     args = ["unit/test_llm_factory.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS + _LANGCHAIN_DEPS,
+    deps = _COMMON_DEPS + _LANGCHAIN_DEPS + _INFRASTRUCTURE_LIB,
 )
 
 py_test(
@@ -562,7 +580,7 @@ py_test(
     srcs = _COMMON_SRCS + ["unit/test_ocr_processor.py"],
     args = ["unit/test_ocr_processor.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS + _LANGCHAIN_DEPS + _IMAGE_DEPS + _REQUESTS_DEPS,
+    deps = _COMMON_DEPS + _LANGCHAIN_DEPS + _IMAGE_DEPS + _REQUESTS_DEPS + _INFRASTRUCTURE_LIB,
 )
 
 py_test(
@@ -571,7 +589,7 @@ py_test(
     srcs = _COMMON_SRCS + ["unit/test_ocr_formats.py"],
     args = ["unit/test_ocr_formats.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS + _FORMAT_DEPS,
+    deps = _COMMON_DEPS + _FORMAT_DEPS + _APPLICATION_LIB,
 )
 
 py_test(
@@ -580,7 +598,7 @@ py_test(
     srcs = _COMMON_SRCS + ["unit/test_ocr_text_cleaner.py"],
     args = ["unit/test_ocr_text_cleaner.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS,
+    deps = _COMMON_DEPS + _INFRASTRUCTURE_LIB,
 )
 
 py_test(
@@ -589,7 +607,7 @@ py_test(
     srcs = _COMMON_SRCS + ["unit/test_preprocessor.py"],
     args = ["unit/test_preprocessor.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS + _IMAGE_DEPS + _CV_DEPS,
+    deps = _COMMON_DEPS + _IMAGE_DEPS + _CV_DEPS + _INFRASTRUCTURE_LIB,
 )
 
 py_test(
@@ -601,7 +619,7 @@ py_test(
     ],
     args = ["unit/test_ollama_discovery.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS + _REQUESTS_DEPS,
+    deps = _COMMON_DEPS + _REQUESTS_DEPS + _INFRASTRUCTURE_LIB,
 )
 
 py_test(
@@ -610,7 +628,7 @@ py_test(
     srcs = _COMMON_SRCS + ["unit/test_ollama_install.py"],
     args = ["unit/test_ollama_install.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS,
+    deps = _COMMON_DEPS + _INFRASTRUCTURE_LIB,
 )
 
 py_test(
@@ -619,7 +637,7 @@ py_test(
     srcs = _COMMON_SRCS + ["unit/test_ollama_utils.py"],
     args = ["unit/test_ollama_utils.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS + _REQUESTS_DEPS,
+    deps = _COMMON_DEPS + _REQUESTS_DEPS + _INFRASTRUCTURE_LIB,
 )
 
 # The fake Ollama server, checked against the ``ollama`` client the app is locked to: a bump
@@ -633,7 +651,7 @@ py_test(
     ],
     args = ["unit/test_fake_ollama.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS + _REQUESTS_DEPS + ["@ocr_test_dependencies//ollama:pkg"],
+    deps = _COMMON_DEPS + _REQUESTS_DEPS + ["@ocr_test_dependencies//ollama:pkg"] + _INFRASTRUCTURE_LIB,
 )
 
 py_test(
@@ -642,7 +660,7 @@ py_test(
     srcs = _COMMON_SRCS + ["unit/test_providers.py"],
     args = ["unit/test_providers.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS + _LANGCHAIN_DEPS,
+    deps = _COMMON_DEPS + _LANGCHAIN_DEPS + _INFRASTRUCTURE_LIB,
 )
 
 py_test(
@@ -652,7 +670,7 @@ py_test(
     args = ["unit/test_providers_mistral_curation.py"],
     data = ["//tests/fixtures:mistral_models.json"],
     main = "run_test.py",
-    deps = _COMMON_DEPS + _LANGCHAIN_DEPS,
+    deps = _COMMON_DEPS + _LANGCHAIN_DEPS + _INFRASTRUCTURE_LIB,
 )
 
 py_test(
@@ -661,7 +679,7 @@ py_test(
     srcs = _COMMON_SRCS + ["integration/test_pipeline_txt.py"],
     args = ["integration/test_pipeline_txt.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS + _PIPELINE_DEPS,
+    deps = _COMMON_DEPS + _PIPELINE_DEPS + _INFRASTRUCTURE_LIB,
 )
 
 py_test(
@@ -670,7 +688,7 @@ py_test(
     srcs = _COMMON_SRCS + ["integration/test_pipeline_preview.py"],
     args = ["integration/test_pipeline_preview.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS + _PIPELINE_DEPS,
+    deps = _COMMON_DEPS + _PIPELINE_DEPS + _INFRASTRUCTURE_LIB,
 )
 
 py_test(
@@ -679,7 +697,7 @@ py_test(
     srcs = _COMMON_SRCS + ["unit/test_docx_builder.py"],
     args = ["unit/test_docx_builder.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS + _PIPELINE_DEPS,
+    deps = _COMMON_DEPS + _PIPELINE_DEPS + _INFRASTRUCTURE_LIB,
 )
 
 py_test(
@@ -688,7 +706,7 @@ py_test(
     srcs = _COMMON_SRCS + ["unit/test_docx_comments.py"],
     args = ["unit/test_docx_comments.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS + _PIPELINE_DEPS,
+    deps = _COMMON_DEPS + _PIPELINE_DEPS + _INFRASTRUCTURE_LIB,
 )
 
 py_test(
@@ -697,7 +715,7 @@ py_test(
     srcs = _COMMON_SRCS + ["integration/test_pipeline_run.py"],
     args = ["integration/test_pipeline_run.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS + _PIPELINE_DEPS,
+    deps = _COMMON_DEPS + _PIPELINE_DEPS + _INFRASTRUCTURE_LIB,
 )
 
 py_test(
@@ -706,7 +724,7 @@ py_test(
     srcs = _COMMON_SRCS + ["unit/test_storage_policy.py"],
     args = ["unit/test_storage_policy.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS,
+    deps = _COMMON_DEPS + _INFRASTRUCTURE_LIB,
 )
 
 py_test(
@@ -715,7 +733,7 @@ py_test(
     srcs = _COMMON_SRCS + ["unit/test_data_location.py"],
     args = ["unit/test_data_location.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS + _PIPELINE_DEPS,
+    deps = _COMMON_DEPS + _PIPELINE_DEPS + _APPLICATION_LIB,
 )
 
 py_test(
@@ -724,7 +742,7 @@ py_test(
     srcs = _COMMON_SRCS + ["unit/test_sent_text.py"],
     args = ["unit/test_sent_text.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS + _PIPELINE_DEPS,
+    deps = _COMMON_DEPS + _PIPELINE_DEPS + _APPLICATION_LIB,
 )
 
 py_test(
@@ -733,7 +751,7 @@ py_test(
     srcs = _COMMON_SRCS + ["unit/test_domain_policy.py"],
     args = ["unit/test_domain_policy.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS,
+    deps = _COMMON_DEPS + _DOMAIN_LIB,
 )
 
 py_test(
@@ -742,7 +760,7 @@ py_test(
     srcs = _COMMON_SRCS + ["unit/test_check_linux_bundle.py"],
     args = ["unit/test_check_linux_bundle.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS + ["//tools/build:build_tools_lib"],
+    deps = _COMMON_DEPS + ["//tools/build:build_tools_lib"] + _PKG_LIB,
 )
 
 py_test(
@@ -751,7 +769,7 @@ py_test(
     srcs = _COMMON_SRCS + ["unit/test_check_macos_bundle.py"],
     args = ["unit/test_check_macos_bundle.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS + ["//tools/build:build_tools_lib"],
+    deps = _COMMON_DEPS + ["//tools/build:build_tools_lib"] + _PKG_LIB,
 )
 
 py_test(
@@ -800,7 +818,7 @@ py_test(
     srcs = _COMMON_SRCS + ["unit/test_addon_constraints.py"],
     args = ["unit/test_addon_constraints.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS + ["//tools/build:build_tools_lib"],
+    deps = _COMMON_DEPS + ["//tools/build:build_tools_lib"] + _INFRASTRUCTURE_LIB,
 )
 
 py_test(
@@ -809,12 +827,23 @@ py_test(
     srcs = _COMMON_SRCS + ["unit/test_texts_types.py"],
     args = ["unit/test_texts_types.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS,
+    deps = _COMMON_DEPS + _TEXTS_LIB,
 )
 
 # The ratchet that keeps teacher-facing text in ``teachers_teammate/texts``: no literal at a
 # call site that is not on the allowlist, no stale allowlist entry, and no ``Notice`` built
 # outside the package.  The sources come in as data because the test parses them with ``ast``.
+# The import direction between the layers of //teachers_teammate (see the libraries there).
+py_test(
+    name = "test_layer_imports",
+    size = "small",
+    srcs = _COMMON_SRCS + ["unit/test_layer_imports.py"],
+    args = ["unit/test_layer_imports.py"],
+    data = ["//teachers_teammate:all_sources"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS,
+)
+
 py_test(
     name = "test_user_text_centralised",
     size = "small",
@@ -822,7 +851,7 @@ py_test(
     args = ["unit/test_user_text_centralised.py"],
     data = ["//teachers_teammate:user_text_sources"],
     main = "run_test.py",
-    deps = _COMMON_DEPS + ["//tools/user_text:user_text_lib"],
+    deps = _COMMON_DEPS + ["//tools/user_text:user_text_lib"] + _PKG_LIB,
 )
 
 py_test(
@@ -831,7 +860,7 @@ py_test(
     srcs = _COMMON_SRCS + ["unit/test_inventory_tool.py"],
     args = ["unit/test_inventory_tool.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS + ["//tools/licenses:licenses_lib"],
+    deps = _COMMON_DEPS + ["//tools/licenses:licenses_lib"] + _INFRASTRUCTURE_LIB,
 )
 
 # The committed store, checked offline: the rows are the closures of the locks, every license
@@ -854,7 +883,7 @@ py_test(
     ],
     env = {"LICENSE_PYPROJECT": "$(rlocationpath //:pyproject.toml)"},
     main = "run_test.py",
-    deps = _COMMON_DEPS + ["//tools/licenses:licenses_lib"],
+    deps = _COMMON_DEPS + ["//tools/licenses:licenses_lib"] + _INFRASTRUCTURE_LIB,
 )
 
 py_test(
@@ -863,7 +892,7 @@ py_test(
     srcs = _COMMON_SRCS + ["unit/test_fetch_models.py"],
     args = ["unit/test_fetch_models.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS + _REQUESTS_DEPS + ["//tools/build:build_tools_lib"],
+    deps = _COMMON_DEPS + _REQUESTS_DEPS + ["//tools/build:build_tools_lib"] + _INFRASTRUCTURE_LIB,
 )
 
 py_test(
@@ -872,7 +901,7 @@ py_test(
     srcs = _COMMON_SRCS + ["unit/test_addon_lock.py"],
     args = ["unit/test_addon_lock.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS + ["//tools/build:build_tools_lib"],
+    deps = _COMMON_DEPS + ["//tools/build:build_tools_lib"] + _PKG_LIB,
 )
 
 py_test(
@@ -901,7 +930,7 @@ py_test(
     data = ["//tools/packaging:windows.nsi"],
     env = {"WINDOWS_NSI": "$(rlocationpath //tools/packaging:windows.nsi)"},
     main = "run_test.py",
-    deps = _COMMON_DEPS + ["//tools/build:build_tools_lib"],
+    deps = _COMMON_DEPS + ["//tools/build:build_tools_lib"] + _PKG_LIB,
 )
 
 py_test(
@@ -910,7 +939,7 @@ py_test(
     srcs = _COMMON_SRCS + ["unit/test_release_stamp_versions.py"],
     args = ["unit/test_release_stamp_versions.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS + ["//tools/release:release_tools_lib"],
+    deps = _COMMON_DEPS + ["//tools/release:release_tools_lib"] + _PKG_LIB,
 )
 
 # `.python-version` is the one place the Python version is written down (rules_python reads it for
@@ -933,7 +962,7 @@ py_test(
     srcs = _COMMON_SRCS + ["unit/test_interfaces.py"],
     args = ["unit/test_interfaces.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS,
+    deps = _COMMON_DEPS + _CORE_LIB,
 )
 
 py_test(
@@ -942,7 +971,7 @@ py_test(
     srcs = _COMMON_SRCS + ["unit/test_run_summary.py"],
     args = ["unit/test_run_summary.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS,
+    deps = _COMMON_DEPS + _DOMAIN_LIB,
 )
 
 py_test(
@@ -951,7 +980,7 @@ py_test(
     srcs = _COMMON_SRCS + ["unit/test_power.py"],
     args = ["unit/test_power.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS + _PIPELINE_DEPS,
+    deps = _COMMON_DEPS + _PIPELINE_DEPS + _INFRASTRUCTURE_LIB,
 )
 
 py_test(
@@ -960,7 +989,7 @@ py_test(
     srcs = _COMMON_SRCS + ["unit/test_state_repository.py"],
     args = ["unit/test_state_repository.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS + _FORMAT_DEPS,
+    deps = _COMMON_DEPS + _FORMAT_DEPS + _INFRASTRUCTURE_LIB,
 )
 
 py_test(
@@ -969,7 +998,7 @@ py_test(
     srcs = _COMMON_SRCS + ["unit/test_service.py"],
     args = ["unit/test_service.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS + _PIPELINE_DEPS,
+    deps = _COMMON_DEPS + _PIPELINE_DEPS + _APPLICATION_LIB,
 )
 
 py_test(
@@ -978,7 +1007,7 @@ py_test(
     srcs = _COMMON_SRCS + ["unit/test_setup_plan.py"],
     args = ["unit/test_setup_plan.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS,
+    deps = _COMMON_DEPS + _APPLICATION_LIB,
 )
 
 py_test(
@@ -987,7 +1016,7 @@ py_test(
     srcs = _COMMON_SRCS + ["unit/test_addon_manager.py"],
     args = ["unit/test_addon_manager.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS,
+    deps = _COMMON_DEPS + _INFRASTRUCTURE_LIB,
 )
 
 # The smoke test imports every lazily loaded module of the app, so it needs the whole runtime
@@ -1006,7 +1035,7 @@ py_test(
     env = {"BUILD_SPEC": "$(rlocationpath //tools/build:teachers-teammate.spec)"},
     main = "run_test.py",
     deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + [
-        "//teachers_teammate:gui_lib",
+        "//teachers_teammate:gui_layer_lib",
         "@ocr_test_dependencies//keyring:pkg",
         "@ocr_test_dependencies//ollama:pkg",
         "@ocr_test_dependencies//platformdirs:pkg",
@@ -1019,7 +1048,7 @@ py_test(
     srcs = _COMMON_SRCS + ["unit/test_gpu_detector.py"],
     args = ["unit/test_gpu_detector.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS,
+    deps = _COMMON_DEPS + _INFRASTRUCTURE_LIB,
 )
 
 py_test(
@@ -1028,7 +1057,7 @@ py_test(
     srcs = _COMMON_SRCS + ["unit/test_diagnostics.py"],
     args = ["unit/test_diagnostics.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS,
+    deps = _COMMON_DEPS + _INFRASTRUCTURE_LIB,
 )
 
 py_test(
@@ -1037,7 +1066,7 @@ py_test(
     srcs = _COMMON_SRCS + ["unit/test_speed_estimates.py"],
     args = ["unit/test_speed_estimates.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS + _FORMAT_DEPS,
+    deps = _COMMON_DEPS + _FORMAT_DEPS + _APPLICATION_LIB,
 )
 
 py_test(
@@ -1046,7 +1075,7 @@ py_test(
     srcs = _COMMON_SRCS + ["unit/test_speed_store.py"],
     args = ["unit/test_speed_store.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS,
+    deps = _COMMON_DEPS + _INFRASTRUCTURE_LIB,
 )
 
 py_test(
@@ -1055,7 +1084,7 @@ py_test(
     srcs = _COMMON_SRCS + ["unit/test_run_stats.py"],
     args = ["unit/test_run_stats.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS,
+    deps = _COMMON_DEPS + _INFRASTRUCTURE_LIB,
 )
 
 py_test(
@@ -1064,7 +1093,7 @@ py_test(
     srcs = _COMMON_SRCS + ["unit/test_performance_probe.py"],
     args = ["unit/test_performance_probe.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS + _IMAGE_DEPS + _CV_DEPS,
+    deps = _COMMON_DEPS + _IMAGE_DEPS + _CV_DEPS + _INFRASTRUCTURE_LIB,
 )
 
 py_test(
@@ -1073,7 +1102,7 @@ py_test(
     srcs = _COMMON_SRCS + ["unit/test_performance_estimate.py"],
     args = ["unit/test_performance_estimate.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS,
+    deps = _COMMON_DEPS + _DOMAIN_LIB,
 )
 
 py_test(
@@ -1082,7 +1111,7 @@ py_test(
     srcs = _COMMON_SRCS + ["unit/test_model_catalog.py"],
     args = ["unit/test_model_catalog.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS + _REQUESTS_DEPS,
+    deps = _COMMON_DEPS + _REQUESTS_DEPS + _INFRASTRUCTURE_LIB,
 )
 
 py_test(
@@ -1091,7 +1120,7 @@ py_test(
     srcs = _COMMON_SRCS + ["unit/test_chunking_corrector.py"],
     args = ["unit/test_chunking_corrector.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS + _FORMAT_DEPS,
+    deps = _COMMON_DEPS + _FORMAT_DEPS + _INFRASTRUCTURE_LIB,
 )
 
 py_test(
@@ -1100,7 +1129,7 @@ py_test(
     srcs = _COMMON_SRCS + ["unit/test_text_chunks.py"],
     args = ["unit/test_text_chunks.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS,
+    deps = _COMMON_DEPS + _DOMAIN_LIB,
 )
 
 # The metrics of a proofreading answer against a reference correction: edit agreement,
@@ -1566,7 +1595,7 @@ py_test(
         "//tools:all_sources",
     ],
     main = "run_test.py",
-    deps = _COMMON_DEPS,
+    deps = _COMMON_DEPS + _PKG_LIB,
 )
 
 # Gate 1 beyond the single request: the saved-answers file and continuing a run.
@@ -1880,7 +1909,7 @@ py_test(
     srcs = _COMMON_SRCS + ["unit/test_context_budget.py"],
     args = ["unit/test_context_budget.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS,
+    deps = _COMMON_DEPS + _DOMAIN_LIB,
 )
 
 py_test(
@@ -1889,7 +1918,7 @@ py_test(
     srcs = _COMMON_SRCS + ["unit/test_model_listing.py"],
     args = ["unit/test_model_listing.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS,
+    deps = _COMMON_DEPS + _DOMAIN_LIB,
 )
 
 py_test(
@@ -1898,7 +1927,7 @@ py_test(
     srcs = _COMMON_SRCS + ["unit/test_cache_service.py"],
     args = ["unit/test_cache_service.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS + _REQUESTS_DEPS + _FORMAT_DEPS,
+    deps = _COMMON_DEPS + _REQUESTS_DEPS + _FORMAT_DEPS + _INFRASTRUCTURE_LIB,
 )
 
 py_test(
@@ -1907,7 +1936,7 @@ py_test(
     srcs = _COMMON_SRCS + ["unit/test_file_processor.py"],
     args = ["unit/test_file_processor.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS + _REQUESTS_DEPS + _FORMAT_DEPS,
+    deps = _COMMON_DEPS + _REQUESTS_DEPS + _FORMAT_DEPS + _INFRASTRUCTURE_LIB,
 )
 
 py_test(
@@ -1916,7 +1945,7 @@ py_test(
     srcs = _COMMON_SRCS + ["unit/test_preview_image_store.py"],
     args = ["unit/test_preview_image_store.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS,
+    deps = _COMMON_DEPS + _INFRASTRUCTURE_LIB,
 )
 
 py_test(
@@ -1925,7 +1954,7 @@ py_test(
     srcs = _COMMON_SRCS + ["unit/test_input_provider_factory.py"],
     args = ["unit/test_input_provider_factory.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS + _PDF_DEPS,
+    deps = _COMMON_DEPS + _PDF_DEPS + _INFRASTRUCTURE_LIB,
 )
 
 py_test(
@@ -1934,7 +1963,7 @@ py_test(
     srcs = _COMMON_SRCS + ["unit/test_ocr_stage_service.py"],
     args = ["unit/test_ocr_stage_service.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS,
+    deps = _COMMON_DEPS + _INFRASTRUCTURE_LIB,
 )
 
 py_test(
@@ -1943,7 +1972,7 @@ py_test(
     srcs = _COMMON_SRCS + ["unit/test_preprocess_service.py"],
     args = ["unit/test_preprocess_service.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS,
+    deps = _COMMON_DEPS + _INFRASTRUCTURE_LIB,
 )
 
 py_test(
@@ -1952,7 +1981,7 @@ py_test(
     srcs = _COMMON_SRCS + ["unit/test_stage_builder.py"],
     args = ["unit/test_stage_builder.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS + _PIPELINE_DEPS,
+    deps = _COMMON_DEPS + _PIPELINE_DEPS + _APPLICATION_LIB,
 )
 
 py_test(
@@ -1961,7 +1990,7 @@ py_test(
     srcs = _COMMON_SRCS + ["unit/test_coordinator.py"],
     args = ["unit/test_coordinator.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS + _FORMAT_DEPS + _REQUESTS_DEPS,
+    deps = _COMMON_DEPS + _FORMAT_DEPS + _REQUESTS_DEPS + _INFRASTRUCTURE_LIB,
 )
 
 py_test(
@@ -1972,7 +2001,7 @@ py_test(
     ],
     args = ["gui/test_gui_config_panel.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_lib"],
+    deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_layer_lib"],
 )
 
 py_test(
@@ -1981,7 +2010,7 @@ py_test(
     srcs = _COMMON_SRCS + ["gui/test_gui_readiness.py"],
     args = ["gui/test_gui_readiness.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_lib"],
+    deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_layer_lib"],
 )
 
 py_test(
@@ -1990,7 +2019,7 @@ py_test(
     srcs = _COMMON_SRCS + ["gui/test_gui_check_page.py"],
     args = ["gui/test_gui_check_page.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_lib"],
+    deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_layer_lib"],
 )
 
 py_test(
@@ -1999,7 +2028,7 @@ py_test(
     srcs = _COMMON_SRCS + ["gui/test_gui_results_table.py"],
     args = ["gui/test_gui_results_table.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_lib"],
+    deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_layer_lib"],
 )
 
 py_test(
@@ -2008,7 +2037,7 @@ py_test(
     srcs = _COMMON_SRCS + ["gui/test_gui_what_is_sent.py"],
     args = ["gui/test_gui_what_is_sent.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_lib"],
+    deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_layer_lib"],
 )
 
 py_test(
@@ -2020,7 +2049,7 @@ py_test(
     ],
     args = ["gui/test_gui_main_window.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_lib"],
+    deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_layer_lib"],
 )
 
 py_test(
@@ -2029,7 +2058,7 @@ py_test(
     srcs = _COMMON_SRCS + ["gui/test_gui_ollama_status_line.py"],
     args = ["gui/test_gui_ollama_status_line.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_lib"],
+    deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_layer_lib"],
 )
 
 py_test(
@@ -2038,7 +2067,7 @@ py_test(
     srcs = _COMMON_SRCS + ["gui/test_gui_worker.py"],
     args = ["gui/test_gui_worker.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_lib"],
+    deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_layer_lib"],
 )
 
 py_test(
@@ -2050,7 +2079,7 @@ py_test(
     ],
     args = ["gui/test_gui_prompt_dialog.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_lib"],
+    deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_layer_lib"],
 )
 
 py_test(
@@ -2062,7 +2091,7 @@ py_test(
     ],
     args = ["gui/test_credential_store.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_lib"],
+    deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_layer_lib"],
 )
 
 py_test(
@@ -2074,7 +2103,7 @@ py_test(
     ],
     args = ["gui/test_gui_general_page.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_lib"],
+    deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_layer_lib"],
 )
 
 py_test(
@@ -2083,7 +2112,7 @@ py_test(
     srcs = _COMMON_SRCS + ["gui/test_gui_run_status.py"],
     args = ["gui/test_gui_run_status.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_lib"],
+    deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_layer_lib"],
 )
 
 py_test(
@@ -2096,7 +2125,7 @@ py_test(
     ],
     args = ["gui/test_gui_settings_pages.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_lib"],
+    deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_layer_lib"],
 )
 
 py_test(
@@ -2109,7 +2138,7 @@ py_test(
     ],
     args = ["gui/test_gui_settings_window.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_lib"],
+    deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_layer_lib"],
 )
 
 py_test(
@@ -2122,7 +2151,7 @@ py_test(
     ],
     args = ["gui/test_gui_setup_assistant.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_lib"],
+    deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_layer_lib"],
 )
 
 py_test(
@@ -2131,7 +2160,7 @@ py_test(
     srcs = _COMMON_SRCS + ["gui/test_gui_setup_flow.py"],
     args = ["gui/test_gui_setup_flow.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_lib"],
+    deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_layer_lib"],
 )
 
 # The whole wizard, end to end: the real pages, the real service, real threads, a real HTTP
@@ -2148,7 +2177,7 @@ py_test(
     args = ["gui/test_gui_setup_walkthrough.py"],
     main = "run_test.py",
     deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + [
-        "//teachers_teammate:gui_lib",
+        "//teachers_teammate:gui_layer_lib",
         "@ocr_test_dependencies//ollama:pkg",
     ],
 )
@@ -2163,7 +2192,7 @@ py_test(
     ],
     args = ["gui/test_gui_setup_pages.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_lib"],
+    deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_layer_lib"],
 )
 
 py_test(
@@ -2172,7 +2201,7 @@ py_test(
     srcs = _COMMON_SRCS + ["gui/test_gui_plain_map.py"],
     args = ["gui/test_gui_plain_map.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_lib"],
+    deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_layer_lib"],
 )
 
 py_test(
@@ -2181,7 +2210,7 @@ py_test(
     srcs = _COMMON_SRCS + ["gui/test_gui_check_style.py"],
     args = ["gui/test_gui_check_style.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_lib"],
+    deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_layer_lib"],
 )
 
 py_test(
@@ -2190,7 +2219,7 @@ py_test(
     srcs = _COMMON_SRCS + ["gui/test_gui_text_views.py"],
     args = ["gui/test_gui_text_views.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_lib"],
+    deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_layer_lib"],
 )
 
 py_test(
@@ -2199,7 +2228,7 @@ py_test(
     srcs = _COMMON_SRCS + ["gui/test_gui_check_body.py"],
     args = ["gui/test_gui_check_body.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_lib"],
+    deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_layer_lib"],
 )
 
 py_test(
@@ -2208,7 +2237,7 @@ py_test(
     srcs = _COMMON_SRCS + ["gui/test_gui_side_panel.py"],
     args = ["gui/test_gui_side_panel.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_lib"],
+    deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_layer_lib"],
 )
 
 py_test(
@@ -2217,7 +2246,7 @@ py_test(
     srcs = _COMMON_SRCS + ["gui/test_gui_scan_view.py"],
     args = ["gui/test_gui_scan_view.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_lib"],
+    deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_layer_lib"],
 )
 
 py_test(
@@ -2226,7 +2255,7 @@ py_test(
     srcs = _COMMON_SRCS + ["gui/test_gui_formatted_text.py"],
     args = ["gui/test_gui_formatted_text.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_lib"],
+    deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_layer_lib"],
 )
 
 py_test(
@@ -2235,7 +2264,7 @@ py_test(
     srcs = _COMMON_SRCS + ["gui/test_gui_chart_widget.py"],
     args = ["gui/test_gui_chart_widget.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_lib"],
+    deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_layer_lib"],
 )
 
 py_test(
@@ -2244,7 +2273,7 @@ py_test(
     srcs = _COMMON_SRCS + ["gui/test_gui_widgets.py"],
     args = ["gui/test_gui_widgets.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_lib"],
+    deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_layer_lib"],
 )
 
 py_test(
@@ -2253,7 +2282,7 @@ py_test(
     srcs = _COMMON_SRCS + ["unit/test_anonymizer.py"],
     args = ["unit/test_anonymizer.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS,
+    deps = _COMMON_DEPS + _INFRASTRUCTURE_LIB,
 )
 
 py_test(
@@ -2264,7 +2293,7 @@ py_test(
     ],
     args = ["gui/test_gui_anonymizer_widget.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_lib"],
+    deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_layer_lib"],
 )
 
 py_test(
@@ -2276,7 +2305,7 @@ py_test(
     ],
     args = ["gui/test_gui_privacy_settings.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_lib"],
+    deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_layer_lib"],
 )
 
 py_test(
@@ -2285,7 +2314,7 @@ py_test(
     srcs = _COMMON_SRCS + ["unit/test_anonymization_mask.py"],
     args = ["unit/test_anonymization_mask.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS,
+    deps = _COMMON_DEPS + _DOMAIN_LIB,
 )
 
 py_test(
@@ -2297,7 +2326,7 @@ py_test(
     ],
     args = ["gui/test_gui_privacy_view.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_lib"],
+    deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_layer_lib"],
 )
 
 py_test(
@@ -2306,7 +2335,7 @@ py_test(
     srcs = _COMMON_SRCS + ["gui/test_gui_dialogs.py"],
     args = ["gui/test_gui_dialogs.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_lib"],
+    deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_layer_lib"],
 )
 
 py_test(
@@ -2315,7 +2344,7 @@ py_test(
     srcs = _COMMON_SRCS + ["gui/test_gui_addon_installer_dialog.py"],
     args = ["gui/test_gui_addon_installer_dialog.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_lib"],
+    deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_layer_lib"],
 )
 
 py_test(
@@ -2324,7 +2353,7 @@ py_test(
     srcs = _COMMON_SRCS + ["gui/test_gui_update_check.py"],
     args = ["gui/test_gui_update_check.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_lib"],
+    deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_layer_lib"],
 )
 
 py_test(
@@ -2333,7 +2362,7 @@ py_test(
     srcs = _COMMON_SRCS + ["gui/test_ocr_config_selector.py"],
     args = ["gui/test_ocr_config_selector.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_lib"],
+    deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_layer_lib"],
 )
 
 py_test(
@@ -2342,7 +2371,7 @@ py_test(
     srcs = _COMMON_SRCS + ["gui/test_gui_speed_panel.py"],
     args = ["gui/test_gui_speed_panel.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_lib"],
+    deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_layer_lib"],
 )
 
 py_test(
@@ -2351,7 +2380,7 @@ py_test(
     srcs = _COMMON_SRCS + ["gui/test_hardware_profile_selector.py"],
     args = ["gui/test_hardware_profile_selector.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_lib"],
+    deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_layer_lib"],
 )
 
 py_test(
@@ -2360,7 +2389,7 @@ py_test(
     srcs = _COMMON_SRCS + ["gui/test_background.py"],
     args = ["gui/test_background.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_lib"],
+    deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_layer_lib"],
 )
 
 py_test(
@@ -2369,7 +2398,7 @@ py_test(
     srcs = _COMMON_SRCS + ["gui/test_model_item_delegate.py"],
     args = ["gui/test_model_item_delegate.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_lib"],
+    deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_layer_lib"],
 )
 
 py_test(
@@ -2378,7 +2407,7 @@ py_test(
     srcs = _COMMON_SRCS + ["gui/test_model_wording.py"],
     args = ["gui/test_model_wording.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_lib"],
+    deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_layer_lib"],
 )
 
 py_test(
@@ -2387,7 +2416,7 @@ py_test(
     srcs = _COMMON_SRCS + ["gui/test_gui_install_round.py"],
     args = ["gui/test_gui_install_round.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_lib"],
+    deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_layer_lib"],
 )
 
 py_test(
@@ -2401,7 +2430,7 @@ py_test(
     args = ["gui/test_gui_addons_page.py"],
     main = "run_test.py",
     deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + [
-        "//teachers_teammate:gui_lib",
+        "//teachers_teammate:gui_layer_lib",
         "@ocr_test_dependencies//ollama:pkg",
     ],
 )
@@ -2412,7 +2441,7 @@ py_test(
     srcs = _COMMON_SRCS + ["gui/test_benchmark_window.py"],
     args = ["gui/test_benchmark_window.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_lib"],
+    deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_layer_lib"],
 )
 
 py_test(
@@ -2424,7 +2453,7 @@ py_test(
     ],
     args = ["gui/test_gui_lifecycle.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_lib"],
+    deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_layer_lib"],
 )
 
 py_test(
@@ -2436,7 +2465,7 @@ py_test(
     ],
     args = ["gui/test_gui_bootstrap.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_lib"],
+    deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_layer_lib"],
 )
 
 py_test(
@@ -2445,7 +2474,7 @@ py_test(
     srcs = _COMMON_SRCS + ["gui/test_benchmark_widgets.py"],
     args = ["gui/test_benchmark_widgets.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_lib"],
+    deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_layer_lib"],
 )
 
 py_test(
@@ -2454,7 +2483,7 @@ py_test(
     srcs = _COMMON_SRCS + ["gui/test_benchmark_worker.py"],
     args = ["gui/test_benchmark_worker.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_lib"],
+    deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_layer_lib"],
 )
 
 py_test(
@@ -2463,7 +2492,7 @@ py_test(
     srcs = _COMMON_SRCS + ["gui/test_benchmark_integration.py"],
     args = ["gui/test_benchmark_integration.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_lib"],
+    deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_layer_lib"],
 )
 
 py_test(
@@ -2474,7 +2503,7 @@ py_test(
     data = _READER_MODEL_DATA,
     env = _READER_MODEL_ENV,
     main = "run_test.py",
-    deps = _COMMON_DEPS + _PIPELINE_DEPS,
+    deps = _COMMON_DEPS + _PIPELINE_DEPS + _INFRASTRUCTURE_LIB,
 )
 
 py_test(
@@ -2483,7 +2512,7 @@ py_test(
     srcs = _COMMON_SRCS + ["unit/test_local_models.py"],
     args = ["unit/test_local_models.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS,
+    deps = _COMMON_DEPS + _DOMAIN_LIB,
 )
 
 py_test(
@@ -2492,7 +2521,7 @@ py_test(
     srcs = _COMMON_SRCS + ["unit/test_model_store.py"],
     args = ["unit/test_model_store.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS + _REQUESTS_DEPS,
+    deps = _COMMON_DEPS + _REQUESTS_DEPS + _INFRASTRUCTURE_LIB,
 )
 
 py_test(
@@ -2501,7 +2530,7 @@ py_test(
     srcs = _COMMON_SRCS + ["unit/test_ppocr_detect.py"],
     args = ["unit/test_ppocr_detect.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS + _CV_DEPS,
+    deps = _COMMON_DEPS + _CV_DEPS + _INFRASTRUCTURE_LIB,
 )
 
 py_test(
@@ -2510,7 +2539,7 @@ py_test(
     srcs = _COMMON_SRCS + ["unit/test_ppocr_reading_order.py"],
     args = ["unit/test_ppocr_reading_order.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS + _CV_DEPS,
+    deps = _COMMON_DEPS + _CV_DEPS + _INFRASTRUCTURE_LIB,
 )
 
 py_test(
@@ -2519,7 +2548,7 @@ py_test(
     srcs = _COMMON_SRCS + ["unit/test_ppocr_recognise.py"],
     args = ["unit/test_ppocr_recognise.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS + _CV_DEPS,
+    deps = _COMMON_DEPS + _CV_DEPS + _INFRASTRUCTURE_LIB,
 )
 
 py_test(
@@ -2528,7 +2557,7 @@ py_test(
     srcs = _COMMON_SRCS + ["unit/test_ppocr_engine.py"],
     args = ["unit/test_ppocr_engine.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS + _CV_DEPS + _REQUESTS_DEPS,
+    deps = _COMMON_DEPS + _CV_DEPS + _REQUESTS_DEPS + _INFRASTRUCTURE_LIB,
 )
 
 py_test(
@@ -2539,7 +2568,7 @@ py_test(
     data = ["//tests/fixtures:umlaut_line.png"] + _READER_MODEL_DATA,
     env = _READER_MODEL_ENV,
     main = "run_test.py",
-    deps = _COMMON_DEPS + _PIPELINE_DEPS,
+    deps = _COMMON_DEPS + _PIPELINE_DEPS + _INFRASTRUCTURE_LIB,
 )
 
 py_test(
@@ -2549,7 +2578,7 @@ py_test(
     args = ["tools/test_no_retired_engines.py"],
     data = ["//teachers_teammate:all_sources"],
     main = "run_test.py",
-    deps = _COMMON_DEPS,
+    deps = _COMMON_DEPS + _PKG_LIB,
 )
 
 py_test(
@@ -2559,7 +2588,7 @@ py_test(
     args = ["tools/test_no_sentence_review_in_the_app.py"],
     data = ["//teachers_teammate:all_sources"],
     main = "run_test.py",
-    deps = _COMMON_DEPS,
+    deps = _COMMON_DEPS + _PKG_LIB,
 )
 
 py_test(
@@ -2571,7 +2600,7 @@ py_test(
     ],
     args = ["unit/test_preprocessing_auto.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS + _PIPELINE_DEPS,
+    deps = _COMMON_DEPS + _PIPELINE_DEPS + _INFRASTRUCTURE_LIB,
 )
 
 py_test(
@@ -2583,7 +2612,7 @@ py_test(
     ],
     args = ["unit/test_preprocessing_auto_golden.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS + _PIPELINE_DEPS,
+    deps = _COMMON_DEPS + _PIPELINE_DEPS + _INFRASTRUCTURE_LIB,
 )
 
 py_test(
@@ -2597,7 +2626,7 @@ py_test(
     data = _PAGE_MODEL_DATA,
     env = _PAGE_MODEL_ENV,
     main = "run_test.py",
-    deps = _COMMON_DEPS + _PIPELINE_DEPS,
+    deps = _COMMON_DEPS + _PIPELINE_DEPS + _INFRASTRUCTURE_LIB,
 )
 
 # ── Test suite ────────────────────────────────────────────────────────────
@@ -2654,6 +2683,7 @@ test_suite(
         ":test_inventory_tool",
         ":test_language",
         ":test_latest_release",
+        ":test_layer_imports",
         ":test_license_inventory",
         ":test_llm_factory",
         ":test_local_models",

@@ -35,7 +35,10 @@ py_library(
         "model_eval/viewer/viewer.js",
     ],
     visibility = ["//visibility:public"],
-    deps = ["//teachers_teammate:ocr_lib"],
+    # What the tools import: the settings, the exchanges and the application's own calls
+    # (structured_check) -- never the GUI, the texts or the command line, so an edit there does
+    # not rerun the tools' tests.
+    deps = ["//teachers_teammate:application_lib"],
 )
 
 # The memory agent: one file, standard library only, no import from this repository, so it can be
@@ -61,7 +64,7 @@ py_binary(
     visibility = ["//visibility:public"],
     deps = [
         ":model_eval",
-        "//teachers_teammate:ocr_lib",
+        "//teachers_teammate:application_lib",
         "@ocr_test_dependencies//lxml:pkg",
         "@ocr_test_dependencies//markdown_it_py:pkg",
         "@ocr_test_dependencies//ollama:pkg",
@@ -80,7 +83,7 @@ py_binary(
     visibility = ["//visibility:public"],
     deps = [
         ":model_eval",
-        "//teachers_teammate:ocr_lib",
+        "//teachers_teammate:application_lib",
         "@ocr_test_dependencies//lxml:pkg",
         "@ocr_test_dependencies//markdown_it_py:pkg",
         "@ocr_test_dependencies//ollama:pkg",
@@ -98,7 +101,7 @@ py_binary(
     visibility = ["//visibility:public"],
     deps = [
         ":model_eval",
-        "//teachers_teammate:ocr_lib",
+        "//teachers_teammate:application_lib",
         "@ocr_test_dependencies//numpy:pkg",
         "@ocr_test_dependencies//ollama:pkg",
         "@ocr_test_dependencies//opencv_python_headless:pkg",
@@ -135,7 +138,7 @@ py_binary(
     visibility = ["//visibility:public"],
     deps = [
         ":model_eval",
-        "//teachers_teammate:ocr_lib",
+        "//teachers_teammate:application_lib",
         "@ocr_test_dependencies//lxml:pkg",
         "@ocr_test_dependencies//markdown_it_py:pkg",
         "@ocr_test_dependencies//ollama:pkg",
@@ -155,7 +158,7 @@ py_binary(
     visibility = ["//visibility:public"],
     deps = [
         ":model_eval",
-        "//teachers_teammate:ocr_lib",
+        "//teachers_teammate:application_lib",
         "@ocr_test_dependencies//lxml:pkg",
         "@ocr_test_dependencies//markdown_it_py:pkg",
         "@ocr_test_dependencies//ollama:pkg",

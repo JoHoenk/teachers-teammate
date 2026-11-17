@@ -1451,6 +1451,12 @@ def test_the_pull_manager_pulls_the_whole_queue_on_its_own(qtbot, monkeypatch) -
         def isRunning(self) -> bool:
             return True
 
+        def isFinished(self) -> bool:
+            return False
+
+        def wait(self, _timeout: int = 0) -> bool:
+            return True
+
         def request_abort(self) -> None:
             pass
 
@@ -1477,6 +1483,56 @@ def test_the_pull_manager_pulls_the_whole_queue_on_its_own(qtbot, monkeypatch) -
 
 
 @pytest.mark.gui
+def test_a_pull_thread_outlives_the_manager_that_started_it(qtbot, monkeypatch) -> None:
+    """
+    Given  a pull that reported "finished" from run(), so the manager let go of its thread
+    When   the thread is still running its last lines
+    Then   the thread is still held (it is parked until it ends), because dropping the last
+           reference to a running QThread aborts the whole process
+    """
+    from PySide6.QtCore import QObject, Signal  # noqa: PLC0415
+
+    from teachers_teammate.gui import _addon_installer_dialog, _model_fetch  # noqa: PLC0415
+
+    threads: list[Any] = []
+
+    class _FakePull(QObject):
+        progress = Signal(str, float, float)
+        finished_ok = Signal(str)
+        finished_err = Signal(str)
+
+        def __init__(self, url: str, model: str) -> None:
+            super().__init__()
+            threads.append(self)
+
+        def start(self) -> None:
+            pass
+
+        def isRunning(self) -> bool:
+            return True
+
+        def isFinished(self) -> bool:
+            return False
+
+        def wait(self, _timeout: int = 0) -> bool:
+            return True
+
+    monkeypatch.setattr(_addon_installer_dialog, "_OllamaPullThread", _FakePull)
+    manager = main_window_module.OllamaDownloadManager()
+    held_before = set(_model_fetch._RETIRED_THREADS)
+
+    manager.start("http://host:11434", "a:1b")
+    thread = threads[0]
+    thread.finished_ok.emit("a:1b")
+
+    try:
+        assert manager._thread is None
+        assert thread in _model_fetch._RETIRED_THREADS
+    finally:
+        _model_fetch._RETIRED_THREADS.intersection_update(held_before)
+
+
+@pytest.mark.gui
 def test_aborting_a_pull_drops_the_queue(qtbot, monkeypatch) -> None:
     """
     Given  a running pull with two more models queued
@@ -1499,6 +1555,12 @@ def test_aborting_a_pull_drops_the_queue(qtbot, monkeypatch) -> None:
             pass
 
         def isRunning(self) -> bool:
+            return True
+
+        def isFinished(self) -> bool:
+            return False
+
+        def wait(self, _timeout: int = 0) -> bool:
             return True
 
         def request_abort(self) -> None:
@@ -4625,6 +4687,12 @@ def test_a_pull_requested_while_one_runs_is_queued_not_dropped(qtbot, monkeypatc
             pass
 
         def isRunning(self) -> bool:
+            return True
+
+        def isFinished(self) -> bool:
+            return False
+
+        def wait(self, _timeout: int = 0) -> bool:
             return True
 
         def request_abort(self) -> None:

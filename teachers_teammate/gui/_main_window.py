@@ -105,6 +105,7 @@ from ._fix_targets import (
 from ._help_dialog import AboutDialog, HelpDialog, ThirdPartyLicensesDialog
 from ._image_utils import load_icon, load_pixmap
 from ._log_widget import LogWidget
+from ._model_fetch import _start_thread
 from ._model_wording import profile_text
 from ._preview_panel import PreviewPanel, ZoomableImageView
 from ._privacy_settings import (
@@ -361,7 +362,9 @@ class OllamaDownloadManager(QObject):
         thread.progress.connect(self.progress)
         thread.finished_ok.connect(self._on_finished_ok)
         thread.finished_err.connect(self._on_finished_err)
-        thread.start()
+        # Kept alive until it ends: the thread reports from run(), so the reference dropped
+        # in _on_finished_ok may be the last one while the thread is still running.
+        _start_thread(thread)
         self._thread = thread
         self.started.emit(model_name)
 

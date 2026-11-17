@@ -590,6 +590,20 @@ py_test(
     deps = _COMMON_DEPS + _REQUESTS_DEPS,
 )
 
+# The fake Ollama server, checked against the ``ollama`` client the app is locked to: a bump
+# that changes a response model fails here, not as a hang in the walkthrough.
+py_test(
+    name = "test_fake_ollama",
+    size = "small",
+    srcs = _COMMON_SRCS + [
+        "fakes/fake_ollama.py",
+        "unit/test_fake_ollama.py",
+    ],
+    args = ["unit/test_fake_ollama.py"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS + _REQUESTS_DEPS + ["@ocr_test_dependencies//ollama:pkg"],
+)
+
 py_test(
     name = "test_providers",
     size = "small",
@@ -2063,6 +2077,25 @@ py_test(
     deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_lib"],
 )
 
+# The whole wizard, end to end: the real pages, the real service, real threads, a real HTTP
+# conversation with a fake Ollama and the real MainWindow writing a real ocr.toml.  ``medium``
+# for the headroom: the default 60 s of ``small`` is tight for a wizard plus real threads.
+py_test(
+    name = "test_gui_setup_walkthrough",
+    size = "medium",
+    srcs = _COMMON_SRCS + [
+        "fakes/fake_ollama.py",
+        "gui/_settings_stubs.py",
+        "gui/test_gui_setup_walkthrough.py",
+    ],
+    args = ["gui/test_gui_setup_walkthrough.py"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + [
+        "//teachers_teammate:gui_lib",
+        "@ocr_test_dependencies//ollama:pkg",
+    ],
+)
+
 py_test(
     name = "test_gui_setup_pages",
     size = "small",
@@ -2483,6 +2516,7 @@ test_suite(
         ":test_exchange_corrector",
         ":test_exchange_schemas",
         ":test_exchange_t",
+        ":test_fake_ollama",
         ":test_fallback_exchange",
         ":test_fetch_models",
         ":test_file_processor",
@@ -2584,6 +2618,7 @@ test_suite(
         ":test_gui_setup_assistant",
         ":test_gui_setup_flow",
         ":test_gui_setup_pages",
+        ":test_gui_setup_walkthrough",
         ":test_gui_speed_panel",
         ":test_gui_update_check",
         ":test_gui_what_is_sent",

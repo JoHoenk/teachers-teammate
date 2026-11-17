@@ -9,11 +9,12 @@ from typing import Any, ClassVar
 
 from PySide6.QtCore import QRect, QThread, Qt
 from PySide6.QtGui import QImage, QPainter
-from PySide6.QtWidgets import QMessageBox, QStyledItemDelegate, QStyleOptionViewItem
+from PySide6.QtWidgets import QStyledItemDelegate, QStyleOptionViewItem
 import pytest
 
 from teachers_teammate.application.service import AnonymizerConfig
 from teachers_teammate.config import DEFAULTS, OcrConfig
+from teachers_teammate.gui import _dialogs
 from teachers_teammate.gui import _model_fetch
 from teachers_teammate.gui.settings import (
     PAGE_TITLES,
@@ -32,6 +33,7 @@ from teachers_teammate.gui.settings._page import (
     FOCUS_READING_MODELS,
     FOCUS_SENDING,
 )
+from teachers_teammate.texts._types import Answer, Choice, Notice, Question
 
 from ._gui_harness import settings_context
 from ._settings_stubs import AddonsCapableService, FakeKeyring, ProviderAddonsService
@@ -66,67 +68,40 @@ class _MemoryQSettings:
         type(self).store.pop(key, None)
 
 
-class _Button:
-    def __init__(self, label: str) -> None:
-        self.label = label
-        self._enabled = True
+class _ScriptedAnswers:
+    """Stands in for the window's questions: answers each with the button named in ``answers``.
 
-    def setEnabled(self, enabled: bool) -> None:
-        self._enabled = enabled
+    ``answers`` holds one button label per question, in the order the window asks them;
+    ``questions`` keeps what was asked, so a test can read the buttons and the informative
+    text, and ``notices`` keeps every notice the window showed.
+    """
 
-    def isEnabled(self) -> bool:
-        return self._enabled
-
-
-class _ScriptedBox:
-    """Stands in for ``QMessageBox``: clicks the buttons named in ``answers``, one per box."""
-
-    Icon = QMessageBox.Icon
-    ButtonRole = QMessageBox.ButtonRole
-    StandardButton = QMessageBox.StandardButton
     answers: ClassVar[list[str]] = []
-    boxes: ClassVar[list[_ScriptedBox]] = []
-    information_calls: ClassVar[list[str]] = []
-
-    def __init__(self, _parent: object = None) -> None:
-        self.buttons: dict[str, _Button] = {}
-        self.text = ""
-        self.informative = ""
-        self._clicked: _Button | None = None
-
-    def setIcon(self, _icon: object) -> None: ...
-    def setWindowTitle(self, _title: str) -> None: ...
-    def setInformativeText(self, text: str) -> None:
-        self.informative = text
-
-    def setDefaultButton(self, _button: object) -> None: ...
-
-    def setText(self, text: str) -> None:
-        self.text = text
-
-    def addButton(self, what: object, _role: object = None) -> _Button:
-        label = what if isinstance(what, str) else "Cancel"
-        self.buttons[label] = _Button(label)
-        return self.buttons[label]
-
-    def exec(self) -> int:
-        self._clicked = self.buttons[type(self).answers.pop(0)]
-        type(self).boxes.append(self)
-        return 0
-
-    def clickedButton(self) -> _Button | None:
-        return self._clicked
+    questions: ClassVar[list[Question]] = []
+    notices: ClassVar[list[Notice]] = []
 
     @classmethod
-    def information(cls, _parent: object, _title: str, text: str) -> None:
-        cls.information_calls.append(text)
+    def choose(cls, _parent: object, question: Question) -> Answer:
+        cls.questions.append(question)
+        label = cls.answers.pop(0)
+        return Answer(next((c for c in question.choices if c.label == label), None), False)
+
+    @classmethod
+    def notify(cls, _parent: object, notice: Notice) -> None:
+        cls.notices.append(notice)
+
+
+def _choice(question: Question, label: str) -> Choice:
+    """Return the button of *question* labelled *label*."""
+    return next(choice for choice in question.choices if choice.label == label)
 
 
 @pytest.fixture
-def scripted_box(monkeypatch) -> type[_ScriptedBox]:
-    """Replace the window's message boxes; set ``answers`` to the buttons to click."""
-    box = type("_Box", (_ScriptedBox,), {"answers": [], "boxes": [], "information_calls": []})
-    monkeypatch.setattr(window_module, "QMessageBox", box)
+def scripted_box(monkeypatch) -> type[_ScriptedAnswers]:
+    """Replace the window's questions and notices; set ``answers`` to the buttons to click."""
+    box = type("_Box", (_ScriptedAnswers,), {"answers": [], "questions": [], "notices": []})
+    monkeypatch.setattr(_dialogs, "choose", box.choose)
+    monkeypatch.setattr(_dialogs, "notify", box.notify)
     return box
 
 
@@ -509,10 +484,8 @@ def test_ok_stores_a_key_and_warns_when_the_keychain_refused_it(
     from teachers_teammate.gui import _credential_store  # noqa: PLC0415
 
     monkeypatch.setattr(_credential_store, "_keyring", lambda: FakeKeyring(refuses_writes=True))
-    warned: list[str] = []
-    monkeypatch.setattr(
-        QMessageBox, "warning", staticmethod(lambda _parent, _title, text: warned.append(text))
-    )
+    warned: list[Notice] = []
+    monkeypatch.setattr(_dialogs, "notify", lambda _parent, notice: warned.append(notice))
     window = _window(qtbot, SettingsPage.ONLINE_SERVICES)
     _enter_key(window)
 
@@ -520,7 +493,7 @@ def test_ok_stores_a_key_and_warns_when_the_keychain_refused_it(
 
     assert credential_file["credentials/OPENAI_API_KEY"] == "sk-typed"
     assert len(warned) == 1
-    assert "OpenAI" in warned[0] or "openai" in warned[0].lower()
+    assert "OpenAI" in warned[0].body or "openai" in warned[0].body.lower()
 
 
 @pytest.mark.gui
@@ -912,9 +885,9 @@ def test_restore_this_page_is_disabled_on_add_ons(qtbot, scripted_box) -> None:
 
     window._restore_btn.click()
 
-    [box] = scripted_box.boxes
-    assert box.buttons["This page"].isEnabled() is False
-    assert box.buttons["All settings"].isEnabled() is True
+    [question] = scripted_box.questions
+    assert _choice(question, "This page").enabled is False
+    assert _choice(question, "All settings").enabled is True
 
 
 @pytest.mark.gui
@@ -932,10 +905,10 @@ def test_restore_on_add_ons_does_not_promise_a_change_on_ok(qtbot, scripted_box)
     window.show_page(SettingsPage.SCAN_QUALITY)
     window._restore_btn.click()
 
-    addons_box, scan_box = scripted_box.boxes
-    assert "saved when you press OK" not in addons_box.informative
-    assert "not undone" in addons_box.informative
-    assert "saved when you press OK" in scan_box.informative
+    addons_question, scan_question = scripted_box.questions
+    assert "saved when you press OK" not in addons_question.informative
+    assert "not undone" in addons_question.informative
+    assert "saved when you press OK" in scan_question.informative
 
 
 @pytest.mark.gui
@@ -977,9 +950,9 @@ def test_restore_all_needs_a_second_confirmation_and_closes_with_a_special_resul
 
     assert window.result() == SettingsWindow.RESTORE_ALL_RESULT
     assert window.values().restore_all is True
-    confirm = scripted_box.boxes[-1]
-    assert "including the choices in the main window" in confirm.text
-    assert "saved API keys are kept" in confirm.text
+    confirm = scripted_box.questions[-1]
+    assert "including the choices in the main window" in confirm.body
+    assert "saved API keys are kept" in confirm.body
 
 
 @pytest.mark.gui
@@ -1207,8 +1180,8 @@ def test_closing_waits_while_an_install_runs(qtbot, scripted_box) -> None:
 
         assert window.result() == 0
         assert window.values().restore_all is False
-        assert len(scripted_box.information_calls) == 3
-        assert "installation is still running" in scripted_box.information_calls[0]
+        assert len(scripted_box.notices) == 3
+        assert "installation is still running" in scripted_box.notices[0].body
         assert shut_down == []
     finally:
         busy.release.set()

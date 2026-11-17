@@ -18,7 +18,6 @@ from PySide6.QtWidgets import (
     QLabel,
     QListWidget,
     QListWidgetItem,
-    QMessageBox,
     QProgressBar,
     QPushButton,
     QVBoxLayout,
@@ -26,6 +25,8 @@ from PySide6.QtWidgets import (
 )
 
 from ...domain.ollama_discovery import DiscoveredServer, DiscoveryScope, ServerKind
+from ...texts import dialogs as dlg
+from .. import _dialogs
 from .._model_fetch import _retire_thread, _start_thread
 
 TITLE = "Find the AI server"
@@ -53,13 +54,6 @@ STOP_BUTTON = "Stop"
 USE_BUTTON = "Use this server"
 TYPE_BUTTON = "Enter address myself"
 CLOSE_BUTTON = "Close"
-NETWORK_CONFIRM_TITLE = "Search the network?"
-NETWORK_CONFIRM = (
-    "The app will ask every computer in your network range (up to 254 addresses per "
-    "network connection) whether it runs Ollama. No documents or settings are sent.\n\n"
-    "Some school networks notice such a search. Only continue if your IT department allows "
-    "it."
-)
 _KIND_NAMES = {
     ServerKind.THIS_COMPUTER: "This computer",
     ServerKind.WINDOWS_HOST: "Windows (this computer)",
@@ -207,14 +201,7 @@ class ServerSearchDialog(QDialog):
         _start_thread(thread)
 
     def _on_network_clicked(self) -> None:
-        answer = QMessageBox.question(
-            self,
-            NETWORK_CONFIRM_TITLE,
-            NETWORK_CONFIRM,
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
-        )
-        if answer == QMessageBox.StandardButton.Yes:
+        if _dialogs.ask(self, dlg.search_network()):
             self._network_searched = True
             self._start(DiscoveryScope.NETWORK)
 

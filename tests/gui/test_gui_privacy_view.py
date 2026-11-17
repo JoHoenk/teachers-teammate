@@ -21,6 +21,7 @@ from teachers_teammate.gui.settings._page import FOCUS_DETECTION
 from teachers_teammate.gui.settings._privacy_page import PrivacyPage
 
 from ._gui_harness import install_scripted_settings_window
+from teachers_teammate.texts.settings import WHERE_ADDONS
 
 RAW = "Anna Müller schreibt an Bernd."
 CORRECTED = "Anna Müller schreibt einen Brief an Bernd."
@@ -774,7 +775,7 @@ def test_the_string_language_without_spacy_disables_the_choice(
     checkbox = page.hide_personal_checkbox()
     assert not checkbox.isEnabled()
     assert not checkbox.isChecked()
-    assert txt.WHERE_ADDONS in checkbox.toolTip()
+    assert WHERE_ADDONS in checkbox.toolTip()
     assert win._preview.display_anonymized() is False
 
 

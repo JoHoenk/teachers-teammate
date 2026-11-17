@@ -288,18 +288,12 @@ def test_closing_by_hand_during_a_run_asks_before_stopping_it(
     When   the user closes it and answers the question "Stop the run and close?"
     Then   a "No" keeps the window open and the run going, a "Yes" stops the run and closes
     """
-    from PySide6.QtWidgets import QMessageBox  # noqa: PLC0415
-
-    from teachers_teammate.gui.benchmark import _benchmark_window  # noqa: PLC0415
+    from teachers_teammate.gui import _dialogs  # noqa: PLC0415
 
     win, _service = window
     worker = _RunningWorker()
     win._worker = worker
-    monkeypatch.setattr(
-        _benchmark_window.QMessageBox,
-        "question",
-        lambda *_a, **_k: getattr(QMessageBox.StandardButton, answer),
-    )
+    monkeypatch.setattr(_dialogs, "ask", lambda *_a, **_k: answer == "Yes")
     event = _UserClose.make()
 
     win.closeEvent(event)
@@ -338,7 +332,7 @@ def test_closing_from_the_main_window_stops_a_run_without_asking(window, monkeyp
     When   the main window closes it as the app quits (not an event from the window system)
     Then   the run is stopped and nobody is asked
     """
-    from teachers_teammate.gui.benchmark import _benchmark_window  # noqa: PLC0415
+    from teachers_teammate.gui import _dialogs  # noqa: PLC0415
 
     win, _service = window
     worker = _RunningWorker()
@@ -347,7 +341,7 @@ def test_closing_from_the_main_window_stops_a_run_without_asking(window, monkeyp
     def _no_question(*_a, **_k):
         raise AssertionError("closing from the main window must not ask")
 
-    monkeypatch.setattr(_benchmark_window.QMessageBox, "question", _no_question)
+    monkeypatch.setattr(_dialogs, "ask", _no_question)
 
     win.close()
 

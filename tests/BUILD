@@ -775,6 +775,28 @@ py_test(
 )
 
 py_test(
+    name = "test_texts_types",
+    size = "small",
+    srcs = _COMMON_SRCS + ["unit/test_texts_types.py"],
+    args = ["unit/test_texts_types.py"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS,
+)
+
+# The ratchet that keeps teacher-facing text in ``teachers_teammate/texts``: no literal at a
+# call site that is not on the allowlist, no stale allowlist entry, and no ``Notice`` built
+# outside the package.  The sources come in as data because the test parses them with ``ast``.
+py_test(
+    name = "test_user_text_centralised",
+    size = "small",
+    srcs = _COMMON_SRCS + ["unit/test_user_text_centralised.py"],
+    args = ["unit/test_user_text_centralised.py"],
+    data = ["//teachers_teammate:user_text_sources"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS + ["//tools/user_text:user_text_lib"],
+)
+
+py_test(
     name = "test_inventory_tool",
     size = "small",
     srcs = _COMMON_SRCS + ["unit/test_inventory_tool.py"],
@@ -2204,6 +2226,15 @@ py_test(
 )
 
 py_test(
+    name = "test_gui_dialogs",
+    size = "small",
+    srcs = _COMMON_SRCS + ["gui/test_gui_dialogs.py"],
+    args = ["gui/test_gui_dialogs.py"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_lib"],
+)
+
+py_test(
     name = "test_gui_addon_installer_dialog",
     size = "small",
     srcs = _COMMON_SRCS + ["gui/test_gui_addon_installer_dialog.py"],
@@ -2588,6 +2619,8 @@ test_suite(
         ":test_storage_policy",
         ":test_text_chunks",
         ":test_text_loss",
+        ":test_texts_types",
+        ":test_user_text_centralised",
         ":test_windows_installer_floor",
         ":test_windows_installer_script",
         ":test_word_diff",
@@ -2610,6 +2643,7 @@ test_suite(
         ":test_gui_chart_widget",
         ":test_gui_check_page",
         ":test_gui_config_panel",
+        ":test_gui_dialogs",
         ":test_gui_formatted_text",
         ":test_gui_general_page",
         ":test_gui_install_round",

@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (
 )
 
 from ...config import DEFAULTS
+from ...texts.settings import PAGE_AI_MODELS, PAGE_AI_SETUP
 from .. import _user_text as txt
 from .._hardware_profile_selector import HardwareProfileSelector
 from .._model_fetch import _GpuDetectThread, _retire_thread, _start_thread
@@ -42,9 +43,9 @@ from ._page import (
 )
 from ._speed_panel import SpeedPanel
 
-TITLE = txt.PAGE_AI_SETUP
+TITLE = PAGE_AI_SETUP
 DESCRIPTION = (
-    f"What {txt.PAGE_AI_MODELS} needs from this computer: how powerful it is (the model "
+    f"What {PAGE_AI_MODELS} needs from this computer: how powerful it is (the model "
     "suggestions follow it), where its local AI server is, and how fast it runs your models. "
     "Set up once; usually nothing to change."
 )

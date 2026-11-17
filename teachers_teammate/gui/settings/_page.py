@@ -20,7 +20,15 @@ from PySide6.QtCore import QTimer, Signal
 from PySide6.QtWidgets import QWidget
 
 from ...config import DEFAULTS
-from .. import _user_text as txt
+from ...texts.settings import (
+    PAGE_ADDONS,
+    PAGE_AI_MODELS,
+    PAGE_AI_SETUP,
+    PAGE_GENERAL,
+    PAGE_ONLINE_SERVICES,
+    PAGE_PRIVACY,
+    PAGE_SCAN_QUALITY,
+)
 
 
 class SettingsPage(StrEnum):
@@ -217,11 +225,11 @@ class SettingsPageBase(QWidget):
 
 #: Sidebar titles, also used by the menu entries.
 PAGE_TITLES: dict[SettingsPage, str] = {
-    SettingsPage.GENERAL: txt.PAGE_GENERAL,
-    SettingsPage.AI_MODELS: txt.PAGE_AI_MODELS,
-    SettingsPage.AI_SETUP: txt.PAGE_AI_SETUP,
-    SettingsPage.ONLINE_SERVICES: txt.PAGE_ONLINE_SERVICES,
-    SettingsPage.SCAN_QUALITY: txt.PAGE_SCAN_QUALITY,
-    SettingsPage.PRIVACY: txt.PAGE_PRIVACY,
-    SettingsPage.ADDONS: txt.PAGE_ADDONS,
+    SettingsPage.GENERAL: PAGE_GENERAL,
+    SettingsPage.AI_MODELS: PAGE_AI_MODELS,
+    SettingsPage.AI_SETUP: PAGE_AI_SETUP,
+    SettingsPage.ONLINE_SERVICES: PAGE_ONLINE_SERVICES,
+    SettingsPage.SCAN_QUALITY: PAGE_SCAN_QUALITY,
+    SettingsPage.PRIVACY: PAGE_PRIVACY,
+    SettingsPage.ADDONS: PAGE_ADDONS,
 }

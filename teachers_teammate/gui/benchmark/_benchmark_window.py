@@ -6,12 +6,10 @@ from pathlib import Path
 from typing import Any
 
 from PySide6.QtWidgets import (
-    QFileDialog,
     QGroupBox,
     QHBoxLayout,
     QLabel,
     QMainWindow,
-    QMessageBox,
     QPushButton,
     QTabWidget,
     QVBoxLayout,
@@ -21,6 +19,8 @@ from PySide6.QtWidgets import (
 from ...application.benchmark_service import BenchmarkApplicationService
 from ...application.service import ProcessingApplicationService
 from ...config import DEFAULTS
+from ...texts import dialogs as dlg
+from .. import _dialogs
 from .._app_bootstrap import create_app, finish_process
 from .._log_widget import LogWidget
 from .._ocr_config_selector import OcrConfigSelector
@@ -116,18 +116,16 @@ class BenchmarkWindow(QMainWindow):
     def _on_choose_document(self) -> None:
         suffixes = sorted(self._service.list_supported_suffixes())
         pattern = " ".join(f"*{s}" for s in suffixes)
-        path, _ = QFileDialog.getOpenFileName(
-            self, "Choose document", "", f"Supported files ({pattern})"
-        )
-        if not path:
+        chosen = _dialogs.pick_file(self, dlg.choose_document(pattern))
+        if chosen is None:
             return
-        self._source = Path(path)
+        self._source = chosen
         self._source_label.setText(self._source.name)
         self._refresh_runs()
 
     def _on_run(self) -> None:
         if self._source is None:
-            QMessageBox.information(self, "No document", "Choose a document first.")
+            _dialogs.notify(self, dlg.no_document())
             return
         ocr = self._selector.get_ocr_config()
         self._set_running(True)
@@ -177,12 +175,7 @@ class BenchmarkWindow(QMainWindow):
     def _on_clear_all(self) -> None:
         if self._source is None:
             return
-        confirm = QMessageBox.question(
-            self,
-            "Clear all runs",
-            f"Delete all stored runs for {self._source.name}?",
-        )
-        if confirm == QMessageBox.StandardButton.Yes:
+        if _dialogs.ask(self, dlg.clear_all_runs(self._source.name)):
             self._service.delete_all_runs(self._source)
             self._refresh_runs()
 
@@ -211,15 +204,7 @@ class BenchmarkWindow(QMainWindow):
 
     def _confirm_stop_running_worker(self) -> bool:
         """Ask whether to stop the running benchmark when the user closes the window."""
-        answer = QMessageBox.question(
-            self,
-            "Benchmark still running",
-            "A benchmark run is still going. Closing this window stops it.\n\n"
-            "Stop the run and close the window?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
-        )
-        return answer == QMessageBox.StandardButton.Yes
+        return _dialogs.ask(self, dlg.benchmark_still_running())
 
     def closeEvent(self, event: Any) -> None:
         """Stop background threads before the window is destroyed.

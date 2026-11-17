@@ -13,13 +13,13 @@ from collections.abc import Sequence
 
 from PySide6.QtWidgets import QVBoxLayout, QWidget
 
-from .. import _user_text as txt
+from ...texts.settings import PAGE_AI_MODELS, PAGE_ONLINE_SERVICES
 from ._credentials import ApiKeyDrafts, CredentialsGroup
 from ._page import FOCUS_API_KEYS, SettingsContext, SettingsPage, SettingsPageBase
 
-TITLE = txt.PAGE_ONLINE_SERVICES
+TITLE = PAGE_ONLINE_SERVICES
 DESCRIPTION = (
-    f"Access keys for the online AI services you can choose on {txt.PAGE_AI_MODELS}. Not "
+    f"Access keys for the online AI services you can choose on {PAGE_AI_MODELS}. Not "
     "needed while everything runs on this computer."
 )
 

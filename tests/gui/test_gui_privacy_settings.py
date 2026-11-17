@@ -32,6 +32,7 @@ from teachers_teammate.gui.settings._privacy_page import NOTHING_REMEMBERED, Pri
 from teachers_teammate.infrastructure.anonymizer import DEFAULT_PATTERNS, AnonymizerConfig
 
 from ._gui_harness import settings_context
+from teachers_teammate.texts.settings import WHERE_ADDONS
 
 
 class _MemorySettings:
@@ -314,7 +315,7 @@ def test_the_checkbox_is_disabled_without_the_privacy_addon(qtbot, acks) -> None
     checkbox = page.hide_personal_checkbox()
     assert not checkbox.isEnabled()
     assert not checkbox.isChecked()
-    assert txt.WHERE_ADDONS in checkbox.toolTip()
+    assert WHERE_ADDONS in checkbox.toolTip()
 
 
 @pytest.mark.gui

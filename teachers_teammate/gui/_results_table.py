@@ -12,7 +12,6 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QMenu,
-    QMessageBox,
     QPushButton,
     QStyle,
     QStyledItemDelegate,
@@ -26,6 +25,8 @@ from ..domain.data_location import STAGE_CORRECTION, STAGE_EVALUATION, SentStatu
 from ..domain.formatted_text import TextFormat
 from ..domain.proofreading.review import CorrectionReview
 from ..domain.stages import STAGE_ORDER
+from ..texts import dialogs as dlg
+from . import _dialogs
 from . import _user_text as txt
 from ._constants import (
     _COLOUR_CACHED,
@@ -319,7 +320,7 @@ class ResultsTable(QTableWidget):
         )
         info_btn.setToolTip(message)
         info_btn.clicked.connect(
-            lambda _=False, m=message: QMessageBox.warning(None, "Stage Warning", m)
+            lambda _=False, m=message: _dialogs.notify(None, dlg.stage_warning(m))
         )
         h.addWidget(lbl)
         h.addWidget(info_btn)
@@ -343,7 +344,7 @@ class ResultsTable(QTableWidget):
         )
         info_btn.setToolTip(message)
         info_btn.clicked.connect(
-            lambda _=False, m=message: QMessageBox.warning(None, "Stage Error", m)
+            lambda _=False, m=message: _dialogs.notify(None, dlg.stage_error(m))
         )
         h.addWidget(lbl)
         h.addWidget(info_btn)

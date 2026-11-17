@@ -25,7 +25,6 @@ from PySide6.QtWidgets import (
     QHeaderView,
     QLabel,
     QLineEdit,
-    QMessageBox,
     QPlainTextEdit,
     QProgressBar,
     QPushButton,
@@ -53,6 +52,9 @@ from ...domain.model_catalog import (
     suitability_rank,
 )
 from ...infrastructure.addon_licenses import license_tooltip
+from ...texts import dialogs as dlg
+from ...texts.settings import TAB_READING_MODELS
+from .. import _dialogs
 from .. import _user_text as txt
 from .._background import LatestTask
 from .._constants import _SPACY_MODEL_CHOICES as _SPACY_MODEL_DOWNLOAD_CHOICES
@@ -100,13 +102,8 @@ DESCRIPTION = (
     "away and take effect immediately."
 )
 TAB_LOCAL_MODELS = "AI models for this computer"
-TAB_READING_MODELS = txt.TAB_READING_MODELS
 TAB_ONLINE_SERVICES = "Online AI services"
 TAB_NAME_DETECTION = "Name detection"
-CLOSE_BLOCKED = (
-    "An installation is still running. Please wait until it has finished — the new package "
-    "must be set up before the app can use it."
-)
 
 # Tree group rows: group key → (label, catalog category or None for user models).
 _OLLAMA_GROUPS: dict[str, tuple[str, ModelCategory | None]] = {
@@ -865,7 +862,7 @@ class AddonsPage(SettingsPageBase):
     def close_blocker(self) -> str:
         """A pip install or language-model download must finish before the window closes."""
         if self._round.busy():
-            return CLOSE_BLOCKED
+            return dlg.INSTALLATION_RUNNING
         return ""
 
     def shutdown(self) -> None:
@@ -1114,15 +1111,7 @@ class AddonsPage(SettingsPageBase):
                 )
         if not messages:
             return True
-        box = QMessageBox(self.window())
-        box.setWindowTitle("Model does not fit")
-        box.setIcon(QMessageBox.Icon.Warning)
-        box.setText("\n\n".join(messages) + "\n\nDownload anyway?")
-        download_btn = box.addButton("Download anyway", QMessageBox.ButtonRole.AcceptRole)
-        cancel_btn = box.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
-        box.setDefaultButton(cancel_btn)
-        box.exec()
-        return box.clickedButton() == download_btn
+        return _dialogs.ask(self.window(), dlg.model_does_not_fit(messages))
 
     # ── following the install round ──────────────────────────────────────────────
 

@@ -28,6 +28,7 @@ from teachers_teammate.gui import _user_text as txt
 from teachers_teammate.gui._hardware_profile_selector import HardwareProfileSelector
 from teachers_teammate.gui.settings._speed_panel import SpeedPanel
 from teachers_teammate.infrastructure.performance_probe import ProbeResult
+from teachers_teammate.texts.settings import WHERE_AI_MODELS
 
 _URL = "http://localhost:11434"
 
@@ -283,7 +284,7 @@ def test_the_panel_says_when_the_card_was_not_used(qtbot) -> None:
     assert not panel._card_line.isHidden()
     assert "gemma4:e4b" in panel._card_line.text()
     assert "RTX 3070 (8 GB)" in panel._card_line.text()
-    assert txt.WHERE_AI_MODELS in panel._card_line.text()
+    assert WHERE_AI_MODELS in panel._card_line.text()
     assert panel._rows[SpeedStep.PROOFREADING].note.text() == txt.SPEED_ON_PROCESSOR
 
 

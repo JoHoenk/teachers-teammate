@@ -15,6 +15,7 @@ import pytest
 from teachers_teammate.config import DEFAULTS
 from teachers_teammate.domain.model_catalog import DEFAULT_WRITING_MODEL
 from teachers_teammate.domain.model_listing import ModelListing
+from teachers_teammate.gui import _dialogs
 from teachers_teammate.gui import _model_fetch
 from teachers_teammate.gui import _user_text as txt
 from teachers_teammate.gui._model_item_delegate import ITEM_LABEL_ROLE
@@ -3747,11 +3748,9 @@ def test_the_search_dialog_explains_an_empty_result_and_never_scans_without_cons
     When   the dialog opens, and the network button is pressed but the question is answered No
     Then   the hints are shown, and no network search was started
     """
-    from PySide6.QtWidgets import QMessageBox  # noqa: PLC0415
-
     from teachers_teammate.gui.settings._server_search_dialog import ServerSearchDialog  # noqa: PLC0415
 
-    monkeypatch.setattr(QMessageBox, "question", lambda *_a, **_k: QMessageBox.StandardButton.No)
+    monkeypatch.setattr(_dialogs, "ask", lambda *_a, **_k: False)
     service = _SearchService()
     dialog = ServerSearchDialog(service)
     qtbot.addWidget(dialog)
@@ -3771,8 +3770,6 @@ def test_the_network_search_starts_only_after_the_question_is_answered_yes(
     When   the network button is pressed and the question is answered Yes
     Then   the network scope is searched, and its hit is added without duplicating others
     """
-    from PySide6.QtWidgets import QMessageBox  # noqa: PLC0415
-
     from teachers_teammate.domain.ollama_discovery import (  # noqa: PLC0415
         DiscoveredServer,
         DiscoveryScope,
@@ -3780,7 +3777,7 @@ def test_the_network_search_starts_only_after_the_question_is_answered_yes(
     )
     from teachers_teammate.gui.settings._server_search_dialog import ServerSearchDialog  # noqa: PLC0415
 
-    monkeypatch.setattr(QMessageBox, "question", lambda *_a, **_k: QMessageBox.StandardButton.Yes)
+    monkeypatch.setattr(_dialogs, "ask", lambda *_a, **_k: True)
     school = DiscoveredServer("http://192.168.1.20:11434", ServerKind.NETWORK, "0.12.3", 2)
     service = _SearchService([school])
     dialog = ServerSearchDialog(service)

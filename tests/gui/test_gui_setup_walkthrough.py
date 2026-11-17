@@ -35,7 +35,7 @@ import socket
 from typing import Any
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QApplication, QMessageBox, QWizard
+from PySide6.QtWidgets import QApplication, QWizard
 import pytest
 
 from teachers_teammate.application import service as service_module
@@ -50,12 +50,12 @@ from teachers_teammate.application.setup_plan import (
 from teachers_teammate.config import DEFAULTS, dump_config_file, load_config_file
 from teachers_teammate.domain.model_catalog import HardwareProfile, ModelCategory, best_model
 from teachers_teammate.domain.model_listing import ModelListing
+from teachers_teammate.gui import _dialogs
 from teachers_teammate.gui._background import wait_for_background_tasks
 from teachers_teammate.gui import _main_window as main_window
 from teachers_teammate.gui._main_window import MainWindow
 from teachers_teammate.gui._ollama_status_line import CHECKING
 from teachers_teammate.gui.setup import SetupAssistant
-from teachers_teammate.gui.setup._assistant import CANNOT_CLOSE_TITLE
 from teachers_teammate.gui.setup._flow import ORDER, SetupPageId
 from teachers_teammate.gui.setup._pages import (
     DONE_DONE,
@@ -69,6 +69,8 @@ from teachers_teammate.gui.setup._pages import (
 )
 from teachers_teammate.infrastructure import gpu_detector, ollama_install
 from teachers_teammate.infrastructure.onnx.store import ModelStore
+from teachers_teammate.texts import dialogs as dlg
+from teachers_teammate.texts._types import Notice
 
 from ..fakes.fake_ollama import FakeOllama
 from ._settings_stubs import commit_key, select_provider
@@ -501,13 +503,11 @@ def _modal_boxes(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, str]]:
     """
     shown: list[tuple[str, str]] = []
 
-    def box(_parent: object, title: str, text: str, *_args: object, **_kwargs: object) -> object:
-        shown.append((title, text))
-        assert title != CANNOT_CLOSE_TITLE, "the wizard was closed while it was busy"
-        return QMessageBox.StandardButton.Ok
+    def box(_parent: object, notice: Notice) -> None:
+        shown.append((notice.title, notice.body))
+        assert notice != dlg.installation_running(), "the wizard was closed while it was busy"
 
-    monkeypatch.setattr(QMessageBox, "information", staticmethod(box))
-    monkeypatch.setattr(QMessageBox, "warning", staticmethod(box))
+    monkeypatch.setattr(_dialogs, "notify", box)
     return shown
 
 

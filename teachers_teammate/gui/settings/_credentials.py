@@ -28,13 +28,14 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
-    QMessageBox,
     QPushButton,
     QVBoxLayout,
     QWidget,
 )
 
-from .. import _user_text as txt
+from ...texts import dialogs as dlg
+from ...texts.settings import PAGE_AI_MODELS
+from .. import _dialogs
 from .._credential_store import CredentialStore, KeyLocation, set_outside_app
 
 SHOW_KEY = "Show"
@@ -46,7 +47,7 @@ GROUP_TITLE = "Access keys (API keys)"
 #: Opens both notes: the key list shows the keys that are also entered under the service.
 _GROUP_NOTE_SAME_KEYS = (
     "A key is what an online service gives you to use its AI. You can also enter it under "
-    f"the service on {txt.PAGE_AI_MODELS}; here you see all of them, can remove one, or add "
+    f"the service on {PAGE_AI_MODELS}; here you see all of them, can remove one, or add "
     "one for another service. "
 )
 GROUP_NOTE_KEYCHAIN = (
@@ -67,11 +68,6 @@ KEY_LINE_OUTSIDE = (
 KEY_LINE_KEYCHAIN = "Kept in your system's keychain."
 KEY_LINE_FILE = "Kept in this app's settings file, not encrypted (no keychain found)."
 KEY_LINE_GET_KEY = "Get a key at {link}."
-FILE_FALLBACK_TITLE = "Key not saved in the keychain"
-FILE_FALLBACK_TEXT = (
-    "The system keychain did not accept the key for {services} (it may be locked). It was "
-    "kept in this app's settings file instead, in plain text."
-)
 
 #: How long after the last keystroke a typed key counts as entered.
 COMMIT_DELAY_MS = 800
@@ -266,7 +262,7 @@ def store_key_drafts(drafts: ApiKeyDrafts, parent: QWidget | None = None) -> Non
         return
     titles = drafts.titles()
     services = ", ".join(titles.get(env_key, env_key) for env_key in in_file)
-    QMessageBox.warning(parent, FILE_FALLBACK_TITLE, FILE_FALLBACK_TEXT.format(services=services))
+    _dialogs.notify(parent, dlg.key_not_in_keychain(services))
 
 
 def discard_key_drafts(drafts: ApiKeyDrafts, app_service: _KeyService) -> None:

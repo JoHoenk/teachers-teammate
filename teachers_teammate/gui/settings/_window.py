@@ -32,7 +32,6 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QListWidget,
-    QMessageBox,
     QPushButton,
     QScrollArea,
     QStackedWidget,
@@ -43,6 +42,8 @@ from PySide6.QtWidgets import (
 )
 
 from ...config import OcrConfig
+from ...texts import dialogs as dlg
+from .. import _dialogs
 from ._addons_page import AddonsPage
 from ._ai_models_page import AiModelsPage
 from ._ai_setup_page import AiSetupPage
@@ -61,20 +62,7 @@ from ._scan_quality_page import ScanQualityPage
 
 WINDOW_TITLE = "Settings"
 RESTORE_DEFAULTS = "Restore defaults…"
-RESTORE_QUESTION_TITLE = "Restore defaults"
-RESTORE_QUESTION = "Which settings should go back to their built-in values?"
-RESTORE_THIS_PAGE = "This page"
-RESTORE_ALL = "All settings"
-RESTORE_THIS_PAGE_NOTE = "The values on this page change now and are saved when you press OK."
-RESTORE_ADDONS_NOTE = "Add-ons has no settings to restore: downloads and installs are not undone."
-RESTORE_ALL_CONFIRM = (
-    "This resets every setting, including the choices in the main window and the answers "
-    "you asked not to be asked about again. "
-    "Downloaded models and saved API keys are kept."
-)
-RESTORE_ALL_BUTTON = "Reset everything"
 ADDONS_NOTE = "Downloads and installs start right away and are not undone by Cancel."
-CANNOT_CLOSE_TITLE = "Please wait"
 
 #: QSettings keys (GUI state, not pipeline settings).
 GEOMETRY_KEY = "gui/settings_geometry"
@@ -426,27 +414,18 @@ class SettingsWindow(QDialog):
 
     def _on_restore_defaults(self) -> None:
         current = self.current_page()
-        box = QMessageBox(self)
-        box.setIcon(QMessageBox.Icon.Question)
-        box.setWindowTitle(RESTORE_QUESTION_TITLE)
-        box.setText(RESTORE_QUESTION)
-        applies_immediately = self._pages[current].applies_immediately
-        box.setInformativeText(
-            RESTORE_ADDONS_NOTE if applies_immediately else RESTORE_THIS_PAGE_NOTE
+        question = dlg.restore_settings(
+            applies_immediately=self._pages[current].applies_immediately
         )
-        this_page = box.addButton(RESTORE_THIS_PAGE, QMessageBox.ButtonRole.AcceptRole)
-        this_page.setEnabled(not applies_immediately)
-        everything = box.addButton(RESTORE_ALL, QMessageBox.ButtonRole.DestructiveRole)
-        cancel = box.addButton(QMessageBox.StandardButton.Cancel)
-        box.setDefaultButton(cancel)
-        box.exec()
-        clicked = box.clickedButton()
-        if clicked is this_page:
+        answer = _dialogs.choose(self, question)
+        if answer.choice is not None and answer.choice.id == dlg.RESTORE_PAGE:
             self._restore_page(current)
-        elif clicked is everything and self._confirm_restore_all():
+        elif answer.choice is not None and answer.choice.id == dlg.RESTORE_EVERYTHING:
+            if not self._confirm_restore_all():
+                return
             reason = self._close_blocker()
             if reason:
-                QMessageBox.information(self, CANNOT_CLOSE_TITLE, reason)
+                _dialogs.notify(self, dlg.cannot_close(reason))
                 return
             self._restore_all = True
             self.done(self.RESTORE_ALL_RESULT)
@@ -456,15 +435,7 @@ class SettingsWindow(QDialog):
         self._pages[page].restore_defaults()
 
     def _confirm_restore_all(self) -> bool:
-        box = QMessageBox(self)
-        box.setIcon(QMessageBox.Icon.Warning)
-        box.setWindowTitle(RESTORE_QUESTION_TITLE)
-        box.setText(RESTORE_ALL_CONFIRM)
-        reset = box.addButton(RESTORE_ALL_BUTTON, QMessageBox.ButtonRole.DestructiveRole)
-        cancel = box.addButton(QMessageBox.StandardButton.Cancel)
-        box.setDefaultButton(cancel)
-        box.exec()
-        return box.clickedButton() is reset
+        return _dialogs.ask(self, dlg.restore_all_settings())
 
     # ── closing ───────────────────────────────────────────────────────────────
 
@@ -475,7 +446,7 @@ class SettingsWindow(QDialog):
         """Save what pages keep outside the settings (API keys, remembered answers), then close."""
         reason = self._close_blocker()
         if reason:
-            QMessageBox.information(self, CANNOT_CLOSE_TITLE, reason)
+            _dialogs.notify(self, dlg.cannot_close(reason))
             return
         if not all(built.is_valid() for built in self._pages.values()):
             return
@@ -495,7 +466,7 @@ class SettingsWindow(QDialog):
         """
         reason = self._close_blocker()
         if reason:
-            QMessageBox.information(self, CANNOT_CLOSE_TITLE, reason)
+            _dialogs.notify(self, dlg.cannot_close(reason))
             return
         for built in self._pages.values():
             built.shutdown()

@@ -24,7 +24,8 @@ from PySide6.QtWidgets import (
 
 from ..application.service import ProcessingApplicationService
 from ..config import SECONDARY_MODEL_AUTO, SECONDARY_MODEL_NONE
-from . import _user_text as txt
+from ..texts import dialogs as dlg
+from . import _dialogs
 from ._model_fetch import _retire_thread, _start_thread
 
 _INVALID_BG = QColor("#ffd0d0")
@@ -522,19 +523,12 @@ class AnonymizerConfigWidget(QWidget):
         from ._addon_installer_dialog import SpacyModelDownloadDialog  # noqa: PLC0415
 
         if not self._app_service.is_addon_available(ADDON_PRIVACY):
-            from PySide6.QtWidgets import QMessageBox  # noqa: PLC0415
-
-            QMessageBox.information(
-                self.window(),
-                "spaCy not installed",
-                "spaCy must be installed before you can download a model.\n\n"
-                f"Install it under {txt.WHERE_ADDONS} (Name detection) first.",
-            )
+            _dialogs.notify(self.window(), dlg.spacy_not_installed())
             return
 
-        dlg = SpacyModelDownloadDialog(needed_model, self.window())
-        dlg.model_downloaded.connect(self._on_model_downloaded)
-        dlg.exec()
+        dialog = SpacyModelDownloadDialog(needed_model, self.window())
+        dialog.model_downloaded.connect(self._on_model_downloaded)
+        dialog.exec()
 
     def _on_model_downloaded(self, _model: str) -> None:
         """Refresh model combos after a successful download and re-run the preview."""

@@ -145,6 +145,11 @@ _OCR_SRCS = [
     "infrastructure/workflow/ocr_service.py",
     "infrastructure/workflow/preprocess_service.py",
     "interfaces.py",
+    "texts/__init__.py",
+    "texts/_types.py",
+    "texts/dialogs.py",
+    "texts/privacy.py",
+    "texts/settings.py",
 ]
 
 _GUI_SRCS = [
@@ -161,6 +166,7 @@ _GUI_SRCS = [
     "gui/_constants.py",
     "gui/_data_flow_summary.py",
     "gui/_dependency_guard_dialog.py",
+    "gui/_dialogs.py",
     "gui/_export_menu.py",
     "gui/_fix_targets.py",
     "gui/_formatted_text.py",
@@ -344,4 +350,13 @@ py_wheel(
     version = "0.1.0",
     visibility = ["//visibility:public"],
     deps = [":ocr_pkg"],
+)
+
+# Every module of the app, for the ratchet test that keeps teacher-facing text in
+# ``teachers_teammate/texts`` (tests/unit/test_user_text_centralised.py).  The test parses the
+# sources with ``ast``, so it needs them as data rather than as imports.
+filegroup(
+    name = "user_text_sources",
+    srcs = glob(["**/*.py"]),
+    visibility = ["//visibility:public"],
 )

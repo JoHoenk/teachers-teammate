@@ -15,11 +15,14 @@ Pure: no I/O, no Qt, no provider imports.
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import re
 from typing import Any, cast
 
-from .edits import Edit, EditPart
+from ..offset_map import OffsetMap
+from .edits import Edit, EditPart, touched_sentences
+from .quotes import map_forward
+from .sentences import sentence_index, sentence_spans
 from .word_diff import Hunk, word_diff
 
 REVIEW_VERSION = 2
@@ -158,6 +161,68 @@ class CorrectionReview:
             ),
         )
 
+    def shifted(self, by: int) -> CorrectionReview:
+        """Return a copy whose every offset moved *by* characters.
+
+        For a review made on a piece of a text that starts *by* characters into the whole one.
+        An insertion stays zero-width, because both of its ends move together.
+        """
+        return CorrectionReview(
+            edits=tuple(
+                EditNote(
+                    id=note.id,
+                    parts=tuple(
+                        EditPart(
+                            raw_start=part.raw_start + by,
+                            raw_end=part.raw_end + by,
+                            original=part.original,
+                            corrected=part.corrected,
+                        )
+                        for part in note.parts
+                    ),
+                    sentences=note.sentences,
+                    category=note.category,
+                    explanation=note.explanation,
+                    optional=note.optional,
+                    needed=note.needed,
+                )
+                for note in self.edits
+            ),
+            unclear=tuple(
+                UnclearNote(
+                    raw_start=note.raw_start + by,
+                    raw_end=note.raw_end + by,
+                    expression=note.expression,
+                    why=note.why,
+                    recommendation=note.recommendation,
+                    is_suggestion=note.is_suggestion,
+                )
+                for note in self.unclear
+            ),
+        )
+
+    def remapped(self, offsets: OffsetMap) -> CorrectionReview:
+        """Return a copy whose offsets are carried over through *offsets*.
+
+        For a review made on a text that was then changed by literal replacements (the names put
+        back in place of the placeholders).  A span that reaches into a replaced run covers the
+        whole replacement; an insertion, and an unclear note whose quote was not found, stay
+        zero-width.  The sentence numbers of an edit are dropped: they were counted on the other
+        text, whose sentence split a restored name can change, so the edit is placed by its
+        (remapped) first offset instead.
+        """
+        return CorrectionReview(
+            edits=tuple(
+                replace(
+                    note,
+                    parts=tuple(_remapped_part(part, offsets) for part in note.parts),
+                    sentences=(),
+                )
+                for note in self.edits
+            ),
+            unclear=tuple(_remapped_unclear(note, offsets) for note in self.unclear),
+        )
+
     def to_dict(self) -> dict[str, Any]:
         """Return a JSON-serialisable record, tagged with :data:`REVIEW_VERSION`."""
         return {
@@ -265,6 +330,79 @@ def edit_note(
     )
 
 
+def _remapped_part(part: EditPart, offsets: OffsetMap) -> EditPart:
+    """Return *part* with its span carried over through *offsets*."""
+    start, end = _remap(part.raw_start, part.raw_end, offsets)
+    return replace(part, raw_start=start, raw_end=end)
+
+
+def _remapped_unclear(note: UnclearNote, offsets: OffsetMap) -> UnclearNote:
+    """Return *note* with its span carried over through *offsets*."""
+    start, end = _remap(note.raw_start, note.raw_end, offsets)
+    return replace(note, raw_start=start, raw_end=end)
+
+
+def _remap(start: int, end: int, offsets: OffsetMap) -> tuple[int, int]:
+    """Return the span *start*..*end* carried over through *offsets*, keeping it zero-width."""
+    if start == end:
+        at = offsets.start(start)
+        return at, at
+    return offsets.start(start), offsets.end(end)
+
+
+def fits(review: CorrectionReview, raw_plain: str) -> bool:
+    """Whether every offset of *review* still points at the words it quotes in *raw_plain*.
+
+    The check a producer makes before it stores a review: a review whose offsets were carried
+    over wrongly would put explanations on the wrong words, and a half-right review is worse than
+    none (it would show the model's corrections as the teacher's own).  An insertion has no words
+    to compare, so only its position is checked; an unclear note whose quote was not found has
+    equal ends and is only checked to lie inside the text.
+    """
+    length = len(raw_plain)
+    for note in review.edits:
+        for part in note.parts:
+            if not 0 <= part.raw_start <= part.raw_end <= length:
+                return False
+            if part.raw_start == part.raw_end:
+                continue
+            if raw_plain[part.raw_start : part.raw_end] != part.original:
+                return False
+    return all(0 <= note.raw_start <= note.raw_end <= length for note in review.unclear)
+
+
+def merge_reviews(
+    pieces: Sequence[tuple[int, CorrectionReview]], whole_plain: str
+) -> CorrectionReview:
+    """Return one review over *whole_plain* from the reviews of its pieces.
+
+    Each piece is given with the offset it starts at in *whole_plain*; its review is shifted
+    there, the edit ids are renumbered 1..k in text order over the whole text, and every edit's
+    sentences are recomputed from the whole text, because a piece boundary can cut a sentence in
+    two.  The unclear notes keep their order and their wording.
+    """
+    spans = sentence_spans(whole_plain)
+    notes = [note for start, review in pieces for note in review.shifted(start).edits]
+    notes.sort(key=lambda note: (note.raw_start, note.raw_end))
+    unclear = [note for start, review in pieces for note in review.shifted(start).unclear]
+    unclear.sort(key=lambda note: (note.raw_start, note.raw_end))
+    return CorrectionReview(
+        edits=tuple(
+            EditNote(
+                id=number,
+                parts=note.parts,
+                sentences=touched_sentences(note.parts, spans),
+                category=note.category,
+                explanation=note.explanation,
+                optional=note.optional,
+                needed=note.needed,
+            )
+            for number, note in enumerate(notes, 1)
+        ),
+        unclear=tuple(unclear),
+    )
+
+
 # ── Alignment ─────────────────────────────────────────────────────────────────
 
 
@@ -306,6 +444,16 @@ class AlignedChange:
     def explanation(self) -> str:
         """Return the note's explanation, or ``""`` for a hunk without a note."""
         return self.note.explanation if self.note is not None else ""
+
+    @property
+    def explains_text(self) -> bool:
+        """Whether this change's explanation is about words that are in the text now.
+
+        A note on an edit the teacher changed afterwards explains words that are no longer
+        there, and a note without an explanation explains nothing: neither belongs in a Word
+        file the teacher keeps.
+        """
+        return self.note is not None and bool(self.note.explanation) and not self.changed_afterwards
 
 
 @dataclass(frozen=True)
@@ -361,6 +509,72 @@ class AlignedReview:
     def unclear_count(self) -> int:
         """Number of unclear expressions."""
         return len(self.unclear)
+
+
+@dataclass(frozen=True)
+class ExplainedSentence:
+    """One sentence of the corrected text with the notes that explain what changed in it."""
+
+    text: str
+    """The sentence as the corrected text reads it now."""
+    notes: tuple[EditNote, ...]
+    """The notes of the edits in it, in text order and each id once."""
+
+
+def explained_sentences(
+    aligned: AlignedReview, raw_plain: str, corrected_plain: str
+) -> tuple[ExplainedSentence, ...]:
+    """Return the sentences whose changes are explained, in text order.
+
+    What the table layout lists and what the evaluation tools quote: one entry per source
+    sentence that holds an explained edit, with the sentence as the corrected text reads it now.
+    An edit is listed once, in the sentence of its first hunk, so a verb bracket
+    (``habe … gewartet`` → ``… gewartet habe``) is one entry and not two.  Spelling and
+    punctuation edits explain themselves and are left out, as are notes without an explanation
+    and notes on edits the teacher changed afterwards (:attr:`AlignedChange.explains_text`).
+    """
+    spans = sentence_spans(raw_plain)
+    hunks = tuple(change.hunk for change in aligned.changes)
+    by_sentence: dict[int, list[EditNote]] = {}
+    for change in aligned.changes:
+        if change.note is None or change.is_minor or not change.explains_text:
+            continue
+        sentence = _first_sentence(change.note, spans)
+        if sentence < 0:
+            continue
+        notes = by_sentence.setdefault(sentence, [])
+        if all(change.note.id != other.id for other in notes):
+            notes.append(change.note)
+    return tuple(
+        ExplainedSentence(
+            text=corrected_plain[slice(*map_forward(spans[sentence], hunks))],
+            notes=tuple(notes),
+        )
+        for sentence, notes in sorted(by_sentence.items())
+    )
+
+
+def note_sentence(
+    aligned: AlignedReview, raw_plain: str, corrected_plain: str, note: EditNote
+) -> str:
+    """Return the sentence *note*'s edit belongs to, as the corrected text reads it now.
+
+    For every note, minor and unexplained ones too (:func:`explained_sentences` lists only the
+    explained ones); ``""`` when the text has no sentence.
+    """
+    spans = sentence_spans(raw_plain)
+    sentence = _first_sentence(note, spans)
+    if sentence < 0:
+        return ""
+    hunks = tuple(change.hunk for change in aligned.changes)
+    return corrected_plain[slice(*map_forward(spans[sentence], hunks))]
+
+
+def _first_sentence(note: EditNote, spans: tuple[tuple[int, int], ...]) -> int:
+    """Return the source sentence *note* belongs to, ``-1`` when the text has none."""
+    if note.sentences and 0 <= note.sentences[0] < len(spans):
+        return note.sentences[0]
+    return sentence_index(spans, note.raw_start)
 
 
 def review_summary(aligned: AlignedReview | None, *, separator: str = ", ") -> str:

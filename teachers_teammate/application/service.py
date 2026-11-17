@@ -18,7 +18,6 @@ import uuid
 
 from ..config import DEFAULTS, Config, OcrConfig
 from ..domain.context_budget import RunWindows, memory_at_context_gb
-from ..domain.correction_review import CorrectionReview
 from ..domain.data_location import (
     ENGINE_PPOCR,
     DataFlow,
@@ -61,6 +60,7 @@ from ..domain.output_files import (
 )
 from ..domain.pdf_text_layer import PdfTextLayerMode, normalize_pdf_text_layer
 from ..domain.performance_estimate import MachineFactors, TimeRange
+from ..domain.proofreading.review import CorrectionReview
 from ..domain.run_summary import RunSummary
 from ..infrastructure import power
 from ..infrastructure.addon_manager import ADDON_PRIVACY as ADDON_PRIVACY  # noqa: PLC0414

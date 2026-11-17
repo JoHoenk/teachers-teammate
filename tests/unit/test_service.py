@@ -1682,6 +1682,48 @@ def test_export_docx_keeps_markdown_formatting(tmp_path: Path) -> None:
 
 
 @pytest.mark.unit
+def test_export_docx_quotes_the_stored_review(tmp_path: Path) -> None:
+    """
+    Given  a stored review that explains one change
+    When   export_docx() is called with that review in the table layout
+    Then   the explanation is written into the document
+    """
+    from docx import Document  # noqa: PLC0415
+
+    from teachers_teammate.domain.proofreading.edits import EditPart  # noqa: PLC0415
+    from teachers_teammate.domain.proofreading.review import (  # noqa: PLC0415
+        CorrectionReview,
+        EditNote,
+    )
+
+    review = CorrectionReview(
+        edits=(
+            EditNote(
+                id=1,
+                parts=(EditPart(4, 8, "have", "has"),),
+                sentences=(),
+                category="grammar",
+                explanation='"she" is 3rd person singular.',
+            ),
+        )
+    )
+    svc = _make_svc()
+    out = tmp_path / "doc.docx"
+
+    svc.export_docx(
+        tmp_path / "doc.png",
+        "She have a dog.",
+        "She has a dog.",
+        "",
+        out,
+        options=DocxExport(review=review),
+    )
+
+    text = " ".join(para.text for para in Document(str(out)).paragraphs)
+    assert '"she" is 3rd person singular.' in text
+
+
+@pytest.mark.unit
 def test_export_docx_defaults_to_plain_text(tmp_path: Path) -> None:
     """
     Given  cached plain text that contains Markdown-looking characters
@@ -3787,7 +3829,9 @@ def test_the_pieces_count_matches_the_requests_correct_really_makes(
     When   the size is estimated and the same corrector proofreads the text
     Then   the estimate equals the number of requests correct() really sends
     """
-    from teachers_teammate.domain.correction_review import CorrectionOutcome  # noqa: PLC0415
+    from teachers_teammate.domain.proofreading.result import (  # noqa: PLC0415
+        CorrectionOutcome,
+    )
     from teachers_teammate.infrastructure.proofreading.corrector import (  # noqa: PLC0415
         ExchangeCorrector,
     )

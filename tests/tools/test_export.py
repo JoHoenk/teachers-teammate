@@ -287,8 +287,8 @@ def test_a_restricted_item_stores_no_words(tmp_path):
                     category="word_choice",
                     explanation="The river runs through the town, so calm fits better.",
                 ),
-                original="It is quiet there.",
-                corrected="It is calm there.",
+                original=invented_corpus.LOCNESS_TEXT,
+                corrected=invented_corpus.LOCNESS_TEXT.replace("quiet", "calm"),
             )
         },
     )

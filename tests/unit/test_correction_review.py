@@ -14,7 +14,6 @@ from teachers_teammate.domain.correction_review import (
     SentenceNote,
     UnclearNote,
     align,
-    best_note_index,
     review_summary,
     splice,
 )
@@ -395,39 +394,6 @@ def _full_review() -> CorrectionReview:
     )
 
 
-def test_review_round_trips_through_its_dict() -> None:
-    """
-    Given  a review with sentences, changes, unclear notes and an unplaced index
-    When   it is written with to_dict() and read back with from_dict()
-    Then   the result is equal to the original
-    """
-    review = _full_review()
-
-    assert CorrectionReview.from_dict(review.to_dict()) == review
-
-
-def test_from_dict_rejects_an_unknown_version() -> None:
-    """
-    Given  a stored record with a version this build does not know
-    When   from_dict() is called
-    Then   it returns None so the caller simply shows no review
-    """
-    record = _full_review().to_dict()
-    record["version"] = 99
-
-    assert CorrectionReview.from_dict(record) is None
-
-
-def test_from_dict_rejects_a_non_dict_record() -> None:
-    """
-    Given  a stored value that is not a dict at all
-    When   from_dict() is called
-    Then   it returns None instead of raising
-    """
-    assert CorrectionReview.from_dict("not a record") is None
-    assert CorrectionReview.from_dict(None) is None
-
-
 def test_map_text_applies_the_function_to_every_text_field() -> None:
     """
     Given  a review with personal names in sentences, changes and unclear notes
@@ -787,37 +753,3 @@ def test_align_does_not_borrow_a_note_for_an_edit_outside_every_changed_sentence
     assert aligned.changes[0].note is not None
     assert aligned.changes[1].note is None
     assert aligned.changes[1].by_teacher is True
-
-
-@pytest.mark.parametrize(
-    "record",
-    [
-        {"version": 1, "sentences": [{"original": "a", "corrected": "b", "changes": ["x"]}]},
-        {"version": 1, "sentences": ["not a sentence"]},
-        {"version": 1, "unclear": [None]},
-    ],
-)
-def test_from_dict_rejects_malformed_nested_records(record: dict) -> None:
-    """
-    Given  a stored record whose nested entries have the wrong shape
-    When   from_dict() is called
-    Then   it returns None instead of raising, so loading a file never crashes
-    """
-    assert CorrectionReview.from_dict(record) is None
-
-
-def test_the_note_with_the_larger_share_of_its_own_words_covered_wins() -> None:
-    """
-    Given  a diff part of two words and two notes, one changing a word of the part (his/her) and
-           one changing six words, two of them in the part
-    When   the best note for the part is chosen
-    Then   the narrow note wins: the part covers half of its words, a third of the other's
-    """
-    narrow = ChangeNote(original="his", corrected="her", category="grammar", explanation="A.")
-    wide = ChangeNote(
-        original="his friend went", corrected="her friends go", category="grammar", explanation="B."
-    )
-
-    best = best_note_index([wide, narrow], set(), frozenset({"his", "friend"}))
-
-    assert best == 1

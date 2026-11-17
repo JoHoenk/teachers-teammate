@@ -4,14 +4,14 @@ from __future__ import annotations
 
 import pytest
 
-from tools.model_eval import quality
-from teachers_teammate.domain.correction_review import (
-    ChangeNote,
+from teachers_teammate.domain.proofreading.edits import EditPart
+from teachers_teammate.domain.proofreading.review import (
     CorrectionReview,
-    SentenceNote,
+    EditNote,
     align,
-    tokenize,
 )
+from teachers_teammate.domain.proofreading.word_diff import tokenize
+from tools.model_eval import quality
 from tools.model_eval.quality import (
     EditScore,
     ExplainedCount,
@@ -26,6 +26,23 @@ from tools.model_eval.quality import (
 )
 
 _SOURCE = "Gestern hat sie ins Kino gegangen mit sein Freundin."
+
+
+def _review(source: str, *changes: tuple[str, str, str, str]) -> CorrectionReview:
+    """Return a review whose edits quote *changes* (original, corrected, category, explanation)."""
+    notes = []
+    for index, (original, corrected, category, explanation) in enumerate(changes, start=1):
+        start = source.find(original)
+        notes.append(
+            EditNote(
+                id=index,
+                parts=(EditPart(start, start + len(original), original, corrected),),
+                sentences=(),
+                category=category,
+                explanation=explanation,
+            )
+        )
+    return CorrectionReview(edits=tuple(notes))
 
 
 @pytest.mark.use_case("Proofreading_Quality")
@@ -149,22 +166,7 @@ def test_a_change_that_explains_itself_needs_no_note() -> None:
     """
     source = "Er kam mit dem Rad und sie zu Fuss."
     corrected = "Er kam mit dem Rad, und sie zu Fuss."
-    review = CorrectionReview(
-        sentences=(
-            SentenceNote(
-                original="Er kam mit dem Rad und sie zu Fuss.",
-                corrected="Er kam mit dem Rad, und sie zu Fuss.",
-                changes=(
-                    ChangeNote(
-                        original="Rad und",
-                        corrected="Rad, und",
-                        category="punctuation",
-                        explanation="",
-                    ),
-                ),
-            ),
-        )
-    )
+    review = _review(source, ("Rad und", "Rad, und", "punctuation", ""))
 
     count = count_explained(source, corrected, review)
 
@@ -181,22 +183,7 @@ def test_a_word_change_without_an_explanation_counts_as_needed_but_not_explained
     """
     source = "Er hat sein Freundin mitgebracht."
     corrected = "Er hat seine Freundin mitgebracht."
-    review = CorrectionReview(
-        sentences=(
-            SentenceNote(
-                original=source,
-                corrected=corrected,
-                changes=(
-                    ChangeNote(
-                        original="sein",
-                        corrected="seine",
-                        category="grammar",
-                        explanation="   ",
-                    ),
-                ),
-            ),
-        )
-    )
+    review = _review(source, ("sein", "seine", "grammar", "   "))
 
     count = count_explained(source, corrected, review)
 
@@ -213,22 +200,7 @@ def test_a_note_that_explains_no_change_is_an_orphan() -> None:
     Then   the note is reported as an orphan and nothing else counts
     """
     source = "Ein ganz normaler Satz."
-    review = CorrectionReview(
-        sentences=(
-            SentenceNote(
-                original="Ein ganz anderer Satz.",
-                corrected="Ein ganz anderer Satz!",
-                changes=(
-                    ChangeNote(
-                        original="Satz.",
-                        corrected="Satz!",
-                        category="punctuation",
-                        explanation="Satzzeichen.",
-                    ),
-                ),
-            ),
-        )
-    )
+    review = _review(source, ("Satz.", "Satz!", "punctuation", "Satzzeichen."))
 
     count = count_explained(source, source, review)
 
@@ -441,22 +413,7 @@ def test_an_aligned_review_the_caller_has_is_not_aligned_again(monkeypatch) -> N
     """
     source = "Er kam mit dem Rad und sie zu Fuss."
     corrected = "Er kam mit dem Rad, und sie zu Fuß."
-    review = CorrectionReview(
-        sentences=(
-            SentenceNote(
-                original=source,
-                corrected=corrected,
-                changes=(
-                    ChangeNote(
-                        original="Fuss",
-                        corrected="Fuß",
-                        category="spelling",
-                        explanation="Nach der Rechtschreibung mit ß.",
-                    ),
-                ),
-            ),
-        )
-    )
+    review = _review(source, ("Fuss", "Fuß", "spelling", "Nach der Rechtschreibung mit ß."))
     aligned = align(source, corrected, review)
     expected = count_explained(source, corrected, review)
 

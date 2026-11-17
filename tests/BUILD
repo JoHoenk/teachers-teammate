@@ -57,6 +57,7 @@ filegroup(
         "unit/test_config.py",
         "unit/test_coordinator.py",
         "unit/test_docx_builder.py",
+        "unit/test_docx_comments.py",
         "unit/test_file_discovery.py",
         "unit/test_file_processor.py",
         "unit/test_gpu_detector.py",
@@ -428,6 +429,15 @@ py_test(
 )
 
 py_test(
+    name = "test_offset_map",
+    size = "small",
+    srcs = _COMMON_SRCS + ["unit/test_offset_map.py"],
+    args = ["unit/test_offset_map.py"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS,
+)
+
+py_test(
     name = "test_quotes",
     size = "small",
     srcs = _COMMON_SRCS + ["unit/test_quotes.py"],
@@ -622,6 +632,15 @@ py_test(
     size = "small",
     srcs = _COMMON_SRCS + ["unit/test_docx_builder.py"],
     args = ["unit/test_docx_builder.py"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS + _PIPELINE_DEPS,
+)
+
+py_test(
+    name = "test_docx_comments",
+    size = "small",
+    srcs = _COMMON_SRCS + ["unit/test_docx_comments.py"],
+    args = ["unit/test_docx_comments.py"],
     main = "run_test.py",
     deps = _COMMON_DEPS + _PIPELINE_DEPS,
 )
@@ -1002,7 +1021,7 @@ py_test(
     srcs = _COMMON_SRCS + ["unit/test_chunking_corrector.py"],
     args = ["unit/test_chunking_corrector.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS,
+    deps = _COMMON_DEPS + _FORMAT_DEPS,
 )
 
 py_test(
@@ -1208,6 +1227,15 @@ py_test(
     size = "small",
     srcs = _COMMON_SRCS + ["tools/test_comparison.py"],
     args = ["tools/test_comparison.py"],
+    main = "run_test.py",
+    deps = _TOOL_DEPS,
+)
+
+py_test(
+    name = "test_edit_review",
+    size = "small",
+    srcs = _COMMON_SRCS + ["tools/test_edit_review.py"],
+    args = ["tools/test_edit_review.py"],
     main = "run_test.py",
     deps = _TOOL_DEPS,
 )
@@ -1717,6 +1745,7 @@ py_test(
 test_suite(
     name = "tools_tests",
     tests = [
+        ":test_edit_review",
         ":test_model_eval_answer_mode",
         ":test_model_eval_app_corrector",
         ":test_model_eval_cache_groups",
@@ -2447,6 +2476,7 @@ test_suite(
         ":test_data_location",
         ":test_diagnostics",
         ":test_docx_builder",
+        ":test_docx_comments",
         ":test_domain_policy",
         ":test_edits",
         ":test_evaluation",
@@ -2477,6 +2507,7 @@ test_suite(
         ":test_ocr_processor",
         ":test_ocr_stage_service",
         ":test_ocr_text_cleaner",
+        ":test_offset_map",
         ":test_ollama_discovery",
         ":test_ollama_install",
         ":test_ollama_utils",

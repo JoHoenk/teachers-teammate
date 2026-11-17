@@ -26,6 +26,9 @@ from teachers_teammate.domain.model_catalog import (
     DetectionReason,
     HardwareDetection,
 )
+from teachers_teammate.domain.proofreading.edits import EditPart
+from teachers_teammate.domain.proofreading.legacy_review import sentence_review
+from teachers_teammate.domain.proofreading.review import CorrectionReview, EditNote
 from teachers_teammate.gui import _main_window as main_window_module
 from teachers_teammate.gui._config_panel import ConfigPanel
 from teachers_teammate.gui._export_menu import ExportKind
@@ -41,6 +44,7 @@ from teachers_teammate.gui.settings._page import (
 )
 from teachers_teammate.gui.settings._window import SUB_PAGES
 from teachers_teammate.domain.run_summary import RunSummary
+from teachers_teammate.infrastructure.ocr_formats import plain_text_of
 from teachers_teammate.infrastructure.ollama_install import OLLAMA_DOWNLOAD_URL
 from teachers_teammate.infrastructure.reporting import KeepAwakeState
 from teachers_teammate.infrastructure.storage_root import resolve_artifact_dir
@@ -1164,6 +1168,43 @@ def test_main_window_load_check_shows_the_text_of_the_document(main_window) -> N
     assert "ocr content" in main_window._preview._ocr_text.toPlainText()
     assert main_window._check._name_label.text() == "page.png"
     assert main_window._check._position_label.text() == "1 of 1"
+
+
+@pytest.mark.gui
+def test_main_window_load_check_hands_the_preview_the_sentence_review(
+    main_window, monkeypatch
+) -> None:
+    """
+    Given  a row whose document has a stored review
+    When   _load_check is called for it
+    Then   the preview panel receives that review as the sentence-based one it reads
+    """
+    raw = "She **have** a dog."
+    review = CorrectionReview(
+        edits=(
+            EditNote(
+                id=1,
+                parts=(EditPart(6, 10, "have", "has"),),
+                sentences=(),
+                category="grammar",
+                explanation='"she" is 3rd person singular.',
+            ),
+        )
+    )
+    seen: list[Any] = []
+    monkeypatch.setattr(
+        main_window._preview,
+        "load",
+        lambda *_args, **kwargs: seen.append(kwargs),
+    )
+    main_window._results_table.set_queue(["page.png"], source_ids=["/tmp/page.png"])
+    main_window._results_table.set_row_artifacts("/tmp/page.png", "", raw, "She **has** a dog.", "")
+    main_window._results_table.set_text_format("/tmp/page.png", "markdown")
+    main_window._results_table.set_correction_review("/tmp/page.png", review)
+
+    main_window._load_check("/tmp/page.png")
+
+    assert seen[0]["correction_review"] == sentence_review(plain_text_of(raw, "markdown"), review)
 
 
 @pytest.mark.gui

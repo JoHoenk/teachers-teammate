@@ -6,7 +6,8 @@ Responsibilities
   application data (state JSON files and preview images).  Tries candidates in
   priority order: env-var override → OS user-cache directory.
 - `compute_cache_key(value)` — produce a short stable identifier from a string.
-  Used by `StateRepository` to map a source-file path to a JSON state-file name.
+- `document_stem(path)` — the name a document's stored files carry: its stem and that key.
+  Used by `StateRepository` for the JSON state file and by the cache service for the images.
 - `resolve_config_root()` / `resolve_data_root()` — where the teacher's *own* data lives
   (settings; benchmark history and speed measurements), apart from the cache.
 - `resolve_data_folder(name)` — one folder of the data root, moved there from the cache the
@@ -54,6 +55,7 @@ __all__ = [
     "StorageRoot",
     "compute_cache_key",
     "default_config_path",
+    "document_stem",
     "migrate_once",
     "resolve_artifact_dir",
     "resolve_config_path",
@@ -78,6 +80,16 @@ class StorageRoot:
 def compute_cache_key(value: str) -> str:
     """Return a short stable cache key for path/identifier values."""
     return hashlib.sha256(value.encode("utf-8")).hexdigest()[:16]
+
+
+def document_stem(path: Path) -> str:
+    """Return the name a document's stored files carry: its stem and its key.
+
+    Two files of the same name in different folders are two documents, so the key of the
+    resolved path is part of every name derived from it — the state file and the stored images
+    alike.  Without it the second ``Anna.pdf`` would overwrite the first one's pages.
+    """
+    return f"{path.stem}_{compute_cache_key(str(path.resolve()))}"
 
 
 def _get_platform_cache_dir() -> Path:

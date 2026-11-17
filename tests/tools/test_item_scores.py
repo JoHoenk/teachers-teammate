@@ -6,7 +6,7 @@ from collections.abc import Sequence
 
 import pytest
 
-from teachers_teammate.domain.correction_review import tokenize
+from teachers_teammate.domain.proofreading.word_diff import tokenize
 from tools.model_eval.quality import score_edits
 from tools.model_eval.gleu import SOURCE_PREFIX
 from tools.model_eval.item_scores import item_scores

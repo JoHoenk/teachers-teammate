@@ -25,6 +25,9 @@ HunkKind = Literal["replace", "insert", "delete"]
 #: Token pattern of the word diff: words, single punctuation marks and whitespace runs.
 _TOKEN_RE = re.compile(r"\w+|[^\w\s]|\s+", flags=re.UNICODE)
 
+#: Markdown marks that a stored text may carry but an anchor string should not.
+_MARK_RE = re.compile(r"</?(?:sup|sub|u)>|~~|\*\*|__")
+
 DiffOpcode = tuple[str, int, int, int, int]
 """``(tag, i1, i2, j1, j2)``: the tokens ``raw[i1:i2]`` become ``corrected[j1:j2]``."""
 
@@ -32,6 +35,11 @@ DiffOpcode = tuple[str, int, int, int, int]
 def tokenize(text: str) -> list[str]:
     """Split *text* into diff tokens, preserving whitespace and punctuation."""
     return _TOKEN_RE.findall(text)
+
+
+def strip_marks(text: str) -> str:
+    """Remove the Markdown notation marks from an anchor string."""
+    return _MARK_RE.sub("", text)
 
 
 def diff_opcodes(

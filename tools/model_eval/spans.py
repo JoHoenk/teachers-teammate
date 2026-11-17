@@ -2,7 +2,7 @@
 
 A text is cut into sentences by characters (a corpus adapter's sentence split, a fixture's
 sentences), while ``edits``, ``untouched_spans`` and the manifest count tokens of
-:func:`~teachers_teammate.domain.correction_review.tokenize`, whitespace tokens included.  This
+:func:`~teachers_teammate.domain.proofreading.word_diff.tokenize`, whitespace tokens included.  This
 module is the one place that converts one into the other, so a sentence span means the same
 thing in the test set and in the structured-output check.
 """
@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from collections.abc import Collection, Sequence
 
-from teachers_teammate.domain.correction_review import tokenize
+from teachers_teammate.domain.proofreading.word_diff import tokenize
 
 from .quality import Span
 
@@ -20,7 +20,7 @@ def token_spans(source: str, char_spans: Collection[Span]) -> tuple[Span, ...]:
     """Return the token span of every character span of *source*.
 
     The manifest records sentence spans in the positions of ``edits``, which are token indices
-    into :func:`~teachers_teammate.domain.correction_review.tokenize`, whitespace tokens included.
+    into :func:`~teachers_teammate.domain.proofreading.word_diff.tokenize`, whitespace tokens included.
 
     Args:
         source: The text the character spans are positions in.

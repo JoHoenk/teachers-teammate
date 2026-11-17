@@ -561,8 +561,7 @@ def test_review_mode_returns_the_corrected_text_and_its_review(monkeypatch) -> N
     assert outcome.text == "Hello world."
     assert outcome.warning is None
     assert outcome.review is not None
-    assert outcome.review.sentences[0].changes[0].explanation == "Misspelt word."
-    assert outcome.review.unplaced == ()
+    assert [note.explanation for note in outcome.review.edits] == ["Misspelt word."]
 
 
 def test_a_review_answer_with_markup_a_placeholder_and_a_noop_is_cleaned(monkeypatch) -> None:
@@ -617,7 +616,7 @@ def test_a_review_answer_with_markup_a_placeholder_and_a_noop_is_cleaned(monkeyp
 
     assert outcome.text == "Hello world. Ich habe gewartet."
     assert outcome.review is not None
-    assert [len(s.changes) for s in outcome.review.sentences] == [1, 0]
+    assert [note.explanation for note in outcome.review.edits] == ["Misspelt word."]
 
 
 def test_invalid_review_answer_is_repaired_once(monkeypatch) -> None:

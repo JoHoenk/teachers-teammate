@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from teachers_teammate.domain.correction_review import align, CorrectionReview
+from teachers_teammate.domain.proofreading.review import CorrectionReview, align
 from teachers_teammate.domain.proofreading.word_diff import (
     Hunk,
     Similarity,

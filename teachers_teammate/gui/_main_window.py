@@ -47,6 +47,7 @@ from PySide6.QtWidgets import (
 import qdarkstyle
 
 from .. import __version__ as _APP_VERSION
+from ..application.correction_review import CorrectionReviewPresenter
 from ..application.sent_text import SentTexts
 from ..application.service import (
     ADDON_PRIVACY,
@@ -2457,7 +2458,11 @@ class MainWindow(QMainWindow):
                 eval_txt,
                 preprocess=info,
                 text_format=self._results_table.text_format_for_source(source_id),
-                correction_review=self._results_table.review_for_source(source_id),
+                correction_review=CorrectionReviewPresenter.for_preview(
+                    raw_txt,
+                    self._results_table.text_format_for_source(source_id),
+                    self._results_table.review_for_source(source_id),
+                ),
                 correction_warning=self._results_table.correction_warning_for_source(source_id),
             )
         except Exception as exc:  # noqa: BLE001  # preview load may raise on missing/corrupt files; warn instead of crashing
@@ -2839,7 +2844,9 @@ class MainWindow(QMainWindow):
             state.evaluation_text,
             preprocess=info,
             text_format=state.raw_text_format,
-            correction_review=state.review,
+            correction_review=CorrectionReviewPresenter.for_preview(
+                state.raw_text, state.raw_text_format, state.review
+            ),
             correction_warning=state.correction_warning,
         )
         self._update_preview_stage_statuses(source_id)
@@ -2901,7 +2908,9 @@ class MainWindow(QMainWindow):
             state.evaluation_text,
             preprocess=info,
             text_format=state.raw_text_format,
-            correction_review=state.review,
+            correction_review=CorrectionReviewPresenter.for_preview(
+                state.raw_text, state.raw_text_format, state.review
+            ),
             correction_warning=state.correction_warning,
         )
         self._update_preview_stage_statuses(source_id)

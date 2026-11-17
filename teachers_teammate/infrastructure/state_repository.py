@@ -34,7 +34,6 @@ from pathlib import Path
 import tempfile
 import time
 
-from ..domain.correction_review import CorrectionReview
 from ..domain.data_location import STAGE_CORRECTION, STAGE_EVALUATION, SentRecord, SentStatus
 from ..domain.freshness import (
     StageHashes,
@@ -42,8 +41,9 @@ from ..domain.freshness import (
     reset_policy_from_stage,
     should_invalidate_preview_artifact,
 )
+from ..domain.proofreading.review import CorrectionReview
 from ..domain.stages import normalize_stage
-from .storage_root import compute_cache_key
+from .storage_root import document_stem
 
 
 def compute_file_hash(path: Path) -> str:
@@ -79,7 +79,8 @@ class DocumentState:
     raw_text: str = ""
     correction_text: str = ""
     # Explanations and unclear expressions of the proofreading (``CorrectionReview.to_dict``);
-    # empty/None when the file was corrected without a review (corrections-only mode).
+    # empty/None when the file was corrected without a review (corrections-only mode).  The
+    # offsets are in the plain text of ``raw_text``, crossed-out words included.
     correction_review: dict | None = None
     # Why ``correction_review`` is missing or incomplete (e.g. the fallback to corrections only,
     # or suggestions that could not be placed); replayed when the cached correction is reused.
@@ -256,15 +257,14 @@ def _without_orphan_sent(state: DocumentState) -> DocumentState:
 class StateRepository:
     """Persistence service for loading, validating, and invalidating state records."""
 
-    _SCHEMA_VERSION = 2
+    _SCHEMA_VERSION = 3
 
     def __init__(self, state_root: Path) -> None:
         self._state_root = state_root
         self._state_root.mkdir(parents=True, exist_ok=True)
 
     def state_path_for_input(self, input_file: Path) -> Path:
-        key = compute_cache_key(str(input_file.resolve()))
-        return self._state_root / f"{input_file.stem}_{key}.json"
+        return self._state_root / f"{document_stem(input_file)}.json"
 
     @staticmethod
     def _cache_status_label(state: DocumentState) -> str:

@@ -142,8 +142,8 @@ layering:
   (`_ocr_config_selector.OcrConfigSelector`, `_preview_panel` `ZoomableImageView`
   /`DiffWidget`, `_log_widget.LogWidget`, `_app_bootstrap.create_app`,
   `_qt_stream.QtStream`). The main window's proofreading tab uses
-  `_review_views.ReviewDiffView` / `ReviewNotesView` instead (see *Correction review:
-  schema, splice, align* below); plain `DiffWidget` is still what the benchmark compare
+  `_review_views.ReviewDiffView` / `ReviewNotesView` instead (see *Correction review*
+  below); plain `DiffWidget` is still what the benchmark compare
   view and the privacy preview dialog show.
 
 The OCR-only fields live in the nested `Config.ocr` value object
@@ -1769,10 +1769,10 @@ settings switch removes `ocr.toml`, `benchmark\` and `speed\` there.
 <storage_root>/                                    # the cache
 ├── artifacts/
 │   └── <output_dir_key>/                          # key = sha256(output_dir.resolve())[:16]
-│       ├── <stem>_preprocessed.png                # prepared page 1 (the preview image)
-│       ├── <stem>_p<N>.png                        # prepared pages 2..N, listed in DocumentState.page_images
-│       ├── <stem>_original.<ext>                  # page before preprocessing (only if steps changed it)
-│       └── state/<stem>_<source_key>.json         # CACHE: one DocumentState per (output_dir, path)
+│       ├── <stem>_<key>_preprocessed.png          # prepared page 1 (the preview image)
+│       ├── <stem>_<key>_p<N>.png                  # prepared pages 2..N, listed in DocumentState.page_images
+│       ├── <stem>_<key>_original.<ext>            # page before preprocessing (only if steps changed it)
+│       └── state/<stem>_<key>.json                # CACHE: one DocumentState per (output_dir, path)
 <config_root>/ocr.toml                             # configuration (the pipeline config)
 <data_root>/
 ├── speed/                                         # measured speeds (samples.json, measurements.json)
@@ -1813,6 +1813,15 @@ settings switch removes `ocr.toml`, `benchmark\` and `speed\` there.
   review count as stale and are made again (documents with it off are untouched).
 - `compute_cache_key(value)` (`storage_root.py`) — a short (16-char) stable key
   used to map a path (output dir / source file) to an on-disk file name.
+- `document_stem(path)` (`storage_root.py`) — `<stem>_<key of the resolved path>`, the name a
+  document's stored files carry: its state file and its images.  Two files of one name in
+  different folders are two documents and never overwrite each other's pages.
+
+**The state schema.**  `StateRepository._SCHEMA_VERSION` is 3.  A file of another version is
+read as missing, so the document is processed again; the bump to 3 also wipes the cache once,
+because a review stored in the old shape would otherwise load without explanations and, its key
+unchanged, never be made again.  The review's offsets are in the plain text of the stored
+`raw_text` (see *Correction review*).
 
 ### Shared anonymization cache
 
@@ -2085,7 +2094,9 @@ through the window's export path (`_on_export_requested`), not a second one.
 
 **Every prepared page is kept.**  `PreviewImageStore.persist_page_images()` writes page 1 as
 `<stem>_preprocessed.png` (the `preview_img` the preview shows) and pages 2..N as
-`<stem>_p<N>.png`, listed in `DocumentState.page_images`; `prune_page_images()` removes the ones
+`<stem>_p<N>.png`, listed in `DocumentState.page_images`; the stem is `document_stem(file)`, the
+name of the document's state file, so two files of one name in different folders keep their own
+pages.  `prune_page_images()` removes the ones
 a shorter document no longer has, and `cleanup_intermediate_images()` treats them as
 intermediate.  `DocumentState.load_valid()` drops the list when a file is missing, so a deleted
 cache costs a re-run, never a broken page.  The old preview still shows page 1 only.
@@ -2283,9 +2294,7 @@ are stored (`normalize_llm_answer` / `clean_llm_answer` in `ocr_formats/__init__
 by the correctors and evaluators via `tidy_answer`): reasoning blocks, control tokens and a
 wrapping code fence are removed. A correction of a Markdown text is read as Markdown and
 written back canonically; for a plain text, markup the model added on its own is removed. A
-failed call returns its fallback untouched. In the DOCX comments layout a word whose
-formatting the correction changed (a crossed-out word that lost its strikethrough) gets a
-comment like a changed word.
+failed call returns its fallback untouched.
 
 **Escaping.** `MarkdownRenderer` escapes only what CommonMark would interpret (`snake_case`
 words and e-mail addresses stay free of backslashes, so the anonymizer's patterns still
@@ -2313,108 +2322,80 @@ boxes of layout engines are not kept.
 add the module to `_OCR_SRCS` in `teachers_teammate/BUILD`. Parsers must be total: an
 exception falls through to the next parser, ending at plain text.
 
-## Correction review: schema, splice, align
+## Correction review
 
-Proofreading answers with a *review*, not a text: the corrected sentence plus one
-explanation per edit, and a table of unclear or ambiguous expressions. Three pieces
-make it work.
+Proofreading answers with a *review*, not a text: the corrected text plus one explanation per
+edit, and a list of unclear or ambiguous expressions.  The review is what the corrector returns,
+what the cache stores and what every reader reads — the pipeline, the CLI line, both Word
+layouts, the queue, the export and the evaluation tools.
 
-**This is the one-request path, and the app no longer runs it.**  The pipeline proofreads
-through the exchange (see *Proofreading exchange*), which asks three times and builds its review
-from the diff.  What stays in use here is `splice` and the v1 review: the readers of a stored
-result and `domain/proofreading/legacy_review.py` turn the exchange's review into it.  The
-one-request correctors, the answer schema, the answer formats and the policy presets live in
-`tools/model_eval/one_request/` — the evaluation baseline, not the app.  Nothing under
-`teachers_teammate/` imports them; `tests/tools/test_session.py` keeps it that way.
+**The review is edit-based** (`domain/proofreading/review.py`).  `CorrectionReview` holds
+`EditNote`s and `UnclearNote`s.  An `EditNote` has an id, one or more `EditPart`s (`raw_start`,
+`raw_end`, `original`, `corrected`), the source sentences it touches, a category and an
+explanation; an `UnclearNote` has a span in the raw text, the expression, why it is unclear and a
+recommendation.  The edits are always the diff of the student's text against the corrected text
+(`word_diff`), so the model explains edits but never places them.
 
-**Schema, answer format, message** (`tools/model_eval/one_request/correction_schema.py`,
-`tools/model_eval/one_request/answer_format.py`). `CorrectionAnswer` (sentences → changes, plus
-`unclear`) is the Pydantic model both provider paths are bound to: Ollama through
-`OllamaClient.chat(format=CorrectionAnswer.model_json_schema())`, online providers through
-`with_structured_output(..., include_raw=True)`. The system message has two parts. The
-*instructions* (the seven presets in `tools/model_eval/one_request/presets.py`) say what to
-correct and are per language. The *answer format* (`REVIEW_FORMAT` / `TEXT_FORMAT`) says how to
-fill in the reply: one English text per mode, **no language names, no placeholders**. It
-describes the structure field by field, because Ollama's `format=` only constrains the keys and
-never shows the model the schema's field descriptions (online providers see them as well). The
-languages travel in the message that carries the text (`Text language: …`,
-`Explanation language: …`; `one_request/correction.py:_human_template`), so the answer format is
-plain text. Never put output-format rules into a preset. A test keeps `REVIEW_FIELDS` and the
-schema in step: every field name must appear in `REVIEW_FORMAT`. On the native Ollama path
-`OllamaClient.chat(system=...)` sends the instructions as a real `system` message (it used to
-send everything as one user message). `ANSWER_FORMAT_VERSION` (= `CONTRACT_VERSION`) is part of
-the evaluation protocol fingerprint (`tools/model_eval/protocol.py`), so a saved run is looked up
-by the format it was made with; the app's correction cache no longer reads it.
+**The offsets are in the plain text of the stored `raw_text`** — `plain_text_of(raw_text,
+raw_text_format)`, crossed-out words included, real names.  The exchange makes them in the plain
+text of what it was sent, so the two producers that change that text fix the offsets before
+anything stores them:
+
+- **Pieces** (`infrastructure/proofreading/chunking.py`).  A text longer than one request is
+  proofread in pieces.  Each piece's plain text is found in the whole plain text from a forward
+  cursor; its review is shifted by that start, the edit ids are renumbered over the whole text
+  and `EditNote.sentences` is recomputed from it (`merge_reviews`).  A piece whose plain text is
+  not found, or whose shifted review does not fit, loses its review and the file gets
+  `MISSING_REVIEW_WARNING`.
+- **Names** (`infrastructure/workflow/file_processor.py`).  The exchange sees placeholders
+  (`[PERSON_1]`), and a name is rarely as long as its placeholder, so every edit after a name
+  would point at the wrong words.  `restore_with_offsets` returns the restored text and an
+  `OffsetMap` (`domain/offset_map.py`); the review is remapped through it.
+
+Both are checked with `fits(review, raw_plain)`: every part's `original` must be
+`raw_plain[start:end]`.  A review that does not fit is dropped with a correction warning
+(`REVIEW_UNMATCHED` for names, `MISSING_REVIEW_WARNING` for pieces) instead of being stored: a
+half-right review would show AI corrections as the teacher's own.
+
+**Align** (`domain/proofreading/review.py:align`) is how a reader shows the review.  It diffs raw
+against corrected (`word_diff`, the one diff of the app) and attaches each note to the hunk it
+explains, by span.  A hunk without a note is either the model's change without a reason or the
+teacher's own edit; a note whose hunk is gone becomes an *orphan*.  Alignment is recomputed from
+`(raw, corrected, review)` on every render and needs no extra state.  Every count shown anywhere
+(`review_summary()`) is the number of listed hunks: spelling and punctuation hunks
+(`AlignedChange.is_minor`) are marked in the text but left out of the lists.
+
+**The Word file** (`infrastructure/docx_builder.py`, `infrastructure/docx_comments.py`).  Both
+layouts read `align()`.
+
+- The *table* layout lists the explanations of the changes that are in the text
+  (`explained_sentences`): one block per changed sentence, quoted as it reads in the corrected
+  text now, one bullet per note.  A note on an edit the teacher changed afterwards explains words
+  that are no longer there and is left out (`AlignedChange.explains_text`).
+- The *comments* layout writes the extracted text as plain text, one paragraph per line, and
+  comments it: every hunk is highlighted on its raw span and commented with what it does to the
+  words, every anchored unclear expression is commented on its stored span.  An edit of several
+  hunks is explained once, in the comment of its first hunk.  There is no diff and no text search
+  of its own.
+
+**The old Preview** still reads the sentence-based review of `domain/correction_review.py`.
+`CorrectionReviewPresenter.for_preview(raw_text, text_format, review)` is the one seam that
+converts (`domain/proofreading/legacy_review.py`); it goes with the Preview.
+
+**The one-request path is the evaluation baseline, not the app.**
+`tools/model_eval/one_request/` holds the answer schema, the answer formats, the policy presets
+and `splice`; its `edit_review.py` turns the sentence answer into the edit-based review at its
+edge, so the tools read one review shape everywhere.  Nothing under `teachers_teammate/` imports
+it; `tests/tools/test_session.py` keeps it that way.  The request fingerprint
+(`tools/model_eval/protocol.py`) does not move: nothing sent changes.  A baseline row made after
+this change counts one explanation per edit instead of one per token match, so its numbers are
+not comparable with rows made before it; the exchange rows are pinned by a test.
 
 **The answer format is fixed.**  The formats are no longer settings: `answer_format_review`,
 `answer_format_text` and `answer_format_version` were removed with the one-request path, and an
 old key in `ocr.toml` is ignored on load and not written again.  The exchange's steps carry their
 own answer shape (a plain text for ①, a schema for ② and ③), so there is nothing for a teacher to
 edit.
-
-**What the cache is keyed on.** `compute_correction_config_hash()` hashes
-`exchange_identity(profile, corrections_only=…)` — the exchange kind, `PROMPT_VERSION`, the first
-twelve hex digits of the SHA-256 over the system prompts of the steps that run, and
-`RequestProfile.fingerprint()` (every step's temperature, thinking and sampling values) — plus the
-provider, the effective model, the language, the level, the explanation language, the output mode,
-the notes and the window.  The prompts are hashed, not the settings, so a changed built-in prompt
-re-runs proofreading and a teacher's notes are part of the key.
-
-**The teacher's notes** (`domain/correction_prompts.py`, `config.py`, `gui/_config_panel.py`).
-`correction_notes` (`""` by default, at most `NOTES_LIMIT` = 500 characters, cut on load and in the
-dialog with a warning) travels as the notes block of every step's user message
-(`notes_block()`), never as a prompt: the prompts are fixed and versioned.  A custom prompt of an
-older version is not migrated — it was a whole policy and would contradict the fixed prompt if it
-were sent as notes.  `ProcessingApplicationService.proofreading_prompts()` returns the prompts of
-the steps that run, for the dialog's read-only section and for *What is sent*.
-`normalize_output_mode()` / `normalize_level()` in
-`domain/correction_policy.py` give an unknown setting the same meaning in every layer, and
-the saved output mode is used as it is for every model: there is no per-model block, because
-Ollama's `format=` is enforced by the engine and works with all local models (a model that still
-fails keeps the corrected text and warns). `structured_output` in the catalog only
-decides the `explanations ✓` badge; to earn it, run
-`tools/verify_model_catalog.py --structured-output` against the model and enter the result.
-The same run decides whether a model's answers are cut off at the context size, so a badge
-never sits next to a model that truncates (see *Soft failures and per-file warnings*).
-
-**Splice** (`domain/correction_review.py:splice`). The model answers only the sentences it
-changed, so the full text is rebuilt by walking the anonymized source with a cursor and
-replacing each `original` with its `corrected`: exact match, then whitespace-normalised
-(OCR line breaks), then fuzzy. The fuzzy lookup compares the anchor with whole
-sentence-like pieces of the text after the cursor (up to four in a row; `difflib` ratio
-≥ 0.9, the earliest best one wins). It must return a complete piece, never a fragment:
-replacing a fragment would leave the rest of the old sentence in the text. It searches the
-rest of the text, not a window next to the cursor, because the model returns only changed
-sentences, which are rarely adjacent. Text between anchors is copied verbatim, so line
-breaks, paragraphs and Markdown marks survive. A sentence that matches nowhere is *unplaced*: not applied, its
-index recorded, and the caller falls back to text mode when nothing at all could be placed.
-
-**Align** (`domain/correction_review.py:align`, entered through
-`application/correction_review.py:CorrectionReviewPresenter.aligned`). The local word diff
-stays the ground truth: `align()` diffs raw against corrected and attaches notes to hunks.
-A note belongs to a hunk when it *changes* the hunk's tokens (`change_tokens()`: what only
-one side of the note has, punctuation included, so `Tom → Tom,` is the comma). Notes of the
-hunk's own sentence come first; a note may serve several hunks, because the word diff cuts
-`his friend → her friends` in two, and a note not used yet wins a tie. A hunk without a
-note is either the model's change without a reason (`by_teacher=False`, shown as "no
-explanation") or the teacher's own edit (`by_teacher=True`, "your change"); it is the
-teacher's when its new words are not in the model's version of its sentence. A hunk outside
-every changed sentence never borrows a note from another sentence (only from a sentence whose
-wording could not be found in the text at all). Alignment is
-recomputed from `(raw, corrected, review)` on every render and needs no extra state. A note
-whose hunk is gone becomes an *orphan* ("not in the text"). Unclear expressions are
-searched independently of each other, because the model lists them in any order. Every
-count shown anywhere (`review_summary()`) is the number of *listed* hunks of the aligned review:
-spelling and punctuation hunks (`AlignedChange.is_minor`, `MINOR_CATEGORIES`; a note-less hunk
-that touches no word character counts too) are marked in the text but listed only as one
-collapsed line in the notes view and left out of the DOCX *Explanations* list.
-Hunks come from `diff_opcodes()`, which the GUI diff uses as well so the numbers agree; it
-reports a whitespace-only difference (an OCR line break the model joined into a space) as
-`equal`, so it is never listed as an unexplained change.
-`align()` takes plain text and strips Markdown marks from the anchors itself, so the DOCX
-builder can call it without importing the application layer. The DOCX comments layout cuts
-the text into whitespace words, which line up with the hunks only roughly, so it asks for
-the note that changes most of a part's tokens instead of looking up exact hunks.
 
 **Failures** (`infrastructure/_llm_invoke.py:StructuredResult`). A schema-bound request
 ends as success or as one of three failures. `transport`: the provider call raised; the
@@ -2442,8 +2423,11 @@ explanation would show as `&quot;`.
 `one_request/correction_schema.py`), so it is declared in `pyproject.toml` (it already arrives
 with `ollama`).
 
-Both functions are pure and table-tested in `tests/unit/test_correction_review.py`; the
-review views are tested with pytest-qt in `tests/gui/test_gui_review_views.py`.
+`align()`, `fits()`, `merge_reviews()`, `explained_sentences()` and the offset map are pure and
+table-tested in `tests/unit/test_review_v2.py`, `tests/unit/test_offset_map.py`,
+`tests/unit/test_quotes.py` and `tests/unit/test_anonymization_mask.py`; the review views are
+tested with pytest-qt in `tests/gui/test_gui_review_views.py`, the Word layouts in
+`tests/unit/test_docx_builder.py` and `tests/unit/test_docx_comments.py`.
 
 ## Proofreading exchange
 
@@ -2451,14 +2435,14 @@ The exchange is the shape of the proofreading the app runs: three requests inste
 the edits are always the diff of the student's text against the corrected text, so the model
 explains edits but never places them.  `ExchangeCorrector`
 (`infrastructure/proofreading/corrector.py`) is the pipeline's `Corrector`: it runs exchange `T`
-over a `ModelPort` and returns the sentence-based review (v1) through
-`domain/proofreading/legacy_review.py`, so the readers of a stored result are unchanged.
+over a `ModelPort` and returns the edit-based review as it is, so what it makes is what the cache
+stores and every reader reads.
 
 | Module | Role |
 |---|---|
 | `domain/proofreading/word_diff.py` | `word_diff(raw, corrected)` → `Hunk`s. The one diff of the app: GUI preview, DOCX, `align`, the edits and the evaluation tools all read it. `difflib` is imported here and nowhere else |
 | `domain/proofreading/edits.py` | hunks → `Edit`s with ids, sentence groups, step-② batches, note merging, the overlap filter, the optional-comma rule, the framing check |
-| `domain/proofreading/review.py` | `CorrectionReview` v2 (`EditNote` with parts, `UnclearNote`), `align()` for display |
+| `domain/proofreading/review.py` | the stored `CorrectionReview` (`EditNote` with parts, `UnclearNote`), `align()` for display, `fits()` / `merge_reviews()` / `explained_sentences()` |
 | `domain/proofreading/quotes.py` | `find_spans()` for the quotes of step ③, `map_back()` through the hunks |
 | `domain/proofreading/markdown_shield.py` | `shield()` / `restore()`: strip the notation before the request, put it back after it |
 | `domain/proofreading/text_loss.py` | `measure()` / `dropped_text()`: what an answer kept of the text it was sent, for the guard of step ① |

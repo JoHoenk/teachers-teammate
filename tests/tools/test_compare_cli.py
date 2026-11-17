@@ -385,7 +385,9 @@ def test_a_resume_with_the_same_settings_goes_on(tmp_path, monkeypatch):
     When   the run is started again
     Then   it resumes: a second session is appended and the missing text is written
     """
-    from teachers_teammate.domain.correction_review import CorrectionOutcome  # noqa: PLC0415
+    from teachers_teammate.domain.proofreading.result import (  # noqa: PLC0415
+        CorrectionOutcome,
+    )
     from teachers_teammate.interfaces import Corrector  # noqa: PLC0415
 
     class _Echo(Corrector):
@@ -606,7 +608,9 @@ def test_a_log_has_one_line_per_row_and_says_how_the_run_ended(tmp_path, monkeyp
     Then   the log holds the session, one line per written row with its seconds, and the closing
            "finished" line with what the run did
     """
-    from teachers_teammate.domain.correction_review import CorrectionOutcome  # noqa: PLC0415
+    from teachers_teammate.domain.proofreading.result import (  # noqa: PLC0415
+        CorrectionOutcome,
+    )
     from teachers_teammate.interfaces import Corrector  # noqa: PLC0415
 
     class _Echo(Corrector):

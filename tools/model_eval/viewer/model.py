@@ -22,7 +22,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass, field, replace
 from typing import Any
 
-from teachers_teammate.domain.correction_review import tokenize
+from teachers_teammate.domain.proofreading.word_diff import tokenize
 
 from .. import protocol, quality, results, scoring
 from ..error_labels import UNLABELLED

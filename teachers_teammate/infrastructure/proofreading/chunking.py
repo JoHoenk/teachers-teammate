@@ -10,15 +10,12 @@ window and is left unwrapped, while the Ollama port asks for a fixed one.
 
 from __future__ import annotations
 
-from ...domain.correction_review import (
-    CorrectionOutcome,
-    CorrectionReview,
-    SentenceNote,
-    UnclearNote,
-)
 from ...domain.formatted_text import TextFormat
+from ...domain.proofreading.result import CorrectionOutcome
+from ...domain.proofreading.review import CorrectionReview, fits, merge_reviews
 from ...domain.text_chunks import Chunk, split_for_budget
 from ...interfaces import Corrector
+from ..ocr_formats import plain_text_of
 
 CHUNK_FAILURE = "Proofreading part of the text failed; keeping the original text."
 """Warning of a chunked file whose one piece failed: no half-corrected text is ever stored."""
@@ -97,14 +94,15 @@ class ChunkingCorrector(Corrector):
             outcome for outcome, chunk in zip(outcomes, chunks, strict=True) if chunk.text.strip()
         ]
         reviews = [outcome.review for outcome in answerable if outcome.review is not None]
-        incomplete = bool(reviews) and len(reviews) < len(answerable)
+        merged, lost = _merged_review(outcomes, chunks, raw_text, text_format)
+        incomplete = lost or (bool(reviews) and len(reviews) < len(answerable))
         warning = join_warnings(
             *(outcome.warning for outcome in outcomes),
             MISSING_REVIEW_WARNING if incomplete else None,
         )
         return CorrectionOutcome(
             text=_join_text(outcomes, chunks),
-            review=_merged_review(reviews) if reviews else None,
+            review=merged,
             warning=warning,
             fell_back=any(outcome.fell_back for outcome in outcomes),
         )
@@ -145,16 +143,42 @@ def _join_text(outcomes: list[CorrectionOutcome], chunks: tuple[Chunk, ...]) -> 
     )
 
 
-def _merged_review(reviews: list[CorrectionReview]) -> CorrectionReview:
-    """Return one review over the whole text from the reviews of its pieces."""
-    sentences: list[SentenceNote] = []
-    unclear: list[UnclearNote] = []
-    unplaced: list[int] = []
-    for review in reviews:
-        offset = len(sentences)
-        sentences.extend(review.sentences)
-        unclear.extend(review.unclear)
-        unplaced.extend(index + offset for index in review.unplaced)
-    return CorrectionReview(
-        sentences=tuple(sentences), unclear=tuple(unclear), unplaced=tuple(unplaced)
-    )
+def _merged_review(
+    outcomes: list[CorrectionOutcome],
+    chunks: tuple[Chunk, ...],
+    raw_text: str,
+    text_format: TextFormat,
+) -> tuple[CorrectionReview | None, bool]:
+    """Return one review over the whole text, and whether a piece lost its review.
+
+    A piece's review is anchored in the plain text of that piece, so it is found in the plain
+    text of the whole from a forward cursor and shifted there.  A piece whose plain text is not
+    found, or whose shifted review no longer quotes the words it points at, loses its review:
+    the file keeps the explanations of the other pieces and says that some are missing.
+    """
+    whole = plain_text_of(raw_text, text_format)
+    cursor = 0
+    found: list[tuple[int, CorrectionReview]] = []
+    lost = False
+    for outcome, chunk in zip(outcomes, chunks, strict=True):
+        if not chunk.text.strip():
+            continue
+        piece_plain = plain_text_of(chunk.text, text_format)
+        start = whole.find(piece_plain, cursor)
+        if start >= 0:
+            # Every piece moves the cursor, a piece without a review too: a later piece with the
+            # same words (a repeated paragraph) must not be found at the earlier one's place.
+            cursor = start + len(piece_plain)
+        if outcome.review is None:
+            continue
+        if start < 0:
+            lost = True
+            continue
+        shifted = outcome.review.shifted(start)
+        if not fits(shifted, whole):
+            lost = True
+            continue
+        found.append((start, outcome.review))
+    if not found:
+        return None, lost
+    return merge_reviews(found, whole), lost

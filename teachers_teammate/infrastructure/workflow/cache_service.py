@@ -32,6 +32,7 @@ from ..state_repository import (
     compute_config_hash,
     compute_file_hash,
 )
+from ..storage_root import document_stem
 
 # ── Module-level hash helpers (shared with application layer) ─────────────────
 
@@ -363,11 +364,13 @@ class CacheReconciliationService:
         """
         page_images: list[str] = []
         if pages:
-            stored = self._artifacts.persist_page_images(stem=file.stem, sources=pages)
+            stored = self._artifacts.persist_page_images(stem=document_stem(file), sources=pages)
             preview_img = str(stored[0])
             page_images = [str(page) for page in stored]
         else:
-            stable = self._artifacts.persist_preview_image(stem=file.stem, source_path=source_path)
+            stable = self._artifacts.persist_preview_image(
+                stem=document_stem(file), source_path=source_path
+            )
             preview_img = str(stable)
         original_img = ""
         if original_path is not None:
@@ -375,13 +378,13 @@ class CacheReconciliationService:
             try:
                 original_img = str(
                     self._artifacts.persist_original_image(
-                        stem=file.stem, source_path=original_path
+                        stem=document_stem(file), source_path=original_path
                     )
                 )
             except OSError:
                 original_img = ""
         if not original_img:
-            self._artifacts.prune_original_images(file.stem)
+            self._artifacts.prune_original_images(document_stem(file))
         new_state = self._repo.record_preview_artifact(
             file,
             ctx.state,

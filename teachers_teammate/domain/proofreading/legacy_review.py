@@ -1,11 +1,12 @@
-"""The edit-based review of the exchange, shown as the sentence-based review the app still reads.
+"""The edit-based review of the exchange, shown as the sentence-based review of the old Preview.
 
-The exchange explains *edits* (:class:`~.review.CorrectionReview`); the GUI, the DOCX builder, the
-cache and the evaluation tools still read the sentence-based review of
-:mod:`~teachers_teammate.domain.correction_review`, which the review path produces.  Until the
-readers move, this module is the one bridge: every edit becomes a change note in the sentence it
-touches, and the sentence carries its corrected wording, so ``align()`` matches every note to the
-same hunk the edit was made from.  When the readers take the edit-based review, this module goes.
+The exchange explains *edits* (:class:`~.review.CorrectionReview`); the old Preview still reads
+the sentence-based review of :mod:`~teachers_teammate.domain.correction_review`.  This module is
+the one bridge: every edit becomes a change note in the sentence it touches, and the sentence
+carries its corrected wording, so ``align()`` matches every note to the same hunk the edit was
+made from.  It is called by
+:meth:`~teachers_teammate.application.correction_review.CorrectionReviewPresenter.for_preview`
+and goes with the Preview.
 
 Pure: no I/O, no Qt, no provider imports.
 """

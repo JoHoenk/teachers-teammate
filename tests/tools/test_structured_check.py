@@ -12,7 +12,7 @@ import re
 
 import pytest
 
-from teachers_teammate.domain.correction_review import tokenize
+from teachers_teammate.domain.proofreading.word_diff import tokenize
 from teachers_teammate.domain.model_catalog import RequestProfile
 from tools.model_eval.one_request.correction import COMPACT_ANSWER_RULE
 from teachers_teammate.infrastructure.ollama_utils import ChatStats

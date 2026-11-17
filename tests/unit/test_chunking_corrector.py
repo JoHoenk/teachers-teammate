@@ -4,20 +4,22 @@ from __future__ import annotations
 
 import pytest
 
-from teachers_teammate.domain.correction_review import (
-    ChangeNote,
-    CorrectionOutcome,
-    CorrectionReview,
-    SentenceNote,
-    UnclearNote,
-)
 from teachers_teammate.domain.formatted_text import TextFormat
+from teachers_teammate.domain.proofreading.edits import EditPart
+from teachers_teammate.domain.proofreading.result import CorrectionOutcome
+from teachers_teammate.domain.proofreading.review import (
+    CorrectionReview,
+    EditNote,
+    UnclearNote,
+    fits,
+)
 from teachers_teammate.domain.text_chunks import split_for_budget
 from teachers_teammate.infrastructure.proofreading.chunking import (
     CHUNK_FAILURE,
     MISSING_REVIEW_WARNING,
     ChunkingCorrector,
 )
+from teachers_teammate.infrastructure.ocr_formats import plain_text_of
 from teachers_teammate.interfaces import Corrector
 
 _SENTENCE = "Das ist ein deutscher Satz. "
@@ -33,17 +35,29 @@ def _german_text(paragraphs: int = 25) -> str:
     return "\n\n".join([body] * paragraphs)
 
 
-def _sentence(original: str, corrected: str) -> SentenceNote:
-    """Return a sentence note with one explained change."""
-    return SentenceNote(
-        original=original,
-        corrected=corrected,
-        changes=(
-            ChangeNote(
-                original=original,
-                corrected=corrected,
+def _review_of(text: str, text_format: TextFormat = "plain") -> CorrectionReview:
+    """Return a review of the plain text of *text*: one explained edit and one unclear
+    expression, both on its first word."""
+    plain = plain_text_of(text, text_format)
+    word = plain.split(maxsplit=1)[0] if plain.split() else ""
+    end = len(word)
+    return CorrectionReview(
+        edits=(
+            EditNote(
+                id=1,
+                parts=(EditPart(raw_start=0, raw_end=end, original=word, corrected=word.upper()),),
+                sentences=(0,),
                 category="spelling",
                 explanation="Tippfehler.",
+            ),
+        ),
+        unclear=(
+            UnclearNote(
+                raw_start=0,
+                raw_end=end,
+                expression=word,
+                why="d",
+                recommendation="e",
             ),
         ),
     )
@@ -53,8 +67,8 @@ class _RecordingCorrector(Corrector):
     """Stand-in for the wrapped corrector: records its calls and scripted answers.
 
     ``failing`` holds the indices of the calls that fail, ``without_review`` the ones that
-    fall back to text mode.  Every other call answers with the upper-cased text and a review
-    of two sentences, of which the second one is ``unplaced``.
+    fall back to text mode.  Every other call answers with the upper-cased text and a review of
+    one edit and one unclear expression, both on the first word of the piece.
     """
 
     def __init__(
@@ -84,7 +98,7 @@ class _RecordingCorrector(Corrector):
         self, raw_text: str, language: str, *, text_format: TextFormat = "plain"
     ) -> CorrectionOutcome:
         """Return the scripted answer for this call."""
-        del language, text_format
+        del language
         index = len(self.calls)
         self.calls.append(raw_text)
         if index in self._failing:
@@ -96,12 +110,7 @@ class _RecordingCorrector(Corrector):
                 warning=self._fallback_warning,
                 fell_back=True,
             )
-        review = CorrectionReview(
-            sentences=(_sentence("a", "A"), _sentence("b", "B")),
-            unclear=(UnclearNote(expression="c", why="d", recommendation="e"),),
-            unplaced=(1,),
-        )
-        return CorrectionOutcome(text=raw_text.upper(), review=review)
+        return CorrectionOutcome(text=raw_text.upper(), review=_review_of(raw_text, text_format))
 
 
 @pytest.mark.use_case("Chunking_Corrector")
@@ -161,11 +170,12 @@ def test_the_pieces_are_the_original_text_piece_by_piece() -> None:
 
 
 @pytest.mark.use_case("Chunking_Corrector")
-def test_the_reviews_of_all_pieces_are_merged_and_unplaced_shifted() -> None:
+def test_the_reviews_of_all_pieces_are_merged_onto_the_whole_text() -> None:
     """
-    Given  a long text whose every piece explains two sentences, one of them unplaceable
+    Given  a long text whose every piece explains one edit and one unclear expression
     When   it is proofread through the chunking corrector
-    Then   the merged review counts all six sentences and points at the right unplaced ones
+    Then   the merged review holds all three edits and all three unclear notes, numbered in text
+           order, and every offset points at the words it quotes in the whole text
     """
     text = _german_text()
     corrector = ChunkingCorrector(_RecordingCorrector())
@@ -173,9 +183,67 @@ def test_the_reviews_of_all_pieces_are_merged_and_unplaced_shifted() -> None:
     outcome = corrector.correct(text, "German")
 
     assert outcome.review is not None
-    assert len(outcome.review.sentences) == 6
+    assert [note.id for note in outcome.review.edits] == [1, 2, 3]
     assert len(outcome.review.unclear) == 3
-    assert outcome.review.unplaced == (1, 3, 5)
+    assert fits(outcome.review, text)
+
+
+@pytest.mark.use_case("Chunking_Corrector")
+def test_a_markdown_text_keeps_its_offsets_in_the_plain_whole_text() -> None:
+    """
+    Given  a long Markdown text whose every piece explains one edit
+    When   it is proofread through the chunking corrector
+    Then   the merged review fits the plain text of the whole, so the marks land on the words
+    """
+    text = "\n\n".join(f"**Fett** und *kursiv* in Absatz {number}." for number in range(400))
+    corrector = ChunkingCorrector(_RecordingCorrector())
+
+    outcome = corrector.correct(text, "German", text_format="markdown")
+
+    assert outcome.review is not None
+    assert len(outcome.review.edits) > 1
+    assert fits(outcome.review, plain_text_of(text, "markdown"))
+
+
+@pytest.mark.use_case("Chunking_Corrector")
+def test_a_piece_whose_review_does_not_fit_loses_it_and_warns() -> None:
+    """
+    Given  a long text whose pieces answer with a review that quotes words not at its offsets
+    When   it is proofread through the chunking corrector
+    Then   no review is stored and the warning says that explanations are missing
+    """
+    text = _german_text()
+
+    class _WrongOffsets(_RecordingCorrector):
+        """A corrector whose review quotes words that are not where it says they are."""
+
+        def correct(
+            self, raw_text: str, language: str, *, text_format: TextFormat = "plain"
+        ) -> CorrectionOutcome:
+            self.calls.append(raw_text)
+            return CorrectionOutcome(
+                text=raw_text.upper(),
+                review=CorrectionReview(
+                    edits=(
+                        EditNote(
+                            id=1,
+                            parts=(
+                                EditPart(raw_start=0, raw_end=3, original="zzz", corrected="ZZZ"),
+                            ),
+                            sentences=(0,),
+                            category="spelling",
+                            explanation="Tippfehler.",
+                        ),
+                    ),
+                ),
+            )
+
+    outcome = ChunkingCorrector(_WrongOffsets()).correct(text, "German")
+
+    assert outcome.failed is False
+    assert outcome.review is None
+    assert outcome.warning is not None
+    assert MISSING_REVIEW_WARNING in outcome.warning
 
 
 @pytest.mark.use_case("Chunking_Corrector")
@@ -234,7 +302,7 @@ def test_a_piece_that_fell_back_to_text_mode_only_warns() -> None:
     assert outcome.warning is not None
     assert MISSING_REVIEW_WARNING in outcome.warning
     assert outcome.review is not None
-    assert len(outcome.review.sentences) == 4  # the two pieces that answered
+    assert len(outcome.review.edits) == 2  # the two pieces that answered
 
 
 @pytest.mark.use_case("Chunking_Corrector")
@@ -334,3 +402,21 @@ def test_a_piece_that_fell_back_marks_the_merged_outcome_as_fallen_back() -> Non
 
     assert fell_back.correct(text, "German").fell_back is True
     assert clean.correct(text, "German").fell_back is False
+
+
+@pytest.mark.use_case("Chunking_Corrector")
+def test_a_repeated_piece_is_not_found_at_the_place_of_an_earlier_one_without_a_review() -> None:
+    """
+    Given  a long text of repeated paragraphs, whose first piece produced no review
+    When   it is proofread through the chunking corrector
+    Then   the explanations of the third piece stay with the third piece and not the first
+    """
+    text = _german_text()
+    corrector = ChunkingCorrector(_RecordingCorrector(without_review=frozenset({0})))
+
+    outcome = corrector.correct(text, "German")
+
+    assert outcome.review is not None
+    starts = [note.raw_start for note in outcome.review.edits]
+    assert len(starts) == 2
+    assert min(starts) > 0

@@ -14,12 +14,19 @@ from unittest.mock import MagicMock, patch
 import pytest
 from docx import Document
 
-from teachers_teammate.domain.correction_review import CorrectionOutcome
+from teachers_teammate.domain.anonymization import restore
+from teachers_teammate.domain.proofreading.edits import EditPart
+from teachers_teammate.domain.proofreading.result import CorrectionOutcome
+from teachers_teammate.domain.proofreading.review import CorrectionReview, EditNote, fits
+from teachers_teammate.domain.proofreading.word_diff import word_diff
 from teachers_teammate.exceptions import OCRError
+from teachers_teammate.infrastructure.ocr_formats import plain_text_of
 from teachers_teammate.infrastructure.pipeline import OCRPipeline
+from teachers_teammate.infrastructure.proofreading.chunking import ChunkingCorrector
 from teachers_teammate.infrastructure.stage_builder import StageBuilder
 from teachers_teammate.infrastructure.state_repository import StateRepository
 from teachers_teammate.infrastructure.storage_root import resolve_artifact_dir
+from teachers_teammate.interfaces import Corrector
 from tests.conftest import make_config, reader_store, skip_no_reader_models
 
 
@@ -27,7 +34,7 @@ def _state_for(cfg, source: Path):
     return StateRepository(resolve_artifact_dir(cfg.output_dir) / "state").load(source)
 
 
-def _patch_correction(corrector: MagicMock):
+def _patch_correction(corrector: Corrector | MagicMock):
     """Patch the correction stage so the stage builder returns a double."""
     return (
         patch("teachers_teammate.infrastructure.stage_builder.build_llm", return_value=MagicMock()),
@@ -313,3 +320,92 @@ def test_pipeline_reports_nonzero_exit_when_all_inputs_corrupt(tmp_path: Path) -
         rc = OCRPipeline(cfg).run().exit_code
 
     assert rc != 0
+
+
+# ── the stored review of a text with names hidden, in pieces ─────────────────
+
+
+class _ScriptedReviewCorrector(Corrector):
+    """A corrector that answers with a review built from the diff of what it was sent."""
+
+    def __init__(self, budget: int) -> None:
+        self._budget = budget
+        self.sent: list[str] = []
+
+    def max_text_chars(self, language: str, *, text_format: str = "plain") -> int:
+        del language, text_format
+        return self._budget
+
+    def correct(
+        self, raw_text: str, language: str, *, text_format: str = "plain"
+    ) -> CorrectionOutcome:
+        del language, text_format
+        self.sent.append(raw_text)
+        corrected = raw_text.replace("have", "has")
+        return CorrectionOutcome(text=corrected, review=_review_of(raw_text, corrected))
+
+
+def _review_of(raw: str, corrected: str) -> CorrectionReview:
+    """Return a review whose edits are the hunks of *raw* → *corrected*, each explained."""
+    return CorrectionReview(
+        edits=tuple(
+            EditNote(
+                id=index,
+                parts=(EditPart(hunk.raw_start, hunk.raw_end, hunk.original, hunk.corrected),),
+                sentences=(),
+                category="grammar",
+                explanation="Third person singular.",
+            )
+            for index, hunk in enumerate(word_diff(raw, corrected), start=1)
+        )
+    )
+
+
+@pytest.mark.use_case("PII_Anonymization_Before_Correction")
+def test_a_text_with_names_hidden_in_pieces_stores_a_review_that_fits(tmp_path: Path) -> None:
+    """
+    Given  a text with two names, hiding on, and a corrector that takes three pieces
+    When   OCRPipeline.run() completes
+    Then   the stored review quotes the words at its offsets in the plain stored text
+    """
+    cfg = make_config(
+        tmp_path,
+        correction_enabled=True,
+        correction_provider="openai",
+        anonymization_enabled=True,
+        docx_enabled=False,
+    )
+    source = cfg.input_dir / "letter.txt"
+    source.write_text(
+        "Dear Alice, she have a dog.\nBob have a cat too.\nAlice have a bird as well.\n",
+        encoding="utf-8",
+    )
+    mapping = {"[PERSON_1]": "Alice", "[PERSON_2]": "Bob"}
+    anonymizer = MagicMock()
+    anonymizer.anonymize.side_effect = lambda text: (
+        text.replace("Alice", "[PERSON_1]").replace("Bob", "[PERSON_2]"),
+        mapping,
+    )
+    anonymizer.restore.side_effect = lambda text, table: restore(text, table)
+    corrector = ChunkingCorrector(_ScriptedReviewCorrector(budget=40))
+    build_llm_patch, corrector_patch = _patch_correction(corrector)
+
+    with (
+        build_llm_patch,
+        corrector_patch,
+        patch(
+            "teachers_teammate.infrastructure.anonymizer.SpacyAnonymizer",
+            return_value=anonymizer,
+        ),
+    ):
+        rc = OCRPipeline(cfg).run().exit_code
+
+    assert rc == 0
+    assert len(corrector.inner.sent) == 3
+    state = _state_for(cfg, source)
+    assert state is not None
+    assert state.correction_review is not None
+    review = CorrectionReview.from_dict(state.correction_review)
+    assert review is not None
+    assert fits(review, plain_text_of(state.raw_text, state.raw_text_format))
+    assert [note.original for note in review.edits] == ["have", "have", "have"]

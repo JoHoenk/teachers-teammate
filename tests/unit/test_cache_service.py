@@ -17,6 +17,7 @@ from teachers_teammate.infrastructure.input_provider_factory import (
 from teachers_teammate.infrastructure.onnx.store import ModelStore
 from teachers_teammate.infrastructure.preprocessing.identity import AUTO_VERSION
 from teachers_teammate.infrastructure.state_repository import DocumentState, OcrResultRecord
+from teachers_teammate.infrastructure.storage_root import document_stem
 from teachers_teammate.domain.data_location import STAGE_CORRECTION, STAGE_EVALUATION
 from teachers_teammate.infrastructure.workflow.cache_service import (
     CacheContext,
@@ -830,7 +831,9 @@ def test_persist_preview_artifact_copies_and_records(tmp_path: Path) -> None:
     ctx = _make_ctx()
     preview_img, new_ctx = svc.persist_preview_artifact(file, ctx, source_path)
 
-    artifacts.persist_preview_image.assert_called_once_with(stem=file.stem, source_path=source_path)
+    artifacts.persist_preview_image.assert_called_once_with(
+        stem=document_stem(file), source_path=source_path
+    )
     repo.record_preview_artifact.assert_called_once_with(
         file,
         ctx.state,
@@ -874,7 +877,7 @@ def test_persist_preview_artifact_stores_original_and_steps(tmp_path: Path) -> N
     )
 
     artifacts.persist_original_image.assert_called_once_with(
-        stem=file.stem, source_path=original_path
+        stem=document_stem(file), source_path=original_path
     )
     repo.record_preview_artifact.assert_called_once_with(
         file,
@@ -943,7 +946,7 @@ def test_persist_preview_artifact_stores_every_page(tmp_path: Path) -> None:
     ctx = _make_ctx()
     preview_img, _ = svc.persist_preview_artifact(file, ctx, pages[0], pages=pages)
 
-    artifacts.persist_page_images.assert_called_once_with(stem=file.stem, sources=pages)
+    artifacts.persist_page_images.assert_called_once_with(stem=document_stem(file), sources=pages)
     artifacts.persist_preview_image.assert_not_called()
     assert preview_img == str(stored[0])
     repo.record_preview_artifact.assert_called_once_with(
@@ -973,7 +976,7 @@ def test_persist_preview_artifact_prunes_stale_originals_when_none_recorded(
 
     svc.persist_preview_artifact(file, _make_ctx(), tmp_path / "tmp_preview.png")
 
-    artifacts.prune_original_images.assert_called_once_with(file.stem)
+    artifacts.prune_original_images.assert_called_once_with(document_stem(file))
 
 
 def test_persist_preview_artifact_preserves_all_hash_fields(tmp_path: Path) -> None:

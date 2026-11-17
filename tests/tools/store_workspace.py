@@ -12,16 +12,18 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from tools.model_eval.one_request.answer_format import ANSWER_FORMAT_VERSION
 from teachers_teammate.domain.correction_review import (
     ChangeNote,
-    CorrectionOutcome,
-    CorrectionReview,
+    CorrectionReview as SentenceReview,
     SentenceNote,
 )
 from teachers_teammate.domain.formatted_text import TextFormat
+from teachers_teammate.domain.proofreading.result import CorrectionOutcome
+from teachers_teammate.domain.proofreading.review import CorrectionReview
 from teachers_teammate.interfaces import Corrector as CorrectorPort
 from tests.tools import invented_corpus
+from tools.model_eval.one_request.answer_format import ANSWER_FORMAT_VERSION
+from tools.model_eval.one_request.edit_review import edit_review
 from tools.model_eval import export as export_module
 from tools.model_eval import protocol, results, run_format, testset
 from tools.model_eval.answer_mode import DEFAULT_MODE, AnswerMode
@@ -292,10 +294,15 @@ def write_testset(space: Workspace) -> Path:
 
 
 def review(*changes: ChangeNote, original: str, corrected: str) -> CorrectionReview:
-    """Return a review of one sentence with *changes*."""
-    return CorrectionReview(
+    """Return a review of one sentence with *changes*, as the app stores it.
+
+    The sentence answer is what a test can write down; the stored review is the edit-based one,
+    so it is made from the sentence answer the way the baseline's edge makes it.
+    """
+    sentences = SentenceReview(
         sentences=(SentenceNote(original=original, corrected=corrected, changes=changes),)
     )
+    return edit_review(original, corrected, sentences)
 
 
 COMMITTED = Path(__file__).resolve().parents[2] / "evaluations" / "proofreading"

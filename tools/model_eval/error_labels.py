@@ -24,7 +24,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from teachers_teammate.domain.correction_review import align, tokenize
+from teachers_teammate.domain.proofreading.review import align
+from teachers_teammate.domain.proofreading.word_diff import tokenize
 
 from .quality import (
     Edit,
@@ -36,7 +37,7 @@ from .quality import (
 )
 
 if TYPE_CHECKING:
-    from teachers_teammate.domain.correction_review import AlignedReview, CorrectionReview
+    from teachers_teammate.domain.proofreading.review import AlignedReview, CorrectionReview
 
 UNLABELLED = "unlabelled"
 """Name of the group that holds the reference changes no annotated edit could be found for."""

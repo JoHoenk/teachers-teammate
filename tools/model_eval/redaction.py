@@ -31,7 +31,7 @@ from dataclasses import dataclass
 import hashlib
 import hmac
 
-from teachers_teammate.domain.correction_review import strip_marks, tokenize
+from teachers_teammate.domain.proofreading.word_diff import strip_marks, tokenize
 
 WORD_RUN = 5
 """How many consecutive words a field may not copy from the source or reference of its item."""

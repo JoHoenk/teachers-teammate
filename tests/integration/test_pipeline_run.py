@@ -22,7 +22,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from teachers_teammate.domain.correction_review import CorrectionOutcome
+from teachers_teammate.domain.proofreading.result import CorrectionOutcome
 from teachers_teammate.exceptions import OCRError, RunStoppedError
 from teachers_teammate.infrastructure.pipeline import (
     OCRPipeline,
@@ -32,7 +32,7 @@ from teachers_teammate.infrastructure.pipeline import (
 from teachers_teammate.infrastructure.reporting import ProgressCallbacks
 from teachers_teammate.infrastructure.stage_builder import StageBuilder
 from teachers_teammate.infrastructure.state_repository import StateRepository
-from teachers_teammate.infrastructure.storage_root import resolve_artifact_dir
+from teachers_teammate.infrastructure.storage_root import document_stem, resolve_artifact_dir
 from teachers_teammate.infrastructure.workflow.preprocess_service import PreparedInput
 from tests.conftest import make_config
 
@@ -343,7 +343,9 @@ def test_pipeline_persists_preview_artifact_for_none_preprocess(tmp_path: Path) 
         cfg.input_dir / "page.png"
     )
     assert state is not None
-    assert state.preview_img.endswith("page_preprocessed.png")
+    assert Path(state.preview_img).name == (
+        f"{document_stem(cfg.input_dir / 'page.png')}_preprocessed.png"
+    )
     assert Path(state.preview_img).exists()
 
 
@@ -406,7 +408,9 @@ def test_pipeline_reports_progress_and_keeps_original_for_the_automatic_preparat
     assert state is not None
     assert state.preprocess_steps is not None
     assert "light" in state.preprocess_steps
-    assert state.original_img.endswith("page_original.png")
+    assert Path(state.original_img).name == (
+        f"{document_stem(cfg.input_dir / 'page.png')}_original.png"
+    )
     assert Path(state.original_img).exists()
 
 
@@ -1797,10 +1801,11 @@ def test_a_scanned_pdf_keeps_every_prepared_page(tmp_path: Path, sample_multipag
     assert len(state.page_images) == 3
     assert state.preview_img == state.page_images[0]
     assert all(Path(page).exists() for page in state.page_images)
+    stem = document_stem(cfg.input_dir / "essay.pdf")
     assert [Path(page).name for page in state.page_images] == [
-        "essay_preprocessed.png",
-        "essay_p2.png",
-        "essay_p3.png",
+        f"{stem}_preprocessed.png",
+        f"{stem}_p2.png",
+        f"{stem}_p3.png",
     ]
 
 
@@ -1852,7 +1857,43 @@ def test_a_shorter_document_drops_the_pages_it_no_longer_has(
     state = _state_of(cfg, "essay.pdf")
     assert state is not None
     assert len(state.page_images) == 2
-    assert not (artifact_dir / "essay_p3.png").exists()
+    assert not (artifact_dir / f"{document_stem(cfg.input_dir / 'essay.pdf')}_p3.png").exists()
+
+
+@pytest.mark.use_case("Preview_Preprocessing")
+def test_two_documents_of_one_name_keep_their_own_pages(
+    tmp_path: Path, sample_multipage_pdf
+) -> None:
+    """
+    Given  two scanned PDFs called Anna.pdf in different folders of the input
+    When   the pipeline runs over both
+    Then   each keeps its own pages, and neither overwrites the other's
+    """
+    cfg = make_config(
+        tmp_path,
+        ocr_engine="ppocr",
+        correction_enabled=False,
+        docx_enabled=False,
+        recursive=True,
+    )
+    (cfg.input_dir / "a").mkdir()
+    (cfg.input_dir / "b").mkdir()
+    sample_multipage_pdf("Anna.pdf", pages=3).rename(cfg.input_dir / "a" / "Anna.pdf")
+    sample_multipage_pdf("Anna.pdf", pages=2).rename(cfg.input_dir / "b" / "Anna.pdf")
+
+    _run_scanned_pdf(cfg)
+
+    states = [
+        StateRepository(resolve_artifact_dir(cfg.output_dir) / "state").load(
+            cfg.input_dir / folder / "Anna.pdf"
+        )
+        for folder in ("a", "b")
+    ]
+    assert all(state is not None for state in states)
+    pages = [state.page_images for state in states if state is not None]
+    assert [len(own) for own in pages] == [3, 2]
+    assert all(Path(page).exists() for own in pages for page in own)
+    assert set(pages[0]).isdisjoint(pages[1])
 
 
 @pytest.mark.use_case("Preview_Preprocessing")

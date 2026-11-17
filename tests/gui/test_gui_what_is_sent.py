@@ -7,7 +7,7 @@ from PySide6.QtGui import QAction
 from PySide6.QtWidgets import QLabel
 
 from teachers_teammate.application.sent_text import SentText, SentTexts, describe_sent_texts
-from teachers_teammate.domain.correction_review import CorrectionReview, UnclearNote
+from teachers_teammate.domain.proofreading.review import CorrectionReview, UnclearNote
 from teachers_teammate.domain.data_location import (
     STAGE_CORRECTION,
     STAGE_EVALUATION,
@@ -298,7 +298,7 @@ def test_results_table_keeps_its_own_message_below_the_stage_line(qtbot) -> None
     table.mark_cached("a.pdf", "", "", "", "", ocr_done=True, correction_done=True)
     table.set_correction_review(
         "a.pdf",
-        CorrectionReview(unclear=(UnclearNote("weil", "why", "because"),)),
+        CorrectionReview(unclear=(UnclearNote(0, 4, "weil", "why", "because"),)),
         "",
     )
 

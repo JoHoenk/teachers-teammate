@@ -4,7 +4,7 @@ The developer tools that compare writing models need three numbers, and this mod
 them without I/O, without a provider and without Qt, so they can be unit-tested and reused:
 
 * **Edit agreement** — the word-diff changes of source → model text against source → reference
-  text.  A change is one hunk of :func:`~teachers_teammate.domain.correction_review.diff_opcodes`: its span in the
+  text.  A change is one hunk of :func:`~teachers_teammate.domain.proofreading.word_diff.diff_opcodes`: its span in the
   source and the words that replace it.  A change counts as found when both agree, so a note
   that touched the right words but replaced them with different ones counts as one miss and
   one invention, not as a hit.
@@ -28,7 +28,11 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from functools import lru_cache
 
-from teachers_teammate.domain.correction_review import AlignedReview, CorrectionReview, align
+from teachers_teammate.domain.proofreading.review import (
+    AlignedReview,
+    CorrectionReview,
+    align,
+)
 from teachers_teammate.domain.proofreading.word_diff import diff_opcodes, tokenize
 
 Edit = tuple[int, int, tuple[str, ...]]
@@ -65,7 +69,7 @@ def ordered_edits(source: str, other: str) -> tuple[Edit, ...]:
 
     The same changes as :func:`edits`, which is a set because the scoring only needs membership;
     a caller that wants to point at one change (a note that explains it) needs the order, which
-    is the order of the hunks :func:`~teachers_teammate.domain.correction_review.align` numbers.
+    is the order of the hunks :func:`~teachers_teammate.domain.proofreading.review.align` numbers.
     """
     source_tokens = tokenize(source)
     other_tokens = tokenize(other)

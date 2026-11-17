@@ -12,7 +12,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from teachers_teammate.domain.correction_review import CorrectionOutcome
+from teachers_teammate.domain.proofreading.result import CorrectionOutcome
 from teachers_teammate.infrastructure.pipeline import OCRPipeline, PipelineDependencies
 from teachers_teammate.infrastructure.reporting import FileDoneResult, ProgressCallbacks
 from teachers_teammate.infrastructure.stage_builder import StageBuilder

@@ -26,8 +26,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar, Literal, Protocol, runtime_checkable
 
-from .domain.correction_review import CorrectionOutcome, CorrectionReview
 from .domain.formatted_text import FormattedDocument, TextFormat
+from .domain.proofreading.result import CorrectionOutcome
+from .domain.proofreading.review import CorrectionReview
 
 if TYPE_CHECKING:
     from langchain_core.language_models import BaseChatModel
@@ -224,7 +225,7 @@ class Corrector(ABC):
                 to the model and keep intact.
 
         Returns:
-            A :class:`~.domain.correction_review.CorrectionOutcome`.
+            A :class:`~.domain.proofreading.result.CorrectionOutcome`.
         """
 
     def max_text_chars(

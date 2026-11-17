@@ -22,9 +22,9 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ..domain.correction_review import CorrectionReview
 from ..domain.data_location import STAGE_CORRECTION, STAGE_EVALUATION, SentStatus
 from ..domain.formatted_text import TextFormat
+from ..domain.proofreading.review import CorrectionReview
 from ..domain.stages import STAGE_ORDER
 from . import _user_text as txt
 from ._constants import (

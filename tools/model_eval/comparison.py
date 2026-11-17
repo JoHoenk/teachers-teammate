@@ -13,7 +13,11 @@ from collections.abc import Callable, Iterator, Sequence
 import time
 from typing import TYPE_CHECKING, Protocol
 
-from teachers_teammate.domain.correction_review import CorrectionReview, align
+from teachers_teammate.domain.proofreading.review import (
+    CorrectionReview,
+    align,
+    note_sentence,
+)
 
 from .answer_mode import DEFAULT_MODE, AnswerMode
 from .app_corrector import CorrectorFactory, pieces_of
@@ -36,7 +40,7 @@ from .results import (
 )
 
 if TYPE_CHECKING:
-    from teachers_teammate.domain.correction_review import AlignedReview
+    from teachers_teammate.domain.proofreading.review import AlignedReview
     from teachers_teammate.interfaces import Corrector
 
 
@@ -163,7 +167,7 @@ class WritingModelComparison:
             reference=record.reference,
             output=outcome.text,
             warning=outcome.warning or "",
-            notes=notes_of(outcome.review),
+            notes=notes_of(outcome.review, record.source, corrected),
             changes=changes_of(record.source, corrected, aligned),
             unclear=aligned.unclear_count if aligned is not None else 0,
             explained=explained.explained,
@@ -191,27 +195,31 @@ class WritingModelComparison:
         )
 
 
-def notes_of(review: CorrectionReview | None) -> tuple[dict, ...]:
+def notes_of(review: CorrectionReview | None, source: str, corrected: str) -> tuple[dict, ...]:
     """Return a review's notes as plain dicts, for the spot-check sheet.
 
     It turns a review into the dicts of :attr:`~.results.ResultRow.notes`, which is the runner's
-    work: the renderer only reads them.
+    work: the renderer only reads them.  One dict per edit, in text order, quoting the sentence
+    the edit belongs to as the corrected text reads it now (for every edit, spelling and
+    unexplained ones too: the sheet is where a reviewer checks exactly those).
+
+    Args:
+        review: The model's explanations, or ``None`` in corrections-only mode.
+        source: The text before proofreading, in plain text.
+        corrected: The text after proofreading, in plain text.
     """
     if review is None:
         return ()
+    aligned = align(source, corrected, review)
     return tuple(
-        note
-        for sentence in review.sentences
-        for note in (
-            {
-                "sentence": sentence.corrected,
-                "original": change.original,
-                "corrected": change.corrected,
-                "category": change.category,
-                "explanation": change.explanation,
-            }
-            for change in sentence.changes
-        )
+        {
+            "sentence": note_sentence(aligned, source, corrected, note),
+            "original": note.original,
+            "corrected": note.corrected,
+            "category": note.category,
+            "explanation": note.explanation,
+        }
+        for note in review.edits
     )
 
 
@@ -219,7 +227,8 @@ def changes_of(source: str, corrected: str, aligned: AlignedReview | None) -> tu
     """Return the model's changes with the note that explains each, in text order.
 
     The changes are the hunks of the word diff of *source* against *corrected*, the same list
-    :func:`~.correction_review.align` numbered, so one entry of *aligned* belongs to one change.
+    :func:`~teachers_teammate.domain.proofreading.review.align` numbered, so one entry of
+    *aligned* belongs to one change.
     A note that explains no change (an orphan) is appended with ``edit: None``, because the
     export has to keep it too: it is what "the model claimed an edit it did not make" looks like.
 

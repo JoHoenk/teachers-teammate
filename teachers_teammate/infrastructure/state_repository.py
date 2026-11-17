@@ -119,6 +119,10 @@ class DocumentState:
     # Empty for state written before the app kept more than one page: such a document has the
     # one page it had.
     page_images: list[str] = field(default_factory=list)
+    # The page as it was scanned, for every prepared page, in the same order; the first entry
+    # is ``original_img``.  Empty when preparation changed nothing, and for state written
+    # before the app kept more than one original.
+    original_images: list[str] = field(default_factory=list)
     # Preprocessing steps applied to produce ``preview_img``.  ``None`` means unknown
     # (state written before this field existed); ``[]`` means none were applied.
     preprocess_steps: list[str] | None = None
@@ -132,6 +136,11 @@ class DocumentState:
     def pages(self) -> tuple[str, ...]:
         """Return the stored pages in page order, falling back to the one page there is."""
         return tuple(self.page_images) or ((self.preview_img,) if self.preview_img else ())
+
+    @property
+    def originals(self) -> tuple[str, ...]:
+        """Return the stored original pages in page order, falling back to the one there is."""
+        return tuple(self.original_images) or ((self.original_img,) if self.original_img else ())
 
 
 @dataclass(frozen=True)
@@ -166,6 +175,11 @@ class DocumentStateView:
     page_images: tuple[str, ...] = ()
     """Every prepared page in page order (the first is ``preview_img``); one page when the
     document was recognized before the app kept all of them."""
+
+    original_images: tuple[str, ...] = ()
+    """The page as it was scanned, in the same order (the first is ``original_img``); one page
+    when the document was recognized before the app kept all of them, and empty when
+    preparation changed nothing."""
 
 
 @dataclass(frozen=True)
@@ -300,6 +314,7 @@ class StateRepository:
             correction_warning=state.correction_warning,
             sent=self._sent_statuses(state),
             page_images=state.pages,
+            original_images=state.originals,
         )
 
     @staticmethod
@@ -411,19 +426,24 @@ class StateRepository:
         preview_img: str,
         source_image: str,
         preview_config_hash: str,
-        original_img: str = "",
         preprocess_steps: Sequence[str] | None = None,
         page_images: Sequence[str] = (),
+        original_images: Sequence[str] = (),
     ) -> DocumentState:
-        """Persist preview artifact paths without changing downstream stage data."""
+        """Persist preview artifact paths without changing downstream stage data.
+
+        ``original_img`` is the first of *original_images*: the two cannot disagree.
+        """
+        originals = list(original_images)
         new_state = dataclasses.replace(
             state,
             preview_img=preview_img,
             source_image=source_image,
             preview_config_hash=preview_config_hash,
-            original_img=original_img,
+            original_img=originals[0] if originals else "",
             preprocess_steps=None if preprocess_steps is None else list(preprocess_steps),
             page_images=list(page_images),
+            original_images=originals,
         )
         self.save(input_file, new_state)
         return new_state
@@ -666,6 +686,7 @@ class StateRepository:
             original_img="",
             preprocess_steps=None,
             page_images=[],
+            original_images=[],
         )
         self.save(input_file, new_state)
         return new_state
@@ -697,6 +718,7 @@ class StateRepository:
                 original_img="",
                 preprocess_steps=None,
                 page_images=[],
+                original_images=[],
                 raw_text="",
                 raw_text_format="plain",
             )
@@ -765,12 +787,22 @@ class StateRepository:
             and all(Path(page).exists() for page in state.page_images)
             else []
         )
+        # The originals describe the preview too, and they are only worth listing when the
+        # first one is there: without it the document has the one original it had.
+        original_images = (
+            list(state.original_images)
+            if original_img
+            and state.original_images
+            and all(Path(page).exists() for page in state.original_images)
+            else []
+        )
         if (
             preview_img != state.preview_img
             or source_image != state.source_image
             or original_img != state.original_img
             or preprocess_steps != state.preprocess_steps
             or page_images != state.page_images
+            or original_images != state.original_images
         ):
             state = dataclasses.replace(
                 state,
@@ -779,6 +811,7 @@ class StateRepository:
                 original_img=original_img,
                 preprocess_steps=preprocess_steps,
                 page_images=page_images,
+                original_images=original_images,
             )
         return state
 

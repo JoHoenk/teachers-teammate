@@ -9,6 +9,7 @@ from unittest.mock import patch
 import pytest
 
 from teachers_teammate.infrastructure.input_providers import (
+    SCAN_DPI,
     ImageInputProvider,
     PdfInputProvider,
     TextInputProvider,
@@ -124,7 +125,7 @@ def test_pdf_provider_uses_embedded_text_for_text_only_pdf(tmp_path: Path) -> No
     """
     Given  a text-only PDF and a PdfInputProvider in auto mode
     When   load() is called
-    Then   a single text unit with the embedded text is returned and only page 1 is rendered
+    Then   a single text unit with the embedded text is returned and every page is rendered
     """
     pdf = write_text_pdf(tmp_path / "typed.pdf", [_LONG_TEXT, _LONG_TEXT.upper()])
     render_dir = tmp_path / "renders"
@@ -137,7 +138,79 @@ def test_pdf_provider_uses_embedded_text_for_text_only_pdf(tmp_path: Path) -> No
     assert text.startswith(f"Page 1:\n{_LONG_TEXT}")
     assert f"Page 2:\n{_LONG_TEXT.upper()}" in text
     assert payload.source_image is not None and payload.source_image.exists()
-    assert [p.name for p in render_dir.iterdir()] == ["typed_page0.png"]
+    assert [p.name for p in sorted(render_dir.iterdir())] == [
+        "typed_page0.png",
+        "typed_page1.png",
+    ]
+    assert payload.page_images == [render_dir / "typed_page0.png", render_dir / "typed_page1.png"]
+
+
+def test_pdf_provider_text_layer_renders_every_page_for_the_scan(tmp_path: Path) -> None:
+    """
+    Given  a three-page text-only PDF
+    When   load() is called in auto mode
+    Then   all three pages are rendered, in page order, and the first is the source image
+    """
+    pdf = write_text_pdf(tmp_path / "typed.pdf", [_LONG_TEXT] * 3)
+
+    payload = PdfInputProvider(tmp_dir=tmp_path, text_layer="auto").load(pdf)
+
+    assert [path.name for path in payload.page_images] == [
+        "typed_page0.png",
+        "typed_page1.png",
+        "typed_page2.png",
+    ]
+    assert all(path.exists() for path in payload.page_images)
+    assert payload.source_image == payload.page_images[0]
+
+
+def test_pdf_provider_text_layer_renders_the_scan_below_the_ocr_resolution(
+    tmp_path: Path,
+) -> None:
+    """
+    Given  a text-only PDF and a provider that renders pages for OCR at 300 DPI
+    When   load() is called in auto mode
+    Then   the pages of the scan are rendered at the lower scan resolution, not at 300 DPI
+    """
+    from PIL import Image  # noqa: PLC0415
+
+    pdf = write_text_pdf(tmp_path / "typed.pdf", [_LONG_TEXT])
+    scan = PdfInputProvider(tmp_dir=tmp_path / "a", text_layer="auto", pdf_dpi=300)
+    ocr = PdfInputProvider(tmp_dir=tmp_path / "b", text_layer="never", pdf_dpi=300)
+    (tmp_path / "a").mkdir()
+    (tmp_path / "b").mkdir()
+
+    scan_page = scan.load(pdf).page_images[0]
+    ocr_page = ocr.load(pdf).units[0].image_path
+    assert ocr_page is not None
+
+    with Image.open(scan_page) as small, Image.open(ocr_page) as large:
+        assert small.width == pytest.approx(large.width * SCAN_DPI / 300, abs=2)
+
+
+def test_pdf_provider_text_layer_keeps_the_pages_rendered_before_a_broken_one(
+    tmp_path: Path,
+) -> None:
+    """
+    Given  a three-page text-only PDF whose second page cannot be rendered
+    When   load() is called in auto mode
+    Then   the pages rendered so far are kept and the text is still returned
+    """
+    pdf = write_text_pdf(tmp_path / "typed.pdf", [_LONG_TEXT] * 3)
+    provider = PdfInputProvider(tmp_dir=tmp_path, text_layer="auto")
+    render_page = provider._render_page  # the failing page is the point
+
+    def fail_on_page_1(pdf_doc: Any, page_num: int, file_path: Path, **kwargs: Any) -> Path:
+        if page_num == 1:
+            raise RuntimeError("page 2 is broken")
+        return render_page(pdf_doc, page_num, file_path, **kwargs)
+
+    with patch.object(provider, "_render_page", side_effect=fail_on_page_1):
+        payload = provider.load(pdf)
+
+    assert [path.name for path in payload.page_images] == ["typed_page0.png", "typed_page2.png"]
+    assert payload.source_image == payload.page_images[0]
+    assert payload.units[0].kind == "text"
 
 
 def test_pdf_provider_single_page_text_has_no_page_label(tmp_path: Path) -> None:

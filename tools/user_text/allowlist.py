@@ -269,27 +269,6 @@ ALLOWED: dict[str, frozenset[str]] = {
             "",
         }
     ),
-    "teachers_teammate/gui/_preview_panel.py": frozenset(
-        {
-            "A+",
-            "A-",
-            "Content Review",
-            "Ctrl+B bold · Ctrl+I italic · Ctrl+U underline · Ctrl+Shift+X crossed out · Ctrl+Shift+= inserted above the line",
-            "Extracted Text",
-            "Make text larger (Ctrl + scroll up)",
-            "Make text smaller (Ctrl + scroll down)",
-            "Original",
-            "Proofread Text",
-            "Scroll: zoom · Drag: pan",
-            "Show the page as scanned, before it was prepared",
-            "Show the stored text with its formatting marks (Markdown) instead of the formatted view. Edits made there are saved as written.",
-            "Source",
-            "f'Run {next_stage} on this document again.'",
-            "f'{new_pt} pt'",
-            "f'{self._base_font_pt} pt'",
-            "f'▶ Run {next_stage.capitalize()}'",
-        }
-    ),
     "teachers_teammate/gui/_prompt_editor.py": frozenset(
         {
             "",

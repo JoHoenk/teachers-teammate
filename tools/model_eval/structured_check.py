@@ -278,8 +278,8 @@ def placeable(answer_json: str, source: str) -> tuple[int, int, str] | None:
 
 def _placed(answer, source: str) -> tuple[int, int, str]:
     """Return ``(placed, total, corrected)`` for a validated *answer*."""
-    from teachers_teammate.domain.correction_review import splice  # noqa: PLC0415
     from tools.model_eval.one_request.correction_schema import to_review  # noqa: PLC0415
+    from tools.model_eval.one_request.sentence_review import splice  # noqa: PLC0415
 
     review = to_review(answer)
     total = len(review.sentences)

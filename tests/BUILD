@@ -37,7 +37,9 @@ filegroup(
         "gui/test_gui_setup_assistant.py",
         "gui/test_gui_setup_flow.py",
         "gui/test_gui_setup_pages.py",
+        "gui/test_gui_side_panel.py",
         "gui/test_gui_speed_panel.py",
+        "gui/test_gui_text_views.py",
         "gui/test_gui_widgets.py",
         "gui/test_hardware_profile_selector.py",
         "gui/test_model_wording.py",
@@ -339,12 +341,12 @@ py_test(
 )
 
 py_test(
-    name = "test_correction_review",
+    name = "test_sentence_review",
     size = "small",
-    srcs = _COMMON_SRCS + ["unit/test_correction_review.py"],
-    args = ["unit/test_correction_review.py"],
+    srcs = _COMMON_SRCS + ["tools/test_sentence_review.py"],
+    args = ["tools/test_sentence_review.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS,
+    deps = _TOOL_DEPS,
 )
 
 py_test(
@@ -433,6 +435,33 @@ py_test(
     size = "small",
     srcs = _COMMON_SRCS + ["unit/test_offset_map.py"],
     args = ["unit/test_offset_map.py"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS,
+)
+
+py_test(
+    name = "test_check_items",
+    size = "small",
+    srcs = _COMMON_SRCS + ["unit/test_check_items.py"],
+    args = ["unit/test_check_items.py"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS,
+)
+
+py_test(
+    name = "test_check_document",
+    size = "small",
+    srcs = _COMMON_SRCS + ["unit/test_check_document.py"],
+    args = ["unit/test_check_document.py"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS + _FORMAT_DEPS,
+)
+
+py_test(
+    name = "test_teacher_work",
+    size = "small",
+    srcs = _COMMON_SRCS + ["unit/test_teacher_work.py"],
+    args = ["unit/test_teacher_work.py"],
     main = "run_test.py",
     deps = _COMMON_DEPS,
 )
@@ -1838,6 +1867,7 @@ test_suite(
         ":test_model_eval_viewer_schema",
         ":test_no_plan_references",
         ":test_no_retired_engines",
+        ":test_no_sentence_review_in_the_app",
         ":test_ocr_page_tokens",
         ":test_prepare_gec_testset",
         ":test_verify_model_catalog_cli",
@@ -2137,19 +2167,64 @@ py_test(
 )
 
 py_test(
-    name = "test_gui_formatted_text",
+    name = "test_gui_plain_map",
     size = "small",
-    srcs = _COMMON_SRCS + ["gui/test_gui_formatted_text.py"],
-    args = ["gui/test_gui_formatted_text.py"],
+    srcs = _COMMON_SRCS + ["gui/test_gui_plain_map.py"],
+    args = ["gui/test_gui_plain_map.py"],
     main = "run_test.py",
     deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_lib"],
 )
 
 py_test(
-    name = "test_gui_review_views",
+    name = "test_gui_check_style",
     size = "small",
-    srcs = _COMMON_SRCS + ["gui/test_gui_review_views.py"],
-    args = ["gui/test_gui_review_views.py"],
+    srcs = _COMMON_SRCS + ["gui/test_gui_check_style.py"],
+    args = ["gui/test_gui_check_style.py"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_lib"],
+)
+
+py_test(
+    name = "test_gui_text_views",
+    size = "small",
+    srcs = _COMMON_SRCS + ["gui/test_gui_text_views.py"],
+    args = ["gui/test_gui_text_views.py"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_lib"],
+)
+
+py_test(
+    name = "test_gui_check_body",
+    size = "small",
+    srcs = _COMMON_SRCS + ["gui/test_gui_check_body.py"],
+    args = ["gui/test_gui_check_body.py"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_lib"],
+)
+
+py_test(
+    name = "test_gui_side_panel",
+    size = "small",
+    srcs = _COMMON_SRCS + ["gui/test_gui_side_panel.py"],
+    args = ["gui/test_gui_side_panel.py"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_lib"],
+)
+
+py_test(
+    name = "test_gui_scan_view",
+    size = "small",
+    srcs = _COMMON_SRCS + ["gui/test_gui_scan_view.py"],
+    args = ["gui/test_gui_scan_view.py"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_lib"],
+)
+
+py_test(
+    name = "test_gui_formatted_text",
+    size = "small",
+    srcs = _COMMON_SRCS + ["gui/test_gui_formatted_text.py"],
+    args = ["gui/test_gui_formatted_text.py"],
     main = "run_test.py",
     deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_lib"],
 )
@@ -2478,6 +2553,16 @@ py_test(
 )
 
 py_test(
+    name = "test_no_sentence_review_in_the_app",
+    size = "small",
+    srcs = _COMMON_SRCS + ["tools/test_no_sentence_review_in_the_app.py"],
+    args = ["tools/test_no_sentence_review_in_the_app.py"],
+    data = ["//teachers_teammate:all_sources"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS,
+)
+
+py_test(
     name = "test_preprocessing_auto",
     size = "small",
     srcs = _COMMON_SRCS + [
@@ -2531,6 +2616,8 @@ test_suite(
         ":test_benchmark_service",
         ":test_cache_service",
         ":test_check_desktop_entry",
+        ":test_check_document",
+        ":test_check_items",
         ":test_check_linux_bundle",
         ":test_check_macos_bundle",
         ":test_check_pins",
@@ -2545,7 +2632,6 @@ test_suite(
         ":test_correction",
         ":test_correction_presets",
         ":test_correction_prompts_steps",
-        ":test_correction_review",
         ":test_data_location",
         ":test_diagnostics",
         ":test_docx_builder",
@@ -2608,6 +2694,7 @@ test_suite(
         ":test_run_stats",
         ":test_run_summary",
         ":test_sent_text",
+        ":test_sentence_review",
         ":test_sentences",
         ":test_service",
         ":test_setup_plan",
@@ -2617,6 +2704,7 @@ test_suite(
         ":test_state_repository",
         ":test_step_runner",
         ":test_storage_policy",
+        ":test_teacher_work",
         ":test_text_chunks",
         ":test_text_loss",
         ":test_texts_types",
@@ -2641,7 +2729,9 @@ test_suite(
         ":test_gui_anonymizer_widget",
         ":test_gui_bootstrap",
         ":test_gui_chart_widget",
+        ":test_gui_check_body",
         ":test_gui_check_page",
+        ":test_gui_check_style",
         ":test_gui_config_panel",
         ":test_gui_dialogs",
         ":test_gui_formatted_text",
@@ -2649,20 +2739,23 @@ test_suite(
         ":test_gui_install_round",
         ":test_gui_lifecycle",
         ":test_gui_main_window",
+        ":test_gui_plain_map",
         ":test_gui_privacy_settings",
         ":test_gui_privacy_view",
         ":test_gui_prompt_dialog",
         ":test_gui_readiness",
         ":test_gui_results_table",
-        ":test_gui_review_views",
         ":test_gui_run_status",
+        ":test_gui_scan_view",
         ":test_gui_settings_pages",
         ":test_gui_settings_window",
         ":test_gui_setup_assistant",
         ":test_gui_setup_flow",
         ":test_gui_setup_pages",
         ":test_gui_setup_walkthrough",
+        ":test_gui_side_panel",
         ":test_gui_speed_panel",
+        ":test_gui_text_views",
         ":test_gui_update_check",
         ":test_gui_what_is_sent",
         ":test_gui_widgets",

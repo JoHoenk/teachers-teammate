@@ -51,13 +51,19 @@ def sample_multipage_pdf(tmp_path: Path, sample_png: Path):  # pylint: disable=r
     """A factory for a scanned PDF of *pages* pages, each one the sample PNG.
 
     A scanned PDF has no text layer, so every page is rendered and prepared — the case in
-    which the app keeps more than one page image.
+    which the app keeps more than one page image.  With *shadow* the pages are lit from the
+    right, so the automatic preparation has something to do on each of them.
     """
     from PIL import Image  # noqa: PLC0415
 
-    def write(name: str = "sample.pdf", *, pages: int = 3) -> Path:
+    def write(name: str = "sample.pdf", *, pages: int = 3, shadow: bool = False) -> Path:
         pdf_path = tmp_path / name
         page = Image.open(sample_png).convert("RGB")
+        if shadow:
+            import numpy as np  # noqa: PLC0415
+
+            gradient = np.linspace(0.4, 1.0, page.width)[None, :, None]
+            page = Image.fromarray((np.asarray(page, dtype=np.float32) * gradient).astype(np.uint8))
         page.save(
             str(pdf_path),
             "PDF",

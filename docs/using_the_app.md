@@ -5,7 +5,7 @@
 The app has two tabs under the menu bar, plus a separate **Settings** window:
 
 - **Documents** — the work: the workflow panel on the left, the results list and the log on the right.
-- **Check** — one document at a time, full width: the scan next to its text, with the file name, its position in the queue and the arrows to move through the documents at the top. It is greyed out until at least one document has a result. Double-click a row in the results list (or press Enter on it) to open it here; **Esc** or **Ctrl+1** goes back to **Documents**, **Ctrl+2** returns to the document you had open. The **Copy** menu in the header puts the text of the open document on the clipboard — what was read, or the corrected text, each also with names hidden when the Privacy add-on is installed — and its two **Save** entries write what was read as a text file (also with names hidden).
+- **Check** — one document at a time, full width: the scan on the left, one text in the middle, the corrections in a list on the right, with the file name, its position in the queue and the arrows to move through the documents at the top. It is greyed out until at least one document has a result. Double-click a row in the results list (or press Enter on it) to open it here; **Esc** or **Ctrl+1** goes back to **Documents**, **Ctrl+2** returns to the document you had open. The **Copy** menu in the header puts the text of the open document on the clipboard — what was read, or the corrected text, each also with names hidden when the Privacy add-on is installed — and its two **Save** entries write what was read as a text file (also with names hidden). The **⋯** menu holds **Show Markdown source** (the stored text of the view in front, read-only) and **Proofread again** for this document. See *Reading a document in the Check tab* below.
 
 The **Documents** tab holds:
 
@@ -99,9 +99,54 @@ A stopped run is not an error. The document that was cut short shows **stopped**
 
 **Closing the window during a run** asks first. If you choose **Stop and close**, the run stops at once and the window closes right away; it does not wait for the run to finish. Finished documents are kept, and the document that was being processed is picked up again next time.
 
-### Editing the result by hand
+### Reading a document in the Check tab
 
-After processing, double-click any row in the results list to open it in the **Check** tab. The text shown next to the scan is fully editable — click into it and type to correct anything. Your changes are saved automatically. You do not need to re-run the file. The arrows in the header move to the previous and next document that has a result, in the order of the list, so you can work through a whole class set without going back to **Documents**.
+After processing, double-click any row in the results list to open it in the **Check** tab. The
+arrows in the header move to the previous and next document that has a result, in the order of
+the list, so you can work through a whole class set without going back to **Documents**.
+
+**One text, three views.** The switch above the text chooses what you read:
+
+- **What was read** — the transcription, as the reader produced it. This is where you fix a
+  reading mistake.
+- **With corrections** — the same text with the proofreading in it: the student's words struck
+  through in grey, the corrected ones marked. Read-only; it is the view for reading, not for
+  typing.
+- **Final text** — the corrected text alone, with no marks. This is what is exported and what
+  the content review reads, and it is where you change a correction.
+
+A document without a proofreading has only **What was read**; the other two views are greyed
+out. A document that was only recognised (see *Switching text recognition off*) shows no switch
+at all.
+
+**The scan** on the left shows every stored page of the document, one below the other, fitted to
+the width of the pane. Ctrl + mouse wheel zooms, and a double-click fits the page to the window
+again. **Original** swaps every page for the page as it was scanned, before the image
+preparation, and says *Showing the original pages*; a page whose original was not kept stays as
+it is. In a narrow window the scan folds away to a strip with **Show scan**; the text and the
+list keep their room.
+
+**The list** on the right numbers the same things the text marks, in the order they appear. Pick
+a row and the text scrolls to it and marks it; click a mark in the text and its row is picked.
+The card above the list says what the chosen item is and offers what you can do with it — see
+*Reading the proofreading notes* below. The line under the list counts the items: *7 corrections
+· 2 unclear*.
+
+**Typing.** Your changes are saved automatically after a short pause, and you do not need to
+re-run the file. **Ctrl+Z** undoes them, one action at a time — a typed word, or a whole
+**Take out** from the card. The text size is set with Ctrl + mouse wheel and is remembered for
+the next document and the next start.
+
+**While a run works on a document** it is read-only: the banner says *Waiting for this run*
+until the run reaches it, then *Being proofread — you can edit it when it is done*. Documents
+the run does not touch, and documents it has already finished, stay editable.
+
+**Fixing what was read.** A proofreading is made from the transcription, so changing the
+transcription throws the corrections away. The first time you type in **What was read** while
+the document has a proofreading, a banner says so and offers **Edit anyway**; it asks once per
+document. After the first stored change the proofreading is gone, the tab falls back to **What
+was read**, and the header offers **Proofread this document** to make a new one from the text
+you fixed.
 
 ### Re-running a specific step
 
@@ -111,7 +156,7 @@ If you want to redo just one part — for example, run proofreading again with a
 
 The app stores the result for every file it has processed. If you change only the proofreading settings and click **Run Selected** again, the app reuses the text it already read — it does not read your documents a second time. If you change the reading method or the image preparation setting, any affected files are re-read from scratch automatically.
 
-Next to the text, the app keeps every prepared page of a document as an image, not only the first one. That takes roughly one to three megabytes per page of a scan in the app's cache folder, so a class set of four-page essays can take a few hundred megabytes. Deleting the cache costs nothing but a re-run, which makes the images again. The **Check** tab still shows the first page; documents that were read before this version keep only that page until they are read again, and a page file that has gone missing is not made again by itself.
+Next to the text, the app keeps every prepared page of a document as an image, not only the first one, and — when the image preparation changed the page — the page as it was scanned. That takes roughly one to three megabytes per prepared page and three to eight per original page of a scan in the app's cache folder, so a class set of four-page essays can take a few hundred megabytes. Deleting the cache costs nothing but a re-run, which makes the images again. The **Check** tab shows all of them; documents that were read before this version keep only the first page until they are read again, and a page file that has gone missing is not made again by itself.
 
 ---
 
@@ -294,12 +339,12 @@ one per step, so you can compare what went out with what the next run would send
 
 Hand the screen to a colleague, or show a proofread text to the class, without the names of
 the children in it: **Hide personal information in the texts shown in this app** replaces every
-name the anonymizer knows with its stand-in — `[PERSON_1]`, `[EMAIL_1]` and so on — in the
-**Extracted Text**, **Proofread Text**, **Changes**, **Content Review** and the review notes
-at once. The same stand-ins appear in every tab, so a note that talks about `[PERSON_1]` is
-about the same child as in the text. Turn it on under **Settings → Privacy… → Personal info: detection → Showing texts → Hide
-personal information in the texts shown in this app**; the eye button in the header above the texts does the same and follows
-that checkbox.
+name the anonymizer knows with its stand-in — `[PERSON_1]`, `[EMAIL_1]` and so on — in all
+three views of the **Check** tab and in the list of corrections at once. The same stand-ins
+appear everywhere, so a note that talks about `[PERSON_1]` is about the same child as in the
+text. Turn it on under **Settings → Privacy… → Personal info: detection → Showing texts → Hide
+personal information in the texts shown in this app**; the **Hide names** box in the header of
+the **Check** tab does the same and follows that checkbox.
 
 This works like *Remove personal information* (see *Protecting privacy* above): the extracted
 text is anonymized with the current detection settings and models the first time you switch
@@ -309,21 +354,21 @@ and forth costs nothing. The setting is **on by default**, so a fresh installati
 never shows names on screen until you ask for them; your choice is remembered for the next
 start.
 
-While it is on, the **Extracted Text** and **Proofread Text** tabs cannot be edited — an edit
-would be saved with the stand-ins instead of the names. The note above the texts says
+While it is on, the texts cannot be edited and the card's buttons are greyed out — an edit
+would be saved with the stand-ins instead of the names. The note above the text says
 **Personal information is hidden, so the texts can't be edited. Click here to show it and
-edit.** Clicking it switches the setting off (like the eye button), so you can
+edit.** Clicking it switches the setting off (like the **Hide names** box), so you can
 work on the text; switch it on again afterwards. The choice is remembered, so the names stay
 visible at the next start until you hide them again. Word documents, text files and the anonymized text file are not affected: only the
-preview is masked, and the original names are never shown in a tooltip.
+texts on screen are masked, and the original names are never shown in a tooltip.
 
 Hiding needs the **Privacy add-on** and a detection model for the document language. Without
 them the checkbox stays greyed out; its tooltip points at **Settings → Add-ons**.
 
 One limitation: a name the proofreader spelled differently — *Meier* corrected to *Maier* —
-is not found in the proofread text or the changes, because the stand-ins are matched against
-the spelling of the extracted text. The extracted text, the changes that do not touch a name,
-and everything the anonymizer did recognize are hidden as expected.
+is not found in the corrected text or the list, because the stand-ins are matched against
+the spelling of the extracted text. The extracted text, the corrections that do not touch a
+name, and everything the anonymizer did recognize are hidden as expected.
 
 ---
 
@@ -388,39 +433,43 @@ A model can only read a limited amount of text at once (about 10,000 characters 
 Proofreading does not just return a corrected text: it explains every change and lists the
 passages that it could not make sense of, even when they are grammatically correct.
 
-Open a document and switch to the **Changes** tab. Its title carries the counts —
-`Changes (7 · 2 ?)` means 7 corrections in the list and 2 unclear passages. The same
-counts appear in the status line below the text, in the filter buttons, and on the command
-line. A correction of several words (`his friend → her friends`) can be marked in more than
-one place; it has one explanation, shown at each of them.
+Open a document and switch to **With corrections**. The list on the right numbers the same
+things the text marks, in the order they appear, and the line under it counts them: *7
+corrections · 2 unclear*. The command line and the log count the same way, one line per
+document.
 
-The left half is the text with the corrections marked, as before. The marked words are
-links: hovering over a change shows the reason, and clicking it marks the change in strong
-yellow and marks the matching note on the right. Clicking the number of a note on the right
-does the same the other way round and scrolls the text to the change. Passages highlighted in
-orange are unclear expressions; they link to their note the same way. A difference in line
-breaks or spaces alone is not counted as a change.
+Pick a row and the text scrolls to it and marks it in strong yellow; click a mark in the text
+and its row is picked. A correction of several words (`his friend → her friends`) can be
+marked in more than one place; it is one row with one explanation. A difference in line breaks
+or spaces alone is not counted as a change.
 
-The right half lists the notes. Use the filter at the top to see **All**, only the
-**Changes**, or only the **Unclear** items:
+The card above the list says what the chosen item is and offers what you can do with it:
 
-- A **change** shows what was replaced (`have → has`), its kind (*Grammar*,
-  *Word choice*, *Word order*), and one sentence saying why. **Spelling and punctuation
-  corrections** explain themselves, so they are not listed one by one: the text still marks
-  them, and one line at the end of the list (`▸ 5 spelling and punctuation corrections`)
-  opens them. They are not counted in the title either. If you edit the
-  text yourself in the **Proofread Text** tab, your own edits appear as `your change`, and a
-  correction you undo moves to a section **Not in the text** at the end of the list (click
-  its title to open it). A correction the AI made without giving a reason reads
-  `no explanation`.
-- An **unclear expression** has three parts: the original wording, why it is unclear, and a
-  recommended version. The **Unclear** filter shows them as a three-column table. When the
-  intended meaning cannot be told from the text, the recommendation is labelled
-  **Suggestion** — treat it as one option, not as a correction.
+- A **correction** shows what was replaced (`have → has`), its kind (*Grammar*, *Word
+  choice*, *Word order*) and one sentence saying why. **Take out** puts the student's words
+  back and takes the correction out of the text; **Change** goes to **Final text** and selects
+  the words, so you can type your own version. A correction the AI made without giving a
+  reason says so and offers the same two buttons.
+- **Spelling and punctuation corrections** explain themselves, so they are not listed one by
+  one: one row says *9 spelling, punctuation* and opens into its items. **Take out all** puts
+  the student's words back for every one of them.
+- An **unclear expression** shows the words, why they are unclear, and a recommended version.
+  When the intended meaning cannot be told from the text, the recommendation is labelled
+  **Suggestion** — treat it as one option, not as a correction — and **Use suggestion** writes
+  it into the text.
+- A correction you took out moves to the end of the list as **taken out**, with **Put back**.
+- A change you made yourself in **Final text** appears as `your change`, with **Take out**.
+- A correction you edited by hand keeps its explanation and says *you changed this*.
 
-The **Proofread Text** tab stays clean: it holds only the corrected text, no markers, so you
-can keep editing it and export it. The results list shows a small `?2` badge next to files
-that contain unclear expressions.
+Every one of these is one edit of the text, so **Ctrl+Z** undoes it and the list follows.
+
+The **Final text** view stays clean: it holds only the corrected text, no marks, so you can
+keep editing it and export it. The results list shows a small `?2` badge next to files that
+contain unclear expressions.
+
+A **Content review** section at the end of the list shows the report for this document, if one
+was made. It is read-only; **Run Content Review** in the results list's right-click menu makes
+one.
 
 Two settings belong to the review. The **Level** dropdown in step 2, next to the language (A1–C2,
 default B2) tells the AI how strictly to correct: at B2 it fixes real errors and leaves a
@@ -433,13 +482,12 @@ If you switch on **Corrections only (faster)**, proofreading returns the correct
 without explanations and without the unclear list — faster, and it works with every model.
 A full proofreading asks the model three times: once for the corrected text, once for the
 explanations and once for the unclear expressions. **Corrections only** sends the first request
-alone, so it is about three times faster and the time estimate in the panel shows it before you
-start. Every model is asked for explanations unless you tick **Corrections only**; models the app
-has checked show `explanations ✓`. When a model cannot answer the explanation or the unclear
-request (models without the `explanations ✓` badge are more likely to), the corrected text is
-kept and a short banner above it says which part is missing — the file is never lost. With an
-older Ollama (before version 0.5) the app also uses corrections only and tells you that updating
-Ollama gives you the explanations.
+alone, so it is about three times faster. Every model is asked for explanations unless you tick
+**Corrections only**; models the app has checked show `explanations ✓`. When a model cannot
+answer the explanation or the unclear request (models without the `explanations ✓` badge are
+more likely to), the corrected text is kept and a short banner above it says which part is
+missing — the file is never lost. With an older Ollama (before version 0.5) the app also uses
+corrections only and tells you that updating Ollama gives you the explanations.
 
 ### Notes for the AI
 

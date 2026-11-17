@@ -195,7 +195,7 @@ def test_cache_hit_restoring_preview_keeps_recorded_original_and_steps(tmp_path:
         file,
         ctx,
         source_image,
-        original_path=tmp_path / "doc_original.png",
+        original_paths=[tmp_path / "doc_original.png"],
         preprocess_steps=["grayscale"],
     )
 
@@ -1514,8 +1514,12 @@ def _image_returns(
     tmp_path: Path, steps: list[str], pages: int = 1, ocr_pages: list[str] | None = None
 ) -> _StubReturns:
     page_paths = [tmp_path / f"img{i}.png" for i in range(pages)]
+    raw = tmp_path / "raw.png"
+    originals = [raw, *(tmp_path / f"raw{i}.png" for i in range(1, pages))]
     return _StubReturns(
-        preprocess_return=(page_paths, steps, tmp_path / "raw.png", None),
+        preprocess_return=PreparedInput(
+            page_paths, steps, raw, None, None, None, (), tuple(originals)
+        ),
         ocr_return=(ocr_pages or ["text"] * pages, None),
     )
 
@@ -1675,7 +1679,7 @@ def test_process_persists_original_when_preprocessing_changed_the_page(tmp_path:
     """
     Given  an image whose raw page exists and differs from the preprocessed output
     When   process() is called with applied steps
-    Then   persist_preview_artifact receives the raw page as original_path and the steps
+    Then   persist_preview_artifact receives the raw page as original_paths and the steps
     """
     raw = tmp_path / "raw.png"
     raw.write_bytes(b"raw")
@@ -1686,7 +1690,7 @@ def test_process_persists_original_when_preprocessing_changed_the_page(tmp_path:
     fp.process(tmp_path / "doc.png")
 
     kwargs = cache_svc.persist_preview_artifact.call_args.kwargs
-    assert kwargs["original_path"] == raw
+    assert kwargs["original_paths"] == (raw,)
     assert kwargs["preprocess_steps"] == ["grayscale", "deskew"]
 
 
@@ -1702,8 +1706,28 @@ def test_process_keeps_no_original_when_no_steps_applied(tmp_path: Path) -> None
     fp.process(tmp_path / "doc.png")
 
     kwargs = cache_svc.persist_preview_artifact.call_args.kwargs
-    assert kwargs["original_path"] is None
+    assert kwargs["original_paths"] == ()
     assert kwargs["preprocess_steps"] == []
+
+
+def test_process_stores_the_pages_of_a_text_layer_pdf(tmp_path: Path) -> None:
+    """
+    Given  a PDF read through its text layer, whose pages are rendered but not OCR'd
+    When   process() is called
+    Then   persist_preview_artifact receives every rendered page for the scan
+    """
+    pages = [tmp_path / f"typed_page{num}.png" for num in range(3)]
+    for page in pages:
+        page.write_bytes(b"png")
+    prepared = PreparedInput([], [], pages[0], "typed text", "pdf_text_layer", None, tuple(pages))
+    fp, cache_svc, *_ = _make_processor(tmp_path, returns=_StubReturns(preprocess_return=prepared))
+
+    fp.process(tmp_path / "typed.pdf")
+
+    persist_call = cache_svc.persist_preview_artifact.call_args
+    assert persist_call.args[2] == pages[0]
+    assert persist_call.kwargs["pages"] == tuple(pages)
+    assert persist_call.kwargs["preprocess_steps"] is None
 
 
 # ── Text notation (plain / markdown) ──────────────────────────────────────

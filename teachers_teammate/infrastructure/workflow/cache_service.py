@@ -312,6 +312,7 @@ class CacheReconciliationService:
         old_source_image = state.source_image
         old_original_img = state.original_img
         old_page_images = state.page_images
+        old_original_images = state.original_images
 
         state = self._repo.reconcile_runtime_config(
             file,
@@ -330,7 +331,11 @@ class CacheReconciliationService:
         # If reconciliation cleared the preview artifacts, delete the actual files.
         if old_preview_img and not state.preview_img:
             self._artifacts.delete_preview_artifacts(
-                old_preview_img, old_source_image, old_original_img, old_page_images
+                old_preview_img,
+                old_source_image,
+                old_original_img,
+                old_page_images,
+                old_original_images,
             )
 
         return CacheContext(
@@ -349,15 +354,16 @@ class CacheReconciliationService:
         ctx: CacheContext,
         source_path: Path,
         *,
-        original_path: Path | None = None,
+        original_paths: Sequence[Path] = (),
         preprocess_steps: Sequence[str] | None = None,
         pages: Sequence[Path] = (),
     ) -> tuple[str, CacheContext]:
         """Copy *source_path* to the stable artifact location; return (preview_img, updated_ctx).
 
-        *original_path* is the un-preprocessed page; when given it is stored alongside the
-        preview so the GUI can toggle between both.  *preprocess_steps* records which steps
-        produced the preview (``None`` = unknown, ``[]`` = none applied).
+        *original_paths* are the pages as they were scanned, in the order of *pages*; when
+        given they are stored alongside the preview so the GUI can toggle between both.
+        *preprocess_steps* records which steps produced the preview (``None`` = unknown,
+        ``[]`` = none applied).
 
         *pages* are all prepared pages of the document in page order; page 1 is
         *source_path*.  Without it only that one page is stored.
@@ -372,18 +378,20 @@ class CacheReconciliationService:
                 stem=document_stem(file), source_path=source_path
             )
             preview_img = str(stable)
-        original_img = ""
-        if original_path is not None:
-            # The original is only for the GUI comparison toggle: never fail the file over it.
+        original_images: list[str] = []
+        if original_paths:
+            # The originals are only for the GUI comparison toggle: never fail the file over
+            # one of them.
             try:
-                original_img = str(
-                    self._artifacts.persist_original_image(
-                        stem=document_stem(file), source_path=original_path
+                original_images = [
+                    str(page)
+                    for page in self._artifacts.persist_original_images(
+                        stem=document_stem(file), sources=original_paths
                     )
-                )
+                ]
             except OSError:
-                original_img = ""
-        if not original_img:
+                original_images = []
+        if not original_images:
             self._artifacts.prune_original_images(document_stem(file))
         new_state = self._repo.record_preview_artifact(
             file,
@@ -391,9 +399,9 @@ class CacheReconciliationService:
             preview_img=preview_img,
             source_image=preview_img,
             preview_config_hash=ctx.preview_config_hash,
-            original_img=original_img,
             preprocess_steps=preprocess_steps,
             page_images=page_images,
+            original_images=original_images,
         )
         return preview_img, dataclasses.replace(ctx, state=new_state)
 

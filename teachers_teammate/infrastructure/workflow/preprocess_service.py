@@ -24,6 +24,18 @@ class PreparedInput(NamedTuple):
     text_origin: TextOrigin | None
     text_layer_note: str | None = None
     """Why a PDF's text layer was not used and OCR runs instead; ``None`` otherwise."""
+    page_images: tuple[Path, ...] = ()
+    """Every page rendered for the scan, in page order, when the units are not images.
+
+    A PDF read through its text layer has no image units, but its pages are what the teacher
+    compares the text with.  Empty when the units are the pages themselves.
+    """
+    original_pages: tuple[Path, ...] = ()
+    """Each image unit as it was loaded, in the order of ``ocr_inputs``, before preparation.
+
+    The teacher compares the text with the page as it was scanned, so the app keeps it next to
+    the prepared page.  Empty when the input has no image units.
+    """
 
 
 class PreprocessService:
@@ -67,6 +79,7 @@ class PreprocessService:
             raise RecognitionSwitchedOffError(file.name)
 
         preprocessed: list[Path] = []
+        originals: list[Path] = []
         steps: list[str] = []
         text_parts: list[str] = []
         for unit in payload.units:
@@ -77,6 +90,7 @@ class PreprocessService:
                     )
                 proc_path, page_steps = self._preprocessor.preprocess(unit.image_path)
                 preprocessed.append(proc_path)
+                originals.append(unit.image_path)
                 if not steps:
                     steps = page_steps
             elif unit.kind == "text":
@@ -99,4 +113,6 @@ class PreprocessService:
             raw_text_hint,
             payload.text_origin,
             payload.text_layer_note,
+            tuple(payload.page_images),
+            tuple(originals),
         )

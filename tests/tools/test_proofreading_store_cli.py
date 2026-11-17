@@ -10,7 +10,7 @@ import shutil
 
 import pytest
 
-from teachers_teammate.domain.correction_review import ChangeNote
+from tools.model_eval.one_request.sentence_review import ChangeNote
 from tests.tools import gate_fixtures as fixtures
 from tests.tools import invented_corpus
 from tests.tools import store_workspace

@@ -37,7 +37,6 @@ if TYPE_CHECKING:
 
 from teachers_teammate.domain.context_budget import REVIEW_ANSWER_FACTOR, ContextBudget
 from teachers_teammate.domain.correction_policy import CUT_OFF_TRIES, normalize_output_mode
-from teachers_teammate.domain.correction_review import splice
 from teachers_teammate.domain.formatted_text import TextFormat
 from teachers_teammate.domain.model_catalog import DEFAULT_REQUEST_PROFILE, RequestProfile
 from teachers_teammate.domain.notation import with_notation_hint
@@ -53,6 +52,7 @@ from teachers_teammate.infrastructure.proofreading.port import (
 )
 from teachers_teammate.infrastructure.proofreading.runner import StepRunner
 from teachers_teammate.interfaces import Corrector
+from tools.model_eval.one_request.sentence_review import splice
 
 from .answer_format import resolve_format
 from .correction_schema import (

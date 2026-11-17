@@ -79,11 +79,23 @@ def mask(text: str, mapping: PlaceholderMap) -> str:
     starting with ``+``, a house number ending in ``.``) are still matched as a whole.
 
     A name the proofreader spelled differently is not found; the caller says so in the help
-    text rather than guess.
+    text rather than guess.  This is :func:`mask_with_offsets` without the offsets, so a text
+    masked here is the same text whose offsets that function carries over.
+    """
+    return mask_with_offsets(text, mapping)[0]
+
+
+def mask_with_offsets(text: str, mapping: PlaceholderMap) -> tuple[str, OffsetMap]:
+    """Replace the original values by their placeholders, and say where each one landed.
+
+    The text :func:`mask` returns, in one pass over the originals, together with the
+    :class:`~.offset_map.OffsetMap` that carries a position of *text* over to the masked one.
+    A caller that holds offsets into *text* (a review anchored on the real text) needs both: the
+    masked words, and where they now stand.
     """
     pairs = [(placeholder, original) for placeholder, original in mapping.items() if original]
     if not pairs or not text:
-        return text
+        return text, OffsetMap()
 
     # Longest original first, so a full name is not cut by its own first name.
     pairs.sort(key=lambda pair: len(pair[1]), reverse=True)
@@ -95,10 +107,21 @@ def mask(text: str, mapping: PlaceholderMap) -> str:
     originals.sort(key=len, reverse=True)
     pattern = re.compile("|".join(_word_bounded(original) for original in originals))
 
-    def replace(match: re.Match[str]) -> str:
-        return by_original.get(match.group(0), match.group(0))
-
-    return pattern.sub(replace, text)
+    runs: list[tuple[int, int, int, int]] = []
+    pieces: list[str] = []
+    position = 0
+    new_position = 0
+    for match in pattern.finditer(text):
+        start, end = match.span()
+        pieces.append(text[position:start])
+        new_position += start - position
+        replacement = by_original[match.group(0)]
+        runs.append((start, end, new_position, new_position + len(replacement)))
+        pieces.append(replacement)
+        new_position += len(replacement)
+        position = end
+    pieces.append(text[position:])
+    return "".join(pieces), OffsetMap(tuple(runs))
 
 
 def _word_bounded(value: str) -> str:

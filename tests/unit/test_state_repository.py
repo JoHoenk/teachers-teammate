@@ -1136,7 +1136,7 @@ def test_record_preview_artifact_persists_original_and_steps(tmp_path: Path) -> 
         preview_img=str(preview),
         source_image=str(preview),
         preview_config_hash="ph",
-        original_img=str(original),
+        original_images=[str(original)],
         preprocess_steps=["grayscale", "deskew"],
     )
 
@@ -1467,6 +1467,187 @@ def test_a_new_ocr_result_keeps_the_pages(tmp_path: Path) -> None:
     )
 
     assert recorded.page_images == [str(page) for page in pages]
+
+
+# ── the original of every page (original_images) ──────────────────────────
+
+
+def _originals(tmp_path: Path, count: int = 3) -> list[Path]:
+    """Write *count* original page files and return their paths."""
+    originals = []
+    for number in range(1, count + 1):
+        name = "doc_original.png" if number == 1 else f"doc_o{number}.png"
+        original = tmp_path / name
+        original.write_bytes(b"png")
+        originals.append(original)
+    return originals
+
+
+def test_record_preview_artifact_persists_every_original(tmp_path: Path) -> None:
+    """
+    Given  a repository and a fresh state
+    When   record_preview_artifact stores three originals
+    Then   they survive a save/load round trip and appear on the UI view in order
+    """
+    repo = _repo(tmp_path)
+    src = _source_file(tmp_path)
+    pages = _pages(tmp_path)
+    originals = _originals(tmp_path)
+    state = repo.create(src, compute_file_hash(src))
+
+    repo.record_preview_artifact(
+        src,
+        state,
+        preview_img=str(pages[0]),
+        source_image=str(pages[0]),
+        preview_config_hash="ph",
+        page_images=[str(page) for page in pages],
+        original_images=[str(page) for page in originals],
+    )
+
+    loaded = repo.load_valid(src)
+    assert loaded is not None
+    assert loaded.original_images == [str(page) for page in originals]
+    assert loaded.originals == tuple(str(page) for page in originals)
+    assert repo.to_view(src, loaded).original_images == tuple(str(page) for page in originals)
+
+
+def test_state_without_originals_has_the_one_original_it_had(tmp_path: Path) -> None:
+    """
+    Given  a state file written before original_images existed
+    When   it is loaded
+    Then   originals is the original image alone
+    """
+    repo = _repo(tmp_path)
+    src = _source_file(tmp_path)
+    pages = _pages(tmp_path)
+    original = tmp_path / "doc_original.png"
+    original.write_bytes(b"png")
+    state = dataclasses.replace(
+        repo.create(src, compute_file_hash(src)),
+        preview_img=str(pages[0]),
+        original_img=str(original),
+    )
+    data = dataclasses.asdict(state)
+    del data["original_images"]
+    repo.state_path_for_input(src).write_text(json.dumps(data), encoding="utf-8")
+
+    loaded = repo.load_valid(src)
+
+    assert loaded is not None
+    assert loaded.original_images == []
+    assert loaded.originals == (str(original),)
+    assert repo.to_view(src, loaded).original_images == (str(original),)
+
+
+def test_an_original_missing_on_disk_leaves_the_one_original_it_had(tmp_path: Path) -> None:
+    """
+    Given  a state whose second original file is gone
+    When   load_valid is called
+    Then   the list is dropped and the document has its first original
+    """
+    repo = _repo(tmp_path)
+    src = _source_file(tmp_path)
+    pages = _pages(tmp_path)
+    originals = _originals(tmp_path)
+    repo.save(
+        src,
+        dataclasses.replace(
+            repo.create(src, compute_file_hash(src)),
+            preview_img=str(pages[0]),
+            original_img=str(originals[0]),
+            page_images=[str(page) for page in pages],
+            original_images=[str(page) for page in originals],
+        ),
+    )
+    originals[1].unlink()
+
+    loaded = repo.load_valid(src)
+
+    assert loaded is not None
+    assert loaded.original_images == []
+    assert loaded.originals == (str(originals[0]),)
+
+
+def test_a_missing_first_original_leaves_no_originals(tmp_path: Path) -> None:
+    """
+    Given  a state whose first original is gone
+    When   load_valid is called
+    Then   originals is empty
+    """
+    repo = _repo(tmp_path)
+    src = _source_file(tmp_path)
+    pages = _pages(tmp_path)
+    originals = _originals(tmp_path)
+    repo.save(
+        src,
+        dataclasses.replace(
+            repo.create(src, compute_file_hash(src)),
+            preview_img=str(pages[0]),
+            original_img=str(originals[0]),
+            page_images=[str(page) for page in pages],
+            original_images=[str(page) for page in originals],
+        ),
+    )
+    originals[0].unlink()
+
+    loaded = repo.load_valid(src)
+
+    assert loaded is not None
+    assert loaded.originals == ()
+
+
+def test_invalidate_preview_artifact_clears_the_originals(tmp_path: Path) -> None:
+    """
+    Given  a state with three originals
+    When   invalidate_preview_artifact is called
+    Then   the originals are cleared with the preview paths
+    """
+    repo = _repo(tmp_path)
+    src = _source_file(tmp_path)
+    pages = _pages(tmp_path)
+    originals = _originals(tmp_path)
+    state = dataclasses.replace(
+        repo.create(src, compute_file_hash(src)),
+        preview_img=str(pages[0]),
+        source_image=str(pages[0]),
+        original_img=str(originals[0]),
+        page_images=[str(page) for page in pages],
+        original_images=[str(page) for page in originals],
+    )
+
+    cleared = repo.invalidate_preview_artifact(src, state)
+
+    assert cleared.original_images == []
+
+
+def test_resetting_from_ocr_clears_the_originals(tmp_path: Path) -> None:
+    """
+    Given  a state with OCR text and three originals
+    When   invalidate_from_stage("ocr") runs
+    Then   the originals are cleared with the preview paths
+    """
+    repo = _repo(tmp_path)
+    src = _source_file(tmp_path)
+    pages = _pages(tmp_path)
+    originals = _originals(tmp_path)
+    repo.save(
+        src,
+        dataclasses.replace(
+            repo.create(src, compute_file_hash(src)),
+            raw_text="text",
+            ocr_done=True,
+            preview_img=str(pages[0]),
+            original_img=str(originals[0]),
+            page_images=[str(page) for page in pages],
+            original_images=[str(page) for page in originals],
+        ),
+    )
+
+    cleared = repo.invalidate_from_stage(src, "ocr")
+
+    assert cleared is not None
+    assert cleared.original_images == []
 
 
 # ── Text notation (raw_text_format) ───────────────────────────────────────

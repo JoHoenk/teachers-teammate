@@ -1,7 +1,7 @@
 """Pydantic schema, contract text and prompt plumbing for a structured correction review.
 
 The model answers with this schema; :func:`to_review` converts the validated answer to the
-pure domain model in :mod:`teachers_teammate.domain.correction_review`.  The **answer format**
+pure domain model in :mod:`.sentence_review`.  The **answer format**
 (:mod:`.answer_format`) tells the model how to fill in this structure; it is English for every
 language and names no language, because it addresses the model, not the teacher.
 
@@ -21,14 +21,14 @@ from teachers_teammate.domain.correction_policy import (
     DEFAULT_LEVEL,
     OUTPUT_MODES,  # noqa: F401  # re-exported
 )
-from teachers_teammate.domain.correction_review import (
+from teachers_teammate.domain.formatted_text import TextFormat
+from teachers_teammate.domain.proofreading.word_diff import similarity
+from tools.model_eval.one_request.sentence_review import (
     ChangeNote,
     CorrectionReview,
     SentenceNote,
     UnclearNote,
 )
-from teachers_teammate.domain.formatted_text import TextFormat
-from teachers_teammate.domain.proofreading.word_diff import similarity
 
 from .answer_format import ANSWER_FORMAT_VERSION
 

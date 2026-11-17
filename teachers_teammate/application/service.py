@@ -122,6 +122,7 @@ from ..infrastructure.workflow.cache_service import (
     privacy_fingerprint,
 )
 from ..interfaces import SUPPORTED_SUFFIXES, SleepBlocker
+from .check_document import CheckDocument, check_document_of
 from .commands import ApplicationCommands
 from .context_choice import ContextChoice, context_choice
 from .correction_options import prompt_step_title
@@ -143,7 +144,6 @@ from .setup_plan import (
     build_setup_plan,
 )
 from .speed_estimates import SpeedChoices, SpeedEstimateService, SpeedSummary
-from .text_size import TextSizeEstimate, proofreading_pieces
 
 if TYPE_CHECKING:
     from ..infrastructure.anonymizer import SpacyAnonymizer
@@ -498,6 +498,18 @@ class ProcessingApplicationService:
         if view is None:
             return None
         return self._sent_verdict(view, lambda: privacy_fingerprint(config))
+
+    def check_document(self, config: Config, source: Path) -> CheckDocument | None:
+        """Return everything the Check tab shows about *source*, or ``None`` without state.
+
+        One query for the whole tab: the texts, the review aligned with them, the items the list
+        numbers, the pages of the scan and how the results were sent.  The window asks for it
+        once per document and once per stored edit, so nothing else assembles that state.
+        """
+        view = self.load_view(config, source)
+        if view is None:
+            return None
+        return check_document_of(view)
 
     @staticmethod
     def _sent_verdict(
@@ -1405,74 +1417,6 @@ class ProcessingApplicationService:
                 correction_enabled=True,
                 evaluation_enabled=True,
             )
-        )
-
-    def estimate_text_size(
-        self,
-        config: Config,
-        raw_text: str,
-        text_format: TextFormat = "plain",
-        hardware: HardwareDetection | None = None,
-    ) -> TextSizeEstimate:
-        """Return how long *raw_text* is and how many proofreading requests it takes.
-
-        The count comes from the corrector the run builds and from
-        :meth:`~teachers_teammate.infrastructure.proofreading.chunking.ChunkingCorrector.split`,
-        so the estimate and the run cannot disagree.  Building the corrector is cheap: neither
-        the Ollama client nor the corrector contacts the server.
-
-        It is an estimate: the text really sent is anonymized when personal-info removal is
-        on, and the content review reads the proofread text, not the OCR text.
-
-        An online proofreading provider brings its own request limit, which the app does not
-        set, so there is nothing to count: the answer is the word count alone.  That also keeps
-        the GUI thread from importing LangChain, reading the keychain and building a client
-        every few hundred milliseconds.
-
-        Args:
-            hardware: The detection the caller already has.  ``None`` keeps the base window.
-                The caller resolves it, because resolving it here would run the graphics probe
-                on the GUI thread.
-        """
-        from ..infrastructure.evaluation import NativeOllamaEvaluator  # noqa: PLC0415
-        from ..infrastructure.reporting import CallbackReporter  # noqa: PLC0415
-        from ..infrastructure.stage_builder import StageBuilder  # noqa: PLC0415
-
-        words = len(TextFormatter.plain_text(raw_text, text_format).split())
-        if config.correction_provider != "ollama":
-            return TextSizeEstimate(
-                words=words, pieces=None, words_per_piece=None, content_review_fits=None
-            )
-        builder = StageBuilder(
-            config,
-            self._component_factory,
-            CallbackReporter(lambda _line: None),  # an estimate says nothing on the console
-            hardware,
-        )
-        corrector = builder.build_corrector()
-        pieces: int | None = None
-        words_per_piece: int | None = None
-        if corrector is not None:
-            pieces, words_per_piece = proofreading_pieces(
-                corrector, raw_text, config.language, text_format=text_format
-            )
-        content_review_fits: bool | None = None
-        if (
-            corrector is not None
-            and config.evaluation_enabled
-            and config.evaluate_provider == "ollama"
-        ):
-            # Only a NativeOllamaEvaluator answers ``fits``; an online one brings its own limit.
-            evaluator = builder.build_evaluation(corrector)
-            if isinstance(evaluator, NativeOllamaEvaluator):
-                content_review_fits = evaluator.fits(
-                    raw_text, config.language, text_format=text_format
-                )
-        return TextSizeEstimate(
-            words=words,
-            pieces=pieces,
-            words_per_piece=words_per_piece,
-            content_review_fits=content_review_fits,
         )
 
     def get_provider_data_region(self, provider: str) -> str:

@@ -34,7 +34,6 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-import glob
 import os
 from pathlib import Path
 import re
@@ -141,8 +140,37 @@ class PreviewImageStore:
         target.parent.mkdir(parents=True, exist_ok=True)
         if not (target.exists() and source_path.resolve() == target.resolve()):
             self._link_or_copy(source_path, target)
-        self.prune_original_images(stem, keep=target)
+        self.prune_original_images(stem, keep=[target])
         return target
+
+    def persist_original_images(self, *, stem: str, sources: Sequence[Path]) -> list[Path]:
+        """Store the page as it was scanned for every prepared page of *stem*.
+
+        Page 1 keeps the name it always had (``<stem>_original.<ext>``); pages 2…N are
+        ``<stem>_o<N>.<ext>``.  A later page that cannot be stored is not worth failing the
+        file over: the pages stored so far are kept and returned, so the list is always a
+        prefix of *sources* and the state never names a page that is not on disk.
+        """
+        if not sources:
+            return []
+        stored = [self.persist_original_image(stem=stem, source_path=sources[0])]
+        for number, source in enumerate(sources[1:], start=2):
+            try:
+                stored.append(
+                    self._link_or_copy(source, self.paths_for_original(stem, number, source))
+                )
+            except OSError:
+                break
+        self.prune_original_images(stem, keep=stored)
+        return stored
+
+    def paths_for_original(self, stem: str, number: int, source: Path) -> Path:
+        """Return the canonical path of the original of page *number* (2-based here).
+
+        Page 1 is not covered: its name keeps the suffix of the file it came from, which
+        only :meth:`persist_original_image` knows.
+        """
+        return self._root / f"{stem}_o{number}{source.suffix.lower() or '.png'}"
 
     @staticmethod
     def _link_or_copy(source: Path, target: Path) -> Path:
@@ -155,11 +183,21 @@ class PreviewImageStore:
             shutil.copy2(source, target)
         return target
 
-    def prune_original_images(self, stem: str, *, keep: Path | None = None) -> None:
-        """Delete stale ``<stem>_original.*`` files except *keep* (best-effort)."""
-        keep_resolved = keep.resolve() if keep is not None else None
-        for stale in self._root.glob(f"{glob.escape(stem)}_original.*"):
-            if keep_resolved is not None and stale.resolve() == keep_resolved:
+    def prune_original_images(self, stem: str, *, keep: Sequence[Path] = ()) -> None:
+        """Delete stale original pages of *stem* except *keep* (best-effort).
+
+        Matched with full-name patterns rather than a glob: the stem ``Anna_o2`` has its own
+        ``Anna_o2_original.png`` and ``Anna_o2_preprocessed.png``, which must survive when the
+        originals of ``Anna`` are pruned.
+        """
+        kept = {path.resolve() for path in keep}
+        page = re.compile(rf"{re.escape(stem)}_o(\d+)\..+")
+        for stale in self._root.iterdir():
+            if not (
+                stale.name.startswith(f"{stem}_original.") or page.fullmatch(stale.name) is not None
+            ):
+                continue
+            if stale.resolve() in kept:
                 continue
             try:
                 stale.unlink(missing_ok=True)
@@ -172,13 +210,14 @@ class PreviewImageStore:
         source_image: str,
         original_img: str = "",
         page_images: Sequence[str] = (),
+        original_images: Sequence[str] = (),
     ) -> None:
         """Delete preview image files that were recorded in a now-invalidated state.
 
         Only deletes files that are non-empty paths and actually exist.
         Safe to call with empty strings.
         """
-        for file_path in {preview_img, source_image, original_img, *page_images}:
+        for file_path in {preview_img, source_image, original_img, *page_images, *original_images}:
             if file_path:
                 Path(file_path).unlink(missing_ok=True)
 

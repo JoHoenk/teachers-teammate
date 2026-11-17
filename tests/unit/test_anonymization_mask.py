@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
-from teachers_teammate.domain.anonymization import mask, restore, restore_with_offsets
+from teachers_teammate.domain.anonymization import (
+    mask,
+    mask_with_offsets,
+    restore,
+    restore_with_offsets,
+)
 
 ANNA = {"[PERSON_1]": "Anna Müller"}
 TWO_PEOPLE = {"[PERSON_1]": "Anna", "[PERSON_2]": "Anna Müller"}
@@ -162,3 +167,46 @@ def test_restore_does_not_replace_a_placeholder_that_an_original_contains() -> N
     restored, _offsets = restore_with_offsets(text, mapping)
 
     assert restore(text, mapping) == restored == "see [PERSON_2] and Anna"
+
+
+def test_mask_with_offsets_returns_the_text_mask_returns() -> None:
+    """
+    Given  a text naming two people
+    When   the names are hidden with their offsets
+    Then   the text is the one mask() gives, and every replaced run is recorded
+    """
+    mapping = {"[PERSON_1]": "Anna Müller", "[PERSON_2]": "Bernd"}
+    text = "Anna Müller und Bernd gehen."
+
+    masked, offsets = mask_with_offsets(text, mapping)
+
+    assert masked == mask(text, mapping)
+    assert masked == "[PERSON_1] und [PERSON_2] gehen."
+    assert offsets.runs == ((0, 11, 0, 10), (16, 21, 15, 25))
+
+
+def test_mask_with_offsets_carries_a_position_past_two_names() -> None:
+    """
+    Given  a text whose first and third word are names
+    When   a position after both names is carried over
+    Then   it moves by the characters the placeholders are longer or shorter than the names
+    """
+    mapping = {"[PERSON_1]": "Anna Müller", "[PERSON_2]": "Bernd"}
+    text = "Anna Müller und Bernd gehen."
+
+    masked, offsets = mask_with_offsets(text, mapping)
+
+    assert offsets.start(22) == 26
+    assert masked[26:] == text[22:]
+
+
+def test_mask_with_offsets_without_a_map_changes_nothing() -> None:
+    """
+    Given  a text and no names to hide
+    When   the names are hidden with their offsets
+    Then   the text comes back unchanged and no run is recorded
+    """
+    masked, offsets = mask_with_offsets("Anna Müller", {})
+
+    assert masked == "Anna Müller"
+    assert offsets.runs == ()

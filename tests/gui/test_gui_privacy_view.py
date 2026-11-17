@@ -1,24 +1,27 @@
-"""GUI tests for showing placeholders instead of names: the View setting and the panel."""
-# pylint: disable=W0212,W0613,W0621  # protected-access — the tests drive the panel and the menu directly / unused-argument, redefined-outer-name — pytest fixtures are injected by parameter name
+"""GUI tests for showing placeholders instead of names: the View setting and the Check tab."""
+# pylint: disable=W0212,W0613,W0621  # protected-access — the tests drive the page and the menu directly / unused-argument, redefined-outer-name — pytest fixtures are injected by parameter name
 
 from __future__ import annotations
 
+import dataclasses
 import threading
+from pathlib import Path
 
 import pytest
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QPixmap
-
 from teachers_teammate.application.service import ProcessingApplicationService
 from teachers_teammate.gui import _main_window as main_window_module
 from teachers_teammate.gui import _user_text as txt
-from teachers_teammate.gui._formatted_text import PLACEHOLDER_BACKGROUND, PLACEHOLDER_TEXT
 from teachers_teammate.gui._main_window import MainWindow
-from teachers_teammate.gui._preview_panel import PreviewPanel
 from teachers_teammate.gui._privacy_settings import DISPLAY_ANONYMIZED_KEY
 from teachers_teammate.gui.settings import SettingsPage, SettingsResult
 from teachers_teammate.gui.settings._page import FOCUS_DETECTION
 from teachers_teammate.gui.settings._privacy_page import PrivacyPage
+from teachers_teammate.infrastructure.state_repository import (
+    StateRepository,
+    compute_file_hash,
+)
+from teachers_teammate.infrastructure.storage_root import resolve_artifact_dir
+from tests.conftest import make_config
 
 from ._gui_harness import install_scripted_settings_window
 from teachers_teammate.texts.settings import WHERE_ADDONS
@@ -27,390 +30,6 @@ RAW = "Anna Müller schreibt an Bernd."
 CORRECTED = "Anna Müller schreibt einen Brief an Bernd."
 ANONYMIZED = "[PERSON_1] schreibt an [PERSON_2]."
 MAPPING = {"[PERSON_1]": "Anna Müller", "[PERSON_2]": "Bernd"}
-
-
-def _pixmap() -> QPixmap:
-    pix = QPixmap(20, 20)
-    pix.fill()
-    return pix
-
-
-def _loaded_panel(qtbot) -> PreviewPanel:
-    """A shown panel holding one file with an extracted and a proofread text."""
-    panel = PreviewPanel()
-    qtbot.addWidget(panel)
-    panel.show()
-    panel.load(_pixmap(), RAW, CORRECTED, "Review notes for Anna Müller.")
-    return panel
-
-
-# ── the panel ─────────────────────────────────────────────────────────────
-
-
-@pytest.mark.gui
-def test_turning_the_setting_on_masks_every_tab(qtbot) -> None:
-    """
-    Given  a panel showing a text with names
-    When   the placeholders arrive and the setting is switched on
-    Then   the extracted text, the proofread text and the review show placeholders
-    """
-    panel = _loaded_panel(qtbot)
-    panel.set_anonymization(ANONYMIZED, MAPPING, raw_text=RAW)
-
-    panel.set_display_anonymized(True)
-
-    assert panel.display_anonymized()
-    assert panel._ocr_text.toPlainText() == ANONYMIZED
-    assert "Anna Müller" not in panel._correction_text.toPlainText()
-    assert "Bernd" not in panel._correction_text.toPlainText()
-    assert "[PERSON_1]" in panel._correction_text.toPlainText()
-    assert "Anna Müller" not in panel._evaluation_text.toPlainText()
-
-
-@pytest.mark.gui
-def test_turning_the_setting_off_shows_the_names_again(qtbot) -> None:
-    """
-    Given  a panel showing placeholders
-    When   the setting is switched off
-    Then   the stored texts are back unchanged
-    """
-    panel = _loaded_panel(qtbot)
-    panel.set_anonymization(ANONYMIZED, MAPPING, raw_text=RAW)
-    panel.set_display_anonymized(True)
-
-    panel.set_display_anonymized(False)
-
-    assert panel._ocr_text.toPlainText() == RAW
-    assert panel._correction_text.toPlainText() == CORRECTED
-
-
-@pytest.mark.gui
-def test_the_texts_cannot_be_edited_while_names_are_hidden(qtbot) -> None:
-    """
-    Given  a panel showing placeholders
-    When   the text views are asked whether they are editable
-    Then   they are read-only and no edit signal is emitted
-    """
-    panel = _loaded_panel(qtbot)
-    panel.set_anonymization(ANONYMIZED, MAPPING, raw_text=RAW)
-    edited: list[str] = []
-    panel.ocr_text_edited.connect(edited.append)
-
-    panel.set_display_anonymized(True)
-    panel._ocr_text.setPlainText("Ein ganz anderer Text.")
-
-    assert panel._ocr_text.isReadOnly()
-    assert panel._correction_text.isReadOnly()
-    assert edited == []
-    assert panel._stored_raw == RAW
-
-
-@pytest.mark.gui
-def test_clicking_the_lock_note_asks_to_show_the_names(qtbot) -> None:
-    """
-    Given  a panel whose texts are locked behind the "click here to edit" note
-    When   the note is clicked
-    Then   the panel announces that the names should be shown, like the eye button does
-    """
-    panel = _loaded_panel(qtbot)
-    panel.set_anonymization(ANONYMIZED, MAPPING, raw_text=RAW)
-    panel.set_display_anonymized(True)
-    announced: list[bool] = []
-    panel.display_anonymized_changed.connect(announced.append)
-
-    assert panel._privacy_note.text() == txt.TURN_OFF_HIDING_TO_EDIT
-    qtbot.mouseClick(panel._privacy_note, Qt.MouseButton.LeftButton)
-
-    assert announced == [False]
-
-
-@pytest.mark.gui
-def test_the_note_is_clickable_only_while_it_offers_to_unlock(qtbot) -> None:
-    """
-    Given  a panel that is waiting for the placeholders, then one whose hiding failed
-    When   the note is clicked
-    Then   nothing is announced and the pointer does not suggest a click
-    """
-    panel = _loaded_panel(qtbot)
-    announced: list[bool] = []
-    panel.display_anonymized_changed.connect(announced.append)
-
-    panel.set_display_anonymized(True)  # no result yet: "Hiding personal information…"
-    qtbot.mouseClick(panel._privacy_note, Qt.MouseButton.LeftButton)
-    assert panel._privacy_note.text() == txt.HIDING_PERSONAL_INFO
-    assert panel._privacy_note.cursor().shape() == Qt.CursorShape.ArrowCursor
-
-    panel.set_anonymization("", {}, raw_text=RAW, error="model missing")  # failed
-    qtbot.mouseClick(panel._privacy_note, Qt.MouseButton.LeftButton)
-
-    assert "model missing" in panel._privacy_note.text()
-    assert panel._privacy_note.cursor().shape() == Qt.CursorShape.ArrowCursor
-    assert announced == []
-
-
-@pytest.mark.gui
-def test_the_lock_note_looks_clickable(qtbot) -> None:
-    """
-    Given  a panel with the lock note showing
-    When   its cursor is asked
-    Then   it is a pointing hand, and the note stops being clickable once the names are shown
-    """
-    panel = _loaded_panel(qtbot)
-    panel.set_anonymization(ANONYMIZED, MAPPING, raw_text=RAW)
-    panel.set_display_anonymized(True)
-
-    assert panel._privacy_note.cursor().shape() == Qt.CursorShape.PointingHandCursor
-
-    panel.set_display_anonymized(False)
-
-    assert not panel._privacy_note.isVisible()
-    assert panel._privacy_note.cursor().shape() == Qt.CursorShape.ArrowCursor
-
-
-@pytest.mark.gui
-def test_the_setting_asks_for_the_placeholders_once(qtbot) -> None:
-    """
-    Given  a panel with a text and no placeholders yet
-    When   the setting is switched on twice
-    Then   the panel asks for the placeholders only once
-    """
-    panel = _loaded_panel(qtbot)
-    asked: list[str] = []
-    panel.anonymization_needed.connect(asked.append)
-
-    panel.set_display_anonymized(True)
-    panel.set_display_anonymized(True)
-
-    assert asked == [RAW]
-
-
-@pytest.mark.gui
-def test_loading_a_file_asks_for_its_placeholders(qtbot) -> None:
-    """
-    Given  a panel whose setting is on and whose file has just been replaced
-    When   a new file is loaded
-    Then   the panel asks for the placeholders of the new text and shows a note meanwhile
-    """
-    panel = _loaded_panel(qtbot)
-    panel.set_anonymization(ANONYMIZED, MAPPING, raw_text=RAW)
-    panel.set_display_anonymized(True)
-    asked: list[str] = []
-    panel.anonymization_needed.connect(asked.append)
-
-    panel.load(_pixmap(), "Clara West trägt vor.", "", "")
-
-    assert asked == ["Clara West trägt vor."]
-    assert "Clara West" not in panel._ocr_text.toPlainText()
-    assert panel._privacy_note.isVisible()
-
-
-@pytest.mark.gui
-def test_placeholders_of_another_text_are_dropped(qtbot) -> None:
-    """
-    Given  a panel showing one text while its placeholders are worked out
-    When   the result belongs to a text that is no longer shown
-    Then   it is dropped and the panel keeps waiting
-    """
-    panel = _loaded_panel(qtbot)
-    panel.set_display_anonymized(True)
-
-    panel.set_anonymization(ANONYMIZED, MAPPING, raw_text="Ein anderer Text.")
-
-    assert panel._anon_ready is False
-
-
-@pytest.mark.gui
-def test_a_failed_anonymization_keeps_the_names_hidden(qtbot) -> None:
-    """
-    Given  a panel whose setting is on
-    When   hiding the names fails
-    Then   the note says why and the names are still not shown
-    """
-    panel = _loaded_panel(qtbot)
-    panel.set_display_anonymized(True)
-
-    panel.set_anonymization("", {}, raw_text=RAW, error="spaCy model missing: de_core_news_sm")
-
-    assert "Anna Müller" not in panel._ocr_text.toPlainText()
-    assert "spacy" in panel._privacy_note.text().lower()
-    assert panel._privacy_note.isVisible()
-
-
-@pytest.mark.gui
-def test_the_placeholders_are_highlighted_not_the_names(qtbot) -> None:
-    """
-    Given  a panel with the placeholder map {placeholder: original name}
-    When   the setting is switched on
-    Then   the plain views mark the placeholders and nothing else
-    """
-    panel = _loaded_panel(qtbot)
-    panel.set_anonymization(ANONYMIZED, MAPPING, raw_text=RAW)
-
-    panel.set_display_anonymized(True)
-
-    marked = [sel.cursor.selectedText() for sel in panel._ocr_text.extraSelections()]
-    assert marked == ["[PERSON_1]", "[PERSON_2]"]
-
-
-@pytest.mark.gui
-def test_marked_placeholders_have_a_readable_text_colour(qtbot) -> None:
-    """
-    Given  a panel in a dark theme, whose default text colour is light
-    When   the setting is switched on
-    Then   every marked placeholder sets its own dark text colour on the light background
-    """
-    panel = _loaded_panel(qtbot)
-    panel.set_anonymization(ANONYMIZED, MAPPING, raw_text=RAW)
-
-    panel.set_display_anonymized(True)
-
-    selections = panel._ocr_text.extraSelections()
-    assert selections
-    for selection in selections:
-        fmt = selection.format
-        assert fmt.foreground().color().name() == PLACEHOLDER_TEXT
-        assert fmt.background().color().name() == PLACEHOLDER_BACKGROUND
-        assert fmt.foreground().color().lightness() < fmt.background().color().lightness()
-
-
-@pytest.mark.gui
-def test_typing_just_before_hiding_is_saved_not_dropped(qtbot) -> None:
-    """
-    Given  uncommitted typing in the formatted view of a Markdown file
-    When   the setting is switched on before the typing pause has ended
-    Then   the typed text is stored and emitted once, and survives the masking
-    """
-    from PySide6.QtGui import QTextCursor  # noqa: PLC0415
-
-    panel = PreviewPanel()
-    qtbot.addWidget(panel)
-    panel.load(_pixmap(), "Anna Müller schrieb", "", "", text_format="markdown")
-    emitted: list[str] = []
-    panel.ocr_text_edited.connect(emitted.append)
-    cursor = panel._ocr_view.textCursor()
-    cursor.movePosition(QTextCursor.MoveOperation.Start)
-    cursor.insertText("Heute: ")
-
-    panel.set_display_anonymized(True)
-
-    assert emitted == ["Heute: Anna Müller schrieb"]
-    assert panel._stored_raw == "Heute: Anna Müller schrieb"
-
-
-@pytest.mark.gui
-def test_an_edited_text_gets_new_placeholders(qtbot) -> None:
-    """
-    Given  placeholders were worked out, then hiding was turned off and the text edited
-    When   hiding is turned on again
-    Then   the old placeholders are not used: the panel asks for the edited text
-    """
-    panel = _loaded_panel(qtbot)
-    panel.set_anonymization(ANONYMIZED, MAPPING, raw_text=RAW)
-    panel.set_display_anonymized(True)
-    panel.set_display_anonymized(False)
-    panel._ocr_text.setPlainText(RAW + " Clara West kam dazu.")
-    asked: list[str] = []
-    panel.anonymization_needed.connect(asked.append)
-
-    panel.set_display_anonymized(True)
-
-    assert asked == [RAW + " Clara West kam dazu."]
-    assert "Clara West" not in panel._ocr_text.toPlainText()
-
-
-@pytest.mark.gui
-def test_a_text_without_content_does_not_wait_for_placeholders(qtbot) -> None:
-    """
-    Given  a file that has no extracted text yet
-    When   the setting is switched on
-    Then   the panel does not show "Hiding personal information…" forever
-    """
-    panel = PreviewPanel()
-    qtbot.addWidget(panel)
-    panel.load(_pixmap(), "", "", "")
-
-    panel.set_display_anonymized(True)
-
-    assert panel._anon_ready is True
-    assert "Hiding personal information" not in panel._ocr_text.toPlainText()
-
-
-@pytest.mark.gui
-def test_a_name_the_detector_missed_is_hidden_in_every_tab(qtbot) -> None:
-    """
-    Given  a detector result that hid only the first of two mentions of a name
-    When   the setting is switched on
-    Then   the extracted and the proofread text hide both, and the Changes tab shows no
-           change that would reveal the name
-    """
-    raw = "Anna Müller kam. Später ging Anna Müller."
-    corrected = "Anna Müller kam. Später ging Anna Müller heim."
-    panel = PreviewPanel()
-    qtbot.addWidget(panel)
-    panel.show()
-    panel.load(_pixmap(), raw, corrected, "")
-    panel.set_anonymization(
-        "[PERSON_1] kam. Später ging Anna Müller.", {"[PERSON_1]": "Anna Müller"}, raw_text=raw
-    )
-
-    panel.set_display_anonymized(True)
-
-    assert "Anna" not in panel._ocr_text.toPlainText()
-    assert "Anna" not in panel._correction_text.toPlainText()
-    assert "Anna" not in panel._review_diff.toPlainText()
-
-
-@pytest.mark.gui
-def test_the_eye_button_mirrors_the_setting(qtbot) -> None:
-    """
-    Given  a panel with an enabled eye button
-    When   the button is clicked
-    Then   the panel announces the new value instead of applying it itself
-    """
-    panel = _loaded_panel(qtbot)
-    announced: list[bool] = []
-    panel.display_anonymized_changed.connect(announced.append)
-
-    panel._hide_btn.click()
-
-    assert announced == [True]
-    assert panel.display_anonymized() is False
-
-
-@pytest.mark.gui
-def test_without_the_add_on_the_setting_stays_off(qtbot) -> None:
-    """
-    Given  a panel whose personal-info removal is not installed
-    When   the setting is switched on
-    Then   the panel stays unmasked and the eye button is disabled
-    """
-    panel = _loaded_panel(qtbot)
-
-    panel.set_display_anonymized_available(False)
-    panel.set_display_anonymized(True)
-
-    assert panel.display_anonymized() is False
-    assert not panel._hide_btn.isEnabled()
-    assert panel._ocr_text.toPlainText() == RAW
-
-
-@pytest.mark.gui
-def test_changed_settings_produce_new_placeholders(qtbot) -> None:
-    """
-    Given  a panel showing placeholders from the current anonymizer settings
-    When   the settings change
-    Then   the old placeholders are dropped and the text is asked for again
-    """
-    panel = _loaded_panel(qtbot)
-    panel.set_anonymization(ANONYMIZED, MAPPING, raw_text=RAW)
-    panel.set_display_anonymized(True)
-    asked: list[str] = []
-    panel.anonymization_needed.connect(asked.append)
-
-    panel.invalidate_anonymization()
-
-    assert asked == [RAW]
-    assert panel._anon_ready is False
 
 
 # ── where the setting is chosen: Privacy Settings and the eye button ─────
@@ -481,6 +100,31 @@ class _MemorySettings:
         self.store.pop(key, None)
 
 
+def _open_document(main_window, monkeypatch, tmp_path, raw: str, corrected: str = "") -> None:
+    """Store a document with these texts and open it in the Check tab."""
+    cfg = make_config(tmp_path)
+    cfg.input_dir.mkdir(parents=True, exist_ok=True)
+    source = cfg.input_dir / "page.png"
+    source.write_text("page", encoding="utf-8")
+    monkeypatch.setattr(main_window._config_panel, "to_config", lambda: cfg)
+    repo = StateRepository(resolve_artifact_dir(cfg.output_dir) / "state")
+    state = repo.create(source, compute_file_hash(source))
+    repo.save(
+        source,
+        dataclasses.replace(
+            state,
+            raw_text=raw,
+            correction_text=corrected,
+            ocr_done=bool(raw),
+            correction_done=bool(corrected),
+        ),
+    )
+    main_window._results_table.set_queue(["page.png"], source_ids=[str(source)])
+    main_window._results_table.set_row_artifacts(str(source), "", raw, corrected, "")
+    main_window._update_check_tab()
+    main_window._load_check(str(source))
+
+
 @pytest.fixture(autouse=True)
 def _no_network(monkeypatch) -> None:
     """Never probe a real service: the status row and the menu ask in the background."""
@@ -534,9 +178,9 @@ def test_the_eye_button_switches_the_setting(main_window, settings) -> None:
     When   the button is clicked
     Then   the preview shows the names and the choice is stored
     """
-    main_window._preview._hide_btn.click()
+    main_window._check._hide_names_box.click()
 
-    assert not main_window._preview.display_anonymized()
+    assert not main_window._check._masking.enabled
     assert not main_window._display_anonymized
     assert settings.value(DISPLAY_ANONYMIZED_KEY) == "no"
 
@@ -572,7 +216,7 @@ def test_ok_in_privacy_settings_applies_the_checkbox(main_window, settings, open
     assert window.focus == FOCUS_DETECTION
     assert window.context.display_anonymized is True
     assert window.context.privacy_available is True
-    assert not main_window._preview.display_anonymized()
+    assert not main_window._check._masking.enabled
     assert settings.value(DISPLAY_ANONYMIZED_KEY) == "no"
 
 
@@ -604,7 +248,7 @@ def test_cancel_in_privacy_settings_leaves_the_setting_alone(
     """
     open_privacy(accepted=False, choice=False)
 
-    assert main_window._preview.display_anonymized()
+    assert main_window._check._masking.enabled
     assert settings.value(DISPLAY_ANONYMIZED_KEY) is None
 
 
@@ -650,7 +294,7 @@ def test_the_eye_button_and_the_privacy_page_stay_in_step(qtbot, main_window) ->
     When   the eye button shows them
     Then   the Privacy page opened afterwards shows a cleared checkbox
     """
-    main_window._preview._hide_btn.click()
+    main_window._check._hide_names_box.click()
 
     page = _privacy_page(qtbot, main_window)
 
@@ -673,7 +317,7 @@ def _privacy_page(qtbot, win: MainWindow) -> PrivacyPage:
 
 @pytest.mark.gui
 def test_clicking_the_lock_note_makes_the_texts_editable(
-    qtbot, main_window, settings, monkeypatch
+    main_window, settings, monkeypatch, tmp_path: Path
 ) -> None:
     """
     Given  a window whose texts are locked because the names are hidden
@@ -686,17 +330,17 @@ def test_clicking_the_lock_note_makes_the_texts_editable(
         lambda _self, _text, _language, _config=None: (ANONYMIZED, MAPPING),
     )
     main_window.show()
-    preview = main_window._preview
-    preview.load(_pixmap(), RAW, "", "")  # the names are hidden by default
-    _wait_for(lambda: preview._anon_ready)
-    assert preview._ocr_text.isReadOnly()
-    assert preview._privacy_note.isVisible()
+    _open_document(main_window, monkeypatch, tmp_path, RAW)  # names are hidden by default
+    body = main_window._check.body
+    _wait_for(lambda: not main_window._check._masking.pending)
+    assert body.read_view.isReadOnly()
+    assert body.banner.text == txt.TURN_OFF_HIDING_TO_EDIT
 
-    qtbot.mouseClick(preview._privacy_note, Qt.MouseButton.LeftButton)
+    body.banner.action_clicked.emit()
 
-    assert not preview.display_anonymized()
-    assert not preview._ocr_text.isReadOnly()
-    assert preview._ocr_text.toPlainText() == RAW
+    assert not main_window._check._masking.enabled
+    assert not body.read_view.isReadOnly()
+    assert body.read_view.toPlainText() == RAW
     assert not main_window._display_anonymized
     assert settings.value(DISPLAY_ANONYMIZED_KEY) == "no"
 
@@ -710,7 +354,7 @@ def test_personal_information_is_hidden_on_the_first_start(main_window, settings
     """
     assert settings.value(DISPLAY_ANONYMIZED_KEY) is None
     assert main_window._display_anonymized
-    assert main_window._preview.display_anonymized()
+    assert main_window._check._masking.enabled
 
 
 @pytest.mark.gui
@@ -730,7 +374,7 @@ def test_a_stored_choice_to_show_the_names_is_kept(qtbot, monkeypatch, settings)
     qtbot.addWidget(win)
 
     assert not win._display_anonymized
-    assert not win._preview.display_anonymized()
+    assert not win._check._masking.enabled
 
 
 @pytest.mark.gui
@@ -750,7 +394,7 @@ def test_the_setting_is_restored_from_the_last_session(qtbot, monkeypatch, setti
     qtbot.addWidget(win)
 
     assert win._display_anonymized
-    assert win._preview.display_anonymized()
+    assert win._check._masking.enabled
 
 
 @pytest.mark.gui
@@ -770,21 +414,21 @@ def test_the_string_language_without_spacy_disables_the_choice(
     win = MainWindow(worker_factory=_DummyWorker)
     qtbot.addWidget(win)
 
-    assert not win._preview._hide_btn.isEnabled()
+    assert not win._check._hide_names_box.isEnabled()
     page = _privacy_page(qtbot, win)
     checkbox = page.hide_personal_checkbox()
     assert not checkbox.isEnabled()
     assert not checkbox.isChecked()
     assert WHERE_ADDONS in checkbox.toolTip()
-    assert win._preview.display_anonymized() is False
+    assert win._check._masking.enabled is False
 
 
 @pytest.mark.gui
-def test_the_placeholders_arrive_from_the_service(main_window, monkeypatch) -> None:
+def test_the_placeholders_arrive_from_the_service(main_window, monkeypatch, tmp_path: Path) -> None:
     """
-    Given  a window whose preview shows a text
-    When   the panel asks for placeholders
-    Then   the service is asked once and the preview shows its result
+    Given  a window whose Check tab shows a text
+    When   the page asks for placeholders
+    Then   the service is asked once and the tab shows its result
     """
     calls: list[tuple[str, str]] = []
 
@@ -793,13 +437,13 @@ def test_the_placeholders_arrive_from_the_service(main_window, monkeypatch) -> N
         return ANONYMIZED, MAPPING
 
     monkeypatch.setattr(ProcessingApplicationService, "anonymize_preview", _fake_anonymize)
-    main_window._preview.load(_pixmap(), RAW, CORRECTED, "")
+    _open_document(main_window, monkeypatch, tmp_path, RAW, CORRECTED)
     main_window._apply_display_anonymized(True)
 
-    _wait_for(lambda: main_window._preview._anon_ready)
+    _wait_for(lambda: not main_window._check._masking.pending)
 
     assert calls == [(RAW, main_window._config_panel.lookup_language())]
-    assert main_window._preview._ocr_text.toPlainText() == ANONYMIZED
+    assert main_window._check.body.read_view.toPlainText() == ANONYMIZED
 
 
 def _wait_for(predicate, timeout_ms: int = 5000) -> None:
@@ -829,17 +473,17 @@ def test_changing_the_language_updates_the_privacy_availability(main_window, mon
     main_window._config_panel._language.setCurrentText("English")
     main_window._refresh_privacy_availability()
     assert main_window._privacy_available
-    assert main_window._preview._hide_btn.isEnabled()
+    assert main_window._check._hide_names_box.isEnabled()
 
     main_window._config_panel._language.setCurrentText("German")
 
     assert not main_window._privacy_available
-    assert not main_window._preview._hide_btn.isEnabled()
+    assert not main_window._check._hide_names_box.isEnabled()
 
     main_window._config_panel._language.setCurrentText("English")
 
     assert main_window._privacy_available
-    assert main_window._preview._hide_btn.isEnabled()
+    assert main_window._check._hide_names_box.isEnabled()
 
 
 @pytest.mark.gui
@@ -855,18 +499,20 @@ def test_a_finished_download_enables_the_setting(main_window, monkeypatch) -> No
     )
     main_window._privacy_availability.clear()
     main_window._refresh_privacy_availability()
-    assert not main_window._preview._hide_btn.isEnabled()
+    assert not main_window._check._hide_names_box.isEnabled()
 
     installed["yes"] = True
     main_window._on_packages_changed()
 
-    assert main_window._preview._hide_btn.isEnabled()
+    assert main_window._check._hide_names_box.isEnabled()
 
 
 @pytest.mark.gui
-def test_only_the_newest_anonymization_reaches_the_preview(main_window, monkeypatch) -> None:
+def test_only_the_newest_anonymization_reaches_the_page(
+    main_window, monkeypatch, tmp_path: Path
+) -> None:
     """
-    Given  two files asked for placeholders one after the other, the first one slower
+    Given  two documents asked for placeholders one after the other, the first one slower
     When   both results arrive
     Then   only the second one is applied, and the first cannot reset the second's state
     """
@@ -879,14 +525,14 @@ def test_only_the_newest_anonymization_reaches_the_preview(main_window, monkeypa
         return "[PERSON_1] ist hier.", {"[PERSON_1]": "Clara West"}
 
     monkeypatch.setattr(ProcessingApplicationService, "anonymize_preview", _fake_anonymize)
-    main_window._preview.load(_pixmap(), RAW, "", "")
+    _open_document(main_window, monkeypatch, tmp_path, RAW)
     main_window._apply_display_anonymized(True)
-    main_window._preview.load(_pixmap(), "Clara West ist hier.", "", "")
+    _open_document(main_window, monkeypatch, tmp_path, "Clara West ist hier.")
 
-    _wait_for(lambda: main_window._preview._anon_ready)
+    _wait_for(lambda: not main_window._check._masking.pending)
     release_first.set()
     from PySide6.QtTest import QTest  # noqa: PLC0415
 
     QTest.qWait(100)
 
-    assert main_window._preview._ocr_text.toPlainText() == "[PERSON_1] ist hier."
+    assert main_window._check.body.read_view.toPlainText() == "[PERSON_1] ist hier."

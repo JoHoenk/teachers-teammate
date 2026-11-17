@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from teachers_teammate.domain.correction_review import ChangeNote
+from tools.model_eval.one_request.sentence_review import ChangeNote
 from tests.tools.store_workspace import (
     COMMITTED,
     export,

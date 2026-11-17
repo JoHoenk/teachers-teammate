@@ -43,7 +43,11 @@ section "Functional Requirements" {
     }
 
     UseCase Manual_Text_Editing {
-        description = "As a user I want to edit the recognised and proofread text directly in the Check tab so that I can fix individual mistakes without reprocessing the document."
+        description = "As a user I want to edit the recognised and proofread text directly in the Check tab, in the view that holds each of them, so that I can fix individual mistakes without reprocessing the document."
+    }
+
+    UseCase Correction_Take_Out_And_Put_Back {
+        description = "As a user I want to take a single correction out of the text, put it back, or use the suggestion for an unclear passage, from the list beside the text, so that the corrected text says what I decide without retyping it."
     }
 
     UseCase PII_Anonymization_Before_Correction {

@@ -16,9 +16,10 @@ from PySide6.QtWidgets import (
 from ...application.formatting import TextFormatter
 from ...domain.benchmark import PairComparison
 from ...infrastructure.benchmark.run_store import StoredRun
+from .._diff_widget import DiffWidget
 from .._formatted_text import render_html
 from .._image_utils import load_pixmap
-from .._preview_panel import DiffWidget, ZoomableImageView
+from .._image_view import ZoomableImageView
 
 
 def _text_pane(title: str) -> tuple[QWidget, QTextEdit]:

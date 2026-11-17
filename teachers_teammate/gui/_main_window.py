@@ -44,7 +44,7 @@ from PySide6.QtWidgets import (
 import qdarkstyle
 
 from .. import __version__ as _APP_VERSION
-from ..application.correction_review import CorrectionReviewPresenter
+from ..application.check_document import CheckDocument
 from ..application.sent_text import SentTexts
 from ..application.service import (
     ADDON_PRIVACY,
@@ -75,6 +75,7 @@ from ..infrastructure.diagnostics import phase as diagnostics_phase
 from ..infrastructure.diagnostics import start_if_requested as start_diagnostics_if_requested
 from ..infrastructure.ollama_install import OLLAMA_DOWNLOAD_URL
 from ..infrastructure.reporting import BATTERY_WARNING, KeepAwakeState
+from ..infrastructure.state_repository import DocumentState
 from ..infrastructure.system_locale import system_language
 from ..texts import dialogs as dlg
 from ..texts import privacy
@@ -105,10 +106,10 @@ from ._fix_targets import (
 )
 from ._help_dialog import AboutDialog, HelpDialog, ThirdPartyLicensesDialog
 from ._image_utils import load_icon, load_pixmap
+from ._image_view import ZoomableImageView
 from ._log_widget import LogWidget
 from ._model_fetch import _start_thread
 from ._model_wording import profile_text
-from ._preview_panel import PreviewPanel, ZoomableImageView
 from ._privacy_settings import (
     DISPLAY_ANONYMIZED_DEFAULT,
     FlowAcknowledgements,
@@ -120,8 +121,9 @@ from ._results_table import ResultsTable
 from ._run_status import RunPace, RunTone, describe_run, time_left_note, time_left_tooltip
 from ._stats_widget import SystemStatsWidget
 from ._system_monitor import SystemMonitorWindow
-from ._types import FileDoneEvent, PreprocessInfo
+from ._types import FileDoneEvent
 from ._update_check import UpdateCheckThread
+from ._view_settings import set_text_point_size, text_point_size
 from ._what_is_sent_dialog import WhatIsSentDialog
 from ._worker import OCRWorker, detach_running_worker
 from .check import CheckPage, CopyKind, CopyState
@@ -377,6 +379,10 @@ class OllamaDownloadManager(QObject):
         self.error.emit(msg)
 
 
+#: The two texts the Check tab lets the teacher type in, as the store names them.
+_EDIT_RAW = "raw"
+_EDIT_CORRECTED = "corrected"
+
 #: How much of a document's name the Check tab label shows before it is shortened.
 _CHECK_TAB_NAME_CHARS = 28
 
@@ -503,8 +509,10 @@ class MainWindow(QMainWindow):
         self._steps_per_file: int = 1
         #: The document the Check tab shows; empty when none is open.
         self._current_preview_source_id: str = ""
-        #: The open document was emptied at a run start and has not been shown again yet.
-        self._open_document_awaits_result = False
+        #: The documents of the running batch whose own result has not arrived yet.
+        self._run_pending: set[str] = set()
+        #: The document the run is working on right now, or ``""``.
+        self._run_current: str = ""
 
         # Declared here; assigned in _build_left_panel / _build_right_panel.
         self._config_panel: ConfigPanel
@@ -529,13 +537,6 @@ class MainWindow(QMainWindow):
         )
         # "Checking…" shows only when the first answer takes a noticeable moment.
         self._checking_timer = _debounce_timer(self, self._CHECKING_DELAY_MS, self._show_checking)
-        # The pieces counter follows the shown text and the settings, debounced: it builds
-        # the corrector, which is cheap but not free.
-        self._text_size_timer = _debounce_timer(
-            self, self._TEXT_SIZE_DELAY_MS, self._refresh_text_size_estimate
-        )
-        # The graphics probe must never run on the GUI thread, so the counter waits for it.
-        self._text_size_task = LatestTask(self)
         # The same for the expected cache keys of the queue: they depend on the card.
         self._cache_state_task = LatestTask(self)
         self._update_thread: UpdateCheckThread | None = None
@@ -555,7 +556,6 @@ class MainWindow(QMainWindow):
         self._results_table: ResultsTable
         self._chart: ChartWidget
         self._check: CheckPage
-        self._preview: PreviewPanel
         self._main_splitter: QSplitter
 
     def _setup_tray(self) -> None:
@@ -612,14 +612,9 @@ class MainWindow(QMainWindow):
         )
         self._config_panel.results_changed.connect(self._on_results_changed)
         self._config_panel.instructions_changed.connect(self._on_instructions_changed)
-        self._preview.ocr_text_edited.connect(self._on_ocr_text_edited)
-        self._preview.correction_text_edited.connect(self._on_correction_text_edited)
-        self._preview.run_stage_requested.connect(self._on_preview_stage_run_requested)
-        self._preview.display_anonymized_changed.connect(self._apply_display_anonymized)
-        self._preview.anonymization_needed.connect(self._on_anonymization_needed)
         self._connect_check_page()
         self._refresh_privacy_availability()
-        self._preview.set_display_anonymized(self._display_anonymized)
+        self._check.set_display_anonymized(self._display_anonymized)
         # Kick off the first readiness check once the window is laid out.
         # Pass self as the receiver so the callback is cancelled if the window is destroyed.
         QTimer.singleShot(500, self, self._start_readiness_check)
@@ -652,7 +647,7 @@ class MainWindow(QMainWindow):
         self._tabs.addTab(self._main_splitter, "Documents")
 
         self._check = CheckPage()
-        self._preview = self._check.preview
+        self._check.set_point_size(text_point_size(self._settings_store))
         self._tabs.addTab(self._check, "Check")
         self._tabs.setTabEnabled(1, False)  # nothing to check before a document has a result
         self._tabs.currentChanged.connect(self._on_tab_changed)
@@ -665,6 +660,12 @@ class MainWindow(QMainWindow):
         self._check.copy_requested.connect(self._on_check_copy)
         self._check.save_requested.connect(self._on_check_save)
         self._check.back_requested.connect(self._show_documents_tab)
+        self._check.raw_text_edited.connect(self._on_ocr_text_edited)
+        self._check.corrected_text_edited.connect(self._on_correction_text_edited)
+        self._check.proofread_requested.connect(self._on_check_proofread_requested)
+        self._check.display_anonymized_changed.connect(self._apply_display_anonymized)
+        self._check.anonymization_needed.connect(self._on_anonymization_needed)
+        self._check.text_zoom_changed.connect(self._store_text_zoom)
         # Ctrl+1 / Ctrl+2 reach the tabs from anywhere in the window; Esc is the Check page's.
         QShortcut(QKeySequence("Ctrl+1"), self, self._show_documents_tab)
         QShortcut(QKeySequence("Ctrl+2"), self, self._show_check_tab)
@@ -941,8 +942,6 @@ class MainWindow(QMainWindow):
     _READINESS_DEBOUNCE_MS = 400
     #: How long the first readiness check may take before the line says "Checking…".
     _CHECKING_DELAY_MS = 300
-    #: How long the pieces counter waits after an edit or a settings change.
-    _TEXT_SIZE_DELAY_MS = 400
     _QSETTINGS_ORG = "TeachersTeammate"
     _QSETTINGS_APP = "TeachersTeammate"
 
@@ -1295,9 +1294,6 @@ class MainWindow(QMainWindow):
             self._results_table.set_correction_review(
                 source_id, view.correction_review, view.correction_warning
             )
-            self._results_table.set_preprocessing(
-                source_id, PreprocessInfo(view.original_img, view.preprocess_steps)
-            )
             self._results_table.set_text_format(source_id, view.raw_text_format)
             self._results_table.set_sent(source_id, view.sent)
             if view.ocr_done:
@@ -1500,13 +1496,13 @@ class MainWindow(QMainWindow):
         self._results_table.set_output_dir(config.output_dir)
         self._chart.clear_data()
         self._run_source_ids = list(selected_source_ids)
-        # A document the run redoes is emptied: what the tab shows would be stale until the
-        # result arrives. It stays the open document, so its result reloads it (without a tab
-        # switch), and a run that ends before reaching it reloads it too. Documents the run
-        # leaves alone stay open for work.
-        if self._current_preview_source_id in selected_source_ids:
-            self._preview.clear_preview()
-            self._open_document_awaits_result = True
+        # A document the run redoes is read-only from the run's start until its own result
+        # arrives: an edit stored meanwhile would race the run. It stays the open document, so
+        # its result reloads it (without a tab switch), and a run that ends before reaching it
+        # reloads it too. Documents the run leaves alone stay open for work.
+        self._run_pending = set(selected_source_ids)
+        self._run_current = ""
+        self._apply_lock()
         self._result_names = []
         self._result_ocr_times = []
         self._result_correction_times = []
@@ -1618,6 +1614,9 @@ class MainWindow(QMainWindow):
 
     def _run_stage(self, config: Config, selected_source_ids: list[str], stage: str) -> None:
         """Invalidate the cache from *stage* onward and start the worker on the rows."""
+        # A typed edit is stored first: after the invalidation it would be stored on top of the
+        # state the run is about to work on, and a run would redo or skip the wrong thing.
+        self._check.flush_pending_edit()
         run_source_ids, failures, no_files = self._app_service.invalidate_from_stage(
             config,
             selected_source_ids=selected_source_ids,
@@ -1859,11 +1858,10 @@ class MainWindow(QMainWindow):
         # remembered "Don't ask again" answers (so the next run asks before sending).
         self._apply_display_anonymized(DISPLAY_ANONYMIZED_DEFAULT)
         self._acknowledgements().forget_all()
-        self._preview.invalidate_anonymization()
+        self._check.forget_anonymization()
         self._save_settings(notify=False)
         self._start_readiness_check()
         self._refresh_queue_from_inputs()
-        self._text_size_timer.start()  # the context setting changes how the text is split
 
     def _on_results_changed(self) -> None:
         """Step "Results" changed: save it, and show what is cached for the new folder."""
@@ -1874,7 +1872,6 @@ class MainWindow(QMainWindow):
     def _on_instructions_changed(self) -> None:
         """The proofreading instructions changed: save them, and re-count the parts."""
         self._save_settings(notify=False)
-        self._text_size_timer.start()  # longer instructions leave less room for the text
 
     def _on_stop(self) -> None:
         """First click: finish the document being processed; second click: stop at once."""
@@ -1943,10 +1940,10 @@ class MainWindow(QMainWindow):
         self._progress.setValue((idx - 1) * self._steps_per_file)
         self._set_progress_text(f"[{idx}/{total}] {name} — starting…")
         self._results_table.mark_processing(source_id)
-        # The previous run's preprocessing info is stale until this run records its own.
+        self._run_current = source_id
+        self._apply_lock()
         # The text format is deliberately kept: the row still shows the previous texts, and
         # a format that no longer matches them would save an edit in the wrong notation.
-        self._results_table.set_preprocessing(source_id, PreprocessInfo())
 
     _STAGE_PROGRESS_LABEL: ClassVar[dict[str, str]] = {
         PROGRESS_STAGE_PREPROCESSING: "preprocessing…",
@@ -1968,8 +1965,6 @@ class MainWindow(QMainWindow):
         ocr_s = event.ocr_s
         correction_s = event.correction_s
         self._results_table.add_result(event)
-        # Refresh from the persisted state even on failure/stop, when on_ocr_done never fired.
-        self._refresh_preprocessing_info(source_id, text_format=event.text_format)
         self._set_export_enabled(True)
         # A skipped or stopped file is not an error: its row says why, the final line counts it.
         if not (event.skipped or event.stopped) and not ok and message:
@@ -1988,33 +1983,37 @@ class MainWindow(QMainWindow):
 
         # Only the open document is reloaded: a finished file never takes the tab away from
         # the document the teacher is working on, and never switches tabs.
-        if source_id == self._current_preview_source_id:
-            self._load_check(source_id)
+        self._run_pending.discard(source_id)
+        if self._run_current == source_id:
+            self._run_current = ""
+        # The open document is read once, for the page and the row together; any other row
+        # is read for itself.  Both refresh from the persisted state even on failure or stop,
+        # when on_ocr_done never fired.
+        if not (source_id == self._current_preview_source_id and self._load_check(source_id)):
+            self._refresh_row_state(source_id, text_format=event.text_format)
+            self._apply_lock()
         self._update_check_tab()
 
-    def _refresh_preprocessing_info(self, source_id: str, *, text_format: str = "plain") -> None:
-        """Re-read how *source_id*'s preview was produced and its results were sent.
+    def _refresh_row_state(self, source_id: str, *, text_format: str = "plain") -> None:
+        """Re-read how *source_id*'s results were sent and which notation its texts are in.
 
         Both are unknown (empty) when no valid state exists.
 
         *text_format* is the notation the pipeline reported for the texts; it is kept when the
         persisted state cannot be read back (e.g. the output directory changed meanwhile).
         """
-        info = PreprocessInfo()
         sent: dict[str, SentStatus] = {}
         try:
             source = Path(source_id)
             if source.exists():
                 view = self._app_service.load_view(self._config_panel.to_config(), source)
                 if view is not None:
-                    info = PreprocessInfo(view.original_img, view.preprocess_steps)
                     text_format = view.raw_text_format
                     # The run that just finished stored how it sent its results; the cells
                     # were reset when those steps started.
                     sent = view.sent
         except OSError, ValueError:
             pass
-        self._results_table.set_preprocessing(source_id, info)
         self._results_table.set_text_format(source_id, text_format)
         self._results_table.set_sent(source_id, sent)
 
@@ -2120,7 +2119,6 @@ class MainWindow(QMainWindow):
         self._save_settings(notify=False)
         self._start_readiness_check(fresh=True)
         self._refresh_queue_from_inputs()
-        self._text_size_timer.start()
 
     def _show_checking(self) -> None:
         self._checking_visible = not self._first_check_answered
@@ -2277,10 +2275,15 @@ class MainWindow(QMainWindow):
         self._progress.setToolTip("")
         self._pace = RunPace()
         self._run_source_ids = []
-        if self._open_document_awaits_result and self._current_preview_source_id:
+        reload = self._current_preview_source_id in self._run_pending
+        self._run_pending = set()
+        self._run_current = ""
+        if reload:
             # The run ended (stopped, failed) before it reached the open document: show what
-            # it still has instead of leaving the tab empty.
+            # it still has instead of leaving the tab locked.
             self._load_check(self._current_preview_source_id)
+        else:
+            self._apply_lock()
         self._update_check_tab()
         icon = (
             QSystemTrayIcon.MessageIcon.Warning
@@ -2309,7 +2312,6 @@ class MainWindow(QMainWindow):
                         view.raw_text,
                         view.correction_text,
                         view.evaluation_text,
-                        preprocess=PreprocessInfo(view.original_img, view.preprocess_steps),
                     )
                     self._results_table.set_text_format(source_id, view.raw_text_format)
                     self._results_table.set_sent(source_id, view.sent)
@@ -2339,40 +2341,68 @@ class MainWindow(QMainWindow):
 
     # ── The Check tab ─────────────────────────────────────────────────────
 
-    def _load_check(self, source_id: str) -> None:
-        """Show *source_id* in the Check tab, with its texts and stage badges.
+    def _load_check(self, source_id: str) -> bool:
+        """Show *source_id* in the Check tab, with its texts and the items of its review.
 
         The loader never switches tabs. A finished file reloads the open document, and only
         the teacher (or a run start, which goes to Documents) decides which tab is in front.
+        Returns whether the document was shown; when it was not, the teacher was told why and
+        what was open before stays open.
         """
-        _sid, name, preview_img, raw_txt, corr_txt, eval_txt = self._results_table.entry_for_source(
-            source_id
-        )
-        info = self._results_table.preprocessing_for_source(source_id)
-        try:
-            self._preview.load(
-                load_pixmap(preview_img),
-                raw_txt,
-                corr_txt,
-                eval_txt,
-                preprocess=info,
-                text_format=self._results_table.text_format_for_source(source_id),
-                correction_review=CorrectionReviewPresenter.for_preview(
-                    raw_txt,
-                    self._results_table.text_format_for_source(source_id),
-                    self._results_table.review_for_source(source_id),
-                ),
-                correction_warning=self._results_table.correction_warning_for_source(source_id),
-            )
-        except Exception as exc:  # noqa: BLE001  # preview load may raise on missing/corrupt files; warn instead of crashing
-            _dialogs.notify(self, dlg.preview_failed(str(exc)))
-            return
+        doc = self._check_document(source_id)
+        if doc is None:
+            _dialogs.notify(self, dlg.check_without_state(Path(source_id).name))
+            # What was open stays open; a lock the run put on it must still lift with the run.
+            self._apply_lock()
+            self._update_check_tab()
+            return False
         self._current_preview_source_id = source_id
-        self._open_document_awaits_result = False
-        self._update_preview_stage_statuses(source_id)
-        self._refresh_text_size_estimate(source_id)
-        self._show_check_header(source_id, name, raw_txt, corr_txt)
+        self._check.show_document(doc, *self._check_position(source_id))
+        self._set_copy_state(doc.raw_text, doc.corrected_text)
+        # The queue row says how this document was sent and in which notation it is written.
+        self._results_table.set_sent(source_id, doc.sent)
+        self._results_table.set_text_format(source_id, doc.text_format)
+        self._apply_lock()
         self._update_check_tab()
+        return True
+
+    def _check_document(self, source_id: str) -> CheckDocument | None:
+        """Return what the Check tab shows about *source_id*, or ``None`` without a state."""
+        try:
+            config = self._config_panel.to_config()
+        except ValueError:
+            # A setting that is not valid yet (no output folder) must not hide stored results:
+            # reading them needs no more than the lookup config does.
+            config = self._config_panel.lookup_config()
+        return self._app_service.check_document(config, Path(source_id))
+
+    def _apply_lock(self) -> None:
+        """Make the open document read-only while the run works on it, or free it again."""
+        source_id = self._current_preview_source_id
+        if not source_id:
+            return
+        if source_id == self._run_current:
+            self._check.set_lock(txt.BEING_PROOFREAD)
+        elif source_id in self._run_pending:
+            self._check.set_lock(txt.WAITING_FOR_RUN)
+        else:
+            self._check.set_lock(None)
+
+    def _store_text_zoom(self, point_size: int) -> None:
+        """Remember the text size the teacher zoomed to, for the next document and restart."""
+        set_text_point_size(self._settings_store, point_size)
+
+    def _on_check_proofread_requested(self) -> None:
+        """Proofread the open document: the header's button and ⋯ → *Proofread again*."""
+        source_id = self._current_preview_source_id
+        if source_id:
+            self._on_stage_run_requested([source_id], "correction")
+
+    def _check_position(self, source_id: str) -> tuple[int, int]:
+        """Return where *source_id* sits among the documents the Check tab can open."""
+        openable = self._results_table.checkable_source_ids()
+        position = openable.index(source_id) + 1 if source_id in openable else 0
+        return position, len(openable)
 
     def _open_check(self, source_id: str) -> None:
         """Show *source_id* in the Check tab: what a double-click, Enter or the menu asks for.
@@ -2384,13 +2414,6 @@ class MainWindow(QMainWindow):
         self._load_check(source_id)
         self._results_table.select_source(source_id)
         self._tabs.setCurrentIndex(1)
-
-    def _show_check_header(self, source_id: str, name: str, raw_txt: str, corr_txt: str) -> None:
-        """Say in the header which document is open, where it sits and what can be copied."""
-        openable = self._results_table.checkable_source_ids()
-        position = openable.index(source_id) + 1 if source_id in openable else 0
-        self._check.show_document(name, source_id, position, len(openable))
-        self._set_copy_state(raw_txt, corr_txt)
 
     def _set_copy_state(self, raw_txt: str, corr_txt: str) -> None:
         """Say what the Copy menu may offer for a document with these texts."""
@@ -2457,8 +2480,6 @@ class MainWindow(QMainWindow):
     def _close_check(self) -> None:
         """Forget the open document and go back to Documents."""
         self._current_preview_source_id = ""
-        self._open_document_awaits_result = False
-        self._preview.clear_preview()
         self._check.clear()
         self._tabs.setCurrentIndex(0)
 
@@ -2516,7 +2537,7 @@ class MainWindow(QMainWindow):
         source_id = self._current_preview_source_id
         if not source_id:
             return
-        self._preview.flush_pending_edit()  # a typed edit must be in the text that is copied
+        self._check.flush_pending_edit()  # a typed edit must be in the text that is copied
         _sid, _name, _img, raw_txt, corr_txt, _eval = self._results_table.entry_for_source(
             source_id
         )
@@ -2556,70 +2577,8 @@ class MainWindow(QMainWindow):
         source_id = self._current_preview_source_id
         if not source_id:
             return
-        self._preview.flush_pending_edit()
+        self._check.flush_pending_edit()
         self._on_export_requested([source_id], kind)
-
-    def _on_preview_stage_run_requested(self, source_id: str, stage: str) -> None:
-        """Forward a per-stage run request from the preview panel to the normal handler."""
-        self._on_stage_run_requested([source_id], stage)
-
-    def _update_preview_stage_statuses(self, source_id: str) -> None:
-        """Push stage status badges + nav-bar run buttons to the preview panel."""
-        settings = self._config_panel.get_settings_dict()
-        correction_enabled = bool(settings.get("correction_enabled", True))
-        evaluation_enabled = bool(settings.get("evaluation_enabled", False))
-        ocr, correction, evaluation = self._results_table.get_stage_statuses_for_source(source_id)
-        corr_inv = False
-        eval_inv = False
-        try:
-            config = self._config_panel.to_config()
-            doc_state = self._app_service.get_document_state(config, Path(source_id))
-            if doc_state is not None:
-                corr_inv = doc_state.correction_invalidated
-                eval_inv = doc_state.evaluation_invalidated
-        except ValueError:
-            pass
-        self._preview.update_stage_statuses(
-            source_id,
-            ocr,
-            correction,
-            evaluation,
-            correction_enabled,
-            evaluation_enabled,
-            correction_invalidated=corr_inv,
-            evaluation_invalidated=eval_inv,
-        )
-
-    def _refresh_text_size_estimate(self, source_id: str | None = None) -> None:
-        """Show how many proofreading requests the text of *source_id* takes.
-
-        The estimate comes from the application service, which builds the same corrector the
-        run builds, so the counter and the run cannot disagree.  Nothing is shown when there
-        is no text yet or the settings are incomplete: the counter is a hint, never a gate.
-
-        The hardware detection is asked for, never resolved here: with "My computer" on a local
-        server the first resolution runs the graphics probe, which would freeze the window.
-        While it is unknown the counter stays hidden and the estimate runs again when the
-        detection arrives.
-        """
-        sid = source_id or self._current_preview_source_id
-        _sid, _name, _img, raw_txt, _corr, _eval = self._results_table.entry_for_source(sid)
-        if not raw_txt:
-            self._preview.set_text_size(None)
-            return
-        try:
-            config = self._config_panel.to_config()
-        except Exception:  # noqa: BLE001  # an incomplete setup must not break the preview
-            self._preview.set_text_size(None)
-            return
-        hardware = self._app_service.cached_hardware_profile(
-            config.hardware_profile, config.ollama_url
-        )
-        if hardware is None:
-            self._preview.set_text_size(None)
-            self._detect_hardware_for_text_size(config.ollama_url, sid)
-            return
-        self._show_text_size_estimate(config, sid, raw_txt, hardware)
 
     def _ensure_hardware_known_for_cache_state(self, config: Config) -> None:
         """Probe this computer in the background when the cache keys need to know the card.
@@ -2645,36 +2604,6 @@ class MainWindow(QMainWindow):
 
         self._cache_state_task.submit(detect, done)
 
-    def _detect_hardware_for_text_size(self, ollama_url: str, source_id: str) -> None:
-        """Probe this computer in the background, then estimate the size again."""
-
-        def detect() -> object:
-            return self._app_service.detect_hardware(ollama_url)
-
-        def done(_result: object, error: BaseException | None) -> None:
-            # A failed probe leaves the counter hidden; the estimate is a hint, not a gate.
-            # Asking again would submit the same failing probe in a loop.
-            if error is None:
-                self._refresh_text_size_estimate(source_id)
-
-        self._text_size_task.submit(detect, done)
-
-    def _show_text_size_estimate(
-        self, config: Config, source_id: str, raw_text: str, hardware: HardwareDetection
-    ) -> None:
-        """Show the estimate for *raw_text*, sized for the *hardware* already detected."""
-        try:
-            estimate = self._app_service.estimate_text_size(
-                config,
-                raw_text,
-                self._results_table.text_format_for_source(source_id),
-                hardware,
-            )
-        except Exception:  # noqa: BLE001  # an incomplete setup must not break the preview
-            self._preview.set_text_size(None)
-            return
-        self._preview.set_text_size(estimate)
-
     def _open_source_for_edit(self) -> tuple[Path, str, str, str, str] | None:
         """Resolve the open document to its input path and current payloads.
 
@@ -2692,90 +2621,68 @@ class MainWindow(QMainWindow):
         return source, preview_img, raw_txt, corr_txt, eval_txt
 
     def _on_ocr_text_edited(self, edited_text: str) -> None:
-        selected = self._open_source_for_edit()
-        if selected is None:
-            return
-        source, preview_img, _raw_txt, _corr_txt, _eval_txt = selected
-        source_id = str(source.resolve())
-
-        try:
-            config = self._config_panel.to_config()
-        except ValueError:
-            return
-        state = self._app_service.record_manual_ocr_edit(
-            config,
-            source=source,
-            edited_text=edited_text,
-            preview_img=preview_img,
-            raw_text_format=self._results_table.text_format_for_source(source_id),
-        )
-        if state is None:
-            return
-
-        self._results_table.set_row_artifacts(
-            source_id,
-            state.preview_img,
-            state.raw_text,
-            state.correction_text,
-            state.evaluation_text,
-        )
-        self._results_table.mark_cached(
-            source_id,
-            state.preview_img,
-            state.raw_text,
-            state.correction_text,
-            state.evaluation_text,
-            ocr_done=state.ocr_done,
-            correction_done=state.correction_done,
-            evaluation_done=state.evaluation_done,
-        )
-        self._results_table.set_correction_review(source_id, state.review, state.correction_warning)
-        info = self._results_table.preprocessing_for_source(source_id)
-        self._results_table.set_text_format(source_id, state.raw_text_format)
-        # An edit drops the results it invalidates, and their sent lines with them.
-        view = self._app_service.load_view(config, source)
-        if view is not None:
-            self._results_table.set_sent(source_id, view.sent)
-        self._preview.load(
-            load_pixmap(state.preview_img),
-            state.raw_text,
-            state.correction_text,
-            state.evaluation_text,
-            preprocess=info,
-            text_format=state.raw_text_format,
-            correction_review=CorrectionReviewPresenter.for_preview(
-                state.raw_text, state.raw_text_format, state.review
-            ),
-            correction_warning=state.correction_warning,
-        )
-        self._update_preview_stage_statuses(source_id)
-        self._text_size_timer.start()  # the edited text may need other parts
-        self._update_check_tab()
+        """The transcription was typed into: store it and show what the store now says."""
+        self._store_edit(_EDIT_RAW, edited_text)
 
     def _on_correction_text_edited(self, edited_text: str) -> None:
+        """The final text was typed into: store it and show what the store now says."""
+        self._store_edit(_EDIT_CORRECTED, edited_text)
+
+    def _store_edit(self, kind: str, edited_text: str) -> None:
+        """Store one typed edit of the open document, then show the document it left behind.
+
+        One handler for both texts: they differ only in which record the store writes, and
+        everything after it — the row, the page, the tab label — is the same.
+        """
         selected = self._open_source_for_edit()
         if selected is None:
             return
         source, preview_img, raw_txt, _corr_txt, _eval_txt = selected
-        if not raw_txt:
+        if kind == _EDIT_CORRECTED and not raw_txt:
             return
-        source_id = str(source.resolve())
-
         try:
             config = self._config_panel.to_config()
         except ValueError:
             return
-        state = self._app_service.record_manual_correction_edit(
-            config,
-            source=source,
-            raw_text=raw_txt,
-            preview_img=preview_img,
-            edited_text=edited_text,
-            raw_text_format=self._results_table.text_format_for_source(source_id),
-        )
+        source_id = str(source.resolve())
+        text_format = self._results_table.text_format_for_source(source_id)
+        if kind == _EDIT_RAW:
+            state = self._app_service.record_manual_ocr_edit(
+                config,
+                source=source,
+                edited_text=edited_text,
+                preview_img=preview_img,
+                raw_text_format=text_format,
+            )
+        else:
+            state = self._app_service.record_manual_correction_edit(
+                config,
+                source=source,
+                raw_text=raw_txt,
+                preview_img=preview_img,
+                edited_text=edited_text,
+                raw_text_format=text_format,
+            )
         if state is None:
             return
+        # One read of the stored state serves the row and the page.
+        doc = self._app_service.check_document(config, source)
+        self._sync_row(source_id, state, doc)
+        if doc is None:
+            return
+        if kind == _EDIT_RAW:
+            # The proofreading went with the transcription: the page falls back to it.
+            self._check.show_document(doc, *self._check_position(source_id), typed=True)
+            self._set_copy_state(doc.raw_text, doc.corrected_text)
+        else:
+            self._check.update_document(doc)
+        self._update_check_tab()
 
+    def _sync_row(self, source_id: str, state: DocumentState, doc: CheckDocument | None) -> None:
+        """Push what the store now says about *source_id* into its row.
+
+        *doc* is the Check tab's read of the same state; it says how the results were sent.
+        """
         self._results_table.set_row_artifacts(
             source_id,
             state.preview_img,
@@ -2794,26 +2701,10 @@ class MainWindow(QMainWindow):
             evaluation_done=state.evaluation_done,
         )
         self._results_table.set_correction_review(source_id, state.review, state.correction_warning)
-        info = self._results_table.preprocessing_for_source(source_id)
         self._results_table.set_text_format(source_id, state.raw_text_format)
         # An edit drops the results it invalidates, and their sent lines with them.
-        view = self._app_service.load_view(config, source)
-        if view is not None:
-            self._results_table.set_sent(source_id, view.sent)
-        self._preview.load(
-            load_pixmap(state.preview_img),
-            state.raw_text,
-            state.correction_text,
-            state.evaluation_text,
-            preprocess=info,
-            text_format=state.raw_text_format,
-            correction_review=CorrectionReviewPresenter.for_preview(
-                state.raw_text, state.raw_text_format, state.review
-            ),
-            correction_warning=state.correction_warning,
-        )
-        self._update_preview_stage_statuses(source_id)
-        self._update_check_tab()
+        if doc is not None:
+            self._results_table.set_sent(source_id, doc.sent)
 
     def _on_what_is_sent_requested(self, source_id: str) -> None:
         """Open "What is sent for this file…" for one row of the results table."""
@@ -2865,7 +2756,7 @@ class MainWindow(QMainWindow):
         enabled = bool(enabled) and self._privacy_available
         set_display_anonymized(self._settings_store, enabled)
         self._display_anonymized = enabled
-        self._preview.set_display_anonymized(enabled)
+        self._check.set_display_anonymized(enabled)
 
     def _refresh_privacy_availability(self) -> None:
         """Enable the setting only while personal information can actually be hidden.
@@ -2881,16 +2772,16 @@ class MainWindow(QMainWindow):
         available = self._privacy_availability[language]
         changed = available != self._privacy_available
         self._privacy_available = available
-        self._preview.set_display_anonymized_available(available)
+        self._check.set_display_anonymized_available(available)
         self._refresh_copy_state()
         if changed and available and self._display_anonymized:
             # The setting was on but could not be applied; it can now.
-            self._preview.set_display_anonymized(True)
+            self._check.set_display_anonymized(True)
 
     def _on_anonymization_needed(self, raw_text: str) -> None:
         """Start hiding the personal information of the text the preview shows."""
         if not raw_text.strip():
-            self._preview.set_anonymization("", {}, raw_text=raw_text)
+            self._check.set_anonymization({})
             return
         language = self._config_panel.lookup_language()
         if self._anonymize_running and self._anonymize_key == (raw_text, language):
@@ -2904,31 +2795,29 @@ class MainWindow(QMainWindow):
             return service.anonymize_preview(raw_text, language, anon_config)
 
         def _on_done(result: object, error: BaseException | None) -> None:
-            self._on_anonymization_done(raw_text, result, error)
+            self._on_anonymization_done(result, error)
 
         # Only the latest request counts: a slow result for a text the preview already left
         # is dropped, and no thread object can be destroyed while it still runs.
         self._anonymize_task.submit(_anonymize, _on_done)
 
-    def _on_anonymization_done(
-        self, raw_text: str, payload: object, error: BaseException | None
-    ) -> None:
-        """Hand the placeholders to the preview (only the newest request gets here)."""
+    def _on_anonymization_done(self, payload: object, error: BaseException | None) -> None:
+        """Hand the placeholders to the Check tab (only the newest request gets here)."""
         self._anonymize_key = None
         self._anonymize_running = False
         if error is not None or not isinstance(payload, tuple) or len(payload) != 2:
             reason = (
                 (_spacy_problem(error) or str(error)) if error is not None else dlg.UNKNOWN_ERROR
             )
-            self._preview.set_anonymization("", {}, raw_text=raw_text, error=reason)
+            self._check.set_anonymization({}, error=reason)
             return
-        anonymized, raw_mapping = payload
+        _anonymized, raw_mapping = payload
         mapping = (
             {str(key): str(value) for key, value in raw_mapping.items()}
             if isinstance(raw_mapping, dict)
             else {}
         )
-        self._preview.set_anonymization(str(anonymized), mapping, raw_text=raw_text)
+        self._check.set_anonymization(mapping)
 
     def _on_data_flow_changed(self, flow: object) -> None:
         """Say under the proofreading and content-review cells where their text goes."""
@@ -2938,7 +2827,6 @@ class MainWindow(QMainWindow):
             {stage.stage: stage_tooltip(stage) for stage in flow.stages if not stage.detail}
         )
         self._refresh_privacy_availability()  # the document language may have changed
-        self._text_size_timer.start()  # language, provider, model or an enabled stage changed
         self._schedule_readiness_check()  # ... and what a run needs with it
 
     def _show_what_is_sent(self, report: SentTexts, name: str) -> None:
@@ -3060,7 +2948,7 @@ class MainWindow(QMainWindow):
             self._config_panel.update_anonymizer_config(result.anonymizer_config)
             if self._config_panel.build_anonymizer_config() != before:
                 # New models or patterns produce different placeholders for the shown text.
-                self._preview.invalidate_anonymization()
+                self._check.forget_anonymization()
         if result.display_anonymized is not None and hiding_was_possible:
             # Without the add-on the checkbox is disabled and shows "off"; applying that
             # would overwrite the saved preference.
@@ -3068,7 +2956,6 @@ class MainWindow(QMainWindow):
         self._save_settings(notify=False)
         self._start_readiness_check()
         self._refresh_queue_from_inputs()
-        self._text_size_timer.start()  # the context setting changes how the text is split
 
     def _on_packages_changed(self) -> None:
         """A download finished: a spaCy model may be available now, so look again."""

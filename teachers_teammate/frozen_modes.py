@@ -6,8 +6,9 @@ before the splash screen and before any heavy import.
 
 ``run_smoke_test`` is what proves a build is complete: the modules the app loads lazily,
 Qt's image plugins, the reader's OpenCV runtime, PDF and DOCX writing, the provider list,
-the bundled assets, the model files the app carries itself, the absence of GPL-only Qt
-modules, the pip dispatch and the add-on constraints and lock. CI runs it on every build
+the Setup Assistant building a plan, the bundled assets, the model files the app carries
+itself, the absence of GPL-only Qt modules, the pip dispatch and the add-on constraints and
+lock. CI runs it on every build
 (see ``.github/workflows/build_artifacts.yml``) and the Windows installer test runs it again
 on the installed copy.
 
@@ -17,7 +18,7 @@ keys sit in the system keychain, which no uninstaller can enumerate.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Mapping
 import importlib
 import importlib.metadata
 from io import BytesIO
@@ -26,6 +27,16 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+import tempfile
+import time
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from PySide6.QtCore import QCoreApplication
+
+    from teachers_teammate.application.service import ProcessingApplicationService
+    from teachers_teammate.application.setup_plan import SetupAnswers, SetupPlan
+    from teachers_teammate.gui.setup import SetupAssistant
 
 # Modules the app loads lazily — a menu action, an import inside a function. PyInstaller
 # cannot see them, so the smoke test is what proves they made it into the bundle.
@@ -68,6 +79,17 @@ _ASSETS: tuple[str, ...] = (
 # is why the constraints file must pin them to what the bundle carries.
 _CONSTRAINED_RUNTIME_PACKAGES: tuple[str, ...] = ("numpy", "pydantic", "requests", "pillow")
 
+# The address the Setup Assistant check points the app at.  Nothing listens on port 9, so the
+# answer is the same on every machine and an Ollama on a developer's computer cannot change it.
+SETUP_OLLAMA_URL = "http://127.0.0.1:9"
+
+# How long the Setup Assistant check waits for the setup plan to arrive.  A module constant, so a test
+# can lower it instead of waiting half a minute for a timeout it provoked itself.
+SETUP_PLAN_TIMEOUT_MS = 30_000
+
+# The pages the check clicks through: Welcome, Classes, Local AI, Proofreading → Summary.
+SETUP_PAGES = 4
+
 # Qt modules that Qt offers only under the GPL-3.0 or a commercial license. The rest of Qt is
 # LGPL-3.0, which lets an Apache-2.0 application link it; one of these in the bundle would make
 # the whole application GPL-3.0. ``tools/build/teachers-teammate.spec`` drops the same names
@@ -109,17 +131,154 @@ def _check_imports() -> str | None:
 
 
 def _check_qt() -> str | None:
-    """Start Qt headless and check the image formats the app reads."""
-    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-    from PySide6.QtGui import QGuiApplication, QImageReader  # noqa: PLC0415
+    """Start Qt headless and check the image formats the app reads.
 
-    if QGuiApplication.instance() is None:
-        QGuiApplication([])
+    A ``QApplication``, not a ``QGuiApplication``: the Setup Assistant check builds a ``QWizard``
+    afterwards, and Qt refuses to create a ``QApplication`` once a ``QGuiApplication`` exists.
+    A ``QApplication`` is a ``QGuiApplication``, so this check's own work is unaffected.
+    """
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtGui import QImageReader  # noqa: PLC0415
+    from PySide6.QtWidgets import QApplication  # noqa: PLC0415
+
+    if QApplication.instance() is None:
+        QApplication([])
     supported = {bytes(fmt.data()).decode() for fmt in QImageReader.supportedImageFormats()}
     missing = [fmt for fmt in _IMAGE_FORMATS if fmt not in supported]
     if missing:
         return f"Qt cannot read {', '.join(missing)} (has {', '.join(sorted(supported))})"
     return None
+
+
+def _setup_answers(settings: Mapping[str, object]) -> SetupAnswers:
+    """Return the answers the check walks the wizard with: handwritten pages, local proofreading."""
+    from teachers_teammate.application.setup_plan import (  # noqa: PLC0415
+        HandIn,
+        ProofreadingPlace,
+        SetupAnswers,
+    )
+
+    return SetupAnswers(
+        language=str(settings["language"]),
+        hand_in=HandIn.HANDWRITTEN,
+        proofreading=ProofreadingPlace.LOCAL,
+        ollama_url=str(settings["ollama_url"]),
+        hardware_profile=str(settings["hardware_profile"]),
+        local_ai_shown=True,
+    )
+
+
+def _setup_plan_problem(plan: SetupPlan, frozen: bool) -> str | None:
+    """Return what is wrong with *plan*, or ``None`` when it is what the defaults should give."""
+    from teachers_teammate.application.setup_plan import DownloadKind  # noqa: PLC0415
+
+    if not plan.steps:
+        return "the setup plan has no step"
+    provider = plan.settings.get("correction_provider")
+    if provider != "ollama":
+        return f"the setup plan proofreads with {provider!r} instead of 'ollama'"
+    if frozen:
+        # The bundle carries the page models, so the defaults (handwritten pages, automatic image
+        # preparation) must not plan their download: this is the real ``setup_facts`` seeing them.
+        planned = [item.name for item in plan.downloads if item.kind is DownloadKind.PAGE_MODELS]
+        if planned:
+            return "the bundle's page models were not found: the setup plan downloads them"
+    return None
+
+
+def _wait_for_setup_plan(app: QCoreApplication, assistant: SetupAssistant) -> SetupPlan | None:
+    """Pump the event loop until the summary page's plan arrives, or the timeout passes."""
+    deadline = time.monotonic() + SETUP_PLAN_TIMEOUT_MS / 1000
+    while time.monotonic() < deadline:
+        app.processEvents()
+        plan = assistant.plan()
+        if plan is not None:
+            return plan
+        time.sleep(0.01)
+    app.processEvents()
+    return assistant.plan()
+
+
+def _walk_setup_assistant(
+    service: ProcessingApplicationService,
+    settings: Mapping[str, object],
+    frozen: bool,
+) -> str | None:
+    """Build the wizard on *service*, click through to the summary, check the setup plan."""
+    from PySide6.QtWidgets import QApplication  # noqa: PLC0415
+
+    from teachers_teammate.gui._background import wait_for_background_tasks  # noqa: PLC0415
+    from teachers_teammate.gui.setup import SetupAssistant, SetupContext  # noqa: PLC0415
+    from teachers_teammate.gui.setup._flow import ORDER  # noqa: PLC0415
+
+    app = QApplication.instance()
+    if app is None:
+        app = QApplication([])
+    elif not isinstance(app, QApplication):
+        # A QGuiApplication is already running: Qt aborts the process on a second application,
+        # so say what is wrong instead of taking the whole smoke test down with it.
+        return f"Qt runs as {type(app).__name__}, so no wizard can be built"
+    try:
+        assistant = SetupAssistant(SetupContext(settings=settings, app_service=service))
+    except Exception as exc:  # noqa: BLE001 — a page that cannot be built is a failed check
+        return f"the wizard could not be built ({type(exc).__name__}: {exc})"
+    try:
+        assistant.show()
+        for _ in range(SETUP_PAGES):
+            assistant.next()
+        plan = _wait_for_setup_plan(app, assistant)
+        if plan is None:
+            current = assistant.currentId()
+            page = ORDER[current] if current >= 0 else "no page"
+            return f"no setup plan after {SETUP_PLAN_TIMEOUT_MS / 1000:g} s, stuck on {page}"
+        return _setup_plan_problem(plan, frozen)
+    finally:
+        assistant.reject()
+        assistant.deleteLater()
+        app.processEvents()
+        wait_for_background_tasks()
+
+
+def _check_setup_assistant() -> str | None:
+    """Build the Setup Assistant on the real service and walk it to the setup plan.
+
+    The service first, on this thread: a failure inside ``setup_facts`` keeps its own exception
+    type and message, which the summary page would throw away and show as a headline.  Then the
+    wizard itself, so the pages, the thread pool and the setup plan arriving from it are exercised too.
+
+    Nothing lands in the user's folders: the cache, the config root and the data root are one
+    temporary folder for the duration of the check.
+    """
+    from teachers_teammate.application.service import ProcessingApplicationService  # noqa: PLC0415
+    from teachers_teammate.config import DEFAULTS  # noqa: PLC0415
+
+    frozen = bool(getattr(sys, "frozen", False))
+    previous = {
+        name: os.environ.get(name) for name in ("QT_QPA_PLATFORM", "TEACHERS_TEAMMATE_TMPDIR")
+    }
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    try:
+        with tempfile.TemporaryDirectory(
+            prefix="teachers-teammate-smoke-", ignore_cleanup_errors=True
+        ) as folder:
+            os.environ["TEACHERS_TEAMMATE_TMPDIR"] = folder
+            settings = dict(DEFAULTS)
+            settings["ollama_url"] = SETUP_OLLAMA_URL
+            # The real detection runs in the frozen process: subprocesses, psutil, the platform's
+            # own memory query.  That is part of what this check is for.
+            settings["hardware_profile"] = "auto"
+            service = ProcessingApplicationService()
+            plan = service.plan_setup(_setup_answers(settings), settings)
+            problem = _setup_plan_problem(plan, frozen)
+            if problem is not None:
+                return problem
+            return _walk_setup_assistant(service, settings, frozen)
+    finally:
+        for name, value in previous.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
 
 
 def _check_reader_runtime() -> str | None:
@@ -313,6 +472,7 @@ def _checks() -> list[tuple[str, Check]]:
     checks: list[tuple[str, Check]] = [
         ("imports", _check_imports),
         ("qt", _check_qt),
+        ("setup assistant", _check_setup_assistant),
         ("reader", _check_reader_runtime),
         ("pdf", _check_pdf),
         ("docx", _check_docx),

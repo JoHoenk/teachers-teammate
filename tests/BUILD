@@ -938,9 +938,11 @@ py_test(
 
 # The smoke test imports every lazily loaded module of the app, so it needs the whole runtime
 # set — including the packages no other unit test imports (ollama, platformdirs, keyring).
+# ``medium``: the smoke test now also builds the Setup Assistant and waits for its plan, which
+# has a 30 s timeout of its own, so the 60 s of ``small`` is too tight on a loaded runner.
 py_test(
     name = "test_frozen_modes",
-    size = "small",
+    size = "medium",
     srcs = _COMMON_SRCS + [
         "gui/_settings_stubs.py",
         "unit/test_frozen_modes.py",

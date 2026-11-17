@@ -71,6 +71,106 @@ def test_frozen_only_checks_are_skipped_in_source_mode() -> None:
     assert {"imports", "qt", "reader", "pdf", "docx", "providers"} <= set(names)
 
 
+def test_setup_assistant_check_is_listed_in_both_modes(tmp_path: Path, monkeypatch) -> None:
+    """Given a source run and a frozen bundle, When the checks are listed, Then both build the wizard."""
+    import sys  # noqa: PLC0415
+
+    assert "setup assistant" in [name for name, _ in frozen_modes._checks()]
+
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "_MEIPASS", str(tmp_path), raising=False)
+
+    assert "setup assistant" in [name for name, _ in frozen_modes._checks()]
+
+
+def test_setup_assistant_check_names_a_service_failure(tmp_path: Path, monkeypatch) -> None:
+    """Given a service whose plan_setup raises, When the smoke test runs, Then the line names it."""
+    from teachers_teammate.application.service import ProcessingApplicationService  # noqa: PLC0415
+
+    def boom(*_args: object, **_kwargs: object) -> None:
+        raise RuntimeError("no plan today")
+
+    monkeypatch.setattr(ProcessingApplicationService, "plan_setup", boom)
+    monkeypatch.setattr(
+        frozen_modes,
+        "_checks",
+        lambda: [("setup assistant", frozen_modes._check_setup_assistant)],
+    )
+    out = tmp_path / "smoke.json"
+
+    exit_code = frozen_modes.run_smoke_test(out)
+
+    assert exit_code == 1
+    result = json.loads(out.read_text(encoding="utf-8"))
+    assert result["failed"] == ["setup assistant: RuntimeError: no plan today"]
+
+
+def test_setup_assistant_check_names_a_page_that_cannot_be_built(monkeypatch) -> None:
+    """Given a page class that raises, When the check runs, Then it names the page and the error."""
+    from teachers_teammate.gui.setup import _pages  # noqa: PLC0415
+
+    def boom(_self: object, *_args: object, **_kwargs: object) -> None:
+        raise RuntimeError("ClassesPage cannot be built")
+
+    monkeypatch.setattr(_pages.ClassesPage, "__init__", boom)
+
+    problem = frozen_modes._check_setup_assistant()
+
+    assert problem is not None
+    assert "ClassesPage" in problem
+    assert "RuntimeError" in problem
+
+
+def test_setup_assistant_check_times_out_with_the_page_it_is_stuck_on(monkeypatch) -> None:
+    """Given a plan that never arrives, When the check runs, Then it names the page it waited on."""
+    from teachers_teammate.gui import _background  # noqa: PLC0415
+
+    monkeypatch.setattr(_background.LatestTask, "submit", lambda *_args, **_kwargs: 0)
+    monkeypatch.setattr(frozen_modes, "SETUP_PLAN_TIMEOUT_MS", 300)
+
+    problem = frozen_modes._check_setup_assistant()
+
+    assert problem is not None
+    assert "stuck on summary" in problem
+
+
+def test_setup_assistant_check_notices_a_bundle_without_its_page_models(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Given a frozen bundle without the page models, When the check runs, Then it says so."""
+    import sys  # noqa: PLC0415
+
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "_MEIPASS", str(tmp_path), raising=False)
+
+    problem = frozen_modes._check_setup_assistant()
+
+    assert problem is not None
+    assert "page models" in problem
+
+
+def test_setup_assistant_check_leaves_the_environment_as_it_found_it(monkeypatch) -> None:
+    """Given no temporary folder and no Qt platform, When the check runs and fails, Then both are back."""
+    from teachers_teammate.application.service import ProcessingApplicationService  # noqa: PLC0415
+
+    watched = ("QT_QPA_PLATFORM", "TEACHERS_TEAMMATE_TMPDIR")
+    for name in watched:
+        monkeypatch.delenv(name, raising=False)
+    before = {name: os.environ.get(name) for name in watched}
+
+    assert frozen_modes._check_setup_assistant() is None
+    assert {name: os.environ.get(name) for name in watched} == before
+
+    def boom(*_args: object, **_kwargs: object) -> None:
+        raise RuntimeError("no plan today")
+
+    monkeypatch.setattr(ProcessingApplicationService, "plan_setup", boom)
+    with pytest.raises(RuntimeError):
+        frozen_modes._check_setup_assistant()
+
+    assert {name: os.environ.get(name) for name in watched} == before
+
+
 def test_forget_keys_removes_every_provider_key(credential_file, keychain) -> None:
     """Given keys of two providers and an unrelated one, When forget_keys runs, Then only the provider keys are gone."""
     credential_file["credentials/OPENAI_API_KEY"] = "sk-openai"

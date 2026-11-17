@@ -50,7 +50,7 @@ bazel coverage //tests:coverage_tests \
     --combined_report=lcov
 
 # Optional HTML report (requires lcov/genhtml)
-genhtml bazel-out/_coverage/_coverage_report.dat -o coverage_html/
+genhtml --ignore-errors unmapped bazel-out/_coverage/_coverage_report.dat -o coverage_html/
 ```
 
 ---

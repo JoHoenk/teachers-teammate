@@ -1,0 +1,95 @@
+"""The package's import direction matches the Bazel libraries of ``//teachers_teammate``."""
+
+from __future__ import annotations
+
+import ast
+import os
+from pathlib import Path
+
+#: Layer -> the layers it may import (``teachers_teammate/BUILD`` lists the same as ``deps``).
+ALLOWED: dict[str, frozenset[str]] = {
+    "pkg": frozenset(),
+    "domain": frozenset({"pkg"}),
+    "core": frozenset({"pkg", "domain"}),
+    "texts": frozenset({"pkg", "domain"}),
+    "infrastructure": frozenset({"pkg", "domain", "core"}),
+    "application": frozenset({"pkg", "domain", "core", "infrastructure"}),
+    "cli": frozenset({"pkg", "domain", "core", "infrastructure", "application"}),
+    "gui": frozenset({"pkg", "domain", "core", "infrastructure", "application", "texts"}),
+}
+
+_PACKAGE = "teachers_teammate"
+_CORE_MODULES = {"config", "interfaces", "_model_defaults"}
+_CLI_MODULES = {"cli", "cli_composition", "__main__"}
+
+
+def _package_dir() -> Path:
+    """Return the package folder, from the Bazel runfiles or from the source checkout."""
+    runfiles = os.environ.get("TEST_SRCDIR", "")
+    workspace = os.environ.get("TEST_WORKSPACE", "")
+    if runfiles and workspace:
+        return Path(runfiles) / workspace / _PACKAGE
+    return Path(__file__).resolve().parents[2] / _PACKAGE
+
+
+def _layer_of(parts: list[str], package: Path) -> str:
+    """Return the layer of the module whose dotted path below the package is *parts*."""
+    if not parts or parts[0] in {"exceptions", "__version__"}:
+        return "pkg"
+    first = parts[0]
+    if (package / first).is_dir():
+        return first
+    if first in _CORE_MODULES:
+        return "core"
+    if first in _CLI_MODULES:
+        return "cli"
+    if first == "frozen_modes":
+        return "gui"
+    raise AssertionError(f"{first} is in no layer: add it to teachers_teammate/BUILD and here")
+
+
+def _imported_modules(path: Path, relative_to: list[str]) -> list[list[str]]:
+    """Return the dotted paths (below the package) of every package import in *path*."""
+    found: list[list[str]] = []
+    for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+        if isinstance(node, ast.Import):
+            names = [alias.name for alias in node.names]
+        elif isinstance(node, ast.ImportFrom):
+            if node.level:
+                base = [_PACKAGE, *relative_to]
+                base = base[: len(base) - (node.level - 1)]
+                module = ".".join([*base, *([node.module] if node.module else [])])
+            else:
+                module = node.module or ""
+            names = [module, *(f"{module}.{alias.name}" for alias in node.names)]
+        else:
+            continue
+        for name in names:
+            parts = name.split(".")
+            if parts[0] == _PACKAGE:
+                found.append(parts[1:])
+    return found
+
+
+def test_every_import_points_down_the_layers() -> None:
+    """
+    Given  the layers of the package and the libraries Bazel builds for them
+    When   every import of every module (also the ones inside functions) is read
+    Then   each one stays in its own layer or in one the layer's library depends on, so a test
+           that lists only its layer finds everything it imports
+    """
+    package = _package_dir()
+    violations: list[str] = []
+    for path in sorted(package.rglob("*.py")):
+        relative = path.relative_to(package)
+        own = (
+            []
+            if relative.name == "__init__.py" and len(relative.parts) == 1
+            else list(relative.with_suffix("").parts)
+        )
+        layer = _layer_of(own, package)
+        for target in _imported_modules(path, list(relative.parts[:-1])):
+            other = _layer_of(target, package)
+            if other != layer and other not in ALLOWED[layer]:
+                violations.append(f"{relative} ({layer}) imports {'.'.join(target)} ({other})")
+    assert not violations, "\n".join(violations)

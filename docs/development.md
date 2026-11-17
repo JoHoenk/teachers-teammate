@@ -59,6 +59,22 @@ bazel run //:buildifier.fix -- -r .
 bazel test //tests/...
 ```
 
+#### Test dependencies and Bazel's cache
+
+`//teachers_teammate` is one Bazel library per layer (`pkg_lib`, `domain_lib`, `core_lib`,
+`texts_lib`, `infrastructure_lib`, `application_lib`, `cli_lib`, `gui_layer_lib`), each with the
+layers it imports as `deps`. A test lists the **highest layer it imports** and nothing more
+(`_DOMAIN_LIB`, `_INFRASTRUCTURE_LIB`, … in `tests/BUILD`; the lower layers come with it), so
+Bazel reruns it only when that layer or one below it changes. Editing a `gui/` file reruns the
+GUI tests; editing `domain/` reruns nearly everything, which is correct.
+
+- Never give a test `//teachers_teammate:ocr_lib` or `:gui_lib`: they hold the whole package and
+  every test would rerun on every edit. They are for the wheel, the docs and the lint targets.
+- Count lazy imports and `patch("teachers_teammate.…")` strings too: the test imports that module.
+- `tests/unit/test_layer_imports.py` fails on an import that points up a layer (domain →
+  infrastructure, application → gui, …). A new module goes into the matching `_*_SRCS` list of
+  `teachers_teammate/BUILD`; a new layer needs a library there and a row in that test.
+
 ## Documentation build
 
 ```bash

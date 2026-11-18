@@ -18,6 +18,7 @@ from teachers_teammate.application.service import (
     ProcessingApplicationService,
     RequirementIssue,
     RunPreflight,
+    WorkedOn,
 )
 from teachers_teammate.domain.model_catalog import (
     DEFAULT_OCR_MODEL,
@@ -28,12 +29,14 @@ from teachers_teammate.domain.model_catalog import (
 )
 from teachers_teammate.domain.proofreading.edits import EditPart
 from teachers_teammate.domain.proofreading.review import CorrectionReview, EditNote
+from teachers_teammate.domain.teacher_work import WorkTooNewError
 from teachers_teammate.gui import _dialogs
 from teachers_teammate.gui import _main_window as main_window_module
 from teachers_teammate.gui import _user_text as txt
 from teachers_teammate.gui._config_panel import ConfigPanel
 from teachers_teammate.gui._export_menu import ExportKind
 from teachers_teammate.gui._main_window import MainWindow
+from teachers_teammate.gui._results_table import ResultsTable
 from teachers_teammate.gui._types import FileDoneEvent
 from teachers_teammate.gui.check import CopyKind
 from teachers_teammate.gui.settings import SettingsPage, SettingsResult
@@ -52,6 +55,7 @@ from teachers_teammate.infrastructure.state_repository import (
     compute_file_hash,
 )
 from teachers_teammate.infrastructure.storage_root import resolve_artifact_dir
+from teachers_teammate.infrastructure.teacher_work_store import TeacherWorkStore
 from teachers_teammate.texts import dialogs as dlg
 from teachers_teammate.texts._types import Answer, Notice, Question, StandardButton
 from tests.conftest import make_config
@@ -949,7 +953,7 @@ def test_a_document_opens_although_the_settings_are_not_valid_yet(
 
 @pytest.mark.gui
 def test_a_typed_edit_is_stored_before_a_stage_run_clears_the_cache(
-    main_window, monkeypatch, stored
+    main_window, monkeypatch, stored, qtbot
 ) -> None:
     """
     Given  an open document with text typed but not yet stored
@@ -960,6 +964,9 @@ def test_a_typed_edit_is_stored_before_a_stage_run_clears_the_cache(
     main_window._open_check(a)
     order: list[str] = []
     monkeypatch.setattr(main_window._check, "flush_pending_edit", lambda: order.append("flush"))
+    monkeypatch.setattr(
+        main_window._app_service, "worked_on_documents", lambda *_a, **_k: WorkedOn()
+    )
 
     def _invalidate(*_a, **_k):
         order.append("invalidate")
@@ -969,6 +976,7 @@ def test_a_typed_edit_is_stored_before_a_stage_run_clears_the_cache(
     monkeypatch.setattr(main_window, "_start_worker", lambda *_a, **_k: order.append("start"))
 
     main_window._run_stage(make_config(Path("/tmp")), [a], "correction")
+    qtbot.waitUntil(lambda: order == ["flush", "invalidate", "start"], timeout=2000)
 
     assert order == ["flush", "invalidate", "start"]
 
@@ -998,14 +1006,11 @@ def test_a_stored_edit_reads_the_document_state_once(main_window, monkeypatch, s
 
 
 @pytest.mark.gui
-def test_main_window_ocr_edit_persists_and_invalidates_downstream(
-    main_window,
-    stored,
-) -> None:
+def test_main_window_ocr_edit_is_stored_as_the_teachers_work(main_window, stored) -> None:
     """
-    Given  a document open in the Check tab with cached correction/evaluation
+    Given  a document open in the Check tab with a cached proofreading
     When   OCR text is edited
-    Then   OCR text is persisted and correction/evaluation are invalidated
+    Then   the teacher's text is stored apart from the cache, whose proofreading is reset
     """
     [source_id] = stored("page.png", raw="raw old", corrected="corr old")
     source = Path(source_id)
@@ -1017,11 +1022,13 @@ def test_main_window_ocr_edit_persists_and_invalidates_downstream(
     cfg = main_window._config_panel.to_config()
     state = StateRepository(resolve_artifact_dir(cfg.output_dir) / "state").load(source)
     assert state is not None
-    assert state.raw_text == "raw edited"
+    assert state.raw_text == "raw old"
     assert state.correction_done is False
     assert state.correction_text == ""
-    assert state.evaluation_done is False
-    assert state.evaluation_text == ""
+    work = TeacherWorkStore().load(compute_file_hash(source))
+    assert work is not None
+    assert work.transcription is not None
+    assert work.transcription.text == "raw edited"
 
     _name, _preview, raw_txt, corr_txt, eval_txt = main_window._results_table.selected_paths()
     assert raw_txt == "raw edited"
@@ -1030,14 +1037,14 @@ def test_main_window_ocr_edit_persists_and_invalidates_downstream(
 
 
 @pytest.mark.gui
-def test_main_window_correction_edit_persists_and_clears_evaluation(
+def test_main_window_correction_edit_is_stored_as_the_teachers_work(
     main_window,
     stored,
 ) -> None:
     """
-    Given  a document open in the Check tab with OCR/correction/evaluation payloads
-    When   correction text is edited
-    Then   correction is persisted and evaluation is invalidated
+    Given  a document open in the Check tab with a stored proofreading
+    When   the final text is edited
+    Then   the teacher's text is stored apart from the cache, which keeps the machine's
     """
     [source_id] = stored("page.png", raw="raw text", corrected="corr old")
     source = Path(source_id)
@@ -1050,14 +1057,15 @@ def test_main_window_correction_edit_persists_and_clears_evaluation(
     state = StateRepository(resolve_artifact_dir(cfg.output_dir) / "state").load(source)
     assert state is not None
     assert state.correction_done is True
-    assert state.correction_text == "corr edited"
-    assert state.evaluation_done is False
-    assert state.evaluation_text == ""
+    assert state.correction_text == "corr old"
+    work = TeacherWorkStore().load(compute_file_hash(source))
+    assert work is not None
+    assert work.corrections is not None
+    assert work.corrections.text == "corr edited"
 
     _name, _preview, raw_txt, corr_txt, eval_txt = main_window._results_table.selected_paths()
     assert raw_txt == "raw text"
     assert corr_txt == "corr edited"
-    assert eval_txt == ""
 
 
 @pytest.mark.gui
@@ -1679,7 +1687,8 @@ def stored(main_window, monkeypatch, tmp_path: Path):
         source_ids: list[str] = []
         for name in names:
             source = cfg.input_dir / name
-            source.write_text("page", encoding="utf-8")
+            # One essay per file: the work is keyed by content, so two files must differ.
+            source.write_text(f"page of {name}", encoding="utf-8")
             _store_document(
                 cfg,
                 source,
@@ -2093,13 +2102,12 @@ def test_an_edit_goes_to_the_open_document_not_to_the_selected_row(
 
     main_window._on_ocr_text_edited("raw edited")
 
-    cfg = main_window._config_panel.to_config()
-    state_dir = resolve_artifact_dir(cfg.output_dir) / "state"
-    state_a = StateRepository(state_dir).load(source_a)
-    state_b = StateRepository(state_dir).load(source_b)
-    assert state_a is not None
-    assert state_a.raw_text == "raw edited"
-    assert state_b is None or state_b.raw_text == "raw old"
+    work_a = TeacherWorkStore().load(compute_file_hash(source_a))
+    work_b = TeacherWorkStore().load(compute_file_hash(source_b))
+    assert work_a is not None
+    assert work_a.transcription is not None
+    assert work_a.transcription.text == "raw edited"
+    assert work_b is None
 
 
 @pytest.mark.gui
@@ -2117,7 +2125,7 @@ def test_copy_with_names_hidden_puts_the_anonymized_text_on_the_clipboard(
     monkeypatch.setattr(
         main_window._app_service,
         "text_for_copy",
-        lambda text, **_kw: f"hidden:{text}",
+        lambda view, **_kw: f"hidden:{view.raw_text}",
     )
     monkeypatch.setattr(
         "teachers_teammate.gui._main_window.run_in_background",
@@ -4151,10 +4159,23 @@ def test_stage_rerun_is_refused_while_a_worker_runs(
 
 
 def _queue_with_text(window: MainWindow, folder: Path, texts: dict[str, str]) -> list[str]:
-    """Queue one row per *texts* key (a file name in *folder*) holding that extracted text."""
+    """Queue one row per *texts* key (a file name in *folder*) holding that extracted text.
+
+    Each row gets a real stored document, because every writer reads the texts from the store
+    rather than from the row.
+    """
+    folder.mkdir(parents=True, exist_ok=True)
+    cfg = make_config(folder.parent)
+    window._config_panel.to_config = lambda: cfg  # ty: ignore[invalid-assignment]
     ids = [str(folder / name) for name in texts]
     window._results_table.set_queue(list(texts), source_ids=ids)
     for source_id, text in zip(ids, texts.values(), strict=True):
+        source = Path(source_id)
+        # A test may have written the file already; its content is what the work is keyed by.
+        if not source.exists():
+            source.write_text(f"page of {source.name}", encoding="utf-8")
+        if text:
+            _store_document(cfg, source, raw=text)
         window._results_table.set_row_artifacts(source_id, "", text, "", "")
     return ids
 
@@ -4389,18 +4410,17 @@ def test_export_skips_documents_that_would_share_an_output_file(
     Then   only the first is exported and the second is reported instead of overwriting it
     """
     scans, out = tmp_path / "scans", tmp_path / "out"
-    ids = [str(scans / "x.png"), str(scans / "x.pdf")]
-    main_window._results_table.set_queue(["x.png", "x.pdf"], source_ids=ids)
-    for sid in ids:
-        main_window._results_table.set_row_artifacts(sid, "", "text", "", "")
+    ids = _queue_with_text(main_window, scans, {"x.png": "alpha", "x.pdf": "beta"})
     _pick_folder(monkeypatch, out)
     warnings = _capture_warnings(monkeypatch)
     written: list[Path] = []
     service = main_window._app_service
     monkeypatch.setattr(
-        service, "export_docx", lambda _s, _r, _c, _i, path, **_k: written.append(path)
+        service, "export_docx", lambda _config, _source, path, **_k: written.append(path)
     )
-    monkeypatch.setattr(service, "export_text", lambda _s, _r, path, **_k: written.append(path))
+    monkeypatch.setattr(
+        service, "export_text", lambda _config, _source, path, **_k: written.append(path)
+    )
 
     main_window._on_export_requested(ids, kind)
     _wait_for(lambda: bool(warnings))
@@ -4577,9 +4597,7 @@ def test_exported_docx_labels_follow_the_explanation_language(
     When   the document is exported as a DOCX
     Then   the headings language is the text's language respectively the explanation language
     """
-    sid = str(tmp_path / "scans" / "a.png")
-    main_window._results_table.set_queue(["a.png"], source_ids=[sid])
-    main_window._results_table.set_row_artifacts(sid, "", "text", "corrected", "")
+    sid = _queue_with_text(main_window, tmp_path / "scans", {"a.png": "text"})[0]
     main_window._config_panel._language.setCurrentText(text_language)
     main_window._config_panel.update_settings({"explanation_language": explanation_language})
     _pick_file(monkeypatch, tmp_path / "out" / "a.docx")
@@ -4587,7 +4605,7 @@ def test_exported_docx_labels_follow_the_explanation_language(
     monkeypatch.setattr(
         main_window._app_service,
         "export_docx",
-        lambda _s, _r, _c, _i, _path, options=None, **_k: seen.append(options.labels_language),
+        lambda _config, _source, _path, options=None, **_k: seen.append(options.labels_language),
     )
 
     main_window._on_export_requested([sid], ExportKind.DOCX)
@@ -5447,3 +5465,603 @@ def test_an_old_config_without_the_key_still_checks(qtbot, monkeypatch) -> None:
 
     assert len(_RecordingUpdateThread.built) == 1
     assert win._update_thread is not None
+
+
+@pytest.mark.gui
+@pytest.mark.use_case("Mark_Document_Checked")
+def test_checked_marks_the_corrections_and_shows_in_the_queue(main_window, stored) -> None:
+    """
+    Given  a document with a stored proofreading, open in the Check tab
+    When   the teacher presses *Checked*
+    Then   the corrections are marked as checked in the work, and the queue says so
+    """
+    [source_id] = stored("page.png", raw="raw text", corrected="corr")
+    source = Path(source_id)
+    main_window._results_table.selectRow(0)
+    main_window._open_check(source_id)
+
+    main_window._check._checked_btn.click()
+
+    work = TeacherWorkStore().load(compute_file_hash(source))
+    assert work is not None
+    assert work.corrections is not None
+    assert work.corrections.checked is True
+    assert main_window._results_table.item(0, ResultsTable._COL_CHECKED).text() == "Checked"
+    assert main_window._check._checked_btn.text() == txt.CHECKED_BUTTON
+
+
+@pytest.mark.gui
+@pytest.mark.use_case("Mark_Document_Checked")
+def test_checked_without_a_proofreading_marks_the_text_and_keeps_a_copy(
+    main_window, stored
+) -> None:
+    """
+    Given  a document that was read but not proofread, open in the Check tab
+    When   the teacher presses *Checked*
+    Then   the transcription is checked and stored as a copy, so the check names that text
+    """
+    [source_id] = stored("page.png", raw="raw text")
+    source = Path(source_id)
+    main_window._results_table.selectRow(0)
+    main_window._open_check(source_id)
+
+    main_window._check._checked_btn.click()
+
+    work = TeacherWorkStore().load(compute_file_hash(source))
+    assert work is not None
+    assert work.transcription is not None
+    assert work.transcription.checked is True
+    assert work.transcription.text == "raw text"
+    assert main_window._results_table.item(0, ResultsTable._COL_CHECKED).text() == "Text checked"
+
+
+@pytest.mark.gui
+def test_showing_a_card_records_that_the_teacher_looked_at_it(main_window, stored) -> None:
+    """
+    Given  a document with one explained correction
+    When   the Check tab opens it
+    Then   the item the card shows is stored as looked at, and the footer counts it
+    """
+    review = CorrectionReview(
+        edits=(
+            EditNote(
+                id=1,
+                parts=(EditPart(4, 8, "have", "has"),),
+                sentences=(),
+                category="grammar",
+                explanation='"she" is 3rd person singular.',
+            ),
+        )
+    )
+    [source_id] = stored(
+        "page.png", raw="She have a dog.", corrected="She has a dog.", review=review
+    )
+
+    main_window._open_check(source_id)
+
+    work = TeacherWorkStore().load(compute_file_hash(Path(source_id)))
+    assert work is not None
+    assert work.corrections is not None
+    assert work.corrections.looked_at == frozenset({"edit:1"})
+    assert main_window._check.body.panel._counts.text().endswith("1 of 1 looked at")
+
+
+@pytest.mark.gui
+@pytest.mark.use_case("Mark_Document_Checked")
+def test_checked_is_its_own_undo(main_window, stored) -> None:
+    """
+    Given  a document marked as checked
+    When   the teacher presses *Checked* again
+    Then   the mark is gone from the work and from the queue
+    """
+    [source_id] = stored("page.png", raw="raw text", corrected="corr")
+    main_window._results_table.selectRow(0)
+    main_window._open_check(source_id)
+    main_window._check._checked_btn.click()
+
+    main_window._check._checked_btn.click()
+
+    work = TeacherWorkStore().load(compute_file_hash(Path(source_id)))
+    assert work is None or work.corrections is None or work.corrections.checked is False
+    assert main_window._results_table.item(0, ResultsTable._COL_CHECKED).text() == ""
+
+
+# ── The questions about what the teacher worked on ─────────────────────────
+
+
+def _answer_with(monkeypatch, *, index: int = 0, cancel: bool = False) -> list[Question]:
+    """Answer every question with its *index*-th button, or with Cancel; return what was asked."""
+    asked: list[Question] = []
+
+    def choose(_parent: object, question: Question) -> Answer:
+        asked.append(question)
+        return Answer(None if cancel else question.choices[index], False)
+
+    monkeypatch.setattr(_dialogs, "choose", choose)
+    return asked
+
+
+@pytest.mark.gui
+@pytest.mark.use_case("Keep_Worked_On_Corrections")
+def test_the_run_start_question_keeps_the_changes_by_default(
+    main_window, monkeypatch, tmp_path: Path
+) -> None:
+    """
+    Given  a run whose proofreading settings changed and two documents the teacher worked on
+    When   the run-start question is answered with *Keep my changes*
+    Then   the answer is recorded for those documents and the run goes ahead
+    """
+    cfg = make_config(tmp_path)
+    asked = _answer_with(monkeypatch)
+    kept: list[list[str]] = []
+    started: list[bool] = []
+    monkeypatch.setattr(
+        main_window._app_service,
+        "keep_teacher_work",
+        lambda _cfg, *, files: kept.append([str(path) for path in files]),
+    )
+    worked_on = WorkedOn(
+        kept_stale=(Path("/in/a.png"), Path("/in/b.png")),
+        unanswered=(Path("/in/a.png"), Path("/in/b.png")),
+    )
+
+    main_window._confirm_teacher_work_then(cfg, worked_on, lambda: started.append(True))
+
+    assert asked[0].title == "You worked on some of these corrections"
+    assert "a.png" in asked[0].body and "b.png" in asked[0].body
+    assert asked[0].choices[0].id == dlg.KEEP_MY_CHANGES
+    assert asked[0].choices[0].default is True
+    assert kept == [["/in/a.png", "/in/b.png"]]
+    assert started == [True]
+
+
+@pytest.mark.gui
+@pytest.mark.use_case("Keep_Worked_On_Corrections")
+def test_the_run_start_question_proofreads_again_when_asked(
+    main_window, monkeypatch, tmp_path: Path
+) -> None:
+    """
+    Given  a run whose proofreading settings changed and a document the teacher worked on
+    When   the run-start question is answered with *Proofread again*
+    Then   that document's proofreading is dropped and the run goes ahead
+    """
+    cfg = make_config(tmp_path)
+    _answer_with(monkeypatch, index=1)
+    dropped: list[tuple[list[str], str]] = []
+    started: list[bool] = []
+    monkeypatch.setattr(
+        main_window._app_service,
+        "invalidate_from_stage",
+        lambda _cfg, *, selected_source_ids, stage: (
+            dropped.append((list(selected_source_ids), stage)) or ([], [], False)
+        ),
+    )
+    worked_on = WorkedOn(kept_stale=(Path("/in/a.png"),), unanswered=(Path("/in/a.png"),))
+
+    main_window._confirm_teacher_work_then(cfg, worked_on, lambda: started.append(True))
+
+    assert dropped == [(["/in/a.png"], "correction")]
+    assert started == [True]
+
+
+@pytest.mark.gui
+@pytest.mark.use_case("Keep_Worked_On_Corrections")
+def test_the_run_start_question_cancels_the_run(main_window, monkeypatch, tmp_path: Path) -> None:
+    """
+    Given  a run whose proofreading settings changed and a document the teacher worked on
+    When   the run-start question is cancelled
+    Then   nothing is written and the run does not start
+    """
+    cfg = make_config(tmp_path)
+    _answer_with(monkeypatch, cancel=True)
+    started: list[bool] = []
+
+    main_window._confirm_teacher_work_then(
+        cfg,
+        WorkedOn(kept_stale=(Path("/in/a.png"),), unanswered=(Path("/in/a.png"),)),
+        lambda: started.append(True),
+    )
+
+    assert started == []
+
+
+@pytest.mark.gui
+@pytest.mark.use_case("Keep_Worked_On_Corrections")
+def test_the_run_start_question_only_continues_when_nothing_is_stored(
+    main_window, monkeypatch, tmp_path: Path
+) -> None:
+    """
+    Given  a run that proofreads and a document whose corrections belong to no stored answer
+    When   the run-start question is shown
+    Then   it only says so and offers Continue, and the run goes ahead
+    """
+    cfg = make_config(tmp_path)
+    asked = _answer_with(monkeypatch)
+    started: list[bool] = []
+
+    main_window._confirm_teacher_work_then(
+        cfg, WorkedOn(unbound=(Path("/in/a.png"),)), lambda: started.append(True)
+    )
+
+    assert [choice.id for choice in asked[0].choices] == [dlg.CONTINUE, ""]
+    assert "not stored here" in asked[0].body
+    assert started == [True]
+
+
+@pytest.mark.gui
+@pytest.mark.use_case("Keep_Worked_On_Corrections")
+def test_no_question_when_the_teacher_worked_on_nothing(main_window, monkeypatch, tmp_path) -> None:
+    """
+    Given  a run over documents the teacher did nothing to
+    When   the run-start step is reached
+    Then   nothing is asked and the run goes ahead
+    """
+    cfg = make_config(tmp_path)
+    asked = _answer_with(monkeypatch)
+    started: list[bool] = []
+
+    main_window._confirm_teacher_work_then(cfg, WorkedOn(), lambda: started.append(True))
+
+    assert asked == []
+    assert started == [True]
+
+
+@pytest.mark.gui
+def test_rerunning_the_proofreading_asks_before_it_drops_the_changes(
+    main_window, monkeypatch, tmp_path: Path
+) -> None:
+    """
+    Given  two documents whose corrections the teacher worked on
+    When   *Re-run Proofreading* is asked for and the question is cancelled
+    Then   one dialog names both and the cache is not touched
+    """
+    cfg = make_config(tmp_path)
+    asked: list[Question] = []
+    ran: list[str] = []
+    monkeypatch.setattr(_dialogs, "ask", lambda _parent, question: asked.append(question) or False)
+    monkeypatch.setattr(main_window, "_invalidate_and_run", lambda *_a: ran.append("run"))
+
+    main_window._confirm_rerun_then(
+        cfg,
+        ["/in/a.png", "/in/b.png"],
+        "correction",
+        WorkedOn(worked_on=(Path("/in/a.png"), Path("/in/b.png"))),
+        None,
+    )
+
+    assert asked[0].title == "Proofread again?"
+    assert "a.png" in asked[0].body and "b.png" in asked[0].body
+    assert asked[0].choices[0].id == dlg.PROOFREAD_AGAIN
+    assert asked[0].choices[1].declines is True
+    assert ran == []
+
+
+@pytest.mark.gui
+def test_rerunning_the_proofreading_goes_ahead_when_confirmed(
+    main_window, monkeypatch, tmp_path: Path
+) -> None:
+    """
+    Given  a document whose corrections the teacher worked on
+    When   *Re-run Proofreading* is confirmed
+    Then   the cache is invalidated and the run starts
+    """
+    cfg = make_config(tmp_path)
+    ran: list[str] = []
+    monkeypatch.setattr(_dialogs, "ask", lambda *_a, **_k: True)
+    monkeypatch.setattr(main_window, "_invalidate_and_run", lambda *_a: ran.append("run"))
+
+    main_window._confirm_rerun_then(
+        cfg, ["/in/a.png"], "correction", WorkedOn(worked_on=(Path("/in/a.png"),)), None
+    )
+
+    assert ran == ["run"]
+
+
+@pytest.mark.gui
+def test_rerunning_the_recognition_asks_before_it_replaces_the_transcription(
+    main_window, monkeypatch, tmp_path: Path
+) -> None:
+    """
+    Given  a document whose transcription the teacher fixed
+    When   *Re-run Text Recognition* is asked for and the question is cancelled
+    Then   the question says what is replaced and the cache is not touched
+    """
+    cfg = make_config(tmp_path)
+    asked: list[Question] = []
+    ran: list[str] = []
+    monkeypatch.setattr(_dialogs, "ask", lambda _parent, question: asked.append(question) or False)
+    monkeypatch.setattr(main_window, "_invalidate_and_run", lambda *_a: ran.append("run"))
+
+    main_window._confirm_rerun_then(
+        cfg, ["/in/a.png"], "ocr", WorkedOn(transcribed=(Path("/in/a.png"),)), None
+    )
+
+    assert asked[0].title == "Read again?"
+    assert "a.png" in asked[0].body
+    assert asked[0].choices[0].id == dlg.READ_AGAIN
+    assert ran == []
+
+
+@pytest.mark.gui
+def test_rerunning_a_stage_the_teacher_did_not_touch_asks_nothing(
+    main_window, monkeypatch, tmp_path: Path
+) -> None:
+    """
+    Given  a document the teacher did nothing to
+    When   a stage is re-run
+    Then   nothing is asked and the run starts
+    """
+    cfg = make_config(tmp_path)
+    asked: list[Question] = []
+    ran: list[str] = []
+    monkeypatch.setattr(_dialogs, "ask", lambda _parent, question: asked.append(question) or True)
+    monkeypatch.setattr(main_window, "_invalidate_and_run", lambda *_a: ran.append("run"))
+
+    main_window._confirm_rerun_then(cfg, ["/in/a.png"], "correction", WorkedOn(), None)
+
+    assert asked == []
+    assert ran == ["run"]
+
+
+# ── What the review of the branch found ───────────────────────────────────────
+
+
+@pytest.mark.gui
+@pytest.mark.use_case("Keep_Worked_On_Corrections")
+def test_the_run_start_question_does_not_start_when_the_proofreading_cannot_be_dropped(
+    main_window, monkeypatch, tmp_path: Path
+) -> None:
+    """
+    Given  a run-start question answered with *Proofread again*
+    When   the cache of that document cannot be invalidated
+    Then   the failure is shown and the run does not start
+    """
+    cfg = make_config(tmp_path)
+    _answer_with(monkeypatch, index=1)
+    shown: list[object] = []
+    started: list[bool] = []
+    monkeypatch.setattr(
+        main_window._app_service,
+        "invalidate_from_stage",
+        lambda *_a, **_k: ([], ["a.png: denied"], False),
+    )
+    monkeypatch.setattr(_dialogs, "notify", lambda _parent, notice: shown.append(notice))
+
+    main_window._confirm_teacher_work_then(
+        cfg,
+        WorkedOn(kept_stale=(Path("/in/a.png"),), unanswered=(Path("/in/a.png"),)),
+        lambda: started.append(True),
+    )
+
+    assert len(shown) == 1
+    assert started == []
+
+
+@pytest.mark.gui
+@pytest.mark.use_case("Keep_Worked_On_Corrections")
+def test_the_run_start_question_names_a_document_by_its_resolved_path(
+    main_window, monkeypatch, tmp_path: Path
+) -> None:
+    """
+    Given  a document listed through a symbolic link, so that its path is not its resolved one
+    When   the run-start question is answered with *Proofread again*
+    Then   the cache is asked about the resolved path, the id the queue is keyed by
+    """
+    real = tmp_path / "real"
+    real.mkdir()
+    (tmp_path / "link").symlink_to(real, target_is_directory=True)
+    listed = tmp_path / "link" / "a.png"
+    cfg = make_config(tmp_path)
+    _answer_with(monkeypatch, index=1)
+    asked_for: list[list[str]] = []
+    monkeypatch.setattr(
+        main_window._app_service,
+        "invalidate_from_stage",
+        lambda _cfg, *, selected_source_ids, stage: (
+            asked_for.append(list(selected_source_ids)) or ([], [], False)
+        ),
+    )
+
+    main_window._confirm_teacher_work_then(
+        cfg,
+        WorkedOn(kept_stale=(listed,), unanswered=(listed,)),
+        lambda: None,
+    )
+
+    assert asked_for == [[str(listed.resolve())]]
+    assert str(listed) != str(listed.resolve())
+
+
+@pytest.mark.gui
+@pytest.mark.use_case("Keep_Worked_On_Corrections")
+def test_the_corrections_of_no_stored_answer_are_dropped_once_the_teacher_went_on(
+    main_window, monkeypatch, tmp_path: Path
+) -> None:
+    """
+    Given  a run-start question about corrections that belong to no stored proofreading
+    When   it is answered with *Continue*, and, in another run, cancelled
+    Then   they are dropped only for the answered one, so the question does not come back
+    """
+    cfg = make_config(tmp_path)
+    dropped: list[list[Path]] = []
+    monkeypatch.setattr(
+        main_window._app_service,
+        "drop_unbound_corrections",
+        lambda _cfg, *, files: dropped.append(list(files)),
+    )
+    worked_on = WorkedOn(unbound=(Path("/in/a.png"),))
+
+    _answer_with(monkeypatch, cancel=True)
+    main_window._confirm_teacher_work_then(cfg, worked_on, lambda: None)
+    assert dropped == []
+
+    _answer_with(monkeypatch)
+    main_window._confirm_teacher_work_then(cfg, worked_on, lambda: None)
+    assert dropped == [[Path("/in/a.png")]]
+
+
+@pytest.mark.gui
+def test_rerunning_the_recognition_also_asks_for_corrections_without_a_transcription(
+    main_window, monkeypatch, tmp_path: Path
+) -> None:
+    """
+    Given  a document whose corrections the teacher worked on, and no fixed transcription
+    When   *Re-run Text Recognition* is asked for
+    Then   the question names it, because the new reading removes those corrections too
+    """
+    cfg = make_config(tmp_path)
+    asked: list[Question] = []
+    monkeypatch.setattr(_dialogs, "ask", lambda _parent, question: asked.append(question) or False)
+
+    main_window._confirm_rerun_then(
+        cfg, ["/in/a.png"], "ocr", WorkedOn(worked_on=(Path("/in/a.png"),)), None
+    )
+
+    assert asked[0].title == "Read again?"
+    assert "a.png" in asked[0].body
+    assert "corrections" in asked[0].body
+
+
+@pytest.mark.gui
+def test_a_rerun_does_not_go_ahead_when_what_was_worked_on_is_unknown(
+    main_window, monkeypatch, tmp_path: Path
+) -> None:
+    """
+    Given  a re-run whose look at the teacher's work failed
+    When   the answer arrives
+    Then   nothing is invalidated, and the teacher is told why
+    """
+    cfg = make_config(tmp_path)
+    shown: list[object] = []
+    ran: list[str] = []
+    monkeypatch.setattr(_dialogs, "notify", lambda _parent, notice: shown.append(notice))
+    monkeypatch.setattr(main_window, "_invalidate_and_run", lambda *_a: ran.append("run"))
+
+    main_window._confirm_rerun_then(cfg, ["/in/a.png"], "correction", None, OSError("disk"))
+
+    assert ran == []
+    assert len(shown) == 1
+
+
+@pytest.mark.gui
+def test_the_queue_shows_the_checked_mark_when_it_is_loaded(
+    main_window, monkeypatch, stored
+) -> None:
+    """
+    Given  a document the teacher marked as checked in an earlier session
+    When   the queue is built again from the folder
+    Then   the Checked column says so, without a run or an edit in between
+    """
+    [source_id] = stored("page.png", raw="raw text", corrected="corr")
+    main_window._results_table.selectRow(0)
+    main_window._open_check(source_id)
+    main_window._check._checked_btn.click()
+    monkeypatch.setattr(main_window, "_scan_input_files", lambda: [Path(source_id)])
+
+    main_window._refresh_queue_from_inputs()
+
+    assert main_window._results_table.item(0, ResultsTable._COL_CHECKED).text() == "Checked"
+    assert main_window._results_table.checked_source_ids() == [source_id]
+
+
+@pytest.mark.gui
+@pytest.mark.parametrize("kind", ["raw", "corrected"])
+def test_an_edit_that_cannot_be_stored_says_so(main_window, monkeypatch, stored, kind: str) -> None:
+    """
+    Given  a document open in the Check tab, whose work file was saved by a newer version
+    When   the teacher's edit is committed
+    Then   the teacher is told it was not saved, and nothing was written
+    """
+    [source_id] = stored("page.png", raw="raw text", corrected="corr")
+    main_window._results_table.selectRow(0)
+    main_window._open_check(source_id)
+    shown: list[Notice] = []
+    monkeypatch.setattr(_dialogs, "notify", lambda _parent, notice: shown.append(notice))
+
+    def refuse(self, *_args, **_kwargs):
+        raise WorkTooNewError("newer")
+
+    monkeypatch.setattr(TeacherWorkStore, "update", refuse)
+
+    if kind == "raw":
+        main_window._on_ocr_text_edited("raw edited")
+    else:
+        main_window._on_correction_text_edited("corr edited")
+
+    assert len(shown) == 1
+    assert shown[0].title == "Not saved"
+    assert "newer version" in shown[0].body
+    stored_work = TeacherWorkStore().load(compute_file_hash(Path(source_id)))
+    # Looking at the first card was stored before the store started to refuse; the edit was not.
+    assert stored_work is None or (
+        stored_work.transcription is None
+        and (stored_work.corrections is None or stored_work.corrections.text is None)
+    )
+
+
+@pytest.mark.gui
+def test_checked_that_cannot_be_stored_says_so_and_the_button_goes_back(
+    main_window, monkeypatch, stored
+) -> None:
+    """
+    Given  a document open in the Check tab, whose work cannot be written
+    When   the teacher presses *Checked*
+    Then   the teacher is told, and the button shows the document as unchecked again
+    """
+    [source_id] = stored("page.png", raw="raw text", corrected="corr")
+    main_window._results_table.selectRow(0)
+    main_window._open_check(source_id)
+    shown: list[Notice] = []
+    monkeypatch.setattr(_dialogs, "notify", lambda _parent, notice: shown.append(notice))
+
+    def refuse(self, *_args, **_kwargs):
+        raise PermissionError("denied")
+
+    monkeypatch.setattr(TeacherWorkStore, "update", refuse)
+
+    main_window._check._checked_btn.click()
+
+    assert len(shown) == 1
+    assert shown[0].title == "Not saved"
+    assert main_window._check._checked_btn.isChecked() is False
+    assert main_window._check._checked_btn.text() == txt.MARK_AS_CHECKED
+
+
+@pytest.mark.gui
+def test_checked_stores_a_typed_edit_first(main_window, stored) -> None:
+    """
+    Given  a document with text typed in the final text that is not stored yet
+    When   the teacher presses *Checked*
+    Then   the edit is stored before the mark, so the mark names the text the teacher sees
+    """
+    [source_id] = stored("page.png", raw="raw text", corrected="corr")
+    main_window._results_table.selectRow(0)
+    main_window._open_check(source_id)
+    main_window._check.body.final_view.setPlainText("typed text")
+
+    main_window._check._checked_btn.click()
+
+    work = TeacherWorkStore().load(compute_file_hash(Path(source_id)))
+    assert work is not None and work.corrections is not None
+    assert work.corrections.text == "typed text"
+    assert work.corrections.checked is True
+
+
+@pytest.mark.gui
+def test_a_run_asks_about_the_teachers_work(main_window, monkeypatch, stored) -> None:
+    """
+    Given  a queue of documents
+    When   Run is pressed
+    Then   its requirement check is told to look for the work the teacher did
+    """
+    stored("a.png")
+    captured: dict = {}
+    monkeypatch.setattr(
+        main_window,
+        "_check_requirements_then",
+        lambda _config, _on_ready, **kwargs: captured.update(kwargs),
+    )
+
+    main_window._on_run()
+
+    assert captured["ask_about_work"] is True

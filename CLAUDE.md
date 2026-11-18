@@ -105,6 +105,7 @@ Config
 | New proofreading exchange | Implement `Exchange` (`proofread`, `max_text_chars`, `cost_model`) in a module of `infrastructure/proofreading/exchanges/`, register it in `EXCHANGES` under its `ExchangeKind` (`domain/proofreading/result.py`), and build it through `build_exchange()` so port, cut-off tries and clause check arrive the same way. Map the exchange's own answer schema to `ExchangeResult` — nothing outside `infrastructure/proofreading/` may see it. `FallbackExchange(primary, fallback)` is the chain of responsibility. See `docs/development.md` → "Proofreading exchange" |
 | Proofreading steps / prompts | The three system prompts are fixed and versioned in `domain/correction_prompts.py` (`CORRECT_SYSTEM`, `EXPLAIN_SYSTEM`, `UNCLEAR_SYSTEM`, `PROMPT_VERSION`); languages, level and the teacher's notes travel in the user message. Never make a prompt editable and never put output-format rules into it. A step ① variant (`CORRECT_VARIANTS`, adopted per model in `STEP_ONE_PROMPTS`) never changes its text once a measurement used it — another text is another id — because the cache key hashes it (`prompt_identity()`). Answer schemas of steps ② and ③: `infrastructure/proofreading/schemas.py`; retry and repair rules: `runner.py:StepRunner`. See `docs/development.md` → "Choosing writing models: the quality comparison" |
 | Stored review / Word file explanations | `domain/proofreading/review.py` is the one review: `EditNote`s with `EditPart`s, and `UnclearNote`s. Its offsets are in the **plain text of the stored `raw_text`** (`plain_text_of(raw_text, raw_text_format)`), so a producer that changes that text fixes them first: `ChunkingCorrector` merges the pieces (`merge_reviews`), `FileProcessor` restores the names (`restore_with_offsets`). Both check `fits(review, raw_plain)` and drop a review that does not fit, with a warning — never store a half-right one. Every reader goes through `align()` (CLI, queue, export, both Word layouts, evaluation tools). The sentence-based review lives only in `tools/model_eval/one_request/sentence_review.py`; no module of `teachers_teammate/` may import it (`tests/tools/test_no_sentence_review_in_the_app.py`). See `docs/development.md` → "Correction review" |
+| Teacher work / what a reader shows | `domain/teacher_work.py:current_texts(machine, work)` is the one merge point: the transcription (text 2 else 1), the corrected text (text 5 where its part is bound to the stored answer, else 4) and the `WorkStatus` a reader marks. `ProcessingApplicationService` merges it into every `DocumentStateView`; the pipeline calls the same function. **Never read a `DocumentState` text for display or output** — queue rows, *Export*, *Copy*, *Save*, *Hide names*, *What is sent* and `check_document` read the view (a test greps the GUI and the application for it). The teacher's edits go to `TeacherWorkStore` through `ApplicationCommands`, never into the cache. See `docs/development.md` → "The teacher's work" |
 | New evaluation corpus | Add `<name>.py` to `tools/model_eval/corpora/` (an `ADAPTER` class); a new test set is a module in `tools/model_eval/recipes/` that sets `RECIPE`. Nothing lists either: both packages find their modules. An adapter reads only the files it pins. Recipes of whole texts in bands share `recipes/_bands.py` (`select_texts`: slots, seed, splits); `gec-2026-12-heldout` is the set for confirming a tuning choice on splits the first never reads; each recipe holds its own `Rules` and never imports another recipe's numbers |
 | Third-party licenses | One list, `third_party_licenses/inventory.csv`, written by `tools/licenses/inventory.py` — never edit it, the texts or the compiled outputs by hand. The tool reads the app's own lists (`[project] dependencies`, `addon_manager.addon_package_names()`, the `LocalModel`s, `SPACY_MODEL_PINS`) and the two locks, so a new dependency, add-on, model or spaCy language is a red test until the tool runs. `tools/licenses/policy.toml` holds the denied licenses, display names and accepted exceptions; `curated/` is the only hand-owned part (the tool never writes there). `NOTICE` is hand-written; a test keeps its versions on the locked ones. See `docs/deployment.md` → "Third-party licenses" |
 
@@ -120,7 +121,7 @@ Persistent data lives in three per-user places (`infrastructure/storage_root.py`
 `resolve_storage_root()` (results, previews — every prepared page of a document, not only the
 first; may be deleted by cleanup tools), the **config
 root** `resolve_config_root()` (`ocr.toml`) and the **data root** `resolve_data_root()`
-(`benchmark/`, `speed/`, via `resolve_data_folder(name)`, which moves a folder an earlier
+(`benchmark/`, `speed/`, `work/`, via `resolve_data_folder(name)`, which moves a folder an earlier
 version left in the cache). Anything a teacher cannot rebuild goes to the config or data root,
 never the cache; the Windows uninstaller's "Settings…" box deletes those files too. Identity/fingerprint helpers:
 `compute_file_hash` (document content), `compute_ocr_config_hash` (OCR stage
@@ -131,10 +132,13 @@ deliberately **not** part of the proofreading and review fingerprints: what a ru
 stored with its result instead (`SentRecord` in `domain/data_location.py`, the text and its
 placeholder map in `DocumentState`), so switching *Remove personal information* on or off
 does not send a text again and the window can still say how the stored result was sent.
-Two distinct stores: the pipeline **cache** (`StateRepository`, one overwritten `DocumentState` per
-`(output_dir, path)`, **no expiry**) and the benchmark **run store**
+Three distinct stores: the pipeline **cache** (`StateRepository`, one overwritten `DocumentState`
+per `(output_dir, path)`, **no expiry**), the benchmark **run store**
 (`BenchmarkRunStore`, append-only per document-hash, keep-last-N + manual
-delete). See `docs/development.md` → "Storage, hashing & caching".
+delete) and the teacher's **work** (`TeacherWorkStore`, one file per essay in `work/`, keyed by
+`compute_file_hash` — what the teacher typed, took out, checked and looked at, bound to the
+proofreading answer it was written on; the window is its only writer, runs and the CLI only read
+it). See `docs/development.md` → "Storage, hashing & caching".
 
 ## Code conventions
 

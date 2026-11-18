@@ -14,7 +14,7 @@ All wording comes from :mod:`.._user_text`; the colours and icons from :mod:`._s
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import html
 
 from PySide6.QtCore import QSize, Qt, Signal, SignalInstance
@@ -96,11 +96,11 @@ def _words_of(row: _Row) -> str:
     return f"{item.before} \u2192 {item.after}"
 
 
-def _icon_of(row: _Row, *, expanded: bool) -> str:
-    """Return the character in front of a row: the arrow of the group, else the kind's icon."""
+def _icon_of(row: _Row, *, expanded: bool, looked_at: frozenset[str]) -> str:
+    """Return the character in front of a row: the group's arrow, else whether it was looked at."""
     if row.item is None:
         return "\u25be" if expanded else "\u25b8"
-    return _style.icon(row.item.kind)
+    return _style.icon(row.item.kind, looked_at=row.key in looked_at)
 
 
 def _category_of(row: _Row) -> str:
@@ -117,6 +117,8 @@ class _ItemDelegate(QStyledItemDelegate):
         super().__init__(parent)
         self.expanded = False
         """Whether the group row shows its items, which decides its arrow."""
+        self.looked_at: frozenset[str] = frozenset()
+        """The keys the teacher has looked at, which decides the icon of every other row."""
 
     def paint(self, painter: QPainter, option: QStyleOptionViewItem, index) -> None:
         """Draw the row of *index*; a row without one falls back to the plain text."""
@@ -136,7 +138,7 @@ class _ItemDelegate(QStyledItemDelegate):
         muted.setAlpha(150)
         painter.save()
         painter.setFont(QFont(opt.font))
-        icon = _icon_of(row, expanded=self.expanded)
+        icon = _icon_of(row, expanded=self.expanded, looked_at=self.looked_at)
         painter.setPen(text_colour)
         painter.drawText(rect, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, icon)
         words_rect = rect.adjusted(metrics.horizontalAdvance(icon) + 6, 0, 0, 0)
@@ -305,6 +307,12 @@ class SidePanel(QWidget):
 
     item_chosen = Signal(str)
     """A row was selected: the key of its item."""
+    item_shown = Signal(str)
+    """An item became the one the card shows: its key, or ``"minor"`` for the group row.
+
+    Emitted for the first item of a document too, and again when a reload keeps the same row:
+    the window decides whether it is a key it has not recorded yet.
+    """
     take_out_requested = Signal(str)
     """The teacher asked for the student's words back for the item of this key."""
     put_back_requested = Signal(str)
@@ -319,6 +327,7 @@ class SidePanel(QWidget):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._rows: tuple[_Row, ...] = ()
+        self._doc: CheckDocument | None = None
         self._masking = Masking()
         self._folded = False
         self._expanded = False
@@ -391,6 +400,7 @@ class SidePanel(QWidget):
         """Show the items of *doc*, keeping the chosen one where it still exists."""
         chosen = self.chosen
         row = self._list.currentRow()
+        self._doc = doc
         self._masking = masking
         self._rows = rows_of(doc.items)
         self._folded = len(group_minor(doc.items)) > 1
@@ -403,7 +413,8 @@ class SidePanel(QWidget):
             self._list.addItem(item)
         self._list.blockSignals(False)
         self._set_expanded(self._expanded)
-        self._counts.setText(self._counts_text(doc))
+        self._delegate.looked_at = doc.work.looked_at
+        self._counts.setText(self._counts_text())
         self._set_content(doc.content_review)
         self._select(chosen, row)
 
@@ -435,9 +446,18 @@ class SidePanel(QWidget):
         if self._note:
             self._card.set_note(self._note)
 
+    def set_looked_at(self, looked_at: frozenset[str], progress: tuple[int, int]) -> None:
+        """Show which items were looked at, without rebuilding the list or moving the choice."""
+        self._delegate.looked_at = looked_at
+        self._list.viewport().update()
+        if self._doc is not None:
+            self._doc = replace(self._doc, looked_at_progress=progress)
+        self._counts.setText(self._counts_text())
+
     def clear(self) -> None:
         """Empty the panel: no document is open."""
         self._rows = ()
+        self._doc = None
         self._list.clear()
         self._counts.clear()
         self._set_content("")
@@ -469,7 +489,10 @@ class SidePanel(QWidget):
         self._card.set_row(row, self._masking, editable=self._editable, reason=self._reason)
         if self._note:
             self._card.set_note(self._note)
-        if row is not None and row.item is not None and not self._choosing:
+        if row is None:
+            return
+        self.item_shown.emit(row.key)
+        if row.item is not None and not self._choosing:
             self.item_chosen.emit(row.item.key)
 
     def _select(self, chosen: str, row: int) -> None:
@@ -524,11 +547,18 @@ class SidePanel(QWidget):
 
     # ── The footer and the content review ─────────────────────────────────
 
-    @staticmethod
-    def _counts_text(doc: CheckDocument) -> str:
-        """Return the footer line: how many corrections and how many unclear passages."""
+    def _counts_text(self) -> str:
+        """Return the footer line: the corrections, the unclear passages, and how far it is read."""
+        doc = self._doc
+        if doc is None:
+            return ""
         unclear = sum(1 for item in doc.items if item.kind is ItemKind.UNCLEAR)
-        return txt.item_counts(len(doc.items) - unclear, unclear)
+        looked_at, countable = doc.looked_at_progress
+        parts = [
+            txt.item_counts(len(doc.items) - unclear, unclear),
+            txt.looked_at_progress_text(looked_at, countable),
+        ]
+        return " \u00b7 ".join(part for part in parts if part)
 
     def _set_content(self, content_review: str) -> None:
         """Show the content review of the document, or hide the section when there is none."""

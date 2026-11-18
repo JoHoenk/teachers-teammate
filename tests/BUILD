@@ -47,6 +47,7 @@ filegroup(
         "integration/test_pipeline_preview.py",
         "integration/test_pipeline_run.py",
         "integration/test_pipeline_scenarios.py",
+        "integration/test_pipeline_teacher_work.py",
         "integration/test_pipeline_txt.py",
         "unit/test_addon_manager.py",
         "unit/test_anonymizer.py",
@@ -482,6 +483,35 @@ py_test(
     args = ["unit/test_teacher_work.py"],
     main = "run_test.py",
     deps = _COMMON_DEPS + _DOMAIN_LIB,
+)
+
+py_test(
+    name = "test_atomic_file",
+    size = "small",
+    srcs = _COMMON_SRCS + ["unit/test_atomic_file.py"],
+    args = ["unit/test_atomic_file.py"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS + _INFRASTRUCTURE_LIB,
+)
+
+py_test(
+    name = "test_teacher_work_store",
+    size = "small",
+    srcs = _COMMON_SRCS + ["unit/test_teacher_work_store.py"],
+    args = ["unit/test_teacher_work_store.py"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS + _INFRASTRUCTURE_LIB,
+)
+
+# Every reader shows the merged view, never a DocumentState text of its own.
+py_test(
+    name = "test_teacher_work_readers",
+    size = "small",
+    srcs = _COMMON_SRCS + ["unit/test_teacher_work_readers.py"],
+    args = ["unit/test_teacher_work_readers.py"],
+    data = ["//teachers_teammate:all_sources"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS,
 )
 
 py_test(
@@ -2507,6 +2537,17 @@ py_test(
 )
 
 py_test(
+    name = "test_pipeline_teacher_work_integration",
+    size = "small",
+    srcs = _COMMON_SRCS + ["integration/test_pipeline_teacher_work.py"],
+    args = ["integration/test_pipeline_teacher_work.py"],
+    data = _READER_MODEL_DATA,
+    env = _READER_MODEL_ENV,
+    main = "run_test.py",
+    deps = _COMMON_DEPS + _PIPELINE_DEPS + _INFRASTRUCTURE_LIB,
+)
+
+py_test(
     name = "test_local_models",
     size = "small",
     srcs = _COMMON_SRCS + ["unit/test_local_models.py"],
@@ -2735,6 +2776,7 @@ test_suite(
         ":test_step_runner",
         ":test_storage_policy",
         ":test_teacher_work",
+        ":test_teacher_work_readers",
         ":test_text_chunks",
         ":test_text_loss",
         ":test_texts_types",
@@ -2804,6 +2846,7 @@ test_suite(
         ":test_pipeline_preview_integration",
         ":test_pipeline_run_integration",
         ":test_pipeline_scenarios_integration",
+        ":test_pipeline_teacher_work_integration",
         ":test_pipeline_txt_integration",
         ":test_ppocr_models",
     ],

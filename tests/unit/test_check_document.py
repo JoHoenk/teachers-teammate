@@ -46,7 +46,7 @@ def _view(**overrides: object) -> DocumentStateView:
         "original_images": ("/tmp/Anna_original.png",),
     }
     fields.update(overrides)
-    return DocumentStateView(**fields)
+    return DocumentStateView(**fields)  # ty: ignore[invalid-argument-type]
 
 
 def test_a_stored_document_carries_its_texts_and_its_items() -> None:
@@ -175,20 +175,23 @@ def test_the_preparation_and_the_content_review_are_carried() -> None:
     assert doc.sent == sent
 
 
-def test_realigned_equals_a_fresh_query_for_the_same_texts() -> None:
+def test_realigned_keeps_the_machines_own_text() -> None:
     """
-    Given  a stored document and two new texts
-    When   the document is realigned and a fresh query is made for the same texts
-    Then   both say the same thing
+    Given  a stored document and two new texts typed into it
+    When   the document is realigned
+    Then   the machine's own text stays what the store holds, so a change the model made
+           without an explanation is still the model's and the teacher's own is theirs
     """
     doc = check_document_of(_view())
     new_raw = "Der bunte Hund bellt laut. Er lauft."
     new_corrected = "Der braune Hund bellt laut. Er läuft."
 
     realigned = doc.realigned(new_raw, new_corrected)
-    fresh = check_document_of(_view(raw_text=new_raw, correction_text=new_corrected))
 
-    assert realigned == fresh
+    assert realigned.machine_corrected_text == doc.machine_corrected_text
+    assert realigned.raw_plain == new_raw
+    assert realigned.corrected_plain == new_corrected
+    assert [item.kind for item in realigned.items] == [ItemKind.CORRECTION, ItemKind.OWN]
 
 
 def test_realigned_keeps_the_pages_and_the_content_review() -> None:

@@ -1831,18 +1831,18 @@ Persistent data lives in three per-user places, resolved by `infrastructure/stor
 |---|---|---|---|
 | cache (**storage root**) | `resolve_storage_root()` | results, previews, the cache of every run; may be deleted by cleanup tools | `~/.cache/teachers_teammate` / `%LOCALAPPDATA%\teachers_teammate\Cache` / `~/Library/Caches/teachers_teammate` |
 | config | `resolve_config_root()` | `ocr.toml` | `~/.config/teachers_teammate` / `%LOCALAPPDATA%\teachers_teammate` / `~/Library/Application Support/teachers_teammate` |
-| data | `resolve_data_root()` | `benchmark/`, `speed/` (next to `packages/` and `models/`, which have their own lookup) | `~/.local/share/teachers_teammate` / `%LOCALAPPDATA%\teachers_teammate` / `~/Library/Application Support/teachers_teammate` |
+| data | `resolve_data_root()` | `benchmark/`, `speed/`, `work/` (next to `packages/` and `models/`, which have their own lookup) | `~/.local/share/teachers_teammate` / `%LOCALAPPDATA%\teachers_teammate` / `~/Library/Application Support/teachers_teammate` |
 
 The `TEACHERS_TEAMMATE_TMPDIR` environment variable, when set, replaces all three with that one
 folder (tests, portable use). The rule: what a teacher cannot rebuild (settings, benchmark
-history, speed measurements) never goes into the cache.
+history, speed measurements, their own corrections) never goes into the cache.
 
 **Moving from the cache.** Versions up to 0.5.6 kept `ocr.toml`, `benchmark/` and `speed/` in the
 cache folder. `resolve_config_path(None)` and `resolve_data_folder(name)` move them to the new
 place the first time they are asked for (`migrate_once`: only when the new one is missing; when
 both exist the new one wins and the old one stays; a move that fails is logged and the old file
 is still read). On Windows the config and data folders are the same, so the uninstaller's
-settings switch removes `ocr.toml`, `benchmark\` and `speed\` there.
+settings switch removes `ocr.toml`, `benchmark\`, `speed\` and `work\` there.
 
 ```
 <storage_root>/                                    # the cache
@@ -1855,6 +1855,8 @@ settings switch removes `ocr.toml`, `benchmark\` and `speed\` there.
 <config_root>/ocr.toml                             # configuration (the pipeline config)
 <data_root>/
 ├── speed/                                         # measured speeds (samples.json, measurements.json)
+├── work/
+│   └── <sha256>.json                              # WORK: one TeacherWork per essay, keyed by its content
 └── benchmark/
     └── <document_hash>/                           # compute_file_hash(document)
         ├── document.json                          # {document_hash, display_name, last_path}
@@ -1901,6 +1903,146 @@ read as missing, so the document is processed again; the bump to 3 also wipes th
 because a review stored in the old shape would otherwise load without explanations and, its key
 unchanged, never be made again.  The review's offsets are in the plain text of the stored
 `raw_text` (see *Correction review*).
+
+### The teacher's work (`domain/teacher_work.py`, `infrastructure/teacher_work_store.py`)
+
+What the teacher changes and decides lives in a store of its own, apart from the machine results
+in the cache.  The cache keeps what the models produced and is never written by an edit; the
+window, every output file, *Export*, *Copy* and the next proofreading read the teacher's texts
+where they exist.
+
+**One file per essay, keyed by the file's content.**  `TeacherWorkStore` keeps
+`work/<sha256>.json` in `resolve_data_folder("work")`; the key is `compute_file_hash` of the
+document, the `source_hash` the cache already computes.  One essay has one work wherever its
+results go and whatever it is called; a changed file is another essay.  Written atomically
+(`infrastructure/atomic_file.py:write_text_atomic`, the temp-file-and-replace the state store
+uses too).  **One writer**: the window, through `ApplicationCommands`; runs and the CLI only read.
+
+**Two parts, two validity rules.**
+
+| Part | Holds | Bound to |
+|---|---|---|
+| transcription | text 2, its notation, `checked` | nothing — it is what the student wrote, checked against the scan |
+| corrections | text 5, `checked`, `looked_at`, `kept`, `kept_under` | one machine answer: `bound_to = proofreading_id(source identity, text 4, review)` |
+
+`proofreading_id` hashes the answer itself, not the settings that asked for it.  A new answer —
+other settings, a re-run, the same settings after the cache was emptied — has another id, and
+the corrections part no longer applies: it is **ignored on read** (never shown, never in an
+output) and **replaced on the next write**.  Nothing deletes it eagerly except an explicit
+re-run.  The price is deliberate: after an emptied cache the corrections work cannot come back,
+because the answer it was written on is gone.  The transcription part — usually the bigger
+effort, and the input of the next proofreading — always does.
+
+**Copies only where needed.**  The transcription part exists when the teacher fixed *or* checked
+the transcription (*Checked* on a transcription stores a copy, so the check names the exact text
+it was given).  The corrections part exists when the text differs from text 4; an edit that
+returns to text 4 drops the copy but keeps the part for `checked` and `looked_at`.  An empty part
+is removed, an empty work deletes its file.
+
+**The reading is frozen while the teacher has worked on the document.**  A run does not read a
+document again whose transcription the teacher fixed or checked, nor one whose corrections they
+worked on (text 5, `checked` or `kept`), even when the recognition settings changed (the stored OCR
+hash counts as current, `StageHashes.ocr_frozen`).  Re-reading could change the text the
+proofreading was made from, and the corrections written on that answer would stop applying; for a
+transcription part it would change nothing the teacher sees and cascade into a new proofreading of
+the same text.  Looking at items (`looked_at`) freezes nothing.  Only *Re-run Text Recognition*
+reads it again, after asking, and then drops both parts.
+
+**The teacher's transcription needs no reading at all.**  When the cache holds no reading (it was
+emptied) and the work has a transcription part, `FileProcessor._run_preprocess_and_ocr` prepares
+the pages for the scan but does not read them: the teacher's text is stored as the document's
+text, with its notation, as if the file carried its own text (a text file, a PDF text layer).  The
+file is not skipped when text recognition is switched off either — `check_run_preflight` counts a
+file with a transcription part as recognised.  The cache's text 1 is then the teacher's text;
+`work_status.transcription_changed` does not say they changed it.  Until a run has rebuilt the
+state, the queue and the Check tab show nothing of that document: the pages come from the cache.
+
+**The proofreading remembers its source.**  `DocumentState.correction_source_hash` is
+`text_identity` of the transcription the proofreading was made from.  A stored proofreading is
+stale when that differs from the current transcription (text 2, else text 1) — whatever the
+settings.  It guards against a store emptied on one side only: the teacher's transcription gone
+while the cache still holds a proofreading made from it.  `""` (a state written before this
+field) means "made from `raw_text`".
+
+**Runs keep worked-on corrections by default.**  A stored proofreading that is stale only by its
+settings and whose corrections part applies and is *worked on* (text 5, `checked`, or `kept`)
+counts as fresh for every run, the CLI included: no run replaces it unless something explicit
+invalidated it.  `looked_at` alone is not worked on — it is cheap to lose.  The window's
+run-start question only offers to replace; *Keep my changes* writes `kept_under = expected
+correction hash` into each part, so the same settings never ask again.
+
+**One merge point for every reader.**  `current_texts(machine, work)` returns the texts the
+document has now — transcription 2 else 1, corrected 5 (where bound) else 4 — plus
+`machine_corrected` (text 4) and the `WorkStatus` a reader marks.  `ProcessingApplicationService`
+merges it into every `DocumentStateView` (`load_view`, `load_views`, `load_views_reconciled`), and
+the pipeline calls the same function.  Queue rows, *Export*, *Copy*, *Save*, *Hide names*, *What
+is sent* and `check_document` read the view.  **Nothing outside the cache's own code reads a
+`DocumentState` text** for display or output: `tests/unit/test_teacher_work_readers.py` holds the
+package to that, and the GUI may not name the type at all.
+
+**One helper for the flags.**  `cache_service.stage_hashes(state, work, expected)` is the only
+place that turns a work into the three flags freshness needs: `ocr_frozen` (a transcription part
+exists, or a corrections part was worked on), `expected_correction_source` (`text_identity` of the current transcription) and
+`correction_kept` (the corrections part applies and was worked on).  The run
+(`CacheReconciliationService.prepare`) and the queue (`load_views_reconciled`) both ask there, so
+they agree on what is stale and what is kept.  `correction_kept_over_settings(hashes)` is what
+the queue's *kept* note and the run-start lookup ask.
+
+**Robust file handling.**  A work with an unknown newer `version` is ignored and never
+overwritten, also by the very first write of a session: the store reads the file before it
+decides (a write is refused with `WorkTooNewError`).  A file that is not a work file is moved aside
+(`<name>.broken-<UTC time>`) and treated as absent; if it cannot be moved, nothing is written over
+it.  A file that only cannot be opened right now (another program holds it) is neither moved nor
+replaced: a read says "none" for that call, a write raises `OSError`.  Reads and writes of one store
+take one lock, so a read never sees a write of the same process half done.
+
+**A refused write is said.**  `edit_transcription`, `edit_corrected_text` and `set_checked` raise
+`WorkNotSavedError(name, too_new=…)` when the work cannot be stored; the window shows
+`dlg.work_not_saved` ("saved by a newer version of the app", or "could not be saved") and leaves
+what was typed in the text view.  `edit_transcription` stores the work first and resets the
+cache's proofreading after: a failed write changes nothing, and a failed reset leaves a
+proofreading that fails the source guard anyway.  `mark_looked_at` and `keep_teacher_work` only
+log: nothing the teacher did is lost.  Work of essays whose files changed or went stays (a few KB
+each, `name` inside for people looking at the folder); the uninstaller's settings box removes the
+folder.
+
+**One work per content.**  Two files with the same content (a copy in another folder) are one
+essay, so they share one work, though each has its own cache and its own answer.  Corrections
+written on the answer of one copy do not apply to the other's, and the next write for the other
+replaces them (a corrections part is bound to one answer).  The transcription part is shared as it
+should be.  This is a known limit of keying by content; the alternative — one part per answer —
+was left out because two copies of one essay are rare and the shared transcription is the
+effort that matters.
+
+**Who owns which text, after every operation:**
+
+| Operation | Cache (machine) | Transcription part | Corrections part |
+|---|---|---|---|
+| Run: reading (no part) | text 1 new; proofreading cleared (cascade) | — | stops applying (id gone) |
+| Run: reading (part exists) | not read (frozen) | kept | kept |
+| Run: reading (cache emptied, transcription part exists) | pages prepared, not read; text 1 = the teacher's | kept | stops applying (id gone) |
+| Run: proofreading, fresh or kept | unchanged | — | applies |
+| Run: proofreading, new | text 4 + review + source hash | — | stops applying; replaced on the next write |
+| Teacher: fix transcription | correction stage reset when it had one | text 2 | dropped |
+| Teacher: card action / typing in *Final text* | — | — | text 5, bound |
+| Teacher: *Checked* | — | checked (+ copy) **or** | checked, bound |
+| Teacher: card shown | — | — | `looked_at`, bound |
+| Explicit re-run proofreading | correction reset | — | dropped |
+| Explicit re-read | everything reset | dropped | dropped (also when there is no transcription part) |
+| Cache emptied | everything gone | kept, used as the proofreading input | kept on disk, applies to nothing |
+| `work/` emptied | proofreading made from text 2 is stale by the source guard | — | — |
+
+**Writes while a run is going.**  The run reads a work once, in `prepare`.  The window writes only
+for documents the run does not hold (the lock), and a *Keep my changes* answer is written before
+the run starts, so no write races a read of the same document.  A card shown while the run holds
+the document records nothing (`CheckPage.mark_looked_at` is refused under the lock).
+
+Tests: `tests/unit/test_teacher_work.py` (the model, the merge, the changes),
+`tests/unit/test_teacher_work_store.py` (the store), `tests/unit/test_atomic_file.py` (the
+write), `tests/unit/test_domain_policy.py` (the freshness flags),
+`tests/unit/test_file_processor.py` (the pipeline on the current texts),
+`tests/unit/test_service.py` (the merged views, the commands, `worked_on_documents`),
+`tests/unit/test_teacher_work_readers.py` (no reader names the cache's type).
 
 ### Shared anonymization cache
 
@@ -2194,6 +2336,62 @@ undoes one action and the stored text comes from the commit path of typing.  The
 is one function (`_fit_gap`): a replacement keeps the separators around it, an insertion into a
 gap gets one space on the side where the neighbour is a word, a removal takes one adjacent space
 with it, and words are never joined across a block boundary.
+
+**Where an edit goes.**  `_store_edit(kind, text)` calls `edit_transcription` or
+`edit_corrected_text` on `ApplicationCommands`, which writes the teacher's work and returns the
+merged view; `_sync_row(view)` fills the row from it.  The cache's texts are never written by an
+edit, so the machine result stays what the models produced and the teacher's text is what every
+reader sees.  The undo stack is untouched by a stored edit coming back (`update_document`), so
+Ctrl+Z works across the store exactly as across the cache.
+
+***Checked*.**  A checkable button in the Check header (`CheckPage.checked_toggled`,
+`CheckPage._refresh_checked`, public as `refresh_checked()`): *Mark as checked* unchecked, *✓ Checked* with a proofreading,
+*✓ Text checked* without.  It marks what the document has now — the corrections when there is a
+proofreading (bound, so a new proofreading starts unchecked), else the transcription, which is
+then stored as a copy.  It is its own undo (not on Ctrl+Z), an edit after it does not uncheck it,
+it is disabled while the lock holds, and it is allowed with *Hide names* on because it changes no
+text.  A typed edit is stored before the mark (`flush_pending_edit`), and a press that cannot be
+stored shows the notice and puts the button back to what the document says.  It does not move to
+the next document — ▶ does.  The queue's *Checked* column shows
+*Checked* / *Text checked* / nothing, and right-click → *Select checked* selects rows with
+either; "checked only" export is that selection plus *Export*, not a separate option.
+
+**Looked at.**  `SidePanel.item_shown` fires when an item becomes the chosen one (a list click, a
+text click, the first item on open); the window calls `mark_looked_at` once per new key and
+updates the document's set in place, without a reload.  The keys are `edit:<id>` (also for a
+correction the teacher took out: it is the same item), `unclear:<n>`, `own:<start>-<end>` (the
+words' place in the student's text, so taking another change back does not renumber them) and
+`minor` for the group row; the list shows ● for a looked-at item and ○ otherwise (own changes
+keep ✋, taken out ↶), and the footer says "8 of 12 looked at" from `looked_at_progress`.  Own
+changes do not count, the minor group counts once, and looking at an item is never undone and is
+not *worked on* — a run may still replace the answer.
+
+**The questions.**  Three, all in `texts/dialogs.py`, all one dialog for the whole selection:
+
+- *Run start* (`_confirm_teacher_work_then`, after the data-flow question and before
+  `_continue_run`): the documents whose proofreading is stale with these settings and whose
+  corrections were worked on, and — in the same dialog — the ones whose corrections belong to no
+  stored proofreading.  *Keep my changes* (default) writes `kept_under` and runs, *Proofread
+  again* invalidates their proofreading first, *Cancel* starts nothing.  Only the second list:
+  *Continue* / *Cancel*.  Any answer but *Cancel* drops the corrections of the second list
+  (`drop_unbound_corrections`): the teacher was told that a new proofreading will not contain
+  them, and they would otherwise be asked about on every run.  The lists come from
+  `worked_on_documents`, worked out in the preflight's background task because it reads the files
+  (`compute_file_hash_cached`: a file is read again only when its size, time or identity changed);
+  only the check that starts a run asks for it (`ask_about_work`), not the readiness line.
+- *Re-run Proofreading* (`_confirm_rerun_then`): the documents of the selection whose corrections
+  were worked on, before the cache is touched.
+- *Re-run Text Recognition*: the documents with a transcription part or worked-on corrections,
+  which the new reading replaces.
+
+All three fail closed: if the question cannot be put together (the look at the work failed), the
+window says so and re-runs nothing.  A re-run drops the work before it resets the cache; if the
+work cannot be dropped, nothing is reset.
+
+A run with changed settings keeps worked-on corrections and says so per file in its log
+("→ Proofreading kept: you worked on it (made with other settings)"), in the window and in the
+CLI alike; the queue shows that proofreading as done with the note *kept* and a tooltip saying
+why and how to get a new one.
 
 **The lock.**  A document the run will redo is read-only from the run's start until its own
 result arrives (`MainWindow._run_pending`, `_run_current`, `_apply_lock`): between the start of

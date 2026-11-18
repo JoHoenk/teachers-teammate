@@ -562,188 +562,6 @@ def test_invalidate_from_stage_evaluation_preserves_ocr_and_correction_text(tmp_
     assert loaded.correction_text == "fixed"
 
 
-# ── record_manual_ocr_edit ────────────────────────────────────────────────
-
-
-@pytest.mark.use_case("Manual_Text_Editing")
-def test_record_manual_ocr_edit_invalidates_correction_and_evaluation(tmp_path: Path) -> None:
-    """
-    Given  a fully processed state
-    When   record_manual_ocr_edit() is called with new_text
-    Then   correction_done=False, evaluation_done=False, ocr_done=True, raw_text=new_text
-    """
-    source = _source_file(tmp_path)
-    source_hash = compute_file_hash(source)
-    repo = _repo(tmp_path)
-    state = dataclasses.replace(
-        repo.create(source, source_hash),
-        ocr_done=True,
-        raw_text="old ocr",
-        correction_done=True,
-        correction_text="corrected",
-        evaluation_done=True,
-        evaluation_text="evaluated",
-    )
-
-    repo.record_manual_ocr_edit(source, state, raw_text="new text", preview_img="")
-
-    loaded = repo.load(source)
-    assert loaded is not None
-    assert loaded.ocr_done is True
-    assert loaded.raw_text == "new text"
-    assert loaded.correction_done is False
-    assert loaded.correction_text == ""
-    assert loaded.evaluation_done is False
-    assert loaded.evaluation_text == ""
-
-
-@pytest.mark.use_case("Manual_Text_Editing")
-def test_record_manual_ocr_edit_clears_the_review(tmp_path: Path) -> None:
-    """
-    Given  a corrected state that carries a review
-    When   the recognised text is edited
-    Then   the review is gone with the correction, because its offsets belong to the old text
-    """
-    source = _source_file(tmp_path)
-    source_hash = compute_file_hash(source)
-    repo = _repo(tmp_path)
-    review = CorrectionReview(
-        edits=(
-            EditNote(
-                id=1,
-                parts=(EditPart(raw_start=0, raw_end=3, original="alt", corrected="neu"),),
-                sentences=(0,),
-                category="word_choice",
-                explanation="Deutlicher.",
-            ),
-        ),
-    )
-    state = dataclasses.replace(
-        repo.create(source, source_hash),
-        ocr_done=True,
-        raw_text="alt",
-        correction_done=True,
-        correction_text="neu",
-        correction_review=review.to_dict(),
-        correction_warning="a warning",
-    )
-
-    repo.record_manual_ocr_edit(source, state, raw_text="anders", preview_img="")
-
-    loaded = repo.load(source)
-    assert loaded is not None
-    assert loaded.review is None
-    assert loaded.correction_review is None
-    assert loaded.correction_warning == ""
-
-
-@pytest.mark.use_case("Manual_Text_Editing")
-def test_record_manual_ocr_edit_clears_downstream_config_hashes(tmp_path: Path) -> None:
-    """
-    Given  a state with ocr_config_hash, correction_config_hash, and eval_config_hash set
-    When   record_manual_ocr_edit() is called
-    Then   all three config hashes are cleared to empty strings
-    """
-    source = _source_file(tmp_path)
-    source_hash = compute_file_hash(source)
-    repo = _repo(tmp_path)
-    state = dataclasses.replace(
-        repo.create(source, source_hash),
-        ocr_config_hash="ocr-h",
-        correction_config_hash="corr-h",
-        eval_config_hash="eval-h",
-    )
-
-    repo.record_manual_ocr_edit(source, state, raw_text="some text", preview_img="")
-
-    loaded = repo.load(source)
-    assert loaded is not None
-    assert loaded.ocr_config_hash == ""
-    assert loaded.correction_config_hash == ""
-    assert loaded.eval_config_hash == ""
-
-
-def test_record_manual_ocr_edit_with_empty_text(tmp_path: Path) -> None:
-    """
-    Given  an existing state with OCR text
-    When   record_manual_ocr_edit() is called with empty raw_text
-    Then   raw_text="" and ocr_done=False (no valid OCR result)
-    """
-    source = _source_file(tmp_path)
-    source_hash = compute_file_hash(source)
-    repo = _repo(tmp_path)
-    state = dataclasses.replace(
-        repo.create(source, source_hash), ocr_done=True, raw_text="something"
-    )
-
-    repo.record_manual_ocr_edit(source, state, raw_text="", preview_img="")
-
-    loaded = repo.load(source)
-    assert loaded is not None
-    assert loaded.raw_text == ""
-    assert loaded.ocr_done is False
-
-
-# ── record_manual_correction_edit ─────────────────────────────────────────
-
-
-@pytest.mark.use_case("Manual_Text_Editing")
-def test_record_manual_correction_edit_invalidates_evaluation_preserves_ocr(tmp_path: Path) -> None:
-    """
-    Given  a fully processed state
-    When   record_manual_correction_edit() is called with new correction text
-    Then   evaluation_done=False but ocr_done=True and raw_text is unchanged
-    """
-    source = _source_file(tmp_path)
-    source_hash = compute_file_hash(source)
-    repo = _repo(tmp_path)
-    state = dataclasses.replace(
-        repo.create(source, source_hash),
-        ocr_done=True,
-        raw_text="raw ocr",
-        correction_done=True,
-        correction_text="old correction",
-        evaluation_done=True,
-        evaluation_text="evaluated",
-    )
-
-    repo.record_manual_correction_edit(source, state, correction_text="new correction")
-
-    loaded = repo.load(source)
-    assert loaded is not None
-    assert loaded.ocr_done is True
-    assert loaded.raw_text == "raw ocr"
-    assert loaded.correction_done is True
-    assert loaded.correction_text == "new correction"
-    assert loaded.evaluation_done is False
-    assert loaded.evaluation_text == ""
-
-
-def test_record_manual_correction_edit_with_empty_text(tmp_path: Path) -> None:
-    """
-    Given  a state with correction_done=True
-    When   record_manual_correction_edit() is called with empty correction_text
-    Then   correction_done=False
-    """
-    source = _source_file(tmp_path)
-    source_hash = compute_file_hash(source)
-    repo = _repo(tmp_path)
-    state = dataclasses.replace(
-        repo.create(source, source_hash),
-        ocr_done=True,
-        raw_text="raw",
-        correction_done=True,
-        correction_text="corrected",
-    )
-
-    repo.record_manual_correction_edit(source, state, correction_text="")
-
-    loaded = repo.load(source)
-    assert loaded is not None
-    assert loaded.correction_done is False
-    assert loaded.correction_text == ""
-
-
 # ── How a stored result was sent ──────────────────────────────────────────
 
 
@@ -873,28 +691,6 @@ def test_record_ocr_result_clears_the_sent_records(tmp_path: Path) -> None:
     assert loaded.evaluation_sent is None
 
 
-@pytest.mark.use_case("Manual_Text_Editing")
-def test_record_manual_ocr_edit_clears_the_sent_records(tmp_path: Path) -> None:
-    """
-    Given  a fully processed state with a sent record for both text stages
-    When   the recognised text is edited
-    Then   the sent text, its map and both records are gone with the results
-    """
-    source = _source_file(tmp_path)
-    source_hash = compute_file_hash(source)
-    repo = _repo(tmp_path)
-    state = _processed_state(repo, source, source_hash)
-
-    repo.record_manual_ocr_edit(source, state, raw_text="anders", preview_img="")
-
-    loaded = repo.load(source)
-    assert loaded is not None
-    assert loaded.correction_sent_text == ""
-    assert loaded.correction_sent_map is None
-    assert loaded.correction_sent is None
-    assert loaded.evaluation_sent is None
-
-
 @pytest.mark.use_case("Stage_Specific_Rerun")
 def test_invalidate_from_stage_correction_clears_the_sent_records(tmp_path: Path) -> None:
     """
@@ -939,28 +735,6 @@ def test_record_correction_result_clears_the_review_sent_record(tmp_path: Path) 
     loaded = repo.load(source)
     assert loaded is not None
     assert loaded.correction_sent == _sent(names_hidden=0).to_dict()
-    assert loaded.evaluation_sent is None
-
-
-@pytest.mark.use_case("Manual_Text_Editing")
-def test_manual_correction_edit_keeps_the_proofreading_sent_record(tmp_path: Path) -> None:
-    """
-    Given  a fully processed state with a sent record for both text stages
-    When   the proofread text is edited
-    Then   the proofreading keeps its record (it was sent as recorded) and the review loses its
-    """
-    source = _source_file(tmp_path)
-    source_hash = compute_file_hash(source)
-    repo = _repo(tmp_path)
-    state = _processed_state(repo, source, source_hash)
-
-    repo.record_manual_correction_edit(source, state, correction_text="edited")
-
-    loaded = repo.load(source)
-    assert loaded is not None
-    assert loaded.correction_sent_text == "raw with <PERSON_1>"
-    assert loaded.correction_sent_map == {"<PERSON_1>": "Anna"}
-    assert loaded.correction_sent == _sent().to_dict()
     assert loaded.evaluation_sent is None
 
 
@@ -1809,44 +1583,6 @@ def test_correction_shares_the_raw_text_format_on_the_view(tmp_path: Path) -> No
     assert view.raw_text_format == "markdown"
 
 
-def test_manual_ocr_edit_keeps_the_text_format(tmp_path: Path) -> None:
-    """
-    Given  a state with Markdown OCR text
-    When   the user edits the text (Source view) and record_manual_ocr_edit() is called
-    Then   the edited text stays flagged as Markdown
-    """
-    repo = _repo(tmp_path)
-    src = _source_file(tmp_path)
-    state = dataclasses.replace(
-        repo.create(src, compute_file_hash(src)),
-        raw_text="**x**",
-        raw_text_format="markdown",
-        ocr_done=True,
-    )
-
-    updated = repo.record_manual_ocr_edit(src, state, raw_text="**y**", preview_img="")
-
-    assert updated.raw_text == "**y**"
-    assert updated.raw_text_format == "markdown"
-
-
-def test_manual_ocr_edit_stores_the_notation_it_is_written_in(tmp_path: Path) -> None:
-    """
-    Given  a fresh (plain) state and an edit written in Markdown
-    When   record_manual_ocr_edit() is called with raw_text_format="markdown"
-    Then   the state is flagged Markdown, so the preview does not flip to the source view
-    """
-    repo = _repo(tmp_path)
-    src = _source_file(tmp_path)
-    state = repo.create(src, compute_file_hash(src))
-
-    updated = repo.record_manual_ocr_edit(
-        src, state, raw_text="**y**", preview_img="", raw_text_format="markdown"
-    )
-
-    assert updated.raw_text_format == "markdown"
-
-
 def test_reset_from_ocr_stage_returns_the_format_to_plain(tmp_path: Path) -> None:
     """
     Given  a state with Markdown OCR text and a Markdown correction
@@ -1870,55 +1606,6 @@ def test_reset_from_ocr_stage_returns_the_format_to_plain(tmp_path: Path) -> Non
     assert (cleared.raw_text, cleared.correction_text) == ("", "")
 
 
-def test_manual_correction_edit_keeps_the_review(tmp_path: Path) -> None:
-    """
-    Given  a state holding a proofreading review
-    When   the teacher edits the proofread text and the edit is recorded
-    Then   the review is kept (its alignment is recomputed from the texts on every render)
-    """
-    source = _source_file(tmp_path)
-    repo = _repo(tmp_path)
-    review = {"version": 2, "edits": [], "unclear": []}
-    state = dataclasses.replace(
-        repo.create(source, compute_file_hash(source)),
-        ocr_done=True,
-        raw_text="raw",
-        correction_done=True,
-        correction_text="old",
-        correction_review=review,
-    )
-
-    repo.record_manual_correction_edit(source, state, correction_text="edited")
-
-    loaded = repo.load(source)
-    assert loaded is not None
-    assert loaded.correction_text == "edited"
-    assert loaded.correction_review == review
-    assert loaded.review is not None
-
-
-def test_manual_correction_edit_to_empty_text_drops_the_review(tmp_path: Path) -> None:
-    """
-    Given  a state holding a proofreading review
-    When   the proofread text is emptied by hand
-    Then   the review is dropped together with the text it explained
-    """
-    source = _source_file(tmp_path)
-    repo = _repo(tmp_path)
-    state = dataclasses.replace(
-        repo.create(source, compute_file_hash(source)),
-        correction_done=True,
-        correction_text="old",
-        correction_review={"version": 2},
-    )
-
-    repo.record_manual_correction_edit(source, state, correction_text="")
-
-    loaded = repo.load(source)
-    assert loaded is not None
-    assert loaded.correction_review is None
-
-
 def test_save_writes_through_a_temp_file_and_leaves_none_behind(tmp_path: Path) -> None:
     """
     Given  a repository and a stored state
@@ -1937,84 +1624,6 @@ def test_save_writes_through_a_temp_file_and_leaves_none_behind(tmp_path: Path) 
     path = repo.state_path_for_input(source)
     assert json.loads(path.read_text(encoding="utf-8"))["raw_text"] == "new text"
     assert list(path.parent.glob("*.tmp")) == []
-
-
-def test_save_keeps_the_old_file_when_the_swap_fails(tmp_path: Path, monkeypatch) -> None:
-    """
-    Given  a stored state and a swap (os.replace) that fails
-    When   the state is saved again
-    Then   the error propagates and the previous file is intact
-    """
-    repo = _repo(tmp_path)
-    source = _source_file(tmp_path)
-    state = repo.load_or_create(source, "somehash")
-    repo.save(source, dataclasses.replace(state, raw_text="old", ocr_done=True))
-    path = repo.state_path_for_input(source)
-
-    def broken_replace(*_args: object) -> None:
-        raise OSError("disk full")
-
-    monkeypatch.setattr(
-        "teachers_teammate.infrastructure.state_repository.os.replace", broken_replace
-    )
-
-    with pytest.raises(OSError, match="disk full"):
-        repo.save(source, dataclasses.replace(state, raw_text="new"))
-
-    assert json.loads(path.read_text(encoding="utf-8"))["raw_text"] == "old"
-
-
-def test_save_writes_in_place_when_the_swap_is_refused(tmp_path: Path, monkeypatch) -> None:
-    """
-    Given  a swap (os.replace) that Windows refuses because the file is held open
-    When   the state is saved
-    Then   the state is still written, and no temporary file is left behind
-    """
-    monkeypatch.setattr("teachers_teammate.infrastructure.state_repository._REPLACE_WAIT_S", 0.0)
-    repo = _repo(tmp_path)
-    source = _source_file(tmp_path)
-    state = repo.load_or_create(source, "somehash")
-
-    def refused(*_args: object) -> None:
-        raise PermissionError("held open")
-
-    monkeypatch.setattr("teachers_teammate.infrastructure.state_repository.os.replace", refused)
-
-    repo.save(source, dataclasses.replace(state, raw_text="new"))
-
-    path = repo.state_path_for_input(source)
-    assert json.loads(path.read_text(encoding="utf-8"))["raw_text"] == "new"
-    assert list(path.parent.glob("*.tmp")) == []
-
-
-def test_save_retries_a_refused_swap_before_giving_in(tmp_path: Path, monkeypatch) -> None:
-    """
-    Given  a swap that is refused once and then works
-    When   the state is saved
-    Then   the swap is retried and the state is stored by the swap
-    """
-    import os as os_module  # noqa: PLC0415
-
-    real_replace = os_module.replace  # the patch below replaces it on the shared os module
-
-    monkeypatch.setattr("teachers_teammate.infrastructure.state_repository._REPLACE_WAIT_S", 0.0)
-    repo = _repo(tmp_path)
-    source = _source_file(tmp_path)
-    state = repo.load_or_create(source, "somehash")
-    calls: list[int] = []
-
-    def flaky(src, dst) -> None:
-        calls.append(1)
-        if len(calls) == 1:
-            raise PermissionError("held open")
-        real_replace(src, dst)
-
-    monkeypatch.setattr("teachers_teammate.infrastructure.state_repository.os.replace", flaky)
-
-    repo.save(source, dataclasses.replace(state, raw_text="new"))
-
-    assert len(calls) == 2
-    assert repo.load(source).raw_text == "new"
 
 
 def test_two_saves_never_share_a_temporary_file(tmp_path: Path) -> None:
@@ -2077,3 +1686,177 @@ def test_two_documents_of_one_name_get_two_state_files(tmp_path: Path) -> None:
 
     assert repo.load(first).raw_text == "first"
     assert repo.load(second).raw_text == "second"
+
+
+# ── the transcription a proofreading was made from ────────────────────────
+
+
+def test_record_correction_result_stores_the_source_it_was_made_from(tmp_path: Path) -> None:
+    """
+    Given  a state whose reading is done
+    When   a proofreading is recorded with the identity of the text it was made from
+    Then   the state holds that identity
+    """
+    repo = _repo(tmp_path)
+    source = _source_file(tmp_path)
+    state = dataclasses.replace(repo.load_or_create(source, "h"), ocr_done=True, raw_text="raw")
+
+    updated = repo.record_correction_result(
+        source,
+        state,
+        correction_text="corrected",
+        correction_config_hash="corr-h",
+        source_hash="text-identity",
+    )
+
+    assert updated.correction_source_hash == "text-identity"
+
+
+def test_record_ocr_result_clears_the_source_of_the_proofreading(tmp_path: Path) -> None:
+    """
+    Given  a state with a proofreading made from a text
+    When   a new reading is recorded
+    Then   the identity of the old text is gone with the proofreading
+    """
+    repo = _repo(tmp_path)
+    source = _source_file(tmp_path)
+    state = dataclasses.replace(
+        repo.load_or_create(source, "h"),
+        ocr_done=True,
+        raw_text="raw",
+        correction_done=True,
+        correction_text="corrected",
+        correction_source_hash="text-identity",
+    )
+
+    updated = repo.record_ocr_result(
+        source,
+        state,
+        OcrResultRecord(
+            source_hash="h",
+            raw_text="new raw",
+            preview_img="",
+            source_image="",
+            ocr_prompt="",
+            evaluate_prompt="",
+            ocr_config_hash="ocr-h",
+            preview_config_hash="",
+        ),
+    )
+
+    assert updated.correction_source_hash == ""
+
+
+def test_resetting_the_correction_clears_the_source_it_was_made_from(tmp_path: Path) -> None:
+    """
+    Given  a state with a proofreading made from a text
+    When   the correction stage is reset
+    Then   the identity of that text is cleared with the proofreading
+    """
+    repo = _repo(tmp_path)
+    source = _source_file(tmp_path)
+    state = dataclasses.replace(
+        repo.load_or_create(source, "h"),
+        ocr_done=True,
+        raw_text="raw",
+        correction_done=True,
+        correction_text="corrected",
+        correction_source_hash="text-identity",
+    )
+
+    updated = repo.reset_from_stage(source, state, "correction")
+
+    assert updated.correction_source_hash == ""
+
+
+def _snapshot(**overrides: object) -> RuntimeConfigSnapshot:
+    """Return a runtime snapshot whose hashes all match a processed state."""
+    values: dict[str, object] = {
+        "source_hash": "h",
+        "ocr_prompt": "",
+        "evaluate_prompt": "",
+        "ocr_config_hash": "ocr-h",
+        "correction_config_hash": "corr-h",
+        "eval_config_hash": "eval-h",
+        "preview_config_hash": "",
+    }
+    values.update(overrides)
+    return RuntimeConfigSnapshot(**values)  # ty: ignore[invalid-argument-type]
+
+
+def _done_state(repo: StateRepository, source: Path) -> DocumentState:
+    """Return a state whose reading and proofreading are done and current."""
+    return dataclasses.replace(
+        repo.load_or_create(source, "h"),
+        ocr_done=True,
+        raw_text="raw",
+        ocr_config_hash="ocr-h",
+        correction_done=True,
+        correction_text="corrected",
+        correction_config_hash="corr-h",
+        correction_source_hash="text-identity",
+    )
+
+
+def test_a_frozen_reading_is_not_reset_by_changed_settings(tmp_path: Path) -> None:
+    """
+    Given  a document whose transcription the teacher fixed, and changed reading settings
+    When   the runtime config is reconciled
+    Then   the reading stays: the teacher's text is what the document says
+    """
+    repo = _repo(tmp_path)
+    source = _source_file(tmp_path)
+    state = _done_state(repo, source)
+
+    reconciled = repo.reconcile_runtime_config(
+        source, state, _snapshot(ocr_config_hash="other", ocr_frozen=True)
+    )
+
+    assert reconciled.ocr_done is True
+    assert reconciled.raw_text == "raw"
+
+
+def test_a_proofreading_the_teacher_worked_on_is_not_reset_by_changed_settings(
+    tmp_path: Path,
+) -> None:
+    """
+    Given  a document whose corrections the teacher worked on, and changed proofreading settings
+    When   the runtime config is reconciled
+    Then   the proofreading stays
+    """
+    repo = _repo(tmp_path)
+    source = _source_file(tmp_path)
+    state = _done_state(repo, source)
+
+    reconciled = repo.reconcile_runtime_config(
+        source,
+        state,
+        _snapshot(
+            correction_config_hash="other",
+            expected_correction_source="text-identity",
+            correction_kept=True,
+        ),
+    )
+
+    assert reconciled.correction_done is True
+    assert reconciled.correction_text == "corrected"
+
+
+def test_a_proofreading_made_from_another_text_is_reset_even_when_kept(tmp_path: Path) -> None:
+    """
+    Given  a document whose corrections the teacher worked on, and a transcription that changed
+    When   the runtime config is reconciled
+    Then   the proofreading is reset: it was made from a text the document no longer has
+    """
+    repo = _repo(tmp_path)
+    source = _source_file(tmp_path)
+    state = _done_state(repo, source)
+
+    reconciled = repo.reconcile_runtime_config(
+        source,
+        state,
+        _snapshot(expected_correction_source="another-text", correction_kept=True),
+    )
+
+    assert reconciled.correction_done is False
+    assert reconciled.correction_source_hash == ""

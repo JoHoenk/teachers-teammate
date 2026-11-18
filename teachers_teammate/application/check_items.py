@@ -26,6 +26,9 @@ from ..domain.proofreading.review import (
 #: Sort position of an expression the model quoted but the text does not contain: it goes last.
 _NOT_FOUND = 1 << 30
 
+#: The key of the row that folds the minor changes: one thing to look at, not one per comma.
+MINOR_KEY = "minor"
+
 
 class ItemKind(Enum):
     """What kind of thing an item of the list is."""
@@ -79,16 +82,16 @@ class CheckItem:
     """``True`` for a spelling or punctuation change, which the list folds into one row."""
 
 
-def check_items(aligned: AlignedReview, *, review_complete: bool) -> tuple[CheckItem, ...]:
+def check_items(aligned: AlignedReview) -> tuple[CheckItem, ...]:
     """Return the items of *aligned*, in text order and numbered 1..n.
 
-    One item per stored edit, however many hunks it has; a hunk the review does not know is the
-    teacher's own change when *review_complete*, and a correction without explanation when the
-    review is missing or was reported incomplete — nothing else tells the two apart until the
-    machine text is kept next to the teacher's.
+    One item per stored edit, however many hunks it has.  A hunk the review does not know is the
+    teacher's own change or a correction without explanation, and ``align`` decides which: it
+    compares the hunk with the machine's own answer, so the two are told apart from the texts
+    rather than from whether the review is complete.
     """
     placed = [
-        *_change_items(aligned.changes, review_complete=review_complete),
+        *_change_items(aligned.changes),
         *_taken_out_items(aligned.orphan_notes),
         *_unclear_items(aligned.unclear),
     ]
@@ -120,17 +123,25 @@ def group_minor(items: Sequence[CheckItem]) -> tuple[CheckItem, ...]:
     return tuple(item for item in items if item.is_minor)
 
 
-def _change_items(
-    changes: Sequence[AlignedChange], *, review_complete: bool
-) -> list[tuple[int, CheckItem]]:
+def countable_keys(items: Sequence[CheckItem]) -> tuple[str, ...]:
+    """Return the keys the "looked at" count counts: one per AI item, the minor group as one.
+
+    The teacher's own changes are not something to look at — they made them — so they are left
+    out.  The spelling and punctuation changes count once, as the row that folds them.
+    """
+    keys = [item.key for item in items if not item.is_minor and item.kind is not ItemKind.OWN]
+    if any(item.is_minor for item in items):
+        keys.append(MINOR_KEY)
+    return tuple(keys)
+
+
+def _change_items(changes: Sequence[AlignedChange]) -> list[tuple[int, CheckItem]]:
     """Return one item per stored edit, and one per hunk the review does not know."""
     groups: dict[int, list[AlignedChange]] = {}
     placed: list[tuple[int, CheckItem]] = []
     for change in changes:
         if change.edit_id is None:
-            placed.append(
-                (change.hunk.raw_start, _own_item(change, review_complete=review_complete))
-            )
+            placed.append((change.hunk.raw_start, _own_item(change)))
         else:
             groups.setdefault(change.edit_id, []).append(change)
     placed.extend((_raw_span(group)[0], _edit_item(group)) for group in groups.values())
@@ -159,11 +170,13 @@ def _edit_item(group: Sequence[AlignedChange]) -> CheckItem:
     )
 
 
-def _own_item(change: AlignedChange, *, review_complete: bool) -> CheckItem:
+def _own_item(change: AlignedChange) -> CheckItem:
     """Return the item of a hunk the review does not know."""
     return CheckItem(
-        key=f"own:{change.number}",
-        kind=ItemKind.OWN if review_complete else ItemKind.UNEXPLAINED,
+        # The words' place in the student's text, not their number among the changes: taking a
+        # change back must not give the ones after it other keys.
+        key=f"own:{change.hunk.raw_start}-{change.hunk.raw_end}",
+        kind=ItemKind.OWN if change.by_teacher else ItemKind.UNEXPLAINED,
         number=0,
         before=change.hunk.original,
         after=change.hunk.corrected,
@@ -183,7 +196,9 @@ def _taken_out_items(notes: Sequence[EditNote]) -> list[tuple[int, CheckItem]]:
         (
             note.raw_start,
             CheckItem(
-                key=f"taken:{note.id}",
+                # The note's own key: taking a correction out does not make it another item,
+                # so that the teacher has looked at it stays true.
+                key=f"edit:{note.id}",
                 kind=ItemKind.TAKEN_OUT,
                 number=0,
                 before=note.original,

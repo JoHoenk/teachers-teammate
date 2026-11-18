@@ -16,7 +16,13 @@ from ...domain.data_location import (
     STAGE_EVALUATION,
     SentRecord,
 )
+from ...domain.freshness import StageHashes, correction_kept_over_settings
 from ...domain.local_models import reader_fingerprint
+from ...domain.teacher_work import (
+    TeacherWork,
+    current_texts,
+    text_identity,
+)
 from ..input_provider_factory import InputOptions, input_settings_fingerprint
 from ..ocr_processor import get_ocr_prompt
 from ..ollama_utils import ollama_host
@@ -31,8 +37,10 @@ from ..state_repository import (
     StateRepository,
     compute_config_hash,
     compute_file_hash,
+    machine_texts,
 )
 from ..storage_root import document_stem
+from ..teacher_work_store import TeacherWorkStore
 
 # ── Module-level hash helpers (shared with application layer) ─────────────────
 
@@ -239,6 +247,64 @@ def compute_eval_config_hash(config: Config, windows: RunWindows | None = None) 
     )
 
 
+# ── Freshness ─────────────────────────────────────────────────────────────────
+
+
+@dataclass(frozen=True)
+class ExpectedHashes:
+    """The stage hashes the current settings and the document's content ask for."""
+
+    ocr_config_hash: str
+    correction_config_hash: str
+    eval_config_hash: str
+
+
+def expected_hashes(
+    config: Config, file: Path, windows: RunWindows, model_store: ModelStore | None
+) -> ExpectedHashes:
+    """Return the stage hashes the settings of *config* ask for, for the document *file*."""
+    return ExpectedHashes(
+        ocr_config_hash=compute_ocr_config_hash(
+            config, get_ocr_prompt(config.language), file, model_store
+        ),
+        correction_config_hash=compute_correction_config_hash(config, windows),
+        eval_config_hash=compute_eval_config_hash(config, windows),
+    )
+
+
+def stage_hashes(
+    state: DocumentState, work: TeacherWork | None, expected: ExpectedHashes
+) -> StageHashes:
+    """Return the freshness snapshot of *state* under *expected*, with the teacher's work.
+
+    The one place that turns a work into the three flags freshness needs: a transcription part
+    freezes the reading, and so does a corrections part the teacher worked on (reading the pages
+    again could change the transcription the proofreading was made from, and the corrections
+    would stop applying); the current transcription is what a proofreading must have been made
+    from, and a corrections part the teacher worked on keeps its answer.  Both the run
+    (``CacheReconciliationService.prepare``) and the queue (``load_views_reconciled``) ask
+    here, so they agree on what is stale and what is kept.
+    """
+    texts = current_texts(machine_texts(state), work)
+    corrections = texts.corrections_work
+    return StageHashes(
+        ocr_done=state.ocr_done,
+        ocr_config_hash=state.ocr_config_hash,
+        expected_ocr_config_hash=expected.ocr_config_hash,
+        correction_done=state.correction_done,
+        correction_config_hash=state.correction_config_hash,
+        expected_correction_config_hash=expected.correction_config_hash,
+        evaluation_done=state.evaluation_done,
+        eval_config_hash=state.eval_config_hash,
+        expected_eval_config_hash=expected.eval_config_hash,
+        ocr_frozen=(work is not None and work.transcription is not None)
+        or (corrections is not None and corrections.worked_on),
+        correction_source=state.correction_source_hash,
+        expected_correction_source=text_identity(texts.transcription),
+        correction_kept=corrections is not None and corrections.worked_on,
+    )
+
+
 # ── Context dataclass ─────────────────────────────────────────────────────────
 
 
@@ -253,6 +319,11 @@ class CacheContext:
     correction_config_hash: str
     eval_config_hash: str
     preview_config_hash: str
+    work: TeacherWork | None = None
+    """What the teacher did to this document, as it was when the run prepared it."""
+    proofreading_kept: bool = False
+    """Whether the stored proofreading is kept although the settings changed (the teacher
+    worked on its corrections).  The run says so instead of "using cached output"."""
 
 
 # ── Service ───────────────────────────────────────────────────────────────────
@@ -269,8 +340,12 @@ class CacheReconciliationService:
         config: Config,
         windows: RunWindows | None = None,
         model_store: ModelStore | None = None,
+        work_store: TeacherWorkStore | None = None,
     ) -> None:
         self._repo = state_repo
+        #: Where the teacher's work is; ``None`` reads none, which is what a tool that only
+        #: wants the machine's results asks for.
+        self._work_store = work_store
         #: Where the page models are; the automatic preparation's identity depends on them.
         self._model_store = model_store
         self._artifacts = artifact_store
@@ -294,9 +369,10 @@ class CacheReconciliationService:
     # ── Public API ────────────────────────────────────────────────────────────
 
     def prepare(self, file: Path) -> CacheContext:
-        """Compute hashes, load state, reconcile with runtime config."""
+        """Compute hashes, load state and the teacher's work, reconcile with runtime config."""
         cfg = self._config
         source_hash = compute_file_hash(file)
+        work = self._work_store.load(source_hash) if self._work_store is not None else None
         state = self._repo.load_or_create(file, source_hash)
 
         ocr_prompt = get_ocr_prompt(cfg.language)
@@ -314,6 +390,15 @@ class CacheReconciliationService:
         old_page_images = state.page_images
         old_original_images = state.original_images
 
+        flags = stage_hashes(
+            state,
+            work,
+            ExpectedHashes(
+                ocr_config_hash=ocr_config_hash,
+                correction_config_hash=correction_config_hash,
+                eval_config_hash=eval_config_hash,
+            ),
+        )
         state = self._repo.reconcile_runtime_config(
             file,
             state,
@@ -325,6 +410,9 @@ class CacheReconciliationService:
                 correction_config_hash=correction_config_hash,
                 eval_config_hash=eval_config_hash,
                 preview_config_hash=preview_config_hash,
+                ocr_frozen=flags.ocr_frozen,
+                expected_correction_source=flags.expected_correction_source,
+                correction_kept=flags.correction_kept,
             ),
         )
 
@@ -346,6 +434,8 @@ class CacheReconciliationService:
             correction_config_hash=correction_config_hash,
             eval_config_hash=eval_config_hash,
             preview_config_hash=preview_config_hash,
+            work=work,
+            proofreading_kept=correction_kept_over_settings(flags),
         )
 
     def persist_preview_artifact(
@@ -444,6 +534,7 @@ class CacheReconciliationService:
         correction_warning: str = "",
         sent_text: str = "",
         sent_map: dict[str, str] | None = None,
+        source_text: str = "",
     ) -> CacheContext:
         """Persist correction result and return updated context.
 
@@ -451,6 +542,10 @@ class CacheReconciliationService:
         placeholder map — only when names were hidden.  With hiding off both stay empty: the
         text that was sent is the extracted text itself, and an edit of it clears the result,
         so the two cannot drift apart.
+
+        *source_text* is the transcription the answer was made from; its identity is stored
+        with the result, so a proofreading made from a text the document no longer has is
+        stale (the teacher's transcription may be gone while the cache still holds one).
         """
         new_state = self._repo.record_correction_result(
             file,
@@ -462,6 +557,7 @@ class CacheReconciliationService:
             sent_text=sent_text,
             sent_map=sent_map,
             sent=sent_record(self._config, STAGE_CORRECTION, names_hidden=len(sent_map or {})),
+            source_hash=text_identity(source_text),
         )
         return dataclasses.replace(ctx, state=new_state)
 

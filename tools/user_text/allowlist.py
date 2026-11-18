@@ -292,7 +292,6 @@ ALLOWED: dict[str, frozenset[str]] = {
             "Run Content Review",
             "What is sent for this file…",
             "f'{event.total_s:.1f} s'",
-            "f'{symbol} {txt.unclear_badge(count)}'",
             "source_ids must be the same length as names",
             "ⓘ",
             "⚠",

@@ -8,6 +8,7 @@ from PySide6.QtGui import QKeyEvent
 from PySide6.QtWidgets import QComboBox, QLineEdit, QTextEdit
 
 from teachers_teammate.application.check_document import CheckDocument, check_document_of
+from teachers_teammate.domain.teacher_work import WorkStatus
 from teachers_teammate.gui import _user_text as txt
 from teachers_teammate.gui._export_menu import ExportKind
 from teachers_teammate.gui.check import CheckPage, CopyKind, CopyState
@@ -15,14 +16,16 @@ from teachers_teammate.gui.check._page import _escape_is_for_the_focus
 from teachers_teammate.infrastructure.state_repository import DocumentStateView
 
 
-def _document(name: str, source_id: str) -> CheckDocument:
-    """Return the Check tab's data for a stored document that has no text yet."""
+def _document(
+    name: str, source_id: str, *, raw_text: str = "", work: WorkStatus | None = None
+) -> CheckDocument:
+    """Return the Check tab's data for a stored document, with what the teacher did to it."""
     return check_document_of(
         DocumentStateView(
             source_id=source_id,
             name=name,
             preview_img="",
-            raw_text="",
+            raw_text=raw_text,
             correction_text="",
             evaluation_text="",
             ocr_done=False,
@@ -38,6 +41,7 @@ def _document(name: str, source_id: str) -> CheckDocument:
             sent={},
             page_images=(),
             original_images=(),
+            work=work or WorkStatus(),
         )
     )
 
@@ -335,3 +339,137 @@ def test_escape_belongs_to_an_editable_combo(qtbot) -> None:
     combo.setEditable(True)
 
     assert _escape_is_for_the_focus(combo) is True
+
+
+@pytest.mark.gui
+@pytest.mark.parametrize(
+    ("work", "shown", "checked"),
+    [
+        (WorkStatus(), txt.MARK_AS_CHECKED, False),
+        (WorkStatus(transcription_checked=True), txt.TEXT_CHECKED_BUTTON, True),
+        (WorkStatus(corrections_checked=True), txt.CHECKED_BUTTON, True),
+    ],
+)
+def test_check_page_checked_toggle_says_what_was_checked(
+    qtbot, work: WorkStatus, shown: str, checked: bool
+) -> None:
+    """
+    Given  a document whose work says nothing, the text, or the corrections were checked
+    When   the Check page shows it
+    Then   the header's toggle says so and is pressed accordingly
+    """
+    page = CheckPage()
+    qtbot.addWidget(page)
+
+    page.show_document(_document("a.pdf", "/tmp/a.pdf", raw_text="what was read", work=work), 1, 1)
+
+    assert page._checked_btn.text() == shown
+    assert page._checked_btn.isChecked() is checked
+
+
+@pytest.mark.gui
+def test_check_page_checked_toggle_needs_a_text(qtbot) -> None:
+    """
+    Given  a document that was never read
+    When   the Check page shows it
+    Then   *Checked* cannot be pressed: there is nothing to check
+    """
+    page = CheckPage()
+    qtbot.addWidget(page)
+
+    page.show_document(_document("a.pdf", "/tmp/a.pdf"), 1, 1)
+
+    assert page._checked_btn.isEnabled() is False
+
+
+@pytest.mark.gui
+def test_check_page_checked_toggle_is_disabled_while_the_run_holds_the_document(qtbot) -> None:
+    """
+    Given  a document with a text, open in the Check page
+    When   the run takes the document and then lets it go
+    Then   *Checked* is disabled while the lock holds and enabled again afterwards
+    """
+    page = CheckPage()
+    qtbot.addWidget(page)
+    page.show_document(_document("a.pdf", "/tmp/a.pdf", raw_text="what was read"), 1, 1)
+
+    page.set_lock(txt.BEING_PROOFREAD)
+    locked = page._checked_btn.isEnabled()
+    page.set_lock(None)
+
+    assert locked is False
+    assert page._checked_btn.isEnabled() is True
+
+
+@pytest.mark.gui
+def test_check_page_checked_toggle_asks_for_the_new_state(qtbot) -> None:
+    """
+    Given  a document with a text, open in the Check page
+    When   the teacher presses *Checked*
+    Then   the page asks for the document to be marked as checked
+    """
+    page = CheckPage()
+    qtbot.addWidget(page)
+    page.show_document(_document("a.pdf", "/tmp/a.pdf", raw_text="what was read"), 1, 1)
+
+    with qtbot.waitSignal(page.checked_toggled, timeout=1000) as sig:
+        page._checked_btn.click()
+
+    assert sig.args == [True]
+
+
+@pytest.mark.gui
+def test_check_page_mark_looked_at_says_whether_it_was_new(qtbot) -> None:
+    """
+    Given  a document open in the Check page
+    When   the same item is marked as looked at twice
+    Then   only the first time is new, so the window writes to the store once
+    """
+    page = CheckPage()
+    qtbot.addWidget(page)
+    page.show_document(_document("a.pdf", "/tmp/a.pdf", raw_text="what was read"), 1, 1)
+
+    first = page.mark_looked_at("edit:1")
+    second = page.mark_looked_at("edit:1")
+
+    assert first is True
+    assert second is False
+
+
+@pytest.mark.gui
+def test_check_page_records_nothing_as_looked_at_while_the_run_holds_the_document(qtbot) -> None:
+    """
+    Given  a document the run holds (the page is locked)
+    When   an item is marked as looked at
+    Then   nothing is recorded, so the window writes nothing for a document a run is working on
+    """
+    page = CheckPage()
+    qtbot.addWidget(page)
+    page.show_document(_document("a.pdf", "/tmp/a.pdf", raw_text="what was read"), 1, 1)
+    page.set_lock(txt.BEING_PROOFREAD)
+
+    held = page.mark_looked_at("edit:1")
+    page.set_lock(None)
+    free = page.mark_looked_at("edit:1")
+
+    assert held is False
+    assert free is True
+
+
+@pytest.mark.gui
+def test_check_page_refresh_checked_puts_the_button_back_to_what_the_document_says(qtbot) -> None:
+    """
+    Given  an unchecked document whose *Checked* button was pressed but not stored
+    When   the page is asked to show *Checked* as the document says
+    Then   the button is not pressed any more
+    """
+    page = CheckPage()
+    qtbot.addWidget(page)
+    page.show_document(_document("a.pdf", "/tmp/a.pdf", raw_text="what was read"), 1, 1)
+    page._checked_btn.click()
+    assert page._checked_btn.isChecked() is True
+
+    page.refresh_checked()
+
+    assert page._checked_btn.isChecked() is False
+    assert page._checked_btn.text() == txt.MARK_AS_CHECKED

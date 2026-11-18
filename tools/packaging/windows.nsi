@@ -821,11 +821,17 @@ Function un.UnDataPageCreate
     "(built-in reader, page models, name detection, packages for online AI services)"
   Pop $0
 
-  ${NSD_CreateCheckBox} 10u 70u 270u 14u "Settings, API keys, benchmark history and results cache"
+  ; The box keeps the short label of the first one (a long one runs out of the page); what it
+  ; removes is said under it.
+  ${NSD_CreateCheckBox} 10u 70u 270u 14u "Settings, your work and results cache"
   Pop $UnDelCache
   ${NSD_SetState} $UnDelCache ${UN_DEFAULT_SETTINGS}
 
-  ${NSD_CreateLabel} 10u 94u 270u 40u \
+  ${NSD_CreateLabel} 22u 84u 258u 20u \
+    "(API keys, your corrections and checks, benchmark history and speed data)"
+  Pop $0
+
+  ${NSD_CreateLabel} 10u 108u 270u 32u \
     "AI models you downloaded in Ollama are kept: they belong to Ollama.$\r$\nRemove Ollama itself in Windows Settings > Apps."
   Pop $0
 
@@ -933,12 +939,14 @@ Section "Uninstall"
     ; An all-users uninstall does not touch HKCU below; do not leave the empty parent behind.
     DeleteRegKey /ifempty HKCU "${REG_KEY}"
     RMDir /r "$LOCALAPPDATA\teachers_teammate\Cache"
-    ; The settings file, the benchmark history and the speed data sit beside packages\ and
-    ; models\ (the config and data folders are the same on Windows). Earlier versions kept them
-    ; in Cache\, which the line above already removed.
+    ; The settings file, the benchmark history, the speed data and the teacher's own work sit
+    ; beside packages\ and models\ (the config and data folders are the same on Windows).
+    ; Earlier versions kept them in Cache\, which the line above already removed.
     Delete "$LOCALAPPDATA\teachers_teammate\ocr.toml"
     RMDir /r "$LOCALAPPDATA\teachers_teammate\benchmark"
     RMDir /r "$LOCALAPPDATA\teachers_teammate\speed"
+    ; The corrections and checks the teacher made, one file per essay (domain/teacher_work.py).
+    RMDir /r "$LOCALAPPDATA\teachers_teammate\work"
     RMDir "$LOCALAPPDATA\teachers_teammate"
   ${EndIf}
 

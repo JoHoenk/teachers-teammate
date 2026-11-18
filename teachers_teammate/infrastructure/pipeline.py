@@ -76,6 +76,7 @@ from .stage_builder import PipelineComponentFactory as PipelineComponentFactory 
 from .stage_builder import StageBuilder, default_build_preprocessor
 from .state_repository import StateRepository
 from .storage_root import resolve_artifact_dir, resolve_storage_root
+from .teacher_work_store import TeacherWorkStore
 from .workflow.cache_service import CacheReconciliationService
 from .workflow.coordinator import run_files as _run_files_coordinator
 from .workflow.file_processor import FileProcessor, FileProcessorConfig
@@ -106,6 +107,9 @@ class PipelineDependencies:
     # Where the built-in reader's model files live; the application layer passes the store its
     # readiness check looks at, so the run reads the folder that was checked.
     model_store: ModelStore | None = None
+    # Where the teacher's work is.  The application layer passes the store the window writes
+    # to, so a run reads the corrections the teacher made; ``None`` builds the default one.
+    work_store: TeacherWorkStore | None = None
 
 
 # ── Public helpers ─────────────────────────────────────────────────────────
@@ -232,6 +236,7 @@ class OCRPipeline:
         self._component_factory = deps.component_factory or PipelineComponentFactory()
         self._hardware: HardwareDetection | None = deps.hardware
         self._model_store: ModelStore | None = deps.model_store
+        self._work_store: TeacherWorkStore | None = deps.work_store
         self._artifact_store: PreviewImageStore | None = deps.artifact_store
         self._state_repo: StateRepository | None = deps.state_repo
         self._cache_service: CacheReconciliationService | None = deps.cache_service
@@ -563,6 +568,9 @@ class OCRPipeline:
             config=cfg,
             windows=builder.resolved_windows(),
             model_store=self._model_store,
+            # A run always reads the teacher's work: the window's writes and the run's reads
+            # must see the same folder, so the default store is the one the window uses.
+            work_store=self._work_store or TeacherWorkStore(),
         )
         preprocess_service = self._preprocess_service or builder.build_preprocessor_service(tmp_dir)
         ocr_stage_service = self._ocr_stage_service or OCRStageService(

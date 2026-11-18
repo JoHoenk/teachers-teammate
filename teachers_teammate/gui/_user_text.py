@@ -291,6 +291,16 @@ def unclear_badge(count: int) -> str:
     return f"?{count}" if count else ""
 
 
+KEPT_NOTE = "kept"
+"""The note beside the proofreading cell of a proofreading kept over other settings."""
+
+KEPT_TOOLTIP = (
+    "Made with other settings. Kept because you worked on it \u2014 "
+    "right-click \u2192 Re-run Proofreading for a new one."
+)
+"""What the kept proofreading cell says when the teacher hovers over it."""
+
+
 def recommendation_caption(is_suggestion: bool) -> str:
     """Return the caption in front of a recommended version."""
     return SUGGESTION_PREFIX if is_suggestion else RECOMMENDED_PREFIX
@@ -646,6 +656,13 @@ def item_counts(corrections: int, unclear: int) -> str:
     return " · ".join(parts)
 
 
+def looked_at_progress_text(looked_at: int, countable: int) -> str:
+    """Return how far the teacher has read the list, e.g. ``"8 of 12 looked at"``."""
+    if not countable:
+        return ""
+    return f"{looked_at} of {countable} looked at"
+
+
 # ── The Check tab's header and banners ────────────────────────────────────────
 
 VIEW_READ = "What was read"
@@ -664,3 +681,35 @@ SHOW_MARKDOWN_SOURCE = "Show Markdown source"
 SOURCE_DIALOG_TITLE = "The stored text of this document"
 WAITING_FOR_RUN = "Waiting for this run"
 BEING_PROOFREAD = "Being proofread — you can edit it when it is done"
+
+
+# ── Checked ───────────────────────────────────────────────────────────────────
+
+MARK_AS_CHECKED = "Mark as checked"
+CHECKED_BUTTON = "\u2713 Checked"
+TEXT_CHECKED_BUTTON = "\u2713 Text checked"
+CHECKED_TOOLTIP = (
+    "Mark this document as checked. With a proofreading it is the corrections that are "
+    "checked; without one, the text that was read."
+)
+CHECKED_COLUMN = "Checked"
+CHECKED_CELL = "Checked"
+TEXT_CHECKED_CELL = "Text checked"
+SELECT_CHECKED = "Select checked"
+SELECT_CHECKED_TOOLTIP = "Select every document you marked as checked, so Export writes those"
+
+#: The header toggle's text, by the ``checked_label`` of the document's work.
+_CHECKED_BUTTONS = {"checked": CHECKED_BUTTON, "text": TEXT_CHECKED_BUTTON}
+
+#: The queue cell's text, by the same label; an unchecked document shows nothing.
+_CHECKED_CELLS = {"checked": CHECKED_CELL, "text": TEXT_CHECKED_CELL}
+
+
+def checked_button_label(label: str) -> str:
+    """Return the header toggle's text for a document whose work says *label*."""
+    return _CHECKED_BUTTONS.get(label, MARK_AS_CHECKED)
+
+
+def checked_cell_label(label: str) -> str:
+    """Return the queue cell's text for a document whose work says *label*."""
+    return _CHECKED_CELLS.get(label, "")

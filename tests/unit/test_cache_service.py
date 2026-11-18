@@ -19,13 +19,23 @@ from teachers_teammate.infrastructure.preprocessing.identity import AUTO_VERSION
 from teachers_teammate.infrastructure.state_repository import DocumentState, OcrResultRecord
 from teachers_teammate.infrastructure.storage_root import document_stem
 from teachers_teammate.domain.data_location import STAGE_CORRECTION, STAGE_EVALUATION
+from teachers_teammate.domain.freshness import first_stale_stage_for_hashes
+from teachers_teammate.domain.teacher_work import (
+    CorrectionsWork,
+    TeacherWork,
+    TranscriptionWork,
+    proofreading_id,
+    text_identity,
+)
 from teachers_teammate.infrastructure.workflow.cache_service import (
     CacheContext,
     CacheReconciliationService,
+    ExpectedHashes,
     _preprocess_fingerprint,
     compute_ocr_config_hash,
     privacy_fingerprint,
     sent_record,
+    stage_hashes,
 )
 from tests.conftest import fake_page_models_store, make_config
 
@@ -654,6 +664,7 @@ def test_record_correction_delegates_to_repo(tmp_path: Path) -> None:
         sent_text="",
         sent_map=None,
         sent=sent_record(svc._config, STAGE_CORRECTION),
+        source_hash=text_identity(""),
     )
     assert result.state is new_state
     assert result.correction_config_hash == ctx.correction_config_hash
@@ -1453,3 +1464,253 @@ def test_correction_config_hash_follows_the_text_of_a_variant_not_only_its_id(
     )
 
     assert svc._correction_config_hash() != before
+
+
+# ── stage_hashes: what the teacher's work says about the stored stages ─────
+
+
+def _proofread_state() -> DocumentState:
+    """Return a state whose reading and proofreading are done."""
+    return replace(
+        _make_state(),
+        ocr_done=True,
+        raw_text="Der bunte Hund",
+        ocr_config_hash="ocr_h",
+        correction_done=True,
+        correction_text="Der braune Hund",
+        correction_config_hash="corr_h",
+        correction_source_hash=text_identity("Der bunte Hund"),
+    )
+
+
+def _expected() -> ExpectedHashes:
+    """Return the hashes the settings of :func:`_make_svc` ask for."""
+    return ExpectedHashes(
+        ocr_config_hash="ocr_h", correction_config_hash="corr_h", eval_config_hash="eval_h"
+    )
+
+
+def _answer_of(state: DocumentState) -> str:
+    """Return the identity of the answer *state* holds."""
+    return proofreading_id(
+        text_identity(state.raw_text), state.correction_text, state.correction_review
+    )
+
+
+def test_stage_hashes_without_work_freezes_and_keeps_nothing() -> None:
+    """
+    Given  a document with a reading and a proofreading, and no work
+    When   its freshness snapshot is built
+    Then   nothing is frozen or kept, and the expected source is the reading itself
+    """
+    state = _proofread_state()
+
+    hashes = stage_hashes(state, None, _expected())
+
+    assert hashes.ocr_frozen is False
+    assert hashes.correction_kept is False
+    assert hashes.expected_correction_source == text_identity("Der bunte Hund")
+    assert hashes.correction_source == text_identity("Der bunte Hund")
+
+
+def test_stage_hashes_freezes_the_reading_when_the_teacher_fixed_it() -> None:
+    """
+    Given  a document whose transcription the teacher fixed
+    When   its freshness snapshot is built
+    Then   the reading is frozen and the expected source is the teacher's text
+    """
+    state = _proofread_state()
+    work = TeacherWork(
+        source_hash=state.source_hash,
+        name="doc.png",
+        transcription=TranscriptionWork(text="Der bunte Hunt", text_format="plain"),
+    )
+
+    hashes = stage_hashes(state, work, _expected())
+
+    assert hashes.ocr_frozen is True
+    assert hashes.expected_correction_source == text_identity("Der bunte Hunt")
+
+
+def test_stage_hashes_keeps_a_proofreading_the_teacher_worked_on() -> None:
+    """
+    Given  a document whose corrections the teacher changed, bound to the stored answer
+    When   its freshness snapshot is built
+    Then   the proofreading counts as kept
+    """
+    state = _proofread_state()
+    work = TeacherWork(
+        source_hash=state.source_hash,
+        name="doc.png",
+        corrections=CorrectionsWork(bound_to=_answer_of(state), text="Der braune Hund!"),
+    )
+
+    hashes = stage_hashes(state, work, _expected())
+
+    assert hashes.correction_kept is True
+
+
+def test_stage_hashes_freezes_the_reading_for_corrections_the_teacher_worked_on() -> None:
+    """
+    Given  a document whose corrections the teacher changed, and no fixed transcription
+    When   its freshness snapshot is built
+    Then   the reading is frozen too: reading the pages again could change the text the
+           proofreading was made from, and the corrections would stop applying
+    """
+    state = _proofread_state()
+    work = TeacherWork(
+        source_hash=state.source_hash,
+        name="doc.png",
+        corrections=CorrectionsWork(bound_to=_answer_of(state), text="Der braune Hund!"),
+    )
+
+    hashes = stage_hashes(state, work, _expected())
+
+    assert hashes.ocr_frozen is True
+    assert first_stale_stage_for_hashes(replace(hashes, expected_ocr_config_hash="other")) is None
+
+
+def test_stage_hashes_does_not_freeze_the_reading_for_items_only_looked_at() -> None:
+    """
+    Given  a corrections part whose items the teacher only looked at
+    When   its freshness snapshot is built
+    Then   the reading is not frozen: looking is cheap to lose
+    """
+    state = _proofread_state()
+    work = TeacherWork(
+        source_hash=state.source_hash,
+        name="doc.png",
+        corrections=CorrectionsWork(bound_to=_answer_of(state), looked_at=frozenset({"edit:1"})),
+    )
+
+    assert stage_hashes(state, work, _expected()).ocr_frozen is False
+
+
+def test_stage_hashes_does_not_keep_a_part_bound_to_another_answer() -> None:
+    """
+    Given  a corrections part bound to an answer the cache does not hold
+    When   its freshness snapshot is built
+    Then   nothing is kept: the part applies to nothing
+    """
+    state = _proofread_state()
+    work = TeacherWork(
+        source_hash=state.source_hash,
+        name="doc.png",
+        corrections=CorrectionsWork(bound_to="another-answer", text="Der braune Hund!"),
+    )
+
+    hashes = stage_hashes(state, work, _expected())
+
+    assert hashes.correction_kept is False
+
+
+def test_stage_hashes_does_not_keep_a_part_the_teacher_only_looked_at() -> None:
+    """
+    Given  a corrections part whose items the teacher only looked at
+    When   its freshness snapshot is built
+    Then   nothing is kept: looking is not work
+    """
+    state = _proofread_state()
+    work = TeacherWork(
+        source_hash=state.source_hash,
+        name="doc.png",
+        corrections=CorrectionsWork(bound_to=_answer_of(state), looked_at=frozenset({"edit:1"})),
+    )
+
+    hashes = stage_hashes(state, work, _expected())
+
+    assert hashes.correction_kept is False
+
+
+# ── prepare(): the work the run reads ─────────────────────────────────────
+
+
+def test_prepare_loads_the_work_of_the_documents_content(tmp_path: Path) -> None:
+    """
+    Given  a store that holds the work of the document's content
+    When   prepare() is called
+    Then   the work is in the context, loaded by the file's hash
+    """
+    src = tmp_path / "doc.png"
+    src.write_bytes(b"data")
+    work = TeacherWork(source_hash="filehash", name="doc.png")
+    work_store = MagicMock()
+    work_store.load.return_value = work
+    repo = MagicMock()
+    repo.load_or_create.return_value = _make_state()
+    repo.reconcile_runtime_config.return_value = _make_state()
+    svc = CacheReconciliationService(
+        state_repo=repo,
+        artifact_store=MagicMock(),
+        config=make_config(tmp_path),
+        work_store=work_store,
+    )
+
+    with patch(
+        "teachers_teammate.infrastructure.workflow.cache_service.compute_file_hash",
+        return_value="filehash",
+    ):
+        ctx = svc.prepare(src)
+
+    work_store.load.assert_called_once_with("filehash")
+    assert ctx.work is work
+
+
+def test_prepare_without_a_store_reads_no_work(tmp_path: Path) -> None:
+    """
+    Given  a cache service without a work store
+    When   prepare() is called
+    Then   the context holds no work
+    """
+    src = tmp_path / "doc.png"
+    src.write_bytes(b"data")
+    svc, repo, _ = _make_svc(tmp_path)
+    repo.load_or_create.return_value = _make_state()
+    repo.reconcile_runtime_config.return_value = _make_state()
+
+    with patch(
+        "teachers_teammate.infrastructure.workflow.cache_service.compute_file_hash",
+        return_value="h",
+    ):
+        ctx = svc.prepare(src)
+
+    assert ctx.work is None
+
+
+def test_prepare_freezes_the_reading_of_a_document_the_teacher_fixed(tmp_path: Path) -> None:
+    """
+    Given  a document whose transcription the teacher fixed, and changed reading settings
+    When   prepare() is called
+    Then   the reading is not reset: the teacher's text is what the document says
+    """
+    src = tmp_path / "doc.png"
+    src.write_bytes(b"data")
+    state = replace(
+        _make_state(), ocr_done=True, raw_text="Der bunte Hund", ocr_config_hash="old-ocr"
+    )
+    work = TeacherWork(
+        source_hash="h",
+        name="doc.png",
+        transcription=TranscriptionWork(text="Der bunte Hunt", text_format="plain"),
+    )
+    work_store = MagicMock()
+    work_store.load.return_value = work
+    repo = MagicMock()
+    repo.load_or_create.return_value = state
+    repo.reconcile_runtime_config.return_value = state
+    svc = CacheReconciliationService(
+        state_repo=repo,
+        artifact_store=MagicMock(),
+        config=make_config(tmp_path),
+        work_store=work_store,
+    )
+
+    with patch(
+        "teachers_teammate.infrastructure.workflow.cache_service.compute_file_hash",
+        return_value="h",
+    ):
+        svc.prepare(src)
+
+    snapshot = repo.reconcile_runtime_config.call_args.args[2]
+    assert snapshot.ocr_frozen is True
+    assert snapshot.expected_correction_source == text_identity("Der bunte Hunt")

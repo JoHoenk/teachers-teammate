@@ -597,7 +597,13 @@ def review_summary(aligned: AlignedReview | None, *, separator: str = ", ") -> s
     return separator.join(parts)
 
 
-def align(raw_plain: str, corrected_plain: str, review: CorrectionReview) -> AlignedReview:
+def align(
+    raw_plain: str,
+    corrected_plain: str,
+    review: CorrectionReview,
+    *,
+    machine_plain: str | None = None,
+) -> AlignedReview:
     """Match *review*'s notes to the current word diff of *raw_plain* against *corrected_plain*.
 
     The diff stays the ground truth: a hunk the review does not know is shown as the teacher's own
@@ -605,8 +611,28 @@ def align(raw_plain: str, corrected_plain: str, review: CorrectionReview) -> Ali
     not in the text.  A stored part with the same span and the same replacement is an exact match;
     a part whose span overlaps but whose replacement differs is the same edit changed afterwards,
     so its note stays and is marked.  Both inputs must be plain text.
+
+    *machine_plain* is the machine's own corrected text.  With it, a hunk the review does not
+    know is the teacher's only when it is not a hunk of the machine's answer either: a change
+    the model made without an explanation is the model's, not the teacher's.  Without it the
+    caller has no machine text to compare with, and every unexplained hunk counts as the
+    teacher's — the rule the Word builder and the evaluation tools use.
+
+    The comparison is by hunk, so it is a rule of thumb at the edges: a teacher's edit that
+    touches or overlaps a change of the model merges with it into one hunk the machine's diff
+    does not have, and that hunk counts as the teacher's.  That is the right way round — the
+    teacher decided about those words — but the model's own change inside it is no longer
+    listed as one of its unexplained corrections.
     """
     hunks = word_diff(raw_plain, corrected_plain)
+    machine_hunks = (
+        None
+        if machine_plain is None
+        else {
+            (hunk.raw_start, hunk.raw_end, hunk.corrected)
+            for hunk in word_diff(raw_plain, machine_plain)
+        }
+    )
     parts = [(note, part) for note in review.edits for part in note.parts]
     used: set[int] = set()
     changes: list[AlignedChange] = []
@@ -621,7 +647,7 @@ def align(raw_plain: str, corrected_plain: str, review: CorrectionReview) -> Ali
                 hunk=hunk,
                 note=note,
                 position=hunk.raw_start,
-                by_teacher=index < 0,
+                by_teacher=index < 0 and _is_the_teachers(machine_hunks, hunk),
                 edit_id=note.id if note is not None else None,
                 changed_afterwards=changed,
             )
@@ -632,6 +658,16 @@ def align(raw_plain: str, corrected_plain: str, review: CorrectionReview) -> Ali
         unclear=_aligned_unclear(review.unclear),
         orphan_notes=tuple(note for note in review.edits if note.id not in matched),
     )
+
+
+def _is_the_teachers(machine_hunks: set[tuple[int, int, str]] | None, hunk: Hunk) -> bool:
+    """Whether an unexplained *hunk* is the teacher's own change rather than the model's.
+
+    Without the machine's text there is nothing to compare with, so it is the teacher's.
+    """
+    if machine_hunks is None:
+        return True
+    return (hunk.raw_start, hunk.raw_end, hunk.corrected) not in machine_hunks
 
 
 def _match(

@@ -630,14 +630,14 @@ for one to be removed in Windows Settings; a silent run needs `/SCOPE=` to pick 
 | 15 | Windows 10 (version 1809) or newer is required |
 
 A silent uninstall keeps all user data unless `/DELDATA` (add-ons and models) or
-`/DELSETTINGS` (settings file `ocr.toml`, benchmark history, speed data, Qt settings, saved API
-keys, results cache) is given. Settings, benchmark history and speed data live in
-`%LOCALAPPDATA%\teachers_teammate` beside `packages\` and `models\`, not in the cache folder.
-The two flags stand alone: the installer test runs each one without the other and asserts
-exactly what it removes, and that neither removes the other's data. The uninstaller's dialog
-starts from `UN_DEFAULT_PACKAGES` (ticked) and `UN_DEFAULT_SETTINGS` (not ticked); a silent run
-is the "nothing asked for" case and ignores both, which `tests/unit/test_windows_installer_script.py`
-holds the script to.
+`/DELSETTINGS` (settings file `ocr.toml`, benchmark history, speed data, the teacher's own
+corrections and checks, Qt settings, saved API keys, results cache) is given. Settings, benchmark
+history, speed data and the teacher's work live in `%LOCALAPPDATA%\teachers_teammate` beside
+`packages\` and `models\`, not in the cache folder. The two flags stand alone: the installer test
+runs each one without the other and asserts exactly what it removes, and that neither removes the
+other's data. The uninstaller's dialog starts from `UN_DEFAULT_PACKAGES` (ticked) and
+`UN_DEFAULT_SETTINGS` (not ticked); a silent run is the "nothing asked for" case and ignores both,
+which `tests/unit/test_windows_installer_script.py` holds the script to.
 
 ---
 

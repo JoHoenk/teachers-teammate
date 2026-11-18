@@ -172,6 +172,45 @@ def test_a_hunk_the_review_does_not_know_is_the_teachers_own_edit() -> None:
     assert aligned.changes[0].note is None
 
 
+def test_a_hunk_of_the_machines_answer_is_not_the_teachers() -> None:
+    """
+    Given  the machine's own text and a review that does not explain one of its changes
+    When   the review is aligned with the machine's text as the comparison
+    Then   the unexplained hunk is the model's, not the teacher's
+    """
+    machine = "Ich gehe Heim."
+
+    aligned = align("Ich gehe heim.", machine, CorrectionReview(), machine_plain=machine)
+
+    assert [change.by_teacher for change in aligned.changes] == [False]
+
+
+def test_a_hunk_beyond_the_machines_answer_is_the_teachers() -> None:
+    """
+    Given  a text the teacher changed beyond the machine's answer
+    When   the review is aligned with the machine's text as the comparison
+    Then   only the change the machine did not make is the teacher's
+    """
+    machine = "Ich gehe Heim."
+
+    aligned = align(
+        "Ich gehe heim.", "Ich gehe Heim. Und du?", CorrectionReview(), machine_plain=machine
+    )
+
+    assert [change.by_teacher for change in aligned.changes] == [False, True]
+
+
+def test_without_the_machines_text_every_unexplained_hunk_is_the_teachers() -> None:
+    """
+    Given  a review without notes and no machine text to compare with
+    When   the review is aligned with the current diff
+    Then   the hunk counts as the teacher's, the rule the Word builder uses
+    """
+    aligned = align("Ich gehe heim.", "Ich gehe Heim.", CorrectionReview())
+
+    assert [change.by_teacher for change in aligned.changes] == [True]
+
+
 def test_an_insertion_shifted_by_a_token_still_finds_its_note() -> None:
     """
     Given  a stored insertion one token away from where the current diff places it

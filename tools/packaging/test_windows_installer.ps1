@@ -333,9 +333,10 @@ foreach ($sub in @('packages', 'models', 'Cache')) {
     New-Item -ItemType Directory -Path (Join-Path $DataDir $sub) -Force | Out-Null
     Set-Content -LiteralPath (Join-Path $DataDir "$sub\marker.txt") -Value 'keep me'
 }
-# The settings file, the benchmark history and the speed data (PR 7) sit beside packages\.
+# The settings file, the benchmark history, the speed data and the teacher's own work sit
+# beside packages\.
 Set-Content -LiteralPath (Join-Path $DataDir 'ocr.toml') -Value 'keep me'
-foreach ($sub in @('benchmark', 'speed')) {
+foreach ($sub in @('benchmark', 'speed', 'work')) {
     New-Item -ItemType Directory -Path (Join-Path $DataDir $sub) -Force | Out-Null
     Set-Content -LiteralPath (Join-Path $DataDir "$sub\marker.txt") -Value 'keep me'
 }
@@ -349,7 +350,7 @@ foreach ($sub in @('packages', 'models', 'Cache')) {
     Assert-Present (Join-Path $DataDir "$sub\marker.txt") "the $sub marker survives"
 }
 Assert-Present (Join-Path $DataDir 'ocr.toml') 'the settings file survives the update'
-foreach ($sub in @('benchmark', 'speed')) {
+foreach ($sub in @('benchmark', 'speed', 'work')) {
     Assert-Present (Join-Path $DataDir "$sub\marker.txt") "the $sub marker survives the update"
 }
 Assert-Equal $Version (Get-UninstallValue "HKCU:\$UninstKey" 'DisplayVersion') 'one Apps entry, with the version'
@@ -387,7 +388,7 @@ foreach ($sub in @('packages', 'models', 'Cache')) {
     Assert-Present (Join-Path $DataDir "$sub\marker.txt") "the $sub data survives"
 }
 Assert-Present (Join-Path $DataDir 'ocr.toml') 'the settings file survives the uninstall'
-foreach ($sub in @('benchmark', 'speed')) {
+foreach ($sub in @('benchmark', 'speed', 'work')) {
     Assert-Present (Join-Path $DataDir "$sub\marker.txt") "the $sub data survives the uninstall"
 }
 
@@ -400,7 +401,7 @@ foreach ($sub in @('packages', 'models', 'Cache')) {
     Assert-Missing (Join-Path $DataDir $sub) "the $sub folder is gone"
 }
 Assert-Missing (Join-Path $DataDir 'ocr.toml') 'the settings file is gone'
-foreach ($sub in @('benchmark', 'speed')) {
+foreach ($sub in @('benchmark', 'speed', 'work')) {
     Assert-Missing (Join-Path $DataDir $sub) "the $sub folder is gone"
 }
 Assert-Missing $QtKey 'the Qt settings key is gone'

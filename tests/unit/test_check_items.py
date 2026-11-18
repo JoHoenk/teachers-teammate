@@ -62,7 +62,7 @@ def test_one_item_per_edit_however_many_hunks_it_has() -> None:
         edits=(edit_note(edits(raw, corrected)[0], category="grammar", explanation="Akkusativ."),)
     )
 
-    items = check_items(align(raw, corrected, review), review_complete=True)
+    items = check_items(align(raw, corrected, review))
 
     assert len(items) == 1
     assert items[0].kind is ItemKind.CORRECTION
@@ -86,9 +86,9 @@ def test_items_are_numbered_in_text_order() -> None:
         unclear=(_unclear(10, 14),),
     )
 
-    items = check_items(align(RAW, CORRECTED, review), review_complete=True)
+    items = check_items(align(RAW, CORRECTED, review))
 
-    assert [item.key for item in items] == ["edit:1", "unclear:1", "taken:3", "edit:2"]
+    assert [item.key for item in items] == ["edit:1", "unclear:1", "edit:3", "edit:2"]
     assert [item.number for item in items] == [1, 2, 3, 4]
     assert _kinds(items) == [
         ItemKind.CORRECTION,
@@ -110,7 +110,7 @@ def test_a_taken_out_item_has_the_notes_words_and_no_corrected_span() -> None:
         )
     )
 
-    items = check_items(align(RAW, RAW, review), review_complete=True)
+    items = check_items(align(RAW, RAW, review))
 
     assert len(items) == 1
     assert items[0].kind is ItemKind.TAKEN_OUT
@@ -122,35 +122,42 @@ def test_a_taken_out_item_has_the_notes_words_and_no_corrected_span() -> None:
 
 def test_a_hunk_the_review_does_not_know_is_the_teachers_own() -> None:
     """
-    Given  a complete review that does not explain one change of the text
+    Given  a text the teacher changed beyond the machine's answer
     When   the items are built
-    Then   that change is the teacher's own
+    Then   the change the machine did not make is the teacher's own
     """
-    items = check_items(align(RAW, CORRECTED, _review("word_choice")), review_complete=True)
+    raw = "Der bunte Hund bellt laut."
+    machine = "Der braune Hund bellt laut."
+    teacher = "Der braune Hund bellt sehr laut."
+    review = CorrectionReview(
+        edits=(edit_note(edits(raw, machine)[0], category="word_choice", explanation="Farbe."),)
+    )
+
+    items = check_items(align(raw, teacher, review, machine_plain=machine))
 
     assert _kinds(items) == [ItemKind.CORRECTION, ItemKind.OWN]
-    assert items[1].before == "lauft"
-    assert items[1].after == "läuft"
+    assert items[1].before == ""
+    assert items[1].after == "sehr"
 
 
-def test_without_a_review_a_change_is_a_correction_without_explanation() -> None:
+def test_a_change_of_the_machine_without_a_note_is_not_the_teachers() -> None:
     """
-    Given  a text with changes and no review at all
+    Given  a text with the machine's changes and no review at all
     When   the items are built
     Then   every change is a correction without explanation, not the teacher's own
     """
-    items = check_items(align(RAW, CORRECTED, CorrectionReview()), review_complete=False)
+    items = check_items(align(RAW, CORRECTED, CorrectionReview(), machine_plain=CORRECTED))
 
     assert _kinds(items) == [ItemKind.UNEXPLAINED, ItemKind.UNEXPLAINED]
 
 
-def test_an_incomplete_review_makes_unknown_hunks_unexplained() -> None:
+def test_a_review_that_explains_one_of_two_changes_leaves_the_other_unexplained() -> None:
     """
-    Given  a review that explains only one of two changes, reported as incomplete
+    Given  a review that explains only one of the machine's two changes
     When   the items are built
     Then   the unexplained change is a correction without explanation
     """
-    items = check_items(align(RAW, CORRECTED, _review("word_choice")), review_complete=False)
+    items = check_items(align(RAW, CORRECTED, _review("word_choice"), machine_plain=CORRECTED))
 
     assert _kinds(items) == [ItemKind.CORRECTION, ItemKind.UNEXPLAINED]
 
@@ -170,7 +177,7 @@ def test_a_change_the_teacher_changed_again_is_marked_as_changed() -> None:
         )
     )
 
-    items = check_items(align(raw, corrected, review), review_complete=True)
+    items = check_items(align(raw, corrected, review, machine_plain="Der braune Hund"))
 
     assert len(items) == 1
     assert items[0].kind is ItemKind.CHANGED
@@ -187,7 +194,7 @@ def test_an_unclear_expression_that_was_not_found_goes_last() -> None:
     """
     review = CorrectionReview(unclear=(_unclear(0, 0, "Nirgends"),))
 
-    items = check_items(align(RAW, CORRECTED, review), review_complete=False)
+    items = check_items(align(RAW, CORRECTED, review))
 
     assert items[-1].kind is ItemKind.UNCLEAR
     assert items[-1].before == "Nirgends"
@@ -208,7 +215,7 @@ def test_an_unclear_item_carries_its_why_and_suggestion() -> None:
         is_suggestion=True,
     )
 
-    items = check_items(align(RAW, RAW, CorrectionReview(unclear=(note,))), review_complete=False)
+    items = check_items(align(RAW, RAW, CorrectionReview(unclear=(note,))))
 
     assert len(items) == 1
     assert items[0].why == "Welcher Hund?"
@@ -222,9 +229,7 @@ def test_minor_changes_are_folded_into_one_group() -> None:
     When   the minor items are asked for
     Then   only the spelling change is in the group, and it is marked minor
     """
-    items = check_items(
-        align(RAW, CORRECTED, _review("spelling", "word_choice")), review_complete=True
-    )
+    items = check_items(align(RAW, CORRECTED, _review("spelling", "word_choice")))
 
     minor = group_minor(items)
 
@@ -239,9 +244,47 @@ def test_an_edit_without_a_note_is_minor_when_it_touches_no_word() -> None:
     When   the items are built
     Then   the change is minor, so the list folds it away
     """
-    items = check_items(
-        align("Der Hund bellt", "Der Hund, bellt", CorrectionReview()), review_complete=False
-    )
+    items = check_items(align("Der Hund bellt", "Der Hund, bellt", CorrectionReview()))
 
     assert len(items) == 1
     assert items[0].is_minor is True
+
+
+def test_an_unexplained_change_keeps_its_key_when_an_earlier_one_is_taken_back() -> None:
+    """
+    Given  two changes of the model that the review does not explain
+    When   the teacher takes the first one back
+    Then   the second keeps the key it had, so what was looked at stays attached to it
+    """
+    raw = "aa bb cc dd"
+    machine = "AA bb CC dd"
+    taken_back = "aa bb CC dd"
+
+    before = check_items(align(raw, machine, CorrectionReview(), machine_plain=machine))
+    after = check_items(align(raw, taken_back, CorrectionReview(), machine_plain=machine))
+
+    assert [item.before for item in before] == ["aa", "cc"]
+    assert [item.before for item in after] == ["cc"]
+    assert after[0].key == before[1].key
+    assert before[0].key != before[1].key
+
+
+def test_a_correction_keeps_its_key_when_the_teacher_takes_it_out() -> None:
+    """
+    Given  a correction the teacher has looked at
+    When   the teacher takes it out of the text
+    Then   the item is the same item: its key does not change, so it stays looked at
+    """
+    corrected = RAW.replace("laut", "leise")
+    review = CorrectionReview(
+        edits=(
+            edit_note(_edit_of(1, 21, 25, "laut", "leise"), category="word_choice", explanation=""),
+        )
+    )
+
+    inside = check_items(align(RAW, corrected, review))
+    taken_out = check_items(align(RAW, RAW, review))
+
+    assert [item.kind for item in inside] == [ItemKind.CORRECTION]
+    assert [item.kind for item in taken_out] == [ItemKind.TAKEN_OUT]
+    assert inside[0].key == taken_out[0].key == "edit:1"

@@ -6,7 +6,7 @@ from collections.abc import Collection, Mapping
 from pathlib import Path
 from typing import Any, ClassVar
 
-from PySide6.QtCore import QEvent, QObject, QPoint, Qt, Signal
+from PySide6.QtCore import QEvent, QItemSelection, QItemSelectionModel, QObject, QPoint, Qt, Signal
 from PySide6.QtGui import QBrush, QColor, QFont
 from PySide6.QtWidgets import (
     QHBoxLayout,
@@ -91,7 +91,7 @@ class _ViewportLeaveFilter(QObject):
 class ResultsTable(QTableWidget):
     """Table of processed files: name, per-stage status, and duration.
 
-    Columns: File | OCR | Correction | Evaluation | Duration | Open
+    Columns: File | OCR | Correction | Evaluation | Checked | Duration | Open
 
     Each stage cell transitions through: ``-`` → ``▶`` → ``✓`` / ``✗``.
     Cached stages start at ``✓`` (muted green) before the worker runs.
@@ -106,8 +106,9 @@ class ResultsTable(QTableWidget):
     _COL_OCR = 1
     _COL_CORRECTION = 2
     _COL_EVALUATION = 3
-    _COL_DURATION = 4
-    _COL_PREVIEW = 5
+    _COL_CHECKED = 4
+    _COL_DURATION = 5
+    _COL_PREVIEW = 6
     _ROLE_IMAGE = Qt.ItemDataRole.UserRole
     _ROLE_RAW = Qt.ItemDataRole.UserRole + 1
     _ROLE_CORR = Qt.ItemDataRole.UserRole + 2
@@ -118,6 +119,7 @@ class ResultsTable(QTableWidget):
     _ROLE_CORRECTION_WARNING = Qt.ItemDataRole.UserRole + 9  # str
     _ROLE_NOTE = Qt.ItemDataRole.UserRole + 10  # str: the cell's own tooltip text
     _ROLE_SENT = Qt.ItemDataRole.UserRole + 11  # SentStatus: how the stored result was sent
+    _ROLE_KEPT = Qt.ItemDataRole.UserRole + 12  # bool: the proofreading was kept over settings
 
     _STAGE_ACTIVE_COLORS: ClassVar[dict[int, str]] = {
         _COL_OCR: _COLOUR_OCR_BAR,
@@ -126,11 +128,19 @@ class ResultsTable(QTableWidget):
     }
 
     def __init__(self, parent: QWidget | None = None) -> None:
-        super().__init__(0, 6, parent)
+        super().__init__(0, 7, parent)
         #: Where the text of a stage goes, keyed by stage name; shown as a cell tooltip.
         self._stage_tooltips: dict[str, str] = {}
         self.setHorizontalHeaderLabels(
-            ["File", "OCR", "Correction", "Evaluation", "Duration", "Open"]
+            [
+                "File",
+                "OCR",
+                "Correction",
+                "Evaluation",
+                txt.CHECKED_COLUMN,
+                "Duration",
+                "Open",
+            ]
         )
         _header = self.horizontalHeader()
         assert _header is not None
@@ -140,6 +150,7 @@ class ResultsTable(QTableWidget):
         self.setColumnWidth(self._COL_OCR, 80)
         self.setColumnWidth(self._COL_CORRECTION, 95)
         self.setColumnWidth(self._COL_EVALUATION, 100)
+        self.setColumnWidth(self._COL_CHECKED, 95)
         self.setColumnWidth(self._COL_DURATION, 80)
         self.setColumnWidth(self._COL_PREVIEW, 120)
         _header.setStretchLastSection(False)
@@ -211,6 +222,9 @@ class ResultsTable(QTableWidget):
             item.setText(symbol)
             # A new status means the result is being made again: the old sent line is gone.
             item.setData(self._ROLE_SENT, None)
+            if col == self._COL_CORRECTION:
+                # A new status means the result is being made again: nothing is kept any more.
+                self._set_kept(row, False)
             self._set_note(row, col, "")  # a new status drops the old ``?n`` badge's note
             item.setForeground(QColor(color))
             item.setFont(_STAGE_FONT)
@@ -368,6 +382,7 @@ class ResultsTable(QTableWidget):
                 cell.setFont(_STAGE_FONT)
                 self.setItem(row, col, cell)
             self.setItem(row, self._COL_DURATION, QTableWidgetItem(""))
+            self.setItem(row, self._COL_CHECKED, QTableWidgetItem(""))
             file_item = self.item(row, self._COL_FILE)
             if file_item is not None:
                 file_item.setData(self._ROLE_SOURCE, source_id)
@@ -478,7 +493,7 @@ class ResultsTable(QTableWidget):
             return
         item.setData(self._ROLE_REVIEW, review)
         item.setData(self._ROLE_CORRECTION_WARNING, warning)
-        self._refresh_unclear_badge(row, review)
+        self._refresh_correction_cell(row)
 
     def set_row_artifacts(
         self,
@@ -533,22 +548,106 @@ class ResultsTable(QTableWidget):
             return ""
         return str(item.data(self._ROLE_CORRECTION_WARNING) or "")
 
-    def _refresh_unclear_badge(self, row: int, review: CorrectionReview | None) -> None:
-        """Append the ``?n`` unclear badge to the proofreading cell when there is a review."""
+    def _refresh_correction_cell(self, row: int) -> None:
+        """Compose the proofreading cell: the status symbol, the ``?n`` badge and *kept*.
+
+        Both notes belong to the same cell, so they are written together: the badge counts the
+        unclear passages of the review, and *kept* says the proofreading was made with other
+        settings and kept because the teacher worked on it.
+        """
         item = self.item(row, self._COL_CORRECTION)
         if item is None or self.cellWidget(row, self._COL_CORRECTION) is not None:
-            # A cell widget carries the warning/error info; the badge would be hidden.
+            # A cell widget carries the warning/error info; the notes would be hidden.
             return
         symbol = self._stage_symbol(row, self._COL_CORRECTION)
         if not symbol.startswith(_DONE_SYMBOL):
             return
+        review = self._review_at(row)
         count = review.unclear_count if review is not None else 0
-        if count:
-            item.setText(f"{symbol} {txt.unclear_badge(count)}")
-            self._set_note(row, self._COL_CORRECTION, txt.filter_unclear_label(count))
-        else:
-            item.setText(symbol)
-            self._set_note(row, self._COL_CORRECTION, "")
+        kept = self._kept_at(row)
+        badges = [
+            badge for badge in (txt.unclear_badge(count), txt.KEPT_NOTE if kept else "") if badge
+        ]
+        item.setText(" ".join([symbol, *badges]))
+        notes = [
+            note
+            for note in (
+                txt.filter_unclear_label(count) if count else "",
+                txt.KEPT_TOOLTIP if kept else "",
+            )
+            if note
+        ]
+        self._set_note(row, self._COL_CORRECTION, "\n\n".join(notes))
+
+    def _review_at(self, row: int) -> CorrectionReview | None:
+        """Return the proofreading review recorded for *row*, or ``None``."""
+        item = self.item(row, self._COL_FILE)
+        review = item.data(self._ROLE_REVIEW) if item is not None else None
+        return review if isinstance(review, CorrectionReview) else None
+
+    def _kept_at(self, row: int) -> bool:
+        """Return whether *row*'s proofreading was kept over other settings."""
+        item = self.item(row, self._COL_FILE)
+        return bool(item.data(self._ROLE_KEPT)) if item is not None else False
+
+    def _set_kept(self, row: int, kept: bool) -> None:
+        """Record whether *row*'s proofreading was kept, without touching the cell."""
+        item = self.item(row, self._COL_FILE)
+        if item is not None:
+            item.setData(self._ROLE_KEPT, kept)
+
+    def set_kept(self, source_id: str, kept: bool) -> None:
+        """Say that *source_id*'s proofreading was made with other settings and kept.
+
+        The cell keeps its ``✓`` and gains the note *kept*; the tooltip says why it is there and
+        how to get a new proofreading.
+        """
+        row = self._row_for_source(source_id)
+        if row is None:
+            return
+        self._set_kept(row, kept)
+        self._refresh_correction_cell(row)
+
+    def set_checked(self, source_id: str, label: str) -> None:
+        """Show whether *source_id* is checked: ``"Checked"``, ``"Text checked"`` or nothing.
+
+        *label* is the ``checked_label`` of the document's work: ``"checked"`` for the
+        corrections, ``"text"`` for the transcription alone, ``""`` for neither.
+        """
+        row = self._row_for_source(source_id)
+        item = self.item(row, self._COL_CHECKED) if row is not None else None
+        if item is not None:
+            item.setText(txt.checked_cell_label(label))
+
+    def checked_source_ids(self) -> list[str]:
+        """Return the documents marked as checked, in queue order."""
+        ids: list[str] = []
+        for row in range(self.rowCount()):
+            item = self.item(row, self._COL_CHECKED)
+            if item is not None and item.text():
+                source_id = self.source_id_for_row(row)
+                if source_id:
+                    ids.append(source_id)
+        return ids
+
+    def select_checked(self) -> None:
+        """Select every row marked as checked, so Export writes just those."""
+        rows = [
+            row
+            for row in range(self.rowCount())
+            if (item := self.item(row, self._COL_CHECKED)) is not None and item.text()
+        ]
+        if not rows:
+            return
+        model = self.model()
+        selection = QItemSelection()
+        for row in rows:
+            selection.select(model.index(row, 0), model.index(row, self.columnCount() - 1))
+        self.selectionModel().select(
+            selection,
+            QItemSelectionModel.SelectionFlag.ClearAndSelect
+            | QItemSelectionModel.SelectionFlag.Rows,
+        )
 
     def source_id_for_row(self, row: int) -> str:
         item = self.item(row, self._COL_FILE)
@@ -594,6 +693,10 @@ class ResultsTable(QTableWidget):
             return
         self._finalize_stage_cells(row, event, (raw_txt, corr_txt, eval_txt))
         self.setItem(row, self._COL_DURATION, QTableWidgetItem(f"{event.total_s:.1f} s"))
+        if ok:
+            # A file that failed did not get as far as reading the teacher's work: its label is
+            # empty, which is not "unchecked".
+            self.set_checked(source_id, event.checked_label)
 
         # Tint entire row for at-a-glance overall status
         row_bg = QColor("#1a3d2a" if ok else "#3d1a1a")
@@ -618,7 +721,7 @@ class ResultsTable(QTableWidget):
             file_item.setData(self._ROLE_EVAL, event.eval_txt)
             file_item.setData(self._ROLE_REVIEW, event.correction_review)
             file_item.setData(self._ROLE_CORRECTION_WARNING, event.correction_warning)
-        self._refresh_unclear_badge(row, event.correction_review)
+        self._refresh_correction_cell(row)
 
     def _show_stopped_cells(
         self, row: int, event: FileDoneEvent, artifacts: tuple[str, str, str]
@@ -660,6 +763,7 @@ class ResultsTable(QTableWidget):
             cell.setFont(_STAGE_FONT)
             self.setItem(row, col, cell)
         self.setItem(row, self._COL_DURATION, QTableWidgetItem(""))
+        self.setItem(row, self._COL_CHECKED, QTableWidgetItem(""))
         self._add_preview_button(row, source_id)
         return row
 
@@ -752,6 +856,9 @@ class ResultsTable(QTableWidget):
         _check_font.setBold(True)
         check.setFont(_check_font)
         check.setEnabled(len(selected_source_ids) == 1 and self._has_result(rows[0]))
+        select_checked = menu.addAction(txt.SELECT_CHECKED)
+        select_checked.setToolTip(txt.SELECT_CHECKED_TOOLTIP)
+        select_checked.setEnabled(bool(self.checked_source_ids()))
         menu.addSeparator()
         rerun_ocr = menu.addAction("Re-run Text Recognition")
         rerun_correction = menu.addAction("Re-run Proofreading")
@@ -768,6 +875,8 @@ class ResultsTable(QTableWidget):
             return
         if action is check:
             self.check_requested.emit(selected_source_ids[0])
+        elif action is select_checked:
+            self.select_checked()
         elif action is rerun_ocr:
             self.stage_run_requested.emit(selected_source_ids, "ocr")
         elif action is rerun_correction:

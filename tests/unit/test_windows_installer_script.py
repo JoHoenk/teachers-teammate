@@ -107,3 +107,22 @@ def test_silent_uninstall_asks_for_nothing() -> None:
     assert '${GetOptions} $R0 "/DELDATA" $R1' in on_init
     assert '${GetOptions} $R0 "/DELSETTINGS" $R1' in on_init
     assert on_init.count("${BST_CHECKED}") == 2
+
+
+def test_the_settings_box_removes_the_teachers_own_work() -> None:
+    """
+    Given  the installer script
+    When   the uninstaller's data page and its Uninstall section are read
+    Then   the box names the corrections and checks, and ticking it removes work\\ beside the
+           results cache, the benchmark history and the speed data
+    """
+    script = _script()
+
+    page = _function(script, "un.UnDataPageCreate")
+    assert "your corrections and checks" in page
+
+    start = script.index('Section "Uninstall"')
+    uninstall = script[start : script.index("SectionEnd", start)]
+    settings = uninstall[uninstall.index("$DoDelCache == ${BST_CHECKED}") :]
+    for folder in ("Cache", "benchmark", "speed", "work"):
+        assert f'RMDir /r "$LOCALAPPDATA\\teachers_teammate\\{folder}"' in settings

@@ -9,6 +9,7 @@ from PySide6.QtCore import QItemSelectionModel, QPoint, Qt
 from PySide6.QtWidgets import QMenu
 
 from teachers_teammate.domain.proofreading.review import CorrectionReview, UnclearNote
+from teachers_teammate.gui import _user_text as txt
 from teachers_teammate.gui._export_menu import ExportKind
 from teachers_teammate.gui._results_table import ResultsTable
 from teachers_teammate.gui._types import FileDoneEvent, StageStatus
@@ -233,7 +234,7 @@ def test_results_table_context_menu_emits_stage_run_requested(qtbot, monkeypatch
     # immediately (no blocking modal dialog).
     class _NonBlockingMenu(QMenu):
         def exec(self, *args, **kwargs):  # Qt naming: overrides QMenu.exec
-            return self.actions()[3]  # "Re-run Proofreading": Check, separator, OCR, this
+            return self.actions()[4]  # "Re-run Proofreading": Check, Select checked, sep, OCR, this
 
     monkeypatch.setattr("teachers_teammate.gui._results_table.QMenu", _NonBlockingMenu)
 
@@ -557,6 +558,61 @@ def test_unclear_badge_keeps_the_proofreading_stage_done(qtbot) -> None:
 
 
 @pytest.mark.gui
+@pytest.mark.use_case("Keep_Worked_On_Corrections")
+def test_a_kept_proofreading_says_so_and_stays_done(qtbot) -> None:
+    """
+    Given  a file whose proofreading finished
+    When   the row is told the proofreading was kept over other settings
+    Then   the cell keeps its tick, gains the note *kept* and says why in its tooltip
+    """
+    table = ResultsTable()
+    qtbot.addWidget(table)
+    table.set_queue(["a.pdf"])
+    table.mark_processing("a.pdf")
+    table.mark_correcting("a.pdf")
+    table.mark_evaluating("a.pdf")
+    cell = table.item(0, ResultsTable._COL_CORRECTION)
+    assert cell is not None
+
+    table.set_kept("a.pdf", True)
+
+    assert cell.text() == f"\u2713 {txt.KEPT_NOTE}"
+    assert txt.KEPT_TOOLTIP in cell.toolTip()
+    assert table.get_stage_statuses_for_source("a.pdf")[1] is StageStatus.DONE
+
+    table.set_kept("a.pdf", False)
+
+    assert cell.text() == "\u2713"
+    assert txt.KEPT_TOOLTIP not in cell.toolTip()
+
+
+@pytest.mark.gui
+@pytest.mark.use_case("Keep_Worked_On_Corrections")
+def test_a_kept_proofreading_keeps_its_unclear_badge(qtbot) -> None:
+    """
+    Given  a file whose proofreading finished and whose review has one unclear expression
+    When   the row is told the proofreading was kept
+    Then   the cell carries both notes, and neither replaces the other
+    """
+    table = ResultsTable()
+    qtbot.addWidget(table)
+    table.set_queue(["a.pdf"])
+    table.mark_processing("a.pdf")
+    table.mark_correcting("a.pdf")
+    table.mark_evaluating("a.pdf")
+    note = UnclearNote(raw_start=0, raw_end=2, expression="it", why="w", recommendation="r")
+    table.set_correction_review("a.pdf", CorrectionReview(unclear=(note,)))
+
+    table.set_kept("a.pdf", True)
+
+    cell = table.item(0, ResultsTable._COL_CORRECTION)
+    assert cell is not None
+    assert cell.text() == f"\u2713 ?1 {txt.KEPT_NOTE}"
+    assert txt.KEPT_TOOLTIP in cell.toolTip()
+    assert txt.filter_unclear_label(1) in cell.toolTip()
+
+
+@pytest.mark.gui
 def test_the_stored_review_is_handed_back_for_the_preview_and_the_export(qtbot) -> None:
     """
     Given  a row whose proofreading stored a review
@@ -711,3 +767,125 @@ def test_a_stopped_file_keeps_its_stored_review_badge(qtbot) -> None:
     )
 
     assert "1" in table.item(0, 2).text()
+
+
+@pytest.mark.gui
+@pytest.mark.use_case("Mark_Document_Checked")
+def test_the_queue_has_a_checked_column_after_the_content_review(qtbot) -> None:
+    """
+    Given  a results table
+    When   its columns are read
+    Then   *Checked* sits between the content review and the duration
+    """
+    table = ResultsTable()
+    qtbot.addWidget(table)
+
+    headers = [table.horizontalHeaderItem(col).text() for col in range(table.columnCount())]
+
+    assert headers == [
+        "File",
+        "OCR",
+        "Correction",
+        "Evaluation",
+        "Checked",
+        "Duration",
+        "Open",
+    ]
+
+
+@pytest.mark.gui
+@pytest.mark.parametrize(
+    ("label", "shown"), [("checked", "Checked"), ("text", "Text checked"), ("", "")]
+)
+@pytest.mark.use_case("Mark_Document_Checked")
+def test_the_checked_cell_says_what_was_checked(qtbot, label: str, shown: str) -> None:
+    """
+    Given  a queued row
+    When   its checked label is set to the corrections, the transcription alone, or neither
+    Then   the cell says "Checked", "Text checked" or nothing
+    """
+    table = ResultsTable()
+    qtbot.addWidget(table)
+    table.set_queue(["a.png"], source_ids=["/a.png"])
+
+    table.set_checked("/a.png", label)
+
+    assert table.item(0, ResultsTable._COL_CHECKED).text() == shown
+
+
+@pytest.mark.gui
+@pytest.mark.use_case("Mark_Document_Checked")
+def test_a_finished_file_brings_its_checked_mark(qtbot) -> None:
+    """
+    Given  a queued row whose document was checked before the run
+    When   the run's result for it arrives
+    Then   the row shows the mark without a reload
+    """
+    table = ResultsTable()
+    qtbot.addWidget(table)
+    table.set_queue(["a.png"], source_ids=["/a.png"])
+
+    table.add_result(
+        FileDoneEvent(
+            source_id="/a.png",
+            name="a.png",
+            ok=True,
+            message="",
+            ocr_s=1.0,
+            correction_s=0.0,
+            raw_txt="raw",
+            corr_txt="fixed",
+            checked_label="checked",
+        )
+    )
+
+    assert table.item(0, ResultsTable._COL_CHECKED).text() == "Checked"
+
+
+@pytest.mark.gui
+@pytest.mark.use_case("Mark_Document_Checked")
+def test_select_checked_takes_both_kinds_and_leaves_the_rest(qtbot) -> None:
+    """
+    Given  four rows, one checked for its corrections, one for its text, two unchecked
+    When   *Select checked* is chosen
+    Then   the two checked rows are selected, so Export writes just those
+    """
+    table = ResultsTable()
+    qtbot.addWidget(table)
+    table.set_queue(["a.png", "b.png", "c.png", "d.png"], source_ids=["/a", "/b", "/c", "/d"])
+    table.set_checked("/a", "checked")
+    table.set_checked("/b", "text")
+
+    table.select_checked()
+
+    assert table.selected_source_ids() == ["/a", "/b"]
+    assert table.checked_source_ids() == ["/a", "/b"]
+
+
+@pytest.mark.gui
+@pytest.mark.use_case("Mark_Document_Checked")
+def test_a_failed_file_keeps_the_checked_mark_it_had(qtbot) -> None:
+    """
+    Given  a row marked as checked
+    When   a run's result for it arrives as a failure, which says nothing about the mark
+    Then   the row still shows *Checked*: a failure is not "unchecked"
+    """
+    table = ResultsTable()
+    qtbot.addWidget(table)
+    table.set_queue(["a.png"], source_ids=["/a.png"])
+    table.set_checked("/a.png", "checked")
+
+    table.add_result(
+        FileDoneEvent(
+            source_id="/a.png",
+            name="a.png",
+            ok=False,
+            message="OCR failed",
+            ocr_s=1.0,
+            correction_s=0.0,
+            raw_txt="",
+            corr_txt="",
+        )
+    )
+
+    assert table.item(0, ResultsTable._COL_CHECKED).text() == "Checked"

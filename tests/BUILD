@@ -963,6 +963,51 @@ py_test(
     deps = _COMMON_DEPS + ["//tools/build:build_tools_lib"] + _PKG_LIB,
 )
 
+# The wheel Bazel builds must hold every module, the assets and the help pages, and say what
+# pyproject.toml says. Builds the wheel, so it is the slowest of the release tests; the wheel's
+# install is checked on the release dry run (build_wheel.yml).
+py_test(
+    name = "test_wheel",
+    size = "small",
+    srcs = _COMMON_SRCS + ["unit/test_wheel.py"],
+    args = ["unit/test_wheel.py"],
+    data = [
+        "//:pyproject.toml",
+        "//docs:advanced_user_guide.md",
+        "//docs:index.md",
+        "//docs:using_the_app.md",
+        "//teachers_teammate:__init__.py",
+        "//teachers_teammate:all_sources",
+        "//teachers_teammate:teachers_teammate_wheel",
+    ],
+    env = {
+        "DOCS_INDEX": "$(rlocationpath //docs:index.md)",
+        "PACKAGE_INIT": "$(rlocationpath //teachers_teammate:__init__.py)",
+        "PYPROJECT": "$(rlocationpath //:pyproject.toml)",
+        "WHEEL": "$(rlocationpath //teachers_teammate:teachers_teammate_wheel)",
+    },
+    main = "run_test.py",
+    deps = _COMMON_DEPS + ["@ocr_test_dependencies//packaging:pkg"],
+)
+
+py_test(
+    name = "test_check_smoke",
+    size = "small",
+    srcs = _COMMON_SRCS + ["unit/test_check_smoke.py"],
+    args = ["unit/test_check_smoke.py"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS + ["//tools/build:build_tools_lib"] + _PKG_LIB,
+)
+
+py_test(
+    name = "test_release_tag",
+    size = "small",
+    srcs = _COMMON_SRCS + ["unit/test_release_tag.py"],
+    args = ["unit/test_release_tag.py"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS + ["//tools/release:release_tools_lib"] + _PKG_LIB,
+)
+
 py_test(
     name = "test_release_stamp_versions",
     size = "small",
@@ -2691,6 +2736,7 @@ test_suite(
         ":test_check_linux_bundle",
         ":test_check_macos_bundle",
         ":test_check_pins",
+        ":test_check_smoke",
         ":test_chunking_corrector",
         ":test_clean_answer",
         ":test_cli",
@@ -2760,6 +2806,7 @@ test_suite(
         ":test_python_version",
         ":test_quotes",
         ":test_release_stamp_versions",
+        ":test_release_tag",
         ":test_request_profile",
         ":test_review_v2",
         ":test_run_stats",
@@ -2781,6 +2828,7 @@ test_suite(
         ":test_text_loss",
         ":test_texts_types",
         ":test_user_text_centralised",
+        ":test_wheel",
         ":test_windows_installer_floor",
         ":test_windows_installer_script",
         ":test_word_diff",

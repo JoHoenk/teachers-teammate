@@ -15,6 +15,10 @@ from __future__ import annotations
 
 from pathlib import Path
 import sys
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from PIL import Image as ImageModule
 
 # MUI2 welcome/finish page side-panel size (pixels)
 _WELCOME_BMP_SIZE = (164, 314)
@@ -24,14 +28,16 @@ _ICO_SIZES = [(16, 16), (24, 24), (32, 32), (48, 48), (64, 64), (128, 128), (256
 _WELCOME_BG: tuple[int, int, int] = (43, 43, 43)
 
 
-def _fit_into(img: object, target_w: int, target_h: int, bg: tuple) -> object:
-    """Scale *img* proportionally to fit (target_w × target_h) and center on a *bg* canvas."""
+def _fit_into(
+    img: ImageModule.Image, target_w: int, target_h: int, bg: tuple[int, ...]
+) -> ImageModule.Image:
+    """Scale *img* proportionally to fit (target_w x target_h) and center on a *bg* canvas."""
     from PIL import Image  # noqa: PLC0415
 
-    scale = min(target_w / img.width, target_h / img.height)  # type: ignore[union-attr]
-    new_w = max(1, round(img.width * scale))  # type: ignore[union-attr]
-    new_h = max(1, round(img.height * scale))  # type: ignore[union-attr]
-    resized = img.resize((new_w, new_h), Image.LANCZOS)  # type: ignore[union-attr]
+    scale = min(target_w / img.width, target_h / img.height)
+    new_w = max(1, round(img.width * scale))
+    new_h = max(1, round(img.height * scale))
+    resized = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
     mode = "RGBA" if len(bg) == 4 else "RGB"
     canvas = Image.new(mode, (target_w, target_h), bg)
     paste_x = (target_w - new_w) // 2
@@ -75,7 +81,7 @@ def main() -> int:
     else:
         with Image.open(splash_src) as img:
             bmp = _fit_into(img.convert("RGB"), *_WELCOME_BMP_SIZE, _WELCOME_BG)
-        bmp.save(splash_out, format="BMP")  # type: ignore[union-attr]
+        bmp.save(splash_out, format="BMP")
         print(f"Created: {splash_out}")
 
     return rc

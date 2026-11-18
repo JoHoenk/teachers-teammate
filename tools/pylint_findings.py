@@ -95,7 +95,7 @@ def resolve_ruff_rule(rule):
         ruff_cache[rule] = info
         return info
 
-    except Exception:
+    except OSError, subprocess.SubprocessError:  # ruff missing, or it hung past the timeout
         return None
 
 
@@ -121,8 +121,8 @@ def scan_file(path: Path):
             for match in pylint_pattern.finditer(line):
                 content = match.group(1).strip()
 
-                for value in content.split(","):
-                    value = value.strip()
+                for raw in content.split(","):
+                    value = raw.strip()
 
                     if value:
                         suppressions.append(
@@ -148,8 +148,8 @@ def scan_file(path: Path):
                     )
                     continue
 
-                for value in content.split(","):
-                    value = value.strip()
+                for raw in content.split(","):
+                    value = raw.strip()
 
                     if value:
                         suppressions.append(
@@ -249,7 +249,7 @@ def main(root_folder):
 
                 grouped[key].append(suppression)
 
-        except Exception as ex:
+        except (OSError, ValueError) as ex:
             print(f"Failed to read {py_file}: {ex}")
 
     total = 0

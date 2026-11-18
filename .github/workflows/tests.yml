@@ -12,21 +12,14 @@ jobs:
     runs-on: ubuntu-24.04
 
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
 
       - name: Set up Bazel
-        uses: bazel-contrib/setup-bazel@f34d6a05eae3c24acab7fa54587492daeaeffdab # 0.19.2
+        uses: ./.github/actions/setup-bazel
         with:
-          bazelisk-cache: true
           disk-cache: tests
-          repository-cache: true
-
-      - name: Allow unprivileged user namespaces (Bazel linux-sandbox)
-        # Ubuntu 24.04 runners block them via AppArmor, which makes Bazel fall
-        # back to the weaker processwrapper-sandbox.
-        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
 
       - name: Install Qt system libraries
         run: |

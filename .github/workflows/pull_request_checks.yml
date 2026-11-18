@@ -1,13 +1,18 @@
-# Quality gate for pull requests. Runs format-lint, the test suite and CodeQL on every
-# PR, on pushes to main, and when GitHub's merge queue requests checks. Mark the
+# Quality gate for pull requests. Runs format-lint, the test suite, the docs build and CodeQL on
+# every PR, on pushes to main, and when GitHub's merge queue requests checks. Mark the
 # `check` job as required in branch protection to block merges until it passes.
+#
+# Not on tags: release.yml runs lint and tests itself, and a second run per tag only repeats it.
+#
+# The bundle build (build_bundles.yml) is not part of the gate on purpose. It runs only when the
+# packaging files change, and a required check that is skipped by a path filter stays "pending"
+# forever. Making it blocking would mean running three platform builds on every pull request.
 
 name: Pull Request Checks
 
 on:
   push:
     branches: ["main"]
-    tags: ["v*"]
   pull_request:
     branches: ["main"]
     types: [opened, reopened, synchronize]
@@ -29,6 +34,9 @@ jobs:
   test:
     uses: ./.github/workflows/tests.yml
 
+  docs:
+    uses: ./.github/workflows/build_docs.yml
+
   codeql:
     uses: ./.github/workflows/codeql.yml
     permissions:
@@ -41,12 +49,14 @@ jobs:
   check:
     name: PR merge gate
     if: always()
-    needs: [lint, test, codeql]
+    needs: [lint, test, docs, codeql]
     runs-on: ubuntu-24.04
     steps:
       - name: Verify all required jobs passed
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
         run: |
-          results='${{ join(needs.*.result, ' ') }}'
+          results="${RESULTS}"
           echo "Upstream job results: ${results}"
           for result in ${results}; do
             if [[ "${result}" != "success" ]]; then

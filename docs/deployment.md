@@ -8,36 +8,58 @@ This page covers how Teacher's Teammate is built and released — both via CI an
 
 ### Pull request checks (`pull_request_checks.yml`)
 
-Runs on every push to `main`, on all pull requests targeting `main`, and on merge-queue checks.
+Runs on every push to `main`, on all pull requests targeting `main`, and on merge-queue checks
+(not on tags: `release.yml` runs the lint and the tests itself).
 
 | Job | What it does |
 |-----|-------------|
-| **lint** | ruff + pylint + ty type check |
+| **lint** | Bazel: format check, ruff, pylint and ty over the whole first-party tree (the app, the tests and every folder of `tools/`); shellcheck on the `.sh` scripts and PSScriptAnalyzer on the `.ps1` scripts (all through `aspect_rules_lint`, `//:lint`; the PowerShell binary and modules are pinned archives in `MODULE.bazel`, Linux only); plus `lint-ci`: actionlint and zizmor on the workflows, which rules_lint has no rule for (`tools/ci/requirements.txt` pins them; zizmor's exceptions, with reasons, are in `.github/zizmor.yml`) |
 | **test** | Full Bazel test suite |
+| **docs** | `bazel build //docs:html` (`build_docs.yml`) |
+| **codeql** | CodeQL for Python and for the workflows |
 | **check** | Merge gate — fails unless every job above succeeded. Mark this as the required status check in branch protection. |
+
+The docs build runs on every pull request, not only when `docs/` changes: the site reads the
+use-case tests and the requirements model, so a change there can break it. The site depends on
+the application only through its version string (`conf.py`), so Bazel serves a pull request that
+touches neither from the cache.
+
+The bundle test build below is **not** part of the gate. It runs only when the packaging files
+change, and a required check that a path filter skips stays "pending" forever. Making it blocking
+would mean three platform builds on every pull request.
+
+Every Bazel job sets Bazel up through one composite action, `.github/actions/setup-bazel`
+(Bazelisk, the caches and the AppArmor setting for the Linux sandbox), and every action in every
+workflow is pinned by commit SHA with its version in a trailing comment, which Dependabot keeps
+current.
 
 ### Documentation (`deploy_docs.yml`)
 
-Builds the Sphinx site (`bazel build //docs:html`) on every push to `main` and on PRs touching `docs/`. Pushes to `main` deploy the result to GitHub Pages; PRs only build it as a check.
+Pushes to `main` (and a manual trigger) build the Sphinx site through `build_docs.yml` and deploy
+the result to GitHub Pages. The pull-request build is the `docs` job of the checks above.
 
 ### Release dry run (`release_dry_run.yml`)
 
-Manual trigger (`workflow_dispatch`) with a version string (e.g. `v1.0.0-rc1`).
+Manual trigger (`workflow_dispatch`) with a version string (e.g. `v1.0.0-rc.1`).
 Runs the full build matrix — lint, test, wheel, and all platform standalone builds — but **never
 touches a release**: the builds run read-only and their outputs stay in the run's artifacts.
-Use this to validate the build before cutting a real release. It starts with the same `validate`
-job as the release, so a version that would fail there fails here first, before anything is built.
+Use this to validate the build before cutting a real release. It starts with the same tag check as
+the release (`tools/release/release_tag.py check`, without "is on main", because a dry run starts
+on a branch), so a version that would fail there fails here first, before anything is built. It
+ends with the step `publish` starts with, collecting the five release files and refusing a
+missing, a doubled or a stray one, so a renamed installer fails here and not on release day.
 
 ### Bundle test build (`build_bundles.yml`)
 
-Manual trigger with a version string (default `v0.0.0-test`).
+Manual trigger with a version string (default `v0.0.0-rc.1`, the version a pull request builds
+too; it has to be a release form, `stamp_versions.py` refuses anything else).
 Builds all three platform bundles — no lint/test gate, no release, no tag — and uploads them as
 workflow-run artifacts with 2-day retention. After a successful build, artifacts from earlier manual
 runs of this workflow are deleted, so only the newest bundles are kept (a failed build leaves the
 previous ones in place):
 
 ```bash
-gh workflow run build_bundles.yml -f version=v0.0.0-test
+gh workflow run build_bundles.yml -f version=v0.0.0-rc.1
 gh run watch
 gh run download <run-id> -n teachers-teammate-linux   # or -windows, -macos
 ```
@@ -52,13 +74,18 @@ the same pull request cancels the run it supersedes.
 A release is a tag: the tag is the version and the commit it points at is what is built.
 
 ```bash
-git tag v1.2.3            # or v1.2.3-rc1 for a pre-release
+git tag v1.2.3            # or v1.2.3-rc.1 for a pre-release
 git push origin v1.2.3
 ```
 
 Accepted are `vX.Y.Z` and `vX.Y.Z-(alpha|beta|rc|pre)[.]N`, the number required — `v0.5.7-rc1`
 and `v0.5.7-rc.1` both, `v0.5.7-rc.` and `v0.5.7-pre` not. A PEP 440 form without the dash (`v0.5.7rc1`) is rejected: GitHub would publish it as
 *Latest*, and `VIProductVersion` would break `makensis`.
+
+The rules the workflows apply to a tag are in one script, `tools/release/release_tag.py`
+(`check`, `forms`, `draft`, `collect`, `summary`), which has unit tests and runs on a laptop too:
+`python tools/release/release_tag.py check v0.5.7 --repo OWNER/NAME --skip-main` tells you before you
+push a tag whether `validate` would take it.
 
 ```
 validate ──► lint ──┐
@@ -76,7 +103,9 @@ validate ──► lint ──┐
 **validate** runs first and fails within seconds, before anything is built or a draft exists: it
 checks the tag form, that the tagged commit is on `main` (so a tag on a side branch cannot
 ship) and that the version is newer than the latest published release (the app's update check
-reads `/releases/latest`; a pre-release must belong to a higher version). A bad tag is deleted by hand (`git push --delete origin <tag>`) and pushed again.
+reads `/releases/latest`; a pre-release must belong to a higher version; no release yet passes, any
+other answer than "not found" from GitHub fails, so the check is never skipped silently). A bad tag
+is deleted by hand (`git push --delete origin <tag>`) and pushed again.
 
 A tag ruleset in the repository settings allows only the maintainer to create or delete `v*` tags
 and forbids moving an existing one.
@@ -87,8 +116,13 @@ by side — a single shared group would keep only one pending run and cancel the
 **publish** is the only job that writes to the release, and it only uploads files: it downloads
 the four release artifacts by name (`release-wheel`, `release-linux`, `release-windows`,
 `release-macos`; the `release` prefix keeps the manual *Build bundles* clean-up away from them),
-requires exactly one wheel, `.deb`, tarball, installer and `.dmg` and nothing else, writes `SHA256SUMS`, attests the build provenance of each file and
+requires exactly one wheel, `.deb`, tarball, installer and `.dmg` and nothing else
+(`release_tag.py collect`), writes `SHA256SUMS`, attests the build provenance of each file and
 attaches them to the draft with `gh release upload`. It never flips the draft to published.
+
+**create-release** makes the draft through `release_tag.py draft`: it reuses the draft a failed run
+left behind (so *Re-run all jobs* works) and refuses a release that is already published, whose
+files must not be replaced.
 
 The build jobs (`build_wheel.yml`, `build_artifacts.yml`) declare `permissions: contents: read`
 themselves, so a caller cannot raise them, and every `actions/checkout` sets
@@ -104,14 +138,15 @@ tag is already marked pre-release. The workflow does not mark a release *Latest*
 tells you whether to tick the box (**not** when a higher version is already published), so an
 older tag that finishes last does not take it over — the maintainer's choice decides.
 
-A failed run leaves its draft behind: delete it with `gh release delete <tag> --cleanup-tag`
-before pushing the tag again.
+A failed run leaves its draft behind. Fix the cause and use *Re-run failed jobs* or *Re-run all
+jobs* (the draft is reused), or delete it with `gh release delete <tag> --cleanup-tag` before
+pushing the tag again.
 
 The **build-standalone** job (`build_artifacts.yml`) runs in parallel on three GitHub-hosted runners:
 
 | Runner | Steps | Output |
 |--------|-------|--------|
-| `ubuntu-24.04` | pinned install → `tools/build/build_standalone.py` → smoke test → add-on resolution check → bundle checks → `tools/packaging/make_deb.sh` → `tools/packaging/make_tarball.sh` | `teachers-teammate_<ver>.deb`, `teachers-teammate-<ver>-linux-x86_64.tar.gz` |
+| `ubuntu-24.04` | pinned install → `tools/build/build_standalone.py` → smoke test → add-on resolution check → bundle checks → `tools/packaging/make_deb.sh` → `tools/packaging/make_tarball.sh` | `teachers-teammate_<ver>.deb`, `teachers-teammate-<ver>-linux-x86_64.tar.xz` |
 | `windows-2025` | pinned install → `tools/build/build_standalone.py` → smoke test → NSIS 3.13.0 (`tools/packaging/windows.nsi`, two passes: the uninstaller, then the setup) | `teachers-teammate-<ver>-w64-setup.exe` |
 | `macos-26` | pinned install → `tools/build/build_standalone.py` → smoke test → `tools/build/check_macos_bundle.py` → `tools/packaging/make_dmg.sh` | `teachers-teammate-<ver>-macos.dmg` |
 
@@ -136,8 +171,15 @@ on a non-zero exit, and uploads `smoke.json` as an artifact. The checks are the 
 `teachers_teammate/frozen_modes.py`; the `setup assistant` one builds the wizard on the real service
 and works out a plan, so a bundle that lost a lazy import, a Qt widget module or the page models
 fails here rather than in a teacher's first start. The Linux job also runs
-`tools/build/check_linux_bundle.py` twice: `--max-glibc 2.39` proves the bundle starts on Ubuntu
-24.04, `--unused` proves it carries no library that nothing loads. The macOS job runs
+`tools/build/check_linux_bundle.py` three times: `--max-glibc 2.39` proves the bundle starts on Ubuntu
+24.04, `--unused` proves it carries no library that nothing loads, `--debug-info` proves no ELF file
+carries debug information. That last one is about size: the Python that `setup-python` installs ships
+`libpython3.14.so` and its extension modules with debug information (about 46 MB of the 510 MB
+folder), and `build_standalone.py` strips it from the bundle's copy right after PyInstaller
+(`check_linux_bundle.py --strip-debug`; never the main program, which carries PyInstaller's archive,
+and never the build machine's files). Together with `xz` instead of `gzip` for the tarball
+(`make_tarball.sh`) the Linux download went from 244 MB to about 169 MB, and the dmg uses LZMA
+(`ULMO`) instead of zlib. The macOS job runs
 `tools/build/check_macos_bundle.py` (its floor is `MACOS_MINIMUM`, 14.4): it reads the minimum macOS of every Mach-O
 file in the `.app` (every architecture slice of a universal2 one) and fails when one needs a newer
 macOS than 14.4. The PySide6 6.12.0 wheel is tagged `macosx_14_0`, but its Qt libraries say 14.4 and
@@ -151,10 +193,13 @@ teacher's Add-ons window. The same check runs weekly on all three runners
 
 Three further jobs install what the build made, one per system, so a broken package fails here
 rather than on a teacher's computer. They are read-only like the build, and all three check out,
-because they run the packaging helpers from the repository and download the newest published
+because they run the packaging scripts from the repository and download the newest published
 release with `gh` — the version a teacher has today, which is the one path a fresh install never
 takes. A missing release or a failed download fails the job on purpose: a renamed asset must not
-switch the test off silently.
+switch the test off silently. The tests themselves are scripts, not workflow text, so you can run
+the same one on a clean machine: `tools/packaging/test_deb_install.sh <image>` (Docker),
+`tools/packaging/test_macos_install.sh` (replaces `/Applications/teachers-teammate.app`: a CI runner
+or a throwaway Mac) and `tools/packaging/test_windows_installer.ps1`.
 
 | Job | Runs on | What it proves |
 |-----|---------|----------------|
@@ -162,8 +207,11 @@ switch the test off silently.
 | `install-macos` | `macos-15`, `macos-26` | the dmg mounts, the newest release's app is replaced by the new one and the copy in `/Applications` is the dmg's bundle, the installed `Info.plist` carries the build's version, identifier, floor and icon, and the app starts |
 | `install-windows` | `windows-2022`, `windows-2025` | `tools/packaging/test_windows_installer.ps1` passes: install, update, uninstall, both scopes, the shortcuts, the Apps entry, `/DELDATA` and `/DELSETTINGS` one at a time, and an update from the newest release |
 
-Each job uploads the smoke result of the **installed** copy (`<prefix>-<system>-installed-smoke`),
-next to the build job's own `<prefix>-<system>-smoke`.
+Each leg uploads the smoke result of the **installed** copy under a name of its own
+(`<prefix>-linux-installed-smoke-ubuntu-24.04`, `<prefix>-macos-installed-smoke-macos-15`,
+`<prefix>-windows-installed-smoke-windows-2022`, ...), next to the build job's own
+`<prefix>-<system>-smoke`: `upload-artifact` accepts two artifacts with one name, and they could not
+be told apart.
 
 What no runner can reach is the VM list. Each row names the path, what covers it in CI, and what
 is left for a person:
@@ -183,7 +231,13 @@ is left for a person:
 | A window, fonts, X11/Wayland | — | a real desktop on each system |
 | Windows 10 1809, macOS 14.4 | — | a VM of each |
 
-The **build-wheel** job stamps the version into `pyproject.toml` via `tools/release/stamp_versions.py`, then builds a pure-Python wheel with Bazel.
+The **build-wheel** job stamps the version into `teachers_teammate/__init__.py` and the wheel's
+Bazel target via `tools/release/stamp_versions.py`, builds the pure-Python wheel with Bazel and then
+installs it the way a teacher does: into a clean venv, against the same pinned versions as the
+bundle, from a folder that is not the repository. `teachers-teammate --help` has to run,
+`tools/release/check_installed_wheel.py` loads every console script (the command line and both
+windows) and looks for the assets and help pages, and `pip install --dry-run "<wheel>[llm,privacy]"`
+proves the extras resolve. This runs in the release and in the release dry run.
 
 ### Add-on resolution (weekly)
 
@@ -217,8 +271,11 @@ it was downloaded. It vouches for the workflow run, not for the packages that ru
 
 ### Dependency updates (`dependabot.yml`)
 
-Dependabot proposes weekly bumps for the Python pins (`/` and `/tools/build`), the Bazel modules
-in `MODULE.bazel` and the actions in `.github/workflows`. Every entry carries
+Dependabot proposes weekly bumps for the Python pins (`/`, `/tools/build` and `/tools/ci`, the
+workflow linters), the Bazel modules in `MODULE.bazel` and the actions in `.github/workflows` and
+`.github/actions/setup-bazel`. Every action is pinned by commit SHA with its version in a trailing
+comment (`# v7`); Dependabot updates both, and zizmor fails the lint on an action that is pinned by
+tag only. Every entry carries
 `cooldown: default-days: 7`: a version update is proposed only once the release is a week old.
 The build installs by version — the lock's hashes are dropped by `make_constraints.py` — so a
 malicious release of any of the ~90 packages the bundle carries would otherwise be merged before
@@ -287,6 +344,14 @@ bazel build //teachers_teammate:teachers_teammate_wheel
 # Output
 ls bazel-bin/teachers_teammate/*.whl
 ```
+
+The wheel is the whole package, GUI and Benchmark included, with the icons, the license page and
+the three help pages (copied into `teachers_teammate/_docs/`, where the Help window looks after
+`docs/`), and the extras `llm` and `privacy`. `[project.dependencies]` and the extras are written
+into the metadata from `pyproject.toml` (`tools/release/extract_wheel_requires.py`); the tooling
+extras (`test`, `dev`) are not. `//tests:test_wheel` holds the wheel to the sources and to
+`pyproject.toml` on every pull request, so a new module, a changed dependency or a new console
+script cannot leave it behind.
 
 ### Third-party licenses
 
@@ -474,7 +539,7 @@ Run these **after** `build_standalone.py`.
 **Linux — `.deb` package**
 
 ```bash
-bash tools/packaging/make_deb.sh [version]
+bash tools/packaging/make_deb.sh <version>
 # e.g.  bash tools/packaging/make_deb.sh 1.2.3
 # Output: dist/teachers-teammate_1.2.3_amd64.deb
 ```
@@ -497,8 +562,8 @@ and asserts that nothing is left under `/opt`, `/usr/share/applications` and the
 **Linux — portable tarball**
 
 ```bash
-bash tools/packaging/make_tarball.sh [version]
-# Output: dist/teachers-teammate-1.2.3-linux-x86_64.tar.gz
+bash tools/packaging/make_tarball.sh <version>
+# Output: dist/teachers-teammate-1.2.3-linux-x86_64.tar.xz
 ```
 
 The tarball holds the same folder under `teachers-teammate-1.2.3/`, plus a `README.txt` that says
@@ -511,7 +576,7 @@ to unpack it and run `./teachers-teammate`.
 python tools/build/build_standalone.py
 
 # Wrap into a .dmg
-bash tools/packaging/make_dmg.sh [version]
+bash tools/packaging/make_dmg.sh <version>
 # e.g.  bash tools/packaging/make_dmg.sh 1.2.3
 # Output: dist/teachers-teammate-1.2.3-macos.dmg
 ```
@@ -536,17 +601,13 @@ the uninstaller and quits; the second pass packs that file instead of writing it
 the same version, because the uninstaller carries the setup's version resource.
 
 ```powershell
-# Pass 1: the helper, then run it to write Uninstall.exe
-makensis /DBUILD_UNINSTALLER /DAPP_VERSION="1.2.3" /DAPP_VERSION_WIN="1.2.3.0" `
-    "/DUNINSTALLER_HELPER=$PWD\pyinstaller-work\uninstaller-helper.exe" `
-    "/DUNINSTALLER_TARGET=$PWD\pyinstaller-work\Uninstall.exe" `
-    "/DUNINSTALLER_OUT=$PWD\pyinstaller-work\Uninstall.exe" tools/packaging/windows.nsi
-Start-Process .\pyinstaller-work\uninstaller-helper.exe -Wait   # a GUI program: `&` would not wait
-
-# Pass 2: the setup, which packs pyinstaller-work\Uninstall.exe
-makensis /DAPP_VERSION="1.2.3" /DAPP_VERSION_WIN="1.2.3.0" tools/packaging/windows.nsi
+pwsh tools/packaging/make_windows_installer.ps1 -Version 1.2.3 -WinVersion 1.2.3
 # Output: dist/teachers-teammate-1.2.3-w64-setup.exe
 ```
+
+The script is what CI runs (`-WinVersion` is the version without a pre-release suffix:
+`VIProductVersion` wants X.Y.Z.W). It runs the two `makensis` passes with the defines below, and
+a signing step for `pyinstaller-work\Uninstall.exe` belongs between them.
 
 The three defines default to `..\..\pyinstaller-work\…` relative to `tools/packaging/`, so a
 build from the repository root needs none of them. `UNINSTALLER_TARGET` is where the helper
@@ -651,7 +712,8 @@ which `tests/unit/test_windows_installer_script.py` holds the script to.
 | `tools/build/check_pins.py` | Fails the build when an installed package is not pinned |
 | `tools/build/addon_constraints.py` | Writes the bundle's package versions (`teachers_teammate/_build/addon_constraints.txt`) that the installed app gives to pip |
 | `tools/build/check_addon_resolution.py` | Dry-runs every add-on's requirement against the built app's constraints |
-| `tools/build/check_linux_bundle.py` | Checks the Linux bundle's glibc floor and lists libraries nothing loads |
+| `tools/build/check_linux_bundle.py` | Checks the Linux bundle's glibc floor and lists libraries nothing loads; `--strip-debug` / `--debug-info` remove and check the debug information |
+| `tools/build/check_smoke.py` | Holds the Python version the bundle's `smoke.json` reports to `.python-version` |
 | `tools/build/check_macos_bundle.py` | Checks the minimum macOS of every Mach-O file in the `.app`; `MACOS_MINIMUM` is the one floor |
 | `tools/build/make_version_resource.py` | Writes the Windows version resource the spec hands to `EXE(version=…)` |
 | `tools/build/teachers-teammate.spec` | The committed PyInstaller spec: what the bundle contains |
@@ -659,12 +721,19 @@ which `tests/unit/test_windows_installer_script.py` holds the script to.
 | `tools/packaging/make_ico.py` | Generates `.ico` and welcome BMP for Windows |
 | `tools/packaging/make_icns.sh` | Generates `.icns` for macOS |
 | `tools/packaging/make_deb.sh` | Creates `.deb` package for Debian/Ubuntu |
-| `tools/packaging/make_tarball.sh` | Creates the portable Linux `.tar.gz` |
+| `tools/packaging/make_tarball.sh` | Creates the portable Linux `.tar.xz` |
 | `tools/packaging/make_dmg.sh` | Creates `.dmg` installer for macOS |
 | `tools/packaging/windows.nsi` | NSIS script for the Windows installer and, in its first pass, the uninstaller |
+| `tools/packaging/make_windows_installer.ps1` | The two `makensis` passes: the uninstaller, then the setup that packs it |
+| `tools/packaging/test_deb_install.sh` | Installs, upgrades, removes and purges the `.deb` in a clean container (Docker) |
+| `tools/packaging/test_macos_install.sh` | Installs the newest release, replaces it with the new dmg's app and starts it |
 | `tools/packaging/test_windows_installer.ps1` | Installs, updates and uninstalls the setup and asserts on what is left behind |
 | `tools/packaging/latest_release.py` | Prints the newest published release's tag, or downloads one of its assets by pattern |
 | `tools/packaging/check_desktop_entry.py` | Checks the installed `.desktop` file, its `Exec`/`Icon` and the icon's folder |
 | `tools/release/stamp_versions.py` | Stamps version into `pyproject.toml` and Bazel `BUILD` |
+| `tools/release/release_tag.py` | The release rules the workflows call: tag check, version forms, the draft, the five release files and `SHA256SUMS`, the summary |
+| `tools/release/check_installed_wheel.py` | After `pip install` of the wheel: every console script loads and the data files are there |
+| `tools/release/extract_wheel_requires.py` | Writes the wheel's requirements and extras from `pyproject.toml` |
+| `tools/ci/requirements.txt` | The pinned workflow linters (actionlint, zizmor) |
 | `tools/licenses/inventory.py` | Writes the license inventory, its texts and the compiled outputs; `--compile`, `--check-env`, `--check-resolved` |
 | `tools/licenses/policy.toml` | The denied licenses, the display names and the accepted exceptions |

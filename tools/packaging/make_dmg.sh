@@ -3,13 +3,13 @@
 #
 # Prerequisites: macOS (uses hdiutil — built-in).
 # Usage (from the repo root):
-#   bash tools/packaging/make_dmg.sh [version]
+#   bash tools/packaging/make_dmg.sh <version>
 #
 # Outputs: dist/teachers-teammate-<version>-macos.dmg
 
 set -euo pipefail
 
-VERSION="${1:-0.1.0}"
+VERSION="${1:?usage: make_dmg.sh <version>}"
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 # PyInstaller BUNDLE produces "teachers-teammate.app" (from the spec name field).
 APP_PATH="${ROOT}/dist/teachers-teammate.app"
@@ -40,7 +40,7 @@ echo "Creating DMG: ${DMG_PATH}…"
 hdiutil create \
     -volname "${VOLNAME}" \
     -srcfolder "${STAGING}" \
-    -ov -format UDZO \
+    -ov -format ULMO \
     "${DMG_PATH}"
 
 echo "Created: ${DMG_PATH}"

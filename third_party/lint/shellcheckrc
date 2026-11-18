@@ -1,0 +1,3 @@
+# shellcheck options for //:sh_shellcheck (aspect_rules_lint passes this file with --rcfile).
+# Every check runs at its default severity. A check that is switched off goes here with the reason,
+# e.g.:  disable=SC2034  # variable appears unused: it is read by the sourced file

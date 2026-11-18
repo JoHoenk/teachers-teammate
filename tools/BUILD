@@ -17,6 +17,27 @@ filegroup(
     visibility = ["//visibility:public"],
 )
 
+# Every script of this folder as one library, for //:py_ruff and //:py_ty. The binaries below
+# each hold one script with its own dependencies; this one lets the linters see all of them, so a
+# new script is linted without anybody remembering to add it to the root BUILD.
+py_library(
+    name = "scripts_lib",
+    srcs = glob(["*.py"]),
+    tags = ["manual"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":model_eval",
+        "//teachers_teammate:application_lib",
+        "@ocr_test_dependencies//lxml:pkg",
+        "@ocr_test_dependencies//markdown_it_py:pkg",
+        "@ocr_test_dependencies//numpy:pkg",
+        "@ocr_test_dependencies//ollama:pkg",
+        "@ocr_test_dependencies//opencv_python_headless:pkg",
+        "@ocr_test_dependencies//pillow:pkg",
+        "@ocr_test_dependencies//pydantic:pkg",
+    ],
+)
+
 # The writing-model tools' shared work: the pure metrics (model_eval/quality.py) and everything
 # that needs a server, which sits behind the ChatPort seam (ports.py), so the rules are tested
 # without Ollama.

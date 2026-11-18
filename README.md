@@ -13,7 +13,7 @@ Teacher's Teammate turns scanned and handwritten student work into proofread Wor
 - **review the content** and report gaps and unclear passages.
 
 Everything can run on your computer, with nothing uploaded. The installers give you the desktop
-app; the Python wheel adds a command-line tool.
+app; the Python wheel adds a command-line tool (and installs the same windows).
 
 ## Why local AI protects your students' privacy
 
@@ -95,8 +95,8 @@ Every file comes from the [releases page](https://github.com/JoHoenk/teachers-te
 | Windows | `teachers-teammate-<version>-w64-setup.exe` | Installer |
 | macOS | `teachers-teammate-<version>-macos.dmg` | Disk image with the app |
 | Linux | `teachers-teammate_<version>_amd64.deb` | Installs into `/opt/teachers-teammate` and adds a launcher entry |
-| Linux | `teachers-teammate-<version>-linux-x86_64.tar.gz` | Portable build |
-| Any | `teachers_teammate-<version>-py3-none-any.whl` | Python wheel with the command-line tool (see [Python and command line](#python-and-command-line)) |
+| Linux | `teachers-teammate-<version>-linux-x86_64.tar.xz` | Portable build |
+| Any | `teachers_teammate-<version>-py3-none-any.whl` | Python wheel with the command-line tool and the windows (see [Python and command line](#python-and-command-line)) |
 
 The app brings the built-in reader's model files (31 MB) and the page models (39 MB). Everything
 else is downloaded from inside the app, on request, after it names the size: privacy protection
@@ -106,7 +106,7 @@ else is downloaded from inside the app, on request, after it names the size: pri
 
 | | Windows | macOS | Linux |
 |---|---|---|---|
-| **System** | 10 (version 1809 or newer) or 11 | 14.4 Sonoma or newer | Ubuntu 24.04+, Debian 13+ or Mint 22+ (glibc 2.39 or newer); other distributions with glibc 2.39 or newer: the `.tar.gz` |
+| **System** | 10 (version 1809 or newer) or 11 | 14.4 Sonoma or newer | Ubuntu 24.04+, Debian 13+ or Mint 22+ (glibc 2.39 or newer); other distributions with glibc 2.39 or newer: the `.tar.xz` |
 | **Processor** | x64 | Apple Silicon (M1 or newer) | x86_64 |
 | **Main memory** | 8 GB | 8 GB | 8 GB |
 | **Free disk space** | about 700 MB | about 700 MB | about 700 MB |
@@ -129,7 +129,7 @@ refuses to open it, see [Code signing](#code-signing).
 
 - `.deb`: `sudo apt install ./teachers-teammate_<version>_amd64.deb`, then start **Teacher's
   Teammate** from your application launcher.
-- `.tar.gz`: unpack it anywhere and run `./teachers-teammate`.
+- `.tar.xz`: unpack it anywhere (`tar -xJf <file>`) and run `./teachers-teammate`.
 
 ### Python and command line
 
@@ -137,6 +137,9 @@ The installers do not contain the command-line tool; the wheel does:
 
 ```bash
 pip install teachers_teammate-<version>-py3-none-any.whl
+
+# With the add-ons
+pip install "teachers_teammate-<version>-py3-none-any.whl[llm,privacy]"
 
 # Process a folder and write DOCX reports
 teachers-teammate -i scans/ -o output/ --docx

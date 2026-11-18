@@ -253,3 +253,107 @@ def test_owner_names_reads_one_and_several_packages() -> None:
         "libx-common",
     ]
     assert check_linux_bundle._owner_names("") == []
+
+
+def _bundle(tmp_path: Path) -> Path:
+    """A folder build: the main program, two ELF libraries, a symlink and a data file."""
+    bundle = tmp_path / "teachers-teammate"
+    internal = bundle / "_internal"
+    internal.mkdir(parents=True)
+    (bundle / "teachers-teammate").write_bytes(b"\x7fELF main program with an appended archive")
+    (internal / "libpython3.14.so.1.0").write_bytes(b"\x7fELF debug")
+    (internal / "libclean.so.1").write_bytes(b"\x7fELF clean")
+    (internal / "libclean.so").symlink_to("libclean.so.1")
+    (internal / "base_library.zip").write_bytes(b"PK data")
+    return bundle
+
+
+def _fake_binutils(with_debug: set[str], fail_strip: bool = False):
+    """Stand in for readelf and strip; the second element records the files strip saw."""
+    stripped: list[str] = []
+
+    def run(command, **_kwargs):
+        name = Path(command[-1]).name
+        if command[0] == "readelf":
+            sections = ".text\n.debug_info\n" if name in with_debug else ".text\n"
+            return subprocess.CompletedProcess(command, 0, stdout=sections, stderr="")
+        stripped.append(name)
+        code = 1 if fail_strip else 0
+        return subprocess.CompletedProcess(command, code, stdout="", stderr="bad file")
+
+    return run, stripped
+
+
+def test_bundle_elf_files_skips_the_main_program_symlinks_and_data(tmp_path: Path) -> None:
+    """
+    Given  a folder build with a main program, ELF libraries, a symlink and a zip
+    When   the ELF files are listed
+    Then   only the real ELF files below _internal remain (the main program carries
+           PyInstaller's archive, which strip would drop)
+    """
+    found = check_linux_bundle.bundle_elf_files(_bundle(tmp_path))
+
+    assert [path.name for path in found] == ["libclean.so.1", "libpython3.14.so.1.0"]
+
+
+def test_with_debug_info_names_the_files_that_still_have_it(tmp_path: Path, monkeypatch) -> None:
+    """
+    Given  a bundle in which only libpython has a .debug_info section
+    When   the files with debug information are listed
+    Then   only libpython is named
+    """
+    run, _ = _fake_binutils({"libpython3.14.so.1.0"})
+    monkeypatch.setattr(check_linux_bundle.subprocess, "run", run)
+
+    left = check_linux_bundle.with_debug_info(_bundle(tmp_path))
+
+    assert [path.name for path in left] == ["libpython3.14.so.1.0"]
+
+
+def test_strip_debug_info_touches_only_files_that_have_it(tmp_path: Path, monkeypatch) -> None:
+    """
+    Given  a bundle in which only libpython has debug information
+    When   the debug information is stripped
+    Then   strip runs on libpython alone and reports it as changed
+    """
+    run, stripped = _fake_binutils({"libpython3.14.so.1.0"})
+    monkeypatch.setattr(check_linux_bundle.subprocess, "run", run)
+
+    changed = check_linux_bundle.strip_debug_info(_bundle(tmp_path))
+
+    assert stripped == ["libpython3.14.so.1.0"]
+    assert [path.name for path in changed] == ["libpython3.14.so.1.0"]
+
+
+def test_strip_debug_info_reports_a_failing_strip(tmp_path: Path, monkeypatch) -> None:
+    """
+    Given  a strip that fails on a file
+    When   the debug information is stripped
+    Then   a RuntimeError names the file, so the build stops instead of shipping it
+    """
+    run, _ = _fake_binutils({"libpython3.14.so.1.0"}, fail_strip=True)
+    monkeypatch.setattr(check_linux_bundle.subprocess, "run", run)
+
+    with pytest.raises(RuntimeError, match=r"libpython3\.14\.so\.1\.0"):
+        check_linux_bundle.strip_debug_info(_bundle(tmp_path))
+
+
+def test_debug_info_command_fails_while_a_file_has_it(
+    tmp_path: Path, monkeypatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """
+    Given  a bundle with debug information in libpython
+    When   the --debug-info check runs
+    Then   it returns 1 and lists the file, and after --strip-debug the same check passes
+    """
+    run, _ = _fake_binutils({"libpython3.14.so.1.0"})
+    monkeypatch.setattr(check_linux_bundle.subprocess, "run", run)
+    monkeypatch.setattr(check_linux_bundle.shutil, "which", lambda name: f"/usr/bin/{name}")
+    bundle = _bundle(tmp_path)
+
+    assert check_linux_bundle._debug_info_command(bundle, strip=False) == 1
+    assert "libpython3.14.so.1.0" in capsys.readouterr().out
+
+    clean, _ = _fake_binutils(set())
+    monkeypatch.setattr(check_linux_bundle.subprocess, "run", clean)
+    assert check_linux_bundle._debug_info_command(bundle, strip=True) == 0

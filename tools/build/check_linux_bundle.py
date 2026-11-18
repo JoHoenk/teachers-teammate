@@ -20,11 +20,20 @@ from the build machine rather than from a wheel.  No wheel's license text covers
 one is listed with the Debian package that owns it and that package's copyright file.  A library
 the policy's ``[host_deny]`` names, or one no Debian package owns, fails the build.
 
+``--strip-debug`` and ``--debug-info`` are about size.  The Python that ``actions/setup-python``
+installs ships ``libpython3.x.so`` and its extension modules with their debug information
+(about 24 MB of a 32 MB library), and PyInstaller copies them as they are.  ``--strip-debug``
+removes it from the bundle's copy (never the main program, which carries PyInstaller's archive,
+and never the build machine's files); ``--debug-info`` fails while any ELF file in the bundle
+still has it, so the saving cannot be lost unnoticed.
+
 Usage (from the repo root, after build_standalone.py):
 
     python tools/build/check_linux_bundle.py --max-glibc 2.39
     python tools/build/check_linux_bundle.py --unused
     python tools/build/check_linux_bundle.py --depends
+    python tools/build/check_linux_bundle.py --strip-debug
+    python tools/build/check_linux_bundle.py --debug-info
     python tools/build/check_linux_bundle.py --host-libs dist/teachers-teammate/_internal/third_party_host_libraries.txt
 """
 
@@ -67,6 +76,59 @@ POLICY = ROOT / "tools" / "licenses" / "policy.toml"
 _GLIBC_LIBRARIES = re.compile(
     r"^(ld-linux.*|libc|libm|libdl|libpthread|librt|libutil|libresolv|libnsl)\.so(\.\d+)*$"
 )
+
+
+#: The folder build, and the folder inside it that holds everything but the main program.
+BUNDLE = ROOT / "dist" / "teachers-teammate"
+
+_ELF_MAGIC = b"\x7fELF"
+
+
+def is_elf(path: Path) -> bool:
+    """Return whether *path* is a regular file that starts with the ELF magic number."""
+    if path.is_symlink() or not path.is_file():
+        return False
+    with path.open("rb") as handle:
+        return handle.read(4) == _ELF_MAGIC
+
+
+def bundle_elf_files(bundle: Path) -> list[Path]:
+    """Return every ELF file below ``bundle/_internal``, sorted.
+
+    The main program beside ``_internal`` is left out: PyInstaller appends its archive to it, and
+    ``strip`` would drop that.
+    """
+    return sorted(path for path in (bundle / "_internal").rglob("*") if is_elf(path))
+
+
+def has_debug_info(path: Path) -> bool:
+    """Return whether the ELF file *path* has a ``.debug_info`` section, read from ``readelf``."""
+    result = subprocess.run(
+        ["readelf", "-S", "--wide", str(path)], capture_output=True, text=True, check=False
+    )
+    return result.returncode == 0 and ".debug_info" in result.stdout
+
+
+def with_debug_info(bundle: Path) -> list[Path]:
+    """Return the ELF files of *bundle* that still carry debug information."""
+    return [path for path in bundle_elf_files(bundle) if has_debug_info(path)]
+
+
+def strip_debug_info(bundle: Path) -> list[Path]:
+    """Remove the debug information from the ELF files of *bundle*; return the ones changed.
+
+    Raises:
+        RuntimeError: ``strip`` failed on a file.
+    """
+    changed: list[Path] = []
+    for path in with_debug_info(bundle):
+        result = subprocess.run(
+            ["strip", "--strip-debug", str(path)], capture_output=True, text=True, check=False
+        )
+        if result.returncode != 0:
+            raise RuntimeError(f"strip failed on {path}: {result.stderr.strip()}")
+        changed.append(path)
+    return changed
 
 
 def default_toc() -> Path:
@@ -324,6 +386,33 @@ def host_library_report(
     return _HOST_HEADER + "\n" + "\n".join(sections), []
 
 
+def _debug_info_command(bundle: Path, *, strip: bool) -> int:
+    """Strip the bundle (``strip``) or check that it is stripped; return the exit code."""
+    for tool in ("readelf", "strip"):
+        if shutil.which(tool) is None:
+            print(f"{tool} is missing; install binutils")
+            return 1
+    if not (bundle / "_internal").is_dir():
+        print(f"{bundle / '_internal'} is missing; run tools/build/build_standalone.py first")
+        return 1
+    if strip:
+        try:
+            changed = strip_debug_info(bundle)
+        except RuntimeError as exc:
+            print(exc, file=sys.stderr)
+            return 1
+        print(f"Removed the debug information from {len(changed)} ELF files.")
+    left = with_debug_info(bundle)
+    if left:
+        print("ELF files that still carry debug information:")
+        for path in left:
+            print(f"  {path.relative_to(bundle)}")
+        print("\nRun `python tools/build/check_linux_bundle.py --strip-debug` after PyInstaller.")
+        return 1
+    print("No ELF file in the bundle carries debug information.")
+    return 0
+
+
 def main() -> int:
     """Check the bundle against ``--max-glibc``; return 0 when every file fits."""
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
@@ -351,12 +440,31 @@ def main() -> int:
         "copyright files, to OUT instead of checking glibc",
     )
     parser.add_argument(
+        "--strip-debug",
+        action="store_true",
+        help="remove the debug information from the bundle's ELF files (run after PyInstaller)",
+    )
+    parser.add_argument(
+        "--debug-info",
+        action="store_true",
+        help="fail when an ELF file in the bundle still has debug information",
+    )
+    parser.add_argument(
+        "--bundle",
+        type=Path,
+        default=BUNDLE,
+        help="the folder build (default: dist/teachers-teammate)",
+    )
+    parser.add_argument(
         "--toc",
         type=Path,
         default=None,
         help="the bundle's table of contents (default: the last build's, in pyinstaller-work/)",
     )
     args = parser.parse_args()
+
+    if args.strip_debug or args.debug_info:
+        return _debug_info_command(args.bundle, strip=args.strip_debug)
 
     if shutil.which("objdump") is None:
         print("objdump is missing; install binutils")
@@ -368,47 +476,66 @@ def main() -> int:
 
     files = bundled_elf_files(toc)
     if args.host_libs is not None:
-        if shutil.which("dpkg-query") is None:
-            print("dpkg-query is missing; the host libraries can only be attributed on Debian")
-            return 1
-        deny, rows = host_policy()
-        text, problems = host_library_report(files, deny, rows)
-        if problems:
-            print("The bundle carries host libraries we cannot account for:", file=sys.stderr)
-            for problem in problems:
-                print(f"  {problem}", file=sys.stderr)
-            return 1
-        args.host_libs.parent.mkdir(parents=True, exist_ok=True)
-        args.host_libs.write_text(text, encoding="utf-8")
-        print(f"Wrote {args.host_libs}")
-        return 0
+        return _host_libs_command(files, args.host_libs)
     if args.depends:
-        try:
-            print(depends_line(files))
-        except RuntimeError as exc:
-            print(exc, file=sys.stderr)
-            return 1
-        return 0
+        return _depends_command(files)
     if args.unused:
-        unused = unused_libraries(files)
-        if not unused:
-            print("Every bundled library is needed by another bundled file.")
-            return 0
-        print("Bundled libraries that nothing loads:")
-        for name in unused:
-            print(f"  {name}")
-        print("\nDrop them in tools/build/teachers-teammate.spec, or say why they stay.")
-        return 1
+        return _unused_command(files)
+    return _glibc_command(files, args.max_glibc)
 
-    limit = tuple(int(part) for part in args.max_glibc.split("."))
-    problems = too_new(files, limit)
+
+def _host_libs_command(files: list[tuple[str, Path]], out: Path) -> int:
+    """Write the host-library report to *out*; return 1 when a library cannot be accounted for."""
+    if shutil.which("dpkg-query") is None:
+        print("dpkg-query is missing; the host libraries can only be attributed on Debian")
+        return 1
+    deny, rows = host_policy()
+    text, problems = host_library_report(files, deny, rows)
     if problems:
-        print(f"The bundle needs a newer glibc than {args.max_glibc}:")
+        print("The bundle carries host libraries we cannot account for:", file=sys.stderr)
+        for problem in problems:
+            print(f"  {problem}", file=sys.stderr)
+        return 1
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(text, encoding="utf-8")
+    print(f"Wrote {out}")
+    return 0
+
+
+def _depends_command(files: list[tuple[str, Path]]) -> int:
+    """Print the .deb ``Depends:`` line; return 1 when it cannot be measured."""
+    try:
+        print(depends_line(files))
+    except RuntimeError as exc:
+        print(exc, file=sys.stderr)
+        return 1
+    return 0
+
+
+def _unused_command(files: list[tuple[str, Path]]) -> int:
+    """List the libraries nothing loads; return 1 when there are any."""
+    unused = unused_libraries(files)
+    if not unused:
+        print("Every bundled library is needed by another bundled file.")
+        return 0
+    print("Bundled libraries that nothing loads:")
+    for name in unused:
+        print(f"  {name}")
+    print("\nDrop them in tools/build/teachers-teammate.spec, or say why they stay.")
+    return 1
+
+
+def _glibc_command(files: list[tuple[str, Path]], max_glibc: str) -> int:
+    """Return 1 when a bundled file needs a newer glibc than *max_glibc*."""
+    major, minor = (int(part) for part in max_glibc.split("."))
+    problems = too_new(files, (major, minor))
+    if problems:
+        print(f"The bundle needs a newer glibc than {max_glibc}:")
         for problem in problems:
             print(f"  {problem}")
         print("\nBuild on an older distribution, or raise --max-glibc and say so in the docs.")
         return 1
-    print(f"{len(files)} bundled ELF files fit glibc {args.max_glibc}.")
+    print(f"{len(files)} bundled ELF files fit glibc {max_glibc}.")
     return 0
 
 

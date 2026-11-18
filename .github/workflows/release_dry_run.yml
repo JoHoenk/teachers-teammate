@@ -1,10 +1,14 @@
 name: Release Dry Run
 
+# Everything release.yml does except touching a release: the same tag check (on a branch, so
+# "is on main" is skipped), the same gate, the same builds, and the same collection of the five
+# release files. A version that would fail in the release fails here first.
+
 on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Release version — use v1.0.0-rc1 (or -pre, -alpha) for a pre-release dry run"
+        description: "Release version — use v1.0.0-rc.1 (or -pre.1, -alpha.1) for a pre-release dry run"
         required: true
         type: string
 
@@ -12,25 +16,20 @@ permissions:
   contents: read
 
 jobs:
-  # The same check release.yml runs on a tag, so a version that would fail there fails here
-  # first, before anything is built.
   validate:
     name: Validate the version
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
 
-      - name: Check the version form
+      - name: Check the version form and that it is newer than the latest release
         env:
           VERSION: ${{ inputs.version }}
-        run: |
-          if [[ ! "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-(alpha|beta|rc|pre)\.?[0-9]*)?$ ]]; then
-            echo "::error::'$VERSION' is not a release version. Use vX.Y.Z or vX.Y.Z-(alpha|beta|rc|pre)[.]N."
-            exit 1
-          fi
-          python3 tools/release/stamp_versions.py --version "$VERSION" --check
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: python3 tools/release/release_tag.py check "$VERSION" --repo "$REPO" --skip-main
 
   lint:
     needs: [validate]
@@ -41,15 +40,45 @@ jobs:
     uses: ./.github/workflows/tests.yml
 
   # Both build jobs run read-only and upload their outputs as artifacts, exactly as in the
-  # release. There is no `publish` job: a dry run never touches a release.
+  # release. Their names are the release's own with another prefix, so the check below lists
+  # the same artifacts `publish` does.
   build-wheel:
     needs: [lint, test]
     uses: ./.github/workflows/build_wheel.yml
     with:
       version: ${{ inputs.version }}
+      artifact_name: dry-run-wheel
 
   build-standalone:
     needs: [lint, test]
     uses: ./.github/workflows/build_artifacts.yml
     with:
       version: ${{ inputs.version }}
+      artifact_prefix: dry-run
+
+  # What `publish` does before it uploads: exactly one file of each kind and nothing else, so a
+  # renamed installer or a stray file fails here, not on release day. No release is touched.
+  check-release-files:
+    name: Check the release files
+    needs: [build-wheel, build-standalone]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      # `gh run download` lists this run's artifacts.
+      actions: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Download the build artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          gh run download "$RUN_ID" --repo "$REPO" --dir artifacts \
+            -n dry-run-wheel -n dry-run-linux -n dry-run-windows -n dry-run-macos
+
+      - name: Collect the release files
+        run: python3 tools/release/release_tag.py collect artifacts release

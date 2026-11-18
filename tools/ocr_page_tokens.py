@@ -34,11 +34,11 @@ from teachers_teammate.domain.model_catalog import OLLAMA_CATALOG
 from teachers_teammate.exceptions import OCRError
 from teachers_teammate.infrastructure.ocr_processor import OCR_ANSWER_TOKENS, get_ocr_prompt
 from teachers_teammate.infrastructure.ollama_utils import ChatStats, OllamaClient
+from teachers_teammate.infrastructure.onnx.store import ModelStore
 from teachers_teammate.infrastructure.performance_probe import (
     WARMUP_ANSWER_TOKENS,
     WARMUP_PROMPT,
 )
-from teachers_teammate.infrastructure.onnx.store import ModelStore
 from teachers_teammate.infrastructure.preprocessing.recipes import steps_for
 from teachers_teammate.infrastructure.preprocessing.steps import StepPipeline
 from tools.model_eval.performance import Spread

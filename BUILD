@@ -1,6 +1,6 @@
 load("@rules_python//python:defs.bzl", "py_library")
 load("@rules_python//python:pip.bzl", "compile_pip_requirements")
-load("//third_party/lint:linters.bzl", "pylint_test", "ruff_test", "ty_test")
+load("//third_party/lint:linters.bzl", "ps_script_analyzer_test", "pylint_test", "ruff_test", "shellcheck_test", "ty_test")
 
 # pyproject.toml is needed by pylint/ty via rules_lint.  `.python-version` is the one place the
 # Python version is written down; //tests:test_python_version holds the interpreter to it.
@@ -43,6 +43,9 @@ py_library(
         "//tools:all_sources",
         "//tools/build:all_sources",
         "//tools/licenses:all_sources",
+        "//tools/packaging:all_sources",
+        "//tools/release:all_sources",
+        "//tools/user_text:all_sources",
     ],
     tags = ["manual"],
 )
@@ -58,12 +61,13 @@ ruff_test(
         "//teachers_teammate:gui_lib",
         "//teachers_teammate:ocr_lib",
         "//tests:tests_lib",
-        "//tools:compare_writing_models",
         "//tools:model_eval",
-        "//tools:prepare_gec_testset",
-        "//tools:proofreading_store",
-        "//tools:verify_model_catalog",
+        "//tools:scripts_lib",
+        "//tools/build:all_lib",
         "//tools/licenses:licenses_lib",
+        "//tools/packaging:all_lib",
+        "//tools/release:all_lib",
+        "//tools/user_text:user_text_lib",
     ],
 )
 
@@ -73,21 +77,41 @@ ty_test(
         "//teachers_teammate:gui_lib_typed",
         "//teachers_teammate:ocr_lib_typed",
         "//tests:tests_lib",
-        "//tools:compare_writing_models",
         "//tools:model_eval",
-        "//tools:prepare_gec_testset",
-        "//tools:proofreading_store",
-        "//tools:verify_model_catalog",
+        "//tools:scripts_lib",
+        "//tools/build:all_lib",
         "//tools/licenses:licenses_lib",
+        "//tools/packaging:all_lib",
+        "//tools/release:all_lib",
+        "//tools/user_text:user_text_lib",
     ],
+)
+
+# Every shell script of the repository (the packaging and build scripts the workflows run).
+shellcheck_test(
+    name = "sh_shellcheck",
+    srcs = [
+        "//tools/build:scripts",
+        "//tools/packaging:scripts",
+    ],
+)
+
+# The PowerShell scripts (the Windows installer build and its test). The PowerShell binary comes
+# from a Linux archive (MODULE.bazel), so the test is skipped on other systems.
+ps_script_analyzer_test(
+    name = "ps_script_analyzer",
+    srcs = ["//tools/packaging:powershell_scripts"],
+    target_compatible_with = ["@platforms//os:linux"],
 )
 
 test_suite(
     name = "lint",
     tests = [
+        ":ps_script_analyzer",
         ":py_pylint",
         ":py_ruff",
         ":py_ty",
+        ":sh_shellcheck",
     ],
 )
 

@@ -80,7 +80,7 @@ ALLOWED: dict[str, frozenset[str]] = {
     ),
     "teachers_teammate/gui/__init__.py": frozenset(
         {
-            "GUI requires extra dependencies. Install with: pip install teachers-teammate[gui]",
+            "The window needs PySide6-Essentials, which is part of the base install. Reinstall with: pip install --force-reinstall teachers-teammate",
         }
     ),
     "teachers_teammate/gui/_addon_installer_dialog.py": frozenset(
@@ -216,7 +216,7 @@ ALLOWED: dict[str, frozenset[str]] = {
     "teachers_teammate/gui/_main_window.py": frozenset(
         {
             "",
-            "About Teacher’s Teammate…",
+            "About Teacher\u2019s Teammate…",
             "All settings…",
             "Answer a few questions to set up the AI for this computer.",
             "Benchmark…",
@@ -305,7 +305,7 @@ ALLOWED: dict[str, frozenset[str]] = {
             "f'{mem.used / 2 ** 30:.1f} / {mem.total / 2 ** 30:.1f} GB'",
             "f'{usage.busy_percent} %'",
             "f'{usage.vram_used_mb / 1024:.1f} / {usage.vram_total_mb / 1024:.1f} GB'",
-            "–",
+            "\u2013",
         }
     ),
     "teachers_teammate/gui/_system_monitor.py": frozenset(
@@ -321,7 +321,7 @@ ALLOWED: dict[str, frozenset[str]] = {
     ),
     "teachers_teammate/gui/benchmark/__init__.py": frozenset(
         {
-            "Benchmark GUI requires extra dependencies. Install with: pip install teachers-teammate[gui]",
+            "The Benchmark window needs PySide6-Essentials, which is part of the base install. Reinstall with: pip install --force-reinstall teachers-teammate",
         }
     ),
     "teachers_teammate/gui/benchmark/_benchmark_window.py": frozenset(

@@ -1,0 +1,16 @@
+# zizmor: the security linter for workflows (run by format_lint.yml; pinned in tools/ci/).
+# Every finding fails the lint, so an exception is written down here with its reason.
+
+rules:
+  github-env:
+    ignore:
+      # Writes the build venv's folder to GITHUB_PATH. The folder is under RUNNER_TEMP, which the
+      # runner owns and no input of a pull request reaches, so nothing attacker-controlled can
+      # end up on the PATH. (zizmor matches the file name; build-venv is the only composite
+      # action that writes to GITHUB_PATH.)
+      - action.yml
+
+  # Style only: it prefers another spelling of `uses: ./.github/...` for a workflow of this
+  # repository. The local path is what the other tooling (actionlint, GitHub's own docs) shows.
+  self-repository:
+    disable: true

@@ -14,10 +14,9 @@ on:
         type: number
         default: 14
       version:
-        description: "Optional version used for installer file names (e.g. v1.2.3 or 1.2.3)"
-        required: false
+        description: "Release version, stamped into the bundles and used for file names (e.g. v1.2.3 or v1.2.3-rc.1)"
+        required: true
         type: string
-        default: ""
 
 # Read-only, and declared here rather than left to the caller: the build runs ~90 PyPI
 # packages and PyInstaller hooks, so a bad version of any of them must not be able to write
@@ -51,33 +50,29 @@ jobs:
             os: macos-26
 
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           # The token stays out of .git/config: nothing here pushes, and a build step that
           # runs third-party code must not find a credential lying around.
           persist-credentials: false
 
-      - uses: actions/setup-python@v7
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
         with:
           python-version-file: .python-version
 
+      # `value` is the release string without the v (file names, the exe's version resource);
+      # `win` has no pre-release suffix, because VIProductVersion wants X.Y.Z.W.
       - name: Resolve package version
         id: version
         shell: bash
         env:
-          RAW_VERSION: ${{ inputs.version }}
-        run: |
-          CLEAN="${RAW_VERSION#v}"
-          # Strip pre-release suffix for Windows installer (VIProductVersion requires X.Y.Z.W)
-          WIN="${CLEAN%%-*}"
-          echo "value=${CLEAN}" >> "$GITHUB_OUTPUT"
-          echo "win=${WIN}" >> "$GITHUB_OUTPUT"
+          VERSION: ${{ inputs.version }}
+        run: python tools/release/release_tag.py forms "$VERSION" --github-output "$GITHUB_OUTPUT"
 
       # Stamp the release version into the source tree so the bundled
       # __version__ (shown in the About dialog) matches the release tag.
       # Without this the standalone build ships the hardcoded dev version.
       - name: Stamp release version into source
-        if: inputs.version != ''
         shell: bash
         env:
           VERSION: ${{ inputs.version }}
@@ -121,7 +116,7 @@ jobs:
       # file that is already there and correct, so a hit costs nothing; the key changes when a pin
       # does.  Per runner, so three jobs never race to save the same key.
       - name: Cache the bundled model files
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: teachers_teammate/_models
           key: bundled-models-${{ runner.os }}-${{ hashFiles('teachers_teammate/domain/local_models.py') }}
@@ -185,18 +180,7 @@ jobs:
       # PyInstaller actually froze.  A mismatch means the bundle and the tests disagree.
       - name: Check the bundle's Python version
         shell: bash
-        run: |
-          python - <<'PY'
-          import json
-          import pathlib
-          import sys
-
-          expected = pathlib.Path(".python-version").read_text(encoding="utf-8").strip()
-          actual = json.loads(pathlib.Path("smoke.json").read_text(encoding="utf-8"))["versions"]["python"]
-          if actual != expected:
-              sys.exit(f"the bundle runs on Python {actual}, .python-version says {expected}")
-          print(f"the bundle runs on Python {actual}")
-          PY
+        run: python tools/build/check_smoke.py smoke.json
 
       # The add-ons' packages are not in the test lock (on purpose), so this is the only place
       # their newest releases are held against the bundled numpy, pydantic, ... A conflict shows
@@ -207,7 +191,7 @@ jobs:
 
       - name: Upload the smoke test result
         if: ${{ always() }}
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: ${{ inputs.artifact_prefix }}-${{ matrix.artifact }}-smoke
           retention-days: ${{ inputs.retention_days }}
@@ -218,6 +202,9 @@ jobs:
         run: |
           python tools/build/check_linux_bundle.py --max-glibc 2.39
           python tools/build/check_linux_bundle.py --unused
+          # build_standalone.py strips the debug information setup-python's libpython and
+          # extension modules ship with (about 46 MB); this fails when a new file brings it back.
+          python tools/build/check_linux_bundle.py --debug-info
           # The libraries the bundle took from the runner image, with their Debian copyright
           # files.  A denied one, or one no package owns, fails here; the file goes into
           # _internal/ for the help dialog, and make_deb.sh and make_tarball.sh copy it out.
@@ -229,12 +216,7 @@ jobs:
         shell: bash
         env:
           VERSION: ${{ steps.version.outputs.value }}
-        run: |
-          if [[ -n "$VERSION" ]]; then
-            bash tools/packaging/make_deb.sh "$VERSION"
-          else
-            bash tools/packaging/make_deb.sh
-          fi
+        run: bash tools/packaging/make_deb.sh "$VERSION"
 
       - name: Create the portable tarball (Linux)
         if: runner.os == 'Linux'
@@ -242,9 +224,9 @@ jobs:
         env:
           VERSION: ${{ steps.version.outputs.value }}
         run: |
-          bash tools/packaging/make_tarball.sh "${VERSION:-0.1.0}"
+          bash tools/packaging/make_tarball.sh "$VERSION"
           # The LGPL needs the notice and the license texts in every download.
-          listing=$(tar -tzf dist/teachers-teammate-*-linux-x86_64.tar.gz)
+          listing=$(tar -tJf dist/teachers-teammate-*-linux-x86_64.tar.xz)
           grep -E '/NOTICE$' <<<"$listing"
           grep -E '/third_party_license\.txt$' <<<"$listing"
 
@@ -260,58 +242,33 @@ jobs:
           choco install nsis --version=3.13.0 --no-progress -y
           # Chocolatey does not update the current process PATH — prepend NSIS manually
           $env:PATH = "C:\Program Files (x86)\NSIS;$env:PATH"
-          $ver    = $env:VERSION
-          $winVer = $env:WIN_VERSION
-          if ([string]::IsNullOrEmpty($ver))    { $ver    = "0.1.0" }
-          if ([string]::IsNullOrEmpty($winVer)) { $winVer = "0.1.0" }
-
-          # Two passes: the uninstaller is a file of its own, so a remote signer can sign it
-          # before the setup is built (tools/packaging/windows.nsi says why). The helper writes
-          # it and quits; the setup packs it instead of writing it. Both passes get the same
-          # version, because the uninstaller carries the setup's version resource.
-          $work = Join-Path $PWD 'pyinstaller-work'
-          New-Item -ItemType Directory -Force -Path $work | Out-Null
-          $helper      = Join-Path $work 'uninstaller-helper.exe'
-          $uninstaller = Join-Path $work 'Uninstall.exe'
-          makensis /DBUILD_UNINSTALLER /DAPP_VERSION="$ver" "/DAPP_VERSION_WIN=$winVer.0" `
-            "/DUNINSTALLER_HELPER=$helper" "/DUNINSTALLER_TARGET=$uninstaller" `
-            "/DUNINSTALLER_OUT=$uninstaller" tools/packaging/windows.nsi
-          if ($LASTEXITCODE -ne 0) { throw "the uninstaller pass failed ($LASTEXITCODE)" }
-          # Start-Process -Wait: the helper is a GUI program, and `&` would not wait for it.
-          $run = Start-Process -FilePath $helper -Wait -PassThru
-          if ($run.ExitCode -ne 0) { throw "the uninstaller helper failed ($($run.ExitCode))" }
-          if (-not (Test-Path -LiteralPath $uninstaller)) { throw "the helper wrote no Uninstall.exe" }
-
-          makensis /DAPP_VERSION="$ver" "/DAPP_VERSION_WIN=$winVer.0" tools/packaging/windows.nsi
-          if ($LASTEXITCODE -ne 0) { throw "the setup pass failed ($LASTEXITCODE)" }
+          # The two makensis passes (uninstaller, then the setup that packs it) are the script's.
+          pwsh -File tools/packaging/make_windows_installer.ps1 `
+            -Version $env:VERSION -WinVersion $env:WIN_VERSION
+          if ($LASTEXITCODE -ne 0) { throw "make_windows_installer.ps1 failed ($LASTEXITCODE)" }
 
       - name: Create .dmg installer (macOS)
         if: runner.os == 'macOS'
         shell: bash
         env:
           VERSION: ${{ steps.version.outputs.value }}
-        run: |
-          if [[ -n "$VERSION" ]]; then
-            bash tools/packaging/make_dmg.sh "$VERSION"
-          else
-            bash tools/packaging/make_dmg.sh
-          fi
+        run: bash tools/packaging/make_dmg.sh "$VERSION"
 
       # Platform-specific uploads prevent the macOS onedir intermediate
       # (dist/teachers-teammate/) from being swept up alongside the .dmg.
       - name: Upload build artifact (Linux)
         if: runner.os == 'Linux'
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: ${{ inputs.artifact_prefix }}-${{ matrix.artifact }}
           retention-days: ${{ inputs.retention_days }}
           path: |
-            dist/teachers-teammate-*-linux-x86_64.tar.gz
+            dist/teachers-teammate-*-linux-x86_64.tar.xz
             dist/teachers-teammate_*.deb
 
       - name: Upload build artifact (Windows)
         if: runner.os == 'Windows'
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: ${{ inputs.artifact_prefix }}-${{ matrix.artifact }}
           retention-days: ${{ inputs.retention_days }}
@@ -319,7 +276,7 @@ jobs:
 
       - name: Upload build artifact (macOS)
         if: runner.os == 'macOS'
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: ${{ inputs.artifact_prefix }}-${{ matrix.artifact }}
           retention-days: ${{ inputs.retention_days }}
@@ -328,10 +285,15 @@ jobs:
   # ── Install the built packages on the systems we support ──────────────────
   # Build once, install in a matrix: the build job makes the file, these jobs prove it
   # installs, upgrades and starts on each system. Read-only, like the build. All three check
-  # out, because they run the packaging helpers from the repository and download the newest
-  # published release with `gh` — the version a teacher has today, which is the one path a
-  # fresh install never takes. A missing release or a failed download fails the job on
-  # purpose: a renamed asset must not switch the test off silently.
+  # out, because they run the packaging scripts from the repository (test_deb_install.sh,
+  # test_macos_install.sh, test_windows_installer.ps1: everything is in them, so a maintainer can
+  # run the same test on a clean machine) and download the newest published release with `gh` —
+  # the version a teacher has today, which is the one path a fresh install never takes. A missing
+  # release or a failed download fails the job on purpose: a renamed asset must not switch the
+  # test off silently.
+  #
+  # Each matrix leg uploads its smoke result under a name of its own (`...-<image or os>`):
+  # upload-artifact accepts two artifacts with one name, and they could not be told apart.
 
   install-linux:
     name: Install the .deb (${{ matrix.image }})
@@ -345,15 +307,22 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # The floor, the next LTS, and the Debian the floor's glibc covers.
-        image: [ubuntu:24.04, ubuntu:26.04, debian:13]
+        # The floor, the next LTS, and the Debian the floor's glibc covers. `slug` is the image
+        # as an artifact name (a colon is not allowed there).
+        include:
+          - image: ubuntu:24.04
+            slug: ubuntu-24.04
+          - image: ubuntu:26.04
+            slug: ubuntu-26.04
+          - image: debian:13
+            slug: debian-13
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
 
       - name: Download the Linux artifacts
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: ${{ inputs.artifact_prefix }}-linux
           path: dist
@@ -364,97 +333,17 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: python3 tools/packaging/latest_release.py download --pattern '*_amd64.deb' --dir old
 
-      # apt resolves Depends, so a library missing from the control file fails here rather
-      # than on a user's machine. The upgrade from the newest release comes first, because it
-      # is the one path a fresh install never takes; then the launcher, the smoke test and the
-      # remove/purge pair. Not a real desktop (no window, no X11/Wayland, no fonts): that stays
-      # on the VM list.
       - name: Install, upgrade, remove and purge the .deb in a clean container
         shell: bash
         env:
           IMAGE: ${{ matrix.image }}
-        run: |
-          echo "==> $IMAGE"
-          mkdir -p smoke
-          docker run --rm \
-            -v "$PWD/dist:/dist:ro" \
-            -v "$PWD/old:/old:ro" \
-            -v "$PWD/smoke:/smoke" \
-            -v "$PWD/tools/packaging/check_desktop_entry.py:/check_desktop_entry.py:ro" \
-            "$IMAGE" bash -c '
-            set -euo pipefail
-            # The Ubuntu images drop /usr/share/doc (all but copyright) at install time, which
-            # would hide the notice files this job checks for; a desktop install keeps them.
-            rm -f /etc/dpkg/dpkg.cfg.d/excludes
-            apt-get update -qq
-            # desktop-file-validate reads the launcher the package installs; python3 runs
-            # check_desktop_entry.py (the bare images have none, and the bundle needs none).
-            apt-get install -y -qq --no-install-recommends desktop-file-utils python3
-
-            # ── L3: the upgrade from the newest published release ──
-            old_deb=$(ls /old/teachers-teammate_*_amd64.deb)
-            apt-get install -y -qq --no-install-recommends "$old_deb"
-            # Every file and symlink the old package owns, so the upgrade can be checked for
-            # leftovers. Directories are left out on purpose: one the old package made can be
-            # shared with another package (hicolor-icon-theme owns the hicolor folders) and
-            # stay behind rightly.
-            dpkg-deb --fsys-tarfile "$old_deb" | tar -t | grep -v "/$" \
-              | sed -e "s|^\./|/|" | sort -u > /tmp/old-files
-            # A test build is 0.1.0, older than anything published: apt has to be told, as the
-            # Windows installer needs /ALLOWDOWNGRADE.
-            apt-get install -y -qq --no-install-recommends --allow-downgrades \
-              /dist/teachers-teammate_*_amd64.deb
-            dpkg -L teachers-teammate | sort -u > /tmp/new-files
-            left=0
-            while read -r path; do
-              [ -z "$path" ] && continue
-              if ! grep -qxF "$path" /tmp/new-files && { [ -e "$path" ] || [ -L "$path" ]; }; then
-                echo "left behind by the upgrade: $path" >&2
-                left=1
-              fi
-            done < /tmp/old-files
-            [ "$left" -eq 0 ]
-
-            # The LGPL needs the notice and the license texts in every download.
-            test -s /usr/share/doc/teachers-teammate/NOTICE
-            test -s /usr/share/doc/teachers-teammate/third_party_license.txt
-
-            # The smoke result of the installed copy, kept for the artifact upload.
-            QT_QPA_PLATFORM=offscreen teachers-teammate --_smoke_test /smoke/smoke.json
-            cat /smoke/smoke.json
-
-            # The bootloader puts _internal on LD_LIBRARY_PATH, which is how the libraries the
-            # bundle carries are found; a bare ldd would report them as missing.
-            if LD_LIBRARY_PATH=/opt/teachers-teammate/_internal \
-                ldd /opt/teachers-teammate/_internal/PySide6/Qt/plugins/platforms/libqxcb.so \
-                | grep "not found"; then
-              echo "the xcb platform plugin is missing libraries" >&2
-              exit 1
-            fi
-
-            # ── L1: the launcher, its Exec, its Icon and the icon size ──
-            python3 /check_desktop_entry.py
-
-            # ── L2: remove and purge leave nothing behind ──
-            apt-get remove -y -qq teachers-teammate
-            test ! -e /opt/teachers-teammate
-            test ! -e /usr/share/applications/teachers-teammate.desktop
-            test ! -e /usr/bin/teachers-teammate
-            test -z "$(find /usr/share/icons/hicolor -name "teachers-teammate.*")"
-            apt-get install -y -qq --no-install-recommends /dist/teachers-teammate_*_amd64.deb
-            apt-get purge -y -qq teachers-teammate
-            test ! -e /opt/teachers-teammate
-            test ! -e /usr/share/applications/teachers-teammate.desktop
-            test ! -e /usr/bin/teachers-teammate
-            test -z "$(find /usr/share/icons/hicolor -name "teachers-teammate.*")"
-            echo "remove and purge leave nothing behind"
-          '
+        run: bash tools/packaging/test_deb_install.sh "$IMAGE" dist old smoke
 
       - name: Upload the smoke test result
         if: ${{ always() }}
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
-          name: ${{ inputs.artifact_prefix }}-linux-installed-smoke
+          name: ${{ inputs.artifact_prefix }}-linux-installed-smoke-${{ matrix.slug }}
           retention-days: ${{ inputs.retention_days }}
           path: smoke/smoke.json
 
@@ -475,12 +364,12 @@ jobs:
         # and the "tested on" line in docs/deployment.md follows.
         os: [macos-15, macos-26]
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
 
       - name: Download the dmg
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: ${{ inputs.artifact_prefix }}-macos
           path: dist
@@ -491,74 +380,20 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: python3 tools/packaging/latest_release.py download --pattern '*-macos.dmg' --dir old
 
-      # M2: a teacher who already has the app drags the new one over it. The newest release is
-      # installed first, so the replacement is what this job tests (Finder's "Replace" removes
-      # the old bundle and copies the new one, which is what the step after this one does). Its
-      # own smoke test is not run: an old build on a newer macOS is not what this job is about.
-      - name: Install the newest published release
+      # M2 (a teacher who already has the app drags the new one over it), the licenses in the
+      # dmg, the replaced bundle, M1 (version, identifier, floor, icon) and the installed app's
+      # smoke test: all in the script.
+      - name: Install the newest release, replace it with the new dmg and start it
         shell: bash
-        run: |
-          mount="$RUNNER_TEMP/old-dmg"
-          mkdir -p "$mount"
-          hdiutil attach old/*-macos.dmg -nobrowse -mountpoint "$mount"
-          old_app=$(ls -d "$mount"/*.app | head -1)
-          rm -rf /Applications/teachers-teammate.app
-          cp -R "$old_app" /Applications/teachers-teammate.app
-          hdiutil detach "$mount"
-
-      # A teacher copies the app to /Applications and starts it there, not from the mounted
-      # volume. This tests the dmg, not Gatekeeper: a downloaded artifact carries no quarantine
-      # flag, so the "cannot be verified" dialog never appears here (that stays on the VM list).
-      - name: Mount the dmg and replace the app in /Applications
-        id: mount
-        shell: bash
-        run: |
-          dmg=$(ls dist/*-macos.dmg)
-          mount="$RUNNER_TEMP/dmg"
-          mkdir -p "$mount"
-          hdiutil attach "$dmg" -nobrowse -mountpoint "$mount"
-          echo "mount=$mount" >> "$GITHUB_OUTPUT"
-          # The LGPL needs the notice and the license texts in every download.
-          test -s "$mount/Licenses/NOTICE.txt"
-          test -s "$mount/Licenses/third_party_license.txt"
-          # Finder replaces the bundle rather than merging into it. What stands in
-          # /Applications afterwards must be the dmg's bundle and nothing else. The lists are
-          # of paths (symlinks included, not followed), so a dropped file or link shows.
-          rm -rf /Applications/teachers-teammate.app
-          cp -R "$mount/teachers-teammate.app" /Applications/
-          diff <(cd "$mount/teachers-teammate.app" && find . | sort) \
-               <(cd /Applications/teachers-teammate.app && find . | sort)
-
-      # M1: the version the build was stamped with, the bundle identifier, the floor
-      # (MACOS_MINIMUM, the same number the Mach-O check uses) and the icon the plist names.
-      - name: Check the installed bundle
-        shell: bash
-        run: |
-          version=$(basename dist/*-macos.dmg | sed -e 's/^teachers-teammate-//' -e 's/-macos\.dmg$//')
-          python3 tools/build/check_macos_bundle.py --plist --version "$version" \
-            /Applications/teachers-teammate.app
-
-      - name: Start the installed app
-        shell: bash
-        run: /Applications/teachers-teammate.app/Contents/MacOS/teachers-teammate --_smoke_test smoke.json
+        run: bash tools/packaging/test_macos_install.sh dist/*-macos.dmg old/*-macos.dmg smoke.json
 
       - name: Upload the smoke test result
         if: ${{ always() }}
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
-          name: ${{ inputs.artifact_prefix }}-macos-installed-smoke
+          name: ${{ inputs.artifact_prefix }}-macos-installed-smoke-${{ matrix.os }}
           retention-days: ${{ inputs.retention_days }}
           path: smoke.json
-
-      - name: Detach the dmg
-        if: always()
-        shell: bash
-        env:
-          MOUNT: ${{ steps.mount.outputs.mount }}
-        run: |
-          if [[ -n "$MOUNT" && -d "$MOUNT" ]]; then
-            hdiutil detach "$MOUNT" || true
-          fi
 
   install-windows:
     name: Install the setup (${{ matrix.os }})
@@ -578,12 +413,12 @@ jobs:
         # the Windows 10 1809 VM on the VM list.
         os: [windows-2022, windows-2025]
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
 
       - name: Download the installer
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: ${{ inputs.artifact_prefix }}-windows
           path: dist
@@ -608,8 +443,8 @@ jobs:
 
       - name: Upload the smoke test result
         if: ${{ always() }}
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
-          name: ${{ inputs.artifact_prefix }}-windows-installed-smoke
+          name: ${{ inputs.artifact_prefix }}-windows-installed-smoke-${{ matrix.os }}
           retention-days: ${{ inputs.retention_days }}
           path: smoke.json

@@ -1,0 +1,16 @@
+# The linters for the CI files themselves, installed by format_lint.yml. They are not part of the
+# Bazel lint (//:lint) because Bazel's rules have none for workflows. Dependabot bumps them (the
+# "/tools/ci" entry in .github/dependabot.yml). The name matters: its pip ecosystem only reads
+# requirements*.txt.
+#
+# Run them on a laptop the same way:
+#   python -m venv /tmp/ci-lint && /tmp/ci-lint/bin/pip install -r tools/ci/requirements.txt
+#   /tmp/ci-lint/bin/actionlint && /tmp/ci-lint/bin/zizmor --offline .
+
+# Syntax, expressions and the shell of every `run:` block (it calls shellcheck, which the runner
+# image has). The wheel downloads the actionlint binary of the same version from its release page.
+actionlint-py==1.7.12.25
+
+# Security: template injection, unpinned actions, excess permissions. Its exceptions, with their
+# reasons, are in .github/zizmor.yml.
+zizmor==1.32.0

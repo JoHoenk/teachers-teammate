@@ -123,16 +123,52 @@ def group_minor(items: Sequence[CheckItem]) -> tuple[CheckItem, ...]:
     return tuple(item for item in items if item.is_minor)
 
 
-def countable_keys(items: Sequence[CheckItem]) -> tuple[str, ...]:
-    """Return the keys the "looked at" count counts: one per AI item, the minor group as one.
+def counts_for_looked_at(item: CheckItem) -> bool:
+    """Whether *item* is a row the teacher has to look at.
 
-    The teacher's own changes are not something to look at — they made them — so they are left
-    out.  The spelling and punctuation changes count once, as the row that folds them.
+    Their own changes are not something to look at — they made them — and the spelling and
+    punctuation changes count once, as the row that folds them, not one per comma.
     """
-    keys = [item.key for item in items if not item.is_minor and item.kind is not ItemKind.OWN]
-    if any(item.is_minor for item in items):
+    return not item.is_minor and item.kind is not ItemKind.OWN
+
+
+def countable_keys(items: Sequence[CheckItem]) -> tuple[str, ...]:
+    """Return the keys the "looked at" count counts: one per row that counts, the group as one.
+
+    The keys are those of the rows the list shows, so the count and the list never disagree: a
+    single spelling change is a row of its own and is not folded, so it does not count either.
+    """
+    keys = [item.key for item in items if counts_for_looked_at(item)]
+    if sum(1 for item in items if item.is_minor) > 1:
         keys.append(MINOR_KEY)
     return tuple(keys)
+
+
+def next_unseen(rows: Sequence[str], looked_at: frozenset[str], after: str) -> str:
+    """Return the first row after *after* that was not looked at, wrapping to the top.
+
+    *rows* are the keys of the rows that count for looked-at, in list order.  *after* is the key
+    of the chosen row; a key the rows do not have — the teacher's own change, which is not a
+    correction to walk to — starts the walk at the top.  ``""`` when every row was looked at.
+    """
+    if not rows:
+        return ""
+    start = rows.index(after) + 1 if after in rows else 0
+    for key in (*rows[start:], *rows[:start]):
+        if key not in looked_at:
+            return key
+    return ""
+
+
+def first_unseen(rows: Sequence[str], looked_at: frozenset[str]) -> str:
+    """Return the first row that was not looked at, or the first row when all were.
+
+    ``""`` when there is no row at all.
+    """
+    for key in rows:
+        if key not in looked_at:
+            return key
+    return rows[0] if rows else ""
 
 
 def _change_items(changes: Sequence[AlignedChange]) -> list[tuple[int, CheckItem]]:

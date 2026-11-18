@@ -8,15 +8,18 @@ The body is three panes: the scan of every stored page, one text with the switch
 *With corrections* / *Final text*, and the side panel with the card of the chosen item above the
 list of all of them.  A card action is an edit of the final text in plain offsets, applied in one
 edit block, so one Ctrl+Z takes it back and the stored text comes from the path typing takes.
+Ctrl+Z and redo are the final text's own history, and the body owns them, so they work from the
+list and the card too, not only while the teacher types.
 """
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from enum import Enum
 
 from PySide6.QtCore import Qt, QTimer, Signal
-from PySide6.QtGui import QAction, QFontMetrics, QKeyEvent
+from PySide6.QtGui import QAction, QFontMetrics, QKeyEvent, QKeySequence
 from PySide6.QtWidgets import (
     QApplication,
     QButtonGroup,
@@ -160,6 +163,14 @@ def _escape_is_for_the_focus(widget: QWidget | None) -> bool:
     return False
 
 
+def _item_at(items: Sequence[CheckItem], offset: int) -> str:
+    """Return the key of the item whose corrected words hold *offset*, or ``""``."""
+    for item in items:
+        if any(start <= offset <= end for start, end in item.corrected_spans):
+            return item.key
+    return ""
+
+
 class _Banner(QWidget):
     """One strip above the text: why it cannot be edited, or what it costs to edit it."""
 
@@ -291,6 +302,27 @@ class CheckBody(QWidget):
         self.panel.use_suggestion_requested.connect(self._on_use_suggestion)
         self.panel.take_out_all_requested.connect(self._on_take_out_all)
         self.panel.change_requested.connect(self._on_change)
+
+        self._undo_action = self._build_history_action(QKeySequence.StandardKey.Undo, self._on_undo)
+        self._redo_action = self._build_history_action(QKeySequence.StandardKey.Redo, self._on_redo)
+        document = self.final_view.document()
+        document.undoAvailable.connect(self._refresh_history_actions)
+        document.redoAvailable.connect(self._refresh_history_actions)
+
+    def _build_history_action(self, key: QKeySequence.StandardKey, slot) -> QAction:
+        """Return an action of the page for one of the corrected text's own history steps.
+
+        The action belongs to the body, so it fires wherever the focus is inside it — the list,
+        the card, the scan — and not only while the teacher types.  A text view that can be typed
+        in keeps the keys for itself (Qt's shortcut override), which is what makes Ctrl+Z in
+        *What was read* undo the transcription and not the corrected text.
+        """
+        action = QAction(self)
+        action.setShortcuts(QKeySequence.keyBindings(key))
+        action.setShortcutContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+        action.triggered.connect(slot)
+        self.addAction(action)
+        return action
 
     # ── What the page pushes ──────────────────────────────────────────────
 
@@ -432,6 +464,7 @@ class CheckBody(QWidget):
         """Let the teacher type where the state allows it, and say why where it does not."""
         doc = self._doc
         if doc is None:
+            self._refresh_history_actions()
             return
         locked = bool(self._lock)
         masked = self._masking.enabled
@@ -444,6 +477,14 @@ class CheckBody(QWidget):
         elif masked:
             reason = txt.SHOW_NAMES_TO_CHANGE
         self.panel.set_editable(not (locked or masked), reason=reason)
+        self._refresh_history_actions()
+
+    def _refresh_history_actions(self) -> None:
+        """Let Ctrl+Z and redo work while the corrected text may be changed and has a history."""
+        document = self.final_view.document()
+        editable = self._doc is not None and not self.final_view.isReadOnly()
+        self._undo_action.setEnabled(editable and document.isUndoAvailable())
+        self._redo_action.setEnabled(editable and document.isRedoAvailable())
 
     def _refresh_banner(self) -> None:
         """Show the one strip that matters most: the lock, the names, the reading fix, a warning."""
@@ -607,6 +648,31 @@ class CheckBody(QWidget):
         self.set_view(ViewKind.FINAL)
         self.final_view.reveal(key)
         self.final_view.setFocus()
+
+    # ── The corrected text's own history ──────────────────────────────────
+
+    def _on_undo(self) -> None:
+        """Undo the last change of the corrected text, from wherever the focus is."""
+        self.final_view.document().undo()
+        self.final_view.flush()
+        self._choose_at_cursor()
+
+    def _on_redo(self) -> None:
+        """Redo the last undone change of the corrected text, from wherever the focus is."""
+        self.final_view.document().redo()
+        self.final_view.flush()
+        self._choose_at_cursor()
+
+    def _choose_at_cursor(self) -> None:
+        """Choose the item whose words hold the cursor, so the teacher sees what came back."""
+        doc = self._doc
+        offset = self.final_view.plain_offset()
+        if doc is None or offset is None:
+            return
+        key = _item_at(doc.items, offset)
+        if key:
+            self.panel.set_chosen(key)
+            self._refresh_marks()
 
 
 class CheckPage(QWidget):

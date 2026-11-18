@@ -2,7 +2,18 @@
 
 from __future__ import annotations
 
-from teachers_teammate.application.check_items import CheckItem, ItemKind, check_items, group_minor
+import pytest
+
+from teachers_teammate.application.check_items import (
+    CheckItem,
+    ItemKind,
+    check_items,
+    countable_keys,
+    counts_for_looked_at,
+    first_unseen,
+    group_minor,
+    next_unseen,
+)
 from teachers_teammate.domain.proofreading.edits import Edit, EditPart, edits
 from teachers_teammate.domain.proofreading.review import (
     CorrectionReview,
@@ -288,3 +299,74 @@ def test_a_correction_keeps_its_key_when_the_teacher_takes_it_out() -> None:
     assert [item.kind for item in inside] == [ItemKind.CORRECTION]
     assert [item.kind for item in taken_out] == [ItemKind.TAKEN_OUT]
     assert inside[0].key == taken_out[0].key == "edit:1"
+
+
+def test_counts_for_looked_at_skips_own_changes_and_group_members() -> None:
+    """
+    Given  a correction, a spelling change, an unexplained change and the teacher's own change
+    When   each item is asked whether it counts for looked-at
+    Then   the correction and the unexplained change count, the other two do not
+    """
+    items = check_items(align(RAW, CORRECTED, _review("word_choice", "spelling")))
+    unexplained = check_items(align("aa bb", "aa BB", CorrectionReview(), machine_plain="aa BB"))
+    own = check_items(align("aa bb", "aa BB", CorrectionReview(), machine_plain="aa bb"))
+
+    assert [counts_for_looked_at(item) for item in items] == [True, False]
+    assert [counts_for_looked_at(item) for item in unexplained] == [True]
+    assert [counts_for_looked_at(item) for item in own] == [False]
+
+
+def test_the_countable_keys_are_the_rows_the_list_counts() -> None:
+    """
+    Given  a document with one spelling change, and one with two
+    When   the keys the looked-at count counts are asked for
+    Then   the single change is not folded and does not count, the two count once as the group
+    """
+    single = check_items(align(RAW, CORRECTED, _review("word_choice", "spelling")))
+    folded = check_items(align(RAW, CORRECTED, _review("spelling", "spelling")))
+
+    assert countable_keys(single) == ("edit:1",)
+    assert countable_keys(folded) == ("minor",)
+
+
+@pytest.mark.parametrize(
+    ("rows", "looked_at", "after", "expected"),
+    [
+        (("a", "b", "c"), frozenset(), "a", "b"),
+        (("a", "b", "c"), frozenset(), "c", "a"),
+        (("a", "b", "c"), frozenset({"b"}), "a", "c"),
+        (("a", "b", "c"), frozenset({"a", "b", "c"}), "a", ""),
+        (("a", "b"), frozenset(), "own:1-4", "a"),
+        ((), frozenset(), "a", ""),
+    ],
+)
+def test_next_unseen_walks_the_rows_that_were_not_looked_at(
+    rows: tuple[str, ...], looked_at: frozenset[str], after: str, expected: str
+) -> None:
+    """
+    Given  the rows that count, the ones already looked at, and the chosen row
+    When   the next row to walk to is asked for
+    Then   it is the next one not looked at, from the top when the chosen one is the last, and
+           nothing when every row was looked at
+    """
+    assert next_unseen(rows, looked_at, after) == expected
+
+
+@pytest.mark.parametrize(
+    ("rows", "looked_at", "expected"),
+    [
+        (("a", "b", "c"), frozenset(), "a"),
+        (("a", "b", "c"), frozenset({"a"}), "b"),
+        (("a", "b", "c"), frozenset({"a", "b", "c"}), "a"),
+        ((), frozenset(), ""),
+    ],
+)
+def test_first_unseen_is_the_first_row_not_looked_at(
+    rows: tuple[str, ...], looked_at: frozenset[str], expected: str
+) -> None:
+    """
+    Given  the rows that count and the ones already looked at
+    When   the row a document opens on is asked for
+    Then   it is the first one not looked at, the first row when all were, and nothing without rows
+    """
+    assert first_unseen(rows, looked_at) == expected

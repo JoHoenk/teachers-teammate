@@ -2337,6 +2337,20 @@ is one function (`_fit_gap`): a replacement keeps the separators around it, an i
 gap gets one space on the side where the neighbour is a word, a removal takes one adjacent space
 with it, and words are never joined across a block boundary.
 
+**Ctrl+Z is the corrected text's own history.**  `CheckBody` owns two `QAction`s
+(`QKeySequence.Undo` / `Redo`, `WidgetWithChildrenShortcut`) that call the *Final text*
+document's `undo()` / `redo()` and store at once (`flush`), so they work from the list and the
+card too, not only while typing.  A text view that can be typed in keeps the keys for itself
+(Qt's shortcut override), which is what makes Ctrl+Z in *What was read* undo the transcription;
+*With corrections* is read-only and lets the page's action through.  After a step the panel
+chooses the item whose span holds the cursor (`PlainMap.offset`), so the teacher sees what came
+back.  The actions are disabled while *Final text* is read-only (the lock, *Hide names*) or has
+nothing to undo, and the history ends whenever the text is filled again — another document,
+*Hide names*, a reading fix, the reload after a run — because Qt resets it on `set_text`; a
+stored edit coming back (`update_document`) fills nothing and keeps it.  There is no stack of the
+app's own and no approval step per correction: every correction is applied, the teacher takes out
+or changes what is wrong, and *looked at* and *Checked* say how far they got.
+
 **Where an edit goes.**  `_store_edit(kind, text)` calls `edit_transcription` or
 `edit_corrected_text` on `ApplicationCommands`, which writes the teacher's work and returns the
 merged view; `_sync_row(view)` fills the row from it.  The cache's texts are never written by an
@@ -2365,6 +2379,15 @@ words' place in the student's text, so taking another change back does not renum
 keep ✋, taken out ↶), and the footer says "8 of 12 looked at" from `looked_at_progress`.  Own
 changes do not count, the minor group counts once, and looking at an item is never undone and is
 not *worked on* — a run may still replace the answer.
+
+**Walking the corrections.**  *Next* on the card (`SidePanel.choose_next`) chooses the next row
+that counts for looked-at, in list order and from the top at the end; a document opens at the
+first of them.  `counts_for_looked_at`, `next_unseen` and `first_unseen`
+(`application/check_items.py`) are pure and on keys, so the list's rows and `looked_at_progress`
+count the same rows — a single spelling change is not folded and does not count either.  The walk
+keeps no state of its own: choosing a row is what marks it looked at, so the icons and the footer
+say how far it got, and a card action does not move the choice — the teacher presses *Next* when
+they are done with the item.
 
 **The questions.**  Three, all in `texts/dialogs.py`, all one dialog for the whole selection:
 

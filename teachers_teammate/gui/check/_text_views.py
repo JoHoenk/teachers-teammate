@@ -209,6 +209,12 @@ class CheckTextView(FormattedTextEdit):
                 self.ensureCursorVisible()
                 return
 
+    def plain_offset(self) -> int | None:
+        """Return where the cursor stands in the plain text, or ``None`` without a map."""
+        if self._map is None:
+            return None
+        return self._map.offset(self.textCursor().position())
+
     def _key_at(self, point: QPoint) -> str:
         """Return the key of the innermost mark at *point*, or ``""``."""
         position = self.cursorForPosition(point).position()

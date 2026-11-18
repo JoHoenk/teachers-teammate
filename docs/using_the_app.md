@@ -129,13 +129,18 @@ list keep their room.
 **The list** on the right numbers the same things the text marks, in the order they appear. Pick
 a row and the text scrolls to it and marks it; click a mark in the text and its row is picked.
 The card above the list says what the chosen item is and offers what you can do with it — see
-*Reading the proofreading notes* below. The line under the list counts the items: *7 corrections
-· 2 unclear*.
+*Reading the proofreading notes* below. **Next ›** on the card goes to the next correction you
+have not looked at yet, in the order of the list and from the top when you reach the end; when
+there is none left it reads *All looked at*. The line under the list counts the items: *7
+corrections · 2 unclear*.
 
 **Typing.** Your changes are saved automatically after a short pause, and you do not need to
 re-run the file. **Ctrl+Z** undoes them, one action at a time — a typed word, or a whole
-**Take out** from the card. The text size is set with Ctrl + mouse wheel and is remembered for
-the next document and the next start.
+**Take out** from the card — and it works wherever the focus is on the page: in the list, on the
+card, or in any of the three texts. Ctrl+Shift+Z or Ctrl+Y redoes. The undo history ends when the
+corrected text is filled again: when you open another document, switch **Hide names**, fix what
+was read, or the document is proofread again. The text size is set with Ctrl + mouse wheel and is
+remembered for the next document and the next start.
 
 **While a run works on a document** it is read-only: the banner says *Waiting for this run*
 until the run reaches it, then *Being proofread — you can edit it when it is done*. Documents
@@ -163,7 +168,9 @@ only what you have checked: **Select checked**, then **Export**.
 seen: ● for an item you have looked at, ○ for one you have not, and the line under the list
 counts them — *8 of 12 looked at*. An item counts as looked at as soon as its card is shown,
 whether you change anything or not. Your own changes and the *minor* group row count once each.
-Looking at something is never undone and never stops a run from proofreading the document again.
+A document opens at the first correction you have not looked at, so coming back to an essay
+continues where you stopped, and **Next ›** walks the ones that are left. Looking at something is
+never undone and never stops a run from proofreading the document again.
 
 ### Re-running a specific step
 
@@ -516,6 +523,8 @@ The card above the list says what the chosen item is and offers what you can do 
 - A correction you edited by hand keeps its explanation and says *you changed this*.
 
 Every one of these is one edit of the text, so **Ctrl+Z** undoes it and the list follows.
+**Next ›** on the card goes on to the next correction you have not looked at yet, so you can
+work through a document without going back to the list.
 
 The **Final text** view stays clean: it holds only the corrected text, no marks, so you can
 keep editing it and export it. The results list shows a small `?2` badge next to files that

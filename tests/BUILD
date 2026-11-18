@@ -1617,7 +1617,7 @@ py_test(
     args = ["tools/test_no_plan_references.py"],
     data = [
         ":all_sources",
-        "//:CLAUDE.md",
+        "//:AGENTS.md",
         "//docs:markdown",
         "//evaluations:records",
         "//evaluations/proofreading:all",

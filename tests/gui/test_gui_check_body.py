@@ -7,6 +7,8 @@ from __future__ import annotations
 import dataclasses
 
 import pytest
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QKeySequence, QTextCursor
 
 from teachers_teammate.application.check_document import CheckDocument, check_document_of
 from teachers_teammate.application.check_items import ItemKind
@@ -537,3 +539,161 @@ def test_a_reading_fix_removes_the_proofreading_and_offers_proofread_this_docume
     assert page.body.view is ViewKind.READ
     assert page._switch.isHidden() is True
     assert page._proofread_btn.isHidden() is False
+
+
+@pytest.mark.gui
+def test_a_card_action_does_not_move_the_choice_and_next_walks_on(qtbot) -> None:
+    """
+    Given  a body that shows a document with a correction and an unclear passage
+    When   *Take out* is pressed for the correction, and then *Next*
+    Then   the correction stays chosen, and *Next* goes on to the unclear passage
+    """
+    review = CorrectionReview(
+        edits=_review(RAW, CORRECTED).edits,
+        unclear=(UnclearNote(10, 14, "Hund", "Welches Tier?", "Koeter"),),
+    )
+    body = _body(qtbot, _document(review=review))
+    assert body.chosen == "edit:1"
+
+    body.panel.take_out_requested.emit("edit:1")
+
+    assert body.chosen == "edit:1"
+    assert body._doc is not None
+    assert [item.kind for item in body._doc.items] == [ItemKind.TAKEN_OUT, ItemKind.UNCLEAR]
+
+    body.panel._card.next_button.click()
+
+    assert body.chosen == "unclear:1"
+
+
+# ── Ctrl+Z from anywhere on the page ──────────────────────────────────────
+
+
+@pytest.mark.gui
+def test_ctrl_z_from_the_list_takes_the_take_out_back(qtbot) -> None:
+    """
+    Given  a body that shows a document with one correction, and the focus in the list
+    When   *Take out* is pressed and then Ctrl+Z
+    Then   the correction is back in the text and stored at once, and its item is chosen
+    """
+    body = _body(qtbot, _document(review=_review(RAW, CORRECTED)))
+    stored: list[str] = []
+    body.corrected_text_edited.connect(stored.append)
+    body.panel.take_out_requested.emit("edit:1")
+    body.panel._list.setFocus()
+    stored.clear()
+
+    qtbot.keyClick(body.panel._list, Qt.Key.Key_Z, Qt.KeyboardModifier.ControlModifier)
+
+    assert body.final_view.toPlainText() == CORRECTED
+    assert stored == [CORRECTED]
+    assert body.chosen == "edit:1"
+
+
+@pytest.mark.gui
+def test_redo_from_the_list_takes_the_correction_out_again(qtbot) -> None:
+    """
+    Given  a body whose take-out was undone from the list
+    When   redo is pressed from the list
+    Then   the student's words stand in the text again and are stored
+    """
+    body = _body(qtbot, _document(review=_review(RAW, CORRECTED)))
+    body.panel.take_out_requested.emit("edit:1")
+    body.panel._list.setFocus()
+    qtbot.keyClick(body.panel._list, Qt.Key.Key_Z, Qt.KeyboardModifier.ControlModifier)
+    stored: list[str] = []
+    body.corrected_text_edited.connect(stored.append)
+
+    qtbot.keySequence(body.panel._list, QKeySequence.StandardKey.Redo)
+
+    assert body.final_view.toPlainText() == RAW
+    assert stored == [RAW]
+
+
+@pytest.mark.gui
+def test_ctrl_z_from_the_list_undoes_the_take_out_before_the_typing(qtbot) -> None:
+    """
+    Given  a body whose final text was typed in and whose correction was then taken out
+    When   Ctrl+Z is pressed twice from the list
+    Then   the take-out goes first, and then the typing
+    """
+    body = _body(qtbot, _document(review=_review(RAW, CORRECTED)))
+    body.set_view(ViewKind.FINAL)
+    body.final_view.setFocus()
+    cursor = body.final_view.textCursor()
+    cursor.movePosition(QTextCursor.MoveOperation.End)
+    body.final_view.setTextCursor(cursor)
+    qtbot.keyClicks(body.final_view, "!")
+    body.final_view.flush()
+    typed = body.final_view.toPlainText()
+    body.panel.take_out_requested.emit("edit:1")
+    body.panel._list.setFocus()
+
+    qtbot.keyClick(body.panel._list, Qt.Key.Key_Z, Qt.KeyboardModifier.ControlModifier)
+    assert body.final_view.toPlainText() == typed
+
+    qtbot.keyClick(body.panel._list, Qt.Key.Key_Z, Qt.KeyboardModifier.ControlModifier)
+    assert body.final_view.toPlainText() == CORRECTED
+
+
+@pytest.mark.gui
+def test_ctrl_z_in_what_was_read_undoes_the_transcription(qtbot) -> None:
+    """
+    Given  a body whose transcription may be fixed, with the focus in *What was read*
+    When   the teacher types and presses Ctrl+Z
+    Then   the transcription's typing is undone and the corrected text is untouched
+    """
+    body = _body(qtbot, _document(review=_review(RAW, CORRECTED)))
+    body.banner.action_clicked.emit()
+    body.set_view(ViewKind.READ)
+    body.read_view.setFocus()
+    qtbot.keyClicks(body.read_view, "X")
+    body.read_view.flush()
+
+    qtbot.keyClick(body.read_view, Qt.Key.Key_Z, Qt.KeyboardModifier.ControlModifier)
+
+    assert body.read_view.toPlainText() == RAW
+    assert body.final_view.toPlainText() == CORRECTED
+
+
+@pytest.mark.gui
+def test_ctrl_z_in_with_corrections_undoes_the_corrected_text(qtbot) -> None:
+    """
+    Given  a body whose correction was taken out, with the focus in *With corrections*
+    When   Ctrl+Z is pressed there
+    Then   the corrected text is what is undone, although that view is read-only
+    """
+    body = _body(qtbot, _document(review=_review(RAW, CORRECTED)))
+    body.panel.take_out_requested.emit("edit:1")
+    body.set_view(ViewKind.MARKED)
+    body.marked_view.setFocus()
+
+    qtbot.keyClick(body.marked_view, Qt.Key.Key_Z, Qt.KeyboardModifier.ControlModifier)
+
+    assert body.final_view.toPlainText() == CORRECTED
+
+
+@pytest.mark.gui
+def test_the_lock_and_hidden_names_take_ctrl_z_away(qtbot) -> None:
+    """
+    Given  a body whose take-out can be undone
+    When   the run takes the document, and then the names are hidden and shown again
+    Then   undo and redo are disabled while either holds, and the history is gone afterwards
+    """
+    body = _body(qtbot, _document(review=_review(RAW, CORRECTED)))
+    body.panel.take_out_requested.emit("edit:1")
+    assert body._undo_action.isEnabled() is True
+
+    body.set_lock(txt.BEING_PROOFREAD)
+    assert body._undo_action.isEnabled() is False
+    assert body._redo_action.isEnabled() is False
+
+    body.set_lock(None)
+    assert body._undo_action.isEnabled() is True
+
+    body.set_masking(_masking())
+    assert body._undo_action.isEnabled() is False
+
+    body.set_masking(Masking())
+    assert body._undo_action.isEnabled() is False
+    assert body._redo_action.isEnabled() is False

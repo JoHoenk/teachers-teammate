@@ -8,6 +8,10 @@ an edit of the final text.
 The spelling and punctuation changes are folded into one row, which opens in place into its items;
 a group of one is not folded, since a group row over a single correction is only noise.
 
+*Next* on the card walks the rows the teacher has not looked at yet, in list order and from the top
+at the end; a document opens at the first of them.  The walk keeps no state of its own: choosing a
+row is what marks it looked at, so the icons and the footer say how far it got.
+
 All wording comes from :mod:`.._user_text`; the colours and icons from :mod:`._style`.
 """
 
@@ -37,7 +41,14 @@ from PySide6.QtWidgets import (
 )
 
 from ...application.check_document import CheckDocument
-from ...application.check_items import CheckItem, ItemKind, group_minor
+from ...application.check_items import (
+    CheckItem,
+    ItemKind,
+    counts_for_looked_at,
+    first_unseen,
+    group_minor,
+    next_unseen,
+)
 from .. import _user_text as txt
 from . import _style
 from ._masking import Masking
@@ -255,6 +266,14 @@ class _Card(QFrame):
             row.addWidget(button)
         row.addStretch()
         layout.addLayout(row)
+
+        self.next_button = QPushButton(txt.NEXT)
+        self.next_button.setToolTip(txt.NEXT_TOOLTIP)
+        next_row = QHBoxLayout()
+        next_row.setSpacing(4)
+        next_row.addStretch()
+        next_row.addWidget(self.next_button)
+        layout.addLayout(next_row)
         self.set_row(None, Masking(), editable=False)
 
     def set_note(self, text: str) -> None:
@@ -329,6 +348,7 @@ class SidePanel(QWidget):
         self._rows: tuple[_Row, ...] = ()
         self._doc: CheckDocument | None = None
         self._masking = Masking()
+        self._looked_at: frozenset[str] = frozenset()
         self._folded = False
         self._expanded = False
         self._choosing = False
@@ -364,6 +384,7 @@ class SidePanel(QWidget):
         )
         self._card.change.clicked.connect(lambda: self._request(self.change_requested))
         self._card.take_out_all.clicked.connect(self.take_out_all_requested)
+        self._card.next_button.clicked.connect(self.choose_next)
 
     def _build_content_section(self) -> QWidget:
         """Return the collapsible section that shows the content review, read-only."""
@@ -397,11 +418,18 @@ class SidePanel(QWidget):
     # ── What the page pushes ──────────────────────────────────────────────
 
     def set_document(self, doc: CheckDocument, masking: Masking) -> None:
-        """Show the items of *doc*, keeping the chosen one where it still exists."""
+        """Show the items of *doc*: the first one not looked at, or the chosen one where it is.
+
+        Another document opens at the first correction the teacher has not looked at yet, so
+        coming back to an essay continues where they stopped.  The same document keeps the
+        chosen row: a stored edit must not move the teacher's place.
+        """
+        same = self._doc is not None and self._doc.source_id == doc.source_id
         chosen = self.chosen
         row = self._list.currentRow()
         self._doc = doc
         self._masking = masking
+        self._looked_at = doc.work.looked_at
         self._rows = rows_of(doc.items)
         self._folded = len(group_minor(doc.items)) > 1
         self._list.blockSignals(True)
@@ -416,18 +444,28 @@ class SidePanel(QWidget):
         self._delegate.looked_at = doc.work.looked_at
         self._counts.setText(self._counts_text())
         self._set_content(doc.content_review)
-        self._select(chosen, row)
+        if same:
+            self._select(chosen, row)
+        else:
+            self._select(first_unseen(self._countable_keys(), self._looked_at), 0)
+        self._refresh_next()
+
+    def choose_next(self) -> None:
+        """Choose the next row the teacher has not looked at yet, from the top at the end."""
+        key = next_unseen(self._countable_keys(), self._looked_at, self.chosen_row)
+        if key:
+            self.set_chosen(key)
 
     def set_chosen(self, key: str) -> None:
         """Select the row of *key*, if the list has it, without telling the page back."""
-        for index, row in enumerate(self._rows):
-            if row.item is not None and row.item.key == key:
-                self._choosing = True
-                try:
-                    self._list.setCurrentRow(index)
-                finally:
-                    self._choosing = False
-                return
+        index = self._row_index(key)
+        if index is None:
+            return
+        self._choosing = True
+        try:
+            self._list.setCurrentRow(index)
+        finally:
+            self._choosing = False
 
     def set_note(self, text: str) -> None:
         """Say something in place of the card, e.g. that the marks could not be placed."""
@@ -448,26 +486,36 @@ class SidePanel(QWidget):
 
     def set_looked_at(self, looked_at: frozenset[str], progress: tuple[int, int]) -> None:
         """Show which items were looked at, without rebuilding the list or moving the choice."""
+        self._looked_at = looked_at
         self._delegate.looked_at = looked_at
         self._list.viewport().update()
         if self._doc is not None:
             self._doc = replace(self._doc, looked_at_progress=progress)
         self._counts.setText(self._counts_text())
+        self._refresh_next()
 
     def clear(self) -> None:
         """Empty the panel: no document is open."""
         self._rows = ()
         self._doc = None
+        self._looked_at = frozenset()
         self._list.clear()
         self._counts.clear()
         self._set_content("")
         self._card.set_row(None, self._masking, editable=False)
+        self._refresh_next()
 
     @property
     def chosen(self) -> str:
         """The key of the chosen item, or ``""`` for the group row and for no choice."""
         row = self._current_row()
         return row.item.key if row is not None and row.item is not None else ""
+
+    @property
+    def chosen_row(self) -> str:
+        """The key of the chosen row — the group row included — or ``""`` for no choice."""
+        row = self._current_row()
+        return row.key if row is not None else ""
 
     @property
     def row_count(self) -> int:
@@ -489,11 +537,24 @@ class SidePanel(QWidget):
         self._card.set_row(row, self._masking, editable=self._editable, reason=self._reason)
         if self._note:
             self._card.set_note(self._note)
+        self._refresh_next()
         if row is None:
             return
         self.item_shown.emit(row.key)
         if row.item is not None and not self._choosing:
             self.item_chosen.emit(row.item.key)
+
+    def _countable_keys(self) -> tuple[str, ...]:
+        """Return the keys of the rows that count for looked-at, in list order."""
+        return tuple(
+            row.key for row in self._rows if row.item is None or counts_for_looked_at(row.item)
+        )
+
+    def _refresh_next(self) -> None:
+        """Let *Next* walk to the next row not looked at, and say when there is none left."""
+        left = bool(next_unseen(self._countable_keys(), self._looked_at, self.chosen_row))
+        self._card.next_button.setEnabled(left)
+        self._card.next_button.setText(txt.NEXT if left else txt.ALL_LOOKED_AT)
 
     def _select(self, chosen: str, row: int) -> None:
         """Select *chosen*, or the item nearest to *row* when the item it was is gone.
@@ -501,11 +562,10 @@ class SidePanel(QWidget):
         The list was rebuilt, not clicked: the page is not told, because it would scroll to the
         item and select its words in a text the teacher may be typing in.
         """
-        if chosen:
+        if chosen and self._row_index(chosen) is not None:
             self.set_chosen(chosen)
-            if self.chosen == chosen:
-                return
-        elif 0 <= row < len(self._rows) and self._rows[row].is_group:
+            return
+        if not chosen and 0 <= row < len(self._rows) and self._rows[row].is_group:
             self._set_row_silently(row)  # the folded group stays the row that is open
             return
         index = self._nearest_item_row(max(row, 0))
@@ -513,6 +573,10 @@ class SidePanel(QWidget):
             self._card.set_row(None, self._masking, editable=False)
             return
         self._set_row_silently(index)
+
+    def _row_index(self, key: str) -> int | None:
+        """Return the index of the row of *key*, or ``None`` when the list has no such row."""
+        return next((index for index, row in enumerate(self._rows) if row.key == key), None)
 
     def _set_row_silently(self, index: int) -> None:
         """Select the row at *index* without telling the page."""

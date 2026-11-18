@@ -435,23 +435,39 @@ def _minor_document() -> CheckDocument:
     return _document(raw=raw, corrected=corrected, review=review)
 
 
+def _minor_after_a_correction() -> CheckDocument:
+    """Return a document with one word choice and two spelling corrections after it."""
+    raw = "Der bunte Hund bellt. Die Katz mauzt. Er lauft weg."
+    corrected = "Der braune Hund bellt. Die Katze mauzt. Er läuft weg."
+    review = CorrectionReview(
+        edits=tuple(
+            edit_note(edit, category=category, explanation="Weil.")
+            for edit, category in zip(
+                edits(raw, corrected), ("word_choice", "spelling", "spelling"), strict=False
+            )
+        )
+    )
+    return _document(raw=raw, corrected=corrected, review=review)
+
+
 @pytest.mark.gui
 def test_the_minor_changes_are_one_row_that_opens(qtbot) -> None:
     """
-    Given  a document with two spelling corrections
+    Given  a document with a word choice and two spelling corrections after it
     When   the side panel shows it, and the group row is chosen
-    Then   one row folds them, its items are hidden until it is chosen, and then they show
+    Then   one row folds the spelling changes, its items are hidden until it is chosen, and then
+           they show
     """
-    doc = _minor_document()
+    doc = _minor_after_a_correction()
     panel = _panel(qtbot, doc)
     rows = rows_of(doc.items)
 
-    assert [row.key for row in rows] == [GROUP_KEY, "edit:1", "edit:2"]
-    assert panel._list.item(1).isHidden() and panel._list.item(2).isHidden()
+    assert [row.key for row in rows] == ["edit:1", GROUP_KEY, "edit:2", "edit:3"]
+    assert panel._list.item(2).isHidden() and panel._list.item(3).isHidden()
 
-    panel._list.setCurrentRow(0)
+    panel._list.setCurrentRow(1)
 
-    assert not panel._list.item(1).isHidden() and not panel._list.item(2).isHidden()
+    assert not panel._list.item(2).isHidden() and not panel._list.item(3).isHidden()
     assert panel.chosen == ""
 
 
@@ -655,3 +671,131 @@ def test_a_list_rebuilt_after_an_edit_does_not_report_a_new_choice(qtbot) -> Non
 
     assert panel.chosen != ""
     assert chosen == []
+
+
+# ── Walking the corrections ───────────────────────────────────────────────
+
+WALK_RAW = (
+    "Der bunte Hund bellt laut. Die Katz mauzt leise. Er lauft schnell weg. "
+    "Wir gehen heim. Das ist fein."
+)
+WALK_CORRECTED = (
+    "Der braune Hund bellt laut. Die Katze mauzt leise. Er läuft schnell weg. "
+    "Wir gehen nach Hause. Das ist schön."
+)
+WALK_MACHINE = (
+    "Der braune Hund bellt laut. Die Katze mauzt leise. Er läuft schnell weg. "
+    "Wir gehen nach Hause. Das ist fein."
+)
+
+
+def _walk_document(*, looked_at: frozenset[str] = frozenset()) -> CheckDocument:
+    """Return a document with two corrections, a folded group and the teacher's own change."""
+    found = edits(WALK_RAW, WALK_CORRECTED)
+    review = CorrectionReview(
+        edits=tuple(
+            edit_note(edit, category=category, explanation="Weil.")
+            for edit, category in zip(
+                found, ("word_choice", "spelling", "spelling", "word_choice"), strict=False
+            )
+        )
+    )
+    return _document(
+        raw=WALK_RAW,
+        corrected=WALK_CORRECTED,
+        machine=WALK_MACHINE,
+        review=review,
+        work=WorkStatus(looked_at=looked_at),
+    )
+
+
+def _walking_panel(qtbot, doc: CheckDocument) -> SidePanel:
+    """Return a shown side panel that marks what it shows as looked at, as the window does."""
+    panel = SidePanel()
+    qtbot.addWidget(panel)
+    panel.resize(320, 600)
+    panel.show()
+    qtbot.wait(20)
+    looked_at = set(doc.work.looked_at)
+
+    def _mark(key: str) -> None:
+        looked_at.add(key)
+        panel.set_looked_at(frozenset(looked_at), (len(looked_at), 3))
+
+    panel.item_shown.connect(_mark)
+    panel.set_document(doc, Masking())
+    return panel
+
+
+@pytest.mark.gui
+def test_next_walks_every_row_that_counts_once_and_then_says_all_looked_at(qtbot) -> None:
+    """
+    Given  a document with two corrections, a folded group of two and the teacher's own change
+    When   *Next* is pressed until it stops
+    Then   it visits the two corrections and the group once each, and then reads All looked at
+    """
+    panel = _walking_panel(qtbot, _walk_document())
+    assert [row.key for row in panel._rows] == [
+        "edit:1",
+        GROUP_KEY,
+        "edit:2",
+        "edit:3",
+        "edit:4",
+        "own:95-99",
+    ]
+    assert panel.chosen_row == "edit:1"
+    walked = [panel.chosen_row]
+
+    for _ in range(2):
+        panel._card.next_button.click()
+        walked.append(panel.chosen_row)
+
+    assert walked == ["edit:1", GROUP_KEY, "edit:4"]
+    assert panel._card.next_button.text() == txt.ALL_LOOKED_AT
+    assert panel._card.next_button.isEnabled() is False
+    assert panel._counts.text().endswith("3 of 3 looked at")
+
+
+@pytest.mark.gui
+def test_a_document_opens_at_the_first_correction_not_looked_at(qtbot) -> None:
+    """
+    Given  a document whose first correction and group row were looked at
+    When   the side panel shows it
+    Then   the first correction not looked at is chosen, so the teacher continues where they were
+    """
+    panel = _walking_panel(qtbot, _walk_document(looked_at=frozenset({"edit:1", GROUP_KEY})))
+
+    assert panel.chosen == "edit:4"
+
+
+@pytest.mark.gui
+def test_a_document_whose_rows_were_all_looked_at_opens_at_the_first(qtbot) -> None:
+    """
+    Given  a document whose every row that counts was looked at
+    When   the side panel shows it
+    Then   the first row is chosen and *Next* says there is nothing left
+    """
+    panel = _walking_panel(
+        qtbot, _walk_document(looked_at=frozenset({"edit:1", GROUP_KEY, "edit:4"}))
+    )
+
+    assert panel.chosen == "edit:1"
+    assert panel._card.next_button.text() == txt.ALL_LOOKED_AT
+
+
+@pytest.mark.gui
+def test_a_stored_edit_does_not_move_the_choice(qtbot) -> None:
+    """
+    Given  a side panel whose third row is chosen
+    When   the same document comes back after a stored edit
+    Then   the choice stays, and *Next* walks on from there
+    """
+    doc = _walk_document()
+    panel = _walking_panel(qtbot, doc)
+    panel.set_chosen("edit:4")
+
+    panel.set_document(doc, Masking())
+
+    assert panel.chosen == "edit:4"
+    panel._card.next_button.click()
+    assert panel.chosen_row == GROUP_KEY

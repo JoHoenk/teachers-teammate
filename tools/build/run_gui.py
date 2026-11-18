@@ -62,9 +62,9 @@ inject_packages_dir()
 if "--_smoke_test" in sys.argv:
     _idx = sys.argv.index("--_smoke_test")
 
-    from pathlib import Path as _SmokePath  # noqa: PLC0415, E402
+    from pathlib import Path as _SmokePath
 
-    from teachers_teammate.frozen_modes import run_smoke_test  # noqa: PLC0415, E402
+    from teachers_teammate.frozen_modes import run_smoke_test
 
     raise SystemExit(run_smoke_test(_SmokePath(sys.argv[_idx + 1])))
 
@@ -72,7 +72,7 @@ if "--_smoke_test" in sys.argv:
 # The uninstaller runs `--_forget_keys` before it removes the program files: the API
 # keys live in the system keychain, which no uninstaller can enumerate.
 if "--_forget_keys" in sys.argv:
-    from teachers_teammate.frozen_modes import forget_keys  # noqa: PLC0415, E402
+    from teachers_teammate.frozen_modes import forget_keys
 
     raise SystemExit(forget_keys())
 
@@ -92,8 +92,8 @@ if "--_spacy_download_mode" in sys.argv:
 
     # Apply the same distlib / PyInstaller loader workaround as --_pip_install_mode.
     try:
-        import pip._vendor.distlib as _dl_pkg  # noqa: PLC0415
-        import pip._vendor.distlib.resources as _dr  # noqa: PLC0415
+        import pip._vendor.distlib as _dl_pkg
+        import pip._vendor.distlib.resources as _dr
 
         _pyinstaller_loader = getattr(_dl_pkg, "__loader__", None)
         if _pyinstaller_loader is not None:
@@ -103,7 +103,7 @@ if "--_spacy_download_mode" in sys.argv:
     except Exception:  # noqa: BLE001
         pass
 
-    from pip._internal.cli.main import main as _pip_main  # noqa: PLC0415, E402
+    from pip._internal.cli.main import main as _pip_main
 
     raise SystemExit(_pip_main(["install", *_pip_args, _download_url]))
 
@@ -114,12 +114,12 @@ if "--_spacy_download_mode" in sys.argv:
 # a second splash after the slow import phase has already finished.
 _early_splash = None
 try:
-    from pathlib import Path as _Path  # noqa: PLC0415
+    from pathlib import Path as _Path
 
-    from PySide6.QtCore import Qt as _Qt  # noqa: PLC0415
-    from PySide6.QtGui import QPixmap as _QPixmap  # noqa: PLC0415
-    from PySide6.QtWidgets import QApplication as _QApp  # noqa: PLC0415
-    from PySide6.QtWidgets import QSplashScreen as _QSplash  # noqa: PLC0415
+    from PySide6.QtCore import Qt as _Qt
+    from PySide6.QtGui import QPixmap as _QPixmap
+    from PySide6.QtWidgets import QApplication as _QApp
+    from PySide6.QtWidgets import QSplashScreen as _QSplash
 
     _qt_app = _QApp.instance() or _QApp(sys.argv)
 
@@ -148,7 +148,7 @@ except Exception:  # noqa: BLE001
     pass
 
 try:
-    from teachers_teammate.gui import main_gui  # noqa: E402
+    from teachers_teammate.gui import main_gui
 except BaseException:
     # A failed import must not leave the splash covering the error dialog.
     if _early_splash is not None:

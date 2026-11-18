@@ -1,0 +1,57 @@
+name: Reusable Build Docs
+
+# Builds the Sphinx documentation (`bazel build //docs:html`). Called by the PR checks, where it
+# is part of the merge gate, and by deploy_docs.yml, which also publishes the result.
+#
+# It runs on every pull request, not only when docs/ changes: the site reads the use-case tests
+# (//tests:use_case_test_files) and the requirements model, so a change to a test can break it.
+# Bazel only reruns what changed, and the site depends on the application only through its
+# version string, so a pull request that touches neither is a cache hit.
+
+on:
+  workflow_call:
+    inputs:
+      upload:
+        description: "Upload the site as the GitHub Pages artifact (the deploy job needs it)"
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build docs
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Bazel
+        uses: ./.github/actions/setup-bazel
+        with:
+          disk-cache: docs
+
+      - name: Build Sphinx HTML
+        run: bazel build --config=ci //docs:html
+
+      - name: Stage site for Pages
+        if: inputs.upload
+        run: |
+          # `bazel build //docs:html` writes the rendered site under
+          # bazel-bin/docs/html/_build/html (Bazel outputs are read-only).
+          rm -rf _site
+          cp -rL bazel-bin/docs/html/_build/html _site
+          chmod -R u+w _site
+          # Tell GitHub Pages not to run the site through Jekyll, which would
+          # strip the Sphinx `_static`/`_sources` underscore directories.
+          touch _site/.nojekyll
+          test -f _site/index.html || { echo "::error::no index.html produced"; exit 1; }
+
+      - name: Upload Pages artifact
+        if: inputs.upload
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5
+        with:
+          path: _site

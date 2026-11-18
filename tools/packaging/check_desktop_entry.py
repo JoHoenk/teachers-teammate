@@ -46,13 +46,13 @@ def read_entry(path: Path) -> dict[str, str]:
     in_entry = False
     for line in path.read_text(encoding="utf-8").splitlines():
         stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
         if stripped.startswith("["):
             in_entry = stripped == "[Desktop Entry]"
-            continue
-        if not in_entry or not stripped or stripped.startswith("#"):
-            continue
-        key, _, value = stripped.partition("=")
-        keys[key.strip()] = value.strip()
+        elif in_entry:
+            key, _, value = stripped.partition("=")
+            keys[key.strip()] = value.strip()
     return keys
 
 

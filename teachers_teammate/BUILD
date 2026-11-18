@@ -458,19 +458,73 @@ py_library(
     deps = [":ocr_lib_typed"] + _TYPED_DEPS_GUI,
 )
 
+# The help pages the Help window reads. The bundle and a source checkout have them in docs/; a
+# wheel has no docs/ folder, so they are copied into the package (gui/_help_dialog.py looks in
+# `<package>/_docs` after `docs/`).
+genrule(
+    name = "wheel_docs",
+    srcs = [
+        "//docs:advanced_user_guide.md",
+        "//docs:index.md",
+        "//docs:using_the_app.md",
+    ],
+    outs = [
+        "_docs/advanced_user_guide.md",
+        "_docs/index.md",
+        "_docs/using_the_app.md",
+    ],
+    cmd = " && ".join([
+        "cp $(location //docs:advanced_user_guide.md) $(location _docs/advanced_user_guide.md)",
+        "cp $(location //docs:index.md) $(location _docs/index.md)",
+        "cp $(location //docs:using_the_app.md) $(location _docs/using_the_app.md)",
+    ]),
+)
+
+# What the wheel carries besides Python files: the assets the GUI loads and the help pages. An
+# explicit list, not a glob: assets/ also gets the generated .ico/.icns on a build machine.
+# (The license inventory copy and the licenses page are read by the Add-ons page and the About
+# dialog.)
+filegroup(
+    name = "wheel_data",
+    srcs = [
+        "assets/teachers_teammate.png",
+        "assets/teachers_teammate_icon.png",
+        "assets/third_party_inventory.csv",
+        "assets/third_party_licenses.md",
+        ":wheel_docs",
+    ],
+)
+
+# The whole package, GUI included: the wheel installs `teachers-teammate-gui` and
+# `teachers-teammate-benchmark` as well as the command line. tests/unit/test_wheel.py holds it to
+# pyproject.toml and to the sources.
 py_package(
     name = "ocr_pkg",
     packages = ["teachers_teammate"],
-    deps = [":ocr_lib"],
+    deps = [
+        ":gui_lib",
+        ":wheel_data",
+    ],
 )
 
-# The wheel's Requires-Dist is generated from pyproject.toml's
-# [project.dependencies] so there is a single source of truth for pip deps.
+# The wheel's Requires-Dist and Provides-Extra are generated from pyproject.toml's
+# [project.dependencies] and the user-facing [project.optional-dependencies] groups, so there is
+# a single source of truth for pip deps. `test` and `dev` are tooling and stay out.
 genrule(
     name = "wheel_requires",
     srcs = ["//:pyproject.toml"],
-    outs = ["wheel_requires.txt"],
-    cmd = "$(execpath //tools/release:extract_wheel_requires) $(execpath //:pyproject.toml) $@",
+    outs = [
+        "wheel_requires.txt",
+        "wheel_requires_llm.txt",
+        "wheel_requires_privacy.txt",
+    ],
+    cmd = " ".join([
+        "$(execpath //tools/release:extract_wheel_requires)",
+        "$(execpath //:pyproject.toml)",
+        "$(execpath wheel_requires.txt)",
+        "--extra llm=$(execpath wheel_requires_llm.txt)",
+        "--extra privacy=$(execpath wheel_requires_privacy.txt)",
+    ]),
     tools = ["//tools/release:extract_wheel_requires"],
 )
 
@@ -487,11 +541,15 @@ py_wheel(
             "teachers-teammate-benchmark = teachers_teammate.gui.benchmark:main_benchmark",
         ],
     },
+    extra_requires_files = {
+        "wheel_requires_llm.txt": "llm",
+        "wheel_requires_privacy.txt": "privacy",
+    },
     license = "Apache-2.0",
     platform = "any",
     python_requires = ">=3.14",
     python_tag = "py3",
-    requires_file = ":wheel_requires",
+    requires_file = "wheel_requires.txt",
     summary = "OCR pipeline for handwritten documents",
     version = "0.1.0",
     visibility = ["//visibility:public"],

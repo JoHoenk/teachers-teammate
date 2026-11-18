@@ -62,7 +62,7 @@ For detailed guidance on choosing the best settings for your documents, see the 
 **Linux — two downloads:** `teachers-teammate_<version>_amd64.deb` installs the app into
 `/opt/teachers-teammate` and adds a launcher entry; install it with
 `sudo apt install ./teachers-teammate_<version>_amd64.deb`, which also pulls in the system
-libraries it needs. `teachers-teammate-<version>-linux-x86_64.tar.gz` is the portable build:
+libraries it needs. `teachers-teammate-<version>-linux-x86_64.tar.xz` is the portable build:
 unpack it anywhere and run `./teachers-teammate`.
 :::
 
@@ -82,9 +82,9 @@ Your settings are saved automatically and restored every time you start the app.
 
 | | Windows | macOS | Linux |
 |---|---|---|---|
-| **Version** | 10 (version 1809 or newer) or 11 | 14.4 Sonoma or newer | Ubuntu 24.04+, Debian 13+, Mint 22+ (glibc 2.39 or newer); other distributions with glibc 2.39 or newer: the `.tar.gz` |
+| **Version** | 10 (version 1809 or newer) or 11 | 14.4 Sonoma or newer | Ubuntu 24.04+, Debian 13+, Mint 22+ (glibc 2.39 or newer); other distributions with glibc 2.39 or newer: the `.tar.xz` |
 | **Processor** | x64 (Windows 11 on ARM: x64 emulation, not tested) | Apple Silicon (M1 or newer) | x86_64 |
-| **Download** | setup `.exe` | `.dmg` | `.deb`, `.tar.gz` |
+| **Download** | setup `.exe` | `.dmg` | `.deb`, `.tar.xz` |
 
 **Main memory:** 8 GB. A model needs 2.5 to 7.2 GB while it runs; with a graphics card it runs
 there instead, and the app shows what fits your computer before anything is downloaded.

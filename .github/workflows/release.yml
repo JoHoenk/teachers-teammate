@@ -3,6 +3,9 @@ name: Release
 # A release is a tag: the tag is the version and the commit it points at is what is built.
 #   git tag v0.5.7 && git push origin v0.5.7
 # The workflow leaves a complete draft release; the maintainer reviews it and publishes it.
+#
+# The rules (tag form, "newer than the latest release", the draft, the five release files, the
+# summary) are in tools/release/release_tag.py, which has unit tests and runs on a laptop too.
 
 on:
   push:
@@ -27,47 +30,19 @@ jobs:
     name: Validate the tag
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           # The whole history, so the tagged commit can be checked against origin/main.
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Check the tag form and that the tag is on main
+      - name: Check the tag form, that the tag is on main and that it is newer than the latest
         env:
           TAG: ${{ github.ref_name }}
           SHA: ${{ github.sha }}
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
-        run: |
-          # vX.Y.Z or vX.Y.Z-(alpha|beta|rc|pre)[.]N, the number required. A PEP 440 form
-          # without the dash (v0.5.7rc1) is rejected: GitHub would publish it as Latest and
-          # VIProductVersion would break makensis.
-          if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-(alpha|beta|rc|pre)\.?[0-9]+)?$ ]]; then
-            echo "::error::'$TAG' is not a release tag. Use vX.Y.Z or vX.Y.Z-(alpha|beta|rc|pre)[.]N."
-            echo "Delete it with: git push --delete origin '$TAG'"
-            exit 1
-          fi
-          python3 tools/release/stamp_versions.py --version "$TAG" --check
-          if ! git merge-base --is-ancestor "$SHA" origin/main; then
-            echo "::error::'$TAG' does not point at a commit on main, so it cannot ship."
-            echo "Delete it with: git push --delete origin '$TAG'"
-            exit 1
-          fi
-          # The app's update check reads /releases/latest, so a version that is not newer than
-          # it would either replace it as "Latest" or ship a build nobody is offered.
-          latest=$(gh api "repos/$REPO/releases/latest" --jq .tag_name 2>/dev/null || true)
-          if [[ -n "$latest" && "$latest" != "$TAG" ]]; then
-            base="${TAG%%-*}"
-            highest=$(printf '%s\n%s\n' "$latest" "$base" | sort -V | tail -n1)
-            # A pre-release of the latest version itself is stale too, so the base must be
-            # strictly higher; a final tag may only equal it on a re-run (handled above).
-            if [[ "$highest" != "$base" || "$base" == "$latest" ]]; then
-              echo "::error::'$TAG' is not newer than the latest release '$latest'."
-              echo "Delete it with: git push --delete origin '$TAG'"
-              exit 1
-            fi
-          fi
+        run: python3 tools/release/release_tag.py check "$TAG" --repo "$REPO" --sha "$SHA"
 
   # ── Quality gate ─────────────────────────────────────────────────────────
   # The merge queue keeps `main` green, but a tag can be pushed at any time and the release
@@ -90,25 +65,19 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      # A draft, so a half-uploaded release is never visible and the update check
+      # (`/releases/latest`) never offers it. A re-run of all jobs finds the draft a failed run
+      # left and reuses it; a published release is never touched.
       - name: Create the draft
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
           REPO: ${{ github.repository }}
-        run: |
-          # A draft, so a half-uploaded release is never visible and the update check
-          # (`/releases/latest`) never offers it. The tag exists already, so `--verify-tag`
-          # is the check and no target commit is needed.
-          #
-          # The body starts with the link to the code signing policy: the signing service asks
-          # for it on every download page. GitHub puts `--notes` in front of the generated
-          # notes, so both are kept.
-          notes="**What is signed, where the files come from and what the app does with your data:** [code signing policy](https://github.com/${REPO}/blob/main/docs/code_signing_policy.md)"
-          args=(--draft --verify-tag --generate-notes --notes "$notes" --title "Release $TAG")
-          if [[ "$TAG" == *-* ]]; then
-            args+=(--prerelease)
-          fi
-          gh release create "$TAG" --repo "$REPO" "${args[@]}"
+        run: python3 tools/release/release_tag.py draft "$TAG" --repo "$REPO"
 
   # ── Wheel (pure-Python, platform-independent) ───────────────────────────
   # Read-only: it uploads the wheel as an artifact, and `publish` attaches it.
@@ -150,6 +119,10 @@ jobs:
       id-token: write
       attestations: write
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
       # Only the artifacts that carry release files, by name: nothing else of this run (smoke
       # reports, anything a build step added under another name) can reach the release.
       - name: Download the build artifacts
@@ -162,35 +135,12 @@ jobs:
             -n release-wheel -n release-linux -n release-windows -n release-macos
 
       # Exactly one file of each kind, or the run fails: a draft with a missing installer
-      # (or a stray extra file) must never be offered for publishing.
+      # (or a stray extra file) must never be offered for publishing. SHA256SUMS goes with them.
       - name: Collect the release files
-        run: |
-          mkdir -p release
-          fail=0
-          for pattern in '*.whl' '*.deb' '*-linux-x86_64.tar.gz' '*-w64-setup.exe' '*-macos.dmg'; do
-            mapfile -t found < <(find artifacts -type f -name "$pattern")
-            if [[ ${#found[@]} -ne 1 ]]; then
-              echo "::error::expected exactly one '$pattern', found ${#found[@]}"
-              fail=1
-              continue
-            fi
-            cp -v "${found[0]}" release/
-          done
-          # Nothing besides those five files may be in the artifacts.
-          extra=$(find artifacts -type f | wc -l)
-          if [[ "$extra" -ne 5 ]]; then
-            echo "::error::the artifacts hold $extra files, expected exactly 5"
-            find artifacts -type f
-            fail=1
-          fi
-          exit "$fail"
-
-      - name: Write SHA256SUMS
-        working-directory: release
-        run: sha256sum * > SHA256SUMS
+        run: python3 tools/release/release_tag.py collect artifacts release
 
       - name: Attest the build provenance
-        uses: actions/attest-build-provenance@v4
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4
         with:
           subject-path: release/*
 
@@ -206,30 +156,4 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
           REPO: ${{ github.repository }}
-        run: |
-          {
-            echo "### Draft release \`$TAG\`"
-            echo
-            echo "Nothing is public yet. Check the notes and the assets, then click **Publish**:"
-            echo "https://github.com/$REPO/releases/edit/$TAG"
-            echo
-            if [[ "$TAG" == *-* ]]; then
-              echo "The draft is already marked pre-release."
-            else
-              # GitHub would pick "Latest" by creation date, so an older tag that finishes
-              # last could take it from a higher version: say which way to tick.
-              latest=$(gh api "repos/$REPO/releases/latest" --jq .tag_name 2>/dev/null || true)
-              highest=$(printf '%s\n%s\n' "${latest:-v0}" "$TAG" | sort -V | tail -n1)
-              if [[ "$highest" == "$TAG" ]]; then
-                echo "Tick **Set as the latest release** when you publish."
-              else
-                echo "**Do not** tick *Set as the latest release*: \`$latest\` is newer than \`$TAG\`."
-              fi
-            fi
-            echo
-            echo "| Asset | Size |"
-            echo "|---|---|"
-            for f in release/*; do
-              printf '| %s | %s |\n' "$(basename "$f")" "$(du -h "$f" | cut -f1)"
-            done
-          } >> "$GITHUB_STEP_SUMMARY"
+        run: python3 tools/release/release_tag.py summary "$TAG" release --repo "$REPO" >> "$GITHUB_STEP_SUMMARY"

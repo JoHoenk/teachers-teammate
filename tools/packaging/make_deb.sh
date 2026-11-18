@@ -2,7 +2,7 @@
 # Create a Debian/Ubuntu .deb package for Teacher's Teammate.
 #
 # Usage (from repo root):
-#   ./tools/packaging/make_deb.sh [version]
+#   ./tools/packaging/make_deb.sh <version>
 #   e.g.: ./tools/packaging/make_deb.sh 0.1.0
 #
 # Prerequisites:
@@ -21,7 +21,7 @@
 
 set -euo pipefail
 
-VERSION="${1:-0.1.0}"
+VERSION="${1:?usage: make_deb.sh <version>}"
 ARCH="amd64"
 PKG_NAME="teachers-teammate"
 MAINTAINER="Teacher's Teammate Contributors"

@@ -24,7 +24,6 @@ from __future__ import annotations
 import argparse
 from collections.abc import Sequence
 from dataclasses import replace
-from pathlib import Path
 import sys
 
 from tools.model_eval import results

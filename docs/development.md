@@ -36,6 +36,27 @@ ruff and ty come with `aspect_rules_lint` (see `MODULE.bazel`), the same ruff th
 uses; a version bump is a rules_lint bump. Run them through Bazel only — a `ruff`/`ty` from a
 local `.venv` can be a different version and report different results.
 
+The linters (ruff, ty, pylint, shellcheck for the `.sh` scripts and PSScriptAnalyzer for the `.ps1`
+scripts, all from `aspect_rules_lint`; `bazel test //:lint` runs them; the PowerShell one is skipped
+off Linux, and its rules are in `third_party/lint/PSScriptAnalyzerSettings.psd1`) cover the whole first-party tree: the app, the tests and every folder of
+`tools/` (the build, packaging and release scripts decide what ships, so they get the same gate as
+the app). A new script in an existing folder is picked up by that folder's `all_lib` /
+`scripts_lib` / `scripts` target; a new folder under `tools/` has to be added to `//:py_ruff`,
+`//:py_ty`, `//:first_party_sources` (or `//:sh_shellcheck`) in the root `BUILD`.
+
+The workflow files have their own linters, because rules_lint has none for them (`lint-ci` in
+`.github/workflows/format_lint.yml` runs them):
+
+```bash
+python -m venv /tmp/ci-lint && /tmp/ci-lint/bin/pip install -r tools/ci/requirements.txt
+/tmp/ci-lint/bin/actionlint                    # syntax, expressions and the shell of every run: block
+/tmp/ci-lint/bin/zizmor --offline .            # security; exceptions and reasons: .github/zizmor.yml
+```
+
+A workflow holds no logic. What a `run:` block would decide (a tag's form, the release files, an
+install test) is a script in `tools/` with a unit test, so it runs and fails the same way on a
+laptop.
+
 ### Type checking
 
 ```bash

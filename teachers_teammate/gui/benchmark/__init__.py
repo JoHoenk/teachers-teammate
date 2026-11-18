@@ -15,7 +15,8 @@ try:
     from ._benchmark_window import BenchmarkWindow, main_benchmark
 except ImportError as _exc:  # pragma: no cover - mirrors gui/__init__ guard
     raise ImportError(
-        "Benchmark GUI requires extra dependencies. Install with: pip install teachers-teammate[gui]"
+        "The Benchmark window needs PySide6-Essentials, which is part of the base install. "
+        "Reinstall with: pip install --force-reinstall teachers-teammate"
     ) from _exc
 
 __all__ = ["BenchmarkWindow", "main_benchmark"]

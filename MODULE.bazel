@@ -27,6 +27,21 @@ bazel_dep(
     dev_dependency = True,
 )
 
+# OS constraint for the one lint test that only runs on Linux (//:ps_script_analyzer).
+bazel_dep(
+    name = "platforms",
+    version = "1.0.0",
+    dev_dependency = True,
+)
+
+# sh_library for the shell scripts, so the shellcheck aspect of rules_lint has targets to visit.
+# rules_lint depends on the same version.
+bazel_dep(
+    name = "rules_shell",
+    version = "0.5.0",
+    dev_dependency = True,
+)
+
 bazel_dep(name = "rules_jvm_external", version = "7.2")
 bazel_dep(name = "rules_java", version = "9.9.0")
 
@@ -97,6 +112,40 @@ git_override(
 http_file = use_repo_rule(
     "@bazel_tools//tools/build_defs/repo:http.bzl",
     "http_file",
+)
+
+http_archive = use_repo_rule(
+    "@bazel_tools//tools/build_defs/repo:http.bzl",
+    "http_archive",
+)
+
+# PowerShell and the two modules aspect_rules_lint's PSScriptAnalyzer aspect needs (it ships none
+# of them): //:ps_script_analyzer lints the .ps1 installer scripts. Linux x86_64 only, which is
+# where the lint runs (CI and the WSL development machine); the test is marked incompatible
+# elsewhere. The hashes are the publishers' own: hashes.sha256 of the PowerShell release, and the
+# nupkg of each module on the PowerShell Gallery. A bump is a manual change (no Dependabot
+# ecosystem reads these URLs).
+http_archive(
+    name = "pwsh",
+    build_file_content = """exports_files(["pwsh"])""",
+    sha256 = "e261cabc91c78a9afe8d1e5f24731ab0d38204735ab2ec94b0af55102652e10d",
+    urls = ["https://github.com/PowerShell/PowerShell/releases/download/v7.6.10/powershell-7.6.10-linux-x64.tar.gz"],
+)
+
+http_archive(
+    name = "psscriptanalyzer",
+    build_file_content = """filegroup(name = "files", srcs = glob(["**"]), visibility = ["//visibility:public"])""",
+    sha256 = "14e634c828eb98efb9f40b2918ba90f139ed5eccdf663a2a747736d996995d60",
+    type = "zip",
+    urls = ["https://www.powershellgallery.com/api/v2/package/PSScriptAnalyzer/1.25.0"],
+)
+
+http_archive(
+    name = "converttosarif",
+    build_file_content = """filegroup(name = "files", srcs = glob(["**"]), visibility = ["//visibility:public"])""",
+    sha256 = "b1bdf60f029f12284dd78b2c2edc34705d4475079b4cb3d50d669da464bf3d35",
+    type = "zip",
+    urls = ["https://www.powershellgallery.com/api/v2/package/ConvertToSARIF/1.0.0"],
 )
 
 http_file(

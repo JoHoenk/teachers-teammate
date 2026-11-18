@@ -12,10 +12,10 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Version stamped into the bundles (e.g. v0.0.0-test)"
+        description: "Version stamped into the bundles (a release form, e.g. v0.0.0-rc.1)"
         required: true
         type: string
-        default: "v0.0.0-test"
+        default: "v0.0.0-rc.1"
   # The installer scripts and the bundle spec are only exercised on their own system, so a
   # change to any of them builds and tests the bundles here rather than after the release.
   pull_request:
@@ -41,7 +41,10 @@ jobs:
       contents: read
     uses: ./.github/workflows/build_artifacts.yml
     with:
-      version: ${{ inputs.version }}
+      # A pull request has no input: it builds the version a dispatch offers by default, so the
+      # test version is written down once. Older than anything published, which the installer
+      # tests rely on (they allow the downgrade).
+      version: ${{ inputs.version || 'v0.0.0-rc.1' }}
       retention_days: 2
       # A pull request's bundles are named apart, so the prune step below never deletes
       # artifacts a reviewer may still want to download.
@@ -55,22 +58,19 @@ jobs:
     permissions:
       actions: write
     steps:
+      # By pattern, not by a list of names: the install jobs upload one smoke result per image
+      # (`...-linux-installed-smoke-ubuntu-24.04`), and a new job must not need an edit here. A
+      # pull request's artifacts start with `teachers-teammate-pr-`, which the pattern skips.
       - name: Delete artifacts from earlier runs
         env:
           GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
         run: |
-          for name in \
-            "${ARTIFACT_PREFIX}-linux" "${ARTIFACT_PREFIX}-windows" "${ARTIFACT_PREFIX}-macos" \
-            "${ARTIFACT_PREFIX}-linux-smoke" "${ARTIFACT_PREFIX}-windows-smoke" \
-            "${ARTIFACT_PREFIX}-macos-smoke" \
-            "${ARTIFACT_PREFIX}-linux-installed-smoke" \
-            "${ARTIFACT_PREFIX}-windows-installed-smoke" \
-            "${ARTIFACT_PREFIX}-macos-installed-smoke"; do
-            gh api --paginate \
-              "repos/${{ github.repository }}/actions/artifacts?name=${name}&per_page=100" \
-              --jq '.artifacts[] | select(.workflow_run.id != ${{ github.run_id }}) | .id' |
-            while read -r id; do
-              echo "Deleting artifact ${id} (${name})"
-              gh api -X DELETE "repos/${{ github.repository }}/actions/artifacts/${id}"
-            done
+          pattern="^${ARTIFACT_PREFIX}-(linux|windows|macos)(-|$)"
+          gh api --paginate "repos/${REPO}/actions/artifacts?per_page=100" \
+            --jq ".artifacts[] | select(.workflow_run.id != ${RUN_ID}) | select(.name | test(\"${pattern}\")) | \"\(.id) \(.name)\"" |
+          while read -r id name; do
+            echo "Deleting artifact ${id} (${name})"
+            gh api -X DELETE "repos/${REPO}/actions/artifacts/${id}"
           done

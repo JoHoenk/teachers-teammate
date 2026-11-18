@@ -17,6 +17,7 @@ Outputs:
 
 from __future__ import annotations
 
+import io
 import os
 from pathlib import Path
 import shutil
@@ -162,6 +163,27 @@ def _run() -> None:
     )
 
 
+def _strip_debug_info() -> None:
+    """Remove the debug information PyInstaller copied from the build machine (Linux only).
+
+    The Python from ``actions/setup-python`` ships ``libpython3.x.so`` and its extension modules
+    with debug information: about 46 MB of a 510 MB folder, and 30 MB of the download. Nobody
+    debugs the frozen app with it, and ``check_linux_bundle.py --debug-info`` fails the build
+    when it comes back. The bundle's copy is stripped, never the build machine's files.
+    """
+    if not sys.platform.startswith("linux"):
+        return
+    subprocess.run(
+        [
+            sys.executable,
+            str(Path(__file__).resolve().parent / "check_linux_bundle.py"),
+            "--strip-debug",
+        ],
+        check=True,
+        cwd=ROOT,
+    )
+
+
 def _license_destination() -> Path | None:
     """Return the folder that carries the license files, or ``None`` where packaging does it.
 
@@ -196,7 +218,7 @@ def main() -> None:
     # Windows default console encoding (cp1252) cannot represent some Unicode
     # chars used in the progress messages below.  Force UTF-8 so the output is
     # readable in all CI and terminal environments.
-    if hasattr(sys.stdout, "reconfigure"):
+    if isinstance(sys.stdout, io.TextIOWrapper):
         sys.stdout.reconfigure(encoding="utf-8")
 
     _ensure_icons()
@@ -206,6 +228,7 @@ def main() -> None:
     _write_version_resource()
     print("==> Building standalone binary…")
     _run()
+    _strip_debug_info()
     _add_license_files()
     if sys.platform == "darwin":
         label = "dist/teachers-teammate.app"

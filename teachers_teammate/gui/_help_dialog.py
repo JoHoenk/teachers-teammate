@@ -20,7 +20,16 @@ from ._image_utils import load_pixmap
 
 _MEIPASS = getattr(sys, "_MEIPASS", None)
 _ROOT = Path(_MEIPASS) if _MEIPASS is not None else Path(__file__).resolve().parent.parent.parent
-_DOCS = _ROOT / "docs"
+#: The user guide: ``docs/`` in a source checkout and in the bundle, and ``_docs/`` inside the
+#: package in a wheel (the wheel build copies the three pages there).
+_DOCS = next(
+    (
+        folder
+        for folder in (_ROOT / "docs", Path(__file__).resolve().parent.parent / "_docs")
+        if folder.is_dir()
+    ),
+    _ROOT / "docs",
+)
 _IMG_PATH = _ROOT / "teachers_teammate" / "assets" / "teachers_teammate.png"
 _LICENSES_PATH = _ROOT / "teachers_teammate" / "assets" / "third_party_licenses.md"
 #: The Linux build's host libraries, written into ``_internal/`` by the build.  No other platform

@@ -66,8 +66,25 @@ updates:
       - dependency-name: "bazel"
         versions: [">=9"]
 
+  # The linters for the workflows themselves (actionlint, zizmor), pinned in tools/ci/.
+  - package-ecosystem: "pip"
+    directory: "/tools/ci"
+    schedule:
+      interval: "weekly"
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 5
+    groups:
+      ci-lint:
+        patterns: ["*"]
+
+  # Every action is pinned by commit SHA with its version in a trailing comment (`# v7`), which
+  # Dependabot keeps in step. `directories` adds the composite action that has one: a `uses:` inside it is
+  # not found by the "/" entry.
   - package-ecosystem: "github-actions"
-    directory: "/"
+    directories:
+      - "/"
+      - "/.github/actions/setup-bazel"
     schedule:
       interval: "weekly"
     cooldown:

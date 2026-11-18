@@ -12,24 +12,41 @@ jobs:
     runs-on: ubuntu-24.04
 
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
 
       - name: Set up Bazel
-        uses: bazel-contrib/setup-bazel@f34d6a05eae3c24acab7fa54587492daeaeffdab # 0.19.2
+        uses: ./.github/actions/setup-bazel
         with:
-          bazelisk-cache: true
           disk-cache: lint
-          repository-cache: true
-
-      - name: Allow unprivileged user namespaces (Bazel linux-sandbox)
-        # Ubuntu 24.04 runners block them via AppArmor, which makes Bazel fall
-        # back to the weaker processwrapper-sandbox.
-        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
 
       - name: Check formatting
         run: bazel run --config=ci //:format.check
 
-      - name: Run Python linters
+      - name: Run the linters (Python, shell)
         run: bazel test --config=ci //:lint --test_output=errors
+
+  # The workflow files. rules_lint has no linter for them (the Python and the shell scripts are
+  # in //:lint above); a broken `run:` block or an unpinned action would first show on release day.
+  lint-ci:
+    name: Lint the workflows
+    runs-on: ubuntu-24.04
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
+        with:
+          python-version-file: .python-version
+
+      - name: Install actionlint and zizmor
+        run: python -m pip install -r tools/ci/requirements.txt
+
+      - name: Check the workflows (actionlint)
+        run: actionlint
+
+      - name: Check the workflows for security problems (zizmor)
+        run: zizmor --no-progress --offline .

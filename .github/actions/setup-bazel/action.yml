@@ -1,0 +1,27 @@
+name: Set up Bazel
+description: >
+  Bazelisk, the caches and the Linux sandbox setting every Bazel job needs. One place, so the
+  four workflows that run Bazel (tests, lint, docs, wheel) cannot drift apart.
+
+inputs:
+  disk-cache:
+    description: "Name of the disk cache; one per workflow, so two jobs never save the same key."
+    required: true
+
+# The caller checks out first and runs `bazel ... --config=ci` afterwards.
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Bazel
+      uses: bazel-contrib/setup-bazel@f34d6a05eae3c24acab7fa54587492daeaeffdab # 0.19.2
+      with:
+        bazelisk-cache: true
+        disk-cache: ${{ inputs.disk-cache }}
+        repository-cache: true
+
+    - name: Allow unprivileged user namespaces (Bazel linux-sandbox)
+      # Ubuntu 24.04 runners block them via AppArmor, which makes Bazel fall back to the weaker
+      # processwrapper-sandbox.
+      shell: bash
+      run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0

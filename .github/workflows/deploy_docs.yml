@@ -1,17 +1,12 @@
-# Builds the Sphinx documentation (`bazel build //docs:html`) and deploys it to
-# GitHub Pages. Runs on every push to main; PRs touching the docs build the site
-# as a check but do not deploy. Can also be triggered manually.
+# Deploys the Sphinx documentation to GitHub Pages. Runs on every push to main and can be
+# triggered manually. The pull-request build is part of pull_request_checks.yml (the merge gate),
+# so it is not repeated here.
 
 name: Deploy Documentation
 
 on:
   push:
     branches: ["main"]
-  pull_request:
-    branches: ["main"]
-    paths:
-      - "docs/**"
-      - ".github/workflows/deploy_docs.yml"
   workflow_dispatch:
 
 # Least privilege: the deploy job needs pages + id-token; everything else reads.
@@ -26,44 +21,12 @@ concurrency:
 
 jobs:
   build:
-    name: Build docs
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          persist-credentials: false
-
-      - name: Set up Bazel
-        uses: bazel-contrib/setup-bazel@f34d6a05eae3c24acab7fa54587492daeaeffdab # 0.19.2
-        with:
-          bazelisk-cache: true
-          disk-cache: docs
-          repository-cache: true
-
-      - name: Build Sphinx HTML
-        run: bazel build --config=ci //docs:html
-
-      - name: Stage site for Pages
-        run: |
-          # `bazel build //docs:html` writes the rendered site under
-          # bazel-bin/docs/html/_build/html (Bazel outputs are read-only).
-          rm -rf _site
-          cp -rL bazel-bin/docs/html/_build/html _site
-          chmod -R u+w _site
-          # Tell GitHub Pages not to run the site through Jekyll, which would
-          # strip the Sphinx `_static`/`_sources` underscore directories.
-          touch _site/.nojekyll
-          test -f _site/index.html || { echo "::error::no index.html produced"; exit 1; }
-
-      - name: Upload Pages artifact
-        uses: actions/upload-pages-artifact@v5
-        with:
-          path: _site
+    uses: ./.github/workflows/build_docs.yml
+    with:
+      upload: true
 
   deploy:
     name: Deploy to GitHub Pages
-    # Build the site on PRs as a check, but only publish from main / manual runs.
-    if: github.event_name != 'pull_request'
     needs: build
     runs-on: ubuntu-24.04
     permissions:
@@ -75,4 +38,4 @@ jobs:
     steps:
       - name: Deploy
         id: deployment
-        uses: actions/deploy-pages@v5
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5

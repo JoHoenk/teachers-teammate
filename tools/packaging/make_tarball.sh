@@ -2,13 +2,13 @@
 # Create the portable Linux tarball for Teacher's Teammate.
 #
 # Usage (from repo root):
-#   ./tools/packaging/make_tarball.sh [version]
+#   ./tools/packaging/make_tarball.sh <version>
 #   e.g.: ./tools/packaging/make_tarball.sh 0.1.0
 #
 # Prerequisites:
 #   * The folder build in dist/teachers-teammate/  (run tools/build/build_standalone.py first)
 #
-# Output: dist/teachers-teammate-<version>-linux-x86_64.tar.gz
+# Output: dist/teachers-teammate-<version>-linux-x86_64.tar.xz
 #         with the top folder teachers-teammate-<version>/
 #
 # This replaces the single-file download: the folder unpacks once and runs from wherever it
@@ -16,12 +16,12 @@
 
 set -euo pipefail
 
-VERSION="${1:-0.1.0}"
+VERSION="${1:?usage: make_tarball.sh <version>}"
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 
 BUILD="${ROOT}/dist/teachers-teammate"
 TOP="teachers-teammate-${VERSION}"
-OUT="${ROOT}/dist/${TOP}-linux-x86_64.tar.gz"
+OUT="${ROOT}/dist/${TOP}-linux-x86_64.tar.xz"
 
 if [[ ! -x "${BUILD}/teachers-teammate" ]]; then
     echo "ERROR: ${BUILD}/teachers-teammate not found." >&2
@@ -63,5 +63,7 @@ if [[ -f "${BUILD}/_internal/third_party_host_libraries.txt" ]]; then
     cp "${BUILD}/_internal/third_party_host_libraries.txt" "${STAGE}/${TOP}/"
 fi
 
-tar -C "${STAGE}" -czf "${OUT}" "${TOP}"
+# xz, not gzip: the same folder is about 30% smaller (169 MB against 244 MB on the Linux build),
+# and every distribution that runs the app has xz. -T0 uses every core.
+XZ_OPT="-6 -T0" tar -C "${STAGE}" -cJf "${OUT}" "${TOP}"
 echo "Created: ${OUT}"

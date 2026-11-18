@@ -7,6 +7,20 @@ Build and serve:
 
 load("@sphinxdocs//sphinxdocs:sphinx.bzl", "sphinx_build_binary", "sphinx_docs")
 
+# The three pages the Help window shows. The wheel copies them into the package
+# (//teachers_teammate:wheel_docs); the bundle takes them from the spec.
+exports_files(
+    [
+        "advanced_user_guide.md",
+        "index.md",
+        "using_the_app.md",
+    ],
+    visibility = [
+        "//teachers_teammate:__pkg__",
+        "//tests:__pkg__",
+    ],
+)
+
 # The Markdown pages, for tests/tools/test_no_plan_references.py. Not built or shipped.
 filegroup(
     name = "markdown",
@@ -21,7 +35,9 @@ sphinx_build_binary(
     ],
     tags = ["manual"],  # Only needed during doc builds
     deps = [
-        "//teachers_teammate:ocr_lib",
+        # conf.py reads `__version__` from the package root and nothing else: the whole of
+        # ocr_lib here would rebuild the site on every code edit.
+        "//teachers_teammate:pkg_lib",
         "@ocr_dev_dependencies//furo:pkg",
         "@ocr_dev_dependencies//myst_parser:pkg",
         "@ocr_dev_dependencies//sphinx:pkg",

@@ -15,3 +15,13 @@ py_console_script_binary(
         "@ocr_dev_dependencies//tomlkit:pkg",
     ],
 )
+
+# The configs aspect_rules_lint passes to shellcheck and PSScriptAnalyzer explicitly (--rcfile,
+# -Settings), so they need no place a tool would search: see linters.bzl.
+exports_files(
+    [
+        "PSScriptAnalyzerSettings.psd1",
+        "shellcheckrc",
+    ],
+    visibility = ["//visibility:public"],
+)

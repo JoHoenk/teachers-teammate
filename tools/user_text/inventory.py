@@ -15,11 +15,11 @@ from __future__ import annotations
 
 import argparse
 import ast
-import csv
-import sys
 from collections.abc import Iterable, Iterator
+import csv
 from dataclasses import dataclass
 from pathlib import Path
+import sys
 
 #: The modules whose literals a teacher can read, relative to the repository root.
 SCANNED: tuple[str, ...] = ("teachers_teammate/gui", "teachers_teammate/cli.py")

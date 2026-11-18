@@ -41,13 +41,13 @@ reported: its versions are newer than the lock by design.
 from __future__ import annotations
 
 import argparse
+from collections.abc import Callable
 from functools import partial
 from pathlib import Path
 import re
 import subprocess
 import sys
 import tempfile
-from typing import Callable
 
 #: Longest an add-on's dry run may take (pip downloads metadata, and some wheels, to resolve).
 TIMEOUT_S = 900
@@ -271,35 +271,50 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    lock: Path | None = None
-    if args.python is not None:
-        if args.constraints is None:
-            parser.error("--python needs --constraints")
-        if not args.constraints.is_file():
-            print(f"{args.constraints} is missing; run tools/build/addon_constraints.py first")
-            return 1
-        if args.lock is not None:
-            if not args.lock.is_file():
-                print(f"{args.lock} is missing; run tools/build/addon_lock.py first")
-                return 1
-            lock = args.lock
-        check = partial(check_addon_with_python, args.python, args.constraints)
-    else:
-        if args.app is None:
-            parser.error("give the built app, or --python and --constraints")
-        try:
-            constraints = find_constraints(args.app)
-            lock = find_lock(args.app)
-        except FileNotFoundError as exc:
-            print(exc)
-            return 1
-        check = partial(check_addon, args.app, constraints)
+    try:
+        check, lock = _checker(args, parser)
+    except FileNotFoundError as exc:
+        print(exc)
+        return 1
 
     if args.report is not None:
         if lock is None:
             parser.error("--report needs --lock: only the locked install is what the app brings")
         args.report.mkdir(parents=True, exist_ok=True)
 
+    return _check_all(check, lock, args.report)
+
+
+def _checker(
+    args: argparse.Namespace, parser: argparse.ArgumentParser
+) -> tuple[Callable[..., str], Path | None]:
+    """Return the function that checks one add-on, and the lock it uses (or ``None``).
+
+    Raises:
+        FileNotFoundError: a constraints or lock file the chosen mode needs is missing.
+    """
+    if args.python is not None:
+        if args.constraints is None:
+            parser.error("--python needs --constraints")
+        if not args.constraints.is_file():
+            raise FileNotFoundError(
+                f"{args.constraints} is missing; run tools/build/addon_constraints.py first"
+            )
+        lock: Path | None = None
+        if args.lock is not None:
+            if not args.lock.is_file():
+                raise FileNotFoundError(
+                    f"{args.lock} is missing; run tools/build/addon_lock.py first"
+                )
+            lock = args.lock
+        return partial(check_addon_with_python, args.python, args.constraints), lock
+    if args.app is None:
+        parser.error("give the built app, or --python and --constraints")
+    return partial(check_addon, args.app, find_constraints(args.app)), find_lock(args.app)
+
+
+def _check_all(check: Callable[..., str], lock: Path | None, report_dir: Path | None) -> int:
+    """Check every add-on in each mode; return 1 when one cannot be installed."""
     problems = []
     for name, requirements in addons_to_check().items():
         # "newest": the bundle's constraints alone, to meet a release the lock does not know yet.
@@ -312,8 +327,8 @@ def main(argv: list[str] | None = None) -> int:
             # versions are the inventory's.  The newest run exists to meet a release the lock
             # does not know yet, and its versions are newer by design.
             report = None
-            if args.report is not None and mode_lock is not None:
-                report = args.report / f"{_slug(name)}.json"
+            if report_dir is not None and mode_lock is not None:
+                report = report_dir / f"{_slug(name)}.json"
             problem = check(f"{name} [{mode}]", requirements, mode_lock, report)
             print(f"{'FAIL' if problem else 'ok  '} {name} [{mode}]: {' '.join(requirements)}")
             if problem:

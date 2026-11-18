@@ -80,7 +80,7 @@ $script:Step = 0
 function Write-Step([string]$Text) {
     $script:Step++
     Write-Host ''
-    Write-Host "── $($script:Step). $Text" -ForegroundColor Cyan
+    Write-Host "-- $($script:Step). $Text" -ForegroundColor Cyan
 }
 
 function Assert-True([bool]$Condition, [string]$Message) {
@@ -256,13 +256,13 @@ function Get-LatestReleaseSetup([string]$Directory) {
 function Remove-Install([string]$Directory, [string]$UninstallKey) {
     <# Best effort: leave no copy behind for the next step. #>
     if (Test-Path -LiteralPath (Join-Path $Directory 'Uninstall.exe')) {
-        try { Invoke-Uninstaller -Directory $Directory -Arguments @('/DELDATA', '/DELSETTINGS') -AppsKey $UninstallKey } catch { }
+        try { Invoke-Uninstaller -Directory $Directory -Arguments @('/DELDATA', '/DELSETTINGS') -AppsKey $UninstallKey } catch { Write-Verbose "best effort, left as it is: $($_.Exception.Message)" }
     }
     Remove-Item -LiteralPath $Directory -Recurse -Force -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath $UninstallKey -Recurse -Force -ErrorAction SilentlyContinue
 }
 
-# ── Start from a clean slate ────────────────────────────────────────────────
+# -- Start from a clean slate ------------------------------------------------
 
 Write-Step 'Clean up anything an earlier run left behind'
 Remove-Install -Directory $UserDir -UninstallKey "HKCU:\$UninstKey"
@@ -275,7 +275,7 @@ Remove-Item -LiteralPath $AllUsersStartMenu -Recurse -Force -ErrorAction Silentl
 Remove-Item -LiteralPath $UserDesktopLink -Force -ErrorAction SilentlyContinue
 Remove-Item -LiteralPath $AllUsersDesktopLink -Force -ErrorAction SilentlyContinue
 
-# ── 1. A fresh per-user install ─────────────────────────────────────────────
+# -- 1. A fresh per-user install ---------------------------------------------
 
 Write-Step 'Fresh per-user install'
 Assert-Equal 0 (Invoke-Setup @('/SCOPE=user')) 'the installer exits 0'
@@ -324,7 +324,7 @@ $setupInfo = (Get-Item -LiteralPath $Setup).VersionInfo
 Assert-Equal $AppName $setupInfo.ProductName 'the setup carries the product name'
 Assert-Equal $Version $setupInfo.ProductVersion 'the setup carries the product version'
 
-# ── 2. Markers that an update must not touch ────────────────────────────────
+# -- 2. Markers that an update must not touch --------------------------------
 
 Write-Step 'Write markers an update must keep'
 New-Item -Path $QtKey -Force | Out-Null
@@ -341,7 +341,7 @@ foreach ($sub in @('benchmark', 'speed', 'work')) {
     Set-Content -LiteralPath (Join-Path $DataDir "$sub\marker.txt") -Value 'keep me'
 }
 
-# ── 3. Update over the same install ─────────────────────────────────────────
+# -- 3. Update over the same install -----------------------------------------
 
 Write-Step 'Update over the installed copy'
 Assert-Equal 0 (Invoke-Setup @('/SCOPE=user')) 'the second run exits 0'
@@ -359,7 +359,7 @@ Assert-Missing $AllUsersDir 'nothing was written to Program Files'
 Assert-Shortcut $UserDesktopLink (Join-Path $UserDir 'teachers-teammate.exe') `
     'the update keeps the desktop shortcut'
 
-# ── 4. The app is still open ────────────────────────────────────────────────
+# -- 4. The app is still open ------------------------------------------------
 
 Write-Step 'Update while the app is open'
 $exe = Join-Path $UserDir 'teachers-teammate.exe'
@@ -370,7 +370,7 @@ try {
     $handle.Dispose()
 }
 
-# ── 5. Uninstall, keeping the data ──────────────────────────────────────────
+# -- 5. Uninstall, keeping the data ------------------------------------------
 
 Write-Step 'Uninstall, keeping the user data'
 # Through the Apps entry's own UninstallString, which is what Windows Settings runs: the value
@@ -392,7 +392,7 @@ foreach ($sub in @('benchmark', 'speed', 'work')) {
     Assert-Present (Join-Path $DataDir "$sub\marker.txt") "the $sub data survives the uninstall"
 }
 
-# ── 6. Uninstall, removing the data ─────────────────────────────────────────
+# -- 6. Uninstall, removing the data -----------------------------------------
 
 Write-Step 'Uninstall, removing the user data'
 Assert-Equal 0 (Invoke-Setup @('/SCOPE=user')) 'the reinstall exits 0'
@@ -406,7 +406,7 @@ foreach ($sub in @('benchmark', 'speed', 'work')) {
 }
 Assert-Missing $QtKey 'the Qt settings key is gone'
 
-# ── 7. A folder that belongs to somebody else ───────────────────────────────
+# -- 7. A folder that belongs to somebody else -------------------------------
 
 Write-Step 'Refuse a folder that holds other files'
 New-Item -ItemType Directory -Path 'C:\tt-foreign' -Force | Out-Null
@@ -415,7 +415,7 @@ Assert-Equal 12 (Invoke-Setup @('/SCOPE=user', '/D=C:\tt-foreign')) 'the install
 Assert-Present 'C:\tt-foreign\keep.txt' 'the other file is still there'
 Remove-Item -LiteralPath 'C:\tt-foreign' -Recurse -Force
 
-# ── 8. Both scopes side by side ─────────────────────────────────────────────
+# -- 8. Both scopes side by side ---------------------------------------------
 
 Write-Step 'An all-users install, then a per-user run'
 Assert-Equal 0 (Invoke-Setup @('/SCOPE=all')) 'the all-users install exits 0'
@@ -439,11 +439,11 @@ Assert-Missing $AllUsersDir 'the refused run wrote nothing to Program Files'
 Invoke-Uninstaller -Directory $UserDir
 Assert-Missing $UserDir 'the per-user copy is gone'
 
-# ── 9. Update from the shipped v0.5.6 ───────────────────────────────────────
+# -- 9. Update from the shipped v0.5.6 ---------------------------------------
 
 if ($SkipOldVersion) {
     Write-Host ''
-    Write-Host '── 9. Update from v0.5.6: skipped' -ForegroundColor Yellow
+    Write-Host '-- 9. Update from v0.5.6: skipped' -ForegroundColor Yellow
 } else {
     Write-Step 'Update from the shipped v0.5.6'
     $old = Join-Path $env:TEMP 'tt-old-setup'
@@ -461,7 +461,7 @@ if ($SkipOldVersion) {
     Set-ItemProperty -LiteralPath $QtKey -Name 'ci_marker' -Value 'keep me'
     $update = @('/SCOPE=all')
     if ([version]($Version -replace '-.*$', '') -le [version]'0.5.6') {
-        # A build without a release tag is 0.1.0, older than the shipped v0.5.6. The installer
+        # A test build (v0.0.0-rc.1, build_bundles.yml) is older than the shipped v0.5.6. The installer
         # refuses that with exit 11 and changes nothing; /ALLOWDOWNGRADE then replaces it in
         # place, which is the same file and registry work as a real update.
         Assert-Equal 11 (Invoke-Setup $update) 'an older build is refused without /ALLOWDOWNGRADE'
@@ -475,7 +475,7 @@ if ($SkipOldVersion) {
     Remove-Item -LiteralPath $old -Recurse -Force -ErrorAction SilentlyContinue
 }
 
-# ── 10. Update from the newest published release ────────────────────────────
+# -- 10. Update from the newest published release ----------------------------
 
 Write-Step 'Update from the newest published release'
 $latest = Join-Path $env:TEMP 'tt-latest-setup'
@@ -497,7 +497,7 @@ if ((-not $SkipOldVersion) -and $latestVersion -eq '0.5.6') {
     Set-ItemProperty -LiteralPath $QtKey -Name 'ci_marker' -Value 'keep me'
     $update = @('/SCOPE=all')
     if ([version]($Version -replace '-.*$', '') -lt [version]($latestVersion -replace '-.*$', '')) {
-        # A test build is 0.1.0, older than anything published. Equal is a reinstall, not a refusal.
+        # A test build (v0.0.0-rc.1) is older than anything published. Equal is a reinstall, not a refusal.
         Assert-Equal 11 (Invoke-Setup $update) "a build older than $latestVersion is refused without /ALLOWDOWNGRADE"
         $update += '/ALLOWDOWNGRADE'
     }
@@ -511,7 +511,7 @@ if ((-not $SkipOldVersion) -and $latestVersion -eq '0.5.6') {
 }
 Remove-Item -LiteralPath $latest -Recurse -Force -ErrorAction SilentlyContinue
 
-# ── 11. The desktop shortcut rules ──────────────────────────────────────────
+# -- 11. The desktop shortcut rules ------------------------------------------
 
 Write-Step 'A fresh install without a desktop shortcut'
 Assert-Equal 0 (Invoke-Setup @('/SCOPE=user', '/NODESKTOP')) 'the installer exits 0'
@@ -529,7 +529,7 @@ Assert-Equal 0 (Invoke-Setup @('/SCOPE=user')) 'the update exits 0'
 Assert-Missing $UserDesktopLink 'the update did not recreate the deleted shortcut'
 Invoke-Uninstaller -Directory $UserDir
 
-# ── 12. Two copies, and a silent run without /SCOPE= ────────────────────────
+# -- 12. Two copies, and a silent run without /SCOPE= ------------------------
 
 Write-Step 'Two copies, and a silent run without /SCOPE='
 # The installer refuses to make a second copy (step 8 asserts exit 13 both ways), so the state
@@ -558,7 +558,7 @@ Assert-Equal '9.9.9' (Get-UninstallValue "HKCU:\$RegKey" 'Version') 'the per-use
 Invoke-Uninstaller -Directory $UserDir
 Invoke-Uninstaller -Directory $AllUsersDir -AppsKey "HKLM:\$UninstKey32"
 
-# ── 13. The uninstaller's two checkboxes, one at a time ─────────────────────
+# -- 13. The uninstaller's two checkboxes, one at a time ---------------------
 
 Write-Step 'Uninstall with /DELDATA only'
 Assert-Equal 0 (Invoke-Setup @('/SCOPE=user')) 'the install exits 0'
@@ -595,11 +595,11 @@ foreach ($sub in @('Cache', 'benchmark', 'speed')) {
 }
 Assert-Missing $QtKey 'the Qt settings key is gone'
 
-# ── 14. The uninstaller page still takes its defaults from the defines ──────
+# -- 14. The uninstaller page still takes its defaults from the defines ------
 
 Write-Step 'Static check: the uninstaller page takes its defaults from the defines'
-# The dialog cannot be clicked on a runner, so the one thing a silent run cannot show — which
-# boxes the page starts with — is read out of the script instead.
+# The dialog cannot be clicked on a runner, so the one thing a silent run cannot show - which
+# boxes the page starts with - is read out of the script instead.
 $nsi = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'windows.nsi') -Raw
 Assert-True ($nsi -match '(?m)^!define UN_DEFAULT_PACKAGES\s+\$\{BST_CHECKED\}') `
     'the add-ons box is ticked by default'

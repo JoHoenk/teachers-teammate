@@ -9,7 +9,11 @@ build/
 # The negations above would otherwise un-ignore the byte-code cache too.
 __pycache__/
 .coverage
-.claude/
+# Claude Code: keep local state out, but allow shared .claude/settings.json, skills and rules
+.claude/*
+!.claude/settings.json
+!.claude/skills/
+!.claude/rules/
 coverage_html/
 
 # Virtual environments

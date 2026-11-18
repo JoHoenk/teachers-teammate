@@ -155,6 +155,7 @@ advanced_user_guide
 :caption: Developer Guide
 
 development
+extension_points
 deployment
 testing
 ```

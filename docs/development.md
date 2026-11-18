@@ -1687,7 +1687,7 @@ character list from `inference.yml` (a base dependency).
 reading order or joining changes what the reader returns; it is part of the cache identity, so
 stored pages are read again.
 
-**Adding an engine** is in `CLAUDE.md` ("New OCR engine").  The settings file of an older
+**Adding an engine** is in {doc}`extension_points` ("New OCR engine").  The settings file of an older
 version may name `tesseract` or `paddleocr`: `config.normalize_ocr_engine` maps them to `ppocr`
 (`RETIRED_OCR_ENGINES`, a notice names the old engine and where to download the reader), and an
 online engine falls back to the default as before.

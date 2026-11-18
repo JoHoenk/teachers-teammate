@@ -7,7 +7,7 @@ load("//third_party/lint:linters.bzl", "pylint_test", "ruff_test", "ty_test")
 exports_files(
     [
         ".python-version",
-        "CLAUDE.md",
+        "AGENTS.md",
         "NOTICE",
         "pyproject.toml",
         "README.md",

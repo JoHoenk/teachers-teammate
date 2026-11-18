@@ -21,7 +21,7 @@ THIS_FILE = Path(__file__).resolve()
 SOURCE_TREES = ("teachers_teammate", "tools", "tests")
 """Python and BUILD files below these."""
 
-DOCUMENT_GLOBS = ("docs/*.md", "evaluations/**/*.md", "evaluations/**/*.txt", "CLAUDE.md")
+DOCUMENT_GLOBS = ("docs/*.md", "evaluations/**/*.md", "evaluations/**/*.txt", "AGENTS.md")
 
 REFERENCES: dict[str, re.Pattern[str]] = {
     "a path into plans/": re.compile(r"\bplans/"),

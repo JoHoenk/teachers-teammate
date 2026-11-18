@@ -17,7 +17,8 @@ def test_every_kind_has_an_icon_and_a_mark(kind: ItemKind) -> None:
     When   its icon and its mark are asked for
     Then   both exist, and the mark is readable on its own background
     """
-    assert _style.icon(kind)
+    assert _style.icon(kind, looked_at=False)
+    assert _style.icon(kind, looked_at=True)
 
     fmt = _style.mark_format(kind)
 

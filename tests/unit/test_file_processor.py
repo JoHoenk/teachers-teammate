@@ -17,6 +17,7 @@ from teachers_teammate.domain.proofreading.edits import EditPart
 from teachers_teammate.domain.proofreading.result import CorrectionOutcome
 from teachers_teammate.domain.proofreading.review import CorrectionReview, EditNote
 from teachers_teammate.domain.performance_estimate import SpeedStep
+from teachers_teammate.domain.teacher_work import text_identity
 from teachers_teammate.infrastructure.proofreading.chunking import ChunkingCorrector
 from teachers_teammate.infrastructure.proofreading.corrector import (
     ExchangeCorrector,
@@ -97,6 +98,38 @@ def _make_ctx(state: DocumentState) -> CacheContext:
     )
 
 
+def _record_ocr(_file: Path, ctx: CacheContext, **kwargs: Any) -> CacheContext:
+    return _make_ctx(
+        dataclasses.replace(
+            ctx.state,
+            ocr_done=True,
+            raw_text=kwargs["raw_text"],
+            raw_text_format=kwargs.get("raw_text_format", "plain"),
+        )
+    )
+
+
+def _record_correction(_file: Path, ctx: CacheContext, **kwargs: Any) -> CacheContext:
+    return _make_ctx(
+        dataclasses.replace(
+            ctx.state,
+            correction_done=True,
+            correction_text=kwargs["correction_text"],
+            correction_review=kwargs.get("correction_review"),
+            correction_warning=kwargs.get("correction_warning", ""),
+            correction_source_hash=text_identity(kwargs.get("source_text", "")),
+        )
+    )
+
+
+def _record_evaluation(_file: Path, ctx: CacheContext, **kwargs: Any) -> CacheContext:
+    return _make_ctx(
+        dataclasses.replace(
+            ctx.state, evaluation_done=True, evaluation_text=kwargs["evaluation_text"]
+        )
+    )
+
+
 class _ListReporter:
     """Reporter that records status/warning lines for assertions."""
 
@@ -130,9 +163,11 @@ def _make_processor(
     cache_ctx = returns.cache_ctx or _make_ctx(default_state)
     cache_service.prepare.return_value = cache_ctx
     cache_service.persist_preview_artifact.return_value = ("preview.png", cache_ctx)
-    cache_service.record_ocr.return_value = cache_ctx
-    cache_service.record_correction.return_value = cache_ctx
-    cache_service.record_evaluation.return_value = cache_ctx
+    # The real service hands back the state it just wrote; the processor reads the texts from
+    # there, so the fake records what it is given.
+    cache_service.record_ocr.side_effect = _record_ocr
+    cache_service.record_correction.side_effect = _record_correction
+    cache_service.record_evaluation.side_effect = _record_evaluation
 
     preprocess_return = returns.preprocess_return or (
         [tmp_path / "img.png"],
@@ -357,9 +392,9 @@ def test_stop_after_ocr_without_proofreading_still_completes(tmp_path: Path) -> 
     file = tmp_path / "doc.png"
     stop = threading.Event()
 
-    def set_stop_after_ocr(*_args: object, **_kwargs: object) -> CacheContext:
+    def set_stop_after_ocr(file: Path, ctx: CacheContext, **kwargs: Any) -> CacheContext:
         stop.set()
-        return _make_ctx(_make_state())
+        return _record_ocr(file, ctx, **kwargs)
 
     fp, cache_svc, _, _ = _make_processor(tmp_path, stop_event=stop)
     cache_svc.record_ocr.side_effect = set_stop_after_ocr
@@ -381,9 +416,9 @@ def test_stop_after_ocr_skips_proofreading_and_keeps_the_text(tmp_path: Path) ->
     stop = threading.Event()
     corrector = MagicMock()
 
-    def set_stop_after_ocr(*_args: object, **_kwargs: object) -> CacheContext:
+    def set_stop_after_ocr(file: Path, ctx: CacheContext, **kwargs: Any) -> CacheContext:
         stop.set()
-        return _make_ctx(_make_state())
+        return _record_ocr(file, ctx, **kwargs)
 
     fp, cache_svc, _, _ = _make_processor(tmp_path, stop_event=stop, corrector=corrector)
     cache_svc.record_ocr.side_effect = set_stop_after_ocr
@@ -1834,6 +1869,9 @@ def test_markdown_text_format_reaches_corrector_evaluator_and_docx(tmp_path: Pat
         # No anonymizer in this run: the text that was sent is the extracted text itself.
         "sent_text": "",
         "sent_map": None,
+        # The transcription the answer was made from, so a proofreading made from a text the
+        # document no longer has is stale.
+        "source_text": "~~a~~ b",
     }
 
 

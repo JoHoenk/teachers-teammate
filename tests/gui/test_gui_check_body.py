@@ -433,7 +433,7 @@ def test_take_out_puts_the_students_words_back_and_ctrl_z_restores_them(qtbot) -
     assert body.final_view.toPlainText() == RAW
     assert body._doc is not None
     assert [item.kind for item in body._doc.items] == [ItemKind.TAKEN_OUT]
-    assert body._doc.items[0].key == "taken:1"
+    assert body._doc.items[0].key == "edit:1"
 
     body.final_view.undo()
     body.final_view.flush()
@@ -454,7 +454,7 @@ def test_put_back_restores_a_taken_out_correction(qtbot) -> None:
     assert body._doc is not None
     assert [item.kind for item in body._doc.items] == [ItemKind.TAKEN_OUT]
 
-    body.panel.put_back_requested.emit("taken:1")
+    body.panel.put_back_requested.emit("edit:1")
 
     assert body.final_view.toPlainText() == CORRECTED
     assert body._doc is not None

@@ -50,6 +50,9 @@ class FileDoneEvent:
     stopped_stage: str = ""
     """With ``stopped``: the step the stop cut short (``"ocr"``, ``"correction"`` or
     ``"evaluation"``); empty when the file did not get as far as telling."""
+    checked_label: str = ""
+    """What the teacher checked: ``"checked"`` (the corrections), ``"text"`` (the transcription
+    alone) or ``""``.  The wording of the cell is the table's."""
 
     @property
     def total_s(self) -> float:

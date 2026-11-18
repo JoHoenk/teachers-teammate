@@ -43,7 +43,15 @@ section "Functional Requirements" {
     }
 
     UseCase Manual_Text_Editing {
-        description = "As a user I want to edit the recognised and proofread text directly in the Check tab, in the view that holds each of them, so that I can fix individual mistakes without reprocessing the document."
+        description = "As a user I want to edit the recognised and proofread text directly in the Check tab, in the view that holds each of them, so that I can fix individual mistakes without reprocessing the document. My edits are stored as my own work, apart from the machine result, so a run never writes over them and emptying the results cache does not lose them."
+    }
+
+    UseCase Mark_Document_Checked {
+        description = "As a user I want to mark a document as checked in the Check tab, see that mark in a column of the results list, and select every checked document in one step, so that I can tell what I have finished and export only that."
+    }
+
+    UseCase Keep_Worked_On_Corrections {
+        description = "As a user I want a run with changed settings to keep the corrections I changed or checked, and to be asked once before it replaces them, so that a settings change never silently throws my work away."
     }
 
     UseCase Correction_Take_Out_And_Put_Back {

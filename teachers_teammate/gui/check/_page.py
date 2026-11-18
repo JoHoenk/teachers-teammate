@@ -12,7 +12,7 @@ edit block, so one Ctrl+Z takes it back and the stored text comes from the path 
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import Enum
 
 from PySide6.QtCore import Qt, QTimer, Signal
@@ -38,9 +38,15 @@ from PySide6.QtWidgets import (
 )
 
 from ...application.check_document import CheckDocument
-from ...application.check_items import CheckItem, group_minor
+from ...application.check_items import CheckItem, ItemKind, countable_keys, group_minor
 from ...domain.proofreading.review import AlignedReview
-from ...domain.teacher_work import TextEdit, put_back, take_out, use_suggestion
+from ...domain.teacher_work import (
+    TextEdit,
+    looked_at_progress,
+    put_back,
+    take_out,
+    use_suggestion,
+)
 from ...texts import check as check_text
 from .. import _user_text as txt
 from .._export_menu import ExportKind
@@ -227,6 +233,8 @@ class CheckBody(QWidget):
     """The banner offered to show the names, and the teacher took it."""
     text_zoom_changed = Signal(int)
     """Ctrl+wheel changed the text size; the window stores it for the next document."""
+    item_shown = Signal(str)
+    """An item became the one the card shows: its key, or ``"minor"`` for the group row."""
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -277,6 +285,7 @@ class CheckBody(QWidget):
             view.item_clicked.connect(self._on_item_clicked)
             view.zoom_changed.connect(self.text_zoom_changed)
         self.panel.item_chosen.connect(self._on_item_chosen)
+        self.panel.item_shown.connect(self.item_shown)
         self.panel.take_out_requested.connect(self._on_take_out)
         self.panel.put_back_requested.connect(self._on_put_back)
         self.panel.use_suggestion_requested.connect(self._on_use_suggestion)
@@ -354,6 +363,21 @@ class CheckBody(QWidget):
         """Store a typed-but-uncommitted edit right now."""
         self.read_view.flush()
         self.final_view.flush()
+
+    def mark_looked_at(self, key: str) -> bool:
+        """Record that the teacher looked at *key*; return whether it was new.
+
+        The document is updated in place — the list icons and the footer say so — and nothing is
+        reloaded: the teacher is reading, not waiting for the disk.
+        """
+        doc = self._doc
+        if doc is None or key in doc.work.looked_at:
+            return False
+        work = replace(doc.work, looked_at=doc.work.looked_at | {key})
+        progress = looked_at_progress(countable_keys(doc.items), work.looked_at)
+        self._doc = replace(doc, work=work, looked_at_progress=progress)
+        self.panel.set_looked_at(work.looked_at, progress)
+        return True
 
     def clear(self) -> None:
         """Empty the body: no document is open."""
@@ -517,18 +541,23 @@ class CheckBody(QWidget):
         if doc is None or doc.aligned is None:
             return ()
         aligned: AlignedReview = doc.aligned
-        kind, _, number = item.key.partition(":")
-        if kind in ("edit", "own"):
+        number = item.key.partition(":")[2]
+        if item.kind in (ItemKind.CORRECTION, ItemKind.CHANGED):
+            group = [change for change in aligned.changes if change.edit_id == int(number)]
+            return take_out(group, doc.raw_plain, doc.corrected_plain)
+        if item.kind in (ItemKind.OWN, ItemKind.UNEXPLAINED):
+            start, _, end = number.partition("-")
+            span = (int(start), int(end))
             group = [
                 change
                 for change in aligned.changes
-                if (change.edit_id if kind == "edit" else change.number) == int(number)
+                if change.edit_id is None and (change.hunk.raw_start, change.hunk.raw_end) == span
             ]
             return take_out(group, doc.raw_plain, doc.corrected_plain)
-        if kind == "taken":
+        if item.kind is ItemKind.TAKEN_OUT:
             note = next((note for note in aligned.orphan_notes if note.id == int(number)), None)
             return put_back(note, aligned, doc.raw_plain, doc.corrected_plain) if note else ()
-        if kind == "unclear":
+        if item.kind is ItemKind.UNCLEAR:
             unclear = next(
                 (entry for entry in aligned.unclear if entry.number == int(number)), None
             )
@@ -591,9 +620,13 @@ class CheckPage(QWidget):
     raw_text_edited = Signal(str)
     corrected_text_edited = Signal(str)
     proofread_requested = Signal()
+    checked_toggled = Signal(bool)
+    """The teacher pressed *Checked*: the state the document should have now."""
     display_anonymized_changed = Signal(bool)
     anonymization_needed = Signal(str)
     text_zoom_changed = Signal(int)
+    item_shown = Signal(str)
+    """An item became the one the card shows: its key, or ``"minor"`` for the group row."""
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -602,6 +635,7 @@ class CheckPage(QWidget):
         self._doc: CheckDocument | None = None
         self._choice: ViewKind | None = None
         self._masking = Masking()
+        self._lock = ""
         self._display_anonymized = True
         self._anonymized_available = False
         # Built by the header helpers below; declared here so the class owns them.
@@ -627,6 +661,7 @@ class CheckPage(QWidget):
         self.body.anonymization_needed.connect(self.anonymization_needed)
         self.body.display_anonymized_changed.connect(self.display_anonymized_changed)
         self.body.text_zoom_changed.connect(self.text_zoom_changed)
+        self.body.item_shown.connect(self.item_shown)
 
     # ── Header ────────────────────────────────────────────────────────────
 
@@ -666,6 +701,13 @@ class CheckPage(QWidget):
         self._proofread_btn.setVisible(False)
         self._proofread_btn.clicked.connect(self.proofread_requested)
         layout.addWidget(self._proofread_btn)
+
+        self._checked_btn = QPushButton(txt.MARK_AS_CHECKED)
+        self._checked_btn.setCheckable(True)
+        self._checked_btn.setToolTip(txt.CHECKED_TOOLTIP)
+        self._checked_btn.setEnabled(False)
+        self._checked_btn.clicked.connect(self.checked_toggled)
+        layout.addWidget(self._checked_btn)
 
         layout.addStretch()
         self._build_header_tools(layout)
@@ -783,6 +825,7 @@ class CheckPage(QWidget):
         self._proofread_btn.setVisible(not doc.has_proofreading and bool(doc.raw_text.strip()))
         self._again_action.setEnabled(doc.has_proofreading)
         self._source_action.setEnabled(bool(doc.raw_text.strip()))
+        self._refresh_checked()
         self.body.show_document(doc, self._masking, typed=typed)
         self._put_in_front(self._view_for(doc))
 
@@ -792,9 +835,25 @@ class CheckPage(QWidget):
         self._switch.setVisible(doc.has_proofreading)
         self._proofread_btn.setVisible(not doc.has_proofreading and bool(doc.raw_text.strip()))
         self._again_action.setEnabled(doc.has_proofreading)
+        self._refresh_checked()
         self.body.update_document(doc)
         if not doc.has_proofreading and self.body.view is not ViewKind.READ:
             self._put_in_front(ViewKind.READ)
+
+    def _refresh_checked(self) -> None:
+        """Show *Checked* as the document's work says, and let it be pressed where it may.
+
+        The toggle marks what the document has now: with a proofreading the corrections, without
+        one the transcription.  It is disabled while the run holds the document and while there
+        is no text to check; hiding the names does not stop it, since it changes no text.
+        """
+        doc = self._doc
+        label = doc.work.checked_label if doc is not None else ""
+        self._checked_btn.setText(txt.checked_button_label(label))
+        self._checked_btn.setChecked(bool(label))
+        self._checked_btn.setEnabled(
+            doc is not None and not self._lock and bool(doc.raw_text.strip())
+        )
 
     def set_view(self, view: ViewKind) -> None:
         """Put one of the three texts in front, and remember the choice for the next document.
@@ -815,6 +874,8 @@ class CheckPage(QWidget):
 
     def set_lock(self, reason: str | None) -> None:
         """Make the texts read-only while the run works on this document, or free them again."""
+        self._lock = reason or ""
+        self._refresh_checked()
         self.body.set_lock(reason)
 
     def set_anonymization(self, mapping, *, error: str = "") -> None:
@@ -858,6 +919,20 @@ class CheckPage(QWidget):
         """Store a typed-but-uncommitted edit right now."""
         self.body.flush_pending_edit()
 
+    def mark_looked_at(self, key: str) -> bool:
+        """Record that the teacher looked at *key*; return whether it was new.
+
+        Nothing is recorded while the run holds the document: the window writes only for
+        documents the run does not hold.
+        """
+        if self._lock:
+            return False
+        return self.body.mark_looked_at(key)
+
+    def refresh_checked(self) -> None:
+        """Show *Checked* as the document says again, e.g. after a press that was not stored."""
+        self._refresh_checked()
+
     def clear(self) -> None:
         """Empty the page: no document is open."""
         self._doc = None
@@ -869,6 +944,7 @@ class CheckPage(QWidget):
         self._next_btn.setEnabled(False)
         self._switch.setVisible(False)
         self._proofread_btn.setVisible(False)
+        self._refresh_checked()
         self.body.clear()
         self.set_copy_state(CopyState())
 

@@ -148,9 +148,35 @@ document. After the first stored change the proofreading is gone, the tab falls 
 was read**, and the header offers **Proofread this document** to make a new one from the text
 you fixed.
 
+**Marking a document as checked.** The button in the header of the **Check** tab says **Mark as
+checked**; click it when you are done with the document and it turns into **✓ Checked** — or
+**✓ Text checked** when the document has no proofreading, because then it is the transcription
+you checked. Click it again to take the mark back. It is not part of **Ctrl+Z**: it is a
+decision, not a change to the text, and typing after it does not uncheck the document. It does
+not move you to the next document either — the arrows in the header do that.
+
+The results list has a **Checked** column for it: *Checked*, *Text checked*, or empty.
+Right-click → **Select checked** selects every row with either mark, which is how you export
+only what you have checked: **Select checked**, then **Export**.
+
+**What you have looked at.** The list of items on the right marks the ones you have already
+seen: ● for an item you have looked at, ○ for one you have not, and the line under the list
+counts them — *8 of 12 looked at*. An item counts as looked at as soon as its card is shown,
+whether you change anything or not. Your own changes and the *minor* group row count once each.
+Looking at something is never undone and never stops a run from proofreading the document again.
+
 ### Re-running a specific step
 
 If you want to redo just one part — for example, run proofreading again with a different setting — right-click a row in the results list and choose the step you want to repeat: **Re-run Text Recognition**, **Re-run Proofreading**, or **Run Content Review**. Only the chosen step is repeated (and any steps that depend on it).
+
+A re-run of the reading or the proofreading throws away what you did to that document, so the app
+asks first when there is something to lose. **Re-run Proofreading** on a document whose
+corrections you changed or checked says so and offers **Proofread again** or **Cancel**; **Re-run
+Text Recognition** on a document whose transcription you fixed or checked, or whose corrections
+you changed or checked, says that what you did is replaced by the new reading and that the
+proofreading made from the old one is removed. **Cancel** is the default in both, and one dialog names every document of the selection
+that it applies to. **Run Content Review** asks nothing: it is made from your corrected text and
+changes none of it.
 
 ### How the app remembers your results
 
@@ -158,11 +184,39 @@ The app stores the result for every file it has processed. If you change only th
 
 Next to the text, the app keeps every prepared page of a document as an image, not only the first one, and — when the image preparation changed the page — the page as it was scanned. That takes roughly one to three megabytes per prepared page and three to eight per original page of a scan in the app's cache folder, so a class set of four-page essays can take a few hundred megabytes. Deleting the cache costs nothing but a re-run, which makes the images again. The **Check** tab shows all of them; documents that were read before this version keep only the first page until they are read again, and a page file that has gone missing is not made again by itself.
 
+**Your own corrections are kept apart from the results.** What you type, the corrections you take
+out or put back, the documents you mark as checked and the items you have looked at are stored in
+a folder of their own, one small file per essay, keyed by the essay's content — so an essay keeps
+its corrections wherever its results go and whatever the file is called. A run never writes over
+them. Emptying the results cache therefore costs you the machine's texts and the prepared pages,
+not your work: your corrected transcription is still there and the next proofreading is made from
+it. Your corrections to the proofreading are kept too, as long as the proofreading they were made
+on is still stored — a new proofreading is a new answer, and corrections written on the old one
+would not fit it. The app tells you before that happens (below).
+
+**A run with changed settings keeps what you worked on.** If you change the proofreading settings
+and run again, a document whose corrections you changed or checked keeps its proofreading: the
+results list shows it as done with the note *kept*, and hovering over it says that it was made
+with other settings and how to get a new one. Before such a run starts, the app asks once and
+lists the documents it applies to: **Keep my changes** (the default) keeps them and does not ask
+again for these settings, **Proofread again** makes new corrections and removes your changes to
+them, **Cancel** starts nothing. The same dialog names the documents whose corrections belong to
+a proofreading that is not stored here any more — after an emptied cache, for example — because a
+new proofreading will not contain them; whatever you answer there (except **Cancel**), those
+changes are let go and the question does not come back.
+
+Changing the settings of the **reading** does not read a page again for a document you worked on:
+one whose transcription you fixed or checked, or whose corrections you changed or checked, keeps
+the text it has. Only **Re-run Text Recognition** reads it again, after asking.
+
 ---
 
 ## Switching text recognition off
 
 **Recognize text** is ticked by default: photos and scanned pages are read by the AI. Text files (`.txt`) and PDFs that already contain their text are used as they are either way, and a document whose text was recognised before is not read again.
+
+A scan whose text you fixed or checked counts as text that already exists, even when the results
+were emptied since: its pages are prepared for the scan, but not read again.
 
 Untick **Recognize text** when you only want to work with text that already exists — for example to proofread a folder of typed essays without setting up a recognition model. Then:
 
@@ -527,11 +581,18 @@ Lighter AI models work well for content review:
 
 The results list on the **Documents** tab shows one row per document with its current status — `done`, `error`, `skipped` (already up to date), `processing`, or `correcting` while running — and a short preview of the extracted and corrected text. Double-click a row to open the full text in the **Check** tab.
 
+**Export after checking.** The Word file and the text files a run writes are a snapshot of the
+texts the document had when the run reached it. Correcting a document afterwards does not change
+them — no edit and no *Checked* writes a file. When you are done, export: **Export ▸** builds the
+files from the texts the document has now, so your corrections are in them. That is also why
+**Select checked** followed by **Export** is the way to hand in only what you have checked.
+
 Right-click a row for more options:
 
 - **Re-run Text Recognition** — re-extract the text for the selected rows.
 - **Re-run Proofreading** — run the proofreading step again for the selected rows.
 - **Run Content Review** — generate a content review report for the selected rows without reprocessing anything else.
+- **Select checked** — select every row you marked as checked in the **Check** tab, whether it is *Checked* or *Text checked*.
 - **Export ▸** — save the selected rows (the **Export** button below the settings offers the same choices, for the selected rows or all rows when none is selected). A single row prompts you to choose a file name, multiple rows prompt for a destination folder.
   - **Word Document…** — a Word file with the extracted and proofread text.
   - **Text File…** — the extracted text as a plain text file (`<name>.txt`), without any Markdown markup.

@@ -8,6 +8,7 @@ import pytest
 
 from teachers_teammate.domain.freshness import (
     StageHashes,
+    correction_kept_over_settings,
     first_stale_stage_for_hashes,
     reset_policy_from_stage,
     should_invalidate_preview_artifact,
@@ -83,6 +84,89 @@ def test_first_stale_stage_for_hashes_returns_earliest_stale_stage() -> None:
         )
     )
     assert stale_stage == "ocr"
+
+
+def _hashes(**overrides) -> StageHashes:
+    """Return the hashes of a document whose stages are all done and all current."""
+    values = {
+        "ocr_done": True,
+        "ocr_config_hash": "ocr",
+        "expected_ocr_config_hash": "ocr",
+        "correction_done": True,
+        "correction_config_hash": "correction",
+        "expected_correction_config_hash": "correction",
+        "evaluation_done": True,
+        "eval_config_hash": "eval",
+        "expected_eval_config_hash": "eval",
+        "correction_source": "source",
+        "expected_correction_source": "source",
+    }
+    values.update(overrides)
+    return StageHashes(**values)  # ty: ignore[invalid-argument-type]
+
+
+def test_a_frozen_reading_is_not_stale_by_its_settings() -> None:
+    """
+    Given  a document whose transcription the teacher fixed, and changed reading settings
+    When   the stale stage is asked for
+    Then   the reading is not taken again
+    """
+    hashes = _hashes(ocr_config_hash="old", ocr_frozen=True)
+
+    assert first_stale_stage_for_hashes(hashes) is None
+
+
+def test_a_reading_nobody_worked_on_is_stale_by_its_settings() -> None:
+    """
+    Given  a document nobody worked on and changed reading settings
+    When   the stale stage is asked for
+    Then   the reading is stale
+    """
+    assert first_stale_stage_for_hashes(_hashes(ocr_config_hash="old")) == "ocr"
+
+
+def test_a_proofreading_of_another_transcription_is_stale_whatever_the_settings() -> None:
+    """
+    Given  a proofreading made from a transcription the document no longer has
+    When   the stale stage is asked for
+    Then   it is stale, even though its settings are current and the teacher kept it
+    """
+    hashes = _hashes(expected_correction_source="other", correction_kept=True)
+
+    assert first_stale_stage_for_hashes(hashes) == "correction"
+
+
+def test_a_kept_proofreading_is_not_stale_by_its_settings() -> None:
+    """
+    Given  a proofreading the teacher worked on and changed proofreading settings
+    When   the stale stage is asked for
+    Then   it is kept, not stale
+    """
+    hashes = _hashes(correction_config_hash="old", correction_kept=True)
+
+    assert first_stale_stage_for_hashes(hashes) is None
+    assert correction_kept_over_settings(hashes) is True
+
+
+def test_a_proofreading_nobody_worked_on_is_stale_by_its_settings() -> None:
+    """
+    Given  a proofreading nobody worked on and changed proofreading settings
+    When   the stale stage is asked for
+    Then   it is stale, and it is not reported as kept
+    """
+    hashes = _hashes(correction_config_hash="old")
+
+    assert first_stale_stage_for_hashes(hashes) == "correction"
+    assert correction_kept_over_settings(hashes) is False
+
+
+def test_a_kept_proofreading_with_current_settings_is_not_kept_over_them() -> None:
+    """
+    Given  a proofreading the teacher worked on and the settings it was made with
+    When   the kept-over-settings question is asked
+    Then   there is nothing to say: it is simply current
+    """
+    assert correction_kept_over_settings(_hashes(correction_kept=True)) is False
 
 
 def test_should_invalidate_preview_artifact_requires_existing_artifact() -> None:

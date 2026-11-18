@@ -29,12 +29,11 @@ from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 import hashlib
 import json
-import os
 from pathlib import Path
-import tempfile
-import time
+import threading
 
 from ..domain.data_location import STAGE_CORRECTION, STAGE_EVALUATION, SentRecord, SentStatus
+from ..domain.formatted_text import normalize_text_format
 from ..domain.freshness import (
     StageHashes,
     first_stale_stage_for_hashes,
@@ -43,6 +42,8 @@ from ..domain.freshness import (
 )
 from ..domain.proofreading.review import CorrectionReview
 from ..domain.stages import normalize_stage
+from ..domain.teacher_work import MachineTexts, WorkStatus
+from .atomic_file import write_text_atomic
 from .storage_root import document_stem
 
 
@@ -58,6 +59,36 @@ def compute_file_hash(path: Path) -> str:
     return hasher.hexdigest()
 
 
+#: The hash of a file that did not change, by what ``stat`` says about it.  The window asks
+#: for the hash of the open document on every card it shows and every mark it sets; reading
+#: the file each time would be work for the GUI thread to do over and over.
+_HASH_MEMO: dict[tuple[str, int, int, int], str] = {}
+_HASH_MEMO_LIMIT = 512
+_HASH_MEMO_LOCK = threading.Lock()
+
+
+def compute_file_hash_cached(path: Path) -> str:
+    """Return :func:`compute_file_hash` of *path*, read again only when the file changed.
+
+    "Changed" is the file's size, modification time and identity: a file replaced by one of
+    the same size within the clock's resolution is not noticed, which is why a run (the code
+    that decides what a result belongs to) always reads the file with
+    :func:`compute_file_hash`.
+    """
+    info = path.stat()
+    key = (str(path.resolve()), info.st_size, info.st_mtime_ns, info.st_ino)
+    with _HASH_MEMO_LOCK:
+        known = _HASH_MEMO.get(key)
+    if known is not None:
+        return known
+    digest = compute_file_hash(path)
+    with _HASH_MEMO_LOCK:
+        if len(_HASH_MEMO) >= _HASH_MEMO_LIMIT:
+            _HASH_MEMO.clear()
+        _HASH_MEMO[key] = digest
+    return digest
+
+
 def compute_config_hash(*parts: str) -> str:
     """Return SHA-256 hash over ordered configuration parts."""
     hasher = hashlib.sha256()
@@ -65,6 +96,21 @@ def compute_config_hash(*parts: str) -> str:
         hasher.update(part.encode("utf-8"))
         hasher.update(b"\0")
     return hasher.hexdigest()
+
+
+def machine_texts(state: DocumentState) -> MachineTexts:
+    """Return what the cache holds for *state*, as the domain reads it.
+
+    The machine's own texts, untouched by the teacher: the merge point
+    (``domain.teacher_work.current_texts``) puts their work over them.
+    """
+    return MachineTexts(
+        raw_text=state.raw_text,
+        raw_text_format=normalize_text_format(state.raw_text_format),
+        corrected_text=state.correction_text,
+        review=state.correction_review,
+        correction_source_hash=state.correction_source_hash,
+    )
 
 
 @dataclass(frozen=True)
@@ -110,6 +156,12 @@ class DocumentState:
     evaluate_prompt: str = ""
     ocr_config_hash: str = ""
     correction_config_hash: str = ""
+    # ``text_identity`` of the transcription the stored proofreading was made from.  A stored
+    # proofreading is stale when that differs from the current transcription, whatever the
+    # settings: it guards against a store emptied on one side only (the teacher's transcription
+    # gone while the cache still holds a proofreading made from it).  Empty means "made from
+    # ``raw_text``", which is what state written before this field existed holds.
+    correction_source_hash: str = ""
     eval_config_hash: str = ""
     preview_config_hash: str = ""
     # Un-preprocessed page render kept next to ``preview_img`` so the GUI can toggle
@@ -163,6 +215,13 @@ class DocumentStateView:
     raw_text_format: str = "plain"
     """Notation of ``raw_text`` and ``correction_text`` (the corrector answers in the
     notation it was given)."""
+    machine_correction_text: str = ""
+    """The machine's own proofread text, before the teacher changed anything.
+
+    Equals :attr:`correction_text` when the teacher changed nothing, and is empty for a view
+    built by hand that does not say.  It is what tells a change the model made without an
+    explanation from one the teacher made."""
+
     correction_review: CorrectionReview | None = None
     """Explanations and unclear expressions; ``None`` when the file has no review."""
     correction_warning: str = ""
@@ -181,6 +240,12 @@ class DocumentStateView:
     when the document was recognized before the app kept all of them, and empty when
     preparation changed nothing."""
 
+    work: WorkStatus = field(default_factory=WorkStatus)
+    """What the teacher changed and decided about this document.
+
+    Filled by the application layer, which is the only place that reads the teacher's work; a
+    view built straight from the cache says they did nothing."""
+
 
 @dataclass(frozen=True)
 class RuntimeConfigSnapshot:
@@ -197,6 +262,11 @@ class RuntimeConfigSnapshot:
     correction_config_hash: str
     eval_config_hash: str
     preview_config_hash: str
+    # What the teacher's work says about the stored stages; worked out by the caller from the
+    # work (``cache_service.stage_hashes``), never stored.
+    ocr_frozen: bool = False
+    expected_correction_source: str = ""
+    correction_kept: bool = False
 
 
 @dataclass(frozen=True)
@@ -212,22 +282,6 @@ class OcrResultRecord:
     ocr_config_hash: str
     preview_config_hash: str
     raw_text_format: str = "plain"
-
-
-_REPLACE_ATTEMPTS = 5
-_REPLACE_WAIT_S = 0.05
-
-
-def _replace_file(source: Path, target: Path) -> None:
-    """Move *source* over *target*; retry a refusal for a moment (Windows: file held open)."""
-    for attempt in range(_REPLACE_ATTEMPTS):
-        try:
-            os.replace(source, target)
-            return
-        except PermissionError:
-            if attempt == _REPLACE_ATTEMPTS - 1:
-                raise
-            time.sleep(_REPLACE_WAIT_S)
 
 
 def _inconsistent(state: DocumentState) -> bool:
@@ -310,6 +364,7 @@ class StateRepository:
                 None if state.preprocess_steps is None else tuple(state.preprocess_steps)
             ),
             raw_text_format=state.raw_text_format,
+            machine_correction_text=state.correction_text,
             correction_review=state.review,
             correction_warning=state.correction_warning,
             sent=self._sent_statuses(state),
@@ -397,26 +452,9 @@ class StateRepository:
         return looks_like_markup(raw_text)
 
     def save(self, input_file: Path, state: DocumentState) -> None:
-        path = self.state_path_for_input(input_file)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        text = json.dumps(asdict(state), indent=2)
-        # Write beside the file, then swap it in: the process may end during a save (the window
-        # closed while a run was going), and a half-written file would lose the whole state.
-        # The temporary name is unique, so two saves of one document never share a file.
-        fd, temp_name = tempfile.mkstemp(dir=path.parent, prefix=path.name + ".", suffix=".tmp")
-        temp = Path(temp_name)
-        try:
-            with os.fdopen(fd, "w", encoding="utf-8") as handle:
-                handle.write(text)
-            _replace_file(temp, path)
-        except PermissionError:
-            # Windows refuses to replace a file that something else holds open (the window
-            # reading it, a virus scanner); writing in place still works there.
-            temp.unlink(missing_ok=True)
-            path.write_text(text, encoding="utf-8")
-        except OSError:
-            temp.unlink(missing_ok=True)
-            raise
+        write_text_atomic(
+            self.state_path_for_input(input_file), json.dumps(asdict(state), indent=2)
+        )
 
     def record_preview_artifact(
         self,
@@ -471,6 +509,7 @@ class StateRepository:
             evaluate_prompt=record.evaluate_prompt,
             ocr_config_hash=record.ocr_config_hash,
             correction_config_hash="",
+            correction_source_hash="",
             eval_config_hash="",
             preview_config_hash=record.preview_config_hash,
             correction_text="",
@@ -497,16 +536,19 @@ class StateRepository:
         sent_text: str = "",
         sent_map: dict[str, str] | None = None,
         sent: SentRecord | None = None,
+        source_hash: str = "",
     ) -> DocumentState:
         """Persist correction output and invalidate evaluation output.
 
-        The corrector sees ``raw_text`` and answers in the same notation, so the correction
+        The corrector answers in the notation of the text it was given, so the correction
         shares the state's ``raw_text_format``.  *correction_review* is the review payload of
         a structured proofreading answer, or ``None`` in corrections-only mode;
         *correction_warning* says why a file has no review or an incomplete one.
 
         *sent_text* and *sent_map* are the text the proofreading was made from and its
         placeholder map (only when names were hidden); *sent* says how it was sent.
+        *source_hash* is the ``text_identity`` of the transcription it was made from, so a
+        proofreading made from a text the document no longer has is stale.
         """
         new_state = dataclasses.replace(
             state,
@@ -519,6 +561,7 @@ class StateRepository:
             correction_sent_map=sent_map,
             correction_sent=sent.to_dict() if sent is not None else None,
             correction_config_hash=correction_config_hash,
+            correction_source_hash=source_hash,
             evaluation_done=False,
             evaluation_invalidated=state.evaluation_done,
             eval_config_hash="",
@@ -554,87 +597,6 @@ class StateRepository:
         self.save(input_file, new_state)
         return new_state
 
-    def record_manual_ocr_edit(
-        self,
-        input_file: Path,
-        state: DocumentState,
-        *,
-        raw_text: str,
-        preview_img: str,
-        ocr_config_hash: str = "",
-        raw_text_format: str | None = None,
-    ) -> DocumentState:
-        """Persist a manual OCR-text edit and invalidate downstream stages.
-
-        *ocr_config_hash* should be the current expected OCR config hash so the
-        edit is treated as fresh by reconciliation; otherwise the next run would
-        flag it stale and discard it.  *raw_text_format* is the notation the edited
-        text is written in; ``None`` keeps the state's current notation.
-        """
-        new_state = dataclasses.replace(
-            state,
-            preview_img=preview_img,
-            source_image=preview_img,
-            raw_text=raw_text,
-            raw_text_format=raw_text_format or state.raw_text_format,
-            ocr_done=bool(raw_text),
-            ocr_config_hash=ocr_config_hash,
-            correction_done=False,
-            evaluation_done=False,
-            correction_invalidated=state.correction_done,
-            evaluation_invalidated=state.evaluation_done,
-            correction_config_hash="",
-            eval_config_hash="",
-            correction_text="",
-            correction_review=None,
-            correction_warning="",
-            correction_sent_text="",
-            correction_sent_map=None,
-            correction_sent=None,
-            evaluation_text="",
-            evaluation_sent=None,
-        )
-        self.save(input_file, new_state)
-        return new_state
-
-    def record_manual_correction_edit(
-        self,
-        input_file: Path,
-        state: DocumentState,
-        *,
-        correction_text: str,
-        correction_config_hash: str = "",
-    ) -> DocumentState:
-        """Persist a manual correction edit and invalidate evaluation output.
-
-        *correction_config_hash* should be the current expected correction config
-        hash so the edit is treated as fresh by reconciliation; otherwise the
-        next run would flag it stale and discard it.
-        """
-        new_state = dataclasses.replace(
-            state,
-            correction_done=bool(correction_text),
-            correction_invalidated=False,
-            correction_text=correction_text,
-            # The review is kept: its alignment with the text is recomputed on every render,
-            # so an edit only loses the explanations of the changes the teacher reverted.
-            correction_review=state.correction_review if correction_text else None,
-            correction_warning=state.correction_warning if correction_text else "",
-            # The text that was sent belongs to the proofreading, which the edit keeps; only a
-            # dropped proofreading takes it with it.
-            correction_sent_text=state.correction_sent_text if correction_text else "",
-            correction_sent_map=state.correction_sent_map if correction_text else None,
-            correction_sent=state.correction_sent if correction_text else None,
-            correction_config_hash=correction_config_hash,
-            evaluation_done=False,
-            evaluation_invalidated=state.evaluation_done,
-            eval_config_hash="",
-            evaluation_text="",
-            evaluation_sent=None,
-        )
-        self.save(input_file, new_state)
-        return new_state
-
     def reconcile_runtime_config(
         self,
         input_file: Path,
@@ -655,6 +617,10 @@ class StateRepository:
                 evaluation_done=state.evaluation_done,
                 eval_config_hash=state.eval_config_hash,
                 expected_eval_config_hash=snapshot.eval_config_hash,
+                ocr_frozen=snapshot.ocr_frozen,
+                correction_source=state.correction_source_hash,
+                expected_correction_source=snapshot.expected_correction_source,
+                correction_kept=snapshot.correction_kept,
             )
         )
         if stale_stage is not None:
@@ -727,6 +693,7 @@ class StateRepository:
                 correction_done=False,
                 correction_invalidated=False,
                 correction_config_hash="",
+                correction_source_hash="",
                 correction_text="",
                 correction_review=None,
                 correction_warning="",
@@ -752,7 +719,7 @@ class StateRepository:
         if state is None or state.source_path != str(input_file.resolve()):
             return None
         try:
-            if state.source_hash != compute_file_hash(input_file):
+            if state.source_hash != compute_file_hash_cached(input_file):
                 return None
         except OSError:
             return None

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from teachers_teammate.domain.proofreading.edits import EditPart, edits
 from teachers_teammate.domain.proofreading.review import (
     AlignedChange,
@@ -14,12 +16,29 @@ from teachers_teammate.domain.proofreading.review import (
 )
 from teachers_teammate.domain.proofreading.word_diff import Hunk, word_diff
 from teachers_teammate.domain.teacher_work import (
+    WORK_VERSION,
+    CorrectionsWork,
+    MachineTexts,
+    TeacherWork,
     TextEdit,
+    TranscriptionWork,
+    WorkTooNewError,
     apply_edits,
+    current_texts,
+    kept_over,
+    looked_at_progress,
+    proofreading_id,
     put_back,
     suggestion_is_wording,
     take_out,
+    text_identity,
     use_suggestion,
+    with_checked,
+    with_corrected,
+    with_looked_at,
+    with_transcription,
+    without_corrections,
+    without_work_for_reading,
 )
 
 SOURCE = "Ich habe ein grosse Hund gesehen. Er lauft schnell."
@@ -358,3 +377,409 @@ def test_apply_edits_applies_them_last_to_first() -> None:
     result = apply_edits(text, (TextEdit(4, 9, "braune"), TextEdit(21, 25, "leise")))
 
     assert result == "Der braune Hund bellt leise."
+
+
+# ── The teacher's work ────────────────────────────────────────────────────────
+
+WORK_RAW = "Ich habe ein grosse Hund gesehen."
+WORK_CORRECTED = "Ich habe einen großen Hund gesehen."
+WORK_REVIEW = {"edits": [{"id": 1, "parts": []}]}
+
+
+def _machine(
+    *, corrected: str = WORK_CORRECTED, review: dict | None = None, source: str = ""
+) -> MachineTexts:
+    """Return the machine texts of the sample essay, with *corrected* as its proofreading."""
+    return MachineTexts(
+        raw_text=WORK_RAW,
+        raw_text_format="plain",
+        corrected_text=corrected,
+        review=WORK_REVIEW if review is None else review,
+        correction_source_hash=source,
+    )
+
+
+def _work(**kwargs) -> TeacherWork:
+    """Return the work of the sample essay, with *kwargs* as its parts."""
+    return TeacherWork(source_hash="hash", name="essay.png", **kwargs)
+
+
+def test_current_texts_without_work_are_the_machines() -> None:
+    """A document nobody worked on shows what the machine produced."""
+    texts = current_texts(_machine(), None)
+
+    assert texts.transcription == WORK_RAW
+    assert texts.corrected == WORK_CORRECTED
+    assert texts.machine_corrected == WORK_CORRECTED
+    assert texts.proofreading_id
+    assert texts.transcription_work is None
+    assert texts.corrections_work is None
+
+
+def test_current_texts_take_the_teachers_transcription() -> None:
+    """The teacher's transcription wins over what the recognition read."""
+    work = _work(
+        transcription=TranscriptionWork(
+            text="Ich habe einen großen Hund gesehen.", text_format="plain"
+        )
+    )
+
+    texts = current_texts(_machine(), work)
+
+    assert texts.transcription == "Ich habe einen großen Hund gesehen."
+    assert texts.transcription_work is work.transcription
+
+
+def test_current_texts_without_a_proofreading_have_no_id() -> None:
+    """Without a proofreading there is no answer to bind anything to."""
+    texts = current_texts(_machine(corrected="", review=None), None)
+
+    assert texts.proofreading_id == ""
+    assert texts.corrected == ""
+    assert texts.machine_corrected == ""
+
+
+def test_current_texts_apply_a_part_bound_to_the_stored_answer() -> None:
+    """A corrections part written on this answer is the text the document has."""
+    machine = _machine()
+    answer = current_texts(machine, None).proofreading_id
+    work = _work(
+        corrections=CorrectionsWork(bound_to=answer, text="Ich habe einen großen Hund gesehen!")
+    )
+
+    texts = current_texts(machine, work)
+
+    assert texts.corrected == "Ich habe einen großen Hund gesehen!"
+    assert texts.machine_corrected == WORK_CORRECTED
+    assert texts.corrections_work is work.corrections
+
+
+def test_current_texts_ignore_a_part_bound_to_another_answer() -> None:
+    """A part written on another answer does not apply: the machine's text stands."""
+    work = _work(corrections=CorrectionsWork(bound_to="another answer", text="Etwas anderes"))
+
+    texts = current_texts(_machine(), work)
+
+    assert texts.corrected == WORK_CORRECTED
+    assert texts.corrections_work is None
+
+
+def test_current_texts_ignore_a_proofreading_made_from_another_transcription() -> None:
+    """A proofreading made from a transcription that is gone is not current."""
+    edited = "Ich habe einen großen Hund gesehen."
+    machine = _machine(source=text_identity(edited))
+
+    with_work = current_texts(
+        machine, _work(transcription=TranscriptionWork(text=edited, text_format="plain"))
+    )
+    without_work = current_texts(machine, None)
+
+    assert with_work.proofreading_id
+    assert without_work.proofreading_id == ""
+    # The text of a proofreading that is not current is not shown either: it would be diffed
+    # against a transcription it was not made from.
+    assert without_work.corrected == ""
+    assert without_work.machine_corrected == ""
+
+
+def test_current_texts_keep_the_machine_text_apart_from_the_teachers() -> None:
+    """``machine_corrected`` is always the machine's own text, whatever the teacher wrote."""
+    machine = _machine()
+    answer = current_texts(machine, None).proofreading_id
+    work = _work(corrections=CorrectionsWork(bound_to=answer, text="Anders"))
+
+    texts = current_texts(machine, work)
+
+    assert texts.machine_corrected == WORK_CORRECTED
+    assert texts.corrected == "Anders"
+
+
+def test_proofreading_id_changes_with_the_review() -> None:
+    """Two answers with the same text but another review are two answers."""
+    first = proofreading_id("source", WORK_CORRECTED, WORK_REVIEW)
+    second = proofreading_id("source", WORK_CORRECTED, {"edits": []})
+
+    assert first != second
+
+
+def test_proofreading_id_ignores_the_key_order_of_the_review() -> None:
+    """The review is hashed with sorted keys, so its order does not matter."""
+    first = proofreading_id("source", WORK_CORRECTED, {"edits": [], "unclear": []})
+    second = proofreading_id("source", WORK_CORRECTED, {"unclear": [], "edits": []})
+
+    assert first == second
+
+
+def test_proofreading_id_is_stable_for_the_same_answer() -> None:
+    """The same source, text and review are the same answer."""
+    assert proofreading_id("source", WORK_CORRECTED, WORK_REVIEW) == proofreading_id(
+        "source", WORK_CORRECTED, WORK_REVIEW
+    )
+
+
+def test_with_transcription_drops_a_copy_of_the_recognition() -> None:
+    """Typing the recognition's own text back is no work at all."""
+    work = with_transcription(_work(), WORK_RAW, "plain", _machine())
+
+    assert work.transcription is None
+    assert work.empty
+
+
+def test_with_transcription_keeps_a_checked_copy_of_the_recognition() -> None:
+    """A checked transcription stays stored even when it is the recognition's text."""
+    checked = _work(
+        transcription=TranscriptionWork(text=WORK_RAW, text_format="plain", checked=True)
+    )
+
+    work = with_transcription(checked, WORK_RAW, "plain", _machine())
+
+    assert work.transcription is not None
+    assert work.transcription.checked
+
+
+def test_with_transcription_drops_the_corrections_part_of_a_proofreading() -> None:
+    """A new transcription means a new proofreading: the corrections written on the old one go."""
+    work = _work(corrections=CorrectionsWork(bound_to="answer", text="Anders"))
+
+    changed = with_transcription(work, "Ein anderer Text.", "plain", _machine())
+
+    assert changed.transcription is not None
+    assert changed.corrections is None
+
+
+def test_with_transcription_keeps_the_corrections_part_without_a_proofreading() -> None:
+    """Without a proofreading there is no answer to lose, so the part stays."""
+    work = _work(corrections=CorrectionsWork(bound_to="answer", text="Anders"))
+
+    changed = with_transcription(work, "Ein anderer Text.", "plain", _machine(corrected=""))
+
+    assert changed.corrections is not None
+
+
+def test_with_corrected_binds_to_the_current_answer() -> None:
+    """An edit of the corrected text is stored against the answer it was made on."""
+    machine = _machine()
+    current = current_texts(machine, None)
+
+    work = with_corrected(_work(), "Ein neuer Text.", current)
+
+    assert work.corrections is not None
+    assert work.corrections.bound_to == current.proofreading_id
+    assert work.corrections.text == "Ein neuer Text."
+
+
+def test_with_corrected_drops_the_copy_when_it_is_the_machines_text_again() -> None:
+    """An edit that returns to the machine's text keeps the part but drops the copy."""
+    machine = _machine()
+    current = current_texts(machine, None)
+    edited = with_corrected(_work(), "Ein neuer Text.", current)
+
+    back = with_corrected(edited, WORK_CORRECTED, current)
+
+    assert back.corrections is not None
+    assert back.corrections.text is None
+
+
+def test_with_corrected_replaces_a_part_bound_to_another_answer() -> None:
+    """A part of another answer is replaced, and its items looked at with it."""
+    machine = _machine()
+    current = current_texts(machine, None)
+    stale = _work(
+        corrections=CorrectionsWork(
+            bound_to="another answer", text="Alt", checked=True, looked_at=frozenset({"edit:1"})
+        )
+    )
+
+    work = with_corrected(stale, "Ein neuer Text.", current)
+
+    assert work.corrections is not None
+    assert work.corrections.bound_to == current.proofreading_id
+    assert work.corrections.looked_at == frozenset()
+    assert not work.corrections.checked
+
+
+def test_with_corrected_without_a_proofreading_changes_nothing() -> None:
+    """There is no answer to bind an edit to, so nothing is stored."""
+    current = current_texts(_machine(corrected="", review=None), None)
+
+    work = with_corrected(_work(), "Ein neuer Text.", current)
+
+    assert work.corrections is None
+
+
+def test_with_checked_marks_the_corrections_of_a_proofreading() -> None:
+    """With a proofreading, *Checked* marks the corrections."""
+    machine = _machine()
+    current = current_texts(machine, None)
+
+    work = with_checked(_work(), True, current)
+
+    assert work.corrections is not None
+    assert work.corrections.checked
+    assert work.transcription is None
+
+
+def test_with_checked_stores_a_copy_of_the_transcription() -> None:
+    """Without a proofreading, *Checked* stores the transcription it was given."""
+    current = current_texts(_machine(corrected="", review=None), None)
+
+    work = with_checked(_work(), True, current)
+
+    assert work.transcription is not None
+    assert work.transcription.text == WORK_RAW
+    assert work.transcription.checked
+
+
+def test_with_checked_drops_the_copy_it_created_when_unchecked() -> None:
+    """Unchecking a copy of the recognition's own text leaves no work behind."""
+    current = current_texts(_machine(corrected="", review=None), None)
+    checked = with_checked(_work(), True, current)
+
+    work = with_checked(checked, False, current)
+
+    assert work.transcription is None
+    assert work.empty
+
+
+def test_with_checked_keeps_a_fixed_transcription_when_unchecked() -> None:
+    """A transcription the teacher fixed stays stored when it is unchecked."""
+    fixed = _work(transcription=TranscriptionWork(text="Ein anderer Text.", text_format="plain"))
+    current = current_texts(_machine(corrected="", review=None), fixed)
+
+    work = with_checked(fixed, True, current)
+    unchecked = with_checked(work, False, current)
+
+    assert unchecked.transcription is not None
+    assert not unchecked.transcription.checked
+
+
+def test_with_looked_at_adds_keys_to_the_current_answer() -> None:
+    """Looking at an item is stored in the part of the answer it belongs to."""
+    current = current_texts(_machine(), None)
+
+    work = with_looked_at(_work(), ["edit:1", "unclear:2"], current)
+    more = with_looked_at(work, ["minor"], current)
+
+    assert more.corrections is not None
+    assert more.corrections.looked_at == frozenset({"edit:1", "unclear:2", "minor"})
+
+
+def test_with_looked_at_without_a_proofreading_changes_nothing() -> None:
+    """There is no answer whose items could be looked at."""
+    current = current_texts(_machine(corrected="", review=None), None)
+
+    work = with_looked_at(_work(), ["edit:1"], current)
+
+    assert work.corrections is None
+
+
+def test_kept_over_records_the_settings_it_was_kept_for() -> None:
+    """*Keep my changes* remembers the settings, so they never ask again."""
+    machine = _machine()
+    answer = current_texts(machine, None).proofreading_id
+    work = _work(corrections=CorrectionsWork(bound_to=answer, text="Anders"))
+
+    kept = kept_over(work, "correction-hash", current_texts(machine, work))
+
+    assert kept.corrections is not None
+    assert kept.corrections.kept_under == "correction-hash"
+
+
+def test_kept_over_without_a_corrections_part_changes_nothing() -> None:
+    """There is no answer to keep."""
+    work = _work()
+
+    kept = kept_over(work, "correction-hash", current_texts(_machine(), work))
+
+    assert kept.corrections is None
+
+
+def test_kept_over_leaves_a_part_of_another_answer_alone() -> None:
+    """
+    Given  corrections written on an answer that is not the stored one
+    When   the teacher keeps their changes over new settings
+    Then   that part is not stamped: it is not what they kept
+    """
+    machine = _machine()
+    work = _work(corrections=CorrectionsWork(bound_to="another-answer", text="Anders"))
+
+    kept = kept_over(work, "correction-hash", current_texts(machine, work))
+
+    assert kept.corrections is not None
+    assert kept.corrections.kept_under == ""
+
+
+def test_without_corrections_keeps_the_transcription() -> None:
+    """Dropping the corrections part leaves the transcription alone."""
+    work = _work(
+        transcription=TranscriptionWork(text="Ein anderer Text.", text_format="plain"),
+        corrections=CorrectionsWork(bound_to="answer", text="Anders"),
+    )
+
+    dropped = without_corrections(work)
+
+    assert dropped.corrections is None
+    assert dropped.transcription is not None
+
+
+def test_without_work_for_reading_drops_both_parts() -> None:
+    """Reading the pages again makes both texts new."""
+    work = _work(
+        transcription=TranscriptionWork(text="Ein anderer Text.", text_format="plain"),
+        corrections=CorrectionsWork(bound_to="answer", text="Anders"),
+    )
+
+    dropped = without_work_for_reading(work)
+
+    assert dropped.empty
+
+
+def test_looked_at_progress_counts_the_keys_the_list_has() -> None:
+    """Only the items the list has now count, so a gone item is no work left over."""
+    assert looked_at_progress(["edit:1", "edit:2", "minor"], {"edit:1", "taken:9"}) == (1, 3)
+    assert looked_at_progress([], {"edit:1"}) == (0, 0)
+
+
+def test_work_round_trips_through_its_stored_shape() -> None:
+    """What is written is what is read back."""
+    work = _work(
+        transcription=TranscriptionWork(
+            text="Ein anderer Text.", text_format="markdown", checked=True
+        ),
+        corrections=CorrectionsWork(
+            bound_to="answer",
+            text="Anders",
+            checked=True,
+            looked_at=frozenset({"edit:1"}),
+            kept=frozenset({"edit:2"}),
+            kept_under="correction-hash",
+        ),
+    )
+
+    stored = work.to_dict()
+
+    assert stored["version"] == WORK_VERSION
+    assert TeacherWork.from_dict(stored) == work
+
+
+def test_work_of_a_newer_version_is_refused() -> None:
+    """A file of a newer version is never read: the app would lose what it does not know."""
+    stored = _work().to_dict()
+    stored["version"] = WORK_VERSION + 1
+
+    with pytest.raises(WorkTooNewError):
+        TeacherWork.from_dict(stored)
+
+
+def test_a_file_that_is_not_work_is_refused() -> None:
+    """A file without a version or a source hash is not a work file."""
+    with pytest.raises(ValueError, match="version"):
+        TeacherWork.from_dict({"source_hash": "hash"})
+    with pytest.raises(ValueError, match="source hash"):
+        TeacherWork.from_dict({"version": WORK_VERSION})
+
+
+def test_empty_work_has_no_parts() -> None:
+    """An empty work is what deletes its file."""
+    assert _work().empty
+    assert not _work(transcription=TranscriptionWork(text="x", text_format="plain")).empty

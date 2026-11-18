@@ -10,7 +10,7 @@ import threading
 from typing import TYPE_CHECKING
 
 from ...domain.anonymization import restore_with_offsets
-from ...domain.formatted_text import TextFormat, join_labelled_pages, normalize_text_format
+from ...domain.formatted_text import TextFormat, join_labelled_pages
 from ...domain.output_files import (
     ANONYMIZED_TEXT_SUFFIX,
     DOCX_SUFFIX,
@@ -21,6 +21,13 @@ from ...domain.output_files import (
 from ...domain.performance_estimate import SpeedStep
 from ...domain.proofreading.review import CorrectionReview, fits
 from ...domain.stages import PROGRESS_STAGE_OCR, PROGRESS_STAGE_PREPROCESSING, StageName
+from ...domain.teacher_work import (
+    CurrentTexts,
+    TranscriptionWork,
+    current_texts,
+    text_identity,
+    work_status,
+)
 from ...exceptions import (
     RECOGNITION_OFF_MESSAGE,
     PipelineInputError,
@@ -33,6 +40,7 @@ from ..ocr_formats import plain_text_of
 from ..proofreading.chunking import proofreading_pieces
 from ..reporting import OnOcrDoneFn, OnStageStartedFn, Reporter, StdoutReporter
 from ..run_stats import RunStatsCollector
+from ..state_repository import machine_texts
 from .cache_service import CacheContext, CacheReconciliationService
 from .ocr_service import OCRStageService
 from .preprocess_service import PreparedInput, PreprocessService
@@ -70,6 +78,9 @@ class ProcessingResult:
     stopped_stage: str = ""
     """With ``stopped``: the step the stop cut short (``"ocr"``, ``"correction"`` or
     ``"evaluation"``); empty when the file did not get as far as telling."""
+    checked_label: str = ""
+    """What the teacher checked: ``"checked"`` (the corrections), ``"text"`` (the transcription
+    alone) or ``""``.  Read from the work, so the row shows what the Check tab would."""
 
 
 #: What a stopped file says, by the step it did not get to.
@@ -215,26 +226,32 @@ class FileProcessor:
         self._stats = config.stats
 
     def process(self, file: Path) -> ProcessingResult:
-        """Process *file* through all pipeline stages."""
+        """Process *file* through all pipeline stages.
+
+        Every stage reads the texts the document has *now*: the teacher's transcription where
+        they fixed or checked it, their corrections where they apply to the stored answer.
+        The machine's own texts stay in the cache untouched.
+        """
         try:
             ctx = self._prepare_cache(file)
-            raw_text, preview_img, source_image, ctx = self._run_preprocess_or_cache(file, ctx)
-            text_format = self._text_format(ctx)
+            _read, preview_img, source_image, ctx = self._run_preprocess_or_cache(file, ctx)
+            texts = self._current_texts(ctx)
 
             # The extracted text is anonymized once, and only when something asks for it: a
             # proofreading that is not served from the cache.  Without proofreading nothing
             # else would ask, so it runs here to fill the session cache the previews read.
-            anonymized = self._lazy_personal_info_removal(raw_text, preview_img)
+            anonymized = self._lazy_personal_info_removal(texts.transcription, preview_img)
             if self._correction is None and self._anonymizer is not None and not self._stopping():
                 anonymized()
 
-            correction_text, review, ctx, correction_warnings = self._run_correction_or_cache(
-                file, raw_text, preview_img, ctx, anonymized
+            review, ctx, correction_warnings = self._run_correction_or_cache(
+                file, texts, preview_img, ctx, anonymized
             )
+            # Again: a new proofreading makes the teacher's corrections part not apply.
+            texts = self._current_texts(ctx)
             evaluation_text, eval_warnings = self._run_evaluation_or_cache(
                 file,
-                raw_text,
-                correction_text,
+                texts,
                 preview_img,
                 ctx,
                 stored_review=(review, "; ".join(correction_warnings)),
@@ -252,22 +269,26 @@ class FileProcessor:
         reused = done[0] if done is not None and self._text_anonymizer is self._anonymizer else None
         result = self._write_outputs(
             file,
-            _OutputTexts(raw_text, correction_text, evaluation_text),
+            _OutputTexts(texts.transcription, texts.corrected, evaluation_text),
             preview_img,
             source_image,
             all_warnings,
-            text_format=text_format,
+            text_format=texts.transcription_format,
             review=review,
             anonymized_raw=reused,
         )
-        return replace(result, correction_warning="; ".join(correction_warnings))
+        return replace(
+            result,
+            correction_warning="; ".join(correction_warnings),
+            checked_label=work_status(ctx.work, texts).checked_label,
+        )
 
     # ── Stage helpers ─────────────────────────────────────────────────────
 
     @staticmethod
-    def _text_format(ctx: CacheContext) -> TextFormat:
-        """Notation of the document's OCR text (and so of its correction)."""
-        return normalize_text_format(ctx.state.raw_text_format)
+    def _current_texts(ctx: CacheContext) -> CurrentTexts:
+        """Return the texts the document has now: the teacher's where they exist."""
+        return current_texts(machine_texts(ctx.state), ctx.work)
 
     def _prepare_cache(self, file: Path) -> CacheContext:
         try:
@@ -325,11 +346,17 @@ class FileProcessor:
         self, file: Path, ctx: CacheContext
     ) -> tuple[str, str, Path | None, CacheContext]:
         is_text_input = file.suffix.lower() == ".txt"
+        # The teacher's own transcription is the document's text whatever the cache holds (the
+        # cache may have been emptied): the pages are still prepared, for the scan, but they
+        # are not read again, and the reading may be switched off without leaving the file out.
+        reading = ctx.work.transcription if ctx.work is not None else None
+        if reading is not None and not reading.text.strip():
+            reading = None  # an emptied text is not a reading to go by
         if not is_text_input:
             self._reporter.status("       → Preprocessing...")
             self._notify_stage(file, PROGRESS_STAGE_PREPROCESSING)
         try:
-            if self._recognize:
+            if self._recognize or reading is not None:
                 prepared = self._preprocess_service.preprocess_input(file)
             else:
                 prepared = self._preprocess_service.preprocess_input(file, allow_images=False)
@@ -389,12 +416,17 @@ class FileProcessor:
                 f"       → Preprocessing done: {', '.join(prep_steps)} ({len(ocr_inputs)} page(s))"
             )
 
+        if reading is not None and prepared.raw_text_hint is None:
+            prepared = prepared._replace(raw_text_hint=reading.text)
+        else:
+            reading = None  # the file carries its own text; nothing of the teacher's is read in
+
         if self._stopping() and prepared.raw_text_hint is None:
             raise _stopped_abort(STOPPED_BEFORE_RECOGNITION, "ocr", preview_img=preview_img)
 
         try:
             raw_text, ctx = self._run_ocr(
-                file, ocr_inputs, prepared, preview_img, source_image, ctx
+                file, ocr_inputs, prepared, preview_img, source_image, ctx, reading=reading
             )
         except RunStoppedError as exc:
             raise _stopped_abort(
@@ -437,13 +469,18 @@ class FileProcessor:
         preview_img: str,
         source_image: Path | None,
         ctx: CacheContext,
+        *,
+        reading: TranscriptionWork | None = None,
     ) -> tuple[str, CacheContext]:
         raw_text_hint = prepared.raw_text_hint
         page_count = 0
         raw_text_format: TextFormat = "plain"
         if raw_text_hint is not None:
             raw_text = raw_text_hint
-            if prepared.text_origin == "pdf_text_layer":
+            if reading is not None:
+                raw_text_format = reading.text_format
+                self._reporter.status("       → Your transcription used (pages not read again)")
+            elif prepared.text_origin == "pdf_text_layer":
                 self._reporter.status("       → Embedded PDF text used (OCR skipped)")
             else:
                 self._reporter.status("       → Text input loaded (OCR skipped)")
@@ -567,29 +604,40 @@ class FileProcessor:
     def _run_correction_or_cache(
         self,
         file: Path,
-        raw_text: str,
+        texts: CurrentTexts,
         preview_img: str,
         ctx: CacheContext,
         anonymized: _LazyAnonymization,
-    ) -> tuple[str, CorrectionReview | None, CacheContext, list[str]]:
+    ) -> tuple[CorrectionReview | None, CacheContext, list[str]]:
+        """Proofread the current transcription, or return the stored answer.
+
+        The teacher's transcription is what is sent: it is what the student wrote, as they read
+        it.  A stored answer is served as it is — the teacher's corrections of it are applied by
+        the caller, which reads the current texts again.
+        """
         if self._correction is None:
-            return "", None, ctx, []
+            return None, ctx, []
 
         cache_state = ctx.state
         if cache_state.correction_done and cache_state.correction_text:
-            self._reporter.status("       → Using cached correction output")
+            if ctx.proofreading_kept:
+                self._reporter.status(
+                    "       → Proofreading kept: you worked on it (made with other settings)"
+                )
+            else:
+                self._reporter.status("       → Using cached correction output")
             review = CorrectionReview.from_dict(cache_state.correction_review)
             warnings = [cache_state.correction_warning] if cache_state.correction_warning else []
-            return cache_state.correction_text, review, ctx, warnings
+            return review, ctx, warnings
 
-        text_format = self._text_format(ctx)
+        text_format = texts.transcription_format
 
         def stopped() -> _StageAbort:
             return _stopped_abort(
                 STOPPED_BEFORE_PROOFREADING,
                 "correction",
                 preview_img=preview_img,
-                raw_text=raw_text,
+                raw_text=texts.transcription,
                 text_format=text_format,
             )
 
@@ -623,13 +671,16 @@ class FileProcessor:
             usable=not (outcome.failed or outcome.fell_back),
         )
         corrected_text = self._restore_pii(
-            outcome.text or "", anon_map, preview_img=preview_img, raw_text=raw_text
+            outcome.text or "",
+            anon_map,
+            preview_img=preview_img,
+            raw_text=texts.transcription,
         )
         review, unmatched = self._restore_review_pii(
             outcome.review,
             anon_map,
             sent_text=text_for_correction,
-            raw_text=raw_text,
+            raw_text=texts.transcription,
             text_format=text_format,
             file_name=file.name,
         )
@@ -654,11 +705,27 @@ class FileProcessor:
                     # extracted text itself, so nothing is duplicated.
                     sent_text=text_for_correction if anon_map else "",
                     sent_map=dict(anon_map) if anon_map else None,
+                    # The transcription the answer was made from, so a proofreading made from
+                    # a text the document no longer has is stale.
+                    source_text=texts.transcription,
                 )
             except OSError as exc:
                 _logger.warning("Could not save correction state for %s: %s", file.name, exc)
+                # The answer is still this run's: the outputs and the review are made from it,
+                # even though the next run will not find it in the cache.
+                ctx = replace(
+                    ctx,
+                    state=replace(
+                        ctx.state,
+                        correction_done=True,
+                        correction_text=corrected_text,
+                        correction_review=review.to_dict() if review is not None else None,
+                        correction_warning=outcome.warning or "",
+                        correction_source_hash=text_identity(texts.transcription),
+                    ),
+                )
 
-        return corrected_text, review, ctx, corr_warnings
+        return review, ctx, corr_warnings
 
     def _restore_review_pii(
         self,
@@ -702,8 +769,7 @@ class FileProcessor:
     def _run_evaluation_or_cache(
         self,
         file: Path,
-        raw_text: str,
-        correction_text: str,
+        texts: CurrentTexts,
         preview_img: str,
         ctx: CacheContext,
         *,
@@ -711,9 +777,13 @@ class FileProcessor:
     ) -> tuple[str, list[str]]:
         """Run the content review, or return the cached one.
 
+        The review is made from the current corrected text — the teacher's where they changed
+        it: it judges the student's content, which their corrections hardly change.
+
         *stored_review* is the ``(review, warning)`` of the proofreading; a file stopped here
         hands them back with the stored correction, so its row keeps them.
         """
+        correction_text = texts.corrected
         if self._evaluation is None or not correction_text:
             return "", []
 
@@ -730,9 +800,9 @@ class FileProcessor:
                 STOPPED_BEFORE_REVIEW,
                 "evaluation",
                 preview_img=preview_img,
-                raw_text=raw_text,
+                raw_text=texts.transcription,
                 correction_text=correction_text if stored else "",
-                text_format=self._text_format(ctx),
+                text_format=texts.transcription_format,
                 correction_review=review if stored else None,
                 correction_warning=review_warning if stored else "",
             )
@@ -749,7 +819,7 @@ class FileProcessor:
         self._begin_sample(SpeedStep.REVIEW)
         try:
             eval_text, eval_warning = self._evaluation.evaluate(
-                text_for_evaluation, self._language, text_format=self._text_format(ctx)
+                text_for_evaluation, self._language, text_format=texts.transcription_format
             )
         except RunStoppedError as exc:
             raise stopped() from exc
@@ -758,7 +828,7 @@ class FileProcessor:
             eval_text or "",
             anon_map,
             preview_img=preview_img,
-            raw_text=raw_text,
+            raw_text=texts.transcription,
             correction_text=correction_text,
         )
         eval_warnings: list[str] = [eval_warning] if eval_warning else []

@@ -16,7 +16,8 @@ from teachers_teammate.domain.proofreading.review import (
 )
 from teachers_teammate.gui import _user_text as txt
 from teachers_teammate.gui.check._masking import Masking
-from teachers_teammate.gui.check._side_panel import GROUP_KEY, SidePanel, rows_of
+from teachers_teammate.domain.teacher_work import WorkStatus
+from teachers_teammate.gui.check._side_panel import GROUP_KEY, SidePanel, _icon_of, rows_of
 from teachers_teammate.infrastructure.state_repository import DocumentStateView
 
 RAW = "Der bunte Hund bellt. Die Katze mauzt."
@@ -34,9 +35,11 @@ def _document(
     *,
     raw: str = RAW,
     corrected: str = CORRECTED,
+    machine: str = "",
     review: CorrectionReview | None = None,
     warning: str = "",
     content_review: str = "",
+    work: WorkStatus | None = None,
 ) -> CheckDocument:
     """Return the Check tab's data for a stored document."""
     return check_document_of(
@@ -55,11 +58,13 @@ def _document(
             original_img="",
             preprocess_steps=(),
             raw_text_format="plain",
+            machine_correction_text=machine,
             correction_review=review,
             correction_warning=warning,
             sent={},
             page_images=(),
             original_images=(),
+            work=work or WorkStatus(),
         )
     )
 
@@ -100,7 +105,7 @@ def test_the_list_has_one_row_per_item(qtbot) -> None:
     panel = _panel(qtbot, doc)
 
     assert panel.row_count == len(doc.items) == 1
-    assert panel._counts.text() == "1 correction"
+    assert panel._counts.text() == "1 correction \u00b7 0 of 1 looked at"
 
 
 @pytest.mark.gui
@@ -117,7 +122,104 @@ def test_the_footer_counts_corrections_and_unclear_passages(qtbot) -> None:
 
     panel = _panel(qtbot, _document(review=review))
 
-    assert panel._counts.text() == "1 correction · 1 unclear"
+    assert panel._counts.text() == "1 correction · 1 unclear · 0 of 2 looked at"
+
+
+@pytest.mark.gui
+def test_the_first_item_is_reported_as_shown_when_the_list_opens(qtbot) -> None:
+    """
+    Given  a document with two items
+    When   the side panel shows it
+    Then   the page is told which item the card shows, so it counts as looked at
+    """
+    review = CorrectionReview(
+        edits=_note(RAW, CORRECTED).edits,
+        unclear=(UnclearNote(4, 9, "bunte", "Farbe unklar.", "bunte Farbe"),),
+    )
+    panel = SidePanel()
+    qtbot.addWidget(panel)
+    shown: list[str] = []
+    panel.item_shown.connect(shown.append)
+
+    panel.set_document(_document(review=review), Masking())
+
+    assert shown == ["edit:1"]
+
+
+@pytest.mark.gui
+def test_a_looked_at_item_has_a_filled_icon(qtbot) -> None:
+    """
+    Given  a document whose correction was looked at
+    When   the side panel shows it
+    Then   its row has the filled icon and the footer counts it
+    """
+    doc = _document(review=_note(RAW, CORRECTED), work=WorkStatus(looked_at=frozenset({"edit:1"})))
+
+    panel = _panel(qtbot, doc)
+
+    assert panel._delegate.looked_at == frozenset({"edit:1"})
+    assert _icon_of(panel._rows[0], expanded=False, looked_at=panel._delegate.looked_at) == "\u25cf"
+    assert panel._counts.text() == "1 correction \u00b7 1 of 1 looked at"
+
+
+@pytest.mark.gui
+def test_an_item_not_looked_at_has_an_open_icon(qtbot) -> None:
+    """
+    Given  a document nothing was looked at yet
+    When   the side panel shows it
+    Then   its row has the open icon
+    """
+    panel = _panel(qtbot, _document(review=_note(RAW, CORRECTED)))
+
+    assert _icon_of(panel._rows[0], expanded=False, looked_at=frozenset()) == "\u25cb"
+
+
+@pytest.mark.gui
+def test_the_folded_minor_changes_count_once(qtbot) -> None:
+    """
+    Given  a document with two spelling corrections
+    When   the side panel shows it, and the group row is looked at
+    Then   the footer counts the group as one thing, not one per correction
+    """
+    panel = _panel(qtbot, _minor_document())
+
+    assert panel._counts.text() == "2 corrections \u00b7 0 of 1 looked at"
+
+    panel.set_looked_at(frozenset({GROUP_KEY}), (1, 1))
+
+    assert panel._counts.text() == "2 corrections \u00b7 1 of 1 looked at"
+
+
+@pytest.mark.gui
+def test_the_teachers_own_changes_are_not_counted(qtbot) -> None:
+    """
+    Given  a document whose only change is the teacher's own
+    When   the side panel shows it
+    Then   the footer counts nothing to look at
+    """
+    panel = _panel(qtbot, _document(review=CorrectionReview(), machine=RAW))
+
+    assert panel._counts.text() == "1 correction"
+
+
+@pytest.mark.gui
+def test_a_reload_keeps_what_was_looked_at(qtbot) -> None:
+    """
+    Given  a side panel whose item was looked at
+    When   the same document is shown again after a stored edit
+    Then   the item is still marked as looked at
+    """
+    doc = _document(review=_note(RAW, CORRECTED))
+    panel = _panel(qtbot, doc)
+    panel.set_looked_at(frozenset({"edit:1"}), (1, 1))
+
+    panel.set_document(
+        _document(review=_note(RAW, CORRECTED), work=WorkStatus(looked_at=frozenset({"edit:1"}))),
+        Masking(),
+    )
+
+    assert panel._delegate.looked_at == frozenset({"edit:1"})
+    assert panel._counts.text() == "1 correction \u00b7 1 of 1 looked at"
 
 
 @pytest.mark.gui
@@ -238,11 +340,11 @@ def test_the_card_of_an_unexplained_correction_says_so(qtbot) -> None:
 @pytest.mark.gui
 def test_the_card_of_the_teachers_own_change_offers_take_out_only(qtbot) -> None:
     """
-    Given  a change the review does not know, with a complete review
+    Given  a change the review does not know and the machine did not make
     When   the side panel shows it
     Then   the card says it is the teacher's change and offers only Take out
     """
-    panel = _panel(qtbot, _document(review=CorrectionReview()))
+    panel = _panel(qtbot, _document(review=CorrectionReview(), machine=RAW))
 
     assert panel._rows[0].item.kind is ItemKind.OWN
     assert txt.YOUR_CHANGE in _card_text(panel)

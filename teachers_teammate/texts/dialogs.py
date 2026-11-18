@@ -178,6 +178,46 @@ def check_without_state(name: str) -> Notice:
     )
 
 
+def checked_not_saved() -> Notice:
+    """Tell the teacher that the *Checked* mark could not be stored."""
+    return Notice(
+        "Not saved",
+        "Your change could not be saved. The document is as it was before.",
+        NoticeKind.WARNING,
+    )
+
+
+def work_not_saved(name: str, *, too_new: bool) -> Notice:
+    """Tell the teacher that what they did to a document could not be stored.
+
+    *too_new* says the stored work was written by a newer version of the app, which this one
+    leaves alone rather than write over what it does not understand.
+    """
+    if too_new:
+        return Notice(
+            "Not saved",
+            f"Your work on {name} was saved by a newer version of the app, so this version does "
+            "not change it. Your change was not saved; update the app to go on working on it.",
+            NoticeKind.WARNING,
+        )
+    return Notice(
+        "Not saved",
+        f"Your change to {name} could not be saved. Check that the folder for your work can be "
+        "written to; the text stays in the window until you close the document.",
+        NoticeKind.WARNING,
+    )
+
+
+def could_not_check_work() -> Notice:
+    """Tell the teacher that nothing was re-run because what they worked on is not known."""
+    return Notice(
+        "Nothing was re-run",
+        "The app could not find out which of these documents you worked on, so it did not "
+        "remove anything. Try again.",
+        NoticeKind.WARNING,
+    )
+
+
 def preprocessing_preview_failed(reason: str) -> Notice:
     """Tell the teacher that the image-preparation preview could not be made."""
     return Notice("Preview failed", reason, NoticeKind.WARNING)
@@ -291,6 +331,88 @@ def documents_leave_computer(
         (Choice("Continue"), cancel()),
         kind=QuestionKind.WARNING,
         checkbox=f"Don't ask again for these settings (change under {WHERE_PRIVACY})",
+    )
+
+
+#: How many document names a question lists before it says how many more there are.
+_LISTED_NAMES = 10
+
+#: The answers of :func:`worked_on_before_run`, :func:`proofread_again` and :func:`read_again`.
+KEEP_MY_CHANGES = "keep"
+PROOFREAD_AGAIN = "proofread-again"
+READ_AGAIN = "read-again"
+CONTINUE = "continue"
+
+
+def _bullets(names: Sequence[str]) -> str:
+    """Return *names* as a bullet list, at most ten of them, then how many more there are."""
+    shown = list(names[:_LISTED_NAMES])
+    rest = len(names) - len(shown)
+    lines = [f"  \u2022 {name}" for name in shown]
+    if rest:
+        lines.append(f"  \u2022 and {rest} more")
+    return "\n".join(lines)
+
+
+def worked_on_before_run(unanswered: Sequence[str], unbound: Sequence[str]) -> Question:
+    """Ask what to do with corrections the teacher worked on before a run replaces them.
+
+    *unanswered* are the documents whose proofreading is stale with these settings and whose
+    corrections the teacher changed or checked; *unbound* are the ones whose corrections belong
+    to no proofreading stored here, which a new one cannot contain.
+    """
+    parts: list[str] = []
+    if unanswered:
+        parts.append(
+            "These documents were proofread with other settings:\n\n"
+            f"{_bullets(unanswered)}\n\n"
+            "Proofreading them again makes new corrections and removes your changes to them."
+        )
+    if unbound:
+        parts.append(
+            "Your changes to the corrections of these documents belong to a proofreading that "
+            f"is not stored here; a new proofreading will not contain them:\n\n{_bullets(unbound)}"
+        )
+    if unanswered:
+        choices = (
+            Choice("Keep my changes", default=True, id=KEEP_MY_CHANGES),
+            Choice("Proofread again", role=ChoiceRole.DESTRUCTIVE, id=PROOFREAD_AGAIN),
+            cancel(default=False),
+        )
+    else:
+        choices = (Choice("Continue", default=True, id=CONTINUE), cancel(default=False))
+    return Question(
+        "You worked on some of these corrections",
+        "\n\n".join(parts),
+        choices,
+        kind=QuestionKind.WARNING,
+    )
+
+
+def proofread_again(names: Sequence[str]) -> Question:
+    """Ask before an explicit re-run of the proofreading drops the teacher's corrections."""
+    return Question(
+        "Proofread again?",
+        "You changed or checked the corrections of:\n\n"
+        f"{_bullets(names)}\n\n"
+        "A new proofreading makes new corrections and removes those changes.",
+        (
+            Choice("Proofread again", role=ChoiceRole.DESTRUCTIVE, id=PROOFREAD_AGAIN),
+            cancel(),
+        ),
+        kind=QuestionKind.WARNING,
+    )
+
+
+def read_again(names: Sequence[str]) -> Question:
+    """Ask before an explicit re-read replaces the teacher's transcription."""
+    return Question(
+        "Read again?",
+        "Reading these documents again replaces what you did to them: your corrected "
+        "transcription, if you made one, and your changes to the corrections. The "
+        f"proofreading made from the old reading is removed:\n\n{_bullets(names)}",
+        (Choice("Read again", role=ChoiceRole.DESTRUCTIVE, id=READ_AGAIN), cancel()),
+        kind=QuestionKind.WARNING,
     )
 
 

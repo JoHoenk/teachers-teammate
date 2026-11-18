@@ -7,6 +7,7 @@ import contextlib
 import dataclasses
 import os
 from pathlib import Path
+import shutil
 import sys
 import threading
 from types import SimpleNamespace
@@ -15,7 +16,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from teachers_teammate.application import service as service_module
-from teachers_teammate.application.commands import ApplicationCommands
+from teachers_teammate.config import Config
+from teachers_teammate.application.commands import ApplicationCommands, WorkNotSavedError
 from teachers_teammate.application.service import (
     AnonymizerConfig,
     DocxExport,
@@ -29,9 +31,36 @@ from teachers_teammate.domain.data_location import STAGE_CORRECTION
 from teachers_teammate.domain.model_listing import ModelListing
 from teachers_teammate.domain.ollama_discovery import OllamaState
 from teachers_teammate.domain.run_summary import RunSummary
+from teachers_teammate.domain.teacher_work import (
+    CorrectionsWork,
+    MachineTexts,
+    current_texts,
+    kept_over,
+    text_identity,
+    with_corrected,
+    with_looked_at,
+    with_transcription,
+)
+from teachers_teammate.infrastructure.file_discovery import FileDiscovery
 from teachers_teammate.infrastructure.onnx.store import ModelStore
 from teachers_teammate.infrastructure.power import KEEP_AWAKE_REASON
-from teachers_teammate.infrastructure.state_repository import DocumentState
+from teachers_teammate.infrastructure.preview_image_store import PreviewImageStore
+from teachers_teammate.infrastructure.state_repository import (
+    DocumentState,
+    OcrResultRecord,
+    StateRepository,
+    compute_file_hash,
+    machine_texts,
+)
+from teachers_teammate.infrastructure.teacher_work_store import (
+    TeacherWorkStore,
+    WorkTooNewError,
+)
+from teachers_teammate.infrastructure.workflow.cache_service import (
+    CacheReconciliationService,
+    compute_correction_config_hash,
+    sent_record,
+)
 from teachers_teammate.interfaces import SleepBlocker
 from tests.conftest import (
     fake_bundle,
@@ -90,6 +119,45 @@ def _minimal_state(tmp_path: Path, source: Path) -> DocumentState:
         source_path=str(source.resolve()),
         source_hash="abc123",
     )
+
+
+def _svc_with_document(
+    tmp_path: Path,
+    *,
+    raw_text: str = "hello world",
+    raw_text_format: str = "plain",
+    corrected: str = "",
+    review: dict | None = None,
+) -> tuple[ProcessingApplicationService, Path]:
+    """A service over a real state store holding one document the machine read."""
+    source = tmp_path / "scan.png"
+    source.write_text("x")
+    repo = StateRepository(tmp_path / "state")
+    state = repo.record_ocr_result(
+        source,
+        repo.load_or_create(source, compute_file_hash(source)),
+        OcrResultRecord(
+            source_hash=compute_file_hash(source),
+            raw_text=raw_text,
+            preview_img="",
+            source_image="",
+            ocr_prompt="",
+            evaluate_prompt="",
+            ocr_config_hash="ocr",
+            preview_config_hash="",
+            raw_text_format=raw_text_format,
+        ),
+    )
+    if corrected:
+        repo.record_correction_result(
+            source,
+            state,
+            correction_text=corrected,
+            correction_config_hash="corr",
+            correction_review=review,
+            source_hash=text_identity(raw_text),
+        )
+    return _make_svc(state_repository_factory=lambda _path: repo), source
 
 
 # ── run_selected / run_preview_only ───────────────────────────────────────
@@ -655,142 +723,281 @@ def test_invalidate_from_stage_static_accumulates_oserror_failures(tmp_path: Pat
     assert str(source.resolve()) in run_ids
 
 
-# ── record_manual_ocr_edit ────────────────────────────────────────────────
+# ── The teacher's texts and decisions ──────────────────────────────────────
 
 
-@pytest.mark.unit
-def test_record_manual_ocr_edit_delegates_to_store(tmp_path: Path) -> None:
-    """
-    Given  a valid source file and a store that returns a state
-    When   record_manual_ocr_edit() is called
-    Then   the store receives the edited text and the updated state is returned
-    """
-    source = tmp_path / "page.png"
-    source.write_text("x")
-    state = _minimal_state(tmp_path, source)
-    updated = MagicMock()
-    mock_store = MagicMock()
-    mock_store.load_or_create.return_value = state
-    mock_store.record_manual_ocr_edit.return_value = updated
-
-    with patch(
-        "teachers_teammate.application.commands.compute_file_hash",
-        return_value="abc123",
-    ):
-        svc = ProcessingApplicationService(
-            state_repository_factory=lambda _: mock_store,
-        )
-        result = svc.record_manual_ocr_edit(
-            make_config(tmp_path),
-            source=source,
-            edited_text="hello world",
-            preview_img="/tmp/preview.png",
-        )
-
-    mock_store.record_manual_ocr_edit.assert_called_once()
-    assert result is updated
-
-
-@pytest.mark.unit
-def test_record_manual_ocr_edit_returns_none_on_oserror(tmp_path: Path) -> None:
-    """
-    Given  compute_file_hash raises OSError (file unreadable)
-    When   record_manual_ocr_edit() is called
-    Then   None is returned without raising
-    """
-    source = tmp_path / "missing.png"
-
-    with patch(
-        "teachers_teammate.application.commands.compute_file_hash",
-        side_effect=OSError("no such file"),
-    ):
-        svc = ProcessingApplicationService(
-            state_repository_factory=lambda _: MagicMock(),
-        )
-        result = svc.record_manual_ocr_edit(
-            make_config(tmp_path),
-            source=source,
-            edited_text="text",
+def _repo_with_document(
+    tmp_path: Path, *, corrected: str = "", review: dict | None = None
+) -> tuple[StateRepository, Path]:
+    """A state store holding one document the machine read, and proofread when asked."""
+    source = tmp_path / "input" / "note.txt"
+    source.parent.mkdir(parents=True, exist_ok=True)
+    source.write_text("hello world")
+    repo = StateRepository(tmp_path / "state")
+    state = repo.record_ocr_result(
+        source,
+        repo.load_or_create(source, compute_file_hash(source)),
+        OcrResultRecord(
+            source_hash=compute_file_hash(source),
+            raw_text="hello world",
             preview_img="",
+            source_image="",
+            ocr_prompt="",
+            evaluate_prompt="",
+            ocr_config_hash="ocr",
+            preview_config_hash="",
+        ),
+    )
+    if corrected:
+        repo.record_correction_result(
+            source,
+            state,
+            correction_text=corrected,
+            correction_config_hash="corr",
+            correction_review=review,
+            source_hash=text_identity("hello world"),
         )
+    return repo, source
 
-    assert result is None
 
-
-# ── record_manual_correction_edit ─────────────────────────────────────────
+def _commands_for(repo: StateRepository, **kwargs) -> ApplicationCommands:
+    """The window's write commands over *repo*, with the teacher's work in a temporary folder."""
+    return ApplicationCommands(
+        discovery=FileDiscovery(),
+        state_store_factory=lambda _config: repo,
+        **kwargs,
+    )
 
 
 @pytest.mark.unit
-def test_record_manual_correction_edit_persists_text(tmp_path: Path) -> None:
+def test_edit_transcription_stores_the_teachers_text(tmp_path: Path) -> None:
     """
-    Given  a valid source file and a store holding an existing OCR-done state
-    When   record_manual_correction_edit() is called
-    Then   the store records the correction and the updated state is returned
+    Given  a document whose transcription the machine read
+    When   edit_transcription() is called with the teacher's text
+    Then   the view carries that text and the cache keeps the machine's own
     """
-    source = tmp_path / "page.png"
-    source.write_text("x")
-    state = dataclasses.replace(_minimal_state(tmp_path, source), ocr_done=True, raw_text="raw")
-    updated = MagicMock()
-    mock_store = MagicMock()
-    mock_store.load_or_create.return_value = state
-    mock_store.record_manual_correction_edit.return_value = updated
+    repo, source = _repo_with_document(tmp_path)
+    commands = _commands_for(repo)
 
-    with patch(
-        "teachers_teammate.application.commands.compute_file_hash",
-        return_value="abc123",
-    ):
-        svc = ProcessingApplicationService(
-            state_repository_factory=lambda _: mock_store,
-        )
-        result = svc.record_manual_correction_edit(
-            make_config(tmp_path),
-            source=source,
-            raw_text="raw",
-            preview_img="",
-            edited_text="corrected",
-        )
+    view = commands.edit_transcription(
+        make_config(tmp_path), source=source, text="hello, world", text_format="plain"
+    )
 
-    mock_store.record_manual_correction_edit.assert_called_once()
-    assert result is updated
+    assert view is not None
+    assert view.raw_text == "hello, world"
+    assert view.work.transcription_changed is True
+    assert repo.load_valid(source).raw_text == "hello world"
 
 
 @pytest.mark.unit
-def test_manual_ocr_edit_survives_reconcile(tmp_path: Path) -> None:
+def test_edit_transcription_resets_the_proofreading_and_drops_the_part(tmp_path: Path) -> None:
     """
-    Given  a manual OCR edit recorded for a source file
+    Given  a document with a proofreading the teacher checked
+    When   edit_transcription() is called
+    Then   the cache's correction stage is reset and the corrections part is gone
+    """
+    repo, source = _repo_with_document(tmp_path, corrected="Hello world.")
+    commands = _commands_for(repo)
+    config = make_config(tmp_path)
+    assert commands.set_checked(config, source=source, checked=True) is not None
+
+    view = commands.edit_transcription(config, source=source, text="hello, world")
+
+    assert view is not None
+    assert view.correction_text == ""
+    assert view.work.corrections_checked is False
+    assert repo.load_valid(source).correction_done is False
+
+
+@pytest.mark.unit
+def test_edit_transcription_keeps_the_transcription_check(tmp_path: Path) -> None:
+    """
+    Given  a transcription the teacher checked
+    When   edit_transcription() is called
+    Then   the check stays: it names the text they were given, and they changed it
+    """
+    repo, source = _repo_with_document(tmp_path)
+    commands = _commands_for(repo)
+    config = make_config(tmp_path)
+    assert commands.set_checked(config, source=source, checked=True) is not None
+
+    view = commands.edit_transcription(config, source=source, text="hello, world")
+
+    assert view is not None
+    assert view.work.transcription_checked is True
+
+
+@pytest.mark.unit
+def test_edit_corrected_text_without_a_proofreading_returns_none(tmp_path: Path) -> None:
+    """
+    Given  a document the machine read but did not proofread
+    When   edit_corrected_text() is called
+    Then   None is returned: there is no answer to bind the corrections to
+    """
+    repo, source = _repo_with_document(tmp_path)
+
+    view = _commands_for(repo).edit_corrected_text(
+        make_config(tmp_path), source=source, text="Hello world."
+    )
+
+    assert view is None
+
+
+@pytest.mark.unit
+def test_edit_corrected_text_stores_the_teachers_corrections(tmp_path: Path) -> None:
+    """
+    Given  a document with a stored proofreading
+    When   edit_corrected_text() is called with the teacher's text
+    Then   the view carries it as the corrected text and the machine's own next to it
+    """
+    repo, source = _repo_with_document(tmp_path, corrected="Hello world.")
+    commands = _commands_for(repo)
+
+    view = commands.edit_corrected_text(make_config(tmp_path), source=source, text="Hello, world!")
+
+    assert view is not None
+    assert view.correction_text == "Hello, world!"
+    assert view.machine_correction_text == "Hello world."
+    assert view.work.corrections_changed is True
+    assert repo.load_valid(source).correction_text == "Hello world."
+
+
+@pytest.mark.unit
+@pytest.mark.use_case("Mark_Document_Checked")
+def test_set_checked_on_a_transcription_stores_a_copy(tmp_path: Path) -> None:
+    """
+    Given  a document the machine read but did not proofread
+    When   set_checked() is called
+    Then   the transcription is checked and stored as a copy of the text it was given
+    """
+    repo, source = _repo_with_document(tmp_path)
+    commands = _commands_for(repo)
+
+    view = commands.set_checked(make_config(tmp_path), source=source, checked=True)
+
+    assert view is not None
+    assert view.work.transcription_checked is True
+    assert view.work.checked_label == "text"
+    assert view.raw_text == "hello world"
+
+
+@pytest.mark.unit
+def test_a_refused_write_is_reported_and_resets_nothing(tmp_path: Path) -> None:
+    """
+    Given  a work store that refuses to write (a file saved by a newer version)
+    When   edit_transcription() is called for a document that has a proofreading
+    Then   WorkNotSavedError says so (too new), and the stored proofreading is untouched
+    """
+    repo, source = _repo_with_document(tmp_path, corrected="Hello world.")
+    work_store = MagicMock()
+    work_store.update.side_effect = WorkTooNewError("newer")
+    commands = _commands_for(repo, work_store=work_store)
+
+    with pytest.raises(WorkNotSavedError) as raised:
+        commands.edit_transcription(make_config(tmp_path), source=source, text="mine")
+
+    assert raised.value.too_new is True
+    assert raised.value.name == source.name
+    stored = repo.load_valid(source)
+    assert stored is not None
+    assert stored.correction_done
+    assert stored.correction_text == "Hello world."
+
+
+@pytest.mark.unit
+def test_a_write_that_fails_is_reported_not_too_new(tmp_path: Path) -> None:
+    """
+    Given  a work store that cannot write (a folder that is not writable)
+    When   the teacher marks the document as checked
+    Then   WorkNotSavedError says so, and says it is not a newer version's file
+    """
+    repo, source = _repo_with_document(tmp_path, corrected="Hello world.")
+    work_store = MagicMock()
+    work_store.update.side_effect = PermissionError("denied")
+    commands = _commands_for(repo, work_store=work_store)
+
+    with pytest.raises(WorkNotSavedError) as raised:
+        commands.set_checked(make_config(tmp_path), source=source, checked=True)
+
+    assert raised.value.too_new is False
+
+
+@pytest.mark.unit
+def test_invalidate_from_stage_drops_the_parts_the_stage_takes(tmp_path: Path) -> None:
+    """
+    Given  a document whose transcription and corrections the teacher worked on
+    When   the proofreading is re-run, then the reading
+    Then   the corrections part goes first, and the transcription part with the reading
+    """
+    repo, source = _repo_with_document(tmp_path, corrected="Hello world.")
+    work_store = TeacherWorkStore(tmp_path / "work")
+    commands = _commands_for(repo, work_store=work_store)
+    config = make_config(tmp_path)
+    commands.edit_transcription(config, source=source, text="hello, world")
+    commands.edit_corrected_text(config, source=source, text="Hello, world!")
+    source_hash = compute_file_hash(source)
+
+    commands.invalidate_from_stage(
+        config, selected_source_ids=[str(source.resolve())], stage="correction"
+    )
+
+    work = work_store.load(source_hash)
+    assert work is not None
+    assert work.corrections is None
+    assert work.transcription is not None
+
+    commands.invalidate_from_stage(config, selected_source_ids=[str(source.resolve())], stage="ocr")
+
+    assert work_store.load(source_hash) is None
+
+
+@pytest.mark.unit
+def test_a_teachers_transcription_survives_reconcile(tmp_path: Path) -> None:
+    """
+    Given  a transcription the teacher fixed
     When   the cache is reconciled against the same (unchanged) runtime config
-    Then   the edited text is preserved rather than flagged stale and wiped
+    Then   the reading is not redone and the teacher's text is still the one the view shows
     """
-    from teachers_teammate.infrastructure.file_discovery import (  # noqa: PLC0415
-        FileDiscovery,
-    )
-    from teachers_teammate.infrastructure.preview_image_store import (  # noqa: PLC0415
-        PreviewImageStore,
-    )
-    from teachers_teammate.infrastructure.state_repository import (  # noqa: PLC0415
-        StateRepository,
-    )
-    from teachers_teammate.infrastructure.workflow.cache_service import (  # noqa: PLC0415
-        CacheReconciliationService,
-    )
-
     source = tmp_path / "note.txt"
     source.write_text("hello")
     cfg = make_config(tmp_path, correction_enabled=False)
 
     repo = StateRepository(tmp_path / "state")
-    commands = ApplicationCommands(discovery=FileDiscovery(), state_store_factory=lambda _c: repo)
-    commands.record_manual_ocr_edit(cfg, source=source, edited_text="MANUAL", preview_img="")
+    work_store = TeacherWorkStore(tmp_path / "work")
+    commands = ApplicationCommands(
+        discovery=FileDiscovery(),
+        state_store_factory=lambda _c: repo,
+        work_store=work_store,
+    )
+    repo.record_ocr_result(
+        source,
+        repo.load_or_create(source, compute_file_hash(source)),
+        OcrResultRecord(
+            source_hash=compute_file_hash(source),
+            raw_text="hello",
+            preview_img="",
+            source_image="",
+            ocr_prompt="",
+            evaluate_prompt="",
+            ocr_config_hash="ocr",
+            preview_config_hash="",
+        ),
+    )
+    commands.edit_transcription(cfg, source=source, text="MANUAL")
 
     recon = CacheReconciliationService(
         state_repo=repo,
         artifact_store=PreviewImageStore(tmp_path / "art"),
         config=cfg,
+        work_store=work_store,
     )
     ctx = recon.prepare(source)
 
     assert ctx.state.ocr_done is True
-    assert ctx.state.raw_text == "MANUAL"
+    assert ctx.state.raw_text == "hello"
+    assert ctx.work is not None
+    assert ctx.work.transcription is not None
+    assert ctx.work.transcription.text == "MANUAL"
 
 
 # ── What was sent ─────────────────────────────────────────────────────────
@@ -804,16 +1011,6 @@ def test_a_privacy_setting_change_keeps_the_proofreading_and_says_so(tmp_path: P
     Then   the proofreading stays done (so the next run asks no corrector and runs no
            anonymizer) and the view says it was made with other privacy settings
     """
-    from teachers_teammate.infrastructure.preview_image_store import (  # noqa: PLC0415
-        PreviewImageStore,
-    )
-    from teachers_teammate.infrastructure.state_repository import (  # noqa: PLC0415
-        StateRepository,
-    )
-    from teachers_teammate.infrastructure.workflow.cache_service import (  # noqa: PLC0415
-        CacheReconciliationService,
-        sent_record,
-    )
 
     source = tmp_path / "note.txt"
     source.write_text("hello")
@@ -825,7 +1022,7 @@ def test_a_privacy_setting_change_keeps_the_proofreading_and_says_so(tmp_path: P
     recon = CacheReconciliationService(state_repo=repo, artifact_store=artifacts, config=off)
     ctx = recon.prepare(source)
     ctx = recon.record_ocr(source, ctx, raw_text="hello", preview_img="", source_image="")
-    recon.record_correction(source, ctx, correction_text="hello corrected")
+    recon.record_correction(source, ctx, correction_text="hello corrected", source_text="hello")
 
     svc = _make_svc(state_repository_factory=lambda _config: repo)
     view = svc.load_views_reconciled(on, [source])[str(source.resolve())]
@@ -853,15 +1050,6 @@ def test_a_stale_stage_shows_no_line_about_how_it_was_sent(tmp_path: Path) -> No
     Then   the view says it is not done and carries no record of how it was sent, since the
            result it describes will be made again
     """
-    from teachers_teammate.infrastructure.preview_image_store import (  # noqa: PLC0415
-        PreviewImageStore,
-    )
-    from teachers_teammate.infrastructure.state_repository import (  # noqa: PLC0415
-        StateRepository,
-    )
-    from teachers_teammate.infrastructure.workflow.cache_service import (  # noqa: PLC0415
-        CacheReconciliationService,
-    )
 
     source = tmp_path / "note.txt"
     source.write_text("hello")
@@ -889,15 +1077,6 @@ def test_views_without_a_stored_result_cost_no_privacy_fingerprint(tmp_path: Pat
     When   its view is loaded
     Then   the privacy fingerprint is never computed, because nothing is there to compare
     """
-    from teachers_teammate.infrastructure.preview_image_store import (  # noqa: PLC0415
-        PreviewImageStore,
-    )
-    from teachers_teammate.infrastructure.state_repository import (  # noqa: PLC0415
-        StateRepository,
-    )
-    from teachers_teammate.infrastructure.workflow.cache_service import (  # noqa: PLC0415
-        CacheReconciliationService,
-    )
 
     source = tmp_path / "note.txt"
     source.write_text("hello")
@@ -926,15 +1105,6 @@ def test_check_document_answers_for_a_stored_document_and_none_without_one(
     When   check_document() is asked for that file and for a file without state
     Then   the first gives the Check tab's data and the second gives None
     """
-    from teachers_teammate.infrastructure.preview_image_store import (  # noqa: PLC0415
-        PreviewImageStore,
-    )
-    from teachers_teammate.infrastructure.state_repository import (  # noqa: PLC0415
-        StateRepository,
-    )
-    from teachers_teammate.infrastructure.workflow.cache_service import (  # noqa: PLC0415
-        CacheReconciliationService,
-    )
 
     source = tmp_path / "note.txt"
     source.write_text("hello")
@@ -1195,12 +1365,8 @@ def test_reader_refusal_lets_a_run_over_text_files_start(tmp_path: Path) -> None
 
 def _reader_service(tmp_path: Path) -> ProcessingApplicationService:
     """Return a service over an empty reader store that finds the files of a real folder."""
-    from teachers_teammate.infrastructure.file_discovery import (  # noqa: PLC0415
-        FileDiscovery as RealDiscovery,
-    )
-
     return _make_svc(
-        model_store=fake_reader_store(tmp_path, installed=False), discovery=RealDiscovery()
+        model_store=fake_reader_store(tmp_path, installed=False), discovery=FileDiscovery()
     )
 
 
@@ -1696,23 +1862,18 @@ def test_detect_gpus_is_served_from_the_shared_probe(monkeypatch) -> None:
 @pytest.mark.unit
 def test_export_docx_keeps_markdown_formatting(tmp_path: Path) -> None:
     """
-    Given  cached Markdown OCR text with a crossed-out word
-    When   export_docx() is called with text_format="markdown"
+    Given  a stored Markdown transcription with a crossed-out word
+    When   export_docx() is called
     Then   the DOCX run for that word is struck through and no markers are written
     """
     from docx import Document  # noqa: PLC0415
 
-    svc = _make_svc()
+    svc, source = _svc_with_document(
+        tmp_path, raw_text="my ~~backpack~~ bag", raw_text_format="markdown"
+    )
     out = tmp_path / "out" / "doc.docx"
 
-    svc.export_docx(
-        tmp_path / "doc.png",
-        "my ~~backpack~~ bag",
-        "",
-        "",
-        out,
-        options=DocxExport(text_format="markdown"),
-    )
+    svc.export_docx(make_config(tmp_path), source, out)
 
     cells = Document(str(out)).tables[0].rows[1].cells
     runs = [run for para in cells[1].paragraphs for run in para.runs]
@@ -1724,7 +1885,7 @@ def test_export_docx_keeps_markdown_formatting(tmp_path: Path) -> None:
 def test_export_docx_quotes_the_stored_review(tmp_path: Path) -> None:
     """
     Given  a stored review that explains one change
-    When   export_docx() is called with that review in the table layout
+    When   export_docx() is called in the table layout
     Then   the explanation is written into the document
     """
     from docx import Document  # noqa: PLC0415
@@ -1746,17 +1907,15 @@ def test_export_docx_quotes_the_stored_review(tmp_path: Path) -> None:
             ),
         )
     )
-    svc = _make_svc()
+    svc, source = _svc_with_document(
+        tmp_path,
+        raw_text="She have a dog.",
+        corrected="She has a dog.",
+        review=review.to_dict(),
+    )
     out = tmp_path / "doc.docx"
 
-    svc.export_docx(
-        tmp_path / "doc.png",
-        "She have a dog.",
-        "She has a dog.",
-        "",
-        out,
-        options=DocxExport(review=review),
-    )
+    svc.export_docx(make_config(tmp_path), source, out)
 
     text = " ".join(para.text for para in Document(str(out)).paragraphs)
     assert '"she" is 3rd person singular.' in text
@@ -1765,53 +1924,89 @@ def test_export_docx_quotes_the_stored_review(tmp_path: Path) -> None:
 @pytest.mark.unit
 def test_export_docx_defaults_to_plain_text(tmp_path: Path) -> None:
     """
-    Given  cached plain text that contains Markdown-looking characters
-    When   export_docx() is called without a text_format
+    Given  a stored plain text that contains Markdown-looking characters
+    When   export_docx() is called
     Then   the characters are written verbatim
     """
     from docx import Document  # noqa: PLC0415
 
-    svc = _make_svc()
+    svc, source = _svc_with_document(tmp_path, raw_text="~~keep~~")
     out = tmp_path / "doc.docx"
 
-    svc.export_docx(tmp_path / "doc.png", "~~keep~~", "", "", out)
+    svc.export_docx(make_config(tmp_path), source, out)
 
     assert "~~keep~~" in Document(str(out)).tables[0].rows[1].cells[1].text
 
 
 @pytest.mark.unit
-def test_manual_correction_edit_stores_the_notation_of_a_synthesised_ocr_text(
-    tmp_path: Path,
-) -> None:
+def test_export_docx_writes_the_teachers_corrections(tmp_path: Path) -> None:
     """
-    Given  no state yet and a Markdown OCR text shown in the GUI
-    When   the user edits the correction (record_manual_correction_edit)
-    Then   the synthesised state stores the OCR text as Markdown, not plain
+    Given  a document whose corrections the teacher changed
+    When   export_docx() is called
+    Then   the file carries their text, not the machine's
     """
-    from teachers_teammate.infrastructure.file_discovery import (  # noqa: PLC0415
-        FileDiscovery,
-    )
-    from teachers_teammate.infrastructure.state_repository import (  # noqa: PLC0415
-        StateRepository,
+    from docx import Document  # noqa: PLC0415
+
+    svc, source = _svc_with_document(tmp_path, raw_text="hello world", corrected="Hello world.")
+    config = make_config(tmp_path)
+    svc.edit_corrected_text(config, source=source, text="Hello, world!")
+    out = tmp_path / "doc.docx"
+
+    svc.export_docx(config, source, out)
+
+    cells = Document(str(out)).tables[0].rows[1].cells
+    assert cells[1].text == "hello world"
+    assert cells[2].text == "Hello, world!"
+
+
+@pytest.mark.unit
+def test_export_docx_writes_the_teachers_transcription(tmp_path: Path) -> None:
+    """
+    Given  a transcription the teacher fixed
+    When   export_docx() is called
+    Then   the file carries their text, not the machine's
+    """
+    from docx import Document  # noqa: PLC0415
+
+    svc, source = _svc_with_document(tmp_path, raw_text="hello world")
+    config = make_config(tmp_path)
+    svc.edit_transcription(config, source=source, text="hello, world")
+    out = tmp_path / "doc.docx"
+
+    svc.export_docx(config, source, out)
+
+    assert Document(str(out)).tables[0].rows[1].cells[1].text == "hello, world"
+
+
+@pytest.mark.unit
+def test_export_docx_refuses_a_document_without_text(tmp_path: Path) -> None:
+    """
+    Given  a document the app has no text for
+    When   export_docx() is called
+    Then   a ValueError says so instead of writing an empty file
+    """
+    svc = _make_svc(state_repository_factory=lambda _path: StateRepository(tmp_path / "state"))
+
+    with pytest.raises(ValueError, match="No OCR text"):
+        svc.export_docx(make_config(tmp_path), tmp_path / "doc.png", tmp_path / "doc.docx")
+
+
+@pytest.mark.unit
+def test_edit_transcription_stores_the_notation_it_was_given(tmp_path: Path) -> None:
+    """
+    Given  a Markdown transcription shown in the GUI
+    When   edit_transcription() is called with text_format="markdown"
+    Then   the view keeps the Markdown notation and the teacher's text
+    """
+    repo, source = _repo_with_document(tmp_path)
+    commands = _commands_for(repo)
+
+    view = commands.edit_transcription(
+        make_config(tmp_path), source=source, text="~~a~~ b!", text_format="markdown"
     )
 
-    source = tmp_path / "note.txt"
-    source.write_text("hello")
-    repo = StateRepository(tmp_path / "state")
-    commands = ApplicationCommands(discovery=FileDiscovery(), state_store_factory=lambda _c: repo)
-
-    state = commands.record_manual_correction_edit(
-        make_config(tmp_path),
-        source=source,
-        raw_text="~~a~~ b",
-        preview_img="",
-        edited_text="~~a~~ b!",
-        raw_text_format="markdown",
-    )
-
-    assert state is not None
-    assert (state.raw_text, state.raw_text_format) == ("~~a~~ b", "markdown")
-    assert state.correction_text == "~~a~~ b!"
+    assert view is not None
+    assert (view.raw_text, view.raw_text_format) == ("~~a~~ b!", "markdown")
 
 
 # ── Run preflight & model-list caching ──────────────────────────────────────
@@ -2674,13 +2869,14 @@ def test_unreachable_server_is_asked_again_on_the_next_check(tmp_path: Path) -> 
 @pytest.mark.unit
 def test_export_text_writes_plain_text_unchanged(tmp_path: Path) -> None:
     """
-    Given  extracted plain text for a scan
+    Given  a stored plain transcription
     When   export_text() is called without anonymization
     Then   the file holds exactly that text, UTF-8 encoded, and the folder is created
     """
+    svc, source = _svc_with_document(tmp_path, raw_text="Grüße, Anna")
     out = tmp_path / "out" / "scan.txt"
 
-    _make_svc().export_text(tmp_path / "scan.png", "Grüße, Anna", out)
+    svc.export_text(make_config(tmp_path), source, out)
 
     assert out.read_text(encoding="utf-8") == "Grüße, Anna"
 
@@ -2688,15 +2884,35 @@ def test_export_text_writes_plain_text_unchanged(tmp_path: Path) -> None:
 @pytest.mark.unit
 def test_export_text_writes_markdown_as_plain_text(tmp_path: Path) -> None:
     """
-    Given  extracted text stored as Markdown
+    Given  a transcription stored as Markdown
     When   export_text() is called
     Then   the file holds the text without Markdown markup
     """
+    svc, source = _svc_with_document(
+        tmp_path, raw_text="my **bold** bag", raw_text_format="markdown"
+    )
     out = tmp_path / "scan.txt"
 
-    _make_svc().export_text(tmp_path / "scan.png", "my **bold** bag", out, text_format="markdown")
+    svc.export_text(make_config(tmp_path), source, out)
 
     assert out.read_text(encoding="utf-8") == "my bold bag"
+
+
+@pytest.mark.unit
+def test_export_text_writes_the_teachers_transcription(tmp_path: Path) -> None:
+    """
+    Given  a transcription the teacher fixed
+    When   export_text() is called
+    Then   the file carries their text, not the machine's
+    """
+    svc, source = _svc_with_document(tmp_path, raw_text="hello world")
+    config = make_config(tmp_path)
+    svc.edit_transcription(config, source=source, text="hello, world")
+    out = tmp_path / "scan.txt"
+
+    svc.export_text(config, source, out)
+
+    assert out.read_text(encoding="utf-8") == "hello, world"
 
 
 @pytest.mark.unit
@@ -2711,14 +2927,14 @@ def test_export_text_anonymizes_with_the_given_language_and_config(tmp_path: Pat
     anonymizer.anonymize.return_value = ("Dear [PERSON_1]", {"[PERSON_1]": "Anna"})
     config = service_module.AnonymizerConfig()
     out = tmp_path / "scan_anonymized.txt"
-    svc = _make_svc()
+    svc, source = _svc_with_document(tmp_path, raw_text="Dear Anna")
 
     with patch(
         "teachers_teammate.infrastructure.anonymizer.SpacyAnonymizer", return_value=anonymizer
     ) as ctor:
         svc.export_text(
-            tmp_path / "scan.png",
-            "Dear Anna",
+            make_config(tmp_path),
+            source,
             out,
             anonymize=True,
             language="German",
@@ -2742,7 +2958,7 @@ def test_export_text_refuses_to_overwrite_the_source(tmp_path: Path) -> None:
     source.write_text("original", encoding="utf-8")
 
     with pytest.raises(ValueError, match="input document"):
-        _make_svc().export_text(source, "extracted", source)
+        _make_svc().export_text(make_config(tmp_path), source, source)
 
     assert source.read_text(encoding="utf-8") == "original"
 
@@ -2759,7 +2975,10 @@ def test_export_text_refuses_to_overwrite_another_input_document(tmp_path: Path)
 
     with pytest.raises(ValueError, match="input document"):
         _make_svc().export_text(
-            tmp_path / "scan.png", "extracted", sibling, protected=[sibling, tmp_path / "x.pdf"]
+            make_config(tmp_path),
+            tmp_path / "scan.png",
+            sibling,
+            protected=[sibling, tmp_path / "x.pdf"],
         )
 
     assert sibling.read_text(encoding="utf-8") == "original"
@@ -2778,13 +2997,14 @@ def test_export_text_anonymizes_markdown_before_converting_it_to_plain_text(
     anonymizer = MagicMock()
     anonymizer.anonymize.return_value = ("my **[PERSON_1]** bag", {"[PERSON_1]": "Anna"})
     out = tmp_path / "scan_anonymized.txt"
+    svc, source = _svc_with_document(
+        tmp_path, raw_text="my **Anna** bag", raw_text_format="markdown"
+    )
 
     with patch(
         "teachers_teammate.infrastructure.anonymizer.SpacyAnonymizer", return_value=anonymizer
     ):
-        _make_svc().export_text(
-            tmp_path / "scan.png", "my **Anna** bag", out, text_format="markdown", anonymize=True
-        )
+        svc.export_text(make_config(tmp_path), source, out, anonymize=True)
 
     anonymizer.anonymize.assert_called_once_with("my **Anna** bag")
     assert out.read_text(encoding="utf-8") == "my [PERSON_1] bag"
@@ -2810,22 +3030,16 @@ def test_text_for_copy_is_what_export_text_writes(
     anonymizer = MagicMock()
     anonymizer.anonymize.side_effect = lambda text: (text.replace("Anna", "[PERSON_1]"), {})
     out = tmp_path / "scan.txt"
-    svc = _make_svc()
+    svc, source = _svc_with_document(tmp_path, raw_text=raw_text, raw_text_format=text_format)
+    config = make_config(tmp_path)
 
     with patch(
         "teachers_teammate.infrastructure.anonymizer.SpacyAnonymizer", return_value=anonymizer
     ):
-        copied = svc.text_for_copy(
-            raw_text, text_format=text_format, anonymize=anonymize, language="German"
-        )
-        svc.export_text(
-            tmp_path / "scan.png",
-            raw_text,
-            out,
-            text_format=text_format,
-            anonymize=anonymize,
-            language="German",
-        )
+        view = svc.load_view(config, source)
+        assert view is not None
+        copied = svc.text_for_copy(view, anonymize=anonymize, language="German")
+        svc.export_text(config, source, out, anonymize=anonymize, language="German")
 
     assert copied == out.read_text(encoding="utf-8")
 
@@ -2879,6 +3093,7 @@ def test_export_text_reports_a_missing_spacy_model(tmp_path: Path) -> None:
     Then   the OSError reaches the caller and no file is written
     """
     out = tmp_path / "scan_anonymized.txt"
+    svc, source = _svc_with_document(tmp_path, raw_text="text")
 
     with (
         patch(
@@ -2887,7 +3102,7 @@ def test_export_text_reports_a_missing_spacy_model(tmp_path: Path) -> None:
         ),
         pytest.raises(OSError, match="model missing"),
     ):
-        _make_svc().export_text(tmp_path / "scan.png", "text", out, anonymize=True)
+        svc.export_text(make_config(tmp_path), source, out, anonymize=True)
 
     assert not out.exists()
 
@@ -3694,7 +3909,7 @@ def test_describe_sent_texts_shows_the_cached_text_that_a_run_sends(tmp_path: Pa
     """
     anonymizer = MagicMock()
     anonymizer.anonymize.return_value = ("[PERSON_1] wrote", {"[PERSON_1]": "Anna"})
-    svc = _make_svc()
+    svc, source = _svc_with_document(tmp_path, raw_text="Anna wrote")
     config = dataclasses.replace(
         make_config(tmp_path),
         correction_enabled=True,
@@ -3706,7 +3921,9 @@ def test_describe_sent_texts_shows_the_cached_text_that_a_run_sends(tmp_path: Pa
         "teachers_teammate.infrastructure.anonymizer.SpacyAnonymizer", return_value=anonymizer
     ):
         svc.build_cached_anonymizer("English", anon_config).anonymize("Anna wrote")
-        report = svc.describe_sent_texts(config, "Anna wrote")
+        view = svc.load_view(config, source)
+        assert view is not None
+        report = svc.describe_sent_texts(config, view)
 
     sent = [section for section in report.sections if section.stage.stage == "correction"]
     assert sent, "a correction step that hides names is part of the report"
@@ -3724,13 +3941,15 @@ def test_describe_sent_texts_without_anonymization_sends_names_as_written(
     When   describe_sent_texts() is asked what is sent
     Then   the text is the extracted text, and no spaCy model is loaded
     """
-    svc = _make_svc()
+    svc, source = _svc_with_document(tmp_path, raw_text="Anna wrote")
     config = dataclasses.replace(
         make_config(tmp_path), correction_enabled=True, anonymization_enabled=False
     )
 
     with patch("teachers_teammate.infrastructure.anonymizer.SpacyAnonymizer") as ctor:
-        report = svc.describe_sent_texts(config, "Anna wrote")
+        view = svc.load_view(config, source)
+        assert view is not None
+        report = svc.describe_sent_texts(config, view)
 
     ctor.assert_not_called()
     sent = [section for section in report.sections if section.stage.stage == "correction"]
@@ -3745,10 +3964,12 @@ def test_describe_sent_texts_carries_the_prompts_the_steps_send(tmp_path: Path) 
     When   describe_sent_texts() builds the report
     Then   the section carries every step's prompt under its title
     """
-    svc = _make_svc()
+    svc, source = _svc_with_document(tmp_path, raw_text="Anna schrieb das.")
     config = dataclasses.replace(make_config(tmp_path, language="German"), correction_enabled=True)
 
-    report = svc.describe_sent_texts(config, "Anna schrieb das.")
+    view = svc.load_view(config, source)
+    assert view is not None
+    report = svc.describe_sent_texts(config, view)
 
     sent = next(s for s in report.sections if s.stage.stage == "correction")
     for title, prompt in svc.proofreading_prompts(config):
@@ -3763,14 +3984,16 @@ def test_describe_sent_texts_adds_the_notes_for_the_ai(tmp_path: Path) -> None:
     When   describe_sent_texts() builds the report
     Then   the notes appear after the prompts, as the requests carry them
     """
-    svc = _make_svc()
+    svc, source = _svc_with_document(tmp_path, raw_text="Anna wrote this.")
     config = dataclasses.replace(
         make_config(tmp_path),
         correction_enabled=True,
         correction_notes="Year 9, second foreign language.",
     )
 
-    report = svc.describe_sent_texts(config, "Anna wrote this.")
+    view = svc.load_view(config, source)
+    assert view is not None
+    report = svc.describe_sent_texts(config, view)
 
     sent = next(s for s in report.sections if s.stage.stage == "correction")
     assert sent.prompt.rstrip().endswith("Year 9, second foreign language.")
@@ -3991,3 +4214,403 @@ def test_first_run_model_settings_respect_the_main_memory() -> None:
     settings = svc.first_run_model_settings("cpu", system_memory_gb=12.0)
     assert settings["correction_model"] == "gemma4:e4b"
     assert settings["evaluate_model"] == "gemma4:e4b"
+
+
+# ── What the teacher worked on, before a run starts ────────────────────────
+
+
+def _proofread(
+    tmp_path: Path, *names: str, model: str = "qwen3.5:9b"
+) -> tuple[Config, StateRepository, list[Path]]:
+    """Return a config, a repository and sources with a stored proofreading each."""
+    cfg = make_config(tmp_path, correction_enabled=True, correction_model=model)
+    repo = StateRepository(tmp_path / "state")
+    recon = CacheReconciliationService(
+        state_repo=repo, artifact_store=PreviewImageStore(tmp_path / "art"), config=cfg
+    )
+    sources: list[Path] = []
+    for name in names:
+        source = tmp_path / name
+        source.write_text(f"text of {name}")
+        ctx = recon.prepare(source)
+        ctx = recon.record_ocr(
+            source, ctx, raw_text=f"text of {name}", preview_img="", source_image=""
+        )
+        recon.record_correction(
+            source,
+            ctx,
+            correction_text=f"corrected {name}",
+            source_text=f"text of {name}",
+        )
+        sources.append(source)
+    return cfg, repo, sources
+
+
+def _change_work(source: Path, change) -> None:
+    """Apply *change* to the work of *source*, as the window's commands do."""
+    TeacherWorkStore().update(compute_file_hash(source), source.name, change)
+
+
+def _machine_of(repo: StateRepository, source: Path):
+    state = repo.load(source)
+    assert state is not None
+    return machine_texts(state)
+
+
+@pytest.mark.unit
+@pytest.mark.use_case("Keep_Worked_On_Corrections")
+def test_worked_on_documents_lists_a_stale_proofreading_the_teacher_worked_on(
+    tmp_path: Path,
+) -> None:
+    """
+    Given  a proofread document whose corrections the teacher changed, and one they only
+           looked at
+    When   the documents of a run with other proofreading settings are looked at
+    Then   the changed one is stale-but-kept and unanswered, and the other is not listed
+    """
+    _made, repo, [worked, looked] = _proofread(tmp_path, "worked.txt", "looked.txt")
+    _change_work(
+        worked,
+        lambda work: with_corrected(
+            work, "corrected by the teacher", current_texts(_machine_of(repo, worked), work)
+        ),
+    )
+    _change_work(
+        looked,
+        lambda work: with_looked_at(
+            work, ["edit:1"], current_texts(_machine_of(repo, looked), work)
+        ),
+    )
+    other = make_config(tmp_path, correction_enabled=True, correction_model="qwen3.5:4b")
+    svc = _make_svc(state_repository_factory=lambda _config: repo)
+
+    result = svc.worked_on_documents(other, [worked, looked], run_proofreads=True)
+
+    assert result.kept_stale == (worked,)
+    assert result.unanswered == (worked,)
+    assert result.unbound == ()
+    assert result.transcribed == ()
+    assert result.empty is False
+
+
+@pytest.mark.unit
+@pytest.mark.use_case("Keep_Worked_On_Corrections")
+def test_worked_on_documents_does_not_ask_again_after_keep_my_changes(tmp_path: Path) -> None:
+    """
+    Given  a document whose corrections the teacher changed and then kept over these settings
+    When   the documents of a run with the same settings are looked at
+    Then   it is still stale-but-kept, but no longer unanswered
+    """
+    _made, repo, [worked] = _proofread(tmp_path, "worked.txt")
+    _change_work(
+        worked,
+        lambda work: with_corrected(
+            work, "corrected by the teacher", current_texts(_machine_of(repo, worked), work)
+        ),
+    )
+    other = make_config(tmp_path, correction_enabled=True, correction_model="qwen3.5:4b")
+    svc = _make_svc(state_repository_factory=lambda _config: repo)
+    expected = compute_correction_config_hash(other, svc.resolved_windows(other))
+
+    _change_work(
+        worked,
+        lambda work: kept_over(work, expected, current_texts(_machine_of(repo, worked), work)),
+    )
+    result = svc.worked_on_documents(other, [worked], run_proofreads=True)
+
+    assert result.kept_stale == (worked,)
+    assert result.unanswered == ()
+
+
+@pytest.mark.unit
+@pytest.mark.use_case("Keep_Worked_On_Corrections")
+def test_worked_on_documents_names_corrections_that_belong_to_no_stored_answer(
+    tmp_path: Path,
+) -> None:
+    """
+    Given  a document whose corrections the teacher changed, and then the results cache is
+           emptied
+    When   the documents of a run that proofreads are looked at
+    Then   the corrections are named as belonging to no stored answer — and not at all when
+           the run does not proofread
+    """
+    made, repo, [worked] = _proofread(tmp_path, "worked.txt")
+    _change_work(
+        worked,
+        lambda work: with_corrected(
+            work, "corrected by the teacher", current_texts(_machine_of(repo, worked), work)
+        ),
+    )
+    shutil.rmtree(tmp_path / "state")
+    svc = _make_svc(state_repository_factory=lambda _config: repo)
+
+    proofreading = svc.worked_on_documents(made, [worked], run_proofreads=True)
+    reading_only = svc.worked_on_documents(made, [worked], run_proofreads=False)
+
+    assert proofreading.unbound == (worked,)
+    assert proofreading.kept_stale == ()
+    assert reading_only.unbound == ()
+
+
+@pytest.mark.unit
+@pytest.mark.use_case("Keep_Worked_On_Corrections")
+def test_worked_on_documents_names_a_transcription_the_teacher_fixed(tmp_path: Path) -> None:
+    """
+    Given  a document whose transcription the teacher fixed
+    When   the documents of a run are looked at
+    Then   it is named as one whose reading a re-read would replace
+    """
+    made, repo, [source] = _proofread(tmp_path, "essay.txt")
+    machine = _machine_of(repo, source)
+    _change_work(
+        source, lambda work: with_transcription(work, "the essay", machine.raw_text_format, machine)
+    )
+    svc = _make_svc(state_repository_factory=lambda _config: repo)
+
+    result = svc.worked_on_documents(made, [source], run_proofreads=True)
+
+    assert result.transcribed == (source,)
+
+
+@pytest.mark.unit
+@pytest.mark.use_case("Keep_Worked_On_Corrections")
+def test_worked_on_documents_is_empty_without_work(tmp_path: Path) -> None:
+    """
+    Given  a proofread document the teacher did nothing to
+    When   the documents of a run are looked at
+    Then   nothing is listed and the result says so
+    """
+    made, repo, [source] = _proofread(tmp_path, "essay.txt")
+    svc = _make_svc(state_repository_factory=lambda _config: repo)
+
+    result = svc.worked_on_documents(made, [source], run_proofreads=True)
+
+    assert result.empty is True
+
+
+@pytest.mark.unit
+@pytest.mark.use_case("Keep_Worked_On_Corrections")
+def test_preflight_reads_a_scan_the_teacher_transcribed_with_recognition_off(
+    tmp_path: Path,
+) -> None:
+    """
+    Given  recognition switched off, a scan whose transcription the teacher stored, and the
+           results cache emptied
+    When   the run preflight is computed with the queued file
+    Then   the scan is not left out and the run is not blocked: its text is the teacher's
+    """
+    svc = _make_svc()
+    cfg = _ollama_config(tmp_path, recognition_enabled=False, correction_enabled=False)
+    scan = tmp_path / "scan.png"
+    scan.write_bytes(b"page")
+    _change_work(
+        scan,
+        lambda work: with_transcription(
+            work,
+            "what the teacher read",
+            "plain",
+            MachineTexts(raw_text="", raw_text_format="plain"),
+        ),
+    )
+
+    with _server_answers([]):
+        result = svc.check_run_preflight(cfg, files=[scan])
+
+    assert result.blocked is False
+    assert result.skipped == ()
+
+
+@pytest.mark.unit
+@pytest.mark.use_case("Keep_Worked_On_Corrections")
+def test_preflight_looks_at_the_teachers_work_only_when_asked(tmp_path: Path) -> None:
+    """
+    Given  a proofread document whose transcription the teacher fixed
+    When   the preflight is computed without, and then with, the question about their work
+    Then   only the second names the document, so a check that is not a run reads no file
+    """
+    made, repo, [source] = _proofread(tmp_path, "essay.txt")
+    machine = _machine_of(repo, source)
+    _change_work(
+        source, lambda work: with_transcription(work, "the essay", machine.raw_text_format, machine)
+    )
+    svc = _make_svc(state_repository_factory=lambda _config: repo)
+
+    with patch.object(svc, "_check_requirements", return_value=RunPreflight()):
+        plain = svc.check_run_preflight(made, files=[source])
+        asked = svc.check_run_preflight(made, files=[source], ask_about_work=True)
+
+    assert plain.worked_on.empty is True
+    assert asked.worked_on.transcribed == (source,)
+
+
+@pytest.mark.unit
+@pytest.mark.use_case("Keep_Worked_On_Corrections")
+def test_checking_a_document_whose_proofreading_was_kept_leaves_it_kept(tmp_path: Path) -> None:
+    """
+    Given  a proofreading the teacher worked on, made with other settings than today's
+    When   the teacher marks the document as checked
+    Then   the view that comes back still has the proofreading done, and says it was kept
+    """
+    _made, repo, [worked] = _proofread(tmp_path, "worked.txt")
+    _change_work(
+        worked,
+        lambda work: with_corrected(
+            work, "corrected by the teacher", current_texts(_machine_of(repo, worked), work)
+        ),
+    )
+    other = make_config(tmp_path, correction_enabled=True, correction_model="qwen3.5:4b")
+    svc = _make_svc(state_repository_factory=lambda _config: repo)
+
+    view = svc.set_checked(other, source=worked, checked=True)
+
+    assert view is not None
+    assert view.correction_done is True
+    assert view.work.kept_over_settings is True
+    assert view.work.corrections_checked is True
+
+
+@pytest.mark.unit
+@pytest.mark.use_case("Keep_Worked_On_Corrections")
+def test_a_stored_mark_shows_a_stage_stale_by_its_settings_as_not_done(tmp_path: Path) -> None:
+    """
+    Given  a proofread document the teacher did nothing to, and other proofreading settings
+    When   a mark that is not work (an unchecked toggle) is stored
+    Then   the view says the proofreading is not done, as the queue and the run would
+    """
+    _made, repo, [source] = _proofread(tmp_path, "essay.txt")
+    other = make_config(tmp_path, correction_enabled=True, correction_model="qwen3.5:4b")
+    svc = _make_svc(state_repository_factory=lambda _config: repo)
+
+    view = svc.set_checked(other, source=source, checked=False)
+
+    assert view is not None
+    assert view.correction_done is False
+    assert view.work.kept_over_settings is False
+
+
+@pytest.mark.unit
+@pytest.mark.use_case("Keep_Worked_On_Corrections")
+def test_corrections_of_no_stored_answer_are_dropped_and_not_asked_about_again(
+    tmp_path: Path,
+) -> None:
+    """
+    Given  corrections the teacher worked on whose proofreading is gone from the cache
+    When   the teacher went on with the run and the corrections are dropped
+    Then   the next look at the run no longer names them
+    """
+    made, repo, [worked] = _proofread(tmp_path, "worked.txt")
+    _change_work(
+        worked,
+        lambda work: with_corrected(
+            work, "corrected by the teacher", current_texts(_machine_of(repo, worked), work)
+        ),
+    )
+    shutil.rmtree(tmp_path / "state")
+    svc = _make_svc(state_repository_factory=lambda _config: repo)
+    assert svc.worked_on_documents(made, [worked], run_proofreads=True).unbound == (worked,)
+
+    svc.drop_unbound_corrections(made, files=[worked])
+
+    assert svc.worked_on_documents(made, [worked], run_proofreads=True).unbound == ()
+    assert TeacherWorkStore().load(compute_file_hash(worked)) is None
+
+
+@pytest.mark.unit
+@pytest.mark.use_case("Keep_Worked_On_Corrections")
+def test_corrections_that_apply_are_not_dropped_as_unbound(tmp_path: Path) -> None:
+    """
+    Given  corrections the teacher worked on whose proofreading is still stored
+    When   the unbound corrections are dropped
+    Then   these are left alone: they belong to a stored answer
+    """
+    made, repo, [worked] = _proofread(tmp_path, "worked.txt")
+    _change_work(
+        worked,
+        lambda work: with_corrected(
+            work, "corrected by the teacher", current_texts(_machine_of(repo, worked), work)
+        ),
+    )
+    svc = _make_svc(state_repository_factory=lambda _config: repo)
+
+    svc.drop_unbound_corrections(made, files=[worked])
+
+    work = TeacherWorkStore().load(compute_file_hash(worked))
+    assert work is not None and work.corrections is not None
+    assert work.corrections.text == "corrected by the teacher"
+
+
+@pytest.mark.unit
+@pytest.mark.use_case("Keep_Worked_On_Corrections")
+def test_keeping_the_changes_stamps_the_settings_on_corrections_that_apply(tmp_path: Path) -> None:
+    """
+    Given  a document whose corrections apply to the stored proofreading
+    When   *Keep my changes* is recorded for it, with the files themselves
+    Then   the corrections remember the settings they were kept over
+    """
+    _made, repo, [worked] = _proofread(tmp_path, "worked.txt")
+    _change_work(
+        worked,
+        lambda work: with_corrected(
+            work, "corrected by the teacher", current_texts(_machine_of(repo, worked), work)
+        ),
+    )
+    other = make_config(tmp_path, correction_enabled=True, correction_model="qwen3.5:4b")
+    svc = _make_svc(state_repository_factory=lambda _config: repo)
+
+    svc.keep_teacher_work(other, files=[worked])
+
+    stamped = TeacherWorkStore().load(compute_file_hash(worked))
+    assert stamped is not None and stamped.corrections is not None
+    assert stamped.corrections.kept_under == compute_correction_config_hash(
+        other, svc.resolved_windows(other)
+    )
+
+
+@pytest.mark.unit
+@pytest.mark.use_case("Keep_Worked_On_Corrections")
+def test_keeping_the_changes_does_not_stamp_corrections_of_another_answer(tmp_path: Path) -> None:
+    """
+    Given  corrections the teacher worked on, written on an answer that is not the stored one
+    When   *Keep my changes* is recorded for the document
+    Then   they are not stamped: they are not what the teacher kept
+    """
+    _made, repo, [worked] = _proofread(tmp_path, "worked.txt")
+    _change_work(
+        worked,
+        lambda work: dataclasses.replace(
+            work, corrections=CorrectionsWork(bound_to="another-answer", text="Anders")
+        ),
+    )
+    other = make_config(tmp_path, correction_enabled=True, correction_model="qwen3.5:4b")
+    svc = _make_svc(state_repository_factory=lambda _config: repo)
+
+    svc.keep_teacher_work(other, files=[worked])
+
+    stamped = TeacherWorkStore().load(compute_file_hash(worked))
+    assert stamped is not None and stamped.corrections is not None
+    assert stamped.corrections.kept_under == ""
+
+
+@pytest.mark.unit
+def test_a_rerun_that_cannot_drop_the_work_resets_nothing(tmp_path: Path) -> None:
+    """
+    Given  a document the teacher worked on, whose work cannot be written
+    When   the proofreading is invalidated for a re-run
+    Then   the failure is reported, the cache is left as it was, and the document is not run
+    """
+    repo, source = _repo_with_document(tmp_path, corrected="Hello world.")
+    work_store = MagicMock()
+    work_store.update.side_effect = PermissionError("denied")
+
+    run_ids, failures, no_files = ApplicationCommands._invalidate_from_stage(
+        selected_source_ids=[str(source.resolve())],
+        stage="correction",
+        files=[source],
+        store=repo,
+        work_store=work_store,
+    )
+
+    assert no_files is False
+    assert len(failures) == 1 and source.name in failures[0]
+    stored = repo.load_valid(source)
+    assert stored is not None and stored.correction_done

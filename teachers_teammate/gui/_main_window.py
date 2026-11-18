@@ -48,11 +48,14 @@ from ..application.check_document import CheckDocument
 from ..application.sent_text import SentTexts
 from ..application.service import (
     ADDON_PRIVACY,
+    NO_TEXT_MESSAGE,
     DocxExport,
     IssueKind,
     ProcessingApplicationService,
     RequirementIssue,
     RunPreflight,
+    WorkedOn,
+    WorkNotSavedError,
 )
 from ..config import (
     DEFAULTS,
@@ -75,7 +78,7 @@ from ..infrastructure.diagnostics import phase as diagnostics_phase
 from ..infrastructure.diagnostics import start_if_requested as start_diagnostics_if_requested
 from ..infrastructure.ollama_install import OLLAMA_DOWNLOAD_URL
 from ..infrastructure.reporting import BATTERY_WARNING, KeepAwakeState
-from ..infrastructure.state_repository import DocumentState
+from ..infrastructure.state_repository import DocumentStateView
 from ..infrastructure.system_locale import system_language
 from ..texts import dialogs as dlg
 from ..texts import privacy
@@ -663,6 +666,8 @@ class MainWindow(QMainWindow):
         self._check.raw_text_edited.connect(self._on_ocr_text_edited)
         self._check.corrected_text_edited.connect(self._on_correction_text_edited)
         self._check.proofread_requested.connect(self._on_check_proofread_requested)
+        self._check.checked_toggled.connect(self._on_checked_toggled)
+        self._check.item_shown.connect(self._on_item_shown)
         self._check.display_anonymized_changed.connect(self._apply_display_anonymized)
         self._check.anonymization_needed.connect(self._on_anonymization_needed)
         self._check.text_zoom_changed.connect(self._store_text_zoom)
@@ -1294,6 +1299,8 @@ class MainWindow(QMainWindow):
             self._results_table.set_correction_review(
                 source_id, view.correction_review, view.correction_warning
             )
+            self._results_table.set_kept(source_id, view.work.kept_over_settings)
+            self._results_table.set_checked(source_id, view.work.checked_label)
             self._results_table.set_text_format(source_id, view.raw_text_format)
             self._results_table.set_sent(source_id, view.sent)
             if view.ocr_done:
@@ -1342,24 +1349,33 @@ class MainWindow(QMainWindow):
         selected = self._results_table.selected_source_ids()
         self._check_requirements_then(
             config,
-            lambda: self._continue_run(config),
+            lambda preflight: self._confirm_teacher_work_then(
+                config, preflight.worked_on, lambda: self._continue_run(config)
+            ),
             recognition=self._recognition_needed(selected),
             files=self._queued_files(selected),
+            ask_about_work=True,
         )
 
     def _check_requirements_then(
         self,
         config: Config,
-        on_ready: Callable[[], None],
+        on_ready: Callable[[RunPreflight], None],
         *,
         recognition: bool = True,
         files: list[Path] | None = None,
+        ask_about_work: bool = False,
     ) -> None:
         """Check the requirements of *config* off the GUI thread, then call *on_ready*.
+
+        *on_ready* receives the preflight result, so a caller can ask about what the run would
+        replace before it starts.
 
         *recognition* says whether the run reads pages; without it the text recognition
         engine is not required (see ``check_run_preflight``).  *files* are the documents the
         run takes: with text recognition switched off, a run over scans only is refused.
+        *ask_about_work* also finds the documents whose corrections the teacher worked on (it
+        reads the files), which only a check before a run needs.
 
         The checks contact Ollama, so they must not block the GUI.  Until the result is
         in, Run is disabled and :meth:`_run_in_progress` reports busy, so no second
@@ -1378,16 +1394,25 @@ class MainWindow(QMainWindow):
         recognised = set(self._recognised_files)
         run_in_background(
             lambda: service.check_run_preflight(
-                config, recognition=recognition, files=files, recognised=recognised
+                config,
+                recognition=recognition,
+                files=files,
+                recognised=recognised,
+                ask_about_work=ask_about_work,
             ),
             lambda result, error: self._on_preflight_done(
-                lambda: self._confirm_data_flow_then(config, on_ready), result, error
+                lambda preflight: self._confirm_data_flow_then(config, lambda: on_ready(preflight)),
+                result,
+                error,
             ),
             owner=self,
         )
 
     def _on_preflight_done(
-        self, on_ready: Callable[[], None], result: object, error: BaseException | None
+        self,
+        on_ready: Callable[[RunPreflight], None],
+        result: object,
+        error: BaseException | None,
     ) -> None:
         """Show the first unmet requirement, or continue with *on_ready*."""
         self._preflight_running = False
@@ -1395,15 +1420,15 @@ class MainWindow(QMainWindow):
         self._progress.setFormat("Idle")
         if error is not None or not isinstance(result, RunPreflight):
             # The check itself failed: do not block; the pipeline reports real problems.
-            on_ready()
+            on_ready(RunPreflight())
             return
         if result.blocked:
             self._show_blocking_preflight(result)
             return
         if result.memory_warning:
-            self._confirm_memory_warning(result.memory_warning, on_ready)
+            self._confirm_memory_warning(result.memory_warning, lambda: on_ready(result))
             return
-        on_ready()
+        on_ready(result)
 
     def _confirm_memory_warning(self, warning: str, on_ready: Callable[[], None]) -> None:
         """Ask before a run whose models do not fit the memory that is free now.
@@ -1460,6 +1485,43 @@ class MainWindow(QMainWindow):
             return
         if answer.checked:
             self._acknowledgements().remember(flow)
+        on_ready()
+
+    def _confirm_teacher_work_then(
+        self, config: Config, worked_on: WorkedOn, on_ready: Callable[[], None]
+    ) -> None:
+        """Ask what to do with corrections the teacher worked on before a run replaces them.
+
+        *Keep my changes* is the default: it records the answer for these settings, so the same
+        settings never ask again and the run keeps the proofreading.  *Proofread again* drops
+        those proofreadings, and with them the corrections written on them.
+        """
+        if not worked_on.unanswered and not worked_on.unbound:
+            on_ready()
+            return
+        question = dlg.worked_on_before_run(
+            [path.name for path in worked_on.unanswered],
+            [path.name for path in worked_on.unbound],
+        )
+        answer = _dialogs.choose(self, question)
+        if answer.choice is None or answer.choice.declines:
+            return
+        service = self._app_service
+        if answer.choice.id == dlg.KEEP_MY_CHANGES:
+            service.keep_teacher_work(config, files=worked_on.unanswered)
+        elif answer.choice.id == dlg.PROOFREAD_AGAIN:
+            _ids, failures, _no_files = service.invalidate_from_stage(
+                config,
+                # The ids the queue is keyed by are the resolved paths, not the paths as listed.
+                selected_source_ids=[str(path.resolve()) for path in worked_on.unanswered],
+                stage="correction",
+            )
+            if failures:
+                _dialogs.notify(self, dlg.cache_invalidation_failed(failures))
+                return
+        # The teacher was told that a new proofreading will not contain these corrections and
+        # went on: they belong to no stored answer, so they are not asked about again.
+        service.drop_unbound_corrections(config, files=worked_on.unbound)
         on_ready()
 
     def _continue_run(self, config: Config) -> None:
@@ -1607,16 +1669,68 @@ class MainWindow(QMainWindow):
         # Re-running recognition reads the pages again; the later stages work on the stored text.
         self._check_requirements_then(
             config,
-            lambda: self._run_stage(config, selected_source_ids, stage),
+            lambda _preflight: self._run_stage(config, selected_source_ids, stage),
             recognition=stage == "ocr" or self._recognition_needed(selected_source_ids),
             files=self._queued_files(selected_source_ids),
         )
 
     def _run_stage(self, config: Config, selected_source_ids: list[str], stage: str) -> None:
-        """Invalidate the cache from *stage* onward and start the worker on the rows."""
+        """Ask what an explicit re-run would drop, then invalidate the cache and start the worker."""
         # A typed edit is stored first: after the invalidation it would be stored on top of the
         # state the run is about to work on, and a run would redo or skip the wrong thing.
         self._check.flush_pending_edit()
+        if stage == "evaluation":
+            # A content review is made from the corrected text; nothing of the teacher's goes.
+            self._invalidate_and_run(config, selected_source_ids, stage)
+            return
+        # The question needs the files hashed, which is not work for the GUI thread.
+        files = self._queued_files(selected_source_ids)
+        service = self._app_service
+        run_in_background(
+            lambda: service.worked_on_documents(
+                config, files, run_proofreads=stage == "correction"
+            ),
+            lambda result, error: self._confirm_rerun_then(
+                config, selected_source_ids, stage, result, error
+            ),
+            owner=self,
+        )
+
+    def _confirm_rerun_then(
+        self,
+        config: Config,
+        selected_source_ids: list[str],
+        stage: str,
+        result: object,
+        error: BaseException | None,
+    ) -> None:
+        """Ask before an explicit re-run drops what the teacher worked on, then run it.
+
+        If what they worked on cannot be found out, nothing is dropped: the question cannot be
+        asked, so the answer cannot be taken for granted.
+        """
+        if error is not None or not isinstance(result, WorkedOn):
+            _dialogs.notify(self, dlg.could_not_check_work())
+            return
+        if stage == "correction":
+            names = result.worked_on
+        else:
+            # Reading again takes both parts of the work: the transcription and the corrections.
+            names = tuple(dict.fromkeys((*result.transcribed, *result.worked_on)))
+        if names:
+            question = (
+                dlg.proofread_again([path.name for path in names])
+                if stage == "correction"
+                else dlg.read_again([path.name for path in names])
+            )
+            if not _dialogs.ask(self, question):
+                return
+        self._invalidate_and_run(config, selected_source_ids, stage)
+
+    def _invalidate_and_run(
+        self, config: Config, selected_source_ids: list[str], stage: str
+    ) -> None:
+        """Invalidate the cache from *stage* onward and start the worker on the rows."""
         run_source_ids, failures, no_files = self._app_service.invalidate_from_stage(
             config,
             selected_source_ids=selected_source_ids,
@@ -1752,24 +1866,22 @@ class MainWindow(QMainWindow):
         explanation_language = str(
             settings.get("explanation_language") or self._config_panel.to_dict().get("language", "")
         )
+        try:
+            config = self._config_panel.to_config()
+        except ValueError as exc:
+            errors.append(str(exc))
+            _dialogs.notify(self, dlg.word_export_failed(errors))
+            return
         for source_id, out_path in targets:
-            _sid, _name, preview_img, raw_txt, corr_txt, _eval = (
-                self._results_table.entry_for_source(source_id)
-            )
-            if not raw_txt:
-                errors.append(f"{Path(source_id).name}: No OCR text — run the pipeline first.")
-                continue
             try:
+                # The texts, their notation and the review come from the stored document, so the
+                # file carries what the Check tab shows.
                 self._app_service.export_docx(
+                    config,
                     Path(source_id),
-                    raw_txt,
-                    corr_txt,
-                    preview_img,
                     out_path,
                     options=DocxExport(
                         docx_format=docx_format,
-                        text_format=self._results_table.text_format_for_source(source_id),
-                        review=self._results_table.review_for_source(source_id),
                         labels_language=explanation_language,
                     ),
                 )
@@ -1787,17 +1899,24 @@ class MainWindow(QMainWindow):
         service = self._app_service
         language = str(self._config_panel.to_dict().get("language") or "English")
         anon_config = self._config_panel.build_anonymizer_config() if anonymize else None
+        try:
+            config = self._config_panel.to_config()
+        except ValueError as exc:
+            errors.append(str(exc))
+            self._show_text_export_errors(errors)
+            return
         # Every input of the run is protected, not just the row's own file: exporting
         # ``essay.png`` as ``essay.txt`` must not replace an ``essay.txt`` that is an input too.
         protected = [Path(sid) for sid in self._results_table.queued_source_ids()]
-        jobs: list[tuple[Path, str, Path, str]] = []
+        jobs: list[tuple[Path, Path]] = []
         for source_id, out_path in targets:
-            raw_txt = self._results_table.entry_for_source(source_id)[3]
-            if not raw_txt.strip():
-                errors.append(f"{Path(source_id).name}: No OCR text — run the pipeline first.")
+            # The text and its notation come from the stored document, so the file carries the
+            # teacher's transcription where they fixed or checked it.
+            view = service.load_view(config, Path(source_id))
+            if view is None or not view.raw_text.strip():
+                errors.append(f"{Path(source_id).name}: {NO_TEXT_MESSAGE}")
             else:
-                text_format = self._results_table.text_format_for_source(source_id)
-                jobs.append((Path(source_id), raw_txt, out_path, text_format))
+                jobs.append((Path(source_id), out_path))
         if not jobs:
             self._show_text_export_errors(errors)
             return
@@ -1809,13 +1928,12 @@ class MainWindow(QMainWindow):
                 service.warm_up_anonymizer(language, anon_config)
             written: list[Path] = []
             failed = list(preflight_errors)
-            for source, raw_txt, out_path, text_format in jobs:
+            for source, out_path in jobs:
                 try:
                     service.export_text(
+                        config,
                         source,
-                        raw_txt,
                         out_path,
-                        text_format=text_format,
                         anonymize=anonymize,
                         language=language,
                         anonymizer_config=anon_config,
@@ -2398,6 +2516,58 @@ class MainWindow(QMainWindow):
         if source_id:
             self._on_stage_run_requested([source_id], "correction")
 
+    def _on_item_shown(self, key: str) -> None:
+        """An item became the one the card shows: record that the teacher looked at it.
+
+        Stored at once, a few KB, and never undone.  Looking at an item is not work a run has to
+        keep, so it does not make the proofreading one to keep.
+        """
+        source_id = self._current_preview_source_id
+        if not source_id or not self._check.mark_looked_at(key):
+            return
+        try:
+            config = self._config_panel.to_config()
+        except ValueError:
+            config = self._config_panel.lookup_config()
+        self._app_service.mark_looked_at(config, source=Path(source_id), keys=[key])
+
+    def _on_checked_toggled(self, checked: bool) -> None:
+        """The teacher pressed *Checked*: store the decision and show what the store says.
+
+        The toggle marks what the document has now — the corrections with a proofreading, the
+        transcription without one — and is its own undo.  It does not move to the next document;
+        ▶ does.  A typed edit is stored first, so the mark names the text the teacher sees.
+        """
+        source_id = self._current_preview_source_id
+        if not source_id:
+            return
+        self._check.flush_pending_edit()
+        source = Path(source_id)
+        try:
+            config = self._config_panel.to_config()
+        except ValueError:
+            # Without folders there is no store to write to: the button goes back to what the
+            # document says, not to what was pressed.
+            _dialogs.notify(self, dlg.checked_not_saved())
+            self._check.refresh_checked()
+            return
+        try:
+            view = self._app_service.set_checked(config, source=source, checked=checked)
+        except WorkNotSavedError as exc:
+            _dialogs.notify(self, dlg.work_not_saved(exc.name, too_new=exc.too_new))
+            self._check.refresh_checked()
+            return
+        if view is None:
+            _dialogs.notify(self, dlg.checked_not_saved())
+            # The button goes back to what the store says, not to what was pressed.
+            self._load_check(source_id)
+            return
+        doc = self._app_service.check_document(config, source)
+        self._sync_row(view, doc)
+        if doc is not None:
+            self._check.update_document(doc)
+        self._update_check_tab()
+
     def _check_position(self, source_id: str) -> tuple[int, int]:
         """Return where *source_id* sits among the documents the Check tab can open."""
         openable = self._results_table.checkable_source_ids()
@@ -2538,25 +2708,28 @@ class MainWindow(QMainWindow):
         if not source_id:
             return
         self._check.flush_pending_edit()  # a typed edit must be in the text that is copied
-        _sid, _name, _img, raw_txt, corr_txt, _eval = self._results_table.entry_for_source(
-            source_id
-        )
-        text = corr_txt if kind.is_corrected else raw_txt
-        text_format = self._results_table.text_format_for_source(source_id) or "plain"
+        try:
+            config = self._config_panel.to_config()
+        except ValueError:
+            return
+        service = self._app_service
+        # The text comes from the stored document, so a copy carries what the Check tab shows.
+        view = service.load_view(config, Path(source_id))
+        if view is None:
+            return
         if not kind.is_anonymized:
             QApplication.clipboard().setText(
-                self._app_service.text_for_copy(text, text_format=text_format)
+                service.text_for_copy(view, corrected=kind.is_corrected)
             )
             self._check.show_copied()
             return
         language = self._config_panel.lookup_language()
         anon_config = self._config_panel.build_anonymizer_config()
-        service = self._app_service
 
         def _copy() -> object:
             return service.text_for_copy(
-                text,
-                text_format=text_format,
+                view,
+                corrected=kind.is_corrected,
                 anonymize=True,
                 language=language,
                 anonymizer_config=anon_config,
@@ -2631,13 +2804,13 @@ class MainWindow(QMainWindow):
     def _store_edit(self, kind: str, edited_text: str) -> None:
         """Store one typed edit of the open document, then show the document it left behind.
 
-        One handler for both texts: they differ only in which record the store writes, and
-        everything after it — the row, the page, the tab label — is the same.
+        One handler for both texts: they differ only in which part of the teacher's work the
+        store writes, and everything after it — the row, the page, the tab label — is the same.
         """
         selected = self._open_source_for_edit()
         if selected is None:
             return
-        source, preview_img, raw_txt, _corr_txt, _eval_txt = selected
+        source, _preview_img, raw_txt, _corr_txt, _eval_txt = selected
         if kind == _EDIT_CORRECTED and not raw_txt:
             return
         try:
@@ -2646,28 +2819,24 @@ class MainWindow(QMainWindow):
             return
         source_id = str(source.resolve())
         text_format = self._results_table.text_format_for_source(source_id)
-        if kind == _EDIT_RAW:
-            state = self._app_service.record_manual_ocr_edit(
-                config,
-                source=source,
-                edited_text=edited_text,
-                preview_img=preview_img,
-                raw_text_format=text_format,
-            )
-        else:
-            state = self._app_service.record_manual_correction_edit(
-                config,
-                source=source,
-                raw_text=raw_txt,
-                preview_img=preview_img,
-                edited_text=edited_text,
-                raw_text_format=text_format,
-            )
-        if state is None:
+        try:
+            if kind == _EDIT_RAW:
+                view = self._app_service.edit_transcription(
+                    config, source=source, text=edited_text, text_format=text_format
+                )
+            else:
+                view = self._app_service.edit_corrected_text(
+                    config, source=source, text=edited_text
+                )
+        except WorkNotSavedError as exc:
+            # What was typed stays in the text view, so the teacher can still copy it.
+            _dialogs.notify(self, dlg.work_not_saved(exc.name, too_new=exc.too_new))
+            return
+        if view is None:
             return
         # One read of the stored state serves the row and the page.
         doc = self._app_service.check_document(config, source)
-        self._sync_row(source_id, state, doc)
+        self._sync_row(view, doc)
         if doc is None:
             return
         if kind == _EDIT_RAW:
@@ -2678,43 +2847,50 @@ class MainWindow(QMainWindow):
             self._check.update_document(doc)
         self._update_check_tab()
 
-    def _sync_row(self, source_id: str, state: DocumentState, doc: CheckDocument | None) -> None:
-        """Push what the store now says about *source_id* into its row.
+    def _sync_row(self, view: DocumentStateView, doc: CheckDocument | None) -> None:
+        """Push what the store now says about *view*'s document into its row.
 
+        *view* carries the texts the document has now — the teacher's where they changed them.
         *doc* is the Check tab's read of the same state; it says how the results were sent.
         """
+        source_id = view.source_id
         self._results_table.set_row_artifacts(
             source_id,
-            state.preview_img,
-            state.raw_text,
-            state.correction_text,
-            state.evaluation_text,
+            view.preview_img,
+            view.raw_text,
+            view.correction_text,
+            view.evaluation_text,
         )
         self._results_table.mark_cached(
             source_id,
-            state.preview_img,
-            state.raw_text,
-            state.correction_text,
-            state.evaluation_text,
-            ocr_done=state.ocr_done,
-            correction_done=state.correction_done,
-            evaluation_done=state.evaluation_done,
+            view.preview_img,
+            view.raw_text,
+            view.correction_text,
+            view.evaluation_text,
+            ocr_done=view.ocr_done,
+            correction_done=view.correction_done,
+            evaluation_done=view.evaluation_done,
         )
-        self._results_table.set_correction_review(source_id, state.review, state.correction_warning)
-        self._results_table.set_text_format(source_id, state.raw_text_format)
+        self._results_table.set_correction_review(
+            source_id, view.correction_review, view.correction_warning
+        )
+        self._results_table.set_kept(source_id, view.work.kept_over_settings)
+        self._results_table.set_text_format(source_id, view.raw_text_format)
+        self._results_table.set_checked(source_id, view.work.checked_label)
         # An edit drops the results it invalidates, and their sent lines with them.
         if doc is not None:
             self._results_table.set_sent(source_id, doc.sent)
 
     def _on_what_is_sent_requested(self, source_id: str) -> None:
         """Open "What is sent for this file…" for one row of the results table."""
-        _sid, name, _img, raw_txt, corr_txt, _eval = self._results_table.entry_for_source(source_id)
+        _sid, name, _img, raw_txt, _corr_txt, _eval = self._results_table.entry_for_source(
+            source_id
+        )
         if not raw_txt.strip():
             _dialogs.notify(self, privacy.what_is_sent_without_text())
             return
 
         config = self._config_panel.lookup_config()
-        text_format = self._results_table.text_format_for_source(source_id) or "plain"
 
         busy = QDialog(self)
         busy.setWindowTitle(privacy.what_is_sent_title(name))
@@ -2725,10 +2901,9 @@ class MainWindow(QMainWindow):
         def _describe() -> object:
             # The stored results say what really went out; the report says what would go next.
             view = service.load_view(config, Path(source_id))
-            stored = view.sent if view is not None else {}
-            return service.describe_sent_texts(
-                config, raw_txt, corr_txt, text_format=text_format, stored=stored
-            )
+            if view is None:
+                return None
+            return service.describe_sent_texts(config, view)
 
         def _on_done(result: object, error: BaseException | None) -> None:
             busy.accept()

@@ -146,6 +146,7 @@ class OCRWorker(QThread):
                     skipped=result.skipped,
                     stopped=result.stopped,
                     stopped_stage=result.stopped_stage,
+                    checked_label=result.checked_label,
                 )
             )
 

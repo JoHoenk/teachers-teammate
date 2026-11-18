@@ -312,6 +312,23 @@ def _models_dir_in_tmp(
 
 
 @pytest.fixture(autouse=True)
+def _teacher_work_in_tmp(
+    tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Point the teacher's work at a fresh temporary folder: no test sees or fills the real one.
+
+    The work is keyed by the document's content, so two tests that use the same ``sample_png``
+    inside one process would otherwise share one work.
+    """
+    try:
+        from teachers_teammate.infrastructure import teacher_work_store  # noqa: PLC0415
+    except ImportError:  # pure-unit targets without the package
+        return
+    folder = tmp_path_factory.mktemp("work")
+    monkeypatch.setattr(teacher_work_store, "default_work_root", lambda: folder)
+
+
+@pytest.fixture(autouse=True)
 def _add_on_folder_in_tmp(
     tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
 ) -> None:

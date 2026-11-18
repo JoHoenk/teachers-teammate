@@ -31,20 +31,22 @@ TAKEN_OUT_TEXT = "#4b5563"
 CHOSEN_BACKGROUND = "#ffe066"
 CHOSEN_TEXT = "#222222"
 
-ICON_CORRECTION = "\u25cf"
-ICON_UNEXPLAINED = "\u25cb"
-ICON_OWN = "\u270b"
-ICON_CHANGED = "\u270e"
-ICON_TAKEN_OUT = "\u21b6"
-ICON_UNCLEAR = "?"
+ICON_LOOKED_AT = "\u25cf"
+"""An item the teacher has looked at."""
 
-_ICONS = {
-    ItemKind.CORRECTION: ICON_CORRECTION,
-    ItemKind.UNEXPLAINED: ICON_UNEXPLAINED,
+ICON_NOT_LOOKED_AT = "\u25cb"
+"""An item the teacher has not looked at yet."""
+
+ICON_OWN = "\u270b"
+"""The teacher's own change: nothing to look at, so it keeps its own mark."""
+
+ICON_TAKEN_OUT = "\u21b6"
+"""A correction the teacher took out: it keeps its own mark too."""
+
+#: The kinds that keep their own icon instead of the looked-at pair.
+_KIND_ICONS = {
     ItemKind.OWN: ICON_OWN,
-    ItemKind.CHANGED: ICON_CHANGED,
     ItemKind.TAKEN_OUT: ICON_TAKEN_OUT,
-    ItemKind.UNCLEAR: ICON_UNCLEAR,
 }
 
 _COLOURS = {
@@ -63,9 +65,12 @@ _UNDERLINE = {
 }
 
 
-def icon(kind: ItemKind) -> str:
-    """The character the list and the card show for *kind*."""
-    return _ICONS[kind]
+def icon(kind: ItemKind, *, looked_at: bool) -> str:
+    """The character the list shows for *kind*: its own mark, or whether it was looked at."""
+    own = _KIND_ICONS.get(kind)
+    if own is not None:
+        return own
+    return ICON_LOOKED_AT if looked_at else ICON_NOT_LOOKED_AT
 
 
 def mark_format(kind: ItemKind, *, minor: bool = False, chosen: bool = False) -> QTextCharFormat:

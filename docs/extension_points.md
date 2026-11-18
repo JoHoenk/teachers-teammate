@@ -173,7 +173,7 @@ card) for steps ② and ③ and the content review. A `RequestProfile` carries o
 (temperature, `think`, `options`) per step; `options` are sampling values besides the
 temperature (`SAMPLING_OPTIONS`), empty = the model's own tag decides. The cache key and the
 evaluation tools use the same `request_profile(tag, provider)` / `review_temperature()`. See
-{doc}`development` → "Choosing writing models: the quality comparison"
+{doc}`development` → "Request profiles: temperatures and prompts per model"
 
 ## New proofreading exchange
 
@@ -191,8 +191,8 @@ The three system prompts (`CORRECT_SYSTEM`, `EXPLAIN_SYSTEM`, `UNCLEAR_SYSTEM`,
 travel in the user message. Step ① variants: `CORRECT_VARIANTS`, adopted per model in
 `STEP_ONE_PROMPTS`, hashed into the cache key by `prompt_identity()`. Answer schemas of steps ②
 and ③: `infrastructure/proofreading/schemas.py`; retry and repair rules:
-`runner.py:StepRunner`. See {doc}`development` → "Choosing writing models: the quality
-comparison"
+`runner.py:StepRunner`. See {doc}`development` → "Request profiles: temperatures and prompts per
+model"
 
 ## Stored review / Word file explanations
 
@@ -213,7 +213,8 @@ in `tools/model_eval/recipes/` that sets `RECIPE`. Nothing lists either: both pa
 modules. An adapter reads only the files it pins. Recipes of whole texts in bands share
 `recipes/_bands.py` (`select_texts`: slots, seed, splits); `gec-2026-12-heldout` is the set for
 confirming a tuning choice on splits the first never reads; each recipe holds its own `Rules`
-and never imports another recipe's numbers.
+and never imports another recipe's numbers. How the tools measure and compare models is in
+`tools/model_eval/README.md`.
 
 ## Third-party licenses
 

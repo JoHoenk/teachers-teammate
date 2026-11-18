@@ -171,7 +171,7 @@ def test_only_a_model_whose_licence_restricts_use_says_so_in_its_row(qtbot) -> N
     dlg = _make_dialog(qtbot)
     reading = dlg._model_items[DEFAULT_OCR_MODEL]
     assert reading.text(4) == "Modified OpenRAIL-M"
-    assert "commercial licence" in reading.toolTip(4)
+    assert "check the licence" in reading.toolTip(4)
     assert "https://" in reading.toolTip(4)
     assert dlg._model_items[DEFAULT_WRITING_MODEL].text(4) == ""
     # Every model's terms are one hover away, even when the row says nothing.

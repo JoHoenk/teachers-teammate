@@ -784,9 +784,9 @@ def test_the_queue_has_a_checked_column_after_the_content_review(qtbot) -> None:
 
     assert headers == [
         "File",
-        "OCR",
-        "Correction",
-        "Evaluation",
+        "Recognition",
+        "Proofreading",
+        "Content review",
         "Checked",
         "Duration",
         "Open",

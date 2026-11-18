@@ -134,9 +134,9 @@ class ResultsTable(QTableWidget):
         self.setHorizontalHeaderLabels(
             [
                 "File",
-                "OCR",
-                "Correction",
-                "Evaluation",
+                txt.RECOGNITION_COLUMN,
+                txt.PROOFREADING_COLUMN,
+                txt.CONTENT_REVIEW_COLUMN,
                 txt.CHECKED_COLUMN,
                 "Duration",
                 "Open",

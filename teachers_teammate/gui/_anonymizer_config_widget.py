@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import sys
 
 from PySide6.QtCore import Qt, QThread, QTimer, Signal
 from PySide6.QtGui import QColor
@@ -25,6 +26,7 @@ from PySide6.QtWidgets import (
 from ..application.service import ProcessingApplicationService
 from ..config import SECONDARY_MODEL_AUTO, SECONDARY_MODEL_NONE
 from ..texts import dialogs as dlg
+from ..texts import privacy
 from . import _dialogs
 from ._model_fetch import _retire_thread, _start_thread
 
@@ -479,8 +481,7 @@ class AnonymizerConfigWidget(QWidget):
             )
         except ImportError as exc:
             self._preview_error.setText(
-                f"spaCy is not installed: {exc}\n"
-                'Install it via the "Install Privacy Addon" button in the main window.'
+                privacy.spacy_missing(str(exc), installed_app=bool(getattr(sys, "frozen", False)))
             )
             self._preview_error.setVisible(True)
             return

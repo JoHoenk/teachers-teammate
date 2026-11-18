@@ -805,7 +805,7 @@ def test_a_download_whose_licence_restricts_use_says_so_in_its_tooltip() -> None
             )
         )
     )
-    assert "commercial licence" in rows._boxes[DEFAULT_OCR_MODEL].toolTip()
+    assert "check the licence" in rows._boxes[DEFAULT_OCR_MODEL].toolTip()
     assert rows._boxes["gemma4:12b"].toolTip() == "gemma4:12b"
 
 

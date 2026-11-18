@@ -2,8 +2,8 @@
 
 A writing model has to pass two gates before the app recommends it. This page says what each gate
 runs, where its input comes from, which checks keep the numbers honest, and how much machine time
-to plan. The commands and the metric definitions are in `docs/development.md` (*Choosing writing
-models*); this page is the overview that points there.
+to plan. The commands and the metric definitions are in `tools/model_eval/README.md`; this page is the
+overview that points there.
 
 | Where | Content |
 | --- | --- |
@@ -152,7 +152,7 @@ Strict F0.5 (exact match with the reference change), GLEU against the unchanged 
 correct sentences left alone, coverage of the sentences the reference changes, recall in the first
 and second half of the text (catches models that stop early), added Markdown marks, failed and
 fallback answers (and how many were cut off), explained share. Metric definitions:
-`docs/development.md`, *Choosing writing models*.
+`tools/model_eval/README.md`, *Gate 2: the quality comparison*.
 
 ### 3.4 Quality checks of the test set and the runs
 

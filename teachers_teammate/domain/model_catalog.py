@@ -409,7 +409,7 @@ class OllamaModelSpec:
     category: ModelCategory
     #: Memory (GB) the model needs in total while running at the app's proofreading window of
     #: 8192 tokens: weights, context and working buffers, on the card and in main memory
-    #: together.  Measured where a model was run (see ``docs/development.md``), otherwise estimated.
+    #: together.  Measured where a model was run (see ``tools/model_eval/README.md``), otherwise estimated.
     memory_gb: float
     #: Approximate download size (GB), shown before the model is pulled.
     download_gb: float
@@ -423,7 +423,7 @@ class OllamaModelSpec:
     #: ``explanations ✓`` badge; it never switches the proofreading mode.
     structured_output: bool = False
     #: Extra memory (GB) per additional 8192 tokens of context window, measured with
-    #: ``verify_model_catalog fit`` at 8192, 16384 and 32768 tokens (see ``docs/development.md``).
+    #: ``verify_model_catalog fit`` at 8192, 16384 and 32768 tokens (see ``tools/model_eval/README.md``).
     #: ``None`` — not measured, or a model the user added — means the window stays at 8192
     #: tokens.  It cannot be derived from ``memory_gb``: how fast a context cache grows depends
     #: on the model's attention design (sliding-window or linear-attention layers grow much
@@ -464,8 +464,12 @@ OLLAMA_CATALOG: tuple[OllamaModelSpec, ...] = (
         licence=ModelLicence(
             name="Modified OpenRAIL-M",
             url="https://huggingface.co/datalab-to/chandra-ocr-2/blob/main/LICENSE",
-            note="Free for research and personal use only: a school or company that uses "
-            "it institutionally needs a commercial licence from Datalab.",
+            # Read from the licence on 2026-11-18: personal use and research are free; other use
+            # is free below $2M revenue or funding and when it does not compete with Datalab.
+            # Schools are not named, so the note asks to check rather than claiming either way.
+            note="Free for personal use and research. Other use is free only for organisations "
+            "under $2M in revenue or funding; a school using it as an institution should "
+            "check the licence.",
         ),
     ),
     OllamaModelSpec(

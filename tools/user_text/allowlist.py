@@ -45,7 +45,7 @@ ALLOWED: dict[str, frozenset[str]] = {
             "Ollama OCR vision model.",
             "Ollama base URL.",
             "Output folder for generated .docx files (cache state is stored separately).",
-            "Path to a TOML config file. Defaults to ocr.toml in the current directory when that file exists.  CLI arguments override file values.",
+            "Path to a TOML config file. Defaults to ocr.toml in the app's settings folder (the file the app window saves) when it exists.  CLI arguments override file values.",
             "Per-image OCR timeout in seconds (Ollama only).",
             "Preprocess all input files and save the resulting images to the temp cache folder, then exit. No OCR, correction, or DOCX generation is performed.",
             "Read scans (images, PDFs without a text layer) with the OCR engine (default).",
@@ -142,7 +142,6 @@ ALLOWED: dict[str, frozenset[str]] = {
             "f'Could not detect installed spaCy models: {msg}'",
             "f'Invalid regex: {exc}'",
             "f'Preview failed: {exc}'",
-            "f'spaCy is not installed: {exc}\\nInstall it via the \"Install Privacy Addon\" button in the main window.'",
         }
     ),
     "teachers_teammate/gui/_config_panel.py": frozenset(

@@ -37,36 +37,35 @@ package "1  Input" as S_IN {
 
 ' Stage 2: Image Preparation
 package "2  Image Preparation  (local)" as S_PRE {
-  component "Grayscale · Adaptive Threshold · CLAHE · None" as PRE <<local>>
+  component "Automatic · Original page" as PRE <<local>>
 }
 
 ' Stage 3: Text Recognition (OCR)
-package "3  Text Recognition (OCR)" as S_OCR {
+package "3  Text Recognition (OCR, local only)" as S_OCR {
   component "Ollama vision model  (local) -- recommended" as OCR_OL <<local>>
   component "Built-in reader (PP-OCR, local) -- no server needed" as OCR_ALT <<local>>
-  component "Cloud vision model  (cloud)" as OCR_CL <<cloud>>
 }
 
 ' Stage 4: Remove Personal Information (optional)
 package "4  Remove Personal Information  (local · optional)" as S_AN {
-  component "AI name detection (spaCy) + pattern matching\n(names · e-mail · phone · IBAN)" as AN <<local>>
+  component "AI name detection (spaCy) + pattern matching\n(names · e-mail · phone · IBAN · address · date)" as AN <<local>>
 }
 
 ' Stage 5: Proofreading (optional)
 package "5  Proofreading  (optional)" as S_CO {
   component "Ollama  (local)" as CO_OL <<local>>
-  component "Cloud Provider  (cloud)\n(OpenAI · Anthropic · Google · others)" as CO_CLD <<cloud>>
+  component "Cloud Provider  (cloud)\n(Mistral (EU) · OpenAI · Anthropic · Google · others)" as CO_CLD <<cloud>>
 }
 
 ' Stage 6: Content Review (optional)
 package "6  Content Review  (optional)" as S_EV {
   component "Ollama  (local)" as EV_OL <<local>>
-  component "Cloud Provider  (cloud)\n(OpenAI · Anthropic · Google · others)" as EV_CLD <<cloud>>
+  component "Cloud Provider  (cloud)\n(Mistral (EU) · OpenAI · Anthropic · Google · others)" as EV_CLD <<cloud>>
 }
 
 ' Stage 7: Output
 package "7  Output" as S_OUT {
-  component "Word Document (.docx)" as OUT <<local>>
+  component "Word document (.docx) · text files" as OUT <<local>>
 }
 
 ' Pipeline flow

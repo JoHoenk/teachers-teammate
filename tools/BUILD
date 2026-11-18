@@ -42,8 +42,7 @@ py_library(
 # that needs a server, which sits behind the ChatPort seam (ports.py), so the rules are tested
 # without Ollama.
 # protocol.json is the version file of the request side (eval_version and its fingerprint); it is
-# data, so a run and the export read the same file.  See docs/development.md → "Ollama model
-# catalog".
+# data, so a run and the export read the same file.  See tools/model_eval/README.md.
 py_library(
     name = "model_eval",
     srcs = glob(["model_eval/**/*.py"]),
@@ -94,8 +93,8 @@ py_binary(
 )
 
 # Developer tool (needs a running Ollama server; not run in CI) that compares writing models on
-# learner texts through the app's own corrector. See docs/development.md → "Ollama model
-# catalog". Dependencies as for verify_model_catalog: the corrector pulls in pydantic and the
+# learner texts through the app's own corrector. See tools/model_eval/README.md.
+# Dependencies as for verify_model_catalog: the corrector pulls in pydantic and the
 # ocr_formats parsers (lxml, markdown_it), the client needs ollama.
 py_binary(
     name = "compare_writing_models",

@@ -86,7 +86,7 @@ def test_only_a_licence_that_restricts_use_gets_a_sentence() -> None:
     When   the sentence for a model's row is asked for
     Then   the restrictive one has one, the permissive one and an unknown tag have none
     """
-    assert "commercial licence" in licence_note(DEFAULT_OCR_MODEL)
+    assert "check the licence" in licence_note(DEFAULT_OCR_MODEL)
     assert licence_note(DEFAULT_WRITING_MODEL) == ""
     assert licence_note("a-model-the-app-does-not-know:latest") == ""
 

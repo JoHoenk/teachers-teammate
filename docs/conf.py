@@ -45,6 +45,7 @@ plantuml_output_format = "svg_img"
 
 html_theme = "furo"
 html_title = "Teacher's Teammate"
+html_logo = "assets/teachers_teammate.png"
 html_favicon = "assets/teachers_teammate.png"
 html_static_path = ["_static"]
 html_css_files = ["plantuml.css"]

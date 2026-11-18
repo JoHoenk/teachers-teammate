@@ -361,7 +361,7 @@ jobs:
       matrix:
         # The oldest runner GitHub still offers and the build's own (macos-14 is retired, so the
         # 14.4 floor is on the VM list). If GitHub retires one, the oldest left takes its place
-        # and the "tested on" line in docs/deployment.md follows.
+        # and the list of test systems in docs/deployment.md follows.
         os: [macos-15, macos-26]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7

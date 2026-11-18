@@ -26,7 +26,8 @@ asks you to allow the app under **System Settings → Privacy & Security → Ope
 
 **Linux** packages are not signed. Every release ships a `SHA256SUMS` file next to the
 downloads, and every installer carries a build-provenance attestation that GitHub issues for the
-workflow run that produced it — see *Check your download* on the [overview page](index.md).
+workflow run that produced it — see *Checksums and provenance* in the
+[deployment guide](deployment.md).
 
 ## Where the files come from
 

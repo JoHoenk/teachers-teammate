@@ -82,6 +82,99 @@ def test_status_text_per_reason(detection: HardwareDetection, fragment: str) -> 
     assert fragment in wording.detection_status_text(detection)
 
 
+@pytest.mark.use_case("Model_Recommendation_By_Hardware")
+@pytest.mark.parametrize(
+    ("detection", "expected"),
+    [
+        (
+            HardwareDetection(
+                profile="cpu",
+                reason=DetectionReason.GPU_DETECTED,
+                gpu_name="RTX 3050",
+                memory_gb=4.0,
+            ),
+            "Found: RTX 3050 with 4 GB graphics memory, so models for a basic computer "
+            "are suggested.",
+        ),
+        (
+            HardwareDetection(
+                profile="8gb",
+                reason=DetectionReason.GPU_DETECTED,
+                gpu_name="RTX 3060",
+                memory_gb=12.0,
+            ),
+            "Found: RTX 3060 with 12 GB graphics memory, so models for a graphics card with "
+            "about 8 GB are suggested.",
+        ),
+        (
+            HardwareDetection(
+                profile="8gb",
+                reason=DetectionReason.GPU_DETECTED,
+                gpu_name="RTX 4060",
+                memory_gb=8.0,
+            ),
+            "Found: RTX 4060 with 8 GB graphics memory.",
+        ),
+    ],
+)
+def test_the_status_line_names_the_tier_only_when_the_figure_does_not(
+    detection: HardwareDetection, expected: str
+) -> None:
+    """
+    Given  a graphics card whose memory maps to a profile of its own, or to a smaller one
+    When   the status line is built
+    Then   the tier is named only when the figure alone does not say it: a 4 GB card gives the
+           profile of a basic computer, a 12 GB card the one of an 8 GB card, and an 8 GB card
+           needs no second sentence
+    """
+    assert wording.detection_status_text(detection) == expected
+
+
+@pytest.mark.use_case("Model_Recommendation_By_Hardware")
+def test_the_status_line_names_the_memory_free_right_now() -> None:
+    """
+    Given  a detection that knows the computer's memory, and the memory free right now
+    When   the status line is built
+    Then   both figures are named; without the free one the sentence is the same as before
+    """
+    detection = HardwareDetection(
+        profile="8gb",
+        reason=DetectionReason.GPU_DETECTED,
+        gpu_name="RTX 4060",
+        memory_gb=8.0,
+        system_memory_gb=16.0,
+    )
+
+    assert wording.detection_status_text(detection, available_memory_gb=9.0) == (
+        "Found: RTX 4060 with 8 GB graphics memory. Computer memory: 16 GB, 9 GB free right now."
+    )
+    assert wording.detection_status_text(detection) == (
+        "Found: RTX 4060 with 8 GB graphics memory. Computer memory: 16 GB."
+    )
+
+
+@pytest.mark.use_case("Model_Recommendation_By_Hardware")
+def test_a_second_graphics_card_is_named_after_the_one_that_decides() -> None:
+    """
+    Given  a computer with two graphics cards
+    When   the status line is built
+    Then   the card that decides the profile comes first and the other is named after it, so a
+           teacher who knows their card sees that it was found
+    """
+    detection = HardwareDetection(
+        profile="8gb",
+        reason=DetectionReason.GPU_DETECTED,
+        gpu_name="NVIDIA GeForce RTX 4060",
+        memory_gb=8.0,
+        other_gpu_names=("Intel UHD Graphics",),
+    )
+
+    text = wording.detection_status_text(detection)
+
+    assert text.startswith("Found: NVIDIA GeForce RTX 4060 with 8 GB graphics memory.")
+    assert text.endswith(" (also found: Intel UHD Graphics)")
+
+
 # ── too-large wording: never presents the budget as the user's memory ───────
 
 

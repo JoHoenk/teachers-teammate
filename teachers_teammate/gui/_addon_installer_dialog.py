@@ -68,7 +68,7 @@ class _InstallThread(QThread):
             )
             self.finished_ok.emit()
         except Exception as exc:  # noqa: BLE001  # surface any pip/subprocess failure to the UI via the error signal
-            self.finished_err.emit(str(exc))
+            self.finished_err.emit(txt.addon_error_text(exc))
 
 
 class AddonInstallerDialog(QDialog):
@@ -355,7 +355,7 @@ class _ModelDownloadThread(QThread):
             )
             self.finished_ok.emit()
         except Exception as exc:  # noqa: BLE001  # surface any download/subprocess failure to the UI via the error signal
-            self.finished_err.emit(str(exc))
+            self.finished_err.emit(txt.addon_error_text(exc))
 
 
 class SpacyModelDownloadDialog(QDialog):

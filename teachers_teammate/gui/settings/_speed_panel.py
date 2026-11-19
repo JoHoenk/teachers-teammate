@@ -1,9 +1,10 @@
 """The speed test and the time estimates, on the *This computer* page.
 
-A button, one row per step that runs on Ollama, the example of a class set, and the lines that
-qualify the figures.  The speed of a computer is a fact about the computer, so the test lives
-with the other facts about it (its power, its graphics card, its server); the *AI models* page,
-where the models are chosen, shows the result read-only (:class:`SpeedHint`).
+The note and the button, one row per step that runs on Ollama, the example of a class set, and
+the lines that qualify the figures.  The speed of a computer is a fact about the computer, so
+the test lives with the other facts about it (its power, its graphics card, its server); the
+*AI models* page, where the models are chosen, shows the class-set time read-only
+(:class:`~._computer_box.SpeedLine`).
 
 Three rules shape it:
 
@@ -16,8 +17,10 @@ Three rules shape it:
   (``cached_only``); the server's version and model digests, which decide whether a measurement
   is still current, are fetched in the background and only then redraw the block.
 
-While no step uses Ollama the block says so instead: text recognition with the built-in
-reader has no AI model to measure, and a step on an online service is not measured at all.
+A step that runs here but was never measured keeps its row and says so: dropping it would make
+the class set look shorter than it is.  While no step uses Ollama the block says so instead:
+text recognition with the built-in reader has no AI model to measure, and a step on an online
+service is not measured at all.
 """
 
 from __future__ import annotations
@@ -26,8 +29,9 @@ from collections.abc import Callable, Mapping
 import threading
 from typing import Protocol
 
-from PySide6.QtCore import Signal
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
+    QGridLayout,
     QHBoxLayout,
     QLabel,
     QProgressBar,
@@ -36,8 +40,14 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ...application.speed_estimates import CLASS_SET_FILES, SpeedChoices, SpeedSummary
-from ...domain.model_catalog import HardwareDetection
+from ...application.speed_estimates import (
+    CLASS_SET_FILES,
+    SpeedChoices,
+    SpeedSummary,
+    StepEstimate,
+    UnmeasuredStep,
+)
+from ...domain.model_catalog import HardwareDetection, find_spec, short_model_name
 from ...domain.performance_estimate import SpeedStep, StepOutcome
 from ...exceptions import RunStoppedError
 from ...infrastructure.performance_probe import ProbeResult
@@ -47,10 +57,10 @@ from .._hardware_profile_selector import HardwareProfileSelector
 
 #: Left margin of the step rows, so they read as part of the heading above them.
 _ROW_INDENT = 12
-#: Width of the step-name column, so the model names line up.
-_NAME_WIDTH = 110
 #: Width of the model column, so the figures line up.
 _MODEL_WIDTH = 190
+#: How a model name that does not fit its column is shortened.
+_ELIDE = Qt.TextElideMode.ElideRight
 _HINT_STYLE = "color: #888; font-size: 11px;"
 _WARNING_STYLE = "color: #e67e22; font-size: 11px;"
 
@@ -80,24 +90,40 @@ class _SpeedService(Protocol):
     def refresh_speed_server_facts(self, ollama_url: str) -> None: ...
 
 
-class _StepRow(QWidget):
-    """One line of the block: the step, its model, the time per page and where it ran."""
+class _StepRow:
+    """The labels of one step, placed in the panel's one grid so the columns line up.
 
-    def __init__(self, step: SpeedStep, parent: QWidget | None = None) -> None:
-        super().__init__(parent)
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(_ROW_INDENT, 0, 0, 0)
+    A row of its own layout would widen only itself: a long model tag would push its own
+    figures to the right and leave the other rows behind.
+    """
+
+    def __init__(self, step: SpeedStep, grid: QGridLayout, line: int) -> None:
         self.name = QLabel(txt.speed_step_name(step))
-        self.name.setMinimumWidth(_NAME_WIDTH)
         self.model = QLabel("")
-        self.model.setMinimumWidth(_MODEL_WIDTH)
+        self.model.setFixedWidth(_MODEL_WIDTH)
         self.per_page = QLabel("")
+        self.memory = QLabel("")
+        self.memory.setStyleSheet(_HINT_STYLE)
         self.note = QLabel("")
         self.note.setStyleSheet(_HINT_STYLE)
-        layout.addWidget(self.name)
-        layout.addWidget(self.model)
-        layout.addWidget(self.per_page, stretch=1)
-        layout.addWidget(self.note)
+        self._labels = (self.name, self.model, self.per_page, self.memory, self.note)
+        for column, label in enumerate(self._labels):
+            grid.addWidget(label, line, column)
+
+    def set_visible(self, visible: bool) -> None:
+        """Show or hide the whole row."""
+        for label in self._labels:
+            label.setVisible(visible)
+
+    def is_hidden(self) -> bool:
+        """Return whether the row is hidden."""
+        return self.name.isHidden()
+
+    def set_model(self, tag: str) -> None:
+        """Show *tag* as a short name, elided to the column, with the full tag in the tooltip."""
+        short = short_model_name(tag)
+        self.model.setText(self.model.fontMetrics().elidedText(short, _ELIDE, _MODEL_WIDTH))
+        self.model.setToolTip(tag)
 
 
 class SpeedPanel(QWidget):
@@ -158,9 +184,12 @@ class SpeedPanel(QWidget):
         self._selector.resolved_changed.connect(lambda _detection: self.refresh())
 
     def _build_body(self, layout: QVBoxLayout) -> None:
-        """Fill the body: the button, the step rows, the class set and the lines of text."""
+        """Fill the body: the note and the button, the step rows, the class set and the lines."""
         header = QHBoxLayout()
-        header.addStretch(1)
+        self._note = QLabel(txt.SPEED_NOTE)
+        self._note.setWordWrap(True)
+        self._note.setStyleSheet(_HINT_STYLE)
+        header.addWidget(self._note, stretch=1)
         self._button = QPushButton(txt.SPEED_TEST)
         self._button.setToolTip(txt.SPEED_TEST_TOOLTIP)
         self._button.clicked.connect(self._on_button)
@@ -181,12 +210,16 @@ class SpeedPanel(QWidget):
         layout.addWidget(self._busy_bar)
         self._step_started.connect(self._on_step_started)
 
+        grid = QGridLayout()
+        grid.setContentsMargins(_ROW_INDENT, 0, 0, 0)
+        grid.setHorizontalSpacing(12)
+        grid.setColumnStretch(2, 1)  # the per-page figure takes the room the others leave
+        layout.addLayout(grid)
         self._rows: dict[SpeedStep, _StepRow] = {}
-        for step in SpeedStep:
-            row = _StepRow(step, self)
-            row.setVisible(False)
+        for line, step in enumerate(SpeedStep):
+            row = _StepRow(step, grid, line)
+            row.set_visible(False)
             self._rows[step] = row
-            layout.addWidget(row)
 
         self._class_set = QLabel("")
         self._class_set.setVisible(False)
@@ -340,22 +373,16 @@ class SpeedPanel(QWidget):
     def _draw(self, summary: SpeedSummary) -> None:
         for step, row in self._rows.items():
             estimate = summary.step(step)
-            row.setVisible(estimate is not None)
-            if estimate is None:
-                continue
-            row.model.setText(estimate.model)
-            if estimate.outcome is StepOutcome.TOO_SLOW:
-                row.per_page.setText(txt.SPEED_TOO_SLOW)
-                row.per_page.setToolTip(estimate.message)
-            else:
-                row.per_page.setText(
-                    txt.speed_per_page(estimate.per_page.low_s, estimate.per_page.high_s)
-                )
-                row.per_page.setToolTip("")
-            row.note.setText(self._card_note(estimate.on_card))
+            missing = summary.unmeasured_step(step)
+            row.set_visible(estimate is not None or missing is not None)
+            if estimate is not None:
+                self._draw_measured(row, estimate)
+            elif missing is not None:
+                self._draw_unmeasured(row, missing)
 
         if summary.class_set is None:
-            self._class_set.setVisible(False)
+            self._class_set.setText(txt.SPEED_CLASS_SET_TEST)
+            self._class_set.setVisible(bool(summary.steps or summary.unmeasured))
         else:
             self._class_set.setText(
                 txt.speed_class_set(
@@ -371,6 +398,30 @@ class SpeedPanel(QWidget):
             or txt.SPEED_NEVER_MEASURED
         )
         self._date.setVisible(True)
+
+    def _draw_measured(self, row: _StepRow, estimate: StepEstimate) -> None:
+        """Draw a step that was measured here."""
+        row.set_model(estimate.model)
+        if estimate.outcome is StepOutcome.TOO_SLOW:
+            row.per_page.setText(txt.SPEED_TOO_SLOW)
+            row.per_page.setToolTip(estimate.message)
+        else:
+            row.per_page.setText(
+                txt.speed_per_page(estimate.per_page.low_s, estimate.per_page.high_s)
+            )
+            row.per_page.setToolTip("")
+        row.memory.setText(_memory_text(estimate.model))
+        row.note.setText(self._card_note(estimate.on_card))
+
+    def _draw_unmeasured(self, row: _StepRow, missing: UnmeasuredStep) -> None:
+        """Draw a step that runs here but was never measured: the row stays, and says so."""
+        row.set_model(missing.model)
+        row.per_page.setText(txt.speed_unmeasured_label(missing.band))
+        row.per_page.setToolTip(
+            "" if missing.band is None else txt.speed_expected_note(missing.band)
+        )
+        row.memory.setText(_memory_text(missing.model))
+        row.note.setText("")
 
     def _draw_warnings(self, summary: SpeedSummary) -> None:
         detection = self._hardware()
@@ -415,6 +466,18 @@ class SpeedPanel(QWidget):
     def _hardware(self) -> HardwareDetection | None:
         """Return this computer as the page resolved it, or ``None`` while it is unknown."""
         return self._selector.resolved()
+
+
+def _memory_text(tag: str) -> str:
+    """Return the memory *tag* needs, or ``""`` when the catalog does not know the model.
+
+    Memory rather than download size: it is what decides whether the model fits on the card,
+    and so how fast it runs.  After the download, the download size says nothing.
+    """
+    spec = find_spec(tag)
+    if spec is None or spec.memory_gb is None:
+        return ""
+    return txt.speed_memory(spec.memory_gb)
 
 
 def _card_text(detection: HardwareDetection | None) -> str:

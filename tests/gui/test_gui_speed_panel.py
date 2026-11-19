@@ -15,6 +15,7 @@ from teachers_teammate.application.speed_estimates import (
     SpeedSource,
     SpeedSummary,
     StepEstimate,
+    UnmeasuredStep,
 )
 from teachers_teammate.domain.model_catalog import DetectionReason, HardwareDetection
 from teachers_teammate.domain.performance_estimate import (
@@ -144,6 +145,11 @@ def _step(**overrides: object) -> StepEstimate:
     return StepEstimate(**values)  # ty: ignore[invalid-argument-type]  # built from the fields above
 
 
+def _unmeasured(step: SpeedStep, model: str, band: SpeedBand | None) -> UnmeasuredStep:
+    """Return the row of a step that runs here but was never measured."""
+    return UnmeasuredStep(step=step, model=model, band=band)
+
+
 def _summary(**overrides: object) -> SpeedSummary:
     """Return a summary of one measured proofreading step and its class set."""
     values: dict[str, object] = {
@@ -189,12 +195,117 @@ def test_the_panel_shows_one_row_per_measured_step(qtbot) -> None:
     panel = _panel(qtbot, _FakeService(_summary(), _choices()))
 
     row = panel._rows[SpeedStep.PROOFREADING]
-    assert not row.isHidden()
+    assert not row.is_hidden()
     assert row.model.text() == "gemma4:e4b"
     assert row.per_page.text() == "about 25-70 s per page"
     assert row.note.text() == txt.SPEED_ON_CARD
-    assert panel._rows[SpeedStep.READING].isHidden()
-    assert panel._rows[SpeedStep.REVIEW].isHidden()
+    assert panel._rows[SpeedStep.READING].is_hidden()
+    assert panel._rows[SpeedStep.REVIEW].is_hidden()
+
+
+@pytest.mark.gui
+def test_the_step_rows_share_their_columns(qtbot) -> None:
+    """
+    Given  a measurement of two steps, one of them with a long model tag
+    When   the panel is drawn
+    Then   the figures of both rows start at the same place, because one grid holds them all
+    """
+    summary = _summary(
+        steps=(
+            _step(),
+            _step(
+                step=SpeedStep.READING,
+                model="hf.co/org/chandra-ocr-GGUF:Q4_K_M",
+                per_page=TimeRange(5.0, 9.0),
+            ),
+        )
+    )
+    panel = _panel(qtbot, _FakeService(summary, _choices()))
+
+    proofreading = panel._rows[SpeedStep.PROOFREADING]
+    reading = panel._rows[SpeedStep.READING]
+    qtbot.waitUntil(lambda: reading.per_page.x() > 0, timeout=5000)
+    assert reading.per_page.x() == proofreading.per_page.x()
+    assert reading.memory.x() == proofreading.memory.x()
+
+
+@pytest.mark.gui
+def test_a_long_model_tag_is_shortened_and_kept_whole_in_the_tooltip(qtbot) -> None:
+    """
+    Given  a step whose model is a long ``hf.co/…`` tag
+    When   the panel is drawn
+    Then   the row shows the short name and the tooltip the full tag
+    """
+    tag = "hf.co/org/chandra-ocr-GGUF:Q4_K_M"
+    summary = _summary(steps=(_step(model=tag),))
+    panel = _panel(qtbot, _FakeService(summary, _choices()))
+
+    row = panel._rows[SpeedStep.PROOFREADING]
+    assert row.model.text() == "chandra-ocr"
+    assert row.model.toolTip() == tag
+
+
+@pytest.mark.gui
+def test_a_row_names_the_memory_its_model_needs(qtbot) -> None:
+    """
+    Given  a measured step whose model the catalog knows
+    When   the panel is drawn
+    Then   the row says how much memory the model needs, because that decides card or processor
+    """
+    panel = _panel(qtbot, _FakeService(_summary(), _choices()))
+
+    assert panel._rows[SpeedStep.PROOFREADING].memory.text() == "needs ~5 GB"
+
+
+@pytest.mark.gui
+def test_a_step_that_was_never_measured_keeps_its_row(qtbot) -> None:
+    """
+    Given  a summary in which the reading step runs here but was never measured, with a band
+           the catalog expects
+    When   the panel is drawn
+    Then   the row is there and says the figure is expected and not measured
+    """
+    summary = _summary(unmeasured=(_unmeasured(SpeedStep.READING, "glm-ocr:q8_0", SpeedBand.OK),))
+    panel = _panel(qtbot, _FakeService(summary, _choices()))
+
+    row = panel._rows[SpeedStep.READING]
+    assert not row.is_hidden()
+    assert row.model.text() == "glm-ocr:q8_0"
+    assert row.per_page.text() == "ok (expected) — not measured"
+    assert "Expected speed on this computer: ok." in row.per_page.toolTip()
+
+
+@pytest.mark.gui
+def test_a_step_without_a_band_only_says_it_was_not_measured(qtbot) -> None:
+    """
+    Given  a summary in which a step was never measured and nothing says what to expect
+    When   the panel is drawn
+    Then   the row says only that it was not measured, and its tooltip stays empty
+    """
+    summary = _summary(unmeasured=(_unmeasured(SpeedStep.REVIEW, "mystery:latest", None),))
+    panel = _panel(qtbot, _FakeService(summary, _choices()))
+
+    row = panel._rows[SpeedStep.REVIEW]
+    assert not row.is_hidden()
+    assert row.per_page.text() == txt.SPEED_NOT_MEASURED
+    assert row.per_page.toolTip() == ""
+
+
+@pytest.mark.gui
+def test_the_class_set_asks_for_a_test_while_a_step_is_unmeasured(qtbot) -> None:
+    """
+    Given  a summary with a measured step and one that was never measured
+    When   the panel is drawn
+    Then   no class-set figure is promised, because leaving the unmeasured step out would
+           understate the time
+    """
+    summary = _summary(
+        class_set=None, unmeasured=(_unmeasured(SpeedStep.READING, "glm-ocr:q8_0", None),)
+    )
+    panel = _panel(qtbot, _FakeService(summary, _choices()))
+
+    assert panel._class_set.text() == txt.SPEED_CLASS_SET_TEST
+    assert not panel._class_set.isHidden()
 
 
 @pytest.mark.gui
@@ -221,7 +332,7 @@ def test_the_date_line_says_the_figures_come_from_real_runs(qtbot) -> None:
     summary = _summary(sample_count=12, sample_pages=False)
     panel = _panel(qtbot, _FakeService(summary, _choices()))
 
-    assert panel._date.text() == "From your last 12 documents."
+    assert panel._date.text() == "Based on your last 12 proofread documents."
 
 
 @pytest.mark.gui
@@ -234,7 +345,7 @@ def test_the_date_line_counts_pages_when_only_text_recognition_ran(qtbot) -> Non
     summary = _summary(sample_count=12, sample_pages=True)
     panel = _panel(qtbot, _FakeService(summary, _choices()))
 
-    assert panel._date.text() == "From your last 12 pages."
+    assert panel._date.text() == "Based on your last 12 recognised pages."
 
 
 @pytest.mark.gui
@@ -355,7 +466,7 @@ def test_the_panel_says_when_nothing_was_measured_yet(qtbot) -> None:
     panel = _panel(qtbot, _FakeService(summary, _choices()))
 
     assert panel._date.text() == txt.SPEED_NEVER_MEASURED
-    assert panel._rows[SpeedStep.PROOFREADING].isHidden()
+    assert panel._rows[SpeedStep.PROOFREADING].is_hidden()
 
 
 # ── the test itself ─────────────────────────────────────────────────────────
@@ -596,3 +707,22 @@ def test_the_expected_speed_note_says_where_the_figure_comes_from() -> None:
         "Expected speed on this computer: fast. Worked out from the models measured here, "
         "not measured for this one."
     )
+
+
+@pytest.mark.parametrize(
+    ("count", "pages", "expected"),
+    [
+        (12, False, "Based on your last 12 proofread documents."),
+        (1, False, "Based on your last proofread document."),
+        (40, True, "Based on your last 40 recognised pages."),
+        (1, True, "Based on your last recognised page."),
+        (0, False, ""),
+    ],
+)
+def test_the_line_about_real_runs_names_what_was_counted(count, pages, expected) -> None:
+    """
+    Given  a number of samples of real runs, and whether they are pages or documents
+    When   the line under the rows is written
+    Then   it says what was counted, in the singular for one, and nothing without samples
+    """
+    assert txt.speed_from_runs(count, pages=pages) == expected

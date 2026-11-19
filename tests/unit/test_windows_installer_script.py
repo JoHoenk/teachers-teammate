@@ -1,10 +1,11 @@
-"""The Windows installer's scope mapping and uninstaller defaults, checked as text.
+"""The Windows installer's scope mapping, uninstaller defaults and Welcome page, checked as text.
 
-Two things a silent run cannot show: which folder a scope means (the radio buttons are never
-clicked) and which boxes the uninstaller's data page starts with (the page is never shown).
-Both are read out of ``tools/packaging/windows.nsi`` here, so a change that breaks them fails
-on every pull request rather than only in the Windows install job, which runs the silent paths
-themselves (``tools/packaging/test_windows_installer.ps1``).
+Three things a silent run cannot show: which folder a scope means (the radio buttons are never
+clicked), which boxes the uninstaller's data page starts with (the page is never shown), and what
+the Welcome page says and how its button is labelled (no page is shown at all). All are read out
+of ``tools/packaging/windows.nsi`` here, so a change that breaks them fails on every pull request
+rather than only in the Windows install job, which runs the silent paths themselves
+(``tools/packaging/test_windows_installer.ps1``).
 """
 
 from __future__ import annotations
@@ -126,3 +127,61 @@ def test_the_settings_box_removes_the_teachers_own_work() -> None:
     settings = uninstall[uninstall.index("$DoDelCache == ${BST_CHECKED}") :]
     for folder in ("Cache", "benchmark", "speed", "work"):
         assert f'RMDir /r "$LOCALAPPDATA\\teachers_teammate\\{folder}"' in settings
+
+
+def test_welcome_page_show_labels_the_button_with_what_it_does() -> None:
+    """
+    Given  the installer script
+    When   the Welcome page's show callback and its registration are read
+    Then   the callback is registered before the page, and it renames control 1 of the installer
+           window to $WelcomeButton only when the run is not a fresh install
+    """
+    script = _script()
+
+    registration = script.index("!define MUI_PAGE_CUSTOMFUNCTION_SHOW WelcomePageShow")
+    assert registration < script.index("!insertmacro MUI_PAGE_WELCOME")
+
+    show = _function(script, "WelcomePageShow")
+    assert "GetDlgItem $0 $HWNDPARENT 1" in show
+    assert 'SendMessage $0 ${WM_SETTEXT} 0 "STR:$WelcomeButton"' in show
+
+    # A fresh install keeps "Next", because the Scope page follows: the rename is guarded.
+    assert '${If} $Mode != "fresh"' in show
+    assert '${If} $Mode == "fresh"' not in show
+    assert show.index('${If} $Mode != "fresh"') < show.index("${WM_SETTEXT}")
+
+    # The shield is the one Windows puts on a button that raises a UAC prompt.
+    assert "!define BCM_SETSHIELD 0x160C" in script
+    assert "SendMessage $0 ${BCM_SETSHIELD} 0 1" in show
+    assert show.index('${If} $NeedElevation == "1"') < show.index("${BCM_SETSHIELD}")
+
+
+def test_the_elevation_sentence_names_the_button_the_page_shows() -> None:
+    """
+    Given  the installer script, whose Welcome button says Update, Reinstall or Install
+    When   the sentence about administrator rights is read
+    Then   it names the button by $WelcomeButton, not by a fixed word that may not be on the page
+    """
+    script = _script()
+
+    assert "Windows asks for administrator rights when you click $WelcomeButton." in script
+    assert "when you click Update" not in script
+
+
+def test_privacy_note_names_the_setting_that_turns_the_update_check_off() -> None:
+    """
+    Given  the installer script
+    When   the PRIVACY_NOTE define is read
+    Then   it is one sentence that names Settings > General and carries no URL, because a label
+           on the Welcome page cannot be clicked
+    """
+    script = _script()
+
+    start = script.index("!define PRIVACY_NOTE ")
+    note = script[start : script.index("\n", start)]
+
+    assert "Settings > General" in note
+    assert "http" not in note
+    assert "${APP_URL}" not in note
+    # One sentence: the define carries a single full stop.
+    assert note.count(".") == 1

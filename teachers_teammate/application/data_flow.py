@@ -26,6 +26,7 @@ from ..domain.data_location import (
     SentRecord,
     StageLocation,
     anonymization_badge,
+    anonymization_languages,
     classify_ollama,
     llm_stage_location,
     online_ocr_reason,
@@ -235,6 +236,7 @@ def describe_data_flow(
             "text",
             personal_info_hidden=hidden,
             detail=anonymization_badge(anonymizer_models) if hidden else "Off",
+            languages=anonymization_languages(anonymizer_models) if hidden else (),
         ),
     ]
     for step in llm_steps(config.correction_enabled, config.evaluation_enabled):

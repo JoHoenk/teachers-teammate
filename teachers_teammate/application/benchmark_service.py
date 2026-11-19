@@ -159,6 +159,10 @@ class BenchmarkApplicationService:
         """Return the GPUs of this computer (delegated, served from the shared probe)."""
         return self._processing.detect_gpus(refresh=refresh)
 
+    def available_memory_gb(self) -> float | None:
+        """Return the main memory free right now in GB (delegated)."""
+        return self._processing.available_memory_gb()
+
     def classify_ollama_models(
         self, tags: list[str], ollama_url: str, *, cached_only: bool = False
     ) -> dict[str, ModelUses | None]:

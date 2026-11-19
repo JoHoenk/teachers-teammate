@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 from pathlib import Path
 
 import pytest
@@ -310,8 +311,8 @@ def test_the_lookup_config_carries_the_results_step(qtbot) -> None:
     panel.set_service(_GuardService())
     panel.update_settings({"hardware_profile": "16gb", "proofreading_context": "16384"})
     panel._docx_enabled.setChecked(False)
-    panel._text_enabled.setChecked(False)
-    panel._text_anonymized_enabled.setChecked(True)
+    panel._text_enabled.setChecked(True)
+    panel._text_mode.setCurrentText("anonymized")
 
     config = panel.lookup_config()
 
@@ -774,12 +775,37 @@ class _StepsService(_FlowService):
 
         here = StageLocation(DataLocation.THIS_COMPUTER, "Ollama")
         eu = StageLocation(DataLocation.ONLINE, "Mistral (EU)", region=DataRegion.EU)
+        hidden = config.anonymization_enabled
         return DataFlow(
             (
                 DataFlowStage("ocr", here, "page images"),
-                DataFlowStage("anonymization", here, "text", detail="On (spaCy de)"),
+                DataFlowStage(
+                    "anonymization",
+                    here,
+                    "text",
+                    personal_info_hidden=hidden,
+                    detail="On (spaCy de)" if hidden else "Off",
+                    languages=("de",) if hidden else (),
+                ),
                 DataFlowStage("correction", eu, "text"),
                 DataFlowStage("evaluation", eu, "text"),
+            )
+        )
+
+
+class _TwoLanguageStepsService(_StepsService):
+    """Answers ``describe_steps`` with name removal in German and English."""
+
+    def describe_steps(self, config):
+        from teachers_teammate.domain.data_location import DataFlow  # noqa: PLC0415
+
+        flow = super().describe_steps(config)
+        return DataFlow(
+            tuple(
+                dataclasses.replace(stage, languages=("de", "en"))
+                if stage.stage == "anonymization"
+                else stage
+                for stage in flow.stages
             )
         )
 
@@ -805,12 +831,51 @@ def test_every_step_shows_what_it_uses(qtbot) -> None:
     qtbot.addWidget(panel)
     panel.set_service(_StepsService())
 
-    panel.update_settings({**_MISTRAL, "anonymization_enabled": True})
+    panel.update_settings(_MISTRAL)
+    panel._anonymization_enabled.setChecked(True)
 
-    assert "qwen2.5vl:7b · this computer" in panel._ocr_uses.text()
-    assert "On (spaCy de)" in panel._anonymization_uses.text()
+    assert "qwen2.5vl:7b" in panel._ocr_uses.text()
+    assert "this computer" not in panel._ocr_uses.text()  # the place is not repeated
+    assert "Names in German" in panel._anonymization_uses.text()
     assert "mistral-small-latest · Mistral (EU) · EU" in panel._correction_uses.text()
     assert "Same model as proofreading" in panel._evaluation_uses.text()
+
+
+@pytest.mark.gui
+def test_the_name_removal_line_is_hidden_while_it_is_off(qtbot) -> None:
+    """
+    Given  the main window with "Remove personal info" unticked
+    When   the data flow is shown
+    Then   the line under the step is hidden instead of repeating "Off"
+    """
+    panel = ConfigPanel()
+    qtbot.addWidget(panel)
+    panel.set_service(_StepsService())
+
+    panel.update_settings(_MISTRAL)
+
+    assert panel._anonymization_uses.text() == ""
+    assert not panel._anonymization_uses.isVisible()
+
+
+@pytest.mark.gui
+def test_the_name_removal_line_names_the_languages(qtbot) -> None:
+    """
+    Given  name removal on with a German and an English model
+    When   the data flow is shown
+    Then   the line names both languages and says neither "spaCy" nor "On"
+    """
+    panel = ConfigPanel()
+    qtbot.addWidget(panel)
+    panel.set_service(_TwoLanguageStepsService())
+
+    panel.update_settings(_MISTRAL)
+    panel._anonymization_enabled.setChecked(True)
+
+    line = panel._anonymization_uses.text()
+    assert "Names in German and English" in line
+    assert "spaCy" not in line
+    assert "On (" not in line
 
 
 @pytest.mark.gui
@@ -827,7 +892,7 @@ def test_a_program_engine_is_named_by_the_engine_not_by_the_ollama_model(qtbot) 
     panel.update_settings({**_MISTRAL, "ocr_engine": "ppocr"})
 
     assert "qwen2.5vl:7b" not in panel._ocr_uses.text()
-    assert "this computer" in panel._ocr_uses.text()
+    assert "Ollama" in panel._ocr_uses.text()
 
 
 @pytest.mark.gui
@@ -1208,10 +1273,10 @@ def test_results_step_shows_and_saves_the_output_choices(qtbot, tmp_path: Path) 
     assert panel._docx_enabled.isChecked()
     assert panel._docx_format.currentText() == "comments"
     assert panel._text_enabled.isChecked()
-    assert not panel._text_anonymized_enabled.isChecked()
+    assert panel._text_mode.currentText() == "as written"
 
     panel._docx_enabled.setChecked(False)
-    panel._text_anonymized_enabled.setChecked(True)
+    panel._text_mode.setCurrentText("both")
     saved = panel.to_dict()
 
     assert saved["output"] == str(tmp_path)
@@ -1224,8 +1289,58 @@ def test_results_step_shows_and_saves_the_output_choices(qtbot, tmp_path: Path) 
     qtbot.addWidget(reloaded)
     reloaded.load_from_dict(saved)
     assert not reloaded._docx_enabled.isChecked()
-    assert reloaded._text_anonymized_enabled.isChecked()
+    assert reloaded._text_mode.currentText() == "both"
     assert reloaded.get_output_dir() == str(tmp_path)
+
+
+@pytest.mark.gui
+@pytest.mark.parametrize(
+    ("as_written", "anonymized", "mode"),
+    [
+        (False, False, "as written"),
+        (True, False, "as written"),
+        (False, True, "anonymized"),
+        (True, True, "both"),
+    ],
+)
+def test_the_text_file_row_round_trips_all_four_key_combinations(
+    qtbot, as_written: bool, anonymized: bool, mode: str
+) -> None:
+    """
+    Given  saved settings with each combination of the two text-file keys
+    When   they are loaded into the panel and read back
+    Then   the checkbox and the choice show them, and to_dict() writes the same two keys
+    """
+    panel = ConfigPanel()
+    qtbot.addWidget(panel)
+    panel.load_from_dict({"text_enabled": as_written, "text_anonymized_enabled": anonymized})
+
+    assert panel._text_enabled.isChecked() is (as_written or anonymized)
+    assert panel._text_mode.currentText() == mode
+
+    saved = panel.to_dict()
+    assert saved["text_enabled"] is as_written
+    assert saved["text_anonymized_enabled"] is anonymized
+
+
+@pytest.mark.gui
+def test_unticking_the_text_file_keeps_the_choice_for_next_time(qtbot) -> None:
+    """
+    Given  the text file ticked with "both" chosen
+    When   the checkbox is unticked
+    Then   both keys are off, the choice stays "both" and the choice is disabled
+    """
+    panel = ConfigPanel()
+    qtbot.addWidget(panel)
+    panel._text_enabled.setChecked(True)
+    panel._text_mode.setCurrentText("both")
+
+    panel._text_enabled.setChecked(False)
+
+    assert panel._text_mode.currentText() == "both"
+    assert not panel._text_mode.isEnabled()
+    assert panel.get_settings_dict()["text_enabled"] is False
+    assert panel.get_settings_dict()["text_anonymized_enabled"] is False
 
 
 @pytest.mark.gui
@@ -1248,13 +1363,17 @@ def test_word_layout_is_only_enabled_while_word_is_ticked(qtbot) -> None:
 
 
 @pytest.mark.gui
-def test_changing_the_results_step_tells_the_main_window(qtbot, tmp_path: Path) -> None:
+def test_changing_the_results_step_tells_the_main_window(
+    qtbot, tmp_path: Path, monkeypatch
+) -> None:
     """
     Given  the Results step
-    When   the user types another folder (and leaves the field) or ticks text files
+    When   the user chooses another folder or ticks text files
     Then   results_changed is emitted each time and the settings hold the new values;
            loading saved settings emits nothing
     """
+    from teachers_teammate.gui import _dialogs  # noqa: PLC0415
+
     panel = ConfigPanel()
     qtbot.addWidget(panel)
     changes: list[bool] = []
@@ -1263,12 +1382,12 @@ def test_changing_the_results_step_tells_the_main_window(qtbot, tmp_path: Path) 
     panel.load_from_dict({"output": str(tmp_path / "loaded"), "text_enabled": False})
     assert changes == []
 
-    panel._output_dir.setText(str(tmp_path / "typed"))
-    panel._output_dir.editingFinished.emit()
+    monkeypatch.setattr(_dialogs, "pick_folder", lambda *_a, **_k: tmp_path / "chosen")
+    panel._output_browse.click()
     assert changes == [True]
-    assert panel.get_output_dir() == str(tmp_path / "typed")
+    assert panel.get_output_dir() == str(tmp_path / "chosen")
 
-    panel._output_dir.editingFinished.emit()  # focus left again without a change
+    panel._output_browse.click()  # the same folder again: nothing changed
     assert changes == [True]
 
     panel._text_enabled.setChecked(True)
@@ -1420,6 +1539,106 @@ def test_accepting_the_proofreading_options_saves_the_notes_and_explanations(
     assert settings["correction_notes"] == "Year 9, second foreign language."
     assert settings["correction_output"] == "text"
     assert settings["explanation_language"] == "French"
+
+
+@pytest.mark.gui
+def test_both_path_rows_are_read_only(qtbot) -> None:
+    """
+    Given  the Documents step and the Results step
+    When   their rows are inspected
+    Then   both are PathRows and neither field can be typed into
+    """
+    from teachers_teammate.gui._path_row import PathRow  # noqa: PLC0415
+
+    panel = ConfigPanel()
+    qtbot.addWidget(panel)
+
+    assert isinstance(panel._input_row, PathRow)
+    assert isinstance(panel._output_row, PathRow)
+    assert panel._input_row.field().isReadOnly()
+    assert panel._output_row.field().isReadOnly()
+
+
+@pytest.mark.gui
+def test_the_pickers_pass_the_panel_and_the_results_start_next_to_the_documents(
+    qtbot, tmp_path: Path, monkeypatch
+) -> None:
+    """
+    Given  a panel with a documents folder chosen
+    When   the documents pickers and the results picker are used
+    Then   each dialog's parent is the panel, and the results picker starts in the folder
+           above the documents
+    """
+    from teachers_teammate.gui import _dialogs  # noqa: PLC0415
+
+    docs = tmp_path / "Klasse 7b"
+    docs.mkdir()
+    calls: list[tuple[str, object, str]] = []
+
+    def pick_folder(parent, prompt):
+        calls.append(("folder", parent, prompt.start))
+        return docs
+
+    def pick_files(parent, prompt):
+        calls.append(("files", parent, prompt.start))
+        return []
+
+    monkeypatch.setattr(_dialogs, "pick_folder", pick_folder)
+    monkeypatch.setattr(_dialogs, "pick_files", pick_files)
+
+    panel = ConfigPanel()
+    qtbot.addWidget(panel)
+
+    panel._select_folder_btn.click()
+    panel._select_files_btn.click()
+    panel._output_browse.click()
+
+    assert [c[0] for c in calls] == ["folder", "files", "folder"]
+    assert all(c[1] is panel for c in calls)
+    assert calls[2][2] == str(tmp_path)
+
+
+@pytest.mark.gui
+def test_a_file_selection_shows_how_many_files_were_picked(qtbot, tmp_path: Path) -> None:
+    """
+    Given  the Documents step
+    When   three individual files are chosen
+    Then   the field reads "3 files from <folder>" and the tooltip lists the names
+    """
+    docs = tmp_path / "Klasse 7b"
+    docs.mkdir()
+    files = [docs / f"{n}.pdf" for n in ("a", "b", "c")]
+    for path in files:
+        path.touch()
+
+    panel = ConfigPanel()
+    qtbot.addWidget(panel)
+    panel.set_selected_files(files)
+
+    assert panel._input_row.text() == f"3 files from {docs}"
+    assert "a.pdf" in panel._input_row.field().toolTip()
+
+
+@pytest.mark.gui
+def test_a_long_file_selection_lists_twenty_names_and_counts_the_rest(
+    qtbot, tmp_path: Path
+) -> None:
+    """
+    Given  the Documents step
+    When   25 individual files are chosen
+    Then   the tooltip lists twenty names and ends with how many more there are
+    """
+    files = [tmp_path / f"{n:02d}.pdf" for n in range(25)]
+    for path in files:
+        path.touch()
+
+    panel = ConfigPanel()
+    qtbot.addWidget(panel)
+    panel.set_selected_files(files)
+
+    lines = panel._input_row.field().toolTip().split("\n")
+    assert len(lines) == 21
+    assert lines[-1] == "… and 5 more"
 
 
 @pytest.mark.gui

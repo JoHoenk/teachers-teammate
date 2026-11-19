@@ -12,8 +12,9 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from ..application.service import IssueKind, RequirementIssue
+from ..domain.language import language_name
 from . import _user_text as txt
-from ._install_round import READER_ITEM
+from ._install_round import PACKAGE_PREFIX, READER_ITEM
 from ._model_guidance import PROVIDER_PREFIX, SPACY_PREFIX
 from .settings._page import (
     FOCUS_ADDON_UPDATE,
@@ -130,8 +131,13 @@ def _ollama_fix(issue: RequirementIssue) -> Fix | None:
     return None
 
 
-def _general_fix(kind: IssueKind) -> Fix | None:
+def _general_fix(issue: RequirementIssue) -> Fix | None:
     """Return the fix for a requirement that is not about one model or package, else ``None``."""
+    kind = issue.kind
+    if kind is IssueKind.ADDON_RESTART_NEEDED:
+        # Nothing to press: the install is done, the app has to start again.  The service
+        # words the sentence, because it names the step that waits (name detection, a service).
+        return Fix(issue.message, ())
     if kind is IssueKind.NOTHING_TO_READ:
         return Fix(
             txt.NOTHING_TO_READ_LINE,
@@ -174,7 +180,7 @@ def fix_for(
         language: The document language, to name the language of a missing name detection.
     """
     kind = issue.kind
-    general = _general_fix(kind)
+    general = _general_fix(issue)
     if general is not None:
         return general
     if kind is IssueKind.READER_MODEL_MISSING:
@@ -220,18 +226,26 @@ def fix_for(
             f"No API key for {display_name(issue.provider)} yet",
             (FixAction("Enter key…", SettingsPage.AI_MODELS, focus),),
         )
-    # NAME_DETECTION_MISSING
-    what = f"Name detection for {language}" if language else "Name detection"
+    models = tuple(f"{SPACY_PREFIX}{model}" for model in issue.models)
+    if kind is IssueKind.PRIVACY_ADDON_MISSING:
+        # spaCy itself is missing: installing it brings the model along, so the fix ticks both.
+        named = f"the {language_name(language)} model" if language else "a model"
+        return Fix(
+            f"Name detection isn't installed yet (spaCy and {named})",
+            (
+                FixAction(
+                    "Install…",
+                    SettingsPage.ADDONS,
+                    FOCUS_NAME_DETECTION,
+                    (f"{PACKAGE_PREFIX}spacy", *models),
+                ),
+            ),
+        )
+    # NAME_DETECTION_MISSING: spaCy is there, the model of this language is not.
+    what = f"The {language_name(language)} name detection model" if language else "The model"
     return Fix(
         f"{what} isn't downloaded",
-        (
-            FixAction(
-                "Download…",
-                SettingsPage.ADDONS,
-                FOCUS_NAME_DETECTION,
-                tuple(f"{SPACY_PREFIX}{model}" for model in issue.models),
-            ),
-        ),
+        (FixAction("Download…", SettingsPage.ADDONS, FOCUS_NAME_DETECTION, models),),
     )
 
 

@@ -38,6 +38,13 @@ PROFILE_TEXT: dict[str, str] = {
 #: Graphics memory (GB) that computers of a profile are assumed to have.
 _TIER_MEMORY_GB: dict[str, int] = {"8gb": 8, "16gb": 16}
 
+#: How a profile is named in a sentence ("models for … are suggested").
+_TIER_PHRASE: dict[str, str] = {
+    "cpu": "a basic computer",
+    "8gb": "a graphics card with about 8 GB",
+    "16gb": "a graphics card with 16 GB or more",
+}
+
 CHECKING_COMPUTER = "Checking your computer…"
 NO_SUGGESTION_FOR_COMPUTER = "No suggestion available for this computer."
 #: Shown when the check itself failed, so it is not mistaken for "nothing to suggest".
@@ -55,12 +62,7 @@ def profile_text(value: str) -> str:
 
 def read_only_profile_text(profile: str) -> str:
     """Return the line shown where the computer type cannot be edited."""
-    return f"Suggestions are for: {profile_text(profile)}"
-
-
-def auto_profile_text(profile: str) -> str:
-    """Return the label of the "automatic" choice once a profile was resolved."""
-    return f"{PROFILE_TEXT['auto']} — {profile_text(profile)}"
+    return f"Models are suggested for: {profile_text(profile)}"
 
 
 #: Shown once under "My computer" when the computer cannot run a local model at all.
@@ -70,11 +72,20 @@ TOO_LITTLE_MEMORY = (
 )
 
 
-def _computer_memory_sentence(detection: HardwareDetection) -> str:
-    """Return `` Computer memory: N GB.`` when the memory is known (it rates big models)."""
+def _computer_memory_sentence(
+    detection: HardwareDetection, available_memory_gb: float | None
+) -> str:
+    """Return `` Computer memory: N GB, M GB free right now.`` when the memory is known.
+
+    The free figure is read when the line is drawn, so it is passed in rather than stored in
+    the detection: it changes all the time and no suggestion depends on it.
+    """
     if detection.system_memory_gb is None:
         return ""
-    return f" Computer memory: {detection.system_memory_gb:.0f} GB."
+    text = f" Computer memory: {detection.system_memory_gb:.0f} GB"
+    if available_memory_gb is not None:
+        text += f", {available_memory_gb:.0f} GB free right now"
+    return text + "."
 
 
 def _too_little_memory(detection: HardwareDetection) -> bool:
@@ -92,17 +103,50 @@ def _too_little_memory(detection: HardwareDetection) -> bool:
     return memory <= system_reserve_gb(memory)
 
 
-def detection_status_text(detection: HardwareDetection) -> str:
-    """Return the status line shown below the "My computer" choice."""
+def detection_status_text(
+    detection: HardwareDetection, *, available_memory_gb: float | None = None
+) -> str:
+    """Return the status line shown below the "My computer" choice.
+
+    *available_memory_gb* is the main memory free right now, read when the line is drawn; it is
+    left out when unknown, and it is never part of the detection itself.
+    """
     if _too_little_memory(detection):
         return f"{_detection_summary(detection)} {TOO_LITTLE_MEMORY}"
-    return _detection_summary(detection) + _computer_memory_sentence(detection)
+    return (
+        _detection_summary(detection)
+        + _computer_memory_sentence(detection, available_memory_gb)
+        + _other_cards_sentence(detection)
+    )
+
+
+def _tier_sentence(profile: str, memory_gb: float) -> str:
+    """Return ", so models for … are suggested" unless the finding already says the tier.
+
+    A 4 GB card gives the profile of a basic computer, and a 12 GB card the one of an 8 GB
+    card: in both cases the figure alone does not say what the suggestions follow.
+    """
+    assumed = _TIER_MEMORY_GB.get(profile)
+    if assumed is not None and round(memory_gb) == assumed:
+        return ""
+    phrase = _TIER_PHRASE.get(profile)
+    return f", so models for {phrase} are suggested" if phrase else ""
+
+
+def _other_cards_sentence(detection: HardwareDetection) -> str:
+    """Return `` (also found: …)`` when more than one graphics card was found."""
+    if not detection.other_gpu_names:
+        return ""
+    return f" (also found: {', '.join(detection.other_gpu_names)})"
 
 
 def _detection_summary(detection: HardwareDetection) -> str:
     memory = detection.memory_gb
     if detection.reason is DetectionReason.GPU_DETECTED and memory is not None:
-        return f"Found: {detection.gpu_name} with {memory:.0f} GB graphics memory."
+        return (
+            f"Found: {detection.gpu_name} with {memory:.0f} GB graphics memory"
+            f"{_tier_sentence(detection.profile, memory)}."
+        )
     if detection.reason is DetectionReason.APPLE_UNIFIED_MEMORY and memory is not None:
         return f"Found: Apple computer with {memory:.0f} GB shared memory."
     if detection.reason is DetectionReason.NO_GPU_FOUND:

@@ -51,6 +51,10 @@ class DummyAppService(RecommendationServiceStub):
     def list_ocr_engines(self) -> list[str]:
         return ["ollama", "ppocr"]
 
+    def pending_addon_packages(self) -> tuple[str, ...]:
+        """Nothing waits for a restart unless a test says so."""
+        return ()
+
     def get_provider_info(self, provider: str) -> dict:
         if provider == "openai":
             return {

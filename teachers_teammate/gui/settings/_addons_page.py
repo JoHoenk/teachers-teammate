@@ -14,11 +14,14 @@ package importable before anything else uses it).
 from __future__ import annotations
 
 from collections.abc import Sequence
+import re
+import time
 from typing import ClassVar, cast
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QBrush, QColor
 from PySide6.QtWidgets import (
+    QApplication,
     QCheckBox,
     QGroupBox,
     QHBoxLayout,
@@ -38,6 +41,7 @@ from PySide6.QtWidgets import (
 
 from ...application.service import ProcessingApplicationService, bundled_status_key
 from ...config import DEFAULTS
+from ...domain.language import language_name
 from ...domain.local_models import READER_SIZE_LABEL
 from ...domain.model_catalog import (
     HardwareProfile,
@@ -52,6 +56,7 @@ from ...domain.model_catalog import (
     suitability_rank,
 )
 from ...infrastructure.addon_licenses import license_tooltip
+from ...infrastructure.spacy_models import SPACY_MODELS
 from ...texts import dialogs as dlg
 from ...texts.settings import TAB_READING_MODELS
 from .. import _dialogs
@@ -94,7 +99,7 @@ from ._page import (
     SettingsPage,
     SettingsPageBase,
 )
-from ._profile_line import ProfileLine
+from ._computer_box import ProfileLine
 
 TITLE = "Add-ons"
 DESCRIPTION = (
@@ -113,6 +118,22 @@ _OLLAMA_GROUPS: dict[str, tuple[str, ModelCategory | None]] = {
 }
 
 _GREY = QColor("#888888")
+
+#: The status line and the hint under it: small and grey, so the page's content stays first.
+_HINT_STYLE = "color: #888; font-size: 11px;"
+#: A status line that asks for something (a restart, a failure).
+_WARNING_STYLE = "color: #e67e22; font-size: 11px;"
+#: How often the elapsed time of a step without a percentage is redrawn.
+_ELAPSED_TICK_MS = 1000
+#: How long "Copied." stays on the copy button.
+_COPIED_MS = 2000
+#: The language of each name-detection model, for the status line ("the German model").
+_SPACY_MODEL_LANGUAGES: dict[str, str] = {
+    model: language_name(language) for language, model in SPACY_MODELS.items()
+}
+#: pip log lines that name the package it is working on.  Best effort only.
+_PIP_HINT_PREFIXES = ("Collecting ", "Downloading ", "Using cached ")
+_PIP_HINT_INSTALLING = "Installing collected packages:"
 
 _PROVIDER_LABELS: dict[str, str] = {
     "openai": "OpenAI  (langchain-openai)",
@@ -154,6 +175,38 @@ def _model_tooltip(spec: OllamaModelSpec) -> str:
     return f"{spec.note}\n\nLicence: {spec.licence.name} — {spec.licence.url}"
 
 
+def _pip_hint(line: str) -> str:
+    """Return the package a pip log line is about, or "" when the line names none.
+
+    pip prints no progress while its output is a pipe, so these lines are the only sign of
+    life during a long download.  Best effort: a line that does not match changes nothing,
+    and this never decides whether an install worked.
+    """
+    text = line.strip()
+    for prefix in _PIP_HINT_PREFIXES:
+        if text.startswith(prefix):
+            return _distribution_name(text.removeprefix(prefix).split(" ")[0])
+    if text.startswith(_PIP_HINT_INSTALLING):
+        names = text.removeprefix(_PIP_HINT_INSTALLING).strip()
+        return _distribution_name(names.split(",")[0].strip())
+    return ""
+
+
+_REQUIREMENT_END = re.compile(r"[<>=!~;\[@(]")
+_WHEEL_VERSION = re.compile(r"-\d")
+
+
+def _distribution_name(token: str) -> str:
+    """Return the distribution name of a pip token.
+
+    A requirement (``spacy>=3.8,<3.9``) loses its specifier, a URL its folders, and a wheel file
+    name (``de_core_news_sm-3.8.0-py3-none-any.whl``) its version.
+    """
+    name = _REQUIREMENT_END.split(token.rsplit("/", 1)[-1], maxsplit=1)[0]
+    match = _WHEEL_VERSION.search(name)
+    return name[: match.start()] if match else name
+
+
 def _detect_installed(
     svc: ProcessingApplicationService, ollama_url: str, models: list[str]
 ) -> dict[str, object]:
@@ -190,6 +243,9 @@ class AddonsPage(SettingsPageBase):
     title = TITLE
     description = DESCRIPTION
     applies_immediately = True
+    #: The model tree takes the free height, so the page fills the window instead of scrolling:
+    #: the install button must stay visible on a laptop screen.
+    fills_window = True
 
     #: Emitted after a successful install round so callers can refresh model lists.
     packages_changed = Signal()
@@ -228,9 +284,23 @@ class AddonsPage(SettingsPageBase):
         self._round = InstallRound(self._svc, context.pull_manager, self)
         self._round.log_line.connect(self._dl_log_append)
         self._round.item_started.connect(self._on_round_item_started)
+        self._round.item_done.connect(self._on_round_item_done)
         self._round.pull_progress.connect(self._on_round_pull_progress)
         self._round.failed.connect(self._on_round_failed)
         self._round.finished.connect(self._on_round_finished)
+        # The one status line: the running step, then a restart, then the last round's result,
+        # then what the detection found.  pip prints nothing while it downloads, so this line
+        # and the bar are what tells the teacher that something is happening.
+        self._idle_status = txt.ADDONS_DETECTING
+        self._idle_warning = False
+        self._round_result = ""
+        self._round_result_warning = False
+        self._round_steps: list[str] = []
+        self._status_item = ""
+        self._status_parts: tuple[str, str, int, int] | None = None
+        self._status_line = ""
+        self._status_started = 0.0
+        self._done_count = 0
         # Pre-ticking waits for BOTH the installed check and the hardware detection.
         self._installed_ready = False
         self._profile_ready = False
@@ -252,7 +322,6 @@ class AddonsPage(SettingsPageBase):
         main.addWidget(self._build_update_banner())
 
         self._tabs = QTabWidget()
-        self._tabs.setMinimumHeight(460)
         main.addWidget(self._tabs, stretch=1)
 
         self._tabs.addTab(self._build_ollama_models_tab(), TAB_LOCAL_MODELS)
@@ -262,6 +331,7 @@ class AddonsPage(SettingsPageBase):
 
         self._build_status_and_actions(main)
         self._refresh_update_banner()
+        self._refresh_status()
 
         # Enter in a text field must only do what that field does.  A dialog would also
         # "press" its default button (the first push button, e.g. Install Selected).  The
@@ -291,17 +361,23 @@ class AddonsPage(SettingsPageBase):
         """Install the add-ons again with the app's package versions (the teacher clicked)."""
         if self._round.running():
             return
-        self._dl_log.clear()
-        self._dl_install_btn.setEnabled(False)
+        self._prepare_round([UPDATE_ADDONS_ITEM])
         self._update_btn.setEnabled(False)
-        self._dl_detect_lbl.setText(txt.ADDONS_UPDATING)
-        self._round.start(update_addons=True)
+        if not self._round.start(update_addons=True):
+            self._update_btn.setEnabled(True)
+            return
+        self._round_started()
 
     def _build_status_and_actions(self, main: QVBoxLayout) -> None:
-        """Build the detection label, progress bar, log and the action row."""
-        self._dl_detect_lbl = QLabel("Detecting installed packages…")
-        self._dl_detect_lbl.setStyleSheet("color: #888; font-size: 11px;")
-        main.addWidget(self._dl_detect_lbl)
+        """Build the status line, the bar, the details toggle and the action row.
+
+        The status line and the action row are always there, in that order and at the bottom
+        of the page: on a laptop the button must not end up below the fold.
+        """
+        self._status = QLabel(self._idle_status)
+        self._status.setWordWrap(True)
+        self._status.setStyleSheet(_HINT_STYLE)
+        main.addWidget(self._status)
 
         self._dl_progress = QProgressBar()
         self._dl_progress.setRange(0, 100)
@@ -310,25 +386,179 @@ class AddonsPage(SettingsPageBase):
         self._dl_progress.hide()
         main.addWidget(self._dl_progress)
 
+        # Best effort: the package pip is working on now, from its own log lines.
+        self._hint = QLabel("")
+        self._hint.setStyleSheet(_HINT_STYLE)
+        self._hint.hide()
+        main.addWidget(self._hint)
+
+        details_row = QWidget()
+        details_layout = QHBoxLayout(details_row)
+        details_layout.setContentsMargins(0, 0, 0, 0)
+        self._details_btn = QPushButton(txt.ADDONS_SHOW_DETAILS)
+        self._details_btn.setFlat(True)
+        self._details_btn.setCheckable(True)
+        self._details_btn.toggled.connect(self._on_details_toggled)
+        self._copy_btn = QPushButton(txt.ADDONS_COPY_LOG)
+        self._copy_btn.setFlat(True)
+        self._copy_btn.clicked.connect(self._on_copy_log)
+        self._copy_btn.hide()
+        details_layout.addWidget(self._details_btn)
+        details_layout.addWidget(self._copy_btn)
+        details_layout.addStretch(1)
+        main.addWidget(details_row)
+
         self._dl_log = QPlainTextEdit()
         self._dl_log.setReadOnly(True)
         self._dl_log.setMaximumHeight(100)
         self._dl_log.setPlaceholderText("Install / download log will appear here…")
+        self._dl_log.hide()
         main.addWidget(self._dl_log)
 
         action_row = QWidget()
         action_layout = QHBoxLayout(action_row)
         action_layout.setContentsMargins(0, 0, 0, 0)
-        self._dl_install_btn = QPushButton("Install / Download Selected")
+        self._dl_install_btn = QPushButton(txt.ADDONS_INSTALL)
         self._dl_install_btn.clicked.connect(self._on_download_install)
-        self._dl_abort_btn = QPushButton("Abort")
-        self._dl_abort_btn.setToolTip("Stop the current download after the current chunk.")
+        self._dl_abort_btn = QPushButton(txt.ADDONS_ABORT)
+        self._dl_abort_btn.setToolTip(txt.ADDONS_ABORT_TOOLTIP)
         self._dl_abort_btn.clicked.connect(self._on_abort)
         self._dl_abort_btn.hide()
         action_layout.addStretch(1)
         action_layout.addWidget(self._dl_abort_btn)
         action_layout.addWidget(self._dl_install_btn)
         main.addWidget(action_row)
+
+        self._elapsed_timer = QTimer(self)
+        self._elapsed_timer.setInterval(_ELAPSED_TICK_MS)
+        self._elapsed_timer.timeout.connect(self._tick_elapsed)
+        self._copy_timer = QTimer(self)
+        self._copy_timer.setSingleShot(True)
+        self._copy_timer.setInterval(_COPIED_MS)
+        self._copy_timer.timeout.connect(lambda: self._copy_btn.setText(txt.ADDONS_COPY_LOG))
+
+    # ── the status line ──────────────────────────────────────────────────────────
+
+    def _set_status(self, text: str, warning: bool = False) -> None:
+        """Write the status line; *warning* colours it as something to act on."""
+        self._status_line = text
+        self._status.setText(text)
+        self._status.setStyleSheet(_WARNING_STYLE if warning else _HINT_STYLE)
+
+    def _refresh_status(self) -> None:
+        """Show the most important line: the running step, a restart, the result, the idle one."""
+        if self._status_parts is not None:
+            verb, item, number, total = self._status_parts
+            self._set_status(txt.addons_status_step(verb, item, number, total))
+            return
+        pending = self._svc.pending_addon_packages()
+        if pending:
+            self._set_status(
+                txt.ADDONS_RESTART_NEEDED
+                if "spacy" in pending
+                else txt.ADDONS_RESTART_NEEDED_GENERIC,
+                warning=True,
+            )
+            return
+        if self._round_result:
+            self._set_status(self._round_result, warning=self._round_result_warning)
+            return
+        self._set_status(self._idle_status, warning=self._idle_warning)
+
+    def _tick_elapsed(self) -> None:
+        """Add the time the current step has been running, so the screen visibly moves."""
+        if self._status_parts is None:
+            self._elapsed_timer.stop()
+            return
+        self._status.setText(
+            txt.addons_status_elapsed(self._status_line, time.monotonic() - self._status_started)
+        )
+
+    def _show_step(self, item: str, total: int) -> None:
+        """Put *item* in the status line, with the bar and Abort that belong to it."""
+        self._status_item = item
+        self._status_parts = (
+            self._verb(item),
+            self._item_label(item),
+            self._step_number(item),
+            total,
+        )
+        self._status_started = time.monotonic()
+        self._dl_progress.show()
+        abortable = self._round.can_abort()
+        self._dl_abort_btn.setEnabled(abortable)
+        self._dl_abort_btn.setVisible(abortable)
+        if item == UPDATE_ADDONS_ITEM or item.startswith((PACKAGE_PREFIX, SPACY_PREFIX)):
+            # pip and the spaCy model download report no percentage: the bar moves on its own
+            # and the elapsed time shows that something is happening.
+            self._dl_progress.setRange(0, 0)
+            self._elapsed_timer.start()
+        else:
+            self._dl_progress.setRange(0, 100)
+            self._dl_progress.setValue(0)
+            self._elapsed_timer.stop()
+            self._mark_pulls()
+        self._refresh_status()
+
+    def _step_number(self, item: str) -> int:
+        """Return the position of *item* in the running round, counting from 1.
+
+        pip installs all its packages in one command, so they are one step: any package
+        has the number of the first.
+        """
+        if item.startswith(PACKAGE_PREFIX):
+            item = next(
+                (step for step in self._round_steps if step.startswith(PACKAGE_PREFIX)), item
+            )
+        try:
+            return self._round_steps.index(item) + 1
+        except ValueError:
+            return 1
+
+    @staticmethod
+    def _verb(item: str) -> str:
+        """Return what the status line says the round is doing with *item*."""
+        if item == UPDATE_ADDONS_ITEM or item.startswith((PACKAGE_PREFIX, SPACY_PREFIX)):
+            return txt.ADDONS_VERB_INSTALL
+        return txt.ADDONS_VERB_DOWNLOAD
+
+    def _item_label(self, item: str) -> str:
+        """Return the name of *item* as the status line writes it."""
+        if item == UPDATE_ADDONS_ITEM:
+            return txt.ADDONS_ITEM_ADDONS
+        if item == READER_ITEM:
+            return txt.ADDONS_ITEM_READER
+        if item == PAGE_MODELS_ITEM:
+            return txt.ADDONS_ITEM_PAGE_MODELS
+        if item.startswith(SPACY_PREFIX):
+            language = _SPACY_MODEL_LANGUAGES.get(item.removeprefix(SPACY_PREFIX))
+            return txt.addons_spacy_model(language) if language else txt.ADDONS_ITEM_MULTILINGUAL
+        if item.startswith(PACKAGE_PREFIX):
+            package = item.removeprefix(PACKAGE_PREFIX)
+            if package == "spacy":
+                return txt.ADDONS_ITEM_SPACY
+            for provider, (_, pip_pkg) in self._provider_packages.items():
+                if pip_pkg == package:
+                    return self._provider_name(provider)
+            return package
+        return item
+
+    def _on_details_toggled(self, shown: bool) -> None:
+        """Show the log and its Copy button, or hide them."""
+        self._dl_log.setVisible(shown)
+        self._copy_btn.setVisible(shown)
+        self._details_btn.setText(txt.ADDONS_HIDE_DETAILS if shown else txt.ADDONS_SHOW_DETAILS)
+
+    def _show_details(self, shown: bool) -> None:
+        """Open or close the log; the button follows."""
+        self._details_btn.setChecked(shown)
+        self._on_details_toggled(shown)
+
+    def _on_copy_log(self) -> None:
+        """Put the log on the clipboard, for a bug report."""
+        QApplication.clipboard().setText(self._dl_log.toPlainText())
+        self._copy_btn.setText(txt.ADDONS_COPIED)
+        self._copy_timer.start()
 
     # ── tab builders ────────────────────────────────────────────────────────────
 
@@ -411,7 +641,12 @@ class AddonsPage(SettingsPageBase):
         """Return the display name of *provider* (its own name when it has none)."""
         return str(self._svc.get_provider_info(provider).get("display_name", provider))
 
-    def _build_ollama_models_tab(self) -> QScrollArea:
+    def _build_ollama_models_tab(self) -> QWidget:
+        """Build the local-models tab: everything fixed except the tree, which takes the rest.
+
+        This tab is not wrapped in a scroll area: the tree scrolls, the page does not, so the
+        install button below the tabs stays where it is.
+        """
         content = QWidget()
         layout = QVBoxLayout(content)
         group = QGroupBox("AI models for this computer (Ollama)")
@@ -445,7 +680,7 @@ class AddonsPage(SettingsPageBase):
         group_layout.addWidget(best_row)
 
         self._ollama_model_list = self._build_ollama_model_tree()
-        group_layout.addWidget(self._ollama_model_list)
+        group_layout.addWidget(self._ollama_model_list, stretch=1)
 
         custom_row = QWidget()
         cmr = QHBoxLayout(custom_row)
@@ -465,14 +700,13 @@ class AddonsPage(SettingsPageBase):
         add_note.setStyleSheet("color: #888; font-size: 11px;")
         add_note.setWordWrap(True)
         group_layout.addWidget(add_note)
-        layout.addWidget(group)
-        layout.addStretch(1)
-        return self._scrolled(content)
+        layout.addWidget(group, stretch=1)
+        return content
 
     def _build_ollama_model_tree(self) -> QTreeWidget:
         """Build the grouped model tree and populate it from the catalog."""
         tree = QTreeWidget()
-        tree.setMinimumHeight(320)
+        tree.setMinimumHeight(160)
         tree.setColumnCount(5)
         tree.setHeaderLabels(["Model", "Suitability", "Memory", "Download size", "License"])
         header_item = tree.headerItem()
@@ -792,25 +1026,29 @@ class AddonsPage(SettingsPageBase):
         model = self._round.follow_running_pull()
         if model:
             self._dl_log.appendPlainText(f"(pull of {model!r} already in progress…)")
-            self._show_pull_progress()
+            self._show_step(model, 1)
         self._mark_pulls()
 
     def focus(self, focus: str, preselect: Sequence[str] = ()) -> None:
         """Show the tab named *focus*; tick *preselect*.
 
-        Entries are model tags, ``provider:<name>`` (an online service's package) and
-        ``spacy:<model>`` (a name-detection model; spaCy itself is ticked with it while it is
-        not installed).
+        Entries are model tags, ``provider:<name>`` (an online service's package),
+        ``package:<name>`` (a package of its own, ``package:spacy``) and ``spacy:<model>``
+        (a name-detection model).  A model alone does not tick spaCy: only the fix that says
+        spaCy is missing does.
         """
         spacy = [tag for tag in preselect if tag.startswith(SPACY_PREFIX)]
         reader = [tag for tag in preselect if tag.startswith(READER_PREFIX)]
         page_models = [tag for tag in preselect if tag.startswith(PAGE_MODELS_PREFIX)]
+        packages = [
+            tag.removeprefix(PACKAGE_PREFIX) for tag in preselect if tag.startswith(PACKAGE_PREFIX)
+        ]
         tags = [
             tag
             for tag in preselect
             if tag
             and not tag.startswith(
-                (PROVIDER_PREFIX, SPACY_PREFIX, READER_PREFIX, PAGE_MODELS_PREFIX)
+                (PROVIDER_PREFIX, PACKAGE_PREFIX, SPACY_PREFIX, READER_PREFIX, PAGE_MODELS_PREFIX)
             )
         ]
         providers = [
@@ -831,9 +1069,8 @@ class AddonsPage(SettingsPageBase):
             self._tabs.setCurrentIndex(tab)
         self._preselect.extend(tags)
         self._preselect_providers.extend(providers)
-        if spacy:
-            # A box that is already installed is disabled and stays as it is.
-            self._preselect_providers.extend(["spacy", *spacy])
+        self._preselect_providers.extend(packages)
+        self._preselect_providers.extend(spacy)
         if reader:
             self._preselect_providers.append(READER_ITEM)
         if page_models:
@@ -843,7 +1080,9 @@ class AddonsPage(SettingsPageBase):
         # stopped it can take long, while the teacher looks at an empty tab.  Detection ticks
         # them again after it has reset the boxes (an installed one is then disabled instead).
         self._tick_boxes_now(self._preselect_providers)
-        if self._installed_ready and (tags or providers or spacy or reader or page_models):
+        if self._installed_ready and (
+            tags or providers or packages or spacy or reader or page_models
+        ):
             # Detection is done: tick now (otherwise it ticks once detection finished).
             self._tick_preselect_tags()
 
@@ -876,7 +1115,9 @@ class AddonsPage(SettingsPageBase):
             self._detect_again = True
             return
         self._detect_running = True
-        self._dl_detect_lbl.setText("Detecting installed packages…")
+        self._idle_status = txt.ADDONS_DETECTING
+        self._idle_warning = False
+        self._refresh_status()
         svc = self._svc
         url = self._ollama_url
         models = [tag for tag, _item in self._iter_model_items()]
@@ -887,7 +1128,9 @@ class AddonsPage(SettingsPageBase):
     def _on_detect_finished(self, result: object, error: BaseException | None) -> None:
         self._detect_running = False
         if error is not None or not isinstance(result, dict):
-            self._dl_detect_lbl.setText(f"Detection failed: {error or 'unexpected result'}")
+            self._idle_status = txt.addons_detect_failed(str(error) if error else "")
+            self._idle_warning = True
+            self._refresh_status()
             # Nothing is known to be installed, but the suggested ticks and the
             # requested preselection must not depend on this check (ticking never
             # downloads anything — that needs a click on Install).
@@ -901,14 +1144,17 @@ class AddonsPage(SettingsPageBase):
             self._start_detection()
 
     def _on_detection_done(self, results: dict) -> None:
-        self._dl_detect_lbl.setText("Detection complete.")
+        self._idle_status = txt.ADDONS_DETECTED
+        self._idle_warning = False
+        self._refresh_status()
 
         for key, cb in self._dl_checkboxes.items():
             installed = results.get(key, False)
             base = cb.text().split("  ✓")[0]
             if installed:
+                # Disabled and unticked: the mark says it is there, a tick says "install it".
                 cb.setText(f"{base}  {_installed_mark(key, results)}")
-                cb.setChecked(True)
+                cb.setChecked(False)
                 cb.setEnabled(False)
             else:
                 cb.setText(base)
@@ -928,9 +1174,10 @@ class AddonsPage(SettingsPageBase):
             installed = bool(results.get(f"ollama:{tag}", False))
             size_bytes = int(results.get(f"size:{tag}", 0))
             if installed:
-                # Downloaded rows are marked in the Size column: "✓ 4.7 GB".
+                # Downloaded rows are marked in the Size column: "✓ 4.7 GB".  Unticked and
+                # disabled, like the package boxes: a tick always means "will be installed".
                 item.setText(3, f"✓ {_human_size(size_bytes)}" if size_bytes else "✓")
-                self._set_checked(item, True)
+                self._set_checked(item, False)
                 item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEnabled)
                 self._auto_ticked.discard(tag)
                 category = self._group_category(item)
@@ -1067,9 +1314,15 @@ class AddonsPage(SettingsPageBase):
         if ollama_models and not self._confirm_too_large(ollama_models):
             return
 
-        self._dl_log.clear()
-        self._dl_install_btn.setEnabled(False)
-        self._round.start(
+        steps = [f"{PACKAGE_PREFIX}{name}" for name in pip_packages]
+        steps += [f"{SPACY_PREFIX}{model}" for model in spacy_models]
+        if reader:
+            steps.append(READER_ITEM)
+        if page_models:
+            steps.append(PAGE_MODELS_ITEM)
+        steps += ollama_models
+        self._prepare_round(steps)
+        started = self._round.start(
             packages=pip_packages,
             spacy_models=spacy_models,
             reader=reader,
@@ -1077,6 +1330,8 @@ class AddonsPage(SettingsPageBase):
             ollama_models=ollama_models,
             ollama_url=self._ollama_url,
         )
+        if started:
+            self._round_started()
 
     def _confirm_too_large(self, ollama_models: list[str]) -> bool:
         """Ask for confirmation before pulling models that exceed the profile budget.
@@ -1115,46 +1370,83 @@ class AddonsPage(SettingsPageBase):
 
     # ── following the install round ──────────────────────────────────────────────
 
-    def _on_round_item_started(self, item: str) -> None:
-        """Show the progress bar and Abort for an Ollama pull; pip and spaCy have no bar."""
-        if item == UPDATE_ADDONS_ITEM or item.startswith((PACKAGE_PREFIX, SPACY_PREFIX)):
-            return
-        self._show_pull_progress()
-        self._mark_pulls()
+    def _prepare_round(self, steps: Sequence[str]) -> None:
+        """Clear the last result, the log and the hint before a round starts."""
+        packages = [step for step in steps if step.startswith(PACKAGE_PREFIX)]
+        # pip installs all its packages in one command: the round has one step for them.
+        self._round_steps = [step for step in steps if step not in packages[1:]]
+        self._round_result = ""
+        self._round_result_warning = False
+        self._status_item = ""
+        self._status_parts = None
+        self._done_count = 0
+        self._dl_log.clear()
+        self._hint.clear()
+        self._hint.hide()
+        self._show_details(False)
 
-    def _show_pull_progress(self) -> None:
-        self._dl_progress.setValue(0)
-        self._dl_progress.show()
-        self._dl_abort_btn.setEnabled(True)
-        self._dl_abort_btn.show()
+    def _round_started(self) -> None:
+        """Show that a round runs: the button stays where it is, disabled, and says so."""
+        self._dl_install_btn.setEnabled(False)
+        self._dl_install_btn.setText(txt.ADDONS_INSTALLING)
+        self._dl_abort_btn.hide()
+        self._refresh_status()
+
+    def _on_round_item_started(self, item: str) -> None:
+        """Show the step in the status line, with the bar that belongs to it."""
+        if item.startswith(PACKAGE_PREFIX) and self._status_item.startswith(PACKAGE_PREFIX):
+            return  # pip installs all its packages in one command: one step, one line
+        self._show_step(item, len(self._round_steps) or 1)
+
+    def _on_round_item_done(self, _item: str) -> None:
+        self._done_count += 1
 
     def _on_round_pull_progress(self, status: str, completed: int, total: int) -> None:
+        if self._status_parts is None:
+            # A pull the main window started before this page was opened: no step to count.
+            self._set_status(status)
+            return
+        verb, item, number, count = self._status_parts
         if total > 0:
-            mb_done = completed / 1_048_576
-            mb_total = total / 1_048_576
-            self._dl_detect_lbl.setText(f"{status}: {mb_done:.1f} / {mb_total:.1f} MB")
-            self._dl_progress.setValue(int(100 * completed / total))
-            self._mark_pulls(int(100 * completed / total))
+            percent = int(100 * completed / total)
+            self._set_status(txt.addons_status_percent(verb, item, number, count, percent))
+            self._dl_progress.setValue(percent)
+            self._mark_pulls(percent)
         else:
-            self._dl_detect_lbl.setText(status)
+            self._set_status(txt.addons_status_step(verb, item, number, count))
 
-    def _on_round_failed(self, _item: str, message: str) -> None:
+    def _on_round_failed(self, item: str, message: str) -> None:
+        self._elapsed_timer.stop()
+        self._status_parts = None
         if message == "aborted":
-            self._dl_log.appendPlainText("Download aborted.")
-            self._dl_detect_lbl.setText("Aborted.")
+            self._round_result = txt.ADDONS_ABORTED
+            self._round_result_warning = False
+            self._dl_log.appendPlainText(txt.ADDONS_ABORTED)
         else:
+            self._round_result = txt.addons_failed(self._item_label(item), message)
+            self._round_result_warning = True
             self._dl_log.appendHtml(f'<span style="color:#c0392b;"><b>Error:</b> {message}</span>')
+            self._show_details(True)
+        self._refresh_status()
 
     def _on_round_finished(self, installed_any: bool) -> None:
+        self._elapsed_timer.stop()
+        self._status_parts = None
+        self._status_item = ""
         self._dl_progress.hide()
         self._dl_abort_btn.hide()
+        self._hint.hide()
         self._dl_install_btn.setEnabled(True)
+        self._dl_install_btn.setText(txt.ADDONS_INSTALL)
         self._update_btn.setEnabled(True)
         self._refresh_update_banner()
+        if not self._round_result and installed_any:
+            self._round_result = txt.addons_installed(self._done_count)
+            self._round_result_warning = False
+        self._refresh_status()
         if not installed_any:
             return
         # Something arrived: the installed list and the classifications are stale.
-        self._dl_detect_lbl.setText("Done.")
         self.packages_changed.emit()
         self._start_detection()
 
@@ -1166,3 +1458,7 @@ class AddonsPage(SettingsPageBase):
         self._dl_log.appendPlainText(line)
         sb = self._dl_log.verticalScrollBar()
         sb.setValue(sb.maximum())
+        hint = _pip_hint(line)
+        if hint:
+            self._hint.setText(hint)
+            self._hint.show()

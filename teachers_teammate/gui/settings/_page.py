@@ -122,6 +122,9 @@ class SettingsPageBase(QWidget):
     description: ClassVar[str]
     #: True for Add-ons: what happens there is not undone by Cancel.
     applies_immediately: ClassVar[bool] = False
+    #: True when the page fills the window instead of scrolling: its own list scrolls, and the
+    #: action row must stay visible at the bottom (Add-ons).
+    fills_window: ClassVar[bool] = False
 
     #: Asks the window to show another page: ``(SettingsPage, focus, preselect list)``.
     navigate_requested = Signal(object, str, list)

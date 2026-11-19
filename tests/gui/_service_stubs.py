@@ -236,6 +236,9 @@ class RecommendationServiceStub(LocalDataFlowStub):
     #: How much slower this computer is than the reference machine (``None`` = not measured).
     machine_factor: float | None = None
 
+    #: Main memory free right now, as the "My computer" line reads it (``None`` = unreadable).
+    free_memory_gb: float | None = None
+
     def __init__(self) -> None:
         self.detect_calls: list[tuple[str, bool]] = []
         self.changed_urls: list[str] = []
@@ -298,6 +301,10 @@ class RecommendationServiceStub(LocalDataFlowStub):
     def detect_gpus(self, *, refresh: bool = False) -> list:
         self.gpu_calls.append(refresh)
         return []
+
+    def available_memory_gb(self) -> float | None:
+        """Answer with the free memory a test set, or ``None``."""
+        return self.free_memory_gb
 
     # catalog / classification / ratings ──────────────────────────────────────
     def ollama_catalog(self) -> tuple:

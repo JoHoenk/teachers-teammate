@@ -41,7 +41,6 @@ from teachers_teammate.gui.settings._page import (
     FOCUS_REVIEW,
     FOCUS_REVIEW_KEY,
     FOCUS_SERVER,
-    FOCUS_SPEED,
     SettingsPage,
     SettingsPageBase,
 )
@@ -217,11 +216,11 @@ def test_the_page_says_which_computer_the_suggestions_are_for_only_once(models_p
     """
     Given  the AI models page with the recognition picker and two AI sections
     When   it is shown
-    Then   the "Suggestions are for …" line appears once, at the top of the page; the picker
+    Then   the "Models are suggested for …" line appears once, at the top of the page; the picker
            and both sections follow that one selector instead of resolving this computer
            again, so the model hints still follow the profile
     """
-    selector = models_page._profile_line.selector
+    selector = models_page._computer_box.selector
     assert not selector.isHidden()
     assert models_page._ocr_picker._hw_selector is selector
     assert models_page._shared._hw_selector is selector
@@ -796,12 +795,12 @@ def test_this_computer_tests_the_models_the_window_hands_it(computer_page) -> No
 
 
 @pytest.mark.gui
-def test_ai_models_has_no_test_button_but_a_line_that_opens_the_test(qtbot) -> None:
+def test_the_computer_box_shows_the_class_set_time_and_one_change_link(qtbot) -> None:
     """
     Given  the AI models page with a model on this computer
-    When   the "Test speed…" button of its speed line is clicked
-    Then   the page has no test of its own, says the class-set time is not known yet, and
-           asks the window to open This computer at the speed test
+    When   the page is shown and "change…" of its "This computer" box is clicked
+    Then   the page has no test of its own, the box says the class-set time is not measured yet,
+           and the one link asks the window to open This computer
     """
     context = settings_context(DummyAppService())
     page = AiModelsPage(context)
@@ -812,17 +811,53 @@ def test_ai_models_has_no_test_button_but_a_line_that_opens_the_test(qtbot) -> N
     page.navigate_requested.connect(lambda target, focus, _pre: asked.append((target, focus)))
 
     assert not hasattr(page, "_speed_panel")
-    assert not page._speed_hint.isHidden()
-    assert page._speed_hint._label.text() == txt.SPEED_HINT_NEVER
-    page._speed_hint._button.click()
+    assert not page._computer_box.speed_line.isHidden()
+    assert page._computer_box.speed_line._label.text() == txt.SPEED_CLASS_SET_UNKNOWN
+    page._computer_box.change_link.linkActivated.emit("change")
 
-    assert asked == [(SettingsPage.AI_SETUP, FOCUS_SPEED)]
+    assert asked == [(SettingsPage.AI_SETUP, "")]
+
+
+@pytest.mark.gui
+def test_the_computer_box_holds_the_profile_and_the_class_set_time(qtbot) -> None:
+    """
+    Given  the AI models page
+    When   it is created
+    Then   one framed "This computer" box holds both read-only rows and one "change…" link, and
+           the proofreading group no longer repeats where the models run
+    """
+    from teachers_teammate.gui.settings import _ai_models_page  # noqa: PLC0415
+
+    page = _models_page(qtbot)
+    box = page._computer_box
+
+    assert box.profile_line.selector is box.selector
+    assert box.speed_line._selector is box.selector
+    assert box.change_link is not None
+    assert box.profile_line.change_link is None  # one link for the whole box
+    assert not hasattr(page, "_speed_hint")
+    assert not hasattr(_ai_models_page, "PROOFREADING_NOTE")
+
+
+@pytest.mark.gui
+def test_the_box_says_what_the_suggestions_are_for(qtbot) -> None:
+    """
+    Given  the AI models page and a computer with an 8 GB graphics card
+    When   the box has resolved this computer
+    Then   its profile row says what the suggestions are for, in the same words as Add-ons
+    """
+    page = _models_page(qtbot)
+    _wait_for_detection(qtbot, page)
+
+    assert page._computer_box.profile_line.selector._status_lbl.text() == (
+        "Models are suggested for: Graphics card with about 8 GB memory"
+    )
 
 
 def _wait_for_detection(qtbot, page) -> None:
     """Wait until the page's profile selector has resolved this computer."""
     selector = (
-        page._profile_line.selector if isinstance(page, AiModelsPage) else page._hardware_selector
+        page._computer_box.selector if isinstance(page, AiModelsPage) else page._hardware_selector
     )
     qtbot.waitUntil(lambda: selector.resolved() is not None, timeout=5000)
 
@@ -1024,7 +1059,7 @@ def test_the_context_row_follows_the_detected_card(qtbot, monkeypatch) -> None:
     service.detection = HardwareDetection(
         profile="16gb", reason=DetectionReason.GPU_DETECTED, gpu_name="Test GPU", memory_gb=16.0
     )
-    page._profile_line.selector.refresh_status()
+    page._computer_box.selector.refresh_status()
 
     qtbot.waitUntil(
         lambda: (
@@ -1141,39 +1176,25 @@ def test_changing_the_profile_is_announced(computer_page, qtbot) -> None:
 
 
 @pytest.mark.use_case("Hardware_Profile_Override")
-def test_detect_gpu_button_uses_the_shared_service(qtbot) -> None:
+def test_this_computer_has_no_gpu_row_of_its_own(computer_page) -> None:
     """
-    Given  the This computer page with an injected service
-    When   the "Detect GPU" button runs
-    Then   the injected service answers (so its cached probe is reused) instead of a freshly
-           constructed one probing the machine again
+    Given  the This computer page
+    When   it is created
+    Then   there is no "Detect GPU" button and no GPU list: "Detect again" re-probes the same
+           process-wide probe, and the status line names the card it found
     """
-
-    class _Gpu:
-        name = "RTX 4060"
-        vendor = "nvidia"
-
-    class _GpuService(DummyAppService):
-        def detect_gpus(self, *, refresh: bool = False) -> list:
-            super().detect_gpus(refresh=refresh)
-            return [_Gpu()]
-
-    page = AiSetupPage(settings_context(_GpuService(), settings={}))
-    qtbot.addWidget(page)
-
-    page._on_detect_gpu()
-    qtbot.waitUntil(lambda: "RTX 4060" in page._gpu_status_lbl.text(), timeout=5000)
-    assert page._gpu_detect_thread is not None
-    page._gpu_detect_thread.wait(5000)
+    assert not hasattr(computer_page, "_gpu_detect_btn")
+    assert not hasattr(computer_page, "_gpu_status_lbl")
+    assert not hasattr(computer_page, "_on_detect_gpu")
 
 
 @pytest.mark.use_case("Hardware_Profile_Override")
-def test_detect_gpu_button_probes_again_and_refreshes_my_computer(qtbot) -> None:
+def test_detect_again_probes_again_and_redraws_my_computer(qtbot) -> None:
     """
     Given  the This computer page whose first probe already ran
-    When   the user clicks "Detect GPU"
+    When   the user clicks "Detect again"
     Then   the service is asked to probe again (refresh=True — a driver may have been
-           installed since) and "My computer" resolves again from that fresh probe
+           installed since) and the status line follows that fresh probe
     """
     svc = DummyAppService()
     page = AiSetupPage(
@@ -1182,17 +1203,13 @@ def test_detect_gpu_button_probes_again_and_refreshes_my_computer(qtbot) -> None
         )
     )
     qtbot.addWidget(page)
+    page.show()
     qtbot.waitUntil(lambda: len(svc.detect_calls) == 1, timeout=5000)
 
-    page._on_detect_gpu()
-    qtbot.waitUntil(
-        lambda: page._gpu_status_lbl.text() == "No NVIDIA or AMD GPU detected.", timeout=5000
-    )
-    assert svc.gpu_calls == [True]
+    page._hardware_selector._detect_again_lbl.linkActivated.emit("detect")
+
     qtbot.waitUntil(lambda: len(svc.detect_calls) == 2, timeout=5000)
-    assert svc.detect_calls[-1][1] is False  # re-resolved from the probe, no second probe
-    assert page._gpu_detect_thread is not None
-    page._gpu_detect_thread.wait(5000)
+    assert svc.detect_calls[-1][1] is True
 
 
 @pytest.mark.use_case("Hardware_Profile_Override")
@@ -1235,30 +1252,22 @@ def test_restoring_this_computer_lets_the_other_pages_follow(computer_page, qtbo
 
 
 @pytest.mark.gui
-def test_shutdown_parks_a_running_gpu_check(qtbot) -> None:
+def test_shutdown_stops_the_speed_test_and_the_server_check(qtbot) -> None:
     """
-    Given  a GPU check that is still running
-    When   the page shuts down
-    Then   the thread is parked (never destroyed while running) and not waited for
+    Given  the This computer page
+    When   it shuts down
+    Then   the speed test and the server check are stopped, so nothing of the page keeps
+           running after the window closed
     """
-    release = threading.Event()
-
-    class _SlowGpu(DummyAppService):
-        def detect_gpus(self, *, refresh: bool = False) -> list:
-            release.wait(10)
-            return []
-
-    page = AiSetupPage(settings_context(_SlowGpu(), settings={}))
+    page = AiSetupPage(settings_context(DummyAppService(), settings={}))
     qtbot.addWidget(page)
-    page._on_detect_gpu()
-    thread = page._gpu_detect_thread
-    assert thread is not None and thread.isRunning()
+    stopped: list[str] = []
+    page._speed_panel.shutdown = lambda: stopped.append("speed")  # type: ignore[method-assign]  # ty: ignore[invalid-assignment]
+    page._status_line.shutdown = lambda: stopped.append("server")  # type: ignore[method-assign]  # ty: ignore[invalid-assignment]
 
     page.shutdown()
 
-    assert thread in _model_fetch._RETIRED_THREADS
-    release.set()
-    qtbot.waitUntil(thread.isFinished, timeout=5000)
+    assert stopped == ["speed", "server"]
 
 
 # ── API keys ───────────────────────────────────────────────────────────────────
@@ -3178,14 +3187,14 @@ def test_the_profile_line_is_shown_once_and_change_opens_where_the_ai_runs(qtbot
     requests: list[tuple] = []
     page.navigate_requested.connect(lambda *args: requests.append(args))
 
-    page._profile_line.change_link.linkActivated.emit("change")
+    page._computer_box.change_link.linkActivated.emit("change")
 
     visible = [
         selector
-        for selector in page.findChildren(type(page._profile_line.selector))
+        for selector in page.findChildren(type(page._computer_box.selector))
         if not selector.isHidden()
     ]
-    assert visible == [page._profile_line.selector]
+    assert visible == [page._computer_box.selector]
     assert requests == [(SettingsPage.AI_SETUP, "", [])]
 
 

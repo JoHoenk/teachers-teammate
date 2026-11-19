@@ -18,6 +18,7 @@ from typing import Any, Protocol
 from PySide6.QtCore import QObject, QThread, Signal
 
 from ..application.service import PAGE_MODELS_STATUS_KEY, READER_STATUS_KEY
+from . import _user_text as txt
 from ._model_fetch import _start_thread
 from ._model_guidance import SPACY_PREFIX
 
@@ -36,6 +37,10 @@ PAGE_MODELS_ITEM = PAGE_MODELS_STATUS_KEY
 PAGE_MODELS_PROGRESS_STATUS = "Page models"
 #: The add-ons installed again after an app update (``update:addons``).
 UPDATE_ADDONS_ITEM = "update:addons"
+
+#: The phases :meth:`InstallRound.abort` can stop: the downloads.  pip and the spaCy model
+#: download run to their end once started.
+_ABORTABLE_PHASES = ("reader", "page_models", "pull")
 
 
 class _InstallService(Protocol):
@@ -96,7 +101,7 @@ class _PipInstallThread(QThread):
             self._svc.install_packages(self._packages, self.log_line.emit)
             self.finished_ok.emit(self._packages)
         except Exception as exc:  # noqa: BLE001  # surface any pip/subprocess failure to the UI via the error signal
-            self.finished_err.emit(str(exc))
+            self.finished_err.emit(txt.addon_error_text(exc))
 
 
 class _AddonUpdateThread(QThread):
@@ -115,7 +120,7 @@ class _AddonUpdateThread(QThread):
             self._svc.update_addons(self.log_line.emit)
             self.finished_ok.emit()
         except Exception as exc:  # noqa: BLE001  # surface any pip/subprocess failure to the UI via the error signal
-            self.finished_err.emit(str(exc))
+            self.finished_err.emit(txt.addon_error_text(exc))
 
 
 class InstallRound(QObject):
@@ -227,6 +232,20 @@ class InstallRound(QObject):
         """True from :meth:`start` until the round has finished or failed."""
         return self._running
 
+    def can_abort(self) -> bool:
+        """True while Abort would stop something: a download, or a pull this page follows.
+
+        pip and the spaCy model download run to their end once started; the page shows Abort
+        only where it does something.
+        """
+        if self._running:
+            return self._phase in _ABORTABLE_PHASES
+        # A pull the main window started before this page was opened: the page follows it, and
+        # Abort stops it through the manager.
+        if self._pull_manager is None:
+            return False
+        return self._pull_connected and self._pull_manager.is_active
+
     def abort(self) -> None:
         """Stop the downloads; a pip install or spaCy download cannot be stopped once it runs."""
         from ._addon_installer_dialog import (  # noqa: PLC0415
@@ -234,6 +253,8 @@ class InstallRound(QObject):
             _ReaderDownloadThread,
         )
 
+        if not self.can_abort():
+            return
         if isinstance(self._thread, _ReaderDownloadThread):
             self._thread.cancel()
             return
@@ -260,13 +281,15 @@ class InstallRound(QObject):
 
     def _start_update(self) -> None:
         self.log_line.emit("Installing the add-ons again…")
+        # The phase is set before the item is announced: the page reads it to decide whether
+        # Abort can do anything.
+        self._phase = "update"
         self._begin(UPDATE_ADDONS_ITEM)
         thread = _AddonUpdateThread(self._svc)
         thread.log_line.connect(self.log_line)
         thread.finished_ok.connect(self._on_update_done)
         thread.finished_err.connect(self._on_error)
         self._thread = thread
-        self._phase = "update"
         _start_thread(thread)
 
     def _on_update_done(self) -> None:
@@ -283,6 +306,7 @@ class InstallRound(QObject):
         self.log_line.emit(f"pip install {' '.join(self._packages)}")
         # pip reports one error for the whole command, so a failure names the first package.
         self._current = f"{PACKAGE_PREFIX}{self._packages[0]}"
+        self._phase = "pip"
         for package in self._packages:
             self.item_started.emit(f"{PACKAGE_PREFIX}{package}")
         thread = _PipInstallThread(self._svc, self._packages)
@@ -291,7 +315,6 @@ class InstallRound(QObject):
         thread.finished_err.connect(self._on_error)
         # Set before start(): a thread that finishes at once must not be overwritten.
         self._thread = thread
-        self._phase = "pip"
         _start_thread(thread)
 
     def _on_pip_done(self, packages: list[str]) -> None:
@@ -312,13 +335,13 @@ class InstallRound(QObject):
 
         model = self._spacy_models[0]
         self.log_line.emit(f"Downloading spaCy model: {model}")
+        self._phase = "spacy"
         self._begin(f"{SPACY_PREFIX}{model}")
         thread = _ModelDownloadThread(model, self._svc.addon_packages_dir())
         thread.log_line.connect(self.log_line)
         thread.finished_ok.connect(self._on_spacy_done)
         thread.finished_err.connect(self._on_error)
         self._thread = thread
-        self._phase = "spacy"
         _start_thread(thread)
 
     def _on_spacy_done(self, _model: str) -> None:
@@ -349,13 +372,13 @@ class InstallRound(QObject):
         from ._addon_installer_dialog import _ReaderDownloadThread  # noqa: PLC0415
 
         self.log_line.emit("Downloading the built-in reader…")
+        self._phase = "reader"
         self._begin(READER_ITEM)
         thread = _ReaderDownloadThread(self._svc)
         thread.progress.connect(self.pull_progress_from_reader)
         thread.finished_ok.connect(self._on_reader_done)
         thread.finished_err.connect(self._on_reader_error)
         self._thread = thread
-        self._phase = "reader"
         _start_thread(thread)
 
     def pull_progress_from_reader(self, done: int, total: int) -> None:
@@ -381,6 +404,7 @@ class InstallRound(QObject):
         from ._addon_installer_dialog import _ReaderDownloadThread  # noqa: PLC0415
 
         self.log_line.emit("Downloading the page models…")
+        self._phase = "page_models"
         self._begin(PAGE_MODELS_ITEM)
         thread = _ReaderDownloadThread(self._svc, "download_page_models")
         thread.progress.connect(
@@ -389,7 +413,6 @@ class InstallRound(QObject):
         thread.finished_ok.connect(self._on_page_models_done)
         thread.finished_err.connect(self._on_error)
         self._thread = thread
-        self._phase = "page_models"
         _start_thread(thread)
 
     def _on_page_models_done(self) -> None:
@@ -410,8 +433,8 @@ class InstallRound(QObject):
             if queued_behind
             else f"Pulling Ollama model: {model}"
         )
-        self._begin(model)
         self._phase = "pull"
+        self._begin(model)
         if self._pull_manager is not None:
             # Delegate to the main-window-owned manager: it pulls the whole queue, also
             # after this round's window was closed.

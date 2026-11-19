@@ -2229,7 +2229,7 @@ def test_a_stage_issue_wins_over_the_memory_warning(tmp_path: Path, monkeypatch)
     svc = _make_svc()
     cfg = _ollama_config(tmp_path, correction_provider="mistral")
     _computer(svc, monkeypatch, profile="cpu", free_gb=6.0)
-    monkeypatch.setattr(svc, "missing_provider_package", lambda _provider: True)
+    monkeypatch.setattr(svc, "missing_provider_package", lambda _provider: "langchain-mistralai")
 
     with _server_answers(["qwen3-vl:8b", "qwen3.5:9b"]):
         result = svc.check_run_preflight(cfg)
@@ -3353,6 +3353,27 @@ def test_stage_requirements_ask_for_the_add_on_update_after_an_app_update(
 
 
 @pytest.mark.unit
+def test_stage_requirements_ask_for_a_restart_while_a_package_waits(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """
+    Given  spaCy waiting in packages.pending/ after an install that could not replace a file
+    When   removing names is checked
+    Then   the issue is ADDON_RESTART_NEEDED and says what a restart finishes
+    """
+    from teachers_teammate.infrastructure import addon_manager  # noqa: PLC0415
+
+    monkeypatch.setattr(addon_manager, "addon_waits_for_restart", lambda _name: True)
+    svc = _make_svc(model_store=fake_reader_store(tmp_path / "models"))
+    cfg = _ollama_config(tmp_path)
+
+    issues = svc.check_stage_requirements(cfg, "anonymizer")
+
+    assert [i.kind for i in issues] == [IssueKind.ADDON_RESTART_NEEDED]
+    assert issues[0].message == "Restart the app to finish installing name detection."
+
+
+@pytest.mark.unit
 def test_an_outdated_folder_without_the_needed_add_on_changes_nothing(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -3581,6 +3602,33 @@ def test_stage_requirements_carry_the_models_to_download(tmp_path: Path) -> None
     assert model_issue.models == (cfg.effective_correction_model,)
     assert name_issue.kind is IssueKind.NAME_DETECTION_MISSING
     assert name_issue.models == (svc.spacy_model_for_language("German"),)
+
+
+@pytest.mark.unit
+def test_a_missing_spacy_is_told_apart_from_a_missing_model(tmp_path: Path) -> None:
+    """
+    Given  no name detection model installed, once with spaCy importable and once without
+    When   removing names is checked
+    Then   the first asks for the model (NAME_DETECTION_MISSING), the second for spaCy itself
+           (PRIVACY_ADDON_MISSING), and both carry the model the fix ticks
+    """
+    svc = _make_svc()
+    cfg = dataclasses.replace(_ollama_config(tmp_path), language="german")
+
+    with (
+        patch.object(svc, "list_installed_spacy_models", return_value=[]),
+        patch.object(ProcessingApplicationService, "is_module_importable", lambda *_a: True),
+    ):
+        model_missing = svc.check_stage_requirements(cfg, "anonymizer")
+    with (
+        patch.object(svc, "list_installed_spacy_models", return_value=[]),
+        patch.object(ProcessingApplicationService, "is_module_importable", lambda *_a: False),
+    ):
+        spacy_missing = svc.check_stage_requirements(cfg, "anonymizer")
+
+    assert [i.kind for i in model_missing] == [IssueKind.NAME_DETECTION_MISSING]
+    assert [i.kind for i in spacy_missing] == [IssueKind.PRIVACY_ADDON_MISSING]
+    assert spacy_missing[0].models == (svc.spacy_model_for_language("german"),)
 
 
 @pytest.mark.unit

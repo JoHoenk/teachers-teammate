@@ -128,6 +128,7 @@ from ._types import FileDoneEvent
 from ._update_check import UpdateCheckThread
 from ._view_settings import set_text_point_size, text_point_size
 from ._what_is_sent_dialog import WhatIsSentDialog
+from ._window_geometry import restore_geometry
 from ._worker import OCRWorker, detach_running_worker
 from .check import CheckPage, CopyKind, CopyState
 from .settings import (
@@ -954,9 +955,7 @@ class MainWindow(QMainWindow):
         config_path = self._app_service.resolve_config_path(None)
         # Restore window geometry and splitter sizes from QSettings.
         qs = QSettings(self._QSETTINGS_ORG, self._QSETTINGS_APP)
-        raw_geometry = qs.value("gui/geometry")
-        if raw_geometry is not None:
-            self.restoreGeometry(raw_geometry)
+        restore_geometry(self, qs.value("gui/geometry"))
         sizes = [360, 1140]
         raw_sizes = qs.value("gui/panel_sizes")
         if isinstance(raw_sizes, list) and len(raw_sizes) == 2:

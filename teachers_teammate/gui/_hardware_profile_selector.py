@@ -5,6 +5,12 @@ with a plain-language status line that explains *why* a profile was chosen.
 All discovery runs in a background task (:class:`~._background.LatestTask`), so
 opening a dialog never blocks the UI, and closing it while detection is still
 running is harmless.  The wording lives in :mod:`._model_wording`.
+
+The status line also names the memory that is free right now.  That figure is
+not part of the detection — it changes all the time and no suggestion depends on
+it — so it is read again whenever the line is drawn: when the page is shown, on
+"Detect again", and every :data:`_FREE_MEMORY_INTERVAL_MS` while the page is
+visible.
 """
 
 from __future__ import annotations
@@ -12,7 +18,7 @@ from __future__ import annotations
 import logging
 from typing import Protocol
 
-from PySide6.QtCore import Signal
+from PySide6.QtCore import QTimer, Signal
 from PySide6.QtWidgets import QComboBox, QHBoxLayout, QLabel, QVBoxLayout, QWidget
 
 from ..config import DEFAULTS
@@ -22,9 +28,7 @@ from ._model_wording import (
     CHECK_COMPUTER_FAILED,
     CHECKING_COMPUTER,
     NO_SUGGESTION_FOR_COMPUTER,
-    PROFILE_TEXT,
     READ_ONLY_PROFILE_TOOLTIP,
-    auto_profile_text,
     detection_status_text,
     profile_text,
     read_only_profile_text,
@@ -33,6 +37,8 @@ from ._model_wording import (
 _logger = logging.getLogger(__name__)
 
 _STATUS_STYLE = "color: #888; font-size: 11px;"
+#: How often the free memory is read again while the page is visible.
+_FREE_MEMORY_INTERVAL_MS = 10_000
 
 
 class _ProfileService(Protocol):
@@ -40,13 +46,15 @@ class _ProfileService(Protocol):
 
     def resolve_hardware_profile(self, setting: str, ollama_url: str) -> HardwareDetection: ...
 
+    def available_memory_gb(self) -> float | None: ...
+
 
 class HardwareProfileSelector(QWidget):
     """ "My computer" picker with a plain-language detection status line.
 
     Editable variant: a combo with the four ``PROFILE_SETTINGS`` items plus a
     status label and a "Detect again" link.  ``read_only=True`` shows only
-    "Suggestions are for: {profile text}" with a tooltip pointing at the two
+    "Models are suggested for: {profile text}" with a tooltip pointing at the two
     places where the value can be changed.
     """
 
@@ -67,7 +75,9 @@ class HardwareProfileSelector(QWidget):
         self._ollama_url = ollama_url
         self._read_only = read_only
         self._task = LatestTask(self)
+        self._memory_task = LatestTask(self)
         self._detection: HardwareDetection | None = None
+        self._available_memory_gb: float | None = None
         self._setting: str = setting if setting in PROFILE_SETTINGS else "auto"
 
         layout = QVBoxLayout(self)
@@ -106,6 +116,11 @@ class HardwareProfileSelector(QWidget):
             self._detect_again_lbl.linkActivated.connect(self._on_detect_again)
             status_layout.addWidget(self._detect_again_lbl)
             layout.addWidget(status_row)
+
+        # Only the editable line names the free memory, so only it needs the timer.
+        self._memory_timer = QTimer(self)
+        self._memory_timer.setInterval(_FREE_MEMORY_INTERVAL_MS)
+        self._memory_timer.timeout.connect(self._read_available_memory)
 
         self._start_resolve(refresh=False)
 
@@ -148,6 +163,38 @@ class HardwareProfileSelector(QWidget):
             # A concrete choice does not depend on the server.
             self._start_resolve(refresh=False)
 
+    # ── the free memory ────────────────────────────────────────────────────
+
+    def showEvent(self, event) -> None:  # noqa: N802  # Qt's name
+        super().showEvent(event)
+        if self._read_only:
+            return
+        self._read_available_memory()
+        self._memory_timer.start()
+
+    def hideEvent(self, event) -> None:  # noqa: N802  # Qt's name
+        super().hideEvent(event)
+        self._memory_timer.stop()
+
+    def _read_available_memory(self) -> None:
+        """Ask for the memory free right now and redraw the line with it.
+
+        Only worth asking when the line names the computer's memory at all: a remote server's
+        free memory is not this computer's, and a computer whose memory is unknown has no
+        figure to add to.
+        """
+        detection = self._detection
+        if detection is None or detection.system_memory_gb is None or not self.isVisible():
+            return
+        self._memory_task.submit(self._app_service.available_memory_gb, self._on_memory_read)
+
+    def _on_memory_read(self, result: object, error: BaseException | None) -> None:
+        if error is not None:
+            _logger.debug("Reading the free memory failed", exc_info=error)
+            return
+        self._available_memory_gb = result if isinstance(result, float) else None
+        self._draw_status()
+
     # ── internal ───────────────────────────────────────────────────────────
 
     def _on_combo_changed(self, index: int) -> None:
@@ -188,16 +235,19 @@ class HardwareProfileSelector(QWidget):
             self.resolved_changed.emit(None)
             return
         self._detection = result
-        if self._read_only or self._combo is None:
-            self._status_lbl.setText(read_only_profile_text(result.profile))
-        else:
-            self._status_lbl.setText(detection_status_text(result))
-            auto_idx = self._combo.findData("auto")
-            if auto_idx >= 0:
-                text = (
-                    auto_profile_text(result.profile)
-                    if self.setting() == "auto"
-                    else PROFILE_TEXT["auto"]
-                )
-                self._combo.setItemText(auto_idx, text)
+        self._available_memory_gb = None
+        self._draw_status()
+        self._read_available_memory()
         self.resolved_changed.emit(result)
+
+    def _draw_status(self) -> None:
+        """Draw the status line from the detection and the free memory read last."""
+        detection = self._detection
+        if detection is None:
+            return
+        if self._read_only:
+            self._status_lbl.setText(read_only_profile_text(detection.profile))
+            return
+        self._status_lbl.setText(
+            detection_status_text(detection, available_memory_gb=self._available_memory_gb)
+        )

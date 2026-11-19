@@ -34,6 +34,19 @@ _LANGUAGE_BY_CODE: dict[str, str] = {
 _LANGUAGE_BY_NAME: dict[str, str] = {name.lower(): name for name in _LANGUAGE_BY_CODE.values()}
 
 
+def language_name(value: str) -> str:
+    """Return the language name as the app writes it: ``"german"`` → ``"German"``.
+
+    The config holds whatever the teacher typed (the picker offers :data:`LANGUAGES`, and a
+    teacher may type another name), so a sentence that names the language goes through here.
+    A language code works too (``"de"`` → ``"German"``), because a spaCy model is named by
+    one.  A name the app does not know comes back as it was given.
+    """
+    stripped = value.strip()
+    lowered = stripped.lower()
+    return _LANGUAGE_BY_NAME.get(lowered) or _LANGUAGE_BY_CODE.get(lowered) or stripped
+
+
 def language_from_locale(code: str | None) -> str | None:
     """Return the language name for a locale *code*, or ``None`` when it is unknown.
 

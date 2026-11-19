@@ -247,23 +247,62 @@ def test_fix_for_outdated_add_ons_opens_the_update_line_of_add_ons() -> None:
 
 
 @pytest.mark.unit
+def test_fix_for_a_package_that_waits_for_a_restart_offers_no_button() -> None:
+    """
+    Given  an install that could not replace a file the running app has loaded
+    When   its fix is asked
+    Then   the line is the service's sentence and there is nothing to press
+    """
+    issue = RequirementIssue(
+        "Restart the app to finish installing name detection.", IssueKind.ADDON_RESTART_NEEDED
+    )
+
+    fix = _fix("anonymizer", issue)
+
+    assert fix.line == "Restart the app to finish installing name detection."
+    assert fix.actions == ()
+
+
+@pytest.mark.unit
 def test_fix_for_missing_name_detection_ticks_the_spacy_model() -> None:
     """
-    Given  name detection that is not downloaded for German
+    Given  name detection whose model is not downloaded for German
     When   its fix is asked
-    Then   the line names the language and "Download…" ticks the spaCy model
+    Then   the line names the language and "Download…" ticks only the spaCy model
     """
     issue = RequirementIssue("x", IssueKind.NAME_DETECTION_MISSING, models=("de_core_news_sm",))
 
-    fix = _fix("anonymizer", issue, language="German")
+    fix = _fix("anonymizer", issue, language="german")
 
-    assert fix.line == "Name detection for German isn't downloaded"
+    assert fix.line == "The German name detection model isn't downloaded"
     assert fix.actions == (
         FixAction(
             "Download…", SettingsPage.ADDONS, FOCUS_NAME_DETECTION, ("spacy:de_core_news_sm",)
         ),
     )
-    assert _fix("anonymizer", issue).line == "Name detection isn't downloaded"
+    assert _fix("anonymizer", issue).line == "The model isn't downloaded"
+
+
+@pytest.mark.unit
+def test_fix_for_a_missing_spacy_installs_it_with_the_model() -> None:
+    """
+    Given  spaCy itself not installed, so no name detection model can run
+    When   its fix is asked
+    Then   the line says what is missing and "Install…" ticks spaCy and the model
+    """
+    issue = RequirementIssue("x", IssueKind.PRIVACY_ADDON_MISSING, models=("de_core_news_sm",))
+
+    fix = _fix("anonymizer", issue, language="german")
+
+    assert fix.line == "Name detection isn't installed yet (spaCy and the German model)"
+    assert fix.actions == (
+        FixAction(
+            "Install…",
+            SettingsPage.ADDONS,
+            FOCUS_NAME_DETECTION,
+            ("package:spacy", "spacy:de_core_news_sm"),
+        ),
+    )
 
 
 @pytest.mark.unit

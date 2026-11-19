@@ -36,6 +36,7 @@ from ..domain.model_catalog import (
     ModelCategory,
     RequestProfile,
     find_spec,
+    rate_model,
     request_profile,
 )
 from ..domain.performance_estimate import (
@@ -252,13 +253,31 @@ class StepEstimate:
 
 
 @dataclass(frozen=True)
+class UnmeasuredStep:
+    """A step that runs here but was never measured: its row stays, with what to expect.
+
+    A model chosen a moment ago has neither a stored test nor samples of real runs.  Leaving its
+    row out would make the class set look shorter than it is, so the row is kept and says it was
+    not measured.
+    """
+
+    step: SpeedStep
+    model: str
+    band: SpeedBand | None = None
+    """The band the model is expected to reach on this computer; ``None`` when nothing says."""
+
+
+@dataclass(frozen=True)
 class SpeedSummary:
     """Everything the speed panel shows, worked out from the store."""
 
     steps: tuple[StepEstimate, ...] = ()
+    unmeasured: tuple[UnmeasuredStep, ...] = ()
+    """The steps that run here but have no measurement; their rows say so instead of vanishing."""
     class_set: TimeRange | None = None
     """How long a class set (:data:`CLASS_SET_FILES` files of :data:`CLASS_SET_PAGES` pages)
-    takes, or ``None`` when no step has an estimate."""
+    takes, or ``None`` when a step has no estimate: a sum that leaves one out would understate
+    the time."""
     measured_at: str = ""
     """When the measurement behind the rows was taken; ``""`` when nothing was measured."""
     on_battery: bool | None = None
@@ -290,6 +309,10 @@ class SpeedSummary:
         """Return the band of *step*, or ``None`` when the step has no estimate."""
         row = self.step(step)
         return None if row is None else row.band
+
+    def unmeasured_step(self, step: SpeedStep) -> UnmeasuredStep | None:
+        """Return the unmeasured row of *step*, or ``None`` when the step was measured."""
+        return next((item for item in self.unmeasured if item.step is step), None)
 
     @property
     def per_page(self) -> TimeRange | None:
@@ -458,6 +481,8 @@ class SpeedEstimateService:
         url = normalize_ollama_url(choices.ollama_url)
         facts = self.cached_server_facts(url) if cached_only else self.refresh_server_facts(url)
         rows: list[StepEstimate] = []
+        unmeasured: list[UnmeasuredStep] = []
+        factors: MachineFactors | None = None
         measured_at = ""
         shared = swaps = out_of_date = card_unused = too_slow = False
         on_battery: bool | None = None
@@ -473,6 +498,17 @@ class SpeedEstimateService:
             if speed is None and stored is not None:
                 speed = _measured_speed(stored.record, step)
             if speed is None:
+                # The row stays: a step that runs here but was never measured still takes time,
+                # and a class set that left it out would promise a figure that is too short.
+                if factors is None:
+                    factors = self.machine_factors(url)
+                unmeasured.append(
+                    UnmeasuredStep(
+                        step=step,
+                        model=tag,
+                        band=_expected_band(tag, step, hardware, factors),
+                    )
+                )
                 continue
             # The rates do not depend on the mode, the answer length does: only the samples of the
             # mode this run is set to say how long its answers are.
@@ -532,7 +568,8 @@ class SpeedEstimateService:
         swaps = swaps or _most_loaded(run_samples)
         return SpeedSummary(
             steps=tuple(rows),
-            class_set=_class_set(rows, swaps=swaps, load_s=load_s),
+            unmeasured=tuple(unmeasured),
+            class_set=(None if unmeasured else _class_set(rows, swaps=swaps, load_s=load_s)),
             measured_at=measured_at,
             on_battery=on_battery,
             shared=shared,
@@ -820,6 +857,32 @@ def _measured_speed(record: SpeedRecord, step: SpeedStep) -> ModelSpeed | None:
     if speed is None and step is SpeedStep.REVIEW:
         return record.measured(SpeedStep.PROOFREADING)
     return speed
+
+
+def _expected_band(
+    tag: str,
+    step: SpeedStep,
+    hardware: HardwareDetection | None,
+    factors: MachineFactors,
+) -> SpeedBand | None:
+    """Return the band *tag* is expected to reach for *step* here, or ``None``.
+
+    The same path the Add-ons list takes for its "(expected)" label: the catalog's reference
+    speed, scaled by how much slower this computer is than the reference machine.  ``None``
+    while this computer is unknown, and for a model the catalog does not know.
+    """
+    if hardware is None:
+        return None
+    category: ModelCategory = "ocr" if step is SpeedStep.READING else "general"
+    rating = rate_model(
+        tag,
+        category,
+        hardware.profile,
+        system_memory_gb=hardware.system_memory_gb,
+        card_gb=hardware.card_gb,
+        machine_factor=factors.for_category(category),
+    )
+    return rating.speed
 
 
 def _outcome(record: SpeedRecord, step: SpeedStep) -> StepOutcome | None:

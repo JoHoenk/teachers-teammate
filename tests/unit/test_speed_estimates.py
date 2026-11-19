@@ -572,6 +572,60 @@ def test_the_summary_has_no_row_for_a_step_that_was_not_measured(tmp_path: Path)
     assert summary.step(SpeedStep.PROOFREADING) is not None
 
 
+def test_a_step_that_was_never_measured_keeps_a_row_with_its_expected_band(
+    tmp_path: Path,
+) -> None:
+    """
+    Given  a measurement of one writing model and a page that proofreads with another
+    When   the summary is asked for
+    Then   the unmeasured step has a row of its own, with the band the catalog expects here
+    """
+    service, store, _client = _service(tmp_path)
+    store.save(_record())
+
+    summary = service.speed_summary(
+        _choices(reading_model="", writing_model="qwen3:4b"), hardware=_hardware()
+    )
+
+    assert summary.step(SpeedStep.PROOFREADING) is None
+    missing = summary.unmeasured_step(SpeedStep.PROOFREADING)
+    assert missing is not None
+    assert missing.model == "qwen3:4b"
+    assert missing.band is not None
+
+
+def test_an_unmeasured_step_has_no_band_without_a_detection(tmp_path: Path) -> None:
+    """
+    Given  a page that proofreads with a model that was never measured here
+    When   the summary is asked for without a hardware detection
+    Then   the row is there but says nothing about the speed to expect
+    """
+    service, _store, _client = _service(tmp_path)
+
+    summary = service.speed_summary(_choices(reading_model="", writing_model="qwen3:4b"))
+
+    missing = summary.unmeasured_step(SpeedStep.PROOFREADING)
+    assert missing is not None
+    assert missing.band is None
+
+
+def test_the_class_set_is_unknown_while_a_step_is_unmeasured(tmp_path: Path) -> None:
+    """
+    Given  a measurement of the writing model and a reading model that was never measured
+    When   the summary is asked for both steps
+    Then   there is no class set, because a sum that left the reading step out would promise
+           a time that is too short
+    """
+    service, store, _client = _service(tmp_path)
+    store.save(_record())
+
+    summary = service.speed_summary(_choices())
+
+    assert summary.step(SpeedStep.PROOFREADING) is not None
+    assert summary.unmeasured_step(SpeedStep.READING) is not None
+    assert summary.class_set is None
+
+
 def test_a_review_that_shares_the_proofreading_model_has_its_own_row(tmp_path: Path) -> None:
     """
     Given  a stored measurement of the proofreading model and a review that names the same model
@@ -635,10 +689,10 @@ def test_swapping_models_lengthen_the_class_set(tmp_path: Path) -> None:
     """
     service, store, _client = _service(tmp_path)
     store.save(_record(swaps=True))
-    swapping = service.speed_summary(_choices()).class_set
+    swapping = service.speed_summary(_choices(reading_model="")).class_set
 
     store.save(_record(swaps=False))
-    staying = service.speed_summary(_choices()).class_set
+    staying = service.speed_summary(_choices(reading_model="")).class_set
 
     assert swapping.low_s > staying.low_s
 
@@ -798,6 +852,10 @@ def test_an_empty_store_gives_an_empty_summary(tmp_path: Path) -> None:
 
     assert summary.steps == ()
     assert summary.class_set is None
+    assert {item.step for item in summary.unmeasured} == {
+        SpeedStep.READING,
+        SpeedStep.PROOFREADING,
+    }
     assert summary.measured_at == ""
 
 

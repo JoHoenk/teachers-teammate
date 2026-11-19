@@ -3284,7 +3284,7 @@ def test_the_setup_result_is_applied_without_a_guard_dialog(
     assert guarded == []
     assert saved == [{"notify": False}]
     assert checked == ["check"]
-    assert "spaCy de" in main_window._config_panel._anonymization_uses.text()
+    assert "Names in German" in main_window._config_panel._anonymization_uses.text()
 
 
 # ── add-ons wiring (review findings #1, #9, #10 and the GPU tab) ───────────
@@ -5143,9 +5143,10 @@ def test_ticking_a_results_box_asks_the_readiness_check_again(ready_window, monk
     """
     scheduled: list[int] = []
     monkeypatch.setattr(ready_window, "_schedule_readiness_check", lambda: scheduled.append(1))
-    box = ready_window._config_panel._text_anonymized_enabled
+    panel = ready_window._config_panel
 
-    box.setChecked(not box.isChecked())
+    panel._text_enabled.setChecked(True)
+    panel._text_mode.setCurrentText("anonymized")
 
     assert scheduled
 

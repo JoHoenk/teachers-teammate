@@ -20,11 +20,19 @@ imported here, so the app asks for *Update add-ons* instead of failing on the fi
 Next to it the bundle carries ``addon_lock.txt`` (``tools/build/addon_lock.py``): the versions of
 the add-ons' own packages and their dependencies that this release was tested with, passed as a
 second ``-c``.  Without it a teacher would get whatever is newest on the day they click *Install*.
+
+pip never writes into the live folder.  It installs into an empty ``packages.staging/<id>``
+folder beside it, and the app merges the result (:func:`merge_staged_packages`): a package the
+bundle already has at that version is not copied, a copy that is already there at the same
+version is skipped, and anything else replaces the old copy by its ``RECORD``.  Windows locks a
+loaded ``.pyd``, so a replacement that fails moves to ``packages.pending/`` and is applied at the
+next start (:func:`prepare_packages_dir`), before anything is imported from the folder.
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable
+from enum import StrEnum
 import importlib
 import importlib.util
 import logging
@@ -35,6 +43,7 @@ import shutil
 import subprocess
 import sys
 import threading
+import time
 
 from .spacy_models import spacy_model_url
 from .subprocess_utils import no_console_window_kwargs
@@ -62,8 +71,48 @@ ADDON_CONSTRAINTS_RELATIVE = Path("teachers_teammate") / "_build" / "addon_const
 #: Where the build puts the add-on lock, next to the constraints file.
 ADDON_LOCK_RELATIVE = Path("teachers_teammate") / "_build" / "addon_lock.txt"
 
+#: The folder pip installs into, beside the live one: pip never writes into a folder the
+#: running app has imported from (Windows locks a loaded ``.pyd``).
+STAGING_SUFFIX = ".staging"
+#: The folder a distribution waits in when its old copy could not be replaced yet.
+PENDING_SUFFIX = ".pending"
+#: Where the files of an old copy go while it is replaced: all of them move there or none do,
+#: so a locked file never leaves a package half deleted.  Emptied at every start.
+TRASH_SUFFIX = ".trash"
+#: A staging folder younger than this may belong to an install another process still runs; only
+#: an older one is the leftover of a crash.
+_STAGING_MIN_AGE_S = 6 * 3600
+
+
+class InstallFailure(StrEnum):
+    """Why an install failed.  The GUI turns each into a sentence (``texts`` owns the wording)."""
+
+    DISK_FULL = "disk_full"
+    FILE_IN_USE = "file_in_use"
+    OFFLINE = "offline"
+    NO_VERSION = "no_version"
+    MERGE_FAILED = "merge_failed"
+    INSTALL_FAILED = "install_failed"
+    DOWNLOAD_FAILED = "download_failed"
+
+
+class AddonInstallError(RuntimeError):
+    """An add-on install failed for a known *reason*; ``str()`` is for the log, not a teacher."""
+
+    def __init__(self, reason: InstallFailure) -> None:
+        super().__init__(reason.value)
+        self.reason = reason
+
+
+class AddonUpdateError(RuntimeError):
+    """Updating the add-ons failed for some of them; *errors* pairs a requirement with its error."""
+
+    def __init__(self, errors: list[tuple[str, RuntimeError]]) -> None:
+        super().__init__("; ".join(f"{requirement}: {error}" for requirement, error in errors))
+        self.errors = errors
+
+
 #: What every pip call of the installed app adds (see :func:`pip_policy_arguments`).
-_PIP_UPGRADE = "--upgrade"
 _PIP_ONLY_BINARY = ("--only-binary", ":all:")
 _PIP_NO_CACHE = "--no-cache-dir"
 #: pip would end its output with "a new release of pip is available… run <exe> -m pip install
@@ -218,30 +267,79 @@ def _record_targets(pkg_dir: Path, dist_info: Path) -> list[Path] | None:
     return targets
 
 
+def trash_root(live: Path) -> Path:
+    """Return the folder the files of a replaced copy wait in, beside *live*."""
+    return live.with_name(live.name + TRASH_SUFFIX)
+
+
+def _move_aside(pkg_dir: Path, targets: list[Path]) -> bool:
+    """Move every existing file of *targets* into the trash folder, all or none.
+
+    ``False`` when one cannot move (a file Windows has locked): the files already moved are put
+    back, so the package is as whole as it was.  Otherwise the moved files are deleted, which may
+    fail for a file that is still mapped; the trash folder is emptied at the next start.
+    """
+    root = pkg_dir.resolve()
+    trash = trash_root(pkg_dir) / str(time.time_ns())
+    moved: list[tuple[Path, Path]] = []
+    for target in targets:
+        if not target.exists():
+            continue
+        aside = trash / target.relative_to(root)
+        try:
+            aside.parent.mkdir(parents=True, exist_ok=True)
+            os.replace(target, aside)
+        except OSError as exc:
+            _logger.info("Could not move %s aside yet: %s", target, exc)
+            for original, moved_to in reversed(moved):
+                try:
+                    os.replace(moved_to, original)
+                except OSError as undo_exc:
+                    _logger.warning("Could not put %s back: %s", original, undo_exc)
+            shutil.rmtree(trash, ignore_errors=True)
+            _remove_empty_folder(trash_root(pkg_dir))
+            return False
+        moved.append((target, aside))
+    shutil.rmtree(trash, ignore_errors=True)
+    _remove_empty_folder(trash_root(pkg_dir))
+    return True
+
+
 def _remove_distribution(
-    pkg_dir: Path, dist_info: Path, keep: frozenset[Path] = frozenset()
+    pkg_dir: Path,
+    dist_info: Path,
+    keep: frozenset[Path] = frozenset(),
+    *,
+    strict: bool = False,
 ) -> bool:
     """Delete the files *dist_info*'s ``RECORD`` lists (and the folder); return whether it did.
 
     Only files inside *pkg_dir* are touched, then the ``.dist-info`` folder, then folders left
     empty.  Files in *keep* (what another copy of the same package owns) stay.  Without a
     readable ``RECORD`` nothing is removed.  Never raises: a file in use is logged and left
-    behind.
+    behind — unless *strict*, which first moves every file aside and, if one will not move,
+    puts them all back and returns ``False`` without deleting anything, so the caller can wait
+    for the next start.
     """
     targets = _record_targets(pkg_dir, dist_info)
     if targets is None:
         return False
     root = pkg_dir.resolve()
     folders: set[Path] = set()
-    for target in targets:
-        if target in keep:
-            continue
-        try:
-            target.unlink(missing_ok=True)
-        except OSError as exc:
-            _logger.warning("Could not remove %s: %s", target, exc)
-            continue
-        folders.update(p for p in target.parents if root in p.parents)
+    removable = [target for target in targets if target not in keep]
+    if strict:
+        if not _move_aside(pkg_dir, removable):
+            return False
+        for target in removable:
+            folders.update(p for p in target.parents if root in p.parents)
+    else:
+        for target in removable:
+            try:
+                target.unlink(missing_ok=True)
+            except OSError as exc:
+                _logger.warning("Could not remove %s: %s", target, exc)
+                continue
+            folders.update(p for p in target.parents if root in p.parents)
     shutil.rmtree(dist_info, ignore_errors=True)
     for folder in sorted(folders, key=lambda p: len(p.parts), reverse=True):
         try:
@@ -258,6 +356,8 @@ def _remove_stale(pkg_dir: Path, stale: list[tuple[str, str, Path]]) -> list[str
     the same file name), so a stale ``.dist-info`` often shares its files with the fresh copy of
     the same package.  What another, not stale copy of that name lists stays.
     """
+    if not stale:
+        return []  # nothing to remove: do not read every RECORD of the folder (runs at start-up)
     stale_folders = {folder for _name, _version, folder in stale}
     owned: dict[str, set[Path]] = {}
     for name, _version, folder in _distributions(pkg_dir):
@@ -510,6 +610,257 @@ def addon_in_folder(distribution: str, pkg_dir: Path | None = None) -> bool:
     return any(name == wanted for name, _v, _f in _distributions(pkg_dir or get_packages_dir()))
 
 
+# ── Staging: pip never writes into the live folder ────────────────────────────
+
+
+def staging_root(live: Path) -> Path:
+    """Return the folder pip installs into, beside *live*."""
+    return live.with_name(live.name + STAGING_SUFFIX)
+
+
+def pending_root(live: Path) -> Path:
+    """Return the folder a distribution waits in until the next start, beside *live*."""
+    return live.with_name(live.name + PENDING_SUFFIX)
+
+
+def new_staging_dir(live: Path) -> Path:
+    """Return a fresh, empty staging folder for one pip run."""
+    return staging_root(live) / str(time.time_ns())
+
+
+def _has_version(pkg_dir: Path, name: str, version: str) -> bool:
+    """Return whether *pkg_dir* already holds *name* at *version*."""
+    return any(
+        found == name and found_version == version
+        for found, found_version, _folder in _distributions(pkg_dir)
+    )
+
+
+def _remove_copies(pkg_dir: Path, name: str) -> bool:
+    """Remove every copy of *name* in *pkg_dir* by its ``RECORD``; ``False`` if one is locked."""
+    for found, _version, dist_info in _distributions(pkg_dir):
+        if found == name and not _remove_distribution(pkg_dir, dist_info, strict=True):
+            return False
+    return True
+
+
+def _move_distribution(source: Path, destination: Path, dist_info: Path) -> bool:
+    """Move one distribution's files from *source* into *destination*; ``False`` if it failed.
+
+    The files come from the ``RECORD``, so nothing outside the distribution moves.  The
+    ``.dist-info`` folder goes last: a distribution without it is not installed.  A failure
+    moves the files already moved back, so *destination* never keeps half a package.
+    """
+    targets = _record_targets(source, dist_info)
+    if targets is None:
+        _logger.warning("Cannot move %s: it has no readable RECORD", dist_info)
+        return False
+    root = source.resolve()
+    info_root = dist_info.resolve()
+    folders: set[Path] = set()
+    moved: list[tuple[Path, Path]] = []
+    try:
+        for target in targets:
+            if target == info_root or info_root in target.parents or not target.exists():
+                continue
+            relative = target.relative_to(root)
+            (destination / relative).parent.mkdir(parents=True, exist_ok=True)
+            (destination / relative).unlink(missing_ok=True)
+            shutil.move(str(target), str(destination / relative))
+            moved.append((target, destination / relative))
+            folders.update(p for p in target.parents if root in p.parents)
+        shutil.move(str(dist_info), str(destination / dist_info.name))
+    except OSError as exc:
+        _logger.warning("Could not move %s into %s: %s", dist_info.name, destination, exc)
+        for original, moved_to in reversed(moved):
+            try:
+                original.parent.mkdir(parents=True, exist_ok=True)
+                shutil.move(str(moved_to), str(original))
+            except OSError as undo_exc:
+                _logger.warning("Could not put %s back: %s", original, undo_exc)
+        return False
+    for folder in sorted(folders, key=lambda p: len(p.parts), reverse=True):
+        _remove_empty_folder(folder)
+    return True
+
+
+def _park(source: Path, live: Path, dist_info: Path) -> bool:
+    """Move a distribution that cannot replace its old copy into ``packages.pending/``."""
+    pending = pending_root(live)
+    try:
+        pending.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        _logger.warning("Cannot make %s: %s", pending, exc)
+        return False
+    return _move_distribution(source, pending, dist_info)
+
+
+class _Merge(StrEnum):
+    """What became of one distribution that was to move into the live folder."""
+
+    MERGED = "merged"
+    PENDING = "pending"  # waits in packages.pending/ for the next start
+    FAILED = "failed"  # in neither place: the install did not work
+
+
+def _merge_one(source: Path, live: Path, name: str, dist_info: Path) -> _Merge:
+    """Move one distribution into *live*; it waits for the next start when it cannot."""
+    if not _remove_copies(live, name):
+        return _Merge.PENDING if _park(source, live, dist_info) else _Merge.FAILED
+    if _move_distribution(source, live, dist_info):
+        return _Merge.MERGED
+    # The old copy is gone and the new one would not go in (it was put back in *source*):
+    # next start may manage.
+    return _Merge.PENDING if _park(source, live, dist_info) else _Merge.FAILED
+
+
+def merge_staged_packages(staging: Path, live: Path, constraints: Path | None) -> list[str]:
+    """Move what pip installed into *staging* into *live*; return the names left pending.
+
+    Per distribution in *staging*:
+
+    * named in the bundle's *constraints* at that version — not copied, the bundle has it;
+    * the same name and version already in *live* — skipped;
+    * otherwise the old copy goes by its ``RECORD`` and the new one moves in.  A removal that
+      fails because a file is locked (Windows) leaves the old copy whole and parks the new one
+      in ``packages.pending/``; the merge goes on with the next one.
+
+    ``None`` (a source run) means no constraints: nothing is treated as bundled.
+
+    Raises:
+        AddonInstallError: when a distribution could be neither merged nor parked (after the
+            others were handled).  *staging* still holds it until the caller removes it.
+    """
+    pins = read_constraints(constraints) if constraints is not None else {}
+    live.mkdir(parents=True, exist_ok=True)
+    pending: list[str] = []
+    failed: list[str] = []
+    for name, version, dist_info in _distributions(staging):
+        if pins.get(name) == version or _has_version(live, name, version):
+            continue
+        outcome = _merge_one(staging, live, name, dist_info)
+        if outcome is _Merge.PENDING:
+            pending.append(name)
+        elif outcome is _Merge.FAILED:
+            failed.append(name)
+    if failed:
+        _logger.error("Could not install %s into %s", ", ".join(failed), live)
+        raise AddonInstallError(InstallFailure.MERGE_FAILED)
+    return pending
+
+
+def apply_pending_packages(live: Path, constraints: Path | None) -> list[str]:
+    """Move what waited in ``packages.pending/`` into *live*; return the names still waiting.
+
+    The same rules as :func:`merge_staged_packages`.  A distribution the bundle already has, or
+    one that arrived in the meantime, is dropped from the pending folder.
+    """
+    pending = pending_root(live)
+    if not pending.is_dir():
+        return []
+    pins = read_constraints(constraints) if constraints is not None else {}
+    still: list[str] = []
+    for name, version, dist_info in _distributions(pending):
+        if pins.get(name) == version or _has_version(live, name, version):
+            _remove_distribution(pending, dist_info)
+            continue
+        if _merge_one(pending, live, name, dist_info) is not _Merge.MERGED:
+            still.append(name)
+    _remove_empty_folder(pending)
+    return still
+
+
+def drop_redundant_shared_packages(pkg_dir: Path, constraints: Path | None) -> list[str]:
+    """Delete copies of bundled packages at the bundled version; return their names.
+
+    The add-on folder comes first on ``sys.path``, so a copy of a package the app bundles is
+    never needed there — at the bundled version it is the same code twice.  Earlier versions
+    filled the folder with such copies; this cleans them up.  A copy at another version stays
+    (:func:`outdated_shared_packages` reports it, and an update replaces it).
+    """
+    if constraints is None or not pkg_dir.is_dir():
+        return []
+    pins = read_constraints(constraints)
+    redundant = [d for d in _distributions(pkg_dir) if pins.get(d[0]) == d[1]]
+    removed = _remove_stale(pkg_dir, redundant)
+    for name in removed:
+        _logger.info("Removed the redundant %s copy from %s", name, pkg_dir)
+    return removed
+
+
+def _remove_empty_folder(folder: Path) -> None:
+    """Remove *folder* when nothing is left in it."""
+    try:
+        folder.rmdir()
+    except OSError:
+        pass  # not empty, or already gone
+
+
+def remove_leftover_folders(live: Path) -> None:
+    """Delete what an install left beside *live*: the trash, and staging folders of a crash.
+
+    A staging folder younger than ``_STAGING_MIN_AGE_S`` is kept: another process may be
+    installing into it right now.
+    """
+    shutil.rmtree(trash_root(live), ignore_errors=True)
+    root = staging_root(live)
+    try:
+        children = list(root.iterdir())
+    except OSError:
+        return
+    cutoff = time.time() - _STAGING_MIN_AGE_S
+    for child in children:
+        try:
+            if child.stat().st_mtime > cutoff:
+                continue
+        except OSError:
+            continue
+        shutil.rmtree(child, ignore_errors=True)
+    _remove_empty_folder(root)
+
+
+def prepare_packages_dir() -> None:
+    """Finish an interrupted install and clean up, before anything is imported from the folder.
+
+    Called at every normal start, before :func:`inject_packages_dir`: applies what waited in
+    ``packages.pending/``, drops copies of bundled packages, and deletes what a crashed install
+    left behind.  The add-ons are optional, so a step that fails is logged and the app starts
+    anyway.
+    """
+    live = get_packages_dir()
+    constraints = addon_constraints_path()
+    steps: tuple[tuple[str, Callable[[], object]], ...] = (
+        ("apply the pending packages", lambda: apply_pending_packages(live, constraints)),
+        ("drop the redundant packages", lambda: drop_redundant_shared_packages(live, constraints)),
+        ("remove the leftover folders", lambda: remove_leftover_folders(live)),
+    )
+    for what, step in steps:
+        try:
+            step()
+        except OSError as exc:
+            _logger.warning("Could not %s in %s: %s", what, live, exc)
+
+
+def addons_restart_needed() -> bool:
+    """Return whether a distribution waits for the next start (``packages.pending/``)."""
+    try:
+        return any(pending_root(get_packages_dir()).iterdir())
+    except OSError:
+        return False
+
+
+def pending_addon_packages() -> list[str]:
+    """Return the normalised names of the distributions waiting for the next start."""
+    return sorted(
+        {name for name, _version, _folder in _distributions(pending_root(get_packages_dir()))}
+    )
+
+
+def addon_waits_for_restart(distribution: str) -> bool:
+    """Return whether *distribution* waits in ``packages.pending/`` for the next start."""
+    return _normalise(distribution) in pending_addon_packages()
+
+
 def update_installed_addons(progress_cb: Callable[[str], None]) -> None:
     """Bring the add-on folder in line with the app after an app update.
 
@@ -525,33 +876,32 @@ def update_installed_addons(progress_cb: Callable[[str], None]) -> None:
 
     Raises:
         OSError: if the folder cannot be written.
-        RuntimeError: if this is not the installed app, or pip failed for some add-ons
-            (offline, a conflict with the bundle, ...).
+        RuntimeError: if this is not the installed app.
+        AddonUpdateError: if pip failed for some add-ons (offline, a conflict with the
+            bundle, ...); each failure is an :class:`AddonInstallError` when its reason is known.
     """
     if not getattr(sys, "frozen", False):
         raise RuntimeError("Add-ons are updated only in the installed app")
     pkg_dir = get_packages_dir()
-    failures: list[str] = []
+    failures: list[tuple[str, RuntimeError]] = []
     for requirement in installed_addon_requirements(pkg_dir):
         try:
             install_packages_subprocess([requirement], pkg_dir, progress_cb)
         except RuntimeError as exc:
             _logger.warning("Could not update %s: %s", requirement, exc)
-            failures.append(f"{requirement}: {exc}")
+            failures.append((requirement, exc))
     drop_outdated_shared_packages(pkg_dir, addon_constraints_path())
     drop_foreign_packages(pkg_dir)
     inject_packages_dir()
     for addon in _ADDON_STALE_PREFIXES:
         clear_stale_modules(addon)
     if failures:
-        raise RuntimeError("; ".join(failures))
+        raise AddonUpdateError(failures)
 
 
-def pip_policy_arguments(*, upgrade: bool = True) -> list[str]:
+def pip_policy_arguments() -> list[str]:
     """Return the pip arguments the installed app adds to every install (none from source).
 
-    * ``--upgrade``: ``pip --target`` leaves a package folder that already exists alone, so an
-      old numpy copy would never be replaced.
     * ``--only-binary :all:``: a source build would start the GUI executable as its build
       interpreter, and a school computer has no compiler.
     * ``--disable-pip-version-check``: no "a new release of pip is available" notice in the log.
@@ -562,14 +912,11 @@ def pip_policy_arguments(*, upgrade: bool = True) -> list[str]:
     * ``-c <lock>``: the add-ons' own packages and their dependencies stay at the versions this
       release was tested with, instead of whatever is newest that day.
 
-    Args:
-        upgrade: ``False`` for a language model, whose install must leave alone what is there.
+    No ``--upgrade``: pip installs into an empty staging folder, so there is nothing to replace.
     """
     if not getattr(sys, "frozen", False):
         return []
     arguments = [*_PIP_ONLY_BINARY, _PIP_NO_CACHE, _PIP_NO_VERSION_CHECK]
-    if upgrade:
-        arguments.insert(0, _PIP_UPGRADE)
     for path in (addon_constraints_path(), addon_lock_path()):
         if path is not None:
             arguments += ["-c", str(path)]
@@ -659,6 +1006,93 @@ def clear_stale_modules(addon: str) -> None:
     importlib.invalidate_caches()
 
 
+#: What a failed pip run most often is, read from pip's own output, in this order: the first
+#: group that matches wins.  Being offline comes before a missing version, because pip ends an
+#: offline run with "No matching distribution found" after its retries.
+_PIP_FAILURE_HINTS: tuple[tuple[tuple[str, ...], InstallFailure], ...] = (
+    (("no space left", "not enough space", "errno 28"), InstallFailure.DISK_FULL),
+    (
+        (
+            "permission denied",
+            "winerror 5",
+            "access is denied",
+            "zugriff verweigert",
+            "being used by another process",
+        ),
+        InstallFailure.FILE_IN_USE,
+    ),
+    (
+        (
+            "name resolution",
+            "temporary failure",
+            "failed to establish a new connection",
+            "connection refused",
+            "connection aborted",
+            "connectionerror",
+            "max retries exceeded",
+            "timed out",
+            "network is unreachable",
+            "proxyerror",
+            "certificate verify failed",
+        ),
+        InstallFailure.OFFLINE,
+    ),
+    (("could not find a version", "no matching distribution"), InstallFailure.NO_VERSION),
+)
+
+
+def _failure_reason(lines: list[str], fallback: InstallFailure) -> InstallFailure:
+    """Return why a pip run failed, read from its output; *fallback* if unknown."""
+    text = " ".join(lines).lower()
+    for needles, reason in _PIP_FAILURE_HINTS:
+        if any(needle in text for needle in needles):
+            return reason
+    return fallback
+
+
+def _run_pip(cmd: list[str], progress_cb: Callable[[str], None]) -> tuple[int, list[str]]:
+    """Run *cmd*, stream its output to *progress_cb*; return the exit code and the lines."""
+    kwargs: dict = {
+        "stdout": subprocess.PIPE,
+        "stderr": subprocess.STDOUT,
+        "text": True,
+        "bufsize": 1,
+        **no_console_window_kwargs(),
+    }
+    lines: list[str] = []
+    with subprocess.Popen(cmd, **kwargs) as proc:
+        assert proc.stdout is not None
+        for line in proc.stdout:
+            lines.append(line)
+            progress_cb(line)
+        proc.wait()
+    return proc.returncode, lines
+
+
+def _install_into_staging(
+    arguments: list[str],
+    target: Path,
+    progress_cb: Callable[[str], None],
+    fallback: InstallFailure,
+) -> None:
+    """Run pip with *arguments* into a fresh staging folder, then merge it into *target*.
+
+    ``--target`` goes last, which pip accepts after the requirements; the staging folder is
+    empty, so pip never has to replace a file the running app has loaded.  The folder is
+    removed whatever happens.
+    """
+    staging = new_staging_dir(target)
+    staging.mkdir(parents=True)
+    try:
+        code, lines = _run_pip([*arguments, "--target", str(staging)], progress_cb)
+        if code != 0:
+            raise AddonInstallError(_failure_reason(lines, fallback))
+        merge_staged_packages(staging, target, addon_constraints_path())
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)
+        _remove_empty_folder(staging_root(target))
+
+
 def install_packages_subprocess(
     packages: list[str],
     target: Path,
@@ -671,7 +1105,10 @@ def install_packages_subprocess(
     In frozen builds the executable re-invokes itself with ``--_pip_install_mode``
     so that pip runs inside the same Python interpreter that PyInstaller bundled, with the
     arguments of :func:`pip_policy_arguments` (bundle constraints, wheels only, no cache).
-    In non-frozen builds a regular ``python -m pip install --upgrade`` is used.
+    pip installs into a staging folder beside *target*, and the app merges the result
+    (:func:`merge_staged_packages`), so no file the running app has loaded is replaced.
+    In non-frozen builds a regular ``python -m pip install --upgrade`` is used, which installs
+    into the active environment and not into *target*.
     Output lines are streamed to *progress_cb* in real time.  Installs are
     serialised process-wide.
 
@@ -681,54 +1118,44 @@ def install_packages_subprocess(
 
     Raises:
         OSError: if *target* cannot be created (permissions, disk full).
-        RuntimeError: if pip exits with a non-zero return code.
+        AddonInstallError: if pip exits with a non-zero return code (a ``RuntimeError``).
     """
     target.mkdir(parents=True, exist_ok=True)
     network = (
         ["--timeout", str(network_timeout), "--retries", "1"] if network_timeout is not None else []
     )
 
-    if getattr(sys, "frozen", False):
-        cmd = [
-            sys.executable,
-            "--_pip_install_mode",
-            "install",
-            "--target",
-            str(target),
-            *pip_policy_arguments(),
-            *network,
-            *packages,
-        ]
-    else:
-        cmd = [
-            sys.executable,
-            "-m",
-            "pip",
-            "install",
-            "--upgrade",
-            _PIP_NO_VERSION_CHECK,
-            *network,
-            *packages,
-        ]
-
-    kwargs: dict = {
-        "stdout": subprocess.PIPE,
-        "stderr": subprocess.STDOUT,
-        "text": True,
-        "bufsize": 1,
-        **no_console_window_kwargs(),
-    }
-
-    with _PIP_LOCK, subprocess.Popen(cmd, **kwargs) as proc:
-        assert proc.stdout is not None
-        for line in proc.stdout:
-            progress_cb(line)
-        proc.wait()
-
-    if proc.returncode != 0:
-        raise RuntimeError(
-            f"pip exited with code {proc.returncode}. Check the log above for details."
+    with _PIP_LOCK:
+        if getattr(sys, "frozen", False):
+            _install_into_staging(
+                [
+                    sys.executable,
+                    "--_pip_install_mode",
+                    "install",
+                    *pip_policy_arguments(),
+                    *network,
+                    *packages,
+                ],
+                target,
+                progress_cb,
+                InstallFailure.INSTALL_FAILED,
+            )
+            return
+        code, lines = _run_pip(
+            [
+                sys.executable,
+                "-m",
+                "pip",
+                "install",
+                "--upgrade",
+                _PIP_NO_VERSION_CHECK,
+                *network,
+                *packages,
+            ],
+            progress_cb,
         )
+    if code != 0:
+        raise AddonInstallError(_failure_reason(lines, InstallFailure.INSTALL_FAILED))
 
 
 def install_addon_subprocess(
@@ -743,7 +1170,7 @@ def install_addon_subprocess(
     Raises:
         KeyError: if *addon* is not a known addon name.
         OSError: if *target* cannot be created (permissions, disk full).
-        RuntimeError: if pip exits with a non-zero return code.
+        AddonInstallError: if pip exits with a non-zero return code (a ``RuntimeError``).
     """
     install_packages_subprocess(
         _ADDON_PACKAGES[addon], target, progress_cb, network_timeout=network_timeout
@@ -763,6 +1190,7 @@ def download_spacy_model_subprocess(
     compatibility table, so the model a teacher gets is the one this release
     names.  In frozen builds the executable is re-invoked with
     ``--_spacy_download_mode`` to run pip inside the frozen Python.
+    The model is downloaded into a staging folder and merged into *target* like a package.
 
     *model* is a spaCy model name such as ``en_core_web_sm`` or ``xx_ent_wiki_sm``.
     Output lines are streamed to *progress_cb* in real time.
@@ -770,48 +1198,28 @@ def download_spacy_model_subprocess(
     Raises:
         OSError: if *target* cannot be created (permissions, disk full).
         KeyError: if *model* has no pin.
-        RuntimeError: if the download fails.
+        AddonInstallError: if the download fails (a ``RuntimeError``).
     """
     target.mkdir(parents=True, exist_ok=True)
     download_url = spacy_model_url(model)
 
     if getattr(sys, "frozen", False):
-        cmd = [
+        arguments = [
             sys.executable,
             "--_spacy_download_mode",
             download_url,
-            "--target",
-            str(target),
-            *pip_policy_arguments(upgrade=False),
+            *pip_policy_arguments(),
         ]
     else:
-        cmd = [
+        arguments = [
             sys.executable,
             "-m",
             "pip",
             "install",
             _PIP_NO_VERSION_CHECK,
-            "--target",
-            str(target),
             "--prefer-binary",
             download_url,
         ]
 
-    kwargs: dict = {
-        "stdout": subprocess.PIPE,
-        "stderr": subprocess.STDOUT,
-        "text": True,
-        "bufsize": 1,
-        **no_console_window_kwargs(),
-    }
-
-    with _PIP_LOCK, subprocess.Popen(cmd, **kwargs) as proc:
-        assert proc.stdout is not None
-        for line in proc.stdout:
-            progress_cb(line)
-        proc.wait()
-
-    if proc.returncode != 0:
-        raise RuntimeError(
-            f"Model download exited with code {proc.returncode}. Check the log above for details."
-        )
+    with _PIP_LOCK:
+        _install_into_staging(arguments, target, progress_cb, InstallFailure.DOWNLOAD_FAILED)

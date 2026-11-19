@@ -48,11 +48,19 @@ if not getattr(sys, "frozen", False):
 
 # Inject the user addon packages directory before any optional import so that
 # packages installed by the in-app installer are visible from the first launch
-# after installation.
+# after installation.  prepare_packages_dir() first: it applies what an install
+# left pending and cleans up, before anything is imported from the folder.
 from teachers_teammate.infrastructure.addon_manager import (
     inject_packages_dir,
+    prepare_packages_dir,
 )
 
+# The helper modes below (smoke test, forget keys, spaCy model download) are not a start of the
+# app: one of them runs while the app, or an install it started, is using the folder, so they
+# leave the clean-up to a normal start.
+_HELPER_MODES = ("--_smoke_test", "--_forget_keys", "--_spacy_download_mode")
+if not any(mode in sys.argv for mode in _HELPER_MODES):
+    prepare_packages_dir()
 inject_packages_dir()
 
 # ── smoke test dispatch ──────────────────────────────────────────────────────

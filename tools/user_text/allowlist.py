@@ -148,34 +148,20 @@ ALLOWED: dict[str, frozenset[str]] = {
         {
             "Change the explanations (their language, or corrections only) and add notes\nfor the AI. The instructions themselves are fixed; the dialog shows them.",
             "Change the instructions used to generate the content review report.",
-            "Choose a folder for the results",
-            "Choose a folder — all supported files inside will be processed, including subfolders.",
-            "Choose one or more individual files (PDF, images, or plain text).",
-            "Choose the folder.",
-            "Folder where Word documents and text files will be saved.\nRequired as soon as a Word document or a text file is switched on.",
             "Generate a Word document for each input file containing the image,\nextracted text, and (if enabled) the proofread text.",
             "Input folder is required.",
             "Level:",
-            "No input selected",
             "Output folder is required.",
-            "Save the extracted text of each input file as a text file (name.txt).",
-            "Save the extracted text with names and other personal data replaced by\nplaceholders (name_anonymized.txt). Runs on this computer and needs the\nprivacy add-on (spaCy).",
-            "Select Files…",
-            "Select Folder…",
             "Set which types of personal information to hide and how.",
             "Table — side-by-side columns: Image | Extracted text | Proofread text.\nComments — two columns with tracked changes shown as Word comments.",
             "Text file",
-            "Text file, anonymized",
             "Text files need an output folder outside the input folder; otherwise the next run would read them as new documents.",
             "Word document",
             "f\"{('▾' if expanded else '▸')} {txt.PROMPTS_HEADING}\"",
-            "f\"{n} file{('s' if n != 1 else '')} from {parent}\"",
-            "f'Folder: {self._selected_folder}'",
             "f'Input folder does not exist: {input_dir}'",
             "f'Use an AI to fix spelling and grammar in the extracted text.\\nWhich AI: see {WHERE_AI_MODELS}.'",
             "f'▸ {txt.PROMPTS_HEADING}'",
             "i",
-            "…",
         }
     ),
     "teachers_teammate/gui/_data_flow_summary.py": frozenset(
@@ -368,28 +354,19 @@ ALLOWED: dict[str, frozenset[str]] = {
         {
             "",
             "AI models for this computer (Ollama)",
-            "Abort",
-            "Aborted.",
             "Add",
             "Add a model by name:",
-            "Detecting installed packages…",
-            "Detection complete.",
-            "Done.",
-            "Install / Download Selected",
             "Install / download log will appear here…",
             "Name detection",
             "Name detection models",
             "Online AI services",
             "Select the best models for my computer",
-            "Stop the current download after the current chunk.",
             "e.g. llama3.2:latest",
-            "f\"Detection failed: {error or 'unexpected result'}\"",
             "f\"The built-in reader reads pages on this computer, without a server. {txt.OCR_ENGINE_HINTS['ppocr']} Its model files, and the page models of the automatic image preparation, come from PaddlePaddle (Apache-2.0).\"",
             "f'<b>{txt.ADDONS_OUTDATED_LINE}.</b> {txt.ADDONS_OUTDATED_NOTE}'",
             "f'Built-in reader (PP-OCR) — {READER_SIZE_LABEL}'",
             "f'Saved in: {self._svc.models_dir()}'",
             "f'{base}  {_installed_mark(key, results)}'",
-            "f'{status}: {mb_done:.1f} / {mb_total:.1f} MB'",
             "spaCy  (spacy)",
             "spaCy is the library that finds names and other personal information. Install it first, then download a name detection model below.",
         }
@@ -403,7 +380,11 @@ ALLOWED: dict[str, frozenset[str]] = {
     "teachers_teammate/gui/settings/_ai_setup_page.py": frozenset(
         {
             "f'<b>{txt.SPEED_HEADING}</b>'",
-            "—",
+        }
+    ),
+    "teachers_teammate/gui/settings/_computer_box.py": frozenset(
+        {
+            "",
         }
     ),
     "teachers_teammate/gui/settings/_credentials.py": frozenset(
@@ -420,11 +401,6 @@ ALLOWED: dict[str, frozenset[str]] = {
         {
             "Stopping…",
             "f'Found {count} {noun}. Choose one.'",
-        }
-    ),
-    "teachers_teammate/gui/settings/_speed_hint.py": frozenset(
-        {
-            "",
         }
     ),
     "teachers_teammate/gui/settings/_speed_panel.py": frozenset(

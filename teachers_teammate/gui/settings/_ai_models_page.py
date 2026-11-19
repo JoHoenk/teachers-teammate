@@ -47,8 +47,7 @@ from . import _page
 from ._ai_service_section import CONTENT_REVIEW, PROOFREADING, AiServiceSection
 from ._credentials import ApiKeyDrafts
 from ._page import SettingsContext, SettingsPage, SettingsPageBase
-from ._profile_line import ProfileLine
-from ._speed_hint import SpeedHint
+from ._computer_box import ComputerBox
 
 TITLE = "AI models"
 DESCRIPTION = (
@@ -58,7 +57,6 @@ DESCRIPTION = (
 READING_GROUP = "Reading handwriting"
 READING_NOTE = "Always on this computer: pages never go online."
 PROOFREADING_GROUP = "Proofreading and content review"
-PROOFREADING_NOTE = "On this computer, or at an online service you choose."
 OVERRIDE_LABEL = "Use a different model for content review"
 OVERRIDE_TOOLTIP = (
     "Off: the content review uses the proofreading model.\n"
@@ -157,23 +155,16 @@ class AiModelsPage(SettingsPageBase):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(12)
 
-        self._profile_line = ProfileLine(
-            app_service=context.app_service, setting=hardware, ollama_url=self._ollama_url
-        )
-        self._profile_line.change_requested.connect(lambda: self._navigate(SettingsPage.AI_SETUP))
-        self._profile_line.selector.resolved_changed.connect(self._on_profile_resolved)
-        layout.addWidget(self._profile_line)
-
-        self._speed_hint = SpeedHint(
+        self._computer_box = ComputerBox(
             app_service=context.app_service,
             settings_provider=self.speed_settings,
-            profile_selector=self._profile_line.selector,
+            setting=hardware,
+            ollama_url=self._ollama_url,
             parent=self,
         )
-        self._speed_hint.open_requested.connect(
-            lambda: self._navigate(SettingsPage.AI_SETUP, _page.FOCUS_SPEED)
-        )
-        layout.addWidget(self._speed_hint)
+        self._computer_box.change_requested.connect(lambda: self._navigate(SettingsPage.AI_SETUP))
+        self._computer_box.selector.resolved_changed.connect(self._on_profile_resolved)
+        layout.addWidget(self._computer_box)
 
         self._reading_group = self._build_reading_group()
         layout.addWidget(self._reading_group)
@@ -194,7 +185,7 @@ class AiModelsPage(SettingsPageBase):
             app_service=self._app_service,
             ollama_url=self._ollama_url,
             open_downloads=self._open_addons_callback(_page.FOCUS_LOCAL_MODELS),
-            profile_selector=self._profile_line.selector,
+            profile_selector=self._computer_box.selector,
             parent=reading,
         )
         self._ocr_picker.addon_installed.connect(self.addon_installed.emit)
@@ -205,11 +196,6 @@ class AiModelsPage(SettingsPageBase):
     def _build_text_group(self) -> QGroupBox:
         group = QGroupBox(PROOFREADING_GROUP)
         layout = QVBoxLayout(group)
-        note = QLabel(PROOFREADING_NOTE)
-        note.setWordWrap(True)
-        note.setStyleSheet("color: #888; font-size: 11px;")
-        layout.addWidget(note)
-
         self._shared = self._build_section(PROOFREADING, same_model_tip=False)
         layout.addWidget(self._shared)
 
@@ -245,7 +231,7 @@ class AiModelsPage(SettingsPageBase):
             ollama_url=self._ollama_url,
             open_downloads=self._open_addons_callback(_page.FOCUS_LOCAL_MODELS),
             key_drafts=self._drafts,
-            profile_selector=self._profile_line.selector,
+            profile_selector=self._computer_box.selector,
             same_model_tip=same_model_tip,
         )
 
@@ -296,7 +282,7 @@ class AiModelsPage(SettingsPageBase):
                 self._context_combo.setCurrentIndex(index if index >= 0 else 0)
             self._refresh_context_row()
             self._refresh_privacy_line()
-            self._speed_hint.refresh()
+            self._computer_box.refresh_speed()
         finally:
             self._loading = False
 
@@ -354,11 +340,11 @@ class AiModelsPage(SettingsPageBase):
 
     def set_hardware_setting(self, setting: str) -> None:
         # The picker and both sections follow the profile line's selector.
-        self._profile_line.set_setting(setting)
+        self._computer_box.set_setting(setting)
 
     def set_ollama_url(self, url: str) -> None:
         self._ollama_url = url or DEFAULTS["ollama_url"]
-        self._profile_line.set_ollama_url(url)
+        self._computer_box.set_ollama_url(url)
         self._ocr_picker.set_ollama_url(url)
         self._shared.set_ollama_url(url)
         self._review.set_ollama_url(url)
@@ -457,7 +443,7 @@ class AiModelsPage(SettingsPageBase):
     def _on_choices_changed(self) -> None:
         """A choice of service or model changed: what depends on it is looked at again."""
         self._refresh_context_row()
-        self._speed_hint.refresh()
+        self._computer_box.refresh_speed()
         if not self._loading:
             self._refresh_privacy_line()
             self.speed_choices_changed.emit()
@@ -480,7 +466,7 @@ class AiModelsPage(SettingsPageBase):
 
     def refresh_speed(self) -> None:
         """Redraw the class-set line: a speed test stored a new measurement."""
-        self._speed_hint.refresh()
+        self._computer_box.refresh_speed()
 
     def speed_settings(self) -> dict[str, object]:
         """Return the settings the speed test measures: this page as it is now.
@@ -499,7 +485,7 @@ class AiModelsPage(SettingsPageBase):
     def _on_profile_resolved(self, _detection: object) -> None:
         self._profile_known = True
         self._refresh_context_row()
-        self._speed_hint.refresh()
+        self._computer_box.refresh_speed()
 
     def _refresh_context_row(self) -> None:
         """Show the context window row only while it changes something.
@@ -512,7 +498,7 @@ class AiModelsPage(SettingsPageBase):
         if not self._profile_known:
             self._context_row.setVisible(False)
             return
-        detection = self._profile_line.selector.resolved()
+        detection = self._computer_box.selector.resolved()
         card_gb = detection.card_gb if detection is not None else None
         choice = self._app_service.context_choice(self._live_settings(), card_gb)
         if choice.applies:
@@ -611,6 +597,6 @@ class AiModelsPage(SettingsPageBase):
 
     def _on_engine_changed(self, engine: str) -> None:
         if not self._loading:
-            self._speed_hint.refresh()
+            self._computer_box.refresh_speed()
             self.speed_choices_changed.emit()
             self.ocr_engine_changed.emit(engine)

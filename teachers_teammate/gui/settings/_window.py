@@ -44,6 +44,7 @@ from PySide6.QtWidgets import (
 from ...config import OcrConfig
 from ...texts import dialogs as dlg
 from .. import _dialogs
+from .._window_geometry import restore_geometry
 from ._addons_page import AddonsPage
 from ._ai_models_page import AiModelsPage
 from ._ai_setup_page import AiSetupPage
@@ -213,7 +214,7 @@ class SettingsWindow(QDialog):
 
     def _restore_geometry(self) -> None:
         geometry = QSettings(_QSETTINGS_ORG, _QSETTINGS_APP).value(GEOMETRY_KEY)
-        if geometry is not None and self.restoreGeometry(geometry):
+        if restore_geometry(self, geometry):
             return
         width, height = 960, 680
         screen = QApplication.primaryScreen()
@@ -224,7 +225,12 @@ class SettingsWindow(QDialog):
         self.resize(width, height)
 
     def _wrap(self, page: SettingsPageBase) -> QWidget:
-        """Return *page* under its header, in a scroll area without frame or horizontal bar."""
+        """Return *page* under its header, in a scroll area without frame or horizontal bar.
+
+        A page that fills the window (:attr:`~._page.SettingsPageBase.fills_window`) is put in
+        the layout directly: it scrolls its own list, and its action row has to stay visible at
+        the bottom instead of ending up below the fold of an outer scroll area.
+        """
         wrapper = QWidget()
         layout = QVBoxLayout(wrapper)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -245,6 +251,10 @@ class SettingsWindow(QDialog):
         holder_layout = QVBoxLayout(holder)
         holder_layout.setContentsMargins(*PAGE_MARGINS)
         holder_layout.addWidget(page)
+
+        if page.fills_window:
+            layout.addWidget(holder, stretch=1)
+            return wrapper
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)

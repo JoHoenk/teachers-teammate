@@ -44,6 +44,7 @@ from teachers_teammate.domain.model_catalog import (
     ram_needed_gb,
     rate_model,
     request_profile,
+    short_model_name,
     suitability,
     suitability_rank,
     system_reserve_gb,
@@ -51,6 +52,23 @@ from teachers_teammate.domain.model_catalog import (
 )
 from teachers_teammate.domain.performance_estimate import SpeedBand, SpeedSource
 from teachers_teammate.infrastructure.providers.ollama import PROVIDER_INFO
+
+
+# ── short names ──────────────────────────────────────────────────────────────
+
+
+def test_short_model_name_fits_a_narrow_line() -> None:
+    """
+    Given  a Hugging Face tag, a ":latest" tag, a plain tag and an empty string
+    When   each is shortened
+    Then   the repository name, the bare name, the unchanged tag and "" come back
+    """
+    assert short_model_name("hf.co/prithivMLmods/chandra-ocr-2-GGUF:Q8_0") == "chandra-ocr-2"
+    assert short_model_name("hf.co/org/repo:Q4_K_M") == "repo"
+    assert short_model_name("gemma4:latest") == "gemma4"
+    assert short_model_name("gemma4:e4b") == "gemma4:e4b"
+    assert short_model_name("deepseek-ocr") == "deepseek-ocr"
+    assert short_model_name("") == ""
 
 
 # ── catalog consistency ──────────────────────────────────────────────────────
@@ -470,6 +488,25 @@ def test_choose_profile_reports_largest_gpu_details() -> None:
     )
     assert detection.gpu_name == "RTX 4090"
     assert detection.memory_gb == 24.0
+    assert detection.other_gpu_names == ("GT 1030",)
+
+
+@pytest.mark.use_case("Model_Recommendation_By_Hardware")
+def test_choose_profile_names_the_further_cards_after_the_one_that_decides() -> None:
+    """
+    Given  three GPUs, one of them without a readable memory size
+    When   choose_profile picks the largest one
+    Then   the other card with a known size is named, so the status line can say it was found
+           too (a card whose size could not be read cannot have decided the profile)
+    """
+    detection = choose_profile(
+        gpus=[("Intel UHD Graphics", None), ("RTX 4060", 8.0), ("RTX 3050", 4.0)],
+        apple_unified_memory_gb=None,
+        ollama_is_remote=False,
+    )
+
+    assert detection.gpu_name == "RTX 4060"
+    assert detection.other_gpu_names == ("RTX 3050",)
 
 
 # ── single source of truth for defaults ─────────────────────────────────────

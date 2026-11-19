@@ -7,6 +7,7 @@ so the colours and wording here never decide anything.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from html import escape
 
 from PySide6.QtCore import Qt, Signal
@@ -21,6 +22,8 @@ from ..domain.data_location import (
     PrivacyLevel,
     StageLocation,
 )
+from ..domain.language import language_name
+from ..domain.model_catalog import short_model_name
 from . import _user_text as txt
 
 #: One colour per level: green keeps everything here, yellow sends anonymized text into the
@@ -124,14 +127,17 @@ def _marked(stage: DataFlowStage, text: str, *, enabled: bool) -> str:
 def uses_line(stage: DataFlowStage, model: str, *, enabled: bool = True) -> str:
     """Return the "uses" line under a step as rich text: ``● <model> · <place>``.
 
-    Without a model (the built-in reader has none) the engine's name stands in.  The dot has the colour
-    of the step's privacy level while the step is on; an unticked step is grey all over, but
-    still names what ticking it would use.
+    Without a model (the built-in reader has none) the engine's name stands in.  The model is
+    the short name (:func:`short_model_name`); the full tag belongs in the tooltip.  The place
+    is shown only when it is not this computer, because that is the case the line warns about.
+    The dot has the colour of the step's privacy level while the step is on; an unticked step
+    is grey all over, but still names what ticking it would use.
     """
-    name = model or stage.location.service
-    return _marked(
-        stage, f"{escape(name)} · {escape(short_place(stage.location))}", enabled=enabled
-    )
+    name = short_model_name(model) if model else stage.location.service
+    text = escape(name)
+    if stage.location.location is not DataLocation.THIS_COMPUTER:
+        text = f"{text} · {escape(short_place(stage.location))}"
+    return _marked(stage, text, enabled=enabled)
 
 
 def same_model_line(stage: DataFlowStage, *, enabled: bool = True) -> str:
@@ -142,6 +148,26 @@ def same_model_line(stage: DataFlowStage, *, enabled: bool = True) -> str:
 def detail_line(stage: DataFlowStage) -> str:
     """Return the "uses" line of a step that has no place of its own (personal-info removal)."""
     return f'<span style="color:{_GREY};">{escape(stage.detail)}</span>'
+
+
+def names_line(stage: DataFlowStage) -> str:
+    """Return the line under personal-info removal: the languages whose names are hidden.
+
+    Empty while the step is off — the checkbox already says so, and "Off" under it only
+    repeated that.  The languages come from the models that will be loaded.
+    """
+    if not stage.personal_info_hidden:
+        return ""
+    names = [language_name(code) for code in stage.languages]
+    text = txt.NAMES_IN_LANGUAGES.format(languages=_and_list(names)) if names else stage.detail
+    return f'<span style="color:{_GREY};">{escape(text)}</span>'
+
+
+def _and_list(items: Sequence[str]) -> str:
+    """Return ``"German and English"``, ``"German, English and French"`` or ``""``."""
+    if len(items) <= 1:
+        return "".join(items)
+    return f"{', '.join(items[:-1])} and {items[-1]}"
 
 
 def stage_tooltip(stage: DataFlowStage) -> str:

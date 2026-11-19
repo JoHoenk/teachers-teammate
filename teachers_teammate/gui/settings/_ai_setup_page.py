@@ -2,10 +2,10 @@
 
 Not a choice of its own (the place a step runs is decided by the service picked on AI
 models), so the sidebar shows it indented under AI models.  Most important first: how powerful
-this computer is ("My computer", which the model suggestions follow) and its graphics card,
-then the address of the local AI server.  The profile and the address are edited here and
-nowhere else; the AI models and Add-ons pages show them read-only and follow them through the
-window's wiring.  The keys of the online services are on *Online services*.
+this computer is ("My computer", which the model suggestions follow) and how fast it runs the
+chosen models, then the address of the local AI server.  The profile and the address are edited
+here and nowhere else; the AI models and Add-ons pages show them read-only and follow them
+through the window's wiring.  The keys of the online services are on *Online services*.
 """
 
 from __future__ import annotations
@@ -29,12 +29,10 @@ from ...config import DEFAULTS
 from ...texts.settings import PAGE_AI_MODELS, PAGE_AI_SETUP
 from .. import _user_text as txt
 from .._hardware_profile_selector import HardwareProfileSelector
-from .._model_fetch import _GpuDetectThread, _retire_thread, _start_thread
 from .._ollama_status_line import OllamaStatusLine
 from ._page import (
     FOCUS_FIND_SERVER,
     FOCUS_LOCAL_MODELS,
-    FOCUS_PROOFREADING,
     FOCUS_SERVER,
     FOCUS_SPEED,
     SettingsContext,
@@ -64,17 +62,10 @@ SERVER_URL_TOOLTIP = (
 DOWNLOAD_MODEL = "Download a model…"
 DOWNLOAD_MODEL_TOOLTIP = "Opens Add-ons, where AI models for this computer are downloaded."
 PERFORMANCE_GROUP = "Power and speed of this computer"
-DETECT_GPU = "Detect GPU"
-DETECT_GPU_TOOLTIP = (
-    "Check whether a graphics card is available —\n"
-    "this can significantly speed up text recognition."
-)
-DETECTING = "Detecting…"
-NO_GPU = "No NVIDIA or AMD GPU detected."
 
 
 class AiSetupPage(SettingsPageBase):
-    """Computer profile and GPU check, local AI server address."""
+    """Computer profile and speed test, local AI server address."""
 
     page = SettingsPage.AI_SETUP
     title = TITLE
@@ -90,7 +81,6 @@ class AiSetupPage(SettingsPageBase):
     def __init__(self, context: SettingsContext, parent: QWidget | None = None) -> None:
         super().__init__(context, parent)
         self._app_service = context.app_service
-        self._gpu_detect_thread: _GpuDetectThread | None = None
         self._speed_settings_provider: Callable[[], Mapping[str, Any]] | None = None
         settings = context.settings
         # Known before any widget is built: "My computer" must detect for the
@@ -161,7 +151,8 @@ class AiSetupPage(SettingsPageBase):
     def _build_speed_block(self, group: QGroupBox) -> QWidget:
         """Build the speed test: it measures the models chosen on *AI models* on this computer.
 
-        It sits in the same box as the power of the computer: both are facts about it.
+        It sits in the same box as the power of the computer: both are facts about it.  The
+        note and the button share one row, so the note talks about the button beside it.
         """
         self._speed_group = group
         block = QWidget()
@@ -169,17 +160,6 @@ class AiSetupPage(SettingsPageBase):
         layout.setContentsMargins(0, 8, 0, 0)
         heading = QLabel(f"<b>{txt.SPEED_HEADING}</b>")
         layout.addWidget(heading)
-        top = QHBoxLayout()
-        note = QLabel(txt.SPEED_NOTE)
-        note.setWordWrap(True)
-        note.setStyleSheet("color: #888; font-size: 11px;")
-        top.addWidget(note, stretch=1)
-        change = QPushButton(txt.SPEED_CHANGE_MODELS)
-        change.setFlat(True)
-        change.setToolTip(txt.SPEED_CHANGE_MODELS_TOOLTIP)
-        change.clicked.connect(lambda: self._navigate(SettingsPage.AI_MODELS, FOCUS_PROOFREADING))
-        top.addWidget(change)
-        layout.addLayout(top)
         self._speed_panel = SpeedPanel(
             app_service=self._app_service,
             settings_provider=self._speed_settings,
@@ -224,19 +204,6 @@ class AiSetupPage(SettingsPageBase):
         self._hardware_selector.setting_changed.connect(self.hardware_setting_changed.emit)
         form.addRow(self._hardware_selector)
 
-        self._gpu_detect_btn = QPushButton(DETECT_GPU)
-        self._gpu_detect_btn.setFixedWidth(120)
-        self._gpu_detect_btn.setToolTip(DETECT_GPU_TOOLTIP)
-        self._gpu_detect_btn.clicked.connect(self._on_detect_gpu)
-        self._gpu_status_lbl = QLabel("—")
-        self._gpu_status_lbl.setWordWrap(True)
-        gpu_detect_row = QWidget()
-        gdr = QHBoxLayout(gpu_detect_row)
-        gdr.setContentsMargins(0, 0, 0, 0)
-        gdr.addWidget(self._gpu_detect_btn)
-        gdr.addWidget(self._gpu_status_lbl, stretch=1)
-        form.addRow("GPU:", gpu_detect_row)
-
         self._performance_form = form
         return group
 
@@ -272,10 +239,9 @@ class AiSetupPage(SettingsPageBase):
             self.hardware_setting_changed.emit(after["hardware_profile"])
 
     def shutdown(self) -> None:
-        """Stop the speed test and detach the GPU-detection thread before the page is destroyed."""
+        """Stop the speed test and the server check before the page is destroyed."""
         self._speed_panel.shutdown()
         self._status_line.shutdown()
-        _retire_thread(self._gpu_detect_thread)
 
     # ── server ────────────────────────────────────────────────────────────────
 
@@ -306,22 +272,3 @@ class AiSetupPage(SettingsPageBase):
         """Put *url* into the address field and let the other pages follow, as after typing."""
         self._ollama_url.setText(url)
         self._on_url_edited()
-
-    # ── hardware ──────────────────────────────────────────────────────────────
-
-    def _on_detect_gpu(self) -> None:
-        self._gpu_detect_btn.setEnabled(False)
-        self._gpu_status_lbl.setText(DETECTING)
-        self._gpu_detect_thread = _GpuDetectThread(self._app_service)
-        self._gpu_detect_thread.detect_done.connect(self._on_gpu_detected)
-        self._gpu_detect_thread.finished.connect(lambda: self._gpu_detect_btn.setEnabled(True))
-        _start_thread(self._gpu_detect_thread)
-
-    def _on_gpu_detected(self, gpus: list) -> None:
-        # The probe was just repeated: let "My computer" describe the new result.
-        self._hardware_selector.refresh_status()
-        if not gpus:
-            self._gpu_status_lbl.setText(NO_GPU)
-            return
-        names = ", ".join(f"{g.name} ({g.vendor.upper()})" for g in gpus)
-        self._gpu_status_lbl.setText(names)

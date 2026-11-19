@@ -7,7 +7,8 @@
 ; Prerequisites:
 ;   * Binaries must already be in dist\ (run tools/build/build_standalone.py first)
 ;   * NSIS >= 3.0  (https://nsis.sourceforge.io/)
-;   * NSIS plugins (all bundled with NSIS): LogicLib, nsDialogs, System, FileFunc, WinVer, WordFunc
+;   * NSIS plugins (all bundled with NSIS): LogicLib, nsDialogs, System, FileFunc, WinVer,
+;     WinMessages, WordFunc
 ;
 ; Two scopes, one script. A per-user install lives in %LOCALAPPDATA%\Programs and needs no
 ; rights; an all-users install lives in Program Files and needs administrator rights. The
@@ -36,8 +37,10 @@ SetCompressor /SOLID lzma
 !define UNINST_KEY    "Software\Microsoft\Windows\CurrentVersion\Uninstall\TeachersTeammate"
 
 ; What the Welcome page says about the one thing the app sends on its own: the update check.
-; The signing terms want the disclosure shown during installation, with the way to turn it off.
-!define PRIVACY_NOTE "$\r$\n$\r$\nThe app asks GitHub once at every start whether a newer version exists; you can switch that off under Settings > General. What it sends, and when:$\r$\n${APP_URL}/blob/main/docs/code_signing_policy.md"
+; The signing terms want the disclosure shown during installation, with the way to turn it off,
+; and docs/code_signing_policy.md promises the welcome page says so.  One sentence, no URL: a
+; label on the Welcome page cannot be clicked, and the check sends nothing about the teacher.
+!define PRIVACY_NOTE "$\r$\n$\r$\nAt every start the app asks GitHub whether a newer version exists (Settings > General turns this off)."
 
 Name    "${APP_NAME} ${APP_VERSION}"
 
@@ -86,6 +89,7 @@ RequestExecutionLevel user
 !include "FileFunc.nsh"
 !include "LogicLib.nsh"
 !include "nsDialogs.nsh"
+!include "WinMessages.nsh"
 !include "WinVer.nsh"
 !include "WordFunc.nsh"
 
@@ -95,6 +99,12 @@ RequestExecutionLevel user
 ; Side-panel image shown on the Welcome and Finish pages (164×314 24-bit BMP).
 ; Generate with:  python tools/packaging/make_ico.py
 !define MUI_WELCOMEFINISHPAGE_BITMAP "..\..\teachers_teammate\assets\teachers_teammate_welcome.bmp"
+
+; The UAC shield on a push button (Vista and newer).  WinMessages.nsh carries the WM_ messages
+; but not this one, so it is defined here unless a newer NSIS ships it.
+!ifndef BCM_SETSHIELD
+  !define BCM_SETSHIELD 0x160C
+!endif
 
 ; ── Variables ────────────────────────────────────────────────────────────────
 
@@ -122,7 +132,8 @@ Var DirGiven            ; "1" when /D= was given, so $INSTDIR is not ours to set
 
 ; Pages
 Var WelcomeText
-Var WhereText           ; "for all users in <folder>" / "for you in <folder>"
+Var WelcomeButton       ; what the Welcome page's button says: "Next", "Update", "Reinstall", "Install"
+Var WhereText           ; "in <folder>": the folder of the copy an update, reinstall or downgrade means
 Var SkipWelcome         ; "1" in the elevated copy: no Welcome, no Scope page (it was shown before the prompt)
 Var NeedElevation       ; "1" when an update of an all-users copy needs rights this copy lacks:
                         ; the Welcome page says so and starts the elevated copy when it is left
@@ -232,8 +243,9 @@ FunctionEnd
 
 !ifndef BUILD_UNINSTALLER
 !define MUI_PAGE_CUSTOMFUNCTION_PRE WelcomePagePre
+!define MUI_PAGE_CUSTOMFUNCTION_SHOW WelcomePageShow
 !define MUI_PAGE_CUSTOMFUNCTION_LEAVE WelcomePageLeave
-; .onInit works out the text: fresh install, update, reinstall or downgrade.
+; .onInit works out the text and the button label: fresh install, update, reinstall or downgrade.
 !define MUI_WELCOMEPAGE_TEXT "$WelcomeText"
 !insertmacro MUI_PAGE_WELCOME
 
@@ -327,6 +339,8 @@ Function .onInit
   StrCpy $NeedElevation "0"
   StrCpy $DesktopShortcut "1"
   StrCpy $WelcomeText ""
+  ; A fresh install keeps "Next": the Scope page follows.  The other cases set their own label.
+  StrCpy $WelcomeButton "Next"
   StrCpy $PreviousVersion ""
   StrCpy $PreviousVersionNum "0.0.0"
 
@@ -476,15 +490,13 @@ Function .onInit
   ${EndIf}
 
   ; ── the version, and the text the Welcome page shows ──────────────────────
+  ; At most three short lines: what happens, the administrator rights when they are needed, and
+  ; the update check.  The Scope page says itself which scope is chosen, so the text does not.
   ${If} $Mode == "fresh"
-    StrCpy $WelcomeText "This installs ${APP_NAME} ${APP_VERSION} on this computer.$\r$\n$\r$\nIn the next step you choose whether it is installed for all users or only for you."
+    StrCpy $WelcomeText "This installs ${APP_NAME} ${APP_VERSION}."
   ${Else}
     ; Where the copy is: the text names its folder, so the teacher knows which one is meant.
-    ${If} $InstallScope == "all"
-      StrCpy $WhereText "for all users in $INSTDIR"
-    ${Else}
-      StrCpy $WhereText "for you in $INSTDIR"
-    ${EndIf}
+    StrCpy $WhereText "in $INSTDIR"
     ${If} $PreviousVersion == ""
       StrCpy $PrevLabel "An earlier version of ${APP_NAME} is installed $WhereText."
     ${Else}
@@ -499,9 +511,11 @@ Function .onInit
     ${VersionCompare} "$PreviousVersionNum" "$R0" $R3
     ${If} $R3 == "0"
       ${If} $PreviousVersion == "${APP_VERSION}"
-        StrCpy $WelcomeText "${APP_NAME} ${APP_VERSION} is already installed $WhereText. This reinstalls it. Your settings, add-ons and downloaded models stay."
+        StrCpy $WelcomeText "${APP_NAME} ${APP_VERSION} is already installed $WhereText. This installs it again. Settings, add-ons and models are kept."
+        StrCpy $WelcomeButton "Reinstall"
       ${Else}
-        StrCpy $WelcomeText "$PrevLabel This replaces it with ${APP_VERSION}. Your settings, add-ons and downloaded models stay."
+        StrCpy $WelcomeText "$PrevLabel This replaces it with ${APP_VERSION}. Settings, add-ons and models are kept."
+        StrCpy $WelcomeButton "Update"
       ${EndIf}
     ${ElseIf} $R3 == "1"
       ${If} ${Silent}
@@ -517,12 +531,14 @@ Function .onInit
         Quit
         downgrade_ok:
       ${EndIf}
-      StrCpy $WelcomeText "Version $PreviousVersion is installed $WhereText, which is newer than ${APP_VERSION}. This replaces it with the older version. Your settings, add-ons and downloaded models stay."
+      StrCpy $WelcomeText "Version $PreviousVersion is installed $WhereText. This replaces it with the older ${APP_VERSION}. Settings, add-ons and models are kept."
+      StrCpy $WelcomeButton "Install"
     ${Else}
-      StrCpy $WelcomeText "$PrevLabel This updates it to ${APP_VERSION}. Your settings, add-ons and downloaded models stay."
+      StrCpy $WelcomeText "$PrevLabel This updates it to ${APP_VERSION}. Settings, add-ons and models are kept."
+      StrCpy $WelcomeButton "Update"
     ${EndIf}
     ${If} $NeedElevation == "1"
-      StrCpy $WelcomeText "$WelcomeText$\r$\n$\r$\nUpdating this copy needs administrator rights: Windows asks for them when you click Next."
+      StrCpy $WelcomeText "$WelcomeText$\r$\n$\r$\nWindows asks for administrator rights when you click $WelcomeButton."
     ${EndIf}
   ${EndIf}
 
@@ -554,6 +570,21 @@ FunctionEnd
 Function WelcomePagePre
   ${If} $SkipWelcome == "1"
     Abort
+  ${EndIf}
+FunctionEnd
+
+; The button says what the click does.  An update, a reinstall and a downgrade skip the Scope and
+; folder pages (ScopePageCreate and DirectoryPagePre abort), so "Next" would be the one thing on
+; the page that does not say it.  A fresh install keeps "Next", because the Scope page follows.
+; Control 1 of the installer's window is that button; the shield is the one Windows puts on a
+; button that raises a UAC prompt.
+Function WelcomePageShow
+  ${If} $Mode != "fresh"
+    GetDlgItem $0 $HWNDPARENT 1
+    SendMessage $0 ${WM_SETTEXT} 0 "STR:$WelcomeButton"
+    ${If} $NeedElevation == "1"
+      SendMessage $0 ${BCM_SETSHIELD} 0 1
+    ${EndIf}
   ${EndIf}
 FunctionEnd
 

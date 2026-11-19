@@ -20,6 +20,12 @@ class _StubService:
         self.detection = detection
         self.detect_calls: list[tuple[str, bool]] = []
         self.manual_memory_gb: float | None = None  # what a chosen profile reports as memory
+        self.free_memory_gb: float | None = None  # what is free right now
+        self.memory_calls = 0
+
+    def available_memory_gb(self) -> float | None:
+        self.memory_calls += 1
+        return self.free_memory_gb
 
     def detect_hardware(self, ollama_url: str, *, refresh: bool = False) -> HardwareDetection:
         self.detect_calls.append((ollama_url, refresh))
@@ -176,6 +182,79 @@ def test_manual_choice_resolves_without_detection(qtbot, stub_service) -> None:
     assert stub_service.detect_calls == []
 
 
+# ── the memory free right now ───────────────────────────────────────────────
+
+
+@pytest.mark.use_case("Model_Recommendation_By_Hardware")
+def test_the_status_line_names_the_memory_free_right_now(qtbot, stub_service) -> None:
+    """
+    Given  a computer with 16 GB of memory, 9 GB of it free right now
+    When   the selector is shown
+    Then   the status line names both figures, and the free one is read again every 10 s while
+           the page stays visible (it changes all the time)
+    """
+    stub_service.detection = HardwareDetection(
+        profile="cpu", reason=DetectionReason.NO_GPU_FOUND, system_memory_gb=16.0
+    )
+    stub_service.free_memory_gb = 9.0
+    widget = HardwareProfileSelector(app_service=stub_service)
+    qtbot.addWidget(widget)
+
+    widget.show()
+
+    qtbot.waitUntil(lambda: "9 GB free right now" in widget._status_lbl.text(), timeout=5000)
+    assert "Computer memory: 16 GB, 9 GB free right now." in widget._status_lbl.text()
+    assert widget._memory_timer.isActive()
+    assert widget._memory_timer.interval() == 10_000
+    calls = stub_service.memory_calls
+    widget._read_available_memory()
+    qtbot.waitUntil(lambda: stub_service.memory_calls > calls, timeout=5000)
+
+
+@pytest.mark.use_case("Model_Recommendation_By_Hardware")
+def test_a_remote_server_shows_no_free_memory(qtbot, stub_service) -> None:
+    """
+    Given  Ollama on another computer
+    When   the selector is shown
+    Then   no free figure is read: it would be this computer's, not the server's
+    """
+    stub_service.detection = HardwareDetection(
+        profile="8gb", reason=DetectionReason.REMOTE_SERVER, host="gpu-box.lan"
+    )
+    stub_service.free_memory_gb = 9.0
+    widget = HardwareProfileSelector(app_service=stub_service)
+    qtbot.addWidget(widget)
+
+    widget.show()
+    qtbot.waitUntil(lambda: "another computer" in widget._status_lbl.text(), timeout=5000)
+
+    assert stub_service.memory_calls == 0
+    assert "free right now" not in widget._status_lbl.text()
+
+
+@pytest.mark.use_case("Model_Recommendation_By_Hardware")
+def test_the_free_memory_is_not_part_of_the_detection(qtbot, stub_service) -> None:
+    """
+    Given  a computer whose free memory was read
+    When   the detection is asked for again
+    Then   the detection carries the total memory only, so the suggestions stay stable
+    """
+    stub_service.detection = HardwareDetection(
+        profile="cpu", reason=DetectionReason.NO_GPU_FOUND, system_memory_gb=16.0
+    )
+    stub_service.free_memory_gb = 9.0
+    widget = HardwareProfileSelector(app_service=stub_service)
+    qtbot.addWidget(widget)
+    widget.show()
+    qtbot.waitUntil(lambda: "free right now" in widget._status_lbl.text(), timeout=5000)
+
+    detection = widget.resolved()
+
+    assert detection is not None
+    assert detection.system_memory_gb == 16.0
+    assert not hasattr(detection, "available_memory_gb")
+
+
 # ── read-only variant ────────────────────────────────────────────────────────
 
 
@@ -184,14 +263,14 @@ def test_read_only_variant_shows_suggestions_label(qtbot, stub_service) -> None:
     """
     Given  a read-only selector
     When   it is created
-    Then   it has no combo box and shows "Suggestions are for: …"
+    Then   it has no combo box and shows "Models are suggested for: …"
     """
     widget = HardwareProfileSelector(app_service=stub_service, read_only=True)
     qtbot.addWidget(widget)
     with qtbot.waitSignal(widget.resolved_changed, timeout=5000):
         pass
     assert widget._combo is None
-    assert widget._status_lbl.text().startswith("Suggestions are for: ")
+    assert widget._status_lbl.text().startswith("Models are suggested for: ")
     assert "Detect again" not in widget._status_lbl.text()
     assert widget._status_lbl.toolTip()
 
@@ -266,7 +345,7 @@ def test_manual_choice_ignores_url_changes(qtbot, stub_service) -> None:
 def test_refresh_status_resolves_again_without_probing_again(qtbot, stub_service) -> None:
     """
     Given  a selector in auto mode that resolved once
-    When   refresh_status() is called (the probe was repeated elsewhere, e.g. "Detect GPU")
+    When   refresh_status() is called (the probe was repeated elsewhere)
     Then   the profile is resolved again from the shared probe — refresh stays False
     """
     widget = HardwareProfileSelector(app_service=stub_service)

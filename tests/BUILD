@@ -832,6 +832,16 @@ py_test(
 )
 
 py_test(
+    name = "test_run_gui",
+    size = "small",
+    srcs = _COMMON_SRCS + ["unit/test_run_gui.py"],
+    args = ["unit/test_run_gui.py"],
+    data = ["//tools/build:all_sources"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS + _INFRASTRUCTURE_LIB,
+)
+
+py_test(
     name = "test_windows_installer_script",
     size = "small",
     srcs = _COMMON_SRCS + ["unit/test_windows_installer_script.py"],
@@ -2809,6 +2819,7 @@ test_suite(
         ":test_release_tag",
         ":test_request_profile",
         ":test_review_v2",
+        ":test_run_gui",
         ":test_run_stats",
         ":test_run_summary",
         ":test_sent_text",

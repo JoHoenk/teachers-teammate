@@ -507,17 +507,17 @@ def model_does_not_fit(messages: Sequence[str]) -> Question:
 
 def select_output_folder(start: str = "") -> FilePrompt:
     """The picker for the folder the results are written to."""
-    return FilePrompt("Select output folder", start=start)
+    return FilePrompt("Choose the results folder", start=start)
 
 
 def select_input_folder(start: str = "") -> FilePrompt:
     """The picker for the folder the documents are read from."""
-    return FilePrompt("Select Input Folder", start=start)
+    return FilePrompt("Choose the documents folder", start=start)
 
 
 def select_input_files(start: str = "") -> FilePrompt:
     """The picker for the documents themselves, instead of a whole folder."""
-    return FilePrompt("Select Input Files", name_filter=SUPPORTED_FILES_FILTER, start=start)
+    return FilePrompt("Choose documents", name_filter=SUPPORTED_FILES_FILTER, start=start)
 
 
 def save_export(label: str, name_filter: str, suggested: str = "") -> FilePrompt:

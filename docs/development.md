@@ -376,7 +376,8 @@ step and the warnings are on *Settings → This computer* (`gui/settings/_speed_
 test measures the models chosen on *AI models*: the window hands the panel those settings
 (`SettingsWindow._speed_settings`), unsaved choices included, and redraws it when the choice
 changes (`AiModelsPage.speed_choices_changed`).  *AI models* only shows the result, read-only:
-one line with the class-set time and a button that opens the test (`gui/settings/_speed_hint.py`).
+one line with the class-set time, in the "This computer" box at the top of the page
+(`gui/settings/_computer_box.py`).
 The panel owns no setting, so it adds no key to any page's `owned_keys`.
 
 `SpeedChoices` has two entry points.  `from_settings` (the Settings window) includes every step
@@ -485,10 +486,12 @@ answered.
   are this class's error level with this model and these instructions, which no test can know.
 - from `PERCENTILE_SAMPLES` (10) the range is the 10th to the 90th percentile, so one runaway
   answer no longer widens it.
-- a step whose samples are missing falls back to the test, and a step with neither gets no figure.
+- a step whose samples are missing falls back to the test, and a step with neither keeps its row
+  in `SpeedSummary.unmeasured`, with the band the catalog expects here.  `class_set` is `None`
+  while any step is unmeasured: a sum that left one out would promise a time that is too short.
 
 `SpeedSummary.sample_count` and `sample_pages` say which of the two a row rests on, and the panel
-says it in words ("From your last 12 documents").
+says it in words ("Based on your last 12 proofread documents").
 
 #### The time left
 
@@ -1374,6 +1377,16 @@ as written is set to tick "Remove personal info": `privacy_line_state` decides t
 transition from not online to online sets the turn-on, and the window hands it to the main window
 as `SettingsResult.turn_on_anonymization` — the stage guard and the confirmation before sending
 stay the authority.
+
+**Add-ons shows one status line, not a log.**  `AddonsPage` fills the window
+(`SettingsPageBase.fills_window`) instead of scrolling: its model tree takes the free height and
+the action row stays at the bottom, so the install button is visible on a laptop.  Above that row
+sits one status line, fed by `InstallRound`'s signals and never by the log text: the running step
+with its number ("Installing spaCy (step 1 of 2)…"), a percentage for a model pull, the elapsed
+time for a pip step (pip reports no progress at all while its output is a pipe), then the last
+round's result, a pending restart, or what the detection found.  The log is behind "Show details",
+opens by itself on a failure, and "Copy" puts it on the clipboard.  Abort appears only while it
+can stop something (`InstallRound.can_abort()`): a download, not a pip install.
 
 **Closing.**  `done()` calls `shutdown()` on every built page (a running model fetch is parked in
 `_model_fetch._RETIRED_THREADS`, never destroyed while running).  A pip install or

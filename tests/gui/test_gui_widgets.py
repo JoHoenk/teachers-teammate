@@ -975,7 +975,7 @@ def test_uses_line_names_model_and_place_and_falls_back_to_the_engine() -> None:
     """
     Given  a proofreading stage at an EU service and a built-in reader stage without a model
     When   their "uses" lines are built
-    Then   the first shows model and place, the second the engine's name instead of a model
+    Then   the first shows model and place, the second the engine's name and no place
     """
     from teachers_teammate.domain.data_location import (  # noqa: PLC0415
         DataLocation,
@@ -987,7 +987,28 @@ def test_uses_line_names_model_and_place_and_falls_back_to_the_engine() -> None:
     reader = _stage("ocr", DataLocation.THIS_COMPUTER, "Built-in reader", "page images")
 
     assert "mistral-small-latest · Mistral (EU) · EU" in uses_line(online, "mistral-small-latest")
-    assert "Built-in reader · this computer" in uses_line(reader, "")
+    assert "Built-in reader" in uses_line(reader, "")
+    assert "this computer" not in uses_line(reader, "")
+
+
+@pytest.mark.gui
+def test_uses_line_shows_the_short_model_name_and_no_place_on_this_computer() -> None:
+    """
+    Given  a step that runs a Hugging Face model on this computer
+    When   its "uses" line is built
+    Then   the line names the short model name and does not repeat "this computer"
+    """
+    from teachers_teammate.domain.data_location import DataLocation  # noqa: PLC0415
+    from teachers_teammate.gui._data_flow_summary import uses_line  # noqa: PLC0415
+
+    stage = _stage("ocr", DataLocation.THIS_COMPUTER, "Ollama", "page images")
+    tag = "hf.co/prithivMLmods/chandra-ocr-2-GGUF:Q8_0"
+
+    line = uses_line(stage, tag)
+
+    assert "chandra-ocr-2" in line
+    assert "hf.co" not in line
+    assert "this computer" not in line
 
 
 @pytest.mark.gui

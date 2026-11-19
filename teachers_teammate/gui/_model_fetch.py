@@ -104,6 +104,8 @@ class _SettingsAppService(Protocol):
 
     def resolve_hardware_profile(self, setting: str, ollama_url: str) -> HardwareDetection: ...
 
+    def available_memory_gb(self) -> float | None: ...
+
     def classify_ollama_models(
         self, tags: list[str], ollama_url: str, *, cached_only: bool = False
     ) -> dict[str, ModelUses | None]: ...
@@ -119,8 +121,6 @@ class _SettingsAppService(Protocol):
         system_memory_gb: float | None = None,
         card_gb: float | None = None,
     ) -> list[ModelRating]: ...
-
-    def detect_gpus(self, *, refresh: bool = False) -> list: ...
 
     def describe_ocr_location(self, engine: str, model: str, ollama_url: str) -> StageLocation: ...
 
@@ -184,21 +184,6 @@ class _ModelFetchThread(QThread):
         listing = result if isinstance(result, ModelListing) else ModelListing(list(result))
         self.models_ready.emit(listing.models)
         self.listing_ready.emit(self._tag, listing)
-
-
-class _GpuDetectThread(QThread):
-    """Runs GPU detection (nvidia-smi / rocm-smi) in a background thread."""
-
-    detect_done = Signal(list)  # list[GpuInfo]
-
-    def __init__(self, app_service: _SettingsAppService) -> None:
-        super().__init__()
-        self._app_service = app_service
-
-    def run(self) -> None:
-        # "Detect GPU" is a request to look again (a driver may have been installed
-        # since the first probe); the fresh result also feeds "My computer".
-        self.detect_done.emit(self._app_service.detect_gpus(refresh=True))
 
 
 # ── status label helpers ──────────────────────────────────────────────────────

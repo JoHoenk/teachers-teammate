@@ -22,7 +22,8 @@ from ..domain.data_location import (
 from ..domain.local_models import PAGE_MODELS_SIZE_LABEL, READER_SIZE_LABEL
 from ..domain.proofreading.review import CHANGE_CATEGORIES
 from ..exceptions import RECOGNITION_OFF_MESSAGE
-from ..texts.settings import PAGE_AI_MODELS, PAGE_AI_SETUP, WHERE_ADDONS, WHERE_AI_MODELS
+from ..infrastructure.addon_manager import AddonInstallError, AddonUpdateError, InstallFailure
+from ..texts.settings import PAGE_AI_MODELS, WHERE_ADDONS, WHERE_AI_MODELS
 
 # ── The review's wording ──────────────────────────────────────────────────────
 
@@ -189,12 +190,152 @@ ADDONS_OUTDATED_NOTE = (
     "add-ons stay switched off until they are installed again: this downloads them once. "
     "Everything else works meanwhile."
 )
-ADDONS_UPDATING = "Updating the add-ons…"
 ADDONS_UPDATED = "The add-ons are up to date."
+#: An install could not replace a file the running app has loaded (Windows): a restart
+#: finishes it.  The Add-ons page says it, and the readiness line names the step it blocks.
+ADDONS_RESTART_NEEDED = "spaCy is installed. Restart the app to finish."
+ADDONS_RESTART_NEEDED_GENERIC = "The add-ons are installed. Restart the app to finish."
+
+#: The Add-ons page's one status line, and the controls around it.
+ADDONS_INSTALL = "Install / Download Selected"
+ADDONS_INSTALLING = "Installing…"
+ADDONS_ABORT = "Abort"
+ADDONS_ABORT_TOOLTIP = "Stop the current download after the current chunk."
+ADDONS_SHOW_DETAILS = "Show details"
+ADDONS_HIDE_DETAILS = "Hide details"
+ADDONS_COPY_LOG = "Copy"
+ADDONS_COPIED = "Copied."
+ADDONS_DETECTING = "Detecting installed packages…"
+ADDONS_DETECTED = "Detection complete."
+ADDONS_DETECT_FAILED = "Detection failed: {reason}"
+ADDONS_DETECT_UNEXPECTED = "unexpected result"
+ADDONS_STATUS_STEP = "{verb} {item} (step {number} of {total})…"
+ADDONS_STATUS_STEP_PERCENT = "{verb} {item} (step {number} of {total}), {percent} %"
+ADDONS_STATUS_ELAPSED = "{line} {elapsed}"
+ADDONS_STATUS_INSTALLED = "✓ {count} installed"
+ADDONS_STATUS_FAILED = "✗ {item} failed: {reason}"
+ADDONS_ABORTED = "Aborted."
+ADDONS_VERB_INSTALL = "Installing"
+ADDONS_VERB_DOWNLOAD = "Downloading"
+ADDONS_ITEM_ADDONS = "the add-ons"
+ADDONS_ITEM_READER = "the built-in reader"
+ADDONS_ITEM_PAGE_MODELS = "the page models"
+ADDONS_ITEM_SPACY = "spaCy"
+ADDONS_ITEM_SPACY_MODEL = "the {language} model"
+ADDONS_ITEM_MULTILINGUAL = "multilingual"
+
+
+def format_elapsed(seconds: float) -> str:
+    """Return *seconds* as a clock a teacher can watch: ``"0:07"``, ``"1:42"``."""
+    total = max(0, int(seconds))
+    return f"{total // 60}:{total % 60:02d}"
+
+
+def addons_status_step(verb: str, item: str, number: int, total: int) -> str:
+    """Return the status line of a running install step: ``"Installing spaCy (step 1 of 2)…"``."""
+    return ADDONS_STATUS_STEP.format(verb=verb, item=item, number=number, total=total)
+
+
+def addons_status_percent(verb: str, item: str, number: int, total: int, percent: int) -> str:
+    """Return the status line of a download that has come *percent* of the way."""
+    return ADDONS_STATUS_STEP_PERCENT.format(
+        verb=verb, item=item, number=number, total=total, percent=percent
+    )
+
+
+def addons_status_elapsed(line: str, seconds: float) -> str:
+    """Return *line* with the time the step has been running, so the screen visibly moves."""
+    return ADDONS_STATUS_ELAPSED.format(line=line, elapsed=format_elapsed(seconds))
+
+
+def addons_installed(count: int) -> str:
+    """Return the status line after a round that installed *count* items."""
+    return ADDONS_STATUS_INSTALLED.format(count=count)
+
+
+ADDONS_FAILURE: dict[InstallFailure, str] = {
+    InstallFailure.DISK_FULL: "There is not enough space on the disk.",
+    InstallFailure.FILE_IN_USE: "A file in the add-on folder is in use. Close the app and try again.",
+    InstallFailure.OFFLINE: "There is no internet connection.",
+    InstallFailure.NO_VERSION: (
+        "No version of this add-on fits this version of the app. Look for an app update."
+    ),
+    InstallFailure.MERGE_FAILED: (
+        "The add-on could not be put in the add-on folder. Check the free space and try again."
+    ),
+    InstallFailure.INSTALL_FAILED: "The installation failed.",
+    InstallFailure.DOWNLOAD_FAILED: "The model could not be downloaded.",
+}
+
+
+def addon_error_text(error: BaseException) -> str:
+    """Return the sentence for a failed add-on install; any other error says what it says."""
+    if isinstance(error, AddonUpdateError):
+        return "; ".join(
+            f"{requirement}: {addon_error_text(failure)}" for requirement, failure in error.errors
+        )
+    if isinstance(error, AddonInstallError):
+        return ADDONS_FAILURE[error.reason]
+    return str(error)
+
+
+def addons_failed(item: str, reason: str) -> str:
+    """Return the status line of a step that failed, naming the item and the reason."""
+    return ADDONS_STATUS_FAILED.format(item=item, reason=reason)
+
+
+def addons_detect_failed(reason: str = "") -> str:
+    """Return the status line of a detection that could not run."""
+    return ADDONS_DETECT_FAILED.format(reason=reason or ADDONS_DETECT_UNEXPECTED)
+
+
+def addons_spacy_model(language: str) -> str:
+    """Return the name of a name-detection model by its language: ``"the German model"``."""
+    return ADDONS_ITEM_SPACY_MODEL.format(language=language)
+
 
 #: The step that replaces names before text is sent anywhere: the checkbox in the main window
 #: and the line on the AI models page that offers to turn it on must say the same words.
 REMOVE_PERSONAL_INFO = "Remove personal info"
+#: The line under it while it is on: the languages whose names are hidden.
+NAMES_IN_LANGUAGES = "Names in {languages}"
+
+# ── Main window: the documents and results rows ───────────────────────────────
+
+DOCUMENTS_LABEL = "Documents:"
+DOCUMENTS_PLACEHOLDER = "No input selected"
+DOCUMENTS_FOLDER_BUTTON = "Folder…"
+DOCUMENTS_FOLDER_TOOLTIP = (
+    "Choose a folder — all supported files inside will be processed, including subfolders."
+)
+DOCUMENTS_FILES_BUTTON = "Files…"
+DOCUMENTS_FILES_TOOLTIP = "Choose one or more individual files (PDF, images, or plain text)."
+RESULTS_LABEL = "Save to:"
+RESULTS_PLACEHOLDER = "Choose a folder for the results"
+RESULTS_TOOLTIP = (
+    "Folder where Word documents and text files will be saved.\n"
+    "Required as soon as a Word document or a text file is switched on."
+)
+RESULTS_BUTTON = "Choose…"
+RESULTS_BUTTON_TOOLTIP = "Choose the folder."
+TEXT_FILE_TOOLTIP = "Save the extracted text of each input file as a text file (name.txt)."
+TEXT_MODE_TOOLTIP = (
+    "as written — the text as it was read (name.txt).\n"
+    "anonymized — names and other personal data replaced by placeholders\n"
+    "(name_anonymized.txt). Runs on this computer and needs the privacy add-on (spaCy).\n"
+    "both — one file of each."
+)
+
+
+def files_more(count: int) -> str:
+    """Return the last line of the list of selected files: how many more there are."""
+    return f"… and {count} more"
+
+
+def files_from_folder(count: int, folder: object) -> str:
+    """Return ``3 files from C:\\…`` for a selection of individual documents."""
+    return f"{count} file{'s' if count != 1 else ''} from {folder}"
+
 
 # ── Main window: the steps ────────────────────────────────────────────────────
 
@@ -390,22 +531,13 @@ SPEED_TEST_TOOLTIP = (
     "when you ask for it. Nothing is sent anywhere else."
 )
 SPEED_NOTE = (
-    f"Measures the models chosen on {PAGE_AI_MODELS}. "
-    "It runs only when you press the button, never by itself."
+    f"Measures the models chosen on {PAGE_AI_MODELS}. Runs only when you click the button; "
+    "the result is kept for the time estimates."
 )
 SPEED_NOTHING_TO_MEASURE = (
     f"Nothing to measure: no step uses a model on this computer. The steps and their models "
     f"are chosen on {PAGE_AI_MODELS}."
 )
-SPEED_CHANGE_MODELS = "Change models…"
-SPEED_CHANGE_MODELS_TOOLTIP = f"Opens {PAGE_AI_MODELS}, where the models are chosen."
-SPEED_HINT_MEASURE = "Test speed…"
-SPEED_HINT_NEVER = (
-    "How long a class set takes is not known yet. "
-    f"Test the speed of this computer to find out ({PAGE_AI_SETUP})."
-)
-SPEED_HINT_DETAILS = "Details…"
-SPEED_HINT_TOOLTIP = f"Opens {PAGE_AI_SETUP}, where the speed of this computer is measured."
 SPEED_STOP_TOOLTIP = "Stop the test. Nothing is saved."
 SPEED_STOPPING = "Stopping…"
 SPEED_TESTING = "Testing… this takes up to a minute and a half per step."
@@ -432,16 +564,26 @@ SPEED_SWAPS = (
     "each file adds about {load} of loading."
 )
 SPEED_CLASS_SET = "{files} two-page essays: about {span}"
+SPEED_CLASS_SET_TIME = "Time for a class set ({files} two-page essays): about {span}"
+SPEED_CLASS_SET_UNKNOWN = "Time for a class set: not measured yet"
+SPEED_CLASS_SET_TEST = "Test the speed to see how long a class set takes."
 SPEED_PER_PAGE = "about {span} per page"
 SPEED_MEASURED_NOTE = "about {span} per page (measured)"
 SPEED_EXPECTED_LABEL = "{band} (expected)"
+SPEED_NOT_MEASURED = "not measured"
+SPEED_EXPECTED_NOT_MEASURED = "{band} (expected) — not measured"
+SPEED_MEMORY = "needs ~{gb:.0f} GB"
 SPEED_EXPECTED_NOTE = (
     "Expected speed on this computer: {band}. Worked out from the models measured here, "
     "not measured for this one."
 )
 SPEED_MEASURED_AT = "Measured {date}, {power}."
-SPEED_FROM_RUNS = "From your last {count} {unit}."
-SPEED_FROM_RUNS_ONE = "From your last {unit}."
+SPEED_FROM_RUNS = "Based on your last {count} {unit}."
+SPEED_FROM_RUNS_ONE = "Based on your last {unit}."
+#: What the count in :data:`SPEED_FROM_RUNS` counts: a run that proofread nothing measured only
+#: text recognition, which happens once per page.
+SPEED_FROM_RUNS_DOCUMENT = "proofread document"
+SPEED_FROM_RUNS_PAGE = "recognised page"
 SPEED_ON_MAINS = "on mains power"
 SPEED_ON_BATTERY = "on battery power, so slower than usual"
 
@@ -536,9 +678,30 @@ def speed_expected_note(band: str) -> str:
     return SPEED_EXPECTED_NOTE.format(band=speed_band_name(band))
 
 
+def speed_unmeasured_label(band: str | None) -> str:
+    """Return the per-page cell of a step that runs here but was never measured.
+
+    *band* is what the model is expected to reach here; ``None`` when nothing says, and then
+    the cell only says it was not measured.
+    """
+    if band is None:
+        return SPEED_NOT_MEASURED
+    return SPEED_EXPECTED_NOT_MEASURED.format(band=speed_band_name(band))
+
+
+def speed_memory(gb: float) -> str:
+    """Return the memory a model needs, e.g. ``"needs ~7 GB"``."""
+    return SPEED_MEMORY.format(gb=gb)
+
+
 def speed_class_set(files: int, low_s: float, high_s: float) -> str:
     """Return the example line for a class set of *files* two-page essays."""
     return SPEED_CLASS_SET.format(files=files, span=format_span(low_s, high_s))
+
+
+def speed_class_set_time(files: int, low_s: float, high_s: float) -> str:
+    """Return the labelled class-set line of the read-only "This computer" box."""
+    return SPEED_CLASS_SET_TIME.format(files=files, span=format_span(low_s, high_s))
 
 
 def speed_measured_at(stamp: str, *, on_battery: bool | None) -> str:
@@ -561,7 +724,7 @@ def speed_from_runs(count: int, *, pages: bool) -> str:
     """
     if count <= 0:
         return ""
-    unit = "page" if pages else "document"
+    unit = SPEED_FROM_RUNS_PAGE if pages else SPEED_FROM_RUNS_DOCUMENT
     if count == 1:
         return SPEED_FROM_RUNS_ONE.format(unit=unit)
     return SPEED_FROM_RUNS.format(count=count, unit=unit + "s")

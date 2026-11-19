@@ -96,6 +96,10 @@ class FakeGuiService(LocalDataFlowStub):
     def list_provider_packages(self) -> dict[str, tuple[str, str]]:
         return {}
 
+    def pending_addon_packages(self) -> tuple[str, ...]:
+        """Nothing waits for a restart unless a test says so."""
+        return ()
+
     def evaluation_fixed_instructions(self, text_format: TextFormat = "plain") -> str:
         _ = text_format
         return ""
@@ -113,6 +117,10 @@ class FakeGuiService(LocalDataFlowStub):
     def detect_gpus(self, *, refresh: bool = False) -> list:
         _ = refresh
         return []
+
+    def available_memory_gb(self) -> float | None:
+        """Answer with no free figure: the line then names the total memory only."""
+        return None
 
     # ── hardware profiles & model recommendations ─────────────────────────────
     def ollama_catalog(self) -> tuple:
@@ -219,7 +227,6 @@ def neutralize_gui_threads(monkeypatch: Any) -> None:
     for thread_cls in (
         UpdateCheckThread,
         _ConnectionCheckThread,
-        _model_fetch._GpuDetectThread,
         _model_fetch._ModelFetchThread,
         _install_round._PipInstallThread,
         _anonymizer_config_widget._SpacyModelFetchThread,

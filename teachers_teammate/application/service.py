@@ -172,10 +172,14 @@ class IssueKind(StrEnum):
     PACKAGE_MISSING = "package_missing"
     KEY_MISSING = "key_missing"
     NAME_DETECTION_MISSING = "name_detection_missing"
+    #: spaCy itself is not installed, so no name detection model can run.
+    PRIVACY_ADDON_MISSING = "privacy_addon_missing"
     #: Text recognition is switched off and no queued file has text to use without it.
     NOTHING_TO_READ = "nothing_to_read"
     #: An app update changed packages the add-ons share with it: they stay off until updated.
     ADDONS_OUTDATED = "addons_outdated"
+    #: An install could not replace a file the running app has loaded: a restart finishes it.
+    ADDON_RESTART_NEEDED = "addon_restart_needed"
 
 
 @dataclasses.dataclass(frozen=True)
@@ -735,6 +739,17 @@ class ProcessingApplicationService:
     def resolve_hardware_profile(self, setting: str, ollama_url: str) -> HardwareDetection:
         """Resolve the ``hardware_profile`` *setting* into a concrete detection."""
         return self._recommendations.resolve_hardware_profile(setting, ollama_url)
+
+    def available_memory_gb(self) -> float | None:
+        """Return the main memory free right now in GB, or ``None`` when it cannot be read.
+
+        Read when the "My computer" line is drawn, never stored: it changes all the time and no
+        model suggestion depends on it.  It is a quick query, but the GUI still asks for it on a
+        background task, like every other probe of this computer.
+        """
+        from ..infrastructure import gpu_detector  # noqa: PLC0415
+
+        return gpu_detector.detect_available_memory_gb()
 
     def cached_hardware_profile(self, setting: str, ollama_url: str) -> HardwareDetection | None:
         """Resolve *setting* without probing this computer; ``None`` while it is unknown.
@@ -2065,6 +2080,8 @@ class ProcessingApplicationService:
         )
         name = str(get_provider_info(provider).get("display_name", provider))
         missing_package = self.missing_provider_package(provider)
+        if missing_package and self._addon_waits_for_restart(missing_package):
+            return [self._addon_restart_issue(f"{name} support")]
         if missing_package and self._addon_needs_update(missing_package):
             return [self._addons_outdated_issue()]
         if missing_package:
@@ -2116,30 +2133,50 @@ class ProcessingApplicationService:
             "The add-ons need an update after the app update.", IssueKind.ADDONS_OUTDATED
         )
 
+    @staticmethod
+    def _addon_restart_issue(what: str) -> RequirementIssue:
+        return RequirementIssue(
+            f"Restart the app to finish installing {what}.", IssueKind.ADDON_RESTART_NEEDED
+        )
+
     def _addon_needs_update(self, distribution: str) -> bool:
         """Return whether *distribution* is installed as an add-on but kept off by an app update."""
         from ..infrastructure.addon_manager import addon_in_folder, addons_outdated  # noqa: PLC0415
 
         return addons_outdated() and addon_in_folder(distribution)
 
+    @staticmethod
+    def _addon_waits_for_restart(distribution: str) -> bool:
+        """Return whether *distribution* is installed but waits for the next start."""
+        from ..infrastructure.addon_manager import addon_waits_for_restart  # noqa: PLC0415
+
+        return addon_waits_for_restart(distribution)
+
     def _name_detection_issues(self, language: str) -> list[RequirementIssue]:
         """Return what removing names still needs: spaCy itself or the model of *language*."""
+        if self._addon_waits_for_restart("spacy"):
+            return [self._addon_restart_issue("name detection")]
         if self._addon_needs_update("spacy"):
             return [self._addons_outdated_issue()]
         installed_models = self.list_installed_spacy_models()
         required = self.spacy_model_for_language(language)
-        if installed_models:
-            if required in installed_models:
-                return []
-            message = f"spaCy NER model '{required}' is not downloaded."
-        else:
-            try:
-                import spacy  # noqa: PLC0415, F401
-            except ImportError:
-                message = "spaCy is not installed. Install it under Add-ons in the app."
-            else:
-                message = f"spaCy NER model '{required}' is not downloaded."
-        return [RequirementIssue(message, IssueKind.NAME_DETECTION_MISSING, models=(required,))]
+        if required in installed_models:
+            return []
+        if not installed_models and not self.is_module_importable("spacy"):
+            return [
+                RequirementIssue(
+                    "spaCy is not installed. Install it under Add-ons in the app.",
+                    IssueKind.PRIVACY_ADDON_MISSING,
+                    models=(required,),
+                )
+            ]
+        return [
+            RequirementIssue(
+                f"spaCy NER model '{required}' is not downloaded.",
+                IssueKind.NAME_DETECTION_MISSING,
+                models=(required,),
+            )
+        ]
 
     def pull_ollama_model(
         self,
@@ -2350,6 +2387,22 @@ class ProcessingApplicationService:
         from ..infrastructure.addon_manager import install_addon_subprocess  # noqa: PLC0415
 
         install_addon_subprocess(addon, target, progress_cb)
+
+    def addons_restart_needed(self) -> bool:
+        """Return whether an install waits for the next start (``packages.pending/``).
+
+        Windows locks a file the running app has loaded, so a package that could not replace
+        its old copy waits there; :func:`prepare_packages_dir` applies it at the next start.
+        """
+        from ..infrastructure.addon_manager import addons_restart_needed  # noqa: PLC0415
+
+        return addons_restart_needed()
+
+    def pending_addon_packages(self) -> list[str]:
+        """Return the normalised names of the packages that wait for the next start."""
+        from ..infrastructure.addon_manager import pending_addon_packages  # noqa: PLC0415
+
+        return pending_addon_packages()
 
     def addons_outdated(self) -> bool:
         """Return whether an app update left add-ons that wait for *Update add-ons*.

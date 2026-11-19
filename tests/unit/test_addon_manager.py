@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 import sys
@@ -14,6 +15,8 @@ from teachers_teammate.infrastructure import addon_manager
 from teachers_teammate.infrastructure.addon_manager import (
     ADDON_LLM_OPENAI,
     ADDON_PRIVACY,
+    AddonInstallError,
+    InstallFailure,
     _packages_dir_readable,
     can_install_addons,
     clear_stale_modules,
@@ -245,9 +248,9 @@ def test_install_addon_subprocess_streams_progress_cb(tmp_path: Path) -> None:
 
 def test_install_addon_subprocess_raises_on_nonzero_exit(tmp_path: Path) -> None:
     """
-    Given  pip exits with a non-zero return code
+    Given  pip exits with a non-zero return code and an unknown reason
     When   install_addon_subprocess() is called
-    Then   RuntimeError is raised with the exit code in the message
+    Then   RuntimeError carries one sentence, not the exit code
     """
 
     class _FakeProc:
@@ -264,8 +267,9 @@ def test_install_addon_subprocess_raises_on_nonzero_exit(tmp_path: Path) -> None
             pass
 
     with patch("subprocess.Popen", return_value=_FakeProc()):
-        with pytest.raises(RuntimeError, match="pip exited with code 1"):
+        with pytest.raises(AddonInstallError) as raised:
             install_addon_subprocess(ADDON_PRIVACY, tmp_path / "pkg", lambda _: None)
+    assert raised.value.reason is InstallFailure.INSTALL_FAILED
 
 
 def test_install_addon_subprocess_raises_oserror_on_bad_target(tmp_path: Path) -> None:
@@ -367,7 +371,7 @@ def test_download_spacy_model_raises_on_nonzero_exit(tmp_path: Path) -> None:
     """
     Given  the download process exits with a non-zero return code (frozen build)
     When   download_spacy_model_subprocess() is called
-    Then   RuntimeError is raised with the exit code in the message
+    Then   RuntimeError carries one sentence, not the exit code
     """
     proc = _FakeProc(returncode=1, stdout_lines=["ERROR\n"])
 
@@ -375,8 +379,9 @@ def test_download_spacy_model_raises_on_nonzero_exit(tmp_path: Path) -> None:
         patch.object(sys, "frozen", True, create=True),
         patch("subprocess.Popen", return_value=proc),
     ):
-        with pytest.raises(RuntimeError, match="Model download exited with code 1"):
+        with pytest.raises(AddonInstallError) as raised:
             download_spacy_model_subprocess("en_core_web_sm", tmp_path / "pkg", lambda _: None)
+    assert raised.value.reason is InstallFailure.DOWNLOAD_FAILED
 
 
 def test_download_spacy_model_raises_oserror_on_bad_target(tmp_path: Path) -> None:
@@ -812,13 +817,13 @@ def test_pip_policy_of_the_installed_app(frozen_bundle: Path) -> None:
     """
     Given  the installed app
     When   the pip policy is asked for
-    Then   it upgrades, takes wheels only, skips the cache, asks pip for no version notice
-           ("run … -m pip install --upgrade pip") and passes the bundle's constraints
+    Then   it takes wheels only, skips the cache, asks pip for no version notice
+           ("run … -m pip install --upgrade pip") and passes the bundle's constraints; it does
+           not upgrade, because pip installs into an empty staging folder
     """
     arguments = addon_manager.pip_policy_arguments()
 
     assert arguments == [
-        "--upgrade",
         "--only-binary",
         ":all:",
         "--no-cache-dir",
@@ -826,7 +831,7 @@ def test_pip_policy_of_the_installed_app(frozen_bundle: Path) -> None:
         "-c",
         str(frozen_bundle),
     ]
-    assert "--upgrade" not in addon_manager.pip_policy_arguments(upgrade=False)
+    assert "--upgrade" not in arguments
 
 
 def test_a_frozen_build_without_the_file_installs_without_constraints(
@@ -852,8 +857,8 @@ def test_installed_app_pip_call_carries_the_policy(
     """
     Given  the installed app
     When   an add-on and a spaCy model are installed
-    Then   both pip commands carry the constraints, wheels-only and no cache; only the
-           add-on's upgrades what is there
+    Then   both pip commands carry the constraints, wheels-only and no cache, and neither
+           upgrades what is there (both install into an empty staging folder)
     """
     captured: list[list[str]] = []
 
@@ -876,13 +881,11 @@ def test_installed_app_pip_call_carries_the_policy(
     download_spacy_model_subprocess("en_core_web_sm", tmp_path / "pkg", lambda _: None)
 
     assert len(captured) == 2
-    addon, model = captured[0], captured[1]
     for command in captured:
         assert command[command.index("-c") + 1] == str(frozen_bundle)
         assert "--only-binary" in command
         assert "--no-cache-dir" in command
-    assert "--upgrade" in addon
-    assert "--upgrade" not in model
+        assert "--upgrade" not in command
 
 
 def test_source_pip_call_has_no_policy(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1235,8 +1238,10 @@ def test_update_cleans_up_when_one_add_on_fails_to_install(
 
     monkeypatch.setattr(addon_manager, "install_packages_subprocess", _install)
 
-    with pytest.raises(RuntimeError, match="no matching distribution"):
+    with pytest.raises(addon_manager.AddonUpdateError, match="no matching distribution") as raised:
         addon_manager.update_installed_addons(lambda _line: None)
+
+    assert [requirement for requirement, _error in raised.value.errors] == ["langchain-core>=1.4.7"]
 
     assert addon_manager.foreign_python_packages(pkg_dir) == []
 
@@ -1252,3 +1257,368 @@ def test_a_wheel_file_that_is_not_text_is_left_alone(tmp_path: Path, python_314:
     (pkg_dir / "spacy-3.8.0.dist-info" / "WHEEL").write_bytes(b"\xff\xfe\x00Tag: cp312")
 
     assert addon_manager.foreign_python_packages(pkg_dir) == []
+
+
+# ── Staging: pip never writes into the live folder ───────────────────────────
+
+
+def test_an_install_never_writes_into_the_live_folder(tmp_path: Path) -> None:
+    """
+    Given  the installed app and a live folder the app has imported from
+    When   an add-on is installed
+    Then   pip's --target is an empty folder beside the live one, and it is gone afterwards
+    """
+    live = tmp_path / "packages"
+    live.mkdir()
+    targets: list[Path] = []
+
+    def fake_popen(cmd: list[str], **_kwargs: object) -> object:
+        target = Path(cmd[cmd.index("--target") + 1])
+        targets.append(target)
+        assert target != live
+        assert target.parent == tmp_path / "packages.staging"
+        assert list(target.iterdir()) == []  # empty: nothing to replace
+        return _FakeProc()
+
+    with (
+        patch.object(sys, "frozen", True, create=True),
+        patch("subprocess.Popen", side_effect=fake_popen),
+    ):
+        install_addon_subprocess(ADDON_PRIVACY, live, lambda _: None)
+
+    assert len(targets) == 1
+    assert not targets[0].exists()
+    assert not (tmp_path / "packages.staging").exists()
+
+
+def test_merge_does_not_copy_a_package_the_bundle_has(tmp_path: Path, frozen_bundle: Path) -> None:
+    """
+    Given  a staging folder with numpy at the version the bundle pins, and spaCy
+    When   the staged packages are merged into the live folder
+    Then   numpy is not copied (the bundle has it) and spaCy moves in
+    """
+    live = tmp_path / "packages"
+    staging = tmp_path / "packages.staging" / "1"
+    _dist_info(staging, "numpy", "2.5.4")
+    _dist_info(staging, "spacy", "3.8.0")
+
+    pending = addon_manager.merge_staged_packages(staging, live, frozen_bundle)
+
+    assert pending == []
+    assert not (live / "numpy").exists()
+    assert not (live / "numpy-2.5.4.dist-info").exists()
+    assert (live / "spacy" / "__init__.py").is_file()
+    assert (live / "spacy-3.8.0.dist-info" / "RECORD").is_file()
+
+
+def test_merge_skips_a_version_that_is_already_live(tmp_path: Path) -> None:
+    """
+    Given  a live folder that already holds spaCy 3.8.0, and a staging folder with the same
+    When   the staged packages are merged
+    Then   nothing is copied over the live copy
+    """
+    live = tmp_path / "packages"
+    _dist_info(live, "spacy", "3.8.0")
+    staging = tmp_path / "packages.staging" / "1"
+    _dist_info(staging, "spacy", "3.8.0", files=("spacy/extra.py",))
+
+    assert addon_manager.merge_staged_packages(staging, live, None) == []
+    assert not (live / "spacy" / "extra.py").exists()
+
+
+def test_merge_replaces_an_older_copy_by_its_record(tmp_path: Path) -> None:
+    """
+    Given  spaCy 3.7.0 live and 3.8.0 staged
+    When   the staged packages are merged
+    Then   the old copy's files and dist-info go, and the new ones are in place
+    """
+    live = tmp_path / "packages"
+    _dist_info(live, "spacy", "3.7.0", files=("spacy/old.py",))
+    staging = tmp_path / "packages.staging" / "1"
+    _dist_info(staging, "spacy", "3.8.0", files=("spacy/new.py",))
+
+    assert addon_manager.merge_staged_packages(staging, live, None) == []
+    assert not (live / "spacy-3.7.0.dist-info").exists()
+    assert not (live / "spacy" / "old.py").exists()
+    assert (live / "spacy" / "new.py").is_file()
+    assert (live / "spacy-3.8.0.dist-info").is_dir()
+
+
+def _lock_file(monkeypatch: pytest.MonkeyPatch, name: str) -> None:
+    """Make Windows refuse to move the file called *name* (it is loaded by the running app)."""
+    real_replace = os.replace
+
+    def locked(source: object, destination: object, *args: object, **kwargs: object) -> None:
+        if Path(str(source)).name == name:
+            raise PermissionError(13, "Zugriff verweigert", str(source))
+        real_replace(source, destination, *args, **kwargs)  # ty: ignore[invalid-argument-type]
+
+    monkeypatch.setattr(os, "replace", locked)
+
+
+def test_a_locked_file_parks_the_distribution_in_pending(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """
+    Given  a live pydantic_core with a compiled module Windows has locked, and a newer one staged
+    When   the staged packages are merged
+    Then   pydantic_core waits in packages.pending/, the other package is merged anyway, and the
+           old copy is still whole: no file of it was deleted before the locked one was found
+    """
+    live = tmp_path / "packages"
+    old_files = ("pydantic_core/other.py", "pydantic_core/_core.pyd")
+    _dist_info(live, "pydantic_core", "2.0.0", files=old_files)
+    staging = tmp_path / "packages.staging" / "1"
+    _dist_info(staging, "pydantic_core", "2.1.0", files=("pydantic_core/_core.pyd",))
+    _dist_info(staging, "spacy", "3.8.0")
+    _lock_file(monkeypatch, "_core.pyd")
+
+    pending = addon_manager.merge_staged_packages(staging, live, None)
+
+    assert pending == ["pydantic-core"]
+    assert (tmp_path / "packages.pending" / "pydantic_core-2.1.0.dist-info").is_dir()
+    assert (tmp_path / "packages.pending" / "pydantic_core" / "_core.pyd").is_file()
+    assert (live / "spacy-3.8.0.dist-info").is_dir()  # the merge went on
+    for file in ("pydantic_core/__init__.py", *old_files):
+        assert (live / file).is_file(), file  # the old copy is whole
+    assert (live / "pydantic_core-2.0.0.dist-info" / "RECORD").is_file()
+    assert not (tmp_path / "packages.trash").exists()
+
+
+def test_a_replaced_copy_leaves_nothing_in_the_trash(tmp_path: Path) -> None:
+    """
+    Given  spaCy 3.7.0 live and 3.8.0 staged
+    When   the old copy is replaced
+    Then   the trash folder the old files passed through is gone again
+    """
+    live = tmp_path / "packages"
+    _dist_info(live, "spacy", "3.7.0", files=("spacy/old.py",))
+    staging = tmp_path / "packages.staging" / "1"
+    _dist_info(staging, "spacy", "3.8.0")
+
+    addon_manager.merge_staged_packages(staging, live, None)
+
+    assert not (tmp_path / "packages.trash").exists()
+
+
+def _fail_moves(monkeypatch: pytest.MonkeyPatch, name: str, *, only_into: Path | None) -> None:
+    """Make moving the file *name* fail like a full disk, into *only_into* or anywhere."""
+    real_move = shutil.move
+
+    def flaky(source: object, destination: object, *args: object, **kwargs: object) -> object:
+        wanted = only_into is None or only_into in Path(str(destination)).parents
+        if Path(str(source)).name == name and wanted:
+            raise OSError(28, "No space left on device", str(destination))
+        return real_move(source, destination, *args, **kwargs)  # ty: ignore[invalid-argument-type]
+
+    monkeypatch.setattr(shutil, "move", flaky)
+
+
+def test_a_package_that_cannot_be_put_anywhere_is_an_error_and_leaves_no_half_copy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """
+    Given  a staged spaCy whose second file cannot be moved, into the live and the pending folder
+    When   the staged packages are merged
+    Then   the merge raises "merge failed" instead of reporting success, and neither folder
+           keeps a half package: what moved was put back
+    """
+    live = tmp_path / "packages"
+    live.mkdir()
+    staging = tmp_path / "packages.staging" / "1"
+    _dist_info(staging, "spacy", "3.8.0", files=("spacy/new.py",))
+    _fail_moves(monkeypatch, "new.py", only_into=None)
+
+    with pytest.raises(AddonInstallError) as raised:
+        addon_manager.merge_staged_packages(staging, live, None)
+
+    assert raised.value.reason is InstallFailure.MERGE_FAILED
+    assert not any(live.rglob("*.py"))
+    assert not (live / "spacy-3.8.0.dist-info").exists()
+    assert not (tmp_path / "packages.pending" / "spacy-3.8.0.dist-info").exists()
+    assert (staging / "spacy" / "__init__.py").is_file()  # still whole where pip put it
+    assert (staging / "spacy" / "new.py").is_file()
+
+
+def test_a_failed_move_into_the_live_folder_falls_back_to_pending(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """
+    Given  a staged spaCy that cannot be moved into the live folder, but into the pending one
+    When   the staged packages are merged
+    Then   spaCy is reported pending and complete there, and the live folder holds no half copy
+    """
+    live = tmp_path / "packages"
+    live.mkdir()
+    staging = tmp_path / "packages.staging" / "1"
+    _dist_info(staging, "spacy", "3.8.0", files=("spacy/new.py",))
+    _fail_moves(monkeypatch, "new.py", only_into=live)
+
+    pending = addon_manager.merge_staged_packages(staging, live, None)
+
+    assert pending == ["spacy"]
+    assert not any(live.rglob("*.py"))
+    assert (tmp_path / "packages.pending" / "spacy" / "new.py").is_file()
+    assert (tmp_path / "packages.pending" / "spacy-3.8.0.dist-info").is_dir()
+
+
+def test_a_start_up_with_nothing_redundant_reads_no_record(
+    tmp_path: Path, frozen_bundle: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """
+    Given  an add-on folder without any copy of a bundled package
+    When   the redundant copies are dropped (which every start does)
+    Then   no RECORD file is read
+    """
+    live = tmp_path / "packages"
+    _dist_info(live, "spacy", "3.8.0")
+
+    def must_not_read(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("a RECORD was read")
+
+    monkeypatch.setattr(addon_manager, "_record_targets", must_not_read)
+
+    assert addon_manager.drop_redundant_shared_packages(live, frozen_bundle) == []
+
+
+def _age(folder: Path, *, hours: int) -> None:
+    """Make *folder* look *hours* old."""
+    then = folder.stat().st_mtime - hours * 3600
+    os.utime(folder, (then, then))
+
+
+def test_prepare_applies_pending_and_drops_redundant_copies(
+    tmp_path: Path, frozen_bundle: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """
+    Given  a pending pydantic_core, a redundant numpy copy, a leftover staging folder
+    When   prepare_packages_dir() runs at start-up
+    Then   the pending package is in place, the redundant copy and the staging folder are gone
+    """
+    live = tmp_path / "packages"
+    _dist_info(live, "numpy", "2.5.4")  # the bundle has it at this version
+    _dist_info(live, "spacy", "3.8.0")
+    _dist_info(tmp_path / "packages.pending", "pydantic_core", "2.1.0")
+    _dist_info(tmp_path / "packages.staging" / "1", "spacy", "3.9.0")
+    _age(tmp_path / "packages.staging" / "1", hours=24)  # a crash left it, a day ago
+    monkeypatch.setattr(addon_manager, "get_packages_dir", lambda: live)
+
+    addon_manager.prepare_packages_dir()
+
+    assert (live / "pydantic_core-2.1.0.dist-info").is_dir()
+    assert not (tmp_path / "packages.pending").exists()
+    assert not (live / "numpy").exists()
+    assert not (live / "numpy-2.5.4.dist-info").exists()
+    assert (live / "spacy-3.8.0.dist-info").is_dir()
+    assert not (tmp_path / "packages.staging").exists()
+
+
+def test_prepare_keeps_the_staging_folder_of_an_install_that_may_still_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """
+    Given  a staging folder just made, as a second app instance's install would have, and an
+           old one a crash left, and a trash folder
+    When   prepare_packages_dir() runs at start-up
+    Then   only the old staging folder and the trash go
+    """
+    live = tmp_path / "packages"
+    live.mkdir()
+    (tmp_path / "packages.staging" / "fresh").mkdir(parents=True)
+    (tmp_path / "packages.staging" / "old").mkdir()
+    _age(tmp_path / "packages.staging" / "old", hours=24)
+    (tmp_path / "packages.trash" / "1").mkdir(parents=True)
+    monkeypatch.setattr(addon_manager, "get_packages_dir", lambda: live)
+
+    addon_manager.prepare_packages_dir()
+
+    assert (tmp_path / "packages.staging" / "fresh").is_dir()
+    assert not (tmp_path / "packages.staging" / "old").exists()
+    assert not (tmp_path / "packages.trash").exists()
+
+
+def test_prepare_never_stops_the_app_from_starting(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """
+    Given  a pending-package step that fails with a permission error
+    When   prepare_packages_dir() runs at start-up
+    Then   it does not raise, and the clean-up steps after it still run
+    """
+    live = tmp_path / "packages"
+    live.mkdir()
+    (tmp_path / "packages.staging" / "old").mkdir(parents=True)
+    _age(tmp_path / "packages.staging" / "old", hours=24)
+    monkeypatch.setattr(addon_manager, "get_packages_dir", lambda: live)
+
+    def denied(*_args: object, **_kwargs: object) -> list[str]:
+        raise PermissionError(13, "Zugriff verweigert")
+
+    monkeypatch.setattr(addon_manager, "apply_pending_packages", denied)
+
+    addon_manager.prepare_packages_dir()
+
+    assert not (tmp_path / "packages.staging").exists()
+
+
+def test_a_pending_package_is_reported_until_the_next_start(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """
+    Given  a package waiting in packages.pending/
+    When   the app asks whether a restart is needed
+    Then   it says so, names the package, and stops saying so once the folder is empty
+    """
+    live = tmp_path / "packages"
+    _dist_info(tmp_path / "packages.pending", "spacy", "3.8.0")
+    monkeypatch.setattr(addon_manager, "get_packages_dir", lambda: live)
+
+    assert addon_manager.addons_restart_needed() is True
+    assert addon_manager.pending_addon_packages() == ["spacy"]
+    assert addon_manager.addon_waits_for_restart("spaCy") is True
+    assert addon_manager.addon_waits_for_restart("langchain-openai") is False
+
+    shutil.rmtree(tmp_path / "packages.pending")
+    assert addon_manager.addons_restart_needed() is False
+
+
+@pytest.mark.parametrize(
+    ("output", "reason"),
+    [
+        (
+            "ERROR: Could not find a version that satisfies the requirement spacy\n"
+            "ERROR: No matching distribution found for spacy\n",
+            InstallFailure.NO_VERSION,
+        ),
+        (
+            "WARNING: Retrying after connection broken by 'NewConnectionError(Failed to "
+            "establish a new connection)'\nERROR: No matching distribution found for spacy\n",
+            InstallFailure.OFFLINE,
+        ),
+        ("OSError: [Errno 28] No space left on device\n", InstallFailure.DISK_FULL),
+        ("PermissionError: [WinError 5] Access is denied: 'x.pyd'\n", InstallFailure.FILE_IN_USE),
+        (
+            "ERROR: these package versions have conflicting dependencies (connection pool)\n",
+            InstallFailure.INSTALL_FAILED,
+        ),
+    ],
+)
+def test_a_pip_failure_is_told_apart_by_what_pip_printed(
+    tmp_path: Path, output: str, reason: InstallFailure
+) -> None:
+    """
+    Given  pip failing with a typical message
+    When   an add-on is installed in the installed app
+    Then   the error carries the reason: a package without a wheel is not "no internet", and an
+           unrelated message with the word "connection" in it is not either
+    """
+    proc = _FakeProc(returncode=1, stdout_lines=[output])
+
+    with (
+        patch.object(sys, "frozen", True, create=True),
+        patch("subprocess.Popen", return_value=proc),
+    ):
+        with pytest.raises(AddonInstallError) as raised:
+            install_addon_subprocess(ADDON_PRIVACY, tmp_path / "pkg", lambda _: None)
+
+    assert raised.value.reason is reason

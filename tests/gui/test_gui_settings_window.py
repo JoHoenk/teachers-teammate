@@ -542,8 +542,8 @@ def test_the_profile_chosen_on_this_computer_reaches_the_other_pages(qtbot) -> N
     """
     Given  AI models, This computer and Add-ons built, all on the "auto" profile
     When   "My computer" is changed to a basic computer on This computer
-    Then   the profile line of the AI models page (which the recognition picker and both AI
-           sections follow) and Add-ons follow, and a page built afterwards starts with it
+    Then   the "This computer" box of the AI models page (which the recognition picker and both
+           AI sections follow) and Add-ons follow, and a page built afterwards starts with it
     """
     window = _window(qtbot, SettingsPage.AI_MODELS)
     window.show_page(SettingsPage.ADDONS)
@@ -556,10 +556,10 @@ def test_the_profile_chosen_on_this_computer_reaches_the_other_pages(qtbot) -> N
         )
 
     models = window.page(SettingsPage.AI_MODELS)
-    assert models._profile_line.selector.setting() == "cpu"
-    assert models._ocr_picker._hw_selector is models._profile_line.selector
-    assert models._shared._hw_selector is models._profile_line.selector
-    assert models._review._hw_selector is models._profile_line.selector
+    assert models._computer_box.selector.setting() == "cpu"
+    assert models._ocr_picker._hw_selector is models._computer_box.selector
+    assert models._shared._hw_selector is models._computer_box.selector
+    assert models._review._hw_selector is models._computer_box.selector
     assert window.page(SettingsPage.ADDONS)._hardware_selector.setting() == "cpu"
     assert window.values().settings["hardware_profile"] == "cpu"
 
@@ -1276,6 +1276,43 @@ def test_an_unknown_stored_page_falls_back_to_ai_models(qtbot) -> None:
 
 
 @pytest.mark.gui
+def test_a_maximized_window_never_shows_a_small_frame(qtbot) -> None:
+    """
+    Given  a saved geometry that is maximized
+    When   the window is shown
+    Then   it is maximized and no frame it drew was smaller than the screen
+    """
+    from PySide6.QtCore import QEvent, QObject  # noqa: PLC0415
+    from PySide6.QtWidgets import QApplication, QWidget  # noqa: PLC0415
+
+    donor = QWidget()
+    qtbot.addWidget(donor)
+    donor.setGeometry(QRect(100, 100, 760, 680))
+    donor.setWindowState(Qt.WindowState.WindowMaximized)
+    _MemoryQSettings.store[window_module.GEOMETRY_KEY] = donor.saveGeometry()
+
+    window = _window(qtbot)
+    sizes: list[tuple[int, int]] = []
+
+    class _Watcher(QObject):
+        def eventFilter(self, watched: QObject, event: QEvent) -> bool:
+            if event.type() == QEvent.Type.Resize:
+                sizes.append((watched.width(), watched.height()))
+            return False
+
+    watcher = _Watcher()
+    window.installEventFilter(watcher)
+    window.show()
+    qtbot.waitExposed(window)
+
+    screen = window.screen() or QApplication.primaryScreen()
+    available = screen.availableGeometry()
+    assert window.isMaximized()
+    assert sizes, "the window was never resized"
+    assert all(w >= available.width() and h >= available.height() for w, h in sizes)
+
+
+@pytest.mark.gui
 def test_the_window_is_sized_for_a_screen(qtbot) -> None:
     """
     Given  the Settings window
@@ -1360,8 +1397,27 @@ def test_a_measurement_on_this_computer_refreshes_the_line_on_ai_models(qtbot) -
     assert isinstance(models, AiModelsPage)
     assert isinstance(setup, AiSetupPage)
     redrawn: list[bool] = []
-    models._speed_hint.refresh = lambda: redrawn.append(True)  # type: ignore[method-assign]  # ty: ignore[invalid-assignment]
+    models._computer_box.refresh_speed = lambda: redrawn.append(True)  # type: ignore[method-assign]  # ty: ignore[invalid-assignment]
 
     setup.speed_measured.emit()
 
     assert redrawn == [True]
+
+
+@pytest.mark.gui
+def test_a_page_that_fills_the_window_is_not_scrolled(qtbot) -> None:
+    """
+    Given  the Add-ons page, which fills the window instead of scrolling
+    When   its container is inspected
+    Then   no scroll area sits between the page and the container, so its action row stays
+           at the bottom of the window
+    """
+    from PySide6.QtWidgets import QScrollArea  # noqa: PLC0415
+
+    window = _window(qtbot, SettingsPage.ADDONS)
+
+    container = window._containers[SettingsPage.ADDONS]
+    parent = window.page(SettingsPage.ADDONS).parentWidget()
+    while parent is not None and parent is not container:
+        assert not isinstance(parent, QScrollArea)
+        parent = parent.parentWidget()

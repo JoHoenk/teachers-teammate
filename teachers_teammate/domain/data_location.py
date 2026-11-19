@@ -178,13 +178,23 @@ class StageLocation:
         return "\n".join(parts)
 
 
+def anonymization_languages(models: Iterable[str]) -> tuple[str, ...]:
+    """Return the language codes of the spaCy models that will be loaded.
+
+    ``["de_core_news_sm", "en_core_web_sm"]`` → ``("de", "en")``.  A sentence that names the
+    languages turns them into names with
+    :func:`~teachers_teammate.domain.language.language_name`.
+    """
+    return tuple(model.split("_")[0] for model in models if model)
+
+
 def anonymization_badge(models: Iterable[str]) -> str:
     """Return what the personal-info-removal row says, e.g. ``On (spaCy en + de)`` or ``Off``.
 
     *models* are the spaCy models that will actually be loaded; each is shortened to its
     language code so the row stays short (``de_core_news_sm`` → ``de``).
     """
-    codes = [model.split("_")[0] for model in models if model]
+    codes = anonymization_languages(models)
     return f"On (spaCy {' + '.join(codes)})" if codes else "On"
 
 
@@ -250,6 +260,8 @@ class DataFlowStage:
     #: What the row says instead of a place, for display-only rows (personal-info removal:
     #: ``"On (spaCy en + de)"`` or ``"Off"``).
     detail: str = ""
+    #: The languages whose names are hidden, for personal-info removal only (``("de", "en")``).
+    languages: tuple[str, ...] = ()
 
     @property
     def title(self) -> str:

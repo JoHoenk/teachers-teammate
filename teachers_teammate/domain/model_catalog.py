@@ -683,6 +683,27 @@ def normalize_tag(tag: str) -> str:
     return f"{cleaned}:latest"
 
 
+def short_model_name(tag: str) -> str:
+    """Return *tag* as a short name for a narrow line.
+
+    ``hf.co/<org>/<repo>:<quant>`` → ``<repo>`` without a ``-GGUF`` suffix;
+    ``name:latest`` → ``name``; any other ``name:tag`` stays as it is.  The full tag belongs
+    in the tooltip.
+    """
+    cleaned = (tag or "").strip()
+    if not cleaned:
+        return ""
+    name, _, quant = cleaned.rpartition(":")
+    if not name:  # no colon at all
+        name, quant = cleaned, ""
+    if name.startswith("hf.co/"):
+        repo = name.rsplit("/", 1)[-1]
+        return repo[: -len("-GGUF")] if repo.endswith("-GGUF") else repo
+    if quant in ("", "latest"):
+        return name
+    return cleaned
+
+
 def find_spec(tag: str) -> OllamaModelSpec | None:
     """Return the catalog entry for *tag* (normalised), or ``None`` when unknown."""
     wanted = normalize_tag(tag)
@@ -1179,6 +1200,10 @@ class HardwareDetection:
     #: (a server on another computer) or already counted in the profile (Apple Silicon).  Lets
     #: models too big for the graphics card be rated "slower" instead of "too large".
     system_memory_gb: float | None = None
+    #: Names of the further graphics cards found, when there was more than one.  The largest
+    #: decides the profile; the others are only named, so a teacher who knows their card sees
+    #: that it was found.
+    other_gpu_names: tuple[str, ...] = ()
 
     @property
     def card_gb(self) -> float | None:
@@ -1256,13 +1281,15 @@ def choose_profile(
 
     known = [(name, mem) for name, mem in gpus if mem is not None]
     if known:
-        name, mem = max(known, key=lambda pair: pair[1])
+        best = max(range(len(known)), key=lambda index: known[index][1])
+        name, mem = known[best]
         return HardwareDetection(
             profile=_profile_for_memory_gb(mem),
             reason=DetectionReason.GPU_DETECTED,
             gpu_name=name,
             memory_gb=mem,
             system_memory_gb=system_memory_gb,
+            other_gpu_names=tuple(other for i, (other, _mem) in enumerate(known) if i != best),
         )
 
     if gpus:
@@ -1272,6 +1299,7 @@ def choose_profile(
             gpu_name=gpus[0][0],
             memory_gb=None,
             system_memory_gb=system_memory_gb,
+            other_gpu_names=tuple(name for name, _mem in gpus[1:]),
         )
 
     if apple_unified_memory_gb is not None:

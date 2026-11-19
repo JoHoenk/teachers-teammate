@@ -8,6 +8,7 @@ import threading
 from typing import Any, ClassVar
 from unittest.mock import MagicMock
 
+from PySide6.QtWidgets import QApplication, QScrollArea
 import pytest
 
 from teachers_teammate.domain.model_catalog import (
@@ -30,6 +31,11 @@ from teachers_teammate.gui.settings._page import (
     FOCUS_NAME_DETECTION,
     FOCUS_READING_MODELS,
     SettingsPage,
+)
+from teachers_teammate.infrastructure.addon_manager import (
+    AddonInstallError,
+    AddonUpdateError,
+    InstallFailure,
 )
 from teachers_teammate.infrastructure.spacy_models import FALLBACK_SPACY_MODEL, SPACY_MODELS
 from teachers_teammate.texts._types import Question
@@ -81,6 +87,9 @@ class _StubService(RecommendationServiceStub):
     def is_module_importable(self, module: str) -> bool:
         _ = module
         return False
+
+    def pending_addon_packages(self) -> list[str]:
+        return []
 
     def list_ollama_model_sizes(self, url: str = "") -> dict[str, int]:
         _ = url
@@ -438,22 +447,57 @@ def test_the_name_detection_models_are_the_ones_the_app_offers() -> None:
 
 def test_spacy_preselect_ticks_the_model_and_spacy_itself(qtbot) -> None:
     """
-    Given  the page focused on name detection with preselect=["spacy:de_core_news_sm"], while
-           spaCy is not installed
+    Given  the page focused on name detection with preselect=["package:spacy",
+           "spacy:de_core_news_sm"], while spaCy is not installed
     When   install detection finishes
     Then   the name detection tab is shown, the model's box and the spaCy box are ticked, and
-           the entry is no Ollama model
+           the entries are no Ollama models
     """
     from PySide6.QtWidgets import QTabWidget  # noqa: PLC0415
 
     dlg = _make_dialog(qtbot)
-    dlg.focus(FOCUS_NAME_DETECTION, ["spacy:de_core_news_sm"])
+    dlg.focus(FOCUS_NAME_DETECTION, ["package:spacy", "spacy:de_core_news_sm"])
     dlg._on_detection_done(_detection_results(dlg, set()))
 
     assert dlg.findChild(QTabWidget).currentIndex() == AddonsPage.TAB_NAME_DETECTION
     assert dlg._dl_checkboxes["spacy:de_core_news_sm"].isChecked() is True
     assert dlg._dl_checkboxes["spacy"].isChecked() is True
     assert "spacy:de_core_news_sm" not in dlg._model_items
+    assert "package:spacy" not in dlg._model_items
+
+
+def test_a_model_alone_does_not_tick_spacy(qtbot) -> None:
+    """
+    Given  the page focused on name detection with only the model as preselect (spaCy is
+           installed, the model is not)
+    When   install detection finishes
+    Then   only the model's box is ticked: a tick always means "will be installed"
+    """
+    dlg = _make_dialog(qtbot)
+    dlg.focus(FOCUS_NAME_DETECTION, ["spacy:de_core_news_sm"])
+    dlg._on_detection_done(_detection_results(dlg, set()))
+
+    assert dlg._dl_checkboxes["spacy:de_core_news_sm"].isChecked() is True
+    assert dlg._dl_checkboxes["spacy"].isChecked() is False
+
+
+def test_an_installed_row_is_disabled_and_unticked(qtbot) -> None:
+    """
+    Given  a page where spaCy and a model are already installed
+    When   install detection finishes
+    Then   both boxes are disabled and unticked, and the text still says they are installed
+    """
+    dlg = _make_dialog(qtbot)
+
+    dlg._on_detection_done(
+        {**_detection_results(dlg, set()), "spacy": True, "spacy:de_core_news_sm": True}
+    )
+
+    for key in ("spacy", "spacy:de_core_news_sm"):
+        box = dlg._dl_checkboxes[key]
+        assert not box.isEnabled()
+        assert box.isChecked() is False
+        assert "✓" in box.text()
 
 
 def test_name_detection_fix_button_ticks_the_boxes_through_the_settings_window(qtbot) -> None:
@@ -478,7 +522,7 @@ def test_name_detection_fix_button_ticks_the_boxes_through_the_settings_window(q
         ),
         page=SettingsPage.ADDONS,
         focus=FOCUS_NAME_DETECTION,
-        preselect=["spacy:de_core_news_sm"],
+        preselect=["package:spacy", "spacy:de_core_news_sm"],
     )
     qtbot.addWidget(window)
     page = window.page(SettingsPage.ADDONS)
@@ -494,14 +538,15 @@ def test_name_detection_boxes_are_ticked_before_the_detection_has_answered(qtbot
     """
     Given  a page whose detection is still running (it asks the Ollama server too, which can
            take long when Ollama is not there)
-    When   it is focused on name detection with preselect=["spacy:de_core_news_sm"]
+    When   it is focused on name detection with preselect=["package:spacy",
+           "spacy:de_core_news_sm"]
     Then   the model's box and spaCy's box are ticked at once, and still are after the
            detection has answered
     """
     dlg = _make_dialog(qtbot)
     assert dlg._installed_ready is False
 
-    dlg.focus(FOCUS_NAME_DETECTION, ["spacy:de_core_news_sm"])
+    dlg.focus(FOCUS_NAME_DETECTION, ["package:spacy", "spacy:de_core_news_sm"])
 
     assert dlg._dl_checkboxes["spacy:de_core_news_sm"].isChecked() is True
     assert dlg._dl_checkboxes["spacy"].isChecked() is True
@@ -720,7 +765,7 @@ def test_detection_marks_rows_downloaded_and_disables_them(qtbot) -> None:
     """
     Given  a detection result with glm-ocr installed
     When   _on_detection_done runs
-    Then   the row shows a downloaded mark and is disabled (regression)
+    Then   the row shows a downloaded mark, is disabled and is not ticked
     """
     from PySide6.QtCore import Qt  # noqa: PLC0415
 
@@ -729,7 +774,7 @@ def test_detection_marks_rows_downloaded_and_disables_them(qtbot) -> None:
     row = dlg._model_items["glm-ocr:q8_0"]
     assert row.text(3).startswith("✓")
     assert not bool(row.flags() & Qt.ItemFlag.ItemIsEnabled)
-    assert row.checkState(0) is Qt.CheckState.Checked
+    assert row.checkState(0) is Qt.CheckState.Unchecked
 
 
 def test_download_install_collects_ticked_child_rows(qtbot) -> None:
@@ -881,7 +926,7 @@ def test_failed_installed_check_still_ticks_best_models_and_preselect(qtbot) -> 
     service.status_error = RuntimeError("Ollama is unreachable")
     dlg = _make_dialog(qtbot, service=service, preselect=["llama3.2:latest"])
     dlg.on_shown()
-    qtbot.waitUntil(lambda: "Detection failed" in dlg._dl_detect_lbl.text(), timeout=5000)
+    qtbot.waitUntil(lambda: "Detection failed" in dlg._status.text(), timeout=5000)
     assert _ticked(dlg) == {DEFAULT_OCR_MODEL, DEFAULT_WRITING_MODEL, "llama3.2:latest"}
 
 
@@ -1124,7 +1169,7 @@ def test_a_running_pull_keeps_going_when_the_page_shuts_down(qtbot) -> None:
     assert not dlg._round._pull_connected
     assert manager.aborted is False
     manager.finished.emit(DEFAULT_OCR_MODEL)  # a late answer must not reach the closed page
-    assert dlg._dl_detect_lbl.text() != "Done."
+    assert dlg._round_result == ""
 
 
 def test_a_page_opened_during_a_download_marks_the_models_that_are_coming(qtbot) -> None:
@@ -1623,3 +1668,279 @@ def test_update_add_ons_installs_only_after_the_click_and_then_hides_the_banner(
     assert page._update_banner.isHidden()
     assert page._update_btn.isEnabled()
     assert "installing the add-ons again" in page._dl_log.toPlainText()
+
+
+# ── The status line, the bar and the details ─────────────────────────────────
+
+
+def _start_round(dlg: AddonsPage, steps: list[str]) -> None:
+    """Put the page into the state a running round leaves it in, without a real install."""
+    dlg._prepare_round(steps)
+    dlg._round._running = True
+    dlg._round_started()
+
+
+def test_the_status_line_counts_the_steps_of_a_round(qtbot) -> None:
+    """
+    Given  a round that installs spaCy and then the German model
+    When   the first step starts and the second follows
+    Then   the line names the item and how many steps there are, in the teacher's words
+    """
+    dlg = _make_dialog(qtbot)
+    _start_round(dlg, ["package:spacy", "spacy:de_core_news_sm"])
+
+    dlg._round._phase = "pip"
+    dlg._round.item_started.emit("package:spacy")
+    assert dlg._status.text() == "Installing spaCy (step 1 of 2)…"
+
+    dlg._round._phase = "spacy"
+    dlg._round.item_started.emit("spacy:de_core_news_sm")
+    assert dlg._status.text() == "Installing the German model (step 2 of 2)…"
+
+
+def test_the_steps_of_a_round_count_pip_once_however_many_packages_it_installs(qtbot) -> None:
+    """
+    Given  a round that installs two pip packages and then the German model
+    When   pip's step starts and then the model's
+    Then   pip is step 1 of 2 and the model step 2 of 2: no number is skipped
+    """
+    dlg = _make_dialog(qtbot)
+    _start_round(dlg, ["package:spacy", "package:langchain-openai", "spacy:de_core_news_sm"])
+
+    dlg._round._phase = "pip"
+    dlg._round.item_started.emit("package:spacy")
+    assert dlg._status.text() == "Installing spaCy (step 1 of 2)…"
+    dlg._round.item_started.emit("package:langchain-openai")  # the same pip command
+    assert dlg._status.text() == "Installing spaCy (step 1 of 2)…"
+
+    dlg._round._phase = "spacy"
+    dlg._round.item_started.emit("spacy:de_core_news_sm")
+    assert dlg._status.text() == "Installing the German model (step 2 of 2)…"
+
+
+@pytest.mark.parametrize(
+    ("line", "hint"),
+    [
+        ("Collecting spacy>=3.8,<3.9", "spacy"),
+        ("Collecting langchain-openai>=0.2", "langchain-openai"),
+        ("Downloading spacy-3.8.2-cp314-cp314-win_amd64.whl (12 MB)", "spacy"),
+        (
+            "Collecting https://github.com/explosion/spacy-models/releases/download/"
+            "de_core_news_sm-3.8.0/de_core_news_sm-3.8.0-py3-none-any.whl",
+            "de_core_news_sm",
+        ),
+        ("Installing collected packages: numpy, spacy", "numpy"),
+        ("Using cached spacy-3.8.2-py3-none-any.whl (12 MB)", "spacy"),
+        ("Successfully installed spacy-3.8.2", ""),
+    ],
+)
+def test_the_hint_names_the_package_pip_is_busy_with(line: str, hint: str) -> None:
+    """
+    Given  a line pip prints (a requirement, a wheel file, a model URL)
+    When   the page reads the package out of it
+    Then   it is the plain package name, without specifier, version or address
+    """
+    assert _addons_page._pip_hint(line) == hint
+
+
+def test_a_failed_install_is_told_in_the_words_of_its_reason() -> None:
+    """
+    Given  install errors with a known reason, an update error naming two add-ons, and an
+           error the app does not know
+    When   the page asks for the sentence
+    Then   each known reason has its own, the update names the requirements, and the unknown
+           one says what it says
+    """
+    offline = AddonInstallError(InstallFailure.OFFLINE)
+    no_version = AddonInstallError(InstallFailure.NO_VERSION)
+
+    assert txt.addon_error_text(offline) == "There is no internet connection."
+    assert "no internet" not in txt.addon_error_text(no_version)
+    assert {txt.ADDONS_FAILURE[reason] for reason in InstallFailure} and len(
+        txt.ADDONS_FAILURE
+    ) == len(InstallFailure)
+    update = AddonUpdateError([("spacy>=3.7", offline), ("langchain-core>=1", no_version)])
+    assert txt.addon_error_text(update) == (
+        f"spacy>=3.7: {txt.addon_error_text(offline)}; "
+        f"langchain-core>=1: {txt.addon_error_text(no_version)}"
+    )
+    assert txt.addon_error_text(RuntimeError("boom")) == "boom"
+
+
+def test_a_pip_step_shows_an_indeterminate_bar_and_the_elapsed_time(qtbot) -> None:
+    """
+    Given  a round whose only step is a pip install (pip reports no percentage)
+    When   the step starts and time passes
+    Then   the bar is indeterminate and the line shows how long the step has been running
+    """
+    dlg = _make_dialog(qtbot)
+    _start_round(dlg, ["package:spacy"])
+
+    dlg._round._phase = "pip"
+    dlg._round.item_started.emit("package:spacy")
+
+    assert (dlg._dl_progress.minimum(), dlg._dl_progress.maximum()) == (0, 0)
+    assert dlg._status.text() == "Installing spaCy (step 1 of 1)…"
+
+    dlg._status_started -= 102  # the step has been running for 1:42
+    dlg._tick_elapsed()
+
+    assert dlg._status.text() == "Installing spaCy (step 1 of 1)… 1:42"
+
+
+def test_a_model_pull_shows_its_percentage(qtbot) -> None:
+    """
+    Given  a round that downloads a model
+    When   the manager reports 45 % of the bytes
+    Then   the line and the bar show 45 %
+    """
+    dlg = _make_dialog(qtbot)
+    _start_round(dlg, [DEFAULT_OCR_MODEL])
+
+    dlg._round._phase = "pull"
+    dlg._round.item_started.emit(DEFAULT_OCR_MODEL)
+    dlg._round.pull_progress.emit("pulling", 45.0, 100.0)
+
+    assert dlg._status.text() == f"Downloading {DEFAULT_OCR_MODEL} (step 1 of 1), 45 %"
+    assert dlg._dl_progress.value() == 45
+
+
+def test_the_status_line_says_what_a_finished_round_installed(qtbot) -> None:
+    """
+    Given  a round that installed two items
+    When   it finishes
+    Then   the line says so, and the button is back to its own label and enabled
+    """
+    dlg = _make_dialog(qtbot)
+    _start_round(dlg, ["package:spacy", "spacy:de_core_news_sm"])
+    dlg._round.item_done.emit("package:spacy")
+    dlg._round.item_done.emit("spacy:de_core_news_sm")
+
+    dlg._round._running = False
+    dlg._round.finished.emit(True)
+
+    assert dlg._status.text() == "✓ 2 installed"
+    assert dlg._dl_install_btn.text() == txt.ADDONS_INSTALL
+    assert dlg._dl_install_btn.isEnabled()
+
+
+def test_a_failed_step_says_what_failed_and_opens_the_details(qtbot) -> None:
+    """
+    Given  a round whose model download fails
+    When   the round reports the failure
+    Then   the line names the item and the reason in one sentence, and the log is open
+    """
+    dlg = _make_dialog(qtbot)
+    _start_round(dlg, ["spacy:de_core_news_sm"])
+    dlg._round._phase = "spacy"
+    dlg._round.item_started.emit("spacy:de_core_news_sm")
+
+    dlg._round.failed.emit("spacy:de_core_news_sm", "No space left on the disk.")
+
+    assert dlg._status.text() == "✗ the German model failed: No space left on the disk."
+    assert not dlg._dl_log.isHidden()
+    assert dlg._details_btn.text() == txt.ADDONS_HIDE_DETAILS
+
+
+def test_the_details_are_hidden_until_they_are_asked_for(qtbot) -> None:
+    """
+    Given  the Add-ons page
+    When   it is built, and then the teacher clicks "Show details"
+    Then   the log is hidden at first and visible afterwards, and Copy copies it
+    """
+    dlg = _make_dialog(qtbot)
+    assert dlg._dl_log.isHidden()
+    assert dlg._copy_btn.isHidden()
+
+    dlg._details_btn.click()
+
+    assert not dlg._dl_log.isHidden()
+    assert not dlg._copy_btn.isHidden()
+    assert dlg._details_btn.text() == txt.ADDONS_HIDE_DETAILS
+
+    dlg._dl_log_append("Collecting spacy")
+    dlg._copy_btn.click()
+
+    assert "Collecting spacy" in QApplication.clipboard().text()
+
+
+def test_a_pending_package_asks_for_a_restart(qtbot) -> None:
+    """
+    Given  a package that waits for the next start
+    When   the page shows its status
+    Then   the line asks for the restart, in the warning colour
+    """
+    service = _StubService()
+    service.pending_addon_packages = lambda: ["spacy"]  # ty: ignore[invalid-assignment]
+    dlg = _make_dialog(qtbot, service=service)
+
+    dlg._refresh_status()
+
+    assert dlg._status.text() == txt.ADDONS_RESTART_NEEDED
+    assert "#e67e22" in dlg._status.styleSheet()
+
+
+def test_the_hint_names_the_package_pip_is_working_on(qtbot) -> None:
+    """
+    Given  the Add-ons page
+    When   pip's log names a package, then a wheel file, and then a line that names none
+    Then   the hint shows the package (a wheel file loses its version), and the unknown line
+           changes nothing
+    """
+    dlg = _make_dialog(qtbot)
+
+    dlg._dl_log_append("Collecting spacy")
+    assert dlg._hint.text() == "spacy"
+    assert not dlg._hint.isHidden()
+
+    dlg._dl_log_append("Downloading numpy-2.0.0-cp312-cp312-manylinux_x86_64.whl (16.1 MB)")
+    assert dlg._hint.text() == "numpy"
+
+    dlg._dl_log_append("  Building wheel for blis (pyproject.toml) ... done")
+    assert dlg._hint.text() == "numpy"
+
+
+def test_the_install_button_stays_visible_and_says_installing(qtbot) -> None:
+    """
+    Given  a round that is running
+    When   the page is shown
+    Then   the button is still there, disabled, and says "Installing…"
+    """
+    dlg = _make_dialog(qtbot)
+    dlg.show()
+
+    _start_round(dlg, ["package:spacy"])
+
+    assert not dlg._dl_install_btn.isHidden()
+    assert not dlg._dl_install_btn.isEnabled()
+    assert dlg._dl_install_btn.text() == txt.ADDONS_INSTALLING
+
+
+def test_the_action_row_fits_a_laptop_screen(qtbot) -> None:
+    """
+    Given  the Add-ons page in a window the size of a 1366x768 laptop screen
+    When   it is shown
+    Then   the install button lies inside the visible area
+    """
+    dlg = _make_dialog(qtbot)
+    dlg.resize(1000, 708)
+    dlg.show()
+    qtbot.waitExposed(dlg)
+
+    button = dlg._dl_install_btn
+    bottom = button.mapTo(dlg, button.rect().bottomLeft()).y()
+
+    assert 0 < bottom <= dlg.height()
+
+
+def test_only_the_model_tree_scrolls(qtbot) -> None:
+    """
+    Given  the Add-ons page
+    When   its tabs are inspected
+    Then   the local-models tab is not a scroll area (the tree takes the free height), while
+           the short checkbox tabs keep theirs
+    """
+    dlg = _make_dialog(qtbot)
+
+    assert not isinstance(dlg._tabs.widget(dlg.TAB_LOCAL_MODELS), QScrollArea)
+    assert isinstance(dlg._tabs.widget(dlg.TAB_ONLINE_SERVICES), QScrollArea)

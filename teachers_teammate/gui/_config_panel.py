@@ -24,7 +24,6 @@ from PySide6.QtWidgets import (
     QGroupBox,
     QHBoxLayout,
     QLabel,
-    QLineEdit,
     QPlainTextEdit,
     QPushButton,
     QScrollArea,
@@ -65,15 +64,21 @@ from ._constants import _LANGUAGES
 from ._data_flow_summary import (
     DataFlowSummary,
     UsesLine,
-    detail_line,
+    names_line,
     same_model_line,
     uses_line,
     uses_tooltip,
 )
 from ._fix_targets import FixAction, fix_for
+from ._path_row import PathRow
 from ._prompt_editor import PromptEditor
 from ._types import SettingsDict
 from .settings._page import FOCUS_OCR, FOCUS_PROOFREADING, FOCUS_REVIEW, SettingsPage
+
+#: The three choices of the "Text file" row: which text files a run writes.
+TEXT_MODE_AS_WRITTEN = "as written"
+TEXT_MODE_ANONYMIZED = "anonymized"
+TEXT_MODE_BOTH = "both"
 
 #: The step the teacher sees for each stage the requirement guard can untick.
 _STAGE_STEP_TITLES = {
@@ -381,31 +386,14 @@ class ConfigPanel(QScrollArea):
         v.setContentsMargins(0, 2, 0, 4)
         v.setSpacing(6)
 
-        btn_row = QWidget()
-        h = QHBoxLayout(btn_row)
-        h.setContentsMargins(0, 0, 0, 0)
-        h.setSpacing(6)
-
-        self._select_folder_btn = QPushButton("Select Folder…")
-        self._select_folder_btn.setToolTip(
-            "Choose a folder — all supported files inside will be processed, including subfolders."
+        self._input_row = PathRow(txt.DOCUMENTS_LABEL, txt.DOCUMENTS_PLACEHOLDER)
+        self._select_folder_btn = self._input_row.add_button(
+            txt.DOCUMENTS_FOLDER_BUTTON, txt.DOCUMENTS_FOLDER_TOOLTIP, self._on_select_folder
         )
-        self._select_folder_btn.clicked.connect(self._on_select_folder)
-
-        self._select_files_btn = QPushButton("Select Files…")
-        self._select_files_btn.setToolTip(
-            "Choose one or more individual files (PDF, images, or plain text)."
+        self._select_files_btn = self._input_row.add_button(
+            txt.DOCUMENTS_FILES_BUTTON, txt.DOCUMENTS_FILES_TOOLTIP, self._on_select_files
         )
-        self._select_files_btn.clicked.connect(self._on_select_files)
-
-        h.addWidget(self._select_folder_btn)
-        h.addWidget(self._select_files_btn)
-        v.addWidget(btn_row)
-
-        self._input_selection_label = QLabel("No input selected")
-        self._input_selection_label.setWordWrap(True)
-        self._input_selection_label.setStyleSheet("color: #888; font-size: 8pt;")
-        v.addWidget(self._input_selection_label)
+        v.addWidget(self._input_row)
 
         self._layout.addWidget(inner)
 
@@ -561,23 +549,13 @@ class ConfigPanel(QScrollArea):
         form.setContentsMargins(0, 2, 0, 4)
         form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapAllRows)
 
-        output_row = QWidget()
-        orl = QHBoxLayout(output_row)
-        orl.setContentsMargins(0, 0, 0, 0)
-        self._output_dir = QLineEdit()
-        self._output_dir.setPlaceholderText("Choose a folder for the results")
-        self._output_dir.setToolTip(
-            "Folder where Word documents and text files will be saved.\n"
-            "Required as soon as a Word document or a text file is switched on."
+        self._output_row = PathRow(txt.RESULTS_LABEL, txt.RESULTS_PLACEHOLDER)
+        self._output_dir = self._output_row.field()
+        self._output_row.set_tooltip(txt.RESULTS_TOOLTIP)
+        self._output_browse = self._output_row.add_button(
+            txt.RESULTS_BUTTON, txt.RESULTS_BUTTON_TOOLTIP, self._on_browse_output_dir
         )
-        self._output_dir.editingFinished.connect(self._on_output_dir_edited)
-        self._output_browse = QPushButton("…")
-        self._output_browse.setFixedWidth(32)
-        self._output_browse.setToolTip("Choose the folder.")
-        self._output_browse.clicked.connect(self._on_browse_output_dir)
-        orl.addWidget(self._output_dir, stretch=1)
-        orl.addWidget(self._output_browse)
-        form.addRow("Save to:", output_row)
+        form.addRow(self._output_row)
 
         docx_row = QWidget()
         drl = QHBoxLayout(docx_row)
@@ -598,19 +576,18 @@ class ConfigPanel(QScrollArea):
         drl.addStretch(1)
         form.addRow(docx_row)
 
+        text_row = QWidget()
+        trl = QHBoxLayout(text_row)
+        trl.setContentsMargins(0, 0, 0, 0)
         self._text_enabled = QCheckBox("Text file")
-        self._text_enabled.setToolTip(
-            "Save the extracted text of each input file as a text file (name.txt)."
-        )
-        form.addRow(self._text_enabled)
-
-        self._text_anonymized_enabled = QCheckBox("Text file, anonymized")
-        self._text_anonymized_enabled.setToolTip(
-            "Save the extracted text with names and other personal data replaced by\n"
-            "placeholders (name_anonymized.txt). Runs on this computer and needs the\n"
-            "privacy add-on (spaCy)."
-        )
-        form.addRow(self._text_anonymized_enabled)
+        self._text_enabled.setToolTip(txt.TEXT_FILE_TOOLTIP)
+        self._text_mode = QComboBox()
+        self._text_mode.addItems([TEXT_MODE_AS_WRITTEN, TEXT_MODE_ANONYMIZED, TEXT_MODE_BOTH])
+        self._text_mode.setToolTip(txt.TEXT_MODE_TOOLTIP)
+        trl.addWidget(self._text_enabled)
+        trl.addWidget(self._text_mode)
+        trl.addStretch(1)
+        form.addRow(text_row)
 
         self._text_hint = QLabel(
             "Text files need an output folder outside the input folder; otherwise the next "
@@ -622,7 +599,7 @@ class ConfigPanel(QScrollArea):
         self._docx_enabled.toggled.connect(lambda _on: self._on_results_widget_changed())
         self._docx_format.currentTextChanged.connect(lambda _t: self._on_results_widget_changed())
         self._text_enabled.toggled.connect(lambda _on: self._on_results_widget_changed())
-        self._text_anonymized_enabled.toggled.connect(lambda _on: self._on_results_widget_changed())
+        self._text_mode.currentTextChanged.connect(lambda _t: self._on_results_widget_changed())
         self._layout.addWidget(inner)
         self._sync_results_widgets()
 
@@ -634,7 +611,7 @@ class ConfigPanel(QScrollArea):
             self._docx_enabled,
             self._docx_format,
             self._text_enabled,
-            self._text_anonymized_enabled,
+            self._text_mode,
         )
 
     def _sync_results_widgets(self) -> None:
@@ -652,12 +629,21 @@ class ConfigPanel(QScrollArea):
             )
             if index >= 0:
                 self._docx_format.setCurrentIndex(index)
-            self._text_enabled.setChecked(
-                bool(settings.get("text_enabled", DEFAULTS["text_enabled"]))
+            as_written = bool(settings.get("text_enabled", DEFAULTS["text_enabled"]))
+            anonymized = bool(
+                settings.get("text_anonymized_enabled", DEFAULTS["text_anonymized_enabled"])
             )
-            self._text_anonymized_enabled.setChecked(
-                bool(settings.get("text_anonymized_enabled", DEFAULTS["text_anonymized_enabled"]))
+            self._text_enabled.setChecked(as_written or anonymized)
+            mode = (
+                TEXT_MODE_BOTH
+                if as_written and anonymized
+                else TEXT_MODE_ANONYMIZED
+                if anonymized
+                else TEXT_MODE_AS_WRITTEN
             )
+            index = self._text_mode.findText(mode)
+            if index >= 0:
+                self._text_mode.setCurrentIndex(index)
         finally:
             for widget in self._results_widgets():
                 widget.blockSignals(False)
@@ -666,7 +652,8 @@ class ConfigPanel(QScrollArea):
     def _update_results_state(self) -> None:
         """Enable the Word layout only for Word; warn when text files have no folder."""
         self._docx_format.setEnabled(self._docx_enabled.isChecked())
-        wants_text = self._text_enabled.isChecked() or self._text_anonymized_enabled.isChecked()
+        self._text_mode.setEnabled(self._text_enabled.isChecked())
+        wants_text = self._text_enabled.isChecked()
         missing_folder = wants_text and not self._output_dir.text().strip()
         color = "#e67e22" if missing_folder else "#888"
         self._text_hint.setStyleSheet(f"color: {color}; font-size: 8pt;")
@@ -675,11 +662,22 @@ class ConfigPanel(QScrollArea):
         """Write the Results step into the settings dict and tell the main window."""
         self._settings_dict["docx_enabled"] = self._docx_enabled.isChecked()
         self._settings_dict["docx_format"] = self._docx_format.currentText()
-        self._settings_dict["text_enabled"] = self._text_enabled.isChecked()
-        self._settings_dict["text_anonymized_enabled"] = self._text_anonymized_enabled.isChecked()
+        text_enabled, text_anonymized = self._text_keys()
+        self._settings_dict["text_enabled"] = text_enabled
+        self._settings_dict["text_anonymized_enabled"] = text_anonymized
         self._update_results_state()
         if not self._loading:
             self.results_changed.emit()
+
+    def _text_keys(self) -> tuple[bool, bool]:
+        """Return the two text-file keys the row stands for: (as written, anonymized)."""
+        if not self._text_enabled.isChecked():
+            return False, False
+        mode = self._text_mode.currentText()
+        return mode in (TEXT_MODE_AS_WRITTEN, TEXT_MODE_BOTH), mode in (
+            TEXT_MODE_ANONYMIZED,
+            TEXT_MODE_BOTH,
+        )
 
     def _on_output_dir_edited(self) -> None:
         folder = self._output_dir.text().strip()
@@ -693,11 +691,7 @@ class ConfigPanel(QScrollArea):
 
     def results_problem(self) -> bool:
         """Return whether a file output is on but no folder to write it to is chosen."""
-        wants_files = (
-            self._docx_enabled.isChecked()
-            or self._text_enabled.isChecked()
-            or self._text_anonymized_enabled.isChecked()
-        )
+        wants_files = self._docx_enabled.isChecked() or self._text_enabled.isChecked()
         return wants_files and not self._output_dir.text().strip()
 
     def choose_output_dir(self) -> None:
@@ -705,11 +699,18 @@ class ConfigPanel(QScrollArea):
         self._on_browse_output_dir()
 
     def _on_browse_output_dir(self) -> None:
-        start = self._output_dir.text().strip() or str(Path.home())
+        start = self._output_dir.text().strip() or self._results_start_dir()
         chosen = _dialogs.pick_folder(self, dlg.select_output_folder(start))
         if chosen is not None:
             self._output_dir.setText(str(chosen))
             self._on_output_dir_edited()
+
+    def _results_start_dir(self) -> str:
+        """Return where the results picker starts: next to the documents."""
+        input_dir = self.get_input_dir()
+        if input_dir:
+            return str(Path(input_dir).parent)
+        return str(Path.home())
 
     # ── static helpers ────────────────────────────────────────────────────────────
 
@@ -737,7 +738,7 @@ class ConfigPanel(QScrollArea):
 
     def _on_select_folder(self) -> None:
         start = str(self._selected_folder or Path.home())
-        path = _dialogs.pick_folder(None, dlg.select_input_folder(start))
+        path = _dialogs.pick_folder(self, dlg.select_input_folder(start))
         if path is not None:
             self._selected_folder = path
             self._selected_files = []
@@ -746,7 +747,7 @@ class ConfigPanel(QScrollArea):
 
     def _on_select_files(self) -> None:
         start = str(self._selected_folder or Path.home())
-        paths = _dialogs.pick_files(None, dlg.select_input_files(start))
+        paths = _dialogs.pick_files(self, dlg.select_input_files(start))
         if paths:
             self._selected_files = paths
             self._selected_folder = None
@@ -757,14 +758,17 @@ class ConfigPanel(QScrollArea):
         if self._selected_files:
             n = len(self._selected_files)
             parent = self._selected_files[0].parent
-            self._input_selection_label.setText(f"{n} file{'s' if n != 1 else ''} from {parent}")
-            self._input_selection_label.setStyleSheet("color: #ddd; font-size: 8pt;")
+            self._input_row.set_text(txt.files_from_folder(n, parent))
+            names = [p.name for p in self._selected_files[:20]]
+            if n > len(names):
+                names.append(txt.files_more(n - len(names)))
+            self._input_row.set_tooltip("\n".join(names))
         elif self._selected_folder is not None:
-            self._input_selection_label.setText(f"Folder: {self._selected_folder}")
-            self._input_selection_label.setStyleSheet("color: #ddd; font-size: 8pt;")
+            self._input_row.set_text(str(self._selected_folder))
+            self._input_row.set_tooltip(str(self._selected_folder))
         else:
-            self._input_selection_label.setText("No input selected")
-            self._input_selection_label.setStyleSheet("color: #888; font-size: 8pt;")
+            self._input_row.set_text("")
+            self._input_row.set_tooltip("")
 
     # ── prompt dialogs ────────────────────────────────────────────────────────────
 
@@ -869,7 +873,7 @@ class ConfigPanel(QScrollArea):
             uses_tooltip(ocr) if ocr else "",
         )
         names = steps.stage(STAGE_ANONYMIZATION)
-        self._anonymization_uses.set_line(detail_line(names) if names else "")
+        self._anonymization_uses.set_line(names_line(names) if names else "")
 
         proofread = steps.stage(STAGE_CORRECTION)
         proofread_on = self._correction_enabled.isChecked()

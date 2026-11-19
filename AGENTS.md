@@ -132,7 +132,8 @@ that area. A new LLM provider is a new file in `infrastructure/providers/` and n
 - A test's Bazel `deps` list the highest layer it imports (`_DOMAIN_LIB`,
   `_INFRASTRUCTURE_LIB`, `_APPLICATION_LIB`, `gui_layer_lib`, … in `tests/BUILD`), never
   `//teachers_teammate:ocr_lib` / `:gui_lib` (every test would rerun on every edit). A new
-  module goes into its layer's `_*_SRCS` list in `teachers_teammate/BUILD`.
+  module goes into its layer's `_*_SRCS` list in `teachers_teammate/BUILD`. See
+  `docs/testing.md` → "Test dependencies and Bazel's cache".
 - Configs: `make_config(tmp_path, **overrides)` from `tests/conftest.py` (a plain function,
   not a fixture).
 - Patch at the import site, not at the origin:

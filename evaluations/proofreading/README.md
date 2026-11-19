@@ -273,8 +273,8 @@ of its own, whose message records the builder revision, the two hash seeds and t
 set; the built set is copied to `~/gec-testset/set-2026-12` for the runs. The system `python3` lacks
 `pydantic`, hence `.venv/bin/python` outside Bazel.
 
-## The link to `docs/development.md`
+## The link to `tools/model_eval/README.md`
 
-`docs/development.md` describes how the runs are made and what the numbers mean. This directory is
+`tools/model_eval/README.md` describes how the runs are made and what the numbers mean. This directory is
 where they are kept. Keep the rule when adding anything here: counts and scores go in, texts stay
 out.

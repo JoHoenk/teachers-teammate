@@ -696,6 +696,10 @@ CHECKED_TOOLTIP = (
     "checked; without one, the text that was read."
 )
 CHECKED_COLUMN = "Checked"
+#: The step columns of the results list, named like the steps under "What should happen".
+RECOGNITION_COLUMN = "Recognition"
+PROOFREADING_COLUMN = "Proofreading"
+CONTENT_REVIEW_COLUMN = "Content review"
 CHECKED_CELL = "Checked"
 TEXT_CHECKED_CELL = "Text checked"
 SELECT_CHECKED = "Select checked"

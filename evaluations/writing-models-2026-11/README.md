@@ -21,6 +21,6 @@ itself (Falko-MERLIN for German, W&I+LOCNESS for English) is not redistributable
 of this repository; `tools/prepare_gec_testset.py` rebuilds it from the published corpora. Keep
 that separation when adding results here — counts and scores go in, texts stay out.
 
-The check needs a running Ollama server (see `docs/development.md`, *Ollama model catalog*). The
+The check needs a running Ollama server (see `tools/model_eval/README.md`, *Gate 1*). The
 answers it saves stay outside the repository; `verify_model_catalog recheck` re-judges them without
 a server.

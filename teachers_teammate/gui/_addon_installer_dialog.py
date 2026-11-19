@@ -40,7 +40,7 @@ def _model_for_system_language() -> str:
 
 _ADDON_META: dict[str, dict] = {
     ADDON_PRIVACY: {
-        "title": "Install Privacy Addon",
+        "title": "Install Privacy Add-on",
         "description": (
             "This installs <b>spaCy</b>, the NLP library used for PII anonymization.<br><br>"
             "After installation, download a name detection model for your language under "

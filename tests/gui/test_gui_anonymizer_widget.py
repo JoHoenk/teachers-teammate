@@ -10,6 +10,7 @@ from teachers_teammate.config import SECONDARY_MODEL_AUTO
 from teachers_teammate.gui import _dialogs
 from teachers_teammate.gui._anonymizer_config_widget import AnonymizerConfigWidget
 from teachers_teammate.infrastructure.anonymizer import AnonymizerConfig, DEFAULT_PATTERNS
+from teachers_teammate.texts import privacy
 from teachers_teammate.texts._types import Notice
 
 
@@ -544,7 +545,7 @@ def test_dialog_run_preview_shows_spacy_missing_on_import_error(qtbot) -> None:
     """
     Given  anonymize_preview raises ImportError
     When   previewing
-    Then   a spaCy-missing error is shown
+    Then   the shared spaCy-missing message is shown
     """
     svc = MagicMock()
     svc.anonymize_preview.side_effect = ImportError("no spacy")
@@ -553,7 +554,7 @@ def test_dialog_run_preview_shows_spacy_missing_on_import_error(qtbot) -> None:
 
     dlg._run_preview()
 
-    assert "spaCy is not installed" in dlg._preview_error.text()
+    assert dlg._preview_error.text() == privacy.spacy_missing("no spacy", installed_app=False)
 
 
 @pytest.mark.gui

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import re
 import sys
 
 from PySide6.QtCore import Qt
@@ -43,11 +44,16 @@ _USER_GUIDE_PAGES: list[tuple[str, str]] = [
 ]
 
 
+#: A fenced block whose info string is a Sphinx directive (```` ```{toctree} ````): it builds the
+#: website's navigation and means nothing in the app, so the Help window leaves it out.
+_SPHINX_DIRECTIVE = re.compile(r"^```\{[^}]*\}.*?^```[ \t]*$\n?", re.MULTILINE | re.DOTALL)
+
+
 def _make_browser(path: Path) -> QTextBrowser:
     browser = QTextBrowser()
     browser.setOpenExternalLinks(True)
     if path.exists():
-        browser.setMarkdown(path.read_text(encoding="utf-8"))
+        browser.setMarkdown(_SPHINX_DIRECTIVE.sub("", path.read_text(encoding="utf-8")))
     else:
         browser.setPlainText(f"Page not found: {path.name}")
     return browser

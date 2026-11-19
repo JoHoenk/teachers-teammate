@@ -238,8 +238,8 @@ def _parse_args(
         default=None,
         metavar="FILE",
         help=(
-            "Path to a TOML config file. Defaults to ocr.toml in the current directory "
-            "when that file exists.  CLI arguments override file values."
+            "Path to a TOML config file. Defaults to ocr.toml in the app's settings folder "
+            "(the file the app window saves) when it exists.  CLI arguments override file values."
         ),
     )
 

@@ -88,14 +88,15 @@ DEFAULTS: dict[str, Any] = {
     "evaluation_enabled": False,
     "evaluate_provider": "ollama",
     "evaluate_model": DEFAULT_WRITING_MODEL,
+    # What the content review asks.  The teacher can replace it (Options… of "Review content").
     "evaluate_prompt": (
-        "You are a quality evaluator for OCR correction output. "
-        "Given corrected text, provide a concise quality report with: "
-        "1) overall quality score from 1-10, "
-        "2) key remaining issues, "
-        "3) confidence level, and "
-        "4) short recommendation. "
-        "Keep the response compact and actionable."
+        "You help a teacher read a student's text. Review its content, not its spelling, "
+        "grammar or punctuation. Write a short report with: "
+        "1) what the text is about, in one sentence; "
+        "2) whether it is complete and consistent; "
+        "3) gaps, contradictions or passages that are hard to follow, each with a short quote; "
+        "4) one short suggestion for the teacher. "
+        "Write in the language of the text and keep the report brief."
     ),
     # ── Output ────────────────────────────────────────────────────────────────
     "docx_format": "table",

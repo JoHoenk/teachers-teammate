@@ -1,7 +1,7 @@
 # Writing-model candidates: what was looked at, what was dropped, and why
 
 Research date: 2026-11-09. Written for the developers who decide which models go into the next
-comparison run (gate 1 and gate 2, see `docs/development.md`, *Choosing writing models*).
+comparison run (gate 1 and gate 2, see `tools/model_eval/README.md`).
 
 **Scope.** Models that proofread learner text (German, English, French) and answer the app's
 review format, run through Ollama on a 16 GB graphics card or less. Reading (OCR) models are not
@@ -196,5 +196,4 @@ Papers and model pages:
 [Releasebot: Ollama updates](https://releasebot.io/updates/ollama).
 
 Our own earlier material: an earlier deep dive on local proofreading models (a private working
-note, not committed), and `docs/development.md`, *Choosing writing
-models*.
+note, not committed), and `tools/model_eval/README.md`.

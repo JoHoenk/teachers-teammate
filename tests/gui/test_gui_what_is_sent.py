@@ -6,6 +6,7 @@ import pytest
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import QLabel
 
+from teachers_teammate.application.queue import QueueRow, StageState
 from teachers_teammate.application.sent_text import SentText, SentTexts, describe_sent_texts
 from teachers_teammate.domain.proofreading.review import CorrectionReview, UnclearNote
 from teachers_teammate.domain.data_location import (
@@ -263,6 +264,27 @@ def test_stage_tooltip_says_where_the_text_goes() -> None:
     assert stage_tooltip(non_eu) == "Sent to OpenAI, outside the EU, names as written"
 
 
+def _row(
+    source_id: str = "/tmp/a.pdf",
+    name: str = "a.pdf",
+    *,
+    sent: dict[str, SentStatus] | None = None,
+    unclear_count: int = 0,
+    review: CorrectionReview | None = None,
+) -> QueueRow:
+    """Return a queue row of a proofread file, as the store would report it."""
+    return QueueRow(
+        source_id=source_id,
+        name=name,
+        ocr=StageState.DONE,
+        correction=StageState.DONE,
+        has_text=True,
+        unclear_count=unclear_count,
+        sent=sent or {},
+        review=review,
+    )
+
+
 @pytest.mark.gui
 def test_results_table_puts_the_stage_tooltip_on_the_stage_cells(qtbot) -> None:
     """
@@ -272,7 +294,7 @@ def test_results_table_puts_the_stage_tooltip_on_the_stage_cells(qtbot) -> None:
     """
     table = ResultsTable()
     qtbot.addWidget(table)
-    table.set_queue(["a.pdf"])
+    table.set_queue([_row()])
 
     table.set_stage_tooltips(
         {"correction": "Sent to Mistral (EU), names hidden", "evaluation": "Stays here"}
@@ -294,12 +316,13 @@ def test_results_table_keeps_its_own_message_below_the_stage_line(qtbot) -> None
     """
     table = ResultsTable()
     qtbot.addWidget(table)
-    table.set_queue(["a.pdf"])
-    table.mark_cached("a.pdf", "", "", "", "", ocr_done=True, correction_done=True)
-    table.set_correction_review(
-        "a.pdf",
-        CorrectionReview(unclear=(UnclearNote(0, 4, "weil", "why", "because"),)),
-        "",
+    table.set_queue(
+        [
+            _row(
+                unclear_count=1,
+                review=CorrectionReview(unclear=(UnclearNote(0, 4, "weil", "why", "because"),)),
+            )
+        ]
     )
 
     table.set_stage_tooltips({"correction": "Sent to Mistral (EU), names hidden"})
@@ -329,16 +352,13 @@ def test_the_tooltip_says_how_the_stored_result_was_sent(qtbot) -> None:
     """
     Given  a proofread file whose result went to an online service with two names hidden,
            made with other privacy settings than today's
-    When   set_sent() is called and the stage tooltip is set
+    When   the row is shown and the stage tooltip is set
     Then   the cell shows the stage line, how the result was sent and what to do about it
     """
     table = ResultsTable()
     qtbot.addWidget(table)
-    table.set_queue(["a.pdf"])
-    table.mark_cached("a.pdf", "", "", "", "", ocr_done=True, correction_done=True)
+    table.set_queue([_row(sent={STAGE_CORRECTION: _sent_status(other=True)})])
     table.set_stage_tooltips({"correction": "Sent to Mistral (EU), names hidden"})
-
-    table.set_sent("a.pdf", {STAGE_CORRECTION: _sent_status(other=True)})
 
     correction = table.item(0, ResultsTable._COL_CORRECTION)
     assert correction is not None
@@ -354,15 +374,12 @@ def test_the_tooltip_says_how_the_stored_result_was_sent(qtbot) -> None:
 def test_the_tooltip_of_a_result_made_here_says_so(qtbot) -> None:
     """
     Given  a proofread file whose result was made on this computer
-    When   set_sent() is called
+    When   the row is shown
     Then   the cell says it was made here, and nothing about sending
     """
     table = ResultsTable()
     qtbot.addWidget(table)
-    table.set_queue(["a.pdf"])
-    table.mark_cached("a.pdf", "", "", "", "", ocr_done=True, correction_done=True)
-
-    table.set_sent("a.pdf", {STAGE_CORRECTION: _sent_status(provider="ollama")})
+    table.set_queue([_row(sent={STAGE_CORRECTION: _sent_status(provider="ollama")})])
 
     correction = table.item(0, ResultsTable._COL_CORRECTION)
     assert correction is not None
@@ -373,17 +390,15 @@ def test_the_tooltip_of_a_result_made_here_says_so(qtbot) -> None:
 def test_a_stage_without_a_record_loses_its_sent_line(qtbot) -> None:
     """
     Given  a cell that shows how its result was sent
-    When   set_sent() is called without a record for that stage (a re-run or an edit)
+    When   the store reports no record for that stage any more (a re-run or an edit)
     Then   the line is gone and the stage line stays
     """
     table = ResultsTable()
     qtbot.addWidget(table)
-    table.set_queue(["a.pdf"])
-    table.mark_cached("a.pdf", "", "", "", "", ocr_done=True, correction_done=True)
+    table.set_queue([_row(sent={STAGE_CORRECTION: _sent_status()})])
     table.set_stage_tooltips({"correction": "Sent to Mistral (EU), names hidden"})
-    table.set_sent("a.pdf", {STAGE_CORRECTION: _sent_status()})
 
-    table.set_sent("a.pdf", {})
+    table.update_row(_row())
 
     correction = table.item(0, ResultsTable._COL_CORRECTION)
     assert correction is not None
@@ -394,18 +409,18 @@ def test_a_stage_without_a_record_loses_its_sent_line(qtbot) -> None:
 def test_the_tooltip_tells_hiding_that_found_nothing_from_hiding_that_was_off(qtbot) -> None:
     """
     Given  two results sent with no placeholders: one with hiding on, one with hiding off
-    When   set_sent() is called for each
+    When   the rows are shown
     Then   the first says no names were found, the second that names went as written
     """
+    searched = SentStatus(SentRecord(provider="mistral_eu", model="m", hiding_on=True, privacy="p"))
     table = ResultsTable()
     qtbot.addWidget(table)
-    table.set_queue(["a.pdf", "b.pdf"])
-    for name in ("a.pdf", "b.pdf"):
-        table.mark_cached(name, "", "", "", "", ocr_done=True, correction_done=True)
-    searched = SentStatus(SentRecord(provider="mistral_eu", model="m", hiding_on=True, privacy="p"))
-
-    table.set_sent("a.pdf", {STAGE_CORRECTION: searched})
-    table.set_sent("b.pdf", {STAGE_CORRECTION: _sent_status(names_hidden=0)})
+    table.set_queue(
+        [
+            _row("/tmp/a.pdf", "a.pdf", sent={STAGE_CORRECTION: searched}),
+            _row("/tmp/b.pdf", "b.pdf", sent={STAGE_CORRECTION: _sent_status(names_hidden=0)}),
+        ]
+    )
 
     first = table.item(0, ResultsTable._COL_CORRECTION)
     second = table.item(1, ResultsTable._COL_CORRECTION)
@@ -468,7 +483,7 @@ def test_the_context_menu_asks_what_is_sent(qtbot, monkeypatch) -> None:
     """
     table = ResultsTable()
     qtbot.addWidget(table)
-    table.set_queue(["a.pdf"], ["src-a"])
+    table.set_queue([_row("/tmp/src-a", "a.pdf")])
     entries: list[str] = []
 
     class _FakeMenu:

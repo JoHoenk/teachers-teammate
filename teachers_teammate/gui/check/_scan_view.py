@@ -27,10 +27,15 @@ from .._image_view import ZoomableImageView
 #: Blank space around and between the pages.
 _MARGIN = 8
 _GAP = 12
-#: How far the buttons and Ctrl + wheel zoom in or out of the fitted page, as a factor.
+#: How far the buttons and Ctrl + wheel zoom out of the fitted page, and the least they zoom in.
 _ZOOM_MIN = 0.5
 _ZOOM_MAX = 4.0
 _ZOOM_STEP = 1.25
+#: The most a page is enlarged: twice its own pixels, however far the pane is zoomed.
+_ZOOM_NATIVE = 2.0
+#: The width a page is kept at while it is not in view.  A page fitted to a pane this wide is
+#: sharp; a wider pane is read by zooming, which brings the page's own image back.
+_THUMBNAIL_WIDTH = 700
 
 
 class ScanView(ZoomableImageView):
@@ -39,8 +44,16 @@ class ScanView(ZoomableImageView):
     A page opens *fitted to the pane*: the whole page is in view, and the pages below it follow
     by scrolling.  A double click switches to *fit width* (a page as wide as the pane, read by
     scrolling) and back; zoom in and out (buttons, Ctrl + wheel) stay between :data:`_ZOOM_MIN`
-    and :data:`_ZOOM_MAX` times the fitted page, and a double click after zooming fits again in
-    the mode that was on.  The mode stays while the teacher steps through the documents.
+    times the fitted page and :meth:`_max_zoom` (twice the page's own pixels, or
+    :data:`_ZOOM_MAX` times the fitted page where that is more), and a double click after
+    zooming fits again in the mode that was on.  The mode stays while the teacher steps through
+    the documents.
+
+    A page is drawn from its own image, scaled down to the pane, so zooming in shows the pixels
+    that were scanned instead of an enlarged thumbnail.  Only the pages in view keep that image:
+    the others hold a copy at :data:`_THUMBNAIL_WIDTH`, which is swapped for the real one when
+    the teacher zooms or scrolls to them.
+
     The vertical scroll bar is always there and the horizontal one only while zoomed: a fitted
     layout is built from the size of the viewport, so a bar that came and went with the content
     would change that size and start the layout again, for ever.
@@ -58,10 +71,16 @@ class ScanView(ZoomableImageView):
         self._prepared: tuple[Path, ...] = ()
         self._originals: tuple[Path | None, ...] = ()
         self._showing_originals = False
-        self._pixmaps: list[QPixmap] = []
+        self._sources: list[Path] = []
+        self._sizes: list[tuple[int, int]] = []
+        self._thumbs: list[QPixmap] = []
+        self._full: dict[int, QPixmap] = {}
+        self._full_pages: set[int] = set()
         self._items: list[QGraphicsPixmapItem | None] = []
+        self._widths: list[int] = []
         self._layout_key: tuple[int, int] = (0, 0)
         self._fit_page = True
+        self.verticalScrollBar().valueChanged.connect(self._refresh_full_pages)
 
     @property
     def fit_page(self) -> bool:
@@ -102,13 +121,19 @@ class ScanView(ZoomableImageView):
         super().clear()
         self._prepared = ()
         self._originals = ()
-        self._pixmaps = []
+        self._sources = []
+        self._sizes = []
+        self._thumbs = []
+        self._full = {}
+        self._full_pages = set()
         self._items = []
+        self._widths = []
         self._layout_key = (0, 0)
 
     # ── Layout ────────────────────────────────────────────────────────────
 
-    def _sources(self) -> list[Path]:
+    def _sources_of(self) -> list[Path]:
+        """Return the image each page shows: the prepared one, or the original where asked."""
         sources: list[Path] = []
         for index, prepared in enumerate(self._prepared):
             original = self._originals[index] if index < len(self._originals) else None
@@ -116,51 +141,112 @@ class ScanView(ZoomableImageView):
         return sources
 
     def _reload(self) -> None:
-        self._pixmaps = [load_pixmap(path) for path in self._sources()]
+        """Read every page once: its own size, and a copy small enough to keep them all."""
+        self._sources = self._sources_of()
+        self._sizes = []
+        self._thumbs = []
+        self._full = {}
+        self._full_pages = set()
+        for path in self._sources:
+            pix = load_pixmap(path)
+            self._sizes.append((pix.width(), pix.height()))
+            self._thumbs.append(_thumbnail(pix, self.devicePixelRatioF()))
 
     def _key(self) -> tuple[int, int]:
         """The size the layout depends on: the width, and the height only when a page is fitted."""
         viewport = self.viewport()
         return (viewport.width(), viewport.height() if self._fit_page else 0)
 
-    def _page_width(self, pix: QPixmap, available_width: int, available_height: int) -> int:
+    def _page_width(self, index: int, available_width: int, available_height: int) -> int:
         """Return the width a page is drawn at, in the fit mode that is on."""
-        if not self._fit_page or pix.height() <= 0:
+        width, height = self._sizes[index]
+        if not self._fit_page or height <= 0:
             return available_width
-        return max(1, min(available_width, round(available_height * pix.width() / pix.height())))
+        return max(1, min(available_width, round(available_height * width / height)))
 
     def _layout(self, *, keep_scroll: bool = False) -> None:
         fraction = self._scroll_fraction() if keep_scroll else 0.0
         self._scene.clear()
         self._pix_item = None
         self._items = []
+        self._widths = []
         self._layout_key = self._key()
         available_width = max(self.viewport().width() - 2 * _MARGIN, 1)
         available_height = max(self.viewport().height() - 2 * _MARGIN, 1)
-        if not self._pixmaps:
+        if not self._sources:
             self._show_text("(no page image)")
             self.setSceneRect(0, 0, available_width + 2 * _MARGIN, 1)
             return
         y = float(_MARGIN)
-        for pix in self._pixmaps:
-            if pix.isNull():
+        for index in range(len(self._sources)):
+            width, height = self._sizes[index]
+            if width <= 0 or height <= 0:
                 self._items.append(None)
+                self._widths.append(0)
                 y += self._add_message(y) + _GAP
                 continue
-            width = self._page_width(pix, available_width, available_height)
-            scaled = pix.scaledToWidth(width, Qt.TransformationMode.SmoothTransformation)
-            item = self._scene.addPixmap(scaled)
+            drawn = self._page_width(index, available_width, available_height)
+            item = self._scene.addPixmap(self._page_pixmap(index))
             self._items.append(item)
+            self._widths.append(drawn)
             if item is None:
                 continue
+            item.setTransformationMode(Qt.TransformationMode.SmoothTransformation)
+            item.setScale(drawn / max(item.pixmap().width(), 1))
             # A page narrower than the pane sits in its middle.
-            item.setPos(_MARGIN + (available_width - width) / 2, y)
-            y += scaled.height() + _GAP
+            item.setPos(_MARGIN + (available_width - drawn) / 2, y)
+            y += drawn * height / width + _GAP
         # No gap after the last page: a page fitted to the pane then fills it exactly.
         self.setSceneRect(0, 0, available_width + 2 * _MARGIN, max(y - _GAP + _MARGIN, 1))
         self.resetTransform()
         self._set_fitted(True)
         self._set_scroll_fraction(fraction)
+        self._refresh_full_pages()
+
+    # ── The pages in view keep their own image ────────────────────────────
+
+    def _page_pixmap(self, index: int) -> QPixmap:
+        """Return the image of page *index*: its own when it is in memory, else its copy."""
+        full = self._full.get(index)
+        return full if full is not None else self._thumbs[index]
+
+    def _pages_in_view(self) -> set[int]:
+        """Return the pages the teacher can see, and the one before and after them."""
+        visible = self.mapToScene(self.viewport().rect()).boundingRect()
+        shown = [
+            index
+            for index, item in enumerate(self._items)
+            if item is not None and item.sceneBoundingRect().intersects(visible)
+        ]
+        if not shown:
+            return set()
+        first, last = max(shown[0] - 1, 0), min(shown[-1] + 1, len(self._items) - 1)
+        return {index for index in range(first, last + 1) if not self._thumbs[index].isNull()}
+
+    def _refresh_full_pages(self, *_args: Any) -> None:
+        """Keep the pages in view at their own size, and the others as their copies."""
+        wanted = self._pages_in_view()
+        if wanted == self._full_pages:
+            return
+        self._full_pages = wanted
+        self._full = {
+            index: self._full[index] if index in self._full else load_pixmap(self._sources[index])
+            for index in wanted
+        }
+        for index in range(len(self._items)):
+            self._show_page(index)
+
+    def _show_page(self, index: int) -> None:
+        """Put the image page *index* has now into its item, at the width the layout gave it."""
+        item = self._items[index]
+        drawn = self._widths[index]
+        if item is None or drawn <= 0:
+            return
+        pix = self._page_pixmap(index)
+        if pix.isNull():
+            return
+        item.setPixmap(pix)
+        item.setScale(drawn / pix.width())
 
     def _add_message(self, y: float) -> float:
         """Write "(image unavailable)" where a page is missing; return the height it took."""
@@ -211,14 +297,27 @@ class ScanView(ZoomableImageView):
         self.resetTransform()
         self._set_fitted(True)
 
+    def _fitted_scale(self) -> float:
+        """Return how large a page is drawn at zoom 1, as a share of its own pixels."""
+        for index, item in enumerate(self._items):
+            if item is not None and self._sizes[index][0] > 0:
+                return self._widths[index] / self._sizes[index][0]
+        return 0.0
+
+    def _max_zoom(self) -> float:
+        """Return the largest zoom: twice the page's own pixels, and never less than 4× fitted."""
+        scale = self._fitted_scale()
+        return max(_ZOOM_MAX, _ZOOM_NATIVE / scale) if scale > 0 else _ZOOM_MAX
+
     def _zoom_by(self, factor: float) -> None:
         """Zoom by *factor*, keeping within the limits around the fitted pages."""
         current = self.transform().m11()
-        target = min(max(current * factor, _ZOOM_MIN), _ZOOM_MAX)
+        target = min(max(current * factor, _ZOOM_MIN), self._max_zoom())
         if target == current:
             return
         self._set_fitted(False)
         self.scale(target / current, target / current)
+        self._refresh_full_pages()
 
     def zoom_in(self) -> None:
         """Make the pages larger."""
@@ -250,6 +349,20 @@ class ScanView(ZoomableImageView):
         QGraphicsView.resizeEvent(self, event)
         if self._fitted and self._layout_key != self._key():
             self._layout()
+
+
+def _thumbnail(pix: QPixmap, ratio: float) -> QPixmap:
+    """Return *pix* at the width a page is kept at while it is not in view.
+
+    *ratio* is the screen's device pixel ratio: the copy is that much wider than the pane, so a
+    page fitted to it is drawn from its own pixels and not from an enlarged thumbnail.
+    """
+    if pix.isNull():
+        return pix
+    width = round(_THUMBNAIL_WIDTH * max(ratio, 1.0))
+    if pix.width() <= width:
+        return pix
+    return pix.scaledToWidth(width, Qt.TransformationMode.SmoothTransformation)
 
 
 class ScanPane(QWidget):

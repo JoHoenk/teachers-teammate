@@ -13,9 +13,11 @@ at the end; a document opens at the first of them.  The walk keeps no state of i
 row is what marks it looked at, so the icons and the footer say how far it got.  A filter above the
 list narrows both the list and the walk, while the counts keep covering the whole document.
 
-The card keeps one height whatever it says — its text scrolls inside it — so neither its buttons
-nor *Next* move while the teacher steps through a document.  The content review has a tab of its
-own next to the list.
+The card says what the change is on one side and why it was made on the other, side by side once
+the panel is wide enough for both.  Its height is the teacher's — a splitter against the list, so
+a long explanation is read whole — and its text scrolls inside it, so neither its buttons nor
+*Next* move while the teacher steps through a document.  The content review has a tab of its own
+next to the list.
 
 All wording comes from :mod:`.._user_text` and :mod:`...texts.check`; the colours and icons from
 :mod:`._style`.
@@ -32,14 +34,17 @@ from PySide6.QtCore import QRect, QSize, Qt, Signal, SignalInstance
 from PySide6.QtGui import QColor, QFont, QPainter, QPalette
 from PySide6.QtWidgets import (
     QApplication,
+    QBoxLayout,
     QButtonGroup,
     QFrame,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QListWidget,
     QListWidgetItem,
     QPushButton,
     QScrollArea,
+    QSplitter,
     QStyle,
     QStyledItemDelegate,
     QStyleOptionViewItem,
@@ -79,11 +84,28 @@ _ROW_ROLE = Qt.ItemDataRole.UserRole + 1
 
 _ROW_HEIGHT = 24
 
-#: How many lines of text the card shows before its text scrolls.
+#: How many rows of the list stay visible whatever the card's height is.
+_LIST_MIN_ROWS = 3
+
+#: How many lines of text the card shows before its text scrolls, until the teacher drags it.
 _CARD_TEXT_LINES = 5
+
+#: How many lines the card keeps at least, so its buttons never sit on a sliver of text.
+_CARD_MIN_LINES = 2
+
+#: The card's width from which *Change* and *Why* stand side by side instead of one above the other.
+_SIDE_BY_SIDE_WIDTH = 560
+
+#: The kinds whose words the card offers to replace with other words.
+_REPLACEABLE = frozenset(
+    {ItemKind.CORRECTION, ItemKind.CHANGED, ItemKind.UNEXPLAINED, ItemKind.LEFT_OUT}
+)
 
 #: How many characters of the sentence around a change the card shows on either side.
 _CONTEXT_CHARS = 60
+
+#: How wide the card's replace field stays, so the buttons beside it keep their place.
+_REPLACE_WIDTH = 90
 
 #: The characters that end a sentence, for the context line.
 _SENTENCE_ENDS = ".!?\n"
@@ -156,6 +178,21 @@ def _category_of(row: _Row) -> str:
     if row.item is None or not row.item.category:
         return ""
     return txt.category_label(row.item.category)
+
+
+def _words_in_text(item: CheckItem, corrected_plain: str) -> str:
+    """Return the words of *item* as they stand in the corrected text.
+
+    The card's replace field starts from what the text says now, not from the model's wording:
+    a correction the teacher changed again shows their own words.
+    """
+    if not item.corrected_spans:
+        return item.after
+    start = min(span[0] for span in item.corrected_spans)
+    end = max(span[1] for span in item.corrected_spans)
+    if not 0 <= start <= end <= len(corrected_plain):
+        return item.after
+    return corrected_plain[start:end]
 
 
 def _faded(colour: QColor, alpha: int) -> QColor:
@@ -241,12 +278,14 @@ class _ItemDelegate(QStyledItemDelegate):
             return rect
         width = metrics.horizontalAdvance(category) + 10
         badge = QRect(rect.right() - width + 1, rect.top() + 3, width, rect.height() - 6)
-        background, foreground = _style.category_colours(row.item.category)
+        look = _style.look(row.item)
         painter.fillRect(
             badge,
-            _faded(QColor(background), _style.BADGE_ALPHA) if looked_at else QColor(background),
+            _faded(QColor(look.background), _style.BADGE_ALPHA)
+            if looked_at
+            else QColor(look.background),
         )
-        painter.setPen(_row_colour(QColor(foreground), looked_at=looked_at))
+        painter.setPen(_row_colour(QColor(look.text), looked_at=looked_at))
         painter.drawText(badge, Qt.AlignmentFlag.AlignCenter, category)
         return rect.adjusted(0, 0, -(width + 6), 0)
 
@@ -287,6 +326,18 @@ def _wrapped_label() -> QLabel:
     policy.setHeightForWidth(True)
     label.setSizePolicy(policy)
     return label
+
+
+def _column(*labels: QLabel) -> QWidget:
+    """Return *labels* stacked in one column of the card, held to the top of it."""
+    column = QWidget()
+    layout = QVBoxLayout(column)
+    layout.setContentsMargins(0, 0, 0, 0)
+    layout.setSpacing(2)
+    for label in labels:
+        layout.addWidget(label)
+    layout.addStretch()
+    return column
 
 
 def _chip(text: str, colours: tuple[str, str]) -> str:
@@ -335,9 +386,9 @@ def _context_html(row: _Row, raw_plain: str, masking: Masking) -> str:
     words = masked[span[0] : span[1]]
     if not words:
         return html.escape(masked)
-    background, foreground = _style.kind_colours(row.item.kind)
+    look = _style.look(row.item)
     highlight = (
-        f'<span style="background-color:{background}; color:{foreground}; font-weight:bold;">'
+        f'<span style="background-color:{look.background}; color:{look.text}; font-weight:bold;">'
         f"{html.escape(words)}</span>"
     )
     return f"{html.escape(masked[: span[0]])}{highlight}{html.escape(masked[span[1] :])}"
@@ -402,9 +453,8 @@ def _body_html(row: _Row, masking: Masking) -> str:
         return "<br>".join(lines)
     lines = []
     if item.category:
-        lines.append(
-            _chip(txt.category_label(item.category), _style.category_colours(item.category))
-        )
+        look = _style.look(item)
+        lines.append(_chip(txt.category_label(item.category), (look.background, look.text)))
     if item.explanation:
         lines.append(html.escape(masking.mask(item.explanation)))
     if item.kind is ItemKind.UNEXPLAINED:
@@ -416,11 +466,17 @@ def _body_html(row: _Row, masking: Masking) -> str:
 
 
 class _Card(QFrame):
-    """The chosen item: what it says, and the buttons that act on it.
+    """The chosen item: what it changes, why, and the buttons that act on it.
 
-    The text scrolls inside a fixed height and the buttons sit on the card's bottom edge, so the
-    card is as tall for a one-line correction as for a long explanation.
+    *Change* — the words and the sentence around them — stands on the left and *Why* — the
+    category, the explanation and the notes — on the right, once the card is wide enough for both;
+    below that width they stand one above the other.  The text scrolls inside the height the
+    teacher gave the card, and the buttons sit on its bottom edge, so the card is as tall for a
+    one-line correction as for a long explanation.
     """
+
+    replace_requested = Signal(str, str)
+    """The teacher asked for the words of this key to be replaced by the words they typed."""
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -438,13 +494,15 @@ class _Card(QFrame):
 
         self._body = _wrapped_label()
 
+        self._change = _column(self._title, self._context)
+        self._why = _column(self._body)
+
         text = QWidget()
-        text_layout = QVBoxLayout(text)
-        text_layout.setContentsMargins(0, 0, 0, 0)
-        text_layout.setSpacing(2)
-        for label in (self._title, self._context, self._body):
-            text_layout.addWidget(label)
-        text_layout.addStretch()
+        self._columns = QBoxLayout(QBoxLayout.Direction.TopToBottom, text)
+        self._columns.setContentsMargins(0, 0, 0, 0)
+        self._columns.setSpacing(6)
+        self._columns.addWidget(self._change, 1)
+        self._columns.addWidget(self._why, 1)
 
         self._scroll = QScrollArea()
         self._scroll.setWidgetResizable(True)
@@ -452,37 +510,71 @@ class _Card(QFrame):
         self._scroll.setFrameShape(QFrame.Shape.NoFrame)
         self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self._scroll.viewport().setAutoFillBackground(False)
-        self._scroll.setFixedHeight(self.fontMetrics().lineSpacing() * _CARD_TEXT_LINES + 6)
-        layout.addWidget(self._scroll)
+        self._scroll.setMinimumHeight(self.fontMetrics().lineSpacing() * _CARD_MIN_LINES + 6)
+        layout.addWidget(self._scroll, 1)
 
         self.take_out = QPushButton(txt.TAKE_OUT)
         self.put_back = QPushButton(txt.PUT_BACK)
         self.use_suggestion = QPushButton(txt.USE_SUGGESTION)
-        self.change = QPushButton(txt.CHANGE)
         self.take_out_all = QPushButton(txt.TAKE_OUT_ALL)
         self._buttons = (
             self.take_out,
             self.put_back,
             self.use_suggestion,
-            self.change,
             self.take_out_all,
         )
+        # The words to write instead: the card's own way of changing a correction, so the
+        # teacher never leaves the view they are reading.
+        self.replace = QLineEdit()
+        self.replace.setPlaceholderText(txt.REPLACE_WITH)
+        self.replace.setMinimumWidth(_REPLACE_WIDTH)
+        self.replace_ok = QPushButton(txt.REPLACE_OK)
         self._button_row = QWidget()
         row = QHBoxLayout(self._button_row)
         row.setContentsMargins(0, 0, 0, 0)
         row.setSpacing(4)
         for button in self._buttons:
             row.addWidget(button)
+        row.addWidget(self.replace, 1)
+        row.addWidget(self.replace_ok)
         row.addStretch()
         # The row keeps its height while no button is shown, so the card never shrinks.
-        self._button_row.setFixedHeight(max(b.sizeHint().height() for b in self._buttons))
+        self._button_row.setFixedHeight(
+            max(widget.sizeHint().height() for widget in (*self._buttons, self.replace_ok))
+        )
         layout.addWidget(self._button_row)
+        self._key = ""
+        self._editable = False
+        self.replace.textChanged.connect(self._refresh_replace_ok)
+        self.replace.returnPressed.connect(self._on_replace)
+        self.replace_ok.clicked.connect(self._on_replace)
         self.set_row(None, Masking(), editable=False)
+
+    def sizeHint(self) -> QSize:
+        """Ask for five lines of text and the buttons, so the splitter opens the card that tall."""
+        hint = super().sizeHint()
+        return QSize(hint.width(), self._default_height())
+
+    def _default_height(self) -> int:
+        """Return the height of a card nobody dragged: five lines of text and its buttons."""
+        return self.fontMetrics().lineSpacing() * _CARD_TEXT_LINES + 6
+
+    def resizeEvent(self, event) -> None:
+        """Put *Change* and *Why* side by side once the card is wide enough for both."""
+        super().resizeEvent(event)
+        direction = (
+            QBoxLayout.Direction.LeftToRight
+            if event.size().width() >= _SIDE_BY_SIDE_WIDTH
+            else QBoxLayout.Direction.TopToBottom
+        )
+        if self._columns.direction() != direction:
+            self._columns.setDirection(direction)
 
     def set_note(self, text: str) -> None:
         """Say *text* in place of the card's words, without any button."""
         for button in self._buttons:
             button.setVisible(False)
+        self._hide_replace()
         self._title.clear()
         self._context.clear()
         self._body.setText(html.escape(text))
@@ -496,22 +588,28 @@ class _Card(QFrame):
         editable: bool,
         reason: str = "",
         raw_plain: str = "",
+        corrected_plain: str = "",
     ) -> None:
         """Show *row*, or nothing; *editable* says whether its buttons may be pressed.
 
-        *raw_plain* is the transcription the context line is taken from.
+        *raw_plain* is the transcription the context line is taken from, *corrected_plain* the
+        text the replace field is filled from.
         """
         for button in self._buttons:
             button.setVisible(False)
             button.setEnabled(editable)
             button.setToolTip(reason)
+        self._editable = editable
+        self._hide_replace()
         if row is None:
+            self._key = ""
             self._title.clear()
             self._context.clear()
             self._body.clear()
             self.setVisible(False)
             return
         self.setVisible(True)
+        self._key = row.key
         self._title.setText(_title_html(row, masking))
         self._context.setText(_context_html(row, raw_plain, masking))
         self._context.setVisible(bool(self._context.text()))
@@ -519,6 +617,34 @@ class _Card(QFrame):
         for button, tooltip in self._buttons_of(row):
             button.setVisible(True)
             button.setToolTip(reason or tooltip)
+        if row.item is not None and row.item.kind in _REPLACEABLE:
+            self._show_replace(masking.mask(_words_in_text(row.item, corrected_plain)), reason)
+
+    def _show_replace(self, words: str, reason: str) -> None:
+        """Offer the field that writes *words* instead, with the words the item has now."""
+        self.replace.setText(words)
+        self.replace.setToolTip(reason or txt.REPLACE_TOOLTIP)
+        self.replace.setEnabled(self._editable)
+        self.replace_ok.setToolTip(reason or txt.REPLACE_TOOLTIP)
+        self.replace.setVisible(True)
+        self.replace_ok.setVisible(True)
+        self._refresh_replace_ok()
+
+    def _hide_replace(self) -> None:
+        """Take the replace field away, and forget what was typed into it."""
+        self.replace.setVisible(False)
+        self.replace_ok.setVisible(False)
+        self.replace.clear()
+
+    def _refresh_replace_ok(self) -> None:
+        """Let OK work only while the field says something and the card may be acted on."""
+        self.replace_ok.setEnabled(self._editable and bool(self.replace.text().strip()))
+
+    def _on_replace(self) -> None:
+        """Ask for the words of the card's item to be replaced by what the field says."""
+        words = self.replace.text().strip()
+        if self._editable and self._key and words:
+            self.replace_requested.emit(self._key, words)
 
     def _buttons_of(self, row: _Row) -> tuple[tuple[QPushButton, str], ...]:
         """Return the buttons *row* offers, each with its tooltip."""
@@ -530,13 +656,8 @@ class _Card(QFrame):
         if kind is ItemKind.UNCLEAR:
             return ((self.use_suggestion, txt.USE_SUGGESTION_TOOLTIP),)
         if kind is ItemKind.LEFT_OUT:
-            return ((self.change, txt.CHANGE_TOOLTIP),)
-        if kind is ItemKind.OWN:
-            return ((self.take_out, txt.TAKE_OUT_TOOLTIP),)
-        return (
-            (self.take_out, txt.TAKE_OUT_TOOLTIP),
-            (self.change, txt.CHANGE_TOOLTIP),
-        )
+            return ()  # only the replace field: there is no correction to take out
+        return ((self.take_out, txt.TAKE_OUT_TOOLTIP),)
 
 
 class SidePanel(QWidget):
@@ -558,8 +679,10 @@ class SidePanel(QWidget):
     """The teacher asked for the suggested wording of this unclear passage."""
     take_out_all_requested = Signal()
     """The teacher asked for the student's words back for every minor correction."""
-    change_requested = Signal(str)
-    """The teacher asked to go to the words of this item in the final text."""
+    replace_requested = Signal(str, str)
+    """The teacher asked for the words of this item to be replaced by the words they typed."""
+    card_split_changed = Signal(object)
+    """The teacher dragged the card's height: the heights of the card and the list."""
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -574,6 +697,7 @@ class SidePanel(QWidget):
         self._reason = ""
         self._note = ""
         self._filter = FILTER_ALL
+        self._card_split: tuple[int, ...] = ()
         self._filter_buttons: dict[str, QPushButton] = {}
         self._filter_group = QButtonGroup(self)
         self._filter_group.setExclusive(True)
@@ -595,7 +719,7 @@ class SidePanel(QWidget):
         self._card.use_suggestion.clicked.connect(
             lambda: self._request(self.use_suggestion_requested)
         )
-        self._card.change.clicked.connect(lambda: self._request(self.change_requested))
+        self._card.replace_requested.connect(self.replace_requested)
         self._card.take_out_all.clicked.connect(self.take_out_all_requested)
         self._next_button.clicked.connect(self.choose_next)
 
@@ -606,7 +730,7 @@ class SidePanel(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(4)
 
-        # Above the card, whose height is fixed: Next stays where the teacher's pointer is.
+        # Above the card, whose height only the teacher changes: Next stays where the pointer is.
         self._counts = QLabel()
         self._counts.setWordWrap(True)
         self._counts.setStyleSheet("color: #888;")
@@ -621,17 +745,29 @@ class SidePanel(QWidget):
         layout.addLayout(top)
 
         self._card = _Card()
-        layout.addWidget(self._card)
-
-        layout.addWidget(self._build_filter_row())
-
         self._list = QListWidget()
         self._delegate = _ItemDelegate(self._list)
         self._list.setItemDelegate(self._delegate)
         self._list.setSelectionMode(QListWidget.SelectionMode.SingleSelection)
         self._list.setUniformItemSizes(True)
+        self._list.setMinimumHeight(_ROW_HEIGHT * _LIST_MIN_ROWS)
         self._list.currentRowChanged.connect(self._on_row_changed)
-        layout.addWidget(self._list, 1)
+
+        below = QWidget()
+        below_layout = QVBoxLayout(below)
+        below_layout.setContentsMargins(0, 0, 0, 0)
+        below_layout.setSpacing(4)
+        below_layout.addWidget(self._build_filter_row())
+        below_layout.addWidget(self._list, 1)
+
+        # The card's height is the teacher's: a splitter, so a long explanation is read whole.
+        self._split = QSplitter(Qt.Orientation.Vertical)
+        self._split.addWidget(self._card)
+        self._split.addWidget(below)
+        self._split.setStretchFactor(0, 0)
+        self._split.setStretchFactor(1, 1)
+        self._split.splitterMoved.connect(self._on_card_split_moved)
+        layout.addWidget(self._split, 1)
         return page
 
     def _build_filter_row(self) -> QWidget:
@@ -667,6 +803,30 @@ class SidePanel(QWidget):
         self._content_view = QTextBrowser()
         self._content_view.setOpenExternalLinks(False)
         return self._content_view
+
+    # ── The card's height ─────────────────────────────────────────────────
+
+    def set_card_split(self, sizes: Sequence[int]) -> None:
+        """Give the card and the list the heights the teacher dragged them to last time."""
+        self._card_split = tuple(sizes)
+        self._apply_card_split()
+
+    @property
+    def card_split(self) -> tuple[int, ...]:
+        """The heights of the card and the list, as the splitter has them now."""
+        return tuple(self._split.sizes())
+
+    def _on_card_split_moved(self, _position: int, _index: int) -> None:
+        """Remember the heights the teacher dragged the card and the list to."""
+        sizes = self.card_split
+        if all(size > 0 for size in sizes):
+            self._card_split = sizes
+            self.card_split_changed.emit(sizes)
+
+    def _apply_card_split(self) -> None:
+        """Give the card the height the teacher chose; without one it keeps its five lines."""
+        if self._card_split and not self._card.isHidden():
+            self._split.setSizes(list(self._card_split))
 
     # ── What the page pushes ──────────────────────────────────────────────
 
@@ -753,29 +913,29 @@ class SidePanel(QWidget):
     def set_note(self, text: str) -> None:
         """Say something in place of the card, e.g. that the marks could not be placed."""
         self._note = text
-        self._card.set_row(
-            self._current_row(),
-            self._masking,
-            editable=self._editable,
-            reason=self._reason,
-            raw_plain=self._raw_plain(),
-        )
-        if text:
-            self._card.set_note(text)
+        self._show_row(self._current_row())
 
     def set_editable(self, editable: bool, *, reason: str = "") -> None:
         """Allow or refuse the card's actions; *reason* is the tooltip that says why not."""
         self._editable = editable
         self._reason = reason
+        self._show_row(self._current_row())
+
+    def _show_row(self, row: _Row | None) -> None:
+        """Show *row* on the card, and give the card its height back when it comes back."""
+        was_hidden = self._card.isHidden()
         self._card.set_row(
-            self._current_row(),
+            row,
             self._masking,
-            editable=editable,
-            reason=reason,
+            editable=self._editable,
+            reason=self._reason,
             raw_plain=self._raw_plain(),
+            corrected_plain=self._corrected_plain(),
         )
         if self._note:
             self._card.set_note(self._note)
+        if was_hidden and not self._card.isHidden():
+            self._apply_card_split()
 
     def set_looked_at(self, looked_at: frozenset[str], progress: tuple[int, int]) -> None:
         """Show which items were looked at, without rebuilding the list or moving the choice.
@@ -802,7 +962,7 @@ class SidePanel(QWidget):
         self._counts.clear()
         self._set_content("")
         self._refresh_filters()
-        self._card.set_row(None, self._masking, editable=False)
+        self._show_row(None)
         self._refresh_next()
 
     @property
@@ -833,6 +993,10 @@ class SidePanel(QWidget):
         """Return the plain transcription the card's context line is taken from."""
         return self._doc.raw_plain if self._doc is not None else ""
 
+    def _corrected_plain(self) -> str:
+        """Return the plain corrected text the card's replace field is filled from."""
+        return self._doc.corrected_plain if self._doc is not None else ""
+
     def _current_row(self) -> _Row | None:
         """Return the row the list has selected, or ``None``."""
         index = self._list.currentRow()
@@ -843,15 +1007,7 @@ class SidePanel(QWidget):
         row = self._rows[index] if 0 <= index < len(self._rows) else None
         if row is not None and row.is_group:
             self._set_expanded(True)
-        self._card.set_row(
-            row,
-            self._masking,
-            editable=self._editable,
-            reason=self._reason,
-            raw_plain=self._raw_plain(),
-        )
-        if self._note:
-            self._card.set_note(self._note)
+        self._show_row(row)
         self._refresh_next()
         if row is None:
             return
@@ -893,7 +1049,7 @@ class SidePanel(QWidget):
             return
         index = self._nearest_item_row(max(row, 0))
         if index is None:
-            self._card.set_row(None, self._masking, editable=False)
+            self._show_row(None)
             return
         self._set_row_silently(index)
 
@@ -980,7 +1136,7 @@ class SidePanel(QWidget):
             None,
         )
         if first is None:
-            self._card.set_row(None, self._masking, editable=False)
+            self._show_row(None)
             return
         self._set_row_silently(first)
 

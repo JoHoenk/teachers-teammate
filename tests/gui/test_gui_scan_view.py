@@ -41,6 +41,12 @@ def original_files(tmp_path: Path) -> list[Path]:
     ]
 
 
+def _drawn(item) -> tuple[float, float]:
+    """The width and height a page item is drawn at: its own pixels times the item's scale."""
+    pix = item.pixmap()
+    return pix.width() * item.scale(), pix.height() * item.scale()
+
+
 def _messages(view: ScanView) -> list[str]:
     """The texts the scan writes where a page is missing."""
     return [
@@ -77,7 +83,7 @@ def test_scan_view_stacks_every_page_in_one_scene(qtbot, page_files: list[Path])
     tops = [item.pos().y() for item in items]
     assert tops == sorted(tops)
     width = view.viewport().width() - 16
-    assert all(item.pixmap().width() == width for item in items)
+    assert all(_drawn(item)[0] == pytest.approx(width) for item in items)
     assert view.page_count == 3
 
 
@@ -131,11 +137,12 @@ def test_scan_view_opens_with_a_whole_page_in_view(qtbot, page_files: list[Path]
     available_height = view.viewport().height() - 16
     first = view._items[0]
     assert first is not None
-    assert first.pixmap().height() <= available_height
-    assert first.pixmap().width() < view.viewport().width() - 16
+    drawn_width, drawn_height = _drawn(first)
+    assert drawn_height <= available_height
+    assert drawn_width < view.viewport().width() - 16
     # Centred: the same space on both sides.
     left = first.pos().x()
-    right = view.sceneRect().width() - left - first.pixmap().width()
+    right = view.sceneRect().width() - left - drawn_width
     assert left == pytest.approx(right, abs=1)
 
 
@@ -152,7 +159,7 @@ def test_scan_view_fits_a_wide_page_to_the_width(qtbot, tmp_path: Path) -> None:
 
     item = view._items[0]
     assert item is not None
-    assert item.pixmap().width() == view.viewport().width() - 16
+    assert _drawn(item)[0] == pytest.approx(view.viewport().width() - 16)
 
 
 @pytest.mark.gui
@@ -167,15 +174,15 @@ def test_a_double_click_switches_between_fit_page_and_fit_width(
     """
     view = _view(qtbot)
     view.set_pages(page_files)
-    narrow = view._items[0].pixmap().width()
+    narrow = _drawn(view._items[0])[0]
 
     QTest.mouseDClick(view.viewport(), Qt.MouseButton.LeftButton)
     assert not view.fit_page
-    assert view._items[0].pixmap().width() == view.viewport().width() - 16
+    assert _drawn(view._items[0])[0] == pytest.approx(view.viewport().width() - 16)
 
     QTest.mouseDClick(view.viewport(), Qt.MouseButton.LeftButton)
     assert view.fit_page
-    assert view._items[0].pixmap().width() == narrow
+    assert _drawn(view._items[0])[0] == pytest.approx(narrow)
 
     view.zoom_in()
     QTest.mouseDClick(view.viewport(), Qt.MouseButton.LeftButton)
@@ -197,7 +204,7 @@ def test_the_fit_mode_stays_for_the_next_document(qtbot, page_files: list[Path])
     view.set_pages(page_files[:2])
 
     assert not view.fit_page
-    assert view._items[0].pixmap().width() == view.viewport().width() - 16
+    assert _drawn(view._items[0])[0] == pytest.approx(view.viewport().width() - 16)
 
 
 # ── Original ──────────────────────────────────────────────────────────────
@@ -218,11 +225,11 @@ def test_scan_view_swaps_every_page_that_has_an_original(
     view.show_originals(True)
 
     assert view.showing_originals
-    assert [pix.width() for pix in view._pixmaps] == [200, 400, 200]
+    assert [width for width, _ in view._sizes] == [200, 400, 200]
 
     view.show_originals(False)
 
-    assert [pix.width() for pix in view._pixmaps] == [400, 400, 400]
+    assert [width for width, _ in view._sizes] == [400, 400, 400]
 
 
 @pytest.mark.gui
@@ -260,7 +267,7 @@ def test_scan_view_fits_the_pages_to_a_new_width(qtbot, page_files: list[Path]) 
     view.resize(700, 300)
 
     width = view.viewport().width() - 16
-    assert all(item is not None and item.pixmap().width() == width for item in view._items)
+    assert all(item is not None and _drawn(item)[0] == pytest.approx(width) for item in view._items)
 
 
 @pytest.mark.gui
@@ -350,7 +357,7 @@ def test_scan_pane_original_stays_on_for_the_next_document(
     pane.set_pages(page_files, original_files, ("light",))
 
     assert pane.showing_originals
-    assert [pix.width() for pix in pane.view._pixmaps] == [200, 200, 200]
+    assert [width for width, _ in pane.view._sizes] == [200, 200, 200]
 
 
 @pytest.mark.gui
@@ -461,7 +468,7 @@ def test_zoom_stays_between_its_limits(qtbot, page_files: list[Path]) -> None:
     """
     Given  a fitted scan
     When   it is zoomed in and out many times
-    Then   the scale stops at half and at four times the fitted page, and a zoomed scan is not
+    Then   the scale stops at half and at twice the page's own pixels, and a zoomed scan is not
            fitted any more
     """
     view = _view(qtbot)
@@ -469,12 +476,50 @@ def test_zoom_stays_between_its_limits(qtbot, page_files: list[Path]) -> None:
 
     for _ in range(20):
         view.zoom_in()
-    assert view.transform().m11() == pytest.approx(4.0)
+    assert view.transform().m11() == pytest.approx(view._max_zoom())
     assert view.zoomed
 
     for _ in range(40):
         view.zoom_out()
     assert view.transform().m11() == pytest.approx(0.5)
+
+
+@pytest.mark.gui
+def test_the_most_zoom_shows_the_scanned_pixels(qtbot, page_files: list[Path]) -> None:
+    """
+    Given  a fitted scan of 400 x 900 pages in a pane of 400 x 300
+    When   it is zoomed in as far as it goes
+    Then   the page is drawn from its own image, at twice its own pixels, so the teacher reads
+           what was scanned and not an enlarged copy of it
+    """
+    view = _view(qtbot)
+    view.set_pages(page_files)
+
+    for _ in range(20):
+        view.zoom_in()
+
+    item = view._items[0]
+    assert item is not None
+    assert item.pixmap().width() == 400
+    assert item.scale() * view.transform().m11() == pytest.approx(2.0)
+
+
+@pytest.mark.gui
+def test_a_long_document_keeps_only_the_pages_in_view_at_full_size(qtbot, tmp_path: Path) -> None:
+    """
+    Given  a document of twenty pages
+    When   it is shown
+    Then   only the pages in view (and their neighbours) are held at their own size, so a long
+           document does not keep twenty full images in memory
+    """
+    view = _view(qtbot)
+    pages = [_page(tmp_path / f"page{index}.png", 400, 900, "#ffffff") for index in range(20)]
+
+    view.set_pages(pages)
+
+    assert view.page_count == 20
+    assert 0 < len(view._full) <= 4
+    assert view._full_pages == set(view._full)
 
 
 @pytest.mark.gui

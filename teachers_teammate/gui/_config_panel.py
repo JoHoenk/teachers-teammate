@@ -1122,6 +1122,19 @@ class ConfigPanel(QScrollArea):
 
     def to_config(self) -> Config:
         """Build and return a Config from current field values."""
+        return self._build(strict=True)
+
+    def lookup_config(self) -> Config:
+        """Return a Config of the live panel values for requirement lookups.
+
+        Unlike :meth:`to_config` it needs no valid input/output folder, so it also works at
+        start-up and before a folder was chosen.  Every other field is the same, so a lookup
+        and a run never disagree about the state folder or about a stage's settings.
+        """
+        return self._build(strict=False)
+
+    def _build(self, *, strict: bool) -> Config:
+        """Build the Config of the live panel values; *strict* validates the folders."""
         input_text = self.get_input_dir()
         output_text = str(self._settings_dict.get("output_dir", "")).strip()
         docx_enabled = bool(self._settings_dict.get("docx_enabled", DEFAULTS["docx_enabled"]))
@@ -1129,13 +1142,14 @@ class ConfigPanel(QScrollArea):
         text_anonymized_enabled = bool(
             self._settings_dict.get("text_anonymized_enabled", DEFAULTS["text_anonymized_enabled"])
         )
-        if not input_text:
-            raise ValueError("Input folder is required.")
-        if not output_text and (docx_enabled or text_enabled or text_anonymized_enabled):
-            raise ValueError("Output folder is required.")
-        input_dir = Path(input_text)
-        if not input_dir.is_dir():
-            raise ValueError(f"Input folder does not exist: {input_dir}")
+        input_dir = Path(input_text) if input_text else Path(".")
+        if strict:
+            if not input_text:
+                raise ValueError("Input folder is required.")
+            if not output_text and (docx_enabled or text_enabled or text_anonymized_enabled):
+                raise ValueError("Output folder is required.")
+            if not input_dir.is_dir():
+                raise ValueError(f"Input folder does not exist: {input_dir}")
         output_dir = Path(output_text) if output_text else input_dir
 
         return Config(
@@ -1162,7 +1176,7 @@ class ConfigPanel(QScrollArea):
             anonymizer_secondary_model=self._settings_dict.get(
                 "anonymizer_secondary_model", DEFAULTS["anonymizer_secondary_model"]
             )
-            or None,
+            or SECONDARY_MODEL_NONE,
             anonymizer_patterns=self._settings_dict.get("anonymizer_patterns"),
             correction_provider=self._settings_dict.get(
                 "correction_provider", DEFAULTS["correction_provider"]
@@ -1384,67 +1398,6 @@ class ConfigPanel(QScrollArea):
         task.submit(
             lambda: service.check_stage_requirements(config, stage),
             lambda result, error: self._on_stage_guard_result(config, stage, result, error),
-        )
-
-    def lookup_config(self) -> Config:
-        """Return a Config of the live panel values for requirement lookups.
-
-        Unlike :meth:`to_config` it needs no valid input/output folder, so it also works
-        at start-up and before a folder was chosen.  Requires :meth:`set_service`.
-        """
-        from ..application.service import ProcessingApplicationService  # noqa: PLC0415
-
-        # _service is injected as object; narrowed to the concrete service type
-        service: ProcessingApplicationService = self._service  # ty: ignore[invalid-assignment]
-        config = service.build_lookup_config(
-            Path(self.get_input_dir() or "."),
-            Path(self._settings_dict.get("output_dir") or "."),
-        )
-        settings = self._settings_dict
-        return dataclasses.replace(
-            config,
-            # Always recursive, like the config a run uses (see :meth:`to_config`): the check
-            # whether text files would land in the input folder must give the same answer.
-            recursive=True,
-            ocr=self._ocr_config_from_settings(),
-            recognition_enabled=self._recognition_enabled.isChecked(),
-            correction_enabled=self._correction_enabled.isChecked(),
-            evaluation_enabled=self.review_will_run(),
-            anonymization_enabled=self._anonymization_enabled.isChecked(),
-            correction_provider=str(
-                settings.get("correction_provider", config.correction_provider)
-            ),
-            correction_model=str(settings.get("correction_model", config.correction_model or "")),
-            evaluate_provider=str(settings.get("evaluate_provider", config.evaluate_provider)),
-            evaluate_model=str(settings.get("evaluate_model", config.evaluate_model or "")),
-            ollama_url=str(settings.get("ollama_url", config.ollama_url)),
-            ocr_timeout=int(settings.get("ocr_timeout", config.ocr_timeout)),
-            hardware_profile=str(settings.get("hardware_profile", config.hardware_profile)),
-            proofreading_context=str(
-                settings.get("proofreading_context", config.proofreading_context)
-            ),
-            # The Results step: "Text file, anonymized" alone needs name detection.
-            docx_enabled=bool(settings.get("docx_enabled", config.docx_enabled)),
-            text_enabled=bool(settings.get("text_enabled", config.text_enabled)),
-            text_anonymized_enabled=bool(
-                settings.get("text_anonymized_enabled", config.text_anonymized_enabled)
-            ),
-            language=self._language.currentText().strip(),
-            # What a run would send: "What is sent for this file" and the status box read the
-            # anonymizer rules and the instructions from here, so they must be the live ones.
-            anonymizer_primary_model=settings.get("anonymizer_primary_model") or None,
-            anonymizer_secondary_model=settings.get(
-                "anonymizer_secondary_model", DEFAULTS["anonymizer_secondary_model"]
-            )
-            or SECONDARY_MODEL_NONE,
-            anonymizer_patterns=settings.get("anonymizer_patterns"),
-            correction_notes=self._correction_notes_text,
-            correction_level=self._correction_level.currentText(),
-            explanation_language=str(
-                settings.get("explanation_language", DEFAULTS["explanation_language"])
-            ),
-            correction_output=str(settings.get("correction_output", DEFAULTS["correction_output"])),
-            evaluate_prompt=self._evaluation_prompt_text,
         )
 
     @staticmethod

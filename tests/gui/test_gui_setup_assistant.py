@@ -6,7 +6,7 @@ from __future__ import annotations
 import os
 from typing import Any
 
-from PySide6.QtWidgets import QDialog, QWizard
+from PySide6.QtWidgets import QDialog, QWidget, QWizard
 import pytest
 
 from teachers_teammate.application.setup_plan import (
@@ -59,6 +59,23 @@ def _assistant(qtbot, context: SetupContext) -> SetupAssistant:
     assistant = SetupAssistant(context)
     qtbot.addWidget(assistant)
     return assistant
+
+
+@pytest.mark.gui
+def test_the_round_of_installs_belongs_to_the_window_not_the_assistant(
+    qtbot, keyring, no_keys
+) -> None:
+    """
+    Given  an assistant opened from a window
+    When   it is built
+    Then   its round of installs belongs to that window, so a download that finishes after the
+           assistant closed still reaches it
+    """
+    window = QWidget()
+    qtbot.addWidget(window)  # the window owns the assistant, so it closes both
+    assistant = SetupAssistant(_context(SetupAppService()), window)
+
+    assert assistant.install_round().parent() is window
 
 
 def _plan(assistant: SetupAssistant, service: SetupAppService) -> SetupPlan:

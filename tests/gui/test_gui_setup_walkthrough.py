@@ -895,7 +895,7 @@ def test_s7_an_online_service_installs_its_package_and_keeps_the_key(
     monkeypatch.setattr(
         walk.service,
         "anonymizer_available",
-        lambda _language: True,  # the name detection is there, so no spaCy download is planned
+        lambda _language, _config=None: True,  # name detection is there: no spaCy download
     )
     monkeypatch.setattr(
         service_module,

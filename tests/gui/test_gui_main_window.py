@@ -13,6 +13,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QShortcut
 from PySide6.QtWidgets import QApplication, QWidget
 
+from teachers_teammate.application.queue import QueueRow, StageState
 from teachers_teammate.application.speed_estimates import SpeedSummary
 from teachers_teammate.application.service import (
     IssueKind,
@@ -39,7 +40,7 @@ from teachers_teammate.gui._export_menu import ExportKind
 from teachers_teammate.gui._main_window import MainWindow
 from teachers_teammate.gui._results_table import ResultsTable
 from teachers_teammate.gui._types import FileDoneEvent
-from teachers_teammate.gui.check import CopyKind
+from teachers_teammate.gui.check import CheckLayout, CopyKind
 from teachers_teammate.gui.settings import SettingsPage, SettingsResult
 from teachers_teammate.gui.settings._page import (
     FOCUS_LOCAL_MODELS,
@@ -50,6 +51,7 @@ from teachers_teammate.gui.settings._page import (
 from teachers_teammate.gui.settings._window import SUB_PAGES
 from teachers_teammate.domain.run_summary import RunSummary
 from teachers_teammate.infrastructure.ollama_install import OLLAMA_DOWNLOAD_URL
+from teachers_teammate.infrastructure.ollama_utils import WaitDetail, WaitKind
 from teachers_teammate.infrastructure.reporting import KeepAwakeState
 from teachers_teammate.infrastructure.state_repository import (
     StateRepository,
@@ -63,6 +65,30 @@ from teachers_teammate.texts._types import Answer, Notice, Question, StandardBut
 from tests.conftest import make_config
 
 from ._gui_harness import install_scripted_settings_window
+
+
+def _queue_row(
+    source_id: str,
+    name: str = "",
+    *,
+    ocr: StageState = StageState.NONE,
+    correction: StageState = StageState.NONE,
+    evaluation: StageState = StageState.NONE,
+    has_text: bool = False,
+    has_scan: bool = False,
+    **extra: Any,
+) -> QueueRow:
+    """Return a queue row for *source_id*, named after the file unless told otherwise."""
+    return QueueRow(
+        source_id=source_id,
+        name=name or Path(source_id).name,
+        ocr=ocr,
+        correction=correction,
+        evaluation=evaluation,
+        has_text=has_text,
+        has_scan=has_scan,
+        **extra,
+    )
 
 
 class _DummySignal:
@@ -86,6 +112,8 @@ class _DummyWorker:
         self.file_started = _DummySignal()
         self.stage_started = _DummySignal()
         self.ocr_done = _DummySignal()
+        self.stage_detail = _DummySignal()
+        self.first_token = _DummySignal()
         self.file_done = _DummySignal()
         self.keep_awake_changed = _DummySignal()
         self.run_finished = _DummySignal()
@@ -257,7 +285,7 @@ def test_main_window_run_starts_worker_and_updates_ui(
     monkeypatch.setattr(main_window._config_panel, "to_config", lambda: cfg)
     monkeypatch.setattr(main_window, "_get_file_names", lambda _cfg: ["a.png", "b.txt"])
 
-    main_window._results_table.set_queue(["a.png", "b.txt"])
+    main_window._results_table.set_queue([_queue_row("a.png"), _queue_row("b.txt")])
     main_window._results_table.selectRow(0)
 
     main_window._on_run()
@@ -284,7 +312,7 @@ def test_main_window_passes_its_service_to_the_worker(
     monkeypatch.setattr(main_window._config_panel, "to_config", lambda: cfg)
     monkeypatch.setattr(main_window, "_get_file_names", lambda _cfg: ["a.png"])
 
-    main_window._results_table.set_queue(["a.png"])
+    main_window._results_table.set_queue([_queue_row("a.png")])
     main_window._results_table.selectRow(0)
 
     main_window._on_run()
@@ -306,7 +334,7 @@ def test_main_window_run_shows_info_when_no_selection(
     monkeypatch.setattr(main_window._config_panel, "to_config", lambda: cfg)
     monkeypatch.setattr(main_window, "_get_file_names", lambda _cfg: ["a.png", "b.txt"])
     shown = _record_notices(monkeypatch)
-    main_window._results_table.set_queue(["a.png", "b.txt"])
+    main_window._results_table.set_queue([_queue_row("a.png"), _queue_row("b.txt")])
 
     main_window._on_run()
     qtbot.waitUntil(lambda: bool(shown), timeout=3000)
@@ -397,7 +425,7 @@ def test_a_stopped_file_opens_no_error_dialog_and_shows_where_it_stopped(
     shown = _record_notices(monkeypatch)
     monkeypatch.setattr(main_window._app_service, "load_view", lambda *_a, **_k: None)
     source = "/tmp/scan.png"
-    main_window._results_table.set_queue(["scan.png"], source_ids=[source])
+    main_window._results_table.set_queue([_queue_row(source, "scan.png")])
     main_window._results_table.mark_processing(source)
 
     main_window._on_file_done(
@@ -426,11 +454,15 @@ def test_a_stopped_file_keeps_the_tick_of_the_step_that_finished(main_window, mo
     Then   the recognition cell keeps its tick, the proofreading cell says "stopped", and the
            review cell stays pending
     """
-    monkeypatch.setattr(main_window._app_service, "load_view", lambda *_a, **_k: None)
     source = "/tmp/essay.png"
-    main_window._results_table.set_queue(["essay.png"], source_ids=[source])
+    monkeypatch.setattr(
+        main_window._app_service,
+        "queue_row",
+        lambda *_a, **_k: _queue_row(source, "essay.png", ocr=StageState.DONE),
+    )
+    main_window._results_table.set_queue([_queue_row(source, "essay.png")])
     main_window._results_table.mark_processing(source)
-    main_window._results_table.mark_correcting(source)
+    main_window._results_table.mark_stage_running(source, "correction")
 
     main_window._on_file_done(
         FileDoneEvent(
@@ -731,7 +763,7 @@ def test_main_window_file_done_records_txt_artifacts(main_window) -> None:
     When   _on_file_done is called with raw text output paths
     Then   the result row is recorded and selected paths expose the txt artifact
     """
-    main_window._results_table.set_queue(["note.txt"], source_ids=["/tmp/note.txt"])
+    main_window._results_table.set_queue([_queue_row("/tmp/note.txt", "note.txt")])
 
     main_window._on_file_done(
         FileDoneEvent(
@@ -749,10 +781,8 @@ def test_main_window_file_done_records_txt_artifacts(main_window) -> None:
     )
 
     main_window._results_table.selectRow(0)
-    _name, _preview, raw_txt, corr_txt, _eval = main_window._results_table.selected_paths()
     assert main_window._results_table.rowCount() == 1
-    assert raw_txt.endswith("note_ocr.txt")
-    assert corr_txt == ""
+    assert main_window._results_table.queued_file_names() == ["note.txt"]
 
 
 @pytest.mark.gui
@@ -763,7 +793,7 @@ def test_main_window_file_done_reloads_the_open_document(main_window, monkeypatc
     Then   it is loaded again, so the tab shows the new result
     """
     seen: list[str] = []
-    main_window._results_table.set_queue(["page.png"], source_ids=["/tmp/page.png"])
+    main_window._results_table.set_queue([_queue_row("/tmp/page.png", "page.png")])
     main_window._results_table.selectRow(0)
     main_window._current_preview_source_id = "/tmp/page.png"
 
@@ -809,8 +839,8 @@ def test_main_window_file_done_shows_how_the_finished_results_were_sent(
     source = tmp_path / "page.png"
     source.write_bytes(b"x")
     source_id = str(source)
-    main_window._results_table.set_queue(["page.png"], source_ids=[source_id])
-    main_window._results_table.mark_correcting(source_id)
+    main_window._results_table.set_queue([_queue_row(source_id, "page.png")])
+    main_window._results_table.mark_stage_running(source_id, "correction")
     view = DocumentStateView(
         source_id=source_id,
         name="page.png",
@@ -831,7 +861,18 @@ def test_main_window_file_done_shows_how_the_finished_results_were_sent(
     )
     cfg = make_config(tmp_path)
     monkeypatch.setattr(main_window._config_panel, "to_config", lambda: cfg)
-    monkeypatch.setattr(main_window._app_service, "load_view", lambda *_a, **_k: view)
+    monkeypatch.setattr(
+        main_window._app_service,
+        "queue_row",
+        lambda *_a, **_k: _queue_row(
+            source_id,
+            "page.png",
+            ocr=StageState.DONE,
+            correction=StageState.DONE,
+            has_text=True,
+            sent=view.sent,
+        ),
+    )
 
     main_window._on_file_done(
         FileDoneEvent(
@@ -862,7 +903,7 @@ def test_main_window_file_done_leaves_another_open_document_alone(main_window, m
     """
     seen: list[str] = []
     main_window._results_table.set_queue(
-        ["a.png", "b.png"], source_ids=["/tmp/a.png", "/tmp/b.png"]
+        [_queue_row("/tmp/a.png", "a.png"), _queue_row("/tmp/b.png", "b.png")]
     )
     main_window._current_preview_source_id = "/tmp/a.png"
     monkeypatch.setattr(main_window, "_load_check", seen.append)
@@ -895,7 +936,7 @@ def test_main_window_load_check_warns_about_a_document_without_state(
     When   _load_check is called for it
     Then   the teacher is told, and the tab stays where it is
     """
-    main_window._results_table.set_queue(["page.png"], source_ids=["/tmp/page.png"])
+    main_window._results_table.set_queue([_queue_row("/tmp/page.png", "page.png")])
     shown = _record_notices(monkeypatch)
 
     main_window._load_check("/tmp/page.png")
@@ -1032,10 +1073,10 @@ def test_main_window_ocr_edit_is_stored_as_the_teachers_work(main_window, stored
     assert work.transcription is not None
     assert work.transcription.text == "raw edited"
 
-    _name, _preview, raw_txt, corr_txt, eval_txt = main_window._results_table.selected_paths()
-    assert raw_txt == "raw edited"
-    assert corr_txt == ""
-    assert eval_txt == ""
+    row = main_window._results_table.row_for(source_id)
+    assert row is not None
+    assert row.has_text
+    assert row.correction is not StageState.DONE
 
 
 @pytest.mark.gui
@@ -1065,9 +1106,9 @@ def test_main_window_correction_edit_is_stored_as_the_teachers_work(
     assert work.corrections is not None
     assert work.corrections.text == "corr edited"
 
-    _name, _preview, raw_txt, corr_txt, eval_txt = main_window._results_table.selected_paths()
-    assert raw_txt == "raw text"
-    assert corr_txt == "corr edited"
+    row = main_window._results_table.row_for(source_id)
+    assert row is not None
+    assert row.correction is not StageState.NONE
 
 
 @pytest.mark.gui
@@ -1197,7 +1238,9 @@ def test_main_window_on_file_started_updates_progress(main_window) -> None:
     """
     main_window._steps_per_file = 1
     main_window._progress.setRange(0, 3)
-    main_window._results_table.set_queue(["a.png", "b.png", "c.png"])
+    main_window._results_table.set_queue(
+        [_queue_row("a.png"), _queue_row("b.png"), _queue_row("c.png")]
+    )
 
     main_window._on_file_started("b.png", "b.png", 2, 3)
 
@@ -1222,7 +1265,7 @@ def test_the_bar_and_the_time_left_follow_the_clock(main_window, monkeypatch) ->
     main_window._pace = RunPace(TimeRange(100.0, 100.0))
     main_window._pace.set_files(1)
     main_window._pace.set_pages(1)
-    main_window._results_table.set_queue(["a.png"])
+    main_window._results_table.set_queue([_queue_row("a.png")])
     main_window._progress.setRange(0, 2)
 
     clock["now"] = 990.0
@@ -1248,6 +1291,143 @@ def test_the_bar_and_the_time_left_follow_the_clock(main_window, monkeypatch) ->
 
 
 @pytest.mark.gui
+def test_the_check_strip_counts_down_with_the_bar(main_window, monkeypatch, stored) -> None:
+    """
+    Given  a document open in the Check tab, a run over it estimated at 100 seconds, and the
+           proofreading started at second 1000
+    When   the clock moves on without any event of the run
+    Then   the strip's figure counts down with the bar's, because both read one snapshot
+    """
+    from teachers_teammate.domain.performance_estimate import TimeRange  # noqa: PLC0415
+    from teachers_teammate.gui._run_status import RunPace  # noqa: PLC0415
+
+    [a] = stored("a.png")
+    main_window._open_check(a)
+    monkeypatch.setattr(main_window, "_start_pace", lambda *_a, **_kw: None)
+    monkeypatch.setattr(main_window, "_save_settings", lambda **_kw: None)
+    clock = {"now": 1000.0}
+    monkeypatch.setattr(main_window_module.time, "monotonic", lambda: clock["now"])
+    monkeypatch.setattr(main_window, "_run_in_progress", lambda: True)
+    main_window._start_worker(make_config(Path("/tmp")), [a])
+    main_window._pace = RunPace(TimeRange(100.0, 100.0))
+    main_window._pace.set_files(1)
+    main_window._pace.set_pages(1)
+    main_window._on_file_started(a, "a.png", 1, 1)
+    main_window._on_stage_started(a, "a.png", "correction", 1, 1)
+    strip = main_window._check._run_strip
+
+    clock["now"] = 1050.0
+    main_window._refresh_progress()
+
+    assert "about 50 s left" in strip.text
+    assert "about 50 s left" in main_window._progress.format()
+
+    clock["now"] = 1070.0
+    main_window._refresh_progress()
+
+    assert "about 30 s left" in strip.text
+    assert "about 30 s left" in main_window._progress.format()
+
+
+@pytest.mark.gui
+def test_the_clock_waits_for_the_first_token_of_a_local_model(
+    main_window, monkeypatch, stored
+) -> None:
+    """
+    Given  a run whose proofreading waits for a local Ollama server, on a document open in Check
+    When   the proofreading starts, the server says it is busy with another model, and then the
+           first token arrives
+    Then   the bar and the strip say what the server is doing, and the run's clock starts only
+           at the first token, so neither figure moves during the wait
+    """
+    [a] = stored("a.png")
+    main_window._open_check(a)
+    monkeypatch.setattr(main_window, "_start_pace", lambda *_a, **_kw: None)
+    monkeypatch.setattr(main_window, "_save_settings", lambda **_kw: None)
+    clock = {"now": 1000.0}
+    monkeypatch.setattr(main_window_module.time, "monotonic", lambda: clock["now"])
+    monkeypatch.setattr(main_window, "_run_in_progress", lambda: True)
+    main_window._start_worker(make_config(Path("/tmp")), [a])
+    main_window._run_waits_for_ollama = True
+    main_window._on_file_started(a, "a.png", 1, 1)
+
+    clock["now"] = 1005.0
+    main_window._on_stage_started(a, "a.png", "correction", 1, 1)
+
+    assert main_window._pace._work_started_at is None
+
+    clock["now"] = 1010.0
+    main_window._on_stage_detail(a, WaitDetail(WaitKind.BUSY, "gemma4:e4b", "ministral-3:8b"))
+
+    assert "still working with ministral-3:8b" in main_window._progress.format()
+    assert "still working with ministral-3:8b" in main_window._check._run_strip.text
+    assert main_window._pace._work_started_at is None
+
+    clock["now"] = 1020.0
+    main_window._on_first_token(a)
+
+    assert main_window._pace._work_started_at == 1020.0
+    assert "correcting" in main_window._progress.format()
+    assert "still working" not in main_window._check._run_strip.text
+
+
+@pytest.mark.gui
+def test_a_wait_note_of_another_stage_goes_with_the_first_token(
+    main_window, monkeypatch, stored
+) -> None:
+    """
+    Given  a run that reads with a local model, which shows a loading note while it waits
+    When   the first token arrives
+    Then   the note is gone and the bar and the strip say what the reading says again, not what
+           the proofreading says
+    """
+    [a] = stored("a.png")
+    main_window._open_check(a)
+    monkeypatch.setattr(main_window, "_start_pace", lambda *_a, **_kw: None)
+    monkeypatch.setattr(main_window, "_save_settings", lambda **_kw: None)
+    monkeypatch.setattr(main_window, "_run_in_progress", lambda: True)
+    main_window._start_worker(make_config(Path("/tmp")), [a])
+    main_window._on_file_started(a, "a.png", 1, 1)
+    main_window._on_stage_started(a, "a.png", "ocr", 1, 1)
+
+    main_window._on_stage_detail(a, WaitDetail(WaitKind.LOADING, "qwen3-vl:8b"))
+
+    assert "Loading qwen3-vl:8b" in main_window._progress.format()
+
+    main_window._on_first_token(a)
+
+    assert "Loading" not in main_window._progress.format()
+    assert "OCR" in main_window._progress.format()
+    assert "Loading" not in main_window._check._run_strip.text
+    assert main_window._pace._work_started_at is not None
+
+
+@pytest.mark.gui
+def test_a_run_without_a_local_model_starts_its_clock_at_the_stage(
+    main_window, monkeypatch, stored
+) -> None:
+    """
+    Given  a run that does not proofread on a local server
+    When   a stage of its file starts
+    Then   the clock starts there, so a run that never waits for a model is not held back
+    """
+    [a] = stored("a.png")
+    main_window._open_check(a)
+    monkeypatch.setattr(main_window, "_start_pace", lambda *_a, **_kw: None)
+    monkeypatch.setattr(main_window, "_save_settings", lambda **_kw: None)
+    clock = {"now": 1000.0}
+    monkeypatch.setattr(main_window_module.time, "monotonic", lambda: clock["now"])
+    monkeypatch.setattr(main_window, "_run_in_progress", lambda: True)
+    main_window._start_worker(make_config(Path("/tmp")), [a])
+    main_window._on_file_started(a, "a.png", 1, 1)
+
+    clock["now"] = 1005.0
+    main_window._on_stage_started(a, "a.png", "correction", 1, 1)
+
+    assert main_window._pace._work_started_at == 1005.0
+
+
+@pytest.mark.gui
 def test_main_window_on_ocr_done_updates_progress_in_two_step(main_window) -> None:
     """
     Given  a MainWindow with steps_per_file=2
@@ -1256,7 +1436,7 @@ def test_main_window_on_ocr_done_updates_progress_in_two_step(main_window) -> No
     """
     main_window._steps_per_file = 2
     main_window._progress.setRange(0, 4)
-    main_window._results_table.set_queue(["a.png", "b.png"])
+    main_window._results_table.set_queue([_queue_row("a.png"), _queue_row("b.png")])
 
     main_window._on_ocr_done("a.png", "a.png", 1, 2)
 
@@ -1744,9 +1924,18 @@ def stored(main_window, monkeypatch, tmp_path: Path):
                 text_format=text_format,
             )
             source_ids.append(str(source))
-        main_window._results_table.set_queue(list(names), source_ids=source_ids)
-        for source_id in source_ids:
-            main_window._results_table.set_row_artifacts(source_id, "", raw, corrected, "")
+        main_window._results_table.set_queue(
+            [
+                _queue_row(
+                    source_id,
+                    name,
+                    ocr=StageState.DONE if raw else StageState.NONE,
+                    correction=StageState.DONE if corrected else StageState.NONE,
+                    has_text=bool(raw),
+                )
+                for source_id, name in zip(source_ids, names, strict=True)
+            ]
+        )
         main_window._update_check_tab()
         return source_ids
 
@@ -1760,12 +1949,14 @@ def test_check_tab_is_disabled_until_a_document_has_a_result(main_window) -> Non
     When   the tabs are read
     Then   Check cannot be opened, because there would be nothing to check
     """
-    main_window._results_table.set_queue(["a.png"], source_ids=["/tmp/a.png"])
+    main_window._results_table.set_queue([_queue_row("/tmp/a.png", "a.png")])
     main_window._update_check_tab()
 
     assert main_window._tabs.isTabEnabled(1) is False
 
-    main_window._results_table.set_row_artifacts("/tmp/a.png", "", "what was read", "", "")
+    main_window._results_table.update_row(
+        _queue_row("/tmp/a.png", "a.png", ocr=StageState.DONE, has_text=True)
+    )
     main_window._update_check_tab()
 
     assert main_window._tabs.isTabEnabled(1) is True
@@ -1831,9 +2022,11 @@ def test_check_target_falls_back_to_the_first_document_with_a_result(main_window
     Then   it takes the first one that has a result
     """
     main_window._results_table.set_queue(
-        ["a.png", "b.png"], source_ids=["/tmp/a.png", "/tmp/b.png"]
+        [
+            _queue_row("/tmp/a.png", "a.png"),
+            _queue_row("/tmp/b.png", "b.png", ocr=StageState.DONE, has_text=True),
+        ]
     )
-    main_window._results_table.set_row_artifacts("/tmp/b.png", "", "what was read", "", "")
     main_window._results_table.selectRow(0)
 
     assert main_window._check_target() == "/tmp/b.png"
@@ -1874,7 +2067,7 @@ def test_ctrl_2_does_nothing_while_no_document_can_be_opened(main_window) -> Non
     When   the Check tab is asked for
     Then   nothing happens: the tab stays disabled and Documents stays in front
     """
-    main_window._results_table.set_queue(["a.png"], source_ids=["/tmp/a.png"])
+    main_window._results_table.set_queue([_queue_row("/tmp/a.png", "a.png")])
     main_window._update_check_tab()
 
     main_window._show_check_tab()
@@ -2191,8 +2384,7 @@ def test_the_copy_menu_follows_the_privacy_add_on_for_the_open_document(
     kind = CopyKind.RAW_ANONYMIZED
     assert main_window._check._copy_actions[kind].isEnabled() is False
 
-    main_window._app_service.anonymizer_available = lambda _language: True
-    main_window._privacy_availability.clear()
+    main_window._app_service.anonymizer_available = lambda _language, _config=None: True
     main_window._refresh_privacy_availability()
 
     assert main_window._check._copy_actions[kind].isEnabled() is True
@@ -2444,8 +2636,9 @@ def test_the_header_follows_a_rename_of_the_row(main_window, stored) -> None:
     [a] = stored("a.png")
     main_window._open_check(a)
 
-    main_window._results_table.set_queue(["renamed.png"], source_ids=[a])
-    main_window._results_table.set_row_artifacts(a, "", "what was read", "", "")
+    main_window._results_table.set_queue(
+        [_queue_row(a, "renamed.png", ocr=StageState.DONE, has_text=True)]
+    )
     main_window._update_check_tab()
 
     assert main_window._tabs.tabText(1) == "Check \u2014 renamed.png"
@@ -3446,6 +3639,28 @@ def test_cancelling_the_assistant_from_the_tools_menu_saves_nothing(
 
 
 @pytest.mark.gui
+def test_an_idle_install_round_does_not_outlive_the_assistant(main_window, monkeypatch) -> None:
+    """
+    Given  an assistant that was opened and closed without installing anything
+    When   the assistant is gone
+    Then   its install round is deleted too, so opening the assistant again and again leaves
+           nothing behind on the window
+    """
+    from PySide6.QtCore import QCoreApplication, QEvent  # noqa: PLC0415
+    from PySide6.QtWidgets import QDialog  # noqa: PLC0415
+    from teachers_teammate.gui._install_round import InstallRound  # noqa: PLC0415
+    from teachers_teammate.gui.setup import SetupAssistant  # noqa: PLC0415
+
+    monkeypatch.setattr(SetupAssistant, "exec", lambda self: QDialog.DialogCode.Rejected)
+    before = len(main_window.findChildren(InstallRound))
+
+    main_window._open_setup_assistant()
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+
+    assert len(main_window.findChildren(InstallRound)) == before
+
+
+@pytest.mark.gui
 def test_closing_the_assistant_after_set_up_keeps_the_setup_on_a_first_start(
     main_window, monkeypatch
 ) -> None:
@@ -3662,17 +3877,23 @@ def test_close_waits_for_background_tasks(main_window, monkeypatch, tmp_path: Pa
 
 
 @pytest.mark.gui
-def test_main_window_file_done_keeps_the_reported_text_format_without_state(
+def test_main_window_file_done_keeps_the_row_when_the_store_cannot_be_read(
     main_window, monkeypatch
 ) -> None:
     """
-    Given  a finished file whose Markdown format the pipeline reported
-    When   _on_file_done runs and the persisted state cannot be read back
+    Given  a row that shows Markdown texts
+    When   _on_file_done runs and the store cannot be read back
     Then   the row keeps the Markdown format instead of falling back to plain
     """
     source = "/tmp/page.png"
-    main_window._results_table.set_queue(["page.png"], source_ids=[source])
-    monkeypatch.setattr(main_window._app_service, "load_view", lambda *_a, **_k: None)
+    main_window._results_table.set_queue(
+        [_queue_row(source, "page.png", ocr=StageState.DONE, has_text=True, text_format="markdown")]
+    )
+
+    def _unreadable(*_args: object, **_kwargs: object) -> QueueRow:
+        raise OSError("the state folder is gone")
+
+    monkeypatch.setattr(main_window._app_service, "queue_row", _unreadable)
 
     main_window._on_file_done(
         FileDoneEvent(
@@ -3699,8 +3920,13 @@ def test_main_window_file_started_keeps_the_text_format_of_the_shown_texts(main_
            holds the old Markdown text until the new result replaces it
     """
     source = "/tmp/rerun.png"
-    main_window._results_table.set_queue(["rerun.png"], source_ids=[source])
-    main_window._results_table.set_text_format(source, "markdown")
+    main_window._results_table.set_queue(
+        [
+            _queue_row(
+                source, "rerun.png", ocr=StageState.DONE, has_text=True, text_format="markdown"
+            )
+        ]
+    )
 
     main_window._on_file_started(source, "rerun.png", 1, 1)
 
@@ -3828,7 +4054,7 @@ def test_run_checks_requirements_off_the_gui_thread(
     cfg = make_config(tmp_path)
     monkeypatch.setattr(main_window._config_panel, "to_config", lambda: cfg)
     monkeypatch.setattr(main_window, "_get_file_names", lambda _cfg: ["a.png"])
-    main_window._results_table.set_queue(["a.png"])
+    main_window._results_table.set_queue([_queue_row("/tmp/a.png", "a.png")])
     main_window._results_table.selectRow(0)
     release = threading.Event()
 
@@ -3898,7 +4124,7 @@ def test_insufficient_memory_runs_anyway_only_when_the_user_says_so(
         lambda self, config, **_kw: RunPreflight(memory_warning="qwen3.5:9b needs about 7 GB."),
     )
     asked = _answer_questions(monkeypatch, yes=True)
-    main_window._results_table.set_queue(["a.png"], [str(tmp_path / "a.png")])
+    main_window._results_table.set_queue([_queue_row(str(tmp_path / "a.png"), "a.png")])
     main_window._results_table.selectRow(0)
 
     main_window._on_run()
@@ -3929,7 +4155,7 @@ def test_cancelling_the_memory_warning_does_not_start_the_run(
         lambda self, config, **_kw: RunPreflight(memory_warning="qwen3.5:9b needs about 7 GB."),
     )
     asked = _answer_questions(monkeypatch, yes=False)
-    main_window._results_table.set_queue(["a.png"], [str(tmp_path / "a.png")])
+    main_window._results_table.set_queue([_queue_row(str(tmp_path / "a.png"), "a.png")])
     main_window._results_table.selectRow(0)
 
     main_window._on_run()
@@ -4358,7 +4584,7 @@ def test_run_pressed_while_requirements_are_checked_starts_nothing_twice(
     cfg = make_config(tmp_path)
     monkeypatch.setattr(main_window._config_panel, "to_config", lambda: cfg)
     monkeypatch.setattr(main_window, "_get_file_names", lambda _cfg: ["a.png"])
-    main_window._results_table.set_queue(["a.png"])
+    main_window._results_table.set_queue([_queue_row("/tmp/a.png", "a.png")])
     main_window._results_table.selectRow(0)
     release = threading.Event()
     checks: list[int] = []
@@ -4426,15 +4652,23 @@ def _queue_with_text(window: MainWindow, folder: Path, texts: dict[str, str]) ->
     cfg = make_config(folder.parent)
     window._config_panel.to_config = lambda: cfg  # ty: ignore[invalid-assignment]
     ids = [str(folder / name) for name in texts]
-    window._results_table.set_queue(list(texts), source_ids=ids)
-    for source_id, text in zip(ids, texts.values(), strict=True):
+    rows: list[QueueRow] = []
+    for source_id, name, text in zip(ids, texts, texts.values(), strict=True):
         source = Path(source_id)
         # A test may have written the file already; its content is what the work is keyed by.
         if not source.exists():
             source.write_text(f"page of {source.name}", encoding="utf-8")
         if text:
             _store_document(cfg, source, raw=text)
-        window._results_table.set_row_artifacts(source_id, "", text, "", "")
+        rows.append(
+            _queue_row(
+                source_id,
+                name,
+                ocr=StageState.DONE if text else StageState.NONE,
+                has_text=bool(text),
+            )
+        )
+    window._results_table.set_queue(rows)
     return ids
 
 
@@ -4945,9 +5179,7 @@ def test_main_window_probes_this_computer_in_the_background_for_the_cache_keys(
     monkeypatch.setattr(main_window._config_panel, "to_config", lambda: cfg)
     service = main_window._app_service
     loads: list[int] = []
-    monkeypatch.setattr(
-        service, "load_views_reconciled", lambda *_a, **_k: loads.append(1) or {}, raising=False
-    )
+    monkeypatch.setattr(service, "queue_rows", lambda *_a, **_k: loads.append(1) or [])
     probed = False
     detect_threads: list[threading.Thread] = []
 
@@ -4992,8 +5224,9 @@ def test_main_window_does_not_probe_again_and_again_when_the_probe_fails(
     monkeypatch.setattr(service, "detect_hardware", failing)
 
     main_window._refresh_queue_from_inputs()
-    main_window._results_table.set_queue(["page.png"], source_ids=[source_id])
-    main_window._results_table.set_row_artifacts(source_id, "", "raw text", "", "")
+    main_window._results_table.set_queue(
+        [_queue_row(source_id, "page.png", ocr=StageState.DONE, has_text=True)]
+    )
     main_window._results_table.selectRow(0)
     main_window._load_check(source_id)
     qtbot.wait(600)
@@ -5181,7 +5414,7 @@ def test_the_line_says_checking_only_when_the_first_answer_is_slow(
     monkeypatch.setattr(ProcessingApplicationService, "check_run_preflight", slow)
     panel = ready_window._config_panel
     panel._selected_folder = tmp_path  # no scan of the folder: the queue below is the queue
-    ready_window._results_table.set_queue(["a.png"], [str(tmp_path / "a.png")])
+    ready_window._results_table.set_queue([_queue_row(str(tmp_path / "a.png"), "a.png")])
     ready_window._results_table.selectRow(0)
 
     ready_window._start_readiness_check()
@@ -5388,7 +5621,12 @@ def test_the_check_asks_for_the_engine_only_when_a_page_is_to_be_read(
     (tmp_path / "b.png").touch()
     ready_window._refresh_queue_from_inputs()
     assert asks_for_engine() is True
-    ready_window._recognised_files = set(ready_window._queued_files_by_source_id.values())
+    ready_window._results_table.set_queue(
+        [
+            _queue_row(str(path.resolve()), path.name, ocr=StageState.DONE, has_text=True)
+            for path in (tmp_path / "a.txt", tmp_path / "b.png")
+        ]
+    )
     assert asks_for_engine() is False
 
 
@@ -5508,9 +5746,13 @@ def test_a_skipped_file_opens_no_error_dialog_and_is_counted_apart(
            names the skipped file
     """
     shown = _record_notices(monkeypatch)
-    monkeypatch.setattr(main_window._app_service, "load_view", lambda *_a, **_k: None)
     source = "/tmp/scan.png"
-    main_window._results_table.set_queue(["scan.png"], source_ids=[source])
+    monkeypatch.setattr(
+        main_window._app_service,
+        "queue_row",
+        lambda *_a, **_k: _queue_row(source, "scan.png"),
+    )
+    main_window._results_table.set_queue([_queue_row(source, "scan.png")])
 
     main_window._on_file_done(
         FileDoneEvent(
@@ -5561,7 +5803,10 @@ def test_the_note_counts_the_scans_the_check_found_and_marks_their_rows(
     scan, note = tmp_path / "scan.png", tmp_path / "note.txt"
     ready_window._queued_files_by_source_id = {str(scan.resolve()): scan, str(note.resolve()): note}
     ready_window._results_table.set_queue(
-        ["scan.png", "note.txt"], [str(scan.resolve()), str(note.resolve())]
+        [
+            _queue_row(str(scan.resolve()), "scan.png"),
+            _queue_row(str(note.resolve()), "note.txt"),
+        ]
     )
     ready_window._config_panel._recognition_enabled.setChecked(False)
     _preflight_returns(monkeypatch, RunPreflight(skipped=(scan,)))
@@ -6324,3 +6569,38 @@ def test_a_run_asks_about_the_teachers_work(main_window, monkeypatch, stored) ->
     main_window._on_run()
 
     assert captured["ask_about_work"] is True
+
+
+# ── The room the Check tab's panes take ──────────────────────────────────────
+
+
+@pytest.mark.gui
+def test_the_check_layout_survives_a_restart(qtbot, monkeypatch) -> None:
+    """
+    Given  a window whose Check tab the teacher sized
+    When   the window is opened again
+    Then   the panes and the card have the sizes they were left at
+    """
+    _MemorySettings.store = {}
+    monkeypatch.setattr(main_window_module, "QSettings", _MemorySettings)
+    monkeypatch.setattr(MainWindow, "_load_toml_if_present", lambda self: None)
+    monkeypatch.setattr(MainWindow, "_start_readiness_check", lambda self, **_kw: None)
+    monkeypatch.setattr(main_window_module, "UpdateCheckThread", _DummyUpdateThread)
+    first = MainWindow(worker_factory=_DummyWorker)
+    qtbot.addWidget(first)
+
+    first._check.layout_changed.emit(CheckLayout(split=(300, 100, 400), card_split=(100, 100)))
+    first._check.layout_changed.emit(CheckLayout(split=(300, 500, 400), card_split=(200, 300)))
+
+    assert "view/check_split" not in _MemorySettings.store  # nothing is written mid-drag
+
+    qtbot.waitUntil(lambda: "view/check_split" in _MemorySettings.store)
+
+    assert _MemorySettings.store["view/check_split"] == "300,500,400"
+    assert _MemorySettings.store["view/check_card_split"] == "200,300"
+
+    second = MainWindow(worker_factory=_DummyWorker)
+    qtbot.addWidget(second)
+
+    assert second._check.body._stored_split == (300, 500, 400)
+    assert second._check.body.panel._card_split == (200, 300)

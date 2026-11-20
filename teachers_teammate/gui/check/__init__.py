@@ -4,7 +4,7 @@ See :mod:`._page` for the page itself — the header that says which document is
 moves between documents, and the preview panel it holds.
 """
 
-from ._page import CheckPage, CopyKind, CopyState
+from ._page import CheckLayout, CheckPage, CopyKind, CopyState
 from ._run_strip import RunState
 
-__all__ = ["CheckPage", "CopyKind", "CopyState", "RunState"]
+__all__ = ["CheckLayout", "CheckPage", "CopyKind", "CopyState", "RunState"]

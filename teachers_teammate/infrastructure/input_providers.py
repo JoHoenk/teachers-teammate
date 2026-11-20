@@ -31,10 +31,6 @@ from ..interfaces import InputPayload, InputProvider, InputUnit
 
 _logger = logging.getLogger(__name__)
 
-#: Resolution of the pages rendered only to be looked at (a text-layer PDF's scan).  The scan
-#: fits a page to the width of a pane, so the OCR resolution would only cost time and disk.
-SCAN_DPI = 150
-
 _UNPRINTABLE_CATEGORIES = frozenset({"Cc", "Cf", "Cs", "Co", "Cn"})
 
 # Annotations that only mark up what is already on the page.  Every other subtype (ink,
@@ -323,21 +319,11 @@ class PdfInputProvider(InputProvider):
             pdf.close()
         return InputPayload(units=units, source_image=source_image, text_layer_note=text_layer_note)
 
-    def _render_page(
-        self,
-        pdf: pdfium.PdfDocument,
-        page_num: int,
-        file_path: Path,
-        *,
-        dpi: int | None = None,
-    ) -> Path:
-        """Render page *page_num* of *pdf* to a PNG in the temp dir and return its path.
-
-        *dpi* defaults to the OCR resolution; a page that is only shown asks for less.
-        """
+    def _render_page(self, pdf: pdfium.PdfDocument, page_num: int, file_path: Path) -> Path:
+        """Render page *page_num* of *pdf* to a PNG in the temp dir and return its path."""
         page = pdf[page_num]
         try:
-            bitmap = page.render(scale=(dpi or self._pdf_dpi) / 72.0)
+            bitmap = page.render(scale=self._pdf_dpi / 72.0)
             raw_path = self._tmp_dir / f"{file_path.stem}_page{page_num}.png"
             bitmap.to_pil().save(str(raw_path))
         finally:
@@ -350,17 +336,15 @@ class PdfInputProvider(InputProvider):
         """Render every page of *pdf* for the scan, in page order.
 
         A text-layer PDF has no image units, but its pages are what the teacher compares the
-        text with, so all of them are rendered, at the resolution of the scan (nothing reads
-        them, so the OCR resolution would only cost time and cache).  A page that cannot be rendered is logged and
-        left out; the pages rendered so far are kept, because a missing page is better than no
-        scan at all.
+        text with, so all of them are rendered at the OCR resolution: the scan is read by
+        zooming into it, and a page rendered smaller would only be enlarged again.  A page that
+        cannot be rendered is logged and left out; the pages rendered so far are kept, because a
+        missing page is better than no scan at all.
         """
         pages: list[Path] = []
         for page_num in range(page_count):
             try:
-                pages.append(
-                    self._render_page(pdf, page_num, file_path, dpi=min(self._pdf_dpi, SCAN_DPI))
-                )
+                pages.append(self._render_page(pdf, page_num, file_path))
             except Exception:  # a broken page must not fail the document
                 _logger.warning(
                     "Could not render page %d of %s for the scan",

@@ -20,7 +20,8 @@ from teachers_teammate.domain.proofreading.review import (
 )
 from teachers_teammate.gui import _user_text as txt
 from teachers_teammate.gui.check._masking import Masking
-from teachers_teammate.gui.check._page import CheckBody, CheckPage, ViewKind
+from teachers_teammate.gui.check._side_panel import _SIDE_BY_SIDE_WIDTH
+from teachers_teammate.gui.check._page import CheckBody, CheckLayout, CheckPage, ViewKind
 from teachers_teammate.infrastructure.state_repository import DocumentStateView
 
 RAW = "Der bunte Hund bellt. Die Katze mauzt."
@@ -522,18 +523,82 @@ def test_take_out_all_puts_back_every_minor_correction(qtbot) -> None:
 
 
 @pytest.mark.gui
-def test_change_goes_to_the_final_text_and_selects_the_words(qtbot) -> None:
+def test_replace_writes_the_typed_words_and_keeps_the_view(qtbot) -> None:
     """
     Given  a body that shows a document on *With corrections*
-    When   *Change* is clicked for a correction
-    Then   *Final text* is in front with the corrected words selected
+    When   the card's replace field is filled in and OK is pressed
+    Then   the typed words stand in the final text, and *With corrections* is still in front
     """
     body = _body(qtbot, _document(review=_review(RAW, CORRECTED)))
+    body.set_view(ViewKind.MARKED)
+    body.panel.set_chosen("edit:1")
 
-    body.panel.change_requested.emit("edit:1")
+    body.panel._card.replace.setText("dunkelbraune")
+    body.panel._card.replace_ok.click()
 
-    assert body.view is ViewKind.FINAL
-    assert body.final_view.textCursor().selectedText() == "braune"
+    assert body.view is ViewKind.MARKED
+    assert body.final_view.toPlainText() == "Der dunkelbraune Hund bellt. Die Katze mauzt."
+
+
+@pytest.mark.gui
+def test_replace_on_an_added_word_replaces_it(qtbot) -> None:
+    """
+    Given  a correction that only added a word
+    When   other words are written in place of the added word
+    Then   the added word is gone and the typed words stand in its place
+    """
+    raw, corrected = "Ich gehe Schule.", "Ich gehe zur Schule."
+    body = _body(qtbot, _document(raw=raw, corrected=corrected, review=_review(raw, corrected)))
+    body.panel.set_chosen("edit:1")
+
+    body.panel._card.replace.setText("in die")
+    body.panel._card.replace_ok.click()
+
+    assert body.final_view.toPlainText() == "Ich gehe in die Schule."
+
+
+@pytest.mark.gui
+def test_replace_does_nothing_while_the_card_is_locked(qtbot) -> None:
+    """
+    Given  a document the card may not act on, because a run holds it
+    When   Enter is pressed in the card's replace field
+    Then   the field is disabled and the final text is untouched
+    """
+    body = _body(qtbot, _document(review=_review(RAW, CORRECTED)))
+    body.set_lock("A run is working on this document.")
+    body.panel.set_chosen("edit:1")
+
+    card = body.panel._card
+    card.replace.setText("dunkelbraune")
+    card.replace.returnPressed.emit()
+
+    assert not card.replace.isEnabled()
+    assert body.final_view.toPlainText() == CORRECTED
+
+
+@pytest.mark.gui
+def test_take_out_keeps_the_view_and_the_other_struck_words(qtbot) -> None:
+    """
+    Given  a document with two corrections, shown on *With corrections*
+    When   *Take out* is pressed for the first one
+    Then   the view stays, and the student's words of the other one are still struck through
+    """
+    raw = "Der bunte Hund bellt. Die Katze mauzt."
+    corrected = "Der braune Hund bellt. Die Katze mauzt."
+    review = CorrectionReview(
+        edits=tuple(
+            edit_note(edit, category="word_choice", explanation="Farbe.")
+            for edit in edits(raw, corrected)
+        )
+    )
+    body = _body(qtbot, _document(raw=raw, corrected=corrected, review=review))
+    body.set_view(ViewKind.MARKED)
+
+    body.panel.take_out_requested.emit("edit:1")
+
+    assert body.view is ViewKind.MARKED
+    assert body.final_view.toPlainText() == raw
+    assert "bunte" in body.marked_view.toPlainText()
 
 
 @pytest.mark.gui
@@ -713,3 +778,40 @@ def test_the_lock_and_hidden_names_take_ctrl_z_away(qtbot) -> None:
     body.set_masking(Masking())
     assert body._undo_action.isEnabled() is False
     assert body._redo_action.isEnabled() is False
+
+
+# ── The room the panes take ───────────────────────────────────────────────
+
+
+@pytest.mark.gui
+def test_the_panes_keep_the_widths_the_teacher_dragged_them_to(qtbot) -> None:
+    """
+    Given  a Check tab whose side panel the teacher dragged wide
+    When   it is opened again
+    Then   the panel is that wide, enough for the card's two columns
+    """
+    body = _body(qtbot, _document(review=_review(RAW, CORRECTED)))
+    body.set_view(ViewKind.MARKED)
+
+    body.set_layout(CheckLayout(split=(200, 400, 800)))
+    qtbot.wait(20)
+
+    assert body._splitter.sizes()[2] >= _SIDE_BY_SIDE_WIDTH
+
+
+@pytest.mark.gui
+def test_dragging_a_pane_tells_the_window_the_new_layout(qtbot) -> None:
+    """
+    Given  a Check tab that shows a document
+    When   the teacher drags the handle between the text and the side panel
+    Then   the tab says how wide the panes and how tall the card are now
+    """
+    body = _body(qtbot, _document(review=_review(RAW, CORRECTED)))
+    told: list[CheckLayout] = []
+    body.layout_changed.connect(told.append)
+
+    body._splitter.moveSplitter(400, 1)
+    body.panel._split.moveSplitter(body.panel._card.height() + 40, 1)
+
+    assert told[-1].split == tuple(body._splitter.sizes())
+    assert told[-1].card_split == body.panel.card_split

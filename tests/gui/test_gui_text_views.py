@@ -11,8 +11,8 @@ that replaced them.
 from __future__ import annotations
 
 import pytest
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QTextCursor
+from PySide6.QtCore import QPoint, Qt
+from PySide6.QtGui import QColor, QTextCursor
 from PySide6.QtTest import QTest
 
 from teachers_teammate.application.check_document import CheckDocument, check_document_of
@@ -112,6 +112,20 @@ def _marked_words(view: CheckTextView) -> list[str]:
     return [cursor.selectedText() for _mark, cursor in view._mark_cursors]
 
 
+def _point_on(view: CheckTextView, cursor: QTextCursor) -> QPoint:
+    """Return a point inside the words *cursor* selects."""
+    first = QTextCursor(cursor)
+    first.setPosition(cursor.selectionStart())
+    return view.cursorRect(first).center()
+
+
+def _select(view: CheckTextView, words: str) -> None:
+    """Select the first occurrence of *words* in *view*."""
+    cursor = view.document().find(words)
+    assert not cursor.isNull()
+    view.setTextCursor(cursor)
+
+
 def _stored(view: CheckTextView) -> str:
     """The text *view* would store, in the notation of its document."""
     doc = document_from_qt(view.document())
@@ -177,6 +191,22 @@ def test_a_mark_of_every_kind_lands_on_its_words(qtbot) -> None:
 
     assert kinds == [ItemKind.CORRECTION]
     assert _marked_words(view) == ["braune"]
+
+
+@pytest.mark.gui
+def test_a_mark_is_drawn_in_the_look_of_its_item(qtbot) -> None:
+    """
+    Given  a document with one explained correction
+    When   the final text is shown with the marks of its review
+    Then   the mark carries the item's look, and is drawn in that look's background
+    """
+    doc = _document()
+    view = _view(qtbot, FinalView, doc)
+
+    mark, _cursor = view._mark_cursors[0]
+
+    assert mark.look == _style.look(doc.items[0])
+    assert view.extraSelections()[0].format.background().color() == QColor(mark.look.background)
 
 
 @pytest.mark.gui
@@ -359,6 +389,105 @@ def test_the_marked_view_hides_the_names_too(qtbot) -> None:
     view.show_document(doc, _masking())
 
     assert view.toPlainText() == "[PERSON_1] sagt, der bunte braune Hund bellt."
+
+
+# ── What a view offers ────────────────────────────────────────────────────
+
+
+@pytest.mark.gui
+def test_the_formatting_keys_are_offered_only_for_a_markdown_text(qtbot) -> None:
+    """
+    Given  a plain text and a Markdown text in the same editable view
+    When   the view is filled with each
+    Then   only the Markdown one offers the formatting keys, which a plain text cannot store
+    """
+    view = FinalView()
+    qtbot.addWidget(view)
+
+    view.set_text(RAW, "plain")
+    plain = [action.shortcut().toString() for action in view._formatting]
+
+    view.set_text(MARKDOWN_RAW, "markdown")
+    markdown = [action.shortcut().toString() for action in view._formatting]
+
+    assert plain == []
+    assert markdown == ["Ctrl+B", "Ctrl+I", "Ctrl+U", "Ctrl+Shift+X", "Ctrl+Shift+="]
+
+
+@pytest.mark.gui
+def test_ctrl_i_changes_nothing_in_a_plain_text(qtbot) -> None:
+    """
+    Given  an editable view of a plain text, with a word selected
+    When   Ctrl+I is pressed
+    Then   the text is unchanged, because a plain text stores no character style
+    """
+    view = FinalView()
+    qtbot.addWidget(view)
+    view.resize(600, 400)
+    view.show()
+    qtbot.wait(20)
+    view.set_text(RAW, "plain")
+    _select(view, "bunte")
+    view.setFocus()
+
+    QTest.keyClick(view, Qt.Key.Key_I, Qt.KeyboardModifier.ControlModifier)
+
+    assert _stored(view) == RAW
+
+
+@pytest.mark.gui
+def test_ctrl_i_is_stored_in_a_markdown_text(qtbot) -> None:
+    """
+    Given  an editable view of a Markdown text, with a word selected
+    When   Ctrl+I is pressed
+    Then   the word is italic in the text the view stores
+    """
+    view = FinalView()
+    qtbot.addWidget(view)
+    view.resize(600, 400)
+    view.show()
+    qtbot.wait(20)
+    view.set_text(MARKDOWN_RAW, "markdown")
+    _select(view, "bunte")
+    view.setFocus()
+
+    QTest.keyClick(view, Qt.Key.Key_I, Qt.KeyboardModifier.ControlModifier)
+
+    assert "*bunte*" in _stored(view)
+
+
+@pytest.mark.gui
+def test_hovering_a_mark_says_what_the_item_is(qtbot) -> None:
+    """
+    Given  a document with one explained correction
+    When   the pointer rests on its mark
+    Then   the tip names the words, the category and the first line of the explanation
+    """
+    doc = _document()
+    view = _view(qtbot, FinalView, doc)
+    _mark, cursor = view._mark_cursors[0]
+
+    tip = view._tip_at(_point_on(view, cursor))
+
+    assert "bunte \u2192 braune" in tip
+    assert "Word choice" in tip
+    assert "Farbe." in tip
+
+
+@pytest.mark.gui
+def test_a_point_beside_a_mark_has_no_tip(qtbot) -> None:
+    """
+    Given  a document with one correction
+    When   the pointer rests on a word the review did not touch
+    Then   there is no tip of an item, so the view's own tip shows
+    """
+    doc = _document()
+    view = _view(qtbot, FinalView, doc)
+    _mark, cursor = view._mark_cursors[0]
+    beside = _point_on(view, cursor)
+    beside.setX(beside.x() + 400)
+
+    assert view._tip_at(beside) == ""
 
 
 # ── Typing ────────────────────────────────────────────────────────────────

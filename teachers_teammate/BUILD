@@ -169,6 +169,7 @@ _APPLICATION_SRCS = [
     "application/formatting.py",
     "application/merged_view.py",
     "application/model_recommendations.py",
+    "application/queue.py",
     "application/sent_text.py",
     "application/speed_estimates.py",
     "application/service.py",

@@ -1,8 +1,14 @@
-"""Results table: per-file per-stage status and duration."""
+"""Results table: per-file per-stage status and duration.
+
+The table shows what the store says about each file (:class:`~..application.queue.QueueRow`)
+and, on top of that, what the run is doing with it right now.  It keeps no texts of its own:
+an action that needs one reads the document through the service.
+"""
 
 from __future__ import annotations
 
-from collections.abc import Collection, Mapping
+from collections.abc import Collection, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, ClassVar
 
@@ -21,6 +27,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ..application.queue import QueueRow, StageState
 from ..domain.data_location import STAGE_CORRECTION, STAGE_EVALUATION, SentStatus
 from ..domain.formatted_text import TextFormat
 from ..domain.proofreading.review import CorrectionReview
@@ -55,6 +62,26 @@ _STAGE_FONT.setPointSize(13)
 _STAGE_FONT.setBold(True)
 _SKIPPED_FONT = QFont()
 _SKIPPED_FONT.setPointSize(9)
+
+
+@dataclass(frozen=True)
+class LiveState:
+    """What the run is doing with one file, drawn on top of what the store says.
+
+    The store's answer is the row; this is the run's, and it is replaced whenever the file
+    starts again or its result arrives.
+    """
+
+    stage: str = ""
+    """The stage that is running (``"ocr"``, ``"correction"``, ``"evaluation"``), else ``""``."""
+    finished: bool = False
+    """The run finished this file: its results are the run's, not an older cache's."""
+    failed: bool = False
+    skipped: bool = False
+    stopped: bool = False
+    stopped_stage: str = ""
+    warning: str = ""
+    duration_s: float | None = None
 
 
 class _HoverDelegate(QStyledItemDelegate):
@@ -93,8 +120,8 @@ class ResultsTable(QTableWidget):
 
     Columns: File | OCR | Correction | Evaluation | Checked | Duration | Open
 
-    Each stage cell transitions through: ``-`` → ``▶`` → ``✓`` / ``✗``.
-    Cached stages start at ``✓`` (muted green) before the worker runs.
+    Each stage cell shows what the store says (``-`` or ``✓``), or what the run is doing with
+    it (``▶``, ``✗``, ``stopped``, ``skipped``).
     """
 
     check_requested = Signal(str)  # source_id: open this document in the Check tab
@@ -109,17 +136,8 @@ class ResultsTable(QTableWidget):
     _COL_CHECKED = 4
     _COL_DURATION = 5
     _COL_PREVIEW = 6
-    _ROLE_IMAGE = Qt.ItemDataRole.UserRole
-    _ROLE_RAW = Qt.ItemDataRole.UserRole + 1
-    _ROLE_CORR = Qt.ItemDataRole.UserRole + 2
-    _ROLE_EVAL = Qt.ItemDataRole.UserRole + 4
     _ROLE_SOURCE = Qt.ItemDataRole.UserRole + 5
-    _ROLE_TEXT_FORMAT = Qt.ItemDataRole.UserRole + 7  # "plain" | "markdown"
-    _ROLE_REVIEW = Qt.ItemDataRole.UserRole + 8  # CorrectionReview
-    _ROLE_CORRECTION_WARNING = Qt.ItemDataRole.UserRole + 9  # str
     _ROLE_NOTE = Qt.ItemDataRole.UserRole + 10  # str: the cell's own tooltip text
-    _ROLE_SENT = Qt.ItemDataRole.UserRole + 11  # SentStatus: how the stored result was sent
-    _ROLE_KEPT = Qt.ItemDataRole.UserRole + 12  # bool: the proofreading was kept over settings
 
     _STAGE_ACTIVE_COLORS: ClassVar[dict[int, str]] = {
         _COL_OCR: _COLOUR_OCR_BAR,
@@ -129,6 +147,12 @@ class ResultsTable(QTableWidget):
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(0, 7, parent)
+        #: What the store says about each file, keyed by source id.
+        self._rows: dict[str, QueueRow] = {}
+        #: What the run is doing with each file, on top of its row.
+        self._live: dict[str, LiveState] = {}
+        #: Files a run will leave out because text recognition is off, and why.
+        self._skipped: dict[str, str] = {}
         #: Where the text of a stage goes, keyed by stage name; shown as a cell tooltip.
         self._stage_tooltips: dict[str, str] = {}
         self.setHorizontalHeaderLabels(
@@ -153,7 +177,6 @@ class ResultsTable(QTableWidget):
         self.setColumnWidth(self._COL_CHECKED, 95)
         self.setColumnWidth(self._COL_DURATION, 80)
         self.setColumnWidth(self._COL_PREVIEW, 120)
-        _header.setStretchLastSection(False)
         self.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.setSelectionMode(QTableWidget.SelectionMode.ExtendedSelection)
@@ -184,47 +207,237 @@ class ResultsTable(QTableWidget):
     def get_output_dir(self) -> Path | None:
         return self._output_dir
 
-    def _row_for_source(self, source_id: str) -> int | None:
-        return self._row_by_source.get(source_id)
+    # ── The store's answer ────────────────────────────────────────────────
 
-    def select_source(self, source_id: str) -> None:
-        """Select the row of *source_id*, so the queue shows the document that is open."""
-        row = self._row_for_source(source_id)
-        if row is not None:
-            self.selectRow(row)
+    def set_queue(self, rows: Sequence[QueueRow]) -> None:
+        """Show *rows*: one row per file, as the store says it is."""
+        self.setRowCount(0)
+        self._row_by_source.clear()
+        self._rows = {row.source_id: row for row in rows}
+        # What the run did with a file survives a refresh: only the store's answer is new.
+        self._live = {sid: live for sid, live in self._live.items() if sid in self._rows}
+        self._skipped = {sid: why for sid, why in self._skipped.items() if sid in self._rows}
+        for row in rows:
+            index = self.rowCount()
+            self.insertRow(index)
+            self._row_by_source[row.source_id] = index
+            file_item = QTableWidgetItem(row.name)
+            file_item.setData(self._ROLE_SOURCE, row.source_id)
+            self.setItem(index, self._COL_FILE, file_item)
+            for col in (self._COL_OCR, self._COL_CORRECTION, self._COL_EVALUATION):
+                cell = QTableWidgetItem(_PENDING_SYMBOL)
+                cell.setForeground(QColor(_PENDING_COLOR))
+                cell.setFont(_STAGE_FONT)
+                self.setItem(index, col, cell)
+            self.setItem(index, self._COL_DURATION, QTableWidgetItem(""))
+            self.setItem(index, self._COL_CHECKED, QTableWidgetItem(""))
+            self._add_preview_button(index, row.source_id)
+            self._draw_row(row.source_id)
+        self.resizeColumnToContents(self._COL_FILE)
 
-    def get_stage_statuses_for_source(
-        self, source_id: str
-    ) -> tuple[StageStatus, StageStatus, StageStatus]:
-        """Return (ocr, correction, evaluation) StageStatus for *source_id*."""
-        _symbol_map: dict[str, StageStatus] = {
-            _PENDING_SYMBOL: StageStatus.PENDING,
-            _RUNNING_SYMBOL: StageStatus.RUNNING,
-            _DONE_SYMBOL: StageStatus.DONE,
-            _FAIL_SYMBOL: StageStatus.ERROR,
-        }
-        row = self._row_for_source(source_id)
-        if row is None:
-            return StageStatus.PENDING, StageStatus.PENDING, StageStatus.PENDING
-        ocr = _symbol_map.get(self._stage_symbol(row, self._COL_OCR), StageStatus.PENDING)
-        correction = _symbol_map.get(
-            self._stage_symbol(row, self._COL_CORRECTION), StageStatus.PENDING
+    def update_row(self, row: QueueRow) -> None:
+        """Replace what the store says about one file, keeping what the run did with it."""
+        if row.source_id not in self._row_by_source:
+            self._ensure_row(row.source_id, row.name)
+        self._rows[row.source_id] = row
+        self._draw_row(row.source_id)
+
+    def row_for(self, source_id: str) -> QueueRow | None:
+        """Return what the store says about *source_id*, or ``None`` when it is not queued."""
+        return self._rows.get(source_id)
+
+    def has_text(self, source_id: str) -> bool:
+        """Whether *source_id* has a transcription to show or to send."""
+        row = self._rows.get(source_id)
+        return bool(row is not None and row.has_text)
+
+    def text_format_for_source(self, source_id: str) -> TextFormat:
+        """Return the notation of *source_id*'s texts (plain when not recorded)."""
+        row = self._rows.get(source_id)
+        return row.text_format if row is not None else "plain"
+
+    def review_for_source(self, source_id: str) -> CorrectionReview | None:
+        """Return *source_id*'s proofreading review, or ``None`` when it has none."""
+        row = self._rows.get(source_id)
+        return row.review if row is not None else None
+
+    # ── What the run is doing ─────────────────────────────────────────────
+
+    def mark_stage_running(self, source_id: str, stage: str) -> None:
+        """Show *stage* of *source_id* as running, on top of what the store says."""
+        if source_id not in self._row_by_source:
+            return
+        self._live[source_id] = LiveState(stage=stage)
+        self._draw_row(source_id)
+
+    def mark_processing(self, source_id: str) -> None:
+        """Mark the recognition stage as running for the given file."""
+        self.mark_stage_running(source_id, "ocr")
+
+    def add_result(self, event: FileDoneEvent) -> None:
+        """Show how the run ended for one file, on top of what the store says.
+
+        The stored row is refreshed separately (:meth:`update_row`), so the cells come from
+        the same place as on start-up; this only says what the run itself did.
+        """
+        source_id = event.source_id
+        if source_id not in self._row_by_source:
+            self._ensure_row(source_id, event.name)
+        if event.skipped:
+            self._skipped[source_id] = event.message
+        self._live[source_id] = LiveState(
+            stage=self._live.get(source_id, LiveState()).stage,
+            finished=True,
+            failed=not (event.ok or event.skipped or event.stopped),
+            skipped=event.skipped,
+            stopped=event.stopped,
+            stopped_stage=event.stopped_stage,
+            warning=event.message,
+            duration_s=None if (event.skipped or event.stopped) else event.total_s,
         )
-        evaluation = _symbol_map.get(
-            self._stage_symbol(row, self._COL_EVALUATION), StageStatus.PENDING
-        )
-        return ocr, correction, evaluation
+        self._draw_row(source_id)
+        self.resizeColumnToContents(self._COL_FILE)
+        self.resizeColumnToContents(self._COL_DURATION)
+
+    def set_skipped_sources(self, source_ids: Collection[str], reason: str = "") -> None:
+        """Show which queued files a run will leave out because text recognition is off.
+
+        A row in *source_ids* that has not started shows "skipped" in the recognition cell
+        (with *reason* as its tooltip); a row that was marked before and is no longer in
+        *source_ids* goes back to what the store says.  Idempotent: the readiness check calls
+        it after every answer.
+        """
+        wanted = {source_id: reason for source_id in source_ids}
+        if wanted == self._skipped:
+            return
+        self._skipped = wanted
+        for source_id in self._row_by_source:
+            self._draw_row(source_id)
+
+    def clear_results(self) -> None:
+        self.setRowCount(0)
+        self._row_by_source.clear()
+        self._rows.clear()
+        self._live.clear()
+        self._skipped.clear()
+
+    # ── Drawing one row ───────────────────────────────────────────────────
+
+    def _draw_row(self, source_id: str) -> None:
+        """Draw one row: the store's answer, with the run's state on top of it."""
+        index = self._row_by_source.get(source_id)
+        row = self._rows.get(source_id)
+        if index is None or row is None:
+            return
+        live = self._live.get(source_id, LiveState())
+        self._draw_stage_cells(index, row, live)
+        self._draw_checked(index, row)
+        self._draw_duration(index, live)
+        self._draw_tint(index, live)
+
+    def _draw_stage_cells(self, index: int, row: QueueRow, live: LiveState) -> None:
+        """Draw the three stage cells of *index*."""
+        for col, stage, state in (
+            (self._COL_OCR, "ocr", row.ocr),
+            (self._COL_CORRECTION, STAGE_CORRECTION, row.correction),
+            (self._COL_EVALUATION, STAGE_EVALUATION, row.evaluation),
+        ):
+            if stage == "ocr" and (live.skipped or row.source_id in self._skipped):
+                self._set_skipped_cell(index, live.warning or self._skipped.get(row.source_id, ""))
+                continue
+            if live.stage == stage and not live.finished:
+                self._set_stage_cell(index, col, _RUNNING_SYMBOL, self._STAGE_ACTIVE_COLORS[col])
+                continue
+            if live.failed and live.stage == stage:
+                self._set_stage_cell(index, col, _FAIL_SYMBOL, _COLOUR_ERROR)
+                if live.warning:
+                    self._set_error_info_widget(index, col, live.warning)
+                continue
+            if live.stopped and self._is_cut_short(live, stage):
+                self._set_stage_cell(index, col, _STOPPED_TEXT, _PENDING_COLOR)
+                cell = self.item(index, col)
+                if cell is not None:
+                    cell.setFont(_SKIPPED_FONT)
+                self._set_note(index, col, live.warning)
+                continue
+            if (
+                live.warning
+                and live.stage == stage
+                and not (live.failed or live.stopped)
+                and state in (StageState.DONE, StageState.KEPT)
+            ):
+                # The stage ran but fell back (e.g. the proofreading kept the original text).
+                # Only while the store still has its result: a result that went stale since
+                # shows as stale, not as the warning of the run that made it.
+                self._set_warning_info_widget(index, col, live.warning)
+                continue
+            if state in (StageState.DONE, StageState.KEPT):
+                colour = _COLOUR_OK if live.finished else _COLOUR_CACHED
+                self._set_stage_cell(index, col, _DONE_SYMBOL, colour)
+            else:
+                self._set_stage_cell(index, col, _PENDING_SYMBOL, _PENDING_COLOR)
+            if col == self._COL_CORRECTION:
+                self._draw_correction_badges(index, row, live)
+
+    @staticmethod
+    def _is_cut_short(live: LiveState, stage: str) -> bool:
+        """Whether *stage* is the step a stop cut short."""
+        if live.stopped_stage:
+            return live.stopped_stage == stage
+        return live.stage == stage
+
+    def _draw_correction_badges(self, index: int, row: QueueRow, live: LiveState) -> None:
+        """Add the ``?n`` badge and the *kept* note to a done proofreading cell."""
+        item = self.item(index, self._COL_CORRECTION)
+        if item is None or self.cellWidget(index, self._COL_CORRECTION) is not None:
+            # A cell widget carries the warning/error info; the notes would be hidden.
+            return
+        symbol = self._stage_symbol(index, self._COL_CORRECTION)
+        if not symbol.startswith(_DONE_SYMBOL):
+            return
+        kept = row.correction is StageState.KEPT
+        badges = [
+            badge
+            for badge in (txt.unclear_badge(row.unclear_count), txt.KEPT_NOTE if kept else "")
+            if badge
+        ]
+        item.setText(" ".join([symbol, *badges]))
+        notes = [
+            note
+            for note in (
+                txt.filter_unclear_label(row.unclear_count) if row.unclear_count else "",
+                txt.KEPT_TOOLTIP if kept else "",
+            )
+            if note
+        ]
+        self._set_note(index, self._COL_CORRECTION, "\n\n".join(notes))
+        self._compose_tooltip(item, self._COL_CORRECTION, row, live)
+
+    def _draw_checked(self, index: int, row: QueueRow) -> None:
+        item = self.item(index, self._COL_CHECKED)
+        if item is not None:
+            item.setText(txt.checked_cell_label(row.checked))
+
+    def _draw_duration(self, index: int, live: LiveState) -> None:
+        item = self.item(index, self._COL_DURATION)
+        if item is not None:
+            item.setText("" if live.duration_s is None else f"{live.duration_s:.1f} s")
+
+    def _draw_tint(self, index: int, live: LiveState) -> None:
+        """Tint the row for at-a-glance overall status."""
+        if live.skipped or live.stopped:
+            brush = QBrush(QColor(_NEUTRAL_ROW_BG))
+        elif live.finished:
+            brush = QBrush(QColor("#1a3d2a" if not live.failed else "#3d1a1a"))
+        else:
+            brush = QBrush()
+        self._tint_row(index, brush)
 
     def _set_stage_cell(self, row: int, col: int, symbol: str, color: str) -> None:
         self.removeCellWidget(row, col)
         item = self.item(row, col)
         if item is not None:
             item.setText(symbol)
-            # A new status means the result is being made again: the old sent line is gone.
-            item.setData(self._ROLE_SENT, None)
-            if col == self._COL_CORRECTION:
-                # A new status means the result is being made again: nothing is kept any more.
-                self._set_kept(row, False)
             self._set_note(row, col, "")  # a new status drops the old ``?n`` badge's note
             item.setForeground(QColor(color))
             item.setFont(_STAGE_FONT)
@@ -234,6 +447,22 @@ class ResultsTable(QTableWidget):
         item = self.item(row, col)
         return item.text().split(maxsplit=1)[0] if item is not None and item.text() else ""
 
+    def _set_skipped_cell(self, row: int, reason: str) -> None:
+        """Show "skipped" (grey, small) in the recognition cell of *row*."""
+        self._set_stage_cell(row, self._COL_OCR, _SKIPPED_TEXT, _PENDING_COLOR)
+        item = self.item(row, self._COL_OCR)
+        if item is not None:
+            item.setFont(_SKIPPED_FONT)
+        self._set_note(row, self._COL_OCR, reason)
+
+    def _tint_row(self, row: int, brush: QBrush) -> None:
+        for col in range(self.columnCount()):
+            cell = self.item(row, col)
+            if cell is not None:
+                cell.setBackground(brush)
+
+    # ── Tooltips ──────────────────────────────────────────────────────────
+
     def set_stage_tooltips(self, tooltips: dict[str, str]) -> None:
         """Say where each stage's text goes; *tooltips* is keyed by stage name.
 
@@ -241,7 +470,8 @@ class ResultsTable(QTableWidget):
         the stage line is put in front of it, so neither replaces the other.
         """
         self._stage_tooltips = dict(tooltips)
-        self._refresh_cell_tooltips()
+        for source_id in self._row_by_source:
+            self._draw_row(source_id)
 
     def _stage_key(self, col: int) -> str:
         """Return the pipeline stage a column stands for (empty for other columns)."""
@@ -256,33 +486,28 @@ class ResultsTable(QTableWidget):
         if item is None:
             return
         item.setData(self._ROLE_NOTE, note)
-        self._compose_tooltip(item, col)
+        source_id = self.source_id_for_row(row)
+        stored = self._rows.get(source_id)
+        live = self._live.get(source_id, LiveState())
+        if stored is not None:
+            self._compose_tooltip(item, col, stored, live)
 
-    def set_sent(self, source_id: str, sent: Mapping[str, SentStatus]) -> None:
-        """Record how each stored result of *source_id* was sent, and refresh its tooltips.
-
-        *sent* is keyed by stage name (``correction``, ``evaluation``); a stage without a
-        record loses its line, which is what a re-run or an edit leaves behind.
-        """
-        row = self._row_for_source(source_id)
-        if row is None:
-            return
-        for col in (self._COL_CORRECTION, self._COL_EVALUATION):
-            item = self.item(row, col)
-            if item is not None:
-                item.setData(self._ROLE_SENT, sent.get(self._stage_key(col)))
-                self._compose_tooltip(item, col)
-
-    def _compose_tooltip(self, item: QTableWidgetItem, col: int) -> None:
+    def _compose_tooltip(
+        self, item: QTableWidgetItem, col: int, row: QueueRow, live: LiveState
+    ) -> None:
         """Set the item tooltip from the stage line, how the result was sent, and the note."""
-        status = item.data(self._ROLE_SENT)
+        stage = self._stage_key(col)
+        status = row.sent.get(stage) if stage else None
+        # A stage the run is redoing has no stored result to describe any more.
         sent = (
-            txt.sent_lines(status, self._stage_key(col)) if isinstance(status, SentStatus) else ()
+            txt.sent_lines(status, stage)
+            if isinstance(status, SentStatus) and not self._stage_is_live(live, stage)
+            else ()
         )
         parts = [
             part
             for part in (
-                self._stage_tooltips.get(self._stage_key(col), ""),
+                self._stage_tooltips.get(stage, ""),
                 "\n".join(sent),
                 item.data(self._ROLE_NOTE),
             )
@@ -290,13 +515,18 @@ class ResultsTable(QTableWidget):
         ]
         item.setToolTip("\n\n".join(parts))
 
-    def _refresh_cell_tooltips(self) -> None:
-        """Recompose the tooltip of every proofreading and content-review cell."""
-        for row in range(self.rowCount()):
-            for col in (self._COL_CORRECTION, self._COL_EVALUATION):
-                item = self.item(row, col)
-                if item is not None:
-                    self._compose_tooltip(item, col)
+    @classmethod
+    def _stage_is_live(cls, live: LiveState, stage: str) -> bool:
+        """Whether the run is (re)making *stage* for this file."""
+        if not stage:
+            return False
+        if live.stage == stage and not live.finished:
+            return True
+        if live.failed and live.stage == stage:
+            return True
+        return live.stopped and cls._is_cut_short(live, stage)
+
+    # ── Cells and rows ────────────────────────────────────────────────────
 
     def _add_preview_button(self, row: int, source_id: str) -> None:
         btn = QPushButton("Open")
@@ -365,259 +595,60 @@ class ResultsTable(QTableWidget):
         self.setCellWidget(row, col, widget)
         self._set_note(row, col, message)
 
-    def set_queue(self, names: list[str], source_ids: list[str] | None = None) -> None:
-        """Pre-populate a row per file in 'Pending' state before processing begins."""
-        ids = source_ids if source_ids is not None else names
-        if len(ids) != len(names):
-            raise ValueError("source_ids must be the same length as names")
-        self.setRowCount(0)
-        self._row_by_source.clear()
-        for source_id, name in zip(ids, names, strict=False):
-            row = self.rowCount()
-            self.insertRow(row)
-            self.setItem(row, self._COL_FILE, QTableWidgetItem(name))
-            for col in (self._COL_OCR, self._COL_CORRECTION, self._COL_EVALUATION):
-                cell = QTableWidgetItem(_PENDING_SYMBOL)
-                cell.setForeground(QColor(_PENDING_COLOR))
-                cell.setFont(_STAGE_FONT)
-                self.setItem(row, col, cell)
-            self.setItem(row, self._COL_DURATION, QTableWidgetItem(""))
-            self.setItem(row, self._COL_CHECKED, QTableWidgetItem(""))
-            file_item = self.item(row, self._COL_FILE)
-            if file_item is not None:
-                file_item.setData(self._ROLE_SOURCE, source_id)
-            self._row_by_source[source_id] = row
-            self._add_preview_button(row, source_id)
-        self._refresh_cell_tooltips()
-        self.resizeColumnToContents(self._COL_FILE)
+    def _ensure_row(self, source_id: str, name: str) -> int:
+        """Return *source_id*'s row, appending a fresh pending row when it has none."""
+        row = self._row_for_source(source_id)
+        if row is not None:
+            return row
+        index = self.rowCount()
+        self.insertRow(index)
+        self._row_by_source[source_id] = index
+        self._rows[source_id] = QueueRow(source_id=source_id, name=name)
+        file_item = QTableWidgetItem(name)
+        file_item.setData(self._ROLE_SOURCE, source_id)
+        self.setItem(index, self._COL_FILE, file_item)
+        for col in (self._COL_OCR, self._COL_CORRECTION, self._COL_EVALUATION):
+            cell = QTableWidgetItem(_PENDING_SYMBOL)
+            cell.setForeground(QColor(_PENDING_COLOR))
+            cell.setFont(_STAGE_FONT)
+            self.setItem(index, col, cell)
+        self.setItem(index, self._COL_DURATION, QTableWidgetItem(""))
+        self.setItem(index, self._COL_CHECKED, QTableWidgetItem(""))
+        self._add_preview_button(index, source_id)
+        return index
 
-    def set_skipped_sources(self, source_ids: Collection[str], reason: str = "") -> None:
-        """Show which queued files a run will leave out because text recognition is off.
+    # ── Reading the table ─────────────────────────────────────────────────
 
-        A row in *source_ids* that has not started shows "skipped" in the recognition cell
-        (with *reason* as its tooltip); a row that was marked before and is no longer in
-        *source_ids* goes back to pending.  Idempotent: the readiness check calls it after
-        every answer.
-        """
-        for source_id, row in self._row_by_source.items():
-            symbol = self._stage_symbol(row, self._COL_OCR)
-            if source_id in source_ids:
-                if symbol == _PENDING_SYMBOL:
-                    self._set_skipped_cell(row, reason)
-            elif symbol == _SKIPPED_TEXT:
-                self._set_stage_cell(row, self._COL_OCR, _PENDING_SYMBOL, _PENDING_COLOR)
-                self._tint_row(row, QBrush())
+    def _row_for_source(self, source_id: str) -> int | None:
+        return self._row_by_source.get(source_id)
 
-    def _set_skipped_cell(self, row: int, reason: str) -> None:
-        """Show "skipped" (grey, small) in the recognition cell of *row*."""
-        self._set_stage_cell(row, self._COL_OCR, _SKIPPED_TEXT, _PENDING_COLOR)
-        item = self.item(row, self._COL_OCR)
-        if item is not None:
-            item.setFont(_SKIPPED_FONT)
-        self._set_note(row, self._COL_OCR, reason)
+    def select_source(self, source_id: str) -> None:
+        """Select the row of *source_id*, so the queue shows the document that is open."""
+        row = self._row_for_source(source_id)
+        if row is not None:
+            self.selectRow(row)
 
-    def _tint_row(self, row: int, brush: QBrush) -> None:
-        for col in range(self.columnCount()):
-            cell = self.item(row, col)
-            if cell is not None:
-                cell.setBackground(brush)
-
-    def mark_processing(self, source_id: str) -> None:
-        """Mark the OCR stage as running for the given file."""
+    def get_stage_statuses_for_source(
+        self, source_id: str
+    ) -> tuple[StageStatus, StageStatus, StageStatus]:
+        """Return (ocr, correction, evaluation) StageStatus for *source_id*."""
+        _symbol_map: dict[str, StageStatus] = {
+            _PENDING_SYMBOL: StageStatus.PENDING,
+            _RUNNING_SYMBOL: StageStatus.RUNNING,
+            _DONE_SYMBOL: StageStatus.DONE,
+            _FAIL_SYMBOL: StageStatus.ERROR,
+        }
         row = self._row_for_source(source_id)
         if row is None:
-            return
-        self._set_stage_cell(row, self._COL_OCR, _RUNNING_SYMBOL, _COLOUR_OCR_BAR)
-
-    def mark_correcting(self, source_id: str) -> None:
-        """Mark OCR as done and correction as running for the given file."""
-        row = self._row_for_source(source_id)
-        if row is None:
-            return
-        if self._stage_symbol(row, self._COL_OCR) == _RUNNING_SYMBOL:
-            self._set_stage_cell(row, self._COL_OCR, _DONE_SYMBOL, _COLOUR_OK)
-        self._set_stage_cell(row, self._COL_CORRECTION, _RUNNING_SYMBOL, _COLOUR_CORRECTION_BAR)
-
-    def mark_evaluating(self, source_id: str) -> None:
-        """Mark correction as done and evaluation as running for the given file."""
-        row = self._row_for_source(source_id)
-        if row is None:
-            return
-        if self._stage_symbol(row, self._COL_CORRECTION) == _RUNNING_SYMBOL:
-            self._set_stage_cell(row, self._COL_CORRECTION, _DONE_SYMBOL, _COLOUR_OK)
-        self._set_stage_cell(row, self._COL_EVALUATION, _RUNNING_SYMBOL, _COLOUR_EVAL_BAR)
-
-    def mark_cached(
-        self,
-        source_id: str,
-        preview_img: str,
-        raw_txt: str,
-        corr_txt: str,
-        eval_txt: str,
-        *,
-        ocr_done: bool = False,
-        correction_done: bool = False,
-        evaluation_done: bool = False,
-    ) -> None:
-        """Set per-stage cells to reflect cached state before processing begins."""
-        row = self._row_for_source(source_id)
-        if row is None:
-            return
-        for col, done in (
-            (self._COL_OCR, ocr_done),
-            (self._COL_CORRECTION, correction_done),
-            (self._COL_EVALUATION, evaluation_done),
-        ):
-            if done:
-                self._set_stage_cell(row, col, _DONE_SYMBOL, _COLOUR_CACHED)
-            else:
-                self._set_stage_cell(row, col, _PENDING_SYMBOL, _PENDING_COLOR)
-
-        file_item = self.item(row, self._COL_FILE)
-        if file_item is not None:
-            file_item.setData(self._ROLE_IMAGE, preview_img)
-            file_item.setData(self._ROLE_RAW, raw_txt)
-            file_item.setData(self._ROLE_CORR, corr_txt)
-            file_item.setData(self._ROLE_EVAL, eval_txt)
-
-    def set_correction_review(
-        self,
-        source_id: str,
-        review: CorrectionReview | None,
-        warning: str = "",
-    ) -> None:
-        """Record *source_id*'s proofreading review (and why it has none) and badge it."""
-        row = self._row_for_source(source_id)
-        item = self.item(row, self._COL_FILE) if row is not None else None
-        if row is None or item is None:
-            return
-        item.setData(self._ROLE_REVIEW, review)
-        item.setData(self._ROLE_CORRECTION_WARNING, warning)
-        self._refresh_correction_cell(row)
-
-    def set_row_artifacts(
-        self,
-        source_id: str,
-        preview_img: str,
-        raw_txt: str,
-        corr_txt: str,
-        eval_txt: str,
-    ) -> None:
-        """Attach artifact paths to an existing queued/result row identified by *source_id*."""
-        row = self._row_for_source(source_id)
-        if row is None:
-            return
-        file_item = self.item(row, self._COL_FILE)
-        if file_item is None:
-            return
-        file_item.setData(self._ROLE_IMAGE, preview_img)
-        file_item.setData(self._ROLE_RAW, raw_txt)
-        file_item.setData(self._ROLE_CORR, corr_txt)
-        file_item.setData(self._ROLE_EVAL, eval_txt)
-
-    def set_text_format(self, source_id: str, text_format: str) -> None:
-        """Record the notation (plain / markdown) of *source_id*'s stored texts."""
-        row = self._row_for_source(source_id)
-        item = self.item(row, self._COL_FILE) if row is not None else None
-        if item is not None:
-            item.setData(self._ROLE_TEXT_FORMAT, text_format)
-
-    def text_format_for_source(self, source_id: str) -> TextFormat:
-        """Return the notation of *source_id*'s texts (plain when not recorded)."""
-        row = self._row_for_source(source_id)
-        item = self.item(row, self._COL_FILE) if row is not None else None
-        if item is None:
-            return "plain"
-        text_format = item.data(self._ROLE_TEXT_FORMAT)
-        return "markdown" if text_format == "markdown" else "plain"
-
-    def review_for_source(self, source_id: str) -> CorrectionReview | None:
-        """Return *source_id*'s proofreading review, or ``None`` when it has none."""
-        row = self._row_for_source(source_id)
-        item = self.item(row, self._COL_FILE) if row is not None else None
-        if item is None:
-            return None
-        review = item.data(self._ROLE_REVIEW)
-        return review if isinstance(review, CorrectionReview) else None
-
-    def correction_warning_for_source(self, source_id: str) -> str:
-        """Return why *source_id* has no review (empty when it has one or none is known)."""
-        row = self._row_for_source(source_id)
-        item = self.item(row, self._COL_FILE) if row is not None else None
-        if item is None:
-            return ""
-        return str(item.data(self._ROLE_CORRECTION_WARNING) or "")
-
-    def _refresh_correction_cell(self, row: int) -> None:
-        """Compose the proofreading cell: the status symbol, the ``?n`` badge and *kept*.
-
-        Both notes belong to the same cell, so they are written together: the badge counts the
-        unclear passages of the review, and *kept* says the proofreading was made with other
-        settings and kept because the teacher worked on it.
-        """
-        item = self.item(row, self._COL_CORRECTION)
-        if item is None or self.cellWidget(row, self._COL_CORRECTION) is not None:
-            # A cell widget carries the warning/error info; the notes would be hidden.
-            return
-        symbol = self._stage_symbol(row, self._COL_CORRECTION)
-        if not symbol.startswith(_DONE_SYMBOL):
-            return
-        review = self._review_at(row)
-        count = review.unclear_count if review is not None else 0
-        kept = self._kept_at(row)
-        badges = [
-            badge for badge in (txt.unclear_badge(count), txt.KEPT_NOTE if kept else "") if badge
-        ]
-        item.setText(" ".join([symbol, *badges]))
-        notes = [
-            note
-            for note in (
-                txt.filter_unclear_label(count) if count else "",
-                txt.KEPT_TOOLTIP if kept else "",
-            )
-            if note
-        ]
-        self._set_note(row, self._COL_CORRECTION, "\n\n".join(notes))
-
-    def _review_at(self, row: int) -> CorrectionReview | None:
-        """Return the proofreading review recorded for *row*, or ``None``."""
-        item = self.item(row, self._COL_FILE)
-        review = item.data(self._ROLE_REVIEW) if item is not None else None
-        return review if isinstance(review, CorrectionReview) else None
-
-    def _kept_at(self, row: int) -> bool:
-        """Return whether *row*'s proofreading was kept over other settings."""
-        item = self.item(row, self._COL_FILE)
-        return bool(item.data(self._ROLE_KEPT)) if item is not None else False
-
-    def _set_kept(self, row: int, kept: bool) -> None:
-        """Record whether *row*'s proofreading was kept, without touching the cell."""
-        item = self.item(row, self._COL_FILE)
-        if item is not None:
-            item.setData(self._ROLE_KEPT, kept)
-
-    def set_kept(self, source_id: str, kept: bool) -> None:
-        """Say that *source_id*'s proofreading was made with other settings and kept.
-
-        The cell keeps its ``✓`` and gains the note *kept*; the tooltip says why it is there and
-        how to get a new proofreading.
-        """
-        row = self._row_for_source(source_id)
-        if row is None:
-            return
-        self._set_kept(row, kept)
-        self._refresh_correction_cell(row)
-
-    def set_checked(self, source_id: str, label: str) -> None:
-        """Show whether *source_id* is checked: ``"Checked"``, ``"Text checked"`` or nothing.
-
-        *label* is the ``checked_label`` of the document's work: ``"checked"`` for the
-        corrections, ``"text"`` for the transcription alone, ``""`` for neither.
-        """
-        row = self._row_for_source(source_id)
-        item = self.item(row, self._COL_CHECKED) if row is not None else None
-        if item is not None:
-            item.setText(txt.checked_cell_label(label))
+            return StageStatus.PENDING, StageStatus.PENDING, StageStatus.PENDING
+        ocr = _symbol_map.get(self._stage_symbol(row, self._COL_OCR), StageStatus.PENDING)
+        correction = _symbol_map.get(
+            self._stage_symbol(row, self._COL_CORRECTION), StageStatus.PENDING
+        )
+        evaluation = _symbol_map.get(
+            self._stage_symbol(row, self._COL_EVALUATION), StageStatus.PENDING
+        )
+        return ocr, correction, evaluation
 
     def checked_source_ids(self) -> list[str]:
         """Return the documents marked as checked, in queue order."""
@@ -658,156 +689,10 @@ class ResultsTable(QTableWidget):
             return str(source_id)
         return item.text()
 
-    def add_result(self, event: FileDoneEvent) -> None:
-        """Update an existing queued row, or append a new row if not pre-queued.
-
-        ``event`` carries the file name (row key), success flag, status message
-        (logged, not shown), total duration, and the preview/raw/correction/
-        evaluation artifact paths (each may be empty).
-        """
-        source_id = event.source_id
-        name = event.name
-        ok = event.ok
-        raw_txt = event.raw_txt
-        corr_txt = event.corr_txt
-        eval_txt = event.eval_txt
-
-        row = self._ensure_row(source_id, name)
-        if event.skipped:
-            # Left out on purpose: not a success (green) and not a failure (red).
-            self._set_skipped_cell(row, event.message)
-            for col in (self._COL_CORRECTION, self._COL_EVALUATION):
-                self._set_stage_cell(row, col, _PENDING_SYMBOL, _PENDING_COLOR)
-            self.setItem(row, self._COL_DURATION, QTableWidgetItem(""))
-            self._tint_row(row, QBrush(QColor(_NEUTRAL_ROW_BG)))
-            self.resizeColumnToContents(self._COL_FILE)
-            return
-        if event.stopped:
-            # The run was stopped: not a failure (red) and not complete (green).  What is done
-            # keeps its tick; the step that was cut short says so.
-            self._show_stopped_cells(row, event, (raw_txt, corr_txt, eval_txt))
-            self.setItem(row, self._COL_DURATION, QTableWidgetItem(""))
-            self._tint_row(row, QBrush(QColor(_NEUTRAL_ROW_BG)))
-            self._store_artifacts(row, event)
-            self.resizeColumnToContents(self._COL_FILE)
-            return
-        self._finalize_stage_cells(row, event, (raw_txt, corr_txt, eval_txt))
-        self.setItem(row, self._COL_DURATION, QTableWidgetItem(f"{event.total_s:.1f} s"))
-        if ok:
-            # A file that failed did not get as far as reading the teacher's work: its label is
-            # empty, which is not "unchecked".
-            self.set_checked(source_id, event.checked_label)
-
-        # Tint entire row for at-a-glance overall status
-        row_bg = QColor("#1a3d2a" if ok else "#3d1a1a")
-        for col in range(self.columnCount()):
-            cell = self.item(row, col)
-            if cell is not None:
-                cell.setBackground(row_bg)
-
-        self._store_artifacts(row, event)
-
-        self.resizeColumnToContents(self._COL_FILE)
-        self.resizeColumnToContents(self._COL_DURATION)
-
-    def _store_artifacts(self, row: int, event: FileDoneEvent) -> None:
-        """Attach the preview and texts of *event* to *row* (double-click opens them)."""
-        file_item = self.item(row, self._COL_FILE)
-        if file_item is not None:
-            file_item.setData(self._ROLE_SOURCE, event.source_id)
-            file_item.setData(self._ROLE_IMAGE, event.preview_img)
-            file_item.setData(self._ROLE_RAW, event.raw_txt)
-            file_item.setData(self._ROLE_CORR, event.corr_txt)
-            file_item.setData(self._ROLE_EVAL, event.eval_txt)
-            file_item.setData(self._ROLE_REVIEW, event.correction_review)
-            file_item.setData(self._ROLE_CORRECTION_WARNING, event.correction_warning)
-        self._refresh_correction_cell(row)
-
-    def _show_stopped_cells(
-        self, row: int, event: FileDoneEvent, artifacts: tuple[str, str, str]
-    ) -> None:
-        """Tick the steps that have a result, mark the cut-short one "stopped", leave the rest."""
-        # The result names the step it stopped at: no table cell is marked running for the review
-        # (nothing reports that step starting), so the running mark alone cannot tell.  Without
-        # a name (a stop between two steps) the cell that was marked running is the one.
-        cut = event.stopped_stage
-        for col, stage, artifact in zip(
-            (self._COL_OCR, self._COL_CORRECTION, self._COL_EVALUATION),
-            STAGE_ORDER,
-            artifacts,
-            strict=True,
-        ):
-            if artifact:
-                self._set_stage_cell(row, col, _DONE_SYMBOL, _COLOUR_OK)
-            elif stage == cut or (not cut and self._stage_symbol(row, col) == _RUNNING_SYMBOL):
-                self._set_stage_cell(row, col, _STOPPED_TEXT, _PENDING_COLOR)
-                cell = self.item(row, col)
-                if cell is not None:
-                    cell.setFont(_SKIPPED_FONT)
-                self._set_note(row, col, event.message)
-            else:
-                self._set_stage_cell(row, col, _PENDING_SYMBOL, _PENDING_COLOR)
-
-    def _ensure_row(self, source_id: str, name: str) -> int:
-        """Return *source_id*'s row, appending a fresh pending row when it has none."""
-        row = self._row_for_source(source_id)
-        if row is not None:
-            return row
-        row = self.rowCount()
-        self.insertRow(row)
-        self._row_by_source[source_id] = row
-        self.setItem(row, self._COL_FILE, QTableWidgetItem(name))
-        for col in (self._COL_OCR, self._COL_CORRECTION, self._COL_EVALUATION):
-            cell = QTableWidgetItem(_PENDING_SYMBOL)
-            cell.setForeground(QColor(_PENDING_COLOR))
-            cell.setFont(_STAGE_FONT)
-            self.setItem(row, col, cell)
-        self.setItem(row, self._COL_DURATION, QTableWidgetItem(""))
-        self.setItem(row, self._COL_CHECKED, QTableWidgetItem(""))
-        self._add_preview_button(row, source_id)
-        return row
-
-    def _finalize_stage_cells(
-        self, row: int, event: FileDoneEvent, artifacts: tuple[str, str, str]
-    ) -> None:
-        """Turn the running/pending stage cells into done, warning or error cells."""
-        ok = event.ok
-        message = event.message
-        for col, artifact in zip(
-            (self._COL_OCR, self._COL_CORRECTION, self._COL_EVALUATION), artifacts, strict=False
-        ):
-            sym = self._stage_symbol(row, col)
-            if ok:
-                if sym == _RUNNING_SYMBOL:
-                    if message:
-                        # Stage-level warning: overall ok but this stage had a non-fatal error.
-                        # (The coordinator passes "" when all stages succeeded, or the warning
-                        # text when a stage like correction fell back to the original text.)
-                        self._set_warning_info_widget(row, col, message)
-                    else:
-                        self._set_stage_cell(row, col, _DONE_SYMBOL, _COLOUR_OK)
-                elif sym == _PENDING_SYMBOL and artifact:
-                    self._set_stage_cell(row, col, _DONE_SYMBOL, _COLOUR_OK)
-            elif sym == _RUNNING_SYMBOL:
-                self._set_stage_cell(row, col, _FAIL_SYMBOL, _COLOUR_ERROR)
-                if message:
-                    self._set_error_info_widget(row, col, message)
-
-    def clear_results(self) -> None:
-        self.setRowCount(0)
-        self._row_by_source.clear()
-
-    def _on_cell_double_clicked(self, row: int, _col: int) -> None:
-        source_id = self.source_id_for_row(row)
-        if source_id and self._has_result(row):
-            self.check_requested.emit(source_id)
-
     def _has_result(self, row: int) -> bool:
         """Whether *row*'s document has something to show: text that was read or a page."""
-        item = self.item(row, self._COL_FILE)
-        if item is None:
-            return False
-        return bool(item.data(self._ROLE_RAW) or item.data(self._ROLE_IMAGE))
+        stored = self._rows.get(self.source_id_for_row(row))
+        return bool(stored is not None and stored.openable)
 
     def checkable_source_ids(self) -> list[str]:
         """Return the documents that can be opened in the Check tab, in queue order.
@@ -821,6 +706,41 @@ class ResultsTable(QTableWidget):
             if source_id and self._has_result(row):
                 ids.append(source_id)
         return ids
+
+    def selected_source_ids(self) -> list[str]:
+        """Return selected source IDs in row order."""
+        rows = sorted(index.row() for index in self.selectionModel().selectedRows())
+        ids: list[str] = []
+        for row in rows:
+            source_id = self.source_id_for_row(row)
+            if source_id:
+                ids.append(source_id)
+        return ids
+
+    def queued_source_ids(self) -> list[str]:
+        """Return all queued source IDs in row order."""
+        ids: list[str] = []
+        for row in range(self.rowCount()):
+            source_id = self.source_id_for_row(row)
+            if source_id:
+                ids.append(source_id)
+        return ids
+
+    def queued_file_names(self) -> list[str]:
+        """Return all currently queued file names in row order."""
+        names: list[str] = []
+        for row in range(self.rowCount()):
+            item = self.item(row, self._COL_FILE)
+            if item is not None:
+                names.append(item.text())
+        return names
+
+    # ── Opening a document ────────────────────────────────────────────────
+
+    def _on_cell_double_clicked(self, row: int, _col: int) -> None:
+        source_id = self.source_id_for_row(row)
+        if source_id and self._has_result(row):
+            self.check_requested.emit(source_id)
 
     def keyPressEvent(self, event: Any) -> None:
         """Open the current row on Enter or Return (the table itself is not editable)."""
@@ -887,65 +807,3 @@ class ResultsTable(QTableWidget):
             self.export_requested.emit(selected_source_ids, export_kinds[action])
         elif action is what_is_sent:
             self.what_is_sent_requested.emit(selected_source_ids[0])
-
-    def entry_for_source(self, source_id: str) -> tuple[str, str, str, str, str, str]:
-        """Return (source_id, name, preview_img, raw_txt, corr_txt, eval_txt) for *source_id*."""
-        row = self._row_for_source(source_id)
-        if row is None:
-            return "", "", "", "", "", ""
-        item = self.item(row, self._COL_FILE)
-        if item is None:
-            return "", "", "", "", "", ""
-        name = item.text()
-        preview_img = item.data(self._ROLE_IMAGE) or ""
-        raw_txt = item.data(self._ROLE_RAW) or ""
-        corr_txt = item.data(self._ROLE_CORR) or ""
-        eval_txt = item.data(self._ROLE_EVAL) or ""
-        return source_id, name, preview_img, raw_txt, corr_txt, eval_txt
-
-    def selected_entry(self) -> tuple[str, str, str, str, str, str]:
-        """Return selected row payload as (source_id, name, preview_img, raw_txt, corr_txt, eval_txt)."""
-        row = self.currentRow()
-        return self.entry_for_source(self.source_id_for_row(row) if row >= 0 else "")
-
-    def selected_paths(self) -> tuple[str, str, str, str, str]:
-        """Return selected row paths as (name, preview_img, raw_txt, corr_txt, eval_txt)."""
-        _source_id, name, preview_img, raw_txt, corr_txt, eval_txt = self.selected_entry()
-        return name, preview_img, raw_txt, corr_txt, eval_txt
-
-    def selected_source_ids(self) -> list[str]:
-        """Return selected source IDs in row order."""
-        rows = sorted(index.row() for index in self.selectionModel().selectedRows())
-        ids: list[str] = []
-        for row in rows:
-            source_id = self.source_id_for_row(row)
-            if source_id:
-                ids.append(source_id)
-        return ids
-
-    def queued_source_ids(self) -> list[str]:
-        """Return all queued source IDs in row order."""
-        ids: list[str] = []
-        for row in range(self.rowCount()):
-            source_id = self.source_id_for_row(row)
-            if source_id:
-                ids.append(source_id)
-        return ids
-
-    def queued_file_names(self) -> list[str]:
-        """Return all currently queued file names in row order."""
-        names: list[str] = []
-        for row in range(self.rowCount()):
-            item = self.item(row, self._COL_FILE)
-            if item is not None:
-                names.append(item.text())
-        return names
-
-    def set_evaluation_text(self, source_id: str, eval_txt: str) -> None:
-        """Attach evaluation text content to an existing row."""
-        row = self._row_for_source(source_id)
-        if row is None:
-            return
-        item = self.item(row, self._COL_FILE)
-        if item is not None:
-            item.setData(self._ROLE_EVAL, eval_txt)

@@ -15,11 +15,12 @@ MORE_TIP = "More for this document"
 
 SOURCE_CLOSE = "Close"
 
-FORMAT_TIP = (
-    "Ctrl+B bold · Ctrl+I italic · Ctrl+U underline · "
-    "Ctrl+Shift+X crossed out · Ctrl+Shift+= inserted above the line"
-)
-"""What the two editable views accept, so the teacher does not have to guess."""
+FORMAT_BOLD = "Bold"
+FORMAT_ITALIC = "Italic"
+FORMAT_UNDERLINE = "Underline"
+FORMAT_STRIKE = "Crossed out"
+FORMAT_INSERT = "Inserted above the line"
+"""The formatting an editable view offers in its context menu, with the key that applies it."""
 
 READ_TIP = (
     "The text as it was read. Fix a reading mistake here; the corrections of this "
@@ -59,6 +60,14 @@ RUN_READING = "Reading the text…"
 RUN_WAITING = "Waiting for its turn in this run…"
 RUN_TIME_LEFT_SEPARATOR = " · "
 """The strip in the header while the open document is in a run: what is being done to it."""
+
+RUN_WAITING_FOR_MODEL = "Waiting for Ollama: it is still working with {other}"
+RUN_LOADING_MODEL = "Loading {model} into memory…"
+RUN_QUEUED_FOR_MODEL = (
+    "The first file waits until Ollama has finished with {other} and loaded {model}"
+)
+"""Why a request to Ollama has no answer yet: another model is generating, this one loads, or
+another one is in the way before the run starts."""
 
 PROGRESS_PREPROCESSING = "preprocessing…"
 PROGRESS_OCR = "OCR…"

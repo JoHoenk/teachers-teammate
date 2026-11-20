@@ -19,8 +19,6 @@ from PySide6.QtGui import (
     QFocusEvent,
     QFont,
     QKeyEvent,
-    QKeySequence,
-    QShortcut,
     QTextBlock,
     QTextBlockFormat,
     QTextCharFormat,
@@ -342,23 +340,6 @@ def _toggle(view: QTextEdit, attribute: str) -> None:
         )
         fmt.setForeground(default_colour if raised else QColor(INSERT_COLOUR))
     view.mergeCurrentCharFormat(fmt)
-
-
-_SHORTCUTS: tuple[tuple[str, str], ...] = (
-    ("Ctrl+B", "bold"),
-    ("Ctrl+I", "italic"),
-    ("Ctrl+U", "underline"),
-    ("Ctrl+Shift+X", "strike"),
-    ("Ctrl+Shift+=", "insert"),
-)
-
-
-def install_formatting_shortcuts(view: QTextEdit) -> None:
-    """Bind Ctrl+B/I/U, Ctrl+Shift+X (crossed out) and Ctrl+Shift+= (inserted) on *view*."""
-    for sequence, attribute in _SHORTCUTS:
-        shortcut = QShortcut(QKeySequence(sequence), view)
-        shortcut.setContext(Qt.ShortcutContext.WidgetShortcut)
-        shortcut.activated.connect(lambda attr=attribute: _toggle(view, attr))
 
 
 class FormattedTextEdit(QTextEdit):

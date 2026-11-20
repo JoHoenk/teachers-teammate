@@ -43,6 +43,10 @@ class StageHashes:
     """Identity of the transcription the document has now."""
     correction_kept: bool = False
     """The teacher worked on the stored proofreading, so a run keeps it by default."""
+    correction_enabled: bool = True
+    """The run proofreads: only then can its settings make a stored proofreading stale."""
+    evaluation_enabled: bool = True
+    """The run reviews the content: only then can its settings make a stored review stale."""
 
 
 def reset_policy_from_stage(stage: str) -> ResetPolicy:
@@ -77,6 +81,10 @@ def first_stale_stage_for_hashes(hashes: StageHashes) -> StageName | None:
     document says.  A proofreading is stale whenever it was made from another transcription
     than the current one — whatever the settings — and stale by its settings only when the
     teacher did not work on it.
+
+    A stage the run does not do cannot make its stored result stale: switched off means "this
+    run does not do it", not "throw it away".  A new transcription still invalidates the
+    proofreading made from the old one, whatever the switch.
     """
     if (
         hashes.ocr_done
@@ -87,12 +95,17 @@ def first_stale_stage_for_hashes(hashes: StageHashes) -> StageName | None:
     if hashes.correction_done and (
         hashes.correction_source != hashes.expected_correction_source
         or (
-            hashes.correction_config_hash != hashes.expected_correction_config_hash
+            hashes.correction_enabled
+            and hashes.correction_config_hash != hashes.expected_correction_config_hash
             and not hashes.correction_kept
         )
     ):
         return "correction"
-    if hashes.evaluation_done and hashes.eval_config_hash != hashes.expected_eval_config_hash:
+    if (
+        hashes.evaluation_enabled
+        and hashes.evaluation_done
+        and hashes.eval_config_hash != hashes.expected_eval_config_hash
+    ):
         return "evaluation"
     return None
 

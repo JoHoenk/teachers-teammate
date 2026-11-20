@@ -290,6 +290,39 @@ def test_the_progress_is_unknown_without_an_estimate() -> None:
     assert pace.progress(5.0) is None
 
 
+def test_one_snapshot_holds_the_bar_and_the_time_left() -> None:
+    """
+    Given  a run of one page estimated at 100 seconds, proofread from second 0
+    When   the snapshot is taken at second 40
+    Then   it carries the bar's fraction and the time left from that one moment, so the two
+           displays cannot show different moments of the same run
+    """
+    pace = RunPace(estimate=TimeRange(100.0, 100.0))
+    pace.set_files(1)
+    pace.set_pages(1)
+    pace.file_started(1)
+    pace.work_started(0.0)
+
+    snapshot = pace.snapshot(40.0)
+
+    assert snapshot.fraction == pytest.approx(0.4)
+    assert snapshot.note == "about 1 min left"
+    assert snapshot.tooltip == "Between 1 min and 1 min left, at the pace of this run."
+
+
+def test_a_snapshot_without_an_estimate_says_nothing() -> None:
+    """
+    Given  a run nothing is known about
+    When   the snapshot is taken
+    Then   it has neither a fraction nor a note, so the bar keeps counting files
+    """
+    snapshot = RunPace().snapshot(5.0)
+
+    assert snapshot.fraction is None
+    assert snapshot.note == ""
+    assert snapshot.tooltip == ""
+
+
 def test_the_note_says_how_long_is_left() -> None:
     """
     Given  420 seconds left

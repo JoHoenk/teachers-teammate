@@ -18,9 +18,11 @@ from urllib.request import urlopen
 
 import pytest
 
-from teachers_teammate.infrastructure.ollama_utils import OllamaClient
+from teachers_teammate.infrastructure import ollama_utils
+from teachers_teammate.infrastructure.ollama_utils import OllamaClient, WaitKind
 
 from ..fakes.fake_ollama import (
+    CHAT_ANSWER,
     MODEL_SIZE,
     PULL_FAILED,
     PULL_MANIFEST,
@@ -204,3 +206,95 @@ def test_the_size_of_an_installed_model_reaches_the_list(fake: FakeOllama) -> No
         ("small:latest", 1_000_000),
         ("big:latest", MODEL_SIZE),
     ]
+
+
+# ── what the server is doing while a request has no answer yet ─────────────
+
+
+@pytest.fixture(name="quick_wait")
+def _quick_wait(monkeypatch) -> None:
+    """Ask the server what it is doing every 0.2 s, and report after 0.1 s.
+
+    The real figures are seconds; a test that waited them out would take longer than the whole
+    suite.
+    """
+    monkeypatch.setattr(ollama_utils, "_WAITING_POLL_S", 0.05)
+    monkeypatch.setattr(ollama_utils, "WAIT_DETAIL_AFTER_S", 0.1)
+
+
+def test_a_request_queued_behind_another_model_says_so_before_it_answers(
+    fake: FakeOllama, quick_wait: None
+) -> None:
+    """
+    Given  a server still generating with one model while a request asks for another
+    When   the app's client sends that request
+    Then   it reports what the server is doing before the first token arrives, and the answer
+           is marked as one that waited, so its load time is no measurement
+    """
+    fake.install("a:1b")
+    fake.install("b:1b")
+    fake.busy_with("a:1b", 0.8)
+    client = OllamaClient(fake.url)
+    events: list[tuple[str, object]] = []
+    client.detail_sink = lambda detail: events.append(("detail", detail))
+    client.first_token_sink = lambda: events.append(("token", None))
+
+    answer = client.chat("b:1b", "hi")
+
+    assert answer == CHAT_ANSWER
+    details = [detail for kind, detail in events if kind == "detail"]
+    assert details, "the run was never told what the server was doing"
+    assert events[-1][0] == "token"
+    assert any(detail.kind is WaitKind.BUSY and detail.other == "a:1b" for detail in details), (
+        details
+    )
+    assert client.last_stats is not None
+    assert client.last_stats.waited
+
+
+def test_a_model_already_in_memory_says_nothing(fake: FakeOllama, quick_wait: None) -> None:
+    """
+    Given  a model that is in memory and busy with another request
+    When   the app's client asks it for an answer
+    Then   no detail is sent — it is reading the text, so the first token is close — and the
+           answer is not marked as one that waited
+    """
+    fake.install("b:1b")
+    fake.busy_with("b:1b", 0.8)
+    client = OllamaClient(fake.url)
+    details: list[object] = []
+    client.detail_sink = details.append
+    tokens: list[str] = []
+    client.first_token_sink = lambda: tokens.append("token")
+
+    assert client.chat("b:1b", "hi") == CHAT_ANSWER
+
+    assert details == []
+    assert tokens == ["token"]
+    assert client.last_stats is not None
+    assert not client.last_stats.waited
+    # The server was read, and it did list the model: the silence is the answer, not a failure.
+    assert client.activity("b:1b").has("b:1b")
+
+
+def test_a_model_that_is_loading_is_reported_as_loading(fake: FakeOllama, quick_wait: None) -> None:
+    """
+    Given  a model that is not in memory yet and takes a while to load
+    When   the app's client asks it for an answer
+    Then   the run is told that the model is being loaded, naming it, and the answer is not
+           marked as one that waited: loading is this model's own time, and a load figure
+    """
+    fake.install("b:1b")
+    fake.loading_for("b:1b", 0.8)
+    client = OllamaClient(fake.url)
+    details: list[object] = []
+    client.detail_sink = details.append
+
+    assert client.chat("b:1b", "hi") == CHAT_ANSWER
+
+    assert details
+    first = details[0]
+    assert first.kind is WaitKind.LOADING
+    assert first.model == "b:1b"
+    assert client.last_stats is not None
+    assert not client.last_stats.waited

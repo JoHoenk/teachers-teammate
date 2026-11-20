@@ -64,7 +64,9 @@ class SetupAssistant(QWizard):
         self._committed = False
         self._documents_wanted = False
         self._drafts = ApiKeyDrafts(context.app_service, parent=self)
-        self._round = InstallRound(context.app_service, context.pull_manager, self)
+        # The round belongs to the window that opened the assistant, not to the assistant: its
+        # downloads go on after this window closes, and the window has to hear about them.
+        self._round = InstallRound(context.app_service, context.pull_manager, parent)
         self._pages: dict[SetupPageId, SetupPage] = {}
 
         self.setWindowTitle(TITLE)

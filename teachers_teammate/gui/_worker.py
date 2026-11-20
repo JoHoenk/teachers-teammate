@@ -64,6 +64,9 @@ class OCRWorker(QThread):
     # stage is "preprocessing" or "ocr"; not emitted when OCR comes from the cache.
     stage_started = Signal(str, str, str, int, int)  # (source_id, name, stage, idx, total)
     ocr_done = Signal(str, str, int, int)  # (source_id, name, idx, total)
+    # What Ollama is doing while a request has no answer yet (a WaitDetail).
+    stage_detail = Signal(str, object)  # (source_id, detail)
+    first_token = Signal(str)  # (source_id)
     file_done = Signal(object)  # FileDoneEvent
     keep_awake_changed = Signal(object)  # KeepAwakeState, once at the start of the run
     # Not "finished": QThread has a signal of that name.
@@ -117,6 +120,12 @@ class OCRWorker(QThread):
             idx, total = file_indices.get(source_id, (0, 0))
             self.ocr_done.emit(source_id, name, idx, total)
 
+        def on_stage_detail(source_id: str, detail: object) -> None:
+            self.stage_detail.emit(source_id, detail)
+
+        def on_first_token(source_id: str) -> None:
+            self.first_token.emit(source_id)
+
         def on_file_done(result: FileDoneResult) -> None:
             source_id = result.source_id
             now = time.monotonic()
@@ -164,6 +173,8 @@ class OCRWorker(QThread):
                     on_ocr_done=on_ocr_done,
                     on_file_done=on_file_done,
                     on_keep_awake=on_keep_awake,
+                    on_stage_detail=on_stage_detail,
+                    on_first_token=on_first_token,
                 ),
             }
             if self._selected_source_paths is not None:

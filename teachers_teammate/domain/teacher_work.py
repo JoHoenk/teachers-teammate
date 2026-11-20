@@ -132,6 +132,33 @@ def use_suggestion(
     return (_fit_gap(corrected_plain, start, end, item.note.recommendation),)
 
 
+def replace_words(
+    corrected_spans: Sequence[tuple[int, int]],
+    raw_span: tuple[int, int],
+    aligned: AlignedReview,
+    corrected_plain: str,
+    text: str,
+) -> tuple[TextEdit, ...]:
+    """Return the edit that puts *text* in place of the words an item has in the corrected text.
+
+    The words are the ones the item stands on now: its spans in the corrected text, so an
+    insertion is replaced and not added to.  An item with no such span (a stretch the model left
+    out) has the student's words there, which *raw_span* carries forward through the current
+    diff.  ``()`` when the words are not in the text.
+    """
+    if corrected_spans:
+        first = min(start for start, _end in corrected_spans)
+        last = max(end for _start, end in corrected_spans)
+    else:
+        start, end = raw_span
+        if not 0 <= start <= end:
+            return ()
+        first, last = map_forward((start, end), [change.hunk for change in aligned.changes])
+    if not 0 <= first <= last <= len(corrected_plain):
+        return ()
+    return (_fit_gap(corrected_plain, first, last, text),)
+
+
 def suggestion_is_wording(note: UnclearNote) -> bool:
     """Whether the note's recommendation is a wording to use, not a question to ask.
 

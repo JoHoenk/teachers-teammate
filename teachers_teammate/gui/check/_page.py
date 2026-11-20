@@ -47,6 +47,7 @@ from ...domain.teacher_work import (
     TextEdit,
     looked_at_progress,
     put_back,
+    replace_words,
     take_out,
     use_suggestion,
 )
@@ -59,8 +60,10 @@ from ._scan_view import ScanPane
 from ._side_panel import SidePanel
 from ._text_views import CheckTextView, FinalView, MarkedView, ReadView, marks_of
 
-#: Width of the side panel, and the width below which the scan folds to a strip.
-_PANEL_WIDTH = 320
+#: The side panel's share of the width, the least it may take, and the width below which the
+#: scan folds to a strip.
+_PANEL_SHARE = 0.28
+_PANEL_MIN_WIDTH = 320
 _NARROW_WIDTH = 1200
 #: Share of the width the scan takes, on *What was read* and on the other two views.
 _SCAN_SHARE_READ = 0.45
@@ -232,6 +235,17 @@ class _SourceDialog(QDialog):
         layout.addLayout(row)
 
 
+@dataclass(frozen=True)
+class CheckLayout:
+    """How the Check tab's panes are sized: the three widths, and the card's height."""
+
+    split: tuple[int, ...] = ()
+    """The widths of the scan, the text and the side panel; empty for the default ones."""
+
+    card_split: tuple[int, ...] = ()
+    """The heights of the card and the list below it; empty for the default ones."""
+
+
 class CheckBody(QWidget):
     """The scan, the text and the side panel of one document."""
 
@@ -247,6 +261,8 @@ class CheckBody(QWidget):
     """Ctrl+wheel changed the text size; the window stores it for the next document."""
     item_shown = Signal(str)
     """An item became the one the card shows: its key, or ``"minor"`` for the group row."""
+    layout_changed = Signal(object)
+    """The teacher dragged a pane: the :class:`CheckLayout` the tab has now."""
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -257,7 +273,7 @@ class CheckBody(QWidget):
         self._edit_allowed = False
         self._narrow = False
         self._scan_wanted: bool | None = None
-        self._splitter_dragged = False
+        self._stored_split: tuple[int, ...] = ()
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -287,7 +303,7 @@ class CheckBody(QWidget):
         self._splitter.addWidget(self._stack)
 
         self.panel = SidePanel()
-        self.panel.setMinimumWidth(_PANEL_WIDTH)
+        self.panel.setMinimumWidth(_PANEL_MIN_WIDTH)
         self._splitter.addWidget(self.panel)
         layout.addWidget(self._splitter, 1)
 
@@ -302,7 +318,8 @@ class CheckBody(QWidget):
         self.panel.put_back_requested.connect(self._on_put_back)
         self.panel.use_suggestion_requested.connect(self._on_use_suggestion)
         self.panel.take_out_all_requested.connect(self._on_take_out_all)
-        self.panel.change_requested.connect(self._on_change)
+        self.panel.replace_requested.connect(self._on_replace)
+        self.panel.card_split_changed.connect(self._on_card_split_changed)
 
         self._undo_action = self._build_history_action(QKeySequence.StandardKey.Undo, self._on_undo)
         self._redo_action = self._build_history_action(QKeySequence.StandardKey.Redo, self._on_redo)
@@ -395,6 +412,17 @@ class CheckBody(QWidget):
         """Read the texts at *point_size* points."""
         for view in (self.read_view, self.marked_view, self.final_view):
             view.set_point_size(point_size)
+
+    def set_layout(self, layout: CheckLayout) -> None:
+        """Give the panes the widths and the card the height the teacher chose last time."""
+        self._stored_split = tuple(layout.split)
+        self.panel.set_card_split(layout.card_split)
+        self._apply_widths()
+
+    @property
+    def check_layout(self) -> CheckLayout:
+        """How the panes are sized now."""
+        return CheckLayout(tuple(self._splitter.sizes()), self.panel.card_split)
 
     def flush_pending_edit(self) -> None:
         """Store a typed-but-uncommitted edit right now."""
@@ -528,18 +556,32 @@ class CheckBody(QWidget):
     # ── The widths ────────────────────────────────────────────────────────
 
     def _apply_widths(self) -> None:
-        """Give the scan its share of the width, unless the teacher dragged the splitter."""
-        if self._splitter_dragged:
-            return
+        """Give the panes the widths the teacher chose, or the scan its share of the width."""
+        self._splitter.setSizes(self._shown_sizes(self._stored_split or self._default_widths()))
+
+    def _default_widths(self) -> tuple[int, int, int]:
+        """Return the widths of a window nobody dragged: the panel's share, then the scan's."""
         total = max(self._splitter.width(), _NARROW_WIDTH)
-        panel = 0 if self.panel.isHidden() else _PANEL_WIDTH
+        panel = max(int(total * _PANEL_SHARE), _PANEL_MIN_WIDTH)
         share = _SCAN_SHARE_READ if self._view is ViewKind.READ else _SCAN_SHARE_OTHER
-        scan = 0 if self.scan.isHidden() else int((total - panel) * share)
-        self._splitter.setSizes([scan, max(total - panel - scan, 200), panel])
+        scan = int((total - panel) * share)
+        return scan, max(total - panel - scan, 200), panel
+
+    def _shown_sizes(self, sizes: Sequence[int]) -> list[int]:
+        """Return *sizes* with the panes that are hidden set to nothing."""
+        hidden = (self.scan.isHidden(), False, self.panel.isHidden())
+        return [0 if hide else size for size, hide in zip(sizes, hidden)]
 
     def _on_splitter_moved(self, _position: int, _index: int) -> None:
-        """Remember that the teacher chose the widths themselves."""
-        self._splitter_dragged = True
+        """Remember the widths the teacher dragged the panes to."""
+        sizes = tuple(self._splitter.sizes())
+        if all(size > 0 for size in sizes):
+            self._stored_split = sizes
+            self.layout_changed.emit(self.check_layout)
+
+    def _on_card_split_changed(self, _sizes: tuple[int, ...]) -> None:
+        """The teacher dragged the card's height: tell the window, which remembers it."""
+        self.layout_changed.emit(self.check_layout)
 
     def resizeEvent(self, event) -> None:
         """Fold the scan below the narrow width, and open it again above it."""
@@ -615,10 +657,15 @@ class CheckBody(QWidget):
         return ()
 
     def _apply(self, edits: tuple[TextEdit, ...]) -> None:
-        """Apply *edits* to the final text, which stores them through the path typing takes."""
+        """Apply *edits* to the final text, which stores them through the path typing takes.
+
+        The final text is edited where it stands, also while another view is in front: the
+        teacher keeps the view they were reading, and the marks of the others come back with
+        the stored document.  *Final text* is reached through the switch, never as a side
+        effect of an action.
+        """
         if not edits:
             return
-        self.set_view(ViewKind.FINAL)
         self.final_view.apply_plain_edits(edits)
 
     def _on_take_out(self, key: str) -> None:
@@ -648,11 +695,20 @@ class CheckBody(QWidget):
             edits.extend(self._edits_for(item))
         self._apply(tuple(edits))
 
-    def _on_change(self, key: str) -> None:
-        """Go to the words of *key* in the final text and select them."""
-        self.set_view(ViewKind.FINAL)
-        self.final_view.reveal(key)
-        self.final_view.setFocus()
+    def _on_replace(self, key: str, words: str) -> None:
+        """Write *words* in place of the words of *key*, as one plain edit."""
+        item = self._item(key)
+        if item is not None:
+            self._apply(self._replace_edits(item, words))
+
+    def _replace_edits(self, item: CheckItem, words: str) -> tuple[TextEdit, ...]:
+        """Return the edit that puts *words* in place of the words of *item*."""
+        doc = self._doc
+        if doc is None or doc.aligned is None:
+            return ()
+        return replace_words(
+            item.corrected_spans, item.raw_span, doc.aligned, doc.corrected_plain, words
+        )
 
     # ── The corrected text's own history ──────────────────────────────────
 
@@ -704,6 +760,8 @@ class CheckPage(QWidget):
     text_zoom_changed = Signal(int)
     item_shown = Signal(str)
     """An item became the one the card shows: its key, or ``"minor"`` for the group row."""
+    layout_changed = Signal(object)
+    """The teacher dragged a pane: the :class:`CheckLayout` the tab has now."""
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -749,6 +807,7 @@ class CheckPage(QWidget):
         self.body.display_anonymized_changed.connect(self.display_anonymized_changed)
         self.body.text_zoom_changed.connect(self.text_zoom_changed)
         self.body.item_shown.connect(self.item_shown)
+        self.body.layout_changed.connect(self.layout_changed)
 
     # ── Header ────────────────────────────────────────────────────────────
 
@@ -1025,6 +1084,10 @@ class CheckPage(QWidget):
     def set_point_size(self, point_size: int) -> None:
         """Read the texts at *point_size* points."""
         self.body.set_point_size(point_size)
+
+    def set_layout(self, layout: CheckLayout) -> None:
+        """Give the panes the widths and the card the height the teacher chose last time."""
+        self.body.set_layout(layout)
 
     def flush_pending_edit(self) -> None:
         """Store a typed-but-uncommitted edit right now."""

@@ -127,7 +127,9 @@ def _sample_of(step: SpeedStep, stats: list[ChatStats], *, words: int) -> RunSam
     write_ns = sum(item.eval_duration for item in stats)
     if read_tokens <= 0 or read_ns <= 0 or answer_tokens <= 0 or write_ns <= 0:
         return None
-    load_ns = max(item.load_duration for item in stats)
+    # A request that waited behind another model reports that wait as loading time, so it says
+    # nothing about how long this model takes to load: the sample keeps its speed, not its load.
+    load_ns = 0 if any(item.waited for item in stats) else max(item.load_duration for item in stats)
     return RunSample(
         read_tps=read_tokens / (read_ns / _NANOS_PER_S),
         write_tps=answer_tokens / (write_ns / _NANOS_PER_S),

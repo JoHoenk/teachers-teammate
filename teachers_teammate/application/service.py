@@ -87,7 +87,11 @@ from ..infrastructure.llm_factory import (
 from ..infrastructure.ocr_processor import (
     SUPPORTED_OCR_ENGINES,
 )
-from ..infrastructure.ollama_utils import warm_up_own_host_names
+from ..infrastructure.ollama_utils import (
+    ServerActivity,
+    WaitDetail,
+    warm_up_own_host_names,
+)
 from ..infrastructure.onnx.store import ModelStore
 from ..infrastructure.pipeline import OCRPipeline, preprocess_preview
 from ..infrastructure.power import KEEP_AWAKE_REASON, NullSleepBlocker, on_battery
@@ -139,6 +143,7 @@ from .data_flow import (
 from .formatting import TextFormatter
 from .merged_view import merged_view, reconciled_view
 from .model_recommendations import ModelRecommendationService
+from .queue import QueueRow, StoredStages, queue_row
 from .sent_text import Anonymize, SentTexts, describe_sent_texts
 from .setup_plan import (
     LocalModelChoices,
@@ -266,6 +271,9 @@ class RunPreflight:
     #: The documents whose corrections or transcription the teacher worked on, so the window can
     #: ask what to do with them before the run replaces anything.
     worked_on: WorkedOn = WorkedOn()
+    #: Another model is in the way on the Ollama server, so the first file waits for it.  A
+    #: note, never a refusal: the run works, it just waits.
+    ollama_wait: WaitDetail = WaitDetail()
 
     @property
     def blocked(self) -> bool:
@@ -523,6 +531,42 @@ class ProcessingApplicationService:
             views[view.source_id] = self._sent_verdict(view, current_privacy)
         return views
 
+    def queue_rows(self, config: Config, files: Sequence[Path]) -> list[QueueRow]:
+        """Return what the queue shows for *files*, read from the store.
+
+        One row per file, in the order given: the stage states the next run would find, and
+        what the document has.  The texts themselves are not part of a row; an action that
+        needs them reads the document (:meth:`load_view`), so the queue holds no copy that
+        could drift from the store.
+        """
+        store = self._state_store(config)
+        windows = self.resolved_windows(config)
+        current_privacy = functools.cache(lambda: privacy_fingerprint(config))
+        rows: list[QueueRow] = []
+        for file in files:
+            state = store.load_valid(file)
+            if state is None:
+                rows.append(QueueRow.empty(file))
+                continue
+            view = reconciled_view(
+                store,
+                file,
+                state,
+                self._work_store.load(state.source_hash),
+                expected_hashes(config, file, windows, self._model_store),
+            )
+            stored = StoredStages(
+                ocr=state.ocr_done,
+                correction=state.correction_done,
+                evaluation=state.evaluation_done,
+            )
+            rows.append(queue_row(self._sent_verdict(view, current_privacy), stored))
+        return rows
+
+    def queue_row(self, config: Config, source: Path) -> QueueRow:
+        """Return what the queue shows for one file, read from the store."""
+        return self.queue_rows(config, [source])[0]
+
     def worked_on_documents(
         self, config: Config, files: Collection[Path], *, run_proofreads: bool
     ) -> WorkedOn:
@@ -530,7 +574,8 @@ class ProcessingApplicationService:
 
         Reads every file that was not read since it last changed, so call it from a background
         thread.  *run_proofreads* says whether the run makes a proofreading at all: without
-        one, corrections that belong to no stored answer are not worth a question.
+        one it replaces nothing, so no stored proofreading needs a question and corrections that
+        belong to no stored answer are not worth one.
         """
         from ..domain.freshness import correction_kept_over_settings  # noqa: PLC0415
         from ..domain.teacher_work import current_texts  # noqa: PLC0415
@@ -571,12 +616,14 @@ class ProcessingApplicationService:
                     ocr_config_hash=state.ocr_config_hash,
                     correction_config_hash=expected_correction_hash,
                     eval_config_hash=state.eval_config_hash,
+                    correction_enabled=config.correction_enabled,
+                    evaluation_enabled=config.evaluation_enabled,
                 ),
             )
             applies = current_texts(machine_texts(state), work).corrections_work is not None
             if applies and worked_on:
                 worked_on_documents.append(file)
-            if correction_kept_over_settings(flags):
+            if run_proofreads and correction_kept_over_settings(flags):
                 kept_stale.append(file)
                 if corrections is not None and corrections.kept_under != expected_correction_hash:
                     unanswered.append(file)
@@ -990,25 +1037,6 @@ class ProcessingApplicationService:
         """Collect supported input files without a full Config (for partial GUI state)."""
         return self._discovery.collect_input_files_from_dir(input_dir, recursive)
 
-    def build_lookup_config(self, input_dir: Path, output_dir: Path) -> Config:
-        """Return a minimal Config for reading cached state before output_dir is confirmed."""
-        return Config(
-            input_dir=input_dir,
-            output_dir=output_dir,
-            recursive=DEFAULTS["recursive"],
-            debug=DEFAULTS["debug"],
-            ocr=OcrConfig(
-                engine=DEFAULTS["ocr_engine"],
-                model=DEFAULTS["ocr_model"],
-                preprocess_method=DEFAULTS["preprocess_method"],
-            ),
-            language=DEFAULTS["language"],
-            ollama_url=DEFAULTS["ollama_url"],
-            correction_enabled=DEFAULTS["correction_enabled"],
-            correction_provider=DEFAULTS["correction_provider"],
-            correction_model=DEFAULTS["correction_model"],
-        )
-
     def preprocess_preview(
         self,
         source_path: Path,
@@ -1107,9 +1135,16 @@ class ProcessingApplicationService:
             self._anonymization_cache.clear()
         self.forget_installed_models()
 
-    def forget_installed_models(self) -> None:
-        """Ask spaCy again which models are installed (after a download or an install)."""
+    def reread_installed_models(self) -> None:
+        """Ask spaCy again which models are installed, without forgetting what was warned."""
         self._installed_models = None
+
+    def forget_installed_models(self) -> None:
+        """Ask spaCy again which models are installed (after a download or an install).
+
+        Also lets a warning be printed again: what it said may have changed with the install.
+        """
+        self.reread_installed_models()
         self._warned.clear()
 
     def export_docx(
@@ -1568,6 +1603,31 @@ class ProcessingApplicationService:
         """Return where *provider* processes the data: ``"eu"``, ``"non_eu"`` or ``"unknown"``."""
         return get_provider_data_region(provider)
 
+    def anonymizer_models(self, language: str, config: object | None = None) -> list[str]:
+        """Return the spaCy models personal-info removal loads for *language* and *config*.
+
+        Resolved the same way a run resolves them, so a chosen primary model counts and an
+        automatic extra model that is not downloaded is left out.  No warning: this answers
+        "would it work?", and the run itself warns when a model is missing.
+        """
+        from ..infrastructure.anonymizer import resolve_anonymizer_config  # noqa: PLC0415
+        from ..infrastructure.spacy_models import spacy_model_for  # noqa: PLC0415
+        from ..infrastructure.system_locale import system_language  # noqa: PLC0415
+
+        anon_config: AnonymizerConfig = (
+            config if isinstance(config, AnonymizerConfig) else AnonymizerConfig()
+        )
+        resolved = resolve_anonymizer_config(
+            anon_config,
+            document_language=language,
+            system_language=system_language(),
+            installed_models=self._remembered_installed_models(),
+        )
+        models = [resolved.primary_model or spacy_model_for(language)]
+        if resolved.secondary_model:
+            models.append(resolved.secondary_model)
+        return models
+
     def describe_anonymizer_models(self, config: Config) -> list[str]:
         """Return the spaCy models personal-info removal loads for *config*, or ``[]`` when off.
 
@@ -1577,23 +1637,9 @@ class ProcessingApplicationService:
         """
         if not config.anonymization_enabled:
             return []
-        from ..infrastructure.anonymizer import (  # noqa: PLC0415
-            anonymizer_config_from,
-            resolve_anonymizer_config,
-        )
-        from ..infrastructure.spacy_models import spacy_model_for  # noqa: PLC0415
-        from ..infrastructure.system_locale import system_language  # noqa: PLC0415
+        from ..infrastructure.anonymizer import anonymizer_config_from  # noqa: PLC0415
 
-        resolved = resolve_anonymizer_config(
-            anonymizer_config_from(config),
-            document_language=config.language,
-            system_language=system_language(),
-            installed_models=self._remembered_installed_models(),
-        )
-        models = [resolved.primary_model or spacy_model_for(config.language)]
-        if resolved.secondary_model:
-            models.append(resolved.secondary_model)
-        return models
+        return self.anonymizer_models(config.language, anonymizer_config_from(config))
 
     def describe_sent_texts(self, config: Config, view: DocumentStateView) -> SentTexts:
         """Return what every step that leaves this computer receives, exactly as sent.
@@ -1935,7 +1981,49 @@ class ProcessingApplicationService:
             issues = self.check_stage_requirements(config, stage)
             if issues:
                 return RunPreflight(stage=stage, stage_issues=tuple(issues))
-        return RunPreflight(memory_warning=self.memory_warning_for_run(config) if memory else "")
+        return RunPreflight(
+            memory_warning=self.memory_warning_for_run(config) if memory else "",
+            ollama_wait=self.ollama_wait_for_run(config) if memory else WaitDetail(),
+        )
+
+    def ollama_activity(self, url: str, model: str = "") -> ServerActivity:
+        """Return what the Ollama server at *url* holds in memory, and whether *model* is there.
+
+        Never raises: an unreachable server reports nothing loaded and nothing busy.
+        """
+        from ..infrastructure.ollama_utils import OllamaClient  # noqa: PLC0415
+
+        return OllamaClient(url).activity(model)
+
+    def ollama_wait_for_run(self, config: Config) -> WaitDetail:
+        """Return why the first file waits for Ollama, or nothing.
+
+        A note, not a refusal.  Only for a server on this computer, and only when the model the
+        run needs is not in memory while another one is: Ollama then finishes that one and loads
+        this one before the first answer.  Makes one request, so only the check that starts a
+        run asks for it.
+        """
+        if not self._ollama_needed(config):
+            return WaitDetail()
+        from ..infrastructure.ollama_utils import (  # noqa: PLC0415
+            WaitKind,
+            is_local_ollama_url,
+            normalize_ollama_url,
+        )
+
+        if not is_local_ollama_url(normalize_ollama_url(config.ollama_url)):
+            return WaitDetail()
+        models = self.configured_ollama_models(config)
+        if not models:
+            return WaitDetail()
+        model = models[0]
+        activity = self.ollama_activity(config.ollama_url, model)
+        if activity.has(model):
+            return WaitDetail()
+        other = activity.busy_other_than(model) or next(iter(activity.loaded_names()), "")
+        if not other:
+            return WaitDetail()
+        return WaitDetail(WaitKind.QUEUED, model, other)
 
     def memory_warning_for_run(self, config: Config) -> str:
         """Return why the configured Ollama models do not fit in memory now, or ``""``.
@@ -2014,6 +2102,30 @@ class ProcessingApplicationService:
             detection.reason is DetectionReason.APPLE_UNIFIED_MEMORY
             or gpu_detector.detect_apple_unified_memory_gb() is not None
         )
+
+    def config_for_stage_run(self, config: Config, stage: str) -> Config:
+        """Return *config* for running one stage by hand: that stage on, the later ones off.
+
+        Running a stage from the right-click menu is an explicit, per-entry action: it runs
+        exactly that stage regardless of the enable checkboxes (which only govern the main
+        *Run*), and nothing after it.  The cache of the later stages was just cleared, so
+        leaving them enabled would silently run the whole chain again.  Evaluation also needs
+        correction text (cached, or computed first).
+        """
+        if stage == "ocr":
+            return dataclasses.replace(
+                config,
+                # Asking for this stage by hand overrides the "Recognize text" tick.
+                recognition_enabled=True,
+                correction_enabled=False,
+                evaluation_enabled=False,
+                anonymization_enabled=False,
+            )
+        if stage == "correction":
+            return dataclasses.replace(config, correction_enabled=True, evaluation_enabled=False)
+        if stage == "evaluation":
+            return dataclasses.replace(config, evaluation_enabled=True, correction_enabled=True)
+        return config
 
     def check_stage_requirements(self, config: Config, stage: str) -> list[RequirementIssue]:
         """Return unmet requirements for enabling *stage*.
@@ -2235,18 +2347,21 @@ class ProcessingApplicationService:
             self._warned.add(message)
             print(message, file=sys.stderr)
 
-    def anonymizer_available(self, language: str) -> bool:
+    def anonymizer_available(self, language: str, config: object | None = None) -> bool:
         """Return whether personal information can be hidden for *language* right now.
 
-        Cheap enough for the GUI to ask when it builds a menu or a panel: spaCy must be
-        importable and the model of *language* must be downloaded.  The GUI uses this to
-        disable "Hide personal information in texts" instead of failing when it is used.
+        The models are resolved the way a run resolves them, so a chosen primary model counts:
+        the answer is "yes" exactly when a run would find every model it loads.  Cheap enough
+        for the GUI to ask whenever it builds a panel: spaCy must be importable and the models
+        downloaded.  The GUI uses this to disable "Hide personal information in texts" instead
+        of failing when it is used.
         """
         from importlib.util import find_spec as find_module_spec  # noqa: PLC0415
 
         if find_module_spec("spacy") is None:
             return False
-        return self.spacy_model_for_language(language) in self.list_installed_spacy_models()
+        installed = self._remembered_installed_models()
+        return all(model in installed for model in self.anonymizer_models(language, config))
 
     def extra_name_models(self, language: str) -> list[str]:
         """Return the spaCy models that can be the extra language next to *language*'s own.

@@ -96,8 +96,11 @@ A document without a proofreading has only **What was read**, with a strip above
 **Stop**.
 
 **The scan** opens with a whole page in view; **Fit page**, **Fit width**, **+** and **−** (or Ctrl +
-mouse wheel) change the zoom. **Prepared · Original** switches between the pages as fixed for reading and as scanned
-(shown only when the preparation changed something).
+mouse wheel) change the zoom. Zooming in shows the pixels that were scanned, up to twice their own
+size (a small image goes on to four times the fitted page), so a detail is read and not
+guessed from a blurred enlargement. **Prepared · Original**
+switches between the pages as fixed for reading and as scanned (shown only when the preparation
+changed something).
 
 **The list of corrections** on the right numbers what the text marks. Pick a row and the text
 scrolls to it; click a mark in the text and its row is picked. ● marks what you have already looked
@@ -109,12 +112,16 @@ continues where you stopped.
 change with its count (**Grammar 4**). **Next ›** stays inside the filter, while the counts above
 the list keep covering the whole document.
 
-The card above the list explains the chosen item. It keeps one height — a long explanation scrolls
-inside it — so its buttons stay where your pointer is:
+The card above the list explains the chosen item: what it changes on the left, why on the right
+once the panel is wide enough for both, one above the other below that. Drag the handle under the
+card to give a long explanation more room, and the handle beside the list to widen the panel; both
+are remembered. The card keeps the height you gave it — a longer explanation scrolls inside it — so
+its buttons stay where your pointer is:
 
 - A **correction** shows what was replaced (`have → has`), the sentence it stands in with the
   student's words highlighted, its kind as a coloured chip, and one sentence saying why.
-  **Take out** restores the student's words; **Change** lets you type your own version.
+  **Take out** restores the student's words; **Replace with** writes your own version in their
+  place, without leaving the view you are reading.
 - **Spelling and punctuation** corrections are grouped in one row; **Take out all** restores them.
 - An **unclear expression** shows the words, why they are unclear, and a recommended version.
   When the meaning cannot be told from the text it is marked **Suggestion**; **Use suggestion**

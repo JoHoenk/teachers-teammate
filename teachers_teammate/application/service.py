@@ -16,7 +16,7 @@ import time
 from typing import TYPE_CHECKING, Any
 import uuid
 
-from ..config import DEFAULTS, Config, OcrConfig
+from ..config import DEFAULTS, INSTALLER_SETTING_KEYS, Config, OcrConfig, load_config_file
 from ..domain.context_budget import RunWindows, memory_at_context_gb
 from ..domain.data_location import (
     ENGINE_PPOCR,
@@ -2488,6 +2488,24 @@ class ProcessingApplicationService:
     def resolve_config_path(self, explicit: str | None) -> Path | None:
         """Return the config file path to load, or ``None`` when none applies."""
         return _infra_resolve_config_path(explicit)
+
+    def first_start_settings(self, path: Path | None) -> dict | None:
+        """Return what the installer chose when *path* is no saved setup yet, else ``None``.
+
+        A first start is a missing settings file, or one that holds only the keys the installer
+        writes (``INSTALLER_SETTING_KEYS``): the teacher has not set the app up then, and the
+        Setup Assistant must still run.  The dict carries those keys, so the first save does not
+        undo them.  A file that cannot be read is a saved setup, so the caller reports it.
+        """
+        if path is None or not path.is_file():
+            return {}
+        try:
+            values = load_config_file(path)
+        except Exception:  # noqa: BLE001  # a broken file is the caller's warning, not a first start
+            return None
+        if set(values) <= INSTALLER_SETTING_KEYS:
+            return values
+        return None
 
     # ── Commands ──────────────────────────────────────────────────────────
 

@@ -71,6 +71,16 @@ def test_frozen_only_checks_are_skipped_in_source_mode() -> None:
     assert {"imports", "qt", "reader", "pdf", "docx", "providers"} <= set(names)
 
 
+def test_stylesheet_check_loads_the_stylesheet_in_every_mode() -> None:
+    """
+    Given  a source run
+    When   the checks are listed and the stylesheet check runs
+    Then   it is listed, and loading the stylesheet (qdarkstyle -> qtpy -> packaging) passes
+    """
+    assert "stylesheet" in [name for name, _ in frozen_modes._checks()]
+    assert frozen_modes._check_stylesheet() is None
+
+
 def test_setup_assistant_check_is_listed_in_both_modes(tmp_path: Path, monkeypatch) -> None:
     """Given a source run and a frozen bundle, When the checks are listed, Then both build the wizard."""
     import sys  # noqa: PLC0415
@@ -183,6 +193,81 @@ def test_forget_keys_removes_every_provider_key(credential_file, keychain) -> No
     assert exit_code == 0
     assert credential_file == {"credentials/UNRELATED": "keep me"}
     assert keychain.passwords == {}
+
+
+def test_set_update_check_changes_only_that_key(tmp_path: Path, monkeypatch) -> None:
+    """
+    Given  a settings file with another setting
+    When   the installer's switch turns the update check off, and later on again
+    Then   the key flips, the other setting stays, and a bad value or a broken file is refused
+    """
+    monkeypatch.setenv("TEACHERS_TEAMMATE_TMPDIR", str(tmp_path))
+    settings = tmp_path / "ocr.toml"
+    settings.write_text('language = "German"\n', encoding="utf-8")
+
+    assert frozen_modes.set_update_check("off") == 0
+    text = settings.read_text(encoding="utf-8")
+    assert "check_for_updates = false" in text
+    assert 'language = "German"' in text
+
+    assert frozen_modes.set_update_check("on") == 0
+    assert "check_for_updates = true" in settings.read_text(encoding="utf-8")
+
+    assert frozen_modes.set_update_check("maybe") == 2
+    settings.write_text("this is = = not toml", encoding="utf-8")
+    assert frozen_modes.set_update_check("off") == 1
+    assert settings.read_text(encoding="utf-8") == "this is = = not toml"
+
+
+def test_set_update_check_writes_into_the_folder_it_is_given(tmp_path: Path, monkeypatch) -> None:
+    """
+    Given  an install that runs as another account, told the teacher's settings folder
+    When   the update check is switched off with that folder
+    Then   the file is made there, and the folder of the account that runs it stays untouched
+    """
+    own = tmp_path / "admin"
+    monkeypatch.setenv("TEACHERS_TEAMMATE_TMPDIR", str(own))
+    teacher = tmp_path / "teacher"
+
+    assert frozen_modes.set_update_check("off", str(teacher)) == 0
+
+    assert "check_for_updates = false" in (teacher / "ocr.toml").read_text("utf-8")
+    assert not own.exists()
+
+
+def test_set_update_check_keeps_the_settings_an_earlier_version_left_in_the_cache(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """
+    Given  an ocr.toml in the OS cache folder, where earlier versions kept it, and none in the
+           settings folder
+    When   the update check is switched off without a folder
+    Then   the old file is moved over first and keeps its setting, so the new file does not hide it
+    """
+    from teachers_teammate.infrastructure import storage_root  # noqa: PLC0415
+
+    monkeypatch.delenv("TEACHERS_TEAMMATE_TMPDIR", raising=False)
+    cache, config = tmp_path / "cache", tmp_path / "config"
+    cache.mkdir()
+    (cache / "ocr.toml").write_text('language = "German"\n', encoding="utf-8")
+    monkeypatch.setattr(
+        storage_root, "_platform_dir", lambda kind: cache if kind == "cache" else config
+    )
+
+    assert frozen_modes.set_update_check("off") == 0
+
+    text = (config / "ocr.toml").read_text("utf-8")
+    assert 'language = "German"' in text
+    assert "check_for_updates = false" in text
+
+
+def test_set_update_check_makes_a_missing_settings_file(tmp_path: Path, monkeypatch) -> None:
+    """Given no settings file, When the update check is switched off, Then a file with that one key is made."""
+    monkeypatch.setenv("TEACHERS_TEAMMATE_TMPDIR", str(tmp_path / "fresh"))
+
+    assert frozen_modes.set_update_check("off") == 0
+
+    assert "check_for_updates = false" in (tmp_path / "fresh" / "ocr.toml").read_text("utf-8")
 
 
 def test_addon_constraints_check_compares_the_bundle_with_what_is_running(

@@ -232,6 +232,12 @@ hiddenimports = [
     "teachers_teammate.infrastructure.proofreading.corrector",
     "teachers_teammate.infrastructure.docx_builder",
     "teachers_teammate.infrastructure.preprocessing.recipes",
+    # qdarkstyle imports qtpy when the stylesheet is loaded, and qtpy imports packaging at once.
+    # Named here so the bundle does not depend on the analysis following that chain; the
+    # smoke test's "stylesheet" check proves it did.
+    "qtpy",
+    "packaging",
+    "packaging.version",
     # timeit and cProfile are stdlib but some pip/spaCy code paths import them;
     # cProfile depends on the C extension _lsprof.
     "timeit",
@@ -275,6 +281,14 @@ a = Analysis(
     noarchive=False,
     optimize=0,
 )
+# A folder of this repository on PyInstaller's search path hides a library of the same name
+# (tools/packaging hid `packaging`: the bundle shipped the folder's __init__.py and no
+# packaging.version).  Nothing of tools/ belongs in the app, so none may be in the analysis.
+_FROM_TOOLS = sorted(
+    name for name, path, _kind in a.pure if Path(path).is_relative_to(ROOT / "tools")
+)
+if _FROM_TOOLS:
+    raise SystemExit(f"modules of tools/ are in the bundle, they hide libraries: {_FROM_TOOLS}")
 a.binaries = [entry for entry in a.binaries if _keep(entry)]
 a.datas = [entry for entry in a.datas if _keep(entry)]
 

@@ -425,6 +425,12 @@ def unavailable_ocr_engine(path: Path) -> ReplacedEngine | None:
     return replaced_ocr_engine(engine)
 
 
+#: The settings the installer may write before the app has ever started.  A settings file that
+#: holds nothing else is not a teacher's saved setup: the first start (the Setup Assistant) still
+#: runs, and carries these values over.
+INSTALLER_SETTING_KEYS: frozenset[str] = frozenset({"check_for_updates"})
+
+
 def load_config_file(path: Path) -> dict:
     """Parse *path* as TOML and return a dict of recognised pipeline keys.
 

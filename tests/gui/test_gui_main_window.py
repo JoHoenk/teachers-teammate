@@ -3046,6 +3046,43 @@ def _make_first_start_window(qtbot, monkeypatch, tmp_path: Path, detection) -> M
     return win
 
 
+def test_a_settings_file_from_the_installer_is_still_a_first_start(
+    qtbot, monkeypatch, tmp_path: Path
+) -> None:
+    """
+    Given  an ocr.toml that holds only check_for_updates = false, written by the installer
+    When   the main window starts and then saves
+    Then   the Setup Assistant still opens, the update check stays off, and the saved file
+           keeps that choice
+    """
+    from PySide6.QtWidgets import QDialog  # noqa: PLC0415
+    from teachers_teammate.gui.setup import SetupAssistant  # noqa: PLC0415
+
+    settings = tmp_path / "ocr.toml"
+    settings.write_text("check_for_updates = false\n", encoding="utf-8")
+    opened: list[bool] = []
+    monkeypatch.setattr(main_window_module, "UpdateCheckThread", _DummyUpdateThread)
+    monkeypatch.setattr(MainWindow, "_start_readiness_check", lambda self, **_kw: None)
+    monkeypatch.setattr(
+        MainWindow, "_apply_first_start_defaults", lambda self: self._save_settings(notify=False)
+    )
+    monkeypatch.setattr(
+        SetupAssistant,
+        "exec",
+        lambda self: opened.append(True) or QDialog.DialogCode.Rejected,
+    )
+    monkeypatch.setattr(
+        ProcessingApplicationService, "resolve_config_path", lambda self, explicit: settings
+    )
+
+    win = MainWindow(worker_factory=_DummyWorker)
+    qtbot.addWidget(win)
+    qtbot.waitUntil(lambda: bool(opened), timeout=5000)
+    qtbot.waitUntil(lambda: "check_for_updates = false" in settings.read_text("utf-8"))
+
+    assert win._config_panel.get_settings_dict()["check_for_updates"] is False
+
+
 @pytest.mark.use_case("Recommended_Models_On_First_Start")
 def test_first_start_selects_best_models_for_profile(qtbot, monkeypatch, tmp_path: Path) -> None:
     """

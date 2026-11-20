@@ -71,7 +71,8 @@ def test_scope_page_leave_keeps_only_the_two_dialog_reads() -> None:
     assert 'StrCpy $R1 "$R1 /D=$INSTDIR"' in leave
     assert "SetShellVarContext" not in leave
     assert "PROGRAMFILES64" not in leave
-    assert "LOCALAPPDATA" not in leave
+    # The install folder is ApplyScope's; the settings folder handed to the elevated copy is not.
+    assert "$LOCALAPPDATA\\Programs" not in leave
 
 
 def test_uninstaller_page_takes_its_defaults_from_the_defines() -> None:
@@ -168,20 +169,35 @@ def test_the_elevation_sentence_names_the_button_the_page_shows() -> None:
     assert "when you click Update" not in script
 
 
-def test_privacy_note_names_the_setting_that_turns_the_update_check_off() -> None:
+def test_update_check_is_asked_on_the_scope_page_not_on_the_welcome_page() -> None:
     """
     Given  the installer script
-    When   the PRIVACY_NOTE define is read
-    Then   it is one sentence that names Settings > General and carries no URL, because a label
-           on the Welcome page cannot be clicked
+    When   the Welcome text, the scope page and the install section are read
+    Then   the Welcome text carries no update-check note, the scope page has the check box and
+           the link to the policy, "off" travels to the elevated copy together with the folder of
+           the teacher's settings, the app writes the box either way, and /NOUPDATECHECK and
+           /SETTINGSDIR= are read on the command line
     """
     script = _script()
 
-    start = script.index("!define PRIVACY_NOTE ")
-    note = script[start : script.index("\n", start)]
+    assert "PRIVACY_NOTE" not in script
+    assert "GitHub" not in _function(script, ".onInit")
 
-    assert "Settings > General" in note
-    assert "http" not in note
-    assert "${APP_URL}" not in note
-    # One sentence: the define carries a single full stop.
-    assert note.count(".") == 1
+    page = _function(script, "ScopePageCreate")
+    assert "Check for updates when the app starts" in page
+    assert "${NSD_OnClick} $PrivacyLink OpenPrivacyPage" in page
+    assert 'ExecShell "open" "${PRIVACY_URL}"' in _function(script, "OpenPrivacyPage")
+
+    leave = _function(script, "ScopePageLeave")
+    assert "${NSD_GetState} $ScopeUpdates $0" in leave
+    assert '/NOUPDATECHECK /SETTINGSDIR="$LOCALAPPDATA\\teachers_teammate"' in leave
+
+    init = _function(script, ".onInit")
+    assert '${GetOptions} $R0 "/NOUPDATECHECK" $R1' in init
+    assert '${GetOptions} $R0 "/SETTINGSDIR=" $R1' in init
+
+    install = script[script.index('Section "Core (required)"') :]
+    assert '--_set_update_check $R0 "$CmdSettingsDir"' in install
+    assert 'StrCpy $R0 "on"' in install
+    assert 'StrCpy $R0 "off"' in install
+    assert "FileWrite" not in install

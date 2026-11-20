@@ -1205,6 +1205,29 @@ def test_resolve_config_path_delegates(tmp_path: Path) -> None:
 
 
 @pytest.mark.unit
+def test_first_start_settings_tells_a_first_start_from_a_saved_setup(tmp_path: Path) -> None:
+    """
+    Given  no settings file, one with only what the installer writes, one a teacher saved, and
+           one that cannot be read
+    When   first_start_settings() is asked about each
+    Then   the first two are a first start (carrying the installer's choice), the others are not
+    """
+    svc = _make_svc()
+    installer = tmp_path / "installer.toml"
+    installer.write_text("check_for_updates = false\n", encoding="utf-8")
+    saved = tmp_path / "saved.toml"
+    saved.write_text('check_for_updates = false\nlanguage = "German"\n', encoding="utf-8")
+    broken = tmp_path / "broken.toml"
+    broken.write_text("this is = = not toml", encoding="utf-8")
+
+    assert svc.first_start_settings(None) == {}
+    assert svc.first_start_settings(tmp_path / "missing.toml") == {}
+    assert svc.first_start_settings(installer) == {"check_for_updates": False}
+    assert svc.first_start_settings(saved) is None
+    assert svc.first_start_settings(broken) is None
+
+
+@pytest.mark.unit
 def test_default_config_path_delegates(tmp_path: Path) -> None:
     """
     Given  a ProcessingApplicationService and a patched storage root

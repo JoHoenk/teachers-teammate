@@ -11,13 +11,14 @@ and the marks), :mod:`tools.evaluation.input` (the test sets and the corpora) an
 :mod:`tools.evaluation.convert` (the one-off converter of the old store); this file only parses
 arguments and prints.
 
-Usage::
+Usage (``$EVALS`` is the clone of ``teachers-teammate-evals``; every command but ``manifest`` needs
+``--store``)::
 
-    bazel run //tools:store -- convert --old-root ~/gec-testset \\
+    bazel run //tools:store -- convert --store $EVALS --old-root ~/gec-testset \\
         --manifest gec-2026-12=~/git/teachers-teammate-evals/testsets/gec-2026-12/manifest.json
-    bazel run //tools:store -- validate
-    bazel run //tools:store -- marks SHEET.md --marker jh
-    bazel run //tools:store -- accept-marks --testset gec-2026-12 --marker jh
+    bazel run //tools:store -- validate --store $EVALS
+    bazel run //tools:store -- marks SHEET.md --marker jh --store $EVALS
+    bazel run //tools:store -- accept-marks --testset gec-2026-12 --marker jh --store $EVALS
     bazel run //tools:store -- manifest \\
         --manifest ~/git/teachers-teammate-evals/testsets/gec-2026-12/manifest.json
 
@@ -39,7 +40,7 @@ import sys
 
 from tools.evaluation.convert import v1 as convert_v1
 from tools.evaluation.core.formats import FormatError
-from tools.evaluation.core.paths import DEFAULT_STORE, store_argument, workspace_path
+from tools.evaluation.core.paths import store_argument, workspace_path
 from tools.evaluation.input import testset as testset_module
 from tools.evaluation.input.corpora import adapter_class, names
 from tools.evaluation.input.testset import Corpora, corpus_paths
@@ -279,13 +280,13 @@ def _corpora_arguments(target) -> None:
     )
 
 
-def _store_arguments(target, *, default: str = DEFAULT_STORE) -> None:
+def _store_arguments(target) -> None:
     """Add the option that names the store to *target*."""
     target.add_argument(
         "--store",
         type=store_argument,
-        default=default,
-        help="the store of evaluation records (default: %(default)s)",
+        required=True,
+        help="the store of evaluation records, a clone of teachers-teammate-evals",
     )
 
 

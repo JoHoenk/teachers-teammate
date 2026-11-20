@@ -21,7 +21,6 @@ from tools import evaluate, prepare_gec_testset, report, store, verify_model_cat
 from tools.evaluation.core import paths, protocol_table
 from tools.evaluation.core.hashing import sha256_text
 from tools.evaluation.core.labels import ReferenceLabel
-from tools.evaluation.core.paths import DEFAULT_STORE
 from tools.evaluation.core.manifest import Manifest, ManifestItem
 from tools.evaluation.core.records import (
     Answer,
@@ -262,17 +261,24 @@ def test_a_table_of_false_alarms_classifies_them(tmp_path: Path, capsys) -> None
     assert f"| `{MODEL}` | 1 |" in printed.out
 
 
-def test_a_gate_without_a_store_reads_the_default_store() -> None:
+def test_a_command_without_a_store_is_refused_by_the_parser(capsys) -> None:
     """Given  no store on the command line
-    When   the gate, the comparison and the passes are parsed
-    Then   each reads the private store, which is what every command defaults to
+    When   a report, the builder or the size measurement is parsed
+    Then   the parser refuses it and names --store, because no command guesses where the records are
     """
-    parser = report.build_parser()
-    default = Path(DEFAULT_STORE).expanduser()
-
-    assert parser.parse_args(["gate", "--model", MODEL]).store == default
-    assert parser.parse_args(["compare", "--along", "model"]).store == default
-    assert parser.parse_args(["passes"]).store == default
+    for parse in (
+        lambda: report.main(["gate", "--model", MODEL]),
+        lambda: report.main(["compare", "--along", "model"]),
+        lambda: report.main(["passes"]),
+        lambda: report.main(["table"]),
+        lambda: store.main(["validate"]),
+        lambda: evaluate.main(["run", "--testset", "gec-2026-12", "--model", MODEL]),
+        lambda: verify_model_catalog.main(["fit", "--report"]),
+    ):
+        with pytest.raises(SystemExit) as refused:
+            parse()
+        assert refused.value.code == 2
+        assert "--store" in capsys.readouterr().err
 
 
 def test_a_store_inside_the_app_repository_is_refused_by_the_parser(monkeypatch, capsys) -> None:

@@ -19,9 +19,9 @@ Per language and model a run writes one answer per text, and the report derives 
 
 Run (answers are appended, so an interrupted run resumes):::
 
-    bazel run //tools:evaluate -- run --machine rx9070xt-server \\
+    bazel run //tools:evaluate -- run --store $EVALS --machine rx9070xt-server \\
         --testset gec-2026-12 --model qwen3.5:9b --model gemma4:e4b
-    bazel run //tools:report -- table
+    bazel run //tools:report -- table --store $EVALS
 
 Each model starts at the temperature its maker recommends (``--temperature`` overrides it).
 ``--exchange`` says how the text travels and ``--steps`` which steps of it run: the default is the
@@ -73,7 +73,7 @@ from tools.evaluation.core.modes import (
     setup_label,
     steps_of,
 )
-from tools.evaluation.core.paths import DEFAULT_STORE, store_argument, workspace_path
+from tools.evaluation.core.paths import store_argument, workspace_path
 from tools.evaluation.core.performance import performance_of
 from tools.evaluation.core.records import Answer, question_sha256
 from tools.evaluation.run import defaults, protocol, run_log, runner
@@ -587,9 +587,9 @@ def _run_command(sub) -> None:
     run.add_argument(
         "--store",
         type=store_argument,
-        default=DEFAULT_STORE,
-        help="the store the run writes into (default: %(default)s): its answers go to runs/ below "
-        "it, and the test set is read from testsets/<name>/",
+        required=True,
+        help="the store the run writes into, a clone of teachers-teammate-evals: its answers go "
+        "to runs/ below it, and the test set is read from testsets/<name>/",
     )
     run.add_argument(
         "--testset",

@@ -91,7 +91,7 @@ or `docs/development.md`.
 
 **Evaluation records**
 - Every record — runs, test sets with their texts, marks, machines, model sizes, gate records — lives
-  in the private repository `teachers-teammate-evals`, which is what `--store` defaults to. Never in
+  in the private repository `teachers-teammate-evals`, which every tool takes as `--store`. Never in
   this one: `store_path()` refuses a store inside this tree and `tests/tools/test_no_eval_records.py`
   fails on a run file, a manifest, a size record or a marks file here. The texts come from corpora
   that may not be passed to a third party, so that repository stays private.

@@ -8,9 +8,9 @@ Six jobs, six subcommands::
     bazel run //tools:verify_model_catalog -- sizes
     bazel run //tools:verify_model_catalog -- capabilities
     bazel run //tools:verify_model_catalog -- smoke --answers DIR --tag TAG
-    bazel run //tools:verify_model_catalog -- structured-output
-    bazel run //tools:verify_model_catalog -- fit --machine ID --gpu-agent URL --tag TAG
-    bazel run //tools:verify_model_catalog -- fit --report
+    bazel run //tools:verify_model_catalog -- structured-output --fit-store $EVALS/model-fit/sizes.jsonl
+    bazel run //tools:verify_model_catalog -- fit --store $EVALS --machine ID --gpu-agent URL --tag TAG
+    bazel run //tools:verify_model_catalog -- fit --store $EVALS --report
     bazel run //tools:verify_model_catalog -- recheck FILE...
 
 ``sizes`` (the default) reads every catalog tag's manifest from the registry (or, for
@@ -25,7 +25,7 @@ can read images — this is how the ``gemma4:12b`` open question can be settled.
 own proofreading options and stores two readings per step: what Ollama reports (``/api/ps``) and
 what the card really holds (the memory agent, ``--gpu-agent``).  Nothing derived is stored, so a
 new size limit costs no measuring.  The records go to ``model-fit/sizes.jsonl`` in the store of
-evaluation records (``--store``, default ``~/git/teachers-teammate-evals``), append-only;
+evaluation records (``--store``, a clone of ``teachers-teammate-evals``), append-only;
 ``--report`` reads them back without a server, ``--compare A B`` puts two machines
 side by side, and ``--catalog`` prints the figures to enter by hand.  ``--fit-limit`` (default
 ``8gb`` and ``16gb``) says which windows still fit a card of that size, by the app's own rule.
@@ -132,7 +132,7 @@ from tools.evaluation.checks.structured_check import (
 )
 from tools.evaluation.core.formats import FormatError
 from tools.evaluation.core.machines import require_machine
-from tools.evaluation.core.paths import DEFAULT_STORE, store_argument, store_path, workspace_path
+from tools.evaluation.core.paths import store_argument, workspace_path
 from tools.evaluation.core.revision import tool_revision
 from tools.evaluation.run import defaults, protocol
 from tools.evaluation.run.agent_client import AgentClient, AgentError
@@ -321,7 +321,8 @@ class _FitGate:
     costs no extra load.
     """
 
-    store: FitStore
+    store: FitStore | None
+    """The size measurements; ``None`` only when the limit is off, which never reads them."""
     limit: FitLimit
     probe: ServerProbe
     port: OllamaChatPort
@@ -341,7 +342,7 @@ class _FitGate:
         model.  A server that cannot be measured is a warning: the screen is worth more than the
         figure.
         """
-        if self.limit.max_size_gb is None:
+        if self.limit.max_size_gb is None or self.store is None:
             return None, []
         digest = str(self.probe.model_info(tag).get("digest", ""))
         record = size_for_decision(self.store.records(), tag=tag, digest=digest, num_ctx=window)
@@ -361,6 +362,8 @@ class _FitGate:
 
     def _measure(self, tag: str, window: int) -> tuple[FitRecord | None, str | None]:
         """Measure *tag* at *window* and append the record; the second value is why it failed."""
+        if self.store is None:
+            return None, "could not measure the fit: pass --fit-store"
         if not self.machine:
             return None, (
                 "could not measure the fit: pass --machine ID, from the store's machines/, so the "
@@ -410,17 +413,12 @@ class _FitGate:
         return self._agent, self._info, None
 
 
-def _default_sizes() -> Path:
-    """Return where the size measurements are kept unless a command names another file."""
-    return store_path(DEFAULT_STORE) / SIZES_PATH
-
-
 def _fit_gate(
     args: argparse.Namespace, port: OllamaChatPort, probe: ServerProbe, limit: FitLimit
 ) -> _FitGate:
     """Return the size gate of this invocation: the store, the limit and the agent to ask."""
     return _FitGate(
-        store=FitStore(args.fit_store or _default_sizes()),
+        store=FitStore(args.fit_store) if args.fit_store is not None else None,
         limit=limit,
         probe=probe,
         port=port,
@@ -442,9 +440,12 @@ def _fit_limit_of(args: argparse.Namespace) -> FitLimit:
     """Return the size limit of this invocation.
 
     Raises:
-        ValueError: the text is not a limit.
+        ValueError: the text is not a limit, or a limit is set and ``--fit-store`` is not.
     """
-    return FitLimit.parse(args.fit_limit)
+    limit = FitLimit.parse(args.fit_limit)
+    if limit.max_size_gb is not None and args.fit_store is None:
+        raise ValueError("--fit-store is required unless --fit-limit is off")
+    return limit
 
 
 def _open_answers_file(
@@ -1136,7 +1137,8 @@ def _add_fit_options(parser: argparse.ArgumentParser) -> None:
         type=store_argument,
         default=None,
         metavar="PATH",
-        help="Where the size measurements are kept (default: the store's model-fit/sizes.jsonl).",
+        help="Where the size measurements are kept: the model-fit/sizes.jsonl of the store. "
+        "Required unless --fit-limit is off.",
     )
     parser.add_argument(
         "--machine",
@@ -1359,10 +1361,10 @@ def _add_fit(sub, shared) -> None:
     fit.add_argument(
         "--store",
         type=store_argument,
-        default=DEFAULT_STORE,
+        required=True,
         metavar="PATH",
-        help="The store of evaluation records (default: %(default)s); the measurements are kept "
-        "in its model-fit/sizes.jsonl and the machines in its machines/.",
+        help="The store of evaluation records, a clone of teachers-teammate-evals; the "
+        "measurements are kept in its model-fit/sizes.jsonl and the machines in its machines/.",
     )
     fit.add_argument(
         "--gpu-agent",

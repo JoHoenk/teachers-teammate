@@ -4,17 +4,17 @@ Developer tool, offline.  Every number it prints comes from :mod:`tools.evaluati
 page it writes comes from :mod:`tools.evaluation.report.viewer`; this file only parses arguments and
 prints.  Every command reads the store, which holds the model's output, the texts and the marks.
 
-Usage::
+Usage (``$EVALS`` is the clone of ``teachers-teammate-evals``; every command needs ``--store``)::
 
-    bazel run //tools:report -- table --performance
-    bazel run //tools:report -- table --by-error category
-    bazel run //tools:report -- compare --along temperature
-    bazel run //tools:report -- compare --along model \\
+    bazel run //tools:report -- table --store $EVALS --performance
+    bazel run //tools:report -- table --store $EVALS --by-error category
+    bazel run //tools:report -- compare --store $EVALS --along temperature
+    bazel run //tools:report -- compare --store $EVALS --along model \\
         --where exchange=text-first --baseline gemma4:12b
-    bazel run //tools:report -- gate --model gemma4:12b
-    bazel run //tools:report -- passes
-    bazel run //tools:report -- sheet --run RUN_NAME
-    bazel run //tools:report -- page --report-out ~/gec-testset/reports/x
+    bazel run //tools:report -- gate --store $EVALS --model gemma4:12b
+    bazel run //tools:report -- passes --store $EVALS
+    bazel run //tools:report -- sheet --store $EVALS --run RUN_NAME
+    bazel run //tools:report -- page --store $EVALS --report-out ~/gec-testset/reports/x
 
 ``table`` prints the results table; ``--performance`` adds the speed and memory table,
 ``--catalog-lines`` the ``answer_length=`` lines the catalog wants, ``--by-error`` how many errors of
@@ -45,7 +45,7 @@ import sys
 from tools.evaluation.core.axes import AXIS_NAMES
 from tools.evaluation.core.formats import FormatError
 from tools.evaluation.core.modes import Exchange, Step, exchange_of, steps_of
-from tools.evaluation.core.paths import DEFAULT_STORE, store_argument, workspace_path
+from tools.evaluation.core.paths import store_argument, workspace_path
 from tools.evaluation.report import compare as compare_module
 from tools.evaluation.report import gates, groups, load, select, spot_check
 from tools.evaluation.report.load import Loaded, LoadedRun
@@ -106,11 +106,9 @@ def _items_of(args) -> tuple[tuple, tuple]:
     return loaded.items, loaded.skipped
 
 
-def _cache_of(args) -> Path | None:
+def _cache_of(args) -> Path:
     """Return where the score cache lives: the one named, else the store's own ``cache/``."""
-    if args.cache is not None:
-        return args.cache
-    return layout.cache_dir(args.store) if args.store is not None else None
+    return args.cache if args.cache is not None else layout.cache_dir(args.store)
 
 
 # ── the comparison ───────────────────────────────────────────────────────────
@@ -375,8 +373,8 @@ def _store_arguments(target) -> None:
     target.add_argument(
         "--store",
         type=store_argument,
-        default=DEFAULT_STORE,
-        help="the store of evaluation records (default: %(default)s)",
+        required=True,
+        help="the store of evaluation records, a clone of teachers-teammate-evals",
     )
 
 
@@ -588,8 +586,8 @@ def _page_command(sub) -> None:
     build.add_argument(
         "--store",
         type=store_argument,
-        default=DEFAULT_STORE,
-        help="the store of evaluation records (default: %(default)s)",
+        required=True,
+        help="the store of evaluation records, a clone of teachers-teammate-evals",
     )
     build.add_argument(
         "--report-out", type=workspace_path, required=True, help="the folder to write"

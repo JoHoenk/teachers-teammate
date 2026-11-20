@@ -71,11 +71,12 @@ pip_dev.parse(
 )
 use_repo(pip_dev, "ocr_dev_dependencies")
 
-# Test pip hub: runtime subset + pytest, used by //tests:unit_tests.
+# Test pip hub: runtime subset + pytest, used by //tests:unit_tests.  Not a dev dependency: the
+# evaluation tools in //tools are built from the private evaluation repository, a module of its
+# own that depends on this one, and a dependent module sees only the non-dev parts.
 pip_test = use_extension(
     "@rules_python//python/extensions:pip.bzl",
     "pip",
-    dev_dependency = True,
 )
 pip_test.parse(
     hub_name = "ocr_test_dependencies",
@@ -94,7 +95,7 @@ maven.install(
 )
 use_repo(maven, "blueprint_maven_dependencies")
 
-bazel_dep(name = "trlc", version = "0.0.0")
+bazel_dep(name = "trlc", version = "0.0.0", dev_dependency = True)
 git_override(
     module_name = "trlc",
     commit = "08ff8c7d6c362153392003c671a9799a446b0db5",

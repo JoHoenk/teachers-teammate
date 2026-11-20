@@ -1669,23 +1669,13 @@ def test_a_store_inside_the_app_repository_is_refused(monkeypatch, tmp_path) -> 
            corpora's text and a slip in this repository's history cannot be taken back
     """
     monkeypatch.setenv("BUILD_WORKSPACE_DIRECTORY", str(tmp_path / "repo"))
+    monkeypatch.setattr(paths, "repository_root", lambda: tmp_path / "repo")
 
     with pytest.raises(ValueError, match="inside the app repository"):
         paths.store_path("store")
     with pytest.raises(ValueError, match="teachers-teammate-evals"):
         paths.store_path(str(tmp_path / "repo" / "evaluations"))
     assert paths.store_path(str(tmp_path / "elsewhere")) == tmp_path / "elsewhere"
-
-
-def test_the_default_store_is_outside_the_app_repository(monkeypatch, tmp_path) -> None:
-    """
-    Given  the default store every command line falls back to
-    When   it is resolved against the app repository's working tree
-    Then   it is accepted, so the default is a repository of its own and never this one
-    """
-    monkeypatch.setenv("BUILD_WORKSPACE_DIRECTORY", str(tmp_path / "repo"))
-
-    assert paths.store_path(paths.DEFAULT_STORE) == Path(paths.DEFAULT_STORE).expanduser()
 
 
 def test_a_refused_store_is_a_message_on_the_command_line(monkeypatch, tmp_path) -> None:
@@ -1696,25 +1686,28 @@ def test_a_refused_store_is_a_message_on_the_command_line(monkeypatch, tmp_path)
            raising through the caller
     """
     monkeypatch.setenv("BUILD_WORKSPACE_DIRECTORY", str(tmp_path / "repo"))
+    monkeypatch.setattr(paths, "repository_root", lambda: tmp_path / "repo")
 
     with pytest.raises(argparse.ArgumentTypeError, match="inside the app repository"):
         paths.store_argument("store")
 
 
-def test_the_guard_does_not_depend_on_the_directory_the_tool_started_in(
+def test_the_guard_does_not_depend_on_the_workspace_the_tool_started_in(
     monkeypatch, tmp_path
 ) -> None:
     """
-    Given  a tool started outside Bazel, from a directory that is another repository
-    When   the app repository's own folder and a store beside it are named
-    Then   the first is refused and the second accepted, because the repository is found from the
-           tool's own files and not from the current directory
+    Given  a tool started by ``bazel run`` from the evaluation repository, whose workspace Bazel
+           names in the environment, from a directory that is that repository
+    When   the app repository's own folder and the evaluation repository are named
+    Then   the first is refused and the second accepted, because the app repository is found from
+           the tool's own files and not from the workspace or the current directory
     """
-    monkeypatch.delenv("BUILD_WORKSPACE_DIRECTORY", raising=False)
     other = tmp_path / "evals"
     other.mkdir()
+    monkeypatch.setenv("BUILD_WORKSPACE_DIRECTORY", str(other))
     monkeypatch.chdir(other)
 
     with pytest.raises(ValueError, match="inside the app repository"):
         paths.store_path(str(paths.repository_root() / "store"))
     assert paths.store_path(str(other)) == other
+    assert paths.store_path(".") == other

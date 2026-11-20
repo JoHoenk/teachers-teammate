@@ -55,7 +55,7 @@ import sys
 from tools.evaluation.core.constants import TextKind
 from tools.evaluation.core.languages import is_language_code
 from tools.evaluation.core.manifest import Manifest, read_manifest
-from tools.evaluation.core.paths import DEFAULT_STORE, store_argument, workspace_path
+from tools.evaluation.core.paths import store_argument, workspace_path
 from tools.evaluation.core.records import TestRecord
 from tools.evaluation.input import recipes
 from tools.evaluation.input import testset as testset_module
@@ -127,8 +127,8 @@ def main() -> int:
     parser.add_argument(
         "--store",
         type=store_argument,
-        default=DEFAULT_STORE,
-        help="the store to write the set into (default: %(default)s)",
+        required=True,
+        help="the store to write the set into, a clone of teachers-teammate-evals",
     )
     parser.add_argument(
         "--built",

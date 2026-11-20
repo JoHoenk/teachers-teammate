@@ -47,10 +47,12 @@ bazel-*
 # Generated docs (Bazel outputs)
 docs/test_specs.rst
 
-input/
-output*/
-previews/
-pdfs/
+# The app's working folders, at the repository root only: a leading slash keeps the rule from
+# swallowing a source package such as tools/evaluation/input/.
+/input/
+/output*/
+/previews/
+/pdfs/
 
 # Working notes and research plans (not part of the source tree)
 plans/

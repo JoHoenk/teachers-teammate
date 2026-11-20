@@ -9,8 +9,9 @@ filegroup(
     name = "records",
     srcs = glob([
         "*.md",
+        "machines/*",
         "model-fit/*",
-        "writing-models-2026-11/*",
+        "gates/*",
     ]),
     visibility = ["//visibility:public"],
 )

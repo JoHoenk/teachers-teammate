@@ -9,7 +9,7 @@ Six jobs, six subcommands::
     bazel run //tools:verify_model_catalog -- capabilities
     bazel run //tools:verify_model_catalog -- smoke --answers DIR --tag TAG
     bazel run //tools:verify_model_catalog -- structured-output
-    bazel run //tools:verify_model_catalog -- fit --server LABEL --gpu-agent URL --tag TAG
+    bazel run //tools:verify_model_catalog -- fit --machine ID --gpu-agent URL --tag TAG
     bazel run //tools:verify_model_catalog -- fit --report
     bazel run //tools:verify_model_catalog -- recheck FILE...
 
@@ -64,7 +64,7 @@ without a server — a rule change then costs no evening on the server.  The fil
 is checked against its flag and counted in the tally; the others are candidates that only get a
 pass or fail, so a mixed list checks both in one invocation.
 
-The work lives in :mod:`tools.model_eval`; this file parses arguments and prints.  The older
+The work lives in :mod:`tools.evaluation`; this file parses arguments and prints.  The older
 invocations (``--ollama``, ``--structured-output``, ``--tag``, ``--temperature``) still work.
 """
 
@@ -77,7 +77,6 @@ from datetime import UTC, datetime
 from pathlib import Path
 import sys
 from typing import Any
-from urllib.parse import urlparse
 
 from teachers_teammate.domain.context_budget import (
     BASE_NUM_CTX,
@@ -94,13 +93,10 @@ from teachers_teammate.domain.model_catalog import (
 )
 from teachers_teammate.exceptions import OCRError, OllamaUnreachableError
 from teachers_teammate.infrastructure.ollama_utils import OllamaClient
-from tools.model_eval import defaults, gate1_answers, gate_one, protocol
-from tools.model_eval.agent_client import AgentClient, AgentError
-from tools.model_eval.check_rule import CheckRule, CheckRun, Decision
-from tools.model_eval.cli_paths import workspace_path
-from tools.model_eval.download_sizes import check_size, report_real_size
-from tools.model_eval.measure import ServerBusyError, ServerProbe, tool_revision
-from tools.model_eval.model_fit import (
+from tools.evaluation.checks import gate1_answers, gate_one
+from tools.evaluation.checks.check_rule import CheckRule, CheckRun, Decision
+from tools.evaluation.checks.download_sizes import check_size, report_real_size
+from tools.evaluation.checks.model_fit import (
     DEFAULT_LIMITS,
     DEFAULT_STORE,
     FitLimit,
@@ -111,25 +107,21 @@ from tools.model_eval.model_fit import (
     compare_lines,
     fit_failure,
     fit_line,
-    is_cpu_only,
     measure_tag,
     record_line,
     size_for_decision,
     within,
 )
-from tools.model_eval.model_fit import report_lines as fit_report_lines
-from tools.model_eval.one_request.answer_format import ANSWER_FORMAT_VERSION
-from tools.model_eval.ports import OllamaChatPort, ServerUnavailableError
-from tools.model_eval.progress import STYLES, Progress
-from tools.model_eval.smoke import (
+from tools.evaluation.checks.model_fit import report_lines as fit_report_lines
+from tools.evaluation.checks.smoke import (
     SMOKE_DEADLINE,
     SMOKE_FIXTURES,
     SMOKE_TIMEOUT,
     Smoke,
     SmokeCheck,
-    setup_label,
+    smoke_label,
 )
-from tools.model_eval.structured_check import (
+from tools.evaluation.checks.structured_check import (
     FIXTURES,
     RUNS_AT_TEMPERATURE,
     StructuredOutputCheck,
@@ -137,6 +129,16 @@ from tools.model_eval.structured_check import (
     report_lines,
     seed_settings,
 )
+from tools.evaluation.core.formats import FormatError
+from tools.evaluation.core.machines import require_machine
+from tools.evaluation.core.paths import workspace_path
+from tools.evaluation.core.revision import tool_revision
+from tools.evaluation.run import defaults, protocol
+from tools.evaluation.run.agent_client import AgentClient, AgentError
+from tools.evaluation.run.measure import ServerBusyError, ServerProbe
+from tools.evaluation.run.one_request.answer_format import ANSWER_FORMAT_VERSION
+from tools.evaluation.run.ports import OllamaChatPort, ServerUnavailableError
+from tools.evaluation.run.progress import STYLES, Progress
 
 SUBCOMMANDS = ("sizes", "capabilities", "structured-output", "smoke", "fit", "recheck")
 
@@ -272,7 +274,7 @@ class _Session:
             failure, fit_lines = self.fit.check(tag, self.check.window)
             _print_lines([f"  {line}" for line in fit_lines])
             if failure is not None:
-                print(f"  {failure.line(setup_label(tag, profile, self.check.window))}")
+                print(f"  {failure.line(smoke_label(tag, profile, self.check.window))}")
                 self.progress.skip(self._expected(tag))
                 print("  → skipped: the model does not fit the limit, so no request is sent")
                 return Checked([], failure)
@@ -280,7 +282,7 @@ class _Session:
         done: set[tuple[str, int, int]] = set()
         if self.smoke:
             smoke = self.smoke_check(tag, profile).run(tag, temperature)
-            print(f"  {smoke.line(setup_label(tag, profile, self.check.window))}")
+            print(f"  {smoke.line(smoke_label(tag, profile, self.check.window))}")
             _print_lines([f"  WARNING: {warning}" for warning in smoke.warnings])
             if not smoke.passed:
                 self.progress.skip(self._expected(tag) - smoke.requests)
@@ -322,7 +324,7 @@ class _FitGate:
     limit: FitLimit
     probe: ServerProbe
     port: OllamaChatPort
-    server: str
+    machine: str
     agent_url: str | None = None
     token_file: Path | None = None
     timeout: float = 600.0
@@ -358,6 +360,11 @@ class _FitGate:
 
     def _measure(self, tag: str, window: int) -> tuple[FitRecord | None, str | None]:
         """Measure *tag* at *window* and append the record; the second value is why it failed."""
+        if not self.machine:
+            return None, (
+                "could not measure the fit: pass --machine ID, from evaluations/machines/, so the "
+                "record names the machine it was made on"
+            )
         agent, info, problem = self._memory_agent()
         if problem is not None:
             return None, problem
@@ -368,7 +375,7 @@ class _FitGate:
                 agent=agent,
                 agent_info=info,
                 store=self.store,
-                server=self.server,
+                machine=self.machine,
                 tag=tag,
                 temperature=defaults.temperature_for(tag, None),
                 steps=(window,),
@@ -411,16 +418,11 @@ def _fit_gate(
         limit=limit,
         probe=probe,
         port=port,
-        server=args.server or _host_of(args.ollama_url),
+        machine=args.machine or "",
         agent_url=args.gpu_agent,
         token_file=args.gpu_token_file,
         timeout=args.timeout,
     )
-
-
-def _host_of(url: str) -> str:
-    """Return the host of *url*, which is the label a quick screen records."""
-    return urlparse(url).hostname or url
 
 
 def _limit_line(limit: FitLimit) -> str:
@@ -573,7 +575,7 @@ def _smoke(args: argparse.Namespace) -> int:
         failure, fit_lines = gate.check(tag, window)
         _print_lines([f"  {line}" for line in fit_lines])
         if failure is not None:
-            label = setup_label(tag, profile, window)
+            label = smoke_label(tag, profile, window)
             print(f"  {failure.line(label)}")
             rows.append((label, failure))
             progress.skip(len(SMOKE_FIXTURES))
@@ -585,7 +587,7 @@ def _smoke(args: argparse.Namespace) -> int:
             on_sent=gate_one.answer_saver(tag, probe, answers_file, profile),
             on_request=_report_request(progress),
         ).run(tag, temperature)
-        label = setup_label(tag, profile, window)
+        label = smoke_label(tag, profile, window)
         print(f"  {smoke.line(label)}")
         _print_lines([f"  WARNING: {warning}" for warning in smoke.warnings])
         rows.append((label, smoke))
@@ -618,13 +620,14 @@ def _fit(args: argparse.Namespace) -> int:
 
 
 def _fit_header(args: argparse.Namespace, store: FitStore, probe: Any, info: Any) -> None:
-    """Print what a measuring run is valid for: the windows, the date, the server and the card."""
+    """Print what a measuring run is valid for: the windows, the date, the machine and the card."""
     print(f"── model sizes at {', '.join(f'{step:,}' for step in CONTEXT_STEPS)} tokens ──")
     print(f"date: {datetime.now(UTC).strftime('%Y-%m-%d %H:%M UTC')}")
     print(f"command: {_command_line()}")
     print(f"tool commit: {tool_revision()}")
     print(f"ollama: {probe.version()}")
-    print(f"server: {args.server}")
+    print(f"machine: {args.machine}")
+    print(f"device: {'cpu' if args.cpu_only else 'gpu'}")
     if args.cpu_only:
         print("CPU only: num_gpu 0, 8,192 tokens, speed of the processor")
     print(f"store: {store.path}")
@@ -640,8 +643,13 @@ def _fit_header(args: argparse.Namespace, store: FitStore, probe: Any, info: Any
 
 def _fit_measure(args: argparse.Namespace, store: FitStore) -> int:
     """Measure every named model at every window and append what is new to the store."""
-    if not args.server:
-        print("--server LABEL is required when measuring: a record without a server is worthless")
+    if not args.machine:
+        print("--machine ID is required when measuring: a record without a machine is worthless")
+        return 2
+    try:
+        require_machine(workspace_path("."), args.machine)
+    except (ValueError, FormatError) as error:
+        print(error)
         return 2
     if args.gpu_agent is None and not args.no_agent:
         print("no --gpu-agent: pass the agent's URL, or --no-agent to store Ollama's figures only")
@@ -651,19 +659,8 @@ def _fit_measure(args: argparse.Namespace, store: FitStore) -> int:
     if not tags:
         print("no model named: pass --tag, or a tag the catalog knows")
         return 2
-    mixed = [
-        record
-        for record in store.records()
-        if record.server == args.server and is_cpu_only(record) != args.cpu_only
-    ]
-    if mixed:
-        kind = "normal" if args.cpu_only else "CPU-only"
-        print(
-            f"{args.server} already holds {kind} measurements: use another --server label "
-            f"(for example {args.server}-cpu) so the two kinds are never mixed"
-        )
-        return 2
     steps = (BASE_NUM_CTX,) if args.cpu_only else CONTEXT_STEPS
+    device = "cpu" if args.cpu_only else "gpu"
     agent = None
     info = None
     if args.gpu_agent is not None:
@@ -688,7 +685,7 @@ def _fit_measure(args: argparse.Namespace, store: FitStore) -> int:
                 agent=agent,
                 agent_info=info,
                 store=store,
-                server=args.server,
+                machine=args.machine,
                 tag=tag,
                 temperature=temperature,
                 steps=steps,
@@ -722,7 +719,9 @@ def _fit_measure(args: argparse.Namespace, store: FitStore) -> int:
                         [
                             record
                             for record in store.records()
-                            if record.tag == tag and record.server == args.server
+                            if record.tag == tag
+                            and record.machine == args.machine
+                            and record.device == device
                         ],
                         catalog_memory_gb=spec.memory_gb,
                     )
@@ -733,35 +732,58 @@ def _fit_measure(args: argparse.Namespace, store: FitStore) -> int:
 
 
 def _fit_report(args: argparse.Namespace, store: FitStore, limits: Sequence[FitLimit]) -> int:
-    """Report what the store holds: per model and server, the tiers, the cross-check."""
+    """Report what the store holds: per model, machine and device, the tiers, the cross-check."""
     records = store.records()
     if not records:
         print(f"no measurement in {store.path}: run `fit` on the machine with the card")
         return 1
     catalog = {spec.tag: spec for spec in OLLAMA_CATALOG}
-    by_tag: dict[str, dict[str, list]] = {}
+    by_tag: dict[str, dict[tuple[str, str], list]] = {}
     for record in records:
-        by_tag.setdefault(record.tag, {}).setdefault(record.server, []).append(record)
+        by_tag.setdefault(record.tag, {}).setdefault((record.machine, record.device), []).append(
+            record
+        )
+    # What each machine runs now, from its newest record: a record of another version was made on
+    # another backend, and the report says so instead of hiding it.
+    running: dict[tuple[str, str], str] = {}
+    for record in sorted(records, key=lambda found: found.measured_at):
+        running[(record.machine, record.device)] = record.ollama_version
     print(f"── model sizes from {store.path} ──")
     for tag in sorted(by_tag):
         spec = catalog.get(tag)
         memory = spec.memory_gb if spec is not None else None
-        for server in sorted(by_tag[tag]):
+        for where in sorted(by_tag[tag]):
             print(
                 "\n".join(
                     fit_report_lines(
-                        tag, by_tag[tag][server], catalog_memory_gb=memory, limits=limits
+                        tag,
+                        by_tag[tag][where],
+                        catalog_memory_gb=memory,
+                        limits=limits,
+                        current_version=running[where],
                     )
                 )
             )
         if args.compare:
             first, second = args.compare
-            if first in by_tag[tag] and second in by_tag[tag]:
-                print("\n".join(compare_lines(tag, by_tag[tag][first], by_tag[tag][second])))
+            left = [
+                record
+                for (machine, _), group in by_tag[tag].items()
+                if machine == first
+                for record in group
+            ]
+            right = [
+                record
+                for (machine, _), group in by_tag[tag].items()
+                if machine == second
+                for record in group
+            ]
+            if left and right:
+                print("\n".join(compare_lines(tag, left, right)))
             else:
                 print(f"{tag}: {first} and {second} were not both measured")
         if args.catalog:
-            tag_records = [record for servers in by_tag[tag].values() for record in servers]
+            tag_records = [record for group in by_tag[tag].values() for record in group]
             print("\n".join(catalog_lines(tag, tag_records, memory)))
     return 0
 
@@ -1111,11 +1133,11 @@ def _add_fit_options(parser: argparse.ArgumentParser) -> None:
         help="Where the size measurements are kept (default: %(default)s).",
     )
     parser.add_argument(
-        "--server",
+        "--machine",
         default=None,
-        metavar="LABEL",
-        help="Short name of the machine, recorded with a measurement made here (default: the "
-        "host of --ollama-url).",
+        metavar="ID",
+        help="The id of the machine, from evaluations/machines/, recorded with a measurement made "
+        "here.  Required when a model has to be measured.",
     )
     parser.add_argument(
         "--gpu-agent",
@@ -1322,11 +1344,11 @@ def _add_fit(sub, shared) -> None:
         "temperature its vendor recommends, else the app's 0.2).",
     )
     fit.add_argument(
-        "--server",
+        "--machine",
         default=None,
-        metavar="LABEL",
-        help="Short name of the machine measured, e.g. rx9070xt (required when measuring).  What "
-        "it stands for is written once in evaluations/model-fit/README.md.",
+        metavar="ID",
+        help="The id of the machine measured, from evaluations/machines/, e.g. rx9070xt-server "
+        "(required when measuring).  An id the registry does not hold is refused.",
     )
     fit.add_argument(
         "--store",
@@ -1358,8 +1380,7 @@ def _add_fit(sub, shared) -> None:
         "--cpu-only",
         action="store_true",
         help="Keep the model off the card (num_gpu 0) and measure how fast the processor runs it, "
-        "at 8,192 tokens only.  Needs its own --server label, e.g. rx9070xt-cpu: these records "
-        "say nothing about size.",
+        "at 8,192 tokens only.  The record's device is then cpu, and a size lookup ignores it.",
     )
     fit.add_argument(
         "--again",
@@ -1376,7 +1397,7 @@ def _add_fit(sub, shared) -> None:
         nargs=2,
         default=None,
         metavar=("A", "B"),
-        help="Put two servers' measurements side by side, with the cross-check's agreement rule.",
+        help="Put two machines' measurements side by side, with the cross-check's agreement rule.",
     )
     fit.add_argument(
         "--catalog",

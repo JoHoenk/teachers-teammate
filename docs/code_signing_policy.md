@@ -61,8 +61,9 @@ statement of the signing service.
 - **The update check.** Once per start the app asks GitHub (`api.github.com`) whether a newer
   release exists, and shows a note if one does. The request carries nothing about you or your
   documents beyond the request itself. You can turn it off under **Settings → General**; the
-  change takes effect at the next start. The installer's welcome page says so before anything is
-  installed.
+  change takes effect at the next start. A new installation says so on the installer's second
+  page before anything is installed, with a check box that turns it off and a link to this page;
+  an update keeps the choice made then. A silent install turns it off with `/NOUPDATECHECK`.
 - **Online AI services** are contacted only after you have set one up in the app and confirmed
   the run that sends text to it. Which provider, which model and which text is sent is shown
   before you confirm.

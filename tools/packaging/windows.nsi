@@ -36,11 +36,10 @@ SetCompressor /SOLID lzma
 !define REG_KEY       "Software\TeachersTeammate"
 !define UNINST_KEY    "Software\Microsoft\Windows\CurrentVersion\Uninstall\TeachersTeammate"
 
-; What the Welcome page says about the one thing the app sends on its own: the update check.
-; The signing terms want the disclosure shown during installation, with the way to turn it off,
-; and docs/code_signing_policy.md promises the welcome page says so.  One sentence, no URL: a
-; label on the Welcome page cannot be clicked, and the check sends nothing about the teacher.
-!define PRIVACY_NOTE "$\r$\n$\r$\nAt every start the app asks GitHub whether a newer version exists (Settings > General turns this off)."
+; What the second page says about the one thing the app sends on its own: the update check.
+; The signing terms want the disclosure shown during installation, with the way to turn it off:
+; the check box is that way, and the link opens the page that says what is sent, and when.
+!define PRIVACY_URL "${APP_URL}/blob/main/docs/code_signing_policy.md"
 
 Name    "${APP_NAME} ${APP_VERSION}"
 
@@ -128,6 +127,8 @@ Var PrevLabel           ; "Teacher's Teammate 1.2.3", or "An earlier version of 
 Var CmdScope            ; "/SCOPE=" value, "" when not given
 Var CmdNoDesktop        ; "1" when /NODESKTOP was given
 Var CmdAllowDowngrade   ; "1" when /ALLOWDOWNGRADE was given
+Var CmdNoUpdateCheck    ; "1" when /NOUPDATECHECK was given
+Var CmdSettingsDir      ; /SETTINGSDIR= value: the teacher's settings folder, "" when not given
 Var DirGiven            ; "1" when /D= was given, so $INSTDIR is not ours to set
 
 ; Pages
@@ -142,6 +143,9 @@ Var ScopeDialog
 Var ScopeAllUsers
 Var ScopeCurrentUser
 Var ScopeDesktop
+Var ScopeUpdates
+Var PrivacyLink
+Var CheckUpdates        ; "1" when the app should ask GitHub for a newer version at every start
 
 ; The app-still-open check
 Var CheckDir
@@ -335,6 +339,9 @@ Function .onInit
   StrCpy $CmdScope ""
   StrCpy $CmdNoDesktop "0"
   StrCpy $CmdAllowDowngrade "0"
+  StrCpy $CmdNoUpdateCheck "0"
+  StrCpy $CmdSettingsDir ""
+  StrCpy $CheckUpdates "1"
   StrCpy $SkipWelcome "0"
   StrCpy $NeedElevation "0"
   StrCpy $DesktopShortcut "1"
@@ -362,6 +369,15 @@ Function .onInit
   ${GetOptions} $R0 "/ALLOWDOWNGRADE" $R1
   ${IfNot} ${Errors}
     StrCpy $CmdAllowDowngrade "1"
+  ${EndIf}
+  ${GetOptions} $R0 "/NOUPDATECHECK" $R1
+  ${IfNot} ${Errors}
+    StrCpy $CmdNoUpdateCheck "1"
+    StrCpy $CheckUpdates "0"
+  ${EndIf}
+  ${GetOptions} $R0 "/SETTINGSDIR=" $R1
+  ${IfNot} ${Errors}
+    StrCpy $CmdSettingsDir $R1
   ${EndIf}
   ${GetOptions} $R0 "/ELEVATED" $R1
   ${IfNot} ${Errors}
@@ -490,10 +506,10 @@ Function .onInit
   ${EndIf}
 
   ; ── the version, and the text the Welcome page shows ──────────────────────
-  ; At most three short lines: what happens, the administrator rights when they are needed, and
-  ; the update check.  The Scope page says itself which scope is chosen, so the text does not.
+  ; A few short lines: what happens, and the administrator rights when they are needed.  The
+  ; update check is asked on the Scope page, which also says which scope is chosen.
   ${If} $Mode == "fresh"
-    StrCpy $WelcomeText "This installs ${APP_NAME} ${APP_VERSION}."
+    StrCpy $WelcomeText "Welcome! This sets up ${APP_NAME} ${APP_VERSION}, your helper for reading and proofreading handwritten work.$\r$\n$\r$\nIt takes a minute. Click Next to begin."
   ${Else}
     ; Where the copy is: the text names its folder, so the teacher knows which one is meant.
     StrCpy $WhereText "in $INSTDIR"
@@ -541,10 +557,6 @@ Function .onInit
       StrCpy $WelcomeText "$WelcomeText$\r$\n$\r$\nWindows asks for administrator rights when you click $WelcomeButton."
     ${EndIf}
   ${EndIf}
-
-  ; The disclosure the signing terms ask for: shown during installation, with the switch that
-  ; turns the check off.  One sentence for every case, so an update says it too.
-  StrCpy $WelcomeText "$WelcomeText${PRIVACY_NOTE}"
 !endif
 FunctionEnd
 
@@ -664,27 +676,39 @@ Function ScopePageCreate
     Abort
   ${EndIf}
 
-  ${NSD_CreateLabel} 0 0 280u 16u \
+  ${NSD_CreateLabel} 0 0 280u 12u \
     "Choose how ${APP_NAME} should be installed:"
   Pop $0
 
-  ${NSD_CreateRadioButton} 10u 22u 270u 14u \
+  ${NSD_CreateRadioButton} 10u 14u 270u 14u \
     "Install for all users  (Program Files - requires administrator rights)"
   Pop $ScopeAllUsers
 
-  ${NSD_CreateRadioButton} 10u 40u 270u 14u \
+  ${NSD_CreateRadioButton} 10u 30u 270u 14u \
     "Install only for me  (AppData - no administrator rights required)"
   Pop $ScopeCurrentUser
 
-  ${NSD_CreateLabel} 10u 60u 270u 24u \
+  ${NSD_CreateLabel} 10u 46u 270u 18u \
     "Settings and downloads (models, add-ons) are kept separately for each Windows user."
   Pop $0
 
-  ${NSD_CreateCheckBox} 10u 90u 270u 14u "Put a shortcut on the desktop"
+  ${NSD_CreateCheckBox} 10u 68u 270u 14u "Put a shortcut on the desktop"
   Pop $ScopeDesktop
   ${If} $DesktopShortcut == "1"
     ${NSD_Check} $ScopeDesktop
   ${EndIf}
+
+  ${NSD_CreateCheckBox} 10u 84u 270u 14u "Check for updates when the app starts"
+  Pop $ScopeUpdates
+  ${If} $CheckUpdates == "1"
+    ${NSD_Check} $ScopeUpdates
+  ${EndIf}
+  ${NSD_CreateLabel} 22u 98u 258u 18u \
+    "The app asks GitHub once at every start whether a newer version exists. You can change this under Settings > General."
+  Pop $0
+  ${NSD_CreateLink} 22u 116u 258u 10u "What it sends, and when"
+  Pop $PrivacyLink
+  ${NSD_OnClick} $PrivacyLink OpenPrivacyPage
 
   ; Pre-select based on current scope (set in .onInit).
   ${If} $InstallScope == "all"
@@ -696,12 +720,25 @@ Function ScopePageCreate
   nsDialogs::Show
 FunctionEnd
 
+; The link under the update check box.  nsDialogs puts the control's handle on the stack.
+Function OpenPrivacyPage
+  Pop $0
+  ExecShell "open" "${PRIVACY_URL}"
+FunctionEnd
+
 Function ScopePageLeave
   ${NSD_GetState} $ScopeDesktop $0
   ${If} $0 == ${BST_CHECKED}
     StrCpy $DesktopShortcut "1"
   ${Else}
     StrCpy $DesktopShortcut "0"
+  ${EndIf}
+
+  ${NSD_GetState} $ScopeUpdates $0
+  ${If} $0 == ${BST_CHECKED}
+    StrCpy $CheckUpdates "1"
+  ${Else}
+    StrCpy $CheckUpdates "0"
   ${EndIf}
 
   ${NSD_GetState} $ScopeAllUsers $0
@@ -712,6 +749,11 @@ Function ScopePageLeave
       StrCpy $R1 "/SCOPE=all /ELEVATED"
       ${If} $DesktopShortcut == "0"
         StrCpy $R1 "/SCOPE=all /ELEVATED /NODESKTOP"
+      ${EndIf}
+      ; The elevated copy may run as another account (an administrator's password typed for the
+      ; teacher), whose profile is not the teacher's: it is told where the settings belong.
+      ${If} $CheckUpdates == "0"
+        StrCpy $R1 '$R1 /NOUPDATECHECK /SETTINGSDIR="$LOCALAPPDATA\teachers_teammate"'
       ${EndIf}
       ; /D= must be the last argument, and it is not quoted.
       ${If} $DirGiven == "1"
@@ -768,6 +810,23 @@ Section "Core (required)" SecCore
     WriteRegStr HKCU "${REG_KEY}" "InstallDir" "$INSTDIR"
     WriteRegStr HKCU "${REG_KEY}" "Version"    "${APP_VERSION}"
     WriteRegStr HKCU "${REG_KEY}" "Scope"      "user"
+  ${EndIf}
+
+  ; What the check box on the Scope page says is written to the settings.  The app writes the
+  ; one key itself (it owns the settings file and keeps every other setting in it), so a
+  ; reinstall that kept the settings follows the box too, in both directions.  The folder is
+  ; the one /SETTINGSDIR= named, else the one of the account that runs this.  A failure is not
+  ; fatal; the check then stays as it was.
+  ${If} $Mode == "fresh"
+    ${If} $CheckUpdates == "1"
+      StrCpy $R0 "on"
+    ${Else}
+      StrCpy $R0 "off"
+    ${EndIf}
+    ${If} $CmdSettingsDir == ""
+      StrCpy $CmdSettingsDir "$LOCALAPPDATA\teachers_teammate"
+    ${EndIf}
+    ExecWait '"$INSTDIR\teachers-teammate.exe" --_set_update_check $R0 "$CmdSettingsDir"'
   ${EndIf}
 
   ; The uninstaller pass 1 wrote, packed as a file: a remote signer can sign it before the

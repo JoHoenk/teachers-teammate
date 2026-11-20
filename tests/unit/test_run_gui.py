@@ -28,13 +28,17 @@ def _pip_modules(pip_main: MagicMock) -> dict[str, MagicMock]:
     return modules
 
 
-@pytest.mark.parametrize("mode", ["--_smoke_test", "--_forget_keys", "--_spacy_download_mode"])
+@pytest.mark.parametrize(
+    "mode",
+    ["--_smoke_test", "--_forget_keys", "--_set_update_check", "--_spacy_download_mode"],
+)
 def test_a_helper_mode_leaves_the_add_on_folder_alone(
     mode: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """
-    Given  the app started as a helper: the smoke test, the key cleaner of the uninstaller, or
-           the spaCy model download that an install runs with its own staging folder
+    Given  the app started as a helper: the smoke test, the key cleaner of the uninstaller, the
+           update-check switch of the installer, or the spaCy model download that an install
+           runs with its own staging folder
     When   the entry point dispatches it
     Then   the folder is not prepared (a helper must not delete the staging folder of the
            install that started it, nor apply packages the app has loaded), but it is injected
@@ -43,6 +47,7 @@ def test_a_helper_mode_leaves_the_add_on_folder_alone(
     frozen_modes = MagicMock()
     frozen_modes.run_smoke_test.return_value = 0
     frozen_modes.forget_keys.return_value = 0
+    frozen_modes.set_update_check.return_value = 0
     pip_main = MagicMock(return_value=0)
     monkeypatch.setattr(sys, "argv", ["run_gui.py", mode, str(tmp_path / "arg"), "--extra"])
 

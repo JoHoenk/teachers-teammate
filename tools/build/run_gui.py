@@ -58,7 +58,12 @@ from teachers_teammate.infrastructure.addon_manager import (
 # The helper modes below (smoke test, forget keys, spaCy model download) are not a start of the
 # app: one of them runs while the app, or an install it started, is using the folder, so they
 # leave the clean-up to a normal start.
-_HELPER_MODES = ("--_smoke_test", "--_forget_keys", "--_spacy_download_mode")
+_HELPER_MODES = (
+    "--_smoke_test",
+    "--_forget_keys",
+    "--_set_update_check",
+    "--_spacy_download_mode",
+)
 if not any(mode in sys.argv for mode in _HELPER_MODES):
     prepare_packages_dir()
 inject_packages_dir()
@@ -83,6 +88,18 @@ if "--_forget_keys" in sys.argv:
     from teachers_teammate.frozen_modes import forget_keys
 
     raise SystemExit(forget_keys())
+
+# ── update-check dispatch ────────────────────────────────────────────────────
+# The installer runs `--_set_update_check on|off [settings folder]` for the choice the teacher made
+# on its second page.  The folder is the teacher's own, for an install run with the rights of
+# another account.
+if "--_set_update_check" in sys.argv:
+    _idx = sys.argv.index("--_set_update_check")
+    _rest = sys.argv[_idx + 1 :]
+
+    from teachers_teammate.frozen_modes import set_update_check
+
+    raise SystemExit(set_update_check(*_rest[:2]))
 
 # ── spaCy model download dispatch ─────────────────────────────────────────────
 # spaCy models live on GitHub Releases, not PyPI.  spaCy's own download command

@@ -967,10 +967,15 @@ class MainWindow(QMainWindow):
                 pass
         QTimer.singleShot(0, lambda s=sizes: self._main_splitter.setSizes(s))
 
-        if config_path is None or not config_path.exists():
-            # First start (no ocr.toml yet): the assistant asks what only the teacher knows
-            # and works the models out from the answers.  It opens on top of this window, so
-            # the teacher sees the app first.
+        installer_choices = self._app_service.first_start_settings(config_path)
+        if installer_choices is not None or config_path is None:
+            # First start (no ocr.toml yet, or only what the installer wrote): the assistant
+            # asks what only the teacher knows and works the models out from the answers.  It
+            # opens on top of this window, so the teacher sees the app first.  What the
+            # installer chose is loaded first, so the first save keeps it.
+            if installer_choices and config_path is not None:
+                self._config_path = config_path
+                self._config_panel.load_from_dict(installer_choices)
             QTimer.singleShot(0, self._open_setup_assistant_first_start)
             return
         self._config_path = config_path

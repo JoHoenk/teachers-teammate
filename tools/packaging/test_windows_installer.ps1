@@ -529,6 +529,15 @@ Assert-Equal 0 (Invoke-Setup @('/SCOPE=user')) 'the update exits 0'
 Assert-Missing $UserDesktopLink 'the update did not recreate the deleted shortcut'
 Invoke-Uninstaller -Directory $UserDir
 
+Write-Step 'A fresh install with the update check switched off'
+$settingsFile = Join-Path $env:LOCALAPPDATA 'teachers_teammate\ocr.toml'
+Remove-Item -LiteralPath $settingsFile -Force -ErrorAction SilentlyContinue
+Assert-Equal 0 (Invoke-Setup @('/SCOPE=user', '/NOUPDATECHECK')) 'the installer exits 0'
+Assert-True ((Get-Content -LiteralPath $settingsFile -Raw) -match 'check_for_updates\s*=\s*false') `
+    'the installed app wrote check_for_updates = false'
+Invoke-Uninstaller -Directory $UserDir
+Remove-Item -LiteralPath $settingsFile -Force -ErrorAction SilentlyContinue
+
 # -- 12. Two copies, and a silent run without /SCOPE= ------------------------
 
 Write-Step 'Two copies, and a silent run without /SCOPE='

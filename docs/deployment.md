@@ -232,6 +232,8 @@ whichever scope the program was installed in. An update keeps all of them.
 | `/S` | silent |
 | `/SCOPE=user`, `/SCOPE=all` | the scope |
 | `/NODESKTOP` | no desktop shortcut |
+| `/NOUPDATECHECK` | the app does not look for a newer version at start (fresh install); the same choice is a check box on the second page, and a fresh install writes the box either way |
+| `/SETTINGSDIR="<folder>"` | the settings folder that choice is written to; default `%LOCALAPPDATA%\teachers_teammate` of the account that runs the installer, so a silent all-users install run by an administrator sets it for that administrator only. The installer passes it on to its elevated copy, which Windows may run as another account |
 | `/ALLOWDOWNGRADE` | allow an older version (silent) |
 | `/D=<folder>` | install folder of a fresh install (last argument, not quoted) |
 

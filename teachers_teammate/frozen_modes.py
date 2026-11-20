@@ -281,6 +281,20 @@ def _check_setup_assistant() -> str | None:
                 os.environ[name] = value
 
 
+def _check_stylesheet() -> str | None:
+    """Load the dark stylesheet the way the main window does.
+
+    ``import qdarkstyle`` alone is not enough: qdarkstyle imports ``qtpy`` (and qtpy imports
+    ``packaging``) only when the stylesheet is loaded, so a bundle without either one passes the
+    import check and then fails when the window opens.
+    """
+    import qdarkstyle  # noqa: PLC0415
+
+    if not qdarkstyle.load_stylesheet(qt_api="pyside6"):
+        return "qdarkstyle.load_stylesheet returned an empty stylesheet"
+    return None
+
+
 def _check_reader_runtime() -> str | None:
     """Check the OpenCV runtime the built-in reader needs."""
     import cv2  # noqa: PLC0415
@@ -472,6 +486,7 @@ def _checks() -> list[tuple[str, Check]]:
     checks: list[tuple[str, Check]] = [
         ("imports", _check_imports),
         ("qt", _check_qt),
+        ("stylesheet", _check_stylesheet),
         ("setup assistant", _check_setup_assistant),
         ("reader", _check_reader_runtime),
         ("pdf", _check_pdf),
@@ -521,6 +536,49 @@ def forget_keys() -> int:
         env_key = str(llm_factory.get_provider_info(provider).get("env_key", ""))
         if env_key:
             store.remove(env_key)
+    return 0
+
+
+def set_update_check(value: str, folder: str = "") -> int:
+    """Switch the start-up update check on (``"on"``) or off (``"off"``) in the settings file.
+
+    The installer runs this for the box on its second page.  Only the one key changes: the file
+    is read, the key set and the file written back the way the main window saves it, so a
+    teacher's other settings stay (comments do not: the main window does not keep them either).
+    A settings file that cannot be read is left alone and the exit code is 1; the installer
+    goes on, and the check stays as it was.
+
+    Args:
+        value: ``"on"`` or ``"off"``; anything else is refused (exit code 2).
+        folder: The settings folder of the teacher.  Empty means the folder of the account that
+            runs this.  An install that Windows runs with the rights of another account (an
+            administrator's password typed for a teacher) names the teacher's folder here.
+    """
+    from teachers_teammate.config import (  # noqa: PLC0415
+        ConfigFileParseError,
+        dump_config_file,
+        load_config_file,
+    )
+    from teachers_teammate.infrastructure.storage_root import (  # noqa: PLC0415
+        default_config_path,
+        resolve_config_path,
+    )
+
+    if value not in ("on", "off"):
+        return 2
+    try:
+        if folder:
+            path = Path(folder) / default_config_path().name
+        else:
+            # The settings an earlier version left in the cache folder are moved first, so the
+            # new file does not hide them.
+            path = resolve_config_path(None) or default_config_path()
+        values = load_config_file(path) if path.is_file() else {}
+        values["check_for_updates"] = value == "on"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(dump_config_file(values), encoding="utf-8")
+    except ConfigFileParseError, OSError:
+        return 1
     return 0
 
 

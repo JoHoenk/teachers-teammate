@@ -87,8 +87,8 @@ SETUP_OLLAMA_URL = "http://127.0.0.1:9"
 # can lower it instead of waiting half a minute for a timeout it provoked itself.
 SETUP_PLAN_TIMEOUT_MS = 30_000
 
-# The pages the check clicks through: Welcome, Classes, Local AI, Proofreading → Summary.
-SETUP_PAGES = 4
+# The pages the check clicks through: Welcome, Classes, Local AI, Proofreading, Privacy → Summary.
+SETUP_PAGES = 5
 
 # Qt modules that Qt offers only under the GPL-3.0 or a commercial license. The rest of Qt is
 # LGPL-3.0, which lets an Apache-2.0 application link it; one of these in the bundle would make

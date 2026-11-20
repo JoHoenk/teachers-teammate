@@ -62,7 +62,9 @@ _TEXTS_SRCS = [
     "texts/check.py",
     "texts/dialogs.py",
     "texts/privacy.py",
+    "texts/servers.py",
     "texts/settings.py",
+    "texts/setup.py",
 ]
 
 # infrastructure/: concrete implementations; imports domain/ and the core modules.
@@ -223,6 +225,7 @@ _GUI_SRCS = [
     "gui/_model_wording.py",
     "gui/_ocr_config_selector.py",
     "gui/_ollama_status_line.py",
+    "gui/_server_card.py",
     "gui/_package_hint.py",
     "gui/_path_row.py",
     "gui/_privacy_settings.py",
@@ -251,6 +254,7 @@ _GUI_SRCS = [
     "gui/check/_page.py",
     "gui/check/_masking.py",
     "gui/check/_plain_map.py",
+    "gui/check/_run_strip.py",
     "gui/check/_scan_view.py",
     "gui/check/_side_panel.py",
     "gui/check/_style.py",

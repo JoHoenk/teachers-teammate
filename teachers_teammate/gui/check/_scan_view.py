@@ -1,4 +1,4 @@
-"""Every stored page of a document in one scroll, fitted to the width of the pane."""
+"""Every stored page of a document in one scroll, fitted to the pane."""
 
 from __future__ import annotations
 
@@ -9,11 +9,12 @@ from typing import Any
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QPixmap
 from PySide6.QtWidgets import (
+    QButtonGroup,
     QGraphicsPixmapItem,
     QGraphicsView,
     QHBoxLayout,
     QLabel,
-    QToolButton,
+    QPushButton,
     QVBoxLayout,
     QWidget,
 )
@@ -31,10 +32,12 @@ _GAP = 12
 class ScanView(ZoomableImageView):
     """The pages of one document, stacked in a single scene.
 
-    The pages are laid out at the width of the pane, so a teacher reads the whole document by
-    scrolling; the wheel zooms, a double click fits again.  *Original* swaps every page that has
-    one for the page as it was scanned and leaves the others prepared, keeping the place the
-    teacher was reading.
+    A page opens *fitted to the pane*: the whole page is in view, and the pages below it follow
+    by scrolling.  A double click switches to *fit width* (a page as wide as the pane, read by
+    scrolling) and back; the wheel zooms, and a double click after zooming fits again in the
+    mode that was on.  The mode stays while the teacher steps through the documents.
+    *Original* swaps every page that has one for the page as it was scanned and leaves the
+    others prepared, keeping the place the teacher was reading.
     """
 
     def __init__(self, parent: QWidget | None = None) -> None:
@@ -44,7 +47,13 @@ class ScanView(ZoomableImageView):
         self._showing_originals = False
         self._pixmaps: list[QPixmap] = []
         self._items: list[QGraphicsPixmapItem | None] = []
-        self._layout_width = 0
+        self._layout_key: tuple[int, int] = (0, 0)
+        self._fit_page = True
+
+    @property
+    def fit_page(self) -> bool:
+        """Whether a page is fitted whole to the pane (otherwise to its width)."""
+        return self._fit_page
 
     @property
     def showing_originals(self) -> bool:
@@ -82,7 +91,7 @@ class ScanView(ZoomableImageView):
         self._originals = ()
         self._pixmaps = []
         self._items = []
-        self._layout_width = 0
+        self._layout_key = (0, 0)
 
     # ── Layout ────────────────────────────────────────────────────────────
 
@@ -96,16 +105,28 @@ class ScanView(ZoomableImageView):
     def _reload(self) -> None:
         self._pixmaps = [load_pixmap(path) for path in self._sources()]
 
+    def _key(self) -> tuple[int, int]:
+        """The size the layout depends on: the width, and the height only when a page is fitted."""
+        viewport = self.viewport()
+        return (viewport.width(), viewport.height() if self._fit_page else 0)
+
+    def _page_width(self, pix: QPixmap, available_width: int, available_height: int) -> int:
+        """Return the width a page is drawn at, in the fit mode that is on."""
+        if not self._fit_page or pix.height() <= 0:
+            return available_width
+        return max(1, min(available_width, round(available_height * pix.width() / pix.height())))
+
     def _layout(self, *, keep_scroll: bool = False) -> None:
         fraction = self._scroll_fraction() if keep_scroll else 0.0
         self._scene.clear()
         self._pix_item = None
         self._items = []
-        width = max(self.viewport().width() - 2 * _MARGIN, 1)
-        self._layout_width = width
+        self._layout_key = self._key()
+        available_width = max(self.viewport().width() - 2 * _MARGIN, 1)
+        available_height = max(self.viewport().height() - 2 * _MARGIN, 1)
         if not self._pixmaps:
             self._show_text("(no page image)")
-            self.setSceneRect(0, 0, width + 2 * _MARGIN, 1)
+            self.setSceneRect(0, 0, available_width + 2 * _MARGIN, 1)
             return
         y = float(_MARGIN)
         for pix in self._pixmaps:
@@ -113,14 +134,16 @@ class ScanView(ZoomableImageView):
                 self._items.append(None)
                 y += self._add_message(y) + _GAP
                 continue
+            width = self._page_width(pix, available_width, available_height)
             scaled = pix.scaledToWidth(width, Qt.TransformationMode.SmoothTransformation)
             item = self._scene.addPixmap(scaled)
             self._items.append(item)
             if item is None:
                 continue
-            item.setPos(_MARGIN, y)
+            # A page narrower than the pane sits in its middle.
+            item.setPos(_MARGIN + (available_width - width) / 2, y)
             y += scaled.height() + _GAP
-        self.setSceneRect(0, 0, width + 2 * _MARGIN, max(y, 1))
+        self.setSceneRect(0, 0, available_width + 2 * _MARGIN, max(y, 1))
         self.resetTransform()
         self._fitted = True
         self._set_scroll_fraction(fraction)
@@ -146,26 +169,41 @@ class ScanView(ZoomableImageView):
 
     # ── Zoom ──────────────────────────────────────────────────────────────
 
+    def set_fit_page(self, on: bool) -> None:
+        """Fit each page whole to the pane (*on*), or to the width of the pane."""
+        self._fit_page = on
+        self._layout(keep_scroll=True)
+
     def fit_to_view(self) -> None:
-        """Lay the pages out at the width of the pane again."""
-        if self._layout_width != max(self.viewport().width() - 2 * _MARGIN, 1):
+        """Lay the pages out again in the fit mode that is on."""
+        if self._layout_key != self._key():
             self._layout()
             return
         self.resetTransform()
         self._fitted = True
 
+    def mouseDoubleClickEvent(self, event: Any) -> None:
+        """Fit again after a zoom; on a fitted scan switch between fit page and fit width."""
+        if self._fitted:
+            self.set_fit_page(not self._fit_page)
+        else:
+            self.fit_to_view()
+        QGraphicsView.mouseDoubleClickEvent(self, event)
+
     def resizeEvent(self, event: Any) -> None:
         QGraphicsView.resizeEvent(self, event)
-        if self._fitted and self._layout_width != max(self.viewport().width() - 2 * _MARGIN, 1):
+        if self._fitted and self._layout_key != self._key():
             self._layout()
 
 
 class ScanPane(QWidget):
-    """The scan with the strip above it: how the pages were prepared, and *Original*.
+    """The scan with the strip above it: *Prepared · Original*, and how the pages were prepared.
 
-    *Original* shows the pages as they were scanned, so the teacher can see what the automatic
-    preparation did to them.  It is offered only where a page has an original, and it stays on
-    while the teacher steps from one document to the next.
+    The two-part switch says which pages are shown: the prepared ones, or the pages as they
+    were scanned, so the teacher can see what the automatic preparation did.  It is offered only
+    where there is something to compare: a page has an original, and a preparation step acted
+    on the pages (without one the original is the same picture).  The choice stays while the
+    teacher steps from one document to the next.
     """
 
     def __init__(self, parent: QWidget | None = None) -> None:
@@ -173,12 +211,25 @@ class ScanPane(QWidget):
         self.view = ScanView()
         self._steps: Sequence[str] | None = None
 
-        self._original_btn = QToolButton()
-        self._original_btn.setText(check_text.SCAN_ORIGINAL)
+        self._prepared_btn = QPushButton(check_text.SCAN_PREPARED)
+        self._prepared_btn.setToolTip(check_text.SCAN_PREPARED_TIP)
+        self._original_btn = QPushButton(check_text.SCAN_ORIGINAL)
         self._original_btn.setToolTip(check_text.SCAN_ORIGINAL_TIP)
-        self._original_btn.setCheckable(True)
+        group = QButtonGroup(self)
+        group.setExclusive(True)
+        for button in (self._prepared_btn, self._original_btn):
+            button.setCheckable(True)
+            button.setFlat(True)
+            group.addButton(button)
+        self._prepared_btn.setChecked(True)
         self._original_btn.toggled.connect(self._on_original_toggled)
-        self._original_btn.setVisible(False)
+        self._switch = QWidget()
+        switch = QHBoxLayout(self._switch)
+        switch.setContentsMargins(0, 0, 0, 0)
+        switch.setSpacing(2)
+        switch.addWidget(self._prepared_btn)
+        switch.addWidget(self._original_btn)
+        self._switch.setVisible(False)
 
         self._caption = QLabel()
         self._caption.setStyleSheet("color: #888;")
@@ -186,7 +237,7 @@ class ScanPane(QWidget):
 
         strip = QHBoxLayout()
         strip.setContentsMargins(4, 0, 4, 0)
-        strip.addWidget(self._original_btn)
+        strip.addWidget(self._switch)
         strip.addWidget(self._caption, 1)
 
         layout = QVBoxLayout(self)
@@ -207,8 +258,8 @@ class ScanPane(QWidget):
 
     @property
     def original_offered(self) -> bool:
-        """Whether the *Original* toggle is on offer (a page has an original to show)."""
-        return not self._original_btn.isHidden()
+        """Whether the *Prepared · Original* switch is on offer."""
+        return not self._switch.isHidden()
 
     def set_pages(
         self,
@@ -222,12 +273,10 @@ class ScanPane(QWidget):
         """
         has_original = any(path is not None and path.is_file() for path in originals)
         self._steps = steps
-        self._original_btn.setVisible(has_original)
-        if not has_original and self._original_btn.isChecked():
-            self._original_btn.blockSignals(True)
-            self._original_btn.setChecked(False)
-            self._original_btn.blockSignals(False)
-            self.view.show_originals(False)
+        offered = has_original and (steps is None or txt.preparation_changed_pages(steps))
+        self._switch.setVisible(offered)
+        if not offered and self._original_btn.isChecked():
+            self._prepared_btn.setChecked(True)  # toggled() takes the originals off the view
         self.view.set_pages(prepared, originals)
         self._refresh_caption()
 
@@ -235,7 +284,7 @@ class ScanPane(QWidget):
         """Forget the pages: no document is open."""
         self.view.clear()
         self._steps = None
-        self._original_btn.setVisible(False)
+        self._switch.setVisible(False)
         self._caption.setVisible(False)
 
     def _on_original_toggled(self, checked: bool) -> None:
@@ -243,7 +292,7 @@ class ScanPane(QWidget):
         self._refresh_caption()
 
     def _refresh_caption(self) -> None:
-        if self._original_btn.isChecked() and not self._original_btn.isHidden():
+        if self._original_btn.isChecked() and not self._switch.isHidden():
             text = check_text.SCAN_SHOWING_ORIGINAL
         elif self._steps is not None:
             text = txt.prepared_caption(self._steps)

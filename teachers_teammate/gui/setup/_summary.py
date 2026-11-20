@@ -45,6 +45,8 @@ ROW_KEPT = "{engine} (kept)"
 ROW_SAME_MODEL = "same model as proofreading"
 ROW_KEEPS_OWN = "keeps its own model"
 ROW_NAMES_ON = "on · name detection for {language}"
+NAMES_IN_APP_NAME = "Names in this app"
+ROW_NAMES_HIDDEN = "hidden in the texts · name detection for {language}"
 ROW_CLASSES = "{language} · {hand_in}"
 HANDWRITTEN = "handwritten pages"
 TYPED = "typed texts"
@@ -131,10 +133,15 @@ def _step_row(
     name = STEP_NAMES.get(step.stage, step.stage)
     downloads = _downloads_for(step, plan)
     if step.stage == STAGE_ANONYMIZATION:
+        language = str(plan.panel.get("language", ""))
+        if step.view_only:
+            return SummaryRow(
+                name=NAMES_IN_APP_NAME,
+                detail=ROW_NAMES_HIDDEN.format(language=language),
+                downloads=downloads,
+            )
         return SummaryRow(
-            name=name,
-            detail=ROW_NAMES_ON.format(language=str(plan.panel.get("language", ""))),
-            downloads=downloads,
+            name=name, detail=ROW_NAMES_ON.format(language=language), downloads=downloads
         )
     if step.kept:
         if step.stage == STAGE_OCR:

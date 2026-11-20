@@ -60,6 +60,8 @@ class ExchangeResult:
     """``True``: keep the source text and store nothing — a half-corrected text is never stored."""
     reports: tuple[StepReport, ...] = ()
     """One entry per request: step, tokens, seconds, failure, counters."""
+    left_out: int = 0
+    """How many stretches of the text the model left out and the exchange put back."""
 
 
 class Exchange(Protocol):

@@ -7,7 +7,9 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QPixmap
+from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QGraphicsTextItem
 
 from teachers_teammate.gui.check._scan_view import ScanPane, ScanView
@@ -63,9 +65,10 @@ def test_scan_view_stacks_every_page_in_one_scene(qtbot, page_files: list[Path])
     """
     Given  three prepared pages
     When   they are shown
-    Then   all three sit in one scene, in order, each as wide as the pane
+    Then   all three sit in one scene, in order, each as wide as the pane (fit width)
     """
     view = _view(qtbot)
+    view.set_fit_page(False)
 
     view.set_pages(page_files)
 
@@ -107,6 +110,94 @@ def test_scan_view_without_pages_says_so(qtbot) -> None:
     view.set_pages([])
 
     assert _messages(view) == ["(no page image)"]
+
+
+# ── Fit page and fit width ────────────────────────────────────────────────
+
+
+@pytest.mark.gui
+def test_scan_view_opens_with_a_whole_page_in_view(qtbot, page_files: list[Path]) -> None:
+    """
+    Given  tall pages (400 x 900) and a pane of 400 x 300
+    When   they are shown
+    Then   each page is as high as the pane lets it be and narrower than the pane, centred, so a
+           whole page is in view
+    """
+    view = _view(qtbot)
+
+    view.set_pages(page_files)
+
+    assert view.fit_page
+    available_height = view.viewport().height() - 16
+    first = view._items[0]
+    assert first is not None
+    assert first.pixmap().height() <= available_height
+    assert first.pixmap().width() < view.viewport().width() - 16
+    # Centred: the same space on both sides.
+    left = first.pos().x()
+    right = view.sceneRect().width() - left - first.pixmap().width()
+    assert left == pytest.approx(right, abs=1)
+
+
+@pytest.mark.gui
+def test_scan_view_fits_a_wide_page_to_the_width(qtbot, tmp_path: Path) -> None:
+    """
+    Given  a page wider than the pane is high (a landscape page)
+    When   it is shown fitted to the page
+    Then   it is as wide as the pane, because that is what fits
+    """
+    view = _view(qtbot)
+
+    view.set_pages([_page(tmp_path / "wide.png", 1200, 400, "#ffffff")])
+
+    item = view._items[0]
+    assert item is not None
+    assert item.pixmap().width() == view.viewport().width() - 16
+
+
+@pytest.mark.gui
+def test_a_double_click_switches_between_fit_page_and_fit_width(
+    qtbot, page_files: list[Path]
+) -> None:
+    """
+    Given  a scan fitted to the page
+    When   it is double-clicked twice
+    Then   it is fitted to the width and then to the page again, and after a zoom the first
+           double click only fits again in the mode that was on
+    """
+    view = _view(qtbot)
+    view.set_pages(page_files)
+    narrow = view._items[0].pixmap().width()
+
+    QTest.mouseDClick(view.viewport(), Qt.MouseButton.LeftButton)
+    assert not view.fit_page
+    assert view._items[0].pixmap().width() == view.viewport().width() - 16
+
+    QTest.mouseDClick(view.viewport(), Qt.MouseButton.LeftButton)
+    assert view.fit_page
+    assert view._items[0].pixmap().width() == narrow
+
+    view.zoom_in()
+    QTest.mouseDClick(view.viewport(), Qt.MouseButton.LeftButton)
+    assert view.fit_page
+    assert view.transform().m11() == pytest.approx(1.0)
+
+
+@pytest.mark.gui
+def test_the_fit_mode_stays_for_the_next_document(qtbot, page_files: list[Path]) -> None:
+    """
+    Given  a scan the teacher switched to fit width
+    When   the pages of another document are shown
+    Then   they are fitted to the width as well
+    """
+    view = _view(qtbot)
+    view.set_pages(page_files)
+    view.set_fit_page(False)
+
+    view.set_pages(page_files[:2])
+
+    assert not view.fit_page
+    assert view._items[0].pixmap().width() == view.viewport().width() - 16
 
 
 # ── Original ──────────────────────────────────────────────────────────────
@@ -160,9 +251,10 @@ def test_scan_view_fits_the_pages_to_a_new_width(qtbot, page_files: list[Path]) 
     """
     Given  a scan fitted to a narrow pane
     When   the pane grows
-    Then   the pages are laid out at the new width
+    Then   the pages are laid out at the new width (fit width)
     """
     view = _view(qtbot)
+    view.set_fit_page(False)
     view.set_pages(page_files)
 
     view.resize(700, 300)
@@ -211,10 +303,10 @@ def test_scan_pane_offers_original_only_where_a_page_has_one(
     """
     pane = _pane(qtbot)
 
-    pane.set_pages(page_files, original_files, ("grayscale",))
+    pane.set_pages(page_files, original_files, ("turn",))
     assert pane.original_offered
 
-    pane.set_pages(page_files, [None, None, None], ("grayscale",))
+    pane.set_pages(page_files, [None, None, None], ("turn",))
     assert not pane.original_offered
 
 
@@ -228,18 +320,18 @@ def test_scan_pane_original_toggle_swaps_the_pages_and_the_caption(
     Then   the pages are the scanned ones and the caption says so, and then they are prepared again
     """
     pane = _pane(qtbot)
-    pane.set_pages(page_files, original_files, ("grayscale",))
-    assert pane._caption.text().startswith("Prepared")
+    pane.set_pages(page_files, original_files, ("turn",))
+    assert pane._caption.text() == "Fixed for reading: page turned"
 
     pane._original_btn.setChecked(True)
 
     assert pane.showing_originals
     assert pane._caption.text() == "Showing the original pages"
 
-    pane._original_btn.setChecked(False)
+    pane._prepared_btn.setChecked(True)
 
     assert not pane.showing_originals
-    assert pane._caption.text().startswith("Prepared")
+    assert pane._caption.text() == "Fixed for reading: page turned"
 
 
 @pytest.mark.gui
@@ -252,10 +344,55 @@ def test_scan_pane_original_stays_on_for_the_next_document(
     Then   the originals are still the ones on screen
     """
     pane = _pane(qtbot)
-    pane.set_pages(page_files, original_files, ())
+    pane.set_pages(page_files, original_files, ("turn",))
     pane._original_btn.setChecked(True)
 
-    pane.set_pages(page_files, original_files, ())
+    pane.set_pages(page_files, original_files, ("light",))
 
     assert pane.showing_originals
     assert [pix.width() for pix in pane.view._pixmaps] == [200, 200, 200]
+
+
+@pytest.mark.gui
+def test_scan_pane_has_no_switch_when_nothing_was_done_to_the_pages(
+    qtbot, page_files: list[Path], original_files: list[Path]
+) -> None:
+    """
+    Given  pages that have an original, but where no preparation step acted
+    When   they are shown
+    Then   there is no Prepared · Original switch, since the original is the same picture, and
+           the caption says the pages are as scanned; and when the originals were on, they are
+           taken off
+    """
+    pane = _pane(qtbot)
+    pane.set_pages(page_files, original_files, ("turn",))
+    pane._original_btn.setChecked(True)
+
+    pane.set_pages(page_files, original_files, ("grayscale",))
+
+    assert not pane.original_offered
+    assert not pane.showing_originals
+    assert pane._caption.text() == "As scanned — no fixes needed"
+
+
+@pytest.mark.gui
+def test_scan_pane_switch_names_what_is_shown(
+    qtbot, page_files: list[Path], original_files: list[Path]
+) -> None:
+    """
+    Given  a pane with the switch on offer
+    When   Original and then Prepared is pressed
+    Then   exactly one of the two buttons is pressed at any time, the one that says what is shown
+    """
+    pane = _pane(qtbot)
+    pane.set_pages(page_files, original_files, ("turn",))
+    assert pane._prepared_btn.isChecked()
+    assert not pane._original_btn.isChecked()
+
+    pane._original_btn.click()
+    assert pane._original_btn.isChecked()
+    assert not pane._prepared_btn.isChecked()
+
+    pane._prepared_btn.click()
+    assert pane._prepared_btn.isChecked()
+    assert not pane.showing_originals

@@ -69,7 +69,7 @@ from ..config import (
 )
 from ..domain.data_location import OCR_ENGINE_NAMES, DataFlow, SentStatus
 from ..domain.local_models import PAGE_MODELS_ADDON_ID, READER_ADDON_ID
-from ..domain.model_catalog import HardwareDetection
+from ..domain.model_catalog import HardwareDetection, short_model_name
 from ..domain.ollama_discovery import DiscoveredServer, DiscoveryScope, ServerKind
 from ..domain.performance_estimate import TimeRange
 from ..domain.run_summary import RunSummary
@@ -80,6 +80,7 @@ from ..infrastructure.ollama_install import OLLAMA_DOWNLOAD_URL
 from ..infrastructure.reporting import BATTERY_WARNING, KeepAwakeState
 from ..infrastructure.state_repository import DocumentStateView
 from ..infrastructure.system_locale import system_language
+from ..texts import check as check_text
 from ..texts import dialogs as dlg
 from ..texts import privacy
 from ..texts.settings import WHERE_ADDONS, WHERE_GENERAL
@@ -128,9 +129,9 @@ from ._types import FileDoneEvent
 from ._update_check import UpdateCheckThread
 from ._view_settings import set_text_point_size, text_point_size
 from ._what_is_sent_dialog import WhatIsSentDialog
-from ._window_geometry import restore_geometry
+from ._window_geometry import maximize_without_saved_geometry, restore_geometry
 from ._worker import OCRWorker, detach_running_worker
-from .check import CheckPage, CopyKind, CopyState
+from .check import CheckPage, CopyKind, CopyState, RunState
 from .settings import (
     PAGE_TITLES,
     SettingsContext,
@@ -139,7 +140,7 @@ from .settings import (
     SettingsWindow,
     last_page,
 )
-from .settings._page import FOCUS_DETECTION
+from .settings._page import FOCUS_DETECTION, FOCUS_OCR, FOCUS_PROOFREADING
 from .settings._window import SUB_PAGES
 
 if TYPE_CHECKING:
@@ -493,6 +494,12 @@ class MainWindow(QMainWindow):
         self._last_sent_texts: SentTexts | None = None
         self._anonymize_task = LatestTask(self)
         self._anonymize_running = False
+        #: A run was asked for in the Check tab: the tab stays when the run starts.
+        self._run_from_check = False
+        #: What the run does with the document it works on now, for the Check tab's run strip:
+        #: the model that proofreads (``""`` when the run does not proofread) and the step.
+        self._run_model = ""
+        self._run_step = ""
         #: The "Hide personal information in texts" view setting (not part of Config).
         self._display_anonymized = display_anonymized(self._settings_store)
         #: Whether the texts can be hidden, per document language (spaCy model installed).
@@ -667,6 +674,13 @@ class MainWindow(QMainWindow):
         self._check.raw_text_edited.connect(self._on_ocr_text_edited)
         self._check.corrected_text_edited.connect(self._on_correction_text_edited)
         self._check.proofread_requested.connect(self._on_check_proofread_requested)
+        self._check.proofreading_setup_requested.connect(
+            lambda: self.open_settings(SettingsPage.AI_MODELS, focus=FOCUS_PROOFREADING)
+        )
+        self._check.read_settings_requested.connect(
+            lambda: self.open_settings(SettingsPage.AI_MODELS, focus=FOCUS_OCR)
+        )
+        self._check.stop_requested.connect(self._on_stop)
         self._check.checked_toggled.connect(self._on_checked_toggled)
         self._check.item_shown.connect(self._on_item_shown)
         self._check.display_anonymized_changed.connect(self._apply_display_anonymized)
@@ -951,11 +965,13 @@ class MainWindow(QMainWindow):
     _QSETTINGS_ORG = "TeachersTeammate"
     _QSETTINGS_APP = "TeachersTeammate"
 
-    def _load_toml_if_present(self) -> None:
-        config_path = self._app_service.resolve_config_path(None)
-        # Restore window geometry and splitter sizes from QSettings.
+    def _restore_gui_state(self) -> None:
+        """Restore the window geometry and the splitter sizes from QSettings."""
         qs = QSettings(self._QSETTINGS_ORG, self._QSETTINGS_APP)
-        restore_geometry(self, qs.value("gui/geometry"))
+        if not restore_geometry(self, qs.value("gui/geometry")):
+            # The first start: the window is as large as the screen allows.  A saved geometry,
+            # normal or maximized, always wins over this.
+            maximize_without_saved_geometry(self)
         sizes = [360, 1140]
         raw_sizes = qs.value("gui/panel_sizes")
         if isinstance(raw_sizes, list) and len(raw_sizes) == 2:
@@ -966,6 +982,10 @@ class MainWindow(QMainWindow):
             except ValueError, TypeError:
                 pass
         QTimer.singleShot(0, lambda s=sizes: self._main_splitter.setSizes(s))
+
+    def _load_toml_if_present(self) -> None:
+        config_path = self._app_service.resolve_config_path(None)
+        self._restore_gui_state()
 
         installer_choices = self._app_service.first_start_settings(config_path)
         if installer_choices is not None or config_path is None:
@@ -1046,6 +1066,7 @@ class MainWindow(QMainWindow):
             language=language,
             privacy_available=self._privacy_available,
             first_start=first_start,
+            display_anonymized=self._display_anonymized,
         )
         assistant = SetupAssistant(context, self)
         assistant.committed.connect(self._apply_setup_result)
@@ -1083,6 +1104,12 @@ class MainWindow(QMainWindow):
         """
         self._config_panel.update_settings(result.settings)
         self._config_panel.load_from_dict(result.panel)
+        if result.display_anonymized is not None:
+            # The name detection may still be on its way: the wish is stored as it is, and the
+            # view follows it as soon as hiding is possible (_refresh_privacy_availability).
+            set_display_anonymized(self._settings_store, result.display_anonymized)
+            self._display_anonymized = result.display_anonymized
+            self._check.set_display_anonymized(result.display_anonymized)
         self._save_settings(notify=False)
         self._start_readiness_check()
         self._refresh_queue_from_inputs()
@@ -1345,6 +1372,7 @@ class MainWindow(QMainWindow):
     def _on_run(self) -> None:
         if self._run_in_progress():
             return
+        self._run_from_check = False
         try:
             config = self._config_panel.to_config()
         except ValueError as exc:
@@ -1568,6 +1596,10 @@ class MainWindow(QMainWindow):
         # reloads it too. Documents the run leaves alone stay open for work.
         self._run_pending = set(selected_source_ids)
         self._run_current = ""
+        self._run_model = (
+            short_model_name(config.effective_correction_model) if config.correction_enabled else ""
+        )
+        self._run_step = ""
         self._apply_lock()
         self._result_names = []
         self._result_ocr_times = []
@@ -1576,7 +1608,11 @@ class MainWindow(QMainWindow):
         self._progress.setValue(0)
         self._start_pace(config, selected_source_ids)
         self._set_progress_text(f"Selected {len(selected_source_ids)} file(s) — Starting…")
-        self._tabs.setCurrentIndex(0)
+        if self._run_from_check:
+            # Started from the Check header: the teacher stays with the document.
+            self._run_from_check = False
+        else:
+            self._tabs.setCurrentIndex(0)
         self._update_check_tab()
 
         worker_factory = self._worker_factory or OCRWorker
@@ -1637,6 +1673,7 @@ class MainWindow(QMainWindow):
         self._run_pages = pages
         self._pace.set_pages(sum(pages.values()))
         self._set_progress_text(self._progress_base)
+        self._refresh_check_run()
 
     def _on_stage_run_requested(self, selected_source_ids: list[str], stage: str) -> None:
         """Check the requirements, then invalidate cache from *stage* onward and run rows."""
@@ -2021,6 +2058,7 @@ class MainWindow(QMainWindow):
             self._stop_btn.setText(STOP_TEXT)
             self._stop_btn.setToolTip(STOP_TOOLTIP)
             self._stop_btn.setEnabled(stage is _StopStage.RUNNING)
+        self._refresh_check_run()
 
     def _set_progress_text(self, text: str) -> None:
         """Show *text* in the progress bar, with a note while the run stops after this file."""
@@ -2063,6 +2101,7 @@ class MainWindow(QMainWindow):
         self._set_progress_text(f"[{idx}/{total}] {name} — starting…")
         self._results_table.mark_processing(source_id)
         self._run_current = source_id
+        self._run_step = ""
         self._apply_lock()
         # The text format is deliberately kept: the row still shows the previous texts, and
         # a format that no longer matches them would save an edit in the wrong notation.
@@ -2072,12 +2111,20 @@ class MainWindow(QMainWindow):
         PROGRESS_STAGE_OCR: "OCR…",
     }
 
+    #: What the Check tab's run strip says while a step of the run's file is on.
+    _RUN_STEP_TEXT: ClassVar[dict[str, str]] = {
+        PROGRESS_STAGE_PREPROCESSING: check_text.RUN_PREPARING,
+        PROGRESS_STAGE_OCR: check_text.RUN_READING,
+    }
+
     def _on_stage_started(
         self, _source_id: str, name: str, stage: str, idx: int, total: int
     ) -> None:
         label = self._STAGE_PROGRESS_LABEL.get(stage)
         if label is not None:
             self._set_progress_text(f"[{idx}/{total}] {name} — {label}")
+        self._run_step = self._RUN_STEP_TEXT.get(stage, self._run_step)
+        self._refresh_check_run()
 
     def _on_file_done(self, event: FileDoneEvent) -> None:
         source_id = event.source_id
@@ -2264,6 +2311,11 @@ class MainWindow(QMainWindow):
                     _SERVER_PLACES[self._found_server.kind], self._found_server.url
                 )
         results = self._results_problem()
+        # The Check tab's next-step button proofreads, or sets proofreading up when the last
+        # check found the proofreading step unable to run.
+        self._check.set_proofreading_ready(
+            self._blocker is None or self._blocker[0] != "correction"
+        )
         self._show_recognition_state()
         self._readiness_line.show_state(
             readiness(
@@ -2415,6 +2467,8 @@ class MainWindow(QMainWindow):
         self._tray.showMessage("Teacher's Teammate", text.tray, icon, 4000)
 
     def _on_ocr_done(self, source_id: str, name: str, idx: int, total: int) -> None:
+        self._run_step = ""  # the reading is over: what goes on now is the proofreading
+        self._refresh_check_run()
         if self._steps_per_file > 1:
             self._progress.setValue((idx - 1) * 2 + 1)
             self._set_progress_text(f"[{idx}/{total}] {name} — correcting…")
@@ -2509,6 +2563,51 @@ class MainWindow(QMainWindow):
             self._check.set_lock(txt.WAITING_FOR_RUN)
         else:
             self._check.set_lock(None)
+        self._refresh_check_run()
+
+    def _refresh_check_run(self) -> None:
+        """Tell the Check tab what the run does with the open document: working, waiting, or not.
+
+        Fed from what the window already follows (the run's file, step and pace, and the Stop
+        stage), so the teacher who proofreads from Check sees the run without leaving the tab.
+        """
+        source_id = self._current_preview_source_id
+        if not source_id or not (source_id == self._run_current or source_id in self._run_pending):
+            self._check.set_run(None)
+            return
+        stop_text = {
+            _StopStage.RUNNING: STOP_TEXT,
+            _StopStage.AFTER_FILE: STOP_NOW_TEXT,
+            _StopStage.NOW: STOP_NOW_TEXT,
+        }.get(self._stop_stage, "")
+        stop_enabled = self._stop_stage in (_StopStage.RUNNING, _StopStage.AFTER_FILE)
+        if source_id != self._run_current:
+            self._check.set_run(
+                RunState(
+                    check_text.RUN_WAITING,
+                    busy=False,
+                    stop_text=stop_text,
+                    stop_enabled=stop_enabled,
+                )
+            )
+            return
+        step = self._run_step or (
+            check_text.RUN_PROOFREADING.format(model=self._run_model)
+            if self._run_model
+            else check_text.RUN_READING
+        )
+        left = self._pace.time_left()
+        self._check.set_run(
+            RunState(
+                step,
+                time_left=time_left_note(left.typical_s) if left is not None else "",
+                time_left_tip=(
+                    time_left_tooltip(left.low_s, left.high_s) if left is not None else ""
+                ),
+                stop_text=stop_text,
+                stop_enabled=stop_enabled,
+            )
+        )
 
     def _store_text_zoom(self, point_size: int) -> None:
         """Remember the text size the teacher zoomed to, for the next document and restart."""
@@ -2517,8 +2616,13 @@ class MainWindow(QMainWindow):
     def _on_check_proofread_requested(self) -> None:
         """Proofread the open document: the header's button and ⋯ → *Proofread again*."""
         source_id = self._current_preview_source_id
-        if source_id:
-            self._on_stage_run_requested([source_id], "correction")
+        if not source_id:
+            return
+        if self._run_in_progress():
+            self._warn_busy()  # nothing starts, so the tab must not be marked as the origin
+            return
+        self._run_from_check = True
+        self._on_stage_run_requested([source_id], "correction")
 
     def _on_item_shown(self, key: str) -> None:
         """An item became the one the card shows: record that the teacher looked at it.
@@ -2659,6 +2763,8 @@ class MainWindow(QMainWindow):
 
     def _on_tab_changed(self, index: int) -> None:
         """Opening the Check tab with nothing open shows a document; the tab is never empty."""
+        if index == 0:
+            self._run_from_check = False  # a request that never started a run is forgotten
         if index != 1 or self._current_preview_source_id:
             return
         target = self._check_target()

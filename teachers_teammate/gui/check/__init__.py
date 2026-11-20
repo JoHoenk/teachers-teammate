@@ -5,5 +5,6 @@ moves between documents, and the preview panel it holds.
 """
 
 from ._page import CheckPage, CopyKind, CopyState
+from ._run_strip import RunState
 
-__all__ = ["CheckPage", "CopyKind", "CopyState"]
+__all__ = ["CheckPage", "CopyKind", "CopyState", "RunState"]

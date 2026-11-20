@@ -12,7 +12,9 @@ Which module owns what:
 ``check.py``         what the Check tab's widgets say around its text
 ``dialogs.py``       every message box, question and file picker
 ``privacy.py``       what is sent for a file, and the data-flow wording
+``servers.py``       how a found Ollama server is described (the card)
 ``settings.py``      the Settings window's page names and the "where to change it" phrases
+``setup.py``         every sentence of the Setup Assistant's pages
 ===================  ==================================================================
 
 Rules that keep it one home:

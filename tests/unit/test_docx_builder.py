@@ -1059,3 +1059,34 @@ def test_table_layout_lists_only_explanations_of_changes_in_the_text(tmp_path: P
     assert "EXPL-phantom" not in bullets
     quoted = next(p for p in doc.paragraphs if p.text.startswith("1. "))
     assert quoted.runs[1].text == "She has gone!"
+
+
+def test_a_stretch_the_model_left_out_is_not_in_the_word_files_unclear_table(
+    tmp_path: Path,
+) -> None:
+    """
+    Given  a review whose only unclear note is a stretch the model left out and the app put back
+    When   the table layout and the comments layout are written
+    Then   neither lists it: no *Unclear* heading, no table row, no comment (it is a note for the
+           teacher in Check, not for the student's copy)
+    """
+    left_out = UnclearNote(
+        0,
+        len(_RAW),
+        _RAW,
+        "The AI left this passage out of its answer.",
+        "",
+        left_out=True,
+    )
+    review = CorrectionReview(edits=_REVIEW.edits, unclear=(left_out,))
+
+    for layout in ("table", "comments"):
+        out = tmp_path / f"left_out_{layout}.docx"
+        DocxDocumentCreator(fmt=layout).create(
+            raw_text=_RAW, corrected_text=_CORRECTED, out_path=out, title="T", review=review
+        )
+
+        assert "Unclear or ambiguous expressions" not in _headings(out)
+        assert "left this passage out" not in _all_table_text(out)
+        if layout == "comments":
+            assert "left this passage out" not in _comments_xml(out)

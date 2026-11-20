@@ -102,7 +102,9 @@ class ExchangeCorrector(Corrector):
             text=result.text,
             review=result.review,
             warning=warning,
-            fell_back=_partial(result.warnings),
+            left_out=result.left_out,
+            # A repaired answer is shorter than a complete one, like one whose step ② failed.
+            fell_back=_partial(result.warnings) or result.left_out > 0,
         )
 
     def max_text_chars(self, language: str, *, text_format: TextFormat = "plain") -> int | None:

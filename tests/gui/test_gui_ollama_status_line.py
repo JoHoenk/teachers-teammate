@@ -57,13 +57,13 @@ def _buttons(widget: OllamaStatusLine) -> list[str]:
         (
             OllamaStatus(OllamaState.RUNNING, version="0.12.3", model_count=2),
             LOCAL,
-            "✓ Ollama 0.12.3 is running · 2 models downloaded",
+            "Ollama 0.12.3 · 2 models — on this PC · http://127.0.0.1:11434",
             [],
         ),
         (
             OllamaStatus(OllamaState.RUNNING, version="0.12.3", model_count=1),
             LOCAL,
-            "✓ Ollama 0.12.3 is running · 1 model downloaded",
+            "Ollama 0.12.3 · 1 model — on this PC · http://127.0.0.1:11434",
             [],
         ),
         (
@@ -109,7 +109,7 @@ def test_each_state_shows_its_line_and_its_buttons(
 
     qtbot.waitUntil(lambda: widget.status() is not None, timeout=3000)
 
-    assert widget._label.text() == expected_line
+    assert widget.text() == expected_line
     assert _buttons(widget) == expected_buttons
 
 
@@ -128,13 +128,13 @@ def test_a_server_found_elsewhere_is_offered_and_never_taken_over(qtbot) -> None
     widget.use_server_requested.connect(chosen.append)
     widget.show()
 
-    qtbot.waitUntil(lambda: _buttons(widget) == ["Use it"], timeout=3000)
+    qtbot.waitUntil(lambda: not widget.card().isHidden(), timeout=3000)
 
-    assert widget._label.text() == "✓ Ollama answers at http://127.0.0.1:11435 (this computer)"
+    assert widget.text() == "Ollama — on this PC · http://127.0.0.1:11435"
     assert widget.url() == LOCAL
     assert chosen == []
 
-    widget._buttons[0].click()
+    widget.card().use_button.click()
 
     assert chosen == ["http://127.0.0.1:11435"]
     assert widget.url() == LOCAL
@@ -261,3 +261,70 @@ def test_get_ollama_opens_the_download_page(qtbot, monkeypatch) -> None:
     widget._buttons[0].click()
 
     assert opened == [line_module.OLLAMA_DOWNLOAD_URL]
+
+
+@pytest.mark.gui
+@pytest.mark.parametrize(
+    ("kind", "url", "version", "models", "title", "place"),
+    [
+        (
+            ServerKind.THIS_COMPUTER,
+            "http://localhost:11434",
+            "0.12.3",
+            4,
+            "Ollama 0.12.3 · 4 models",
+            "on this PC · http://localhost:11434",
+        ),
+        (
+            ServerKind.NETWORK,
+            "http://192.168.1.20:11434",
+            "0.12.3",
+            1,
+            "Ollama 0.12.3 · 1 model",
+            "on the network · 192.168.1.20",
+        ),
+        (
+            ServerKind.WINDOWS_HOST,
+            "http://172.31.0.1:11434",
+            "",
+            0,
+            "Ollama · no models yet",
+            "on the Windows PC (this computer) · http://172.31.0.1:11434",
+        ),
+        (
+            ServerKind.NETWORK,
+            "http://school:11434",
+            "0.1",
+            None,
+            "Ollama 0.1",
+            "on the network · school",
+        ),
+    ],
+)
+def test_the_server_card_says_what_it_is_and_where(
+    qtbot, kind, url, version, models, title, place
+) -> None:
+    """
+    Given  a server that is on this PC, on the Windows PC, or on the network
+    When   the card shows it
+    Then   the bold line names Ollama with its version and models, and the second line says
+           whose computer it is on and where; "Use it" is offered when asked for
+    """
+    from teachers_teammate.gui._server_card import ServerCard  # noqa: PLC0415
+
+    card = ServerCard()
+    qtbot.addWidget(card)
+    chosen: list[str] = []
+    card.use_requested.connect(chosen.append)
+
+    card.show_server(url=url, kind=kind, version=version, model_count=models)
+    card.show()
+
+    assert card.title == title
+    assert card.place == place
+    assert card.use_button.isVisible()
+    card.use_button.click()
+    assert chosen == [url]
+
+    card.show_server(url=url, kind=kind, version=version, model_count=models, offer_use=False)
+    assert not card.use_button.isVisible()

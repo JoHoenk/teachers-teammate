@@ -15,9 +15,11 @@ from teachers_teammate.infrastructure.spacy_models import spacy_model_for
 from teachers_teammate.application.data_flow import llm_location
 from teachers_teammate.application.service import OllamaStatus
 from teachers_teammate.application.setup_plan import (
+    LocalModelChoices,
     SetupAnswers,
     SetupFacts,
     SetupPlan,
+    build_model_choices,
     build_setup_plan,
 )
 from teachers_teammate.domain.data_location import StageLocation
@@ -387,3 +389,19 @@ class SetupAppService(DummyAppService):
             best=lambda task: best_model(task, facts.profile),
             default_model=self.default_model_for_task,
         )
+
+    def plan_with_model_choices(
+        self, answers: SetupAnswers, current: Mapping[str, object]
+    ) -> tuple[SetupPlan, LocalModelChoices]:
+        """Answer with the real plan and choices for these answers and facts."""
+        facts = self.setup_facts(answers, current)
+        plan = self.plan_setup(answers, current)
+        step = next((row for row in plan.steps if row.stage == "correction"), None)
+        choices = build_model_choices(
+            facts,
+            suggested=step.model if step is not None else "",
+            rate=lambda tag, task: self.rate_ollama_models(
+                [tag], task, facts.profile, answers.ollama_url
+            )[0],
+        )
+        return plan, choices

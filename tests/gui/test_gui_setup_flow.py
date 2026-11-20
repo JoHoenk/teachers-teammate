@@ -70,14 +70,15 @@ def test_the_local_ai_leads_to_the_proofreading_with_handwriting() -> None:
     assert next_page(SetupPageId.LOCAL_AI, _answers()) is SetupPageId.PROOFREADING
 
 
-def test_the_local_ai_leads_to_the_summary_with_typed_texts() -> None:
+def test_the_local_ai_leads_to_the_privacy_page_with_typed_texts() -> None:
     """
     Given  typed texts whose proofreading runs on the local AI
     When   the local AI page is left
-    Then   the summary follows: the proofreading question was already answered
+    Then   the privacy page follows: the proofreading question was already answered, and the
+           address just chosen decides what the privacy page says
     """
     answers = _answers(HandIn.TYPED, ProofreadingPlace.LOCAL)
-    assert next_page(SetupPageId.LOCAL_AI, answers) is SetupPageId.SUMMARY
+    assert next_page(SetupPageId.LOCAL_AI, answers) is SetupPageId.PRIVACY
 
 
 def test_online_proofreading_asks_about_names() -> None:
@@ -100,24 +101,25 @@ def test_typed_texts_with_local_proofreading_go_to_the_local_ai() -> None:
     assert next_page(SetupPageId.PROOFREADING, answers) is SetupPageId.LOCAL_AI
 
 
-def test_handwritten_pages_with_local_proofreading_go_to_the_summary() -> None:
+def test_handwritten_pages_with_local_proofreading_go_to_the_privacy_page() -> None:
     """
     Given  handwritten pages and proofreading on the local AI
     When   the proofreading page is left
-    Then   the summary follows: the local AI page was already shown
+    Then   the privacy page follows (the local AI page was already shown), because the
+           address may be another PC's
     """
     answers = _answers(HandIn.HANDWRITTEN, ProofreadingPlace.LOCAL)
-    assert next_page(SetupPageId.PROOFREADING, answers) is SetupPageId.SUMMARY
+    assert next_page(SetupPageId.PROOFREADING, answers) is SetupPageId.PRIVACY
 
 
-def test_handwritten_pages_without_proofreading_go_to_the_summary() -> None:
+def test_handwritten_pages_without_proofreading_still_see_the_privacy_page() -> None:
     """
     Given  handwritten pages and "Not now" for the proofreading
     When   the proofreading page is left
-    Then   the summary follows, with no privacy question
+    Then   the privacy page follows: it says the texts stay on this computer
     """
     answers = _answers(HandIn.HANDWRITTEN, ProofreadingPlace.OFF)
-    assert next_page(SetupPageId.PROOFREADING, answers) is SetupPageId.SUMMARY
+    assert next_page(SetupPageId.PROOFREADING, answers) is SetupPageId.PRIVACY
 
 
 def test_the_privacy_page_leads_to_the_summary() -> None:
@@ -150,11 +152,13 @@ def test_the_done_page_is_the_last() -> None:
 
 @pytest.mark.parametrize("hand_in", list(HandIn))
 @pytest.mark.parametrize("place", list(ProofreadingPlace))
-def test_every_path_reaches_the_summary(hand_in: HandIn, place: ProofreadingPlace) -> None:
+def test_every_path_reaches_the_summary_through_the_privacy_page(
+    hand_in: HandIn, place: ProofreadingPlace
+) -> None:
     """
     Given  any combination of answers
     When   the pages are followed from the welcome page
-    Then   the summary is reached, and no page is visited twice
+    Then   the summary is reached through the privacy page, and no page is visited twice
     """
     answers = _answers(hand_in, place)
     seen: list[SetupPageId] = []
@@ -164,3 +168,4 @@ def test_every_path_reaches_the_summary(hand_in: HandIn, place: ProofreadingPlac
         seen.append(page)
         page = next_page(page, answers)
     assert page is SetupPageId.SUMMARY
+    assert SetupPageId.PRIVACY in seen

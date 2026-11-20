@@ -420,3 +420,41 @@ def test_a_repeated_piece_is_not_found_at_the_place_of_an_earlier_one_without_a_
     starts = [note.raw_start for note in outcome.review.edits]
     assert len(starts) == 2
     assert min(starts) > 0
+
+
+@pytest.mark.use_case("Chunking_Corrector")
+def test_stretches_left_out_in_the_pieces_are_added_up_and_keep_their_flag() -> None:
+    """
+    Given  a long text whose pieces each came back with a note for a stretch the model left out
+    When   the pieces are merged
+    Then   the outcome counts the stretches of every piece, and the merged review has all the
+           notes, still flagged and moved to their place in the whole text
+    """
+    text = _german_text()
+
+    class _LeavesOut(_RecordingCorrector):
+        def correct(self, raw_text, language, *, text_format="plain"):
+            outcome = super().correct(raw_text, language, text_format=text_format)
+            note = UnclearNote(
+                raw_start=0,
+                raw_end=min(10, len(raw_text)),
+                expression=raw_text[:10],
+                why="left out",
+                recommendation="",
+                left_out=True,
+            )
+            review = outcome.review or CorrectionReview()
+            return CorrectionOutcome(
+                text=outcome.text,
+                review=CorrectionReview(edits=review.edits, unclear=(note,)),
+                left_out=1,
+            )
+
+    outcome = ChunkingCorrector(_LeavesOut()).correct(text, "German")
+
+    assert outcome.left_out == 3
+    assert outcome.review is not None
+    assert [note.left_out for note in outcome.review.unclear] == [True, True, True]
+    assert [note.raw_start for note in outcome.review.unclear] == sorted(
+        note.raw_start for note in outcome.review.unclear
+    )

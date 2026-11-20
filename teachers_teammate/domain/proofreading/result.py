@@ -95,10 +95,17 @@ class CorrectionOutcome:
     failed: bool = False
     """``True`` when the provider call failed and *text* is the unchanged source: such an
     outcome is reported but never stored as a finished correction."""
+    left_out: int = 0
+    """How many stretches of the text the model left out and the app put back.
+
+    Such a file is corrected and stored, with a warning and one item per stretch in the review;
+    the evaluation tools count it as a drop, because the model's own answer was.
+    """
     fell_back: bool = False
     """``True`` when the answer lacks part of what was asked.
 
-    A review came back, but a report of step ② or ③ failed, so the explanations or the unclear
-    list are missing for part of the text.  The file is corrected and stored; only the speed
-    sample is dropped, because it would undercount the answer length of a complete answer.
+    Either a review came back but a report of step ② or ③ failed, so the explanations or the
+    unclear list are missing for part of the text, or step ① left text out and the app put it
+    back (:attr:`left_out`).  The file is corrected and stored; only the speed sample is dropped,
+    because it would undercount the answer length of a complete answer.
     """

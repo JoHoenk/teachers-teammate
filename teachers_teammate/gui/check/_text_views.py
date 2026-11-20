@@ -68,7 +68,11 @@ def marks_of(doc: CheckDocument, masking: Masking) -> tuple[Mark, ...]:
     marks: list[Mark] = []
     for item in doc.items:
         spans = item.corrected_spans
-        if not spans and hunks and item.kind in (ItemKind.TAKEN_OUT, ItemKind.UNCLEAR):
+        if (
+            not spans
+            and hunks
+            and item.kind in (ItemKind.TAKEN_OUT, ItemKind.UNCLEAR, ItemKind.LEFT_OUT)
+        ):
             spans = (map_forward(item.raw_span, hunks),)
         for start, end in spans:
             carried = masking.carry((start, end), doc.corrected_plain)

@@ -88,6 +88,34 @@ def test_a_review_survives_a_round_trip_through_its_record() -> None:
     assert CorrectionReview.from_dict(review.to_dict()) == review
 
 
+def test_a_left_out_stretch_survives_the_record_shift_and_text_mapping() -> None:
+    """
+    Given  a review with a note for a stretch the model left out
+    When   it is written and read back, shifted into a longer text and mapped through a text
+           function
+    Then   the flag is kept every time, and a record without the key reads as not left out
+    """
+    note = UnclearNote(
+        raw_start=5,
+        raw_end=15,
+        expression="left over",
+        why="The AI left this out.",
+        recommendation="",
+        left_out=True,
+    )
+    review = CorrectionReview(unclear=(note,))
+
+    assert CorrectionReview.from_dict(review.to_dict()) == review
+    assert review.shifted(100).unclear[0].left_out is True
+    assert review.shifted(100).unclear[0].raw_start == 105
+    assert review.map_text(str.upper).unclear[0].left_out is True
+    record = review.to_dict()
+    del record["unclear"][0]["left_out"]
+    restored = CorrectionReview.from_dict(record)
+    assert restored is not None
+    assert restored.unclear[0].left_out is False
+
+
 def test_a_record_without_a_version_is_no_review() -> None:
     """
     Given  a stored record without a version field
@@ -664,3 +692,19 @@ def test_the_sentence_of_a_spelling_note_is_still_found() -> None:
 
     assert explained_sentences(aligned, raw, corrected) == ()
     assert note_sentence(aligned, raw, corrected, review.edits[0]) == "Er geht heim."
+
+
+def test_a_stretch_left_out_is_counted_apart_from_the_unclear_expressions() -> None:
+    """
+    Given  a review with one unclear expression and one stretch the model left out
+    When   the review and its aligned form are counted
+    Then   the unclear count is one and the left-out count is one, so the queue's badge and the
+           exports do not call the stretch unclear
+    """
+    unclear = UnclearNote(0, 3, "abc", "Vague.", "Say more.")
+    left_out = UnclearNote(4, 9, "defgh", "Left out.", "", left_out=True)
+    review = CorrectionReview(unclear=(unclear, left_out))
+
+    assert (review.unclear_count, review.left_out_count) == (1, 1)
+    assert review.unclear_notes == (unclear,)
+    assert align("abc defgh", "abc defgh", review).unclear_count == 1

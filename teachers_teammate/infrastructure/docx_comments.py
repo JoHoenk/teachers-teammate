@@ -92,6 +92,8 @@ def marks_for(
                 )
             )
     for unclear in aligned.unclear:
+        if unclear.note.left_out:
+            continue  # the teacher's note in Check, not something for the student's copy
         start, end = unclear.start, unclear.end
         if start is None or end is None:
             line = _line_with_words(raw_plain, unclear.note.expression)

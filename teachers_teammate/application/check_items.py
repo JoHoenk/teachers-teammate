@@ -45,6 +45,8 @@ class ItemKind(Enum):
     """A correction the teacher took out: the student's words stand there again."""
     UNCLEAR = "unclear"
     """Wording whose meaning a reader cannot tell."""
+    LEFT_OUT = "left_out"
+    """A stretch the model left out of its answer: the student's words stand there again."""
 
 
 @dataclass(frozen=True)
@@ -253,13 +255,17 @@ def _taken_out_items(notes: Sequence[EditNote]) -> list[tuple[int, CheckItem]]:
 
 
 def _unclear_items(unclear: Sequence[AlignedUnclear]) -> list[tuple[int, CheckItem]]:
-    """Return one item per unclear expression; one that was not found in the text goes last."""
+    """Return one item per unclear expression and per stretch the model left out.
+
+    One that was not found in the text goes last.  A stretch that was left out has no wording to
+    recommend: its note says why it is listed.
+    """
     return [
         (
             item.start if item.anchored and item.start is not None else _NOT_FOUND,
             CheckItem(
                 key=f"unclear:{item.number}",
-                kind=ItemKind.UNCLEAR,
+                kind=ItemKind.LEFT_OUT if item.note.left_out else ItemKind.UNCLEAR,
                 number=0,
                 before=item.note.expression,
                 after=item.note.recommendation,

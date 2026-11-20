@@ -13,7 +13,9 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, ClassVar
+from urllib.parse import urlparse
 
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QButtonGroup,
     QCheckBox,
@@ -23,7 +25,9 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QPushButton,
+    QProgressBar,
     QRadioButton,
+    QScrollArea,
     QVBoxLayout,
     QWidget,
     QWizardPage,
@@ -33,24 +37,28 @@ from ...application.correction_options import review_has_own_model
 from ...application.setup_plan import (
     DownloadKind,
     HandIn,
+    LocalModelChoices,
+    ModelChoice,
     PlannedDownload,
     PlannedStep,
+    PrivacyCase,
     ProofreadingPlace,
     SetupAnswers,
     SetupPlan,
 )
 from ...config import DEFAULTS
 from ...domain.data_location import (
+    STAGE_ANONYMIZATION,
     STAGE_CORRECTION,
+    STAGE_OCR,
     DataLocation,
     DataRegion,
     StageLocation,
 )
 from ...domain.language import LANGUAGES
 from ...domain.local_models import PAGE_MODELS_ADDON_ID
-from ...domain.model_catalog import DiskVerdict, Suitability
+from ...domain.model_catalog import DiskVerdict, Suitability, short_model_name
 from ...infrastructure.ollama_utils import is_local_ollama_url
-from ...texts.settings import WHERE_SETUP
 from .. import _user_text as txt
 from .._background import LatestTask
 from .._data_flow_summary import short_place
@@ -62,149 +70,116 @@ from .._install_round import (
     READER_PROGRESS_STATUS,
 )
 from .._model_guidance import PROVIDER_PREFIX, SPACY_PREFIX
+from .._model_item_delegate import ModelItem, fill_grouped
+from .._model_item_delegate import install as install_model_labels
+from .._model_wording import compact_suitability_text
 from .._ollama_status_line import OllamaStatusLine
 from ..settings._ai_service_section import PROOFREADING, AiServiceSection
 from ..settings._server_search_dialog import ServerSearchDialog
 from ..settings._speed_panel import SpeedPanel
 from ._context import SetupContext
 from ._flow import ORDER, SetupPageId, next_page
-from ._summary import SummaryRows, summary_rows
+from ._summary import SummaryRows, size_text, summary_rows
+from ...texts.setup import (
+    CLASSES_HANDWRITTEN,
+    CLASSES_HANDWRITTEN_NOTE,
+    CLASSES_LANGUAGE,
+    CLASSES_LANGUAGE_NOTE,
+    CLASSES_QUESTION,
+    CLASSES_TITLE,
+    CLASSES_TYPED,
+    CLASSES_TYPED_NOTE,
+    DONE_DONE,
+    DONE_DOWNLOADS_TITLE,
+    DONE_FAILED,
+    DONE_NAME_PAGE_MODELS,
+    DONE_NAME_READER,
+    DONE_NOTHING,
+    DONE_OLLAMA_GOES_ON,
+    DONE_OVERALL,
+    DONE_PROGRESS,
+    DONE_PROGRESS_MB,
+    DONE_PURPOSE_ADDON,
+    DONE_PURPOSE_NAMES,
+    DONE_PURPOSE_PAGE_MODELS,
+    DONE_PURPOSE_PROOFREADING,
+    DONE_PURPOSE_READER,
+    DONE_PURPOSE_READING,
+    DONE_RUNNING,
+    DONE_SELECT,
+    DONE_SELECT_TOOLTIP,
+    DONE_SPEED_TITLE,
+    DONE_SPEED_WAITING,
+    DONE_TEXT,
+    DONE_TITLE,
+    DONE_TITLE_PROBLEMS,
+    DONE_TITLE_RUNNING,
+    DONE_WAITING,
+    FIT_VERY_SLOW,
+    FIT_WORDS,
+    LOCAL_AI_FIND,
+    LOCAL_AI_FIND_TOOLTIP,
+    LOCAL_AI_HERE,
+    LOCAL_AI_INTRO,
+    LOCAL_AI_OTHER_PC_HEADING,
+    LOCAL_AI_OTHER_PC_TEXT,
+    LOCAL_AI_QUESTION,
+    LOCAL_AI_SERVER,
+    LOCAL_AI_THIS_PC_HEADING,
+    LOCAL_AI_THIS_PC_TEXT,
+    LOCAL_AI_TITLE,
+    MODEL_INSTALLED,
+    PRIVACY_ALREADY_ON,
+    PRIVACY_EXPLAIN,
+    PRIVACY_HAS_DETECTION,
+    PRIVACY_HIDE_HERE,
+    PRIVACY_HIDE_HERE_NOTE,
+    PRIVACY_NEEDS_DETECTION,
+    PRIVACY_SCHOOL_NOTE,
+    PRIVACY_SCHOOL_NOTE_NETWORK,
+    PRIVACY_SENT,
+    PRIVACY_SENT_NETWORK,
+    PRIVACY_STAYS,
+    PRIVACY_STAYS_NOTE,
+    PRIVACY_TITLE,
+    PROOFREADING_INSTALL_NOW,
+    PROOFREADING_INSTALL_TOOLTIP,
+    PROOFREADING_INTRO,
+    PROOFREADING_LOCAL,
+    PROOFREADING_MODEL,
+    PROOFREADING_MODEL_TOOLTIP,
+    PROOFREADING_OFF,
+    PROOFREADING_ONLINE,
+    PROOFREADING_ONLINE_NOTE,
+    PROOFREADING_REVIEW_KEPT,
+    PROOFREADING_TITLE,
+    PROOFREADING_USE_RECOMMENDED,
+    READER_NAME,
+    SUGGESTION,
+    SUGGESTION_CHECKING,
+    SUGGESTION_DOWNLOADED,
+    SUGGESTION_UNKNOWN,
+    SUMMARY_DISK_SHORT,
+    SUMMARY_DOWNLOADS_NEEDED,
+    SUMMARY_DOWNLOADS_TOTAL,
+    SUMMARY_FAILED,
+    SUMMARY_INSTALLING,
+    SUMMARY_LATER,
+    SUMMARY_NO_DOWNLOADS,
+    SUMMARY_OLLAMA_STOPPED,
+    SUMMARY_TITLE,
+    SUMMARY_WORKING,
+    WELCOME_FOOTNOTE,
+    WELCOME_POINTS,
+    WELCOME_TEXT,
+    WELCOME_TITLE,
+)
 
 if TYPE_CHECKING:
     from ._assistant import SetupAssistant
 
-# ── Welcome ───────────────────────────────────────────────────────────────────
-
-WELCOME_TITLE = "Welcome to Teacher's Teammate"
-WELCOME_TEXT = (
-    "The app reads your students' handwritten work, can proofread it and review its content, "
-    "and writes the results into Word documents.\n\n"
-    "This assistant sets it up for this computer. It takes about five minutes; the AI models "
-    "then download in the background (a few gigabytes)."
-)
-WELCOME_POINTS = (
-    "• Pages are always read on this computer — never online.\n"
-    "• You decide whether proofreading may use an online service."
-)
-WELCOME_FOOTNOTE = (
-    f"You can run it again under {WHERE_SETUP}, and change everything under Settings."
-)
-
-# ── Your classes ──────────────────────────────────────────────────────────────
-
-CLASSES_TITLE = "Your classes"
-CLASSES_LANGUAGE = "Language your students write in:"
-CLASSES_LANGUAGE_NOTE = (
-    "Proofreading and name detection follow it. You can change it for every batch."
-)
-CLASSES_QUESTION = "What do they hand in?"
-CLASSES_HANDWRITTEN = (
-    "Handwritten or scanned pages (photos, scans, PDFs), also mixed with typed work"
-)
-CLASSES_HANDWRITTEN_NOTE = "The text is read by an AI on this computer."
-CLASSES_TYPED = "Only typed texts (text files, PDFs that contain their text)"
-CLASSES_TYPED_NOTE = (
-    "Nothing has to be read, so no reading model is downloaded.\n"
-    "Word files can't be read yet: save them as PDF."
-)
-
-# ── Local AI ──────────────────────────────────────────────────────────────────
-
-LOCAL_AI_TITLE = "The AI on this computer"
-LOCAL_AI_INTRO = (
-    "Teacher's Teammate uses Ollama, a free program that runs AI models on your own computer."
-)
-LOCAL_AI_QUESTION = "Where does Ollama run?"
-LOCAL_AI_HERE = "On this computer"
-LOCAL_AI_SERVER = "On a server at my school"
-LOCAL_AI_FIND = "Find…"
-LOCAL_AI_FIND_TOOLTIP = "Look for an Ollama server on this computer or on your network."
-LOCAL_AI_PROFILE_NOTE = "The suggested models follow this."
-
-# ── Proofreading ──────────────────────────────────────────────────────────────
-
-PROOFREADING_TITLE = "Proofreading"
-PROOFREADING_INTRO = (
-    "The app can proofread the recognised text and explain each mistake. Where should that AI run?"
-)
-PROOFREADING_LOCAL = "With the AI on this computer — free; the text never leaves this computer"
-PROOFREADING_ONLINE = (
-    "At an online service — faster on a weak computer; the text is sent over the internet"
-)
-PROOFREADING_OFF = "Not now — only read the text"
-PROOFREADING_ONLINE_NOTE = "You need an account with the service, and it may charge for use."
-PROOFREADING_REVIEW_KEPT = "Content review keeps its own model (Settings → AI models)."
-PROOFREADING_INSTALL_NOW = "Install now"
-PROOFREADING_INSTALL_TOOLTIP = "Download the package this service needs, then check the key."
-SUGGESTION = "Suggested: {model} · {fit} · {size}"
-SUGGESTION_DOWNLOADED = "Suggested: {model} · {fit} · already downloaded"
-SUGGESTION_CHECKING = "Checking this computer…"
-SUGGESTION_UNKNOWN = "The model for this computer is chosen when you press Set up."
-FIT_WORDS: dict[Suitability, str] = {
-    Suitability.BEST: "fits this computer well",
-    Suitability.GOOD: "fits this computer well",
-    Suitability.WORKS: "works on this computer",
-    Suitability.SLOW: "runs slowly here: it doesn't fit the graphics card",
-}
-FIT_VERY_SLOW = "runs very slowly here; an online service is much faster"
-
-# ── Privacy ───────────────────────────────────────────────────────────────────
-
-PRIVACY_TITLE = "Names and personal information"
-PRIVACY_SENT = "Proofreading at {service} sends your students' text over the internet."
-PRIVACY_EXPLAIN = (
-    "Names and other personal details are replaced on this computer before anything is sent."
-)
-PRIVACY_NEEDS_DETECTION = (
-    "Needs name detection for {language}, which is added to the downloads (small)."
-)
-PRIVACY_HAS_DETECTION = "Name detection for {language} is installed."
-PRIVACY_ALREADY_ON = "Already on."
-PRIVACY_SCHOOL_NOTE = (
-    "Check with your school that pupils' texts may be sent to this service. Before the first "
-    "run that sends text, the app shows what is sent and asks you once more."
-)
-
-# ── Summary ───────────────────────────────────────────────────────────────────
-
-SUMMARY_TITLE = "Ready to set up"
-SUMMARY_WORKING = "Working out what is needed…"
-SUMMARY_FAILED = (
-    "The setup plan could not be worked out. You can set everything up under Settings → AI models."
-)
-SUMMARY_INSTALLING = "A package is still being installed. Set up is possible once it has finished."
-SUMMARY_LATER = "You can change all of this later under Settings → AI models."
-SUMMARY_NO_DOWNLOADS = "Nothing to download."
-SUMMARY_DOWNLOADS_TOTAL = "Downloads: about {needed:.1f} GB · {free:.0f} GB free on this computer"
-SUMMARY_DOWNLOADS_NEEDED = "Downloads: about {needed:.1f} GB"
-SUMMARY_OLLAMA_STOPPED = (
-    "⚠ Ollama isn't running yet, so its models can't be downloaded now. "
-    "The main window offers them as soon as it runs."
-)
-SUMMARY_DISK_SHORT = (
-    "Only {free:.0f} GB is free where Ollama keeps its models, and the downloads need about "
-    "{needed:.1f} GB. Free some space, or untick a download."
-)
-
-# ── Done ──────────────────────────────────────────────────────────────────────
-
-DONE_TITLE = "All set"
-DONE_TEXT = "The downloads run in the background; the main window shows how far they are."
-DONE_DOWNLOADS_TITLE = "Downloads"
-DONE_SPEED_TITLE = "Speed on this computer"
-DONE_OLLAMA_GOES_ON = (
-    "Ollama downloads go on after you close this window; the main window shows them."
-)
-DONE_WAITING = "waiting"
-DONE_RUNNING = "↓ downloading…"
-DONE_DONE = "✓ done"
-DONE_FAILED = "✗ {message}"
-DONE_PROGRESS = "↓ {done:.1f} of {total:.1f} GB"
-DONE_PROGRESS_MB = "↓ {done:.0f} of {total:.0f} MB"
-READER_NAME = "ppocr"  # the name of the reader's download row (``PlannedDownload.name``)
-DONE_SELECT = "Select documents…"
-DONE_SELECT_TOOLTIP = "Close this window and choose the folder with your students' work."
-
+#: The overall bar counts in this many steps, so a partly finished download moves it too.
+_BAR_STEPS = 1000
 #: Bytes in a gigabyte, for the pull progress the manager reports in bytes.
 _GB = 1_000_000_000.0
 _MB = 1_000_000.0
@@ -218,6 +193,18 @@ def _fit_words(step: PlannedStep) -> str:
     if rating.suitability is Suitability.SLOW and rating.very_slow:
         return FIT_VERY_SLOW
     return FIT_WORDS.get(rating.suitability, "")
+
+
+def _choice_label(choice: ModelChoice) -> str:
+    """Return the label at the right of a model in the list: how it fits, and what it costs."""
+    fit = compact_suitability_text(
+        choice.rating.suitability, "general", very_slow=choice.rating.very_slow
+    )
+    if choice.installed:
+        return f"{fit} · {MODEL_INSTALLED}"
+    if choice.size_gb is not None:
+        return f"{fit} · {choice.size_gb:.1f} GB"
+    return fit
 
 
 def _size_words(step: PlannedStep) -> str:
@@ -237,10 +224,37 @@ class SetupPage(QWizardPage):
         super().__init__(assistant)
         self._context = context
         self._assistant = assistant
+        self._scroll: QScrollArea | None = None
 
     def assistant(self) -> SetupAssistant:
         """Return the wizard this page belongs to."""
         return self._assistant
+
+    def _content(self) -> QVBoxLayout:
+        """Return the layout the page's widgets go into: inside a frameless scroll area.
+
+        QWizard gives every page the same height, so a page whose content is taller than the
+        window would have its widgets squeezed below their size hint (a drop-down cut in half).
+        In a scroll area they keep their height and the page scrolls.
+        """
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        # The page's own background shows through, in the light and the dark theme alike.
+        scroll.setStyleSheet(
+            "QScrollArea { background: transparent; border: none; } "
+            "QScrollArea > QWidget > QWidget { background: transparent; }"
+        )
+        holder = QWidget()
+        layout = QVBoxLayout(holder)
+        layout.setContentsMargins(0, 0, 0, 0)
+        scroll.setWidget(holder)
+        outer.addWidget(scroll)
+        self._scroll = scroll
+        return layout
 
     def nextId(self) -> int:  # Qt override
         """Return the page that follows this one for the answers as they are now."""
@@ -289,7 +303,7 @@ class WelcomePage(SetupPage):
     def __init__(self, context: SetupContext, assistant: SetupAssistant) -> None:
         super().__init__(context, assistant)
         self.setTitle(WELCOME_TITLE)
-        layout = QVBoxLayout(self)
+        layout = self._content()
         for text in (WELCOME_TEXT, WELCOME_POINTS, WELCOME_FOOTNOTE):
             label = QLabel(text)
             label.setWordWrap(True)
@@ -305,7 +319,7 @@ class ClassesPage(SetupPage):
     def __init__(self, context: SetupContext, assistant: SetupAssistant) -> None:
         super().__init__(context, assistant)
         self.setTitle(CLASSES_TITLE)
-        layout = QVBoxLayout(self)
+        layout = self._content()
 
         layout.addWidget(_heading(CLASSES_LANGUAGE))
         self._language = QComboBox()
@@ -352,12 +366,19 @@ class LocalAiPage(SetupPage):
         self._profile: HardwareProfileSelector | None = None
         self._built = False
 
-        layout = QVBoxLayout(self)
+        layout = self._content()
         intro = QLabel(LOCAL_AI_INTRO)
         intro.setWordWrap(True)
         layout.addWidget(intro)
         layout.addSpacing(8)
         layout.addWidget(_heading(LOCAL_AI_QUESTION))
+
+        # What was found comes first: it is what the teacher most often wants, and the choices
+        # below say where to look when it is not.
+        self._status_holder = QWidget()
+        self._status_layout = QVBoxLayout(self._status_holder)
+        self._status_layout.setContentsMargins(0, 0, 0, 4)
+        layout.addWidget(self._status_holder)
 
         saved = str(context.settings.get("ollama_url") or DEFAULTS["ollama_url"])
         local = is_local_ollama_url(saved, include_wsl_host=True)
@@ -366,7 +387,9 @@ class LocalAiPage(SetupPage):
         self._here.setChecked(local)
         self._server.setChecked(not local)
         layout.addWidget(self._here)
+        layout.addWidget(self._server)
 
+        # The address and the search belong to "another PC", so they sit below it.
         server_row = QWidget()
         server_layout = QHBoxLayout(server_row)
         server_layout.setContentsMargins(22, 0, 0, 0)
@@ -380,18 +403,18 @@ class LocalAiPage(SetupPage):
         self._find.clicked.connect(self._on_find)
         server_layout.addWidget(self._find)
         layout.addWidget(server_row)
-        layout.addWidget(self._server)
 
-        self._status_holder = QWidget()
-        self._status_layout = QVBoxLayout(self._status_holder)
-        self._status_layout.setContentsMargins(22, 4, 0, 0)
-        layout.addWidget(self._status_holder)
+        layout.addSpacing(8)
+        self._computer_heading = _heading(LOCAL_AI_THIS_PC_HEADING)
+        layout.addWidget(self._computer_heading)
+        self._computer_text = QLabel(LOCAL_AI_THIS_PC_TEXT)
+        self._computer_text.setWordWrap(True)
+        layout.addWidget(self._computer_text)
 
         self._profile_holder = QWidget()
         self._profile_layout = QVBoxLayout(self._profile_holder)
-        self._profile_layout.setContentsMargins(0, 8, 0, 0)
+        self._profile_layout.setContentsMargins(0, 4, 0, 0)
         layout.addWidget(self._profile_holder)
-        layout.addWidget(_note(LOCAL_AI_PROFILE_NOTE))
         layout.addStretch(1)
 
         self._here.toggled.connect(self._on_place_changed)
@@ -431,6 +454,7 @@ class LocalAiPage(SetupPage):
             parent=self,
         )
         self._profile_layout.addWidget(self._profile)
+        self._refresh_computer_text()
 
     def shutdown(self) -> None:
         """Stop the status line's checks."""
@@ -455,7 +479,10 @@ class LocalAiPage(SetupPage):
 
     def _on_use_server(self, url: str) -> None:
         """Take the server the status line found, because the teacher pressed "Use it"."""
-        self._server.setChecked(True)
+        if is_local_ollama_url(url, include_wsl_host=True):
+            self._here.setChecked(True)
+        else:
+            self._server.setChecked(True)
         self._url.setText(url)
         self._follow_address()
 
@@ -466,6 +493,15 @@ class LocalAiPage(SetupPage):
             self._status.set_url(url)
         if self._profile is not None:
             self._profile.set_ollama_url(url)
+        self._refresh_computer_text()
+
+    def _refresh_computer_text(self) -> None:
+        """Say whose computer the suggestions are for: this one, or the one Ollama runs on."""
+        other = not is_local_ollama_url(self.ollama_url(), include_wsl_host=True)
+        self._computer_heading.setText(
+            LOCAL_AI_OTHER_PC_HEADING if other else LOCAL_AI_THIS_PC_HEADING
+        )
+        self._computer_text.setText(LOCAL_AI_OTHER_PC_TEXT if other else LOCAL_AI_THIS_PC_TEXT)
 
     def _on_find(self) -> None:
         """Open the search dialog; it searches this computer at once and the network on request."""
@@ -486,7 +522,7 @@ class ProofreadingPage(SetupPage):
         self._section: AiServiceSection | None = None
         self._task = LatestTask(self)
 
-        layout = QVBoxLayout(self)
+        layout = self._content()
         intro = QLabel(PROOFREADING_INTRO)
         intro.setWordWrap(True)
         layout.addWidget(intro)
@@ -496,7 +532,7 @@ class ProofreadingPage(SetupPage):
         self._local = QRadioButton(PROOFREADING_LOCAL)
         self._online = QRadioButton(PROOFREADING_ONLINE)
         self._off = QRadioButton(PROOFREADING_OFF)
-        # "Not now" sits in an indented row, so Qt would not make it exclusive with the others.
+        # One group, so the three choices exclude each other whatever holds them.
         self._places = QButtonGroup(self)
         for button in (self._local, self._online, self._off):
             self._places.addButton(button)
@@ -505,6 +541,7 @@ class ProofreadingPage(SetupPage):
         layout.addWidget(self._local)
         self._suggestion = _note(SUGGESTION_CHECKING)
         layout.addWidget(_indent(self._suggestion))
+        layout.addWidget(self._build_model_choice())
         layout.addWidget(self._online)
 
         self._online_holder = QWidget()
@@ -513,8 +550,8 @@ class ProofreadingPage(SetupPage):
         layout.addWidget(self._online_holder)
         layout.addWidget(_indent(_note(PROOFREADING_ONLINE_NOTE)))
 
-        self._off_holder = _indent(self._off)
-        layout.addWidget(self._off_holder)
+        # Added like the other two choices: nothing indents it.
+        layout.addWidget(self._off)
 
         self._review_note = _note(PROOFREADING_REVIEW_KEPT)
         self._review_note.setVisible(False)
@@ -525,7 +562,32 @@ class ProofreadingPage(SetupPage):
         self._online.toggled.connect(self._on_place_changed)
         self._off.toggled.connect(self._on_place_changed)
 
+    def _build_model_choice(self) -> QWidget:
+        """Build the model choice of the local AI: a list, and "use the recommended one"."""
+        self._use_recommended = QCheckBox(PROOFREADING_USE_RECOMMENDED)
+        self._use_recommended.setChecked(True)
+        self._use_recommended.toggled.connect(self._sync_model_box)
+        self._model_box = QComboBox()
+        self._model_box.setToolTip(PROOFREADING_MODEL_TOOLTIP)
+        self._model_box.setEnabled(False)
+        install_model_labels(self._model_box)
+        self._model_row = QWidget()
+        grid = QGridLayout(self._model_row)
+        grid.setContentsMargins(22, 0, 0, 0)
+        grid.addWidget(self._use_recommended, 0, 0, 1, 2)
+        grid.addWidget(QLabel(PROOFREADING_MODEL), 1, 0)
+        grid.addWidget(self._model_box, 1, 1)
+        grid.setColumnStretch(1, 1)
+        self._choices: LocalModelChoices | None = None
+        return self._model_row
+
     # ── answers ───────────────────────────────────────────────────────────────
+
+    def local_model(self) -> str:
+        """Return the model the teacher chose, or ``""`` to leave it to the assistant."""
+        if self._use_recommended.isChecked():
+            return ""
+        return str(self._model_box.currentData() or "")
 
     def place(self) -> ProofreadingPlace:
         """Return where the proofreading should run."""
@@ -546,7 +608,7 @@ class ProofreadingPage(SetupPage):
     def initializePage(self) -> None:  # Qt override
         """Show the options that apply and ask for the suggested local model."""
         handwritten = self.assistant().answers().hand_in is HandIn.HANDWRITTEN
-        self._off_holder.setVisible(handwritten)
+        self._off.setVisible(handwritten)
         if not handwritten and self._off.isChecked():
             self._local.setChecked(True)
         self._review_note.setVisible(self._review_kept())
@@ -578,6 +640,7 @@ class ProofreadingPage(SetupPage):
         if online and self._section is None:
             self._build_section()
         self._online_holder.setVisible(online)
+        self._model_row.setVisible(self._local.isChecked())
 
     def _build_section(self) -> None:
         """Build the online service section: the same list, key row and check as AI models."""
@@ -626,7 +689,56 @@ class ProofreadingPage(SetupPage):
         )
         current = dict(self._context.settings)
         self._suggestion.setText(SUGGESTION_CHECKING)
-        self._task.submit(lambda: service.plan_setup(local, current), self._on_suggestion)
+        self._task.submit(
+            lambda: service.plan_with_model_choices(local, current), self._on_plan_and_choices
+        )
+
+    def _on_plan_and_choices(self, result: object, error: BaseException | None) -> None:
+        """Show the suggestion and fill the model list from the one answer."""
+        if error is not None or not isinstance(result, tuple) or len(result) != 2:
+            self._on_suggestion(None, error)
+            return
+        plan, choices = result
+        self._on_suggestion(plan, None)
+        self._on_choices(choices, None)
+
+    def _on_choices(self, result: object, error: BaseException | None) -> None:
+        """Fill the model list with what can work here, the recommended one selected."""
+        if error is not None or not isinstance(result, LocalModelChoices):
+            return
+        self._choices = result
+        groups: list[list[ModelItem]] = [[], []]
+        for choice in result.choices:
+            good = choice.rating.suitability in (Suitability.BEST, Suitability.GOOD)
+            groups[0 if good else 1].append(
+                ModelItem(
+                    text=choice.tag,
+                    label=_choice_label(choice),
+                    data=choice.tag,
+                    tooltip=choice.rating.note,
+                )
+            )
+        previous = self._model_box.currentData()
+        self._model_box.blockSignals(True)
+        fill_grouped(self._model_box, groups)
+        self._model_box.blockSignals(False)
+        self._select_model(str(previous) if previous else "")
+        self._sync_model_box()
+
+    def _select_model(self, tag: str) -> None:
+        """Show *tag* in the list when it is there, else the recommended model."""
+        for wanted in (tag, self._choices.suggested if self._choices is not None else ""):
+            index = self._model_box.findData(wanted) if wanted else -1
+            if index >= 0:
+                self._model_box.setCurrentIndex(index)
+                return
+
+    def _sync_model_box(self, _checked: bool = False) -> None:
+        """Follow "use the recommended model": the list shows it and is disabled while it is on."""
+        recommended = self._use_recommended.isChecked()
+        if recommended and self._choices is not None:
+            self._select_model(self._choices.suggested)
+        self._model_box.setEnabled(not recommended and self._model_box.count() > 0)
 
     def _on_suggestion(self, plan: object, error: BaseException | None) -> None:
         if error is not None or not isinstance(plan, SetupPlan):
@@ -645,55 +757,106 @@ class ProofreadingPage(SetupPage):
 
 
 class PrivacyPage(SetupPage):
-    """Whether names are replaced before the text goes to an online service."""
+    """What happens to the names: removed before the text is sent, or hidden in this app."""
 
     page_id = SetupPageId.PRIVACY
 
     def __init__(self, context: SetupContext, assistant: SetupAssistant) -> None:
         super().__init__(context, assistant)
         self.setTitle(PRIVACY_TITLE)
-        layout = QVBoxLayout(self)
+        self._case: PrivacyCase | None = None
+        layout = self._content()
+
+        # Text that leaves this computer — to an online service or to another PC in the network:
+        # what is sent, and whether the names are replaced first.
+        self._sending = QWidget()
+        sending = QVBoxLayout(self._sending)
+        sending.setContentsMargins(0, 0, 0, 0)
         self._sent = QLabel()
         self._sent.setWordWrap(True)
-        layout.addWidget(self._sent)
-        layout.addSpacing(8)
-
+        sending.addWidget(self._sent)
+        sending.addSpacing(8)
         self._remove = QCheckBox(txt.REMOVE_PERSONAL_INFO)
-        layout.addWidget(self._remove)
-        layout.addWidget(_indent(_note(PRIVACY_EXPLAIN)))
+        sending.addWidget(self._remove)
+        sending.addWidget(_indent(_note(PRIVACY_EXPLAIN)))
         self._detection = _note("")
-        layout.addWidget(_indent(self._detection))
+        sending.addWidget(_indent(self._detection))
         self._already = _note(PRIVACY_ALREADY_ON)
         self._already.setVisible(False)
-        layout.addWidget(_indent(self._already))
-        layout.addSpacing(8)
-        school = _note(PRIVACY_SCHOOL_NOTE)
-        layout.addWidget(school)
+        sending.addWidget(_indent(self._already))
+        sending.addSpacing(8)
+        self._school = _note(PRIVACY_SCHOOL_NOTE)
+        sending.addWidget(self._school)
+        layout.addWidget(self._sending)
+
+        # Everything on this computer: nothing is sent, so there is nothing to remove; the names
+        # can still be hidden in the texts this app shows.
+        self._stays = QWidget()
+        stays = QVBoxLayout(self._stays)
+        stays.setContentsMargins(0, 0, 0, 0)
+        stays_text = QLabel(PRIVACY_STAYS)
+        stays_text.setWordWrap(True)
+        stays.addWidget(stays_text)
+        stays.addWidget(_note(PRIVACY_STAYS_NOTE))
+        stays.addSpacing(8)
+        self._hide = QCheckBox(PRIVACY_HIDE_HERE)
+        stays.addWidget(self._hide)
+        stays.addWidget(_indent(_note(PRIVACY_HIDE_HERE_NOTE)))
+        self._hide_detection = _note("")
+        stays.addWidget(_indent(self._hide_detection))
+        self._hide_already = _note(PRIVACY_ALREADY_ON)
+        self._hide_already.setVisible(False)
+        stays.addWidget(_indent(self._hide_already))
+        layout.addWidget(self._stays)
         layout.addStretch(1)
 
     def remove_names(self) -> bool:
         """Return whether names should be replaced before the text is sent."""
         return self._remove.isChecked()
 
+    def hide_names(self) -> bool:
+        """Return whether names should be hidden in the texts this app shows."""
+        return self._case is PrivacyCase.THIS_COMPUTER and self._hide.isChecked()
+
     def initializePage(self) -> None:  # Qt override
-        """Name the service, tick the box in advance, and say what name detection needs."""
+        """Say where the text goes, and offer what fits: removal when it leaves, hiding when not."""
         answers = self.assistant().answers()
-        provider = answers.online_choice[0]
-        info = self._context.app_service.get_provider_info(provider)
-        service = str(info.get("display_name") or provider)
-        self._sent.setText(PRIVACY_SENT.format(service=service))
-
-        already_on = bool(self._context.settings.get("anonymization_enabled"))
-        self._remove.setChecked(True)
-        self._remove.setEnabled(not already_on)
-        self._already.setVisible(already_on)
-
-        detection = self._context.app_service.anonymizer_available(answers.language)
-        self._detection.setText(
-            PRIVACY_HAS_DETECTION.format(language=answers.language)
-            if detection
-            else PRIVACY_NEEDS_DETECTION.format(language=answers.language)
+        service = self._context.app_service
+        case = answers.privacy_case
+        self._case = case
+        leaves = case is not PrivacyCase.THIS_COMPUTER
+        self._sending.setVisible(leaves)
+        self._stays.setVisible(not leaves)
+        detection = service.anonymizer_available(answers.language)
+        detection_text = (PRIVACY_HAS_DETECTION if detection else PRIVACY_NEEDS_DETECTION).format(
+            language=answers.language
         )
+
+        if leaves:
+            if case is PrivacyCase.ONLINE:
+                info = service.get_provider_info(answers.online_choice[0])
+                name = str(info.get("display_name") or answers.online_choice[0])
+                self._sent.setText(PRIVACY_SENT.format(service=name))
+                self._school.setText(PRIVACY_SCHOOL_NOTE)
+            else:
+                host = urlparse(answers.ollama_url).hostname or answers.ollama_url
+                self._sent.setText(PRIVACY_SENT_NETWORK.format(host=host))
+                self._school.setText(PRIVACY_SCHOOL_NOTE_NETWORK)
+            already_on = bool(self._context.settings.get("anonymization_enabled"))
+            self._remove.setChecked(True)
+            self._remove.setEnabled(not already_on)
+            self._already.setVisible(already_on)
+            self._detection.setText(detection_text)
+            return
+
+        # What the assistant never does is turn something off: a setting that is on stays on,
+        # and its box says so.
+        wish = self._context.display_anonymized
+        self._hide.setChecked(wish)
+        self._hide.setEnabled(not (wish and detection))
+        self._hide_already.setVisible(wish and detection)
+        self._hide_detection.setText("" if detection else detection_text)
+        self._hide_detection.setVisible(not detection)
 
 
 class SummaryPage(SetupPage):
@@ -710,7 +873,7 @@ class SummaryPage(SetupPage):
         # Set up cannot run twice.
         self.setCommitPage(True)
         assistant.install_round().finished.connect(lambda _installed: self.completeChanged.emit())
-        layout = QVBoxLayout(self)
+        layout = self._content()
         self._headline = QLabel(SUMMARY_WORKING)
         self._headline.setWordWrap(True)
         layout.addWidget(self._headline)
@@ -849,17 +1012,26 @@ class DonePage(SetupPage):
         super().__init__(context, assistant)
         self.setTitle(DONE_TITLE)
         self._speed: SpeedPanel | None = None
-        layout = QVBoxLayout(self)
+        layout = self._content()
         text = QLabel(DONE_TEXT)
         text.setWordWrap(True)
         layout.addWidget(text)
         layout.addWidget(_heading(DONE_DOWNLOADS_TITLE))
+        # One bar for everything that is downloaded, above the line of each download.
+        self._overall = QProgressBar()
+        self._overall.setRange(0, _BAR_STEPS)
+        self._overall.setVisible(False)
+        layout.addWidget(self._overall)
         self._rows = _DownloadRows()
+        self._rows.changed.connect(self._refresh)
         layout.addWidget(self._rows)
         self._goes_on = _note(DONE_OLLAMA_GOES_ON)
         self._goes_on.setVisible(False)
         layout.addWidget(self._goes_on)
         layout.addWidget(_heading(DONE_SPEED_TITLE))
+        self._speed_waits = _note(DONE_SPEED_WAITING)
+        self._speed_waits.setVisible(False)
+        layout.addWidget(self._speed_waits)
         self._speed_holder = QVBoxLayout()
         layout.addLayout(self._speed_holder)
         layout.addStretch(1)
@@ -875,11 +1047,24 @@ class DonePage(SetupPage):
     def initializePage(self) -> None:  # Qt override
         """List what is being downloaded and let the teacher test the speed."""
         downloads = self.assistant().downloads()
-        self._rows.set_downloads(downloads)
+        self._rows.set_downloads(downloads, self.assistant().answers().language)
         self._goes_on.setVisible(
             any(download.kind is DownloadKind.OLLAMA_MODEL for download in downloads)
         )
         self._build_speed()
+        self._refresh()
+
+    def _refresh(self) -> None:
+        """Let the title, the bar and the speed note follow the rows."""
+        rows = self._rows
+        if rows.failed_any():
+            self.setTitle(DONE_TITLE_PROBLEMS)
+        else:
+            self.setTitle(DONE_TITLE_RUNNING if rows.pending() else DONE_TITLE)
+        self._overall.setVisible(rows.total() > 0)
+        self._overall.setValue(round(rows.fraction() * _BAR_STEPS))
+        self._overall.setFormat(DONE_OVERALL.format(done=rows.finished(), total=rows.total()))
+        self._speed_waits.setVisible(rows.pending_models())
 
     def on_packages_changed(self) -> None:
         """A package arrived: the speed test may have a model it did not have before."""
@@ -926,6 +1111,9 @@ class DonePage(SetupPage):
             ollama_url=self._ollama_url(),
             parent=self,
         )
+        # The panel only reads the resolution; the selector is in no layout of this page and
+        # would otherwise sit in its top-left corner, over the text.
+        selector.hide()
         self._speed = SpeedPanel(
             app_service=self._context.app_service,
             settings_provider=self._settings,
@@ -954,31 +1142,50 @@ class DonePage(SetupPage):
 
 
 class _DownloadRows(QWidget):
-    """One line per download, following the install round and the pull manager.
+    """One line per download — what it is for, its name, its size, how far it is.
 
-    The round starts before this page is shown, so the state is kept here and drawn when the
-    page is entered: a row that already began says so.
+    Following the install round and the pull manager.  The round starts before this page is
+    shown, so the state is kept here and drawn when the page is entered: a row that already began
+    says so.
     """
+
+    #: A row's state changed: the page's title, bar and notes follow.
+    changed = Signal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._grid = QGridLayout(self)
         self._grid.setContentsMargins(0, 0, 0, 0)
-        self._grid.setColumnStretch(1, 1)
+        self._grid.setColumnStretch(3, 1)
+        self._grid.setHorizontalSpacing(14)
         self._labels: dict[str, QLabel] = {}
         self._state: dict[str, str] = {}
+        self._failed: set[str] = set()  # kept like _state: a failure may precede the row
+        self._fraction: dict[str, float] = {}
+        self._names: list[str] = []
+        self._kinds: dict[str, DownloadKind] = {}
         self._pulling = ""  # the Ollama model that is being pulled now
 
-    def set_downloads(self, downloads: Sequence[PlannedDownload]) -> None:
+    def set_downloads(self, downloads: Sequence[PlannedDownload], language: str = "") -> None:
         """Show one line per download, each as far as it has come."""
         self._clear()
+        if not downloads:
+            self._grid.addWidget(_note(DONE_NOTHING), 0, 0, 1, 4)
+            return
         for line, download in enumerate(downloads):
             name = download.name
-            label = QLabel(name)
+            purpose, what = _download_words(download, language)
+            self._grid.addWidget(QLabel(purpose), line, 0)
+            what_label = QLabel(what)
+            what_label.setToolTip(name)
+            self._grid.addWidget(what_label, line, 1)
+            self._grid.addWidget(_note(size_text(download)), line, 2)
             status = _note(self._state.get(name, DONE_WAITING))
-            self._grid.addWidget(label, line, 0)
-            self._grid.addWidget(status, line, 1)
+            self._grid.addWidget(status, line, 3)
             self._labels[name] = status
+            self._names.append(name)
+            self._kinds[name] = download.kind
+        self.changed.emit()
 
     def started(self, item: str) -> None:
         """The round began *item*."""
@@ -990,18 +1197,28 @@ class _DownloadRows(QWidget):
         """The round finished *item*."""
         if item == self._pulling:
             self._pulling = ""
+        self._fraction.pop(_item_name(item), None)
         self._set(item, DONE_DONE)
 
     def failed(self, item: str, message: str) -> None:
         """The round could not install *item*."""
-        self._set(item, DONE_FAILED.format(message=message))
+        self._set(item, DONE_FAILED.format(message=message), failed=True)
 
     def error(self, message: str) -> None:
-        """A pull failed; the manager names no model, so every running row says why."""
+        """A pull failed; the manager names no model, so every running Ollama row says why.
+
+        Only Ollama pulls come through the manager: the reader's and the packages' rows are the
+        install round's, which reports its own failures by name.
+        """
         for name, status in self._labels.items():
-            if self._state.get(name) == DONE_RUNNING:
+            if self._kinds.get(name) is not DownloadKind.OLLAMA_MODEL:
+                continue
+            if self._state.get(name) == DONE_RUNNING or name in self._fraction:
                 self._state[name] = DONE_FAILED.format(message=message)
+                self._failed.add(name)
+                self._fraction.pop(name, None)
                 status.setText(self._state[name])
+        self.changed.emit()
 
     def pull_progress(self, status: str, done: float, total: float) -> None:
         """The running pull reports how far it is, in bytes.
@@ -1013,20 +1230,65 @@ class _DownloadRows(QWidget):
         name = READER_NAME if status == READER_PROGRESS_STATUS else self._pulling
         if name not in self._labels or not total:
             return
+        self._fraction[name] = min(done / total, 1.0)
         self._state[name] = (
             DONE_PROGRESS_MB.format(done=done / _MB, total=total / _MB)
             if total < _GB / 10
             else DONE_PROGRESS.format(done=done / _GB, total=total / _GB)
         )
         self._labels[name].setText(self._state[name])
+        self.changed.emit()
 
-    def _set(self, item: str, text: str) -> None:
+    # ── what the rows add up to ──────────────────────────────────────────────
+
+    def total(self) -> int:
+        """Return how many downloads there are."""
+        return len(self._names)
+
+    def finished(self) -> int:
+        """Return how many downloads are over, done or failed."""
+        return sum(1 for name in self._names if self._over(name))
+
+    def pending(self) -> bool:
+        """Return whether anything is still waiting or running."""
+        return any(not self._over(name) for name in self._names)
+
+    def failed_any(self) -> bool:
+        """Return whether a download failed."""
+        return any(name in self._failed for name in self._names)
+
+    def pending_models(self) -> bool:
+        """Return whether an Ollama model is still to arrive (the speed test needs it)."""
+        return any(
+            self._kinds[name] is DownloadKind.OLLAMA_MODEL and not self._over(name)
+            for name in self._names
+        )
+
+    def fraction(self) -> float:
+        """Return how far the downloads as a whole are, between 0 and 1."""
+        if not self._names:
+            return 0.0
+        done = sum(
+            1.0 if self._over(name) else self._fraction.get(name, 0.0) for name in self._names
+        )
+        return done / len(self._names)
+
+    def _over(self, name: str) -> bool:
+        """Return whether the download *name* is over: done or failed."""
+        return name in self._failed or self._state.get(name, DONE_WAITING) == DONE_DONE
+
+    def _set(self, item: str, text: str, *, failed: bool = False) -> None:
         """Record *text* for *item* and show it when the row is there."""
         name = _item_name(item)
         self._state[name] = text
+        if failed:
+            self._failed.add(name)
+        else:
+            self._failed.discard(name)
         label = self._labels.get(name)
         if label is not None:
             label.setText(text)
+            self.changed.emit()
 
     def _clear(self) -> None:
         """Drop every line, so a new plan starts from an empty grid."""
@@ -1036,6 +1298,24 @@ class _DownloadRows(QWidget):
             if widget is not None:
                 widget.deleteLater()
         self._labels.clear()
+        self._names.clear()
+        self._kinds.clear()
+
+
+def _download_words(download: PlannedDownload, language: str) -> tuple[str, str]:
+    """Return what a download is for and what it is called, in words a teacher knows."""
+    kind = download.kind
+    if kind is DownloadKind.READER_MODEL:
+        return DONE_PURPOSE_READER, DONE_NAME_READER
+    if kind is DownloadKind.PAGE_MODELS:
+        return DONE_PURPOSE_PAGE_MODELS, DONE_NAME_PAGE_MODELS
+    if kind is DownloadKind.SPACY_MODEL:
+        return DONE_PURPOSE_NAMES, language or download.name
+    if kind is DownloadKind.OLLAMA_MODEL:
+        purpose = DONE_PURPOSE_READING if download.stage == STAGE_OCR else DONE_PURPOSE_PROOFREADING
+        return purpose, short_model_name(download.name)
+    purpose = DONE_PURPOSE_NAMES if download.stage == STAGE_ANONYMIZATION else DONE_PURPOSE_ADDON
+    return purpose, download.name
 
 
 def _item_name(item: str) -> str:

@@ -31,6 +31,7 @@ from tools.model_eval.report import (
     table,
 )
 from tools.model_eval import results as results_module
+from tools.model_eval import text_loss
 from tools.model_eval.results import ResultRow
 
 
@@ -61,11 +62,13 @@ class _ScriptedCorrector(Corrector):
         failed: bool = False,
         warning: str = "",
         review: CorrectionReview | None = None,
+        left_out: int = 0,
     ) -> None:
         self._text = text
         self._failed = failed
         self._warning = warning
         self._review = review
+        self._left_out = left_out
         self.calls: list[tuple[str, str]] = []
 
     def correct(
@@ -78,6 +81,7 @@ class _ScriptedCorrector(Corrector):
             review=self._review,
             failed=self._failed,
             warning=self._warning or None,
+            left_out=self._left_out,
         )
 
 
@@ -253,6 +257,27 @@ def test_a_fallback_answer_is_flagged_and_not_counted_as_failed() -> None:
         )
     )
     assert row.fallback
+    assert not row.failed
+
+
+def test_an_answer_the_app_repaired_is_lost_text_though_its_output_is_whole() -> None:
+    """
+    Given  a corrector whose answer left stretches out and had them put back, so the output is
+           the reference
+    When   the comparison runs
+    Then   the output measures clean, and the row still counts as lost text because the count of
+           put-back stretches is in its scores
+    """
+    row = next(
+        iter(
+            _comparison(_ScriptedCorrector(_RECORD.reference, left_out=2)).run(
+                [_RECORD], model="gemma4:e4b", temperature=0.2
+            )
+        )
+    )
+
+    assert row.scores["left_out"] == 2
+    assert text_loss.is_lost(row.scores) is True
     assert not row.failed
 
 

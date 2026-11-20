@@ -26,7 +26,6 @@ from typing import Any
 from PySide6.QtCore import QModelIndex, QSettings, QSignalBlocker, Qt, Signal
 from PySide6.QtGui import QPainter, QShowEvent
 from PySide6.QtWidgets import (
-    QApplication,
     QDialog,
     QDialogButtonBox,
     QHBoxLayout,
@@ -44,7 +43,7 @@ from PySide6.QtWidgets import (
 from ...config import OcrConfig
 from ...texts import dialogs as dlg
 from .. import _dialogs
-from .._window_geometry import restore_geometry
+from .._window_geometry import fit_to_screen, restore_geometry
 from ._addons_page import AddonsPage
 from ._ai_models_page import AiModelsPage
 from ._ai_setup_page import AiSetupPage
@@ -214,15 +213,12 @@ class SettingsWindow(QDialog):
 
     def _restore_geometry(self) -> None:
         geometry = QSettings(_QSETTINGS_ORG, _QSETTINGS_APP).value(GEOMETRY_KEY)
-        if restore_geometry(self, geometry):
-            return
-        width, height = 960, 680
-        screen = QApplication.primaryScreen()
-        if screen is not None:
-            available = screen.availableGeometry()
-            width = min(width, available.width() - 40)
-            height = min(height, available.height() - 60)
-        self.resize(width, height)
+        if not restore_geometry(self, geometry):
+            self.resize(960, 680)
+        # A saved size can be from a larger screen, and a page's minimum can be larger than a
+        # small one: the window never asks for more than the screen has.  A maximized window
+        # already has the whole screen.
+        fit_to_screen(self, resize=not self.isMaximized())
 
     def _wrap(self, page: SettingsPageBase) -> QWidget:
         """Return *page* under its header, in a scroll area without frame or horizontal bar.

@@ -57,9 +57,8 @@ from teachers_teammate.gui._main_window import MainWindow
 from teachers_teammate.gui._ollama_status_line import CHECKING
 from teachers_teammate.gui.setup import SetupAssistant
 from teachers_teammate.gui.setup._flow import ORDER, SetupPageId
+from teachers_teammate.texts.setup import DONE_DONE, DONE_WAITING
 from teachers_teammate.gui.setup._pages import (
-    DONE_DONE,
-    DONE_WAITING,
     ClassesPage,
     DonePage,
     LocalAiPage,
@@ -255,9 +254,15 @@ class Driver:
 
     def next(self) -> None:
         """Press Next, waiting first for the summary page to be ready to commit."""
-        button = self.assistant.button(QWizard.WizardButton.NextButton)
-        assert button is not None
         before = self.assistant.currentId()
+        # The summary page is the commit page: its button is the CommitButton ("Set up").
+        which = (
+            QWizard.WizardButton.CommitButton
+            if ORDER[before] is SetupPageId.SUMMARY
+            else QWizard.WizardButton.NextButton
+        )
+        button = self.assistant.button(which)
+        assert button is not None
         if ORDER[before] is SetupPageId.SUMMARY:
             wait_until(
                 self._qtbot,
@@ -557,6 +562,7 @@ def _handwritten_local(driver: Driver) -> None:
     driver.local_ai()
     driver.next()  # → Proofreading
     driver.proofreading(ProofreadingPlace.LOCAL)
+    driver.next()  # → Names and personal information
     driver.next()  # → Ready to set up
     driver.next()  # Set up → All set
     driver.wait_for_downloads()
@@ -569,7 +575,7 @@ def test_s1_handwritten_pages_are_set_up_on_this_computer(walkthrough) -> None:
     """
     Given  a first run from the Tools menu, an empty Ollama server and a 16 GB computer
     When   the teacher answers handwritten pages and local proofreading and presses Set up
-    Then   the wizard walks Welcome → Classes → Local AI → Proofreading → Summary → Done, the
+    Then   the wizard walks Welcome → Classes → Local AI → Proofreading → Privacy → Summary → Done, the
            ticked downloads are pulled in order, and ocr.toml holds the answers
     """
     walk = walkthrough()
@@ -581,6 +587,7 @@ def test_s1_handwritten_pages_are_set_up_on_this_computer(walkthrough) -> None:
         SetupPageId.CLASSES,
         SetupPageId.LOCAL_AI,
         SetupPageId.PROOFREADING,
+        SetupPageId.PRIVACY,
         SetupPageId.SUMMARY,
         SetupPageId.DONE,
     ]
@@ -632,7 +639,7 @@ def test_s3_first_start_with_typed_texts_asks_for_the_writing_model_only(walkthr
     """
     Given  a computer without an ocr.toml, so the first-start timer opens the assistant
     When   the teacher answers typed texts and local proofreading and types the server address
-    Then   the wizard walks Classes → Proofreading → Local AI → Summary, text recognition stays
+    Then   the wizard walks Classes → Proofreading → Local AI → Privacy → Summary, text recognition stays
            off, only the writing model is pulled and no page models are downloaded
     """
     walk = walkthrough(first_start=True)
@@ -645,6 +652,7 @@ def test_s3_first_start_with_typed_texts_asks_for_the_writing_model_only(walkthr
         driver.proofreading(ProofreadingPlace.LOCAL)
         driver.next()  # → The AI on this computer
         driver.local_ai(url, profile=PROFILE)
+        driver.next()  # → Names and personal information
         driver.next()  # → Ready to set up
         driver.next()  # Set up → All set
         driver.wait_for_downloads()
@@ -656,6 +664,7 @@ def test_s3_first_start_with_typed_texts_asks_for_the_writing_model_only(walkthr
         SetupPageId.CLASSES,
         SetupPageId.PROOFREADING,
         SetupPageId.LOCAL_AI,
+        SetupPageId.PRIVACY,
         SetupPageId.SUMMARY,
         SetupPageId.DONE,
     ]
@@ -692,6 +701,7 @@ def test_s6_a_stopped_server_is_left_out_and_nothing_is_pulled(walkthrough, monk
         notes.append(driver.local_ai_note())
         driver.next()  # → Proofreading
         driver.proofreading(ProofreadingPlace.LOCAL)
+        driver.next()  # → Names and personal information
         driver.next()  # → Ready to set up
         driver.next()  # Set up → All set
         driver.wait_for_downloads()
@@ -732,6 +742,7 @@ def test_s4_not_now_leaves_the_proofreading_off(walkthrough) -> None:
         driver.local_ai()
         driver.next()  # → Proofreading
         driver.proofreading(ProofreadingPlace.OFF)
+        driver.next()  # → Names and personal information
         driver.next()  # → Ready to set up
         driver.next()  # Set up → All set
         driver.wait_for_downloads()
@@ -772,6 +783,7 @@ def test_s5_a_failed_pull_drops_the_queue_and_leaves_the_window_usable(
         driver.local_ai()
         driver.next()  # → Proofreading
         driver.proofreading(ProofreadingPlace.LOCAL)
+        driver.next()  # → Names and personal information
         driver.next()  # → Ready to set up
         driver.next()  # Set up → All set
         driver.wait_for_downloads()
@@ -820,6 +832,7 @@ def test_s8_cancel_on_the_summary_changes_nothing(walkthrough) -> None:
         driver.local_ai()
         driver.next()  # → Proofreading
         driver.proofreading(ProofreadingPlace.LOCAL)
+        driver.next()  # → Names and personal information
         driver.next()  # → Ready to set up
         driver.plan()  # the setup plan arrived, so Cancel really leaves a finished summary
         driver.cancel()

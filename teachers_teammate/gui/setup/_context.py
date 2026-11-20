@@ -27,6 +27,8 @@ class SetupContext:
     language: str = ""
     privacy_available: bool = True
     first_start: bool = False
+    #: The window shows the texts with placeholders for the names (the 👁 setting).
+    display_anonymized: bool = True
 
 
 @dataclass(frozen=True)
@@ -34,8 +36,11 @@ class SetupResult:
     """What the assistant hands back when the teacher presses Set up.
 
     ``settings`` are the Settings-window keys, ``panel`` the main-window ones.  Both are
-    applied by the main window, which saves them at once.
+    applied by the main window, which saves them at once.  ``display_anonymized`` is ``True``
+    when the teacher asked to see the names hidden in the texts, and ``None`` when the
+    assistant leaves that view setting alone (it never turns anything off).
     """
 
     settings: dict[str, Any]
     panel: dict[str, Any]
+    display_anonymized: bool | None = None

@@ -2759,6 +2759,73 @@ def test_the_setup_plan_comes_from_the_facts_and_the_ratings() -> None:
 
 
 @pytest.mark.unit
+def test_the_plan_and_the_model_choices_are_made_from_one_set_of_facts() -> None:
+    """
+    Given  a computer with a running Ollama that holds one model
+    When   plan_with_model_choices is asked for local proofreading
+    Then   the facts are gathered once, the setup plan is the one plan_setup gives, and the
+           choices carry its proofreading model as the suggestion and list the installed one
+    """
+    from teachers_teammate.application.setup_plan import (  # noqa: PLC0415
+        HandIn,
+        ProofreadingPlace,
+        SetupAnswers,
+    )
+    from teachers_teammate.config import DEFAULTS  # noqa: PLC0415
+    from teachers_teammate.domain.model_catalog import (  # noqa: PLC0415
+        DetectionReason,
+        HardwareDetection,
+        ModelRating,
+        Suitability,
+    )
+
+    svc = _make_svc()
+    answers = SetupAnswers(
+        language="German",
+        hand_in=HandIn.TYPED,
+        proofreading=ProofreadingPlace.LOCAL,
+        ollama_url="http://127.0.0.1:11434",
+        hardware_profile="auto",
+        local_ai_shown=True,
+    )
+    hardware = HardwareDetection(profile="8gb", reason=DetectionReason.MANUAL)
+
+    def rate(tags, task, profile, url, **kwargs):
+        return [
+            ModelRating(
+                tag=tag,
+                task=task,
+                model_uses=None,
+                suitability=Suitability.BEST,
+                memory_gb=None,
+                note="",
+            )
+            for tag in tags
+        ]
+
+    with (
+        patch.object(svc, "ollama_status", return_value=OllamaStatus(OllamaState.RUNNING)),
+        patch.object(svc, "list_provider_models", return_value=["mymodel:7b"]) as listing,
+        patch.object(svc, "resolve_hardware_profile", return_value=hardware),
+        patch.object(svc, "anonymizer_available", return_value=False),
+        patch.object(svc, "is_module_importable", return_value=True),
+        patch.object(svc, "spacy_model_for_language", return_value="de_core_news_sm"),
+        patch.object(svc, "missing_provider_package", return_value=None),
+        patch.object(svc, "page_models_installed", return_value=False),
+        patch.object(svc, "rate_ollama_models", side_effect=rate),
+        patch.object(svc, "best_ollama_model", return_value="gemma4:e4b"),
+        patch(f"{_INSTALL}.free_disk_gb", return_value=100.0),
+    ):
+        plan, choices = svc.plan_with_model_choices(answers, dict(DEFAULTS))
+        again = svc.plan_setup(answers, dict(DEFAULTS))
+
+    assert plan == again
+    assert choices.suggested == plan.settings["correction_model"] == "gemma4:e4b"
+    assert "mymodel:7b" in {choice.tag for choice in choices.choices}
+    assert listing.call_count == 2  # once for the combined call, once for plan_setup
+
+
+@pytest.mark.unit
 def test_preflight_lists_missing_models(tmp_path: Path) -> None:
     """
     Given  a reachable server that only has the reading model downloaded

@@ -176,7 +176,6 @@ class PrivacyPage(SettingsPageBase):
             context.language, context.anonymizer_config, context.app_service, self
         )
         self._rules.validity_changed.connect(self.validity_changed.emit)
-        self._rules.setMinimumHeight(560)
         layout.addWidget(self._rules)
 
         self._sending_tab = SendingDataTab(context.acknowledgements)

@@ -11,6 +11,7 @@ rather than only in the Windows install job, which runs the silent paths themsel
 from __future__ import annotations
 
 import os
+import re
 from pathlib import Path
 
 
@@ -21,6 +22,16 @@ def _script() -> str:
     if root and relative:
         return (Path(root) / relative).read_text(encoding="utf-8")
     path = Path(__file__).resolve().parents[2] / "tools" / "packaging" / "windows.nsi"
+    return path.read_text(encoding="utf-8")
+
+
+def _policy() -> str:
+    """Return docs/code_signing_policy.md from the Bazel runfiles, or from the checkout."""
+    root = os.environ.get("TEST_SRCDIR", "")
+    relative = os.environ.get("CODE_SIGNING_POLICY", "")
+    if root and relative:
+        return (Path(root) / relative).read_text(encoding="utf-8")
+    path = Path(__file__).resolve().parents[2] / "docs" / "code_signing_policy.md"
     return path.read_text(encoding="utf-8")
 
 
@@ -201,3 +212,18 @@ def test_update_check_is_asked_on_the_scope_page_not_on_the_welcome_page() -> No
     assert 'StrCpy $R0 "on"' in install
     assert 'StrCpy $R0 "off"' in install
     assert "FileWrite" not in install
+
+
+def test_the_privacy_link_opens_the_privacy_statement_not_the_top_of_the_page() -> None:
+    """
+    Given  the installer script and the signing policy page it links to
+    When   PRIVACY_URL and the page's headings are read
+    Then   the link carries the anchor of "Privacy statement" and that heading still exists
+           (a renamed heading would send the teacher to the top of the page without a sound)
+    """
+    url = re.search(r'!define PRIVACY_URL "([^"]+)"', _script())
+    assert url is not None
+    assert url.group(1).endswith("/docs/code_signing_policy.md#privacy-statement")
+
+    headings = [line for line in _policy().splitlines() if line.startswith("#")]
+    assert "## Privacy statement" in headings

@@ -45,7 +45,9 @@ from ..domain.model_catalog import (
     disk_verdict,
     find_spec,
     normalize_tag,
+    suitability_rank,
 )
+from ..infrastructure.ollama_utils import is_local_ollama_url
 from .correction_options import review_has_own_model
 
 
@@ -72,6 +74,19 @@ class ProofreadingPlace(StrEnum):
     """Not now — only offered for handwritten pages."""
 
 
+class PrivacyCase(StrEnum):
+    """Where the students' text goes, which decides what the Privacy page says and offers."""
+
+    ONLINE = "online"
+    """To an online service the teacher picked."""
+
+    NETWORK_PC = "network_pc"
+    """To Ollama on another PC in the network: off this computer, but not online."""
+
+    THIS_COMPUTER = "this_computer"
+    """Nowhere: everything runs on this computer."""
+
+
 @dataclass(frozen=True)
 class SetupAnswers:
     """What the teacher answered in the assistant."""
@@ -89,6 +104,24 @@ class SetupAnswers:
     online_choice: tuple[str, str] = ("", "")
     #: The Privacy page's answer; only used for :attr:`ProofreadingPlace.ONLINE`.
     remove_names: bool = False
+    #: The Ollama model the teacher chose for the proofreading; ``""`` follows the recommendation
+    #: (and keeps a working model that is already set).  Only used for
+    #: :attr:`ProofreadingPlace.LOCAL`.
+    local_model: str = ""
+    #: The Privacy page's second answer: show the texts in this app with placeholders for the
+    #: names (display only, nothing to do with what is sent).
+    hide_names: bool = False
+
+    @property
+    def privacy_case(self) -> PrivacyCase:
+        """Return where the text goes: online, to another PC in the network, or nowhere."""
+        if self.proofreading is ProofreadingPlace.ONLINE:
+            return PrivacyCase.ONLINE
+        if self.proofreading is ProofreadingPlace.LOCAL and not is_local_ollama_url(
+            self.ollama_url, include_wsl_host=True
+        ):
+            return PrivacyCase.NETWORK_PC
+        return PrivacyCase.THIS_COMPUTER
 
 
 @dataclass(frozen=True)
@@ -114,6 +147,68 @@ class SetupFacts:
     reader_installed: bool = False
     #: The page models (turn and flatten) of the automatic image preparation are downloaded.
     page_models_installed: bool = False
+
+
+@dataclass(frozen=True)
+class ModelChoice:
+    """One model the proofreading page offers for the AI on this computer."""
+
+    tag: str
+    rating: ModelRating
+    #: Ollama has it already, so choosing it downloads nothing.
+    installed: bool
+    #: Catalog download size (GB); ``None`` when the model is not catalogued.
+    size_gb: float | None = None
+
+
+@dataclass(frozen=True)
+class LocalModelChoices:
+    """The models to choose from for the proofreading, and the one the setup plan would use."""
+
+    #: What the setup plan proposes when the teacher leaves it to the assistant.
+    suggested: str
+    choices: tuple[ModelChoice, ...]
+
+
+#: Ratings that keep a catalog model out of the list: it cannot work on this computer.
+_NOT_OFFERED = (Suitability.TOO_LARGE, Suitability.WRONG_KIND)
+
+
+def build_model_choices(
+    facts: SetupFacts,
+    *,
+    suggested: str,
+    rate: Callable[[str, ModelCategory], ModelRating],
+) -> LocalModelChoices:
+    """Return the models to offer for the proofreading: installed ones and rated catalog ones.
+
+    A model that is installed is always offered (the teacher may know why it is there); a
+    catalog model only when it can work on this computer.  The best come first.
+    """
+    tags: dict[str, bool] = {}  # normalised tag -> whether Ollama has it
+    for tag in sorted(facts.installed_tags):
+        tags[normalize_tag(tag)] = True
+    for spec in OLLAMA_CATALOG:
+        if "general" in catalog_uses(spec):
+            tags.setdefault(normalize_tag(spec.tag), False)
+    if suggested:
+        tags.setdefault(normalize_tag(suggested), _installed(suggested, facts))
+    choices: list[ModelChoice] = []
+    for tag, installed in tags.items():
+        rating = rate(tag, "general")
+        if rating.suitability in _NOT_OFFERED and not installed:
+            continue
+        spec = find_spec(tag)
+        choices.append(
+            ModelChoice(
+                tag=tag,
+                rating=rating,
+                installed=installed,
+                size_gb=spec.download_gb if spec is not None else None,
+            )
+        )
+    choices.sort(key=lambda choice: (suitability_rank(choice.rating.suitability), choice.tag))
+    return LocalModelChoices(suggested=suggested, choices=tuple(choices))
 
 
 class DownloadKind(StrEnum):
@@ -154,6 +249,8 @@ class PlannedStep:
     installed: bool = False
     #: The step keeps what it had: another reading method, or a review with its own model.
     kept: bool = False
+    #: The name-detection row serves only the view (names hidden in this app), not what is sent.
+    view_only: bool = False
 
 
 @dataclass(frozen=True)
@@ -172,6 +269,9 @@ class SetupPlan:
     #: The content review keeps its own service and model.
     review_kept: bool
     disk: DiskVerdict
+    #: Show the names hidden in this app's texts: ``True`` when the teacher asked for it, and
+    #: ``None`` when the assistant leaves the setting alone (it never turns it off).
+    display_anonymized: bool | None = None
     #: What the downloads that can run now add up to, in GB.
     needed_gb: float = 0.0
     #: Free space where Ollama keeps its models, or ``None`` when it could not be read.
@@ -267,6 +367,17 @@ def _proofreading_plan(
 ) -> tuple[dict[str, Any], list[PlannedStep], str, str]:
     """Return the proofreading settings, its row and the ``(provider, model)`` pair."""
     place = answers.proofreading
+    if place is ProofreadingPlace.LOCAL and answers.local_model:
+        # The teacher named the model: it is used as chosen, and pulled when it is missing.
+        tag = answers.local_model
+        row = PlannedStep(
+            stage=STAGE_CORRECTION,
+            provider="ollama",
+            model=tag,
+            rating=rate(tag, "general"),
+            installed=_installed(tag, facts),
+        )
+        return {"correction_provider": "ollama", "correction_model": tag}, [row], "ollama", tag
     if place is ProofreadingPlace.LOCAL:
         candidate = (
             _current(current, "correction_model")
@@ -316,15 +427,21 @@ def _review_plan(
 def _names_plan(
     answers: SetupAnswers, facts: SetupFacts
 ) -> tuple[dict[str, Any], list[PlannedStep], bool]:
-    """Return the panel keys, the names row and whether name detection is wanted."""
-    if answers.proofreading is not ProofreadingPlace.ONLINE or not answers.remove_names:
+    """Return the panel keys, the names row and whether name detection is wanted.
+
+    Name detection is wanted for the removal before text is sent online, and for hiding the
+    names in this app's texts; only the removal changes what a run sends.
+    """
+    removal = answers.privacy_case is not PrivacyCase.THIS_COMPUTER and answers.remove_names
+    if not (removal or answers.hide_names):
         return {}, [], False
-    panel = {} if facts.removal_on else {"anonymization_enabled": True}
+    panel = {"anonymization_enabled": True} if removal and not facts.removal_on else {}
     row = PlannedStep(
         stage=STAGE_ANONYMIZATION,
         provider="",
         model=facts.spacy_model,
         installed=facts.name_detection,
+        view_only=not removal,
     )
     return panel, [row], True
 
@@ -473,6 +590,7 @@ def build_setup_plan(
         downloads=tuple(downloads),
         review_kept=review_kept,
         disk=disk_verdict(needed_gb, facts.free_disk_gb),
+        display_anonymized=True if answers.hide_names else None,
         needed_gb=needed_gb,
         free_disk_gb=facts.free_disk_gb,
     )

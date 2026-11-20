@@ -244,3 +244,18 @@ def test_a_run_is_counted_in_words_not_in_tokens() -> None:
 
     assert scores["cut_run"] == 10
     assert is_lost(scores) is False
+
+
+def test_a_row_the_app_repaired_is_lost_text_though_its_output_is_whole() -> None:
+    """
+    Given  a row whose output measures clean because the app put back what the model left out
+    When   it is asked whether it lost text
+    Then   it did when the count of put-back stretches is there, and a row without it is unchanged
+    """
+    from tools.model_eval.text_loss import LEFT_OUT  # noqa: PLC0415
+
+    clean = measure("Ich habe einen Hund.", "Ich habe einen Hund.", "Ich habe einen Hund.")
+    assert is_lost(clean) is False
+    assert is_lost({**clean, LEFT_OUT: 2}) is True
+    assert is_lost({LEFT_OUT: 1}) is True
+    assert is_lost({}) is None

@@ -11,7 +11,7 @@ from teachers_teammate.application.check_document import CheckDocument, check_do
 from teachers_teammate.domain.teacher_work import WorkStatus
 from teachers_teammate.gui import _user_text as txt
 from teachers_teammate.gui._export_menu import ExportKind
-from teachers_teammate.gui.check import CheckPage, CopyKind, CopyState
+from teachers_teammate.gui.check import CheckPage, CopyKind, CopyState, RunState
 from teachers_teammate.gui.check._page import _escape_is_for_the_focus
 from teachers_teammate.infrastructure.state_repository import DocumentStateView
 
@@ -473,3 +473,133 @@ def test_check_page_refresh_checked_puts_the_button_back_to_what_the_document_sa
 
     assert page._checked_btn.isChecked() is False
     assert page._checked_btn.text() == txt.MARK_AS_CHECKED
+
+
+@pytest.mark.gui
+@pytest.mark.parametrize("wish_first", [True, False])
+def test_hide_names_shows_unticked_while_names_cannot_be_hidden(qtbot, wish_first) -> None:
+    """
+    Given  a stored wish to hide names and no add-on to do it
+    When   the page is told both, in either order
+    Then   the box is greyed out and unticked, and ticked again once the add-on arrives
+    """
+    page = CheckPage()
+    qtbot.addWidget(page)
+
+    if wish_first:
+        page.set_display_anonymized(True)
+        page.set_display_anonymized_available(False)
+    else:
+        page.set_display_anonymized_available(False)
+        page.set_display_anonymized(True)
+
+    assert not page._hide_names_box.isEnabled()
+    assert not page._hide_names_box.isChecked()
+
+    page.set_display_anonymized_available(True)
+
+    assert page._hide_names_box.isEnabled()
+    assert page._hide_names_box.isChecked()
+
+
+@pytest.mark.gui
+def test_the_next_step_strip_tells_what_to_do_after_reading(qtbot) -> None:
+    """
+    Given  a document that was read but not proofread
+    When   it is shown
+    Then   a strip says to check the text and proofread, with Proofread this document as its
+           button, and pressing it asks for the proofreading
+    """
+    page = CheckPage()
+    qtbot.addWidget(page)
+    asked: list[str] = []
+    page.proofread_requested.connect(lambda: asked.append("proofread"))
+
+    page.show_document(_document("a.png", "/tmp/a.png", raw_text="Hallo"), 1, 1)
+
+    assert not page._next_step.isHidden()
+    assert page._next_step.button.text() == txt.PROOFREAD_THIS_DOCUMENT
+    page._next_step.button.click()
+    assert asked == ["proofread"]
+
+
+@pytest.mark.gui
+def test_the_next_step_strip_goes_while_a_run_holds_the_document(qtbot) -> None:
+    """
+    Given  a document that was read but not proofread, with the next-step strip shown
+    When   a run locks the document, and then lets it go again
+    Then   the strip is gone while it is locked (the run strip says what goes on) and back after
+    """
+    page = CheckPage()
+    qtbot.addWidget(page)
+    page.show_document(_document("a.png", "/tmp/a.png", raw_text="Hallo"), 1, 1)
+    assert not page._next_step.isHidden()
+
+    page.set_lock(txt.BEING_PROOFREAD)
+    assert page._next_step.isHidden()
+
+    page.set_lock(None)
+    assert not page._next_step.isHidden()
+
+
+@pytest.mark.gui
+def test_the_next_step_button_sets_proofreading_up_when_it_cannot_run(qtbot) -> None:
+    """
+    Given  a next-step strip, and proofreading that is not set up
+    When   the button is pressed
+    Then   it reads "Set up proofreading…" and asks for the settings, not for a proofreading
+    """
+    page = CheckPage()
+    qtbot.addWidget(page)
+    seen: list[str] = []
+    page.proofread_requested.connect(lambda: seen.append("proofread"))
+    page.proofreading_setup_requested.connect(lambda: seen.append("setup"))
+    page.show_document(_document("a.png", "/tmp/a.png", raw_text="Hallo"), 1, 1)
+
+    page.set_proofreading_ready(False)
+    assert page._next_step.button.text() == "Set up proofreading…"
+    page._next_step.button.click()
+    page.set_proofreading_ready(True)
+    page._next_step.button.click()
+
+    assert seen == ["setup", "proofread"]
+
+
+@pytest.mark.gui
+def test_the_next_step_strip_offers_to_change_how_pages_are_read(qtbot) -> None:
+    """
+    Given  the next-step strip of a document
+    When   "Read badly? Change how pages are read…" is pressed
+    Then   the page asks for the settings of the reading
+    """
+    page = CheckPage()
+    qtbot.addWidget(page)
+    page.show_document(_document("a.png", "/tmp/a.png", raw_text="Hallo"), 1, 1)
+
+    with qtbot.waitSignal(page.read_settings_requested, timeout=1000):
+        page._next_step._read_badly.click()
+
+
+@pytest.mark.gui
+def test_the_run_strip_shows_what_the_run_does_and_stops_it(qtbot) -> None:
+    """
+    Given  a page whose document is in a run
+    When   the window gives the strip a state, and then none
+    Then   the strip says what is going on with the time left and has Stop, which asks to stop;
+           with no state it is gone
+    """
+    page = CheckPage()
+    qtbot.addWidget(page)
+    page.show_document(_document("a.png", "/tmp/a.png", raw_text="Hallo"), 1, 1)
+
+    page.set_run(
+        RunState("Proofreading with qwen3…", time_left="about 2 min left", stop_text="Stop")
+    )
+
+    assert not page._run_strip.isHidden()
+    assert page._run_strip.text == "Proofreading with qwen3… · about 2 min left"
+    with qtbot.waitSignal(page.stop_requested, timeout=1000):
+        page._run_strip.stop_button.click()
+
+    page.set_run(None)
+    assert page._run_strip.isHidden()

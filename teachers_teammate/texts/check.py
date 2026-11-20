@@ -27,7 +27,25 @@ READ_TIP = (
 )
 """Says what typing into *What was read* costs, next to the banner that says it again."""
 
+SCAN_PREPARED = "Prepared"
+SCAN_PREPARED_TIP = "Show the pages as they were fixed for reading"
 SCAN_ORIGINAL = "Original"
 SCAN_ORIGINAL_TIP = "Show the pages as scanned, before they were prepared"
 SCAN_SHOWING_ORIGINAL = "Showing the original pages"
-"""The scan's toggle, its tooltip and the caption while it is on."""
+"""The scan's two-part switch, their tooltips and the caption while *Original* is on."""
+
+NEXT_STEP = "Check the text against the scan and fix reading mistakes, then proofread."
+NEXT_STEP_SET_UP = "Set up proofreading…"
+NEXT_STEP_SET_UP_TIP = "Choose the AI that proofreads, in Settings"
+NEXT_STEP_READ_BADLY = "Read badly? Change how pages are read…"
+NEXT_STEP_READ_BADLY_TIP = "Open Settings where the reading of the pages is chosen"
+"""The strip above a transcription that has not been proofread: what to do next, and how to
+read the pages differently when the reading itself is poor."""
+
+RUN_PROOFREADING = "Proofreading with {model}…"
+RUN_PROOFREADING_PLAIN = "Proofreading…"
+RUN_PREPARING = "Preparing the pages…"
+RUN_READING = "Reading the text…"
+RUN_WAITING = "Waiting for its turn in this run…"
+RUN_TIME_LEFT_SEPARATOR = " · "
+"""The strip in the header while the open document is in a run: what is being done to it."""

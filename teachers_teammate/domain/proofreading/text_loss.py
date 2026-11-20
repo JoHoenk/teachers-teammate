@@ -17,6 +17,10 @@ tell a dropped sentence from a text whose own correction cuts one: on the saved 
 official test set, 50 words fires on the four models that drop text and on no text where most
 models agree, while 20 words fires on a text that every model cuts.
 
+An answer that left text out is repaired instead of failing the file: :func:`repair` writes the
+student's words back where the answer left out a stretch of at least :data:`RESTORE_MIN_WORDS`
+words, so the corrections of the rest are not lost with it.
+
 Pure: no I/O, no Qt, no provider imports.
 """
 
@@ -44,6 +48,14 @@ Correcting a short text changes its length by a large share: "ich bin müde" bec
 """
 
 
+RESTORE_MIN_WORDS = 8
+"""How many words a stretch must be cut by for :func:`repair` to put it back.
+
+Shorter cuts are what correction does all the time (a doubled word, a filler); a stretch of this
+many words that the answer left out is a sentence the student wrote.
+"""
+
+
 def words(text: str) -> int:
     """Return how many words *text* has, as the app's tokeniser splits them; marks do not count."""
     return sum(1 for token in tokenize(text) if any(char.isalnum() for char in token))
@@ -61,12 +73,19 @@ class TextLoss:
     """The longest stretch of words the answer deleted without writing as many in their place."""
 
     @property
+    def ratio_lost(self) -> bool:
+        """Whether the length ratio fired: the answer has far fewer words than the text."""
+        return self.words_in >= MIN_RATIO_WORDS and self.words_out < LOST_RATIO * self.words_in
+
+    @property
+    def run_lost(self) -> bool:
+        """Whether the long-run rule fired: the answer cut one long stretch of the text."""
+        return self.cut_run >= RUN_WORDS
+
+    @property
     def lost(self) -> bool:
         """Whether the answer kept too little of the text."""
-        short = self.words_in < MIN_RATIO_WORDS
-        return (not short and self.words_out < LOST_RATIO * self.words_in) or (
-            self.cut_run >= RUN_WORDS
-        )
+        return self.ratio_lost or self.run_lost
 
     @property
     def added(self) -> bool:
@@ -100,13 +119,117 @@ def dropped_text(
     return measured if measured.problem else None
 
 
+@dataclass(frozen=True)
+class LeftOut:
+    """One stretch of the text that the answer left out, as it stood in the text that was sent."""
+
+    text: str
+    """The student's words, as they were sent."""
+    start: int
+    end: int
+    """Half-open span in the text that was sent, with its outer whitespace removed."""
+    words: int
+    """How many words of it the answer did not write in their place."""
+
+
+@dataclass(frozen=True)
+class Repaired:
+    """An answer that left text out, with every stretch it left out put back."""
+
+    text: str
+    """The answer, with each left-out stretch written back where it stood."""
+    left_out: tuple[LeftOut, ...]
+    """The stretches that were put back, in text order."""
+
+    @property
+    def words(self) -> int:
+        """How many words were put back."""
+        return sum(part.words for part in self.left_out)
+
+
+def repair(source: str, corrected: str, hunks: Sequence[Hunk] | None = None) -> Repaired | None:
+    """Return *corrected* with the stretches it left out put back, or ``None`` when it left none.
+
+    Every hunk of the word diff that cuts at least :data:`RESTORE_MIN_WORDS` words is a stretch
+    the answer left out: the student's words stand there again, and the answer is kept everywhere
+    else.  The repaired text is measured again by the caller: an answer that is still not the
+    text (it added text of its own, or cut many short stretches) is not repaired by this.
+
+    Both texts must be plain, as for :func:`measure`; the spans are in *source* with its outer
+    whitespace removed.  A caller that has the diff of the two stripped texts passes it as *hunks*.
+    """
+    source, corrected = source.strip(), corrected.strip()
+    found = word_diff(source, corrected) if hunks is None else hunks
+    cut = [
+        hunk for hunk in found if words(hunk.original) - words(hunk.corrected) >= RESTORE_MIN_WORDS
+    ]
+    if not cut:
+        return None
+    text = corrected
+    for hunk in reversed(cut):
+        before, after = text[: hunk.corrected_start], text[hunk.corrected_end :]
+        text = before + _joined(before, hunk.original, after, source, hunk) + after
+    return Repaired(
+        text=text,
+        left_out=tuple(
+            LeftOut(
+                text=hunk.original,
+                start=hunk.raw_start,
+                end=hunk.raw_end,
+                words=words(hunk.original) - words(hunk.corrected),
+            )
+            for hunk in cut
+        ),
+    )
+
+
+_OPENING = "([{\"'„“‚‘»«"
+
+
+def _wordlike(char: str) -> bool:
+    """Return whether *char* starts or ends a word: a letter or digit, or an opening mark."""
+    return char.isalnum() or char in _OPENING
+
+
+def _joined(before: str, stretch: str, after: str, source: str, hunk: Hunk) -> str:
+    """Return *stretch* with the whitespace it needs to stand between *before* and *after*.
+
+    The whitespace is the one that stood around the stretch in *source*, so a paragraph that was
+    left out comes back with its paragraph breaks; where the source had none, a stretch that
+    starts or ends with a word takes one space.  The diff may cut a stretch at a full stop (the
+    one of the last sentence is the one it matches with the answer's), so a stretch that starts
+    or ends with a mark takes no space on that side.
+    """
+    kept_before = source[: hunk.raw_start]
+    kept_after = source[hunk.raw_end :]
+    gap_before = kept_before[len(kept_before.rstrip()) :]
+    gap_after = kept_after[: len(kept_after) - len(kept_after.lstrip())]
+    lead = ""
+    if before and not before[-1].isspace():
+        if gap_before:
+            lead = gap_before
+        elif before[-1] not in _OPENING and _wordlike(stretch[:1] or " "):
+            lead = " "
+    follow = ""
+    if after and not after[0].isspace() and not stretch[-1:].isspace():
+        if gap_after:
+            follow = gap_after
+        elif _wordlike(after[0]) and stretch[-1:] not in _OPENING:
+            follow = " "
+    return lead + stretch + follow
+
+
 __all__ = [
     "ADDED_RATIO",
     "LOST_RATIO",
     "MIN_RATIO_WORDS",
+    "RESTORE_MIN_WORDS",
     "RUN_WORDS",
+    "LeftOut",
+    "Repaired",
     "TextLoss",
     "dropped_text",
     "measure",
+    "repair",
     "words",
 ]

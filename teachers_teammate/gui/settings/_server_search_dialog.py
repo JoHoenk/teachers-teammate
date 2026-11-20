@@ -13,6 +13,7 @@ from typing import Protocol
 
 from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtWidgets import (
+    QAbstractItemView,
     QDialog,
     QHBoxLayout,
     QLabel,
@@ -28,6 +29,7 @@ from ...domain.ollama_discovery import DiscoveredServer, DiscoveryScope, ServerK
 from ...texts import dialogs as dlg
 from .. import _dialogs
 from .._model_fetch import _retire_thread, _start_thread
+from .._server_card import ServerCard
 
 TITLE = "Find the AI server"
 INTRO = (
@@ -44,6 +46,8 @@ NOTHING_HERE = (
     "it.\n"
     "• A school server: use “Search the network…”."
 )
+FOUND_ONE = "Found 1 server. Press “Use it” to let the AI run there."
+FOUND_MANY = "Found {count} servers. Press “Use it” on the one the AI should run on."
 NOTHING_ON_NETWORK = (
     "No server answered on the network. It may be switched off, listen only on its own "
     "computer, or sit behind a firewall. Ask your IT department for its address and type it "
@@ -54,25 +58,9 @@ STOP_BUTTON = "Stop"
 USE_BUTTON = "Use this server"
 TYPE_BUTTON = "Enter address myself"
 CLOSE_BUTTON = "Close"
-_KIND_NAMES = {
-    ServerKind.THIS_COMPUTER: "This computer",
-    ServerKind.WINDOWS_HOST: "Windows (this computer)",
-    ServerKind.NETWORK: "Another computer on your network",
-}
 _NETWORK_TOOLTIP = (
     "Your documents would be sent to that computer. Only choose a computer you trust."
 )
-
-
-def server_label(server: DiscoveredServer) -> str:
-    """Return the two-line text of a list entry: whose computer, then address and details."""
-    details = [server.url]
-    if server.version:
-        details.append(f"Ollama {server.version}")
-    if server.model_count is not None:
-        noun = "model" if server.model_count == 1 else "models"
-        details.append(f"{server.model_count} {noun}")
-    return f"{_KIND_NAMES[server.kind]}\n{' · '.join(details)}"
 
 
 class _DiscoveryService(Protocol):
@@ -140,8 +128,12 @@ class ServerSearchDialog(QDialog):
         intro.setWordWrap(True)
         layout.addWidget(intro)
 
+        # One card per server (name and models, whose computer, *Use it*): a list that is tall
+        # enough to show two or three of them without scrolling.
         self.list = QListWidget()
-        self.list.setMinimumHeight(120)
+        self.list.setMinimumHeight(220)
+        self.list.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.list.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
         self.list.itemSelectionChanged.connect(self._sync_buttons)
         self.list.itemDoubleClicked.connect(lambda _item: self._use_selected())
         layout.addWidget(self.list)
@@ -220,11 +212,16 @@ class ServerSearchDialog(QDialog):
         for row in range(self.list.count()):
             if self.list.item(row).data(Qt.ItemDataRole.UserRole) == server.url:
                 return
-        item = QListWidgetItem(server_label(server))
+        item = QListWidgetItem()
         item.setData(Qt.ItemDataRole.UserRole, server.url)
+        card = ServerCard()
+        card.show_discovered(server)
+        card.use_requested.connect(self._use)
         if server.kind is ServerKind.NETWORK:
-            item.setToolTip(_NETWORK_TOOLTIP)
+            card.setToolTip(_NETWORK_TOOLTIP)
+        item.setSizeHint(card.sizeHint())
         self.list.addItem(item)
+        self.list.setItemWidget(item, card)
         if self.list.currentRow() < 0:
             self.list.setCurrentRow(0)
 
@@ -237,12 +234,20 @@ class ServerSearchDialog(QDialog):
         self.network_button.setEnabled(not self._network_searched)
         count = self.list.count()
         if count:
-            noun = "server" if count == 1 else "servers"
-            self.status.setText(f"Found {count} {noun}. Choose one.")
+            self.status.setText(FOUND_ONE if count == 1 else FOUND_MANY.format(count=count))
         else:
             self.status.setText(NOTHING_ON_NETWORK if self._network_searched else NOTHING_HERE)
 
     # ── choosing ──────────────────────────────────────────────────────────────
+
+    def cards(self) -> list[ServerCard]:
+        """Return the cards of the servers found so far, in the order of the list."""
+        found: list[ServerCard] = []
+        for row in range(self.list.count()):
+            card = self.list.itemWidget(self.list.item(row))
+            if isinstance(card, ServerCard):
+                found.append(card)
+        return found
 
     def selected_url(self) -> str:
         """Return the URL of the selected entry, or ``""``."""
@@ -253,7 +258,10 @@ class ServerSearchDialog(QDialog):
         self.use_button.setEnabled(bool(self.selected_url()))
 
     def _use_selected(self) -> None:
-        url = self.selected_url()
+        self._use(self.selected_url())
+
+    def _use(self, url: str) -> None:
+        """Report *url* as the server to use, and close."""
         if not url:
             return
         self.server_chosen.emit(url)

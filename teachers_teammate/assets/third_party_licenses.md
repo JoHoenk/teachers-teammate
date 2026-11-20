@@ -47,9 +47,9 @@ Qt 6.12.0 and PySide6 6.12.0, the versions the bundle carries:
   https://download.qt.io/archive/qt/6.12/6.12.0/single/qt-everywhere-src-6.12.0.tar.xz
   https://download.qt.io/official_releases/QtForPython/pyside6/PySide6-6.12.0-src/
 
-FFmpeg 8.1.1, inside opencv-python-headless 5.0.0.93 (Linux and macOS):
-  https://ffmpeg.org/releases/ffmpeg-8.1.1.tar.gz
-  The wheel's build recipe: https://github.com/opencv/opencv-python (tag 93)
+FFmpeg 9.0.2, inside opencv-python-headless 5.1.0.95 (Linux and macOS):
+  https://ffmpeg.org/releases/ffmpeg-9.0.2.tar.gz
+  The wheel's build recipe: https://github.com/opencv/opencv-python (tag 95)
 
 certifi 2026.10.23 (MPL-2.0):
   https://github.com/certifi/python-certifi
@@ -1156,7 +1156,7 @@ be used in advertising or otherwise to promote the sale, use or other deal-
 ings in this Software without prior written authorization from him.
 ```
 
-## markdown-it-py 4.2.0
+## markdown-it-py 4.3.0
 
 **License type:** MIT
 
@@ -1296,7 +1296,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-## numpy 2.5.4
+## numpy 2.5.5
 
 **License type:** BSD-3-Clause AND 0BSD AND MIT AND Zlib AND CC0-1.0
 
@@ -1433,9 +1433,9 @@ License: BSD-3-Clause-Open-MPI
   OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 
-Name: GCC runtime library
-Files: numpy.libs/libgfortran*.so
-Description: dynamically linked to files compiled with gcc
+Name: GCC runtime library libgfortran
+Files: numpy.libs/libscipy_openblas*.so
+Description: statically linked to files compiled with gcc
 Availability: https://gcc.gnu.org/git/?p=gcc.git;a=tree;f=libgfortran
 License: GPL-3.0-or-later WITH GCC-exception-3.1
   Copyright (C) 2002-2017 Free Software Foundation, Inc.
@@ -2216,28 +2216,6 @@ may consider it more useful to permit linking proprietary applications with
 the library.  If this is what you want to do, use the GNU Lesser General
 Public License instead of this License.  But first, please read
 <https://www.gnu.org/licenses/why-not-lgpl.html>.
-
-Name: libquadmath
-Files: numpy.libs/libquadmath*.so
-Description: dynamically linked to files compiled with gcc
-Availability: https://gcc.gnu.org/git/?p=gcc.git;a=tree;f=libquadmath
-License: LGPL-2.1-or-later
-
-    GCC Quad-Precision Math Library
-    Copyright (C) 2010-2019 Free Software Foundation, Inc.
-    Written by Francois-Xavier Coudert  <fxcoudert@gcc.gnu.org>
-
-    This file is part of the libquadmath library.
-    Libquadmath is free software; you can redistribute it and/or
-    modify it under the terms of the GNU Library General Public
-    License as published by the Free Software Foundation; either
-    version 2.1 of the License, or (at your option) any later version.
-
-    Libquadmath is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
-    Lesser General Public License for more details.
-    https://www.gnu.org/licenses/old-licenses/lgpl-2.1.html
 ```
 
 ### numpy/_core/include/numpy/random/LICENSE.txt
@@ -3553,9 +3531,9 @@ License: BSD-3-Clause-Open-MPI
   OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 
-Name: GCC runtime library
-Files: numpy/.dylibs/libgfortran*, numpy/.dylibs/libgcc*
-Description: dynamically linked to files compiled with gcc
+Name: GCC runtime library libgfortran
+Files: numpy/.dylibs/libscipy_openblas*.so
+Description: statically linked to files compiled with gcc
 Availability: https://gcc.gnu.org/git/?p=gcc.git;a=tree;f=libgfortran
 License: GPL-3.0-or-later WITH GCC-exception-3.1
   Copyright (C) 2002-2017 Free Software Foundation, Inc.
@@ -4336,28 +4314,6 @@ may consider it more useful to permit linking proprietary applications with
 the library.  If this is what you want to do, use the GNU Lesser General
 Public License instead of this License.  But first, please read
 <https://www.gnu.org/licenses/why-not-lgpl.html>.
-
-Name: libquadmath
-Files: numpy/.dylibs/libquadmath*.so
-Description: dynamically linked to files compiled with gcc
-Availability: https://gcc.gnu.org/git/?p=gcc.git;a=tree;f=libquadmath
-License: LGPL-2.1-or-later
-
-    GCC Quad-Precision Math Library
-    Copyright (C) 2010-2019 Free Software Foundation, Inc.
-    Written by Francois-Xavier Coudert  <fxcoudert@gcc.gnu.org>
-
-    This file is part of the libquadmath library.
-    Libquadmath is free software; you can redistribute it and/or
-    modify it under the terms of the GNU Library General Public
-    License as published by the Free Software Foundation; either
-    version 2.1 of the License, or (at your option) any later version.
-
-    Libquadmath is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
-    Lesser General Public License for more details.
-    https://www.gnu.org/licenses/old-licenses/lgpl-2.1.html
 ```
 
 ### macOS only: numpy/_core/include/numpy/random/LICENSE.txt
@@ -4555,7 +4511,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-## opencv-python-headless 5.0.0.93
+## opencv-python-headless 5.1.0.95
 
 **License type:** Apache-2.0
 
@@ -8100,6 +8056,34 @@ TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; 
 BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
 CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY
 WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+------------------------------------------------------------------------------
+
+dav1d library is redistributed within all opencv-python Linux packages.
+
+Copyright © 2018-2025, VideoLAN and dav1d authors
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+1. Redistributions of source code must retain the above copyright notice, this
+   list of conditions and the following disclaimer.
+
+2. Redistributions in binary form must reproduce the above copyright notice,
+   this list of conditions and the following disclaimer in the documentation
+   and/or other materials provided with the distribution.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
+ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE LIABLE FOR
+ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+(INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
+ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ------------------------------------------------------------------------------
 
@@ -11751,6 +11735,34 @@ WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH 
 
 ------------------------------------------------------------------------------
 
+dav1d library is redistributed within all opencv-python Linux packages.
+
+Copyright © 2018-2025, VideoLAN and dav1d authors
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+1. Redistributions of source code must retain the above copyright notice, this
+   list of conditions and the following disclaimer.
+
+2. Redistributions in binary form must reproduce the above copyright notice,
+   this list of conditions and the following disclaimer in the documentation
+   and/or other materials provided with the distribution.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
+ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE LIABLE FOR
+ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+(INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
+ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+------------------------------------------------------------------------------
+
 MLAS library is redistributed within all opencv-python packages.
 
 MIT License
@@ -15294,7 +15306,7 @@ freely, subject to the following restrictions:
 3. This notice may not be removed or altered from any source distribution.
 ```
 
-## pip 26.1.2
+## pip 26.3
 
 **License type:** MIT
 
@@ -15305,6 +15317,8 @@ freely, subject to the following restrictions:
 A_Rog
 Aakanksha Agrawal
 Aarni Koskela
+abdul rawoof
+Abdul Rawoof Khan
 Abhinav Sagar
 ABHYUDAY PRATAP SINGH
 abs51295
@@ -15348,6 +15362,7 @@ Ananya Maiti
 Anatoly Techtonik
 Anders Kaseorg
 Andre Aguiar
+Andrea Corna
 Andreas Lutro
 Andrei Geacar
 Andrew Gaul
@@ -15375,6 +15390,7 @@ Anudit Nagar
 Anuj Godase
 AQNOUCH Mohammed
 AraHaan
+Aren Siekmeier
 arena
 arenasys
 Arindam Choudhury
@@ -15506,6 +15522,7 @@ Daniele Procida
 Daniil Konovalenko
 Danny Hermes
 Danny McClanahan
+Darren Carreras
 Darren Kavanagh
 Dav Clark
 Dave Abrahams
@@ -15525,18 +15542,21 @@ David Runge
 David Tucker
 David Wales
 Davidovich
+Dayna Blackwell
 ddelange
 Deepak Sharma
 Deepyaman Datta
 Denis Roussel (ACSONE)
 Denise Yu
 dependabot[bot]
+dereksz
 derwolfe
 Desetude
 developer
 Devesh Kumar
 Devesh Kumar Singh
 devsagul
+Dewank Pant
 Diego Caraballo
 Diego Ramirez
 DiegoCaraballo
@@ -15617,6 +15637,7 @@ Gertjan van Zwieten
 ghost
 Giancarlo Cicellyn Comneno
 Giftlin Rajaiah
+github-actions[bot]
 gizmoguy1
 gkdoc
 Godefroid Chapelle
@@ -15626,6 +15647,7 @@ gousaiyang
 gpiks
 Greg Roodt
 Greg Ward
+Gregory P. Smith
 Guido Diepen
 Guilherme Espada
 Guillaume Seguin
@@ -15647,6 +15669,7 @@ Herbert Pfennig
 Holly Stotelmyer
 Honnix
 Hsiaoming Yang
+Hugo
 Hugo Lopes Tavares
 Hugo van Kemenade
 Hugues Bruant
@@ -15667,6 +15690,7 @@ Ilya Baryshev
 Inada Naoki
 Ionel Cristian Mărieș
 Ionel Maries Cristian
+Islam Asabaev
 Itamar Turner-Trauring
 iTrooz
 Ivan Pozdeev
@@ -15762,6 +15786,7 @@ Keith Maxwell
 Kelsey Hightower
 Kenneth Belitzky
 Kenneth Reitz
+Keto D. Zhang
 Kevin Burke
 Kevin Carter
 Kevin Frommelt
@@ -15792,8 +15817,10 @@ Lincoln de Sousa
 Lipis
 lorddavidiii
 Loren Carvalho
+Louis Liu
 Lucas Cimon
 Ludovic Gasc
+Luis Carlos
 Luis Medel
 Lukas Geiger
 Lukas Juhrich
@@ -15844,6 +15871,7 @@ Maurits van Rees
 Max W Chase
 Maxim Kurnikov
 Maxime Rouyrre
+MaxxxDong
 mayeut
 mbaluna
 Md Sujauddin Sekh
@@ -15867,6 +15895,7 @@ Mike Hendricks
 Min RK
 MinRK
 Miro Hrončok
+Mohsen Fooladnezhad
 Monica Baluna
 montefra
 Monty Taylor
@@ -15898,6 +15927,7 @@ Nitesh Sharma
 Niyas Sait
 Noah
 Noah Gorny
+Nok Lam Chan
 Norbert Manthey
 Nothing-991
 Nowell Strite
@@ -15915,6 +15945,7 @@ Oliver Tonnhofer
 Olivier Girardot
 Olivier Grisel
 Ollie Rutherfurd
+Omar Abdalgwad
 OMOTO Kenji
 Omry Yadan
 onlinejudge95
@@ -15978,6 +16009,8 @@ Quentin Lee
 Quentin Pradet
 R. David Murray
 Rafael Caricio
+RAHUL KUMAR
+rahulkotargasthi
 Ralf Schmitt
 Ran Benita
 Randy Döring
@@ -16010,6 +16043,7 @@ Ronny Pfannschmidt
 Rory McCann
 Ross Brattain
 Roy Wellington Ⅳ
+RoyS
 Ruairidh MacLeod
 Russell Keith-Magee
 Ryan Shepherd
@@ -16018,6 +16052,7 @@ ryneeverett
 Ryuma Asai
 S. Guliaev
 Sachi King
+Sai Sridhar Tarra
 Salvatore Rinchiera
 sandeepkiran-js
 Sander Van Balen
@@ -16026,6 +16061,7 @@ schlamar
 Scott Kitterman
 Sean
 seanj
+Sebastian Höffner
 Sebastian Jordan
 Sebastian Schaetz
 Segev Finer
@@ -16039,6 +16075,7 @@ Shahar Epstein
 Shantanu
 shenxianpeng
 shireenrao
+Shivam Shrey
 Shivansh-007
 Shixian Sheng
 Shlomi Fish
@@ -16080,6 +16117,7 @@ Sviatoslav Sydorenko (Святослав Сидоренко)
 Swat009
 Sylvain
 S​age Abdullah
+T.Yamada
 Takayuki SHIMIZUKAWA
 Taneli Hukkinen
 tbeswick
@@ -16155,6 +16193,7 @@ Yash
 Yashraj
 Yen Chi Hsuan
 Yeray Diaz Diaz
+Youngkwang Yang
 Yoval P
 Yu Jian
 Yuan Jing Vincent Yan
@@ -16739,7 +16778,7 @@ Apache License
 ```
 BSD 3-Clause License
 
-Copyright (c) 2013-2025, Kim Davies and contributors.
+Copyright (c) 2013-2026, Kim Davies and contributors.
 All rights reserved.
 
 Redistribution and use in source and binary forms, with or without
@@ -17226,7 +17265,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-## platformdirs 4.14.5
+## platformdirs 4.14.8
 
 **License type:** MIT
 
@@ -17782,7 +17821,7 @@ LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT
 OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ```
 
-## pydantic 2.14.3
+## pydantic 2.14.4
 
 **License type:** MIT
 
@@ -17812,7 +17851,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-## pydantic-core 2.50.4
+## pydantic-core 2.50.5
 
 **License type:** MIT
 

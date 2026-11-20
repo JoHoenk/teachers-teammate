@@ -42,10 +42,10 @@ def test_a_windows_only_dependency_is_found_although_pip_skipped_it() -> None:
     )
 
     windows = check_pins.skipped_dependencies(report, {}, "win_amd64")
-    macos = check_pins.skipped_dependencies(report, {}, "macosx_14_0_arm64")
+    macos = check_pins.skipped_dependencies(report, {}, "macosx_15_0_arm64")
 
     assert windows == ["pefile (needed by pyinstaller on win_amd64) is not pinned"]
-    assert macos == ["macholib (needed by pyinstaller on macosx_14_0_arm64) is not pinned"]
+    assert macos == ["macholib (needed by pyinstaller on macosx_15_0_arm64) is not pinned"]
 
 
 def test_a_pinned_or_resolved_dependency_is_not_reported() -> None:

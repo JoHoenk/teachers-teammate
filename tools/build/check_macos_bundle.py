@@ -51,10 +51,9 @@ _FAT_MAGIC = (
 #: 0x0034 for Java 8), so the count is 0 or absurdly large and the file is not a Mach-O one.
 _MAX_ARCHITECTURES = 32
 
-#: The oldest macOS the bundle may need.  The PySide6 6.12.0 wheel's Qt libraries say 14.4, so
-#: the app's own floor follows them; the spec's ``LSMinimumSystemVersion`` reads this number, so
-#: the .app and this check cannot disagree.
-MACOS_MINIMUM = "14.4"
+#: The oldest macOS the bundle may need (the OpenCV wheel says 15.0); the spec's
+#: ``LSMinimumSystemVersion`` reads it too, so the .app and this check cannot disagree.
+MACOS_MINIMUM = "15.0"
 
 #: The identifier the spec hands to ``BUNDLE``.  A copy that carries another one is not this
 #: app: macOS keys the app's preferences, its saved state and its update identity on it.

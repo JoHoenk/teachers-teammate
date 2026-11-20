@@ -68,7 +68,7 @@ start. Every bundle build runs the app's smoke test (`--_smoke_test`) and instal
 systems (Ubuntu 24.04/26.04 and Debian 13 containers, macOS 15/26, Windows Server 2022/2025),
 including an update from the newest published release. Not covered by CI, so checked by hand on a
 VM before a release: the installer's interactive pages, the UAC prompt, a real desktop (window,
-fonts, icons, Gatekeeper), Windows 10 1809 and macOS 14.4.
+fonts, icons, Gatekeeper), Windows 10 1809 and macOS 15.0.
 
 ### Checksums and provenance
 
@@ -96,8 +96,8 @@ gh attestation verify teachers-teammate-<version>-w64-setup.exe --repo JoHoenk/t
 
 | | Windows | macOS | Linux |
 |---|---|---|---|
-| **Oldest supported** | Windows 10 1809 | macOS 14.4 | glibc 2.39 (Ubuntu 24.04, Debian 13, Mint 22) |
-| **Set by** | Qt 6.12 | the PySide6 wheel | the build image (`ubuntu-24.04`) |
+| **Oldest supported** | Windows 10 1809 | macOS 15.0 | glibc 2.39 (Ubuntu 24.04, Debian 13, Mint 22) |
+| **Set by** | Qt 6.12 | the OpenCV wheel | the build image (`ubuntu-24.04`) |
 | **Guarded by** | the installer (exit code 15) | `tools/build/check_macos_bundle.py` | `tools/build/check_linux_bundle.py --max-glibc 2.39` |
 
 **When the floor moves.** A PySide6 bump that raises the macOS floor, or a newer Linux build

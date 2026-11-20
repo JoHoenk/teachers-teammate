@@ -64,7 +64,7 @@ Every release also ships a `SHA256SUMS` file and a build attestation, so you or 
 
 | | Windows | macOS | Linux |
 |---|---|---|---|
-| **Version** | 10 (version 1809 or newer) or 11 | 14.4 Sonoma or newer | Ubuntu 24.04+, Debian 13+, Mint 22+ (glibc 2.39 or newer); other distributions with glibc 2.39 or newer: the `.tar.xz` |
+| **Version** | 10 (version 1809 or newer) or 11 | 15 Sequoia or newer | Ubuntu 24.04+, Debian 13+, Mint 22+ (glibc 2.39 or newer); other distributions with glibc 2.39 or newer: the `.tar.xz` |
 | **Processor** | x64 (Windows 11 on ARM: x64 emulation, not tested) | Apple Silicon (M1 or newer) | x86_64 |
 | **Download** | setup `.exe` | `.dmg` | `.deb`, `.tar.xz` |
 

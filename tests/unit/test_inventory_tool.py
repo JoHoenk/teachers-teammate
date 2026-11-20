@@ -569,7 +569,7 @@ def test_the_wheel_fits_the_bundles_python_and_the_newest_acceptable_macos() -> 
     """
     Given  PyPI files for several Python tags, a free-threaded build and two macOS builds
     When   the macOS wheel is chosen for cp314
-    Then   it is the newest one a macOS 14 build accepts, never the free-threaded or an older Python
+    Then   it is the newest one a macOS 15 build accepts, never the free-threaded or an older Python
     """
     files = _entries(
         "n-1-cp313-cp313-macosx_14_0_arm64.whl",
@@ -577,12 +577,13 @@ def test_the_wheel_fits_the_bundles_python_and_the_newest_acceptable_macos() -> 
         "n-1-cp314-cp314-macosx_11_0_arm64.whl",
         "n-1-cp314-cp314-macosx_14_0_arm64.whl",
         "n-1-cp314-cp314-macosx_15_0_arm64.whl",
+        "n-1-cp314-cp314-macosx_26_0_arm64.whl",
         "n-1-cp314-cp314-manylinux_2_28_x86_64.whl",
     )
 
     assert (
         inventory.wheel_url(files, "macosx_arm64", "cp314")["filename"]
-        == "n-1-cp314-cp314-macosx_14_0_arm64.whl"
+        == "n-1-cp314-cp314-macosx_15_0_arm64.whl"
     )
     assert "manylinux" in inventory.wheel_url(files, "manylinux", "cp314")["filename"]
 

@@ -1475,6 +1475,7 @@ class ProcessingApplicationService:
             name_detection=self.anonymizer_available(answers.language),
             spacy_installed=self.is_module_importable("spacy"),
             spacy_model=self.spacy_model_for_language(answers.language),
+            installed_spacy_models=frozenset(self.list_installed_spacy_models()),
             reader_installed=self.reader_installed(),
             page_models_installed=self.page_models_installed(),
             missing_package=(
@@ -2246,6 +2247,22 @@ class ProcessingApplicationService:
         if find_module_spec("spacy") is None:
             return False
         return self.spacy_model_for_language(language) in self.list_installed_spacy_models()
+
+    def extra_name_models(self, language: str) -> list[str]:
+        """Return the spaCy models that can be the extra language next to *language*'s own.
+
+        The model of the document language itself is left out: a second pass with it would only
+        repeat the first.
+        """
+        from ..infrastructure.spacy_models import (  # noqa: PLC0415
+            FALLBACK_SPACY_MODEL,
+            SPACY_MODELS,
+            spacy_model_for,
+        )
+
+        own = spacy_model_for(language)
+        models = dict.fromkeys([*SPACY_MODELS.values(), FALLBACK_SPACY_MODEL])
+        return [model for model in models if model != own]
 
     def system_spacy_model(self) -> str | None:
         """Return the spaCy model for the language this computer is set to, if it is known."""

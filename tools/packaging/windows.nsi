@@ -703,10 +703,10 @@ Function ScopePageCreate
   ${If} $CheckUpdates == "1"
     ${NSD_Check} $ScopeUpdates
   ${EndIf}
-  ${NSD_CreateLabel} 22u 98u 258u 18u \
-    "The app asks GitHub once at every start whether a newer version exists. You can change this under Settings > General."
+  ${NSD_CreateLabel} 22u 98u 258u 24u \
+    "The app asks GitHub once at every start whether a newer version exists. Nothing about you or your documents is sent. You can change this under Settings > General."
   Pop $0
-  ${NSD_CreateLink} 22u 116u 258u 10u "What it sends, and when"
+  ${NSD_CreateLink} 22u 124u 258u 10u "What it sends, and when"
   Pop $PrivacyLink
   ${NSD_OnClick} $PrivacyLink OpenPrivacyPage
 

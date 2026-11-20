@@ -81,6 +81,7 @@ from ._context import SetupContext
 from ._flow import ORDER, SetupPageId, next_page
 from ._summary import SummaryRows, size_text, summary_rows
 from ...texts.setup import (
+    name_model_label,
     CLASSES_HANDWRITTEN,
     CLASSES_HANDWRITTEN_NOTE,
     CLASSES_LANGUAGE,
@@ -131,9 +132,13 @@ from ...texts.setup import (
     MODEL_INSTALLED,
     PRIVACY_ALREADY_ON,
     PRIVACY_EXPLAIN,
+    PRIVACY_EXTRA,
+    PRIVACY_EXTRA_INSTALLED,
+    PRIVACY_EXTRA_NOTE,
     PRIVACY_HAS_DETECTION,
     PRIVACY_HIDE_HERE,
     PRIVACY_HIDE_HERE_NOTE,
+    PRIVACY_MULTILINGUAL,
     PRIVACY_NEEDS_DETECTION,
     PRIVACY_SCHOOL_NOTE,
     PRIVACY_SCHOOL_NOTE_NETWORK,
@@ -808,7 +813,57 @@ class PrivacyPage(SetupPage):
         self._hide_already.setVisible(False)
         stays.addWidget(_indent(self._hide_already))
         layout.addWidget(self._stays)
+
+        # One more language to find names in, below whichever of the two the teacher sees.
+        self._extra_holder = QWidget()
+        extra = QVBoxLayout(self._extra_holder)
+        extra.setContentsMargins(0, 8, 0, 0)
+        self._extra = QCheckBox(PRIVACY_EXTRA)
+        extra.addWidget(self._extra)
+        self._extra_model = QComboBox()
+        extra.addWidget(_indent(self._extra_model))
+        extra.addWidget(_indent(_note(PRIVACY_EXTRA_NOTE)))
+        layout.addWidget(self._extra_holder)
         layout.addStretch(1)
+        self._extra.toggled.connect(self._sync_extra)
+        self._remove.toggled.connect(self._sync_extra)
+        self._hide.toggled.connect(self._sync_extra)
+
+    def extra_names_model(self) -> str:
+        """Return the spaCy model of the extra language, or ``""`` when none is ticked."""
+        if not (self._extra_holder.isVisibleTo(self) and self._extra.isChecked()):
+            return ""
+        return str(self._extra_model.currentData() or "")
+
+    def _sync_extra(self, _checked: bool = False) -> None:
+        """Offer the extra language while names are looked for, and its list while it is ticked."""
+        if self._case is PrivacyCase.THIS_COMPUTER:
+            looking = self._hide.isChecked()
+        else:
+            looking = self._remove.isChecked()
+        self._extra_holder.setVisible(self._case is not None and looking)
+        self._extra_model.setEnabled(self._extra.isChecked())
+
+    def _fill_extra(self, language: str) -> None:
+        """List the languages that can come next to *language*, with the saved one selected."""
+        service = self._context.app_service
+        installed = set(service.list_installed_spacy_models())
+        saved = str(self._context.settings.get("anonymizer_secondary_model") or "")
+        system = service.system_spacy_model()
+        # Coming back to the page keeps what the teacher ticked, as long as it still fits.
+        before = str(self._extra_model.currentData() or "") if self._extra.isChecked() else ""
+        self._extra_model.clear()
+        models = service.extra_name_models(language)
+        for model in models:
+            label = name_model_label(model)
+            if model in installed:
+                label = f"{label} ({PRIVACY_EXTRA_INSTALLED})"
+            self._extra_model.addItem(label, userData=model)
+        remembered = before if before in models else saved
+        chosen = remembered if remembered in models else (system if system in models else "")
+        self._extra_model.setCurrentIndex(max(self._extra_model.findData(chosen), 0))
+        # A language that is saved as the extra one stays ticked: the assistant turns nothing off.
+        self._extra.setChecked(remembered in models)
 
     def remove_names(self) -> bool:
         """Return whether names should be replaced before the text is sent."""
@@ -828,9 +883,14 @@ class PrivacyPage(SetupPage):
         self._sending.setVisible(leaves)
         self._stays.setVisible(not leaves)
         detection = service.anonymizer_available(answers.language)
+        model = service.spacy_model_for_language(answers.language)
         detection_text = (PRIVACY_HAS_DETECTION if detection else PRIVACY_NEEDS_DETECTION).format(
-            language=answers.language
+            language=answers.language, model=model
         )
+        if model == service.spacy_model_for_language(""):
+            # A language without a model of its own gets the multilingual one.
+            detection_text += " " + PRIVACY_MULTILINGUAL.format(language=answers.language)
+        self._fill_extra(answers.language)
 
         if leaves:
             if case is PrivacyCase.ONLINE:
@@ -847,6 +907,7 @@ class PrivacyPage(SetupPage):
             self._remove.setEnabled(not already_on)
             self._already.setVisible(already_on)
             self._detection.setText(detection_text)
+            self._sync_extra()
             return
 
         # What the assistant never does is turn something off: a setting that is on stays on,
@@ -857,6 +918,7 @@ class PrivacyPage(SetupPage):
         self._hide_already.setVisible(wish and detection)
         self._hide_detection.setText("" if detection else detection_text)
         self._hide_detection.setVisible(not detection)
+        self._sync_extra()
 
 
 class SummaryPage(SetupPage):
@@ -1310,6 +1372,8 @@ def _download_words(download: PlannedDownload, language: str) -> tuple[str, str]
     if kind is DownloadKind.PAGE_MODELS:
         return DONE_PURPOSE_PAGE_MODELS, DONE_NAME_PAGE_MODELS
     if kind is DownloadKind.SPACY_MODEL:
+        if download.extra:
+            return DONE_PURPOSE_NAMES, name_model_label(download.name)
         return DONE_PURPOSE_NAMES, language or download.name
     if kind is DownloadKind.OLLAMA_MODEL:
         purpose = DONE_PURPOSE_READING if download.stage == STAGE_OCR else DONE_PURPOSE_PROOFREADING

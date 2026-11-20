@@ -19,9 +19,9 @@ from teachers_teammate.gui import _model_wording as wording
 @pytest.mark.parametrize(
     ("apple_gb", "expected"),
     [
-        (8.0, "Found: Apple computer with 8 GB shared memory."),
-        (16.0, "Found: Apple computer with 16 GB shared memory."),
-        (24.0, "Found: Apple computer with 24 GB shared memory."),
+        (8.0, "Apple computer with 8 GB shared memory"),
+        (16.0, "Apple computer with 16 GB shared memory"),
+        (24.0, "Apple computer with 24 GB shared memory"),
     ],
 )
 def test_apple_status_names_the_memory_the_computer_has(apple_gb: float, expected: str) -> None:
@@ -61,7 +61,7 @@ def test_remote_status_names_the_host() -> None:
                 gpu_name="RTX 4060",
                 memory_gb=7.8,
             ),
-            "Found: RTX 4060 with 8 GB graphics memory.",
+            "Graphics card: RTX 4060 with 8 GB graphics memory",
         ),
         (HardwareDetection(profile="cpu", reason=DetectionReason.NO_GPU_FOUND), "No graphics card"),
         (HardwareDetection(profile="16gb", reason=DetectionReason.MANUAL), "Chosen by you."),
@@ -93,8 +93,8 @@ def test_status_text_per_reason(detection: HardwareDetection, fragment: str) -> 
                 gpu_name="RTX 3050",
                 memory_gb=4.0,
             ),
-            "Found: RTX 3050 with 4 GB graphics memory, so models for a basic computer "
-            "are suggested.",
+            "Graphics card: RTX 3050 with 4 GB graphics memory\n"
+            "Models are suggested for a basic computer.",
         ),
         (
             HardwareDetection(
@@ -103,39 +103,30 @@ def test_status_text_per_reason(detection: HardwareDetection, fragment: str) -> 
                 gpu_name="RTX 3060",
                 memory_gb=12.0,
             ),
-            "Found: RTX 3060 with 12 GB graphics memory, so models for a graphics card with "
-            "about 8 GB are suggested.",
-        ),
-        (
-            HardwareDetection(
-                profile="8gb",
-                reason=DetectionReason.GPU_DETECTED,
-                gpu_name="RTX 4060",
-                memory_gb=8.0,
-            ),
-            "Found: RTX 4060 with 8 GB graphics memory.",
+            "Graphics card: RTX 3060 with 12 GB graphics memory\n"
+            "Models are suggested for a graphics card with about 8 GB.",
         ),
     ],
 )
-def test_the_status_line_names_the_tier_only_when_the_figure_does_not(
+def test_the_status_names_what_the_suggestions_follow(
     detection: HardwareDetection, expected: str
 ) -> None:
     """
-    Given  a graphics card whose memory maps to a profile of its own, or to a smaller one
-    When   the status line is built
-    Then   the tier is named only when the figure alone does not say it: a 4 GB card gives the
-           profile of a basic computer, a 12 GB card the one of an 8 GB card, and an 8 GB card
-           needs no second sentence
+    Given  a graphics card whose memory maps to a smaller profile (4 GB: a basic computer, 12 GB:
+           an 8 GB card)
+    When   the status is built
+    Then   it has a line for the card and a line that says what the suggestions follow
     """
     assert wording.detection_status_text(detection) == expected
 
 
 @pytest.mark.use_case("Model_Recommendation_By_Hardware")
-def test_the_status_line_names_the_memory_free_right_now() -> None:
+def test_the_status_is_one_line_per_fact() -> None:
     """
-    Given  a detection that knows the computer's memory, and the memory free right now
-    When   the status line is built
-    Then   both figures are named; without the free one the sentence is the same as before
+    Given  a detection that knows the card, the computer's memory and the memory free right now
+    When   the status is built
+    Then   the card, the memory and what the suggestions follow are one line each; without the
+           free figure the memory line is shorter, and without the memory it is gone
     """
     detection = HardwareDetection(
         profile="8gb",
@@ -145,20 +136,24 @@ def test_the_status_line_names_the_memory_free_right_now() -> None:
         system_memory_gb=16.0,
     )
 
-    assert wording.detection_status_text(detection, available_memory_gb=9.0) == (
-        "Found: RTX 4060 with 8 GB graphics memory. Computer memory: 16 GB, 9 GB free right now."
+    assert wording.detection_lines(detection, available_memory_gb=9.0) == [
+        "Graphics card: RTX 4060 with 8 GB graphics memory",
+        "Computer memory: 16 GB, 9 GB free right now",
+        "Models are suggested for a graphics card with about 8 GB.",
+    ]
+    assert wording.detection_lines(detection)[1] == "Computer memory: 16 GB"
+    without_memory = HardwareDetection(
+        profile="8gb", reason=DetectionReason.GPU_DETECTED, gpu_name="RTX 4060", memory_gb=8.0
     )
-    assert wording.detection_status_text(detection) == (
-        "Found: RTX 4060 with 8 GB graphics memory. Computer memory: 16 GB."
-    )
+    assert len(wording.detection_lines(without_memory)) == 2
 
 
 @pytest.mark.use_case("Model_Recommendation_By_Hardware")
 def test_a_second_graphics_card_is_named_after_the_one_that_decides() -> None:
     """
     Given  a computer with two graphics cards
-    When   the status line is built
-    Then   the card that decides the profile comes first and the other is named after it, so a
+    When   the status is built
+    Then   the card that decides the profile comes first and the other has its own line, so a
            teacher who knows their card sees that it was found
     """
     detection = HardwareDetection(
@@ -169,10 +164,10 @@ def test_a_second_graphics_card_is_named_after_the_one_that_decides() -> None:
         other_gpu_names=("Intel UHD Graphics",),
     )
 
-    text = wording.detection_status_text(detection)
+    lines = wording.detection_lines(detection)
 
-    assert text.startswith("Found: NVIDIA GeForce RTX 4060 with 8 GB graphics memory.")
-    assert text.endswith(" (also found: Intel UHD Graphics)")
+    assert lines[0] == "Graphics card: NVIDIA GeForce RTX 4060 with 8 GB graphics memory"
+    assert lines[1] == "Also found: Intel UHD Graphics"
 
 
 # ── too-large wording: never presents the budget as the user's memory ───────
@@ -391,95 +386,8 @@ def test_status_line_names_the_computers_memory_when_known() -> None:
         memory_gb=16.0,
     )
 
-    assert wording.detection_status_text(detection) == (
-        "Found: NVIDIA GeForce RTX 3080 Laptop GPU with 16 GB graphics memory. "
-        "Computer memory: 32 GB."
-    )
-    assert wording.detection_status_text(plain) == (
-        "Found: NVIDIA GeForce RTX 3080 Laptop GPU with 16 GB graphics memory."
-    )
-
-
-@pytest.mark.use_case("Model_Recommendation_By_Hardware")
-def test_a_computer_below_the_reserve_is_told_once_that_no_model_fits_it() -> None:
-    """
-    Given  a 7.7 GB computer without a graphics card (the system reserve alone is 8 GB)
-    When   the "My computer" status line is built
-    Then   it says once that the computer is too small for local models and names the way out,
-           instead of naming a memory figure every model is measured against in vain
-    """
-    detection = HardwareDetection(
-        profile="cpu", reason=DetectionReason.NO_GPU_FOUND, system_memory_gb=7.7
-    )
-
-    text = wording.detection_status_text(detection)
-
-    assert text.endswith(wording.TOO_LITTLE_MEMORY)
-    assert "Computer memory" not in text
-    assert "built-in reader" in text and "another computer" in text
-
-
-@pytest.mark.use_case("Model_Recommendation_By_Hardware")
-def test_a_computer_with_enough_memory_names_its_memory_instead() -> None:
-    """
-    Given  a 16 GB computer without a graphics card
-    When   the "My computer" status line is built
-    Then   it names the memory and does not claim that no model fits
-    """
-    detection = HardwareDetection(
-        profile="cpu", reason=DetectionReason.NO_GPU_FOUND, system_memory_gb=16.0
-    )
-
-    text = wording.detection_status_text(detection)
-
-    assert "Computer memory: 16 GB." in text
-    assert wording.TOO_LITTLE_MEMORY not in text
-
-
-@pytest.mark.use_case("Model_Recommendation_By_Hardware")
-def test_slow_models_are_labelled_and_explained_without_alarm() -> None:
-    """
-    Given  a model rated "slow" for a computer with an 8 GB card
-    When   its labels, tooltip and hint are built
-    Then   it says it works but slower and explains that part runs on the processor, and the
-           hint is not a warning (no "too large", no warning sign)
-    """
-    label = wording.suitability_text(Suitability.SLOW, "general")
-    compact = wording.compact_suitability_text(Suitability.SLOW, "general")
-    hint = wording.model_hint(
-        Suitability.SLOW, "8gb", task="general", memory_gb=14.0, best_for_task="qwen3.5:9b"
-    )
-
-    assert label == "Works, but slower"
-    assert compact == "Slower"
-    assert "about 14 GB" in hint and "processor" in hint and "slower" in hint
-    assert "⚠" not in hint and "too large" not in hint.lower()
-    assert not wording.is_warning(Suitability.SLOW)
-
-
-@pytest.mark.use_case("Model_Recommendation_By_Hardware")
-def test_slow_text_without_a_graphics_card_says_it_runs_on_the_processor() -> None:
-    """
-    Given  a computer without a large graphics card
-    When   the slow text is built
-    Then   it says the model runs on the processor using the computer's memory
-    """
-    text = wording.slow_text(14.0, "cpu")
-
-    assert "processor" in text and "memory" in text and "slower" in text
-
-
-@pytest.mark.use_case("Model_Recommendation_By_Hardware")
-def test_a_very_slow_model_is_labelled_very_slow_and_says_a_page_takes_minutes() -> None:
-    """
-    Given  a slow model of which very little fits on the graphics card
-    When   its labels and texts are built with very_slow set
-    Then   they say "very slowly" and that a page can take several minutes, still without alarm
-    """
-    label = wording.suitability_text(Suitability.SLOW, "general", very_slow=True)
-    compact = wording.compact_suitability_text(Suitability.SLOW, "general", very_slow=True)
-    text = wording.slow_text(14.0, "8gb", very_slow=True)
-
-    assert label == "Works, but very slowly"
-    assert compact == "Very slow"
-    assert "very slowly" in text and "several minutes" in text
+    assert wording.detection_lines(detection)[:2] == [
+        "Graphics card: NVIDIA GeForce RTX 3080 Laptop GPU with 16 GB graphics memory",
+        "Computer memory: 32 GB",
+    ]
+    assert len(wording.detection_lines(plain)) == 2

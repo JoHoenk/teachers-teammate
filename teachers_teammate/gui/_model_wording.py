@@ -72,20 +72,20 @@ TOO_LITTLE_MEMORY = (
 )
 
 
-def _computer_memory_sentence(
+def _computer_memory_line(
     detection: HardwareDetection, available_memory_gb: float | None
-) -> str:
-    """Return `` Computer memory: N GB, M GB free right now.`` when the memory is known.
+) -> list[str]:
+    """Return ``Computer memory: N GB, M GB free right now`` when the memory is known.
 
     The free figure is read when the line is drawn, so it is passed in rather than stored in
     the detection: it changes all the time and no suggestion depends on it.
     """
     if detection.system_memory_gb is None:
-        return ""
-    text = f" Computer memory: {detection.system_memory_gb:.0f} GB"
+        return []
+    text = f"Computer memory: {detection.system_memory_gb:.0f} GB"
     if available_memory_gb is not None:
         text += f", {available_memory_gb:.0f} GB free right now"
-    return text + "."
+    return [text]
 
 
 def _too_little_memory(detection: HardwareDetection) -> bool:
@@ -103,69 +103,70 @@ def _too_little_memory(detection: HardwareDetection) -> bool:
     return memory <= system_reserve_gb(memory)
 
 
+def detection_lines(
+    detection: HardwareDetection, *, available_memory_gb: float | None = None
+) -> list[str]:
+    """Return the lines of the status shown below the "My computer" choice.
+
+    A found graphics card gives the card, the computer's memory and what the suggestions follow,
+    one line each.  *available_memory_gb* is the main memory free right now, read when the lines
+    are drawn; it is left out when unknown, and it is never part of the detection itself.
+    """
+    if _too_little_memory(detection):
+        return [*_detection_summary(detection), TOO_LITTLE_MEMORY]
+    return [
+        *_detection_summary(detection),
+        *_other_cards_line(detection),
+        *_computer_memory_line(detection, available_memory_gb),
+        *_suggestion_line(detection),
+    ]
+
+
 def detection_status_text(
     detection: HardwareDetection, *, available_memory_gb: float | None = None
 ) -> str:
-    """Return the status line shown below the "My computer" choice.
-
-    *available_memory_gb* is the main memory free right now, read when the line is drawn; it is
-    left out when unknown, and it is never part of the detection itself.
-    """
-    if _too_little_memory(detection):
-        return f"{_detection_summary(detection)} {TOO_LITTLE_MEMORY}"
-    return (
-        _detection_summary(detection)
-        + _computer_memory_sentence(detection, available_memory_gb)
-        + _other_cards_sentence(detection)
-    )
+    """Return the status below the "My computer" choice as lines of text."""
+    return "\n".join(detection_lines(detection, available_memory_gb=available_memory_gb))
 
 
-def _tier_sentence(profile: str, memory_gb: float) -> str:
-    """Return ", so models for … are suggested" unless the finding already says the tier.
-
-    A 4 GB card gives the profile of a basic computer, and a 12 GB card the one of an 8 GB
-    card: in both cases the figure alone does not say what the suggestions follow.
-    """
-    assumed = _TIER_MEMORY_GB.get(profile)
-    if assumed is not None and round(memory_gb) == assumed:
-        return ""
-    phrase = _TIER_PHRASE.get(profile)
-    return f", so models for {phrase} are suggested" if phrase else ""
+def _suggestion_line(detection: HardwareDetection) -> list[str]:
+    """Return what the suggestions follow, for a graphics card that was found."""
+    if detection.reason is not DetectionReason.GPU_DETECTED or detection.memory_gb is None:
+        return []
+    phrase = _TIER_PHRASE.get(detection.profile)
+    return [f"Models are suggested for {phrase}."] if phrase else []
 
 
-def _other_cards_sentence(detection: HardwareDetection) -> str:
-    """Return `` (also found: …)`` when more than one graphics card was found."""
+def _other_cards_line(detection: HardwareDetection) -> list[str]:
+    """Return ``Also found: …`` when more than one graphics card was found."""
     if not detection.other_gpu_names:
-        return ""
-    return f" (also found: {', '.join(detection.other_gpu_names)})"
+        return []
+    return [f"Also found: {', '.join(detection.other_gpu_names)}"]
 
 
-def _detection_summary(detection: HardwareDetection) -> str:
+def _detection_summary(detection: HardwareDetection) -> list[str]:
     memory = detection.memory_gb
     if detection.reason is DetectionReason.GPU_DETECTED and memory is not None:
-        return (
-            f"Found: {detection.gpu_name} with {memory:.0f} GB graphics memory"
-            f"{_tier_sentence(detection.profile, memory)}."
-        )
+        return [f"Graphics card: {detection.gpu_name} with {memory:.0f} GB graphics memory"]
     if detection.reason is DetectionReason.APPLE_UNIFIED_MEMORY and memory is not None:
-        return f"Found: Apple computer with {memory:.0f} GB shared memory."
+        return [f"Apple computer with {memory:.0f} GB shared memory"]
     if detection.reason is DetectionReason.NO_GPU_FOUND:
-        return (
+        return [
             "No graphics card found. Smaller models are suggested — they are slower but "
             "work everywhere. If you do have a graphics card, choose it in the list."
-        )
+        ]
     if detection.reason is DetectionReason.GPU_MEMORY_UNKNOWN:
-        return (
-            f"Found: {detection.gpu_name}. Its memory size could not be read, "
+        return [
+            f"Graphics card: {detection.gpu_name}. Its memory size could not be read, "
             "so suggestions assume about 8 GB."
-        )
+        ]
     if detection.reason is DetectionReason.REMOTE_SERVER:
-        return (
+        return [
             f"Ollama runs on another computer ({detection.host}). Suggestions assume "
             "a graphics card with about 8 GB. If you know what that computer has, "
             "choose it in the list."
-        )
-    return "Chosen by you."
+        ]
+    return ["Chosen by you."]
 
 
 # ── suitability ───────────────────────────────────────────────────────────────

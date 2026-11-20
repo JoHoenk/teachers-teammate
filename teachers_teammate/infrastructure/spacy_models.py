@@ -16,6 +16,9 @@ they fall back to the multilingual model like any other language without one.
 
 from __future__ import annotations
 
+import importlib
+import importlib.util
+
 #: Language name (lower case) to the spaCy model that recognises people's names in it.
 SPACY_MODELS: dict[str, str] = {
     "english": "en_core_web_sm",
@@ -59,15 +62,24 @@ def spacy_model_url(model: str) -> str:
     return f"{SPACY_MODEL_DOWNLOAD_URL}/{model}-{version}/{filename}"
 
 
-def installed_spacy_models() -> list[str]:
-    """Return the sorted names of the installed spaCy model packages.
-
-    Empty when spaCy (or its model registry) is unavailable, so callers can treat a missing
-    privacy add-on the same as a missing model.
-    """
+def _importable(module: str) -> bool:
+    """Return whether *module* can be found, without importing it."""
     try:
-        import spacy.util  # noqa: PLC0415
+        return importlib.util.find_spec(module) is not None
+    except ImportError, ValueError:  # a broken or half-removed package
+        return False
 
-        return sorted(spacy.util.get_installed_models())
-    except Exception:  # noqa: BLE001  # spaCy may be absent or its model registry may fail
+
+def installed_spacy_models() -> list[str]:
+    """Return the sorted names of the spaCy models of this file that are installed.
+
+    Asked of Python's import system, which re-reads a folder that changed (and everything after
+    ``importlib.invalidate_caches()``, which the add-on code calls after an install).  spaCy's own
+    list (``spacy.util.get_installed_models``) is no use: it comes from a snapshot taken when spaCy
+    is first imported, so a model downloaded while the app runs would not be in it.  Nothing is
+    imported.  Empty when spaCy is not installed, so callers can treat a missing privacy add-on
+    the same as a missing model.
+    """
+    if not _importable("spacy"):
         return []
+    return sorted(model for model in SPACY_MODEL_PINS if _importable(model))

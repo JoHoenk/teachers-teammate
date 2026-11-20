@@ -1205,6 +1205,45 @@ def test_main_window_on_file_started_updates_progress(main_window) -> None:
 
 
 @pytest.mark.gui
+def test_the_bar_and_the_time_left_follow_the_clock(main_window, monkeypatch) -> None:
+    """
+    Given  a run of one file whose time is estimated at 100 seconds, started at second 1000
+    When   the clock reaches second 1050 and the timer ticks
+    Then   the bar stands at half of its way and the time left reads about 50 s; a second later
+           both have moved on
+    """
+    from teachers_teammate.domain.performance_estimate import TimeRange  # noqa: PLC0415
+    from teachers_teammate.gui._run_status import RunPace  # noqa: PLC0415
+
+    clock = {"now": 1000.0}
+    monkeypatch.setattr(main_window_module.time, "monotonic", lambda: clock["now"])
+    monkeypatch.setattr(main_window, "_run_in_progress", lambda: True)
+    main_window._pace = RunPace(TimeRange(100.0, 100.0))
+    main_window._pace.set_files(1)
+    main_window._pace.set_pages(1)
+    main_window._results_table.set_queue(["a.png"])
+    main_window._progress.setRange(0, 2)
+
+    main_window._on_file_started("a.png", "a.png", 1, 1)
+    clock["now"] = 1050.0
+    main_window._refresh_progress()
+
+    assert main_window._progress.maximum() == main_window_module.PROGRESS_RESOLUTION
+    assert main_window._progress.value() == 500
+    assert "about 50 s left" in main_window._progress.format()
+
+    clock["now"] = 1051.0
+    main_window._refresh_progress()
+
+    assert main_window._progress.value() == 510
+    assert "about 49 s left" in main_window._progress.format()
+
+    # An event of the run does not push the bar back to a step count.
+    main_window._on_ocr_done("a.png", "a.png", 1, 1)
+    assert main_window._progress.value() == 510
+
+
+@pytest.mark.gui
 def test_main_window_on_ocr_done_updates_progress_in_two_step(main_window) -> None:
     """
     Given  a MainWindow with steps_per_file=2

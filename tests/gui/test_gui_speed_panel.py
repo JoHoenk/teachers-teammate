@@ -311,7 +311,7 @@ def test_the_class_set_asks_for_a_test_while_a_step_is_unmeasured(qtbot) -> None
 @pytest.mark.gui
 def test_the_panel_shows_the_class_set_and_when_it_was_measured(qtbot) -> None:
     """
-    Given  a measurement taken on mains power
+    Given  a measurement taken while plugged in
     When   the panel is drawn
     Then   the example class set and the date line are shown
     """
@@ -319,7 +319,28 @@ def test_the_panel_shows_the_class_set_and_when_it_was_measured(qtbot) -> None:
 
     assert panel._class_set.text() == "30 two-page essays: about 1 h 30 min - 3 h"
     assert not panel._class_set.isHidden()
-    assert panel._date.text() == "Measured 2026-11-13, on mains power."
+    assert panel._date.text() == "Measured 2026-11-13, plugged in."
+
+
+@pytest.mark.gui
+@pytest.mark.parametrize(
+    ("on_battery", "expected"),
+    [
+        (True, "Measured 2026-11-13, on battery, so slower than usual."),
+        (None, "Measured 2026-11-13."),
+    ],
+)
+def test_the_date_line_names_the_power_only_when_it_was_read(
+    qtbot, on_battery: bool | None, expected: str
+) -> None:
+    """
+    Given  a measurement taken on battery, or on a computer whose power could not be read
+    When   the panel is drawn
+    Then   the date line says "on battery", or says nothing about the power
+    """
+    panel = _panel(qtbot, _FakeService(_summary(on_battery=on_battery), _choices()))
+
+    assert panel._date.text() == expected
 
 
 @pytest.mark.gui

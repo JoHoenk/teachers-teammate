@@ -4170,6 +4170,39 @@ def test_installed_models_are_listed_once_until_forgotten() -> None:
         assert listing.call_count == 2
 
 
+def test_a_spacy_model_downloaded_while_the_app_runs_is_found_at_once(tmp_path: Path) -> None:
+    """
+    Given  an app that is running with spaCy in its add-on folder and no German model, so name
+           detection is reported as not downloaded
+    When   the model arrives in that folder and the add-on folder is injected again (what the
+           install round does after a download)
+    Then   name detection is available and the requirement check no longer asks for the model,
+           without a restart
+    """
+    packages = tmp_path / "packages"
+    (packages / "spacy").mkdir(parents=True)
+    svc = _make_svc()
+    original = sys.path.copy()
+    try:
+        with patch(
+            "teachers_teammate.infrastructure.addon_manager.get_packages_dir",
+            return_value=packages,
+        ):
+            svc.inject_addon_packages_dir()
+            assert not svc.anonymizer_available("German")
+            assert [issue.kind for issue in svc._name_detection_issues("German")] == [
+                IssueKind.NAME_DETECTION_MISSING
+            ]
+
+            (packages / "de_core_news_sm").mkdir()
+            svc.inject_addon_packages_dir()
+
+            assert svc.anonymizer_available("German")
+            assert svc._name_detection_issues("German") == []
+    finally:
+        sys.path[:] = original
+
+
 @pytest.mark.parametrize(
     ("info", "key_set", "missing"),
     [

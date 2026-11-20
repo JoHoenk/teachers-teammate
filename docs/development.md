@@ -1715,7 +1715,8 @@ the wizard and Settings inside the screen.  The wizard sets `ModernStyle` again 
 swaps in its Aero look (a back arrow in the title area).  A found Ollama server is a `ServerCard`
 (`gui/_server_card.py`) on the Ollama page, in Settings and in the search dialog.  The proofreading
 page's model list comes from `plan_with_model_choices()` with the suggestion; an empty
-`SetupAnswers.local_model` means *use the recommended one*.
+`SetupAnswers.local_model` means *use the recommended one*.  `SetupAnswers.extra_names_model`
+(the Privacy page's extra language) becomes `anonymizer_secondary_model` and joins the downloads.
 
 **The plan is a pure function** (`application/setup_plan.py`).  `SetupAnswers` is what the pages
 collected, `SetupFacts` is what `ProcessingApplicationService.setup_facts()` measured (profile,

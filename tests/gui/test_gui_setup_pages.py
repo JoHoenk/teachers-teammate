@@ -470,7 +470,9 @@ def test_the_privacy_page_names_the_service_and_what_name_detection_needs(qtbot)
     page = _page(assistant, SetupPageId.PRIVACY)
     page.initializePage()
     assert "OpenAI (ChatGPT)" in page._sent.text()
-    assert page._detection.text() == PRIVACY_NEEDS_DETECTION.format(language="English")
+    assert page._detection.text() == PRIVACY_NEEDS_DETECTION.format(
+        language="English", model="en_core_web_sm"
+    )
 
 
 def test_the_privacy_page_says_when_name_detection_is_installed(qtbot) -> None:
@@ -483,7 +485,79 @@ def test_the_privacy_page_says_when_name_detection_is_installed(qtbot) -> None:
     _choose_online(assistant)
     page = _page(assistant, SetupPageId.PRIVACY)
     page.initializePage()
-    assert page._detection.text() == PRIVACY_HAS_DETECTION.format(language="English")
+    assert page._detection.text() == PRIVACY_HAS_DETECTION.format(
+        language="English", model="en_core_web_sm"
+    )
+
+
+def test_the_privacy_page_offers_an_extra_language_for_the_names(qtbot) -> None:
+    """
+    Given  proofreading at an online service, English texts and a computer set to German
+    When   the privacy page is shown and the teacher ticks the extra language
+    Then   the list holds every model but the English one with German chosen, an installed one is
+           marked, and the answers carry the German model; unticked they carry none
+    """
+    service = SetupAppService()
+    service.system_model = "de_core_news_sm"
+    service.installed_spacy = ("fr_core_news_sm",)
+    assistant = _assistant(qtbot, _context(service, correction_provider="openai"))
+    _choose_online(assistant)
+    page = _page(assistant, SetupPageId.PRIVACY)
+    page.initializePage()
+
+    models = [page._extra_model.itemData(i) for i in range(page._extra_model.count())]
+    assert "en_core_web_sm" not in models
+    assert "xx_ent_wiki_sm" in models
+    assert page._extra_model.currentData() == "de_core_news_sm"
+    assert "installed" in page._extra_model.itemText(models.index("fr_core_news_sm"))
+    assert page.extra_names_model() == ""
+    assert not page._extra_model.isEnabled()
+
+    page._extra.setChecked(True)
+
+    assert page._extra_model.isEnabled()
+    assert page.extra_names_model() == "de_core_news_sm"
+    assert assistant.answers().extra_names_model == "de_core_news_sm"
+
+
+def test_the_privacy_page_offers_the_extra_language_only_while_names_are_looked_for(
+    qtbot,
+) -> None:
+    """
+    Given  proofreading at an online service
+    When   the teacher unticks "Remove personal info"
+    Then   the extra language goes, and a ticked one does not count
+    """
+    assistant = _assistant(qtbot, _context(SetupAppService(), correction_provider="openai"))
+    _choose_online(assistant)
+    page = _page(assistant, SetupPageId.PRIVACY)
+    page.initializePage()
+    page._extra.setChecked(True)
+    assert page._extra_holder.isVisibleTo(page)
+
+    page._remove.setChecked(False)
+
+    assert not page._extra_holder.isVisibleTo(page)
+    assert page.extra_names_model() == ""
+
+
+def test_the_privacy_page_says_a_language_without_a_model_gets_the_multilingual_one(qtbot) -> None:
+    """
+    Given  Spanish texts, for which there is no model of its own
+    When   the privacy page is shown
+    Then   it says the multilingual detection is used, and the extra list does not offer it again
+    """
+    service = SetupAppService()
+    assistant = _assistant(
+        qtbot, _context(service, correction_provider="openai", language="Spanish")
+    )
+    _choose_online(assistant)
+    page = _page(assistant, SetupPageId.PRIVACY)
+    page.initializePage()
+
+    assert "multilingual" in page._detection.text()
+    models = [page._extra_model.itemData(i) for i in range(page._extra_model.count())]
+    assert "xx_ent_wiki_sm" not in models
 
 
 def test_the_privacy_page_uses_the_shared_step_name(qtbot) -> None:

@@ -15,7 +15,7 @@ Two rules shape it:
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any
@@ -111,6 +111,9 @@ class SetupAnswers:
     #: The Privacy page's second answer: show the texts in this app with placeholders for the
     #: names (display only, nothing to do with what is sent).
     hide_names: bool = False
+    #: The spaCy model of an extra language to find names in, besides the document language's;
+    #: ``""`` for none.  Becomes the saved extra detection model and is downloaded when missing.
+    extra_names_model: str = ""
 
     @property
     def privacy_case(self) -> PrivacyCase:
@@ -143,6 +146,8 @@ class SetupFacts:
     spacy_model: str
     #: pip name of the online provider's package, or ``""`` when nothing is missing.
     missing_package: str
+    #: The spaCy models that are downloaded (for the extra language's model).
+    installed_spacy_models: frozenset[str] = frozenset()
     #: The built-in reader's model files are downloaded.
     reader_installed: bool = False
     #: The page models (turn and flatten) of the automatic image preparation are downloaded.
@@ -234,6 +239,8 @@ class PlannedDownload:
     size_gb: float | None = None
     #: ``False`` when Ollama is not running, so its models cannot be pulled now.
     possible: bool = True
+    #: A name-detection model of an extra language, not the one of the document language.
+    extra: bool = False
 
 
 @dataclass(frozen=True)
@@ -426,15 +433,17 @@ def _review_plan(
 
 def _names_plan(
     answers: SetupAnswers, facts: SetupFacts
-) -> tuple[dict[str, Any], list[PlannedStep], bool]:
-    """Return the panel keys, the names row and whether name detection is wanted.
+) -> tuple[dict[str, Any], dict[str, Any], list[PlannedStep], bool]:
+    """Return the settings, the panel keys, the names rows and whether name detection is wanted.
 
     Name detection is wanted for the removal before text is sent online, and for hiding the
-    names in this app's texts; only the removal changes what a run sends.
+    names in this app's texts; only the removal changes what a run sends.  An extra language
+    becomes the extra detection model (its download is listed with the others); without one the
+    saved choice is left alone.
     """
     removal = answers.privacy_case is not PrivacyCase.THIS_COMPUTER and answers.remove_names
     if not (removal or answers.hide_names):
-        return {}, [], False
+        return {}, {}, [], False
     panel = {"anonymization_enabled": True} if removal and not facts.removal_on else {}
     row = PlannedStep(
         stage=STAGE_ANONYMIZATION,
@@ -443,13 +452,22 @@ def _names_plan(
         installed=facts.name_detection,
         view_only=not removal,
     )
-    return panel, [row], True
+    extra = extra_names_model(answers, facts)
+    settings = {"anonymizer_secondary_model": extra} if extra else {}
+    return settings, panel, [row], True
+
+
+def extra_names_model(answers: SetupAnswers, facts: SetupFacts) -> str:
+    """Return the extra language's model, or ``""`` when none was chosen or it is the main one."""
+    extra = answers.extra_names_model.strip()
+    return "" if extra == facts.spacy_model else extra
 
 
 def _downloads_plan(
     facts: SetupFacts,
     *,
     names_wanted: bool,
+    extra_models: Sequence[str] = (),
     reading_tag: str,
     reader_needed: bool,
     page_models_needed: bool,
@@ -466,16 +484,27 @@ def _downloads_plan(
                 kind=DownloadKind.PACKAGE, name=facts.missing_package, stage=STAGE_CORRECTION
             )
         )
-    if names_wanted and not facts.name_detection:
-        if not facts.spacy_installed:
-            downloads.append(
-                PlannedDownload(kind=DownloadKind.PACKAGE, name="spacy", stage=STAGE_ANONYMIZATION)
-            )
+    wanted_models = [facts.spacy_model, *extra_models] if names_wanted else []
+    missing_models = [
+        model
+        for model in wanted_models
+        if (
+            not facts.name_detection
+            if model == facts.spacy_model
+            else model not in facts.installed_spacy_models
+        )
+    ]
+    if missing_models and not facts.spacy_installed:
+        downloads.append(
+            PlannedDownload(kind=DownloadKind.PACKAGE, name="spacy", stage=STAGE_ANONYMIZATION)
+        )
+    for model in missing_models:
         downloads.append(
             PlannedDownload(
                 kind=DownloadKind.SPACY_MODEL,
-                name=facts.spacy_model,
+                name=model,
                 stage=STAGE_ANONYMIZATION,
+                extra=model != facts.spacy_model,
             )
         )
     if reader_needed and not facts.reader_installed:
@@ -560,13 +589,15 @@ def build_setup_plan(
     settings.update(review_settings)
     steps += review_rows
 
-    names_panel, names_rows, names_wanted = _names_plan(answers, facts)
+    names_settings, names_panel, names_rows, names_wanted = _names_plan(answers, facts)
+    settings.update(names_settings)
     panel.update(names_panel)
     steps += names_rows
 
     downloads = _downloads_plan(
         facts,
         names_wanted=names_wanted,
+        extra_models=[names_settings["anonymizer_secondary_model"]] if names_settings else [],
         reading_tag=reading_tag,
         reader_needed=(
             answers.hand_in is HandIn.HANDWRITTEN and _reading_engine(current) == ENGINE_PPOCR

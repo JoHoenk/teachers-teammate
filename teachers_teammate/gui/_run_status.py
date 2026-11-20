@@ -21,6 +21,9 @@ from ._user_text import format_duration
 #: and a first file that met a cold model would otherwise promise a time the run cannot keep.
 BLEND_FILES = 3
 
+#: The share of its expected time a running file counts for before it is over.
+_FILE_CAP = 0.95
+
 #: The note the progress bar carries while a run is going.
 TIME_LEFT = "about {left} left"
 #: The tooltip behind that note: the range the figure comes from.
@@ -105,6 +108,8 @@ class RunPace:
     _done_pages: list[int] = field(default_factory=list)
     _files_total: int = 0
     _pages_total: int = 0
+    _file_started_at: float | None = None
+    _file_pages: int = 1
 
     def set_files(self, files: int) -> None:
         """Say how many files the run has."""
@@ -114,10 +119,16 @@ class RunPace:
         """Say how many pages all the files of the run have, when that is known."""
         self._pages_total = max(0, pages)
 
+    def file_started(self, now: float, pages: int = 1) -> None:
+        """Say that a file of *pages* pages began at *now* (a monotonic clock reading)."""
+        self._file_started_at = now
+        self._file_pages = max(1, pages)
+
     def file_done(self, seconds: float, pages: int) -> None:
         """Record one finished file: the *seconds* it took and the *pages* it had."""
         self._done_s.append(max(0.0, seconds))
         self._done_pages.append(max(1, pages))
+        self._file_started_at = None
 
     def pages_left(self) -> int:
         """Return how many pages the files that are not done yet have.
@@ -139,17 +150,59 @@ class RunPace:
             return None
         return sum(self._done_s) / pages
 
-    def time_left(self) -> TimeRange | None:
-        """Return how long the rest of the run is expected to take, or ``None``."""
-        pages = self.pages_left()
-        if pages <= 0:
-            return None
+    def per_page(self) -> TimeRange | None:
+        """Return the seconds one page is expected to take, or ``None`` when nothing is known."""
         own = self.own_per_page()
         if own is None:
-            return None if self.estimate is None else self.estimate.scaled(pages)
+            return self.estimate
         if self.estimate is None:
-            return TimeRange(own * pages, own * pages)
+            return TimeRange(own, own)
         weight = min(1.0, len(self._done_s) / BLEND_FILES)
-        low = weight * own + (1 - weight) * self.estimate.low_s
-        high = weight * own + (1 - weight) * self.estimate.high_s
-        return TimeRange(low * pages, high * pages)
+        return TimeRange(
+            weight * own + (1 - weight) * self.estimate.low_s,
+            weight * own + (1 - weight) * self.estimate.high_s,
+        )
+
+    def _credit(self, now: float, per_page_s: float) -> float:
+        """Return the seconds of the running file that count as done at *now*.
+
+        The file's own time is held back at ``_FILE_CAP`` of what it is expected to take: a file
+        that runs long must not drive the figure to zero before it is over.
+        """
+        if self._file_started_at is None:
+            return 0.0
+        elapsed = max(0.0, now - self._file_started_at)
+        return min(elapsed, _FILE_CAP * self._file_pages * per_page_s)
+
+    def time_left(self, now: float | None = None) -> TimeRange | None:
+        """Return how long the rest of the run is expected to take, or ``None``.
+
+        With *now* the time the running file has already used is taken off, so the figure
+        counts down between two events of the run.
+        """
+        pages = self.pages_left()
+        per_page = self.per_page()
+        if pages <= 0 or per_page is None:
+            return None
+        left = per_page.scaled(pages)
+        if now is None:
+            return left
+        credit = self._credit(now, per_page.typical_s)
+        return TimeRange(max(0.0, left.low_s - credit), max(0.0, left.high_s - credit))
+
+    def progress(self, now: float) -> float | None:
+        """Return how much of the run is done at *now*, from 0 to 1, or ``None`` when unknown.
+
+        Time based: the seconds of the files done plus those of the running one, over those plus
+        what is expected for the rest.  ``None`` without an estimate or a page count, so the
+        window falls back to counting files.
+        """
+        per_page = self.per_page()
+        if per_page is None:
+            return None
+        pages = self.pages_left()
+        done_s = sum(self._done_s)
+        total = done_s + pages * per_page.typical_s
+        if total <= 0:
+            return None
+        return min(1.0, (done_s + self._credit(now, per_page.typical_s)) / total)

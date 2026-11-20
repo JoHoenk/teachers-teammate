@@ -60,6 +60,7 @@ from teachers_teammate.infrastructure.addon_manager import (
 # leave the clean-up to a normal start.
 _HELPER_MODES = (
     "--_smoke_test",
+    "--_addon_smoke_test",
     "--_forget_keys",
     "--_set_update_check",
     "--_spacy_download_mode",
@@ -80,6 +81,18 @@ if "--_smoke_test" in sys.argv:
     from teachers_teammate.frozen_modes import run_smoke_test
 
     raise SystemExit(run_smoke_test(_SmokePath(sys.argv[_idx + 1])))
+
+# ── add-on smoke test dispatch ───────────────────────────────────────────────
+# `--_addon_smoke_test <file>` installs every add-on into a temporary folder and uses it
+# (frozen_modes.run_addon_smoke_test); it needs the network, so it is a step of its own in CI.
+if "--_addon_smoke_test" in sys.argv:
+    _idx = sys.argv.index("--_addon_smoke_test")
+
+    from pathlib import Path as _SmokePath
+
+    from teachers_teammate.frozen_modes import run_addon_smoke_test
+
+    raise SystemExit(run_addon_smoke_test(_SmokePath(sys.argv[_idx + 1])))
 
 # ── forget-keys dispatch ─────────────────────────────────────────────────────
 # The uninstaller runs `--_forget_keys` before it removes the program files: the API

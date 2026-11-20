@@ -360,9 +360,13 @@ class CheckBody(QWidget):
         self._refresh()
 
     def set_view(self, view: ViewKind) -> None:
-        """Put one of the three texts in front."""
+        """Put one of the three texts in front, and the panel's tab that belongs to it."""
         self._view = view
         self._stack.setCurrentWidget(self._widget_of(view))
+        if view is ViewKind.READ:
+            self.panel.show_content()
+        else:
+            self.panel.show_corrections()
         self._refresh()
 
     def set_lock(self, reason: str | None) -> None:

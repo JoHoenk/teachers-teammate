@@ -1207,7 +1207,8 @@ def test_main_window_on_file_started_updates_progress(main_window) -> None:
 @pytest.mark.gui
 def test_the_bar_and_the_time_left_follow_the_clock(main_window, monkeypatch) -> None:
     """
-    Given  a run of one file whose time is estimated at 100 seconds, started at second 1000
+    Given  a run of one file whose time is estimated at 100 seconds, started at second 990 and
+           proofread from second 1000 (the model loaded until then)
     When   the clock reaches second 1050 and the timer ticks
     Then   the bar stands at half of its way and the time left reads about 50 s; a second later
            both have moved on
@@ -1224,7 +1225,10 @@ def test_the_bar_and_the_time_left_follow_the_clock(main_window, monkeypatch) ->
     main_window._results_table.set_queue(["a.png"])
     main_window._progress.setRange(0, 2)
 
+    clock["now"] = 990.0
     main_window._on_file_started("a.png", "a.png", 1, 1)
+    clock["now"] = 1000.0
+    main_window._on_stage_started("a.png", "a.png", "correction", 1, 1)
     clock["now"] = 1050.0
     main_window._refresh_progress()
 

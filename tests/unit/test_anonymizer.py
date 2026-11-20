@@ -570,6 +570,20 @@ def test_anonymizer_raises_import_error_when_spacy_missing() -> None:
             SpacyAnonymizer("English")
 
 
+def test_anonymizer_names_the_cause_when_installed_spacy_cannot_load(monkeypatch) -> None:
+    """
+    Given  spacy is found on the path but importing it fails (a module of a dependency is missing)
+    When   SpacyAnonymizer is instantiated
+    Then   the ImportError says spacy is installed and carries the original cause
+    """
+    import importlib.util  # noqa: PLC0415
+
+    monkeypatch.setattr(importlib.util, "find_spec", lambda name: object())
+    with patch.dict("sys.modules", {"spacy": None}):
+        with pytest.raises(ImportError, match="installed but cannot be loaded"):
+            SpacyAnonymizer("English")
+
+
 def test_anonymizer_raises_os_error_when_model_missing() -> None:
     """
     Given  spacy is installed but the primary model is not downloaded

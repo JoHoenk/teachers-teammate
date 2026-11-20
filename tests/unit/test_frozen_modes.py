@@ -425,3 +425,117 @@ def test_spec_drops_the_same_gpl_only_modules_as_the_smoke_test() -> None:
     )
 
     assert tuple(listed) == frozen_modes.GPL_ONLY_QT_MODULES
+
+
+# ── the add-on smoke test ────────────────────────────────────────────────────
+
+
+@pytest.fixture(name="frozen_addons")
+def _frozen_addons(monkeypatch) -> dict[str, list[str]]:
+    """A frozen app whose pip does nothing, with one add-on; returns what was installed."""
+    import sys  # noqa: PLC0415
+
+    from teachers_teammate.infrastructure import addon_manager  # noqa: PLC0415
+
+    installed: dict[str, list[str]] = {"addons": [], "models": []}
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "path", list(sys.path))
+    monkeypatch.setattr(addon_manager, "addon_requirements", lambda: {"privacy": ["spacy"]})
+    monkeypatch.setattr(addon_manager, "addon_module", lambda _addon: "json")
+    monkeypatch.setattr(
+        addon_manager,
+        "install_addon_subprocess",
+        lambda addon, _target, _log, **_kw: installed["addons"].append(addon),
+    )
+    monkeypatch.setattr(
+        addon_manager,
+        "download_spacy_model_subprocess",
+        lambda model, _target, _log: installed["models"].append(model),
+    )
+    monkeypatch.setattr(frozen_modes, "_check_name_detection", lambda: None)
+    return installed
+
+
+def test_addon_smoke_test_refuses_to_install_from_source(tmp_path: Path) -> None:
+    """
+    Given  a source run
+    When   the add-on smoke test runs
+    Then   it installs nothing and fails, saying only the installed app installs add-ons
+    """
+    out = tmp_path / "addons.json"
+
+    exit_code = frozen_modes.run_addon_smoke_test(out)
+
+    assert exit_code == 1
+    result = json.loads(out.read_text(encoding="utf-8"))
+    assert result["failed"] == ["add-ons are installed only by the installed app"]
+
+
+def test_addon_smoke_test_installs_every_addon_and_the_model(
+    tmp_path: Path, frozen_addons: dict[str, list[str]]
+) -> None:
+    """
+    Given  a frozen app whose add-ons install and import
+    When   the add-on smoke test runs
+    Then   it installs every add-on and the English spaCy model and passes
+    """
+    out = tmp_path / "addons.json"
+
+    exit_code = frozen_modes.run_addon_smoke_test(out)
+
+    assert exit_code == 0
+    assert json.loads(out.read_text(encoding="utf-8")) == {"ok": True, "failed": []}
+    assert frozen_addons == {"addons": ["privacy"], "models": ["en_core_web_sm"]}
+
+
+def test_addon_smoke_test_names_an_addon_that_installs_but_does_not_import(
+    tmp_path: Path, frozen_addons: dict[str, list[str]], monkeypatch
+) -> None:
+    """
+    Given  an add-on that installs but whose module fails to import (a bundled package is partial)
+    When   the add-on smoke test runs
+    Then   it fails and names the module and the error
+    """
+    from teachers_teammate.infrastructure import addon_manager  # noqa: PLC0415
+
+    monkeypatch.setattr(addon_manager, "addon_module", lambda _addon: "teachers_teammate.nope")
+    out = tmp_path / "addons.json"
+
+    exit_code = frozen_modes.run_addon_smoke_test(out)
+
+    assert exit_code == 1
+    result = json.loads(out.read_text(encoding="utf-8"))
+    assert result["failed"] == [
+        "import teachers_teammate.nope: ModuleNotFoundError: No module named 'teachers_teammate.nope'"
+    ]
+    assert "pip" in result
+
+
+def test_addon_smoke_test_names_a_failed_install_and_a_failed_name_detection(
+    tmp_path: Path, frozen_addons: dict[str, list[str]], monkeypatch
+) -> None:
+    """
+    Given  an install that fails offline and name detection that raises
+    When   the add-on smoke test runs
+    Then   both failures are listed
+    """
+    from teachers_teammate.infrastructure import addon_manager  # noqa: PLC0415
+
+    def offline(*_args: object, **_kwargs: object) -> None:
+        raise addon_manager.AddonInstallError(addon_manager.InstallFailure.OFFLINE)
+
+    def no_spacy() -> None:
+        raise ImportError("spacy is installed but cannot be loaded: packaging.requirements")
+
+    monkeypatch.setattr(addon_manager, "install_addon_subprocess", offline)
+    monkeypatch.setattr(frozen_modes, "_check_name_detection", no_spacy)
+    out = tmp_path / "addons.json"
+
+    exit_code = frozen_modes.run_addon_smoke_test(out)
+
+    assert exit_code == 1
+    assert json.loads(out.read_text(encoding="utf-8"))["failed"] == [
+        "install privacy: offline",
+        "name detection: ImportError: spacy is installed but cannot be loaded: "
+        "packaging.requirements",
+    ]

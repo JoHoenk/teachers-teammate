@@ -149,6 +149,34 @@ jobs:
         shell: bash
         run: ./dist/teachers-teammate.app/Contents/MacOS/teachers-teammate --_smoke_test smoke.json
 
+      # Installs every add-on from PyPI through the app's own pip and merge, then imports it and
+      # hides a name with spaCy.  The merge keeps the bundle's copy of a shared package
+      # (packaging, pydantic, ...); this is where a bundle that carries only part of one fails.
+      - name: Install and use the add-ons in the binary (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          QT_QPA_PLATFORM=offscreen ./dist/teachers-teammate/teachers-teammate \
+            --_addon_smoke_test addon_smoke.json || { cat addon_smoke.json; exit 1; }
+
+      - name: Install and use the add-ons in the binary (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $process = Start-Process -FilePath dist/teachers-teammate/teachers-teammate.exe `
+            -ArgumentList '--_addon_smoke_test', 'addon_smoke.json' -Wait -PassThru
+          if ($process.ExitCode -ne 0) {
+            Get-Content addon_smoke.json
+            throw "the add-on smoke test exited with $($process.ExitCode)"
+          }
+
+      - name: Install and use the add-ons in the app (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          ./dist/teachers-teammate.app/Contents/MacOS/teachers-teammate \
+            --_addon_smoke_test addon_smoke.json || { cat addon_smoke.json; exit 1; }
+
       # PyInstaller bundles the libraries of the machine it builds on, so a newer macOS runner
       # silently raises the floor. The check reads the minimum macOS of every Mach-O file in
       # the .app, every architecture slice of a universal2 one included.
@@ -194,6 +222,16 @@ jobs:
           name: ${{ inputs.artifact_prefix }}-${{ matrix.artifact }}-smoke
           retention-days: ${{ inputs.retention_days }}
           path: smoke.json
+          if-no-files-found: warn
+
+      - name: Upload the add-on smoke test result
+        if: ${{ always() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: ${{ inputs.artifact_prefix }}-${{ matrix.artifact }}-addon-smoke
+          retention-days: ${{ inputs.retention_days }}
+          path: addon_smoke.json
+          if-no-files-found: ignore
 
       - name: Check the Linux bundle
         if: runner.os == 'Linux'

@@ -12,6 +12,9 @@ lock. CI runs it on every build
 (see ``.github/workflows/build_artifacts.yml``) and the Windows installer test runs it again
 on the installed copy.
 
+``run_addon_smoke_test`` installs every add-on through the app's own pip and merge and uses it;
+it needs the network, so CI runs it as a step of its own.
+
 ``forget_keys`` is what the uninstaller calls before it removes the program files: the API
 keys sit in the system keychain, which no uninstaller can enumerate.
 """
@@ -580,6 +583,99 @@ def set_update_check(value: str, folder: str = "") -> int:
     except ConfigFileParseError, OSError:
         return 1
     return 0
+
+
+#: The add-on check hides a name in this sentence, with the model of this language.
+_ADDON_CHECK_LANGUAGE = "English"
+_ADDON_CHECK_TEXT = "Yesterday Anna Schmidt moved to Berlin."
+_ADDON_CHECK_NAME = "Schmidt"
+#: How many lines of pip's output the result file keeps when a check failed.
+_ADDON_LOG_TAIL = 200
+
+
+def _install_addons(target: Path, log: list[str]) -> list[str]:
+    """Install every add-on and the check language's spaCy model into *target*; return failures."""
+    from teachers_teammate.infrastructure import addon_manager  # noqa: PLC0415
+    from teachers_teammate.infrastructure.spacy_models import spacy_model_for  # noqa: PLC0415
+
+    problems: list[str] = []
+    for addon in addon_manager.addon_requirements():
+        try:
+            addon_manager.install_addon_subprocess(addon, target, log.append)
+        except (OSError, RuntimeError) as exc:
+            problems.append(f"install {addon}: {exc}")
+    model = spacy_model_for(_ADDON_CHECK_LANGUAGE)
+    try:
+        addon_manager.download_spacy_model_subprocess(model, target, log.append)
+    except (OSError, RuntimeError) as exc:
+        problems.append(f"download {model}: {exc}")
+    return problems
+
+
+def _use_addons(target: Path) -> None:
+    """Put *target* first on the import path, as ``inject_packages_dir`` does at a start."""
+    sys.path.insert(0, str(target))
+    if sys.platform == "win32" and target.is_dir():
+        os.add_dll_directory(str(target))
+    importlib.invalidate_caches()
+
+
+def _check_addon_imports() -> list[str]:
+    """Import the module of every add-on; name the ones that fail."""
+    from teachers_teammate.infrastructure import addon_manager  # noqa: PLC0415
+
+    problems: list[str] = []
+    for addon in addon_manager.addon_requirements():
+        module = addon_manager.addon_module(addon)
+        try:
+            importlib.import_module(module)
+        except Exception as exc:  # noqa: BLE001 — any failure is what this check looks for
+            problems.append(f"import {module}: {type(exc).__name__}: {exc}")
+    return problems
+
+
+def _check_name_detection() -> str | None:
+    """Hide a name with spaCy the way a run does."""
+    from teachers_teammate.infrastructure.anonymizer import SpacyAnonymizer  # noqa: PLC0415
+
+    anonymized, _mapping = SpacyAnonymizer(_ADDON_CHECK_LANGUAGE).anonymize(_ADDON_CHECK_TEXT)
+    if _ADDON_CHECK_NAME in anonymized:
+        return f"the name was not hidden: {anonymized!r}"
+    return None
+
+
+def run_addon_smoke_test(out_path: Path) -> int:
+    """Install every add-on as the Add-ons page does, use it, write the JSON result; 0 if all pass.
+
+    The add-ons go into a temporary folder through the app's own pip and merge, so a package the
+    bundle promises (``addon_constraints.txt``) but carries only in part shows up here.  Needs the
+    network; CI runs it on every build.  Only the installed app: from source, pip would install
+    into the active environment.
+    """
+    failed: list[str] = []
+    log: list[str] = []
+    if not getattr(sys, "frozen", False):
+        failed.append("add-ons are installed only by the installed app")
+    else:
+        with tempfile.TemporaryDirectory(
+            prefix="teachers-teammate-addons-", ignore_cleanup_errors=True
+        ) as folder:
+            target = Path(folder) / "packages"
+            failed += _install_addons(target, log)
+            _use_addons(target)
+            failed += _check_addon_imports()
+            try:
+                problem = _check_name_detection()
+            except Exception as exc:  # noqa: BLE001 — a check that raises is a failed check
+                problem = f"{type(exc).__name__}: {exc}"
+            if problem:
+                failed.append(f"name detection: {problem}")
+    result: dict[str, object] = {"ok": not failed, "failed": failed}
+    if failed:
+        result["pip"] = [line.rstrip() for line in log[-_ADDON_LOG_TAIL:]]
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
+    return 0 if not failed else 1
 
 
 def run_smoke_test(out_path: Path) -> int:

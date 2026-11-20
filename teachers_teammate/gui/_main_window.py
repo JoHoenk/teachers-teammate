@@ -74,7 +74,11 @@ from ..domain.model_catalog import HardwareDetection, short_model_name
 from ..domain.ollama_discovery import DiscoveredServer, DiscoveryScope, ServerKind
 from ..domain.performance_estimate import TimeRange
 from ..domain.run_summary import RunSummary
-from ..domain.stages import PROGRESS_STAGE_OCR, PROGRESS_STAGE_PREPROCESSING
+from ..domain.stages import (
+    PROGRESS_STAGE_CORRECTION,
+    PROGRESS_STAGE_OCR,
+    PROGRESS_STAGE_PREPROCESSING,
+)
 from ..infrastructure.diagnostics import phase as diagnostics_phase
 from ..infrastructure.diagnostics import start_if_requested as start_diagnostics_if_requested
 from ..infrastructure.ollama_install import OLLAMA_DOWNLOAD_URL
@@ -2132,7 +2136,7 @@ class MainWindow(QMainWindow):
 
     def _on_file_started(self, source_id: str, name: str, idx: int, total: int) -> None:
         self._set_steps_done((idx - 1) * self._steps_per_file)
-        self._pace.file_started(time.monotonic(), self._run_pages.get(source_id, 1))
+        self._pace.file_started(self._run_pages.get(source_id, 1))
         self._set_progress_text(f"[{idx}/{total}] {name} — starting…")
         self._results_table.mark_processing(source_id)
         self._run_current = source_id
@@ -2142,19 +2146,22 @@ class MainWindow(QMainWindow):
         # a format that no longer matches them would save an edit in the wrong notation.
 
     _STAGE_PROGRESS_LABEL: ClassVar[dict[str, str]] = {
-        PROGRESS_STAGE_PREPROCESSING: "preprocessing…",
-        PROGRESS_STAGE_OCR: "OCR…",
+        PROGRESS_STAGE_PREPROCESSING: check_text.PROGRESS_PREPROCESSING,
+        PROGRESS_STAGE_OCR: check_text.PROGRESS_OCR,
+        PROGRESS_STAGE_CORRECTION: check_text.PROGRESS_CORRECTING,
     }
 
     #: What the Check tab's run strip says while a step of the run's file is on.
     _RUN_STEP_TEXT: ClassVar[dict[str, str]] = {
         PROGRESS_STAGE_PREPROCESSING: check_text.RUN_PREPARING,
         PROGRESS_STAGE_OCR: check_text.RUN_READING,
+        PROGRESS_STAGE_CORRECTION: "",  # empty: the strip names the proofreading model
     }
 
     def _on_stage_started(
         self, _source_id: str, name: str, stage: str, idx: int, total: int
     ) -> None:
+        self._pace.work_started(time.monotonic())
         label = self._STAGE_PROGRESS_LABEL.get(stage)
         if label is not None:
             self._set_progress_text(f"[{idx}/{total}] {name} — {label}")
@@ -2508,7 +2515,7 @@ class MainWindow(QMainWindow):
         self._refresh_check_run()
         if self._steps_per_file > 1:
             self._set_steps_done((idx - 1) * 2 + 1)
-            self._set_progress_text(f"[{idx}/{total}] {name} — correcting…")
+            self._set_progress_text(f"[{idx}/{total}] {name} — {check_text.PROGRESS_CORRECTING}")
             self._results_table.mark_correcting(source_id)
 
         # Attach preview/raw artefacts as soon as OCR finishes so double-click preview

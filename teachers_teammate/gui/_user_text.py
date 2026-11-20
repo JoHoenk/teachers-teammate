@@ -811,7 +811,6 @@ TAKEN_OUT = "taken out"
 MINOR_GROUP_NOTE = "marked in the text"
 SHOW_NAMES_TO_CHANGE = "Show the names to change the text"
 COULD_NOT_MARK = "The corrections could not be marked in this text."
-CONTENT_REVIEW_HEADING = "Content review"
 NO_ITEMS = "Nothing to correct in this text."
 
 

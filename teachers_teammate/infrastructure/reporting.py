@@ -91,8 +91,8 @@ class ProgressCallbacks:
     """Structured per-file progress hooks for adapters (GUI); every hook is optional.
 
     ``on_file_started(source_id, name, idx, total)`` fires at the start of each file.
-    ``on_stage_started(source_id, stage)`` fires when a file enters the ``"preprocessing"``
-    or ``"ocr"`` stage (not when OCR is served from the cache).
+    ``on_stage_started(source_id, stage)`` fires when a file enters the ``"preprocessing"``,
+    ``"ocr"`` or ``"correction"`` stage (not when that stage is served from the cache).
     ``on_ocr_done(source_id, name)`` fires after OCR, before correction.
     ``on_file_done(result)`` fires with a :class:`FileDoneResult` after a file completes
     (success, failure or stop).

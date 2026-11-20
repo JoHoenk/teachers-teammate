@@ -9,6 +9,7 @@ import threading
 from typing import Any, ClassVar
 
 import pytest
+from PySide6.QtCore import Qt
 from PySide6.QtGui import QShortcut
 from PySide6.QtWidgets import QApplication, QWidget
 
@@ -56,6 +57,7 @@ from teachers_teammate.infrastructure.state_repository import (
 )
 from teachers_teammate.infrastructure.storage_root import resolve_artifact_dir
 from teachers_teammate.infrastructure.teacher_work_store import TeacherWorkStore
+from teachers_teammate.texts import check as check_text
 from teachers_teammate.texts import dialogs as dlg
 from teachers_teammate.texts._types import Answer, Notice, Question, StandardButton
 from tests.conftest import make_config
@@ -1897,6 +1899,182 @@ def test_a_run_start_locks_the_document_it_redoes_and_keeps_it_open(
     assert main_window._tabs.currentIndex() == 0
     assert main_window._run_pending == {a}
     assert main_window._check.body.banner.text == txt.WAITING_FOR_RUN
+
+
+@pytest.mark.gui
+def test_a_run_started_from_the_check_header_keeps_the_check_tab(
+    main_window, monkeypatch, stored
+) -> None:
+    """
+    Given  a document open in the Check tab, with the Check tab in front
+    When   the teacher presses Proofread this document and the run starts
+    Then   the Check tab stays in front, and the document is locked there
+    """
+    [a] = stored("a.png")
+    main_window._open_check(a)
+    main_window._tabs.setCurrentIndex(1)
+    monkeypatch.setattr(main_window, "_start_pace", lambda *_a, **_kw: None)
+    monkeypatch.setattr(main_window, "_save_settings", lambda **_kw: None)
+    monkeypatch.setattr(
+        main_window,
+        "_on_stage_run_requested",
+        lambda ids, _stage: main_window._start_worker(make_config(Path("/tmp")), ids),
+    )
+
+    main_window._on_check_proofread_requested()
+
+    assert main_window._tabs.currentIndex() == 1
+    assert main_window._run_pending == {a}
+
+
+@pytest.mark.gui
+def test_a_run_started_from_documents_goes_on_showing_documents_after_a_check_run(
+    main_window, monkeypatch, stored
+) -> None:
+    """
+    Given  a run that was started from the Check header and has begun
+    When   the next run is started from the queue while the Check tab is in front
+    Then   Documents comes to the front, because the Check request was used up by the first run
+    """
+    [a] = stored("a.png")
+    main_window._open_check(a)
+    monkeypatch.setattr(main_window, "_start_pace", lambda *_a, **_kw: None)
+    monkeypatch.setattr(main_window, "_save_settings", lambda **_kw: None)
+    main_window._run_from_check = True
+    main_window._start_worker(make_config(Path("/tmp")), [a])
+    main_window._tabs.setCurrentIndex(1)
+
+    main_window._start_worker(make_config(Path("/tmp")), [a])
+
+    assert main_window._tabs.currentIndex() == 0
+
+
+@pytest.mark.gui
+def test_a_proofread_request_from_check_during_a_run_is_refused_and_not_remembered(
+    main_window, monkeypatch, stored
+) -> None:
+    """
+    Given  a run that is in progress and a document open in Check
+    When   proofreading is asked for from the Check header
+    Then   the busy warning is shown, and the tab is not marked as the origin of a run, so the
+           next run started in Documents is not mistaken for one started in Check
+    """
+    [a] = stored("a.png")
+    main_window._open_check(a)
+    warned: list[bool] = []
+    monkeypatch.setattr(main_window, "_run_in_progress", lambda: True)
+    monkeypatch.setattr(main_window, "_warn_busy", lambda: warned.append(True))
+
+    main_window._on_check_proofread_requested()
+
+    assert warned == [True]
+    assert main_window._run_from_check is False
+
+
+@pytest.mark.gui
+def test_the_first_start_opens_maximized_and_a_saved_geometry_wins(
+    qtbot, main_window, monkeypatch
+) -> None:
+    """
+    Given  a window and a settings store, empty at first and then holding a normal geometry
+    When   the window restores its state
+    Then   it is maximized without a saved geometry, and not maximized with one
+    """
+    values: dict[str, object] = {}
+
+    class _Store:
+        def __init__(self, *_args: object) -> None:
+            pass
+
+        def value(self, key: str, default: object = None) -> object:
+            return values.get(key, default)
+
+    monkeypatch.setattr(main_window_module, "QSettings", _Store)
+    main_window.setWindowState(Qt.WindowState.WindowNoState)
+
+    main_window._restore_gui_state()
+    assert main_window.isMaximized()
+
+    main_window.setWindowState(Qt.WindowState.WindowNoState)
+    main_window.resize(900, 700)
+    values["gui/geometry"] = main_window.saveGeometry()
+    main_window._restore_gui_state()
+    assert not main_window.isMaximized()
+
+
+@pytest.mark.gui
+def test_the_check_tab_shows_the_run_while_the_open_document_is_in_it(
+    main_window, monkeypatch, stored
+) -> None:
+    """
+    Given  a document open in the Check tab, and a run over two documents that includes it
+    When   the run starts, reaches the open document, reads it and ends
+    Then   the run strip waits, then says what is done with the document, then is gone
+    """
+    a, b = stored("a.png", "b.png")
+    main_window._open_check(a)
+    monkeypatch.setattr(main_window, "_start_pace", lambda *_a, **_kw: None)
+    monkeypatch.setattr(main_window, "_save_settings", lambda **_kw: None)
+    strip = main_window._check._run_strip
+
+    config = dataclasses.replace(make_config(Path("/tmp")), correction_enabled=True)
+    main_window._start_worker(config, [b, a])
+    assert not strip.isHidden()
+    assert strip.text == check_text.RUN_WAITING
+
+    main_window._on_file_started(a, "a.png", 2, 2)
+    assert strip.text.startswith("Proofreading with ")
+
+    main_window._on_stage_started(a, "a.png", "ocr", 2, 2)
+    assert strip.text == check_text.RUN_READING
+
+    main_window._on_ocr_done(a, "a.png", 2, 2)
+    assert strip.text.startswith("Proofreading with ")
+
+    main_window._on_run_finished(RunSummary(succeeded=("a.png", "b.png")))
+    assert strip.isHidden()
+
+
+@pytest.mark.gui
+def test_a_run_that_leaves_the_open_document_alone_shows_no_run_in_check(
+    main_window, monkeypatch, stored
+) -> None:
+    """
+    Given  a document open in the Check tab
+    When   a run starts over another document
+    Then   the Check tab shows no run strip
+    """
+    a, b = stored("a.png", "b.png")
+    main_window._open_check(a)
+    monkeypatch.setattr(main_window, "_start_pace", lambda *_a, **_kw: None)
+    monkeypatch.setattr(main_window, "_save_settings", lambda **_kw: None)
+
+    main_window._start_worker(make_config(Path("/tmp")), [b])
+
+    assert main_window._check._run_strip.isHidden()
+
+
+@pytest.mark.gui
+def test_the_check_stop_button_stops_the_run_like_the_documents_tab(
+    main_window, monkeypatch, stored
+) -> None:
+    """
+    Given  a run in which the open document is being worked on
+    When   Stop is pressed in the Check tab
+    Then   the run stops after the file, as with the button in Documents, and the strip offers
+           Stop now
+    """
+    [a] = stored("a.png")
+    main_window._open_check(a)
+    monkeypatch.setattr(main_window, "_start_pace", lambda *_a, **_kw: None)
+    monkeypatch.setattr(main_window, "_save_settings", lambda **_kw: None)
+    main_window._start_worker(make_config(Path("/tmp")), [a])
+    main_window._on_file_started(a, "a.png", 1, 1)
+
+    main_window._check._run_strip.stop_button.click()
+
+    assert main_window._worker.stop_after_file_event.is_set()
+    assert main_window._check._run_strip.stop_button.text() == "Stop now"
 
 
 @pytest.mark.gui

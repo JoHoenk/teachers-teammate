@@ -550,7 +550,8 @@ class DocxDocumentCreator(DocumentCreator):
         self, doc: Any, review: CorrectionReview, labels: dict[str, str]
     ) -> None:
         """Append the *Unclear or ambiguous expressions* heading and its three-column table."""
-        if not review.unclear:
+        notes = review.unclear_notes  # a stretch the model left out is not for the student
+        if not notes:
             return
         heading = doc.add_heading(labels["unclear"], level=2)
         for run in heading.runs:
@@ -563,7 +564,7 @@ class DocxDocumentCreator(DocumentCreator):
         ):
             self._fill_cell(cell, labels[key], bold=True)
             self._shade_cell(cell, _HEADER_FILL)
-        for note in review.unclear:
+        for note in notes:
             row = table.add_row().cells
             self._fill_cell(row[0], note.expression, italic=True)
             self._fill_cell(row[1], note.why)

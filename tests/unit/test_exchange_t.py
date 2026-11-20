@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 
 from teachers_teammate.domain.context_budget import ContextBudget, answers_with_the_same_text
 from teachers_teammate.domain.correction_prompts import (
@@ -19,6 +20,8 @@ from teachers_teammate.infrastructure.proofreading.exchanges.t import (
     EXPLAIN_FAILED,
     FRAMING_WARNING,
     ADDED_TEXT_WARNING,
+    LEFT_OUT_WARNING,
+    LEFT_OUT_WARNING_ONE,
     LOST_TEXT_WARNING,
     UNCLEAR_FAILED,
 )
@@ -32,6 +35,17 @@ LONG_SOURCE = "Ich habe ein grosse Hund. Er ist nett und spielt gern im Garten m
 LONG_CORRECTED = (
     "Ich habe einen großen Hund. Er ist nett und spielt gern im Garten mit meinem Bruder."
 )
+
+
+SHORT_CUTS_SOURCE = (
+    "Heute gehe ich mit meinem kleinen Bruder und unserer Oma in den grossen Park. "
+    "Dort spielen wir Fussball und essen danach zusammen ein leckeres Eis."
+)
+SHORT_CUTS_ANSWER = (
+    "Heute gehe ich mit meinem Bruder in den grossen Park. "
+    "Dort spielen wir Fussball und essen ein Eis."
+)
+"""A text and an answer that cuts a few words in four places: 18 of 25 words, no long stretch."""
 
 
 def _notes(*notes: tuple[int, str, str]) -> str:
@@ -204,19 +218,158 @@ def test_a_dropped_paragraph_is_asked_for_once_more() -> None:
     assert [request.step for request in port.requests].count("correct") == 2
 
 
-def test_a_dropped_paragraph_twice_fails_the_file() -> None:
+def test_a_dropped_paragraph_twice_is_put_back_and_the_file_is_stored() -> None:
     """
-    Given  a model that answers with the end of the text missing twice
+    Given  a model that answers twice with the end of the text missing
     When   the exchange proofreads the text
-    Then   the file fails with the dropped-text warning, and the source is kept
+    Then   the stretch it left out is put back from the student's text, the rest of the answer is
+           kept, the file is stored with a warning that counts the words, and the review lists the
+           stretch as an item that was left out
     """
-    port = FakePort(answer("Ich habe einen großen Hund."), answer("Ich habe einen großen Hund."))
+    short = "Ich habe einen großen Hund."
+    port = FakePort(
+        answer(short),
+        answer(short),
+        answer(_notes((1, "grammar", "x"))),
+        answer(_unclear()),
+    )
 
     result = TExchange(port).proofread(LONG_SOURCE, _ctx())
 
+    assert result.failed is False
+    assert result.text == LONG_CORRECTED
+    assert result.left_out == 1
+    assert LEFT_OUT_WARNING_ONE.format(words=11) in result.warnings
+    assert result.review is not None
+    [note] = [note for note in result.review.unclear if note.left_out]
+    assert note.expression == "Er ist nett und spielt gern im Garten mit meinem Bruder."
+    assert LONG_SOURCE[note.raw_start : note.raw_end] == note.expression
+    assert [edit.id for edit in result.review.edits] == [1]
+
+
+def test_several_stretches_left_out_are_counted_in_one_warning() -> None:
+    """
+    Given  a text of three sentences and a model that leaves out the first and the last twice
+    When   the exchange proofreads the text
+    Then   both stretches are put back and the warning says two passages and their words
+    """
+    first = "Gestern war ich mit meiner ganzen Familie im Zoo und wir haben viele Tiere gesehen."
+    middle = "Der Hund bellt laut."
+    last = "Am Abend sind wir müde nach Hause gefahren und haben sofort tief geschlafen."
+    source = f"{first} {middle} {last}"
+    port = FakePort(
+        answer(middle),
+        answer(middle),
+        answer(_notes()),
+        answer(_unclear()),
+    )
+
+    result = TExchange(port).proofread(source, _ctx())
+
+    assert result.failed is False
+    assert result.text == source
+    assert result.left_out == 2
+    assert LEFT_OUT_WARNING.format(count=2, words=28) in result.warnings
+    assert result.review is not None
+    assert [note.expression for note in result.review.unclear if note.left_out] == [first, last]
+
+
+def test_a_cut_too_short_to_repair_still_fails_the_file() -> None:
+    """
+    Given  a model that drops a few words in two places, in a text where that is over a fifth of
+           the words, twice
+    When   the exchange proofreads the text
+    Then   no stretch is long enough to be put back, so the file fails with the dropped-text
+           warning and the source is kept
+    """
+    port = FakePort(answer(SHORT_CUTS_ANSWER), answer(SHORT_CUTS_ANSWER))
+
+    result = TExchange(port).proofread(SHORT_CUTS_SOURCE, _ctx())
+
     assert result.failed is True
-    assert result.text == LONG_SOURCE
+    assert result.text == SHORT_CUTS_SOURCE
     assert result.warnings == (LOST_TEXT_WARNING,)
+
+
+def test_a_text_that_is_whole_after_the_repair_is_not_asked_about_again() -> None:
+    """
+    Given  a model that leaves out the end twice
+    When   the exchange proofreads the text with corrections only
+    Then   the stretch is put back and the file is stored with the warning, without a review
+    """
+    short = "Ich habe einen großen Hund."
+    port = FakePort(answer(short), answer(short))
+
+    result = TExchange(port).proofread(LONG_SOURCE, _ctx(corrections_only=True))
+
+    assert result.failed is False
+    assert result.review is None
+    assert result.text == LONG_CORRECTED
+    assert result.left_out == 1
+
+
+def test_a_rejected_answer_leaves_its_measurement_in_its_report(caplog) -> None:
+    """
+    Given  a model that answers twice with a few words cut in four places
+    When   the exchange proofreads the text
+    Then   the report of each rejected answer holds the words sent and returned, the longest cut
+           and the rule that fired; the log says it with numbers only, and the rejected text is
+           written only at debug level
+    """
+    port = FakePort(answer(SHORT_CUTS_ANSWER), answer(SHORT_CUTS_ANSWER))
+
+    with caplog.at_level(logging.DEBUG):
+        result = TExchange(port).proofread(SHORT_CUTS_SOURCE, _ctx())
+
+    rejected = [report for report in result.reports if report.counters]
+    assert len(rejected) == 2
+    for report in rejected:
+        assert report.step == "correct"
+        assert report.counters["words_in"] == 25
+        assert report.counters["words_out"] == 18
+        assert report.counters["cut_run"] < 8
+        assert report.counters["rule_ratio_lost"] == 1
+        assert report.counters["rule_run_lost"] == 0
+        assert report.counters["rule_added"] == 0
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warnings) == 2
+    assert "words_in=25" in warnings[0].getMessage()
+    assert SHORT_CUTS_ANSWER not in warnings[0].getMessage()
+    assert any(
+        r.levelno == logging.DEBUG and SHORT_CUTS_ANSWER in r.getMessage() for r in caplog.records
+    )
+
+
+def test_an_accepted_answer_leaves_no_counters() -> None:
+    """
+    Given  a model that answers well the first time
+    When   the exchange proofreads the text
+    Then   no report carries the detector's counters
+    """
+    port = FakePort(answer(CORRECTED), answer(_notes((1, "grammar", "x"))), answer(_unclear()))
+
+    result = TExchange(port).proofread(SOURCE, _ctx())
+
+    assert all(not report.counters for report in result.reports)
+
+
+def test_a_first_answer_that_is_rejected_and_a_second_that_is_good_counts_only_the_first() -> None:
+    """
+    Given  a model that drops the end once and then answers with the whole text
+    When   the exchange proofreads the text
+    Then   only the first answer's report holds counters
+    """
+    port = FakePort(
+        answer("Ich habe einen großen Hund."),
+        answer(LONG_CORRECTED),
+        answer(_notes((1, "grammar", "x"))),
+        answer(_unclear()),
+    )
+
+    result = TExchange(port).proofread(LONG_SOURCE, _ctx())
+
+    corrects = [report for report in result.reports if report.step == "correct"]
+    assert [bool(report.counters) for report in corrects] == [True, False]
 
 
 def test_text_the_model_added_twice_fails_the_file_with_its_own_warning() -> None:

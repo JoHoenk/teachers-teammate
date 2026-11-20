@@ -51,6 +51,12 @@ ADDED_RUN = "added_run"
 KEYS: tuple[str, ...] = (WORDS_OUT, WORDS_REF, CUT_RUN, ADDED_RUN)
 """The numbers :func:`measure` stores, in the order a reader wants them."""
 
+LEFT_OUT = "left_out"
+"""How many stretches the model left out and the app put back, stored only when there were any.
+
+The stored output has them again, so the numbers above see a whole text; the model's own answer
+did not, so a row with a count here is lost text all the same (:func:`is_lost`)."""
+
 
 def measure(source: str, corrected: str, reference: str) -> dict[str, int]:
     """Return the four numbers of one answer: its words, the reference's, and its longest runs.
@@ -92,8 +98,11 @@ def is_lost(scores: Mapping[str, float]) -> bool | None:
     """Whether an answer lost text, or ``None`` when the row was written before it was measured.
 
     A row of an older run carries none of :data:`KEYS`; it is not a row that lost nothing, so the
-    caller can say "not measured" instead of counting it as clean.
+    caller can say "not measured" instead of counting it as clean.  A row whose answer the app
+    had to repair lost text whatever its stored output measures.
     """
+    if scores.get(LEFT_OUT, 0) > 0:
+        return True
     if not all(key in scores for key in KEYS):
         return None
     return scores[WORDS_OUT] < LOST_RATIO * scores[WORDS_REF] or scores[CUT_RUN] >= RUN_WORDS
@@ -111,6 +120,7 @@ __all__ = [
     "ADDED_RUN",
     "CUT_RUN",
     "KEYS",
+    "LEFT_OUT",
     "LOST_RATIO",
     "RUN_WORDS",
     "WORDS_OUT",

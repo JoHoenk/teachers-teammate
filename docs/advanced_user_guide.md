@@ -124,8 +124,8 @@ Set under **Settings → Scan quality…**:
 
 - **Original page** sends the pages as they are, to check what the preparation changes.
 
-**Preview…** shows a page before and after, and says what was done, for example "Prepared: page
-turned, shadows evened out".
+**Preview…** shows a page before and after, and says what was done, for example "Fixed for
+reading: page turned, shadows evened out" (or "As scanned — no fixes needed").
 
 **Page models.** *Turn* and *Flatten* need two small models (39 MB, PaddlePaddle, Apache-2.0),
 which come with the app. Without them *Automatic* skips those two steps.

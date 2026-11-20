@@ -141,10 +141,12 @@ from .merged_view import merged_view, reconciled_view
 from .model_recommendations import ModelRecommendationService
 from .sent_text import Anonymize, SentTexts, describe_sent_texts
 from .setup_plan import (
+    LocalModelChoices,
     ProofreadingPlace,
     SetupAnswers,
     SetupFacts,
     SetupPlan,
+    build_model_choices,
     build_setup_plan,
 )
 from .speed_estimates import SpeedChoices, SpeedEstimateService, SpeedSummary
@@ -1488,6 +1490,29 @@ class ProcessingApplicationService:
         Blocking, like :meth:`setup_facts`: run it on a background thread.
         """
         facts = self.setup_facts(answers, current)
+        return build_setup_plan(answers, current, facts, **self._plan_tools(answers, facts))
+
+    def plan_with_model_choices(
+        self, answers: SetupAnswers, current: Mapping[str, Any]
+    ) -> tuple[SetupPlan, LocalModelChoices]:
+        """Return the setup plan and the models the assistant offers for the proofreading.
+
+        The models are the installed ones and the catalog ones that can work on the computer
+        Ollama runs on, best first, with the one the setup plan uses when the teacher leaves the
+        choice to the assistant.  One call measures the facts once for both.  Blocking, like
+        :meth:`plan_setup`: run it on a background thread.
+        """
+        facts = self.setup_facts(answers, current)
+        tools = self._plan_tools(answers, facts)
+        plan = build_setup_plan(answers, current, facts, **tools)
+        step = next((row for row in plan.steps if row.stage == "correction"), None)
+        choices = build_model_choices(
+            facts, suggested=step.model if step is not None else "", rate=tools["rate"]
+        )
+        return plan, choices
+
+    def _plan_tools(self, answers: SetupAnswers, facts: SetupFacts) -> dict[str, Any]:
+        """Return the rating, recommendation and default-model functions the setup plan is built with."""
 
         def rate(tag: str, task: ModelCategory) -> ModelRating:
             return self.rate_ollama_models(
@@ -1511,14 +1536,7 @@ class ProcessingApplicationService:
                 card_gb=facts.card_gb,
             )
 
-        return build_setup_plan(
-            answers,
-            current,
-            facts,
-            rate=rate,
-            best=best,
-            default_model=self.default_model_for_task,
-        )
+        return {"rate": rate, "best": best, "default_model": self.default_model_for_task}
 
     def describe_data_flow(self, config: Config) -> DataFlow:
         """Return where each enabled step of *config* runs (this computer, another, online)."""

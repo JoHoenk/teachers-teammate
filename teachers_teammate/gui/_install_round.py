@@ -344,7 +344,7 @@ class InstallRound(QObject):
         self._thread = thread
         _start_thread(thread)
 
-    def _on_spacy_done(self, _model: str) -> None:
+    def _on_spacy_done(self) -> None:
         self.log_line.emit("✓ spaCy model downloaded.")
         self.item_done.emit(self._current)
         self._installed_any = True

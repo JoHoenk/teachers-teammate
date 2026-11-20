@@ -370,3 +370,28 @@ def test_first_unseen_is_the_first_row_not_looked_at(
     Then   it is the first one not looked at, the first row when all were, and nothing without rows
     """
     assert first_unseen(rows, looked_at) == expected
+
+
+def test_a_stretch_the_model_left_out_is_its_own_kind_of_item() -> None:
+    """
+    Given  a review with a note for a stretch the model left out and one unclear expression
+    When   the items are built
+    Then   the first is a left-out item carrying its explanation and no suggestion, the second
+           stays an unclear one, and both count for what the teacher has to look at
+    """
+    left_out = UnclearNote(
+        raw_start=0,
+        raw_end=27,
+        expression="Der bunte Hund bellt laut.",
+        why="Der Satz fehlte in der Antwort.",
+        recommendation="",
+        left_out=True,
+    )
+
+    items = check_items(align(RAW, RAW, CorrectionReview(unclear=(left_out, _unclear(28, 31)))))
+
+    assert _kinds(items) == [ItemKind.LEFT_OUT, ItemKind.UNCLEAR]
+    assert items[0].before == "Der bunte Hund bellt laut."
+    assert items[0].why == "Der Satz fehlte in der Antwort."
+    assert items[0].suggestion == ""
+    assert all(counts_for_looked_at(item) for item in items)

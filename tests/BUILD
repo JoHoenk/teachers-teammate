@@ -846,8 +846,14 @@ py_test(
     size = "small",
     srcs = _COMMON_SRCS + ["unit/test_windows_installer_script.py"],
     args = ["unit/test_windows_installer_script.py"],
-    data = ["//tools/packaging:windows.nsi"],
-    env = {"WINDOWS_NSI": "$(rlocationpath //tools/packaging:windows.nsi)"},
+    data = [
+        "//docs:code_signing_policy.md",
+        "//tools/packaging:windows.nsi",
+    ],
+    env = {
+        "CODE_SIGNING_POLICY": "$(rlocationpath //docs:code_signing_policy.md)",
+        "WINDOWS_NSI": "$(rlocationpath //tools/packaging:windows.nsi)",
+    },
     main = "run_test.py",
     deps = _COMMON_DEPS,
 )
@@ -2127,7 +2133,7 @@ py_test(
 
 py_test(
     name = "test_gui_main_window",
-    size = "small",
+    size = "medium",
     srcs = _COMMON_SRCS + [
         "gui/_gui_harness.py",
         "gui/test_gui_main_window.py",
@@ -2321,6 +2327,19 @@ py_test(
     size = "small",
     srcs = _COMMON_SRCS + ["gui/test_gui_side_panel.py"],
     args = ["gui/test_gui_side_panel.py"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_layer_lib"],
+)
+
+py_test(
+    name = "test_gui_window_geometry",
+    size = "small",
+    srcs = _COMMON_SRCS + [
+        "gui/_gui_harness.py",
+        "gui/_settings_stubs.py",
+        "gui/test_gui_window_geometry.py",
+    ],
+    args = ["gui/test_gui_window_geometry.py"],
     main = "run_test.py",
     deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_layer_lib"],
 )
@@ -2890,6 +2909,7 @@ test_suite(
         ":test_gui_update_check",
         ":test_gui_what_is_sent",
         ":test_gui_widgets",
+        ":test_gui_window_geometry",
         ":test_gui_worker",
         ":test_hardware_profile_selector",
         ":test_model_item_delegate",

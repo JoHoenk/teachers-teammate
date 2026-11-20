@@ -7,7 +7,7 @@ import threading
 from typing import Any, ClassVar
 
 import pytest
-from PySide6.QtCore import QObject, QThread, Signal
+from PySide6.QtCore import QMetaMethod, QObject, QThread, Signal
 
 from teachers_teammate.gui import _addon_installer_dialog, _install_round, _model_fetch
 from teachers_teammate.gui._install_round import InstallRound
@@ -89,7 +89,7 @@ class _FakeSpacyThread(FinishedThreadStub, QObject):
     """Reports a downloaded spaCy model at once."""
 
     log_line = Signal(str)
-    finished_ok = Signal(str)
+    finished_ok = Signal()
     finished_err = Signal(str)
 
     def __init__(self, model: str, _target: Any) -> None:
@@ -102,7 +102,7 @@ class _FakeSpacyThread(FinishedThreadStub, QObject):
         if _fails(item):
             self.finished_err.emit(_Script.fail_with)
             return
-        self.finished_ok.emit(self._model)
+        self.finished_ok.emit()
 
 
 class _FakePullThread(FinishedThreadStub, QObject):
@@ -794,3 +794,76 @@ def test_every_thread_a_round_starts_is_held_until_it_ends(
         assert thread in _model_fetch._RETIRED_THREADS
     finally:
         _model_fetch._RETIRED_THREADS.intersection_update(held_before)
+
+
+# ── the fakes say what the real threads say ──────────────────────────────────
+
+
+def _signals(cls: type[QObject]) -> dict[str, str]:
+    """Return the signals a QObject class declares itself, name → full signature."""
+    meta = cls.staticMetaObject
+    found: dict[str, str] = {}
+    for index in range(meta.methodOffset(), meta.methodCount()):
+        method = meta.method(index)
+        if method.methodType() == QMetaMethod.MethodType.Signal:
+            found[bytes(method.name().data()).decode()] = bytes(method.methodSignature()).decode()
+    return found
+
+
+@pytest.mark.parametrize(
+    ("fake", "real_module", "real_name"),
+    [
+        (_FakePipThread, _install_round, "_PipInstallThread"),
+        (_FakeUpdateThread, _install_round, "_AddonUpdateThread"),
+        (_FakeSpacyThread, _addon_installer_dialog, "_ModelDownloadThread"),
+        (_FakePullThread, _addon_installer_dialog, "_OllamaPullThread"),
+        (_FakeReaderThread, _addon_installer_dialog, "_ReaderDownloadThread"),
+    ],
+)
+def test_each_fake_thread_declares_the_signals_of_the_real_one(
+    fake: type[QObject], real_module: Any, real_name: str
+) -> None:
+    """
+    Given  a fake thread of this file and the real thread it replaces
+    When   their signals are compared by name and argument types
+    Then   they are the same (a fake that emits an argument the real one never sends hides a
+           slot that cannot be called, as the spaCy slot once was)
+    """
+    real = getattr(real_module, real_name)
+
+    assert _signals(fake) == _signals(real)
+
+
+def test_a_round_with_two_spacy_models_downloads_both_with_the_real_thread(
+    qtbot, monkeypatch
+) -> None:
+    """
+    Given  a round with two spaCy models, the real download thread and a patched download
+    When   the round runs
+    Then   both models are downloaded one after the other and the round ends, not running
+           (the slot of the first model's end once took an argument the signal never had, and
+           the round stayed busy for good)
+    """
+    downloaded: list[str] = []
+
+    class _Downloader:
+        def download_spacy_model(self, model: str, _target: Any, log: Any) -> None:
+            downloaded.append(model)
+            log(f"Successfully installed {model}")
+
+    monkeypatch.setattr(_addon_installer_dialog, "ProcessingApplicationService", _Downloader)
+    round_, _service = _round()
+    seen = _record(round_)
+
+    with qtbot.waitSignal(round_.finished, timeout=5000):
+        assert round_.start(
+            packages=[],
+            spacy_models=["en_core_web_sm", "de_core_news_sm"],
+            ollama_models=[],
+            ollama_url="http://127.0.0.1:11434",
+        )
+
+    assert downloaded == ["en_core_web_sm", "de_core_news_sm"]
+    assert seen["done"] == ["spacy:en_core_web_sm", "spacy:de_core_news_sm"]
+    assert seen["failed"] == []
+    assert round_.running() is False

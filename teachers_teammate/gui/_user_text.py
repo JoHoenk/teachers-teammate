@@ -162,18 +162,25 @@ STEP_LABELS = {
 }
 
 
+def preparation_changed_pages(steps: Sequence[str]) -> bool:
+    """Return whether a step that is worth a word acted, so the original differs from the page."""
+    return any(name in STEP_LABELS for name in steps)
+
+
 def prepared_caption(steps: Sequence[str]) -> str:
     """Return the preview caption for the steps that acted on the page.
 
-    "Prepared: page turned, shadows evened out"; "Prepared: nothing needed" when no step that
-    is worth a word acted.  Under "Original page" the only step there can be is the rotation
-    tag: "Original page (rotation tag applied)".  The steps' own reasons ("tilt 1.4°") go to
-    the debug log only.
+    "Fixed for reading: page turned, shadows evened out"; "As scanned — no fixes needed" when
+    no step that is worth a word acted.  Under "Original page" the only step there can be is the
+    rotation tag: "Original page (rotation tag applied)".  The steps' own reasons ("tilt 1.4°")
+    go to the debug log only.
     """
     if list(steps) == ["turned by tag"]:
         return "Original page (rotation tag applied)"
     words = [STEP_LABELS[name] for name in steps if name in STEP_LABELS]
-    return f"Prepared: {', '.join(words) if words else 'nothing needed'}"
+    if not words:
+        return "As scanned — no fixes needed"
+    return f"Fixed for reading: {', '.join(words)}"
 
 
 # ── Settings window: page names and "where to change it" ──────────────────────
@@ -810,8 +817,8 @@ def minor_group_label(count: int) -> str:
     return f"{count} spelling, punctuation {noun}"
 
 
-def item_counts(corrections: int, unclear: int) -> str:
-    """Return the footer of the list: how many corrections and how many unclear passages."""
+def item_counts(corrections: int, unclear: int, left_out: int = 0) -> str:
+    """Return the footer of the list: corrections, unclear passages and passages the AI left out."""
     parts: list[str] = []
     if corrections:
         parts.append(
@@ -819,6 +826,8 @@ def item_counts(corrections: int, unclear: int) -> str:
         )
     if unclear:
         parts.append(f"{unclear} unclear")
+    if left_out:
+        parts.append(f"{left_out} left out by the AI")
     return " · ".join(parts)
 
 

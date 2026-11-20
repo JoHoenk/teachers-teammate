@@ -1108,8 +1108,8 @@ def test_the_caption_names_steps_in_words_and_ignores_the_gray_conversion(qtbot)
 
     assert (
         txt.prepared_caption(["page", "turn", "size", "light", "deskew", "grayscale"])
-        == "Prepared: page cut out, page turned, scaled down, shadows evened out, tilt corrected"
+        == "Fixed for reading: page cut out, page turned, scaled down, shadows evened out, tilt corrected"
     )
-    assert txt.prepared_caption(["flatten"]) == "Prepared: page flattened"
-    assert txt.prepared_caption(["grayscale"]) == "Prepared: nothing needed"
+    assert txt.prepared_caption(["flatten"]) == "Fixed for reading: page flattened"
+    assert txt.prepared_caption(["grayscale"]) == "As scanned — no fixes needed"
     assert txt.prepared_caption(["turned by tag"]) == "Original page (rotation tag applied)"

@@ -5,6 +5,10 @@ local AI comes before the proofreading question and can rate the models for the 
 with typed texts Ollama may not be needed at all, so the proofreading question comes first and
 the local AI page is only shown when the proofreading runs there.
 
+The Privacy page is always on the path: online proofreading and proofreading on another PC send
+the text away, and the page asks what to do about names; with everything on this computer it says
+so and offers only to hide the names in the app's own texts.
+
 The function is pure, so the table can be tested without a window.
 """
 
@@ -40,11 +44,11 @@ def next_page(page: SetupPageId, answers: SetupAnswers) -> SetupPageId | None:
     if page is SetupPageId.CLASSES:
         return SetupPageId.LOCAL_AI if handwritten else SetupPageId.PROOFREADING
     if page is SetupPageId.LOCAL_AI:
-        return SetupPageId.PROOFREADING if handwritten else SetupPageId.SUMMARY
+        # Typed texts reach the local AI page after the proofreading question: the privacy
+        # question, which the address decides, comes last.
+        return SetupPageId.PROOFREADING if handwritten else SetupPageId.PRIVACY
     if page is SetupPageId.PROOFREADING:
-        if online:
-            return SetupPageId.PRIVACY
-        return SetupPageId.SUMMARY if handwritten else SetupPageId.LOCAL_AI
+        return SetupPageId.PRIVACY if handwritten or online else SetupPageId.LOCAL_AI
     if page is SetupPageId.PRIVACY:
         return SetupPageId.SUMMARY
     if page is SetupPageId.SUMMARY:

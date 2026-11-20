@@ -9,9 +9,11 @@ from teachers_teammate.application.setup_plan import (
     DownloadKind,
     HandIn,
     PlannedDownload,
+    PrivacyCase,
     ProofreadingPlace,
     SetupAnswers,
     SetupFacts,
+    build_model_choices,
     build_setup_plan,
 )
 from teachers_teammate.config import DEFAULTS
@@ -557,3 +559,174 @@ def test_the_address_and_the_profile_are_written_when_the_local_page_was_shown()
 
     assert plan.settings["ollama_url"] == "http://192.168.1.9:11434"
     assert plan.settings["hardware_profile"] == "16gb"
+
+
+# ── a model the teacher chose ───────────────────────────────────────────────
+
+
+def test_a_chosen_local_model_is_used_and_pulled_when_it_is_missing() -> None:
+    """
+    Given  local proofreading with a model the teacher chose that is not installed
+    When   the setup plan is built
+    Then   the proofreading uses it instead of the recommendation, and it is downloaded
+    """
+    plan = _plan(answers=_answers(local_model="qwen3:8b"))
+
+    assert plan.settings["correction_model"] == "qwen3:8b"
+    assert _step(plan, STAGE_CORRECTION).model == "qwen3:8b"
+    assert "qwen3:8b" in [d.name for d in _downloads(plan, DownloadKind.OLLAMA_MODEL)]
+    assert _BEST["general"] not in [d.name for d in _downloads(plan, DownloadKind.OLLAMA_MODEL)]
+
+
+def test_a_chosen_local_model_that_is_installed_needs_no_download() -> None:
+    """
+    Given  a chosen local model that Ollama already has
+    When   the setup plan is built
+    Then   the row says it is installed and nothing is pulled for the proofreading
+    """
+    plan = _plan(
+        answers=_answers(local_model="qwen3:8b"),
+        facts=_facts(installed_tags=frozenset({"qwen3:8b"})),
+    )
+
+    assert _step(plan, STAGE_CORRECTION).installed is True
+    assert "qwen3:8b" not in [d.name for d in _downloads(plan, DownloadKind.OLLAMA_MODEL)]
+
+
+def test_the_chosen_model_is_ignored_for_online_proofreading() -> None:
+    """
+    Given  a model chosen for the local AI, and then online proofreading
+    When   the setup plan is built
+    Then   the online choice is what is used
+    """
+    plan = _plan(
+        answers=_answers(
+            local_model="qwen3:8b",
+            proofreading=ProofreadingPlace.ONLINE,
+            online_choice=("openai", "gpt-x"),
+        )
+    )
+
+    assert plan.settings["correction_provider"] == "openai"
+    assert plan.settings["correction_model"] == "gpt-x"
+
+
+# ── who gets the text ───────────────────────────────────────────────────────
+
+
+def test_the_privacy_case_follows_where_the_text_goes() -> None:
+    """
+    Given  proofreading online, on Ollama at another PC, on this computer and not at all
+    When   the privacy case of each is asked
+    Then   they are online, network PC, this computer and this computer
+    """
+    network = "http://192.168.1.20:11434"
+    assert _answers(proofreading=ProofreadingPlace.ONLINE).privacy_case is PrivacyCase.ONLINE
+    assert _answers(ollama_url=network).privacy_case is PrivacyCase.NETWORK_PC
+    assert _answers().privacy_case is PrivacyCase.THIS_COMPUTER
+    assert (
+        _answers(proofreading=ProofreadingPlace.OFF, ollama_url=network).privacy_case
+        is PrivacyCase.THIS_COMPUTER
+    )
+
+
+def test_proofreading_on_another_pc_can_remove_names_before_the_text_leaves() -> None:
+    """
+    Given  proofreading on Ollama at another PC, with the names to be removed
+    When   the setup plan is built
+    Then   removal is turned on and name detection is planned, as for an online service
+    """
+    plan = _plan(
+        answers=_answers(ollama_url="http://192.168.1.20:11434", remove_names=True),
+        facts=_facts(name_detection=False),
+    )
+
+    assert plan.panel["anonymization_enabled"] is True
+    assert _step(plan, STAGE_ANONYMIZATION).view_only is False
+    assert [d.kind for d in plan.downloads if d.stage == STAGE_ANONYMIZATION] == [
+        DownloadKind.SPACY_MODEL
+    ]
+
+
+def test_with_everything_on_this_computer_removal_is_never_turned_on() -> None:
+    """
+    Given  everything on this computer and the "remove names" answer set (a stale answer)
+    When   the setup plan is built
+    Then   removal stays as it is: nothing is sent, so there is nothing to remove
+    """
+    plan = _plan(answers=_answers(remove_names=True))
+
+    assert "anonymization_enabled" not in plan.panel
+    assert not any(step.stage == STAGE_ANONYMIZATION for step in plan.steps)
+
+
+def test_hiding_names_in_the_app_asks_for_name_detection_and_the_view_only() -> None:
+    """
+    Given  everything on this computer, and names to be hidden in the app's texts
+    When   the setup plan is built
+    Then   the view setting is turned on, the spaCy model is planned, removal is left alone, and
+           the row says it serves the view only
+    """
+    plan = _plan(answers=_answers(hide_names=True), facts=_facts(name_detection=False))
+
+    assert plan.display_anonymized is True
+    assert "anonymization_enabled" not in plan.panel
+    assert _step(plan, STAGE_ANONYMIZATION).view_only is True
+    assert [d.kind for d in plan.downloads if d.stage == STAGE_ANONYMIZATION] == [
+        DownloadKind.SPACY_MODEL
+    ]
+
+
+def test_not_hiding_names_leaves_the_view_setting_alone() -> None:
+    """
+    Given  the Privacy page's box left unticked
+    When   the setup plan is built
+    Then   the setup plan says nothing about the view setting, so the assistant never turns it off
+    """
+    assert _plan(answers=_answers(hide_names=False)).display_anonymized is None
+
+
+# ── the models the proofreading page offers ─────────────────────────────────
+
+
+def test_the_choices_hold_installed_models_and_catalog_models_that_can_work_here() -> None:
+    """
+    Given  one installed model outside the catalog, and a rating that rules a big catalog model
+           out for this computer
+    When   the choices are built
+    Then   the installed model is offered, the ruled-out one is not, the best come first, and
+           the suggestion is what the setup plan would use
+    """
+    ratings = {
+        "my-own:7b": Suitability.WORKS,
+        _BEST["general"]: Suitability.BEST,
+        "gpt-oss:120b": Suitability.TOO_LARGE,
+    }
+    choices = build_model_choices(
+        _facts(installed_tags=frozenset({"my-own:7b"})),
+        suggested=_BEST["general"],
+        rate=_rater(ratings),
+    )
+
+    tags = [choice.tag for choice in choices.choices]
+    assert choices.suggested == _BEST["general"]
+    assert tags[0] == _BEST["general"]
+    assert "my-own:7b" in tags
+    assert "gpt-oss:120b" not in tags
+    assert next(c for c in choices.choices if c.tag == "my-own:7b").installed is True
+    assert next(c for c in choices.choices if c.tag == _BEST["general"]).installed is False
+
+
+def test_an_installed_model_is_offered_even_when_it_is_too_large() -> None:
+    """
+    Given  an installed model that is too large for this computer
+    When   the choices are built
+    Then   it is still listed (the teacher may know why it is there)
+    """
+    choices = build_model_choices(
+        _facts(installed_tags=frozenset({"huge:70b"})),
+        suggested="",
+        rate=_rater({"huge:70b": Suitability.TOO_LARGE}),
+    )
+
+    assert "huge:70b" in [choice.tag for choice in choices.choices]

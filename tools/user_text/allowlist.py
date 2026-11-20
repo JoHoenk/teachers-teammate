@@ -400,7 +400,6 @@ ALLOWED: dict[str, frozenset[str]] = {
     "teachers_teammate/gui/settings/_server_search_dialog.py": frozenset(
         {
             "Stopping…",
-            "f'Found {count} {noun}. Choose one.'",
         }
     ),
     "teachers_teammate/gui/settings/_speed_panel.py": frozenset(

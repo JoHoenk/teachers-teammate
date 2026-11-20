@@ -104,6 +104,7 @@ class ChunkingCorrector(Corrector):
             text=_join_text(outcomes, chunks),
             review=merged,
             warning=warning,
+            left_out=sum(outcome.left_out for outcome in outcomes),
             fell_back=any(outcome.fell_back for outcome in outcomes),
         )
 

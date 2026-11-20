@@ -54,6 +54,7 @@ from ...texts import check as check_text
 from .. import _user_text as txt
 from .._export_menu import ExportKind
 from ._masking import Masking
+from ._run_strip import NextStepStrip, RunState, RunStrip
 from ._scan_view import ScanPane
 from ._side_panel import SidePanel
 from ._text_views import CheckTextView, FinalView, MarkedView, ReadView, marks_of
@@ -686,6 +687,12 @@ class CheckPage(QWidget):
     raw_text_edited = Signal(str)
     corrected_text_edited = Signal(str)
     proofread_requested = Signal()
+    proofreading_setup_requested = Signal()
+    """Proofreading is not set up, and the teacher pressed the strip's button."""
+    read_settings_requested = Signal()
+    """The teacher wants to change how the pages are read."""
+    stop_requested = Signal()
+    """*Stop* in the run strip."""
     checked_toggled = Signal(bool)
     """The teacher pressed *Checked*: the state the document should have now."""
     display_anonymized_changed = Signal(bool)
@@ -720,6 +727,16 @@ class CheckPage(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(2)
         layout.addWidget(self._build_header())
+        self._run_strip = RunStrip()
+        self._run_strip.stop_requested.connect(self.stop_requested)
+        layout.addWidget(self._run_strip)
+        self._next_step = NextStepStrip()
+        self._next_step.proofread_requested.connect(self.proofread_requested)
+        self._next_step.set_up_requested.connect(self.proofreading_setup_requested)
+        self._next_step.read_settings_requested.connect(self.read_settings_requested)
+        # The strip's primary button: what a transcription waits for.
+        self._proofread_btn = self._next_step.button
+        layout.addWidget(self._next_step)
         self.body = CheckBody()
         layout.addWidget(self.body, 1)
         self.body.raw_text_edited.connect(self.raw_text_edited)
@@ -762,11 +779,6 @@ class CheckPage(QWidget):
         layout.addWidget(self._next_btn)
 
         layout.addWidget(self._build_switch())
-
-        self._proofread_btn = QPushButton(txt.PROOFREAD_THIS_DOCUMENT)
-        self._proofread_btn.setVisible(False)
-        self._proofread_btn.clicked.connect(self.proofread_requested)
-        layout.addWidget(self._proofread_btn)
 
         self._checked_btn = QPushButton(txt.MARK_AS_CHECKED)
         self._checked_btn.setCheckable(True)
@@ -888,7 +900,7 @@ class CheckPage(QWidget):
         self._doc = doc
         self._show_header(doc.name, doc.source_id, position, total)
         self._switch.setVisible(doc.has_proofreading)
-        self._proofread_btn.setVisible(not doc.has_proofreading and bool(doc.raw_text.strip()))
+        self._show_next_step(doc)
         self._again_action.setEnabled(doc.has_proofreading)
         self._source_action.setEnabled(bool(doc.raw_text.strip()))
         self._refresh_checked()
@@ -899,12 +911,30 @@ class CheckPage(QWidget):
         """Show a stored edit of the open document, without reloading the text being typed in."""
         self._doc = doc
         self._switch.setVisible(doc.has_proofreading)
-        self._proofread_btn.setVisible(not doc.has_proofreading and bool(doc.raw_text.strip()))
+        self._show_next_step(doc)
         self._again_action.setEnabled(doc.has_proofreading)
         self._refresh_checked()
         self.body.update_document(doc)
         if not doc.has_proofreading and self.body.view is not ViewKind.READ:
             self._put_in_front(ViewKind.READ)
+
+    def _show_next_step(self, doc: CheckDocument) -> None:
+        """Offer the next step over a transcription that has not been proofread yet.
+
+        Not while a run holds the document: the run strip says what goes on, and a second
+        request would only be refused.
+        """
+        self._next_step.setVisible(
+            not doc.has_proofreading and bool(doc.raw_text.strip()) and not self._lock
+        )
+
+    def set_proofreading_ready(self, ready: bool) -> None:
+        """Say whether proofreading is set up: the next-step button proofreads or sets it up."""
+        self._next_step.set_ready(ready)
+
+    def set_run(self, state: RunState | None) -> None:
+        """Show what the run does with the open document, or nothing when it is not in a run."""
+        self._run_strip.show_state(state)
 
     def _refresh_checked(self) -> None:
         """Show *Checked* as the document's work says, and let it be pressed where it may.
@@ -941,6 +971,8 @@ class CheckPage(QWidget):
     def set_lock(self, reason: str | None) -> None:
         """Make the texts read-only while the run works on this document, or free them again."""
         self._lock = reason or ""
+        if self._doc is not None:
+            self._show_next_step(self._doc)
         self._refresh_checked()
         self.body.set_lock(reason)
 
@@ -957,16 +989,25 @@ class CheckPage(QWidget):
     def set_display_anonymized(self, enabled: bool) -> None:
         """Show the texts with placeholders, or with the names again."""
         self._display_anonymized = bool(enabled)
-        self._hide_names_box.blockSignals(True)
-        self._hide_names_box.setChecked(self._display_anonymized)
-        self._hide_names_box.blockSignals(False)
+        self._sync_hide_names_box()
         self._masking.set_enabled(self._display_anonymized)
         self.body.set_masking(self._masking)
+
+    def _sync_hide_names_box(self) -> None:
+        """Tick the box for the stored wish, but only while names can be hidden.
+
+        Without the add-on the box is greyed out and shows unticked (the names are shown); the
+        wish itself is kept and the box takes it back when the add-on arrives.
+        """
+        self._hide_names_box.blockSignals(True)
+        self._hide_names_box.setChecked(self._display_anonymized and self._anonymized_available)
+        self._hide_names_box.blockSignals(False)
 
     def set_display_anonymized_available(self, available: bool) -> None:
         """Say whether names can be hidden at all; without the add-on they are shown."""
         self._anonymized_available = bool(available)
         self._hide_names_box.setEnabled(self._anonymized_available)
+        self._sync_hide_names_box()
         self._hide_names_box.setToolTip(
             txt.HIDE_PERSONAL_INFO_BUTTON_TIP
             if self._anonymized_available
@@ -1009,7 +1050,8 @@ class CheckPage(QWidget):
         self._previous_btn.setEnabled(False)
         self._next_btn.setEnabled(False)
         self._switch.setVisible(False)
-        self._proofread_btn.setVisible(False)
+        self._next_step.setVisible(False)
+        self._run_strip.show_state(None)
         self._refresh_checked()
         self.body.clear()
         self.set_copy_state(CopyState())

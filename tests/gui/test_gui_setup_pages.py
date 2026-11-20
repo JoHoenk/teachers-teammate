@@ -6,8 +6,8 @@ from __future__ import annotations
 from collections.abc import Collection, Mapping
 from typing import Any
 
-from PySide6.QtCore import QObject, Signal
-from PySide6.QtWidgets import QDialog, QWidget
+from PySide6.QtCore import QObject, QPoint, Signal
+from PySide6.QtWidgets import QDialog, QLabel, QLayout, QScrollArea, QWidget
 import pytest
 
 from teachers_teammate.application.setup_plan import (
@@ -29,8 +29,14 @@ from teachers_teammate.domain.model_catalog import (
 from teachers_teammate.gui import _user_text as txt
 from teachers_teammate.gui._data_flow_summary import PLACE_THIS_COMPUTER
 from teachers_teammate.gui.setup import SetupAssistant, SetupContext
-from teachers_teammate.gui.setup._flow import SetupPageId
-from teachers_teammate.gui.setup._pages import (
+from teachers_teammate.gui.setup._flow import ORDER, SetupPageId
+from teachers_teammate.gui.setup._pages import _fit_words
+from teachers_teammate.texts.setup import (
+    DONE_DONE,
+    DONE_FAILED,
+    DONE_PROGRESS,
+    DONE_RUNNING,
+    DONE_WAITING,
     FIT_VERY_SLOW,
     FIT_WORDS,
     PRIVACY_ALREADY_ON,
@@ -42,12 +48,6 @@ from teachers_teammate.gui.setup._pages import (
     SUMMARY_DOWNLOADS_TOTAL,
     SUMMARY_FAILED,
     SUMMARY_NO_DOWNLOADS,
-    DONE_DONE,
-    DONE_FAILED,
-    DONE_PROGRESS,
-    DONE_RUNNING,
-    DONE_WAITING,
-    _fit_words,
 )
 from teachers_teammate.gui.setup._summary import (
     CLASSES_NAME,
@@ -283,7 +283,7 @@ def test_the_proofreading_page_offers_not_now_only_with_handwriting(qtbot) -> No
     assistant = _assistant(qtbot, _context(SetupAppService(), recognition_enabled=False))
     page = _page(assistant, SetupPageId.PROOFREADING)
     page.initializePage()
-    assert not page._off_holder.isVisible()
+    assert not page._off.isVisible()
     assert page.place() is ProofreadingPlace.LOCAL
 
 
@@ -296,7 +296,7 @@ def test_the_proofreading_page_offers_not_now_with_handwriting(qtbot) -> None:
     assistant = _assistant(qtbot, _context(SetupAppService(), recognition_enabled=True))
     page = _page(assistant, SetupPageId.PROOFREADING)
     page.initializePage()
-    assert page._off_holder.isVisibleTo(page)
+    assert page._off.isVisibleTo(page)
     page._off.setChecked(True)
     assert page.place() is ProofreadingPlace.OFF
 
@@ -428,11 +428,12 @@ def test_the_suggestion_says_when_the_model_is_already_there(qtbot) -> None:
 
 def test_the_privacy_page_starts_ticked(qtbot) -> None:
     """
-    Given  "Remove personal info" is off
+    Given  "Remove personal info" is off, and proofreading at an online service
     When   the privacy page is shown
     Then   the box is ticked in advance, because text is about to go online
     """
     assistant = _assistant(qtbot, _context(SetupAppService(), anonymization_enabled=False))
+    _choose_online(assistant)
     page = _page(assistant, SetupPageId.PRIVACY)
     page.initializePage()
     assert page.remove_names()
@@ -442,11 +443,12 @@ def test_the_privacy_page_starts_ticked(qtbot) -> None:
 
 def test_the_privacy_page_says_already_on_when_it_is(qtbot) -> None:
     """
-    Given  "Remove personal info" is on already
+    Given  "Remove personal info" is on already, and proofreading at an online service
     When   the privacy page is shown
     Then   the box is ticked and disabled, with "Already on." under it: nothing is turned off
     """
     assistant = _assistant(qtbot, _context(SetupAppService(), anonymization_enabled=True))
+    _choose_online(assistant)
     page = _page(assistant, SetupPageId.PRIVACY)
     page.initializePage()
     assert page.remove_names()
@@ -1020,6 +1022,60 @@ def _fake_speed(monkeypatch) -> None:
     )
 
 
+def _in_layout(layout: QLayout | None) -> set[QWidget]:
+    """Return every widget a layout holds, nested layouts included."""
+    found: set[QWidget] = set()
+    if layout is None:
+        return found
+    for index in range(layout.count()):
+        item = layout.itemAt(index)
+        if item is None:
+            continue
+        widget = item.widget()
+        if widget is not None:
+            found.add(widget)
+        found |= _in_layout(item.layout())
+    return found
+
+
+def _floating(page: QWidget) -> list[str]:
+    """Return the visible widgets of *page* that sit in no layout of their parent.
+
+    Such a widget stays at its parent's top-left corner, over whatever is drawn there.
+    """
+    floating: list[str] = []
+    for widget in page.findChildren(QWidget):
+        parent = widget.parentWidget()
+        if parent is None or not widget.isVisibleTo(page):
+            continue
+        if parent.layout() is None or (
+            type(parent).__module__.startswith("PySide6") and type(parent) is not QWidget
+        ):
+            continue  # a Qt container (viewport, combo box, …) arranges its own children
+        if widget not in _in_layout(parent.layout()):
+            floating.append(f"{type(widget).__name__} in {type(parent).__name__}")
+    return floating
+
+
+def test_no_widget_of_the_done_page_floats_outside_its_layout(qtbot, monkeypatch) -> None:
+    """
+    Given  the done page with a plan whose downloads run
+    When   it is shown and every visible child is looked up in its parent's layout
+    Then   there is none outside a layout, so nothing sits over the intro text in the corner
+           (the hardware selector the speed test needs once did)
+    """
+    monkeypatch.setattr(
+        "teachers_teammate.gui.setup._pages.SpeedPanel",
+        lambda **kwargs: QWidget(kwargs.get("parent")),
+    )
+    assistant, summary, done = _done(qtbot, SetupAppService())
+    _show_plan(summary, assistant)
+    done.initializePage()
+    done.show()
+
+    assert _floating(done) == []
+
+
 def test_the_done_page_lists_the_downloads_it_started(qtbot, monkeypatch) -> None:
     """
     Given  a plan with two Ollama models and the page models
@@ -1095,6 +1151,34 @@ def test_the_done_page_says_why_a_pull_failed(qtbot, monkeypatch) -> None:
     manager.error.emit("connection lost")
 
     assert done._rows._labels["gemma4:12b"].text() == DONE_FAILED.format(message="connection lost")
+
+
+def test_a_failed_pull_does_not_fail_the_readers_download(qtbot) -> None:
+    """
+    Given  a download list with the built-in reader and an Ollama model, both running
+    When   the pull manager reports an error
+    Then   the Ollama model's line says why, and the reader's line keeps running
+    """
+    from teachers_teammate.gui.setup._pages import _DownloadRows  # noqa: PLC0415
+
+    rows = _DownloadRows()
+    qtbot.addWidget(rows)
+    rows.set_downloads(
+        [
+            PlannedDownload(kind=DownloadKind.READER_MODEL, name="ppocr", stage="ocr"),
+            PlannedDownload(kind=DownloadKind.OLLAMA_MODEL, name="gemma4:12b", stage="correction"),
+        ]
+    )
+    rows.started("reader:ppocr")
+    rows.pull_progress("Built-in reader", 1_000_000.0, 31_000_000.0)
+    rows.started("gemma4:12b")
+
+    rows.error("connection lost")
+
+    assert rows._labels["gemma4:12b"].text() == DONE_FAILED.format(message="connection lost")
+    assert rows._state["ppocr"] == rows._labels["ppocr"].text()
+    assert not rows._labels["ppocr"].text().startswith("✗")
+    assert "ppocr" in rows._fraction
 
 
 def test_the_done_page_says_when_an_ollama_download_goes_on_afterwards(qtbot, monkeypatch) -> None:
@@ -1219,3 +1303,455 @@ def test_the_done_page_follows_the_reader_download_in_megabytes(qtbot) -> None:
     rows.done("reader:ppocr")
 
     assert rows._labels["ppocr"].text() == DONE_DONE
+
+
+# ── The Ollama page: order, heading, card (S2 to S4) ─────────────────────────────
+
+
+def _shown(qtbot, assistant: SetupAssistant, page_id: SetupPageId):
+    """Show the assistant on *page_id*, laid out, and return that page."""
+    assistant.show()
+    assistant.setCurrentId(ORDER.index(page_id))
+    qtbot.wait(30)
+    return _page(assistant, page_id)
+
+
+def _y(widget: QWidget, page: QWidget) -> int:
+    """Return the top edge of *widget* in the coordinates of *page*."""
+    return widget.mapTo(page, QPoint(0, 0)).y()
+
+
+def test_the_local_ai_page_lists_what_was_found_first_and_the_address_below_the_network_choice(
+    qtbot,
+) -> None:
+    """
+    Given  the Ollama page
+    When   it is laid out
+    Then   under "Where does Ollama run?" come the found server, "On this computer", "On another
+           PC in my network" and, below that choice, the address field with "Find…"
+    """
+    assistant = _assistant(qtbot, _context(SetupAppService(), ollama_url="http://gpu-box:11434"))
+    page = _shown(qtbot, assistant, SetupPageId.LOCAL_AI)
+
+    assert page._here.text() == "On this computer"
+    assert page._server.text() == "On another PC in my network"
+    assert (
+        _y(page._status_holder, page)
+        <= _y(page._here, page)
+        < _y(page._server, page)
+        < _y(page._url, page)
+    )
+    assert _y(page._find, page) == pytest.approx(_y(page._url, page), abs=6)
+
+
+def test_the_computer_heading_speaks_of_the_pc_ollama_runs_on(qtbot) -> None:
+    """
+    Given  the Ollama page with its computer section
+    When   the address is a PC in the network, and then this computer again
+    Then   the heading and sentence speak of the other PC, and then of "Your computer"
+    """
+    assistant = _assistant(qtbot, _context(SetupAppService()))
+    page = _page(assistant, SetupPageId.LOCAL_AI)
+    assert page._computer_heading.text() == "Your computer"
+    assert "graphics card with 8 GB" in page._computer_text.text()
+    assert "this PC" in page._computer_text.text()
+
+    page._server.setChecked(True)
+    page._url.setText("http://192.168.1.20:11434")
+    page._url.editingFinished.emit()
+
+    assert page._computer_heading.text() == "The other PC"
+    assert "that PC" in page._computer_text.text()
+
+    page._here.setChecked(True)
+
+    assert page._computer_heading.text() == "Your computer"
+
+
+def test_a_server_found_on_this_computer_selects_this_computer(qtbot) -> None:
+    """
+    Given  the Ollama page set to another PC
+    When   "Use it" is pressed on a server found on this computer
+    Then   "On this computer" is chosen and the address is the found one
+    """
+    assistant = _assistant(qtbot, _context(SetupAppService(), ollama_url="http://gpu-box:11434"))
+    page = _page(assistant, SetupPageId.LOCAL_AI)
+
+    page._on_use_server("http://127.0.0.1:11435")
+
+    assert page._here.isChecked()
+    assert page.ollama_url() == "http://127.0.0.1:11435"
+
+
+# ── The proofreading page (S5, S6) ───────────────────────────────────────────
+
+
+def test_not_now_is_not_indented(qtbot) -> None:
+    """
+    Given  the proofreading page with handwritten pages
+    When   its three choices are laid out
+    Then   "Not now" sits at the same level as the other two, not in an indented row
+    """
+    assistant = _assistant(qtbot, _context(SetupAppService(), recognition_enabled=True))
+    page = _shown(qtbot, assistant, SetupPageId.PROOFREADING)
+
+    left = page._local.mapTo(page, QPoint(0, 0)).x()
+    assert page._online.mapTo(page, QPoint(0, 0)).x() == left
+    assert page._off.mapTo(page, QPoint(0, 0)).x() == left
+
+
+def _wait_for_choices(qtbot, page) -> None:
+    """Wait until the proofreading page filled its model list."""
+    qtbot.waitUntil(lambda: page._choices is not None, timeout=3000)
+
+
+def test_the_proofreading_page_follows_the_recommended_model_until_one_is_chosen(qtbot) -> None:
+    """
+    Given  the proofreading page for the AI on this computer
+    When   the models arrive, and then "Use the recommended model" is unticked and another chosen
+    Then   the list shows the recommendation and is disabled while it is ticked; after unticking
+           it is usable and the answer carries the chosen model
+    """
+    assistant = _assistant(qtbot, _context(SetupAppService()))
+    page = _page(assistant, SetupPageId.PROOFREADING)
+    page.initializePage()
+    _wait_for_choices(qtbot, page)
+    suggested = page._choices.suggested
+
+    assert page._use_recommended.isChecked()
+    assert not page._model_box.isEnabled()
+    assert page._model_box.currentData() == suggested
+    assert page.local_model() == ""
+    assert assistant.answers().local_model == ""
+
+    other = next(c.tag for c in page._choices.choices if c.tag != suggested)
+    page._use_recommended.setChecked(False)
+    assert page._model_box.isEnabled()
+    page._model_box.setCurrentIndex(page._model_box.findData(other))
+
+    assert page.local_model() == other
+    assert assistant.answers().local_model == other
+
+    page._use_recommended.setChecked(True)
+    assert page._model_box.currentData() == suggested
+    assert page.local_model() == ""
+
+
+def test_the_model_choice_is_for_the_local_ai_only(qtbot) -> None:
+    """
+    Given  the proofreading page
+    When   the online choice is made
+    Then   the model list and its checkbox are hidden
+    """
+    assistant = _assistant(qtbot, _context(SetupAppService()))
+    page = _page(assistant, SetupPageId.PROOFREADING)
+    page.initializePage()
+    assert page._model_row.isVisibleTo(page)
+
+    page._online.setChecked(True)
+
+    assert not page._model_row.isVisibleTo(page)
+
+
+# ── Pages that scroll instead of squeezing (S7) ──────────────────────────────
+
+
+def test_every_page_holds_its_content_in_a_scroll_area(qtbot) -> None:
+    """
+    Given  the assistant's pages
+    When   each is built
+    Then   its content sits in a frameless scroll area, so a page that is taller than the window
+           scrolls instead of squeezing its widgets
+    """
+    assistant = _assistant(qtbot, _context(SetupAppService()))
+
+    for page_id, page in assistant._pages.items():
+        scroll = page._scroll
+        assert scroll is not None, f"{page_id} has no scroll area"
+        assert scroll.frameShape() == QScrollArea.Shape.NoFrame
+        assert scroll.widgetResizable()
+
+
+def test_the_online_drop_downs_keep_their_height_on_a_small_window(qtbot) -> None:
+    """
+    Given  the proofreading page with the online service chosen, in a window of 1366 x 768
+           minus the wizard's frame
+    When   the page is laid out
+    Then   the service and model drop-downs are as high as they want to be, and the page scrolls
+    """
+    assistant = _assistant(qtbot, _context(SetupAppService()))
+    page = _shown(qtbot, assistant, SetupPageId.PROOFREADING)
+    page._online.setChecked(True)
+    page._scroll.setFixedHeight(180)  # what a short window leaves the page
+    qtbot.wait(20)
+
+    section = page._section
+    assert section is not None
+    for box in (section._provider, section._model):
+        assert box.height() >= box.sizeHint().height()
+    assert page._scroll.verticalScrollBar().maximum() > 0
+
+
+# ── Names (S8) ───────────────────────────────────────────────────────────────
+
+
+def test_the_privacy_page_for_a_pc_in_the_network_names_it_and_offers_removal(qtbot) -> None:
+    """
+    Given  proofreading on Ollama at another PC in the network
+    When   the privacy page is shown
+    Then   it says the text goes to that PC, and offers "Remove personal info" as for an online
+           service
+    """
+    assistant = _assistant(qtbot, _context(SetupAppService(), anonymization_enabled=False))
+    local = _page(assistant, SetupPageId.LOCAL_AI)
+    local._server.setChecked(True)
+    local._url.setText("http://192.168.1.20:11434")
+    page = _page(assistant, SetupPageId.PRIVACY)
+
+    page.initializePage()
+
+    assert "192.168.1.20" in page._sent.text()
+    assert "that PC" in page._school.text()
+    assert "this service" not in page._school.text()
+    assert page._sending.isVisibleTo(page)
+    assert not page._stays.isVisibleTo(page)
+    assert page.remove_names()
+    assert not page.hide_names()
+    assert assistant.answers().remove_names
+
+
+def test_the_privacy_page_for_everything_on_this_computer_says_so_and_offers_hiding(
+    qtbot,
+) -> None:
+    """
+    Given  proofreading on this computer, and the 👁 setting off
+    When   the privacy page is shown
+    Then   it says the texts stay here, has no removal, and offers "Hide names in this app",
+           which is unticked and carries into the answers when ticked
+    """
+    assistant = _assistant(qtbot, _context(SetupAppService(), anonymization_enabled=False))
+    assistant._context = SetupContext(
+        settings=assistant._context.settings,
+        app_service=assistant._context.app_service,
+        display_anonymized=False,
+    )
+    page = _page(assistant, SetupPageId.PRIVACY)
+    page._context = assistant._context
+
+    page.initializePage()
+
+    assert page._stays.isVisibleTo(page)
+    assert not page._sending.isVisibleTo(page)
+    assert not page._hide.isChecked()
+    assert page._hide.isEnabled()
+    assert not assistant.answers().hide_names
+
+    page._hide.setChecked(True)
+
+    assert assistant.answers().hide_names
+
+
+def test_hiding_names_that_is_on_already_is_ticked_and_left_alone(qtbot) -> None:
+    """
+    Given  names already hidden in the app, and name detection installed
+    When   the privacy page is shown
+    Then   the box is ticked and disabled with "Already on.", so the assistant turns nothing off
+    """
+    assistant = _assistant(qtbot, _context(SetupAppService()))
+    page = _page(assistant, SetupPageId.PRIVACY)
+
+    page.initializePage()
+
+    assert page._hide.isChecked()
+    assert not page._hide.isEnabled()
+    assert page._hide_already.isVisibleTo(page)
+
+
+def test_hiding_names_without_name_detection_says_it_is_added_to_the_downloads(qtbot) -> None:
+    """
+    Given  names to be hidden in the app, and no name detection installed
+    When   the privacy page is shown
+    Then   the box stays usable and says the detection model joins the downloads
+    """
+    service = SetupAppService()
+    service.anonymizer_ready = False
+    assistant = _assistant(qtbot, _context(service))
+    page = _page(assistant, SetupPageId.PRIVACY)
+
+    page.initializePage()
+
+    assert page._hide.isChecked()
+    assert page._hide.isEnabled()
+    assert page._hide_detection.isVisibleTo(page)
+    assert "English" in page._hide_detection.text()
+
+
+def test_set_up_hands_the_hiding_of_names_to_the_main_window(qtbot) -> None:
+    """
+    Given  an assistant whose Privacy page asks for the names to be hidden in the app
+    When   Set up is pressed
+    Then   the result carries the view setting as True; and as None when the box was left alone
+    """
+    service = SetupAppService()
+    assistant = _assistant(qtbot, _context(service))
+    results: list[Any] = []
+    assistant.committed.connect(results.append)
+    summary = _page(assistant, SetupPageId.SUMMARY)
+    page = _page(assistant, SetupPageId.PRIVACY)
+    page.initializePage()
+    page._hide.setEnabled(True)
+    page._hide.setChecked(True)
+    _show_plan(summary, assistant)
+
+    assistant.commit([])
+
+    assert results[-1].display_anonymized is True
+
+    page._hide.setChecked(False)
+    _show_plan(summary, assistant)
+    assistant.commit([])
+
+    assert results[-1].display_anonymized is None
+
+
+# ── The last page (S9) ───────────────────────────────────────────────────────
+
+
+def test_the_done_page_titles_follow_the_downloads(qtbot, monkeypatch) -> None:
+    """
+    Given  a done page with downloads that are waiting
+    When   they run and then all finish
+    Then   the title reads "Setting up" and then "All set"
+    """
+    _fake_speed(monkeypatch)
+    assistant, summary, done = _done(qtbot, SetupAppService())
+    plan = _show_plan(summary, assistant)
+    done.initializePage()
+    assert done.title() == "Setting up"
+
+    for download in plan.downloads:
+        done._rows.done(
+            {"page_models": "page_models:all", "ppocr": "reader:ppocr"}.get(
+                download.name, download.name
+            )
+        )
+
+    assert done.title() == "All set"
+
+
+def test_the_done_page_says_when_a_download_failed(qtbot, monkeypatch) -> None:
+    """
+    Given  a done page whose downloads are over, one of them failed
+    When   the title is read
+    Then   it does not say "All set"
+    """
+    _fake_speed(monkeypatch)
+    assistant, summary, done = _done(qtbot, SetupAppService())
+    plan = _show_plan(summary, assistant)
+    done.initializePage()
+    names = [download.name for download in plan.downloads]
+    done._rows.failed(names[0], "no network")
+    for name in names[1:]:
+        done._rows.done({"page_models": "page_models:all", "ppocr": "reader:ppocr"}.get(name, name))
+
+    assert "failed" in done.title()
+
+
+def test_the_done_page_rows_say_what_each_download_is_for(qtbot, monkeypatch) -> None:
+    """
+    Given  a plan that downloads a reading model, the page models and a proofreading model
+    When   the done page lists them
+    Then   every row names its purpose and a name a teacher knows, and its size
+    """
+    _fake_speed(monkeypatch)
+    assistant, summary, done = _done(qtbot, SetupAppService())
+    _show_plan(summary, assistant)
+
+    done.initializePage()
+
+    texts = [label.text() for label in done.findChildren(QLabel)]
+    assert "Reading handwriting" in texts
+    assert "Page models" in texts
+    assert "Proofreading" in texts
+    assert "turn and flatten pages" in texts
+
+
+def test_the_done_page_has_one_bar_for_all_downloads(qtbot, monkeypatch) -> None:
+    """
+    Given  a done page with three downloads
+    When   one finishes and another is half way
+    Then   the bar is at a half of the way... of three: one and a half over three, and says how
+           many are done
+    """
+    _fake_speed(monkeypatch)
+    manager = _FakePullManager()
+    assistant, summary, done = _done(qtbot, SetupAppService(), manager)
+    plan = _show_plan(summary, assistant)
+    done.initializePage()
+    assert len(plan.downloads) == 3
+    page_models = "page_models:all"
+    done._rows.done(page_models)
+    first_pull = next(d.name for d in plan.downloads if d.name.startswith("hf.co"))
+    manager.started.emit(first_pull)
+    manager.progress.emit("pulling sha256:0a", 4.0e9, 8.0e9)
+
+    assert done._overall.value() == round((1 + 0.5) / 3 * 1000)
+    assert done._overall.format() == "1 of 3 downloads"
+
+
+def test_the_done_page_says_when_there_is_nothing_to_download(qtbot, monkeypatch) -> None:
+    """
+    Given  a plan without any download
+    When   the done page is shown
+    Then   the downloads section says so instead of standing as a bare heading, and the bar is gone
+    """
+    _fake_speed(monkeypatch)
+    assistant, _summary, done = _done(qtbot, SetupAppService())
+    done._rows.set_downloads([])
+
+    done._refresh()
+
+    assert [label.text() for label in done._rows.findChildren(QLabel)] == [
+        "Nothing to download — everything is in place."
+    ]
+    assert not done._overall.isVisibleTo(done)
+    assert done.title() == "All set"
+
+
+def test_the_done_page_says_the_speed_test_waits_for_the_proofreading_model(
+    qtbot, monkeypatch
+) -> None:
+    """
+    Given  a done page whose proofreading model has not arrived
+    When   the model arrives
+    Then   a line says the speed test starts when it has, and goes
+    """
+    _fake_speed(monkeypatch)
+    manager = _FakePullManager()
+    assistant, summary, done = _done(qtbot, SetupAppService(), manager)
+    plan = _show_plan(summary, assistant)
+    done.initializePage()
+    assert done._speed_waits.isVisibleTo(done)
+
+    for download in plan.downloads:
+        if download.kind is DownloadKind.OLLAMA_MODEL:
+            done._rows.done(download.name)
+
+    assert not done._speed_waits.isVisibleTo(done)
+
+
+@pytest.mark.parametrize(
+    "page_id", [page_id for page_id in SetupPageId if page_id is not SetupPageId.DONE]
+)
+def test_no_widget_of_the_other_pages_floats_outside_its_layout(qtbot, page_id) -> None:
+    """
+    Given  a page of the assistant (the done page has its own test above)
+    When   every visible child is looked up in its parent's layout
+    Then   none is outside a layout: a widget like that sits over the text in the corner
+    """
+    assistant = _assistant(qtbot, _context(SetupAppService()))
+    assistant.show()
+    assistant.setCurrentId(ORDER.index(page_id))
+    qtbot.wait(30)
+
+    assert _floating(_page(assistant, page_id)) == []

@@ -108,11 +108,12 @@ def test_the_wizard_has_one_look_everywhere(qtbot) -> None:
     assert assistant.wizardStyle() is QWizard.WizardStyle.ModernStyle
 
 
-def test_the_next_button_reads_set_up_on_the_summary(qtbot) -> None:
+def test_the_commit_button_reads_set_up_on_the_summary(qtbot) -> None:
     """
     Given  the assistant
     When   the summary page is reached
-    Then   the Next button reads "Set up", because that is what it does
+    Then   the button the page shows reads "Set up", because that is what it does, and the
+           Next button is not the one in use
     """
     assistant = _assistant(qtbot, _context(SetupAppService()))
     assistant.show()
@@ -121,11 +122,24 @@ def test_the_next_button_reads_set_up_on_the_summary(qtbot) -> None:
         assistant.setCurrentId(ORDER.index(page_id))
     assistant.setCurrentId(summary)
 
-    assert assistant.button(QWizard.WizardButton.NextButton).text() == SET_UP
+    commit = assistant.button(QWizard.WizardButton.CommitButton)
+    assert commit.text() == SET_UP
+    assert commit.isVisible()
+    assert not assistant.button(QWizard.WizardButton.NextButton).isVisible()
 
-    assistant.back()
-    assert assistant.currentId() == ORDER.index(SetupPageId.PRIVACY)
-    assert assistant.button(QWizard.WizardButton.NextButton).text() != SET_UP
+
+def test_the_wizard_takes_the_modern_look_back_when_the_window_shows(qtbot) -> None:
+    """
+    Given  an assistant whose style was switched to Aero (as Qt does on Windows when it shows)
+    When   the window is shown
+    Then   it is the modern style again, so there is no back arrow in the title area
+    """
+    assistant = _assistant(qtbot, _context(SetupAppService()))
+    assistant.setWizardStyle(QWizard.WizardStyle.AeroStyle)
+
+    assistant.show()
+
+    assert assistant.wizardStyle() is QWizard.WizardStyle.ModernStyle
 
 
 def test_there_is_no_way_back_from_the_done_page(qtbot) -> None:

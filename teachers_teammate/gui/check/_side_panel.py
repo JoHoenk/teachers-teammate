@@ -98,7 +98,7 @@ def _words_of(row: _Row) -> str:
     if row.item is None:
         return txt.minor_group_label(len(row.members))
     item = row.item
-    if item.kind is ItemKind.UNCLEAR:
+    if item.kind in (ItemKind.UNCLEAR, ItemKind.LEFT_OUT):
         return item.before
     if not item.before:
         return f"\u2192 {item.after}"
@@ -181,7 +181,7 @@ def _title_html(row: _Row, masking: Masking) -> str:
     item = row.item
     before = html.escape(masking.mask(item.before))
     after = html.escape(masking.mask(item.after))
-    if item.kind is ItemKind.UNCLEAR:
+    if item.kind in (ItemKind.UNCLEAR, ItemKind.LEFT_OUT):
         return before
     if item.kind is ItemKind.TAKEN_OUT:
         return f"{before} \u2192 <s>{after}</s>" if before else f"\u2192 <s>{after}</s>"
@@ -198,6 +198,8 @@ def _body_html(row: _Row, masking: Masking) -> str:
         return f"<i>{html.escape(txt.MINOR_GROUP_NOTE)}</i>"
     item = row.item
     lines: list[str] = []
+    if item.kind is ItemKind.LEFT_OUT:
+        return html.escape(masking.mask(item.why))
     if item.kind is ItemKind.UNCLEAR:
         if item.why:
             lines.append(f"{html.escape(txt.WHY_PREFIX)} {html.escape(masking.mask(item.why))}")
@@ -313,6 +315,8 @@ class _Card(QFrame):
             return ((self.put_back, txt.PUT_BACK_TOOLTIP),)
         if kind is ItemKind.UNCLEAR:
             return ((self.use_suggestion, txt.USE_SUGGESTION_TOOLTIP),)
+        if kind is ItemKind.LEFT_OUT:
+            return ((self.change, txt.CHANGE_TOOLTIP),)
         if kind is ItemKind.OWN:
             return ((self.take_out, txt.TAKE_OUT_TOOLTIP),)
         return (
@@ -617,9 +621,10 @@ class SidePanel(QWidget):
         if doc is None:
             return ""
         unclear = sum(1 for item in doc.items if item.kind is ItemKind.UNCLEAR)
+        left_out = sum(1 for item in doc.items if item.kind is ItemKind.LEFT_OUT)
         looked_at, countable = doc.looked_at_progress
         parts = [
-            txt.item_counts(len(doc.items) - unclear, unclear),
+            txt.item_counts(len(doc.items) - unclear - left_out, unclear, left_out),
             txt.looked_at_progress_text(looked_at, countable),
         ]
         return " \u00b7 ".join(part for part in parts if part)

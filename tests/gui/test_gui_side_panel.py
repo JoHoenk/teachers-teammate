@@ -799,3 +799,35 @@ def test_a_stored_edit_does_not_move_the_choice(qtbot) -> None:
     assert panel.chosen == "edit:4"
     panel._card.next_button.click()
     assert panel.chosen_row == GROUP_KEY
+
+
+@pytest.mark.gui
+def test_the_card_of_a_stretch_the_ai_left_out_says_so_and_offers_no_wording(qtbot) -> None:
+    """
+    Given  a document with one stretch the model left out of its answer
+    When   the side panel shows it, with an unclear passage beside it
+    Then   the list has a row for it, the card names the stretch and says why it is listed, there
+           is no suggestion to use but Change leads to the words, and the footer counts it apart
+    """
+    review = CorrectionReview(
+        unclear=(
+            UnclearNote(
+                0,
+                17,
+                "Der bunte Hund bellt.",
+                "Die KI hat diese Stelle ausgelassen.",
+                "",
+                left_out=True,
+            ),
+            UnclearNote(22, 27, "Katze", "Welche Katze?", "die Katze"),
+        )
+    )
+
+    panel = _panel(qtbot, _document(corrected=RAW, review=review))
+
+    kinds = [row.item.kind for row in panel._rows]
+    assert kinds == [ItemKind.LEFT_OUT, ItemKind.UNCLEAR]
+    panel.set_chosen(panel._rows[0].key)
+    assert "Die KI hat diese Stelle ausgelassen." in _card_text(panel)
+    assert _buttons(panel) == [txt.CHANGE]
+    assert panel._counts.text() == "1 unclear · 1 left out by the AI · 0 of 2 looked at"

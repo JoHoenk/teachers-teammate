@@ -249,19 +249,19 @@ def test_a_document_without_a_proofreading_falls_back_to_what_was_read(qtbot) ->
 
 
 @pytest.mark.gui
-def test_the_header_offers_proofread_this_document_while_there_is_none(qtbot) -> None:
+def test_the_page_offers_proofread_this_document_while_there_is_none(qtbot) -> None:
     """
     Given  a page
     When   a document with a transcription but no proofreading is shown
-    Then   the header offers to proofread it, and stops offering once it is done
+    Then   the next-step strip offers to proofread it, and stops offering once it is done
     """
     page = _page(qtbot)
 
     page.show_document(_document(corrected=""), 1, 1)
-    assert page._proofread_btn.isHidden() is False
+    assert page._next_step.isHidden() is False
 
     page.show_document(_document(review=_review(RAW, CORRECTED)), 1, 1)
-    assert page._proofread_btn.isHidden() is True
+    assert page._next_step.isHidden() is True
 
 
 # ── The banners ───────────────────────────────────────────────────────────
@@ -538,7 +538,7 @@ def test_a_reading_fix_removes_the_proofreading_and_offers_proofread_this_docume
 
     assert page.body.view is ViewKind.READ
     assert page._switch.isHidden() is True
-    assert page._proofread_btn.isHidden() is False
+    assert page._next_step.isHidden() is False
 
 
 @pytest.mark.gui

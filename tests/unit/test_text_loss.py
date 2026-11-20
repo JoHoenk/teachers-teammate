@@ -7,6 +7,7 @@ from teachers_teammate.domain.proofreading.text_loss import (
     LOST_RATIO,
     RUN_WORDS,
     dropped_text,
+    repair,
     measure,
     words,
 )
@@ -129,3 +130,95 @@ def test_marks_are_not_words() -> None:
     """
     assert words("Ich bin müde") == words("Ich bin müde.") == 3
     assert measure("Ich bin müde", "Ich bin müde!!!").words_out == 3
+
+
+# ── repair ───────────────────────────────────────────────────────────────────
+
+LONG_SOURCE = "Ich habe ein grosse Hund. Er ist nett und spielt gern im Garten mit meinem Bruder."
+
+
+def test_repair_puts_back_the_stretch_the_answer_left_out() -> None:
+    """
+    Given  an answer that corrected the first sentence and left the second out
+    When   it is repaired
+    Then   the second sentence stands again, after the corrected first one, and the stretch is
+           reported with its words and its place in the text that was sent
+    """
+    repaired = repair(LONG_SOURCE, "Ich habe einen großen Hund.")
+
+    assert repaired is not None
+    assert repaired.text == "Ich habe einen großen Hund. " + LONG_SOURCE.split(". ", 1)[1]
+    [part] = repaired.left_out
+    assert part.text == "Er ist nett und spielt gern im Garten mit meinem Bruder."
+    assert LONG_SOURCE[part.start : part.end] == part.text
+    assert part.words == 11
+    assert repaired.words == 11
+
+
+def test_repair_keeps_the_answer_everywhere_else() -> None:
+    """
+    Given  an answer that corrected two words and left a middle sentence out
+    When   it is repaired
+    Then   both corrections survive and the middle sentence is back between them
+    """
+    source = "Ich habe ein grosse Hund. Er spielt gern im Garten mit meinem Bruder und seinen Freunden. Wir sind froh."
+    answer = "Ich habe einen großen Hund. Wir sind froh."
+
+    repaired = repair(source, answer)
+
+    assert repaired is not None
+    assert repaired.text == (
+        "Ich habe einen großen Hund. "
+        "Er spielt gern im Garten mit meinem Bruder und seinen Freunden. Wir sind froh."
+    )
+
+
+def test_repair_leaves_short_cuts_alone() -> None:
+    """
+    Given  an answer that cut a few words here and there
+    When   it is repaired
+    Then   there is nothing to put back: no cut reaches the length of a sentence
+    """
+    source = "Heute gehe ich mit meinem kleinen Bruder und unserer Oma in den grossen Park."
+    assert repair(source, "Heute gehe ich mit meinem Bruder in den grossen Park.") is None
+
+
+def test_repair_changes_nothing_for_an_answer_that_kept_everything() -> None:
+    """
+    Given  an answer that only corrected words
+    When   it is repaired
+    Then   there is nothing to put back
+    """
+    assert repair(PAGE, PAGE.replace("haben", "hatten")) is None
+
+
+_THREE_PARAGRAPHS = (
+    "Erster Absatz mit Text.\n\n"
+    "Zweiter Absatz hat viele Woerter die das Modell einfach weglaesst ohne Grund.\n\n"
+    "Dritter Absatz."
+)
+
+
+def test_repair_puts_a_left_out_paragraph_back_with_its_paragraph_breaks() -> None:
+    """
+    Given  an answer that left out the middle paragraph of three
+    When   it is repaired
+    Then   the text is the source again: the paragraph breaks around the stretch are the
+           source's, not a single space
+    """
+    repaired = repair(_THREE_PARAGRAPHS, "Erster Absatz mit Text.\n\nDritter Absatz.")
+
+    assert repaired is not None
+    assert repaired.text == _THREE_PARAGRAPHS
+
+
+def test_repair_puts_a_left_out_last_paragraph_back_after_a_paragraph_break() -> None:
+    """
+    Given  an answer that ends before the last two paragraphs
+    When   it is repaired
+    Then   the stretch follows the first paragraph after the source's own break
+    """
+    repaired = repair(_THREE_PARAGRAPHS, "Erster Absatz mit Text.")
+
+    assert repaired is not None
+    assert repaired.text == _THREE_PARAGRAPHS

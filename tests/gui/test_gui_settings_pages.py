@@ -757,12 +757,12 @@ def test_the_status_line_follows_the_address_and_use_it_fills_the_field(qtbot) -
     page = AiSetupPage(settings_context(service))
     qtbot.addWidget(page)
     page.show()
-    qtbot.waitUntil(lambda: page._status_line._buttons[0].text() == "Use it", timeout=3000)
+    qtbot.waitUntil(lambda: not page._status_line.card().isHidden(), timeout=3000)
 
     assert service.asked == [page._ollama_url.text()]
     assert page._status_line.url() == page._ollama_url.text()
 
-    page._status_line._buttons[0].click()
+    page._status_line.card().use_button.click()
 
     assert page._ollama_url.text() == "http://127.0.0.1:11435"
     assert page._status_line.url() == "http://127.0.0.1:11435"
@@ -3730,13 +3730,59 @@ def test_the_search_dialog_lists_a_hit_and_reports_the_chosen_address(qtbot) -> 
     qtbot.addWidget(dialog)
     qtbot.waitUntil(lambda: dialog.list.count() == 1 and not dialog.searching, timeout=3000)
 
-    text = dialog.list.item(0).text()
-    assert "Windows (this computer)" in text
-    assert "Ollama 0.12.3" in text and "4 models" in text
+    card = dialog.cards()[0]
+    assert card.title == "Ollama 0.12.3 · 4 models"
+    assert card.place == "on the Windows PC (this computer) · http://172.31.0.1:11434"
     assert service.scopes == [DiscoveryScope.THIS_COMPUTER]
     assert dialog.use_button.isEnabled()
     with qtbot.waitSignal(dialog.server_chosen) as signal:
         dialog.use_button.click()
+    assert signal.args == ["http://172.31.0.1:11434"]
+
+
+@pytest.mark.gui
+def test_a_card_in_the_search_dialog_has_the_height_its_text_needs(qtbot) -> None:
+    """
+    Given  a shown dialog that lists the longest-worded card (the Windows PC's)
+    When   the list is laid out
+    Then   the row is at least as tall as the card needs at the width it was given, so the second
+           line is not cut off
+    """
+    from teachers_teammate.gui.settings._server_search_dialog import ServerSearchDialog  # noqa: PLC0415
+
+    dialog = ServerSearchDialog(_SearchService([_windows_server()]))
+    qtbot.addWidget(dialog)
+    dialog.show()
+    qtbot.waitUntil(lambda: dialog.list.count() == 1 and not dialog.searching, timeout=3000)
+    qtbot.wait(50)
+
+    card = dialog.cards()[0]
+    layout = card.layout()
+    assert layout is not None
+    needed = (
+        layout.totalHeightForWidth(card.width())
+        if layout.hasHeightForWidth()
+        else layout.sizeHint().height()
+    )
+    assert card.height() >= needed
+
+
+@pytest.mark.gui
+def test_the_use_it_button_of_a_card_chooses_that_server(qtbot) -> None:
+    """
+    Given  a search that found a server, shown as a card
+    When   the card's own "Use it" is pressed
+    Then   that server's address is emitted, without selecting the row first
+    """
+    from teachers_teammate.gui.settings._server_search_dialog import ServerSearchDialog  # noqa: PLC0415
+
+    dialog = ServerSearchDialog(_SearchService([_windows_server()]))
+    qtbot.addWidget(dialog)
+    qtbot.waitUntil(lambda: dialog.list.count() == 1 and not dialog.searching, timeout=3000)
+
+    with qtbot.waitSignal(dialog.server_chosen) as signal:
+        dialog.cards()[0].use_button.click()
+
     assert signal.args == ["http://172.31.0.1:11434"]
 
 
@@ -3798,7 +3844,7 @@ def test_the_network_search_starts_only_after_the_question_is_answered_yes(
     _wait_search_finished(qtbot, dialog)
 
     assert dialog.list.count() == 1
-    assert "Another computer on your network" in dialog.list.item(0).text()
+    assert dialog.cards()[0].place == "on the network · 192.168.1.20"
 
 
 @pytest.mark.gui

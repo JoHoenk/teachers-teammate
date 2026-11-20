@@ -23,7 +23,7 @@ from urllib.parse import urlparse
 
 from PySide6.QtCore import QTimer, QUrl, Signal
 from PySide6.QtGui import QDesktopServices, QHideEvent, QShowEvent
-from PySide6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QWidget
+from PySide6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
 
 from ..application.service import OllamaStatus
 from ..domain.ollama_discovery import DiscoveredServer, DiscoveryScope, OllamaState, ServerKind
@@ -31,6 +31,7 @@ from ..infrastructure.ollama_install import OLLAMA_DOWNLOAD_URL
 from ..infrastructure.ollama_utils import is_local_ollama_url
 from . import _user_text as txt
 from ._background import LatestTask, run_in_background
+from ._server_card import ServerCard
 
 #: How often the line asks again while it is on screen.
 LOCAL_INTERVAL_MS = 3000
@@ -39,11 +40,6 @@ REMOTE_INTERVAL_MS = 10000
 START_GRACE_MS = 3000
 
 CHECKING = "Checking…"
-RUNNING = "✓ Ollama {version} is running · {models}"
-RUNNING_MODELS = "{count} models downloaded"
-RUNNING_ONE_MODEL = "1 model downloaded"
-RUNNING_NO_MODELS = "no models downloaded yet"
-FOUND_ELSEWHERE = "✓ Ollama answers at {url} ({where})"
 NOT_RUNNING = "● Ollama is installed but isn't running."
 START_FAILED = "{text} It could not be started: {reason}"
 NOT_RUNNING_HINT = f"{NOT_RUNNING} {txt.OLLAMA_SERVICE_HINT}"
@@ -53,17 +49,9 @@ NOT_FOUND = (
 )
 NO_ANSWER = "● No answer from {host}. Is the server switched on?"
 
-USE_IT = "Use it"
 START_OLLAMA = "Start Ollama"
 GET_OLLAMA = "Get Ollama…"
 CHECK_AGAIN = "Check again"
-
-#: Whose computer a found server is on, as the line says it.
-_PLACES = {
-    ServerKind.THIS_COMPUTER: "this computer",
-    ServerKind.WINDOWS_HOST: "the Windows computer",
-    ServerKind.NETWORK: "another computer",
-}
 
 
 class _OllamaService(Protocol):
@@ -108,7 +96,16 @@ class OllamaStatusLine(QWidget):
         self._search_task = LatestTask(self)
         self._handlers: dict[QPushButton, Callable[[], None]] = {}
 
-        layout = QHBoxLayout(self)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        # A server that answers is shown as the card every place shows servers with; the other
+        # states are a sentence with the button that helps.
+        self._card = ServerCard()
+        self._card.use_requested.connect(self.use_server_requested)
+        self._card.setVisible(False)
+        outer.addWidget(self._card)
+        self._text_row = QWidget()
+        layout = QHBoxLayout(self._text_row)
         layout.setContentsMargins(0, 0, 0, 0)
         self._label = QLabel(CHECKING)
         self._label.setWordWrap(True)
@@ -118,6 +115,7 @@ class OllamaStatusLine(QWidget):
             button.setVisible(False)
             button.clicked.connect(lambda _checked=False, b=button: self._on_clicked(b))
             layout.addWidget(button)
+        outer.addWidget(self._text_row)
 
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._check)
@@ -139,6 +137,14 @@ class OllamaStatusLine(QWidget):
     def url(self) -> str:
         """Return the address the line asks about."""
         return self._url
+
+    def card(self) -> ServerCard:
+        """Return the card a server that answers is shown on."""
+        return self._card
+
+    def text(self) -> str:
+        """Return what the line says now: the card's two lines, or the sentence."""
+        return self._card.text() if not self._card.isHidden() else self._label.text()
 
     def status(self) -> OllamaStatus | None:
         """Return the last answer, or ``None`` while the first one is on its way."""
@@ -212,7 +218,24 @@ class OllamaStatusLine(QWidget):
     # ── drawing ────────────────────────────────────────────────────────────
 
     def _render(self) -> None:
-        """Show the line and the buttons that fit the last answer."""
+        """Show the card or the line, and the buttons that fit the last answer."""
+        status = self._status
+        found = self._found
+        if status is not None and status.state is OllamaState.RUNNING:
+            self._card.show_server(
+                url=self._url,
+                kind=_kind_of(self._url),
+                version=status.version,
+                model_count=status.model_count,
+                offer_use=False,
+            )
+            self._show_card(True)
+            return
+        if status is not None and found is not None:
+            self._card.show_discovered(found)
+            self._show_card(True)
+            return
+        self._show_card(False)
         text, actions = self._state_text()
         self._label.setText(text)
         self._handlers = {}
@@ -223,19 +246,16 @@ class OllamaStatusLine(QWidget):
         for button in self._buttons[len(actions) :]:
             button.setVisible(False)
 
+    def _show_card(self, on: bool) -> None:
+        """Show the card instead of the sentence, or the sentence instead of the card."""
+        self._card.setVisible(on)
+        self._text_row.setVisible(not on)
+
     def _state_text(self) -> tuple[str, list[tuple[str, Callable[[], None]]]]:
-        """Return the line and the buttons for the last answer."""
+        """Return the line and the buttons for a state with no server to show."""
         status = self._status
         if status is None:
             return CHECKING, []
-        if status.state is OllamaState.RUNNING:
-            return _running_text(status), []
-        found = self._found
-        if found is not None:
-            return (
-                FOUND_ELSEWHERE.format(url=found.url, where=_PLACES[found.kind]),
-                [(USE_IT, lambda: self.use_server_requested.emit(found.url))],
-            )
         if status.state is OllamaState.NOT_FOUND:
             return NOT_FOUND, [(GET_OLLAMA, self._open_download_page)]
         if status.state is OllamaState.NOT_RUNNING:
@@ -274,16 +294,13 @@ class OllamaStatusLine(QWidget):
         QTimer.singleShot(START_GRACE_MS, self._check)
 
 
-def _running_text(status: OllamaStatus) -> str:
-    """Return the line for a server that answered, with its version and its models."""
-    count = status.model_count
-    if count is None:
-        models = RUNNING_NO_MODELS
-    elif count == 1:
-        models = RUNNING_ONE_MODEL
-    else:
-        models = RUNNING_MODELS.format(count=count)
-    return RUNNING.format(version=status.version, models=models)
+def _kind_of(url: str) -> ServerKind:
+    """Return whose computer *url* is on: this one, the Windows PC behind WSL, or another."""
+    if is_local_ollama_url(url):
+        return ServerKind.THIS_COMPUTER
+    if is_local_ollama_url(url, include_wsl_host=True):
+        return ServerKind.WINDOWS_HOST
+    return ServerKind.NETWORK
 
 
 def _host(url: str) -> str:

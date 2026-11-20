@@ -56,11 +56,13 @@ _COLOURS = {
     ItemKind.CHANGED: (OWN_BACKGROUND, OWN_TEXT),
     ItemKind.TAKEN_OUT: (TAKEN_OUT_BACKGROUND, TAKEN_OUT_TEXT),
     ItemKind.UNCLEAR: (UNCLEAR_BACKGROUND, UNCLEAR_TEXT),
+    ItemKind.LEFT_OUT: (UNCLEAR_BACKGROUND, UNCLEAR_TEXT),
 }
 
 #: Underline of a mark whose words are not the model's own change.
 _UNDERLINE = {
     ItemKind.UNCLEAR: QTextCharFormat.UnderlineStyle.DotLine,
+    ItemKind.LEFT_OUT: QTextCharFormat.UnderlineStyle.DotLine,
     ItemKind.TAKEN_OUT: QTextCharFormat.UnderlineStyle.DashUnderline,
 }
 

@@ -19,6 +19,7 @@ from teachers_teammate.domain.proofreading.review import (
     note_sentence,
 )
 
+from . import text_loss
 from .answer_mode import DEFAULT_MODE, AnswerMode
 from .app_corrector import CorrectorFactory, pieces_of
 from .error_labels import category_agreement
@@ -179,13 +180,18 @@ class WritingModelComparison:
             sentences=tuple(record.sentences),
             unchanged=unchanged_sentences(list(record.sentences), corrected),
             band=record.band,
-            scores=item_scores(
-                record.source,
-                corrected,
-                record.reference,
-                sentence_spans=record.sentence_spans,
-                unchanged_sentences=record.unchanged_sentences,
-            ),
+            scores={
+                **item_scores(
+                    record.source,
+                    corrected,
+                    record.reference,
+                    sentence_spans=record.sentence_spans,
+                    unchanged_sentences=record.unchanged_sentences,
+                ),
+                # The stored output has the stretches the model left out put back by the app, so
+                # its own measurement is clean; the count keeps the row a lost text.
+                **({text_loss.LEFT_OUT: outcome.left_out} if outcome.left_out else {}),
+            },
             # The mode is the one the factory was built for: the caller passes both.
             mode=self._mode,
             pieces=pieces_of(corrector, record.source, language),

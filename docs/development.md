@@ -136,7 +136,9 @@ reference everywhere else. The package is Qt-free, so `gui/`, `cli.py`, `applica
 | `texts/dialogs.py` | Every message box, question and file picker. |
 | `texts/settings.py` | Settings page titles, the `WHERE_*` "where do I change this" sentences, tab names. |
 | `texts/privacy.py` | The "what is sent for this file" wording. |
-| `texts/check.py` | What the Check tab's widgets say around its text: the two editable views' tooltips, the ⋯ button, the source dialog's button. |
+| `texts/check.py` | What the Check tab's widgets say around its text: the two editable views' tooltips, the ⋯ button, the source dialog's button, the scan switch, the strips. |
+| `texts/setup.py` | Every sentence of the Setup Assistant's pages. |
+| `texts/servers.py` | How a found Ollama server is described (the card). |
 
 `texts/__init__.py` is the map — a docstring naming which module owns what, no logic.
 
@@ -1672,8 +1674,14 @@ had.  A PDF with a text layer stores every page for the scan as well: `PdfInputP
 the pages it skips into `InputPayload.page_images` — at `SCAN_DPI` (150), not the OCR
 resolution, because nothing reads them — and `FileProcessor` hands them to
 `persist_preview_artifact(pages=…)` as it hands the prepared pages.  The scan's strip
-(`ScanPane` in `gui/check/_scan_view.py`) holds the *Original* toggle, offered only when a page
-has an original, and the caption of the steps that prepared the pages (`prepared_caption`).
+(`ScanPane` in `gui/check/_scan_view.py`) holds the *Prepared · Original* switch, offered only when a page
+has an original and a step acted on it, and the caption of the steps that prepared the pages
+(`prepared_caption`).  The scan opens fitted to the page; a double click toggles fit page / fit width.
+
+**The strips above the text** (`gui/check/_run_strip.py`): `NextStepStrip` over a transcription that
+has not been proofread (*Proofread*, or *Set up proofreading…* via `CheckPage.set_proofreading_ready`)
+and `RunStrip` while the open document is in a run, fed by `MainWindow._refresh_check_run`.  A run
+started from the Check header keeps the tab (`_run_from_check`).
 
 Tests: `tests/gui/test_gui_check_page.py` (the page on its own),
 `tests/gui/test_gui_check_body.py` (the switch, the banners, the lock, the splitter),
@@ -1695,9 +1703,19 @@ language on a first start) and connects `SetupAssistant.committed` to `_apply_se
 Welcome, Your classes, The AI on this computer, Proofreading, Names and personal information,
 Ready to set up, All set — and `next_page(page, answers)` decides which one follows, so a page
 only says what it asks and never where to go.  With typed texts the reading model is not asked
-for; with proofreading off there is nothing to ask about privacy.  A page that is never reached
-asks nothing: the Ollama status line, the computer profile, the online service section and the
-setup plan are all built the first time their page is shown.
+for.  The Privacy page is always on the path; `SetupAnswers.privacy_case` decides its shape (online
+or another PC: *Remove personal info*; this computer: only *Hide names in this app*, handed back as
+`SetupPlan.display_anonymized`, never `False`).  A page that is never reached asks nothing: the
+Ollama status line, the computer profile, the online service section, the model list and the setup
+plan are all built the first time their page is shown.
+
+Every page sits in a scroll area (`SetupPage._content()`), because QWizard gives all pages one
+height and would squeeze a tall page's widgets; `fit_to_screen()` (`gui/_window_geometry.py`) keeps
+the wizard and Settings inside the screen.  The wizard sets `ModernStyle` again on show: Windows
+swaps in its Aero look (a back arrow in the title area).  A found Ollama server is a `ServerCard`
+(`gui/_server_card.py`) on the Ollama page, in Settings and in the search dialog.  The proofreading
+page's model list comes from `plan_with_model_choices()` with the suggestion; an empty
+`SetupAnswers.local_model` means *use the recommended one*.
 
 **The plan is a pure function** (`application/setup_plan.py`).  `SetupAnswers` is what the pages
 collected, `SetupFacts` is what `ProcessingApplicationService.setup_facts()` measured (profile,
@@ -1764,7 +1782,8 @@ window imports the package lazily.
 
 Tests: `tests/gui/test_gui_setup_flow.py` (the order), `tests/gui/test_gui_setup_pages.py` (the
 pages, the summary rows and the done page), `tests/gui/test_gui_setup_assistant.py` (the wizard,
-Set up, Cancel, closing), `tests/unit/test_setup_plan.py` (the setup plan's rules); the main window's side
+Set up, Cancel, closing), `tests/gui/test_gui_window_geometry.py` (a small screen),
+`tests/unit/test_setup_plan.py` (the setup plan's rules); the main window's side
 is tested in `tests/gui/test_gui_main_window.py`.
 
 **The walkthrough** (`tests/gui/test_gui_setup_walkthrough.py`) is the one test that runs the whole
@@ -2074,8 +2093,14 @@ missing a sentence or a whole paragraph, and nothing in the answer says so. Step
 compares its answer with the text it sent (`domain/proofreading/text_loss.py`): an answer that
 keeps less than `LOST_RATIO` (0.80) of the words, writes more than `ADDED_RATIO` (1.25) of them,
 or deletes a run of `RUN_WORDS` (50) words without writing as many in their place is asked for
-once more, and a second such answer fails the piece like a cut-off, with a warning that says
-whether text was dropped or added.  Marks are not words, and a text under `MIN_RATIO_WORDS` (10)
+once more.  A second answer that added text fails the piece like a cut-off.  A second answer that
+**left text out** is **repaired** (`text_loss.repair`): each hunk cutting `RESTORE_MIN_WORDS` (8)
+words or more is written back from the student's text, and the repaired text is judged again (still
+not the text: it fails as before).  The file is stored with a warning, its review is made from the
+repaired text (so it fits), and each stretch is an `UnclearNote(left_out=True)`, listed in Check as
+`ItemKind.LEFT_OUT`.  It is a note for the teacher: the Word files and the unclear badge skip it.
+`CorrectionOutcome.left_out` makes the outcome `fell_back` (no speed sample), and the evaluation
+tools count the row as lost text although the stored output is whole.  Marks are not words, and a text under `MIN_RATIO_WORDS` (10)
 words is not judged by the ratio: correcting "ich bin müde" into "Ich bin müde." changes its
 length by a third. The run threshold is much
 higher than the one the evaluation tools use against a reference, because the app has no
@@ -2083,6 +2108,10 @@ reference: a text whose own correction cuts a paragraph looks exactly like a dro
 guard only fires on a cut no correction of that text would make. On the saved runs of the
 official test set it fires on the four models that drop text and on no text where most models
 agree.
+
+**A rejected answer says why:** the detector's numbers (`words_in`, `words_out`, `cut_run`, `rule_*`,
+`num_ctx`) go to `StepReport.counters` and the warning log; the answer itself only to the debug log,
+as it is the student's text.
 
 **Edits and ids.** `edits()` groups consecutive hunks into one edit, never across a sentence
 group: a deleted token run that reappears as an inserted run in the same group is one edit

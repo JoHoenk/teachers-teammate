@@ -39,7 +39,7 @@ SetCompressor /SOLID lzma
 ; What the second page says about the one thing the app sends on its own: the update check.
 ; The signing terms want the disclosure shown during installation, with the way to turn it off:
 ; the check box is that way, and the link opens the page that says what is sent, and when.
-!define PRIVACY_URL "${APP_URL}/blob/main/docs/code_signing_policy.md"
+!define PRIVACY_URL "${APP_URL}/blob/main/docs/code_signing_policy.md#privacy-statement"
 
 Name    "${APP_NAME} ${APP_VERSION}"
 

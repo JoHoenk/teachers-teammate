@@ -98,6 +98,9 @@ class UnclearNote:
     recommendation: str
     is_suggestion: bool = False
     """``True`` when the intended meaning could not be determined: the fix is a suggestion."""
+    left_out: bool = False
+    """``True`` for a stretch the model left out of its answer: the student's words stand there
+    again, and the note says to read them with the rest.  Nothing was unclear about them."""
 
 
 @dataclass(frozen=True)
@@ -113,9 +116,19 @@ class CorrectionReview:
         return len(self.edits)
 
     @property
+    def unclear_notes(self) -> tuple[UnclearNote, ...]:
+        """The unclear or ambiguous expressions: the notes that are not a stretch left out."""
+        return tuple(note for note in self.unclear if not note.left_out)
+
+    @property
     def unclear_count(self) -> int:
-        """Number of unclear or ambiguous expressions."""
-        return len(self.unclear)
+        """Number of unclear or ambiguous expressions (a stretch left out is none)."""
+        return len(self.unclear_notes)
+
+    @property
+    def left_out_count(self) -> int:
+        """Number of stretches the model left out of its answer and the app put back."""
+        return len(self.unclear) - self.unclear_count
 
     def note(self, edit_id: int) -> EditNote | None:
         """Return the note of edit *edit_id*, or ``None``."""
@@ -156,6 +169,7 @@ class CorrectionReview:
                     why=fn(note.why),
                     recommendation=fn(note.recommendation),
                     is_suggestion=note.is_suggestion,
+                    left_out=note.left_out,
                 )
                 for note in self.unclear
             ),
@@ -196,6 +210,7 @@ class CorrectionReview:
                     why=note.why,
                     recommendation=note.recommendation,
                     is_suggestion=note.is_suggestion,
+                    left_out=note.left_out,
                 )
                 for note in self.unclear
             ),
@@ -255,6 +270,7 @@ class CorrectionReview:
                     "why": note.why,
                     "recommendation": note.recommendation,
                     "is_suggestion": note.is_suggestion,
+                    "left_out": note.left_out,
                 }
                 for note in self.unclear
             ],
@@ -302,6 +318,7 @@ class CorrectionReview:
                         why=str(raw_note.get("why", "")),
                         recommendation=str(raw_note.get("recommendation", "")),
                         is_suggestion=bool(raw_note.get("is_suggestion", False)),
+                        left_out=bool(raw_note.get("left_out", False)),
                     )
                     for raw_note in record.get("unclear", [])
                 ),
@@ -507,8 +524,8 @@ class AlignedReview:
 
     @property
     def unclear_count(self) -> int:
-        """Number of unclear expressions."""
-        return len(self.unclear)
+        """Number of unclear expressions (a stretch the model left out is none)."""
+        return sum(1 for entry in self.unclear if not entry.note.left_out)
 
 
 @dataclass(frozen=True)

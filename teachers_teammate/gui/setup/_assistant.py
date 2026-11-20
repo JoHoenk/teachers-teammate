@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, TypeVar
 
-from PySide6.QtCore import Signal
+from PySide6.QtCore import QEvent, Signal
 from PySide6.QtGui import QShowEvent
 from PySide6.QtWidgets import QWidget, QWizard
 
@@ -24,6 +24,7 @@ from ...application.setup_plan import (
 )
 from ...texts import dialogs as dlg
 from .. import _dialogs
+from .._window_geometry import fit_to_screen
 from .._install_round import InstallRound
 from ..settings._credentials import ApiKeyDrafts, discard_key_drafts, store_key_drafts
 from ._context import SetupContext, SetupResult
@@ -44,6 +45,9 @@ if TYPE_CHECKING:
 TITLE = "Set up Teacher's Teammate"
 SET_UP = "Set up"
 
+#: The events after which Qt may have put its own look on the wizard.
+_LOOK_EVENTS = frozenset({QEvent.Type.Show, QEvent.Type.StyleChange, QEvent.Type.Polish})
+
 #: The page class a caller asks for; :meth:`SetupAssistant._page` returns that type.
 _PageT = TypeVar("_PageT", bound=SetupPage)
 
@@ -59,7 +63,6 @@ class SetupAssistant(QWizard):
         self._context = context
         self._committed = False
         self._documents_wanted = False
-        self._next_text: str | None = None
         self._drafts = ApiKeyDrafts(context.app_service, parent=self)
         self._round = InstallRound(context.app_service, context.pull_manager, self)
         self._pages: dict[SetupPageId, SetupPage] = {}
@@ -68,6 +71,8 @@ class SetupAssistant(QWizard):
         self.setWizardStyle(QWizard.WizardStyle.ModernStyle)
         self.setOption(QWizard.WizardOption.NoBackButtonOnStartPage, True)
         self.setOption(QWizard.WizardOption.NoCancelButtonOnLastPage, True)
+        # The summary page is the commit page, so QWizard shows its CommitButton there.
+        self.setButtonText(QWizard.WizardButton.CommitButton, SET_UP)
         self.setMinimumSize(640, 480)
 
         for index, page_id in enumerate(ORDER):
@@ -76,7 +81,6 @@ class SetupAssistant(QWizard):
             self.setPage(index, page)
         self.setStartId(ORDER.index(SetupPageId.WELCOME))
 
-        self.currentIdChanged.connect(self._sync_next_button)
         self._round.finished.connect(self._on_round_finished)
 
     # ── what the pages ask ────────────────────────────────────────────────────
@@ -98,6 +102,8 @@ class SetupAssistant(QWizard):
             local_ai_shown=hand_in is HandIn.HANDWRITTEN or place is ProofreadingPlace.LOCAL,
             online_choice=proofreading.online_choice(),
             remove_names=privacy.remove_names(),
+            local_model=proofreading.local_model(),
+            hide_names=privacy.hide_names(),
         )
 
     def _page(self, page_id: SetupPageId, kind: type[_PageT]) -> _PageT:
@@ -131,7 +137,13 @@ class SetupAssistant(QWizard):
             return False
         store_key_drafts(self._drafts, self)
         self._committed = True
-        self.committed.emit(SetupResult(settings=dict(plan.settings), panel=dict(plan.panel)))
+        self.committed.emit(
+            SetupResult(
+                settings=dict(plan.settings),
+                panel=dict(plan.panel),
+                display_anonymized=plan.display_anonymized,
+            )
+        )
         self._start_downloads(downloads)
         return True
 
@@ -182,28 +194,30 @@ class SetupAssistant(QWizard):
             discard_key_drafts(self._drafts, self._context.app_service)
         super().done(result)
 
-    # ── the Next button ───────────────────────────────────────────────────────
+    # ── the window's look ─────────────────────────────────────────────────────
+
+    def event(self, event: QEvent) -> bool:  # Qt override
+        """Keep the modern look: on Windows Qt swaps in its Aero look when the window shows.
+
+        The Aero look puts a back arrow in the title area and drops the header band, so the
+        user guide would describe a window the teacher does not see.  Setting the style that is
+        already set does nothing, so this costs nothing on the other systems.
+        """
+        handled = super().event(event)
+        # Only the events that can bring the look back: the others also reach a window that is
+        # being destroyed, and asking it anything then fails.
+        if event.type() in _LOOK_EVENTS and (
+            self.wizardStyle() is not QWizard.WizardStyle.ModernStyle
+        ):
+            self.setWizardStyle(QWizard.WizardStyle.ModernStyle)
+        return handled
 
     def showEvent(self, event: QShowEvent) -> None:  # Qt override
-        """Remember the wizard's own Next wording before the first page can change it."""
-        self._remember_next_text()
+        """Set the modern look before the window is first drawn, and fit it to the screen.
+
+        QWizard sizes itself to its largest page; on a small screen that is more than the screen
+        has, and the pages scroll instead.
+        """
+        self.setWizardStyle(QWizard.WizardStyle.ModernStyle)
         super().showEvent(event)
-
-    def _remember_next_text(self) -> None:
-        """Keep the wizard's own Next wording, so the commit page can give it back."""
-        if self._next_text is not None:
-            return
-        button = self.button(QWizard.WizardButton.NextButton)
-        if button is not None:
-            self._next_text = button.text()
-
-    def _sync_next_button(self, page_id: int) -> None:
-        """Read "Set up" on the commit page and the wizard's own wording everywhere else."""
-        self._remember_next_text()
-        button = self.button(QWizard.WizardButton.NextButton)
-        if button is None:
-            return
-        if page_id == ORDER.index(SetupPageId.SUMMARY):
-            button.setText(SET_UP)
-        elif self._next_text is not None:
-            button.setText(self._next_text)
+        fit_to_screen(self)

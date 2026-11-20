@@ -34,10 +34,12 @@ on a page), **Tools** (Setup Assistant, System Monitor, Benchmark) and **Help**.
 The first time you start the app, the **Setup Assistant** opens. It asks:
 
 - the language of your class, and whether students hand in handwritten pages or typed texts;
-- whether Ollama (the program that runs AI models on your computer) is installed and running —
-  **Get Ollama…** opens its download page, **Start Ollama** starts it;
-- whether proofreading runs on this computer or at an online service (with the service's key);
-- whether names are replaced before any text goes online.
+- where Ollama (the program that runs AI models) runs: on this computer or on another PC in your
+  network — **Get Ollama…**, **Start Ollama** and **Find…** help;
+- whether proofreading runs on this computer (the recommended model, or one you pick) or at an
+  online service (with the service's key);
+- what happens to names: removed before text is sent away, or hidden on screen when everything
+  stays on this computer.
 
 It then lists what it will set and download, with a box per download you can untick, and the
 space needed. Nothing starts until you press **Set up**; the downloads then run in the background.
@@ -89,10 +91,13 @@ The arrows in the header of the **Check** tab move to the previous and next docu
 - **With corrections** — the student's words struck through, the corrections marked. Read-only.
 - **Final text** — the corrected text alone. This is what is exported; change a correction here.
 
-A document without a proofreading has only **What was read**.
+A document without a proofreading has only **What was read**, with a strip above it that leads to
+**Proofread this document**. While a run works on the document, a strip shows its progress and
+**Stop**.
 
-**The scan** shows every page. Ctrl + mouse wheel zooms; **Original** shows the pages as they were
-scanned, before the image preparation.
+**The scan** opens with a whole page in view; a double click switches to fit width. Ctrl + mouse
+wheel zooms. **Prepared · Original** switches between the pages as fixed for reading and as scanned
+(shown only when the preparation changed something).
 
 **The list of corrections** on the right numbers what the text marks. Pick a row and the text
 scrolls to it; click a mark in the text and its row is picked. ● marks what you have already looked
@@ -110,6 +115,9 @@ card above the list explains the chosen item:
   yourself appears as `your change`.
 
 Read an explanation before you pass it on to a student: the AI can be wrong.
+
+If the AI leaves part of the text out, the app puts your student's words back, says so, and lists
+each such stretch in the list to read with the rest.
 
 **Typing** is saved automatically. **Ctrl+Z** undoes one action at a time wherever the focus is on
 the page (Ctrl+Shift+Z or Ctrl+Y redoes). While a run works on a document, that document is

@@ -46,7 +46,6 @@ FALLBACK_MODELS: list[str] = [
     "mistral-large-latest",
     "mistral-medium-latest",
     "mistral-small-latest",
-    "open-mistral-nemo",
 ]
 
 #: Fixed seed so the same text and settings give the same correction when comparing runs.
@@ -136,26 +135,32 @@ def curate_mistral_models(entries: list[dict[str, Any]], today: date) -> Curated
     return CuratedModels(tuple(offered), tuple(retiring), tuple(also_served))
 
 
-def _usable(entry: dict[str, Any]) -> bool:
-    """Return whether an API model entry can proofread text (not code, audio, moderation…).
+def unusable_reason(entry: dict[str, Any]) -> str:
+    """Return why an API model entry cannot proofread text, or ``""`` when it can.
 
-    An entry without an ID cannot be chosen or sent to the API, so it is not usable either.
+    Code, audio, OCR, embedding and moderation models cannot, nor can an archived entry.  An
+    entry without an ID cannot be chosen or sent to the API, so it is not usable either.
     """
     if entry.get("archived"):
-        return False
+        return "archived"
     if not str(entry.get("id") or ""):
-        return False
+        return "no id"
     if _is_off_topic(str(entry.get("id", ""))):
-        return False
+        return "code, OCR or embedding model"
     if entry.get("audio_transcription_capabilities"):
-        return False
+        return "audio model"
     capabilities = entry.get("capabilities")
     if isinstance(capabilities, dict):
         if "completion_chat" in capabilities and not capabilities["completion_chat"]:
-            return False
+            return "no chat capability"
         if capabilities.get("classification"):
-            return False
-    return True
+            return "classification model"
+    return ""
+
+
+def _usable(entry: dict[str, Any]) -> bool:
+    """Return whether an API model entry can proofread text (not code, audio, moderation…)."""
+    return not unusable_reason(entry)
 
 
 def _is_off_topic(model_id: str) -> bool:
@@ -312,6 +317,20 @@ def _size_rank(model_id: str) -> int:
     return len(_SIZE_ORDER)
 
 
+def fetch_model_entries(base_url: str, api_key: str) -> list[dict[str, Any]]:
+    """Return the raw ``/models`` entries *base_url* answers with.
+
+    Raises ``OSError`` (``HTTPError``, ``URLError``, a timeout) when the endpoint cannot be
+    asked, and ``ValueError`` / ``AttributeError`` when the answer is not the expected JSON.
+    """
+    request = urllib.request.Request(
+        f"{base_url}/models",
+        headers={"Authorization": f"Bearer {api_key}", "Accept": "application/json"},
+    )
+    with urllib.request.urlopen(request, timeout=_LIST_TIMEOUT_S) as response:
+        return json.load(response).get("data", [])
+
+
 def list_chat_models_checked(base_url: str, fallback: list[str]) -> ModelListing:
     """Return the chat-capable model IDs served at *base_url*, saying whether they are live.
 
@@ -322,13 +341,8 @@ def list_chat_models_checked(base_url: str, fallback: list[str]) -> ModelListing
     api_key = os.environ.get(ENV_KEY, "").strip()
     if not api_key:
         return ModelListing(list(fallback), "failed", "no Mistral key is set")
-    request = urllib.request.Request(
-        f"{base_url}/models",
-        headers={"Authorization": f"Bearer {api_key}", "Accept": "application/json"},
-    )
     try:
-        with urllib.request.urlopen(request, timeout=_LIST_TIMEOUT_S) as response:
-            entries = json.load(response).get("data", [])
+        entries = fetch_model_entries(base_url, api_key)
         curated = curate_mistral_models(entries, date.today())
     except urllib.error.HTTPError as exc:  # an OSError too, but its status says why
         if exc.code in (401, 403):

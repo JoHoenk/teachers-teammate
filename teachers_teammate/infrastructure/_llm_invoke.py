@@ -170,9 +170,13 @@ def _rejected_request(exc: BaseException) -> bool:
 
     Network failures, timeouts, authentication and rate limits carry other statuses (or none)
     and stay transport errors; the provider SDKs expose the status as ``status_code`` or
-    ``code``.
+    ``code``, and an ``httpx`` error (Mistral) only on its ``response``.
     """
-    status = getattr(exc, "status_code", None) or getattr(exc, "code", None)
+    status = (
+        getattr(exc, "status_code", None)
+        or getattr(exc, "code", None)
+        or getattr(getattr(exc, "response", None), "status_code", None)
+    )
     return isinstance(status, int) and status in _REJECTED_STATUSES
 
 

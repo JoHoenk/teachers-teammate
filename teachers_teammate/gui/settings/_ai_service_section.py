@@ -720,6 +720,7 @@ class AiServiceSection(QWidget):
             )
         elif (
             previous
+            and previous not in listing.models
             and previous not in listing.also_served
             and self._is_saved_model(previous)
             and listing.source == "live"

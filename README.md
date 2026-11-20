@@ -106,7 +106,7 @@ else is downloaded from inside the app, on request, after it names the size: pri
 
 | | Windows | macOS | Linux |
 |---|---|---|---|
-| **System** | 10 (version 1809 or newer) or 11 | 14.4 Sonoma or newer | Ubuntu 24.04+, Debian 13+ or Mint 22+ (glibc 2.39 or newer); other distributions with glibc 2.39 or newer: the `.tar.xz` |
+| **System** | 10 (version 1809 or newer) or 11 | 15 Sequoia or newer | Ubuntu 24.04+, Debian 13+ or Mint 22+ (glibc 2.39 or newer); other distributions with glibc 2.39 or newer: the `.tar.xz` |
 | **Processor** | x64 | Apple Silicon (M1 or newer) | x86_64 |
 | **Main memory** | 8 GB | 8 GB | 8 GB |
 | **Free disk space** | about 700 MB | about 700 MB | about 700 MB |

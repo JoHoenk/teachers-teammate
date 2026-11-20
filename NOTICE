@@ -45,9 +45,9 @@ Qt 6.12.0 and PySide6 6.12.0, the versions the bundle carries:
   https://download.qt.io/archive/qt/6.12/6.12.0/single/qt-everywhere-src-6.12.0.tar.xz
   https://download.qt.io/official_releases/QtForPython/pyside6/PySide6-6.12.0-src/
 
-FFmpeg 8.1.1, inside opencv-python-headless 5.0.0.93 (Linux and macOS):
-  https://ffmpeg.org/releases/ffmpeg-8.1.1.tar.gz
-  The wheel's build recipe: https://github.com/opencv/opencv-python (tag 93)
+FFmpeg 9.0.2, inside opencv-python-headless 5.1.0.95 (Linux and macOS):
+  https://ffmpeg.org/releases/ffmpeg-9.0.2.tar.gz
+  The wheel's build recipe: https://github.com/opencv/opencv-python (tag 95)
 
 certifi 2026.10.23 (MPL-2.0):
   https://github.com/certifi/python-certifi

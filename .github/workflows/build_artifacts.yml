@@ -100,7 +100,7 @@ jobs:
           # Linux resolver, so check them here, once, instead of on the runner that needs them.
           if [[ "$RUNNER_OS" == "Linux" ]]; then
             python tools/build/check_pins.py --platform win_amd64
-            python tools/build/check_pins.py --platform macosx_14_0_arm64
+            python tools/build/check_pins.py --platform macosx_15_0_arm64
           fi
 
       # check_pins.py proves every installed distribution is pinned; this proves every one of
@@ -153,11 +153,9 @@ jobs:
       # silently raises the floor. The check reads the minimum macOS of every Mach-O file in
       # the .app, every architecture slice of a universal2 one included.
       #
-      # The PySide6 6.12.0 wheel is tagged macosx_14_0, but its Qt libraries say minos 14.4 and
-      # its Python binding modules (QtCore.abi3.so, libpyside6, shiboken6, ...) say 26.0 in both
-      # slices: upstream built them without a deployment target. The floor is therefore 14.4 for
-      # everything else and the bindings are exempt. GitHub retired the macos-14 runner, so no job
-      # proves that they load on 14 any more: the install-macos job starts on macos-15 and up. Drop --ignore when a PySide6 wheel fixes its binaries.
+      # The floor is 15.0, set by the OpenCV wheel. The PySide6 6.12.0 binding modules
+      # (QtCore.abi3.so, libpyside6, shiboken6, ...) say 26.0 in both slices: upstream built
+      # them without a deployment target, so they are exempt. Drop --ignore when a wheel fixes it.
       # The floor itself is MACOS_MINIMUM in check_macos_bundle.py, which the spec's
       # LSMinimumSystemVersion reads too, so the .app and this check cannot disagree.
       - name: Check the macOS bundle
@@ -359,8 +357,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # The oldest runner GitHub still offers and the build's own (macos-14 is retired, so the
-        # 14.4 floor is on the VM list). If GitHub retires one, the oldest left takes its place
+        # The oldest runner GitHub still offers and the build's own (the floor).
+        # If GitHub retires one, the oldest left takes its place
         # and the list of test systems in docs/deployment.md follows.
         os: [macos-15, macos-26]
     steps:

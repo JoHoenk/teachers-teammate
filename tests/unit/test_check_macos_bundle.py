@@ -154,7 +154,7 @@ def test_too_new_skips_files_matching_an_ignore_pattern(tmp_path: Path) -> None:
     other = tmp_path / "other.dylib"
     versions = {binding: (26, 0, 0), other: (26, 0, 0)}
 
-    problems = check_macos_bundle.too_new(versions, (14, 4), ("*/PySide6/*.abi3.so",))
+    problems = check_macos_bundle.too_new(versions, (15, 0), ("*/PySide6/*.abi3.so",))
 
     assert problems == [f"{other} needs macOS 26.0"]
 
@@ -206,16 +206,16 @@ def test_check_info_plist_names_a_foreign_identifier(tmp_path: Path) -> None:
 
 def test_check_info_plist_names_a_floor_that_is_not_macos_minimum(tmp_path: Path) -> None:
     """
-    Given  an .app that asks for macOS 15.0 while the floor is 14.4
+    Given  an .app that asks for macOS 14.0 while the floor is 15.0
     When   the plist is checked
     Then   the floor is named, so the .app and the Mach-O check cannot disagree
     """
-    app = _app(tmp_path, LSMinimumSystemVersion="15.0")
+    app = _app(tmp_path, LSMinimumSystemVersion="14.0")
 
     problems = check_macos_bundle.check_info_plist(app)
 
     assert problems == [
-        f"LSMinimumSystemVersion is '15.0', expected {check_macos_bundle.MACOS_MINIMUM!r}"
+        f"LSMinimumSystemVersion is '14.0', expected {check_macos_bundle.MACOS_MINIMUM!r}"
     ]
 
 

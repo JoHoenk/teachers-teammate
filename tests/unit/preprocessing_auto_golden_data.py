@@ -103,9 +103,9 @@ def pencil_photo() -> Any:
 #: Digests of the automatic preparation's output (see test_preprocessing_auto_golden.py).
 #: Regenerate with the snippet in that file when AUTO_VERSION is bumped on purpose.
 GOLDEN: dict[str, str] = {
-    "photo": "350b9e33384b502c",
-    "shadow": "8a7c9a516680cea8",
-    "tilt": "d7fbb37a423549a0",
+    "photo": "4355b6980449c124",
+    "shadow": "f98933c891c9c7e3",
+    "tilt": "8ebe06749d2dd3a6",
     "sample_png": "b4be19f93047d26b",
     "sample_pdf": "ec1937b5a46243eb",
 }

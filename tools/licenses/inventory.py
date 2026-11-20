@@ -616,7 +616,7 @@ def _read_text(path: Path) -> str:
 
 
 #: The macOS the bundle is built on: pip picks the newest wheel tagged for this or an older one.
-MACOS_TARGET = (14, 0)
+MACOS_TARGET = (15, 0)
 
 _WHEEL_TAGS = re.compile(r"-(?P<py>[^-]+)-(?P<abi>[^-]+)-(?P<platform>[^-]+)\.whl$")
 
@@ -648,7 +648,7 @@ def wheel_url(files: list[dict], platform: str, python: str | None = None) -> di
     """Return PyPI's entry for the wheel the bundle of *platform* ships.
 
     The wheel must fit the bundle's CPython (``cp314``, not the free-threaded ``cp314t``) and the
-    platform; among macOS wheels the newest one a ``macosx_14_0`` build accepts wins, as with pip.
+    platform; among macOS wheels the newest one a ``macosx_15_0`` build accepts wins, as with pip.
     Without a platform wheel the universal one is used.
     """
     python = python or _python_tag()

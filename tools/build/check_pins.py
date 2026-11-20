@@ -17,7 +17,7 @@ dependency for Windows or macOS (``pefile``, ``macholib``) therefore fails on th
 instead of on the runner that needs it:
 
     python tools/build/check_pins.py --platform win_amd64
-    python tools/build/check_pins.py --platform macosx_14_0_arm64
+    python tools/build/check_pins.py --platform macosx_15_0_arm64
 """
 
 from __future__ import annotations
@@ -115,7 +115,7 @@ _MARKER_ENVIRONMENTS: dict[str, dict[str, str]] = {
 
 
 def marker_environment(platform: str) -> dict[str, str]:
-    """Return the marker values for a wheel platform tag (``win_amd64``, ``macosx_14_0_arm64``)."""
+    """Return the marker values for a wheel platform tag (``win_amd64``, ``macosx_15_0_arm64``)."""
     for prefix, environment in _MARKER_ENVIRONMENTS.items():
         if platform.startswith(prefix):
             return environment

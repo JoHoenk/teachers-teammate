@@ -2071,6 +2071,29 @@ def test_a_saved_alias_the_service_still_serves_is_not_called_out(qtbot, monkeyp
 
 
 @pytest.mark.gui
+@pytest.mark.parametrize("provider", ["mistral", "mistral_eu"])
+@pytest.mark.parametrize("saved", ["mistral-large-latest", "mistral-small-2506"])
+def test_a_saved_model_the_curated_list_offers_is_not_called_out(
+    qtbot, monkeypatch, provider: str, saved: str
+) -> None:
+    """
+    Given  a saved Mistral model that the curated live list offers (a current and a pinned one)
+    When   the curated live list arrives
+    Then   the model stays chosen and no "not offered" note appears
+    """
+    monkeypatch.setenv("MISTRAL_API_KEY", "k-test")
+    svc = ProviderAppService()
+    svc.listing = curated_listing()
+    section = _proofreading(
+        qtbot, svc, {"correction_provider": provider, "correction_model": saved}
+    )
+    _wait_for_fetch(qtbot, section, svc, calls=1)
+
+    assert section._model.currentText() == saved
+    assert "not offered" not in section._status_lbl.text()
+
+
+@pytest.mark.gui
 def test_a_saved_model_that_is_really_gone_is_still_called_out(qtbot, monkeypatch) -> None:
     """
     Given  a saved Mistral model that is neither listed, retiring nor an alias of a listed one

@@ -563,6 +563,16 @@ py_test(
     deps = _COMMON_DEPS + _LANGCHAIN_DEPS + _INFRASTRUCTURE_LIB,
 )
 
+# The LangChain invocation helpers: which errors count as the provider rejecting a request.
+py_test(
+    name = "test_llm_invoke",
+    size = "small",
+    srcs = _COMMON_SRCS + ["unit/test_llm_invoke.py"],
+    args = ["unit/test_llm_invoke.py"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS + _LANGCHAIN_DEPS + _INFRASTRUCTURE_LIB,
+)
+
 py_test(
     name = "test_ocr_processor",
     size = "small",
@@ -1683,6 +1693,17 @@ py_test(
     ],
 )
 
+# The developer tool that asks the global and the EU Mistral endpoint which models they serve: the
+# comparison and the command line, with the endpoints' answers faked.
+py_test(
+    name = "test_compare_mistral_regions",
+    size = "small",
+    srcs = _COMMON_SRCS + ["tools/test_compare_mistral_regions.py"],
+    args = ["tools/test_compare_mistral_regions.py"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS + _INFRASTRUCTURE_LIB + ["//tools:compare_mistral_regions_lib"],
+)
+
 # The developer tool that measures what a reading model costs on one page: the pure parts, so no
 # server and no page image.  The tool itself imports the image preprocessor, hence the CV deps.
 py_test(
@@ -1727,6 +1748,7 @@ py_test(
     srcs = _COMMON_SRCS + ["tools/test_tool_binaries.py"],
     args = ["tools/test_tool_binaries.py"],
     data = [
+        "//tools:compare_mistral_regions",
         "//tools:evaluate",
         "//tools:extract_test_specs",
         "//tools:ocr_page_tokens",
@@ -2568,6 +2590,7 @@ test_suite(
         ":test_cli",
         ":test_cli_composition",
         ":test_collect_files",
+        ":test_compare_mistral_regions",
         ":test_config",
         ":test_context_budget",
         ":test_coordinator",
@@ -2622,6 +2645,7 @@ test_suite(
         ":test_layer_imports",
         ":test_license_inventory",
         ":test_llm_factory",
+        ":test_llm_invoke",
         ":test_local_models",
         ":test_make_constraints",
         ":test_make_version_resource",

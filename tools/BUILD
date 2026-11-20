@@ -97,6 +97,25 @@ py_binary(
     ] + _APP_RUNTIME,
 )
 
+# Developer tool (needs network and a Mistral key; not run in CI) that asks the global and the EU
+# Mistral endpoint which models they serve.  The model list code it shares with the app imports
+# nothing beyond the standard library at start-up.
+py_binary(
+    name = "compare_mistral_regions",
+    srcs = ["compare_mistral_regions.py"],
+    main = "compare_mistral_regions.py",
+    visibility = ["//visibility:public"],
+    deps = ["//teachers_teammate:application_lib"],
+)
+
+# The same module as a library, so a py_test can import it.
+py_library(
+    name = "compare_mistral_regions_lib",
+    srcs = ["compare_mistral_regions.py"],
+    visibility = ["//visibility:public"],
+    deps = ["//teachers_teammate:application_lib"],
+)
+
 # Developer tool (needs a running Ollama server and the developer's own benchmark pages; not run
 # in CI) that measures what a reading model costs on one page: the answer tokens per page and the
 # words per page, which are the catalog's answer_length and TYPICAL_PAGE_WORDS.

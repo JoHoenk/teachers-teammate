@@ -29,6 +29,7 @@ from teachers_teammate.domain.teacher_work import (
     looked_at_progress,
     proofreading_id,
     put_back,
+    replace_words,
     suggestion_is_wording,
     take_out,
     text_identity,
@@ -343,6 +344,68 @@ def test_use_suggestion_of_an_unanchored_expression_does_nothing() -> None:
     )
 
     assert use_suggestion(item, AlignedReview(), "Der Hund bellt.", "Der Hund bellt.") == ()
+
+
+def test_replace_words_writes_the_typed_words_over_the_corrected_ones() -> None:
+    """
+    Given  a correction whose words stand in the corrected text
+    When   other words are written in their place
+    Then   they replace the corrected wording, and the rest of the text is untouched
+    """
+    raw, corrected = "Der bunte Hund bellt.", "Der braune Hund bellt."
+    aligned = align(raw, corrected, _review_of(raw, corrected))
+
+    edits_of_edit = replace_words(((4, 10),), (4, 9), aligned, corrected, "dunkelbraune")
+
+    assert edits_of_edit == (TextEdit(4, 10, "dunkelbraune"),)
+    assert apply_edits(corrected, edits_of_edit) == "Der dunkelbraune Hund bellt."
+
+
+def test_replace_words_replaces_an_inserted_word_instead_of_adding_to_it() -> None:
+    """
+    Given  a correction that only added a word, so the student's span is empty
+    When   other words are written in place of the added word
+    Then   the added word is replaced, not left standing next to the new words
+    """
+    raw, corrected = "Ich gehe Schule.", "Ich gehe zur Schule."
+    aligned = align(raw, corrected, _review_of(raw, corrected))
+    hunk = aligned.changes[0].hunk
+
+    edits_of_edit = replace_words(
+        ((hunk.corrected_start, hunk.corrected_end),),
+        (hunk.raw_start, hunk.raw_end),
+        aligned,
+        corrected,
+        "in die",
+    )
+
+    assert apply_edits(corrected, edits_of_edit) == "Ich gehe in die Schule."
+
+
+def test_replace_words_gives_nothing_for_words_outside_the_text() -> None:
+    """
+    Given  a span that lies beyond the corrected text
+    When   other words are written in its place
+    Then   there is no edit
+    """
+    raw = "Der Hund bellt."
+    aligned = align(raw, raw, CorrectionReview())
+
+    assert replace_words(((50, 60),), (50, 60), aligned, raw, "x") == ()
+
+
+def test_replace_words_finds_the_students_words_where_the_model_left_them() -> None:
+    """
+    Given  a stretch the model left out, so the student's words still stand in the text
+    When   other words are written in their place
+    Then   they land on those words, not on the model's wording
+    """
+    raw = "Der bunte Hund bellt."
+    aligned = align(raw, raw, CorrectionReview())
+
+    edits_of_edit = replace_words((), (4, 9), aligned, raw, "braune")
+
+    assert apply_edits(raw, edits_of_edit) == "Der braune Hund bellt."
 
 
 def test_suggestion_is_wording_only_for_a_wording() -> None:

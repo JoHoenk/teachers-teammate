@@ -2632,12 +2632,20 @@ benchmark and the Word builder read) and pages 2..N as `<stem>_o<N>.<ext>`, list
 count, so the files of a document called `Anna_o2` stay.  A page whose original is missing stays
 prepared when *Original* is on, and a state written before this field has the one original it
 had.  A PDF with a text layer stores every page for the scan as well: `PdfInputProvider` renders
-the pages it skips into `InputPayload.page_images` — at `SCAN_DPI` (150), not the OCR
-resolution, because nothing reads them — and `FileProcessor` hands them to
+the pages it skips into `InputPayload.page_images` — at `pdf_render_dpi`, the same resolution
+as the OCR page, because the scan is read by zooming into it — and `FileProcessor` hands them to
 `persist_preview_artifact(pages=…)` as it hands the prepared pages.  The scan's strip
 (`ScanPane` in `gui/check/_scan_view.py`) holds the *Prepared · Original* switch, offered only when a page
 has an original and a step acted on it, and the caption of the steps that prepared the pages
 (`prepared_caption`).  The scan opens fitted to the page; a double click toggles fit page / fit width.
+
+`ScanView` draws each page from its own image and scales the item down to the pane
+(`QGraphicsPixmapItem.setScale`, smooth), so zooming in shows the scanned pixels; the zoom stops at
+twice the page's own pixels (`_ZOOM_NATIVE`), or at `_ZOOM_MAX` where the page is small enough that
+four times the fitted size is already more.  Memory is bounded by `_full`: only the pages in view
+and their neighbours (`_pages_in_view`) are held at their own size, the others hold a copy at
+`_THUMBNAIL_WIDTH`, swapped in by `_refresh_full_pages` when the teacher scrolls or zooms.  A
+text-layer PDF's pages are rendered at `pdf_render_dpi` for the same reason.
 
 **The strips above the text** (`gui/check/_run_strip.py`): `NextStepStrip` over a transcription that
 has not been proofread (*Proofread*, or *Set up proofreading…* via `CheckPage.set_proofreading_ready`)
@@ -2902,9 +2910,11 @@ is recorded only where counting from 1 would be wrong).
 | Check tab | formatted rich text (`gui/check/_text_views.py`); **⋯ → Show Markdown source** shows the stored Markdown of the view in front |
 
 **Editing.** The formatted view is editable (Ctrl+B / I / U, Ctrl+Shift+X crossed out,
-Ctrl+Shift+= inserted above the line). Edits are converted back to Markdown
-(`document_from_qt` → `MarkdownRenderer`) and saved like any other manual edit. Bounding
-boxes of layout engines are not kept.
+Ctrl+Shift+= inserted above the line). The keys and the context menu's formatting actions are
+offered only for a Markdown text: a plain text is stored through the plain renderer, which drops
+every character style. Edits are converted back to Markdown (`document_from_qt` →
+`MarkdownRenderer`) and saved like any other manual edit. Bounding boxes of layout engines are
+not kept.
 
 **Adding a notation** (hOCR, DocTags, …): implement `OcrOutputParser` in
 `infrastructure/ocr_formats/`, add it to `default_parsers()` ahead of `PlainTextParser`, and

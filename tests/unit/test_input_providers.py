@@ -9,7 +9,6 @@ from unittest.mock import patch
 import pytest
 
 from teachers_teammate.infrastructure.input_providers import (
-    SCAN_DPI,
     ImageInputProvider,
     PdfInputProvider,
     TextInputProvider,
@@ -164,13 +163,14 @@ def test_pdf_provider_text_layer_renders_every_page_for_the_scan(tmp_path: Path)
     assert payload.source_image == payload.page_images[0]
 
 
-def test_pdf_provider_text_layer_renders_the_scan_below_the_ocr_resolution(
+def test_pdf_provider_text_layer_renders_the_scan_at_the_ocr_resolution(
     tmp_path: Path,
 ) -> None:
     """
     Given  a text-only PDF and a provider that renders pages for OCR at 300 DPI
     When   load() is called in auto mode
-    Then   the pages of the scan are rendered at the lower scan resolution, not at 300 DPI
+    Then   the pages of the scan are rendered at the same resolution, so zooming into the scan
+           shows the page and not an enlarged copy of it
     """
     from PIL import Image  # noqa: PLC0415
 
@@ -184,8 +184,9 @@ def test_pdf_provider_text_layer_renders_the_scan_below_the_ocr_resolution(
     ocr_page = ocr.load(pdf).units[0].image_path
     assert ocr_page is not None
 
-    with Image.open(scan_page) as small, Image.open(ocr_page) as large:
-        assert small.width == pytest.approx(large.width * SCAN_DPI / 300, abs=2)
+    with Image.open(scan_page) as shown, Image.open(ocr_page) as read:
+        assert shown.width == read.width
+        assert shown.height == read.height
 
 
 def test_pdf_provider_text_layer_keeps_the_pages_rendered_before_a_broken_one(

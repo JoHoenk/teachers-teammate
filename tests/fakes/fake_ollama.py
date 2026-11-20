@@ -26,9 +26,11 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import threading
+import time
 from typing import Any
 
 #: The version the fake reports; the app only shows it.
@@ -54,6 +56,12 @@ MODEL_SIZE = 4_000_000_000
 MODIFIED_AT = "2026-01-01T00:00:00Z"
 #: The file format of every installed model.
 MODEL_FORMAT = "gguf"
+#: The expiry ``/api/ps`` reports for a model that is in memory and idle.
+IDLE_EXPIRY = "2026-01-01T00:00:00+00:00"
+#: The answer a chat request gives, so a test can read a whole request back.
+CHAT_ANSWER = "ok"
+#: The second the moving expiry of a busy model starts from (a fixed point, so it is readable).
+_MOVING_EXPIRY_BASE = 1_800_000_000
 
 
 @dataclass(frozen=True)
@@ -94,6 +102,15 @@ class FakeOllama:
         #: Tags whose pull answers an error line instead of a stream that ends in ``success``.
         self.fail_pull: set[str] = set()
         self._models: dict[str, _Model] = {}
+        #: Tags the fake holds in memory and idle: listed, with an expiry that does not move.
+        self._loaded: set[str] = set()
+        #: ``(tag, until)`` of a model that is generating: listed, with a moving expiry.
+        self._busy: tuple[str, float] | None = None
+        #: ``(tag, until)`` of a model that is loading: not listed until *until*, and its first
+        #: answer waits that long.
+        self._loading: tuple[str, float] | None = None
+        #: How often ``/api/ps`` was asked, which is what moves the expiry of a busy model.
+        self._ps_calls = 0
         self._lock = threading.Lock()
         self._server = ThreadingHTTPServer(("127.0.0.1", 0), _handler_for(self))
         self._thread = threading.Thread(
@@ -129,6 +146,65 @@ class FakeOllama:
             self._models[tag] = _Model(
                 tag=tag, capabilities=caps, families=tuple(families), size=size
             )
+
+    def loaded(self, tag: str) -> None:
+        """Pretend *tag* is in memory and idle: ``/api/ps`` lists it, its expiry does not move."""
+        with self._lock:
+            self._loaded.add(tag)
+
+    def busy_with(self, tag: str, seconds: float) -> None:
+        """Pretend *tag* is generating for *seconds*: listed, and its expiry moves on every poll.
+
+        That is what a real server does while a model writes an answer, and it is the only sign
+        the app has that a request is queued behind another one.  Afterwards the model stays in
+        memory and idle, as a real server keeps it.
+        """
+        with self._lock:
+            self._busy = (tag, time.monotonic() + seconds)
+            self._loaded.add(tag)
+
+    def loading_for(self, tag: str, seconds: float) -> None:
+        """Pretend *tag* takes *seconds* to load.
+
+        Until then ``/api/ps`` does not list it and its first answer waits; afterwards it is
+        listed and idle, as a real server reports a model it just loaded.
+        """
+        with self._lock:
+            self._loading = (tag, time.monotonic() + seconds)
+
+    def ps(self) -> list[dict[str, Any]]:
+        """Return the ``/api/ps`` answer: what is in memory, and when it will be dropped."""
+        now = time.monotonic()
+        with self._lock:
+            self._ps_calls += 1
+            calls = self._ps_calls
+            busy, loading, loaded = self._busy, self._loading, set(self._loaded)
+        entries: list[dict[str, Any]] = []
+        if busy is not None and now < busy[1]:
+            # A generating model's expiry moves on every poll; that is the only sign of it.
+            entries.append(_ps_entry(busy[0], _moving_expiry(calls)))
+        if loading is not None and now < loading[1]:
+            return entries
+        if loading is not None:
+            loaded.add(loading[0])
+        entries.extend(_ps_entry(tag, IDLE_EXPIRY) for tag in sorted(loaded))
+        return entries
+
+    def wait_for_turn(self, tag: str) -> None:
+        """Block until the server is free and *tag* is loaded, as it would before answering.
+
+        A request that arrives while another model is generating waits behind it, and then the
+        model it asks for has to be loaded.
+        """
+        with self._lock:
+            busy = self._busy
+        if busy is not None:
+            time.sleep(max(0.0, busy[1] - time.monotonic()))
+        with self._lock:
+            loading = self._loading
+        if loading is None or loading[0] != tag:
+            return
+        time.sleep(max(0.0, loading[1] - time.monotonic()))
 
     def installed(self) -> list[str]:
         """Return the tags the fake holds, in the order they were installed."""
@@ -189,6 +265,23 @@ class FakeOllama:
         self.close()
 
 
+def _moving_expiry(calls: int) -> str:
+    """Return an expiry that moves with every poll, as a generating model's does."""
+    return datetime.fromtimestamp(_MOVING_EXPIRY_BASE + calls, UTC).isoformat()
+
+
+def _ps_entry(tag: str, expires_at: str) -> dict[str, Any]:
+    """Return one ``/api/ps`` entry for *tag*, as a real server sends it."""
+    return {
+        "name": tag,
+        "model": tag,
+        "size": MODEL_SIZE,
+        "size_vram": MODEL_SIZE,
+        "context_length": 4096,
+        "expires_at": expires_at,
+    }
+
+
 def _details(model: _Model) -> dict[str, Any]:
     """Return the ``details`` block of *model*, as ``/api/tags`` and ``/api/show`` send it."""
     return {
@@ -225,7 +318,9 @@ def _handler_for(fake: FakeOllama) -> type[BaseHTTPRequestHandler]:
             elif method == "GET" and self.path == "/api/tags":
                 self._json({"models": fake.tags()})
             elif method == "GET" and self.path == "/api/ps":
-                self._json({"models": []})
+                self._json({"models": fake.ps()})
+            elif method == "POST" and self.path == "/api/chat":
+                self._chat(body)
             elif method == "POST" and self.path == "/api/show":
                 self._show(str(body.get("model") or ""))
             elif method == "POST" and self.path == "/api/pull":
@@ -265,6 +360,37 @@ def _handler_for(fake: FakeOllama) -> type[BaseHTTPRequestHandler]:
                     "details": _details(model),
                     # The client's ShowResponse requires it, and a real server always sends it.
                     "model_info": {},
+                }
+            )
+
+        def _chat(self, body: dict[str, Any]) -> None:
+            """Stream one answer, after the server is free and the model is loaded."""
+            tag = str(body.get("model") or "")
+            fake.wait_for_turn(tag)
+            self.send_response(200)
+            self.send_header("Content-Type", "application/x-ndjson")
+            self.end_headers()
+            self._line(
+                {
+                    "model": tag,
+                    "created_at": MODIFIED_AT,
+                    "message": {"role": "assistant", "content": CHAT_ANSWER},
+                    "done": False,
+                }
+            )
+            self._line(
+                {
+                    "model": tag,
+                    "created_at": MODIFIED_AT,
+                    "message": {"role": "assistant", "content": ""},
+                    "done": True,
+                    "done_reason": "stop",
+                    "prompt_eval_count": 10,
+                    "eval_count": 2,
+                    "total_duration": 2_000_000_000,
+                    "load_duration": 1_500_000_000,
+                    "prompt_eval_duration": 300_000_000,
+                    "eval_duration": 200_000_000,
                 }
             )
 

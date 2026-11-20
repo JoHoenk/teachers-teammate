@@ -261,13 +261,19 @@ class BenchmarkApplicationService:
         config = self.build_config(source, ocr=ocr, language=language, ollama_url=ollama_url)
         if on_progress is not None:
             on_progress(f"Running OCR · {ocr.engine} · {ocr.model}")
-        result = self._runner(
-            config,
-            source,
-            component_factory=self._component_factory,
-            stop_event=stop_event,
-            model_store=self._processing.model_store,
-        )
+        before = self._loaded_tags(ollama_url, ocr)
+        try:
+            result = self._runner(
+                config,
+                source,
+                component_factory=self._component_factory,
+                stop_event=stop_event,
+                model_store=self._processing.model_store,
+            )
+        finally:
+            # A benchmark that ends or is stopped must not leave its model in memory: the next
+            # run would then measure a model that is already loaded.
+            self._unload_models_it_loaded(ollama_url, ocr, before)
         if result.error is not None:
             raise BenchmarkRunError(result.error)
 
@@ -290,6 +296,38 @@ class BenchmarkApplicationService:
                 raw_text_format=result.raw_text_format,
             )
         )
+
+    @staticmethod
+    def _loaded_tags(url: str, ocr: OcrConfig) -> frozenset[str]:
+        """Return the models the server holds in memory before a run, or nothing."""
+        if ocr.engine != "ollama":
+            return frozenset()
+        from ..infrastructure.ollama_utils import (  # noqa: PLC0415
+            OllamaClient,
+            normalize_tag,
+        )
+
+        loaded = OllamaClient(url).activity().loaded_names()
+        return frozenset(normalize_tag(name) for name in loaded)
+
+    @staticmethod
+    def _unload_models_it_loaded(url: str, ocr: OcrConfig, before: frozenset[str]) -> None:
+        """Drop the models this run loaded, so the benchmark does not hold the memory.
+
+        Only the ones that were not in memory before: a model the teacher was already using
+        stays loaded.
+        """
+        if ocr.engine != "ollama":
+            return
+        from ..infrastructure.ollama_utils import (  # noqa: PLC0415
+            OllamaClient,
+            normalize_tag,
+        )
+
+        client = OllamaClient(url)
+        for name in client.activity().loaded_names():
+            if normalize_tag(name) not in before:
+                client.unload(name)
 
     def delete_run(self, source: Path, run_id: str) -> None:
         """Delete a single stored run for *source*."""

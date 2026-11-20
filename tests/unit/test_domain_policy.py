@@ -160,6 +160,39 @@ def test_a_proofreading_nobody_worked_on_is_stale_by_its_settings() -> None:
     assert correction_kept_over_settings(hashes) is False
 
 
+def test_a_switched_off_proofreading_is_not_stale_by_its_settings() -> None:
+    """
+    Given  a proofreading nobody worked on, changed proofreading settings and the stage off
+    When   the stale stage is asked for
+    Then   the stored proofreading stays: off means "this run does not do it"
+    """
+    hashes = _hashes(correction_config_hash="old", correction_enabled=False)
+
+    assert first_stale_stage_for_hashes(hashes) is None
+
+
+def test_a_switched_off_review_is_not_stale_by_its_settings() -> None:
+    """
+    Given  a stored review, changed review settings and the stage off
+    When   the stale stage is asked for
+    Then   the stored review stays
+    """
+    hashes = _hashes(eval_config_hash="old", evaluation_enabled=False)
+
+    assert first_stale_stage_for_hashes(hashes) is None
+
+
+def test_a_switched_off_proofreading_of_another_transcription_is_still_stale() -> None:
+    """
+    Given  a proofreading made from a transcription the document no longer has, stage off
+    When   the stale stage is asked for
+    Then   it is stale: a new transcription invalidates it whatever the switch
+    """
+    hashes = _hashes(expected_correction_source="other", correction_enabled=False)
+
+    assert first_stale_stage_for_hashes(hashes) == "correction"
+
+
 def test_a_kept_proofreading_with_current_settings_is_not_kept_over_them() -> None:
     """
     Given  a proofreading the teacher worked on and the settings it was made with

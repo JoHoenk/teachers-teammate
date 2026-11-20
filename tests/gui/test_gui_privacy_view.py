@@ -8,6 +8,7 @@ import threading
 from pathlib import Path
 
 import pytest
+from teachers_teammate.application.queue import QueueRow, StageState
 from teachers_teammate.application.service import ProcessingApplicationService
 from teachers_teammate.gui import _main_window as main_window_module
 from teachers_teammate.gui import _user_text as txt
@@ -53,6 +54,8 @@ class _DummyWorker:
         self.file_started = _DummySignal()
         self.stage_started = _DummySignal()
         self.ocr_done = _DummySignal()
+        self.stage_detail = _DummySignal()
+        self.first_token = _DummySignal()
         self.file_done = _DummySignal()
         self.keep_awake_changed = _DummySignal()
         self.run_finished = _DummySignal()
@@ -119,8 +122,17 @@ def _open_document(main_window, monkeypatch, tmp_path, raw: str, corrected: str 
             correction_done=bool(corrected),
         ),
     )
-    main_window._results_table.set_queue(["page.png"], source_ids=[str(source)])
-    main_window._results_table.set_row_artifacts(str(source), "", raw, corrected, "")
+    main_window._results_table.set_queue(
+        [
+            QueueRow(
+                source_id=str(source),
+                name="page.png",
+                ocr=StageState.DONE if raw else StageState.NONE,
+                correction=StageState.DONE if corrected else StageState.NONE,
+                has_text=bool(raw),
+            )
+        ]
+    )
     main_window._update_check_tab()
     main_window._load_check(str(source))
 
@@ -149,7 +161,7 @@ def main_window(qtbot, monkeypatch, settings) -> MainWindow:
     """A window whose View setting lives in memory and whose service can hide names."""
     monkeypatch.setattr(MainWindow, "_settings_store", lambda self: settings)
     monkeypatch.setattr(
-        ProcessingApplicationService, "anonymizer_available", lambda self, _lang: True
+        ProcessingApplicationService, "anonymizer_available", lambda self, _lang, _config=None: True
     )
     win = MainWindow(worker_factory=_DummyWorker)
     qtbot.addWidget(win)
@@ -277,7 +289,7 @@ def test_the_privacy_checkbox_reflects_a_stored_choice(qtbot, monkeypatch, setti
     settings.setValue(DISPLAY_ANONYMIZED_KEY, "no")
     monkeypatch.setattr(MainWindow, "_settings_store", lambda self: settings)
     monkeypatch.setattr(
-        ProcessingApplicationService, "anonymizer_available", lambda self, _lang: True
+        ProcessingApplicationService, "anonymizer_available", lambda self, _lang, _config=None: True
     )
     win = MainWindow(worker_factory=_DummyWorker)
     qtbot.addWidget(win)
@@ -367,7 +379,7 @@ def test_a_stored_choice_to_show_the_names_is_kept(qtbot, monkeypatch, settings)
     settings.setValue(DISPLAY_ANONYMIZED_KEY, "no")
     monkeypatch.setattr(MainWindow, "_settings_store", lambda self: settings)
     monkeypatch.setattr(
-        ProcessingApplicationService, "anonymizer_available", lambda self, _lang: True
+        ProcessingApplicationService, "anonymizer_available", lambda self, _lang, _config=None: True
     )
 
     win = MainWindow(worker_factory=_DummyWorker)
@@ -387,7 +399,7 @@ def test_the_setting_is_restored_from_the_last_session(qtbot, monkeypatch, setti
     settings.setValue(DISPLAY_ANONYMIZED_KEY, "yes")
     monkeypatch.setattr(MainWindow, "_settings_store", lambda self: settings)
     monkeypatch.setattr(
-        ProcessingApplicationService, "anonymizer_available", lambda self, _lang: True
+        ProcessingApplicationService, "anonymizer_available", lambda self, _lang, _config=None: True
     )
 
     win = MainWindow(worker_factory=_DummyWorker)
@@ -408,7 +420,9 @@ def test_the_string_language_without_spacy_disables_the_choice(
     """
     monkeypatch.setattr(MainWindow, "_settings_store", lambda self: settings)
     monkeypatch.setattr(
-        ProcessingApplicationService, "anonymizer_available", lambda self, _lang: False
+        ProcessingApplicationService,
+        "anonymizer_available",
+        lambda self, _lang, _config=None: False,
     )
 
     win = MainWindow(worker_factory=_DummyWorker)
@@ -467,9 +481,8 @@ def test_changing_the_language_updates_the_privacy_availability(main_window, mon
     monkeypatch.setattr(
         ProcessingApplicationService,
         "anonymizer_available",
-        lambda self, language: language == "English",
+        lambda self, language, _config=None: language == "English",
     )
-    main_window._privacy_availability.clear()
     main_window._config_panel._language.setCurrentText("English")
     main_window._refresh_privacy_availability()
     assert main_window._privacy_available
@@ -495,14 +508,44 @@ def test_a_finished_download_enables_the_setting(main_window, monkeypatch) -> No
     """
     installed = {"yes": False}
     monkeypatch.setattr(
-        ProcessingApplicationService, "anonymizer_available", lambda self, _l: installed["yes"]
+        ProcessingApplicationService,
+        "anonymizer_available",
+        lambda self, _l, _config=None: installed["yes"],
     )
-    main_window._privacy_availability.clear()
     main_window._refresh_privacy_availability()
     assert not main_window._check._hide_names_box.isEnabled()
 
     installed["yes"] = True
     main_window._on_packages_changed()
+
+    assert main_window._check._hide_names_box.isEnabled()
+
+
+@pytest.mark.gui
+def test_a_round_of_installs_that_outlives_its_window_enables_the_setting(
+    main_window, monkeypatch
+) -> None:
+    """
+    Given  a window whose model for the document language is not downloaded, and a round of
+           installs that belongs to the window rather than to the assistant that started it
+    When   that round finishes with something installed, after its window is gone
+    Then   the window looks again and the setting is available, without a restart
+    """
+    from teachers_teammate.gui._install_round import InstallRound  # noqa: PLC0415
+
+    installed = {"yes": False}
+    monkeypatch.setattr(
+        ProcessingApplicationService,
+        "anonymizer_available",
+        lambda self, _l, _config=None: installed["yes"],
+    )
+    main_window._refresh_privacy_availability()
+    assert not main_window._check._hide_names_box.isEnabled()
+
+    round_ = InstallRound(main_window._app_service, None, main_window)
+    round_.finished.connect(main_window._on_install_round_finished)
+    installed["yes"] = True
+    round_.finished.emit(True)
 
     assert main_window._check._hide_names_box.isEnabled()
 

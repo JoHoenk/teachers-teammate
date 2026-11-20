@@ -7,7 +7,8 @@ connection-check threads use the same code path.
 from __future__ import annotations
 
 from collections.abc import Callable, Iterator, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
+from enum import StrEnum
 import functools
 import ipaddress
 import logging
@@ -253,6 +254,13 @@ def _rejects_think(exc: OCRError) -> bool:
 #: this long, and the polling costs nothing measurable.
 _CANCEL_POLL_S = 0.2
 
+#: How often a request that has no answer yet asks the server what it is doing (seconds).
+_WAITING_POLL_S = 2.0
+
+#: How long a request may wait before the run is told why (seconds).  A model that is already
+#: loaded answers well within this, so it never shows a note.
+WAIT_DETAIL_AFTER_S = 3.0
+
 
 def _next_item[T](
     item_queue: queue.Queue[T],
@@ -295,12 +303,42 @@ def _abandon(abandoned: threading.Event, on_abandon: Callable[[], None] | None) 
             logger.debug("could not cut the abandoned Ollama connection", exc_info=True)
 
 
+def _first_item[T](
+    item_queue: queue.Queue[T | BaseException | None],
+    first_token_timeout: float,
+    cancel_event: threading.Event | None,
+    waiting: Callable[[float], bool] | None,
+) -> T | BaseException | None:
+    """Return the first item, pausing the timeout while *waiting* reports a wait.
+
+    Waiting behind another model of the server is not a failure: while the server is busy the
+    clock starts again, so the timeout only counts the time the request could have been
+    answered.  Without *waiting* the timeout runs as it is.
+    """
+    if waiting is None:
+        return _next_item(item_queue, first_token_timeout, cancel_event)
+    started = time.monotonic()
+    deadline = started + first_token_timeout
+    while True:
+        step = max(min(_WAITING_POLL_S, deadline - time.monotonic()), _CANCEL_POLL_S)
+        try:
+            return _next_item(item_queue, step, cancel_event)
+        except queue.Empty:
+            if waiting(time.monotonic() - started):
+                deadline = time.monotonic() + first_token_timeout
+                continue
+            if time.monotonic() >= deadline:
+                raise
+
+
 def _consume_iterator_with_first_token_timeout[T](
     it: Iterator[T],
     first_token_timeout: float,
     total_timeout: float | None = None,
     cancel_event: threading.Event | None = None,
     on_abandon: Callable[[], None] | None = None,
+    waiting: Callable[[float], bool] | None = None,
+    on_first_token: Callable[[], None] | None = None,
 ) -> list[T]:
     """Consume *it* in a background thread, enforcing a timeout on the first item.
 
@@ -317,6 +355,11 @@ def _consume_iterator_with_first_token_timeout[T](
     loading the model or reading the prompt no chunk comes, so a caller that can cut the
     connection from outside passes *on_abandon*: it is called (never raising) whenever the
     request is given up on -- a timeout, the deadline or a stop.
+
+    *waiting* is asked every :data:`_WAITING_POLL_S` seconds while the first item has not
+    arrived, with the seconds elapsed since the request was sent; returning ``True`` means the
+    server is busy with something else, which pauses the first-token timeout.  *on_first_token*
+    is called once, when the first item arrives.
     """
     from ..exceptions import (  # noqa: PLC0415  # avoid circular import at module level
         OCRDeadlineError,
@@ -350,7 +393,7 @@ def _consume_iterator_with_first_token_timeout[T](
     deadline = None if total_timeout is None else time.monotonic() + total_timeout
 
     try:
-        first = _next_item(item_queue, first_token_timeout, cancel_event)
+        first = _first_item(item_queue, first_token_timeout, cancel_event, waiting)
     except queue.Empty:
         _abandon(abandoned, on_abandon)
         raise OCRTimeoutError(
@@ -361,6 +404,8 @@ def _consume_iterator_with_first_token_timeout[T](
         _abandon(abandoned, on_abandon)
         raise
 
+    if on_first_token is not None:
+        on_first_token()
     results: list[T] = []
     item: T | BaseException | None = first
     while item is not None:
@@ -413,6 +458,9 @@ class ChatStats:
     """Nanoseconds spent reading the request."""
     eval_duration: int = 0
     """Nanoseconds spent writing the answer: ``eval_count`` tokens over this is the speed."""
+    waited: bool = False
+    """The request waited behind another model of the server, so ``load_duration`` counts that
+    wait as well and is no measurement of loading."""
 
     @property
     def truncated(self) -> bool:
@@ -473,6 +521,8 @@ class LoadedModel:
     size_vram_bytes: int
     """The part of it on the graphics card."""
     context_length: int = 0
+    expires_at: str = ""
+    """When the server will unload it; it moves on every poll while the model is generating."""
 
     @property
     def on_card_share(self) -> float:
@@ -516,6 +566,81 @@ class ServerFacts:
         return None
 
 
+class WaitKind(StrEnum):
+    """Why a request to Ollama has no answer yet."""
+
+    NONE = ""
+    """It has one, or the model is in memory and reading the text."""
+    BUSY = "busy"
+    """Another model is still generating, so this request is queued behind it."""
+    LOADING = "loading"
+    """The model asked for is not in memory yet."""
+    QUEUED = "queued"
+    """Another model is in the way before the run even starts."""
+
+
+@dataclass(frozen=True)
+class WaitDetail:
+    """What to tell the teacher about a request that has no answer yet."""
+
+    kind: WaitKind = WaitKind.NONE
+    model: str = ""
+    """The model the request is for."""
+    other: str = ""
+    """The model in the way: generating, or loaded while this one is not."""
+
+    def __bool__(self) -> bool:
+        """Whether there is anything to say."""
+        return self.kind is not WaitKind.NONE
+
+
+@dataclass(frozen=True)
+class ServerActivity:
+    """What the server is doing right now, as far as ``/api/ps`` can tell.
+
+    "Busy" is inferred: a model whose ``expires_at`` moved since the previous look is
+    generating.  That is undocumented behaviour, so it only chooses the wording of a note and
+    never what the app does.
+    """
+
+    loaded: tuple[LoadedModel, ...] = ()
+    """The models the server holds in memory."""
+    busy: tuple[str, ...] = ()
+    """The models that were generating when the server was asked."""
+    reachable: bool = True
+    """The server answered.  ``False`` means nothing is known, not that nothing is loaded."""
+
+    def has(self, model: str) -> bool:
+        """Return whether *model* is in memory."""
+        wanted = normalize_tag(model)
+        return any(normalize_tag(item.name) == wanted for item in self.loaded)
+
+    def loaded_names(self) -> tuple[str, ...]:
+        """Return the names of the models in memory."""
+        return tuple(item.name for item in self.loaded)
+
+    def busy_other_than(self, model: str) -> str:
+        """Return a model that is generating and is not *model*, or ``""``."""
+        wanted = normalize_tag(model)
+        for name in self.busy:
+            if normalize_tag(name) != wanted:
+                return name
+        return ""
+
+    def wait_detail(self, model: str) -> WaitDetail:
+        """Return what to tell the teacher about a request for *model* that has no answer yet.
+
+        Nothing when the model is in memory: it is reading the text, so the first token is
+        close.  Otherwise another model is still generating, or *model* is being loaded.
+        """
+        if not self.reachable or self.has(model):
+            return WaitDetail()
+        other = self.busy_other_than(model)
+        if other:
+            return WaitDetail(WaitKind.BUSY, model, other)
+        return WaitDetail(WaitKind.LOADING, model)
+
+
 class OllamaClient:
     """All HTTP access to a single Ollama server.
 
@@ -542,6 +667,15 @@ class OllamaClient:
         #: every request of the run and can turn them into a measurement of the machine.
         self._stats_sink = stats_sink
         self._last_stats: ChatStats | None = None
+        #: Called with a :class:`WaitDetail` while a request waits for its first token, so the
+        #: run can say what the server is doing.  ``None`` outside a run.
+        self.detail_sink: Callable[[WaitDetail], None] | None = None
+        #: Called when a request's first token arrives: the run's clock starts there, not when
+        #: the request was sent, so a wait behind another model does not move the bar.
+        self.first_token_sink: Callable[[], None] | None = None
+        #: ``{model: expires_at}`` of the previous look at ``/api/ps``, which is what tells a
+        #: generating model from an idle one.
+        self._last_expiry: dict[str, str] = {}
 
     @property
     def last_stats(self) -> ChatStats | None:
@@ -598,8 +732,8 @@ class OllamaClient:
         except Exception:  # noqa: BLE001  # Ollama client/transport may raise anything
             return {}
 
-    def loaded_models(self) -> tuple[LoadedModel, ...]:
-        """Return the models the server holds in memory right now, or ``()`` on any error."""
+    def _ps_models(self) -> tuple[LoadedModel, ...] | None:
+        """Return the models in memory, or ``None`` when the server could not be asked."""
         try:
             resp = self._client().ps()
             return tuple(
@@ -608,12 +742,48 @@ class OllamaClient:
                     size_bytes=int(m.size or 0),
                     size_vram_bytes=int(m.size_vram or 0),
                     context_length=int(m.context_length or 0),
+                    expires_at=str(getattr(m, "expires_at", "") or ""),
                 )
                 for m in resp.models
                 if (m.model or m.name)
             )
         except Exception:  # noqa: BLE001  # older Ollama versions may not have /api/ps
-            return ()
+            return None
+
+    def loaded_models(self) -> tuple[LoadedModel, ...]:
+        """Return the models the server holds in memory right now, or ``()`` on any error."""
+        return self._ps_models() or ()
+
+    def activity(self, model: str = "") -> ServerActivity:
+        """Return what the server is doing, and whether *model* is in memory.
+
+        A model whose ``expires_at`` moved since the previous call is generating.  That is
+        undocumented behaviour, so it only chooses the wording of a note.  Never raises: an
+        unreachable server reports nothing loaded and nothing busy.
+        """
+        loaded = self._ps_models()
+        if loaded is None:
+            return ServerActivity(reachable=False)
+        busy: list[str] = []
+        seen: dict[str, str] = {}
+        for item in loaded:
+            seen[item.name] = item.expires_at
+            before = self._last_expiry.get(item.name)
+            if before and item.expires_at and before != item.expires_at:
+                busy.append(item.name)
+        self._last_expiry = seen
+        return ServerActivity(loaded=loaded, busy=tuple(busy))
+
+    def unload(self, model: str) -> None:
+        """Ask the server to drop *model* from memory (``keep_alive=0``).
+
+        Never raises: a model that stays loaded only costs memory, and the caller is on its way
+        out anyway.
+        """
+        try:
+            self._client().generate(model=model, prompt="", keep_alive=0)
+        except Exception:  # noqa: BLE001  # an old server or a hiccup: nothing to do about it
+            logger.debug("could not unload %s from Ollama", model, exc_info=True)
 
     def server_facts(self) -> ServerFacts:
         """Return version, model digests and loaded models in one go.
@@ -930,6 +1100,28 @@ class OllamaClient:
                 f"cannot connect to Ollama at {self.base_url} — {exc}"
             ) from exc
 
+        waited = False
+        reported: WaitDetail | None = None
+
+        def _waiting(elapsed: float) -> bool:
+            """Say what the server is doing; return whether it is busy with another model.
+
+            Only a busy server pauses the timeout and marks the sample: loading the model is
+            this request's own work, so its time stays in the timeout and in the load figure.
+            """
+            nonlocal waited, reported
+            detail = self.activity(model).wait_detail(model)
+            if not detail:
+                return False
+            if elapsed >= WAIT_DETAIL_AFTER_S and detail != reported:
+                reported = detail
+                if self.detail_sink is not None:
+                    self.detail_sink(detail)
+            if detail.kind is not WaitKind.BUSY:
+                return False
+            waited = True
+            return True
+
         try:
             chunks = _consume_iterator_with_first_token_timeout(
                 _mapped_stream(stream, self.base_url),
@@ -937,6 +1129,8 @@ class OllamaClient:
                 total_timeout,
                 self._cancel_event,
                 on_abandon=lambda: _cut_connection(client),
+                waiting=_waiting,
+                on_first_token=self.first_token_sink,
             )
         except OCRError as exc:
             # A model that does not support ``think`` rejects it with a 400 that names it.  Any
@@ -950,11 +1144,15 @@ class OllamaClient:
                 total_timeout,
                 self._cancel_event,
                 on_abandon=lambda: _cut_connection(client),
+                waiting=_waiting,
+                on_first_token=self.first_token_sink,
             )
         parts = [(chunk.message.content or "") for chunk in chunks if chunk.message]
         content = "".join(parts)
         # The last chunk carries the summary of the whole answer; earlier ones leave these unset.
         stats = _chunk_stats(chunks[-1]) if chunks else ChatStats()
+        if waited:
+            stats = replace(stats, waited=True)
         self._last_stats = stats
         if self._stats_sink is not None:
             # Before the checks below: a request that is refused here still cost the time the

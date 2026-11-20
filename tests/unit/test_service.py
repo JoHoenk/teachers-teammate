@@ -1071,6 +1071,39 @@ def test_a_stale_stage_shows_no_line_about_how_it_was_sent(tmp_path: Path) -> No
 
 
 @pytest.mark.unit
+def test_a_switched_off_proofreading_stays_done_and_is_kept(tmp_path: Path) -> None:
+    """
+    Given  a document proofread with the stage on
+    When   the queue is reconciled with the stage switched off, and a run with it off follows
+    Then   the proofreading still shows as done and the run keeps it: off means "this run does
+           not do it", not "throw it away"
+    """
+
+    source = tmp_path / "note.txt"
+    source.write_text("hello")
+    on = make_config(tmp_path, correction_enabled=True)
+    off = make_config(tmp_path, correction_enabled=False)
+    repo = StateRepository(tmp_path / "state")
+    artifacts = PreviewImageStore(tmp_path / "art")
+    recon = CacheReconciliationService(state_repo=repo, artifact_store=artifacts, config=on)
+    ctx = recon.prepare(source)
+    ctx = recon.record_ocr(source, ctx, raw_text="hello", preview_img="", source_image="")
+    recon.record_correction(source, ctx, correction_text="hello corrected", source_text="hello")
+
+    svc = _make_svc(state_repository_factory=lambda _config: repo)
+    view = svc.load_views_reconciled(off, [source])[str(source.resolve())]
+
+    assert view.correction_done is True
+
+    after = CacheReconciliationService(
+        state_repo=repo, artifact_store=artifacts, config=off
+    ).prepare(source)
+
+    assert after.state.correction_done is True
+    assert after.state.correction_text == "hello corrected"
+
+
+@pytest.mark.unit
 def test_views_without_a_stored_result_cost_no_privacy_fingerprint(tmp_path: Path) -> None:
     """
     Given  a document that has recognised text but no proofreading or review
@@ -2218,6 +2251,45 @@ def test_the_memory_check_leaves_other_cases_alone(tmp_path: Path, monkeypatch) 
     assert svc.memory_warning_for_run(unknown) == ""
     assert svc.memory_warning_for_run(remote) == ""
     assert svc.memory_warning_for_run(no_ollama) == ""
+
+
+@pytest.mark.unit
+def test_the_preflight_says_when_another_model_is_in_the_way(tmp_path: Path, monkeypatch) -> None:
+    """
+    Given  a local Ollama that holds another model while the run's model is not in memory
+    When   the run is checked
+    Then   the preflight carries a note naming both, so the teacher knows why the first file
+           waits — and nothing when the run's own model is there, or the server is another
+           computer's
+    """
+    from teachers_teammate.infrastructure.ollama_utils import (  # noqa: PLC0415
+        LoadedModel,
+        ServerActivity,
+        WaitKind,
+    )
+
+    svc = _make_svc()
+    cfg = _ollama_config(tmp_path, ocr_engine="ppocr")
+    other = LoadedModel("ministral-3:8b", 1, 1)
+    monkeypatch.setattr(
+        svc,
+        "ollama_activity",
+        lambda _url, _model="": ServerActivity(loaded=(other,), busy=("ministral-3:8b",)),
+    )
+
+    detail = svc.ollama_wait_for_run(cfg)
+
+    assert detail.kind is WaitKind.QUEUED
+    assert (detail.model, detail.other) == ("qwen3.5:9b", "ministral-3:8b")
+
+    mine = LoadedModel("qwen3.5:9b", 1, 1)
+    monkeypatch.setattr(
+        svc, "ollama_activity", lambda _url, _model="": ServerActivity(loaded=(mine,))
+    )
+    assert not svc.ollama_wait_for_run(cfg)
+
+    remote = _ollama_config(tmp_path, ocr_engine="ppocr", ollama_url="http://gpu-box.lan:11434")
+    assert not svc.ollama_wait_for_run(remote)
 
 
 @pytest.mark.unit
@@ -4196,11 +4268,59 @@ def test_a_spacy_model_downloaded_while_the_app_runs_is_found_at_once(tmp_path: 
 
             (packages / "de_core_news_sm").mkdir()
             svc.inject_addon_packages_dir()
+            svc.forget_installed_models()  # what the install round does after a download
 
             assert svc.anonymizer_available("German")
             assert svc._name_detection_issues("German") == []
     finally:
         sys.path[:] = original
+
+
+@pytest.mark.unit
+def test_rereading_the_installed_models_keeps_what_was_warned(monkeypatch) -> None:
+    """
+    Given  a service that printed a warning once and remembers the installed models
+    When   it rereads the installed models, and later forgets them after an install
+    Then   the reread asks spaCy again but keeps the warning quiet; only the install lets it
+           be printed again
+    """
+    svc = _make_svc()
+    asked: list[int] = []
+    monkeypatch.setattr(
+        svc, "list_installed_spacy_models", lambda: asked.append(1) or ["de_core_news_sm"]
+    )
+    svc._remembered_installed_models()
+    svc._warned.add("a warning")
+
+    svc.reread_installed_models()
+    svc._remembered_installed_models()
+
+    assert asked == [1, 1]
+    assert svc._warned == {"a warning"}
+
+    svc.forget_installed_models()
+
+    assert svc._warned == set()
+
+
+@pytest.mark.unit
+def test_a_chosen_primary_model_counts_for_name_detection(monkeypatch) -> None:
+    """
+    Given  a chosen primary model that is installed while the model of the document language
+           is not
+    When   the service is asked whether names can be hidden
+    Then   it says yes, because that is the model a run would load
+    """
+    svc = _make_svc()
+    monkeypatch.setattr(svc, "list_installed_spacy_models", lambda: ["de_core_news_sm"])
+    svc.forget_installed_models()
+
+    # spaCy itself is not installed under Bazel; only its presence is asked for here.
+    monkeypatch.setattr(
+        "importlib.util.find_spec", lambda name: object() if name == "spacy" else None
+    )
+    assert not svc.anonymizer_available("English")
+    assert svc.anonymizer_available("English", AnonymizerConfig(primary_model="de_core_news_sm"))
 
 
 @pytest.mark.parametrize(
@@ -4462,6 +4582,32 @@ def test_worked_on_documents_lists_a_stale_proofreading_the_teacher_worked_on(
     assert result.unbound == ()
     assert result.transcribed == ()
     assert result.empty is False
+
+
+@pytest.mark.unit
+@pytest.mark.use_case("Keep_Worked_On_Corrections")
+def test_worked_on_documents_asks_nothing_about_a_proofreading_a_run_does_not_replace(
+    tmp_path: Path,
+) -> None:
+    """
+    Given  a proofread document whose corrections the teacher changed
+    When   the documents of a run that does not proofread are looked at, with other settings
+    Then   nothing is stale-but-kept or unanswered: the run replaces no proofreading
+    """
+    _made, repo, [worked] = _proofread(tmp_path, "worked.txt")
+    _change_work(
+        worked,
+        lambda work: with_corrected(
+            work, "corrected by the teacher", current_texts(_machine_of(repo, worked), work)
+        ),
+    )
+    other = make_config(tmp_path, correction_enabled=False, correction_model="qwen3.5:4b")
+    svc = _make_svc(state_repository_factory=lambda _config: repo)
+
+    result = svc.worked_on_documents(other, [worked], run_proofreads=False)
+
+    assert result.kept_stale == ()
+    assert result.unanswered == ()
 
 
 @pytest.mark.unit

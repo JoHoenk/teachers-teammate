@@ -153,8 +153,8 @@ class LocalDataFlowStub:
         """Answer with the real rule, over this stub's own location and default models."""
         return text_goes_online(settings, self.describe_llm_location, self.effective_model)
 
-    def anonymizer_available(self, language: str) -> bool:
-        _ = language
+    def anonymizer_available(self, language: str, config: object | None = None) -> bool:
+        _ = (language, config)
         return self.anonymizer_ready
 
     def get_provider_info(self, provider: str) -> dict:

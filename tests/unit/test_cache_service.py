@@ -104,48 +104,45 @@ def test_prepare_calls_load_or_create_and_reconcile(tmp_path: Path) -> None:
     assert ctx.preview_config_hash != ""
 
 
-def test_prepare_correction_hash_empty_when_correction_disabled(tmp_path: Path) -> None:
-    """
-    Given  a config with correction_enabled=False
-    When   prepare() is called
-    Then   ctx.correction_config_hash is empty string
-    """
+def _prepared_hashes(tmp_path: Path, **config_overrides: object) -> CacheContext:
+    """Return the context prepare() builds for a config with *config_overrides*."""
     src = tmp_path / "doc.png"
     src.write_bytes(b"data")
-
-    svc, repo, _ = _make_svc(tmp_path, correction_enabled=False)
+    svc, repo, _ = _make_svc(tmp_path, **config_overrides)
     repo.load_or_create.return_value = _make_state()
     repo.reconcile_runtime_config.return_value = _make_state()
-
     with patch(
         "teachers_teammate.infrastructure.workflow.cache_service.compute_file_hash",
         return_value="h",
     ):
-        ctx = svc.prepare(src)
-
-    assert ctx.correction_config_hash == ""
+        return svc.prepare(src)
 
 
-def test_prepare_eval_hash_empty_when_evaluation_disabled(tmp_path: Path) -> None:
+def test_the_correction_hash_describes_the_settings_whatever_the_switch(tmp_path: Path) -> None:
     """
-    Given  a config with evaluation_enabled=False
-    When   prepare() is called
-    Then   ctx.eval_config_hash is empty string
+    Given  two configs that differ only in correction_enabled
+    When   prepare() is called for each
+    Then   both carry the same, non-empty correction hash: a switched-off stage is "this run
+           does not do it", not "throw the stored proofreading away"
     """
-    src = tmp_path / "doc.png"
-    src.write_bytes(b"data")
+    on = _prepared_hashes(tmp_path, correction_enabled=True)
+    off = _prepared_hashes(tmp_path, correction_enabled=False)
 
-    svc, repo, _ = _make_svc(tmp_path, evaluation_enabled=False)
-    repo.load_or_create.return_value = _make_state()
-    repo.reconcile_runtime_config.return_value = _make_state()
+    assert on.correction_config_hash != ""
+    assert off.correction_config_hash == on.correction_config_hash
 
-    with patch(
-        "teachers_teammate.infrastructure.workflow.cache_service.compute_file_hash",
-        return_value="h",
-    ):
-        ctx = svc.prepare(src)
 
-    assert ctx.eval_config_hash == ""
+def test_the_eval_hash_describes_the_settings_whatever_the_switch(tmp_path: Path) -> None:
+    """
+    Given  two configs that differ only in evaluation_enabled
+    When   prepare() is called for each
+    Then   both carry the same, non-empty evaluation hash
+    """
+    on = _prepared_hashes(tmp_path, evaluation_enabled=True)
+    off = _prepared_hashes(tmp_path, evaluation_enabled=False)
+
+    assert on.eval_config_hash != ""
+    assert off.eval_config_hash == on.eval_config_hash
 
 
 # ── Hash determinism ───────────────────────────────────────────────────────

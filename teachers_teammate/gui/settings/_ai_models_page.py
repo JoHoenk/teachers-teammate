@@ -586,7 +586,10 @@ class AiModelsPage(SettingsPageBase):
                 self._refresh_privacy_line()
 
         self._availability_task.submit(
-            lambda: self._app_service.anonymizer_available(language), done
+            lambda: self._app_service.anonymizer_available(
+                language, self._context.anonymizer_config
+            ),
+            done,
         )
 
     # ── internal ──────────────────────────────────────────────────────────────

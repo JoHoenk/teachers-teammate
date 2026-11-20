@@ -13,21 +13,33 @@ from dataclasses import dataclass
 from typing import cast
 
 from PySide6.QtCore import QEvent, QObject, QPoint, Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QFont, QMouseEvent, QTextCharFormat, QTextCursor, QWheelEvent
-from PySide6.QtWidgets import QTextEdit, QWidget
+from PySide6.QtGui import (
+    QAction,
+    QColor,
+    QContextMenuEvent,
+    QFont,
+    QHelpEvent,
+    QKeySequence,
+    QMouseEvent,
+    QTextCharFormat,
+    QTextCursor,
+    QWheelEvent,
+)
+from PySide6.QtWidgets import QTextEdit, QToolTip, QWidget
 
 from ...application.check_document import CheckDocument
-from ...application.check_items import ItemKind
+from ...application.check_items import CheckItem, ItemKind
 from ...application.formatting import TextFormatter
 from ...domain.formatted_text import FormattedDocument, TextFormat
 from ...domain.proofreading.quotes import map_forward
 from ...domain.teacher_work import TextEdit
 from ...texts import check as check_text
+from .. import _user_text as txt
 from .._formatted_text import (
     STUDENT_STRIKE_COLOUR,
     FormattedTextEdit,
+    _toggle,
     document_from_qt,
-    install_formatting_shortcuts,
     render_html,
 )
 from . import _style
@@ -42,6 +54,15 @@ TEXT_POINT_SIZE = 12
 MIN_POINT_SIZE = 8
 MAX_POINT_SIZE = 24
 
+#: The formatting an editable view offers, with the key that applies it and its menu label.
+_FORMATTING: tuple[tuple[str, str, str], ...] = (
+    ("Ctrl+B", "bold", check_text.FORMAT_BOLD),
+    ("Ctrl+I", "italic", check_text.FORMAT_ITALIC),
+    ("Ctrl+U", "underline", check_text.FORMAT_UNDERLINE),
+    ("Ctrl+Shift+X", "strike", check_text.FORMAT_STRIKE),
+    ("Ctrl+Shift+=", "insert", check_text.FORMAT_INSERT),
+)
+
 
 @dataclass(frozen=True)
 class Mark:
@@ -53,8 +74,10 @@ class Mark:
     end: int
     """The span in the plain text of the corrected text (masked when names are hidden)."""
     kind: ItemKind
-    minor: bool = False
-    """``True`` for a spelling or punctuation change, which is drawn lighter."""
+    look: _style.MarkLook
+    """How the item is drawn: the same look the list's badge and the card's chip use."""
+    tip: str = ""
+    """What hovering the mark says: its words, its category and the first line of the why."""
 
 
 def marks_of(doc: CheckDocument, masking: Masking) -> tuple[Mark, ...]:
@@ -76,8 +99,33 @@ def marks_of(doc: CheckDocument, masking: Masking) -> tuple[Mark, ...]:
             spans = (map_forward(item.raw_span, hunks),)
         for start, end in spans:
             carried = masking.carry((start, end), doc.corrected_plain)
-            marks.append(Mark(item.key, carried[0], carried[1], item.kind, item.is_minor))
+            marks.append(
+                Mark(
+                    item.key,
+                    carried[0],
+                    carried[1],
+                    item.kind,
+                    _style.look(item),
+                    _mark_tip(item, masking),
+                )
+            )
     return tuple(marks)
+
+
+def _mark_tip(item: CheckItem, masking: Masking) -> str:
+    """Return what hovering the mark of *item* says: its words, its category, and why.
+
+    The first line of the explanation only: the card is where the whole of it is read.
+    """
+    before = masking.mask(item.before)
+    after = masking.mask(item.after)
+    lines = [f"{before} \u2192 {after}" if before and after else before or after]
+    if item.category:
+        lines.append(txt.category_label(item.category))
+    why = masking.mask(item.explanation or item.why).strip()
+    if why:
+        lines.append(why.splitlines()[0])
+    return "\n".join(line for line in lines if line)
 
 
 def _text_font(point_size: int) -> QFont:
@@ -199,9 +247,7 @@ class CheckTextView(FormattedTextEdit):
         for mark, cursor in self._mark_cursors:
             selection = QTextEdit.ExtraSelection()
             selection.cursor = cursor
-            selection.format = _style.mark_format(
-                mark.kind, minor=mark.minor, chosen=mark.key == self._chosen
-            )
+            selection.format = mark.look.format(chosen=mark.key == self._chosen)
             selections.append(selection)
         self.setExtraSelections(selections)
 
@@ -229,6 +275,20 @@ class CheckTextView(FormattedTextEdit):
             if start <= position < end and (best_length is None or end - start < best_length):
                 best, best_length = mark.key, end - start
         return best
+
+    def event(self, event: QEvent) -> bool:  # Qt override
+        """Show the tip of the mark under the pointer; elsewhere the view's own tip."""
+        if isinstance(event, QHelpEvent) and event.type() == QEvent.Type.ToolTip:
+            tip = self._tip_at(event.pos())
+            if tip:
+                QToolTip.showText(event.globalPos(), tip, self)
+                return True
+        return super().event(event)
+
+    def _tip_at(self, point: QPoint) -> str:
+        """Return the tip of the innermost mark at *point*, or ``""``."""
+        key = self._key_at(point)
+        return next((mark.tip for mark, _cursor in self._mark_cursors if mark.key == key), "")
 
     def mousePressEvent(self, event: QMouseEvent) -> None:
         """A click on a mark tells the page which item it belongs to."""
@@ -267,8 +327,7 @@ class _EditableView(CheckTextView):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setReadOnly(False)
-        self.setToolTip(check_text.FORMAT_TIP)
-        install_formatting_shortcuts(self)
+        self._formatting: list[QAction] = []
         self._stored = ""
         self._timer = QTimer(self)
         self._timer.setSingleShot(True)
@@ -286,7 +345,39 @@ class _EditableView(CheckTextView):
         nobody touched.
         """
         super().set_text(text, text_format)
+        self._set_formatting(text_format == "markdown")
         self._stored = self._text_of(TextFormatter.document(text, text_format))
+
+    def _set_formatting(self, offered: bool) -> None:
+        """Offer the formatting keys and menu entries only where the document stores them.
+
+        A plain text is stored through the plain renderer, which drops every character style:
+        an edit made with Ctrl+B there would do nothing and never be stored, so the keys are
+        not offered at all.
+        """
+        if offered == bool(self._formatting):
+            return
+        for action in self._formatting:
+            self.removeAction(action)
+            action.deleteLater()
+        self._formatting = []
+        if not offered:
+            return
+        for sequence, attribute, label in _FORMATTING:
+            action = QAction(label, self)
+            action.setShortcut(QKeySequence(sequence))
+            action.setShortcutContext(Qt.ShortcutContext.WidgetShortcut)
+            action.triggered.connect(lambda _checked=False, attr=attribute: _toggle(self, attr))
+            self.addAction(action)
+            self._formatting.append(action)
+
+    def contextMenuEvent(self, event: QContextMenuEvent) -> None:
+        """Show the standard menu, with the formatting actions where the document has them."""
+        menu = self.createStandardContextMenu(event.pos())
+        if self._formatting:
+            menu.addSeparator()
+            menu.addActions(self._formatting)
+        menu.exec(event.globalPos())
 
     def _text_of(self, doc: FormattedDocument) -> str:
         """Return *doc* in the notation of the document."""
@@ -331,7 +422,7 @@ class FinalView(_EditableView):
         The edits are applied last to first, so an earlier one never moves a later one, and the
         whole action is one edit block: one Ctrl+Z takes it back.
         """
-        if self._map is None or not edits:
+        if self._map is None or not edits or self.isReadOnly():
             return
         cursor = QTextCursor(self.document())
         cursor.beginEditBlock()

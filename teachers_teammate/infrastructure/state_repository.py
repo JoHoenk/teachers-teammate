@@ -267,6 +267,9 @@ class RuntimeConfigSnapshot:
     ocr_frozen: bool = False
     expected_correction_source: str = ""
     correction_kept: bool = False
+    # Which stages this run does: a stage it does not do cannot make its stored result stale.
+    correction_enabled: bool = True
+    evaluation_enabled: bool = True
 
 
 @dataclass(frozen=True)
@@ -621,6 +624,8 @@ class StateRepository:
                 correction_source=state.correction_source_hash,
                 expected_correction_source=snapshot.expected_correction_source,
                 correction_kept=snapshot.correction_kept,
+                correction_enabled=snapshot.correction_enabled,
+                evaluation_enabled=snapshot.evaluation_enabled,
             )
         )
         if stale_stage is not None:

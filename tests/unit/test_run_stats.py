@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 from teachers_teammate.domain.performance_estimate import SpeedStep
 from teachers_teammate.infrastructure.ollama_utils import ChatStats
 from teachers_teammate.infrastructure.run_stats import LOAD_THRESHOLD_S, RunStatsCollector
@@ -170,6 +172,27 @@ def test_a_short_load_is_noise() -> None:
 
     assert sample is not None
     assert sample.load_s == 0.0
+
+
+def test_a_request_that_waited_behind_another_model_reports_no_load() -> None:
+    """
+    Given  a request that waited behind another model, which Ollama counts as loading time
+    When   the step ends
+    Then   the sample keeps its speed but reports no load, so a queue wait never becomes an
+           estimate of how long this model takes to load
+    """
+    collector, _seen = _collector()
+    collector.begin(SpeedStep.PROOFREADING)
+    collector.record("gemma4:e4b", _stats(load_s=34.0, write_s=4.0, answer_tokens=200))
+    collector.record(
+        "gemma4:e4b", replace(_stats(load_s=34.0, write_s=4.0, answer_tokens=200), waited=True)
+    )
+
+    sample = collector.finish(words=250, mode="review")
+
+    assert sample is not None
+    assert sample.load_s == 0.0
+    assert sample.write_tps == 400 / 8.0
 
 
 def test_a_request_without_durations_gives_no_sample() -> None:

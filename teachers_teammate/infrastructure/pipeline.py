@@ -60,7 +60,7 @@ from ..exceptions import (
 from ..interfaces import ImagePreprocessor
 from .file_discovery import FileDiscovery
 from .input_provider_factory import InputOptions, get_input_provider, supported_suffixes
-from .ollama_utils import OllamaClient
+from .ollama_utils import OllamaClient, WaitDetail
 from .onnx.store import ModelStore
 from .preview_image_store import PreviewImageStore
 from .reporting import (
@@ -230,6 +230,8 @@ class OCRPipeline:
             str(Path(path).resolve()) for path in (selected_source_paths or [])
         }
         self._progress = progress or ProgressCallbacks()
+        #: The file the run is on, so a note from the Ollama client can name it.
+        self._current_source_id = ""
         deps = dependencies or PipelineDependencies()
         self._keep_awake: KeepAwakeState | None = deps.keep_awake
         self._reporter: Reporter = deps.reporter or StdoutReporter()
@@ -432,10 +434,26 @@ class OCRPipeline:
             cleanup_tmp=lambda: self._cleanup_tmp(tmp_dir, artifact_store),
             stop_event=self._stop_event,
             stop_after_file_event=self._stop_after_file_event,
-            on_file_started=self._progress.on_file_started,
+            on_file_started=self._on_file_started,
             on_file_done=self._progress.on_file_done,
             reporter=self._reporter,
         )
+
+    def _on_file_started(self, source_id: str, name: str, idx: int, total: int) -> None:
+        """Remember which file the run is on, then pass the event on."""
+        self._current_source_id = source_id
+        if self._progress.on_file_started is not None:
+            self._progress.on_file_started(source_id, name, idx, total)
+
+    def _on_ollama_detail(self, detail: WaitDetail) -> None:
+        """Pass what the server is doing with the request to the run's progress hooks."""
+        if self._progress.on_stage_detail is not None:
+            self._progress.on_stage_detail(self._current_source_id, detail)
+
+    def _on_ollama_first_token(self) -> None:
+        """Say that the model began answering: the run's clock starts here, not at the request."""
+        if self._progress.on_first_token is not None:
+            self._progress.on_first_token(self._current_source_id)
 
     def _preview_file(self, file: Path, preprocess_service: PreprocessService) -> bool:
         prepared = preprocess_service.preprocess_input(file)
@@ -548,6 +566,11 @@ class OCRPipeline:
             or (cfg.evaluation_enabled and cfg.evaluate_provider == "ollama")
             else None
         )
+        if ollama_client is not None:
+            # The client is the only place that sees a request waiting for the server, so it is
+            # where the run learns what the server is doing and when the answer really began.
+            ollama_client.detail_sink = self._on_ollama_detail
+            ollama_client.first_token_sink = self._on_ollama_first_token
 
         ocr = builder.build_ocr(ollama_client, self._stop_event)
 

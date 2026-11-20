@@ -283,7 +283,7 @@ def test_the_level_sits_in_step_two_and_reaches_the_config(qtbot, tmp_path) -> N
 @pytest.mark.gui
 def test_the_lookup_config_is_recursive_like_the_run_config(qtbot, tmp_path) -> None:
     """
-    Given  a panel whose service builds a non-recursive lookup config
+    Given  a panel with an input folder and no results folder
     When   the lookup config and the run config are built
     Then   both are recursive, so "text files would land in the documents folder" gets the
            same answer for the readiness line as for Run
@@ -297,6 +297,43 @@ def test_the_lookup_config_is_recursive_like_the_run_config(qtbot, tmp_path) -> 
 
     assert panel.lookup_config().recursive is True
     assert panel.to_config().recursive is True
+
+
+@pytest.mark.gui
+def test_the_lookup_config_is_the_run_config(qtbot, tmp_path) -> None:
+    """
+    Given  a panel with an input folder, a results folder and every stage set
+    When   the lookup config and the run config are built
+    Then   they agree field by field, so a requirement check and a run never disagree
+    """
+    input_dir = tmp_path / "in"
+    output_dir = tmp_path / "out"
+    input_dir.mkdir()
+    output_dir.mkdir()
+    panel = ConfigPanel()
+    qtbot.addWidget(panel)
+    panel.set_input_dir(str(input_dir))
+    panel._settings_dict["output_dir"] = str(output_dir)
+    panel.update_settings({"hardware_profile": "16gb", "proofreading_context": "16384"})
+
+    assert panel.lookup_config() == panel.to_config()
+
+
+@pytest.mark.gui
+def test_without_a_results_folder_both_configs_name_the_same_state_folder(qtbot, tmp_path) -> None:
+    """
+    Given  a panel with an input folder and no results folder
+    When   the lookup config and the run config are built
+    Then   both name the input folder as the state folder, so "What is sent" finds the results
+    """
+    input_dir = tmp_path / "in"
+    input_dir.mkdir()
+    panel = ConfigPanel()
+    qtbot.addWidget(panel)
+    panel.set_input_dir(str(input_dir))
+
+    assert panel.lookup_config().output_dir == input_dir
+    assert panel.to_config().output_dir == input_dir
 
 
 @pytest.mark.gui
@@ -418,22 +455,6 @@ def test_config_panel_set_selected_files_overrides_folder(qtbot, tmp_path: Path)
 
 class _GuardService(LocalDataFlowStub):
     """Service stub reporting one missing Ollama model for the requirement check."""
-
-    def build_lookup_config(self, input_dir: Path, output_dir: Path):
-        from teachers_teammate.config import Config, OcrConfig  # noqa: PLC0415
-
-        return Config(
-            input_dir=input_dir,
-            output_dir=output_dir,
-            recursive=False,
-            debug=False,
-            ocr=OcrConfig(engine="ollama", model="", preprocess_method="none"),
-            language="English",
-            ollama_url="http://127.0.0.1:11434",
-            correction_enabled=True,
-            correction_provider="ollama",
-            correction_model="",
-        )
 
     def check_stage_requirements(self, config, stage: str):
         from teachers_teammate.application.service import (  # noqa: PLC0415

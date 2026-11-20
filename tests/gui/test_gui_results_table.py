@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import dataclasses
 from pathlib import Path
+from typing import Any
 
 import pytest
-from PySide6.QtCore import QItemSelectionModel, QPoint, Qt
+from PySide6.QtCore import QItemSelectionModel, QPoint
 from PySide6.QtWidgets import QMenu
 
+from teachers_teammate.application.queue import QueueRow, StageState
 from teachers_teammate.domain.proofreading.review import CorrectionReview, UnclearNote
 from teachers_teammate.gui import _user_text as txt
 from teachers_teammate.gui._export_menu import ExportKind
@@ -15,18 +18,62 @@ from teachers_teammate.gui._results_table import ResultsTable
 from teachers_teammate.gui._types import FileDoneEvent, StageStatus
 
 
+def _row(source_id: str = "/tmp/a.png", name: str = "a.png", **extra: Any) -> QueueRow:
+    """Return a queue row as the store would report it."""
+    return QueueRow(source_id=source_id, name=name, **extra)
+
+
+def _table(qtbot, *rows: QueueRow) -> ResultsTable:
+    """Return a table showing *rows*."""
+    table = ResultsTable()
+    qtbot.addWidget(table)
+    table.set_queue(list(rows))
+    return table
+
+
+def _done_row(source_id: str = "/tmp/preview.png", name: str = "preview.png") -> QueueRow:
+    """Return a row whose document has a transcription, so it can be opened."""
+    return _row(source_id, name, ocr=StageState.DONE, has_text=True)
+
+
+@pytest.mark.gui
+def test_a_warning_of_the_run_gives_way_when_the_stored_result_goes_stale(qtbot) -> None:
+    """
+    Given  a proofreading that ran with a warning, and was stored
+    When   the store later says the proofreading is stale
+    Then   the cell shows it as not done, not as the warning of the run that made it
+    """
+    source_id = "/tmp/a.png"
+    table = _table(qtbot, _row(source_id, ocr=StageState.DONE, correction=StageState.DONE))
+    table.mark_stage_running(source_id, "correction")
+    table.add_result(
+        FileDoneEvent(
+            source_id=source_id,
+            name="a.png",
+            ok=True,
+            message="kept the original",
+            ocr_s=0.0,
+            correction_s=1.0,
+        )
+    )
+    assert table.cellWidget(0, ResultsTable._COL_CORRECTION) is not None
+
+    table.update_row(_row(source_id, ocr=StageState.DONE, correction=StageState.STALE))
+
+    assert table.cellWidget(0, ResultsTable._COL_CORRECTION) is None
+    assert table.item(0, ResultsTable._COL_CORRECTION).text() == "-"
+
+
 @pytest.mark.gui
 def test_results_table_queue_and_processing_transition(qtbot) -> None:
     """
-    Given  a ResultsTable with two queued file names
+    Given  a ResultsTable with two queued files
     When   one file is marked as processing
     Then   that row status changes from pending to processing
     """
-    table = ResultsTable()
-    qtbot.addWidget(table)
+    table = _table(qtbot, _row("/tmp/a.pdf", "a.pdf"), _row("/tmp/b.png", "b.png"))
 
-    table.set_queue(["a.pdf", "b.png"])
-    table.mark_processing("a.pdf")
+    table.mark_processing("/tmp/a.pdf")
 
     ocr_cell = table.item(0, ResultsTable._COL_OCR)
     assert ocr_cell is not None
@@ -34,45 +81,30 @@ def test_results_table_queue_and_processing_transition(qtbot) -> None:
 
 
 @pytest.mark.gui
-def test_results_table_add_result_and_selected_paths(qtbot, tmp_path: Path) -> None:
+def test_a_finished_file_shows_its_duration_and_keeps_the_store_row(qtbot) -> None:
     """
-    Given  a ResultsTable row with result artifacts
-    When   the row is selected and selected_paths() is queried
-    Then   all stored paths are returned for the selected file
+    Given  a queued row whose recognition is stored
+    When   the run's result for it arrives
+    Then   the duration is shown and the row still says what the store said
     """
-    raw = tmp_path / "item_ocr.txt"
-    corr = tmp_path / "item_correction.txt"
-    eval_txt = tmp_path / "item_evaluation.txt"
-    raw.write_text("raw", encoding="utf-8")
-    corr.write_text("corr", encoding="utf-8")
-    eval_txt.write_text("eval", encoding="utf-8")
+    table = _table(qtbot, _done_row())
 
-    table = ResultsTable()
-    qtbot.addWidget(table)
-    table.set_queue(["item.png"], source_ids=["/tmp/item.png"])
     table.add_result(
         FileDoneEvent(
-            source_id="/tmp/item.png",
-            name="item.png",
+            source_id="/tmp/preview.png",
+            name="preview.png",
             ok=True,
-            message="saved",
+            message="",
             ocr_s=1.2,
-            correction_s=0.0,
-            preview_img="",
-            raw_txt=str(raw),
-            corr_txt=str(corr),
-            eval_txt=str(eval_txt),
+            correction_s=0.3,
         )
     )
 
-    table.selectRow(0)
-    name, preview_img, raw_txt, corr_txt, eval_path = table.selected_paths()
-
-    assert name == "item.png"
-    assert preview_img == ""
-    assert raw_txt == str(raw)
-    assert corr_txt == str(corr)
-    assert eval_path == str(eval_txt)
+    duration = table.item(0, ResultsTable._COL_DURATION)
+    assert duration is not None
+    assert duration.text() == "1.5 s"
+    assert table.item(0, ResultsTable._COL_OCR).text() == "✓"
+    assert table.has_text("/tmp/preview.png")
 
 
 @pytest.mark.gui
@@ -82,11 +114,11 @@ def test_results_table_selected_source_ids_returns_multiple_rows(qtbot) -> None:
     When   two rows are selected
     Then   selected_source_ids() returns both source ids in row order
     """
-    table = ResultsTable()
-    qtbot.addWidget(table)
-    table.set_queue(
-        ["a.png", "b.png", "c.png"],
-        source_ids=["/tmp/a.png", "/tmp/b.png", "/tmp/c.png"],
+    table = _table(
+        qtbot,
+        _row("/tmp/a.png", "a.png"),
+        _row("/tmp/b.png", "b.png"),
+        _row("/tmp/c.png", "c.png"),
     )
 
     selection_model = table.selectionModel()
@@ -103,113 +135,81 @@ def test_results_table_selected_source_ids_returns_multiple_rows(qtbot) -> None:
     assert table.selected_source_ids() == ["/tmp/a.png", "/tmp/c.png"]
 
 
-def _row_with_result(table: ResultsTable, source_id: str = "/tmp/preview.png") -> None:
-    """Queue one document and give it a result, so it can be opened."""
-    table.set_queue(["preview.png"], source_ids=[source_id])
-    table.add_result(
-        FileDoneEvent(
-            source_id=source_id,
-            name="preview.png",
-            ok=True,
-            message="saved",
-            ocr_s=1.0,
-            correction_s=0.0,
-            preview_img="",
-            raw_txt="what was read",
-            corr_txt="",
-            eval_txt="",
-        )
-    )
-
-
 @pytest.mark.gui
 def test_results_table_asks_for_the_check_tab_on_double_click(qtbot) -> None:
     """
-    Given  a ResultsTable row whose document has a result
-    When   the file cell is double-clicked
-    Then   check_requested is emitted with that document's source id
+    Given  a row whose document has a result
+    When   the row is double-clicked
+    Then   check_requested carries its source id
     """
-    table = ResultsTable()
-    qtbot.addWidget(table)
-    _row_with_result(table)
+    table = _table(qtbot, _done_row())
+    seen: list[str] = []
+    table.check_requested.connect(seen.append)
 
-    with qtbot.waitSignal(table.check_requested, timeout=1000) as sig:
-        table.cellDoubleClicked.emit(0, ResultsTable._COL_FILE)
+    table.cellDoubleClicked.emit(0, ResultsTable._COL_FILE)
 
-    assert sig.args == ["/tmp/preview.png"]
+    assert seen == ["/tmp/preview.png"]
 
 
 @pytest.mark.gui
 def test_results_table_does_not_open_a_row_without_a_result(qtbot) -> None:
     """
-    Given  a queued row that has not been processed
-    When   the file cell is double-clicked and Enter is pressed
-    Then   nothing is opened: there would be nothing to check
+    Given  a queued row whose document has neither text nor a page
+    When   the row is double-clicked
+    Then   nothing is asked for: there would be nothing to check
     """
-    table = ResultsTable()
-    qtbot.addWidget(table)
-    table.set_queue(["waiting.png"], source_ids=["/tmp/waiting.png"])
+    table = _table(qtbot, _row("/tmp/waiting.png", "waiting.png"))
     table.selectRow(0)
     seen: list[str] = []
     table.check_requested.connect(seen.append)
 
     table.cellDoubleClicked.emit(0, ResultsTable._COL_FILE)
-    qtbot.keyClick(table, Qt.Key.Key_Return)
 
     assert seen == []
-    assert table.checkable_source_ids() == []
 
 
 @pytest.mark.gui
 def test_results_table_opens_the_current_row_on_enter(qtbot) -> None:
     """
-    Given  two rows, only the second with a result
-    When   Enter is pressed on it
-    Then   check_requested is emitted for that document
+    Given  two rows, the second one with a result
+    When   Enter is pressed with the second row current
+    Then   check_requested carries the second row's source id
     """
-    table = ResultsTable()
-    qtbot.addWidget(table)
-    table.set_queue(["a.png", "b.png"], source_ids=["/tmp/a.png", "/tmp/b.png"])
-    table.add_result(
-        FileDoneEvent(
-            source_id="/tmp/b.png",
-            name="b.png",
-            ok=True,
-            message="saved",
-            ocr_s=1.0,
-            correction_s=0.0,
-            preview_img="",
-            raw_txt="what was read",
-            corr_txt="",
-            eval_txt="",
-        )
+    table = _table(
+        qtbot,
+        _row("/tmp/a.png", "a.png"),
+        _done_row("/tmp/b.png", "b.png"),
     )
     table.selectRow(1)
+    seen: list[str] = []
+    table.check_requested.connect(seen.append)
 
-    with qtbot.waitSignal(table.check_requested, timeout=1000) as sig:
-        qtbot.keyClick(table, Qt.Key.Key_Return)
+    table.keyPressEvent(_enter_key())
 
-    assert sig.args == ["/tmp/b.png"]
-    assert table.checkable_source_ids() == ["/tmp/b.png"]
+    assert seen == ["/tmp/b.png"]
+
+
+def _enter_key():
+    """Return a key event for Enter."""
+    from PySide6.QtCore import QEvent, Qt  # noqa: PLC0415
+    from PySide6.QtGui import QKeyEvent  # noqa: PLC0415
+
+    return QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_Return, Qt.KeyboardModifier.NoModifier)
 
 
 @pytest.mark.gui
 def test_results_table_context_menu_opens_the_check_tab(qtbot, monkeypatch) -> None:
     """
-    Given  a selected row whose document has a result
-    When   the first entry of the context menu is chosen
-    Then   check_requested is emitted for it
+    Given  a selected row with a result
+    When   the context menu's *Check* entry is chosen
+    Then   check_requested carries its source id
     """
-    table = ResultsTable()
-    qtbot.addWidget(table)
-    _row_with_result(table)
+    table = _table(qtbot, _done_row())
     table.selectRow(0)
-
-    class _NonBlockingMenu(QMenu):
-        def exec(self, *args, **kwargs):  # Qt naming: overrides QMenu.exec
-            return self.actions()[0]  # "Check"
-
-    monkeypatch.setattr("teachers_teammate.gui._results_table.QMenu", _NonBlockingMenu)
+    monkeypatch.setattr(
+        "teachers_teammate.gui._results_table.QMenu",
+        _menu_picking("Check"),
+    )
 
     with qtbot.waitSignal(table.check_requested, timeout=1000) as sig:
         table._on_context_menu_requested(QPoint(1, 1))
@@ -217,172 +217,147 @@ def test_results_table_context_menu_opens_the_check_tab(qtbot, monkeypatch) -> N
     assert sig.args == ["/tmp/preview.png"]
 
 
+def _menu_picking(label: str):
+    """Return a QMenu subclass whose exec() picks the entry called *label*."""
+
+    class _PickingMenu(QMenu):
+        def exec(self, *args, **kwargs):  # Qt naming: overrides QMenu.exec
+            for action in self.actions():
+                if action.text() == label:
+                    return action
+            raise AssertionError(f"no {label} entry")
+
+    return _PickingMenu
+
+
 @pytest.mark.gui
 def test_results_table_context_menu_emits_stage_run_requested(qtbot, monkeypatch) -> None:
     """
-    Given  a selected queue row and a context menu opened on the table
-    When   the user selects "Re-run Correction"
-    Then   stage_run_requested emits the selected file name and stage id
+    Given  a selected row
+    When   the context menu's *Re-run Proofreading* entry is chosen
+    Then   stage_run_requested carries the selected source ids and the stage
     """
-    table = ResultsTable()
-    qtbot.addWidget(table)
-    table.set_queue(["a.png"])
+    table = _table(qtbot, _row("/tmp/a.png", "a.png"))
     table.selectRow(0)
-
-    # PySide6 C++ methods can't be patched at class level. Substitute the QMenu
-    # class at the import site with a subclass whose exec() returns the action
-    # immediately (no blocking modal dialog).
-    class _NonBlockingMenu(QMenu):
-        def exec(self, *args, **kwargs):  # Qt naming: overrides QMenu.exec
-            return self.actions()[4]  # "Re-run Proofreading": Check, Select checked, sep, OCR, this
-
-    monkeypatch.setattr("teachers_teammate.gui._results_table.QMenu", _NonBlockingMenu)
+    monkeypatch.setattr(
+        "teachers_teammate.gui._results_table.QMenu",
+        _menu_picking("Re-run Proofreading"),
+    )
 
     with qtbot.waitSignal(table.stage_run_requested, timeout=1000) as sig:
         table._on_context_menu_requested(QPoint(1, 1))
 
-    assert sig.args[0] == ["a.png"]
+    assert sig.args[0] == ["/tmp/a.png"]
     assert sig.args[1] == "correction"
 
 
 @pytest.mark.gui
-def test_results_table_mark_cached_shows_stage_granularity(qtbot) -> None:
+def test_the_stage_cells_show_what_the_store_says(qtbot) -> None:
     """
-    Given  a queued file row
-    When   mark_cached() is called with OCR-only and then correction-complete states
-    Then   status text reflects the highest cached stage instead of generic "Cached"
+    Given  a row whose recognition is stored and whose proofreading is not
+    When   the row is shown, and then the store reports the proofreading too
+    Then   each stage cell shows a tick only for a stage the store has
     """
-    table = ResultsTable()
-    qtbot.addWidget(table)
-    table.set_queue(["page.png"])
+    table = _table(qtbot, _row("/tmp/page.png", "page.png", ocr=StageState.DONE))
 
-    table.mark_cached(
-        "page.png",
-        preview_img="",
-        raw_txt="raw",
-        corr_txt="",
-        eval_txt="",
-        ocr_done=True,
-        correction_done=False,
-        evaluation_done=False,
-    )
     assert table.item(0, ResultsTable._COL_OCR).text() == "✓"
     assert table.item(0, ResultsTable._COL_CORRECTION).text() == "-"
     assert table.item(0, ResultsTable._COL_EVALUATION).text() == "-"
 
-    table.mark_cached(
-        "page.png",
-        preview_img="",
-        raw_txt="raw",
-        corr_txt="corr",
-        eval_txt="",
-        ocr_done=True,
-        correction_done=True,
-        evaluation_done=False,
+    table.update_row(
+        _row(
+            "/tmp/page.png",
+            "page.png",
+            ocr=StageState.DONE,
+            correction=StageState.DONE,
+        )
     )
+
     assert table.item(0, ResultsTable._COL_OCR).text() == "✓"
     assert table.item(0, ResultsTable._COL_CORRECTION).text() == "✓"
     assert table.item(0, ResultsTable._COL_EVALUATION).text() == "-"
 
 
 @pytest.mark.gui
-def test_results_table_mark_correcting_promotes_ocr(qtbot) -> None:
+def test_a_running_proofreading_shows_the_reading_as_done(qtbot) -> None:
     """
-    Given  a row whose OCR cell is currently running
-    When   mark_correcting() is called
-    Then   OCR flips to done (✓) and correction shows running (▶)
+    Given  a row whose recognition is stored
+    When   the proofreading is marked as running
+    Then   the recognition cell keeps its tick and the proofreading cell shows ▶
     """
-    table = ResultsTable()
-    qtbot.addWidget(table)
-    table.set_queue(["a.png"])
-    table.mark_processing("a.png")
+    table = _table(qtbot, _row("/tmp/a.png", "a.png", ocr=StageState.DONE))
 
-    table.mark_correcting("a.png")
+    table.mark_stage_running("/tmp/a.png", "correction")
 
     assert table.item(0, ResultsTable._COL_OCR).text() == "✓"
     assert table.item(0, ResultsTable._COL_CORRECTION).text() == "▶"
 
 
 @pytest.mark.gui
-def test_results_table_mark_evaluating_promotes_correction(qtbot) -> None:
+def test_a_running_review_shows_the_proofreading_as_done(qtbot) -> None:
     """
-    Given  a row whose correction cell is currently running
-    When   mark_evaluating() is called
-    Then   correction flips to done (✓) and evaluation shows running (▶)
+    Given  a row whose proofreading is stored
+    When   the content review is marked as running
+    Then   the proofreading cell keeps its tick and the review cell shows ▶
     """
-    table = ResultsTable()
-    qtbot.addWidget(table)
-    table.set_queue(["a.png"])
-    table.mark_processing("a.png")
-    table.mark_correcting("a.png")
+    table = _table(
+        qtbot,
+        _row("/tmp/a.png", "a.png", ocr=StageState.DONE, correction=StageState.DONE),
+    )
 
-    table.mark_evaluating("a.png")
+    table.mark_stage_running("/tmp/a.png", "evaluation")
 
     assert table.item(0, ResultsTable._COL_CORRECTION).text() == "✓"
     assert table.item(0, ResultsTable._COL_EVALUATION).text() == "▶"
 
 
 @pytest.mark.gui
-def test_results_table_mark_methods_noop_for_unknown_source(qtbot) -> None:
+def test_marking_an_unknown_source_adds_no_row(qtbot) -> None:
     """
-    Given  a ResultsTable with no matching row
-    When   the mark_* methods are called with an unknown source id
-    Then   they return without error and add no rows
+    Given  a table with one queued row
+    When   a stage is marked as running for a source that is not queued
+    Then   nothing changes and no row is added
     """
-    table = ResultsTable()
-    qtbot.addWidget(table)
-    table.set_queue(["a.png"])
+    table = _table(qtbot, _row("/tmp/a.png", "a.png"))
 
     table.mark_processing("missing")
-    table.mark_correcting("missing")
-    table.mark_evaluating("missing")
-    table.set_row_artifacts("missing", "", "", "", "")
-    table.set_evaluation_text("missing", "x")
+    table.mark_stage_running("missing", "correction")
 
     assert table.rowCount() == 1
 
 
 @pytest.mark.gui
-def test_results_table_entry_for_source_returns_artifacts(qtbot) -> None:
+def test_the_row_hands_back_what_the_store_says(qtbot) -> None:
     """
-    Given  a queued row with artifacts attached via set_row_artifacts
-    When   entry_for_source() is queried
-    Then   it returns the source id, name, and stored artifact strings
+    Given  a queued row with a transcription and a review
+    When   the row is asked for
+    Then   the same row comes back, and an unknown source has none
     """
-    table = ResultsTable()
-    qtbot.addWidget(table)
-    table.set_queue(["doc.png"], source_ids=["/tmp/doc.png"])
-    table.set_row_artifacts("/tmp/doc.png", "prev.png", "raw", "corr", "eval")
+    review = CorrectionReview(unclear=(UnclearNote(0, 3, "odd", "unclear", "rephrase"),))
+    row = _row("/tmp/doc.png", "doc.png", ocr=StageState.DONE, has_text=True, review=review)
+    table = _table(qtbot, row)
 
-    entry = table.entry_for_source("/tmp/doc.png")
-
-    assert entry == ("/tmp/doc.png", "doc.png", "prev.png", "raw", "corr", "eval")
+    assert table.row_for("/tmp/doc.png") is row
+    assert table.row_for("/tmp/nope.png") is None
+    assert table.review_for_source("/tmp/doc.png") is review
+    assert table.review_for_source("/tmp/nope.png") is None
 
 
 @pytest.mark.gui
-def test_results_table_entry_for_source_unknown_returns_blanks(qtbot) -> None:
-    """Given no matching row / When entry_for_source is queried / Then a 6-tuple of empty strings is returned."""
-    table = ResultsTable()
-    qtbot.addWidget(table)
-    table.set_queue(["doc.png"], source_ids=["/tmp/doc.png"])
-
-    assert table.entry_for_source("/tmp/nope.png") == ("", "", "", "", "", "")
-
-
-@pytest.mark.gui
-def test_results_table_set_evaluation_text_updates_entry(qtbot) -> None:
+def test_update_row_replaces_what_the_store_says(qtbot) -> None:
     """
-    Given  a queued row
-    When   set_evaluation_text() attaches evaluation content
-    Then   entry_for_source reflects the new evaluation string
+    Given  a queued row without a transcription
+    When   the store reports one
+    Then   the row says so, and the table can open the document
     """
-    table = ResultsTable()
-    qtbot.addWidget(table)
-    table.set_queue(["doc.png"], source_ids=["/tmp/doc.png"])
+    table = _table(qtbot, _row("/tmp/doc.png", "doc.png"))
 
-    table.set_evaluation_text("/tmp/doc.png", "Grade: A")
+    assert not table.has_text("/tmp/doc.png")
 
-    assert table.entry_for_source("/tmp/doc.png")[5] == "Grade: A"
+    table.update_row(_row("/tmp/doc.png", "doc.png", ocr=StageState.DONE, has_text=True))
+
+    assert table.has_text("/tmp/doc.png")
+    assert table.checkable_source_ids() == ["/tmp/doc.png"]
 
 
 @pytest.mark.gui
@@ -392,11 +367,11 @@ def test_results_table_queued_accessors(qtbot) -> None:
     When   queued_source_ids() and queued_file_names() are queried
     Then   both return all rows in queue order
     """
-    table = ResultsTable()
-    qtbot.addWidget(table)
-    table.set_queue(
-        ["a.png", "b.png", "c.png"],
-        source_ids=["/tmp/a.png", "/tmp/b.png", "/tmp/c.png"],
+    table = _table(
+        qtbot,
+        _row("/tmp/a.png", "a.png"),
+        _row("/tmp/b.png", "b.png"),
+        _row("/tmp/c.png", "c.png"),
     )
 
     assert table.queued_source_ids() == ["/tmp/a.png", "/tmp/b.png", "/tmp/c.png"]
@@ -404,47 +379,44 @@ def test_results_table_queued_accessors(qtbot) -> None:
 
 
 @pytest.mark.gui
-def test_results_table_selected_entry_empty_without_selection(qtbot) -> None:
-    """Given a table with no current row / When selected_entry is queried / Then blanks are returned."""
-    table = ResultsTable()
-    qtbot.addWidget(table)
-    table.set_queue(["a.png"])
-    table.setCurrentCell(-1, -1)
+def test_selected_source_ids_is_empty_without_a_selection(qtbot) -> None:
+    """
+    Given  a table with one row and no selection
+    When   selected_source_ids() is queried
+    Then   it is empty
+    """
+    table = _table(qtbot, _row("/tmp/a.png", "a.png"))
+    table.clearSelection()
 
-    assert table.selected_entry() == ("", "", "", "", "", "")
+    assert table.selected_source_ids() == []
 
 
 @pytest.mark.gui
-def test_results_table_source_id_for_row_falls_back_to_text(qtbot) -> None:
+def test_source_id_for_row_names_the_queued_file(qtbot) -> None:
     """
-    Given  a queued row created without an explicit source id
+    Given  a queued row
     When   source_id_for_row() is queried
-    Then   it falls back to the displayed file name
+    Then   it returns the source id the row was queued with
     """
-    table = ResultsTable()
-    qtbot.addWidget(table)
-    table.set_queue(["plain.png"])
+    table = _table(qtbot, _row("/tmp/plain.png", "plain.png"))
 
-    assert table.source_id_for_row(0) == "plain.png"
+    assert table.source_id_for_row(0) == "/tmp/plain.png"
 
 
 @pytest.mark.gui
 def test_results_table_failed_correction_shows_cross_with_tooltip(qtbot) -> None:
     """
-    Given  a row whose correction stage is running (▶)
+    Given  a row whose proofreading is running (▶)
     When   add_result() is called with ok=False and an error message
-    Then   the correction cell shows ✗ and its tooltip contains the error message
+    Then   the proofreading cell shows ✗ and its tooltip contains the error message
     """
-    table = ResultsTable()
-    qtbot.addWidget(table)
-    table.set_queue(["doc.pdf"])
-    table.mark_processing("doc.pdf")
-    table.mark_correcting("doc.pdf")
+    table = _table(qtbot, _row("/tmp/doc.pdf", "doc.pdf", ocr=StageState.DONE))
+    table.mark_stage_running("/tmp/doc.pdf", "correction")
 
     error_msg = "Correction failed: model 'typo-model' not found"
     table.add_result(
         FileDoneEvent(
-            source_id="doc.pdf",
+            source_id="/tmp/doc.pdf",
             name="doc.pdf",
             ok=False,
             message=error_msg,
@@ -462,19 +434,17 @@ def test_results_table_failed_correction_shows_cross_with_tooltip(qtbot) -> None
 @pytest.mark.gui
 def test_results_table_failed_ocr_shows_cross_with_tooltip(qtbot) -> None:
     """
-    Given  a row whose OCR stage is running (▶)
+    Given  a row whose recognition is running (▶)
     When   add_result() is called with ok=False and an error message
-    Then   the OCR cell shows ✗ and its tooltip contains the error message
+    Then   the recognition cell shows ✗ and its tooltip contains the error message
     """
-    table = ResultsTable()
-    qtbot.addWidget(table)
-    table.set_queue(["doc.pdf"])
-    table.mark_processing("doc.pdf")
+    table = _table(qtbot, _row("/tmp/doc.pdf", "doc.pdf"))
+    table.mark_processing("/tmp/doc.pdf")
 
     error_msg = "OCR failed: empty response"
     table.add_result(
         FileDoneEvent(
-            source_id="doc.pdf",
+            source_id="/tmp/doc.pdf",
             name="doc.pdf",
             ok=False,
             message=error_msg,
@@ -506,9 +476,7 @@ def test_results_table_export_submenu_emits_export_requested(
     When   the user picks one of its entries
     Then   export_requested emits the selected source id and that export kind
     """
-    table = ResultsTable()
-    qtbot.addWidget(table)
-    table.set_queue(["a.png"])
+    table = _table(qtbot, _row("/tmp/a.png", "a.png"))
     table.selectRow(0)
 
     class _PickingMenu(QMenu):
@@ -524,63 +492,50 @@ def test_results_table_export_submenu_emits_export_requested(
     with qtbot.waitSignal(table.export_requested, timeout=1000) as sig:
         table._on_context_menu_requested(QPoint(1, 1))
 
-    assert sig.args == [["a.png"], kind]
+    assert sig.args == [["/tmp/a.png"], kind]
 
 
 @pytest.mark.gui
 def test_unclear_badge_keeps_the_proofreading_stage_done(qtbot) -> None:
     """
-    Given  a file whose proofreading finished and whose review has two unclear expressions
-    When   the badge is set, set again with one expression, and removed
+    Given  a file whose proofreading is stored and whose review has two unclear expressions
+    When   the row is shown again with one expression, and then with none
     Then   the stage reads as done each time and the cell text never accumulates badges
     """
-    table = ResultsTable()
-    qtbot.addWidget(table)
-    table.set_queue(["a.pdf"])
-    table.mark_processing("a.pdf")
-    table.mark_correcting("a.pdf")
-    table.mark_evaluating("a.pdf")  # proofreading is done once evaluation starts
-    note = UnclearNote(raw_start=0, raw_end=2, expression="it", why="w", recommendation="r")
+    done = _row("/tmp/a.pdf", "a.pdf", ocr=StageState.DONE, correction=StageState.DONE)
+    table = _table(qtbot, dataclasses.replace(done, unclear_count=2))
     cell = table.item(0, ResultsTable._COL_CORRECTION)
     assert cell is not None
+    assert "?2" in cell.text()
+    assert table.get_stage_statuses_for_source("/tmp/a.pdf")[1] is StageStatus.DONE
 
-    table.set_correction_review("a.pdf", CorrectionReview(unclear=(note, note)))
-    assert "?" in cell.text()
-    assert table.get_stage_statuses_for_source("a.pdf")[1] is StageStatus.DONE
-
-    table.set_correction_review("a.pdf", CorrectionReview(unclear=(note,)))
+    table.update_row(dataclasses.replace(done, unclear_count=1))
     assert cell.text().count("?") == 1
-    assert table.get_stage_statuses_for_source("a.pdf")[1] is StageStatus.DONE
+    assert table.get_stage_statuses_for_source("/tmp/a.pdf")[1] is StageStatus.DONE
 
-    table.set_correction_review("a.pdf", CorrectionReview())
+    table.update_row(done)
     assert cell.text() == "✓"
-    assert table.get_stage_statuses_for_source("a.pdf")[1] is StageStatus.DONE
+    assert table.get_stage_statuses_for_source("/tmp/a.pdf")[1] is StageStatus.DONE
 
 
 @pytest.mark.gui
 @pytest.mark.use_case("Keep_Worked_On_Corrections")
 def test_a_kept_proofreading_says_so_and_stays_done(qtbot) -> None:
     """
-    Given  a file whose proofreading finished
-    When   the row is told the proofreading was kept over other settings
+    Given  a file whose proofreading is stored
+    When   the store reports it as kept over other settings, and then as done again
     Then   the cell keeps its tick, gains the note *kept* and says why in its tooltip
     """
-    table = ResultsTable()
-    qtbot.addWidget(table)
-    table.set_queue(["a.pdf"])
-    table.mark_processing("a.pdf")
-    table.mark_correcting("a.pdf")
-    table.mark_evaluating("a.pdf")
+    done = _row("/tmp/a.pdf", "a.pdf", ocr=StageState.DONE, correction=StageState.DONE)
+    table = _table(qtbot, dataclasses.replace(done, correction=StageState.KEPT))
     cell = table.item(0, ResultsTable._COL_CORRECTION)
     assert cell is not None
 
-    table.set_kept("a.pdf", True)
-
     assert cell.text() == f"\u2713 {txt.KEPT_NOTE}"
     assert txt.KEPT_TOOLTIP in cell.toolTip()
-    assert table.get_stage_statuses_for_source("a.pdf")[1] is StageStatus.DONE
+    assert table.get_stage_statuses_for_source("/tmp/a.pdf")[1] is StageStatus.DONE
 
-    table.set_kept("a.pdf", False)
+    table.update_row(done)
 
     assert cell.text() == "\u2713"
     assert txt.KEPT_TOOLTIP not in cell.toolTip()
@@ -590,20 +545,20 @@ def test_a_kept_proofreading_says_so_and_stays_done(qtbot) -> None:
 @pytest.mark.use_case("Keep_Worked_On_Corrections")
 def test_a_kept_proofreading_keeps_its_unclear_badge(qtbot) -> None:
     """
-    Given  a file whose proofreading finished and whose review has one unclear expression
-    When   the row is told the proofreading was kept
+    Given  a file whose proofreading is kept and whose review has one unclear expression
+    When   the row is shown
     Then   the cell carries both notes, and neither replaces the other
     """
-    table = ResultsTable()
-    qtbot.addWidget(table)
-    table.set_queue(["a.pdf"])
-    table.mark_processing("a.pdf")
-    table.mark_correcting("a.pdf")
-    table.mark_evaluating("a.pdf")
-    note = UnclearNote(raw_start=0, raw_end=2, expression="it", why="w", recommendation="r")
-    table.set_correction_review("a.pdf", CorrectionReview(unclear=(note,)))
-
-    table.set_kept("a.pdf", True)
+    table = _table(
+        qtbot,
+        _row(
+            "/tmp/a.pdf",
+            "a.pdf",
+            ocr=StageState.DONE,
+            correction=StageState.KEPT,
+            unclear_count=1,
+        ),
+    )
 
     cell = table.item(0, ResultsTable._COL_CORRECTION)
     assert cell is not None
@@ -622,14 +577,14 @@ def test_the_stored_review_is_handed_back_for_the_preview_and_the_export(qtbot) 
     review = CorrectionReview(
         unclear=(UnclearNote(0, 3, "odd", "unclear", "rephrase"),),
     )
-    table = ResultsTable()
-    qtbot.addWidget(table)
-    table.set_queue(["a.pdf", "b.pdf"])
+    table = _table(
+        qtbot,
+        _row("/tmp/a.pdf", "a.pdf", ocr=StageState.DONE, correction=StageState.DONE, review=review),
+        _row("/tmp/b.pdf", "b.pdf", ocr=StageState.DONE, correction=StageState.DONE),
+    )
 
-    table.set_correction_review("a.pdf", review)
-
-    assert table.review_for_source("a.pdf") is review
-    assert table.review_for_source("b.pdf") is None
+    assert table.review_for_source("/tmp/a.pdf") is review
+    assert table.review_for_source("/tmp/b.pdf") is None
 
 
 # ── skipped scans (text recognition switched off) ────────────────────────────
@@ -643,9 +598,7 @@ def test_a_skipped_result_is_shown_as_skipped_not_as_a_failure(qtbot) -> None:
     Then   the recognition cell says "skipped" with the reason as tooltip, the other stages
            stay pending, the duration is empty and the row is neither green nor red
     """
-    table = ResultsTable()
-    qtbot.addWidget(table)
-    table.set_queue(["scan.png"], ["/in/scan.png"])
+    table = _table(qtbot, _row("/in/scan.png", "scan.png"))
     table.mark_processing("/in/scan.png")
 
     table.add_result(
@@ -682,9 +635,11 @@ def test_queued_scans_can_be_marked_skipped_before_the_run_and_unmarked_again(qt
     When   the scan is marked as skipped, and then the marks are cleared
     Then   only the scan shows "skipped" in between, and it is pending again afterwards
     """
-    table = ResultsTable()
-    qtbot.addWidget(table)
-    table.set_queue(["scan.png", "notes.txt"], ["/in/scan.png", "/in/notes.txt"])
+    table = _table(
+        qtbot,
+        _row("/in/scan.png", "scan.png"),
+        _row("/in/notes.txt", "notes.txt"),
+    )
 
     table.set_skipped_sources({"/in/scan.png"}, "Needs text recognition, which is switched off.")
     assert table.item(0, ResultsTable._COL_OCR).text() == "skipped"
@@ -716,13 +671,13 @@ def test_a_stop_at_the_review_is_shown_in_the_review_cell(qtbot) -> None:
     When   the stopped result arrives
     Then   the review cell says "stopped" with the note, and the proofreading cell keeps its tick
     """
-    table = ResultsTable()
-    qtbot.addWidget(table)
-    table.set_queue(["essay.png"], source_ids=["/e.png"])
-    table.mark_processing("/e.png")
-    table.mark_correcting("/e.png")
+    table = _table(
+        qtbot,
+        _row("/e.png", "essay.png", ocr=StageState.DONE, correction=StageState.DONE),
+    )
+    table.mark_stage_running("/e.png", "correction")
 
-    table.add_result(_stopped_event("/e.png", "evaluation", raw_txt="raw", corr_txt="fixed"))
+    table.add_result(_stopped_event("/e.png", "evaluation"))
 
     assert [table.item(0, col).text() for col in (1, 2, 3)] == ["✓", "✓", "stopped"]
     assert "Stopped at evaluation." in table.item(0, 3).toolTip()
@@ -736,13 +691,10 @@ def test_a_stop_at_the_review_does_not_blame_a_failed_proofreading(qtbot) -> Non
     Then   the proofreading cell is not labelled "stopped" (it stays at the dash) and the
            review cell is
     """
-    table = ResultsTable()
-    qtbot.addWidget(table)
-    table.set_queue(["essay.png"], source_ids=["/e.png"])
-    table.mark_processing("/e.png")
-    table.mark_correcting("/e.png")
+    table = _table(qtbot, _row("/e.png", "essay.png", ocr=StageState.DONE))
+    table.mark_stage_running("/e.png", "correction")
 
-    table.add_result(_stopped_event("/e.png", "evaluation", raw_txt="raw"))
+    table.add_result(_stopped_event("/e.png", "evaluation"))
 
     assert [table.item(0, col).text() for col in (1, 2, 3)] == ["✓", "-", "stopped"]
 
@@ -751,20 +703,24 @@ def test_a_stop_at_the_review_does_not_blame_a_failed_proofreading(qtbot) -> Non
 def test_a_stopped_file_keeps_its_stored_review_badge(qtbot) -> None:
     """
     Given  a stored proofreading with unclear expressions, then "Stop now" at the review
-    When   the stopped result carries the review
+    When   the stopped result arrives
     Then   the row keeps its review and the unclear badge
     """
     review = CorrectionReview(unclear=(UnclearNote(0, 3, "odd", "unclear", "rephrase"),))
-    table = ResultsTable()
-    qtbot.addWidget(table)
-    table.set_queue(["essay.png"], source_ids=["/e.png"])
+    table = _table(
+        qtbot,
+        _row(
+            "/e.png",
+            "essay.png",
+            ocr=StageState.DONE,
+            correction=StageState.DONE,
+            unclear_count=1,
+            review=review,
+        ),
+    )
     table.mark_processing("/e.png")
 
-    table.add_result(
-        _stopped_event(
-            "/e.png", "evaluation", raw_txt="raw", corr_txt="fixed", correction_review=review
-        )
-    )
+    table.add_result(_stopped_event("/e.png", "evaluation"))
 
     assert "1" in table.item(0, 2).text()
 
@@ -801,14 +757,12 @@ def test_the_queue_has_a_checked_column_after_the_content_review(qtbot) -> None:
 def test_the_checked_cell_says_what_was_checked(qtbot, label: str, shown: str) -> None:
     """
     Given  a queued row
-    When   its checked label is set to the corrections, the transcription alone, or neither
+    When   the store reports the corrections checked, the transcription alone, or neither
     Then   the cell says "Checked", "Text checked" or nothing
     """
-    table = ResultsTable()
-    qtbot.addWidget(table)
-    table.set_queue(["a.png"], source_ids=["/a.png"])
+    table = _table(qtbot, _row("/a.png", "a.png"))
 
-    table.set_checked("/a.png", label)
+    table.update_row(_row("/a.png", "a.png", checked=label))
 
     assert table.item(0, ResultsTable._COL_CHECKED).text() == shown
 
@@ -818,12 +772,10 @@ def test_the_checked_cell_says_what_was_checked(qtbot, label: str, shown: str) -
 def test_a_finished_file_brings_its_checked_mark(qtbot) -> None:
     """
     Given  a queued row whose document was checked before the run
-    When   the run's result for it arrives
-    Then   the row shows the mark without a reload
+    When   the run's result for it arrives and the row is read from the store again
+    Then   the row shows the mark, and the run's own state does not take it away
     """
-    table = ResultsTable()
-    qtbot.addWidget(table)
-    table.set_queue(["a.png"], source_ids=["/a.png"])
+    table = _table(qtbot, _row("/a.png", "a.png", checked="checked"))
 
     table.add_result(
         FileDoneEvent(
@@ -833,11 +785,9 @@ def test_a_finished_file_brings_its_checked_mark(qtbot) -> None:
             message="",
             ocr_s=1.0,
             correction_s=0.0,
-            raw_txt="raw",
-            corr_txt="fixed",
-            checked_label="checked",
         )
     )
+    table.update_row(_row("/a.png", "a.png", ocr=StageState.DONE, checked="checked"))
 
     assert table.item(0, ResultsTable._COL_CHECKED).text() == "Checked"
 
@@ -850,11 +800,13 @@ def test_select_checked_takes_both_kinds_and_leaves_the_rest(qtbot) -> None:
     When   *Select checked* is chosen
     Then   the two checked rows are selected, so Export writes just those
     """
-    table = ResultsTable()
-    qtbot.addWidget(table)
-    table.set_queue(["a.png", "b.png", "c.png", "d.png"], source_ids=["/a", "/b", "/c", "/d"])
-    table.set_checked("/a", "checked")
-    table.set_checked("/b", "text")
+    table = _table(
+        qtbot,
+        _row("/a", "a.png", checked="checked"),
+        _row("/b", "b.png", checked="text"),
+        _row("/c", "c.png"),
+        _row("/d", "d.png"),
+    )
 
     table.select_checked()
 
@@ -870,10 +822,7 @@ def test_a_failed_file_keeps_the_checked_mark_it_had(qtbot) -> None:
     When   a run's result for it arrives as a failure, which says nothing about the mark
     Then   the row still shows *Checked*: a failure is not "unchecked"
     """
-    table = ResultsTable()
-    qtbot.addWidget(table)
-    table.set_queue(["a.png"], source_ids=["/a.png"])
-    table.set_checked("/a.png", "checked")
+    table = _table(qtbot, _row("/a.png", "a.png", checked="checked"))
 
     table.add_result(
         FileDoneEvent(
@@ -883,9 +832,121 @@ def test_a_failed_file_keeps_the_checked_mark_it_had(qtbot) -> None:
             message="OCR failed",
             ocr_s=1.0,
             correction_s=0.0,
-            raw_txt="",
-            corr_txt="",
         )
     )
 
     assert table.item(0, ResultsTable._COL_CHECKED).text() == "Checked"
+
+
+@pytest.mark.gui
+def test_a_refresh_after_a_stage_run_keeps_the_row_it_showed(qtbot) -> None:
+    """
+    Given  a row whose proofreading a stage run just made
+    When   the queue is read from the store again
+    Then   the row says the same, and the run's own state is not lost
+    """
+    table = _table(qtbot, _row("/a.png", "a.png", ocr=StageState.DONE))
+    table.mark_stage_running("/a.png", "correction")
+    table.add_result(
+        FileDoneEvent(
+            source_id="/a.png",
+            name="a.png",
+            ok=True,
+            message="",
+            ocr_s=1.0,
+            correction_s=2.0,
+        )
+    )
+    done = _row("/a.png", "a.png", ocr=StageState.DONE, correction=StageState.DONE, has_text=True)
+
+    table.set_queue([done])
+
+    assert table.item(0, ResultsTable._COL_CORRECTION).text() == "✓"
+    assert table.item(0, ResultsTable._COL_DURATION).text() == "3.0 s"
+    assert table.has_text("/a.png")
+
+
+@pytest.mark.gui
+def test_a_row_filled_at_start_up_can_be_sent_and_opened(qtbot) -> None:
+    """
+    Given  a queue read from the store, with no run behind it
+    When   the row is asked what it has
+    Then   it has text to send and can be opened in the Check tab
+    """
+    table = _table(
+        qtbot,
+        _row("/a.png", "a.png", ocr=StageState.DONE, correction=StageState.DONE, has_text=True),
+        _row("/b.png", "b.png", ocr=StageState.DONE, has_scan=True),
+        _row("/c.png", "c.png"),
+    )
+
+    assert table.has_text("/a.png")
+    assert not table.has_text("/b.png")
+    assert table.checkable_source_ids() == ["/a.png", "/b.png"]
+    assert table.text_format_for_source("/a.png") == "plain"
+
+
+@pytest.mark.gui
+def test_the_notation_of_the_texts_comes_from_the_row(qtbot) -> None:
+    """
+    Given  a row whose texts are Markdown
+    When   the notation is asked for
+    Then   it is Markdown, and an unknown source is plain
+    """
+    table = _table(
+        qtbot,
+        dataclasses.replace(_done_row("/a.png", "a.png"), text_format="markdown"),
+    )
+
+    assert table.text_format_for_source("/a.png") == "markdown"
+    assert table.text_format_for_source("/nope.png") == "plain"
+
+
+@pytest.mark.gui
+def test_clear_results_empties_the_queue(qtbot) -> None:
+    """
+    Given  a table with two rows
+    When   clear_results() is called
+    Then   no row is left and no source is queued
+    """
+    table = _table(qtbot, _row("/a.png", "a.png"), _row("/b.png", "b.png"))
+
+    table.clear_results()
+
+    assert table.rowCount() == 0
+    assert table.queued_source_ids() == []
+    assert table.row_for("/a.png") is None
+
+
+@pytest.mark.gui
+def test_the_stage_tooltip_says_where_the_text_goes(qtbot) -> None:
+    """
+    Given  a row whose proofreading is stored
+    When   the stage tooltips are set
+    Then   the proofreading cell's tooltip carries the stage line
+    """
+    table = _table(
+        qtbot,
+        _row("/a.png", "a.png", ocr=StageState.DONE, correction=StageState.DONE),
+    )
+
+    table.set_stage_tooltips({"correction": "Goes to the model on this computer."})
+
+    cell = table.item(0, ResultsTable._COL_CORRECTION)
+    assert cell is not None
+    assert "Goes to the model on this computer." in cell.toolTip()
+
+
+@pytest.mark.gui
+def test_a_row_without_a_state_has_no_page_to_open(qtbot, tmp_path: Path) -> None:
+    """
+    Given  a queued file the store knows nothing about
+    When   the queue is read
+    Then   the row is pending, has no text and cannot be opened
+    """
+    source = tmp_path / "new.png"
+    table = _table(qtbot, QueueRow.empty(source))
+
+    assert table.item(0, ResultsTable._COL_OCR).text() == "-"
+    assert not table.has_text(str(source.resolve()))
+    assert table.checkable_source_ids() == []

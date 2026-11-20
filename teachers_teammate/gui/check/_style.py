@@ -3,15 +3,20 @@
 One place for everything the three views and the side panel draw, so a mark means the same in
 the text, in the list and in the card.  Every background sets its text colour too: the app runs
 on a dark theme, whose light text is unreadable on these light backgrounds, and the colours are
-chosen to read on both.  A change category has one colour, used by the card's chip and the
-list's badge alike.
+chosen to read on both.
+
+:func:`look` is the only colour lookup: a model change takes its category's colour, every other
+kind a colour of its own, and no two of them share a background.  The text marks, the list's
+badge, the card's chip and the card's context line all draw the look of the item.
 """
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from PySide6.QtGui import QColor, QTextCharFormat
 
-from ...application.check_items import ItemKind
+from ...application.check_items import CheckItem, ItemKind
 
 STUDENT_STRIKE = "#999999"
 """The student's own crossed-out words: grey, so they read as the page's history."""
@@ -19,20 +24,11 @@ STUDENT_STRIKE = "#999999"
 MODEL_STRIKE = "#c0392b"
 """The words the model took out: red, as in the Word files and the benchmark."""
 
-KEPT_BACKGROUND = "#d7ffd7"
-KEPT_TEXT = "#14532d"
-MINOR_BACKGROUND = "#eef8ee"
-MINOR_TEXT = "#14532d"
-UNCLEAR_BACKGROUND = "#ffe3b3"
-UNCLEAR_TEXT = "#5a3200"
-OWN_BACKGROUND = "#dbeafe"
-OWN_TEXT = "#1e3a8a"
-TAKEN_OUT_BACKGROUND = "#f3f4f6"
-TAKEN_OUT_TEXT = "#4b5563"
 CHOSEN_BACKGROUND = "#ffe066"
 CHOSEN_TEXT = "#222222"
+"""The item the teacher picked in the list: a stronger background, drawn over the item's own."""
 
-#: Background and text colour of a change category's badge, in the card and in the list.
+#: Background and text colour of a change category, in the text, the badge and the chip.
 CATEGORY_COLOURS: dict[str, tuple[str, str]] = {
     "grammar": ("#dbeafe", "#1e3a8a"),
     "spelling": ("#eef8ee", "#14532d"),
@@ -40,6 +36,15 @@ CATEGORY_COLOURS: dict[str, tuple[str, str]] = {
     "word_choice": ("#ffe3b3", "#5a3200"),
     "word_order": ("#cffafe", "#155e75"),
     "other": ("#f3f4f6", "#4b5563"),
+}
+
+#: Background and text colour of every kind that is not a model change of a category.
+KIND_COLOURS: dict[ItemKind, tuple[str, str]] = {
+    ItemKind.UNEXPLAINED: ("#d7ffd7", "#14532d"),
+    ItemKind.OWN: ("#c7d2fe", "#312e81"),
+    ItemKind.TAKEN_OUT: ("#e7e5e4", "#44403c"),
+    ItemKind.UNCLEAR: ("#fde68a", "#78350f"),
+    ItemKind.LEFT_OUT: ("#fbcfe8", "#831843"),
 }
 
 TAG_BACKGROUND = "#e5e7eb"
@@ -70,15 +75,8 @@ _KIND_ICONS = {
     ItemKind.TAKEN_OUT: ICON_TAKEN_OUT,
 }
 
-_COLOURS = {
-    ItemKind.CORRECTION: (KEPT_BACKGROUND, KEPT_TEXT),
-    ItemKind.UNEXPLAINED: (KEPT_BACKGROUND, KEPT_TEXT),
-    ItemKind.OWN: (OWN_BACKGROUND, OWN_TEXT),
-    ItemKind.CHANGED: (OWN_BACKGROUND, OWN_TEXT),
-    ItemKind.TAKEN_OUT: (TAKEN_OUT_BACKGROUND, TAKEN_OUT_TEXT),
-    ItemKind.UNCLEAR: (UNCLEAR_BACKGROUND, UNCLEAR_TEXT),
-    ItemKind.LEFT_OUT: (UNCLEAR_BACKGROUND, UNCLEAR_TEXT),
-}
+#: The kinds whose colour is their change category's: the model's own changes.
+_CATEGORY_KINDS = frozenset({ItemKind.CORRECTION, ItemKind.CHANGED})
 
 #: Underline of a mark whose words are not the model's own change.
 _UNDERLINE = {
@@ -86,6 +84,28 @@ _UNDERLINE = {
     ItemKind.LEFT_OUT: QTextCharFormat.UnderlineStyle.DotLine,
     ItemKind.TAKEN_OUT: QTextCharFormat.UnderlineStyle.DashUnderline,
 }
+
+
+@dataclass(frozen=True)
+class MarkLook:
+    """How one item is drawn: its background, its text colour and its underline."""
+
+    background: str
+    text: str
+    underline: QTextCharFormat.UnderlineStyle | None = None
+
+    def format(self, *, chosen: bool = False) -> QTextCharFormat:
+        """Return the character format of a mark with this look; *chosen* draws it stronger."""
+        background, text = (
+            (CHOSEN_BACKGROUND, CHOSEN_TEXT) if chosen else (self.background, self.text)
+        )
+        fmt = QTextCharFormat()
+        fmt.setBackground(QColor(background))
+        fmt.setForeground(QColor(text))
+        if self.underline is not None:
+            fmt.setUnderlineStyle(self.underline)
+            fmt.setUnderlineColor(QColor(text))
+        return fmt
 
 
 def icon(kind: ItemKind, *, looked_at: bool) -> str:
@@ -97,31 +117,29 @@ def icon(kind: ItemKind, *, looked_at: bool) -> str:
 
 
 def category_colours(category: str) -> tuple[str, str]:
-    """The background and text colour of *category*'s badge; grey for one without a colour."""
+    """The background and text colour of *category*; grey for one without a colour."""
     return CATEGORY_COLOURS.get(category, CATEGORY_COLOURS["other"])
 
 
-def kind_colours(kind: ItemKind) -> tuple[str, str]:
-    """The background and text colour a mark of *kind* has in the text, for the card's context."""
-    return _COLOURS[kind]
+def look(item: CheckItem) -> MarkLook:
+    """Return how *item* is drawn, in the text, in the list and in the card.
 
-
-def mark_format(kind: ItemKind, *, minor: bool = False, chosen: bool = False) -> QTextCharFormat:
-    """The character format of a mark of *kind* in an editable view.
-
-    *minor* lightens a spelling or punctuation change, *chosen* is the item the teacher picked:
-    a stronger background, drawn over the kind's own.
+    A model change takes its category's colour, so a grammar change is the same blue wherever
+    the teacher meets it; every other kind has a colour of its own.  A spelling or punctuation
+    change is drawn lighter, because the list folds those into one row.
     """
-    background, text = _COLOURS[kind]
-    if minor:
-        background = MINOR_BACKGROUND
-    if chosen:
-        background, text = CHOSEN_BACKGROUND, CHOSEN_TEXT
-    fmt = QTextCharFormat()
-    fmt.setBackground(QColor(background))
-    fmt.setForeground(QColor(text))
-    underline = _UNDERLINE.get(kind)
-    if underline is not None:
-        fmt.setUnderlineStyle(underline)
-        fmt.setUnderlineColor(QColor(text))
-    return fmt
+    if item.kind in _CATEGORY_KINDS:
+        background, text = category_colours(item.category)
+    else:
+        background, text = KIND_COLOURS[item.kind]
+    if item.is_minor:
+        background = _lighter(background)
+    return MarkLook(background, text, _UNDERLINE.get(item.kind))
+
+
+def _lighter(colour: str) -> str:
+    """Return *colour* blended halfway to white: the same hue, drawn lighter."""
+    light = QColor(colour)
+    return QColor(
+        (light.red() + 255) // 2, (light.green() + 255) // 2, (light.blue() + 255) // 2
+    ).name()

@@ -12,6 +12,7 @@ from .settings import WHERE_ADDONS
 WHAT_IS_SENT_TITLE = "What is sent for this file"
 WHAT_IS_SENT_WORKING = "Working out what is sent…"
 NO_TEXT_YET = "No text recognized for this file yet."
+RESULTS_UNREADABLE = "Could not read the stored results of this file."
 
 
 def what_is_sent_title(name: str) -> str:
@@ -30,8 +31,8 @@ def what_is_sent_without_text() -> Notice:
 
 
 def what_is_sent_unreadable() -> Notice:
-    """Tell the teacher that working out what is sent gave no answer, which is a failure."""
-    return Notice(WHAT_IS_SENT_TITLE, NO_TEXT_YET, NoticeKind.WARNING)
+    """Tell the teacher that the stored results of this file could not be read."""
+    return Notice(WHAT_IS_SENT_TITLE, RESULTS_UNREADABLE, NoticeKind.WARNING)
 
 
 def spacy_missing(detail: str, *, installed_app: bool) -> str:

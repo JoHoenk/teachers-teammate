@@ -19,10 +19,13 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     from ..domain.proofreading.review import CorrectionReview
+    from .ollama_utils import WaitDetail
 
 OnFileStartedFn = Callable[[str, str, int, int], None]  # (source_id, name, idx, total)
 OnStageStartedFn = Callable[[str, str], None]  # (source_id, stage)
 OnOcrDoneFn = Callable[[str, str], None]  # (source_id, name)
+OnStageDetailFn = Callable[[str, "WaitDetail"], None]  # (source_id, what the server is doing)
+OnFirstTokenFn = Callable[[str], None]  # (source_id)
 
 
 @dataclass(frozen=True)
@@ -97,6 +100,9 @@ class ProgressCallbacks:
     ``on_file_done(result)`` fires with a :class:`FileDoneResult` after a file completes
     (success, failure or stop).
     ``on_keep_awake(state)`` fires once at the start of a run with a :class:`KeepAwakeState`.
+    ``on_stage_detail(source_id, detail)`` fires while a request to Ollama has no answer yet,
+    with what the server is doing instead.  ``on_first_token(source_id)`` fires when the model
+    begins answering, which is where the run's clock starts.
     """
 
     on_file_started: OnFileStartedFn | None = None
@@ -104,6 +110,8 @@ class ProgressCallbacks:
     on_ocr_done: OnOcrDoneFn | None = None
     on_file_done: OnFileDoneFn | None = None
     on_keep_awake: OnKeepAwakeFn | None = None
+    on_stage_detail: OnStageDetailFn | None = None
+    on_first_token: OnFirstTokenFn | None = None
 
 
 @runtime_checkable

@@ -5,8 +5,9 @@
 from __future__ import annotations
 
 import pytest
-from PySide6.QtCore import QRect
+from PySide6.QtCore import QPoint, QRect
 from PySide6.QtGui import QColor, QImage
+from PySide6.QtWidgets import QBoxLayout
 
 from teachers_teammate.application.check_document import CheckDocument, check_document_of
 from teachers_teammate.application.check_items import ItemKind
@@ -96,6 +97,12 @@ def _panel(qtbot, doc: CheckDocument, masking: Masking | None = None) -> SidePan
 def _buttons(panel: SidePanel) -> list[str]:
     """The buttons the card offers, in card order."""
     return [button.text() for button in panel._card._buttons if not button.isHidden()]
+
+
+def _replace_field(panel: SidePanel) -> str:
+    """What the card's replace field says, or ``""`` when the card offers none."""
+    field = panel._card.replace
+    return field.text() if not field.isHidden() else ""
 
 
 def _card_text(panel: SidePanel) -> str:
@@ -333,7 +340,8 @@ def test_the_card_of_a_correction_offers_take_out_and_change(qtbot) -> None:
     assert "bunte \u2192 braune" in _card_text(panel)
     assert "Word choice" in _card_text(panel)
     assert "Farbe." in _card_text(panel)
-    assert _buttons(panel) == [txt.TAKE_OUT, txt.CHANGE]
+    assert _buttons(panel) == [txt.TAKE_OUT]
+    assert _replace_field(panel) == "braune"
 
 
 @pytest.mark.gui
@@ -347,7 +355,8 @@ def test_the_card_of_an_unexplained_correction_says_so(qtbot) -> None:
 
     assert panel._rows[0].item.kind is ItemKind.UNEXPLAINED
     assert txt.NO_EXPLANATION_MADE in _card_text(panel)
-    assert _buttons(panel) == [txt.TAKE_OUT, txt.CHANGE]
+    assert _buttons(panel) == [txt.TAKE_OUT]
+    assert _replace_field(panel) == "braune"
 
 
 @pytest.mark.gui
@@ -362,6 +371,7 @@ def test_the_card_of_the_teachers_own_change_offers_take_out_only(qtbot) -> None
     assert panel._rows[0].item.kind is ItemKind.OWN
     assert txt.YOUR_CHANGE in _card_text(panel)
     assert _buttons(panel) == [txt.TAKE_OUT]
+    assert _replace_field(panel) == ""
 
 
 @pytest.mark.gui
@@ -369,7 +379,7 @@ def test_the_card_of_a_changed_correction_says_you_changed_this(qtbot) -> None:
     """
     Given  a correction the teacher changed again
     When   the side panel shows it
-    Then   the card says so and offers Take out and Change
+    Then   the card says so, offers Take out, and starts the replace field from their words
     """
     review = _note(RAW, "Der dunkelbraune Hund bellt. Die Katze mauzt.")
 
@@ -377,7 +387,8 @@ def test_the_card_of_a_changed_correction_says_you_changed_this(qtbot) -> None:
 
     assert panel._rows[0].item.kind is ItemKind.CHANGED
     assert txt.YOUR_CHANGE in _card_text(panel)
-    assert _buttons(panel) == [txt.TAKE_OUT, txt.CHANGE]
+    assert _buttons(panel) == [txt.TAKE_OUT]
+    assert _replace_field(panel) == "braune"
 
 
 @pytest.mark.gui
@@ -880,7 +891,8 @@ def test_the_card_of_a_stretch_the_ai_left_out_says_so_and_offers_no_wording(qtb
     assert kinds == [ItemKind.LEFT_OUT, ItemKind.UNCLEAR]
     panel.set_chosen(panel._rows[0].key)
     assert "Die KI hat diese Stelle ausgelassen." in _card_text(panel)
-    assert _buttons(panel) == [txt.CHANGE]
+    assert _buttons(panel) == []
+    assert _replace_field(panel) == ""
     assert panel._counts.text() == "1 unclear · 1 left out by the AI · 0 of 2 looked at"
 
 
@@ -995,12 +1007,13 @@ def test_the_card_shows_the_category_as_a_coloured_chip(qtbot) -> None:
     Then   the card shows the category in the colour the list uses for it
     """
     panel = _panel(qtbot, _document(review=_note(RAW, CORRECTED)))
-
-    background, foreground = _style.category_colours("word_choice")
+    item = panel._rows[0].item
+    assert item is not None
+    look = _style.look(item)
     body = panel._card._body.text()
 
-    assert f"background-color:{background}" in body
-    assert f"color:{foreground}" in body
+    assert f"background-color:{look.background}" in body
+    assert f"color:{look.text}" in body
     assert "Word choice" in body
 
 
@@ -1273,9 +1286,10 @@ def test_a_row_shows_its_category_as_a_coloured_badge(qtbot) -> None:
     Then   the category is a badge in the colour the card's chip uses
     """
     panel = _panel(qtbot, _walk_document())
-    background, _ = _style.category_colours("word_choice")
+    item = panel._rows[0].item
+    assert item is not None
 
-    assert _has_colour(_row_image(panel, 0), QColor(background))
+    assert _has_colour(_row_image(panel, 0), QColor(_style.look(item).background))
 
 
 def test_the_two_word_columns_are_the_same_width() -> None:
@@ -1378,3 +1392,108 @@ def test_a_category_the_chips_lack_is_filed_under_other(qtbot) -> None:
     assert other.text() == check_txt.filter_label(txt.category_label("other"), 1)
     panel.set_filter("other")
     assert _shown_rows(panel) == ["edit:1"]
+
+
+# ── The card's room ───────────────────────────────────────────────────────
+
+
+def _two_items_of_different_length() -> CheckDocument:
+    """Return a document with a short correction and one with a long explanation."""
+    raw = "Der bunte Hund bellt. Die Katz mauzt."
+    corrected = "Der braune Hund bellt. Die Katze mauzt."
+    first, second = edits(raw, corrected)
+    review = CorrectionReview(
+        edits=(
+            edit_note(first, category="word_choice", explanation="Farbe."),
+            edit_note(
+                second, category="grammar", explanation="Der Satz braucht ein Subjekt. " * 20
+            ),
+        )
+    )
+    return _document(raw=raw, corrected=corrected, review=review)
+
+
+@pytest.mark.gui
+def test_the_buttons_stay_where_they_are_while_stepping_through_items(qtbot) -> None:
+    """
+    Given  a document with a short correction and one with a long explanation
+    When   the teacher steps from the first to the second
+    Then   the card's buttons and *Next* are where they were
+    """
+    panel = _panel(qtbot, _two_items_of_different_length())
+    qtbot.wait(20)
+    buttons = panel._card._button_row.mapTo(panel, QPoint(0, 0)).y()
+    next_button = panel._next_button.mapTo(panel, QPoint(0, 0)).y()
+
+    panel.set_chosen("edit:2")
+    qtbot.wait(20)
+
+    assert panel.chosen == "edit:2"
+    assert panel._card._button_row.mapTo(panel, QPoint(0, 0)).y() == buttons
+    assert panel._next_button.mapTo(panel, QPoint(0, 0)).y() == next_button
+
+
+@pytest.mark.gui
+def test_the_card_opens_with_room_for_five_lines(qtbot) -> None:
+    """
+    Given  a document with a correction
+    When   the side panel shows it
+    Then   the card is tall enough for five lines of text, not only for its buttons
+    """
+    panel = _panel(qtbot, _document(review=_note(RAW, CORRECTED)))
+    qtbot.wait(20)
+
+    assert panel._card.height() >= panel._card._default_height()
+
+
+@pytest.mark.gui
+def test_the_card_puts_change_and_why_side_by_side_when_it_is_wide(qtbot) -> None:
+    """
+    Given  a side panel as narrow as the Check tab opens it
+    When   the teacher drags it wide enough for both columns
+    Then   *Change* and *Why* stand side by side instead of one above the other
+    """
+    panel = _panel(qtbot, _document(review=_note(RAW, CORRECTED)))
+    assert panel._card._columns.direction() == QBoxLayout.Direction.TopToBottom
+
+    panel.resize(700, 600)
+    qtbot.wait(20)
+
+    assert panel._card._columns.direction() == QBoxLayout.Direction.LeftToRight
+
+
+@pytest.mark.gui
+def test_the_card_keeps_the_height_the_teacher_dragged_it_to(qtbot) -> None:
+    """
+    Given  a card the teacher made taller
+    When   another document is shown
+    Then   the card is still that tall
+    """
+    panel = _panel(qtbot, _document(review=_note(RAW, CORRECTED)))
+    qtbot.wait(20)
+    before = panel._card.height()
+    panel.set_card_split((before + 100, max(panel._split.height() - before - 100, 1)))
+    qtbot.wait(20)
+    taller = panel._card.height()
+    assert taller > before
+
+    panel.set_document(_document(review=_note(RAW, CORRECTED), source_id="/tmp/Ben.png"), Masking())
+    qtbot.wait(20)
+
+    assert panel._card.height() == taller
+
+
+@pytest.mark.gui
+def test_dragging_the_card_tells_the_window_its_height(qtbot) -> None:
+    """
+    Given  a side panel that shows a document
+    When   the teacher drags the handle under the card
+    Then   the panel says how tall the card and the list are now
+    """
+    panel = _panel(qtbot, _document(review=_note(RAW, CORRECTED)))
+    told: list[tuple[int, ...]] = []
+    panel.card_split_changed.connect(told.append)
+
+    panel._split.moveSplitter(panel._card.height() + 40, 1)
+
+    assert told == [panel.card_split]

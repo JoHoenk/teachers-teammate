@@ -46,6 +46,7 @@ import qdarkstyle
 
 from .. import __version__ as _APP_VERSION
 from ..application.check_document import CheckDocument
+from ..application.queue import StageState
 from ..application.sent_text import SentTexts
 from ..application.service import (
     ADDON_PRIVACY,
@@ -68,7 +69,7 @@ from ..config import (
     load_config_file,
     unavailable_ocr_engine,
 )
-from ..domain.data_location import OCR_ENGINE_NAMES, DataFlow, SentStatus
+from ..domain.data_location import OCR_ENGINE_NAMES, STAGE_CORRECTION, DataFlow
 from ..domain.local_models import PAGE_MODELS_ADDON_ID, READER_ADDON_ID
 from ..domain.model_catalog import HardwareDetection, short_model_name
 from ..domain.ollama_discovery import DiscoveredServer, DiscoveryScope, ServerKind
@@ -82,8 +83,8 @@ from ..domain.stages import (
 from ..infrastructure.diagnostics import phase as diagnostics_phase
 from ..infrastructure.diagnostics import start_if_requested as start_diagnostics_if_requested
 from ..infrastructure.ollama_install import OLLAMA_DOWNLOAD_URL
+from ..infrastructure.ollama_utils import WaitDetail, WaitKind
 from ..infrastructure.reporting import BATTERY_WARNING, KeepAwakeState
-from ..infrastructure.state_repository import DocumentStateView
 from ..infrastructure.system_locale import system_language
 from ..texts import check as check_text
 from ..texts import dialogs as dlg
@@ -127,16 +128,23 @@ from ._privacy_settings import (
 )
 from ._readiness_line import ReadinessLine, readiness
 from ._results_table import ResultsTable
-from ._run_status import RunPace, RunTone, describe_run, time_left_note, time_left_tooltip
+from ._run_status import RunPace, RunProgress, RunTone, describe_run
 from ._stats_widget import SystemStatsWidget
 from ._system_monitor import SystemMonitorWindow
 from ._types import FileDoneEvent
 from ._update_check import UpdateCheckThread
-from ._view_settings import set_text_point_size, text_point_size
+from ._view_settings import (
+    check_card_split,
+    check_split,
+    set_check_card_split,
+    set_check_split,
+    set_text_point_size,
+    text_point_size,
+)
 from ._what_is_sent_dialog import WhatIsSentDialog
 from ._window_geometry import maximize_without_saved_geometry, restore_geometry
 from ._worker import OCRWorker, detach_running_worker
-from .check import CheckPage, CopyKind, CopyState, RunState
+from .check import CheckLayout, CheckPage, CopyKind, CopyState, RunState
 from .settings import (
     PAGE_TITLES,
     SettingsContext,
@@ -246,11 +254,24 @@ AWAKE_UNAVAILABLE_TEXT = (
 )
 
 
+def _wait_detail_text(detail: WaitDetail) -> str:
+    """Return what to say about a request to Ollama that has no answer yet."""
+    if detail.kind is WaitKind.BUSY:
+        return check_text.RUN_WAITING_FOR_MODEL.format(other=detail.other)
+    if detail.kind is WaitKind.LOADING:
+        return check_text.RUN_LOADING_MODEL.format(model=detail.model)
+    if detail.kind is WaitKind.QUEUED:
+        return check_text.RUN_QUEUED_FOR_MODEL.format(other=detail.other, model=detail.model)
+    return ""
+
+
 class _WorkerLike(Protocol):
     log_line: Any
     file_started: Any
     stage_started: Any
     ocr_done: Any
+    stage_detail: Any
+    first_token: Any
     file_done: Any
     keep_awake_changed: Any
     run_finished: Any
@@ -417,6 +438,11 @@ _OLLAMA_KINDS = frozenset(
 class MainWindow(QMainWindow):
     """Teacher's Teammate main application window."""
 
+    #: Something was installed: a package, a spaCy model, the reader's models.  Every installer
+    #: emits it — the Settings window, the Add-ons page, the add-on dialog, the Setup
+    #: Assistant's round, also when that round finishes after its window closed.
+    packages_changed = Signal()
+
     def __init__(
         self,
         *,
@@ -438,6 +464,7 @@ class MainWindow(QMainWindow):
         self._pull_manager.started.connect(self._on_pull_started)
         self._pull_manager.finished.connect(self._on_pull_finished)
         self._pull_manager.error.connect(self._on_pull_error)
+        self.packages_changed.connect(self._on_packages_changed)
 
         self.setAcceptDrops(True)
         self._build_ui()
@@ -469,6 +496,8 @@ class MainWindow(QMainWindow):
         self._close_confirmed = False
         #: How fast the current run is going and how much of it is left (see ``RunPace``).
         self._pace = RunPace()
+        #: Where the run is at the last tick: the bar and the Check strip both read this.
+        self._progress_snapshot = RunProgress()
         #: Pages of the files of the current run, by source id; filled in the background.
         self._run_pages: dict[str, int] = {}
         #: The bar follows the time of the run (0 to 1000) instead of counting files; it does
@@ -488,9 +517,6 @@ class MainWindow(QMainWindow):
     def _init_queue_state(self) -> None:
         """Declare what the window knows about the files in its queue."""
         self._queued_files_by_source_id: dict[str, Path] = {}
-        # Queued files whose recognised text is stored: a run does not read them again, so a
-        # missing text recognition engine must not stop a run over only these.
-        self._recognised_files: set[Path] = set()
         # A silent search for Ollama on this computer, made when the saved address is
         # unreachable: the server it found (offered, never taken over by itself) and the
         # address the search was made for (one search per address).
@@ -516,12 +542,25 @@ class MainWindow(QMainWindow):
         #: the model that proofreads (``""`` when the run does not proofread) and the step.
         self._run_model = ""
         self._run_step = ""
+        #: ``"[3/12] essay.pdf"``: the file the run is on, for the progress line.
+        self._run_file_label = ""
+        #: What the running stage says about itself, which a wait note replaces and the first
+        #: token of the answer brings back: the strip's step and the progress line's label.
+        self._stage_step = ""
+        self._stage_label = ""
+        #: Whether the strip and the progress line carry a note about the server's wait.
+        self._wait_shown = False
+        #: Whether the run's proofreading waits for an Ollama server, so its clock starts
+        #: at the first token instead of at the request.
+        self._run_waits_for_ollama = False
+        #: Whether the pace is holding its clock for that first token.
+        self._pace_waits_for_first_token = False
         #: The "Hide personal information in texts" view setting (not part of Config).
         self._display_anonymized = display_anonymized(self._settings_store)
-        #: Whether the texts can be hidden, per document language (spaCy model installed).
-        self._privacy_availability: dict[str, bool] = {}
         #: Whether the texts can be hidden for the current document language.
         self._privacy_available = True
+        #: What the Copy menu offers for the open document, so a privacy change can redraw it.
+        self._copy_state: CopyState | None = None
         #: The text and language of the running hiding job, to not start it twice.
         self._anonymize_key: tuple[str, str] | None = None
         self._first_run_task = LatestTask(self)
@@ -556,6 +595,11 @@ class MainWindow(QMainWindow):
         # Settings change in bursts (a checkbox, a model, a language): check once, soon after.
         self._readiness_debounce = _debounce_timer(
             self, self._READINESS_DEBOUNCE_MS, self._start_readiness_check
+        )
+        # A drag of a pane reports every pixel: the settings are written once it settles.
+        self._pending_check_layout: CheckLayout | None = None
+        self._layout_debounce = _debounce_timer(
+            self, self._READINESS_DEBOUNCE_MS, self._flush_check_layout
         )
         # An unreachable Ollama is checked again every few seconds: it may be started after
         # the app.
@@ -675,6 +719,12 @@ class MainWindow(QMainWindow):
 
         self._check = CheckPage()
         self._check.set_point_size(text_point_size(self._settings_store))
+        self._check.set_layout(
+            CheckLayout(
+                split=check_split(self._settings_store),
+                card_split=check_card_split(self._settings_store),
+            )
+        )
         self._tabs.addTab(self._check, "Check")
         self._tabs.setTabEnabled(1, False)  # nothing to check before a document has a result
         self._tabs.currentChanged.connect(self._on_tab_changed)
@@ -702,6 +752,7 @@ class MainWindow(QMainWindow):
         self._check.display_anonymized_changed.connect(self._apply_display_anonymized)
         self._check.anonymization_needed.connect(self._on_anonymization_needed)
         self._check.text_zoom_changed.connect(self._store_text_zoom)
+        self._check.layout_changed.connect(self._store_check_layout)
         # Ctrl+1 / Ctrl+2 reach the tabs from anywhere in the window; Esc is the Check page's.
         QShortcut(QKeySequence("Ctrl+1"), self, self._show_documents_tab)
         QShortcut(QKeySequence("Ctrl+2"), self, self._show_check_tab)
@@ -1086,11 +1137,21 @@ class MainWindow(QMainWindow):
         )
         assistant = SetupAssistant(context, self)
         assistant.committed.connect(self._apply_setup_result)
+        # The round outlives the assistant: a download that finishes after the window closed
+        # must still tell this window that packages changed.
+        install_round = assistant.install_round()
+        install_round.finished.connect(self._on_install_round_finished)
         self._setup_open = True
         try:
             assistant.exec()
         finally:
             self._setup_open = False
+        # The round was handed to this window so it can finish after the assistant: it goes
+        # when it is over, or at once when nothing is running.
+        if install_round.running():
+            install_round.finished.connect(install_round.deleteLater)
+        else:
+            install_round.deleteLater()
         wants_documents = assistant.documents_wanted()
         # Set up decides, not how the window closed: the X on the done page is a reject too.
         was_set_up = assistant.is_committed()
@@ -1256,6 +1317,8 @@ class MainWindow(QMainWindow):
             self._save_settings(notify=False, silent_on_error=True)
         except Exception:  # noqa: BLE001  # never block window close on a settings-save error
             pass
+        self._layout_debounce.stop()
+        self._flush_check_layout()
         # Only close() runs the Benchmark window's own closeEvent, which stops its worker;
         # deleting it with a parent would not.  Closing the last window ends the app.
         if self._benchmark_window is not None:
@@ -1299,60 +1362,18 @@ class MainWindow(QMainWindow):
         """Refresh queue from input selection without showing modal validation errors."""
         files = self._scan_input_files()
         self._queued_files_by_source_id = {str(file.resolve()): file for file in files}
-        file_names = [file.name for file in files]
-        source_ids = [str(file.resolve()) for file in files]
-        self._results_table.set_queue(file_names, source_ids)
 
-        views: dict = {}
         try:
             config = self._config_panel.to_config()
-            views = self._app_service.load_views_reconciled(config, files)
-            self._ensure_hardware_known_for_cache_state(config)
         except ValueError:
-            # to_config() fails when output dir isn't set yet (DOCX requires it).
-            # Build a minimal lookup-only Config so cached state is still shown.
-            values = self._config_panel.to_dict()
-            input_text = str(values.get("input", "")).strip()
-            output_text = str(values.get("output", "")).strip()
-            if input_text and Path(input_text).is_dir():
-                try:
-                    lookup_config = self._app_service.build_lookup_config(
-                        Path(input_text),
-                        Path(output_text) if output_text else Path(input_text),
-                    )
-                    views = self._app_service.load_views(lookup_config, files)
-                except Exception:  # noqa: BLE001  # cached-view lookup is best-effort; ignore any load error
-                    pass
-
-        any_ocr_cached = False
-        self._recognised_files = set()
-        for file in files:
-            source_id = str(file.resolve())
-            view = views.get(source_id)
-            if view is None:
-                continue
-            if view.ocr_done:
-                self._recognised_files.add(file)
-            self._results_table.mark_cached(
-                source_id,
-                view.preview_img,
-                view.raw_text,
-                view.correction_text,
-                view.evaluation_text,
-                ocr_done=view.ocr_done,
-                correction_done=view.correction_done,
-                evaluation_done=view.evaluation_done,
-            )
-            self._results_table.set_correction_review(
-                source_id, view.correction_review, view.correction_warning
-            )
-            self._results_table.set_kept(source_id, view.work.kept_over_settings)
-            self._results_table.set_checked(source_id, view.work.checked_label)
-            self._results_table.set_text_format(source_id, view.raw_text_format)
-            self._results_table.set_sent(source_id, view.sent)
-            if view.ocr_done:
-                any_ocr_cached = True
-        if any_ocr_cached:
+            # A setting that is not valid yet (no output folder) must not hide stored results:
+            # the lookup config names the same state folder and needs no valid folder.
+            config = self._config_panel.lookup_config()
+        else:
+            self._ensure_hardware_known_for_cache_state(config)
+        rows = self._app_service.queue_rows(config, files)
+        self._results_table.set_queue(rows)
+        if any(row.ocr is StageState.DONE for row in rows):
             self._set_export_enabled(True)
         # The readiness line says what is in the queue and what to do next; the bar only
         # reports progress, so it stays "Idle" until something runs.
@@ -1372,10 +1393,25 @@ class MainWindow(QMainWindow):
         queued = self._queued_files_by_source_id
         return [queued[i] for i in (source_ids or queued) if i in queued]
 
+    def _recognised_files(self) -> set[Path]:
+        """Return the queued files whose recognised text is stored.
+
+        A run does not read them again, so a missing text recognition engine must not stop a
+        run over only these.
+        """
+        queued = self._queued_files_by_source_id
+        return {
+            queued[source_id]
+            for source_id in self._results_table.queued_source_ids()
+            if source_id in queued
+            and (row := self._results_table.row_for(source_id)) is not None
+            and row.ocr is StageState.DONE
+        }
+
     def _recognition_needed(self, source_ids: list[str] | None = None) -> bool:
         """Return whether a run over *source_ids* (default: the whole queue) reads pages."""
         return self._app_service.needs_text_recognition(
-            self._queued_files(source_ids), recognised=self._recognised_files
+            self._queued_files(source_ids), recognised=self._recognised_files()
         )
 
     def _run_in_progress(self) -> bool:
@@ -1439,7 +1475,7 @@ class MainWindow(QMainWindow):
         self._progress.setValue(0)
         self._progress.setFormat("Checking requirements…")
         service = self._app_service
-        recognised = set(self._recognised_files)
+        recognised = self._recognised_files()
         run_in_background(
             lambda: service.check_run_preflight(
                 config,
@@ -1473,6 +1509,10 @@ class MainWindow(QMainWindow):
         if result.blocked:
             self._show_blocking_preflight(result)
             return
+        note = _wait_detail_text(result.ollama_wait)
+        if note:
+            # A note, not a question: the run works, the first file just waits.
+            self._log.append_text(note + "\n")
         if result.memory_warning:
             self._confirm_memory_warning(result.memory_warning, lambda: on_ready(result))
             return
@@ -1580,10 +1620,7 @@ class MainWindow(QMainWindow):
             queued_files = self._app_service.collect_input_files(config)
             self._queued_files_by_source_id = {str(file.resolve()): file for file in queued_files}
             queued_source_ids = [str(file.resolve()) for file in queued_files]
-            self._results_table.set_queue(
-                [file.name for file in queued_files],
-                queued_source_ids,
-            )
+            self._results_table.set_queue(self._app_service.queue_rows(config, queued_files))
 
         if not queued_source_ids:
             _dialogs.notify(self, dlg.no_files_found(str(config.input_dir)))
@@ -1616,6 +1653,14 @@ class MainWindow(QMainWindow):
             short_model_name(config.effective_correction_model) if config.correction_enabled else ""
         )
         self._run_step = ""
+        self._run_file_label = ""
+        self._stage_step = ""
+        self._stage_label = ""
+        self._wait_shown = False
+        self._run_waits_for_ollama = (
+            config.correction_enabled and config.correction_provider == "ollama"
+        )
+        self._pace_waits_for_first_token = False
         self._apply_lock()
         self._result_names = []
         self._result_ocr_times = []
@@ -1643,6 +1688,8 @@ class MainWindow(QMainWindow):
         self._worker.file_started.connect(self._on_file_started)
         self._worker.stage_started.connect(self._on_stage_started)
         self._worker.ocr_done.connect(self._on_ocr_done)
+        self._worker.stage_detail.connect(self._on_stage_detail)
+        self._worker.first_token.connect(self._on_first_token)
         self._worker.file_done.connect(self._on_file_done)
         self._worker.keep_awake_changed.connect(self._on_keep_awake)
         self._worker.run_finished.connect(self._on_run_finished)
@@ -1664,6 +1711,7 @@ class MainWindow(QMainWindow):
         """
         self._pace = RunPace(self._estimate_per_page(config))
         self._pace.set_files(len(selected_source_ids))
+        self._progress_snapshot = RunProgress()
         self._run_pages = {}
         files = [
             self._queued_files_by_source_id[source_id]
@@ -1690,6 +1738,7 @@ class MainWindow(QMainWindow):
         pages = cast("dict[str, int]", result)
         self._run_pages = pages
         self._pace.set_pages(sum(pages.values()))
+        self._take_snapshot()
         self._set_progress_text(self._progress_base)
         self._refresh_check_run()
 
@@ -1704,24 +1753,9 @@ class MainWindow(QMainWindow):
             _dialogs.notify(self, dlg.configuration_error(str(exc)))
             return
 
-        # Running a stage from the right-click menu is an explicit, per-entry action:
-        # run exactly that stage regardless of the enable checkboxes (which only govern
-        # the main "Run"), and nothing after it.  The cache of the later stages was just
-        # cleared, so leaving them enabled would silently run the whole chain again.
-        # Evaluation also needs correction text (cached, or computed first).
-        if stage == "ocr":
-            config = dataclasses.replace(
-                config,
-                # Asking for this stage by hand overrides the "Recognize text" tick.
-                recognition_enabled=True,
-                correction_enabled=False,
-                evaluation_enabled=False,
-                anonymization_enabled=False,
-            )
-        elif stage == "correction":
-            config = dataclasses.replace(config, correction_enabled=True, evaluation_enabled=False)
-        elif stage == "evaluation":
-            config = dataclasses.replace(config, evaluation_enabled=True, correction_enabled=True)
+        # One stage by hand: the service builds that config, so the GUI holds no variant of
+        # its own that could drift from what a run does.
+        config = self._app_service.config_for_stage_run(config, stage)
 
         # Check before touching the cache: a re-run that cannot work (Ollama stopped, model
         # missing) must not throw away the results that are there.
@@ -2092,12 +2126,14 @@ class MainWindow(QMainWindow):
         One figure in the bar, the range behind it: a range in the bar itself would not fit,
         and the teacher who wants to know how sure the figure is can hover over it.
         """
-        left = self._pace.time_left(time.monotonic())
-        if left is None:
-            self._progress.setToolTip("")
-            return ""
-        self._progress.setToolTip(time_left_tooltip(left.low_s, left.high_s))
-        return " · " + time_left_note(left.typical_s)
+        snapshot = self._progress_snapshot
+        self._progress.setToolTip(snapshot.tooltip)
+        return " · " + snapshot.note if snapshot.note else ""
+
+    def _take_snapshot(self) -> RunProgress:
+        """Ask the pace where the run is now, and keep the answer for both displays."""
+        self._progress_snapshot = self._pace.snapshot(time.monotonic())
+        return self._progress_snapshot
 
     def _on_keep_awake(self, state: KeepAwakeState) -> None:
         """Say under the progress bar whether the computer is kept awake, and warn on battery."""
@@ -2124,7 +2160,7 @@ class MainWindow(QMainWindow):
 
         Without an estimate the pace has no figure and the bar keeps counting steps.
         """
-        fraction = self._pace.progress(time.monotonic())
+        fraction = self._take_snapshot().fraction
         if fraction is None or not self._run_in_progress():
             return
         if not self._time_driven:
@@ -2133,14 +2169,19 @@ class MainWindow(QMainWindow):
         # Full only when the run says so: a file that is nearly done is not yet done.
         self._progress.setValue(min(round(fraction * PROGRESS_RESOLUTION), PROGRESS_RESOLUTION - 1))
         self._set_progress_text(self._progress_base)
+        self._refresh_check_run()
 
     def _on_file_started(self, source_id: str, name: str, idx: int, total: int) -> None:
         self._set_steps_done((idx - 1) * self._steps_per_file)
         self._pace.file_started(self._run_pages.get(source_id, 1))
-        self._set_progress_text(f"[{idx}/{total}] {name} — starting…")
+        self._run_file_label = f"[{idx}/{total}] {name}"
+        self._set_progress_text(f"{self._run_file_label} — starting…")
         self._results_table.mark_processing(source_id)
         self._run_current = source_id
         self._run_step = ""
+        self._stage_step = ""
+        self._stage_label = ""
+        self._wait_shown = False
         self._apply_lock()
         # The text format is deliberately kept: the row still shows the previous texts, and
         # a format that no longer matches them would save an edit in the wrong notation.
@@ -2161,11 +2202,47 @@ class MainWindow(QMainWindow):
     def _on_stage_started(
         self, _source_id: str, name: str, stage: str, idx: int, total: int
     ) -> None:
-        self._pace.work_started(time.monotonic())
+        # A proofreading on an Ollama server may wait for the model: its clock starts at the first
+        # token (see _on_first_token), so neither the bar nor the time left move during a wait.
+        self._pace_waits_for_first_token = bool(
+            stage == PROGRESS_STAGE_CORRECTION and self._run_waits_for_ollama
+        )
+        if not self._pace_waits_for_first_token:
+            self._pace.work_started(time.monotonic())
+        self._run_file_label = f"[{idx}/{total}] {name}"
         label = self._STAGE_PROGRESS_LABEL.get(stage)
         if label is not None:
-            self._set_progress_text(f"[{idx}/{total}] {name} — {label}")
-        self._run_step = self._RUN_STEP_TEXT.get(stage, self._run_step)
+            self._set_progress_text(f"{self._run_file_label} — {label}")
+            self._stage_label = label
+        self._stage_step = self._RUN_STEP_TEXT.get(stage, self._run_step)
+        self._run_step = self._stage_step
+        self._wait_shown = False
+        self._refresh_check_run()
+
+    def _on_stage_detail(self, source_id: str, detail: object) -> None:
+        """Say what Ollama is doing with the request, in the bar and in the Check tab."""
+        if source_id != self._run_current or not isinstance(detail, WaitDetail):
+            return
+        text = _wait_detail_text(detail)
+        if not text:
+            return
+        self._wait_shown = True
+        self._run_step = text
+        self._set_progress_text(f"{self._run_file_label} — {text}")
+        self._refresh_check_run()
+
+    def _on_first_token(self, source_id: str) -> None:
+        """The model began answering: a wait note goes, and the proofreading's clock starts."""
+        if source_id != self._run_current:
+            return
+        if self._pace_waits_for_first_token:
+            self._pace_waits_for_first_token = False
+            self._pace.work_started(time.monotonic())
+        if self._wait_shown:
+            self._wait_shown = False
+            self._run_step = self._stage_step
+            if self._stage_label:
+                self._set_progress_text(f"{self._run_file_label} — {self._stage_label}")
         self._refresh_check_run()
 
     def _on_file_done(self, event: FileDoneEvent) -> None:
@@ -2202,32 +2279,28 @@ class MainWindow(QMainWindow):
         # is read for itself.  Both refresh from the persisted state even on failure or stop,
         # when on_ocr_done never fired.
         if not (source_id == self._current_preview_source_id and self._load_check(source_id)):
-            self._refresh_row_state(source_id, text_format=event.text_format)
+            self._sync_row(source_id)
             self._apply_lock()
         self._update_check_tab()
 
-    def _refresh_row_state(self, source_id: str, *, text_format: str = "plain") -> None:
-        """Re-read how *source_id*'s results were sent and which notation its texts are in.
+    def _sync_row(self, source_id: str) -> None:
+        """Show what the store now says about *source_id* in its row.
 
-        Both are unknown (empty) when no valid state exists.
-
-        *text_format* is the notation the pipeline reported for the texts; it is kept when the
-        persisted state cannot be read back (e.g. the output directory changed meanwhile).
+        The row is the store's answer, so every action that changes a document ends here
+        instead of patching cells: a stage that ran, an edit, a *Checked* mark.
         """
-        sent: dict[str, SentStatus] = {}
+        source = self._queued_files_by_source_id.get(source_id) or Path(source_id)
         try:
-            source = Path(source_id)
-            if source.exists():
-                view = self._app_service.load_view(self._config_panel.to_config(), source)
-                if view is not None:
-                    text_format = view.raw_text_format
-                    # The run that just finished stored how it sent its results; the cells
-                    # were reset when those steps started.
-                    sent = view.sent
+            config = self._config_panel.to_config()
+        except ValueError:
+            # A setting that is not valid yet (no output folder) must not hide stored results:
+            # the lookup config names the same state folder and needs no valid folder.
+            config = self._config_panel.lookup_config()
+        try:
+            row = self._app_service.queue_row(config, source)
         except OSError, ValueError:
-            pass
-        self._results_table.set_text_format(source_id, text_format)
-        self._results_table.set_sent(source_id, sent)
+            return  # nothing readable: the row keeps what it showed
+        self._results_table.update_row(row)
 
     # ── Readiness line ────────────────────────────────────────────────────
 
@@ -2253,7 +2326,7 @@ class MainWindow(QMainWindow):
         config = self._config_panel.lookup_config()
         recognition = self._recognition_needed()
         files = self._queued_files()
-        recognised = set(self._recognised_files)
+        recognised = self._recognised_files()
         self._readiness_task.submit(
             lambda: service.check_run_preflight(
                 config,
@@ -2388,7 +2461,7 @@ class MainWindow(QMainWindow):
             skipped=len(skipped),
             not_needed=bool(files)
             and not self._app_service.needs_text_recognition(
-                files, recognised=self._recognised_files
+                files, recognised=self._recognised_files()
             ),
         )
 
@@ -2436,16 +2509,17 @@ class MainWindow(QMainWindow):
         QTimer.singleShot(3000, lambda: self._start_readiness_check(fresh=True))
 
     def changeEvent(self, event: QEvent) -> None:
-        """Check again when the window becomes active while something blocked a run.
+        """Look again when the window becomes active: something may have been installed.
 
-        A key set outside the app, or ``ollama pull`` run in a terminal, is only seen then.
+        A key set outside the app, ``ollama pull`` run in a terminal, or a spaCy model
+        installed with pip is only seen then.
         """
         super().changeEvent(event)
-        if (
-            event.type() == QEvent.Type.ActivationChange
-            and self.isActiveWindow()
-            and self._blocker is not None
-        ):
+        if event.type() != QEvent.Type.ActivationChange or not self.isActiveWindow():
+            return
+        self._app_service.reread_installed_models()
+        self._refresh_privacy_availability()
+        if self._blocker is not None:
             self._start_readiness_check(fresh=True)
 
     # ── Ollama pull progress (status bar area) ────────────────────────────────────
@@ -2492,6 +2566,8 @@ class MainWindow(QMainWindow):
         self._progress.setFormat(text.progress)
         self._progress.setToolTip("")
         self._pace = RunPace()
+        self._progress_snapshot = RunProgress()
+        self._pace_waits_for_first_token = False
         self._run_source_ids = []
         reload = self._current_preview_source_id in self._run_pending
         self._run_pending = set()
@@ -2512,32 +2588,16 @@ class MainWindow(QMainWindow):
 
     def _on_ocr_done(self, source_id: str, name: str, idx: int, total: int) -> None:
         self._run_step = ""  # the reading is over: what goes on now is the proofreading
+        self._stage_step = ""
+        self._stage_label = check_text.PROGRESS_CORRECTING
+        self._wait_shown = False
         self._refresh_check_run()
         if self._steps_per_file > 1:
             self._set_steps_done((idx - 1) * 2 + 1)
             self._set_progress_text(f"[{idx}/{total}] {name} — {check_text.PROGRESS_CORRECTING}")
-            self._results_table.mark_correcting(source_id)
-
-        # Attach preview/raw artefacts as soon as OCR finishes so double-click preview
-        # works during correction/evaluation phases.
-        try:
-            config = self._config_panel.to_config()
-            source = Path(source_id)
-            if source.exists():
-                view = self._app_service.load_view(config, source)
-                if view is not None:
-                    self._results_table.set_row_artifacts(
-                        source_id,
-                        view.preview_img,
-                        view.raw_text,
-                        view.correction_text,
-                        view.evaluation_text,
-                    )
-                    self._results_table.set_text_format(source_id, view.raw_text_format)
-                    self._results_table.set_sent(source_id, view.sent)
-        except OSError, ValueError:
-            # Non-fatal: preview metadata will be fully attached on file_done.
-            pass
+            # The reading is stored, so the row can be opened while the proofreading runs.
+            self._sync_row(source_id)
+            self._results_table.mark_stage_running(source_id, STAGE_CORRECTION)
 
     # ── Drag-and-drop ─────────────────────────────────────────────────────
 
@@ -2579,9 +2639,7 @@ class MainWindow(QMainWindow):
         self._current_preview_source_id = source_id
         self._check.show_document(doc, *self._check_position(source_id))
         self._set_copy_state(doc.raw_text, doc.corrected_text)
-        # The queue row says how this document was sent and in which notation it is written.
-        self._results_table.set_sent(source_id, doc.sent)
-        self._results_table.set_text_format(source_id, doc.text_format)
+        self._sync_row(source_id)
         self._apply_lock()
         self._update_check_tab()
         return True
@@ -2640,14 +2698,12 @@ class MainWindow(QMainWindow):
             if self._run_model
             else check_text.RUN_READING
         )
-        left = self._pace.time_left()
+        snapshot = self._progress_snapshot
         self._check.set_run(
             RunState(
                 step,
-                time_left=time_left_note(left.typical_s) if left is not None else "",
-                time_left_tip=(
-                    time_left_tooltip(left.low_s, left.high_s) if left is not None else ""
-                ),
+                time_left=snapshot.note,
+                time_left_tip=snapshot.tooltip,
                 stop_text=stop_text,
                 stop_enabled=stop_enabled,
             )
@@ -2656,6 +2712,19 @@ class MainWindow(QMainWindow):
     def _store_text_zoom(self, point_size: int) -> None:
         """Remember the text size the teacher zoomed to, for the next document and restart."""
         set_text_point_size(self._settings_store, point_size)
+
+    def _store_check_layout(self, layout: CheckLayout) -> None:
+        """Note how the teacher sized the Check tab's panes; stored once the drag settles."""
+        self._pending_check_layout = layout
+        self._layout_debounce.start()
+
+    def _flush_check_layout(self) -> None:
+        """Remember the last pane sizes, for the next restart."""
+        layout, self._pending_check_layout = self._pending_check_layout, None
+        if layout is None:
+            return
+        set_check_split(self._settings_store, layout.split)
+        set_check_card_split(self._settings_store, layout.card_split)
 
     def _on_check_proofread_requested(self) -> None:
         """Proofread the open document: the header's button and ⋯ → *Proofread again*."""
@@ -2715,7 +2784,7 @@ class MainWindow(QMainWindow):
             self._load_check(source_id)
             return
         doc = self._app_service.check_document(config, source)
-        self._sync_row(view, doc)
+        self._sync_row(source_id)
         if doc is not None:
             self._check.update_document(doc)
         self._update_check_tab()
@@ -2739,23 +2808,24 @@ class MainWindow(QMainWindow):
 
     def _set_copy_state(self, raw_txt: str, corr_txt: str) -> None:
         """Say what the Copy menu may offer for a document with these texts."""
-        self._check.set_copy_state(
-            CopyState(
-                has_raw=bool(raw_txt.strip()),
-                has_corrected=bool(corr_txt.strip()),
-                can_hide_names=self._privacy_available,
-            )
+        self._copy_state = CopyState(
+            has_raw=bool(raw_txt.strip()),
+            has_corrected=bool(corr_txt.strip()),
+            can_hide_names=self._privacy_available,
         )
+        self._check.set_copy_state(self._copy_state)
 
     def _refresh_copy_state(self) -> None:
         """Bring the Copy menu of the open document up to date (names may now be hideable)."""
-        source_id = self._current_preview_source_id
-        if not source_id:
+        if self._copy_state is None:
             return
-        _sid, _name, _img, raw_txt, corr_txt, _eval = self._results_table.entry_for_source(
-            source_id
+        self._check.set_copy_state(
+            CopyState(
+                has_raw=self._copy_state.has_raw,
+                has_corrected=self._copy_state.has_corrected,
+                can_hide_names=self._privacy_available,
+            )
         )
-        self._set_copy_state(raw_txt, corr_txt)
 
     def _update_check_tab(self) -> None:
         """Label both tabs and enable Check only while a document can be opened."""
@@ -2787,15 +2857,14 @@ class MainWindow(QMainWindow):
 
     def _open_document_name(self) -> str:
         """The name of the document the Check tab shows, or ``""`` when none is open."""
-        if not self._current_preview_source_id:
-            return ""
-        return self._results_table.entry_for_source(self._current_preview_source_id)[1]
+        row = self._results_table.row_for(self._current_preview_source_id)
+        return row.name if row is not None else ""
 
     def _sync_check_with_queue(self) -> None:
         """Close the Check tab when its document is no longer in the queue."""
         if not self._current_preview_source_id:
             return
-        if self._results_table.entry_for_source(self._current_preview_source_id)[0]:
+        if self._results_table.row_for(self._current_preview_source_id) is not None:
             return
         self._close_check()
 
@@ -2818,7 +2887,8 @@ class MainWindow(QMainWindow):
     def _check_target(self) -> str:
         """The document Check opens when none is open: the current row, else the first."""
         openable = self._results_table.checkable_source_ids()
-        current = self._results_table.selected_entry()[0]
+        selected = self._results_table.selected_source_ids()
+        current = selected[0] if selected else ""
         if current in openable:
             return current
         return openable[0] if openable else ""
@@ -2931,21 +3001,19 @@ class MainWindow(QMainWindow):
 
         self._cache_state_task.submit(detect, done)
 
-    def _open_source_for_edit(self) -> tuple[Path, str, str, str, str] | None:
-        """Resolve the open document to its input path and current payloads.
+    def _open_source_for_edit(self) -> tuple[Path, bool] | None:
+        """Resolve the open document to its input path and whether it has a transcription.
 
         An edit belongs to the document the Check tab shows, not to the selected row: the
         selection is how a run picks its documents, and the two may differ.
         """
-        source_id, _name, preview_img, raw_txt, corr_txt, eval_txt = (
-            self._results_table.entry_for_source(self._current_preview_source_id)
-        )
+        source_id = self._current_preview_source_id
         if not source_id:
             return None
         source = Path(source_id)
         if not source.exists():
             return None
-        return source, preview_img, raw_txt, corr_txt, eval_txt
+        return source, self._results_table.has_text(source_id)
 
     def _on_ocr_text_edited(self, edited_text: str) -> None:
         """The transcription was typed into: store it and show what the store now says."""
@@ -2964,8 +3032,8 @@ class MainWindow(QMainWindow):
         selected = self._open_source_for_edit()
         if selected is None:
             return
-        source, _preview_img, raw_txt, _corr_txt, _eval_txt = selected
-        if kind == _EDIT_CORRECTED and not raw_txt:
+        source, has_text = selected
+        if kind == _EDIT_CORRECTED and not has_text:
             return
         try:
             config = self._config_panel.to_config()
@@ -2990,7 +3058,7 @@ class MainWindow(QMainWindow):
             return
         # One read of the stored state serves the row and the page.
         doc = self._app_service.check_document(config, source)
-        self._sync_row(view, doc)
+        self._sync_row(source_id)
         if doc is None:
             return
         if kind == _EDIT_RAW:
@@ -3001,46 +3069,11 @@ class MainWindow(QMainWindow):
             self._check.update_document(doc)
         self._update_check_tab()
 
-    def _sync_row(self, view: DocumentStateView, doc: CheckDocument | None) -> None:
-        """Push what the store now says about *view*'s document into its row.
-
-        *view* carries the texts the document has now — the teacher's where they changed them.
-        *doc* is the Check tab's read of the same state; it says how the results were sent.
-        """
-        source_id = view.source_id
-        self._results_table.set_row_artifacts(
-            source_id,
-            view.preview_img,
-            view.raw_text,
-            view.correction_text,
-            view.evaluation_text,
-        )
-        self._results_table.mark_cached(
-            source_id,
-            view.preview_img,
-            view.raw_text,
-            view.correction_text,
-            view.evaluation_text,
-            ocr_done=view.ocr_done,
-            correction_done=view.correction_done,
-            evaluation_done=view.evaluation_done,
-        )
-        self._results_table.set_correction_review(
-            source_id, view.correction_review, view.correction_warning
-        )
-        self._results_table.set_kept(source_id, view.work.kept_over_settings)
-        self._results_table.set_text_format(source_id, view.raw_text_format)
-        self._results_table.set_checked(source_id, view.work.checked_label)
-        # An edit drops the results it invalidates, and their sent lines with them.
-        if doc is not None:
-            self._results_table.set_sent(source_id, doc.sent)
-
     def _on_what_is_sent_requested(self, source_id: str) -> None:
         """Open "What is sent for this file…" for one row of the results table."""
-        _sid, name, _img, raw_txt, _corr_txt, _eval = self._results_table.entry_for_source(
-            source_id
-        )
-        if not raw_txt.strip():
+        row = self._results_table.row_for(source_id)
+        name = row.name if row is not None else Path(source_id).name
+        if not self._results_table.has_text(source_id):
             _dialogs.notify(self, privacy.what_is_sent_without_text())
             return
 
@@ -3090,15 +3123,15 @@ class MainWindow(QMainWindow):
     def _refresh_privacy_availability(self) -> None:
         """Enable the setting only while personal information can actually be hidden.
 
-        Needs the Privacy add-on and the spaCy model of the document language; without
-        them the eye button stays disabled and its tooltip points at Settings → Add-ons.
-        The answer is cached per language, because it is asked again whenever the data flow
-        changes (that is, on every settings toggle).
+        Needs the Privacy add-on and the spaCy models the view would load, resolved the way a
+        run resolves them — so a chosen primary model counts.  Asked every time instead of
+        cached: the answer is cheap, and a cache is what went stale when a download finished
+        after the window that started it had closed.
         """
         language = self._config_panel.lookup_language()
-        if language not in self._privacy_availability:
-            self._privacy_availability[language] = self._app_service.anonymizer_available(language)
-        available = self._privacy_availability[language]
+        available = self._app_service.anonymizer_available(
+            language, self._config_panel.build_anonymizer_config()
+        )
         changed = available != self._privacy_available
         self._privacy_available = available
         self._check.set_display_anonymized_available(available)
@@ -3246,8 +3279,7 @@ class MainWindow(QMainWindow):
         window.preprocess_preview_requested.connect(
             lambda ocr_config: self._on_preprocess_preview_requested(ocr_config, parent=window)
         )
-        window.packages_changed.connect(self._start_readiness_check)
-        window.packages_changed.connect(self._on_packages_changed)
+        window.packages_changed.connect(self.packages_changed)
         window.addon_installed.connect(self._on_addon_installed)
         # What the Privacy page showed: its checkbox was usable only if hiding was possible
         # when the window opened (later changes to the panel must not decide that).
@@ -3287,18 +3319,25 @@ class MainWindow(QMainWindow):
         self._refresh_queue_from_inputs()
 
     def _on_packages_changed(self) -> None:
-        """A download finished: a spaCy model may be available now, so look again."""
-        self._app_service.forget_installed_models()
-        self._privacy_availability.clear()
+        """Something was installed: forget what was cached about it, then look again.
+
+        The one place that clears the caches which depend on what is installed, so every
+        installer — whichever window it ran in, and whether that window is still open — has
+        the same effect.
+        """
+        self._app_service.clear_anonymizer_cache()  # also forgets the installed models
         self._config_panel.refresh_data_flow()  # also refreshes the privacy availability
         self._refresh_privacy_availability()
+        self._start_readiness_check()
+
+    def _on_install_round_finished(self, installed_any: bool) -> None:
+        """A round of installs ended: a package may have arrived, so look again."""
+        if installed_any:
+            self.packages_changed.emit()
 
     def _on_addon_installed(self, addon: str) -> None:
         if addon == ADDON_PRIVACY:
-            self._app_service.clear_anonymizer_cache()
-            self._privacy_availability.clear()  # spaCy may be available now
-            self._config_panel.refresh_data_flow()
-            self._refresh_privacy_availability()
+            self.packages_changed.emit()  # spaCy may be available now
             _dialogs.notify(self._dialog_parent(), dlg.privacy_addon_installed())
         elif addon == READER_ADDON_ID:
             # The built-in reader's models arrived: the readiness line turns green on the

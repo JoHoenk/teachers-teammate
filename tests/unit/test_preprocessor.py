@@ -173,6 +173,25 @@ def test_output_is_openable_by_pil(tmp_path: Path, sample_png: Path) -> None:
         assert img.size[0] > 0
 
 
+def test_the_prepared_page_is_a_lossless_png_at_the_size_of_the_scan(
+    tmp_path: Path, sample_png: Path
+) -> None:
+    """
+    Given  a clean 400 x 120 scan and the automatic preparation
+    When   preprocess() is called
+    Then   the prepared page is a PNG at the size of the scan, so the scan view can zoom into
+           the pixels that were scanned instead of an enlarged, lossy copy of them
+    """
+    from PIL import Image  # noqa: PLC0415
+
+    out, _ = _pipeline(tmp_dir=tmp_path, engine="ppocr").preprocess(sample_png)
+
+    assert out.suffix == ".png"
+    with Image.open(out) as prepared, Image.open(sample_png) as source:
+        assert prepared.format == "PNG"
+        assert prepared.size == source.size
+
+
 def test_default_method_is_auto(tmp_path: Path, sample_png: Path) -> None:
     """
     Given  an OcrConfig created with no explicit method

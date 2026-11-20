@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import sys
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -348,6 +349,18 @@ def _make_chat_mock_ollama(content_chunks: list[str]) -> MagicMock:
     return mock_ollama
 
 
+def _ps_answer(names: list[str], expires_at: str = "") -> SimpleNamespace:
+    """Return an ``/api/ps`` answer that lists *names* as the models in memory."""
+    return SimpleNamespace(
+        models=[
+            SimpleNamespace(
+                model=name, size=1, size_vram=1, context_length=1, expires_at=expires_at
+            )
+            for name in names
+        ]
+    )
+
+
 class _ResponseError(Exception):
     """A stand-in for ``ollama.ResponseError``, which carries the HTTP status code."""
 
@@ -372,9 +385,14 @@ def _stream_raising(exc: BaseException):
 
 
 def _mock_ollama_with_streams(*streams) -> MagicMock:
-    """Return a mock ``ollama`` module whose Client().chat() returns *streams* in turn."""
+    """Return a mock ``ollama`` module whose Client().chat() returns *streams* in turn.
+
+    The server reports ``llama3`` as loaded, so a wait for its first token is not a load and
+    the first-token timeout counts as it always did.
+    """
     mock_client = MagicMock()
     mock_client.chat.side_effect = list(streams)
+    mock_client.ps.return_value = _ps_answer(["llama3"])
     mock_ollama = MagicMock()
     mock_ollama.Client.return_value = mock_client
     mock_ollama.ResponseError = _ResponseError
@@ -461,7 +479,8 @@ def test_chat_raises_ocr_error_on_empty_stream(monkeypatch) -> None:
 
 def test_chat_raises_ocr_error_when_first_token_times_out(monkeypatch) -> None:
     """
-    Given  ollama.Client.chat() returns a stream whose first chunk never arrives
+    Given  ollama.Client.chat() returns a stream whose first chunk never arrives, and the model
+           is in memory (so the wait is not a load and the timeout is not paused)
     When   OllamaClient.chat() is called with a short timeout
     Then   OCRTimeoutError (an OCRError) mentioning the first-token timeout is raised, so a
            caller can tell a model that did not start from one that failed
@@ -474,6 +493,7 @@ def test_chat_raises_ocr_error_when_first_token_times_out(monkeypatch) -> None:
 
     mock_client = MagicMock()
     mock_client.chat.return_value = _never_yields()
+    mock_client.ps.return_value = _ps_answer(["llama3"])
     mock_ollama = MagicMock()
     mock_ollama.Client.return_value = mock_client
     mock_ollama.ResponseError = Exception
@@ -831,6 +851,61 @@ def test_consume_iterator_raises_when_first_item_times_out() -> None:
 
     with pytest.raises(OCRError, match="No output within"):
         _consume_iterator_with_first_token_timeout(_slow(), 0.05)
+
+
+def test_a_wait_pauses_the_first_token_timeout() -> None:
+    """
+    Given  an iterator whose first item arrives after the timeout, and a hook that reports the
+           server is busy with something else
+    When   _consume_iterator_with_first_token_timeout() is called
+    Then   the item is returned instead of a timeout: waiting behind another model is not a
+           failure of this request
+    """
+    import time  # noqa: PLC0415
+
+    def _slow():
+        time.sleep(0.3)
+        yield 1
+
+    assert _consume_iterator_with_first_token_timeout(
+        _slow(), 0.05, waiting=lambda _elapsed: True
+    ) == [1]
+
+
+def test_the_timeout_counts_again_once_the_wait_is_over() -> None:
+    """
+    Given  an iterator that never yields, and a hook that reports a wait only once
+    When   _consume_iterator_with_first_token_timeout() is called
+    Then   the timeout fires after the wait, so a server that stops answering still ends the
+           request
+    """
+    import time  # noqa: PLC0415
+
+    def _never():
+        time.sleep(5)
+        yield 1
+
+    answers = [True, False]
+
+    with pytest.raises(OCRError, match="No output within"):
+        _consume_iterator_with_first_token_timeout(
+            _never(), 0.05, waiting=lambda _elapsed: answers.pop(0) if answers else False
+        )
+
+
+def test_the_first_token_hook_fires_once_when_the_answer_begins() -> None:
+    """
+    Given  an iterator that yields two items, and a hook for the first token
+    When   _consume_iterator_with_first_token_timeout() is called
+    Then   the hook is called exactly once, so the run's clock starts where the answer really
+           began and not again at every chunk
+    """
+    seen: list[str] = []
+
+    assert _consume_iterator_with_first_token_timeout(
+        iter([1, 2]), 1.0, on_first_token=lambda: seen.append("token")
+    ) == [1, 2]
+    assert seen == ["token"]
 
 
 def test_consume_iterator_propagates_reader_exception_as_ocr_error() -> None:

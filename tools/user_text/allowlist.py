@@ -276,8 +276,6 @@ ALLOWED: dict[str, frozenset[str]] = {
             "Re-run Text Recognition",
             "Run Content Review",
             "What is sent for this file…",
-            "f'{event.total_s:.1f} s'",
-            "source_ids must be the same length as names",
             "ⓘ",
             "⚠",
             "✗",

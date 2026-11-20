@@ -203,9 +203,12 @@ def _evaluation_window_fingerprint(
 
 
 def compute_correction_config_hash(config: Config, windows: RunWindows | None = None) -> str:
-    """Return the correction stage config hash for *config*, or '' when disabled."""
-    if not config.correction_enabled:
-        return ""
+    """Return the correction stage config hash for *config*.
+
+    The hash describes the settings, whatever the switch: a switched-off stage is "this run
+    does not do it", not "throw the stored result away".  Only a stage that is enabled can
+    make a stored result stale (see :func:`first_stale_stage_for_hashes`).
+    """
     # What is sent, not the setting: the exchange's fixed prompts and the model's request
     # profile are what decide the requests, so both key the cache.  The profile carries every
     # temperature, the thinking and the sampling values of the steps, so a change of any of
@@ -232,9 +235,10 @@ def compute_correction_config_hash(config: Config, windows: RunWindows | None = 
 
 
 def compute_eval_config_hash(config: Config, windows: RunWindows | None = None) -> str:
-    """Return the evaluation stage config hash for *config*, or '' when disabled."""
-    if not config.evaluation_enabled:
-        return ""
+    """Return the evaluation stage config hash for *config*.
+
+    Like the proofreading's, it describes the settings whatever the switch.
+    """
     return compute_config_hash(
         "evaluation",
         config.evaluate_provider,
@@ -257,6 +261,10 @@ class ExpectedHashes:
     ocr_config_hash: str
     correction_config_hash: str
     eval_config_hash: str
+    correction_enabled: bool = True
+    """The run proofreads: only then can its settings make a stored proofreading stale."""
+    evaluation_enabled: bool = True
+    """The run reviews the content: only then can its settings make a stored review stale."""
 
 
 def expected_hashes(
@@ -269,6 +277,8 @@ def expected_hashes(
         ),
         correction_config_hash=compute_correction_config_hash(config, windows),
         eval_config_hash=compute_eval_config_hash(config, windows),
+        correction_enabled=config.correction_enabled,
+        evaluation_enabled=config.evaluation_enabled,
     )
 
 
@@ -302,6 +312,8 @@ def stage_hashes(
         correction_source=state.correction_source_hash,
         expected_correction_source=text_identity(texts.transcription),
         correction_kept=corrections is not None and corrections.worked_on,
+        correction_enabled=expected.correction_enabled,
+        evaluation_enabled=expected.evaluation_enabled,
     )
 
 
@@ -397,6 +409,8 @@ class CacheReconciliationService:
                 ocr_config_hash=ocr_config_hash,
                 correction_config_hash=correction_config_hash,
                 eval_config_hash=eval_config_hash,
+                correction_enabled=cfg.correction_enabled,
+                evaluation_enabled=cfg.evaluation_enabled,
             ),
         )
         state = self._repo.reconcile_runtime_config(
@@ -413,6 +427,8 @@ class CacheReconciliationService:
                 ocr_frozen=flags.ocr_frozen,
                 expected_correction_source=flags.expected_correction_source,
                 correction_kept=flags.correction_kept,
+                correction_enabled=cfg.correction_enabled,
+                evaluation_enabled=cfg.evaluation_enabled,
             ),
         )
 

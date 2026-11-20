@@ -92,6 +92,31 @@ def time_left_tooltip(low_s: float, high_s: float) -> str:
     )
 
 
+@dataclass(frozen=True)
+class RunProgress:
+    """Where a running run is at one moment: what the bar and the Check strip both show.
+
+    One snapshot per tick, handed to both displays, so the two figures can never disagree.
+    """
+
+    fraction: float | None = None
+    """How much of the run is done, from 0 to 1, or ``None`` when nothing is known."""
+    left: TimeRange | None = None
+    """How long the rest is expected to take, or ``None`` when nothing is known."""
+
+    @property
+    def note(self) -> str:
+        """Return the note the progress bar carries, ``""`` while nothing is known."""
+        return time_left_note(self.left.typical_s) if self.left is not None else ""
+
+    @property
+    def tooltip(self) -> str:
+        """Return the tooltip behind the note, ``""`` while nothing is known."""
+        if self.left is None:
+            return ""
+        return time_left_tooltip(self.left.low_s, self.left.high_s)
+
+
 @dataclass
 class RunPace:
     """How fast the current run is going, and how much of it is left.
@@ -215,3 +240,11 @@ class RunPace:
         if total <= 0:
             return None
         return min(1.0, (done_s + self._credit(now, per_page.typical_s)) / total)
+
+    def snapshot(self, now: float) -> RunProgress:
+        """Return where the run is at *now*: the bar's fraction and the time left.
+
+        The one place a display gets its figures from, so the bar and the Check strip show the
+        same moment of the same run.
+        """
+        return RunProgress(fraction=self.progress(now), left=self.time_left(now))

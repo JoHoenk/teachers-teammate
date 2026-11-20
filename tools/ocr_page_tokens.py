@@ -41,7 +41,7 @@ from teachers_teammate.infrastructure.performance_probe import (
 )
 from teachers_teammate.infrastructure.preprocessing.recipes import steps_for
 from teachers_teammate.infrastructure.preprocessing.steps import StepPipeline
-from tools.model_eval.performance import Spread
+from tools.evaluation.core.performance import Spread
 
 _NS = 1e9
 """Nanoseconds per second: Ollama reports its durations in nanoseconds."""

@@ -1,9 +1,9 @@
 """The repository explains itself: no source, test, document or record points into working notes.
 
 ``plans/`` is git-ignored, so a reference to a file in it, or to a decision number from it
-(``DW6b-2``, ``F-W6b-13``, ``§4.4``, ``W8``), points nowhere for anyone else.  The reason for a
-rule is written where the rule is.  This test fails on the first such reference, so it cannot grow
-back.
+(``DW6b-2``, ``F-W6b-13``, ``§4.4``, ``W8``, ``(R4)``, ``A1-A5``, ``S0b``), points nowhere for
+anyone else.  The reason for a rule is written where the rule is.  This test fails on the first
+such reference, so it cannot grow back.
 """
 
 from __future__ import annotations
@@ -29,9 +29,27 @@ REFERENCES: dict[str, re.Pattern[str]] = {
     "a finding or decision id": re.compile(r"\b(?:F-W\d+b?-\d+|DW-?c?\d+[ab]?(?:-\d+)?|DF-\d+)\b"),
     "a section sign": re.compile(r"§"),
     "a work-package number": re.compile(r"\bW\d{1,2}[abc]?\b"),
+    "a work-package step": re.compile(r"\bWP\d{1,2}(?:\.\d+)?\b"),
     "the plan": re.compile(r"\b(?:the plan's|the plan\b|model plan|writing-model plan)"),
+    "a parenthesised id": re.compile(
+        r"\((?:[ADFGHPRV]\d{1,2}[a-z]?)(?:\s*[,;]\s*[ADFGHPRV]\d{1,2}[a-z]?)*\)"
+    ),
+    "an id with a note": re.compile(r"\([ADFGHPRV]\d{1,2}[a-z]?:\s"),
+    "an id range": re.compile(r"\b([ADFRV])\d{1,2}\s*[-\u2013]\s*\1?\d{1,2}\b"),
+    "a step id": re.compile(r"\bS0b\b"),
+    "a section comment with an id": re.compile(r"^# ── [ADFHPRV]\d{1,2}[a-z]?:"),
+    "a test named after an acceptance id": re.compile(r"\btest_a\d+_"),
+    "an acceptance id in prose": re.compile(r"\bacceptance tests? [Aa]\d{1,2}\b"),
 }
-"""What counts as a pointer into the working notes, and what to call it."""
+"""What counts as a pointer into the working notes, and what to call it.
+
+The last eight catch the shapes a citation takes in prose: ``(R4)``, ``(R9, V8)``, ``(R1: a run
+keeps every fact)``, ``A1-A5``, ``S0b``, ``WP2.2``, a ``# ── R11: … ──`` section comment, a test
+named ``test_a1_…`` after an acceptance id, and ``acceptance test A3``.  ``S`` is left out of every
+rule that would take a bare ``S<n>``, because the setup walkthrough numbers its own scenarios
+``S1`` to ``S9``; the plan's step id ``S0b`` is caught by its own rule.  A bare ``A1`` is left out
+because it is also a CEFR level.
+"""
 
 ALLOWED: dict[str, str] = {}
 """``"path:line"`` of a line that matches by accident, with the reason."""
@@ -66,7 +84,8 @@ def test_no_file_points_into_the_working_notes():
     """
     Given  every source, test, build, document and record file of the repository
     When   each line is searched for a path into plans/, a spec file, a finding or decision id, a
-           section sign, a work-package number or a mention of "the plan"
+           section sign, a work-package number, a parenthesised id, an id range, a step id or a
+           mention of "the plan"
     Then   there is none, because those notes are not in the repository
     """
     files = _files()
@@ -94,8 +113,33 @@ def test_the_rule_recognises_what_it_forbids(tmp_path):
         "after W8",
         "as the plan's first idea",
         "the model plan wants it",
+        "the rule (R4)",
+        "the two of them (R9, V8)",
+        "the pair (D16, R12)",
+        "the rule (R1: a run keeps every fact)",
+        "the acceptance tests A1-A5",
+        "the step S0b",
+        "a step of WP2.2",
+        "# ── R11: an unknown field survives a read and a write ──",
+        "def test_a1_every_old_row_becomes_one_answer():",
+        "the acceptance test A3",
+        "the acceptance tests a10",
     ]
-    ordinary = ["W&I is a corpus", "the CEFR level C1", "a plan for the run", "MD5 and W3C"]
+    ordinary = [
+        "W&I is a corpus",
+        "the CEFR level C1",
+        "a plan for the run",
+        "MD5 and W3C",
+        "a tuple of (str, ...)",
+        "the run of 2026-11-16",
+        "F0.5 and GLEU",
+        "the levels A1\u2013C2",
+        "# ── S1: the whole way through ──",
+        "# ── The proofreading page (S5, S6) ──",
+        "the scenarios S1\u2013S9",
+        "def test_a_changed_source_moves_the_question():",
+        "the acceptance tests run the converter over the real folders",
+    ]
 
     for line in cited:
         assert any(pattern.search(line) for pattern in REFERENCES.values()), line

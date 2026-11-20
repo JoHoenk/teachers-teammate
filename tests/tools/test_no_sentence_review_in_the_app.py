@@ -1,7 +1,7 @@
 """The baseline's sentence review stays out of the app: only the evaluation tools read it.
 
 The app stores and shows the edit-based review of ``domain/proofreading/review.py``.  The
-sentence-based review of the one-request baseline lives in ``tools/model_eval/one_request/`` and
+sentence-based review of the one-request baseline lives in ``tools/evaluation/run/one_request/`` and
 is reached from there alone; this test fails on the first import of it from the application
 package, so a second review model cannot creep back in.
 """

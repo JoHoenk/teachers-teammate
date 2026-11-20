@@ -202,19 +202,19 @@ model"
 first: `ChunkingCorrector` merges the pieces (`merge_reviews`), `FileProcessor` restores the
 names (`restore_with_offsets`); both check `fits()`. Every reader goes through `align()` (CLI,
 queue, export, both Word layouts, evaluation tools). The sentence-based review lives only in
-`tools/model_eval/one_request/sentence_review.py`; no module of `teachers_teammate/` may import
+`tools/evaluation/run/one_request/sentence_review.py`; no module of `teachers_teammate/` may import
 it (`tests/tools/test_no_sentence_review_in_the_app.py`). See {doc}`development` → "Correction
 review"
 
 ## New evaluation corpus
 
-Add `<name>.py` to `tools/model_eval/corpora/` (an `ADAPTER` class); a new test set is a module
-in `tools/model_eval/recipes/` that sets `RECIPE`. Nothing lists either: both packages find their
+Add `<name>.py` to `tools/evaluation/input/corpora/` (an `ADAPTER` class); a new test set is a
+module in `tools/evaluation/input/recipes/` that sets `RECIPE`. Nothing lists either: both packages find their
 modules. An adapter reads only the files it pins. Recipes of whole texts in bands share
-`recipes/_bands.py` (`select_texts`: slots, seed, splits); `gec-2026-12-heldout` is the set for
+`input/recipes/_bands.py` (`select_texts`: slots, seed, splits); `gec-2026-12-heldout` is the set for
 confirming a tuning choice on splits the first never reads; each recipe holds its own `Rules`
 and never imports another recipe's numbers. How the tools measure and compare models is in
-`tools/model_eval/README.md`.
+`docs/development.md` (*Ollama model catalog*).
 
 ## Third-party licenses
 

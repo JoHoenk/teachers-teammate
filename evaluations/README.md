@@ -2,29 +2,32 @@
 
 A writing model has to pass two gates before the app recommends it. This page says what each gate
 runs, where its input comes from, which checks keep the numbers honest, and how much machine time
-to plan. The commands and the metric definitions are in `tools/model_eval/README.md`; this page is the
-overview that points there.
+to plan. The commands and the metric definitions are in `docs/development.md` (*Ollama model
+catalog*); this page is the overview that points there.
 
 | Where | Content |
 | --- | --- |
-| `writing-models-2026-11/` | The candidate survey, and where gate-1 results and raw records go. The early measurements were deleted on 2026-11-12. Numbers and verdicts only. |
-| `proofreading/` | Gate 2 runs, one file per run, plus the test set's manifest. Format: `proofreading/FORMAT.md`, usage: `proofreading/README.md`. |
-| `model-fit/` | What each model needs on the card, measured at every window of the app's ladder: `sizes.jsonl`, one record per model, server and window, plus the folder's `README.md` with the fields and the machines. Numbers only. |
+| `gates/` | The candidate survey, and where the gate-1 and gate-2 records go. The early measurements were deleted on 2026-11-12. Numbers and verdicts only. |
+| `machines/` | The machines the evaluations ran on, one JSON file each. A run and a size measurement name a machine by its id from here. |
+| `model-fit/` | What each model needs on the card, measured at every window of the app's ladder: `sizes.jsonl`, one record per model, machine, device and window, plus the folder's `README.md` with the fields. Numbers only. |
+| `proofreading/` | Gate 2 runs, one file per run, plus the test sets' manifests. Format: `proofreading/FORMAT.md`, usage: `proofreading/README.md`. |
 
 ## 1. The two gates
 
 | | Gate 1 | Gate 2 |
 | --- | --- | --- |
-| Question | Does the model fill in the app's review answer format reliably, at the size the app sends, for the whole text? | Are its corrections and explanations good, compared with what the tier recommends now? |
-| Tool | `bazel run //tools:verify_model_catalog -- structured-output` | `bazel run //tools:compare_writing_models -- run …` |
-| Input | Six invented texts that live in the repository (`tools/model_eval/structured_check.py`) | `gec-2026-12`: 22 real learner texts (German, English) and 9 invented French items; the corpora are not in the repository |
-| Decides | `structured_output` in the model catalog (the `explanations ✓` badge, and whether the model may be recommended) | Whether a model becomes a tier's star or alternative (`GateTwoRule` and `compare`) |
+| Question | Does the model fill in the app's answer format reliably, at the size the app sends, for the whole text? | Are its corrections and explanations good, compared with what the tier recommends now? |
+| Tool | `bazel run //tools:verify_model_catalog -- structured-output` (screen first: `smoke`) | `bazel run //tools:evaluate -- run …`, then `bazel run //tools:report -- gate …` |
+| Input | Six invented texts that live in the repository (`tools/evaluation/checks/structured_check.py`) | `gec-2026-12`: 22 real learner texts (German, English) and 9 invented French items; `gec-2026-12-heldout` confirms a choice. The corpora are not in the repository |
+| Decides | `structured_output` in the model catalog (the `explanations ✓` badge, and whether the model may be recommended) | Whether a model becomes a tier's star or alternative (`GateTwoRule` for the floors, `verdict_of` for the comparison) |
 | Does not decide | Whether a correction is right | Whether the format holds up on tiny inputs |
-| State | Built; re-running it on the server for the candidates is open | Tools built; the pass/fail rule (`GateTwoRule`) exists, its floors are calibrated on the baselines |
+| State | Built; re-running it on the server for the candidates is open | Tools built; the floors (`GateTwoRule`) are calibrated on the baselines, the comparison is a paired bootstrap |
 
-Everything so far rates the **one-step** approach (corrections and explanations in one JSON
-answer). The two-step approach (corrected text first, then an explanation per edit) has its own
-checks, planned.
+Gate 2 is measured per **exchange**, not per "mode": `text-first` (the app's exchange: ① the
+corrected text, ② the explanations, ③ the unclear check), `one-request-review` (corrections and
+explanations in one JSON answer) and `one-request-text` (the corrected text only). `--steps` narrows
+an exchange to some of its steps, so `text-first/correct` is step ① alone: the same request as the
+app's, none of the time of ② and ③.
 
 ## 2. Gate 1 in detail
 
@@ -92,8 +95,9 @@ Chances for a model whose runs fail independently: a 5 % failure rate passes 93 
 
 ### 2.4 Quality checks of the check itself
 
-* **Offline tests** (`tests/tools/test_check_rule.py`, `test_structured_check.py`,
-  `test_verify_model_catalog.py`; every test has a Given/When/Then docstring): the verdict order,
+* **Offline tests** (`tests/tools/test_evaluation_check_rule.py`,
+  `test_evaluation_structured_check.py`, `test_evaluation_verify_model_catalog.py`; every test has a
+  Given/When/Then docstring): the verdict order,
   the 18/36 rule, the coverage verdict with a scripted answer that stops halfway, the margin warning,
   the second round, saved answers and `recheck`.
 * **Fixtures are pinned:** the full page and the four short texts are tested byte for byte; sentence
@@ -114,17 +118,21 @@ Chances for a model whose runs fail independently: a 5 % failure rate passes 93 
 ### 2.5 What gate 1 does not tell you
 
 How good the corrections are, how fast the model is on a user's computer, how it behaves at 16384
-(no model reaches that window by the automatic rule today), or anything about the two-step approach.
+(no model reaches that window by the automatic rule today), or anything about the other exchanges.
 Fixtures are invented, so real pages may produce longer answers than the fixture does.
 
 ## 3. Gate 2 in detail
 
 ### 3.1 Where the input comes from
 
-The test set `gec-2026-12` is built by `tools/prepare_gec_testset.py` from the recipe
-`tools/model_eval/recipes/gec_2026_12.py`, from two public corpora that stay outside the repository:
-Falko-MERLIN (German) and W&I+LOCNESS (English). French is an invented set of eight texts and ten
-correct sentences, so French is reported but never decides.
+Two test sets, built by `tools/prepare_gec_testset.py` from the recipes in
+`tools/evaluation/input/recipes/`, from two public corpora that stay outside the repository:
+Falko-MERLIN (German) and W&I+LOCNESS (English).
+
+| Set | Texts | Splits | Seed | Role |
+| --- | --- | --- | --- | --- |
+| `gec-2026-12` | 11 German, 11 English, 9 invented French | Falko-MERLIN `test`, W&I `dev` | 20261110 | Ranks the models, and is the set a prompt or a setting is tuned on |
+| `gec-2026-12-heldout` | 11 German, 11 English | Falko-MERLIN `dev`, W&I `train` | 20261116 | The texts nobody tuned on: a variant, a temperature or a text budget is adopted only when it wins on both |
 
 | Language | Short (80 to 150 words) | Page (200 to 400) | Pages (600 to 1,200) | Words in total |
 | --- | --- | --- | --- | --- |
@@ -134,49 +142,113 @@ correct sentences, so French is reported but never decides.
 
 * The bands are in whitespace words. The `pages` texts are longer than the app's budget, so the app
   splits them; one text per language fits in one request, so both paths are measured on real texts.
-* Each band is drawn from the corpus's default split with a fixed seed. Filters: at least 3
-  reference changes, at most 40 per 100 words (a near-rewrite measures agreement with one annotator),
-  labels that fit, sentence spans found.
-* The manifest (`proofreading/testsets/gec-2026-12/manifest.json`) pins every text by hash, with
-  positions and error-label codes, but contains **no corpus text**. It is immutable once committed.
+* Each band is drawn from the corpus's split with a fixed seed. Filters: at least 3 reference
+  changes, at most 40 per 100 words (a near-rewrite measures agreement with one annotator), labels
+  that fit, sentence spans found.
+* The manifest (`proofreading/testsets/<set>/manifest.json`) pins every text by hash, with positions
+  and error-label codes, but contains **no corpus text**. It is immutable once committed: a set
+  under an existing id is never rebuilt with other texts.
+* French is invented and reported, never deciding. The held-out set has no French.
 
 ### 3.2 What a run does
 
-Every text goes through the app's own `NativeOllamaCorrector` inside its `ChunkingCorrector`, so
-long texts are proofread in pieces exactly as in the app. Per model: three repeats, review mode and
-text mode (corrected text only), temperature 0.2. Runs are appended, so an interrupted run resumes.
+Every text goes through the app's own corrector inside its `ChunkingCorrector`, so long texts are
+proofread in pieces exactly as in the app. Per model and exchange: three repeats, at the
+temperature the model's maker recommends (the app's 0.2 for a model without one), unless
+`--temperature` says otherwise. Runs are appended, so an interrupted run resumes.
+
+```bash
+bazel run //tools:evaluate -- run --store DIR --testset gec-2026-12 \
+  --model TAG --exchange text-first --exchange one-request-review --repeat 3 --machine ID
+```
+
+`--exchange` is repeatable, `--steps correct` narrows an exchange to step ①, and `--option`,
+`--prompt` and `--compact-json` vary the request. A run with another value of any of them writes
+files of its own and never pools with the others.
 
 ### 3.3 What is measured
 
 Strict F0.5 (exact match with the reference change), GLEU against the unchanged source, share of
 correct sentences left alone, coverage of the sentences the reference changes, recall in the first
 and second half of the text (catches models that stop early), added Markdown marks, failed and
-fallback answers (and how many were cut off), explained share. Metric definitions:
-`tools/model_eval/README.md`, *Gate 2: the quality comparison*.
+fallback answers (and how many were cut off), explained share. An accepted alternative counts once:
+the made change is the true positive, and the reference edits it overlaps are not counted again.
+Metric definitions: `docs/development.md`, *Gate 2: the floors, the comparison and the
+explanations*.
 
-### 3.4 Quality checks of the test set and the runs
+### 3.4 The floors
+
+`GateTwoRule` holds them as data, so a calibration changes a value and not a branch. Every floor is
+a hard stop, and every one is measured per language — French too — so each language reads as its
+own evaluation; German and English decide the outcome, and the others are printed with
+"(not deciding)".
+
+| Floor | Value | What it counts |
+| --- | --- | --- |
+| `failed_texts` | 0 | Texts the model could not proofread at all, over all runs |
+| `cut_offs` | 0 | Fallbacks whose requests include a `length`: both tries were cut off |
+| `other_fallbacks` | 1 | Fallbacks that were not cut off, per language over all runs |
+| `added_marks` | 0 | Texts where the model added Markdown marks the source does not have |
+| `lost_texts` | 0 | Texts that lost text in two or more repeats, per language |
+| `coverage` | 0.90 | Share of the reference's error sentences the model touches |
+| `explained` | 0.85 | Share of the changes that carry an explanation, in every run that asks for explanations |
+| `left_alone` | 0.50 | Share of the sentences the reference leaves alone that the model leaves alone too |
+| GLEU above the source | > 0 in every run | The corrected text is closer to the reference than the source is |
+| `correct_share` | 0.80 | Share of a language's explanation sample a teacher has to mark `correct` |
+| `repeats` | 3 | How many repeats a group needs before it is judged |
+
+`other_fallbacks` and `explained` are asked only of a run whose steps include `explain`: a
+`text-first/correct` run has no explanations to fall back from or to count.
+
+A group with fewer than three repeats, or with an item missing, is `INCOMPLETE`: nothing is judged.
+A group whose explanations nobody has marked yet is `PASS_PENDING`: enough for an alternative's
+place, not for a star's.
+
+```bash
+bazel run //tools:report -- gate --store DIR --model TAG --exchange text-first
+```
+
+### 3.5 The comparison
+
+Whether model *a* is better than model *b* is a different question from whether it passes, and it
+lives in `verdict_of`: a **paired** bootstrap over the texts (2,000 draws, seed 20261111), so a text
+that is hard for one model is hard for the other and the difference is measured within a text. The
+gap counts only when the interval excludes zero on the right **and** the mean F0.5 differs by at
+least `MIN_EFFECT` (0.01, one point). Two guards may overrule a win: a group that is ahead on F0.5
+but behind on GLEU or on the page band by more than `MIN_EFFECT` is a tie, because the F-score alone
+can prefer a model that fixes fewer errors and makes fewer false alarms.
+
+```bash
+bazel run //tools:report -- compare --store DIR --along exchange
+bazel run //tools:report -- compare --store DIR --along temperature --where model=TAG
+```
+
+`--along` names the axes that vary (`model`, `temperature`, `exchange`, `steps`, `num_ctx`,
+`compact_json`, `sampling.<option>` and the rest of `core/axes.py`), `--where` fixes the others, and
+`--baseline` names the value the others are compared with. Two groups that differ in a hidden axis —
+another machine, another window, other texts, another prompt — are refused, not compared.
+
+### 3.6 Quality checks of the test set and the runs
 
 * **Hash-pinned set:** the manifest fixes source and reference by SHA-256; a run header records
-  the manifest hash, so a different set cannot be compared by accident.
-* **No corpus text in the repository:** `proofreading_store validate` enforces it, and CI runs it
-  over every committed run file.
+  the hash of the set's question, so a different set cannot be compared by accident.
+* **No corpus text in the repository:** `bazel run //tools:store -- validate` enforces it, and CI
+  runs it over every committed run file.
 * **Error labels** (`R:DET:FORM` and so on) are matched to the text by position: on `gec-2026-12`
   all 631 German and 350 English reference changes got a label, and a random sample of 24 was read
   by hand.
-* **Protocol version** (`tools/model_eval/protocol.json`): `run` stops with exit code 2 when the
-  prompts, the answer format or the window changed without a new version entry. Runs are grouped by
-  version, never by commit.
+* **Protocol version** (`tools/evaluation/core/protocol.json`): `run` stops with exit code 2 when
+  the prompts, the answer format or the window changed without a new version entry. Runs are grouped
+  by the compare key, never by commit.
 * **Known limits:** the reference is one annotator's version; a few "correct" sentences contain
   errors the annotators missed; eleven texts per language show only large differences; the spread
   of repeats decides what counts as a difference.
-* **Floors (starting values, calibrated on the full screen):** no failed text, no cut-off answer, at most one other
-  fallback per language, coverage ≥ 0.90, explained share ≥ 0.85, GLEU above the source's, left alone
-  not worse than the star's. Winning needs a better mean F0.5 beyond the spread of the repeats.
 
 ## 4. Which models are evaluated
 
-Reasons, download sizes and what is unverified: `writing-models-2026-11/candidate-models-2026-11-09.md`.
-Nobody is left out for weak scores or slowness while the screen runs; the choice comes at the end. A model enters the catalog only after gate 1 and gate 2, and only to replace a tier's star or its
+Reasons, download sizes and what is unverified: `gates/candidate-models-2026-11-09.md`.
+Nobody is left out for weak scores or slowness while the screen runs; the choice comes at the end. A
+model enters the catalog only after gate 1 and gate 2, and only to replace a tier's star or its
 alternative (at most two recommended models per tier).
 
 | Group | Models | State |
@@ -192,7 +264,8 @@ alternative (at most two recommended models per tier).
 
 The gate-1 re-run covers: `qwen3:4b`, `qwen3.5:9b`, `gemma4:e4b`,
 `gemma4:12b`, `mistral:latest`, `mistral-nemo:12b`, `gpt-oss:20b`, `gemma4:e2b`, `qwen3.5:4b`,
-`ministral-3:3b`, `ministral-3:8b`, `ministral-3:14b`, plus any chunk-2 model that passed under the old rule.
+`ministral-3:3b`, `ministral-3:8b`, `ministral-3:14b`, plus any chunk-2 model that passed under the
+old rule.
 
 ## 5. How long it takes (rough, for planning chunks)
 
@@ -230,17 +303,18 @@ is full: about 7,000 tokens, or 1 min at 150 tokens/s and 2 to 3 min at 45. A lo
 context can be far worse: `ministral-3:3b` once generated 81,920 tokens in a single run (691 s).
 The timeout (900 s) bounds one run, so 18 looping runs of a slow model could take up to 4.5 h.
 
-### 5.3 Gate 2 (estimate; the first real measurement is the full screen)
+### 5.3 Gate 2 (estimates; the first real measurement is the full screen)
 
-Per repeat the set has about 8,560 words, i.e. 43,000 to 86,000 answer tokens in review mode (5 to
-10 tokens per word, from the gate-1 full-page answers) and about 13,000 in text mode.
+Per repeat the set has about 8,560 words. The answer tokens per word come from the gate-1 full-page
+answers: 5 to 10 for an answer that carries explanations, about 1.5 for the corrected text alone.
 
-| Per model | Review, 3 repeats | Text, 3 repeats |
-| --- | --- | --- |
-| 100+ tokens/s | 20 to 45 min | 5 to 10 min |
-| 45 to 60 tokens/s | 45 to 90 min | 10 to 20 min |
+| Exchange | Answer tokens per repeat | 100+ tokens/s | 45 to 60 tokens/s |
+| --- | --- | --- | --- |
+| `one-request-text`, `text-first/correct` | about 13,000 | 5 to 10 min | 10 to 20 min |
+| `one-request-review` | 43,000 to 86,000 | 20 to 45 min | 45 to 90 min |
+| `text-first` | 43,000 to 86,000, plus the two JSON steps | 25 to 55 min | 55 to 110 min |
 
-So eight models in two modes come to roughly 6 to 10 hours, which fits two overnight chunks.
+So eight models in three exchanges come to roughly 8 to 14 hours, which fits two overnight chunks.
 Plan them by model class: small models first (cheap, and they decide the no-card tier), then the
 8 to 12B models. Replace these figures by measured ones after the first model of each class.
 

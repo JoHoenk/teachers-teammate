@@ -167,7 +167,7 @@ def axis_text(value: Any) -> str:
 def host_of(header: RunHeader) -> str:
     """Return the machine a run ran on, or its provider, or :data:`UNKNOWN_MACHINE`.
 
-    The one place the fallback lives, so a file name, an index row and an export cannot disagree.
+    The one place the fallback lives, so a file name and a table row cannot disagree.
     An Ollama run without a machine is ``unknown-machine`` and not ``ollama``: the provider is
     always set, so falling back to it would name every unlabelled run after the server software.
     """

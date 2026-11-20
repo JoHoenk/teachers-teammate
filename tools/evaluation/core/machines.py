@@ -1,9 +1,9 @@
-"""The machines the evaluations ran on, read from the repository's registry.
+"""The machines the evaluations ran on, read from the store's registry.
 
 A run names the machine it was made on, and a model-fit record names the machine and the device.
 Both are ids of this registry, so a typo is refused instead of becoming a second machine that
 nobody can compare with the first.  The registry is data: one JSON file per machine under
-``evaluations/machines/``, and this module only reads it.
+``<store>/machines/``, and this module only reads it.
 
 A machine is not a device.  ``rx9070xt-server`` is one machine, measured on its card and on its
 processor; the two are two devices of one machine, and a size measured on the card says nothing
@@ -22,8 +22,8 @@ from .formats import FormatError, check_format
 FORMAT = 1
 """The version of a machine file; a file of another version is refused, not guessed at."""
 
-MACHINES_DIR = Path("evaluations") / "machines"
-"""Where the registry lives, relative to the repository root."""
+MACHINES_DIR = Path("machines")
+"""Where the registry lives, below the store root."""
 
 DEVICES: tuple[str, ...] = ("gpu", "cpu")
 """The devices a measurement can be made on."""
@@ -85,13 +85,17 @@ def read_machine(path: Path) -> Machine:
 
 
 def known_machines(root: Path) -> dict[str, Machine]:
-    """Return the registry below *root*, keyed by id.
+    """Return the registry of the store at *root*, keyed by id.
 
     Raises:
+        ValueError: the store has no registry, naming the path that is missing.
         FormatError: a file is not a machine of this format, or two files name one id.
     """
+    directory = root / MACHINES_DIR
+    if not directory.is_dir():
+        raise ValueError(f"{root}: no store of evaluation records, there is no {MACHINES_DIR}/")
     found: dict[str, Machine] = {}
-    for path in sorted((root / MACHINES_DIR).glob("*.json")):
+    for path in sorted(directory.glob("*.json")):
         machine = read_machine(path)
         if machine.id in found:
             raise FormatError(f"{path.name}: the id {machine.id!r} is already in the registry")
@@ -100,10 +104,11 @@ def known_machines(root: Path) -> dict[str, Machine]:
 
 
 def require_machine(root: Path, machine: str) -> Machine:
-    """Return the machine *machine* names.
+    """Return the machine *machine* names, from the registry of the store at *root*.
 
     Raises:
-        ValueError: the registry does not hold it, naming the ones it does.
+        ValueError: the store has no registry, or it does not hold the machine, naming the ones it
+            does.
     """
     known = known_machines(root)
     if machine not in known:

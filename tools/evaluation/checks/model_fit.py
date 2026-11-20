@@ -7,15 +7,15 @@ The verdict (does this model fit a 16 GB card?) is computed when it is needed, f
 bytes, so changing the rule costs no measuring.
 
 A measurement costs one model load and one short request, so every step of the ladder is measured:
-``8192``, ``16384`` and ``32768`` tokens.  The records live in
-``evaluations/model-fit/sizes.jsonl``, append-only, numbers only.
+``8192``, ``16384`` and ``32768`` tokens.  The records live in the store's
+``model-fit/sizes.jsonl``, append-only, numbers only.
 
 The **need** of a measurement is ``max(ollama size, card increase)``: Ollama's figure leaves out the
 driver's and the runtime's share, the card's increase cannot exceed the physical card.  Taking the
 larger is cautious in both directions.  A step that spills onto the processor is flagged, because
 its need is only a lower bound.
 
-A record names the **machine** it was made on, an id of ``evaluations/machines/``, and the
+A record names the **machine** it was made on, an id of the store's ``machines/``, and the
 **device** it was measured on: the card or the processor.  The two are not the same thing — one
 machine has both — and a size measured on the card says nothing about the processor.
 
@@ -68,8 +68,8 @@ LINEARITY_TOLERANCE = 0.20
 SPILL_SHARE = 0.98
 """A card peak this close to its total means the model did not fit: the rest is in main memory."""
 
-DEFAULT_STORE = Path("evaluations/model-fit/sizes.jsonl")
-"""Where the measurements are kept, relative to the workspace root."""
+SIZES_PATH = Path("model-fit") / "sizes.jsonl"
+"""Where the measurements are kept, below the store root."""
 
 DEFAULT_LIMITS = ("8gb", "16gb")
 """The tiers a report shows unless other limits are named."""
@@ -141,7 +141,7 @@ class FitRecord:
 
     measured_at: str
     machine: str
-    """The id of the machine, from ``evaluations/machines/``."""
+    """The id of the machine, from the store's ``machines/``."""
     ollama_version: str
     tool_commit: str
     tag: str
@@ -1102,13 +1102,13 @@ __all__ = [
     "CARD_USED_TOLERANCE_BYTES",
     "CPU_ONLY_OPTIONS",
     "DEFAULT_LIMITS",
-    "DEFAULT_STORE",
     "FORMAT",
     "GB",
     "LINEARITY_TOLERANCE",
     "MEMORY_TOLERANCE",
     "MIN_SPEED_TOKENS",
     "PROMPT",
+    "SIZES_PATH",
     "SPILL_SHARE",
     "CardReading",
     "FitLimit",

@@ -197,8 +197,8 @@ def extra_fields(record: Mapping[str, Any], known: Iterable[str]) -> dict[str, A
     """Return the fields of *record* that *known* does not name, so a rewrite keeps them.
 
     The one copy of the rule that a reader keeps what it does not understand: every record of
-    :mod:`.records`, the performance blocks and the redacted run use it, so a newer writer's field
-    survives any round trip.
+    :mod:`.records` and the performance blocks use it, so a newer writer's field survives any
+    round trip.
     """
     names = set(known)
     return {key: value for key, value in record.items() if key not in names}

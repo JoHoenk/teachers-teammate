@@ -30,7 +30,6 @@ LAYERS: dict[str, frozenset[str]] = {
     "convert": frozenset({"core", "input", "metrics", "store"}),
     "run": frozenset({"core", "input", "metrics", "store"}),
     "report": frozenset({"core", "metrics", "store"}),
-    "publish": frozenset({"core", "input", "metrics", "report", "store"}),
     "viewer": frozenset({"core", "input", "metrics", "report", "run", "store"}),
     "checks": frozenset({"core", "metrics", "run"}),
 }

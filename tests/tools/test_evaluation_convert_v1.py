@@ -4,11 +4,12 @@ Two halves.  The unit tests build a small old store in a temporary directory and
 the converter applies — the hash it recomputes, the positions it maps, the steps it infers, the
 machine it refuses to guess, the files it refuses to read.  The acceptance tests run the
 conversion over the real folders and check the result against the old rows they were read from;
-they are skipped unless ``GEC_RESULTS`` names the old store, because the runs are outside the
-repository::
+they are skipped unless ``GEC_RESULTS`` names the old store and ``GEC_EVALS`` the private store
+that holds the manifests, because both are outside the repository::
 
     bazel test //tests:test_evaluation_convert_v1 --test_output=errors \\
-      --test_env=GEC_RESULTS=$HOME/gec-testset
+      --test_env=GEC_RESULTS=$HOME/gec-testset \\
+      --test_env=GEC_EVALS=$HOME/git/teachers-teammate-evals
 
 The three hashes need no old data — they are a property of the records — so that part runs
 everywhere.
@@ -67,23 +68,23 @@ FINGERPRINT = protocol_table.fingerprints_of(protocol_table.current_version())[0
 GEC_RESULTS = os.environ.get("GEC_RESULTS")
 """The old store, when the acceptance tests are to run; never set in CI."""
 
+GEC_EVALS = os.environ.get("GEC_EVALS")
+"""The private store that holds the manifests, when the acceptance tests are to run."""
+
 needs_results = pytest.mark.skipif(
-    not GEC_RESULTS,
-    reason="the old runs are outside the repository; set GEC_RESULTS to the old store",
+    not (GEC_RESULTS and GEC_EVALS),
+    reason="the old runs and the private store are outside the repository; "
+    "set GEC_RESULTS and GEC_EVALS",
 )
 
 OLD_ROOT = Path(GEC_RESULTS).expanduser() if GEC_RESULTS else Path()
 """The old store's directory, which the acceptance tests read and never write."""
 
 MANIFESTS = {
-    "gec-2026-12": Path(__file__).resolve().parents[2]
-    / "evaluations"
-    / "proofreading"
-    / "testsets"
-    / "gec-2026-12"
-    / "manifest.json"
+    name: Path(GEC_EVALS or ".").expanduser() / "testsets" / name / "manifest.json"
+    for name in ("gec-2026-12", "gec-2026-12-heldout")
 }
-"""The committed manifest of the one set the in-scope runs were asked about."""
+"""The private store's manifests of the two sets the in-scope runs were asked about."""
 
 
 # ── an old store, built in the test ─────────────────────────────────────────
@@ -132,7 +133,7 @@ def _old_other(**changes) -> dict:
 
 
 def _manifest_item(line: dict) -> dict:
-    """Return the committed manifest's entry for one old record: its meta and its hashes."""
+    """Return the manifest's entry for one old record: its meta and its hashes."""
     source = line["source"]
     item = {
         "id": line["id"],
@@ -154,7 +155,7 @@ def _manifest_item(line: dict) -> dict:
 
 
 def _manifest(*lines: dict) -> dict:
-    """Return the committed manifest of *lines*, as ``prepare_gec_testset`` writes it."""
+    """Return the manifest of *lines*, as ``prepare_gec_testset`` writes it."""
     return {
         "format": 2,
         "testset": "set-2026-12",
@@ -395,7 +396,7 @@ def test_a_record_maps_its_token_positions_to_characters():
 
 def test_a_converted_manifest_item_holds_character_positions(tmp_path):
     """
-    Given  a committed manifest whose item positions are not the record's
+    Given  a manifest whose item positions are not the record's
     When   the set is converted
     Then   the item's spans are the record's characters, and its hashes are the record's
     """
@@ -563,22 +564,23 @@ def test_a_directory_without_records_is_refused(tmp_path):
 # ── the old run files ───────────────────────────────────────────────────────
 
 
-def test_machine_evidence_names_each_machine_once():
+def test_machine_evidence_holds_every_reading_of_a_machine():
     """
-    Given  two headers of one machine and one of another
+    Given  two headers of one machine, one of them without a sampler, and one of another
     When   the evidence is collected
-    Then   each machine appears once, with its server version and its sampler's hash
+    Then   each machine appears once with every reading it was seen with, so an older run that
+           recorded no sampler does not hide the newer one's
     """
     headers = [
         _old_header(),
-        _old_header(date="2026-11-15T10:00:00+00:00"),
+        _old_header(date="2026-11-15T10:00:00+00:00", gpu_sampler={}),
         _old_header(machine="other", ollama_version="0.40.10"),
         _old_header(machine=""),
     ]
 
     assert convert_v1.machine_evidence(headers) == {
-        "rx9070xt-server": ("0.40.16", "b" * 64),
-        "other": ("0.40.10", "b" * 64),
+        "rx9070xt-server": frozenset({("0.40.16", "b" * 64), ("0.40.16", "")}),
+        "other": frozenset({("0.40.10", "b" * 64)}),
     }
 
 
@@ -701,7 +703,7 @@ def test_an_empty_machine_is_filled_when_the_evidence_agrees():
     Then   the machine is filled and the assumption is written down and noted
     """
     header = _old_header(machine="")
-    evidence = {"rx9070xt-server": ("0.40.16", "b" * 64)}
+    evidence = {"rx9070xt-server": frozenset({("0.40.16", "b" * 64)})}
     notes: list[str] = []
 
     environment = convert_v1._environment_of(header, "rx9070xt-server", evidence, notes)
@@ -718,7 +720,7 @@ def test_an_empty_machine_stays_empty_when_the_evidence_differs():
     Then   the machine stays empty and the refusal is noted, so nothing is guessed
     """
     header = _old_header(machine="", ollama_version="0.40.10")
-    evidence = {"rx9070xt-server": ("0.40.16", "b" * 64)}
+    evidence = {"rx9070xt-server": frozenset({("0.40.16", "b" * 64)})}
     notes: list[str] = []
 
     environment = convert_v1._environment_of(header, "rx9070xt-server", evidence, notes)
@@ -1309,8 +1311,8 @@ def test_every_position_maps_back_to_its_token(real):
     Given  the converted records and the old ones
     When   every label, sentence span and manifest edit is mapped back to tokens
     Then   the token span is the old one and the text under the character span is the old tokens;
-           the manifest's own positions are checked for token alignment, because the committed
-           manifest holds characters now and the old token positions are no longer stored
+           the manifest's own positions are checked for token alignment, because the manifest
+           holds characters now and the old token positions are no longer stored
     """
     root, _ = real
     old_records = {

@@ -1,29 +1,26 @@
-"""Read a store of proofreading runs: the tables, the comparisons, the gates, the sheets, the page.
+"""Read the store of evaluation records: the tables, the comparisons, the gates, the sheets, the page.
 
 Developer tool, offline.  Every number it prints comes from :mod:`tools.evaluation.report`, and the
 page it writes comes from :mod:`tools.evaluation.report.viewer`; this file only parses arguments and
-prints.  ``table`` reads either the local store (``--store``, which holds the model's output and the
-texts) or the committed export (``--out``, which holds the scores instead); every other command
-reads the store, because it needs the model's output or the marks.
+prints.  Every command reads the store, which holds the model's output, the texts and the marks.
 
 Usage::
 
-    bazel run //tools:report -- table --store ~/gec-testset/store --performance
-    bazel run //tools:report -- table --out evaluations/proofreading --by-error category
-    bazel run //tools:report -- compare --store ~/gec-testset/store --along temperature
-    bazel run //tools:report -- compare --store ~/gec-testset/store --along model \\
+    bazel run //tools:report -- table --performance
+    bazel run //tools:report -- table --by-error category
+    bazel run //tools:report -- compare --along temperature
+    bazel run //tools:report -- compare --along model \\
         --where exchange=text-first --baseline gemma4:12b
-    bazel run //tools:report -- gate --model gemma4:12b --store ~/gec-testset/store
-    bazel run //tools:report -- passes --store ~/gec-testset/store
-    bazel run //tools:report -- sheet --run RUN_NAME --store ~/gec-testset/store
-    bazel run //tools:report -- page --store ~/gec-testset/store --report-out ~/gec-testset/reports/x
+    bazel run //tools:report -- gate --model gemma4:12b
+    bazel run //tools:report -- passes
+    bazel run //tools:report -- sheet --run RUN_NAME
+    bazel run //tools:report -- page --report-out ~/gec-testset/reports/x
 
-``table`` prints the results table of the committed runs, or of the local store; ``--performance``
-adds the speed and memory table, ``--catalog-lines`` the ``answer_length=`` lines the catalog wants,
-``--by-error`` how many errors of each kind every model found, and ``--false-alarms`` what kind of
-change each change the reference does not make is (both need the store, because an export holds no
-text).  ``--count-marks`` counts the Markdown marks a model added as changes, and ``--no-accepted``
-scores without the key's accepted alternatives.
+``table`` prints the results table; ``--performance`` adds the speed and memory table,
+``--catalog-lines`` the ``answer_length=`` lines the catalog wants, ``--by-error`` how many errors of
+each kind every model found, and ``--false-alarms`` what kind of change each change the reference
+does not make is.  ``--count-marks`` counts the Markdown marks a model added as changes, and
+``--no-accepted`` scores without the key's accepted alternatives.
 
 ``compare`` is the one comparison: ``--along`` names the axes that vary, ``--where`` fixes the rest,
 and ``--baseline`` names the value the differences are measured against.  A sweep by temperature is
@@ -48,7 +45,7 @@ import sys
 from tools.evaluation.core.axes import AXIS_NAMES
 from tools.evaluation.core.formats import FormatError
 from tools.evaluation.core.modes import Exchange, Step, exchange_of, steps_of
-from tools.evaluation.core.paths import workspace_path
+from tools.evaluation.core.paths import DEFAULT_STORE, store_argument, workspace_path
 from tools.evaluation.report import compare as compare_module
 from tools.evaluation.report import gates, groups, load, select, spot_check
 from tools.evaluation.report.load import Loaded, LoadedRun
@@ -58,29 +55,14 @@ from tools.evaluation.report.tables import by_error, false_alarms, models, passe
 from tools.evaluation.report.viewer import model as viewer_model
 from tools.evaluation.report.viewer import page as viewer_page
 from tools.evaluation.run.defaults import temperature_for
+from tools.evaluation.store import layout, reader
 from tools.evaluation.store import marks as marks_module
-from tools.evaluation.store import reader
-
-DEFAULT_STORE = "store"
-"""Where the local store is, below the repository, unless a command names another."""
-
-DEFAULT_OUT = "evaluations/proofreading"
-"""Where the committed runs are, below the repository."""
-
 
 # ── the results table ────────────────────────────────────────────────────────
 
 
 def _table(args) -> int:
-    """Print the results table of the committed runs, or of the local store; return the exit code."""
-    asked = " and ".join(
-        name
-        for name, given in (("--by-error", args.by_error), ("--false-alarms", args.false_alarms))
-        if given
-    )
-    if asked and not args.store:
-        print(f"refused: {asked} needs --store, because an export holds no text", file=sys.stderr)
-        return 1
+    """Print the results table of the store; return the exit code."""
     try:
         items, skipped = _items_of(args)
     except (ValueError, FormatError) as error:
@@ -113,18 +95,22 @@ def _table(args) -> int:
 
 def _items_of(args) -> tuple[tuple, tuple]:
     """Return the scored items a report reads, and what was skipped."""
-    if args.store:
-        loaded = load.load(
-            workspace_path(args.store),
-            testsets=args.testset or None,
-            folders=args.folder or None,
-            cache=workspace_path(args.cache) if args.cache else None,
-            options=ScoreOptions(count_marks=args.count_marks, accepted=not args.no_accepted),
-            progress=_say_scoring,
-        )
-        return loaded.items, loaded.skipped
-    exported = load.load_export(workspace_path(args.out), testsets=args.testset or None)
-    return exported.items, exported.skipped
+    loaded = load.load(
+        args.store,
+        testsets=args.testset or None,
+        folders=args.folder or None,
+        cache=_cache_of(args),
+        options=ScoreOptions(count_marks=args.count_marks, accepted=not args.no_accepted),
+        progress=_say_scoring,
+    )
+    return loaded.items, loaded.skipped
+
+
+def _cache_of(args) -> Path | None:
+    """Return where the score cache lives: the one named, else the store's own ``cache/``."""
+    if args.cache is not None:
+        return args.cache
+    return layout.cache_dir(args.store) if args.store is not None else None
 
 
 # ── the comparison ───────────────────────────────────────────────────────────
@@ -192,10 +178,9 @@ def _temperature_of(args) -> float:
 def _marks_of_group(args, group: groups.RunGroup) -> list:
     """Return every marker's marks on the group's test set.
 
-    Gate 2 has a floor on the spot check, so it cannot be judged without the marks; an export holds
-    none, which is why the gate reads the store.
+    Gate 2 has a floor on the spot check, so it cannot be judged without the marks.
     """
-    root = workspace_path(args.store)
+    root = args.store
     return marks_module.marks_on(root, marks_module.question_of(root, group.key.testset))
 
 
@@ -221,7 +206,7 @@ def _passes(args) -> int:
 
 def _sheet(args) -> int:
     """Print the sheet of one run of the store; return the exit code."""
-    root = workspace_path(args.store)
+    root = args.store
     try:
         found = _run_of(root, args.run)
     except ValueError as error:
@@ -262,16 +247,13 @@ def _run_of(root: Path, name: str) -> LoadedRun | None:
 
 def _page(args) -> int:
     """Write the report folder the arguments ask for and print what it holds; return the exit code."""
-    if args.store is None:
-        print("give --store, the root of a local store of runs and test sets", file=sys.stderr)
-        return 1
     # Every answer is scored again from its text, which takes a while on a large store.
     print(f"reading {args.store} ...", file=sys.stderr, flush=True)
     loaded = load.load(
         args.store,
         testsets=args.testset or None,
         folders=args.folder or None,
-        cache=args.cache,
+        cache=_cache_of(args),
         progress=lambda name: print(f"  {name}", file=sys.stderr, flush=True),
     )
     if args.languages:
@@ -365,15 +347,11 @@ def _narrowing(args) -> select.Narrowing:
 
 
 def _loaded(args) -> Loaded:
-    """Return the store *args* names, as a report reads it.
-
-    A gate-2 command reads the store and not the export: it groups the repeats of a run and needs
-    the model's output, which an export does not hold.
-    """
+    """Return the store *args* names, as a report reads it."""
     return load.load(
-        workspace_path(args.store),
+        args.store,
         testsets=[args.testset] if args.testset else None,
-        cache=workspace_path(args.cache) if args.cache else None,
+        cache=_cache_of(args),
         progress=_say_scoring,
     )
 
@@ -392,22 +370,13 @@ def _say_skipped(skipped: Sequence) -> None:
 # ── the argument parser ──────────────────────────────────────────────────────
 
 
-def _store_arguments(target, *, default: str = DEFAULT_STORE, required: bool = False) -> None:
-    """Add the option that names the local store to *target*."""
+def _store_arguments(target) -> None:
+    """Add the option that names the store to *target*."""
     target.add_argument(
         "--store",
-        default=default,
-        required=required,
-        help="the local store's directory (default: %(default)s)",
-    )
-
-
-def _out_arguments(target) -> None:
-    """Add the option that names the committed runs to *target*."""
-    target.add_argument(
-        "--out",
-        default=DEFAULT_OUT,
-        help="the repository directory (default: %(default)s)",
+        type=store_argument,
+        default=DEFAULT_STORE,
+        help="the store of evaluation records (default: %(default)s)",
     )
 
 
@@ -475,8 +444,12 @@ def _selection_arguments(target, *, model_required: bool, temperature_help: str)
         default=None,
         help="the compact-JSON rule of the request profile, when two are committed",
     )
-    target.add_argument("--cache", help="where the score cache lives")
-    _store_arguments(target, required=True)
+    target.add_argument(
+        "--cache",
+        type=workspace_path,
+        help="where the score cache lives (default: the store's cache/)",
+    )
+    _store_arguments(target)
 
 
 def _steps(text: str) -> tuple[Step, ...]:
@@ -505,14 +478,15 @@ def build_parser() -> argparse.ArgumentParser:
 
 def _table_command(sub) -> None:
     """Add the subcommand that prints the results table."""
-    reporter = sub.add_parser(
-        "table", help="print the results table of the committed runs, or of the local store"
-    )
-    _out_arguments(reporter)
-    _store_arguments(reporter, default="")
+    reporter = sub.add_parser("table", help="print the results table of the store")
+    _store_arguments(reporter)
     _filter_arguments(reporter)
     _score_arguments(reporter)
-    reporter.add_argument("--cache", help="with --store: where the score cache lives")
+    reporter.add_argument(
+        "--cache",
+        type=workspace_path,
+        help="where the score cache lives (default: the store's cache/)",
+    )
     reporter.add_argument(
         "--performance", action="store_true", help="print the speed and memory table as well"
     )
@@ -525,12 +499,12 @@ def _table_command(sub) -> None:
         "--by-error",
         choices=list(by_error.BY_CHOICES),
         default=None,
-        help="with --store: also print how many errors of each kind every model found",
+        help="also print how many errors of each kind every model found",
     )
     reporter.add_argument(
         "--false-alarms",
         action="store_true",
-        help="with --store: also print what kind of change each false alarm is",
+        help="also print what kind of change each false alarm is",
     )
     reporter.set_defaults(handler=_table)
 
@@ -584,9 +558,13 @@ def _passes_command(sub) -> None:
         "passes",
         help="print what a second and a third pass of each configuration would add",
     )
-    _store_arguments(passer, required=True)
+    _store_arguments(passer)
     passer.add_argument("--testset", default=None, help="the test set of the runs")
-    passer.add_argument("--cache", help="where the score cache lives")
+    passer.add_argument(
+        "--cache",
+        type=workspace_path,
+        help="where the score cache lives (default: the store's cache/)",
+    )
     passer.set_defaults(handler=_passes)
 
 
@@ -608,7 +586,10 @@ def _page_command(sub) -> None:
     """Add the subcommand that writes the static report folder."""
     build = sub.add_parser("page", help="write the report folder: texts, variants and numbers")
     build.add_argument(
-        "--store", type=workspace_path, help="the root of a local store of runs and test sets"
+        "--store",
+        type=store_argument,
+        default=DEFAULT_STORE,
+        help="the store of evaluation records (default: %(default)s)",
     )
     build.add_argument(
         "--report-out", type=workspace_path, required=True, help="the folder to write"
@@ -628,7 +609,9 @@ def _page_command(sub) -> None:
         "--folder", action="append", default=[], help="only these run folders; repeat for several"
     )
     build.add_argument(
-        "--cache", type=workspace_path, help="where the score cache lives, so a rebuild is quick"
+        "--cache",
+        type=workspace_path,
+        help="where the score cache lives, so a rebuild is quick (default: the store's cache/)",
     )
     build.set_defaults(handler=_page)
 

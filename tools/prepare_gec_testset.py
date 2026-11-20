@@ -1,10 +1,10 @@
 """Build the test set for ``tools/evaluate.py`` from public learner corpora.
 
-Developer tool, standard library only, not run in CI.  The corpora are *not* part of the
-repository (licences, and real learner text): download them, point this script at them and keep
-its output outside the repository too.
+Developer tool, standard library only, not run in CI.  The corpora are *not* part of this
+repository (licences, and real learner text): download them, point this script at them, and write
+its output into the private evaluation repository, which is where the records live.
 
-Sources (write them into the results you publish):
+Sources (credit them wherever the results are shown):
 
 * German: Falko-MERLIN GEC corpus (Boyd 2018), test split.  Falko CC BY 3.0, MERLIN CC BY-SA 4.0.
   ``https://github.com/adrianeboyd/boyd-wnut2018/releases/download/wnut2018/data.tar.gz``
@@ -40,7 +40,7 @@ matches what was pinned.
 Usage::
 
     PYTHONPATH=. python3 tools/prepare_gec_testset.py --testset gec-2026-12 \\
-        --corpora ~/gec-testset/corpora.json --store ~/gec-testset/store
+        --corpora ~/gec-testset/corpora.json
 """
 
 from __future__ import annotations
@@ -55,7 +55,7 @@ import sys
 from tools.evaluation.core.constants import TextKind
 from tools.evaluation.core.languages import is_language_code
 from tools.evaluation.core.manifest import Manifest, read_manifest
-from tools.evaluation.core.paths import workspace_path
+from tools.evaluation.core.paths import DEFAULT_STORE, store_argument, workspace_path
 from tools.evaluation.core.records import TestRecord
 from tools.evaluation.input import recipes
 from tools.evaluation.input import testset as testset_module
@@ -125,7 +125,10 @@ def main() -> int:
         help="a JSON object {name: path}; a relative path in it is relative to the file",
     )
     parser.add_argument(
-        "--store", type=workspace_path, required=True, help="the store to write the set into"
+        "--store",
+        type=store_argument,
+        default=DEFAULT_STORE,
+        help="the store to write the set into (default: %(default)s)",
     )
     parser.add_argument(
         "--built",

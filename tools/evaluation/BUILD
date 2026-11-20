@@ -4,7 +4,7 @@ The `deps` of these targets are the import graph, so a layer that imports a laye
 test failure and not a review comment:
 
 ```
-publish → report → store → input → core, metrics
+report → store → input → core, metrics
 run → store, input, core, metrics            checks → run, core, metrics
 viewer → report, run, store, input, core, metrics
 convert → store, input, core, metrics
@@ -92,21 +92,6 @@ py_library(
     deps = [
         ":core",
         ":metrics",
-        ":store",
-    ] + _APP,
-)
-
-# The redacted export and the index: a local run becomes a committed run file, and the index lists
-# them.  It sits above `report`, because the numbers it stores are the report's own.
-py_library(
-    name = "publish",
-    srcs = glob(["publish/*.py"]),
-    visibility = ["//visibility:public"],
-    deps = [
-        ":core",
-        ":input",
-        ":metrics",
-        ":report",
         ":store",
     ] + _APP,
 )

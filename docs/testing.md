@@ -103,6 +103,14 @@ GUI tests; editing `domain/` reruns nearly everything, which is correct.
 | `gui` | Exercises PySide6 widgets and the event loop |
 | `use_case` | Links the test to a use case in `use_cases.trlc` (see below) |
 
+Two test files also read the private evaluation repository (the machine registry and the converter's
+acceptance tests). They are skipped unless the repository is named, so by default nothing runs them:
+
+```bash
+bazel test //tests:test_evaluation_machines //tests:test_evaluation_convert_v1 --test_output=errors \
+  --test_env=GEC_EVALS=$HOME/git/teachers-teammate-evals --test_env=GEC_RESULTS=$HOME/gec-testset
+```
+
 Run only tests that do not require Ollama (direct pytest, ad-hoc use only):
 
 ```bash

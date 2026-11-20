@@ -2,7 +2,7 @@
 
 The layers are tested alone elsewhere; this file walks the path a person walks.  A sheet is printed
 from a stored run, filled in, read back as marks, checked, and then either counted by the gate or
-turned into the key's accepted alternatives.  The blind key of the old sheet is imported the same way.
+turned into the key's accepted alternatives.
 
 Each test builds its own store in ``tmp_path``, so a failure names the step that broke and not a file
 on somebody's disk.
@@ -11,13 +11,11 @@ on somebody's disk.
 from __future__ import annotations
 
 from dataclasses import replace
-import json
 from pathlib import Path
 
 from teachers_teammate.domain.proofreading.edits import EditPart
 from teachers_teammate.domain.proofreading.review import CorrectionReview, EditNote
 
-from tools.evaluation.convert import blind_key
 from tools.evaluation.core import protocol_table
 from tools.evaluation.core.labels import ReferenceLabel
 from tools.evaluation.core.manifest import Manifest, ManifestItem
@@ -37,7 +35,7 @@ from tools.evaluation.core.records import (
     question_sha256,
     text_id,
 )
-from tools.evaluation.metrics.offsets import char_span_to_tokens, token_offsets
+from tools.evaluation.metrics.offsets import token_offsets
 from tools.evaluation.metrics.quality import ordered_edits
 from tools.evaluation.report import gates, groups, load, score, spot_check
 from tools.evaluation.store import accept, layout, reader, validate, writer
@@ -306,63 +304,6 @@ def test_the_extra_edits_sheet_is_blind(tmp_path):
     assert run.name not in sheet
     assert f"Run key: `{spot_check.extra_edits_sample(run).run_key}`" in sheet
     assert "| Value |" in sheet
-
-
-# ── the blind key of the old sheet ────────────────────────────────────────────
-
-
-def _blind_sheet(rows: list[tuple[int, str, str]]) -> str:
-    """Return an old-style blind sheet with one row per ``(number, bracket, mark)``."""
-    lines = [
-        "# Sheet: model edits the reference does not have (blind)",
-        "",
-        "| # | Lang | Student sentence (change marked) | After the model's change "
-        "| Annotator's version of the sentence | Mark | Note |",
-        "|---|---|---|---|---|---|---|",
-    ]
-    lines.extend(
-        f"| {number} | DE | Der Satz [{shown}] hier. | Der Satz [{shown}] hier. "
-        f"| Der Satz hier. | {mark} |  |"
-        for number, shown, mark in rows
-    )
-    return "\n".join(lines) + "\n"
-
-
-def test_the_old_blind_key_becomes_edit_marks(tmp_path):
-    """
-    Given  the old blind sheet's key, in token positions, and the sheet filled in
-    When   the key is imported and the marker's verdicts are accepted
-    Then   the mapped edits are marks, the one that does not map is listed, and only ``A`` is accepted
-    """
-    records = _records()
-    root = _store(tmp_path / "store", records, output=DE_EXTRA)
-    source = records[0].source
-    before = source.index("schön")
-    insert = char_span_to_tokens(source, (before, before))
-    replace_span = char_span_to_tokens(
-        source, (source.index("nach Hause"), source.index("nach Hause") + len("nach Hause"))
-    )
-    key = {
-        "1": {"id": "de/de-01", "edit": [insert[0], insert[1], ["sehr", " "]]},
-        "2": {"id": "de/de-01", "edit": [replace_span[0], replace_span[1], ["heim"]]},
-        "3": {"id": "de/de-01", "edit": [replace_span[0], replace_span[1], ["heim"]]},
-    }
-    key_path = tmp_path / "key.json"
-    key_path.write_text(json.dumps(key), encoding="utf-8")
-    sheet_path = tmp_path / "sheet.md"
-    sheet_path.write_text(
-        _blind_sheet([(1, "∅", "A"), (2, "nach Hause", "C"), (3, "etwas anderes", "A")]),
-        encoding="utf-8",
-    )
-
-    imported = blind_key.import_blind_key(root, TESTSET, key_path, sheet_path, "jh")
-    accepted = accept.accept_marks(root, TESTSET, "jh")
-
-    assert (imported.added, imported.changed) == (2, 0)
-    assert len(imported.failed) == 1
-    assert "the tokenizer moved" in imported.failed[0]
-    assert accepted.edits == 1
-    assert accepted.added == (("de/de-01", (before, before), "sehr "),)
 
 
 # ── two markers ───────────────────────────────────────────────────────────────

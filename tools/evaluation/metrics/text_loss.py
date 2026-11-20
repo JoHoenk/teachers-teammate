@@ -69,7 +69,7 @@ def measure(source: str, corrected: str, reference: str) -> dict[str, int]:
 
     Returns:
         ``words_out`` and ``words_ref``, counts of words and marks as
-        :func:`~.redaction.word_count` counts them, and ``cut_run`` and ``added_run``, the longest
+        :func:`~..core.text.word_count` counts them, and ``cut_run`` and ``added_run``, the longest
         unmatched runs in words and marks.
     """
     yardstick = reference if reference.strip() else source

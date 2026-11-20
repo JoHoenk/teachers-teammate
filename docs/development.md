@@ -489,7 +489,8 @@ app's own proofreading options, and empties the server before each step so the m
 exactly the window asked for:
 
 ```bash
-bazel run //tools:verify_model_catalog -- fit --machine rx9070xt-server \
+bazel run //tools:verify_model_catalog -- fit --store ~/git/teachers-teammate-evals \
+    --machine rx9070xt-server \
     --ollama-url http://gpu-server.example:11434 --gpu-agent http://gpu-server.example:11436 \
     --gpu-token-file ~/.config/gpu_agent.token --tag gemma4:e4b --tag qwen3:4b
 ```
@@ -1069,11 +1070,14 @@ corpora and writes `testsets/<id>/`.
 **The store is a repository of its own.**  Every evaluation record — the runs, the test sets with
 their texts, the marks, the machines, the model sizes, the gate records — lives in the private
 repository `teachers-teammate-evals`, cloned to `~/git/teachers-teammate-evals`, which is what
-`--store` defaults to.  It holds the corpus text, so it may never be published; this repository
-holds the code and the formats (`evaluations/README.md`, `evaluations/FORMAT.md`) and no record.
+`--store` names (every command takes it; none guesses it).  It holds the corpus text, so it may
+never be published; this repository holds the code and the formats (`evaluations/README.md`, `evaluations/FORMAT.md`) and no record.
 `core/paths.py:store_path()` refuses a store inside this repository's working tree, and
 `tests/tools/test_no_eval_records.py` fails when a run file, a manifest, a size record or a marks
-file appears here.
+file appears here.  That repository is a Bazel module that depends on this one (a sibling clone,
+`local_path_override`), so the tools also run from there: `bazel run //:report -- table`,
+`//:store`, `//:evaluate`, `//:prepare_gec_testset`, `//:verify_model_catalog`.  This is why the
+`ocr_test_dependencies` pip hub is not a dev dependency here.
 
 **A run is named by its axes.**  `core/axis_table.py` declares every attribute a run can vary in
 once, and `core/axes.py` derives the four keys from it: the **compare key** (what two runs must
@@ -1655,7 +1659,7 @@ encoded on the way in.  `store -- validate` checks the store's files without the
 every item:
 
 ```bash
-bazel run //tools:store -- validate
+bazel run //tools:store -- validate --store ~/git/teachers-teammate-evals
 bazel run //tools:store -- manifest --testset gec-2026-12 \
     --corpora ~/gec-testset/corpora.json
 ```
@@ -3359,7 +3363,7 @@ yet — that needs Ollama on the machine with the card:
 One pass does both:
 
 ```bash
-bazel run //tools:verify_model_catalog -- fit --machine ID \
+bazel run //tools:verify_model_catalog -- fit --store ~/git/teachers-teammate-evals --machine ID \
     --ollama-url http://HOST:11434 --gpu-agent http://HOST:11436 --tag TAG
 ```
 

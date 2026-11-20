@@ -216,7 +216,7 @@ confirming a tuning choice on splits the first never reads; each recipe holds it
 and never imports another recipe's numbers. How the tools measure and compare models is in
 `docs/development.md` (*Ollama model catalog*). The records the tools write — the test set with its
 texts, the runs, the marks — go to the private repository `teachers-teammate-evals`, which is what
-`--store` defaults to; nothing of them is committed here.
+`--store` names; nothing of them is committed here.
 
 ## Third-party licenses
 

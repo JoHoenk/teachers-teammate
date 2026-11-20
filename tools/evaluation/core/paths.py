@@ -2,13 +2,13 @@
 inside the repository.
 
 ``bazel run`` starts a tool inside its runfiles tree, so a relative path would silently point there
-and not into the repository.  Bazel names the repository in ``BUILD_WORKSPACE_DIRECTORY``; outside
-Bazel the variable is unset and paths stay as typed (the repository is then found from this file,
-not from the current directory).  A leading ``~`` is the home directory.
+and not into the workspace.  Bazel names the workspace the tool was started in in
+``BUILD_WORKSPACE_DIRECTORY`` (this repository, or the evaluation repository); outside Bazel the
+variable is unset and paths stay as typed.  A leading ``~`` is the home directory.
 
 Shared by every command line, so a relative path means the same in all of them.
 
-The evaluation records live in a repository of their own (:data:`DEFAULT_STORE`), because they hold
+The evaluation records live in a repository of their own (:data:`STORE_REPOSITORY`), because they hold
 the corpora's text: a store inside this repository would put that text into its history, where a
 slip cannot be taken back.  :func:`store_path` refuses one.
 """
@@ -19,8 +19,9 @@ import argparse
 import os
 from pathlib import Path
 
-DEFAULT_STORE = "~/git/teachers-teammate-evals"
-"""Where the evaluation records live: a private repository of its own, never this one."""
+STORE_REPOSITORY = "teachers-teammate-evals"
+"""The private repository the evaluation records live in, never this one.  A command names its
+clone with ``--store``; nothing is guessed."""
 
 
 def workspace_path(text: str) -> Path:
@@ -31,14 +32,14 @@ def workspace_path(text: str) -> Path:
 
 
 def repository_root() -> Path:
-    """Return the app repository's working tree: where this module is, whatever the directory the
-    tool was started in.
+    """Return the app repository's working tree: three levels above this file
+    (``tools/evaluation/core/paths.py``), whatever the directory the tool was started in.
 
-    ``bazel run`` names it in ``BUILD_WORKSPACE_DIRECTORY``; anywhere else it is three levels above
-    this file (``tools/evaluation/core/paths.py``).
+    Not ``BUILD_WORKSPACE_DIRECTORY``: the tools also run from the evaluation repository, whose
+    workspace that is.  Under Bazel the file is a link into the source tree, which ``resolve()``
+    follows.
     """
-    base = os.environ.get("BUILD_WORKSPACE_DIRECTORY")
-    return Path(base) if base else Path(__file__).resolve().parents[3]
+    return Path(__file__).resolve().parents[3]
 
 
 def store_path(text: str) -> Path:
@@ -53,7 +54,7 @@ def store_path(text: str) -> Path:
     if resolved == top or top in resolved.parents:
         raise ValueError(
             f"{path} is inside the app repository; the evaluation records live in "
-            f"{DEFAULT_STORE}, a repository of their own"
+            f"the repository {STORE_REPOSITORY}, a repository of their own"
         )
     return path
 
@@ -67,7 +68,7 @@ def store_argument(text: str) -> Path:
 
 
 __all__ = [
-    "DEFAULT_STORE",
+    "STORE_REPOSITORY",
     "repository_root",
     "store_argument",
     "store_path",

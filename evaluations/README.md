@@ -8,7 +8,7 @@ catalog*); this page is the overview that points there.
 The records themselves — the runs, the test sets with their texts, the teachers' marks, the
 machines, the measured model sizes and the gate records — live in a separate private repository,
 **`teachers-teammate-evals`** (GitHub, private; cloned to `~/git/teachers-teammate-evals`, which is
-the default store). It holds the corpus text, so it may never be published. This repository holds
+what `--store` names). It holds the corpus text, so it may never be published. This repository holds
 the code that writes and reads those files and the pages that describe them: this one and
 `FORMAT.md`.
 
@@ -156,10 +156,10 @@ Every text goes through the app's own corrector inside its `ChunkingCorrector`, 
 proofread in pieces exactly as in the app. Per model and exchange: three repeats, at the
 temperature the model's maker recommends (the app's 0.2 for a model without one), unless
 `--temperature` says otherwise. Runs are appended, so an interrupted run resumes. The store is the
-private repository; `--store` defaults to it and refuses a path inside this one.
+private repository, named with `--store`; the tools refuse a path inside this one.
 
 ```bash
-bazel run //tools:evaluate -- run --testset gec-2026-12 \
+bazel run //tools:evaluate -- run --store ~/git/teachers-teammate-evals --testset gec-2026-12 \
   --model TAG --exchange text-first --exchange one-request-review --repeat 3 --machine ID
 ```
 

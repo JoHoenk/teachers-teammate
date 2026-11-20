@@ -136,7 +136,7 @@ reference everywhere else. The package is Qt-free, so `gui/`, `cli.py`, `applica
 | `texts/dialogs.py` | Every message box, question and file picker. |
 | `texts/settings.py` | Settings page titles, the `WHERE_*` "where do I change this" sentences, tab names. |
 | `texts/privacy.py` | The "what is sent for this file" wording. |
-| `texts/check.py` | What the Check tab's widgets say around its text: the two editable views' tooltips, the ⋯ button, the source dialog's button, the scan switch, the strips. |
+| `texts/check.py` | What the Check tab's widgets say around its text: the two editable views' tooltips, the ⋯ button, the source dialog's button, the scan switch, the strips, the side panel's tabs and its filter row. |
 | `texts/setup.py` | Every sentence of the Setup Assistant's pages. |
 | `texts/servers.py` | How a found Ollama server is described (the card). |
 
@@ -2517,6 +2517,24 @@ the next document — ▶ does.  The queue's *Checked* column shows
 *Checked* / *Text checked* / nothing, and right-click → *Select checked* selects rows with
 either; "checked only" export is that selection plus *Export*, not a separate option.
 
+**The panel: two tabs, a filter row, a card.**  `gui/check/_side_panel.py` holds all three.
+`QTabWidget` with `setTabBarAutoHide(True)` puts the content review beside the list
+(*Corrections · Content*, `show_corrections()` / `show_content()`, chosen by `CheckPage.set_view`
+from the view kind); the tab bar hides itself while there is no review, so a document without one
+looks as it did.  Above the list a `FlowLayout` (`gui/check/_flow.py`, wraps and skips hidden
+widgets) holds the filter chips in a `QButtonGroup`: *All*, *Not looked at* and one per category
+with its count.  `set_filter()` only re-applies row visibility (`_apply_row_visibility`), which
+also keeps the chosen row when it survives and otherwise chooses the first visible one, so a
+filter never leaves the card pointing at a hidden row.  The card is a fixed-height `QScrollArea`
+around the text plus a fixed-height button row: a long explanation scrolls inside the card and the
+buttons stay where the pointer is.  Its text is HTML built by `_body_html()` — the bold
+`before → after` line, the sentence around the change with the student's words highlighted
+(`_context_html()`, masked like the title), the category as a coloured chip and *optional* /
+*AI not sure* as grey tags (`_tags_of()`), then the explanation as normal text.  The list's
+`_ItemDelegate` draws the icon, two aligned word columns (`_column_rects()`) and the category as a
+coloured badge, and dims a looked-at row (`_faded()`) instead of hiding it.  The colours are one
+table, `gui/check/_style.py:CATEGORY_COLOURS`, used by both the chip and the badge.
+
 **Looked at.**  `SidePanel.item_shown` fires when an item becomes the chosen one (a list click, a
 text click, the first item on open); the window calls `mark_looked_at` once per new key and
 updates the document's set in place, without a reload.  The keys are `edit:<id>` (also for a
@@ -2529,7 +2547,9 @@ not *worked on* — a run may still replace the answer.
 
 **Walking the corrections.**  *Next* on the card (`SidePanel.choose_next`) chooses the next row
 that counts for looked-at, in list order and from the top at the end; a document opens at the
-first of them.  `counts_for_looked_at`, `next_unseen` and `first_unseen`
+first of them.  With a filter on it stays inside the filter — the next not-looked-at row the
+filter shows — while the counts above the list keep covering the whole document.
+`counts_for_looked_at`, `next_unseen` and `first_unseen`
 (`application/check_items.py`) are pure and on keys, so the list's rows and `looked_at_progress`
 count the same rows — a single spelling change is not folded and does not count either.  The walk
 keeps no state of its own: choosing a row is what marks it looked at, so the icons and the footer

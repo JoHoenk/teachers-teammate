@@ -2,8 +2,8 @@
 
 The tab's own wording — the switch, the banners, the card and its buttons — lives in
 ``gui/_user_text.py`` next to the rest of the window's labels.  What is here is the wording the
-tab's widgets hand to a sink themselves: the tooltips of the two editable views, the ⋯ button and
-the source dialog's button.
+tab's widgets hand to a sink themselves: the tooltips of the two editable views, the ⋯ button,
+the source dialog's button, the side panel's tabs and its filter row.
 """
 
 from __future__ import annotations
@@ -59,3 +59,24 @@ RUN_READING = "Reading the text…"
 RUN_WAITING = "Waiting for its turn in this run…"
 RUN_TIME_LEFT_SEPARATOR = " · "
 """The strip in the header while the open document is in a run: what is being done to it."""
+
+PROGRESS_PREPROCESSING = "preprocessing…"
+PROGRESS_OCR = "OCR…"
+PROGRESS_CORRECTING = "correcting…"
+"""The step named after a file's name in the progress line of a run."""
+
+TAB_CORRECTIONS = "Corrections"
+TAB_CONTENT = "Content"
+"""The side panel's two tabs: the list of corrections, and the content review."""
+
+FILTER_ALL = "All"
+FILTER_ALL_TIP = "Show every correction"
+FILTER_NOT_LOOKED_AT = "Not looked at"
+FILTER_NOT_LOOKED_AT_TIP = "Show only the corrections you have not looked at yet"
+FILTER_CATEGORY_TIP = "Show only the {category} corrections"
+"""The filter row above the list: everything, what is left, and one chip per category."""
+
+
+def filter_label(label: str, count: int) -> str:
+    """Return a filter chip's text with its count, e.g. ``"Grammar 4"``."""
+    return f"{label} {count}"

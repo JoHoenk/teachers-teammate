@@ -397,6 +397,22 @@ def test_a_content_review_keeps_the_side_panel_on_what_was_read(qtbot) -> None:
 
 
 @pytest.mark.gui
+def test_what_was_read_puts_the_content_review_in_front(qtbot) -> None:
+    """
+    Given  a document with a content review
+    When   *What was read* is in front, and then *With corrections*
+    Then   the panel shows the content review there and the list of corrections here
+    """
+    body = _body(qtbot, _document(review=_review(RAW, CORRECTED), content_review="Gut lesbar."))
+
+    body.set_view(ViewKind.READ)
+    assert body.panel._tabs.currentWidget() is body.panel._content_view
+
+    body.set_view(ViewKind.MARKED)
+    assert body.panel._tabs.currentIndex() == 0
+
+
+@pytest.mark.gui
 def test_a_narrow_window_folds_the_scan_and_show_scan_opens_it(qtbot) -> None:
     """
     Given  a body in a wide window
@@ -561,7 +577,7 @@ def test_a_card_action_does_not_move_the_choice_and_next_walks_on(qtbot) -> None
     assert body._doc is not None
     assert [item.kind for item in body._doc.items] == [ItemKind.TAKEN_OUT, ItemKind.UNCLEAR]
 
-    body.panel._card.next_button.click()
+    body.panel._next_button.click()
 
     assert body.chosen == "unclear:1"
 

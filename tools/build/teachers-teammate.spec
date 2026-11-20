@@ -236,13 +236,13 @@ hiddenimports = [
     # Named here so the bundle does not depend on the analysis following that chain; the
     # smoke test's "stylesheet" check proves it did.
     "qtpy",
-    "packaging",
-    "packaging.version",
     # timeit and cProfile are stdlib but some pip/spaCy code paths import them;
     # cProfile depends on the C extension _lsprof.
     "timeit",
     "cProfile",
     "_lsprof",
+    # stdlib that only the Google add-on (google-genai) imports.
+    "wave",
 ]
 
 # pip is bundled so the frozen binary can re-invoke itself in pip-dispatch mode for the
@@ -256,6 +256,10 @@ hiddenimports += _pip[2]
 # Secret Service) through package metadata, which PyInstaller does not follow.
 datas += copy_metadata("keyring")
 hiddenimports += collect_submodules("keyring")
+
+# The add-on constraints promise packaging to the add-ons, so the add-on install drops its own
+# copy; spaCy imports packaging.requirements, which nothing in the app does.  All of it, then.
+hiddenimports += collect_submodules("packaging")
 
 # The smoke test (``frozen_modes._check_addon_constraints``) reads the version of these four
 # through ``importlib.metadata`` and compares it with the add-on constraints. PyInstaller only

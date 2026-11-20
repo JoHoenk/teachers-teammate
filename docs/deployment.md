@@ -64,7 +64,8 @@ gh run download <run-id> -n teachers-teammate-linux   # or -windows, -macos
 ```
 
 The wheel is installed the way a teacher would, into a clean venv, and every console script has to
-start. Every bundle build runs the app's smoke test (`--_smoke_test`) and installs the result on fresh
+start. Every bundle build runs the app's smoke test (`--_smoke_test`), installs and uses every add-on
+in it (`--_addon_smoke_test`, needs the network), and installs the result on fresh
 systems (Ubuntu 24.04/26.04 and Debian 13 containers, macOS 15/26, Windows Server 2022/2025),
 including an update from the newest published release. Not covered by CI, so checked by hand on a
 VM before a release: the installer's interactive pages, the UAC prompt, a real desktop (window,
@@ -126,6 +127,7 @@ so two builds of one commit give the same bundle. Check that it starts:
 
 ```bash
 QT_QPA_PLATFORM=offscreen ./dist/teachers-teammate/teachers-teammate --_smoke_test smoke.json
+QT_QPA_PLATFORM=offscreen ./dist/teachers-teammate/teachers-teammate --_addon_smoke_test addon_smoke.json
 ```
 
 ### Python wheel

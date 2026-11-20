@@ -10,32 +10,41 @@ a group of one is not folded, since a group row over a single correction is only
 
 *Next* on the card walks the rows the teacher has not looked at yet, in list order and from the top
 at the end; a document opens at the first of them.  The walk keeps no state of its own: choosing a
-row is what marks it looked at, so the icons and the footer say how far it got.
+row is what marks it looked at, so the icons and the footer say how far it got.  A filter above the
+list narrows both the list and the walk, while the counts keep covering the whole document.
 
-All wording comes from :mod:`.._user_text`; the colours and icons from :mod:`._style`.
+The card keeps one height whatever it says — its text scrolls inside it — so neither its buttons
+nor *Next* move while the teacher steps through a document.  The content review has a tab of its
+own next to the list.
+
+All wording comes from :mod:`.._user_text` and :mod:`...texts.check`; the colours and icons from
+:mod:`._style`.
 """
 
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
 import html
 
-from PySide6.QtCore import QSize, Qt, Signal, SignalInstance
+from PySide6.QtCore import QRect, QSize, Qt, Signal, SignalInstance
 from PySide6.QtGui import QColor, QFont, QPainter, QPalette
 from PySide6.QtWidgets import (
     QApplication,
+    QButtonGroup,
     QFrame,
     QHBoxLayout,
     QLabel,
     QListWidget,
     QListWidgetItem,
     QPushButton,
+    QScrollArea,
     QStyle,
     QStyledItemDelegate,
     QStyleOptionViewItem,
+    QTabWidget,
     QTextBrowser,
-    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -49,17 +58,35 @@ from ...application.check_items import (
     group_minor,
     next_unseen,
 )
+from ...domain.proofreading.review import CHANGE_CATEGORIES
+from ...texts import check as check_txt
 from .. import _user_text as txt
 from . import _style
+from ._flow import FlowLayout
 from ._masking import Masking
 
 #: The key of the row that folds the spelling and punctuation changes; no item has it.
 GROUP_KEY = "minor"
 
+#: The filter that shows every row.
+FILTER_ALL = ""
+
+#: The filter that shows only the rows the teacher has not looked at yet.
+FILTER_UNSEEN = "unseen"
+
 #: Item data role that carries the :class:`_Row` of a list entry.
 _ROW_ROLE = Qt.ItemDataRole.UserRole + 1
 
 _ROW_HEIGHT = 24
+
+#: How many lines of text the card shows before its text scrolls.
+_CARD_TEXT_LINES = 5
+
+#: How many characters of the sentence around a change the card shows on either side.
+_CONTEXT_CHARS = 60
+
+#: The characters that end a sentence, for the context line.
+_SENTENCE_ENDS = ".!?\n"
 
 
 @dataclass(frozen=True)
@@ -74,6 +101,16 @@ class _Row:
     def is_group(self) -> bool:
         """Whether this row folds several items."""
         return self.item is None
+
+
+def _chip_category(item: CheckItem) -> str:
+    """Return the chip *item* is filed under: its category, or ``"other"`` for one the chips lack.
+
+    ``""`` for an item with no category (an unclear passage, a change of the teacher's own).
+    """
+    if not item.category:
+        return ""
+    return item.category if item.category in CHANGE_CATEGORIES else "other"
 
 
 def rows_of(items: Sequence[CheckItem]) -> tuple[_Row, ...]:
@@ -93,18 +130,18 @@ def rows_of(items: Sequence[CheckItem]) -> tuple[_Row, ...]:
     return tuple(rows)
 
 
-def _words_of(row: _Row) -> str:
-    """Return the words a row shows: the student's, an arrow, and the corrected ones."""
+def _columns_of(row: _Row) -> tuple[str, str]:
+    """Return the two columns of a row: the student's words and the corrected ones.
+
+    The second is empty where the row has no corrected wording of its own — the group row, an
+    unclear expression, a stretch the model left out — and the first then takes the whole width.
+    """
     if row.item is None:
-        return txt.minor_group_label(len(row.members))
+        return txt.minor_group_label(len(row.members)), ""
     item = row.item
     if item.kind in (ItemKind.UNCLEAR, ItemKind.LEFT_OUT):
-        return item.before
-    if not item.before:
-        return f"\u2192 {item.after}"
-    if not item.after:
-        return f"{item.before} \u2192"
-    return f"{item.before} \u2192 {item.after}"
+        return item.before, ""
+    return item.before, item.after
 
 
 def _icon_of(row: _Row, *, expanded: bool, looked_at: frozenset[str]) -> str:
@@ -121,15 +158,48 @@ def _category_of(row: _Row) -> str:
     return txt.category_label(row.item.category)
 
 
+def _faded(colour: QColor, alpha: int) -> QColor:
+    """Return *colour* with *alpha*, so a looked-at row reads as done without disappearing."""
+    faded = QColor(colour)
+    faded.setAlpha(alpha)
+    return faded
+
+
+def _row_colour(colour: QColor, *, looked_at: bool) -> QColor:
+    """Return the colour a row's icon and words are drawn in: faded once it was looked at."""
+    return _faded(colour, _style.LOOKED_AT_ALPHA) if looked_at else QColor(colour)
+
+
+def _column_rects(rect: QRect, arrow_width: int) -> tuple[QRect, QRect, QRect]:
+    """Return the rects of the student's words, the arrow and the corrected words.
+
+    The two word columns are the same width in every row, so the words line up down the list.
+    """
+    column = max((rect.width() - arrow_width) // 2, 0)
+    before = QRect(rect.left(), rect.top(), column, rect.height())
+    arrow = QRect(before.right() + 1, rect.top(), arrow_width, rect.height())
+    after = QRect(
+        arrow.right() + 1,
+        rect.top(),
+        max(rect.width() - column - arrow_width, 0),
+        rect.height(),
+    )
+    return before, arrow, after
+
+
 class _ItemDelegate(QStyledItemDelegate):
-    """Draws one row: the icon of its kind, its words, and its category in a muted colour."""
+    """Draws one row: its icon, the student's words, the corrected ones, and the category badge.
+
+    The two word columns are the same width in every row, so the student's words and the
+    correction line up down the list.  A row the teacher has looked at is drawn dimmed.
+    """
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.expanded = False
         """Whether the group row shows its items, which decides its arrow."""
         self.looked_at: frozenset[str] = frozenset()
-        """The keys the teacher has looked at, which decides the icon of every other row."""
+        """The keys the teacher has looked at, which decides the icon and the dimming."""
 
     def paint(self, painter: QPainter, option: QStyleOptionViewItem, index) -> None:
         """Draw the row of *index*; a row without one falls back to the plain text."""
@@ -145,33 +215,87 @@ class _ItemDelegate(QStyledItemDelegate):
         rect = opt.rect.adjusted(6, 0, -6, 0)
         metrics = opt.fontMetrics
         text_colour = opt.palette.color(QPalette.ColorRole.Text)
-        muted = QColor(text_colour)
-        muted.setAlpha(150)
+        looked_at = row.key in self.looked_at
         painter.save()
         painter.setFont(QFont(opt.font))
+        painter.setPen(_row_colour(text_colour, looked_at=looked_at))
         icon = _icon_of(row, expanded=self.expanded, looked_at=self.looked_at)
-        painter.setPen(text_colour)
         painter.drawText(rect, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, icon)
-        words_rect = rect.adjusted(metrics.horizontalAdvance(icon) + 6, 0, 0, 0)
-        category = _category_of(row)
-        if category:
-            width = metrics.horizontalAdvance(category) + 8
-            painter.setPen(muted)
-            painter.drawText(
-                rect, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, category
-            )
-            words_rect = words_rect.adjusted(0, 0, -width, 0)
-        painter.setPen(text_colour)
-        painter.drawText(
-            words_rect,
-            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
-            metrics.elidedText(_words_of(row), Qt.TextElideMode.ElideRight, words_rect.width()),
-        )
+        words = rect.adjusted(metrics.horizontalAdvance(icon) + 6, 0, 0, 0)
+        words = self._draw_badge(painter, words, metrics, row, looked_at=looked_at)
+        self._draw_words(painter, words, metrics, row)
         painter.restore()
+
+    def _draw_badge(
+        self,
+        painter: QPainter,
+        rect: QRect,
+        metrics,
+        row: _Row,
+        *,
+        looked_at: bool,
+    ) -> QRect:
+        """Draw the category badge at the right of *rect*; return what is left for the words."""
+        category = _category_of(row)
+        if not category or row.item is None:
+            return rect
+        width = metrics.horizontalAdvance(category) + 10
+        badge = QRect(rect.right() - width + 1, rect.top() + 3, width, rect.height() - 6)
+        background, foreground = _style.category_colours(row.item.category)
+        painter.fillRect(
+            badge,
+            _faded(QColor(background), _style.BADGE_ALPHA) if looked_at else QColor(background),
+        )
+        painter.setPen(_row_colour(QColor(foreground), looked_at=looked_at))
+        painter.drawText(badge, Qt.AlignmentFlag.AlignCenter, category)
+        return rect.adjusted(0, 0, -(width + 6), 0)
+
+    def _draw_words(self, painter: QPainter, rect: QRect, metrics, row: _Row) -> None:
+        """Draw the student's words and the corrected ones in two columns of the same width."""
+        before, after = _columns_of(row)
+        if not after:
+            painter.drawText(
+                rect,
+                Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                metrics.elidedText(before, Qt.TextElideMode.ElideRight, rect.width()),
+            )
+            return
+        arrow = " \u2192 "
+        before_rect, arrow_rect, after_rect = _column_rects(rect, metrics.horizontalAdvance(arrow))
+        for part, part_rect in ((before, before_rect), (arrow, arrow_rect), (after, after_rect)):
+            painter.drawText(
+                part_rect,
+                Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                metrics.elidedText(part, Qt.TextElideMode.ElideRight, part_rect.width()),
+            )
 
     def sizeHint(self, _option: QStyleOptionViewItem, _index) -> QSize:
         """Every row is one line high."""
         return QSize(0, _ROW_HEIGHT)
+
+
+def _wrapped_label() -> QLabel:
+    """Return a label that wraps its rich text and says how tall it is at a given width.
+
+    Without the height-for-width policy a wrapped label reports the height of one long line, and
+    the scroll area around it would clip the text instead of scrolling it.
+    """
+    label = QLabel()
+    label.setWordWrap(True)
+    label.setTextFormat(Qt.TextFormat.RichText)
+    policy = label.sizePolicy()
+    policy.setHeightForWidth(True)
+    label.setSizePolicy(policy)
+    return label
+
+
+def _chip(text: str, colours: tuple[str, str]) -> str:
+    """Return *text* as a small coloured chip: a category, or a note about the change."""
+    background, foreground = colours
+    return (
+        f'<span style="background-color:{background}; color:{foreground};">'
+        f"&nbsp;{html.escape(text)}&nbsp;</span>"
+    )
 
 
 def _title_html(row: _Row, masking: Masking) -> str:
@@ -192,15 +316,81 @@ def _title_html(row: _Row, masking: Masking) -> str:
     return f"{before} \u2192 {after}"
 
 
+def _context_html(row: _Row, raw_plain: str, masking: Masking) -> str:
+    """Return the sentence around the item's words, with the student's words highlighted.
+
+    The teacher sees what the change is about without looking for it in the text.  The sentence is
+    cut a fixed number of characters around the words, so a long one does not push the explanation
+    out of the card; the cut ends say so with an ellipsis.
+    """
+    if row.item is None:
+        return ""
+    start, end = row.item.raw_span
+    if not raw_plain or not 0 <= start <= end <= len(raw_plain):
+        return ""
+    left, right = _context_window(raw_plain, start, end)
+    text = raw_plain[left:right]
+    masked = masking.mask(text)
+    span = masking.carry((start - left, end - left), text)
+    words = masked[span[0] : span[1]]
+    if not words:
+        return html.escape(masked)
+    background, foreground = _style.kind_colours(row.item.kind)
+    highlight = (
+        f'<span style="background-color:{background}; color:{foreground}; font-weight:bold;">'
+        f"{html.escape(words)}</span>"
+    )
+    return f"{html.escape(masked[: span[0]])}{highlight}{html.escape(masked[span[1] :])}"
+
+
+def _context_window(raw_plain: str, start: int, end: int) -> tuple[int, int]:
+    """Return where the sentence around the words at *start*..*end* begins and ends."""
+    left = _sentence_start(raw_plain, max(start - _CONTEXT_CHARS, 0), start)
+    right = _sentence_end(raw_plain, min(end + _CONTEXT_CHARS, len(raw_plain)), end)
+    while left < start and raw_plain[left].isspace():
+        left += 1
+    while right > end and raw_plain[right - 1].isspace():
+        right -= 1
+    return left, right
+
+
+def _sentence_start(text: str, left: int, start: int) -> int:
+    """Return where the sentence around *start* begins, at most *left* characters before it."""
+    window = text[left:start]
+    cut = max(window.rfind(char) for char in _SENTENCE_ENDS)
+    return left if cut < 0 else left + cut + 1
+
+
+def _sentence_end(text: str, right: int, end: int) -> int:
+    """Return where the sentence around *end* ends, at most *right* characters after it."""
+    window = text[end:right]
+    cuts = [cut for cut in (window.find(char) for char in _SENTENCE_ENDS) if cut >= 0]
+    return right if not cuts else end + min(cuts) + 1
+
+
+def _tags_of(item: CheckItem) -> tuple[str, ...]:
+    """Return the short notes about *item*: what kind of change it is, and the model's doubt."""
+    tags: list[str] = []
+    if item.kind in (ItemKind.CHANGED, ItemKind.OWN):
+        tags.append(txt.YOUR_CHANGE)
+    if item.kind is ItemKind.TAKEN_OUT:
+        tags.append(txt.TAKEN_OUT)
+    if item.optional:
+        tags.append(txt.OPTIONAL_CHANGE)
+    if item.needed is False:
+        tags.append(txt.AI_NOT_SURE)
+    return tuple(tags)
+
+
 def _body_html(row: _Row, masking: Masking) -> str:
-    """Return what the card says under the words: category, explanation and the notes."""
+    """Return what the card says under the words: the category, the explanation and the notes."""
     if row.item is None:
         return f"<i>{html.escape(txt.MINOR_GROUP_NOTE)}</i>"
     item = row.item
-    lines: list[str] = []
     if item.kind is ItemKind.LEFT_OUT:
         return html.escape(masking.mask(item.why))
     if item.kind is ItemKind.UNCLEAR:
+        lines: list[str] = []
         if item.why:
             lines.append(f"{html.escape(txt.WHY_PREFIX)} {html.escape(masking.mask(item.why))}")
         if item.suggestion:
@@ -210,25 +400,27 @@ def _body_html(row: _Row, masking: Masking) -> str:
         if note:
             lines.append(f"<i>{html.escape(note)}</i>")
         return "<br>".join(lines)
+    lines = []
     if item.category:
-        lines.append(f"<i>{html.escape(txt.category_label(item.category))}</i>")
+        lines.append(
+            _chip(txt.category_label(item.category), _style.category_colours(item.category))
+        )
     if item.explanation:
         lines.append(html.escape(masking.mask(item.explanation)))
     if item.kind is ItemKind.UNEXPLAINED:
         lines.append(f"<i>{html.escape(txt.NO_EXPLANATION_MADE)}</i>")
-    if item.kind in (ItemKind.CHANGED, ItemKind.OWN):
-        lines.append(f"<i>{html.escape(txt.YOUR_CHANGE)}</i>")
-    if item.kind is ItemKind.TAKEN_OUT:
-        lines.append(f"<i>{html.escape(txt.TAKEN_OUT)}</i>")
-    if item.optional:
-        lines.append(f"<i>{html.escape(txt.OPTIONAL_CHANGE)}</i>")
-    if item.needed is False:
-        lines.append(f"<i>{html.escape(txt.AI_NOT_SURE)}</i>")
+    tags = _tags_of(item)
+    if tags:
+        lines.append(" ".join(_chip(tag, (_style.TAG_BACKGROUND, _style.TAG_TEXT)) for tag in tags))
     return "<br>".join(lines)
 
 
 class _Card(QFrame):
-    """The chosen item: what it says, and the buttons that act on it."""
+    """The chosen item: what it says, and the buttons that act on it.
+
+    The text scrolls inside a fixed height and the buttons sit on the card's bottom edge, so the
+    card is as tall for a one-line correction as for a long explanation.
+    """
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -237,18 +429,31 @@ class _Card(QFrame):
         layout.setContentsMargins(8, 6, 8, 6)
         layout.setSpacing(4)
 
-        self._title = QLabel()
-        self._title.setWordWrap(True)
-        self._title.setTextFormat(Qt.TextFormat.RichText)
+        self._title = _wrapped_label()
         title_font = self._title.font()
         title_font.setBold(True)
         self._title.setFont(title_font)
-        layout.addWidget(self._title)
 
-        self._body = QLabel()
-        self._body.setWordWrap(True)
-        self._body.setTextFormat(Qt.TextFormat.RichText)
-        layout.addWidget(self._body)
+        self._context = _wrapped_label()
+
+        self._body = _wrapped_label()
+
+        text = QWidget()
+        text_layout = QVBoxLayout(text)
+        text_layout.setContentsMargins(0, 0, 0, 0)
+        text_layout.setSpacing(2)
+        for label in (self._title, self._context, self._body):
+            text_layout.addWidget(label)
+        text_layout.addStretch()
+
+        self._scroll = QScrollArea()
+        self._scroll.setWidgetResizable(True)
+        self._scroll.setWidget(text)
+        self._scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._scroll.viewport().setAutoFillBackground(False)
+        self._scroll.setFixedHeight(self.fontMetrics().lineSpacing() * _CARD_TEXT_LINES + 6)
+        layout.addWidget(self._scroll)
 
         self.take_out = QPushButton(txt.TAKE_OUT)
         self.put_back = QPushButton(txt.PUT_BACK)
@@ -262,20 +467,16 @@ class _Card(QFrame):
             self.change,
             self.take_out_all,
         )
-        row = QHBoxLayout()
+        self._button_row = QWidget()
+        row = QHBoxLayout(self._button_row)
+        row.setContentsMargins(0, 0, 0, 0)
         row.setSpacing(4)
         for button in self._buttons:
             row.addWidget(button)
         row.addStretch()
-        layout.addLayout(row)
-
-        self.next_button = QPushButton(txt.NEXT)
-        self.next_button.setToolTip(txt.NEXT_TOOLTIP)
-        next_row = QHBoxLayout()
-        next_row.setSpacing(4)
-        next_row.addStretch()
-        next_row.addWidget(self.next_button)
-        layout.addLayout(next_row)
+        # The row keeps its height while no button is shown, so the card never shrinks.
+        self._button_row.setFixedHeight(max(b.sizeHint().height() for b in self._buttons))
+        layout.addWidget(self._button_row)
         self.set_row(None, Masking(), editable=False)
 
     def set_note(self, text: str) -> None:
@@ -283,24 +484,37 @@ class _Card(QFrame):
         for button in self._buttons:
             button.setVisible(False)
         self._title.clear()
+        self._context.clear()
         self._body.setText(html.escape(text))
         self.setVisible(bool(text))
 
     def set_row(
-        self, row: _Row | None, masking: Masking, *, editable: bool, reason: str = ""
+        self,
+        row: _Row | None,
+        masking: Masking,
+        *,
+        editable: bool,
+        reason: str = "",
+        raw_plain: str = "",
     ) -> None:
-        """Show *row*, or nothing; *editable* says whether its buttons may be pressed."""
+        """Show *row*, or nothing; *editable* says whether its buttons may be pressed.
+
+        *raw_plain* is the transcription the context line is taken from.
+        """
         for button in self._buttons:
             button.setVisible(False)
             button.setEnabled(editable)
             button.setToolTip(reason)
         if row is None:
             self._title.clear()
+            self._context.clear()
             self._body.clear()
             self.setVisible(False)
             return
         self.setVisible(True)
         self._title.setText(_title_html(row, masking))
+        self._context.setText(_context_html(row, raw_plain, masking))
+        self._context.setVisible(bool(self._context.text()))
         self._body.setText(_body_html(row, masking))
         for button, tooltip in self._buttons_of(row):
             button.setVisible(True)
@@ -359,27 +573,22 @@ class SidePanel(QWidget):
         self._editable = True
         self._reason = ""
         self._note = ""
+        self._filter = FILTER_ALL
+        self._filter_buttons: dict[str, QPushButton] = {}
+        self._filter_group = QButtonGroup(self)
+        self._filter_group.setExclusive(True)
+        self._filter_row = QWidget()
+        self._filter_layout = FlowLayout(self._filter_row, spacing=2)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(4)
 
-        self._card = _Card()
-        layout.addWidget(self._card)
-
-        self._list = QListWidget()
-        self._delegate = _ItemDelegate(self._list)
-        self._list.setItemDelegate(self._delegate)
-        self._list.setSelectionMode(QListWidget.SelectionMode.SingleSelection)
-        self._list.setUniformItemSizes(True)
-        self._list.currentRowChanged.connect(self._on_row_changed)
-        layout.addWidget(self._list, 1)
-
-        self._counts = QLabel()
-        self._counts.setStyleSheet("color: #888;")
-        layout.addWidget(self._counts)
-
-        layout.addWidget(self._build_content_section())
+        self._tabs = QTabWidget()
+        self._tabs.setTabBarAutoHide(True)
+        self._tabs.addTab(self._build_corrections_page(), check_txt.TAB_CORRECTIONS)
+        self._tabs.addTab(self._build_content_page(), check_txt.TAB_CONTENT)
+        layout.addWidget(self._tabs, 1)
 
         self._card.take_out.clicked.connect(lambda: self._request(self.take_out_requested))
         self._card.put_back.clicked.connect(lambda: self._request(self.put_back_requested))
@@ -388,36 +597,76 @@ class SidePanel(QWidget):
         )
         self._card.change.clicked.connect(lambda: self._request(self.change_requested))
         self._card.take_out_all.clicked.connect(self.take_out_all_requested)
-        self._card.next_button.clicked.connect(self.choose_next)
+        self._next_button.clicked.connect(self.choose_next)
 
-    def _build_content_section(self) -> QWidget:
-        """Return the collapsible section that shows the content review, read-only."""
-        section = QWidget()
-        layout = QVBoxLayout(section)
+    def _build_corrections_page(self) -> QWidget:
+        """Return the tab of the card and the list, with the counts and *Next* above them."""
+        page = QWidget()
+        layout = QVBoxLayout(page)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(2)
-        self._content_toggle = QToolButton()
-        self._content_toggle.setText(txt.CONTENT_REVIEW_HEADING)
-        self._content_toggle.setCheckable(True)
-        self._content_toggle.setAutoRaise(True)
-        self._content_toggle.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
-        self._content_toggle.setArrowType(Qt.ArrowType.RightArrow)
-        self._content_toggle.toggled.connect(self._on_content_toggled)
-        layout.addWidget(self._content_toggle)
+        layout.setSpacing(4)
+
+        # Above the card, whose height is fixed: Next stays where the teacher's pointer is.
+        self._counts = QLabel()
+        self._counts.setWordWrap(True)
+        self._counts.setStyleSheet("color: #888;")
+        self._next_button = QPushButton(txt.ALL_LOOKED_AT)
+        self._next_button.setMinimumWidth(self._next_button.sizeHint().width())
+        self._next_button.setText(txt.NEXT)
+        self._next_button.setToolTip(txt.NEXT_TOOLTIP)
+        top = QHBoxLayout()
+        top.setSpacing(4)
+        top.addWidget(self._counts, 1)
+        top.addWidget(self._next_button)
+        layout.addLayout(top)
+
+        self._card = _Card()
+        layout.addWidget(self._card)
+
+        layout.addWidget(self._build_filter_row())
+
+        self._list = QListWidget()
+        self._delegate = _ItemDelegate(self._list)
+        self._list.setItemDelegate(self._delegate)
+        self._list.setSelectionMode(QListWidget.SelectionMode.SingleSelection)
+        self._list.setUniformItemSizes(True)
+        self._list.currentRowChanged.connect(self._on_row_changed)
+        layout.addWidget(self._list, 1)
+        return page
+
+    def _build_filter_row(self) -> QWidget:
+        """Return the chips that narrow the list: everything, what is left, and each category."""
+        self._add_filter_button(FILTER_ALL, check_txt.FILTER_ALL, check_txt.FILTER_ALL_TIP)
+        self._add_filter_button(
+            FILTER_UNSEEN,
+            check_txt.FILTER_NOT_LOOKED_AT,
+            check_txt.FILTER_NOT_LOOKED_AT_TIP,
+        )
+        for category in CHANGE_CATEGORIES:
+            self._add_filter_button(
+                category,
+                txt.category_label(category),
+                check_txt.FILTER_CATEGORY_TIP.format(category=txt.category_label(category)),
+            )
+        self._filter_buttons[FILTER_ALL].setChecked(True)
+        return self._filter_row
+
+    def _add_filter_button(self, key: str, label: str, tip: str) -> None:
+        """Add one chip to the filter row; *key* is what it filters by."""
+        button = QPushButton(label)
+        button.setCheckable(True)
+        button.setFlat(True)
+        button.setToolTip(tip)
+        button.clicked.connect(lambda _checked=False, k=key: self.set_filter(k))
+        self._filter_group.addButton(button)
+        self._filter_buttons[key] = button
+        self._filter_layout.addWidget(button)
+
+    def _build_content_page(self) -> QWidget:
+        """Return the tab that shows the content review, read-only."""
         self._content_view = QTextBrowser()
         self._content_view.setOpenExternalLinks(False)
-        self._content_view.setVisible(False)
-        layout.addWidget(self._content_view, 1)
-        self._content_section = section
-        section.setVisible(False)
-        return section
-
-    def _on_content_toggled(self, expanded: bool) -> None:
-        """Open or close the content review."""
-        self._content_toggle.setArrowType(
-            Qt.ArrowType.DownArrow if expanded else Qt.ArrowType.RightArrow
-        )
-        self._content_view.setVisible(expanded)
+        return self._content_view
 
     # ── What the page pushes ──────────────────────────────────────────────
 
@@ -425,8 +674,9 @@ class SidePanel(QWidget):
         """Show the items of *doc*: the first one not looked at, or the chosen one where it is.
 
         Another document opens at the first correction the teacher has not looked at yet, so
-        coming back to an essay continues where they stopped.  The same document keeps the
-        chosen row: a stored edit must not move the teacher's place.
+        coming back to an essay continues where they stopped, and with every row shown again.
+        The same document keeps the chosen row and the filter: a stored edit must not move the
+        teacher's place.
         """
         same = self._doc is not None and self._doc.source_id == doc.source_id
         chosen = self.chosen
@@ -436,6 +686,9 @@ class SidePanel(QWidget):
         self._looked_at = doc.work.looked_at
         self._rows = rows_of(doc.items)
         self._folded = len(group_minor(doc.items)) > 1
+        if not same or not self._filter_has_items():
+            self._filter = FILTER_ALL
+            self._filter_buttons[FILTER_ALL].setChecked(True)
         self._list.blockSignals(True)
         self._list.clear()
         for entry in self._rows:
@@ -446,36 +699,66 @@ class SidePanel(QWidget):
         self._list.blockSignals(False)
         self._set_expanded(self._expanded)
         self._delegate.looked_at = doc.work.looked_at
+        self._refresh_filters()
         self._counts.setText(self._counts_text())
         self._set_content(doc.content_review)
         if same:
             self._select(chosen, row)
         else:
-            self._select(first_unseen(self._countable_keys(), self._looked_at), 0)
+            self._select(first_unseen(self._walk_keys(), self._looked_at), 0)
         self._refresh_next()
 
     def choose_next(self) -> None:
         """Choose the next row the teacher has not looked at yet, from the top at the end."""
-        key = next_unseen(self._countable_keys(), self._looked_at, self.chosen_row)
+        key = next_unseen(self._walk_keys(), self._looked_at, self.chosen_row)
         if key:
             self.set_chosen(key)
 
     def set_chosen(self, key: str) -> None:
-        """Select the row of *key*, if the list has it, without telling the page back."""
+        """Select the row of *key*, if the list has it, without telling the page back.
+
+        A row the filter hides stays shown while it is the chosen one: the card and the list
+        must name the same row.
+        """
         index = self._row_index(key)
         if index is None:
             return
-        self._choosing = True
-        try:
-            self._list.setCurrentRow(index)
-        finally:
-            self._choosing = False
+        self._set_row_silently(index)
+        self._apply_row_visibility(keep_chosen=True)
+
+    def set_filter(self, key: str) -> None:
+        """Show only the rows *key* names: everything, what is left, or one category.
+
+        The walk of *Next* follows the filter, so it stays inside what the teacher is looking at;
+        the counts above the list keep covering the whole document.
+        """
+        if key not in self._filter_buttons:
+            return
+        self._filter = key
+        self._filter_buttons[key].setChecked(True)
+        self._choose_first_visible()
+        self._apply_row_visibility()
+        self._refresh_next()
+
+    def show_content(self) -> None:
+        """Put the content review in front, where the document has one."""
+        index = self._tabs.indexOf(self._content_view)
+        if self._tabs.isTabVisible(index):
+            self._tabs.setCurrentIndex(index)
+
+    def show_corrections(self) -> None:
+        """Put the list of corrections in front."""
+        self._tabs.setCurrentIndex(0)
 
     def set_note(self, text: str) -> None:
         """Say something in place of the card, e.g. that the marks could not be placed."""
         self._note = text
         self._card.set_row(
-            self._current_row(), self._masking, editable=self._editable, reason=self._reason
+            self._current_row(),
+            self._masking,
+            editable=self._editable,
+            reason=self._reason,
+            raw_plain=self._raw_plain(),
         )
         if text:
             self._card.set_note(text)
@@ -484,18 +767,30 @@ class SidePanel(QWidget):
         """Allow or refuse the card's actions; *reason* is the tooltip that says why not."""
         self._editable = editable
         self._reason = reason
-        self._card.set_row(self._current_row(), self._masking, editable=editable, reason=reason)
+        self._card.set_row(
+            self._current_row(),
+            self._masking,
+            editable=editable,
+            reason=reason,
+            raw_plain=self._raw_plain(),
+        )
         if self._note:
             self._card.set_note(self._note)
 
     def set_looked_at(self, looked_at: frozenset[str], progress: tuple[int, int]) -> None:
-        """Show which items were looked at, without rebuilding the list or moving the choice."""
+        """Show which items were looked at, without rebuilding the list or moving the choice.
+
+        A filter that hides what was looked at takes the rows away as the teacher works through
+        them, but never the row they are on: that one must not vanish under their pointer.
+        """
         self._looked_at = looked_at
         self._delegate.looked_at = looked_at
         self._list.viewport().update()
         if self._doc is not None:
             self._doc = replace(self._doc, looked_at_progress=progress)
+        self._apply_row_visibility(keep_chosen=True)
         self._counts.setText(self._counts_text())
+        self._refresh_filters()
         self._refresh_next()
 
     def clear(self) -> None:
@@ -506,6 +801,7 @@ class SidePanel(QWidget):
         self._list.clear()
         self._counts.clear()
         self._set_content("")
+        self._refresh_filters()
         self._card.set_row(None, self._masking, editable=False)
         self._refresh_next()
 
@@ -526,7 +822,16 @@ class SidePanel(QWidget):
         """How many rows the list has, the folded ones included."""
         return len(self._rows)
 
+    @property
+    def filter(self) -> str:
+        """What the list is narrowed to: everything, what is left, or one category."""
+        return self._filter
+
     # ── The list ──────────────────────────────────────────────────────────
+
+    def _raw_plain(self) -> str:
+        """Return the plain transcription the card's context line is taken from."""
+        return self._doc.raw_plain if self._doc is not None else ""
 
     def _current_row(self) -> _Row | None:
         """Return the row the list has selected, or ``None``."""
@@ -538,7 +843,13 @@ class SidePanel(QWidget):
         row = self._rows[index] if 0 <= index < len(self._rows) else None
         if row is not None and row.is_group:
             self._set_expanded(True)
-        self._card.set_row(row, self._masking, editable=self._editable, reason=self._reason)
+        self._card.set_row(
+            row,
+            self._masking,
+            editable=self._editable,
+            reason=self._reason,
+            raw_plain=self._raw_plain(),
+        )
         if self._note:
             self._card.set_note(self._note)
         self._refresh_next()
@@ -548,17 +859,25 @@ class SidePanel(QWidget):
         if row.item is not None and not self._choosing:
             self.item_chosen.emit(row.item.key)
 
-    def _countable_keys(self) -> tuple[str, ...]:
-        """Return the keys of the rows that count for looked-at, in list order."""
+    def _walk_keys(self) -> tuple[str, ...]:
+        """Return the keys of the rows *Next* walks over, in list order.
+
+        Without a category filter these are the rows that count for looked-at.  A category
+        filter lists the folded minor changes one by one, so it walks those too.
+        """
+        by_category = self._filter not in (FILTER_ALL, FILTER_UNSEEN)
         return tuple(
-            row.key for row in self._rows if row.item is None or counts_for_looked_at(row.item)
+            row.key
+            for row in self._rows
+            if self._row_visible(row)
+            and (by_category or row.item is None or counts_for_looked_at(row.item))
         )
 
     def _refresh_next(self) -> None:
         """Let *Next* walk to the next row not looked at, and say when there is none left."""
-        left = bool(next_unseen(self._countable_keys(), self._looked_at, self.chosen_row))
-        self._card.next_button.setEnabled(left)
-        self._card.next_button.setText(txt.NEXT if left else txt.ALL_LOOKED_AT)
+        left = bool(next_unseen(self._walk_keys(), self._looked_at, self.chosen_row))
+        self._next_button.setEnabled(left)
+        self._next_button.setText(txt.NEXT if left else txt.ALL_LOOKED_AT)
 
     def _select(self, chosen: str, row: int) -> None:
         """Select *chosen*, or the item nearest to *row* when the item it was is gone.
@@ -591,8 +910,12 @@ class SidePanel(QWidget):
             self._choosing = False
 
     def _nearest_item_row(self, row: int) -> int | None:
-        """Return the first row of an item at or after *row*, else the last one before it."""
-        indices = [index for index, entry in enumerate(self._rows) if entry.item is not None]
+        """Return the first shown row of an item at or after *row*, else the last one before it."""
+        indices = [
+            index
+            for index, entry in enumerate(self._rows)
+            if entry.item is not None and not self._list.item(index).isHidden()
+        ]
         if not indices:
             return None
         after = [index for index in indices if index >= row]
@@ -602,16 +925,83 @@ class SidePanel(QWidget):
         """Open or close the folded spelling and punctuation changes."""
         self._expanded = expanded
         self._delegate.expanded = expanded
-        for index, row in enumerate(self._rows):
-            if row.item is not None and row.item.is_minor and self._folded:
-                self._list.item(index).setHidden(not expanded)
-        self._list.viewport().update()
+        self._apply_row_visibility(keep_chosen=True)
 
     def _request(self, signal: SignalInstance) -> None:
         """Ask the page for the action of the chosen item."""
         key = self.chosen
         if key:
             signal.emit(key)
+
+    # ── The filter ────────────────────────────────────────────────────────
+
+    def _row_visible(self, row: _Row) -> bool:
+        """Whether the filter and the fold show *row*."""
+        if self._filter == FILTER_ALL:
+            return not self._folded_away(row)
+        if self._filter == FILTER_UNSEEN:
+            return (
+                not self._folded_away(row)
+                and (row.item is None or counts_for_looked_at(row.item))
+                and row.key not in self._looked_at
+            )
+        # A category filter shows the folded changes one by one: the list is short already.
+        return row.item is not None and _chip_category(row.item) == self._filter
+
+    def _filter_has_items(self) -> bool:
+        """Whether the filter still has something to show: a category the document has."""
+        if self._filter in (FILTER_ALL, FILTER_UNSEEN):
+            return True
+        return any(_chip_category(item) == self._filter for item in self._doc_items())
+
+    def _doc_items(self) -> tuple[CheckItem, ...]:
+        """Return the items of the open document."""
+        return self._doc.items if self._doc is not None else ()
+
+    def _folded_away(self, row: _Row) -> bool:
+        """Whether the fold hides *row*: a minor change while the group row is closed."""
+        return row.item is not None and row.item.is_minor and self._folded and not self._expanded
+
+    def _apply_row_visibility(self, *, keep_chosen: bool = False) -> None:
+        """Show the rows the filter and the fold let through, and hide the others."""
+        chosen = self._list.currentRow()
+        for index, row in enumerate(self._rows):
+            hidden = not self._row_visible(row) and not (keep_chosen and index == chosen)
+            self._list.item(index).setHidden(hidden)
+        self._list.viewport().update()
+
+    def _choose_first_visible(self) -> None:
+        """Choose the first row the filter shows when the chosen one is hidden."""
+        index = self._list.currentRow()
+        if 0 <= index < len(self._rows) and self._row_visible(self._rows[index]):
+            return
+        first = next(
+            (index for index, row in enumerate(self._rows) if self._row_visible(row)),
+            None,
+        )
+        if first is None:
+            self._card.set_row(None, self._masking, editable=False)
+            return
+        self._set_row_silently(first)
+
+    def _refresh_filters(self) -> None:
+        """Write the count on every chip, and hide the categories this document does not have."""
+        counts = Counter(_chip_category(item) for item in self._doc_items() if item.category)
+        left = sum(
+            1
+            for row in self._rows
+            if (row.item is None or counts_for_looked_at(row.item))
+            and row.key not in self._looked_at
+        )
+        self._filter_buttons[FILTER_ALL].setText(check_txt.FILTER_ALL)
+        self._filter_buttons[FILTER_UNSEEN].setText(
+            check_txt.filter_label(check_txt.FILTER_NOT_LOOKED_AT, left)
+        )
+        for category in CHANGE_CATEGORIES:
+            count = counts.get(category, 0)
+            button = self._filter_buttons[category]
+            button.setText(check_txt.filter_label(txt.category_label(category), count))
+            button.setVisible(bool(count))
 
     # ── The footer and the content review ─────────────────────────────────
 
@@ -630,10 +1020,13 @@ class SidePanel(QWidget):
         return " \u00b7 ".join(part for part in parts if part)
 
     def _set_content(self, content_review: str) -> None:
-        """Show the content review of the document, or hide the section when there is none."""
+        """Show the content review in its tab, or take the tab away when there is none."""
         text = content_review.strip()
-        self._content_section.setVisible(bool(text))
+        index = self._tabs.indexOf(self._content_view)
+        self._tabs.setTabVisible(index, bool(text))
         if not text:
             self._content_view.clear()
+            if self._tabs.currentIndex() == index:
+                self._tabs.setCurrentIndex(0)
             return
         self._content_view.setMarkdown(content_review)

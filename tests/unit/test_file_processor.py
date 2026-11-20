@@ -1639,6 +1639,29 @@ def test_process_notifies_stage_started_for_preprocessing_then_ocr(tmp_path: Pat
     assert stages.call_args_list == [call(source_id, "preprocessing"), call(source_id, "ocr")]
 
 
+def test_process_notifies_stage_started_when_the_proofreading_begins(tmp_path: Path) -> None:
+    """
+    Given  a file whose OCR output is cached, and a corrector
+    When   process() is called
+    Then   the only stage reported is "correction", so the window's clock starts with it
+    """
+    state = _make_state(ocr_done=True, raw_text="cached", preview_img="p.png")
+    corrector = MagicMock()
+    corrector.correct.return_value = CorrectionOutcome("proofread")
+    stages = MagicMock()
+    fp, *_ = _make_processor(
+        tmp_path,
+        returns=_StubReturns(cache_ctx=_make_ctx(state)),
+        corrector=corrector,
+        on_stage_started=stages,
+    )
+    file = tmp_path / "doc.png"
+
+    fp.process(file)
+
+    assert stages.call_args_list == [call(str(file.resolve()), "correction")]
+
+
 def test_process_cache_hit_does_not_notify_stage_started(tmp_path: Path) -> None:
     """
     Given  a file whose OCR output is already cached

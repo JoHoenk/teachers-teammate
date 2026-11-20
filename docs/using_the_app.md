@@ -101,11 +101,19 @@ mouse wheel) change the zoom. **Prepared · Original** switches between the page
 
 **The list of corrections** on the right numbers what the text marks. Pick a row and the text
 scrolls to it; click a mark in the text and its row is picked. ● marks what you have already looked
-at, ○ what you have not. **Next ›** on the card goes to the next correction you have not looked at
-yet; a document opens at the first one, so coming back to an essay continues where you stopped. The
-card above the list explains the chosen item:
+at, ○ what you have not; rows you have looked at are drawn dimmed. **Next ›** goes to the next
+correction you have not looked at yet; a document opens at the first one, so coming back to an essay
+continues where you stopped.
 
-- A **correction** shows what was replaced (`have → has`), its kind and one sentence saying why.
+**The filter row** above the list narrows it: **All**, **Not looked at**, and one chip per kind of
+change with its count (**Grammar 4**). **Next ›** stays inside the filter, while the counts above
+the list keep covering the whole document.
+
+The card above the list explains the chosen item. It keeps one height — a long explanation scrolls
+inside it — so its buttons stay where your pointer is:
+
+- A **correction** shows what was replaced (`have → has`), the sentence it stands in with the
+  student's words highlighted, its kind as a coloured chip, and one sentence saying why.
   **Take out** restores the student's words; **Change** lets you type your own version.
 - **Spelling and punctuation** corrections are grouped in one row; **Take out all** restores them.
 - An **unclear expression** shows the words, why they are unclear, and a recommended version.
@@ -113,6 +121,9 @@ card above the list explains the chosen item:
   writes it into the text.
 - A correction you took out moves to the end of the list with **Put back**; a change you typed
   yourself appears as `your change`.
+
+**Content** beside **Corrections** shows the content review of the document, where there is one;
+*What was read* opens it.
 
 Read an explanation before you pass it on to a student: the AI can be wrong.
 
@@ -189,8 +200,9 @@ to ask what you want to know, for example whether the essay answers the task.
 
 **Review content** can be ticked together with **Proofread**; it then runs after the
 proofreading. To review single documents, right-click their rows → **Run Content Review**. The
-report appears at the end of the list in the **Check** tab. It uses the proofreading model unless
-you tick **Use a different model for content review** under **Settings → AI models…**.
+report appears under **Content** beside **Corrections** in the **Check** tab. It uses the
+proofreading model unless you tick **Use a different model for content review** under
+**Settings → AI models…**.
 
 ---
 

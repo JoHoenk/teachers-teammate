@@ -219,7 +219,8 @@ def test_the_time_left_counts_down_while_a_file_runs() -> None:
     pace = RunPace(estimate=TimeRange(10.0, 10.0))
     pace.set_files(1)
     pace.set_pages(2)
-    pace.file_started(100.0, 2)
+    pace.file_started(2)
+    pace.work_started(100.0)
 
     assert pace.time_left(100.0).typical_s == pytest.approx(20.0)
     assert pace.time_left(105.0).typical_s == pytest.approx(15.0)
@@ -237,13 +238,15 @@ def test_the_progress_follows_the_clock_between_two_files() -> None:
     pace = RunPace(estimate=TimeRange(10.0, 10.0))
     pace.set_files(2)
     pace.set_pages(2)
-    pace.file_started(0.0, 1)
+    pace.file_started(1)
+    pace.work_started(0.0)
 
     assert pace.progress(0.0) == pytest.approx(0.0)
     assert pace.progress(5.0) == pytest.approx(0.25)
 
     pace.file_done(10.0, 1)
-    pace.file_started(10.0, 1)
+    pace.file_started(1)
+    pace.work_started(10.0)
 
     assert pace.progress(10.0) == pytest.approx(0.5)
     assert pace.progress(1000.0) == pytest.approx(0.975)
@@ -251,6 +254,26 @@ def test_the_progress_follows_the_clock_between_two_files() -> None:
     pace.file_done(10.0, 1)
 
     assert pace.progress(20.0) == pytest.approx(1.0)
+
+
+def test_the_clock_of_a_file_starts_with_its_first_real_step() -> None:
+    """
+    Given  one file of 1 page at 10 seconds a page, started at second 0, whose proofreading
+           begins at second 30 (the model was loading) and whose next step begins at second 35
+    When   the progress is asked for before and after the proofreading began
+    Then   it stays at 0 until then, and counts from the first step only
+    """
+    pace = RunPace(estimate=TimeRange(10.0, 10.0))
+    pace.set_files(1)
+    pace.set_pages(1)
+    pace.file_started(1)
+
+    assert pace.progress(29.0) == pytest.approx(0.0)
+
+    pace.work_started(30.0)
+    pace.work_started(35.0)
+
+    assert pace.progress(35.0) == pytest.approx(0.5)
 
 
 def test_the_progress_is_unknown_without_an_estimate() -> None:
@@ -261,7 +284,8 @@ def test_the_progress_is_unknown_without_an_estimate() -> None:
     """
     pace = RunPace()
     pace.set_files(3)
-    pace.file_started(0.0, 1)
+    pace.file_started(1)
+    pace.work_started(0.0)
 
     assert pace.progress(5.0) is None
 

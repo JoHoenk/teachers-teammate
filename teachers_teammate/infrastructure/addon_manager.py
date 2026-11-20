@@ -966,6 +966,11 @@ def inject_packages_dir() -> None:
     importlib.invalidate_caches()
 
 
+def addon_module(addon: str) -> str:
+    """Return the top-level module *addon* provides (``privacy`` → ``spacy``)."""
+    return _ADDON_CHECK_MODULE[addon]
+
+
 def is_addon_importable(addon: str) -> bool:
     """Return True if the top-level module for *addon* can be found by the importer."""
     module = _ADDON_CHECK_MODULE.get(addon, "")

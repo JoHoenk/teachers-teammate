@@ -252,6 +252,7 @@ _GUI_SRCS = [
     "gui/benchmark/composition.py",
     "gui/check/__init__.py",
     "gui/check/_page.py",
+    "gui/check/_flow.py",
     "gui/check/_masking.py",
     "gui/check/_plain_map.py",
     "gui/check/_run_strip.py",

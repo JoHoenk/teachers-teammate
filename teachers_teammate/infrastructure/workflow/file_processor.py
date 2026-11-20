@@ -20,7 +20,12 @@ from ...domain.output_files import (
 )
 from ...domain.performance_estimate import SpeedStep
 from ...domain.proofreading.review import CorrectionReview, fits
-from ...domain.stages import PROGRESS_STAGE_OCR, PROGRESS_STAGE_PREPROCESSING, StageName
+from ...domain.stages import (
+    PROGRESS_STAGE_CORRECTION,
+    PROGRESS_STAGE_OCR,
+    PROGRESS_STAGE_PREPROCESSING,
+    StageName,
+)
 from ...domain.teacher_work import (
     CurrentTexts,
     TranscriptionWork,
@@ -645,6 +650,7 @@ class FileProcessor:
         if self._stopping():
             raise stopped()
         self._reporter.status("       → Running correction...")
+        self._notify_stage(file, PROGRESS_STAGE_CORRECTION)
         text_for_correction, anon_map = anonymized()
 
         # A text that goes out in several pieces cannot be changed across a piece boundary;

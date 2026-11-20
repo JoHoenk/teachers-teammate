@@ -18,6 +18,7 @@ from collections import OrderedDict
 from collections.abc import Callable, Collection
 from dataclasses import dataclass, field, replace
 import hashlib
+import importlib.util
 import re
 import sys
 import threading
@@ -457,6 +458,9 @@ class SpacyAnonymizer(Anonymizer):
         try:
             import spacy  # noqa: PLC0415
         except ImportError as exc:
+            if importlib.util.find_spec("spacy") is not None:
+                # Installed but broken: say what failed, not that it is missing.
+                raise ImportError(f"spacy is installed but cannot be loaded: {exc}") from exc
             print(
                 "ERROR: spacy is not installed. "
                 "Install the privacy extras: pip install 'teachers_teammate[privacy]'",

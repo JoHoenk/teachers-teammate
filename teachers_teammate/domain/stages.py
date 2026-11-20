@@ -12,6 +12,7 @@ STAGE_ORDER: tuple[StageName, ...] = ("ocr", "correction", "evaluation")
 # hence not part of ``StageName`` / ``STAGE_ORDER``).
 PROGRESS_STAGE_PREPROCESSING = "preprocessing"
 PROGRESS_STAGE_OCR = "ocr"
+PROGRESS_STAGE_CORRECTION = "correction"
 
 
 def normalize_stage(stage: str) -> StageName:

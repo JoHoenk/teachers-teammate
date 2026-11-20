@@ -108,7 +108,7 @@ class RunPace:
     _done_pages: list[int] = field(default_factory=list)
     _files_total: int = 0
     _pages_total: int = 0
-    _file_started_at: float | None = None
+    _work_started_at: float | None = None
     _file_pages: int = 1
 
     def set_files(self, files: int) -> None:
@@ -119,16 +119,25 @@ class RunPace:
         """Say how many pages all the files of the run have, when that is known."""
         self._pages_total = max(0, pages)
 
-    def file_started(self, now: float, pages: int = 1) -> None:
-        """Say that a file of *pages* pages began at *now* (a monotonic clock reading)."""
-        self._file_started_at = now
+    def file_started(self, pages: int = 1) -> None:
+        """Say that a file of *pages* pages is next; its time counts from :meth:`work_started`."""
+        self._work_started_at = None
         self._file_pages = max(1, pages)
+
+    def work_started(self, now: float) -> None:
+        """Say that the running file's first real step (preparing, reading, proofreading) began.
+
+        *now* is a monotonic clock reading.  What comes before (cached steps, a model still
+        loading) does not count, so the bar does not run ahead; later steps change nothing.
+        """
+        if self._work_started_at is None:
+            self._work_started_at = now
 
     def file_done(self, seconds: float, pages: int) -> None:
         """Record one finished file: the *seconds* it took and the *pages* it had."""
         self._done_s.append(max(0.0, seconds))
         self._done_pages.append(max(1, pages))
-        self._file_started_at = None
+        self._work_started_at = None
 
     def pages_left(self) -> int:
         """Return how many pages the files that are not done yet have.
@@ -169,9 +178,9 @@ class RunPace:
         The file's own time is held back at ``_FILE_CAP`` of what it is expected to take: a file
         that runs long must not drive the figure to zero before it is over.
         """
-        if self._file_started_at is None:
+        if self._work_started_at is None:
             return 0.0
-        elapsed = max(0.0, now - self._file_started_at)
+        elapsed = max(0.0, now - self._work_started_at)
         return min(elapsed, _FILE_CAP * self._file_pages * per_page_s)
 
     def time_left(self, now: float | None = None) -> TimeRange | None:

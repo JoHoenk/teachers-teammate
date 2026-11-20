@@ -32,6 +32,7 @@ from .._data_flow_summary import (
     PLACE_OWN_SERVER,
     PLACE_THIS_COMPUTER,
     LocationHint,
+    plain_http_note,
     text_note,
 )
 from .._hardware_profile_selector import HardwareProfileSelector
@@ -535,7 +536,8 @@ class AiServiceSection(QWidget):
             self._model.currentText().strip(),
             self._ollama_url,
         )
-        self._where_hint.set_location(location, text_note(location))
+        note = plain_http_note(location, self._ollama_url) or text_note(location)
+        self._where_hint.set_location(location, note)
 
     def _update_same_model_tip(self) -> None:
         """Show the same-model tip for cpu/8gb profiles with differing Ollama models."""

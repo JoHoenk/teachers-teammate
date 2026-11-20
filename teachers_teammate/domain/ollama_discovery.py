@@ -31,6 +31,37 @@ SCAN_PREFIX = 24
 #: Where a teacher downloads Ollama from, when the app offers to open the page.
 OLLAMA_DOWNLOAD_URL = "https://ollama.com/download"
 
+#: The ranges a local network uses: RFC 1918, carrier-grade NAT (Tailscale and the like),
+#: link-local IPv4 and IPv6, IPv6 unique-local and loopback.  Spelled out rather than taken from :meth:`ipaddress.IPv4Address.is_private`,
+#: which also counts the documentation ranges (``203.0.113.0/24``) as private.
+_PRIVATE_NETWORKS = tuple(
+    ipaddress.ip_network(network)
+    for network in (
+        "10.0.0.0/8",
+        "172.16.0.0/12",
+        "192.168.0.0/16",
+        "100.64.0.0/10",
+        "169.254.0.0/16",
+        "127.0.0.0/8",
+        "::1/128",
+        "fc00::/7",
+        "fe80::/10",
+    )
+)
+#: Name suffixes only a local network hands out: mDNS, the router defaults (FRITZ!Box), the
+#: reserved internal ones and the ones an office or school network commonly uses.  A school's own
+#: domain (``ollama.myschool.de``) cannot be told from a public name; its address can.
+_PRIVATE_NAME_SUFFIXES = (
+    ".local",
+    ".lan",
+    ".home.arpa",
+    ".fritz.box",
+    ".intern",
+    ".internal",
+    ".home",
+    ".corp",
+)
+
 
 class ServerKind(StrEnum):
     """Whose computer a found server runs on."""
@@ -224,6 +255,34 @@ def local_candidates(
     return result
 
 
+def is_private_host(host: str) -> bool:
+    """Return whether *host* is an address on a local network rather than on the internet.
+
+    True for the private and link-local ranges of IPv4 and IPv6, for loopback, for the names
+    a local network hands out (``nas.local``, ``nas.lan``, ``nas.home.arpa``) and for a
+    single-label name (``nas``), which no public name server resolves.  False for everything
+    else, including a public address and any other name: the name is not looked up (that would
+    tell a name server where the teacher's server is), so a name under a school's own domain
+    counts as public until the teacher enters its address.
+
+    The one rule for "this address is on a network the teacher controls", used by the privacy
+    classification (:func:`~teachers_teammate.domain.data_location.classify_ollama`).  It is
+    wider than the server search (:func:`scan_targets`), which only asks the ``/24`` of a
+    private IPv4 card, so every server the search finds counts as the teacher's own.
+    """
+    name = host.strip().strip("[]").lower().rstrip(".")
+    if not name:
+        return False
+    name = name.partition("%")[0]  # a zone id (``fe80::1%eth0``) names the card, not the host
+    try:
+        address = ipaddress.ip_address(name)
+    except ValueError:
+        return name.endswith(_PRIVATE_NAME_SUFFIXES) or "." not in name
+    if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped is not None:
+        address = address.ipv4_mapped
+    return any(address in network for network in _PRIVATE_NETWORKS)
+
+
 def scan_targets(address: str, prefix: int = SCAN_PREFIX) -> list[str]:
     """Return the addresses to ask on the network that *address*/*prefix* belongs to.
 
@@ -235,7 +294,9 @@ def scan_targets(address: str, prefix: int = SCAN_PREFIX) -> list[str]:
         own = ipaddress.ip_address(address)
     except ValueError:
         return []
-    if own.version != 4 or not own.is_private or own.is_loopback or own.is_link_local:
+    if own.version != 4 or own.is_loopback or own.is_link_local:
+        return []
+    if not (own.is_private and is_private_host(address)):
         return []
     network = ipaddress.ip_network(f"{address}/{max(prefix, SCAN_PREFIX)}", strict=False)
     return [str(host) for host in network.hosts() if host != own]

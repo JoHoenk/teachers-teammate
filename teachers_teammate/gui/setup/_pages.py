@@ -1036,12 +1036,9 @@ class SummaryPage(SetupPage):
         """Return where *provider* runs in the few words the summary has room for."""
         if provider == "ollama":
             url = self.assistant().answers().ollama_url
-            location = (
-                DataLocation.THIS_COMPUTER
-                if self._context.app_service.ollama.is_local(url)
-                else DataLocation.OTHER_COMPUTER
+            return short_place(
+                self._context.app_service.providers.describe_llm_location(provider, "", url)
             )
-            return short_place(StageLocation(location=location, service="Ollama"))
         info = self._context.app_service.providers.get_provider_info(provider)
         return short_place(
             StageLocation(

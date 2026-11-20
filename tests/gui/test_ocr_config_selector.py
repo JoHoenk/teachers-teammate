@@ -392,22 +392,35 @@ class _LocationAppService(_DummyAppService):
 
 @pytest.mark.gui
 @pytest.mark.parametrize(
-    ("location", "expected"),
+    ("location", "url", "expected"),
     [
-        (StageLocation(DataLocation.THIS_COMPUTER, "Ollama"), "pages never leave it"),
+        (
+            StageLocation(DataLocation.THIS_COMPUTER, "Ollama"),
+            "http://127.0.0.1:11434",
+            "pages never leave it",
+        ),
         (
             StageLocation(DataLocation.OTHER_COMPUTER, "Ollama", "school-server"),
+            "https://school-server:11434",
             "pages are sent there",
+        ),
+        (
+            StageLocation(DataLocation.OTHER_COMPUTER, "Ollama", "school-server"),
+            "http://school-server:11434",
+            "unencrypted (http://)",
         ),
     ],
 )
-def test_selector_says_where_pages_are_read(qtbot, location, expected) -> None:
+def test_selector_says_where_pages_are_read(qtbot, location, url, expected) -> None:
     """
     Given  the selector and a service that reports where the engine runs
     When   the hint is rendered
-    Then   it names the place and what that means for the pages
+    Then   it names the place and what that means for the pages, and says so when the
+           connection to another computer is not encrypted
     """
-    widget = OcrConfigSelector(app_service=services_of(_LocationAppService(location)))
+    widget = OcrConfigSelector(
+        app_service=services_of(_LocationAppService(location)), ollama_url=url
+    )
     qtbot.addWidget(widget)
 
     text = widget._picker._where_hint.text()

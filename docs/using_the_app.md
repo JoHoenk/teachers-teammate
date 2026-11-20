@@ -222,7 +222,7 @@ The dot in front of each step says where it runs:
 | Dot | Meaning |
 |---|---|
 | Green — *On this computer* | Nothing leaves your computer. |
-| Orange — *On another computer* | Ollama on another computer you use. |
+| Orange — *On another computer* | Ollama on another computer in your own network. |
 | Yellow — *Online service · EU · names hidden* | Anonymized text goes to a service in the EU. |
 | Orange — *Online service · outside the EU · names hidden* | Anonymized text goes to a service outside the EU, or one that does not say where. |
 | Red — *Online service · names as written* | The text is sent with the names in it. |
@@ -230,13 +230,20 @@ The dot in front of each step says where it runs:
 "Outside the EU" includes the United Kingdom, Switzerland and Norway. The box at the top names the
 least private step and suggests what helps, for example turning on **Remove personal info**.
 
+An Ollama address that is neither this computer nor in your own network (a public address or a
+name the app cannot tell is private; see the Advanced guide) counts as an online service, not as
+another computer, and as one outside the EU, since the app cannot know where it runs. Plain
+`http://` to another computer is not encrypted; the app says so next to the engine or service you
+pick.
+
 Before a run that sends text away, the app asks you to confirm. If you tick **Don't ask again for
 these settings**, the question returns when the setup changes. **Settings → Privacy…** lists these
 answers and lets you take them back.
 
 **Text recognition always stays on computers you control.** A page has to be read whole — with
 the student's name and the grade — before any name can be found, so online services are not
-offered for reading, and Ollama *cloud* models are refused.
+offered for reading, Ollama *cloud* models are refused, and so is an Ollama server outside your
+own network.
 
 ### Removing personal information
 

@@ -21,6 +21,15 @@ enter its address under **Settings → This computer**, for example:
 http://192.168.1.50:11434
 ```
 
+A server on your own network counts as another computer you control: an address in a private
+range (`192.168.…`, `10.…`, `172.16.…`–`172.31.…`, Tailscale's `100.64.…`), a name ending in
+`.local`, `.lan`, `.fritz.box`, `.intern`, `.internal`, `.home` or `.corp`, or a name without a
+dot. Any other address counts as an online service, and the app refuses to read pages there and
+asks before it sends text. The app does not look names up, so a name under your school's own
+domain (`ollama.myschool.de`) counts as online: enter the server's address instead. It shows the
+server's name in the tooltip of the place. Plain `http://` to another computer or server is not
+encrypted; the app says so next to the engine or service you pick, not as an error.
+
 **Find…** on that page looks for a server:
 
 - **This computer** — when the saved address does not answer, the app looks here too and offers a

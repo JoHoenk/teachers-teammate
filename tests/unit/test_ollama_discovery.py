@@ -16,6 +16,7 @@ from teachers_teammate.domain.ollama_discovery import (
     ServerKind,
     classify_host,
     default_gateway,
+    is_private_host,
     local_candidates,
     nameservers,
     ollama_host_url,
@@ -106,6 +107,64 @@ def test_local_candidates_name_each_url_once_in_order() -> None:
     ]
 
 
+@pytest.mark.parametrize(
+    "host",
+    [
+        "192.168.1.5",
+        "10.0.0.2",
+        "172.16.4.1",
+        "169.254.3.4",
+        "127.0.0.1",
+        "::1",
+        "fd00::1",
+        "fe80::1",
+        "nas.local",
+        "nas.lan",
+        "nas.home.arpa",
+        "nas.fritz.box",
+        "ollama.schule.intern",
+        "host.docker.internal",
+        "ollama.corp",
+        "nas",
+        "NAS.local.",
+        "[fd00::1]",
+        "100.101.1.2",
+        "::ffff:192.168.1.5",
+        "fe80::1%eth0",
+    ],
+)
+def test_private_hosts_are_recognised(host: str) -> None:
+    """
+    Given  an address or name a local network uses
+    When   is_private_host() is asked
+    Then   it is private, so a server there is one the teacher controls
+    """
+    assert is_private_host(host) is True
+
+
+@pytest.mark.parametrize(
+    "host",
+    [
+        "203.0.113.7",
+        "8.8.8.8",
+        "192.0.2.10",
+        "100.128.0.1",
+        "::ffff:8.8.8.8",
+        "ollama.example.com",
+        "ollama.myschool.de",
+        "api.ollama.com",
+        "",
+    ],
+)
+def test_public_hosts_are_not_private(host: str) -> None:
+    """
+    Given  an address on the internet, a name that resolves there, or nothing
+    When   is_private_host() is asked
+    Then   it is not private, so the data would cross the internet
+    """
+    assert is_private_host(host) is False
+
+
 def test_scan_targets_stay_within_one_private_slash_24_without_the_own_address() -> None:
     """
     Given  a /16 card, a /28 card, a public address and a loopback
@@ -119,6 +178,8 @@ def test_scan_targets_stay_within_one_private_slash_24_without_the_own_address()
     assert wide[0] == "192.168.7.1" and wide[-1] == "192.168.7.254"
     assert len(scan_targets("10.0.0.1", 28)) == 13
     assert scan_targets("8.8.8.8", 24) == []
+    assert scan_targets("100.101.1.2", 24) == []  # private for the privacy rule, not a card's /24
+    assert scan_targets("192.0.2.10", 24) == []  # a documentation range is no network to ask
     assert scan_targets("127.0.0.1", 8) == []
     assert scan_targets("not an address", 24) == []
 

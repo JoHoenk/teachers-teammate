@@ -48,3 +48,12 @@ def spacy_missing(detail: str, *, installed_app: bool) -> str:
 def spacy_model_missing(detail: str) -> str:
     """Explain that the name detection model is not installed."""
     return f"spaCy model missing: {detail}\n\nRun: python -m spacy download <model>"
+
+
+def unencrypted_note(host: str) -> str:
+    """Return the note for data sent to another computer over plain ``http://``.
+
+    A note, not a refusal: a school server often has no certificate, so the teacher decides.
+    What it says is that the connection is not encrypted.
+    """
+    return f"unencrypted (http://) — anyone on the network can read what goes to {host}"

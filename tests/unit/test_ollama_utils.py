@@ -985,6 +985,37 @@ def test_pull_no_callback(monkeypatch) -> None:
 # ── is_local_ollama_url ────────────────────────────────────────────────────
 
 
+@pytest.mark.parametrize(
+    ("url", "this_computer", "private"),
+    [
+        ("", True, True),
+        ("http://localhost:11434", True, True),
+        ("http://172.28.0.1:11434", True, True),  # the Windows computer behind WSL
+        ("http://192.168.1.5:11434", False, True),
+        ("nas.fritz.box:11434", False, True),
+        ("http://203.0.113.7:11434", False, False),
+        ("https://ollama.example.com", False, False),
+    ],
+)
+def test_ollama_server_says_where_the_address_is(
+    url: str, this_computer: bool, private: bool, monkeypatch
+) -> None:
+    """
+    Given  an Ollama URL (and a computer that knows itself under no other name, behind a WSL
+           session whose Windows host is 172.28.0.1)
+    When   ollama_server() reads it
+    Then   it names the host, and says whether it is this computer and whether it is on a
+           local network, the one reading every privacy rule starts from
+    """
+    monkeypatch.setattr(ollama_utils, "_own_host_names", lambda: frozenset())
+    monkeypatch.setattr(ollama_utils, "windows_host_addresses", lambda: ("172.28.0.1",))
+
+    server = ollama_utils.ollama_server(url)
+
+    assert server.host == ollama_utils.ollama_host(url)
+    assert (server.is_this_computer, server.is_private) == (this_computer, private)
+
+
 @pytest.mark.use_case("Hardware_Profile_Override")
 @pytest.mark.parametrize(
     ("url", "expected"),

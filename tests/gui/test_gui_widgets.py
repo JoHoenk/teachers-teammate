@@ -934,6 +934,49 @@ def test_data_flow_summary_shows_an_anonymized_eu_service_in_yellow(qtbot) -> No
 
 
 @pytest.mark.gui
+@pytest.mark.parametrize(
+    ("location", "url", "warned"),
+    [
+        ("this", "http://127.0.0.1:11434", False),
+        ("other", "http://school-server:11434", True),
+        ("other", "https://school-server:11434", False),
+        ("other", "HTTPS://school-server:11434", False),
+        ("internet", "http://203.0.113.7:11434", True),
+        ("internet", "https://203.0.113.7:11434", False),
+        ("vendor", "http://127.0.0.1:11434", False),
+    ],
+)
+def test_plain_http_note_warns_for_a_server_of_the_teachers_choosing(
+    location: str, url: str, warned: bool
+) -> None:
+    """
+    Given  a step on this computer, on another computer, on an Ollama server on the internet,
+           or at a vendor, reached through an http:// or https:// address
+    When   the note for an unencrypted connection is asked
+    Then   another computer and a server on the internet are warned about over http:// only,
+           and this computer and a vendor (whose address the teacher did not choose) never
+    """
+    from teachers_teammate.domain.data_location import (  # noqa: PLC0415
+        DataLocation,
+        StageLocation,
+    )
+    from teachers_teammate.gui._data_flow_summary import plain_http_note  # noqa: PLC0415
+
+    places = {
+        "this": StageLocation(DataLocation.THIS_COMPUTER, "Ollama"),
+        "other": StageLocation(DataLocation.OTHER_COMPUTER, "Ollama", host="school-server"),
+        "internet": StageLocation(DataLocation.ONLINE, "Ollama", host="203.0.113.7"),
+        "vendor": StageLocation(DataLocation.ONLINE, "OpenAI"),
+    }
+
+    note = plain_http_note(places[location], url)
+
+    assert bool(note) is warned
+    if warned:
+        assert "unencrypted" in note and places[location].host in note
+
+
+@pytest.mark.gui
 def test_short_place_uses_few_words_for_every_kind_of_place() -> None:
     """
     Given  steps on this computer, on a school server, at an EU service, and at a service

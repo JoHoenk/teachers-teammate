@@ -32,7 +32,7 @@ from ..domain.data_location import (
     online_ocr_reason,
 )
 from ..infrastructure.llm_factory import get_provider_info
-from ..infrastructure.ollama_utils import is_local_ollama_url, ollama_host
+from ..infrastructure.ollama_utils import ollama_server
 
 ProviderInfo = Callable[[str], Mapping[str, Any]]
 #: Answers where a provider processes the data: ``"eu"``, ``"non_eu"`` or ``"unknown"``.
@@ -40,16 +40,25 @@ ProviderRegion = Callable[[str], str]
 
 
 def _ollama_location(model: str, ollama_url: str) -> StageLocation:
+    server = ollama_server(ollama_url)
     return classify_ollama(
         model,
-        url_is_local=is_local_ollama_url(ollama_url, include_wsl_host=True),
-        host=ollama_host(ollama_url),
+        url_is_local=server.is_this_computer,
+        host=server.host,
+        host_is_private=server.is_private,
     )
 
 
 def ocr_refusal(engine: str, model: str, ollama_url: str) -> str:
     """Return why text recognition with these settings is refused, or ``""`` when allowed."""
-    return online_ocr_reason(engine, model, ollama_host(ollama_url))
+    server = ollama_server(ollama_url)
+    return online_ocr_reason(
+        engine,
+        model,
+        server.host,
+        url_is_local=server.is_this_computer,
+        host_is_private=server.is_private,
+    )
 
 
 def ocr_location(engine: str, model: str, ollama_url: str) -> StageLocation:
@@ -102,11 +111,13 @@ def llm_location(
     region = data_region_of(provider, info, provider_region)
     country = str(info.get("vendor_country") or "")
     self_hosted = bool(info.get("self_hosted"))
+    server = ollama_server(ollama_url)
     where = llm_stage_location(
         self_hosted=self_hosted,
         model=model,
-        url_is_local=is_local_ollama_url(ollama_url, include_wsl_host=True),
-        host=ollama_host(ollama_url),
+        url_is_local=server.is_this_computer,
+        host=server.host,
+        host_is_private=server.is_private,
     )
     if not self_hosted:
         # The Ollama server settings say nothing about a vendor's own service.

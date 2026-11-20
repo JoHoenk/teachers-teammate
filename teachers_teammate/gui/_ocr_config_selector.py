@@ -51,7 +51,7 @@ from ..domain.setting_values import PreprocessMethod
 from ..settings_schema import PREPROCESS_METHODS, normalize_preprocess_method
 from . import _user_text as txt
 from ._collapsible_section import CollapsibleSection
-from ._data_flow_summary import LocationHint
+from ._data_flow_summary import LocationHint, plain_http_note
 from ._hardware_profile_selector import HardwareProfileSelector
 from ._model_fetch import (
     _STATUS_ERROR,
@@ -299,7 +299,7 @@ class OcrModelPicker(QWidget):
         elif location.location is DataLocation.THIS_COMPUTER:
             note = "pages never leave it"
         else:
-            note = "pages are sent there"
+            note = plain_http_note(location, self._ollama_url) or "pages are sent there"
         self._where_hint.set_location(location, note, details)
 
     def _auto_fetch(self) -> None:

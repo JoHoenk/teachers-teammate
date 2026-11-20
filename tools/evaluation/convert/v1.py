@@ -72,24 +72,53 @@ IN_SCOPE: tuple[str, ...] = (
     "results-correct-only",
     "results-exchange",
     "results-prompt",
+    "results-prompt-heldout",
     "results-probe-penalty",
     "results-probe-repeat",
     "results-text",
     "results-text-isolated",
 )
-"""The folders the conversion covers: 10,664 rows, every run of the main test set that is a run."""
+"""The folders the conversion covers: 10,664 rows of the main test set, and the held-out set.
+
+``results-prompt-heldout`` is converted in a second call, with the held-out set's manifest: a run
+whose test set was not converted is skipped with that reason, so the first call leaves it alone.
+"""
 
 OUT_OF_SCOPE: dict[str, str] = {
-    "results": "the old store, superseded by the folders above",
-    "results-v1": "the old store, superseded by the folders above",
+    "results": "the oldest store, superseded by the folders above",
+    "results-v1": "the oldest store, superseded by the folders above",
+    "results-v1-server": "review mode B, which no in-scope run uses",
+    "results-w5": "review mode B on another test set",
+    "export-w5": "the old export format, not a run",
     "results-r": "POC rows without a header",
     "results-r-sweep": "POC rows without a header",
+    "poc": "POC data, kept outside both repositories",
+    "gate1": "gate 1 answers: no fingerprint of them is in protocol.json",
+    "gate1-2026-11": "gate 1 answers, as above",
+    "gate1-2026-11-v3": "gate 1 answers, as above",
+    "gate1-2026-11-v4": "gate 1 answers, as above",
+    "gate1-laptop": "gate 1 answers, as above",
+    "gate1-laptop-quiet": "gate 1 answers, as above",
+    "gate1-share": "gate 1 answers, as above",
     "results-text-isolated-invalid": "an invalid run, kept as evidence",
-    "results-w5": "review mode B on another test set",
-    "results-v1-server": "review mode B, which no in-scope run uses",
-    "results-prompt-heldout": "the held-out set; convert it with its own test set",
+    "scratch-correct-only": "a scratch run",
+    "smoke-2026-11-09": "a smoke check, not a run",
+    "smoke-2026-11-10": "a smoke check, not a run",
+    "smoke-exchange": "a smoke check, not a run",
+    "smoke-exchange-out": "a smoke check, not a run",
+    "backup-before-restamp-20261113": "a backup of an earlier header rewrite",
+    "backup-before-restamp-v3-20261115": "a backup of an earlier header rewrite",
+    "backup-before-restamp-v4-20261116": "a backup of an earlier header rewrite",
+    "reports": "generated reports, rebuilt from the runs",
+    "logs": "run logs",
+    "extra": "loose files, not a run",
+    "set": "the oldest test set, superseded by set-2026-12",
+    "set-labelled": "an old test set, superseded by set-2026-12",
 }
-"""The folders the conversion leaves alone, and why, so a report can say it rather than omit them."""
+"""The folders the conversion leaves alone, and why, so a report can say it rather than omit them.
+
+The conversion reads the folders of :data:`IN_SCOPE` and nothing else.
+"""
 
 HEADER_SUFFIX = ".header.json"
 """What the old header file is called after the run's name."""
@@ -369,18 +398,19 @@ def _check_text_hashes(manifest_path: Path, item: ManifestItem, record: TestReco
 # ── the old run files ───────────────────────────────────────────────────────
 
 
-def machine_evidence(headers: Iterable[Mapping[str, Any]]) -> dict[str, tuple[str, str]]:
-    """Return what identifies each machine: its server version and its sampler's hash.
+def machine_evidence(headers: Iterable[Mapping[str, Any]]) -> dict[str, frozenset[tuple[str, str]]]:
+    """Return what identifies each machine: every server version and sampler hash it was seen with.
 
     A run whose ``machine`` is empty can only be given one when its evidence matches a machine that
-    other runs name, which is what this table is for.
+    other runs name, which is what this table is for.  A machine is seen with more than one piece of
+    evidence: the older runs recorded no sampler, so the same machine appears with and without one.
     """
-    found: dict[str, tuple[str, str]] = {}
+    found: dict[str, set[tuple[str, str]]] = {}
     for header in headers:
         machine = str(header.get("machine", ""))
         if machine:
-            found.setdefault(machine, _evidence_of(header))
-    return found
+            found.setdefault(machine, set()).add(_evidence_of(header))
+    return {machine: frozenset(seen) for machine, seen in found.items()}
 
 
 def _evidence_of(header: Mapping[str, Any]) -> tuple[str, str]:
@@ -396,7 +426,7 @@ def convert_run(
     *,
     instructions: InstructionsHash | None = None,
     assume_machine: str = "",
-    evidence: Mapping[str, tuple[str, str]] | None = None,
+    evidence: Mapping[str, frozenset[tuple[str, str]]] | None = None,
     old_sha256: str = "",
 ) -> ConvertedRun:
     """Return the old run of *header_path* and *rows_path* as one new run file.
@@ -484,7 +514,7 @@ def _header_of(
     testset: str,
     instructions: InstructionsHash | None,
     assume_machine: str,
-    evidence: Mapping[str, tuple[str, str]],
+    evidence: Mapping[str, frozenset[tuple[str, str]]],
     notes: list[str],
 ) -> RunHeader:
     """Return the header line of a converted run, from the old header's first session."""
@@ -571,16 +601,16 @@ def _instructions_of(
 def _environment_of(
     first: Mapping[str, Any],
     assume_machine: str,
-    evidence: Mapping[str, tuple[str, str]],
+    evidence: Mapping[str, frozenset[tuple[str, str]]],
     notes: list[str],
 ) -> Environment:
     """Return where a run ran, filling an empty machine only when the evidence agrees."""
     machine = str(first.get("machine", ""))
     source = ""
     if not machine and assume_machine:
-        wanted = evidence.get(assume_machine)
+        wanted = evidence.get(assume_machine, frozenset())
         mine = _evidence_of(first)
-        if wanted is not None and wanted == mine:
+        if mine in wanted:
             machine = assume_machine
             source = f"assumed by convert_v1: ollama {mine[0]}, sampler {mine[1][:8]}"
             notes.append(f"the machine {assume_machine} was assumed from the evidence")
@@ -793,7 +823,7 @@ def convert(
         planned_testsets.append((testset, result))
         converted[testset] = result.records
         old_hashes[testset] = result.old_sha256
-    evidence = machine_evidence(_headers_of(old_root, folders))
+    evidence = machine_evidence(_headers_of(old_root, _evidence_folders(folders)))
     planned: list[ConvertedRun] = []
     skipped: list[tuple[str, str]] = []
     for folder in folders:
@@ -888,6 +918,15 @@ def _old_name_of(testset: str) -> str:
             return old
     known = ", ".join(sorted(TESTSET_NAMES.values()))
     raise KeyError(f"no old folder for the test set {testset!r}; the converter knows: {known}")
+
+
+def _evidence_folders(folders: Sequence[str]) -> tuple[str, ...]:
+    """Return the folders the machine evidence is read from: the ones named, and every in-scope one.
+
+    A folder converted on its own still needs the evidence of the runs that name a machine, so the
+    table is never built from the named folders alone.
+    """
+    return tuple(dict.fromkeys((*folders, *IN_SCOPE)))
 
 
 def _headers_of(old_root: Path, folders: Sequence[str]) -> list[dict[str, Any]]:

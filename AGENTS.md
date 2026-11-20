@@ -89,6 +89,15 @@ or `docs/development.md`.
   bump `AUTO_VERSION` and keep `tests/unit/test_preprocessing_auto_golden.py` green.
 - Model temperatures only through `request_profile()` / `review_temperature()`.
 
+**Evaluation records**
+- Every record — runs, test sets with their texts, marks, machines, model sizes, gate records — lives
+  in the private repository `teachers-teammate-evals`, which is what `--store` defaults to. Never in
+  this one: `store_path()` refuses a store inside this tree and `tests/tools/test_no_eval_records.py`
+  fails on a run file, a manifest, a size record or a marks file here. The texts come from corpora
+  that may not be passed to a third party, so that repository stays private.
+- A gate record is a verdict, the runs it rests on and the command that reproduces the figures — no
+  figure. A number copied into a record goes stale the first time a scorer changes.
+
 **Prompts**
 - The system prompts in `domain/correction_prompts.py` are fixed: never editable, never with
   output-format rules. A step ① variant's text never changes once a measurement used it

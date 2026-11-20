@@ -2,10 +2,9 @@
 
 :class:`~..metrics.quality.EditScore` knows the metrics of one text; a report needs them over many
 texts, and it needs one answer to "nothing was scored here".  This module is that arithmetic, pure
-and shared by every table and by the publisher, so the two cannot drift apart.  It also names what a
-report needs from one scored text (:class:`ItemFacts`), which is what lets the same table be built
-from a run file and from a redacted export.  A table that shows the text itself asks for
-:class:`TextItem`, which only a run file can give: an export holds no text.
+and shared by every table, so no two tables can drift apart.  It also names what a report needs from
+one scored text (:class:`ItemFacts`), and what a table that shows the text itself needs
+(:class:`TextItem`).
 
 A share whose denominator is zero is ``None`` and not ``0.0``: a language whose reference has no
 edit and whose model made none has no score, and counting it as 0.00 would drag a mean down as if
@@ -48,7 +47,7 @@ class CountsLike(Protocol):
 
 @runtime_checkable
 class ItemFacts(Protocol):
-    """What a report needs from one scored text, whether it comes from a run file or an export."""
+    """What a report needs from one scored text."""
 
     @property
     def header(self) -> RunHeader:
@@ -169,12 +168,7 @@ class ItemFacts(Protocol):
 
 @runtime_checkable
 class TextItem(ItemFacts, Protocol):
-    """A scored text whose own text is at hand: what a table that shows the text needs.
-
-    An export holds no text, so a table typed :class:`TextItem` cannot be built from one.  That is
-    the whole difference between the two sources, and it is a type rather than a check in a command
-    line.
-    """
+    """A scored text whose own text is at hand: what a table that shows the text needs."""
 
     @property
     def output(self) -> str:

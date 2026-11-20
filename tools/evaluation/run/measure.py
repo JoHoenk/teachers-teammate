@@ -5,7 +5,7 @@ Everything that touches a machine lives here, behind seams a test can replace: a
 the app sends is the request that is measured), a probe of the server's HTTP interface, and a
 sampler of the graphics card that runs a command on this machine or over SSH.
 
-Protocol of one measured run (see ``evaluations/proofreading/FORMAT.md``):
+Protocol of one measured run (see ``evaluations/FORMAT.md``):
 
 1. optionally unload every model and check that the server is idle (``isolate``);
 2. start the sampler and read the idle graphics memory;

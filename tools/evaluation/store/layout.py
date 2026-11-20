@@ -1,4 +1,4 @@
-"""Where the new store keeps its files, and what a run file is called.
+"""Where the store keeps its files, and what a run file is called.
 
 The store is one directory with three parts::
 
@@ -12,13 +12,8 @@ not part of the format: a run file names its test set in its header, and its own
 derived from the axes, so nothing reads the folder back.  Keeping it makes the conversion
 checkable per folder and leaves the old folders recognisable beside the new ones.
 
-The committed export has no folders: :func:`~..publish.export.export` writes
-``<out>/runs/<name>.run.jsonl``, because a local folder name means nothing in the repository and
-the name is unique by run key.  So :func:`run_path` is called without a folder there, and
-:func:`~..report.load.load_export` reads one level only.
-
-The old store (``~/gec-testset/results-*``, ``set-2026-12``) stays untouched as the backup until
-the acceptance tests pass; this module only ever names paths below the new root.
+The store is the root of the private repository ``teachers-teammate-evals``, so it is found by the
+``testsets/`` directory it holds and not by its name: a clone can be called anything.
 """
 
 from __future__ import annotations
@@ -26,13 +21,13 @@ from __future__ import annotations
 from collections.abc import Iterable
 from pathlib import Path
 
-STORE_DIR = "store"
-"""The directory of the new store, below the workspace the tools are pointed at."""
-
 TESTSETS_DIR = "testsets"
 RUNS_DIR = "runs"
 MARKS_DIR = "marks"
 """The three parts of the store."""
+
+CACHE_DIR = "cache"
+"""Where the score cache lives, below the store root: disposable, and git-ignored there."""
 
 MANIFEST_NAME = "manifest.json"
 """What pins a test set: its id, its hashes and one entry per text, without holding text."""
@@ -55,9 +50,14 @@ def store_root(path: Path) -> Path:
     """
     resolved = path.expanduser()
     for parent in (resolved, *resolved.parents):
-        if parent.name == STORE_DIR:
+        if (parent / TESTSETS_DIR).is_dir():
             return parent
     return resolved
+
+
+def cache_dir(root: Path) -> Path:
+    """Return the store's score cache, which a report may write and delete as it likes."""
+    return root / CACHE_DIR
 
 
 def testset_dir(root: Path, testset: str) -> Path:
@@ -159,14 +159,15 @@ def missing(root: Path, names: Iterable[str]) -> list[str]:
 
 __all__ = [
     "ACCEPTED_NAME",
+    "CACHE_DIR",
     "MANIFEST_NAME",
     "MARKS_DIR",
     "MARKS_SEPARATOR",
     "RUNS_DIR",
     "RUN_SUFFIX",
-    "STORE_DIR",
     "TESTSETS_DIR",
     "accepted_path",
+    "cache_dir",
     "languages_of",
     "manifest_path",
     "marker_of",

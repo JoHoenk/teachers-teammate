@@ -437,12 +437,12 @@ def test_no_module_of_the_run_layer_reaches_a_layer_above_it(name) -> None:
     """
     Given  every module of ``tools.evaluation.run``
     When   its imports are read
-    Then   it imports neither the report, nor the publisher, nor a command line, so the layer
-           graph holds and no cycle can form
+    Then   it imports neither the report, nor a check, nor a command line, so the layer graph
+           holds and no cycle can form
     """
     found = _imported_modules(importlib.import_module(f"tools.evaluation.run.{name}"))
 
-    for restricted in ("report", "publish", "checks", "evaluate", "report_cli"):
+    for restricted in ("report", "checks", "evaluate", "report_cli"):
         assert not any(imported.split(".")[-1] == restricted for imported in found), (
             name,
             restricted,

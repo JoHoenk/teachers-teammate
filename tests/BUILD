@@ -1270,14 +1270,13 @@ py_test(
 )
 
 # The converter: the old folders read as they are.  The unit tests build a small old store; the
-# acceptance tests run over the real folders and are skipped unless GEC_RESULTS names them.  The
-# committed manifest is data because the acceptance tests compare the converted sets against it.
+# acceptance tests run over the real folders and are skipped unless GEC_RESULTS names them and
+# GEC_EVALS the private store that holds the manifests.
 py_test(
     name = "test_evaluation_convert_v1",
     size = "small",
     srcs = _COMMON_SRCS + ["tools/test_evaluation_convert_v1.py"],
     args = ["tools/test_evaluation_convert_v1.py"],
-    data = ["//evaluations/proofreading:all"],
     main = "run_test.py",
     deps = _COMMON_DEPS + _DOMAIN_LIB + _FORMAT_DEPS + [
         "//tools/evaluation:convert",
@@ -1357,22 +1356,6 @@ py_test(
     ],
 )
 
-# The committed runs: every one validates in format mode without the store, and ``INDEX.md`` is the
-# one the run files give.  The tree is a data dependency, so the test sees it in the sandbox.
-py_test(
-    name = "test_evaluation_committed",
-    size = "small",
-    srcs = _COMMON_SRCS + ["tools/test_evaluation_committed.py"],
-    args = ["tools/test_evaluation_committed.py"],
-    data = ["//evaluations/proofreading:all"],
-    main = "run_test.py",
-    deps = _COMMON_DEPS + [
-        "//tools/evaluation:core",
-        "//tools/evaluation:publish",
-        "//tools/evaluation:store",
-    ],
-)
-
 # The four command lines, one block per tool: the temperature a gate reads, the series a command
 # chooses, the options a command refuses before printing, and what ``validate`` says with its exit
 # code.  The store is built in the test, so no file on disk is read.
@@ -1384,9 +1367,10 @@ py_test(
     main = "run_test.py",
     deps = _COMMON_DEPS + [
         "//tools:evaluate",
-        "//tools:publish",
+        "//tools:prepare_gec_testset",
         "//tools:report",
         "//tools:store",
+        "//tools:verify_model_catalog",
         "//tools/evaluation:core",
         "//tools/evaluation:metrics",
         "//tools/evaluation:run",
@@ -1408,24 +1392,6 @@ py_test(
         "//tools/evaluation:report",
         "//tools/evaluation:store",
         "//tools/evaluation:viewer",
-    ],
-)
-
-# The redacted export and the index: the layout an export writes, its own manifest, the copied
-# manifest that stays byte for byte, the refusal of a second export of one run, the export read back
-# as a report, and the key hash a marker's accepted marks move.  The store is built in the test.
-py_test(
-    name = "test_evaluation_publish",
-    size = "small",
-    srcs = _COMMON_SRCS + ["tools/test_evaluation_publish.py"],
-    args = ["tools/test_evaluation_publish.py"],
-    main = "run_test.py",
-    deps = _COMMON_DEPS + [
-        "//tools/evaluation:core",
-        "//tools/evaluation:metrics",
-        "//tools/evaluation:publish",
-        "//tools/evaluation:report",
-        "//tools/evaluation:store",
     ],
 )
 
@@ -1538,8 +1504,8 @@ py_test(
 )
 
 # The path a run walks, end to end: a scripted corrector writes a run file, the report scores it,
-# ``compare`` and ``gate`` read it, the export commits it and the check passes it.  The store is
-# built in the test and no request leaves it.
+# ``compare`` and ``gate`` read it and the check passes it.  The store is built in the test and no
+# request leaves it.
 py_test(
     name = "test_evaluation_workflow",
     size = "small",
@@ -1549,7 +1515,6 @@ py_test(
     deps = _COMMON_DEPS + _FORMAT_DEPS + [
         "//tools/evaluation:core",
         "//tools/evaluation:metrics",
-        "//tools/evaluation:publish",
         "//tools/evaluation:report",
         "//tools/evaluation:run",
         "//tools/evaluation:store",
@@ -1766,11 +1731,29 @@ py_test(
         "//tools:extract_test_specs",
         "//tools:ocr_page_tokens",
         "//tools:prepare_gec_testset",
-        "//tools:publish",
         "//tools:report",
         "//tools:store",
         "//tools:verify_model_catalog",
         "//tools/evaluation:gpu_agent",
+    ],
+    main = "run_test.py",
+    deps = _COMMON_DEPS,
+)
+
+# The records live in a repository of their own: no run file, manifest, size record, machine or
+# marks file is in this one, because they hold the corpora's text.
+py_test(
+    name = "test_no_eval_records",
+    size = "small",
+    srcs = _COMMON_SRCS + ["tools/test_no_eval_records.py"],
+    args = ["tools/test_no_eval_records.py"],
+    data = [
+        ":all_sources",
+        "//:AGENTS.md",
+        "//docs:markdown",
+        "//evaluations:records",
+        "//teachers_teammate:all_sources",
+        "//tools:all_sources",
     ],
     main = "run_test.py",
     deps = _COMMON_DEPS,
@@ -1787,7 +1770,6 @@ py_test(
         "//:AGENTS.md",
         "//docs:markdown",
         "//evaluations:records",
-        "//evaluations/proofreading:all",
         "//teachers_teammate:all_sources",
         "//tools:all_sources",
     ],
@@ -1801,6 +1783,7 @@ test_suite(
         ":test_evaluation_app_corrector",
         ":test_evaluation_layers",
         ":test_evaluation_shared_names",
+        ":test_no_eval_records",
         ":test_no_plan_references",
         ":test_no_retired_engines",
         ":test_no_sentence_review_in_the_app",
@@ -2611,7 +2594,6 @@ test_suite(
         ":test_evaluation_prepare_testset",
         ":test_evaluation_progress",
         ":test_evaluation_protocol",
-        ":test_evaluation_publish",
         ":test_evaluation_report",
         ":test_evaluation_report_tables",
         ":test_evaluation_run_log",

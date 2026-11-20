@@ -1,8 +1,9 @@
 """Checking a store before anything reads it: the test sets, the run files and the marks.
 
 Validation is a layer of its own because the three kinds of file fail in different ways and a
-report that silently reads a broken one is worse than no report.  The checks are the ones the
-format promises:
+report that silently reads a broken one is worse than no report.  :func:`check_store` walks a whole
+store and says what each file is; the ``problems_of_*`` functions are the rules it applies.  The
+checks are the ones the format promises:
 
 * a test set's ids are unique, its labels are still edits of its own reference, and its spans lie on
   token boundaries — a label whose edit moved (a tokenizer or differ change) is **listed**, never
@@ -20,10 +21,13 @@ to refuse or to report.
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping, Sequence
+from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from ..core import protocol_table
 from ..core.constants import OLLAMA, TextKind
+from ..core.formats import FormatError, read_jsonl
 from ..core.hashing import sha256_text
 from ..core.manifest import Manifest
 from ..core.records import (
@@ -35,10 +39,12 @@ from ..core.records import (
     RunHeader,
     TestRecord,
     question_sha256,
+    read_run_file,
 )
 from ..metrics.offsets import char_to_token
 from ..metrics.quality import char_edits, edits
-from .redacted import RedactedAnswer
+from . import layout, reader
+from . import marks as marks_module
 
 KINDS: tuple[str, ...] = (TextKind.ERRORS, TextKind.CORRECT)
 """What a test record can be: a text with mistakes, or one that is already correct."""
@@ -148,15 +154,11 @@ def _manifest_problems(records: Sequence[TestRecord], manifest: Manifest) -> lis
 
 def problems_of_run(
     header: RunHeader,
-    answers: Iterable[Answer | RedactedAnswer],
+    answers: Iterable[Answer],
     records_by_id: Mapping[str, TestRecord],
     table: Mapping[str, Any] | None = None,
 ) -> list[str]:
     """Return what is wrong with one run file against the test set it names.
-
-    The header and the answers are taken apart because a committed run file holds the same two
-    things under another wrapper: its header carries the two facts its numbers need, and its
-    answers hold the scores instead of the model's output.
 
     Without the set's records only the format is checked: an answer's id and text hash can only be
     compared with texts the caller has.  :func:`notes_of_run` says what was left out.
@@ -330,10 +332,134 @@ def _refuse(problems: Sequence[str], what: str) -> None:
         raise ValidationError(f"{what} is not valid: {shown}{more}")
 
 
+# ── the whole store ─────────────────────────────────────────────────────────
+
+
+@dataclass(frozen=True)
+class Checked:
+    """One file of the store, and what checking it found."""
+
+    name: str
+    problems: tuple[str, ...] = ()
+    counted: str = ""
+    """What was checked, in words: ``12 texts``, ``40 answers``, ``7 marks``."""
+    notes: tuple[str, ...] = ()
+    """What the check could not look at, so a reader knows what was not checked."""
+
+    @property
+    def ok(self) -> bool:
+        """Whether the file passed every check."""
+        return not self.problems
+
+
+def check_store(root: Path) -> list[Checked]:
+    """Return what checking every file of the store at *root* found.
+
+    The corpora are not read here: a caller that named them adds the five-word rule and the hashes
+    against the real text, which is :mod:`..input`'s work and not this layer's.
+    """
+    found: list[Checked] = []
+    for name in layout.testsets(root):
+        found.append(_check_testset(root, name))
+    for stored in reader.read_runs(root):
+        found.append(_check_run(stored, root))
+    for path in layout.marks_files(root):
+        found.append(_check_marks(path, root))
+    return found
+
+
+def check_files(paths: Sequence[Path], root: Path) -> list[Checked]:
+    """Return what checking the run files *paths* found, against the store at *root*."""
+    return [_check_file(path, root) for path in paths]
+
+
+def _check_testset(root: Path, name: str) -> Checked:
+    """Return what checking one test set of the store found."""
+    try:
+        records = reader.read_testset(root, name)
+        manifest = reader.read_manifest(root, name)
+    except (FormatError, OSError) as error:
+        return Checked(name=name, problems=(str(error),))
+    return Checked(
+        name=name,
+        problems=tuple(problems_of_testset(records, manifest)),
+        counted=f"{len(records)} texts",
+    )
+
+
+def _check_run(stored: reader.StoredRun, root: Path) -> Checked:
+    """Return what checking one run of the store found, against its test set."""
+    name = stored.run.header.input.testset
+    try:
+        records = reader.read_testset_by_id(root, name)
+    except (FormatError, OSError) as error:
+        return Checked(name=stored.name, problems=(str(error),))
+    return Checked(
+        name=stored.name,
+        problems=tuple(problems_of_run(stored.run.header, stored.run.answers, records)),
+        counted=f"{len(stored.run.answers)} answers",
+        notes=tuple(notes_of_run(name, records)),
+    )
+
+
+def _check_file(path: Path, root: Path) -> Checked:
+    """Return what checking one run file named on the command line found."""
+    try:
+        run = read_run_file(read_jsonl(path), source=str(path))
+    except (FormatError, OSError, KeyError, ValueError) as error:
+        return Checked(name=path.name, problems=(str(error),))
+    records = _records_of(root, run.header.input.testset)
+    return Checked(
+        name=path.name,
+        problems=tuple(problems_of_run(run.header, run.answers, records)),
+        counted=f"{len(run.answers)} answers",
+        notes=tuple(notes_of_run(run.header.input.testset, records)),
+    )
+
+
+def _records_of(root: Path, testset: str) -> dict[str, TestRecord]:
+    """Return the store's records of *testset*, or an empty mapping when the store has none."""
+    try:
+        return reader.read_testset_by_id(root, testset)
+    except FormatError, OSError:
+        return {}
+
+
+def _check_marks(path: Path, root: Path) -> Checked:
+    """Return what checking one marks file found, against its test set."""
+    question = layout.question_of(path)
+    name = next(
+        (
+            name
+            for name in layout.testsets(root)
+            if marks_module.question_of(root, name) == question
+        ),
+        "",
+    )
+    if not name:
+        return Checked(
+            name=path.name,
+            problems=("no test set of the store hashes to this marks file's question",),
+        )
+    try:
+        found = reader.read_marks(path)
+        records = reader.read_testset_by_id(root, name)
+    except (FormatError, ValueError, OSError) as error:
+        return Checked(name=path.name, problems=(str(error),))
+    return Checked(
+        name=path.name,
+        problems=tuple(problems_of_marks(found, records)),
+        counted=f"{len(found)} marks",
+    )
+
+
 __all__ = [
     "KINDS",
     "OLLAMA",
+    "Checked",
     "ValidationError",
+    "check_files",
+    "check_store",
     "checked_marks",
     "checked_run",
     "checked_testset",

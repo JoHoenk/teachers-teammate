@@ -28,18 +28,9 @@ from ..core.axes import run_key_sha256
 from ..core.constants import TextKind
 from ..core.formats import FormatError
 from ..core.hashing import sha256_json
-from ..core.manifest import Manifest, ManifestItem
 from ..core.performance import Performance, performance_of
 from ..core.records import Answer, Protocol, RunFile, RunHeader, TestRecord, text_id
 from ..store import layout, reader
-from ..store.redacted import (
-    EXPORT_NAME,
-    ExportManifest,
-    RedactedAnswer,
-    RedactedRun,
-    read_export_manifest,
-    read_redacted_file,
-)
 from .pooled import mode_label
 from .score import (
     SCORER_VERSION,
@@ -64,11 +55,10 @@ class Skipped:
 
 @dataclass(frozen=True)
 class ScoredFields:
-    """The facts a table reads from one scored text, whether it came from a run file or an export.
+    """The facts a table reads from one scored text.
 
-    Every property here delegates to :attr:`scored` or :attr:`header`, so the two sources cannot
-    disagree about a number or about what the text was measured under.  What each source adds is
-    what it alone holds: a run file the answer and the record, an export the manifest entry.
+    Every property here delegates to :attr:`scored` or :attr:`header`, so a table cannot disagree
+    with the scorer about a number or about what the text was measured under.
     """
 
     scored: Scored
@@ -174,8 +164,7 @@ class ScoredFields:
 class LoadedItem(ScoredFields):
     """One scored answer: the answer, the record it names, and the numbers.
 
-    This is what :class:`~.pooled.TextItem` describes, so a table that shows the text reads a run
-    file and not an export.
+    This is what :class:`~.pooled.TextItem` describes, so a table that shows the text can read it.
     """
 
     answer: Answer
@@ -251,15 +240,10 @@ class LoadedItem(ScoredFields):
 
 
 class RunBase:
-    """What a report needs from one run, whether it came from a run file or an export.
-
-    The two sources hold the same header and the same file name, so the facts a table reads about a
-    run live here once.  What each adds is what it alone holds: a run file its answers, an export
-    its manifest.
-    """
+    """What a report needs from one run: its file, its header and its scored answers."""
 
     path: Path
-    run: RunFile | RedactedRun
+    run: RunFile
     items: tuple[Any, ...]
     header: RunHeader
     """The typed header of the run: what it was measured under, and its repeat number."""
@@ -707,209 +691,8 @@ def _scored_of(line: Mapping[str, Any]) -> Scored:
     return scored_from_dict(line["scores"])
 
 
-# ── the redacted export ─────────────────────────────────────────────────────
-
-
-@dataclass(frozen=True)
-class ExportedItem(ScoredFields):
-    """One scored text of a redacted export: the numbers, and the manifest entry that places it.
-
-    An export holds no text, so the facts a table needs about the text itself — its kind, its band
-    and how many words it has — come from the manifest the export copied, and the numbers from the
-    redacted answer.  This is what :class:`~.pooled.ItemFacts` describes, and not what
-    :class:`~.pooled.TextItem` does: a table that shows the text cannot be built from an export.
-    """
-
-    answer: RedactedAnswer
-    entry: ManifestItem
-
-    @property
-    def language(self) -> str:
-        """The language code of the text."""
-        return self.entry.language
-
-    @property
-    def item(self) -> str:
-        """The record's id of the text (``de-01``)."""
-        return self.entry.id
-
-    @property
-    def kind(self) -> str:
-        """``errors`` (a text with mistakes) or ``correct`` (sentences that must stay untouched)."""
-        return self.entry.kind
-
-    @property
-    def band(self) -> str:
-        """The band the recipe drew the text for, or ``""``."""
-        return self.entry.band
-
-    @property
-    def sentences_total(self) -> int:
-        """The correct sentences of a ``correct`` text, else 0."""
-        return len(self.entry.sentence_sha256) if self.kind == TextKind.CORRECT else 0
-
-    @property
-    def failed(self) -> bool:
-        """The text could not be proofread at all."""
-        return self.answer.failed
-
-    @property
-    def fallback(self) -> bool:
-        """The answer fell back to corrections only, so the explanations are missing."""
-        return self.answer.fallback
-
-    @property
-    def seconds(self) -> float:
-        """Seconds the text took."""
-        return self.answer.seconds
-
-    @property
-    def words(self) -> int:
-        """Words and marks of the source, as the manifest counts them."""
-        return int(self.entry.source.get("words", 0))
-
-    @property
-    def performance(self) -> Performance | None:
-        """What the text cost on the server, or ``None`` when nothing was measured."""
-        return performance_of(self.answer) if self.answer.requests else None
-
-
-@dataclass(frozen=True)
-class ExportedRun(RunBase):
-    """One redacted run of an export, with the answers the manifest could place."""
-
-    path: Path
-    run: RedactedRun
-    items: tuple[ExportedItem, ...]
-
-    @property
-    def header(self) -> RunHeader:
-        """The run's own header; the export's two extra facts are on :attr:`run`."""
-        return self.run.header.header
-
-
-@dataclass(frozen=True)
-class Exported:
-    """A redacted export as a report reads it: the runs, the export's manifest, and what was skipped."""
-
-    root: Path
-    manifest: ExportManifest
-    runs: tuple[ExportedRun, ...]
-    skipped: tuple[Skipped, ...]
-
-    @property
-    def items(self) -> tuple[ExportedItem, ...]:
-        """Every scored answer of every run, in run order."""
-        return tuple(item for run in self.runs for item in run.items)
-
-    @property
-    def answers(self) -> int:
-        """How many answers were placed."""
-        return sum(len(run.items) for run in self.runs)
-
-    def summary(self) -> str:
-        """Return one line naming what was read and what was skipped."""
-        return (
-            f"{len(self.runs)} runs, {self.answers} answers, "
-            f"{len(self.manifest.testsets)} test sets, {len(self.skipped)} skipped"
-        )
-
-
-def load_export(root: Path, *, testsets: Sequence[str] | None = None) -> Exported:
-    """Return the redacted export at *root* as a report reads it.
-
-    Nothing is scored here: the numbers are the ones the export stored, and the only work is
-    placing each answer in the manifest the export copied.  A run whose set, key or scorer the
-    export does not hold is skipped with a reason, so a report never mixes numbers that were
-    measured against different keys.
-
-    Args:
-        root: The export's directory, the one that holds ``export.json``.
-        testsets: The test sets to read; every set of the export when not given.
-
-    Raises:
-        FormatError: if the directory is not an export, or a manifest or run file is unreadable.
-    """
-    try:
-        manifest = read_export_manifest(root / EXPORT_NAME)
-    except FileNotFoundError as error:
-        raise FormatError(f"{root}: not an export, there is no {EXPORT_NAME}") from error
-    wanted = list(testsets) if testsets is not None else sorted(manifest.testsets)
-    entries: dict[str, dict[str, ManifestItem]] = {}
-    skipped: list[Skipped] = []
-    for name in wanted:
-        try:
-            entries[name] = _entries_of(reader.read_manifest(root, name))
-        except FormatError as error:
-            skipped.append(Skipped(file=name, reason=str(error)))
-    runs: list[ExportedRun] = []
-    for path in layout.run_files(root):
-        try:
-            run = read_redacted_file(path)
-        except FormatError as error:
-            skipped.append(Skipped(file=path.name, reason=str(error)))
-            continue
-        reason = manifest.check(run)
-        if reason:
-            skipped.append(Skipped(file=path.name, reason=reason))
-            continue
-        by_text = entries.get(run.header.header.input.testset)
-        if by_text is None:
-            skipped.append(
-                Skipped(
-                    file=path.name,
-                    reason=f"the test set {run.header.header.input.testset!r} was not read",
-                )
-            )
-            continue
-        items = _exported_items(run, by_text, skipped)
-        if not items:
-            skipped.append(Skipped(file=path.name, reason="no answer of this run could be placed"))
-            continue
-        runs.append(ExportedRun(path=path, run=run, items=items))
-    return Exported(root=root, manifest=manifest, runs=tuple(runs), skipped=tuple(skipped))
-
-
-def _entries_of(manifest: Manifest) -> dict[str, ManifestItem]:
-    """Return a manifest's items keyed ``<language>/<id>``, which is how an answer finds its text."""
-    return manifest.by_text()
-
-
-def _exported_items(
-    run: RedactedRun, by_text: Mapping[str, ManifestItem], skipped: list[Skipped]
-) -> tuple[ExportedItem, ...]:
-    """Return the placed answers of *run*, skipping the ones the manifest does not hold."""
-    items: list[ExportedItem] = []
-    for answer in run.answers:
-        entry = by_text.get(answer.text)
-        if entry is None:
-            skipped.append(
-                Skipped(file=run.header.header.input.testset, reason=f"no text {answer.text!r}")
-            )
-            continue
-        try:
-            scored = scored_from_dict(answer.scores)
-        except (KeyError, TypeError, ValueError) as error:
-            skipped.append(
-                Skipped(file=answer.text, reason=f"the numbers are incomplete ({error})")
-            )
-            continue
-        items.append(
-            ExportedItem(
-                answer=answer,
-                entry=entry,
-                scored=scored,
-                header=run.header.header,
-            )
-        )
-    return tuple(items)
-
-
 __all__ = [
     "SCORES_SUFFIX",
-    "Exported",
-    "ExportedItem",
-    "ExportedRun",
     "Loaded",
     "LoadedItem",
     "LoadedRun",
@@ -918,6 +701,5 @@ __all__ = [
     "distinct_runs",
     "key_part_sha256",
     "load",
-    "load_export",
     "load_run",
 ]

@@ -1,4 +1,4 @@
-"""Unit tests for the four command lines: ``evaluate``, ``store``, ``report`` and ``publish``.
+"""Unit tests for the three command lines: ``evaluate``, ``store`` and ``report``.
 
 One block per tool.  A gate finds a model at the temperature its maker recommends, a comparison
 keeps every temperature it was asked to compare, the newest series of a model is chosen and printed
@@ -13,13 +13,15 @@ names the rule that broke and not a file on somebody's disk.
 from __future__ import annotations
 
 from pathlib import Path
+import sys
 
 import pytest
 
-from tools import evaluate, publish, report, store
-from tools.evaluation.core import protocol_table
+from tools import evaluate, prepare_gec_testset, report, store, verify_model_catalog
+from tools.evaluation.core import paths, protocol_table
 from tools.evaluation.core.hashing import sha256_text
 from tools.evaluation.core.labels import ReferenceLabel
+from tools.evaluation.core.paths import DEFAULT_STORE
 from tools.evaluation.core.manifest import Manifest, ManifestItem
 from tools.evaluation.core.records import (
     Answer,
@@ -244,19 +246,6 @@ def test_a_named_machine_overrides_the_choice(tmp_path: Path, capsys) -> None:
 # ── report: the options a command refuses ────────────────────────────────────
 
 
-def test_a_table_by_error_without_a_store_prints_nothing(capsys) -> None:
-    """Given  no store
-    When   the table is asked for the errors by kind
-    Then   it refuses before printing a table, because an export holds no corpus labels
-    """
-    code = report.main(["table", "--by-error", "type"])
-
-    printed = capsys.readouterr()
-    assert code == 1
-    assert printed.out == ""
-    assert "--by-error needs --store" in printed.err
-
-
 def test_a_table_of_false_alarms_classifies_them(tmp_path: Path, capsys) -> None:
     """Given  a run that changes a mark the reference leaves alone
     When   the table is asked for the false alarms
@@ -273,31 +262,37 @@ def test_a_table_of_false_alarms_classifies_them(tmp_path: Path, capsys) -> None
     assert f"| `{MODEL}` | 1 |" in printed.out
 
 
-def test_a_table_of_false_alarms_without_a_store_prints_nothing(capsys) -> None:
-    """Given  no store
-    When   the table is asked for the false alarms
-    Then   it refuses before printing a table, because an export holds no text
+def test_a_gate_without_a_store_reads_the_default_store() -> None:
+    """Given  no store on the command line
+    When   the gate, the comparison and the passes are parsed
+    Then   each reads the private store, which is what every command defaults to
     """
-    code = report.main(["table", "--false-alarms"])
+    parser = report.build_parser()
+    default = Path(DEFAULT_STORE).expanduser()
 
-    printed = capsys.readouterr()
-    assert code == 1
-    assert printed.out == ""
-    assert "--false-alarms needs --store" in printed.err
+    assert parser.parse_args(["gate", "--model", MODEL]).store == default
+    assert parser.parse_args(["compare", "--along", "model"]).store == default
+    assert parser.parse_args(["passes"]).store == default
 
 
-def test_a_gate_without_a_store_is_refused_by_the_parser(capsys) -> None:
-    """Given  no store
-    When   the gate is asked for a model
-    Then   the parser refuses the command before anything is read or printed
+def test_a_store_inside_the_app_repository_is_refused_by_the_parser(monkeypatch, capsys) -> None:
+    """Given  a store inside the app repository
+    When   a command that writes or reads records is parsed
+    Then   the parser refuses it, for the report, the builder and the size measurements alike
     """
-    with pytest.raises(SystemExit) as refused:
-        report.main(["gate", "--model", MODEL])
+    inside = str(paths.repository_root() / "store")
+    monkeypatch.setattr(sys, "argv", ["prepare", "--testset", "gec-2026-12", "--store", inside])
 
-    printed = capsys.readouterr()
-    assert refused.value.code == 2
-    assert printed.out == ""
-    assert "--store" in printed.err
+    for parse in (
+        lambda: report.main(["table", "--store", inside]),
+        prepare_gec_testset.main,
+        lambda: verify_model_catalog.main(["fit", "--store", inside]),
+        lambda: verify_model_catalog.main(["structured-output", "--fit-store", inside]),
+    ):
+        with pytest.raises(SystemExit) as refused:
+            parse()
+        assert refused.value.code == 2
+        assert "inside the app repository" in capsys.readouterr().err
 
 
 # ── store: what validate says with its exit code ─────────────────────────────
@@ -392,19 +387,3 @@ def test_an_option_for_another_exchange_is_refused_before_anything_is_sent(
     assert code == 2
     assert printed.out == ""
     assert "--option reaches the proofreading exchange only" in printed.err
-
-
-# ── publish: the index it checks ─────────────────────────────────────────────
-
-
-def test_an_index_of_a_directory_that_is_no_export_is_refused(tmp_path: Path, capsys) -> None:
-    """Given  a directory that holds no export
-    When   its index is checked
-    Then   it refuses and says what is missing, instead of raising through the caller
-    """
-    code = publish.main(["index", "--out", str(tmp_path / "out"), "--check"])
-
-    printed = capsys.readouterr()
-    assert code == 1
-    assert printed.out == ""
-    assert "not an export" in printed.err

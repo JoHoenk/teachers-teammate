@@ -214,7 +214,9 @@ modules. An adapter reads only the files it pins. Recipes of whole texts in band
 `input/recipes/_bands.py` (`select_texts`: slots, seed, splits); `gec-2026-12-heldout` is the set for
 confirming a tuning choice on splits the first never reads; each recipe holds its own `Rules`
 and never imports another recipe's numbers. How the tools measure and compare models is in
-`docs/development.md` (*Ollama model catalog*).
+`docs/development.md` (*Ollama model catalog*). The records the tools write — the test set with its
+texts, the runs, the marks — go to the private repository `teachers-teammate-evals`, which is what
+`--store` defaults to; nothing of them is committed here.
 
 ## Third-party licenses
 

@@ -7,8 +7,7 @@ is the one the store holds under ``testsets/``, built by ``tools/prepare_gec_tes
 corpora that stay outside the repository (real learner text, licences).
 
 This command only *runs*.  What happens to the answers afterwards — the table, the explanation
-sheet, the export into the repository, the gate and the comparison — is ``tools/report.py`` and
-``tools/publish.py``.
+sheet, the gate and the comparison — is ``tools/report.py``.
 
 Per language and model a run writes one answer per text, and the report derives from it
 
@@ -20,9 +19,9 @@ Per language and model a run writes one answer per text, and the report derives 
 
 Run (answers are appended, so an interrupted run resumes):::
 
-    bazel run //tools:evaluate -- run --store ~/gec-eval --machine rx9070xt-server \\
+    bazel run //tools:evaluate -- run --machine rx9070xt-server \\
         --testset gec-2026-12 --model qwen3.5:9b --model gemma4:e4b
-    bazel run //tools:report -- table --store ~/gec-eval
+    bazel run //tools:report -- table
 
 Each model starts at the temperature its maker recommends (``--temperature`` overrides it).
 ``--exchange`` says how the text travels and ``--steps`` which steps of it run: the default is the
@@ -74,7 +73,7 @@ from tools.evaluation.core.modes import (
     setup_label,
     steps_of,
 )
-from tools.evaluation.core.paths import workspace_path
+from tools.evaluation.core.paths import DEFAULT_STORE, store_argument, workspace_path
 from tools.evaluation.core.performance import performance_of
 from tools.evaluation.core.records import Answer, question_sha256
 from tools.evaluation.run import defaults, protocol, run_log, runner
@@ -347,7 +346,7 @@ def _run(args: argparse.Namespace) -> int:
     # The machine is an id of the registry, so a typo is refused here and not found later as a
     # second machine that no report can compare with the first.
     try:
-        require_machine(workspace_path("."), args.machine)
+        require_machine(args.store, args.machine)
     except (ValueError, FormatError) as error:
         return _refuse(str(error))
     try:
@@ -587,10 +586,10 @@ def _run_command(sub) -> None:
     run.set_defaults(question_sha256="")
     run.add_argument(
         "--store",
-        type=workspace_path,
-        required=True,
-        help="the store the run writes into: its answers go to runs/ below it, and the test set "
-        "is read from testsets/<name>/",
+        type=store_argument,
+        default=DEFAULT_STORE,
+        help="the store the run writes into (default: %(default)s): its answers go to runs/ below "
+        "it, and the test set is read from testsets/<name>/",
     )
     run.add_argument(
         "--testset",
@@ -708,7 +707,7 @@ def _run_command(sub) -> None:
     run.add_argument(
         "--machine",
         required=True,
-        help="the id of the machine the server runs on, from evaluations/machines/, written into "
+        help="the id of the machine the server runs on, from the store's machines/, written into "
         "the run header; a report joins the runs and the size measurements of one machine by it",
     )
     run.add_argument(

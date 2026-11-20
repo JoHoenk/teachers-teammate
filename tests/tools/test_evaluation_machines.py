@@ -1,12 +1,14 @@
 """The machines the evaluations ran on: the registry, its ids, and what it refuses.
 
-The registry is data, so the tests write their own files; one test reads the committed registry,
-because a record that names a machine has to find it there.
+The registry is data, so the tests write their own files; one test reads the private store's
+registry, because a record that names a machine has to find it there.  That test is skipped unless
+``GEC_EVALS`` names the private store.
 """
 
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -19,6 +21,14 @@ from tools.evaluation.core.machines import (
     known_machines,
     read_machine,
     require_machine,
+)
+
+GEC_EVALS = os.environ.get("GEC_EVALS")
+"""The private store, when the registry test is to run; never set in CI."""
+
+needs_store = pytest.mark.skipif(
+    not GEC_EVALS,
+    reason="the registry is outside the repository; set GEC_EVALS to the private store",
 )
 
 
@@ -126,16 +136,18 @@ def test_a_file_without_its_card_is_refused(tmp_path: Path) -> None:
         read_machine(path)
 
 
-def test_the_committed_registry_reads_and_no_alias_is_an_id() -> None:
+@needs_store
+def test_the_store_registry_reads_and_no_alias_is_an_id() -> None:
     """
-    Given  the registry in the repository
+    Given  the registry in the private store
     When   it is read, and an alias of a machine is asked for by that name
     Then   every machine reads, and the alias is refused: it is documentation of an old label,
            not a second id
     """
-    known = known_machines(Path("."))
+    root = Path(GEC_EVALS or ".").expanduser()
+    known = known_machines(root)
 
-    assert known, "the committed registry is empty"
+    assert known, "the store's registry is empty"
     for machine in known.values():
         assert machine.id not in machine.aliases
         assert machine.gpu_name
@@ -144,7 +156,7 @@ def test_the_committed_registry_reads_and_no_alias_is_an_id() -> None:
     for alias in aliases:
         assert alias not in known
         with pytest.raises(ValueError, match="unknown machine"):
-            require_machine(Path("."), alias)
+            require_machine(root, alias)
 
 
 def test_the_devices_are_the_card_and_the_processor() -> None:

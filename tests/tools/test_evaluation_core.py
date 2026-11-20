@@ -9,6 +9,7 @@ tokenizer, and changing each record field in turn moves exactly the hash it shou
 # pylint: disable=W0621  # redefined-outer-name — pytest fixtures shadow module-scope names by design
 from __future__ import annotations
 
+import argparse
 import dataclasses
 from dataclasses import replace
 import json
@@ -23,6 +24,7 @@ from tools.evaluation.core import (
     hashing,
     labels,
     modes,
+    paths,
     protocol_table,
     records,
 )
@@ -1641,3 +1643,78 @@ def test_an_unknown_axis_is_labelled_as_unknown() -> None:
     Then   the label says so, instead of printing a bare value
     """
     assert axis_table.axis_label("unknown.thinking", True) == "unknown axis thinking=true"
+
+
+# ── where a path on a command line points ────────────────────────────────────
+
+
+def test_a_relative_path_is_relative_to_the_repository(monkeypatch, tmp_path) -> None:
+    """
+    Given  a tool started by ``bazel run``, which names the repository in the environment
+    When   a relative path and an absolute one are resolved
+    Then   the relative one is the repository's, so it does not point into the runfiles tree, and
+           the absolute one is left as typed
+    """
+    monkeypatch.setenv("BUILD_WORKSPACE_DIRECTORY", str(tmp_path / "repo"))
+
+    assert paths.workspace_path("docs/x.md") == tmp_path / "repo" / "docs" / "x.md"
+    assert paths.workspace_path(str(tmp_path / "elsewhere")) == tmp_path / "elsewhere"
+
+
+def test_a_store_inside_the_app_repository_is_refused(monkeypatch, tmp_path) -> None:
+    """
+    Given  the app repository's working tree
+    When   a store inside it is named, and one outside it
+    Then   the one inside is refused with the store that is meant, because the records hold the
+           corpora's text and a slip in this repository's history cannot be taken back
+    """
+    monkeypatch.setenv("BUILD_WORKSPACE_DIRECTORY", str(tmp_path / "repo"))
+
+    with pytest.raises(ValueError, match="inside the app repository"):
+        paths.store_path("store")
+    with pytest.raises(ValueError, match="teachers-teammate-evals"):
+        paths.store_path(str(tmp_path / "repo" / "evaluations"))
+    assert paths.store_path(str(tmp_path / "elsewhere")) == tmp_path / "elsewhere"
+
+
+def test_the_default_store_is_outside_the_app_repository(monkeypatch, tmp_path) -> None:
+    """
+    Given  the default store every command line falls back to
+    When   it is resolved against the app repository's working tree
+    Then   it is accepted, so the default is a repository of its own and never this one
+    """
+    monkeypatch.setenv("BUILD_WORKSPACE_DIRECTORY", str(tmp_path / "repo"))
+
+    assert paths.store_path(paths.DEFAULT_STORE) == Path(paths.DEFAULT_STORE).expanduser()
+
+
+def test_a_refused_store_is_a_message_on_the_command_line(monkeypatch, tmp_path) -> None:
+    """
+    Given  a store inside the app repository
+    When   it is read as an ``argparse`` argument
+    Then   the refusal is an argument error, so the command line prints it and exits instead of
+           raising through the caller
+    """
+    monkeypatch.setenv("BUILD_WORKSPACE_DIRECTORY", str(tmp_path / "repo"))
+
+    with pytest.raises(argparse.ArgumentTypeError, match="inside the app repository"):
+        paths.store_argument("store")
+
+
+def test_the_guard_does_not_depend_on_the_directory_the_tool_started_in(
+    monkeypatch, tmp_path
+) -> None:
+    """
+    Given  a tool started outside Bazel, from a directory that is another repository
+    When   the app repository's own folder and a store beside it are named
+    Then   the first is refused and the second accepted, because the repository is found from the
+           tool's own files and not from the current directory
+    """
+    monkeypatch.delenv("BUILD_WORKSPACE_DIRECTORY", raising=False)
+    other = tmp_path / "evals"
+    other.mkdir()
+    monkeypatch.chdir(other)
+
+    with pytest.raises(ValueError, match="inside the app repository"):
+        paths.store_path(str(paths.repository_root() / "store"))
+    assert paths.store_path(str(other)) == other

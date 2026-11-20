@@ -5,12 +5,12 @@ runs, where its input comes from, which checks keep the numbers honest, and how 
 to plan. The commands and the metric definitions are in `docs/development.md` (*Ollama model
 catalog*); this page is the overview that points there.
 
-| Where | Content |
-| --- | --- |
-| `gates/` | The candidate survey, and where the gate-1 and gate-2 records go. The early measurements were deleted on 2026-11-12. Numbers and verdicts only. |
-| `machines/` | The machines the evaluations ran on, one JSON file each. A run and a size measurement name a machine by its id from here. |
-| `model-fit/` | What each model needs on the card, measured at every window of the app's ladder: `sizes.jsonl`, one record per model, machine, device and window, plus the folder's `README.md` with the fields. Numbers only. |
-| `proofreading/` | Gate 2 runs, one file per run, plus the test sets' manifests. Format: `proofreading/FORMAT.md`, usage: `proofreading/README.md`. |
+The records themselves — the runs, the test sets with their texts, the teachers' marks, the
+machines, the measured model sizes and the gate records — live in a separate private repository,
+**`teachers-teammate-evals`** (GitHub, private; cloned to `~/git/teachers-teammate-evals`, which is
+the default store). It holds the corpus text, so it may never be published. This repository holds
+the code that writes and reads those files and the pages that describe them: this one and
+`FORMAT.md`.
 
 ## 1. The two gates
 
@@ -145,9 +145,9 @@ Falko-MERLIN (German) and W&I+LOCNESS (English).
 * Each band is drawn from the corpus's split with a fixed seed. Filters: at least 3 reference
   changes, at most 40 per 100 words (a near-rewrite measures agreement with one annotator), labels
   that fit, sentence spans found.
-* The manifest (`proofreading/testsets/<set>/manifest.json`) pins every text by hash, with positions
-  and error-label codes, but contains **no corpus text**. It is immutable once committed: a set
-  under an existing id is never rebuilt with other texts.
+* The manifest (`testsets/<set>/manifest.json` in the private repository) pins every text by hash,
+  with positions and error-label codes, but contains **no corpus text**. It is immutable once
+  committed: a set under an existing id is never rebuilt with other texts.
 * French is invented and reported, never deciding. The held-out set has no French.
 
 ### 3.2 What a run does
@@ -155,10 +155,11 @@ Falko-MERLIN (German) and W&I+LOCNESS (English).
 Every text goes through the app's own corrector inside its `ChunkingCorrector`, so long texts are
 proofread in pieces exactly as in the app. Per model and exchange: three repeats, at the
 temperature the model's maker recommends (the app's 0.2 for a model without one), unless
-`--temperature` says otherwise. Runs are appended, so an interrupted run resumes.
+`--temperature` says otherwise. Runs are appended, so an interrupted run resumes. The store is the
+private repository; `--store` defaults to it and refuses a path inside this one.
 
 ```bash
-bazel run //tools:evaluate -- run --store DIR --testset gec-2026-12 \
+bazel run //tools:evaluate -- run --testset gec-2026-12 \
   --model TAG --exchange text-first --exchange one-request-review --repeat 3 --machine ID
 ```
 
@@ -205,7 +206,7 @@ A group whose explanations nobody has marked yet is `PASS_PENDING`: enough for a
 place, not for a star's.
 
 ```bash
-bazel run //tools:report -- gate --store DIR --model TAG --exchange text-first
+bazel run //tools:report -- gate --store ~/git/teachers-teammate-evals --model TAG --exchange text-first
 ```
 
 ### 3.5 The comparison
@@ -219,8 +220,8 @@ but behind on GLEU or on the page band by more than `MIN_EFFECT` is a tie, becau
 can prefer a model that fixes fewer errors and makes fewer false alarms.
 
 ```bash
-bazel run //tools:report -- compare --store DIR --along exchange
-bazel run //tools:report -- compare --store DIR --along temperature --where model=TAG
+bazel run //tools:report -- compare --store ~/git/teachers-teammate-evals --along exchange
+bazel run //tools:report -- compare --store ~/git/teachers-teammate-evals --along temperature --where model=TAG
 ```
 
 `--along` names the axes that vary (`model`, `temperature`, `exchange`, `steps`, `num_ctx`,
@@ -232,8 +233,9 @@ another machine, another window, other texts, another prompt — are refused, no
 
 * **Hash-pinned set:** the manifest fixes source and reference by SHA-256; a run header records
   the hash of the set's question, so a different set cannot be compared by accident.
-* **No corpus text in the repository:** `bazel run //tools:store -- validate` enforces it, and CI
-  runs it over every committed run file.
+* **No record in this repository:** the runs, the texts and the marks live in the private one, and
+  `tests/tools/test_no_eval_records.py` fails when a run file, a manifest, a size record or a marks
+  file appears here. `bazel run //tools:store -- validate` checks the store's own files.
 * **Error labels** (`R:DET:FORM` and so on) are matched to the text by position: on `gec-2026-12`
   all 631 German and 350 English reference changes got a label, and a random sample of 24 was read
   by hand.
@@ -246,10 +248,10 @@ another machine, another window, other texts, another prompt — are refused, no
 
 ## 4. Which models are evaluated
 
-Reasons, download sizes and what is unverified: `gates/candidate-models-2026-11-09.md`.
-Nobody is left out for weak scores or slowness while the screen runs; the choice comes at the end. A
-model enters the catalog only after gate 1 and gate 2, and only to replace a tier's star or its
-alternative (at most two recommended models per tier).
+Reasons, download sizes and what is unverified: `gates/candidate-models-2026-11-09.md` in the
+private repository. Nobody is left out for weak scores or slowness while the screen runs; the choice
+comes at the end. A model enters the catalog only after gate 1 and gate 2, and only to replace a
+tier's star or its alternative (at most two recommended models per tier).
 
 | Group | Models | State |
 | --- | --- | --- |
@@ -259,7 +261,7 @@ alternative (at most two recommended models per tier).
 | Chunk 2, 8 GB | EuroLLM 9B, `granite4.1:8b`, Apertus 1.5 8B, `nemotron-3.5-bolt:e4b` | Being pulled; gate 1 not run yet |
 | Chunk 3, 16 GB | EuroLLM 22B (`IQ4_XS`), `lfm2.5:24b`; then 8-bit builds of the winners | Open |
 | Stretch | `gemma4:26b-a4b-it-qat`, `qwen3.6:35b-a3b` | Only after the rest; they need a lot of main memory |
-| Back in (2026-11-11) | `ministral-3:8b`, `ministral-3:14b` | Were dropped for scores on the old test set (mean F0.5 0.41 and 0.43 against 0.61 and 0.63 for `gemma4`; the 14B is about four times slower, weak in French). Rule now: nobody is left out for scores or speed before all are rated; the choice comes at the end |
+| Back in (2026-11-11) | `ministral-3:8b`, `ministral-3:14b` | Were dropped for scores on the old test set (the lowest of the family, and the 14B about four times slower, weak in French). Rule now: nobody is left out for scores or speed before all are rated; the choice comes at the end |
 | Dropped | The Unsloth Qwen3.5-9B build | Ships none of the official sampling settings; a different packaging of `qwen3.5:9b`, not a different model |
 
 The gate-1 re-run covers: `qwen3:4b`, `qwen3.5:9b`, `gemma4:e4b`,
@@ -271,9 +273,8 @@ old rule.
 
 ### 5.1 Measured: gate 1 on the server (2026-11-11, 18 runs per round, temperature 0.2)
 
-Server: AMD RX 9070 XT with 16 GB. Source: the saved answers of the re-run
-(`~/gec-testset/gate1-2026-11/`, written 08:41 UTC). Runs include model loading and other load on
-the server.
+Server: AMD RX 9070 XT with 16 GB. Source: the saved answers of the re-run, in the private
+repository. Runs include model loading and other load on the server.
 
 | Model | Runs | Time | Speed (answer tokens/s) | Slowest run | Remarks |
 | --- | --- | --- | --- | --- | --- |

@@ -6,9 +6,8 @@ works everywhere, so every data file assigns to ``window.REPORT`` instead of bei
 overview opens at once from ``data/index.js``; a text's edits from all variants and repeats load
 when that text is opened.
 
-The command refuses an output inside a git work tree: a report holds corpus text, and the
-repository holds none (the same rule as the redacted export).  The report itself carries no licence
-notes and no advice, only the data.
+The command refuses an output inside a git work tree: a report holds corpus text, and the app
+repository holds none.  The report itself carries no licence notes and no advice, only the data.
 """
 
 from __future__ import annotations

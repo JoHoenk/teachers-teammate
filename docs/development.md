@@ -465,9 +465,9 @@ them again when a model is added or a tag moves to a new version.
 
 `OllamaModelSpec.memory_gb` and `context_gb_per_8k` say how much a model needs at 8,192 tokens and
 how much it grows per further 8,192. They were estimates, or figures from an 8 GB NVIDIA card.
-`evaluations/model-fit/sizes.jsonl` holds the measurements that replace them: one JSON object per
-line, append-only, numbers only. `evaluations/model-fit/README.md` describes the fields and the
-machines; the module is `tools/evaluation/checks/model_fit.py`.
+`model-fit/sizes.jsonl` in the private evaluation repository holds the measurements that replace
+them: one JSON object per line, append-only, numbers only. `evaluations/FORMAT.md` describes the
+fields and the machines; the module is `tools/evaluation/checks/model_fit.py`.
 
 **One record per model, machine, device and window.** It carries what Ollama reports from `/api/ps`
 (`size`, `size_vram`, the window it really loaded) and what the card really held, from the memory
@@ -505,7 +505,7 @@ the tier that has no card. The record's `device` is then `cpu`, and the size loo
 `size_for_decision`, `catalog_lines`) skip such records, because the card's share is missing from
 their need.
 
-`--machine` is an id of `evaluations/machines/`, and it is required when measuring: what the id
+`--machine` is an id of the store's `machines/`, and it is required when measuring: what the id
 stands for is written once in that file, because Ollama's API cannot report it. An id the registry
 does not hold is refused, naming the known ones. A step already stored for the same build and
 version is skipped (`--again` measures it again). The ladder stops for a tag when Ollama loaded a
@@ -1054,25 +1054,26 @@ bazel run //tools:verify_model_catalog -- recheck DIR/*.jsonl  # judge them agai
 
 ### The evaluation tools
 
-Four command lines, one job each.  They parse arguments and print; the work is in
+Three command lines, one job each.  They parse arguments and print; the work is in
 `tools/evaluation/` (see *Where the code lives*).
 
 | Tool | Commands | Reads | Writes |
 | --- | --- | --- | --- |
 | `tools/evaluate.py` | `run` | the test set in the store, a running Ollama server | answers, appended to `runs/` below `--store` |
-| `tools/report.py` | `table`, `compare`, `gate`, `passes`, `sheet`, `page` | the store, or the committed export (`table` only) | the report folder (`page`); the rest prints |
-| `tools/publish.py` | `export`, `index` | the store and the corpora | the committed run files below `--out`, and `INDEX.md` |
-| `tools/store.py` | `convert`, `validate`, `marks`, `accept-marks`, `import-blind-key`, `manifest` | the store, the corpora, a filled-in sheet | the marks files, the accepted alternatives |
+| `tools/report.py` | `table`, `compare`, `gate`, `passes`, `sheet`, `page` | the store | the report folder (`page`); the rest prints |
+| `tools/store.py` | `convert`, `validate`, `marks`, `accept-marks`, `manifest` | the store, the corpora, a filled-in sheet | the marks files, the accepted alternatives |
 
-`prepare_gec_testset.py` builds a test set into the store and is not one of the four: it reads the
+`prepare_gec_testset.py` builds a test set into the store and is not one of the three: it reads the
 corpora and writes `testsets/<id>/`.
 
-**The store and the export.**  The store (`--store`, `~/gec-testset/store` by default) holds the
-corpus text, so it stays outside the repository: `testsets/<id>/<language>.jsonl` with the source
-and the reference, and `runs/` with one file per run, holding the model's output.  The export
-(`--out`, `evaluations/proofreading`) holds the same runs redacted — positions and short
-replacements instead of text — and is what a report reads when no store is at hand.  `table` reads
-either; every other command needs the store, because it needs the model's output or the marks.
+**The store is a repository of its own.**  Every evaluation record — the runs, the test sets with
+their texts, the marks, the machines, the model sizes, the gate records — lives in the private
+repository `teachers-teammate-evals`, cloned to `~/git/teachers-teammate-evals`, which is what
+`--store` defaults to.  It holds the corpus text, so it may never be published; this repository
+holds the code and the formats (`evaluations/README.md`, `evaluations/FORMAT.md`) and no record.
+`core/paths.py:store_path()` refuses a store inside this repository's working tree, and
+`tests/tools/test_no_eval_records.py` fails when a run file, a manifest, a size record or a marks
+file appears here.
 
 **A run is named by its axes.**  `core/axis_table.py` declares every attribute a run can vary in
 once, and `core/axes.py` derives the four keys from it: the **compare key** (what two runs must
@@ -1128,17 +1129,17 @@ answer line records how many (`pieces`).
 ```bash
 # 1. Build the test set from the public corpora (kept outside the repository)
 bazel run //tools:prepare_gec_testset -- --testset gec-2026-12 \
-    --corpora ~/gec-testset/corpora.json --store ~/gec-testset/store
+    --corpora ~/gec-testset/corpora.json --store ~/git/teachers-teammate-evals
 # 2. Send every text to the models (answers are appended; an interrupted run resumes)
-bazel run //tools:evaluate -- run --store ~/gec-testset/store --machine rx9070xt-server \
+bazel run //tools:evaluate -- run --store ~/git/teachers-teammate-evals --machine rx9070xt-server \
     --testset gec-2026-12 --model gemma4:e4b
 #    ... and ask for the corrected text only (no JSON, no explanations) on the same texts
-bazel run //tools:evaluate -- run --store ~/gec-testset/store --machine rx9070xt-server \
+bazel run //tools:evaluate -- run --store ~/git/teachers-teammate-evals --machine rx9070xt-server \
     --testset gec-2026-12 --model gemma4:e4b --exchange one-request-text
 # 3. Print the table / which kinds of error were found / the explanations a teacher marks
-bazel run //tools:report -- table --store ~/gec-testset/store
-bazel run //tools:report -- table --store ~/gec-testset/store --by-error category
-bazel run //tools:report -- sheet --run RUN_NAME --store ~/gec-testset/store > spotcheck.md
+bazel run //tools:report -- table --store ~/git/teachers-teammate-evals
+bazel run //tools:report -- table --store ~/git/teachers-teammate-evals --by-error category
+bazel run //tools:report -- sheet --run RUN_NAME --store ~/git/teachers-teammate-evals > spotcheck.md
 ```
 
 **A run that is checked before it starts, and read afterwards.**  `run --dry-run` makes the same
@@ -1153,7 +1154,7 @@ that lost a setup says so: `N of M planned sessions did not run:` and one line p
 reason the smoke check gave.  The exit code stays 0 — a script that chains runs decides for itself
 what a skipped setup means, and a run that wrote most of its rows is not a failure.
 
-**Evaluation report.** `bazel run //tools:report -- page --store ~/gec-testset/store
+**Evaluation report.** `bazel run //tools:report -- page --store ~/git/teachers-teammate-evals
 --report-out ~/gec-testset/reports/NAME [--zip] [--single-file]
 [--model TAG] [--languages de,en]` writes one static page (opens from `file://`, no server) with the
 scorecard, a heat map, the sentences of every variant next to the reference, and the error types.
@@ -1183,11 +1184,10 @@ on, so a choice that wins there may only fit its 22 texts.  `gec-2026-12-heldout
 and filters from splits the first never reads — Falko-MERLIN `dev` and W&I `train` — and a choice
 is adopted only when it wins on both.  Build it like the first:
 `prepare_gec_testset --testset gec-2026-12-heldout --corpora ~/gec-testset/corpora.json --store
-~/gec-testset/store`.  French is not part of it.  No text of those splits reaches
+~/git/teachers-teammate-evals`.  French is not part of it.  No text of those splits reaches
 the 6,400 characters the app split at in eval version 1, so the two `pages` slots take texts of at
 most 5,800 characters (3,272 to 4,444 in the committed set).  The current budget is about 2,800
-characters, so every `pages` text of both sets is split by the app now; a test checks each
-committed manifest against the budget, not against the two constants.  The recipes share their
+characters, so every `pages` text of both sets is split by the app now.  The recipes share their
 procedure (slots, filters, draw) in `tools/evaluation/input/recipes/_bands.py`, but each recipe writes out
 its own `Rules` (bands, character limits, edit filters): a recipe is frozen once its manifest is
 committed, so a change for one must not move the other, and a test per recipe pins its draw on the
@@ -1243,8 +1243,7 @@ text, at run time and again when the report re-scores a stored row, so the two c
   pieces a long text was sent in, so every exchange and every budget compare alike.
 * *Added marks*: texts whose proofread text contains Markdown marks (`**`, `__`, `~~`) the source did
   not have; **these marks are ignored when scoring** — the scores are computed on the text without
-  them, the same text the edits, the notes and the export use — the column only shows how often they
-  occur.
+  them, the same text the edits and the notes use — the column only shows how often they occur.
 * *Failed / fallback*: reviews that failed or fell back to corrections only, and how many of the
   fallbacks the window cut off (`done_reason: "length"`).  A review-mode fallback keeps its
   corrections in F0.5 and GLEU, because the teacher gets them, but its changes count as
@@ -1334,27 +1333,27 @@ comparison):
 
 ```bash
 # the floors and the explanations of one model
-bazel run //tools:report -- gate --store ~/gec-testset/store \
+bazel run //tools:report -- gate --store ~/git/teachers-teammate-evals \
     --model ministral-3:14b [--exchange text-first] [--steps correct,explain,unclear] \
     [--temperature X] [--machine rx9070xt-server] [--testset gec-2026-12]
 # one model against another
-bazel run //tools:report -- compare --store ~/gec-testset/store \
+bazel run //tools:report -- compare --store ~/git/teachers-teammate-evals \
     --testset gec-2026-12 --along model --baseline gemma4:e4b
 # one model at two temperatures
-bazel run //tools:report -- compare --store ~/gec-testset/store \
+bazel run //tools:report -- compare --store ~/git/teachers-teammate-evals \
     --testset gec-2026-12 --along temperature --where model=qwen3.5:4b --baseline 0.05
 # one table per model over its temperatures, with the best row and its ties
-bazel run //tools:report -- compare --store ~/gec-testset/store \
+bazel run //tools:report -- compare --store ~/git/teachers-teammate-evals \
     --testset gec-2026-12 --along temperature [--corrections]
 # what a second and a third pass of each configuration would add, and what they would cost
 # (the cost column needs a run written with step tags; without them it is a dash)
-bazel run //tools:report -- passes --store ~/gec-testset/store \
+bazel run //tools:report -- passes --store ~/git/teachers-teammate-evals \
     --testset gec-2026-12
 ```
 
 A command names a model, not a file: the runs are read from `--store`, and `--model`,
 `--temperature`, `--exchange`, `--steps`, `--digest`, `--compact-json`, `--machine` and `--testset`
-narrow them (`table` also reads the committed export below `--out`).  The machine and the test set
+narrow them.  The machine and the test set
 are the ones the newest run of the model ran on, and the command prints what it chose and which
 other series the store holds.  `gate` reads the temperature the model's maker recommends unless
 `--temperature` names one; `compare` reads every temperature it did not name, so `--along
@@ -1366,7 +1365,8 @@ because its spot-check floor reads the marks files of the set.  One line per che
 for a diagnostic), then the outcome.  Exit
 codes: `gate` 0 for `PASS` / `PASS_PENDING`, 1 for `FAIL`, 2 for `INCOMPLETE`; `compare` 0 for
 `BETTER`, 1 for `TIE` / `WORSE`, 2 for `NOT_COMPARABLE` or an incomplete group.  The output is the
-record: `evaluations/gates/gate2-<date>.md`, numbers only.
+record: `gates/gate2-<date>.md` in the private evaluation repository, a verdict and the runs it rests
+on, no figure.
 
 **The comparison.**  `compare --store DIR --testset NAME --along AXIS [--where AXIS=VALUE]
 [--baseline VALUE]` scores every answer again and forms the groups from the headers, so a run that
@@ -1587,8 +1587,7 @@ sessions of one run have to agree on the protocol, the test set (by hash), the m
 digest and the request settings including the timeout, and a results file without a header is
 refused.  The fingerprint is compared by its version, not by its value: two fingerprints of one
 version are one protocol, so an additive change does not block a long run in progress, while a
-changed `instructions` hash per language still refuses.  The export copies the
-protocol from the run header and never recomputes it.
+changed `instructions` hash per language still refuses.
 `tool_revision` stays in the header as a pointer for a human reader; nothing checks it.
 
 **What the recommendations stand on.**  The catalog's alternatives (`gemma4:e4b` on 8 GB,
@@ -1634,7 +1633,7 @@ baseline.  Options of `run`:
 | `--repeat N` | Run every text N times; repeat k uses seed + k - 1 and a file tagged `repeat-k` |
 | `--isolate` | Unload every model first, refuse a server that will not become idle, unload the model afterwards.  Only on a server you own |
 | `--gpu-sampler amd\|nvidia`, `--gpu-ssh "ssh.exe user@host"`, `--gpu-agent URL`, `--gpu-token-file PATH` | Sample the graphics memory in use once a second: on this machine, through SSH (from WSL the Windows client `ssh.exe` holds the key), or through the memory agent on the machine with the card |
-| `--machine ID` | The machine the server runs on, an id of `evaluations/machines/`; required, and written into the header |
+| `--machine ID` | The machine the server runs on, an id of the store's `machines/`; required, and written into the header |
 
 Each run file starts with its header — the model's digest, quantisation, parameter size and family,
 the window, the seed, the machine and the Ollama version — and appends one session line per
@@ -1649,27 +1648,21 @@ through SSH; the memory agent (see *Memory agent*) is the reading the fit check 
 where the speed runs' sampler is going — it reads the card on the machine that has it, without a
 key and without a remote command.
 
-**Committing a run as evidence.**  The store above stays outside the repository (it holds the
-source and reference texts).  `publish -- export` turns one run of that store into a run file below
-`evaluations/proofreading/` and checks it against the test-set manifest and the corpora: scores and
-per-error outcomes are numbers, the model's edits are stored as positions and short replacements, a
-replacement or explanation that would copy the corpus is cut down (at most 8 words per replacement,
-no run of 5 copied source words, no words at all from a restricted corpus), and everything is
-hashed, so a committed run holds no corpus sentence.  `store -- validate` checks a file without the
-corpora (as the test suite does for every committed one), `publish -- index` regenerates the
-checksums in `INDEX.md`, and `store -- manifest` checks that the test set there is still the one the
-corpora give — every corpus file and every item:
+**Committing a run as evidence.**  A run is committed in the store itself, which is the private
+repository: the file the tools write is the file the tools read, nothing is converted, cut or
+encoded on the way in.  `store -- validate` checks the store's files without the corpora, and
+`store -- manifest` checks that a test set is still the one the corpora give — every corpus file and
+every item:
 
 ```bash
-bazel run //tools:publish -- export --store ~/gec-testset/store \
-    --out evaluations/proofreading --testset gec-2026-12 \
+bazel run //tools:store -- validate
+bazel run //tools:store -- manifest --testset gec-2026-12 \
     --corpora ~/gec-testset/corpora.json
-bazel run //tools:publish -- index --check
 ```
 
-The rules, the file format and how to read a run back are in
-`evaluations/proofreading/README.md` and `FORMAT.md`; the test-set manifest and the machine files
-are written once and then pinned.
+The rules, the file format and how to read a run back are in `evaluations/README.md` and
+`evaluations/FORMAT.md`; the test-set manifest and the machine files are written once and then
+pinned.
 
 Things to know when reading the figures:
 
@@ -1688,11 +1681,11 @@ Things to know when reading the figures:
   `ssh.exe` alone leaves `amd-smi` running there.
 
 **Where the code lives.**  `tools/evaluation/` is one package per layer, and the command lines
-(`evaluate.py`, `report.py`, `publish.py`, `store.py`, `prepare_gec_testset.py`) only parse
-arguments and print.  A layer imports only the layers below it:
+(`evaluate.py`, `report.py`, `store.py`, `prepare_gec_testset.py`) only parse arguments and print.
+A layer imports only the layers below it:
 
 ```
-publish -> report -> store -> input -> core, metrics
+report -> store -> input -> core, metrics
 run     -> store, input, core, metrics
 checks  -> run, core, metrics
 viewer  -> report, run, store, input, core, metrics
@@ -1705,7 +1698,7 @@ convert -> store, input, core, metrics
 | `core/formats` | The format version of every file, JSONL with sorted keys, and the fields a reader keeps. |
 | `core/axis_table` | Every axis of a run, declared once: its field, its codec, its label, its tag and its compare role. |
 | `core/axes` | The four keys (compare, series, run, environment) and the file name derived from the axes. |
-| `core/machines` | The machine registry: the ids a run and a size measurement name, read from `evaluations/machines/`. |
+| `core/machines` | The machine registry: the ids a run and a size measurement name, read from the store's `machines/`. |
 | `core/modes` | How a model is asked: the exchange and its steps. |
 | `core/labels` | The corpus labels of the reference edits and the category agreement. |
 | `core/languages` | The language codes of the test set and the names the corrector is asked in. |
@@ -1718,10 +1711,8 @@ convert -> store, input, core, metrics
 | `store/layout` | Where the parts of the store live, and what a run file is called. |
 | `store/reader`, `store/writer` | Reading and writing the store's files as typed records. |
 | `store/validate` | What a test set, a run file and a marks file must satisfy. |
-| `store/redaction` | The caps that keep corpus text out of the repository, and what a "word" is. |
-| `store/redacted` | The redacted run and the export's own manifest. |
 | `store/marks`, `store/accept` | What a mark means, and the accepted alternatives it becomes. |
-| `convert/v1`, `convert/blind_key` | The one-off converters: a run of format 1 read and written as format 2, and the old blind sheet's token positions. |
+| `convert/v1` | The one-off converter: a run of format 1 read and written as format 2. |
 | `input/testset` | The test set: its manifest, its items and the way from a pointer to a text. |
 | `input/corpora/` | One module per corpus: what it may be used for, which files it is, how a pointer becomes a text. |
 | `input/recipes/` | One module per test-set id: the selection rule, its seed and the corpora it needs. |
@@ -1734,7 +1725,7 @@ convert -> store, input, core, metrics
 | `run/comparison` | Runs a test set through that corrector and turns the answers into rows. |
 | `run/gpu_agent`, `run/agent_client` | The memory agent on the machine with the card, and the client that reads it. |
 | `report/score` | The one scoring path, and `SCORER_VERSION`. |
-| `report/load` | The store and the export as a report reads them. |
+| `report/load` | The store as a report reads it. |
 | `report/summary` | The numbers a report is made of: one summary per model, temperature, language and band. |
 | `report/groups` | Which runs may be compared: the group key, the runs of one key, and the spread of a number over the repeats. |
 | `report/pooled` | The counts of one language, added up over the repeats. |
@@ -1745,13 +1736,10 @@ convert -> store, input, core, metrics
 | `report/select` | Which committed runs a gate-2 command reads: the newest series of a model, and what it refuses as ambiguous. |
 | `report/tables/` | The tables: `models`, `by_error`, `performance`, `sweep`, `passes`, `false_alarms`. |
 | `report/viewer/` | The static report page. |
-| `publish/export` | A local run becomes a redacted run file. |
-| `publish/check` | The committed tree checked against its manifests and the corpora. |
-| `publish/index` | `INDEX.md`, one row per run. |
 | `checks/` | The checks that run a model rather than read a run: `structured_check`, `model_fit`, `smoke`, `gate_one`, `check_rule`, `download_sizes`. |
 
-`report` imports nothing above it: the command lines, `publish` and `viewer` read it, and the numbers
-it prints come from `summary`, which `groups` and `gates` read instead.  A test in
+`report` imports nothing above it: the command lines and `viewer` read it, and the numbers it prints
+come from `summary`, which `groups` and `gates` read instead.  A test in
 `test_evaluation_session.py` reads the imports of every module of the run layer and refuses one that
 reaches above it.
 
@@ -3355,8 +3343,8 @@ bazel run //tools:verify_model_catalog -- fit --machine ID \
     --ollama-url http://HOST:11434 --gpu-agent http://HOST:11436 --tag TAG
 ```
 
-It appends to `evaluations/model-fit/sizes.jsonl`, and `fit --report` prints the figures without a
-server. The growth fills `OllamaModelSpec.context_gb_per_8k`; until a model has a figure, it stays at
+It appends to `model-fit/sizes.jsonl` in the private evaluation repository, and `fit --report`
+prints the figures without a server. The growth fills `OllamaModelSpec.context_gb_per_8k`; until a model has a figure, it stays at
 8192. How fast a context cache grows depends on the attention design (sliding-window or
 linear-attention layers grow much more slowly), so it cannot be derived from the model size. The
 report puts the need at 8192 next to the catalog's `memory_gb`, gives the growth per 8192 tokens from

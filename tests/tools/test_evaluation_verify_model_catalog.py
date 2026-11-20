@@ -23,12 +23,14 @@ from teachers_teammate.infrastructure.ollama_utils import ChatStats
 from tools import verify_model_catalog
 from tools.evaluation.checks import gate1_answers, gate_one
 from tools.evaluation.checks.model_fit import (
+    SIZES_PATH,
     CardReading,
     FitRecord,
     FitStore,
     OllamaReading,
     spilled,
 )
+from tools.evaluation.core.machines import MACHINES_DIR
 from tools.evaluation.run import defaults, measure, protocol
 from tools.evaluation.run.agent_client import AgentCard, AgentError, AgentInfo, WindowStats
 from tools.evaluation.run.measure import ServerProbe
@@ -587,8 +589,38 @@ def _fit(
     return client, probe
 
 
-def _fit_args(store: Path, *extra: str) -> list[str]:
-    """Return the arguments of a measuring run into *store*."""
+def _store(tmp_path: Path) -> Path:
+    """Return a store root that holds the machine the measuring runs name."""
+    root = tmp_path / "store"
+    (root / "testsets").mkdir(parents=True)
+    machines = root / MACHINES_DIR
+    machines.mkdir()
+    (machines / "rx9070xt-server.json").write_text(json.dumps(_machine()), encoding="utf-8")
+    return root
+
+
+def _sizes(root: Path) -> Path:
+    """Return where the store keeps its size measurements."""
+    return root / SIZES_PATH
+
+
+def _machine() -> dict:
+    """Return the machine file of the server the measuring runs name."""
+    return {
+        "format": 1,
+        "id": "rx9070xt-server",
+        "gpu": {"vendor": "amd", "name": "AMD Radeon RX 9070 XT", "vram_mb": 16304},
+        "cpu": "AMD Ryzen 9 7950X",
+        "ram_gib": 31,
+        "os": "Ubuntu 24",
+        "accelerator_stack": "ROCm 10.1.0",
+        "notes": "",
+        "aliases": [],
+    }
+
+
+def _fit_args(root: Path, *extra: str) -> list[str]:
+    """Return the arguments of a measuring run into the store at *root*."""
     return [
         "fit",
         "--ollama-url",
@@ -596,7 +628,7 @@ def _fit_args(store: Path, *extra: str) -> list[str]:
         "--machine",
         "rx9070xt-server",
         "--store",
-        str(store),
+        str(root),
         "--gpu-agent",
         "http://127.0.0.1:1",
         *extra,
@@ -614,12 +646,12 @@ def test_measuring_a_model_stores_one_record_per_window(
     """
     agent = _FakeAgent()
     _fit(monkeypatch, agent=agent)
-    store = tmp_path / "sizes.jsonl"
+    root = _store(tmp_path)
 
-    code, out = _run(capsys, *_fit_args(store, "--tag", CANDIDATE))
+    code, out = _run(capsys, *_fit_args(root, "--tag", CANDIDATE))
 
     assert code == 0
-    records = FitStore(store).records()
+    records = FitStore(_sizes(root)).records()
     assert [record.num_ctx for record in records] == [8192, 16384, 32768]
     assert {record.machine for record in records} == {"rx9070xt-server"}
     assert {record.device for record in records} == {"gpu"}
@@ -647,12 +679,12 @@ def test_a_cpu_only_run_asks_for_no_gpu_at_one_window(
            the speed
     """
     client, _probe = _fit(monkeypatch, agent=_FakeAgent(increase_gb=0.0))
-    store = tmp_path / "sizes.jsonl"
+    root = _store(tmp_path)
 
-    code, out = _run(capsys, *_fit_args(store, "--cpu-only", "--tag", CANDIDATE))
+    code, out = _run(capsys, *_fit_args(root, "--cpu-only", "--tag", CANDIDATE))
 
     assert code == 0
-    records = FitStore(store).records()
+    records = FitStore(_sizes(root)).records()
     assert [record.num_ctx for record in records] == [BASE_NUM_CTX]
     assert records[0].options["num_gpu"] == 0
     assert records[0].device == "cpu"
@@ -670,14 +702,14 @@ def test_a_cpu_only_measurement_sits_beside_the_cards(
     Then   both records are kept, told apart by their device, so neither figure is lost
     """
     client, _probe = _fit(monkeypatch, agent=_FakeAgent(increase_gb=0.0))
-    store = tmp_path / "sizes.jsonl"
-    FitStore(store).append(_fit_record())
+    root = _store(tmp_path)
+    FitStore(_sizes(root)).append(_fit_record())
 
-    code, out = _run(capsys, *_fit_args(store, "--cpu-only", "--tag", CANDIDATE))
+    code, out = _run(capsys, *_fit_args(root, "--cpu-only", "--tag", CANDIDATE))
 
     assert code == 0
     assert client.asked == [CANDIDATE]
-    assert {(record.machine, record.device) for record in FitStore(store).records()} == {
+    assert {(record.machine, record.device) for record in FitStore(_sizes(root)).records()} == {
         ("rx9070xt-server", "gpu"),
         ("rx9070xt-server", "cpu"),
     }
@@ -695,7 +727,7 @@ def test_a_failed_request_still_closes_the_agents_window(
     agent = _FakeAgent()
     _fit(monkeypatch, failing={CANDIDATE}, agent=agent)
 
-    code, _out = _run(capsys, *_fit_args(tmp_path / "sizes.jsonl", "--tag", CANDIDATE))
+    code, _out = _run(capsys, *_fit_args(_store(tmp_path), "--tag", CANDIDATE))
 
     assert code == 1
     assert agent.windows == 1
@@ -713,15 +745,15 @@ def test_a_report_after_measuring_holds_only_the_model_and_machine_just_measured
     from teachers_teammate.domain.model_catalog import OLLAMA_CATALOG  # noqa: PLC0415
 
     tag = OLLAMA_CATALOG[0].tag
-    store = tmp_path / "sizes.jsonl"
+    root = _store(tmp_path)
     _stored(
-        store,
+        _sizes(root),
         _fit_record(tag="huge:70b", size_gb=41.0, card_gb=41.0),
         _fit_record(tag=tag, machine="rtx3070-laptop", size_gb=40.0, card_gb=40.0),
     )
     _fit(monkeypatch, agent=_FakeAgent())
 
-    code, out = _run(capsys, *_fit_args(store, "--tag", tag))
+    code, out = _run(capsys, *_fit_args(root, "--tag", tag))
 
     assert code == 0
     assert "41.00 GB" not in out
@@ -743,7 +775,7 @@ def test_an_agent_that_does_not_answer_stops_before_the_first_request(
 
     monkeypatch.setattr(verify_model_catalog, "AgentClient", refuse)
 
-    code, out = _run(capsys, *_fit_args(tmp_path / "sizes.jsonl", "--tag", CANDIDATE))
+    code, out = _run(capsys, *_fit_args(_store(tmp_path), "--tag", CANDIDATE))
 
     assert code == 2
     assert "cannot be used" in out
@@ -759,13 +791,13 @@ def test_an_agent_that_stops_answering_ends_the_run(
     Then   the first window is stored, the second is not, and the exit code is 2
     """
     _fit(monkeypatch, agent=_FakeAgent(fail_at=2))
-    store = tmp_path / "sizes.jsonl"
+    root = _store(tmp_path)
 
-    code, out = _run(capsys, *_fit_args(store, "--tag", CANDIDATE))
+    code, out = _run(capsys, *_fit_args(root, "--tag", CANDIDATE))
 
     assert code == 2
     assert "stopped answering" in out
-    assert [record.num_ctx for record in FitStore(store).records()] == [8192]
+    assert [record.num_ctx for record in FitStore(_sizes(root)).records()] == [8192]
 
 
 def test_without_an_agent_the_records_carry_ollamas_figures_only(
@@ -777,7 +809,7 @@ def test_without_an_agent_the_records_carry_ollamas_figures_only(
     Then   the records have no card reading, and the report says so
     """
     _fit(monkeypatch)
-    store = tmp_path / "sizes.jsonl"
+    root = _store(tmp_path)
 
     code, out = _run(
         capsys,
@@ -787,14 +819,14 @@ def test_without_an_agent_the_records_carry_ollamas_figures_only(
         "--machine",
         "rx9070xt-server",
         "--store",
-        str(store),
+        str(root),
         "--no-agent",
         "--tag",
         CANDIDATE,
     )
 
     assert code == 0
-    assert all(record.card is None for record in FitStore(store).records())
+    assert all(record.card is None for record in FitStore(_sizes(root)).records())
     assert "no card reading" in out
 
 
@@ -807,21 +839,21 @@ def test_a_second_run_measures_nothing_and_again_measures_again(
     Then   the second run sends no request and the third measures every window again
     """
     _fit(monkeypatch, agent=_FakeAgent())
-    store = tmp_path / "sizes.jsonl"
-    _run(capsys, *_fit_args(store, "--tag", CANDIDATE))
+    root = _store(tmp_path)
+    _run(capsys, *_fit_args(root, "--tag", CANDIDATE))
     client, _probe = _fit(monkeypatch, agent=_FakeAgent())
 
-    code, out = _run(capsys, *_fit_args(store, "--tag", CANDIDATE))
+    code, out = _run(capsys, *_fit_args(root, "--tag", CANDIDATE))
 
     assert code == 0
     assert client.asked == []
     assert "already measured" in out
 
-    code, _out = _run(capsys, *_fit_args(store, "--tag", CANDIDATE, "--again"))
+    code, _out = _run(capsys, *_fit_args(root, "--tag", CANDIDATE, "--again"))
 
     assert code == 0
     assert len(client.asked) == 3
-    assert len(FitStore(store).records()) == 6
+    assert len(FitStore(_sizes(root)).records()) == 6
 
 
 def test_a_window_the_model_cannot_hold_ends_the_ladder(
@@ -834,12 +866,12 @@ def test_a_window_the_model_cannot_hold_ends_the_ladder(
            same window
     """
     _fit(monkeypatch, context_length=8192, agent=_FakeAgent())
-    store = tmp_path / "sizes.jsonl"
+    root = _store(tmp_path)
 
-    code, _out = _run(capsys, *_fit_args(store, "--tag", CANDIDATE))
+    code, _out = _run(capsys, *_fit_args(root, "--tag", CANDIDATE))
 
     assert code == 0
-    assert [record.num_ctx for record in FitStore(store).records()] == [8192, 16384]
+    assert [record.num_ctx for record in FitStore(_sizes(root)).records()] == [8192, 16384]
 
 
 def test_a_step_that_does_not_fit_the_card_is_stored_and_flagged(
@@ -851,13 +883,13 @@ def test_a_step_that_does_not_fit_the_card_is_stored_and_flagged(
     Then   the step is stored, because it is a real figure, and marked as spilled
     """
     _fit(monkeypatch, agent=_FakeAgent(increase_gb=CARD_TOTAL / GB - 0.7))
-    store = tmp_path / "sizes.jsonl"
+    root = _store(tmp_path)
 
-    code, out = _run(capsys, *_fit_args(store, "--tag", CANDIDATE))
+    code, out = _run(capsys, *_fit_args(root, "--tag", CANDIDATE))
 
     assert code == 0
     assert "SPILLED" in out
-    assert all(spilled(record) for record in FitStore(store).records())
+    assert all(spilled(record) for record in FitStore(_sizes(root)).records())
 
 
 def test_a_model_that_fails_does_not_end_the_fit_run(
@@ -870,14 +902,14 @@ def test_a_model_that_fails_does_not_end_the_fit_run(
            whole evening
     """
     client, _probe = _fit(monkeypatch, failing={CANDIDATE}, agent=_FakeAgent())
-    store = tmp_path / "sizes.jsonl"
+    root = _store(tmp_path)
 
-    code, out = _run(capsys, *_fit_args(store, "--tag", CANDIDATE, "--tag", "invented:2b"))
+    code, out = _run(capsys, *_fit_args(root, "--tag", CANDIDATE, "--tag", "invented:2b"))
 
     assert code == 1
     assert f"{CANDIDATE}: " in out
     assert "invented:2b" in client.asked
-    assert {record.tag for record in FitStore(store).records()} == {"invented:2b"}
+    assert {record.tag for record in FitStore(_sizes(root)).records()} == {"invented:2b"}
 
 
 def test_an_unreachable_server_ends_the_fit_run(
@@ -897,7 +929,7 @@ def test_an_unreachable_server_ends_the_fit_run(
         lambda url: _DeadProbe(url, URLError("connection refused")),
     )
 
-    code, out = _run(capsys, *_fit_args(tmp_path / "sizes.jsonl", "--tag", CANDIDATE))
+    code, out = _run(capsys, *_fit_args(_store(tmp_path), "--tag", CANDIDATE))
 
     assert code == 2
     assert "cannot be reached" in out
@@ -916,7 +948,7 @@ class _DeadProbe(_FitProbe):
 
 
 def _stored(store: Path, *records) -> None:
-    """Write *records* into *store*."""
+    """Write *records* into the sizes file *store*."""
     fit_store = FitStore(store)
     for record in records:
         fit_store.append(record)
@@ -972,15 +1004,15 @@ def test_the_report_names_the_tier_window_of_a_limit(
     When   ``fit --report --fit-limit 14.5`` runs
     Then   the largest window within 14.5 GB is printed, without a server
     """
-    store = tmp_path / "sizes.jsonl"
+    root = _store(tmp_path)
     _stored(
-        store,
+        _sizes(root),
         _fit_record(num_ctx=8192, size_gb=6.0, card_gb=6.0),
         _fit_record(num_ctx=16384, size_gb=10.0, card_gb=10.0),
         _fit_record(num_ctx=32768, size_gb=16.0, card_gb=16.0),
     )
 
-    code, out = _run(capsys, "fit", "--report", "--store", str(store), "--fit-limit", "14.5")
+    code, out = _run(capsys, "fit", "--report", "--store", str(root), "--fit-limit", "14.5")
 
     assert code == 0
     assert "limit 14.5 GB: up to 16,384 tokens" in out
@@ -994,9 +1026,9 @@ def test_the_report_marks_two_machines_that_disagree(
     When   ``fit --report --compare`` runs
     Then   the figure is marked as disagreeing
     """
-    store = tmp_path / "sizes.jsonl"
+    root = _store(tmp_path)
     _stored(
-        store,
+        _sizes(root),
         _fit_record(machine="rx9070xt-server", size_gb=8.0, card_gb=8.0),
         _fit_record(machine="rtx3070-laptop", size_gb=8.96, card_gb=8.96),
     )
@@ -1006,7 +1038,7 @@ def test_the_report_marks_two_machines_that_disagree(
         "fit",
         "--report",
         "--store",
-        str(store),
+        str(root),
         "--compare",
         "rx9070xt-server",
         "rtx3070-laptop",
@@ -1025,14 +1057,14 @@ def test_the_catalog_figures_take_the_larger_of_two_machines(
     Then   the larger need is the figure to enter, because two backends that disagree give the
            cautious answer
     """
-    store = tmp_path / "sizes.jsonl"
+    root = _store(tmp_path)
     _stored(
-        store,
+        _sizes(root),
         _fit_record(machine="rx9070xt-server", size_gb=8.0, card_gb=8.0),
         _fit_record(machine="rtx3070-laptop", size_gb=9.0, card_gb=9.4),
     )
 
-    code, out = _run(capsys, "fit", "--report", "--store", str(store), "--catalog")
+    code, out = _run(capsys, "fit", "--report", "--store", str(root), "--catalog")
 
     assert code == 0
     assert "memory_gb: 9.40" in out
@@ -1046,16 +1078,16 @@ def test_the_catalog_figures_of_a_model_come_from_its_own_records(
     When   ``fit --report --catalog`` runs
     Then   each model gets its own memory and growth, not the other model's
     """
-    store = tmp_path / "sizes.jsonl"
+    root = _store(tmp_path)
     _stored(
-        store,
+        _sizes(root),
         _fit_record(tag="big:27b", num_ctx=8192, size_gb=8.0, card_gb=8.0),
         _fit_record(tag="big:27b", num_ctx=16384, size_gb=12.0, card_gb=12.0),
         _fit_record(tag="small:4b", num_ctx=8192, size_gb=3.0, card_gb=3.0),
         _fit_record(tag="small:4b", num_ctx=16384, size_gb=3.5, card_gb=3.5),
     )
 
-    code, out = _run(capsys, "fit", "--report", "--store", str(store), "--catalog")
+    code, out = _run(capsys, "fit", "--report", "--store", str(root), "--catalog")
 
     assert code == 0
     big = out[out.index("big:27b:\n  memory_gb") :]
@@ -1094,7 +1126,7 @@ def test_measuring_needs_a_machine(
         "--ollama-url",
         "http://127.0.0.1:1",
         "--store",
-        str(tmp_path / "sizes.jsonl"),
+        str(_store(tmp_path)),
         "--gpu-agent",
         "http://127.0.0.1:1",
         "--tag",
@@ -1123,7 +1155,7 @@ def test_measuring_needs_an_agent_or_a_decision_against_one(
         "--machine",
         "rx9070xt-server",
         "--store",
-        str(tmp_path / "sizes.jsonl"),
+        str(_store(tmp_path)),
         "--tag",
         CANDIDATE,
     )

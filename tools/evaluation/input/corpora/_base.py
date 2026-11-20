@@ -17,7 +17,6 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Collection, Mapping
 from dataclasses import dataclass
-import hashlib
 from pathlib import Path
 from typing import Any, ClassVar, TypeVar
 
@@ -177,23 +176,6 @@ class CorpusAdapter(ABC):
         for split in chosen:
             files.update(self._files_of(split))
         return files
-
-    def redaction_key(self) -> bytes:
-        """Return the key of the hashes an item of this corpus keeps, made from the corpus itself.
-
-        Only someone who holds the corpus can recompute it, so a keyed hash of a short field of a
-        restricted corpus cannot be checked by a dictionary attack on the repository.  It covers
-        every pinned file, in the order of their names.
-        """
-
-        def build() -> bytes:
-            digest = hashlib.sha256(b"teachers-teammate/redaction/v1\0")
-            for name, path in sorted(self.files().items()):
-                digest.update(name.encode("utf-8") + b"\0")
-                digest.update(path.read_bytes())
-            return digest.digest()
-
-        return self._reading("redaction_key", "", build)
 
     @abstractmethod
     def _files_of(self, split: str) -> dict[str, Path]:

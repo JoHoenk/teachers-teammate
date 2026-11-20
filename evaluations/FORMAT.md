@@ -1,23 +1,23 @@
-# The format of a stored proofreading run
+# The format of the evaluation records
 
 Format version **2** for a run file, a test-set record and a manifest; **3** for a marks file, whose
-marks have a kind; **3** for a redacted run file, which is a different record and not a run file with
-fields added; **1** for `export.json`. Every file carries its `format`, and a reader refuses any
-version it does not know rather than guessing. The history is at the end.
+marks have a kind; **1** for a machine file; **3** for a size record. Every file carries its
+`format`, and a reader refuses any version it does not know rather than guessing. The history is at
+the end.
 
 The rules the format serves:
 
 | # | Requirement | How the format meets it |
 | --- | --- | --- |
 | 1 | A committed run can be **checked** later: same texts, same request, same weights, same machine | the question hash, the key hash, the protocol fingerprint, the instructions hash, the model digest, the seed and the machine are in the header |
-| 2 | A committed run can be **re-scored** with a metric that did not exist when it ran | the model's edits are stored as character positions plus short replacements, not only the scores, and `scorer_version` names the scorer that made the numbers |
-| 3 | A committed run can be **read without the corpora** | scores, edits and notes are numbers and capped words; every report works on them |
-| 4 | The repository holds **no corpus sentence** | hashes, positions, label codes, numbers and capped model words only; `validate` enforces it |
-| 5 | Runs are **evidence**: immutable and listed | append-only files, `INDEX.md` with checksums, a test that regenerates it |
+| 2 | A committed run can be **re-scored** with a metric that did not exist when it ran | a run file holds the model's output and the app's own review as returned, and no score, so any scorer can read it; the score cache records the `scorer_version` of the numbers it holds |
+| 3 | A run can be **read without the corpora** | the store holds the texts beside the runs, so a clone reports without downloading a corpus |
+| 4 | The record lives in a **private repository** | the texts come from corpora that may not be passed to a third party; this repository holds the code and the formats, never a record |
+| 5 | Runs are **evidence**: immutable | a run file is written once and never merged; git is the history |
 
-Reading a run is possible at two levels. **Level 1** needs nothing but the file: the numbers are
-there. **Level 2** needs the corpora: the texts are rebuilt from the pointers and the stored edits
-are applied, so the scoring can be recomputed.
+Reading a run is possible at two levels. **Level 1** needs the file and the store's texts: the
+answer is scored from what the file holds. **Level 2** needs the corpora: the texts are rebuilt from
+the pointers and the stored edits are applied, so the scoring can be recomputed from the source.
 
 Everything is plain JSON with sorted keys, so `git diff` shows what changed and a run is one file.
 
@@ -29,9 +29,9 @@ They are easy to mix up, and only one of them groups runs:
 
 | Name | Says | Where | Who changes it |
 | --- | --- | --- | --- |
-| `format` | The layout of a JSON file: which fields exist | A run file, a test-set record and a manifest (`2`); a marks file (`3`); a redacted run file (`3`); `export.json` (`1`); `protocol.json` carries `schema: 1` | Whoever changes the format |
+| `format` | The layout of a JSON file: which fields exist | A run file, a test-set record and a manifest (`2`); a marks file (`3`); a machine file (`1`); a size record (`3`); `protocol.json` carries `schema: 1` | Whoever changes the format |
 | `eval_version` | Which requests a run measured: prompts, answer format, window | `tools/evaluation/core/protocol.json`, looked up from the header's `protocol.fingerprint` | Raised by hand; `evaluate run` refuses to start when the fingerprint is not in the table |
-| `scorer_version` | How the numbers were computed | `SCORER_VERSION` in `tools/evaluation/report/score.py`, copied into the redacted header and the export manifest | Raised by hand when a number changes; the golden numbers of the tests fail until it is |
+| `scorer_version` | How the numbers were computed | `SCORER_VERSION` in `tools/evaluation/report/score.py`, recorded in the score cache | Raised by hand when a number changes; the golden numbers of the tests fail until it is |
 | `tool_revision` | The commit the tools were at | Every session line | Nobody: git. **Information only** — nothing checks it, groups by it or refuses because of it |
 
 Four keys are built from a header, each with one job (`tools/evaluation/core/axes.py`):
@@ -89,21 +89,31 @@ golden numbers of the tests fail until it is.
 <store>/testsets/<id>/accepted.jsonl              the accepted alternatives of the key
 <store>/runs/<folder>/<name>.run.jsonl            one run file, header first
 <store>/marks/<marker>__<question_sha256>.jsonl   one marker's verdicts on one set
+<store>/machines/<id>.json                        one machine, named by its id
+<store>/model-fit/sizes.jsonl                     one size record per model, machine, device, window
+<store>/gates/<record>.md                         a gate's verdict and the runs it rests on
+<store>/cache/                                    the score cache, disposable and git-ignored
 ```
 
 | Path | Holds |
 | --- | --- |
-| `testsets/<id>/<language>.jsonl` | The texts of one language: source, reference, labels, spans. Corpus text, so it stays in the store and is never committed. |
+| `testsets/<id>/<language>.jsonl` | The texts of one language: source, reference, labels, spans. Corpus text, so it stays in the private repository and is never published. |
 | `testsets/<id>/manifest.json` | The pointers and hashes that pin the set; no text. |
 | `testsets/<id>/accepted.jsonl` | The corrections a marker called valid, which the key accepts as a second annotator's fix. Optional. |
-| `runs/<folder>/<name>.run.jsonl` | One run: header, sessions, one answer per text. Holds the model's output, so it stays in the store. |
+| `runs/<folder>/<name>.run.jsonl` | One run: header, sessions, one answer per text. Holds the model's output, so it stays in the private repository. |
 | `marks/<marker>__<question_sha256>.jsonl` | One marker's verdicts on one set, named by the marker and the set's question hash. |
+| `machines/<id>.json` | One machine: its card, processor, memory, OS and driver stack. |
+| `model-fit/sizes.jsonl` | What each model needs on the card, per machine, device and window. |
+| `gates/<record>.md` | A gate's verdict, the runs it rests on and the command that reproduces the figures. |
+| `cache/` | The score cache. Disposable, git-ignored. |
 
 `<folder>` is the folder a converted run came from (`results-exchange`). It is provenance and not
 part of the format: a run file names its test set in its header, and its own name is a label derived
 from the axes, so nothing reads the folder back.
 
-The store is local. What the repository holds is the **export** of it, below.
+The store is the private repository `teachers-teammate-evals`. The tools default to a clone at
+`~/git/teachers-teammate-evals` and refuse a store inside this repository's working tree: nothing of
+the store is committed here.
 
 ## `testsets/<id>/manifest.json`
 
@@ -150,7 +160,7 @@ Says *which* texts the items are, and what a correct rebuild must look like. It 
 | `built` | The day the builder made it. |
 | `selection_seed` | The seed of the shuffles, so the same selection can be made again. The recipe is `tools/evaluation/input/recipes/<testset with _>.py` at `builder_revision`. |
 | `builder_revision` | The commit of `tools/prepare_gec_testset.py` that built it, `+dirty` when the tree had uncommitted changes. |
-| `key_version` | Raised by hand when the key changes: the same runs, scored against a better key. An export replaces a committed manifest of a lower version and refuses one of the same version with another `key_sha256`. |
+| `key_version` | Raised by hand when the key changes: the same runs, scored against a better key. A manifest of a higher version replaces one of a lower version; the same version with another `key_sha256` is refused. |
 | `corpora.<name>` | The name of an adapter in `tools/evaluation/input/corpora/`; `licence`, `restricted`, and the `sha256` of every corpus file the items come from. |
 | `question_sha256` | The hash of the whole set's question: its texts' hashes, in order. Another value is another set, whatever the id says. |
 | `key_sha256` | The hash of the whole set's key: every text's key group, in order. |
@@ -194,7 +204,7 @@ and to score; the words come back from the corpus at level 2.
 A manifest is immutable. Another selection is another `testset` id: committed runs pin the manifest
 by hash, so an edited manifest would make them uncheckable. The key may still move — see
 `accepted.jsonl` — and a run records the key it was measured against. A key change raises
-`key_version`, which is what lets an export replace the committed manifest instead of refusing it.
+`key_version`, which is what lets a new manifest replace the old one instead of being refused.
 
 ## `testsets/<id>/accepted.jsonl`
 
@@ -220,7 +230,7 @@ also accepted stays with the named marker taken out of its `markers`. The comman
 added and what it removed.
 
 The file is part of the key group, so adding one moves `key_sha256` and no run: the numbers of a run
-are only meaningful against the key they were measured with, and the export records that key.
+are only meaningful against the key they were measured with, and a run records that key.
 
 ## `testsets/<id>/<language>.jsonl`
 
@@ -261,7 +271,7 @@ the question is another set; a change of the key is the same runs scored against
 
 `text_sha256` is the hash of a text's language and source, `question_sha256` the hash of a set's
 `text_sha256` values in order, and `key_sha256` the hash of every text's key group, in order. A run
-records the first; the export records both.
+records the first; a report reads both from the store.
 
 ## `runs/<folder>/<name>.run.jsonl`
 
@@ -275,7 +285,7 @@ The file name is a label derived from the axes and is never read back.
 ```
 
 * `date` — `YYYY-MM-DD` of the first session;
-* `host` — the machine id, an id of `evaluations/machines/`; for a run of a provider other than
+* `host` — the machine id, an id of the store's `machines/`; for a run of a provider other than
   `ollama`, which ran on no machine of ours, the provider name stands here; `unknown-machine` when
   neither is known (`axes.host_of`, the one place that fallback lives);
 * `model-slug` — the tag in lower case with a leading `hf.co/` removed and `/` and `:` replaced by
@@ -286,8 +296,8 @@ The file name is a label derived from the axes and is never read back.
   `repeat-<n>`, which always get one;
 * `key8` — the first eight hex digits of the compare key's hash.
 
-A reader that parses a name is a bug: a name cannot carry a new axis. An export refuses a name that
-already exists; `--label` tells two runs of one configuration apart.
+A reader that parses a name is a bug: a name cannot carry a new axis. `store convert` refuses a name
+that already exists; `--label` tells two runs of one configuration apart.
 
 ### The header
 
@@ -299,7 +309,7 @@ already exists; `--label` tells two runs of one configuration apart.
 | `protocol` | The axes, each stored once under a readable name — see below. |
 | `run` | `seed`, `repeat`, `timeout`. Not axes: the seed is derived from the repeat, so repeats would never pool. |
 | `model_info` | The tag's `digest`, `quantization`, `parameter_size`, `family`. |
-| `environment` | `machine`, `ollama_version`, `isolated`, `gpu_sampler`, and `machine_source` when an empty machine was filled in. `machine` is an id of `evaluations/machines/`, the registry `evaluate run --machine` and `verify_model_catalog fit --machine` check; a run and a size measurement of one machine are joined by it. |
+| `environment` | `machine`, `ollama_version`, `isolated`, `gpu_sampler`, and `machine_source` when an empty machine was filled in. `machine` is an id of the store's `machines/`, the registry `evaluate run --machine` and `verify_model_catalog fit --machine` check; a run and a size measurement of one machine are joined by it. |
 
 `protocol` holds every axis: `model`, `model_digest`, `exchange` (`text-first`,
 `one-request-text`, `one-request-review`, `sentence-walk`, `sentence-list`), `steps` (a subset of
@@ -318,8 +328,7 @@ is absent exactly when `steps` has no `explain`.
 `instructions` is the SHA-256 of the policy and answer format of each language, keyed by the
 language code. The comparison asks for the language by name and sends plain text, so the preset of
 that language is hashed, with the default level and the answer format of the run's exchange. It
-hashes what went into the request, so a run whose prompt has since changed is recognisable — the
-export copies the hash the run recorded and never recomputes it.
+hashes what went into the request, so a run whose prompt has since changed is recognisable.
 
 ### The session
 
@@ -359,172 +368,6 @@ the window's budget at paragraph and sentence ends, and a text within the budget
 whatever it holds. For a text that failed, the pieces after the failed one were not sent. A run of
 the comparison therefore records how often a model was asked more than once for one text.
 
-## The export
-
-The repository holds no corpus text, so a run is *exported*: the model's edits become character
-positions plus capped replacements, the notes categories plus capped explanations, and every outcome
-a number. `bazel run //tools:publish -- export --store <store> --out evaluations/proofreading`
-writes:
-
-```
-<out>/export.json                       the export's own manifest
-<out>/testsets/<id>/manifest.json       the store's manifest, written again
-<out>/runs/<name>.run.jsonl             one redacted run file
-<out>/INDEX.md                          one row per run
-```
-
-A run file sits directly below `runs/`. The folder a converted run came from is provenance of the
-store and not part of the export: the file names its test set in its header, and its own name is a
-label derived from the axes, so nothing reads a folder back.
-
-An export is a **plan** first: one entry per run, and nothing is written while any entry is refused.
-
-| Action | When |
-| --- | --- |
-| `write` | The run file is not there yet. |
-| `unchanged` | The committed file holds exactly this run. |
-| `replace (grew)` | The committed file holds the first answers of this run, so the run only grew. |
-| `replace (rescore)` | `--rescore` was given and the numbers were measured against another key or another scorer. |
-| `stale` | The numbers were measured against another key or another scorer, and `--rescore` was not given. |
-| `skipped (incomplete)` | The run holds fewer answers than its set has texts, and `--partial` was not given. |
-| `refused` | Writing the run would lose something: another run of the same name, a set that was not read, or a committed file holding answers this run does not. |
-
-A run file is written once: a second export of the same run says `unchanged` rather than merging. A
-copied manifest is compared by what it pins, not by its bytes: another `question_sha256` is another
-set and is refused, because a committed set is never edited; the same question with a higher
-`key_version` replaces the committed manifest, because the same runs are scored against a better
-key; a lower or equal `key_version` with another `key_sha256` is refused, because the key moved
-without saying so.
-
-Two things in an export are derived and are therefore replaced: a copied manifest, as above, and a
-run file whose numbers were measured against another key or another scorer. The second needs
-`--rescore`; without it the export lists the run and leaves it alone. `export.json` is merged, not
-rewritten: the sets of an earlier export stay, so exporting one set does not hide the runs of the
-others. `INDEX.md` is written even when a run file fails, so an aborted export never leaves a run
-file the list does not name.
-
-### `export.json`
-
-```json
-{
-  "format": 1,
-  "exported": "2026-11-17",
-  "scorer_version": 1,
-  "testsets": {
-    "gec-2026-12": {
-      "manifest_sha256": "<sha256>",
-      "question_sha256": "<sha256>",
-      "key_sha256": "<sha256>",
-      "texts": 31
-    }
-  }
-}
-```
-
-| Key | Meaning |
-| --- | --- |
-| `format` | `1`. |
-| `exported` | The day the export was made, not the day of the runs. |
-| `scorer_version` | The scorer that computed every number in the export. |
-| `testsets.<id>` | What pins the set: the hash of the copied manifest, the hash of its question, the hash of its key, and how many texts it holds. |
-
-A run is placed by three facts: the set it was asked about, the key its numbers were measured
-against, and the scorer that computed them. A run that disagrees with the export on any of them is
-skipped with a reason, so a report never mixes numbers that were measured against different keys; a
-run whose key or scorer moved says so and names `export --rescore`.
-
-### The redacted run
-
-The same shape as a run file — header, session and answer lines — with `format: 3`, two extra
-header fields and `scores` in place of `output`:
-
-| Header field | Content |
-| --- | --- |
-| `scorer_version` | The version of `tools/evaluation/report/score.py` that computed the numbers. |
-| `key_sha256` | The key the numbers were measured against, beside `input.question_sha256`. |
-
-A reader that finds either missing refuses the file rather than showing numbers nobody can place.
-The two are typed fields of the header and not extras, so a reader cannot mistake a run file for an
-export.
-
-A redacted answer line:
-
-| Field | Content |
-| --- | --- |
-| `format`, `type`, `text`, `text_sha256` | As in a run file. |
-| `key_part_sha256` | The hash of this text's key group, so a key that moved for one text makes only the runs holding that text stale. |
-| `scores` | Every number of the answer, flat: the counts below. |
-| `edits` | The model's changes as `[start, end, field]`, the span in **characters** of the source and the field `{"r": text}` or, when the caps forbid the text, `{"h": hash, "n": words}`. |
-| `notes` | One entry per note: `edit` (index into `edits`, or `null`), `category`, `explanation`, `explanation_sha256` (`null` when the text is stored in full), `orphan`. |
-| `failed`, `fallback`, `warning`, `unclear_count`, `requests`, `loaded`, `shared`, `vram_baseline_mb`, `vram_peak_mb`, `pieces`, `seconds` | As in a run file. |
-
-**Positions are character offsets** into the stored text, end exclusive, in every stored record.
-Token indices exist only inside the scorer, so a tokenizer change moves no stored data.
-
-**The score numbers.** They are counts, not shares: a language's figures are pooled over its texts,
-so a share computed per text and then averaged would not be the same number.
-`tools/evaluation/report/score.py` computes all of them, at export time and again in a report of the
-store, so the two cannot drift apart.
-
-| Key | Meaning |
-| --- | --- |
-| `tp`, `fp`, `fn` | Changes the answer made that the reference makes too, changes it made that the reference does not, and changes the reference makes that the answer does not. |
-| `explained`, `needed` | Changes whose note explains them in non-blank words, and changes that need an explanation at all (a comma does not). |
-| `orphans` | Notes that explain no change in the text: the model claimed an edit it did not make. |
-| `category_checked`, `category_agreed` | Errors the answer fixed exactly with a note, whose corpus label maps to a category, and of those how many notes carry that category. |
-| `unchanged` | Already-correct sentences that came back unchanged. |
-| `unclear` | Unclear expressions the review listed. |
-| `marks_added` | Whether the answer carries Markdown marks the source does not have. |
-| `accepted` | Answer edits that match an accepted alternative of the key. |
-| `words_out`, `words_ref` | The words of the answer and of the reference (of the source for a `correct` text). |
-| `cut_run`, `added_run` | The longest deleted and the longest inserted run of the answer that no reference change overlaps. |
-| `gleu_c`, `gleu_r` | Tokens of the model's text and of the reference. |
-| `gleu_m1` … `gleu_m4`, `gleu_p1` … `gleu_p4` | Per n-gram order: the model's n-grams the reference has, minus the ones the source has and the reference removed, floored at 0 per text; and `max(c + 1 − n, 0)`, the n-grams the model's text could have. |
-| `gleu_src_c`, `gleu_src_m1` … `gleu_src_m4`, `gleu_src_p1` … `gleu_src_p4` | The same for the unchanged source, the floor a model has to beat. `r` is the same as the model's, so it is not repeated. |
-| `tp_h1`, `fn_h1`, `tp_h2`, `fn_h2` | Exact matches and misses of the reference's changes in the first and in the second half of the text. A change belongs to the first half when its start lies before the middle word. |
-| `located`, `ref_edits` | Of the reference's changes, how many the model touched at all, and how many there are. |
-| `alone`, `alone_of` | Of the sentences the reference leaves alone, those the model's diff leaves alone too, and how many that is. Only for a text whose record has `sentence_spans`. |
-| `cover`, `cover_of` | Of the sentences some reference change touches, those some model change touches too, and how many that is. Coverage is "looked at", not "fixed". Only with `sentence_spans`. |
-
-A `correct` text has the words only: it has no reference correction, and its `unchanged` already
-says what it is for.
-
-### The caps
-
-`tools/evaluation/store/redaction.py` decides, field by field, whether it may be stored as text. A
-**word** is a word or a mark of the app's tokeniser; whitespace is not counted.
-
-| Cap | Value |
-| --- | --- |
-| `WORD_RUN` | 5 — a field may not copy five consecutive words of the item's source or reference. |
-| `MAX_REPLACEMENT_WORDS` | 8 — a longer replacement is stored as `{"h": hash, "n": words}`. |
-| `MAX_EXPLANATION_CHARS` | 600 — a longer explanation is shortened and marked with `…`. |
-| restricted corpus | An item of a `restricted` corpus stores no words at all: replacements as hashes, explanations as `""` with their hash kept. The hash is an HMAC-SHA256 under a key made from the corpus files, so a dictionary cannot reverse it. |
-
-The comparison is lenient the way a reader would be: marks are dropped and case is folded.
-Punctuation is a word of its own, which makes the rule stricter than a word-only count and therefore
-safe.
-
-## `INDEX.md`
-
-Generated by `bazel run //tools:publish -- index` from the run files themselves; `index --check`
-fails when it is stale. One row per run: run, date, machine, model, digest, one column per axis the runs of the
-export differ in, test set, texts, mean F0.5, seconds per 100 words, scorer, and the SHA-256 of the
-file.
-
-The axis columns are the varying axes of the compare key, printed with
-`core/axis_table.py:axis_label`, so a sweep of temperatures has a `temperature` column reading
-`temperature 0.4` and a run of one setup has none. The model, its digest and the test set have
-columns of their own and are not repeated as axes. The machine is `axes.host_of`, the one place the
-fallback to the provider lives.
-
-Mean F0.5 is the mean over the deciding languages, German and English (`errors` items only,
-`correct` items have no precision to speak of); French is reported, not averaged, and a language
-where nothing was scored has no F0.5 at all. Seconds per 100 words is scaled by the manifest's word counts of the items, so it is
-comparable across run lengths. A *word* is `redaction.word_count` of the source — words **and**
-punctuation marks — which is what `items[].source.words` holds, so the index and the local
-performance table divide by the same number. Numbers of different scorers are never compared.
-
 ## `marks/<marker>__<question_sha256>.jsonl`
 
 A teacher's marks of a run's explanations, written by
@@ -555,8 +398,7 @@ change) and `vague` (true but too general to help a student) are the spot check'
 `correct` counts. `valid` is a correction the annotators did not make but a person judged right, and
 it is what `accept-marks` turns into key data; only an `edit` mark can say it.
 
-Two producers write this file: `store marks` from a filled-in sheet, and `store import-blind-key`
-from the old blind sheet, which maps its token positions to characters once.
+`store marks` writes this file from a filled-in sheet.
 
 The file is merged, not replaced: marking a second run's sheet keeps the first run's marks, a mark of
 the same identity is replaced, and the lines are written sorted by identity, so two writers of the
@@ -567,11 +409,104 @@ notes of `page`-band texts that explain an edit, at most two per text, drawn wit
 the run key. Every machine draws the same one, and the sheet's header carries the run key beside the
 name, so a renamed file draws the same sample.
 
+## `machines/<id>.json`
+
+One machine, named by its id. A run and a size record name a machine by this id, so a typo is
+refused instead of becoming a second machine nobody can compare with the first.
+
+```json
+{
+  "format": 1,
+  "id": "rx9070xt-server",
+  "gpu": {"vendor": "amd", "name": "AMD Radeon RX 9070 XT", "vram_mb": 16304},
+  "cpu": "Intel Core i5-13600KF, 14 cores (6 P + 8 E) / 20 threads",
+  "ram_gib": 31,
+  "os": "Ubuntu 24, Linux 7, bare metal",
+  "accelerator_stack": "ROCm 10.1.0, amd-smi 27.1.0",
+  "notes": "Ollama on the same machine; the evaluation tool runs on another one.",
+  "aliases": ["rx9070xt", "rx9070xt-cpu"]
+}
+```
+
+| Field | Meaning |
+| --- | --- |
+| `format` | `1`. |
+| `id` | The machine's id: the file name, and every record's `machine`. |
+| `gpu` | `vendor`, `name` and `vram_mb` of the card; `null` for a machine without one. |
+| `cpu`, `ram_gib` | The processor and the main memory. |
+| `os`, `accelerator_stack` | The operating system and the driver stack. Ollama's API cannot report them, and a difference between two backends is only readable with them. |
+| `notes` | What a reader has to know to compare two machines. |
+| `aliases` | The labels the records used before the registry. Documentation, not ids: a command line that names one is refused like any other unknown machine. |
+
+A machine is not a device: one machine is measured on its card and on its processor, and a size
+record keeps the two apart.
+
+## `model-fit/sizes.jsonl`
+
+What each model needs on the card, one JSON object per line, append-only. Numbers only.
+
+```json
+{"format": 3, "measured_at": "2026-11-13T19:04:11Z", "machine": "rx9070xt-server",
+ "device": "gpu", "ollama_version": "0.40.15", "tool_commit": "abc1234",
+ "tag": "gemma4:e4b", "digest": "sha256:…", "num_ctx": 16384,
+ "answer_tokens": 172, "generation_seconds": 2.4,
+ "options": {"temperature": 1.0, "num_ctx": 16384}, "load_seconds": 4.2,
+ "ollama": {"context_length": 16384, "size_bytes": 6012345678, "size_vram_bytes": 6012345678},
+ "card": {"agent_sha256": "…", "source": "sysfs", "total_bytes": 17095983104,
+          "idle_bytes": 715128832, "peak_bytes": 7301234688, "end_bytes": 7299137536},
+ "ram": {"total_bytes": 33285996544, "idle_available_bytes": 30100000000,
+         "min_available_bytes": 29200000000}}
+```
+
+| Field | Meaning |
+| --- | --- |
+| `format` | `3` since the machine and the device. |
+| `measured_at` | When the request ran, UTC. |
+| `machine` | An id of `machines/`. |
+| `device` | `gpu` for the card, `cpu` for the processor (`--cpu-only`). A size measured on the card says nothing about the processor, so the two are never pooled. |
+| `ollama_version` | The server's version. A different version is a different backend, so a record only matches a run of the same version, and a report marks a record of another version. |
+| `tool_commit` | The commit that made the record. |
+| `tag`, `digest` | The model, and the build of it. A tag that is pushed again gets a new digest, and its old records no longer match. |
+| `num_ctx` | The window the request asked for. |
+| `answer_tokens`, `generation_seconds` | The answer (Ollama's `eval_count`) and the time the model took to write it (`eval_duration`, load excluded). The speed is their quotient, computed when read; an answer under 20 tokens gives none. |
+| `options` | The options the request sent, i.e. the app's own proofreading request at that window. |
+| `load_seconds` | What a reload costs. |
+| `ollama.context_length` | The window Ollama really loaded (`/api/ps`). Smaller than `num_ctx` when the model's own maximum is smaller, and then the ladder stops. |
+| `ollama.size_bytes`, `size_vram_bytes` | Ollama's own figures. `size_vram` below `size` means part of the model is in main memory. |
+| `card.idle_bytes` | The card's use after the server was emptied and had settled, before the load. |
+| `card.peak_bytes` | The highest sample while the window was open. |
+| `card.end_bytes` | The sample at close, with the model still loaded. |
+| `card.total_bytes` | The card's total, so a peak can be read as a share of it. |
+| `ram.*` | Main memory: total, available when idle, and the lowest available during the window. |
+
+`card` and `ram` are `null` for a record made with `--no-agent`. Every byte figure is a raw byte
+count; the reports divide by 10⁹ for GB, the same unit as the catalog's sizes, so a figure can be
+compared with `memory_gb` without a conversion.
+
+**Nothing derived is stored.** The card's increase (`peak - idle`), the need
+(`max(ollama size, card increase)`), the growth per 8k and the tier windows are computed when the
+file is read, so a change of the rule costs no new measurement.
+
+## `gates/<record>.md`
+
+A gate's verdict, the runs it rests on and the command that reproduces the figures. **No figure**:
+the numbers are in the runs, and a record that copied them would go stale the first time a scorer
+changed.
+
+| Part | Content |
+| --- | --- |
+| Verdict | Which models passed, which were dropped, and why. |
+| Runs | The run files the verdict rests on, by name. |
+| Command | The `bazel run //tools:report -- …` line that prints the figures again. |
+
+A gate-1 record says which models answered the app's format and which did not; a gate-2 record says
+which passed the floors and which won the comparison. Both are written once the runs they read are
+in the store, so a record never names a run that is not there.
+
 ## What validation checks
 
 `bazel run //tools:store -- validate --store <store>` checks the store's files; `validate <run file>`
-checks single files, and a committed one is recognised by its `scores`. The rules live in
-`tools/evaluation/store/validate.py`.
+checks single files. The rules live in `tools/evaluation/store/validate.py`.
 
 **A test set:**
 
@@ -590,15 +525,11 @@ ways, and every `text_sha256` and `source.sha256` is the record's.
 was assumed), the fingerprint is in the table, no text is answered twice, and every answer's text is
 in the set with the right `text_sha256`.
 
-**A committed run file** additionally needs `scorer_version` and `key_sha256`, and its stored fields
-are checked against the caps.
-
 **A marks file:** the text exists and the span lies on token boundaries; a mark whose edit no stored
 answer makes any more is listed.
 
 **Strict mode** (with the corpora named, `--corpus NAME=PATH` or `--corpora FILE`) adds the corpus
-file hashes and a full rebuild of every item, and applies the caps against the real source and
-reference.
+file hashes and a full rebuild of every item.
 
 Nothing here repairs a file. A problem is a string a person reads, and the command decides whether to
 refuse.
@@ -607,17 +538,13 @@ refuse.
 
 `tools/evaluation/core/records.py:read_run_file(lines)` returns a `RunFile`: the header, the sessions
 and the answers as they are, and refuses an unknown format version and a line that is neither a
-session nor an answer. `tools/evaluation/store/redacted.py:read_redacted_file(path)` returns a
-`RedactedRun` the same way, and refuses a line that holds an `output` — that is a run file, not an
-export.
+session nor an answer.
 
 `tools/evaluation/report/load.py:load(root)` pairs every answer of the store with the record it
-names, scores it, and returns `LoadedItem`s; `load_export(root)` does the same for an export, taking
-the numbers the file stored and placing each answer in the manifest the export copied. A file or an
-answer that cannot be used is skipped with a reason, so a report can say "23 / 31 texts" instead of
-pretending a run is complete. Level 1 works on those numbers alone. Level 2 (`resolve` the pointer,
-check the hashes, apply the edits) is what the rebuild does; an edit stored as `{h, n}` cannot be
-rebuilt and stays at level 1.
+names, scores it, and returns `LoadedItem`s. A file or an answer that cannot be used is skipped with
+a reason, so a report can say "23 / 31 texts" instead of pretending a run is complete. Level 1 works
+on the store's texts alone. Level 2 (`resolve` the pointer, check the hashes, apply the edits) is
+what the rebuild does.
 
 ## The score cache
 
@@ -632,15 +559,15 @@ machines have two files, and a flush writes every line it read plus the new ones
 
 | Version | Change |
 | --- | --- |
-| 1 | 2026-11-09. The first format: `machines/`, `testsets/`, `runs/`, `INDEX.md`; the caps of `redaction.py`; format and strict validation. Superseded by version 2; no run file of it is committed. |
-| 2 | 2026-11-17. The store and its export: `testsets/<id>/{manifest.json,<language>.jsonl,accepted.jsonl}`, `runs/<folder>/<name>.run.jsonl`, `marks/<marker>__<question_sha256>.jsonl`, `export.json`. Positions are character offsets. The header holds the axes under `protocol` and the machine under `environment`; `eval_version` is looked up from the fingerprint and no longer covers scoring, which has its own `scorer_version`; the redacted header also records `key_sha256`. `request_profile`, `kind`, `output_sha256`, the per-reference outcome list, `machines/` and `marks/<run-id>.json` are gone. |
+| 1 | 2026-11-09. The first format. Superseded by version 2; no run file of it is in the store. |
+| 2 | 2026-11-17. The store: `testsets/<id>/{manifest.json,<language>.jsonl,accepted.jsonl}`, `runs/<folder>/<name>.run.jsonl`, `marks/<marker>__<question_sha256>.jsonl`. Positions are character offsets. The header holds the axes under `protocol` and the machine under `environment`; `eval_version` is looked up from the fingerprint and no longer covers scoring, which has its own `scorer_version`. `request_profile`, `kind`, `output_sha256`, the per-reference outcome list, `machines/` and `marks/<run-id>.json` are gone. |
 
 The marks file has a version of its own, because it is not a run:
 
 | Version | Change |
 | --- | --- |
 | 1, 2 | The spot check's marks, with one value list for every mark. Superseded; no marks file of them is committed. |
-| 3 | 2026-11-20. A mark has a `kind` (`edit` or `explanation`) and the value list of its kind, so `wrong` on an edit and `wrong` on an explanation are two different verdicts. `import-blind-key` writes edit marks from the old blind sheet. |
+| 3 | 2026-11-20. A mark has a `kind` (`edit` or `explanation`) and the value list of its kind, so `wrong` on an edit and `wrong` on an explanation are two different verdicts. |
 
-The machines a run names are no longer a file of this directory: `evaluations/machines/` holds one
-JSON file per machine, and `machine` is an id from it.
+The machines a run names are not a file of this directory: the store's `machines/` holds one JSON
+file per machine, and `machine` is an id from it.

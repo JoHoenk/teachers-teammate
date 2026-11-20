@@ -1,10 +1,10 @@
-"""The evaluation tooling, in layers: core, metrics, input, store, run, report, publish, checks.
+"""The evaluation tooling, in layers: core, metrics, input, store, run, report, checks.
 
 One layer per job, and a layer imports only the layers below it, which the Bazel targets of
 ``//tools/evaluation`` enforce.
 
 ```
-publish → report → store → input → core, metrics
+report → store → input → core, metrics
 run → store, input, core, metrics            checks → run, core, metrics
 ```
 

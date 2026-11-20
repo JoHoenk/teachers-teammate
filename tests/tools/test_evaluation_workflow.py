@@ -1,5 +1,5 @@
-"""The path a run walks: a scripted corrector writes a run file, the report scores it, the export
-commits it.
+"""The path a run walks: a scripted corrector writes a run file, the report scores it, the check
+passes it.
 
 The layers are tested alone elsewhere; this file walks the path once, end to end, so a change that
 breaks the seam between two layers fails here with the step that broke.  Nothing here reads the real
@@ -25,10 +25,9 @@ from tools.evaluation.core.performance import LoadedModel, RequestStats
 from tools.evaluation.core.records import TestRecord, key_sha256, question_sha256
 from tools.evaluation.metrics.offsets import token_offsets
 from tools.evaluation.metrics.quality import ordered_edits
-from tools.evaluation.publish import WRITE, check, export
 from tools.evaluation.report import compare, gates, groups, load
 from tools.evaluation.run import protocol, runner
-from tools.evaluation.store import writer
+from tools.evaluation.store import validate, writer
 
 MODEL = "gemma4:12b"
 MACHINE = "rx9070xt-server"
@@ -270,11 +269,11 @@ def _store(root: Path, records: tuple[TestRecord, ...]) -> Path:
 # ── the path ──────────────────────────────────────────────────────────────────
 
 
-def test_a_scripted_run_becomes_a_report_and_a_committed_export(tmp_path: Path):
+def test_a_scripted_run_becomes_a_report_and_a_checked_store(tmp_path: Path):
     """
     Given  a store of two texts and a scripted corrector that answers with each reference
-    When   the run writes its files, the report scores them, and the export commits them
-    Then   every step reads what the one before it wrote, and the export passes the check
+    When   the run writes its files, the report scores them, and the store is checked
+    Then   every step reads what the one before it wrote, and every file passes the check
     """
     records = _records()
     root = _store(tmp_path / "store", records)
@@ -301,10 +300,6 @@ def test_a_scripted_run_becomes_a_report_and_a_committed_export(tmp_path: Path):
             check.line() for check in judgement.checks if check.passed is not True
         ]
 
-    out = tmp_path / "committed"
-    written = export(root, out=out)
-    assert [entry.action for entry in written.entries] == [WRITE] * 6
-
-    checked = check.check_store(root, out=out)
+    checked = validate.check_store(root)
     assert [item.name for item in checked if not item.ok] == []
-    assert {item.name for item in checked} >= {entry.name for entry in written.entries}
+    assert len(checked) == 7, "one test set and six runs"

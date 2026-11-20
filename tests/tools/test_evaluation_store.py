@@ -119,15 +119,19 @@ def _run(records: tuple[TestRecord, ...], **changes) -> RunFile:
 # ── the layout ──────────────────────────────────────────────────────────────
 
 
-def test_the_store_root_is_found_from_a_path_inside_it(tmp_path):
+def test_the_store_root_is_found_by_the_testsets_it_holds(tmp_path):
     """
-    Given  a path below a directory called store
+    Given  a path below a directory that holds ``testsets/``, and one that holds none
     When   the store root is asked for
-    Then   the store directory is returned, so a command line may name either the store or a file
+    Then   the directory with the test sets is returned whatever it is called, so a clone of the
+           private repository may have any name, and a path outside a store is its own root
     """
-    inside = tmp_path / "store" / "runs" / "results-exchange" / "a.run.jsonl"
+    root = tmp_path / "a-clone"
+    (root / "testsets").mkdir(parents=True)
+    inside = root / "runs" / "results-exchange" / "a.run.jsonl"
 
-    assert layout.store_root(inside) == tmp_path / "store"
+    assert layout.store_root(inside) == root
+    assert layout.store_root(root) == root
     assert layout.store_root(tmp_path / "elsewhere") == tmp_path / "elsewhere"
 
 

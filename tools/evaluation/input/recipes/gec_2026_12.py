@@ -24,8 +24,7 @@ recipe, not read from ``protocol``: a recipe never changes once its manifest is 
 the budget belongs to an eval version.  At eval version 1 the budget at window 8192 was 6,026
 characters for German and 6,091 for English, so a text of 6,400 or more was split and one of 5,800
 or less went out as one long request.  Today's budget is lower (about 2,800 characters), so every
-"pages" text of the set is split now; a CI test checks the committed manifest against the current
-budget instead of these two constants.
+"pages" text of the set is split now.
 
 **Three of the four "pages" texts are forced by the corpora, not by the seed.**  In the default
 splits there is exactly one German text above 6,400 characters (``sa009``) and exactly two English

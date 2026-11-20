@@ -152,8 +152,7 @@ def summarise(items: Sequence[ItemFacts], beta: float = DEFAULT_BETA) -> list[Mo
 
     A configuration is one compare key, so two prompt variants or two test sets are two rows and
     never one average.  Every language gets a row over all its texts (band ``""``) and one row per
-    band its texts were drawn for.  The items may come from a run file or from a redacted export;
-    both satisfy :class:`~.pooled.ItemFacts`, so the table is the same from either source.
+    band its texts were drawn for.
 
     Args:
         items: The (already scored) texts.

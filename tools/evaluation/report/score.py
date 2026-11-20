@@ -2,7 +2,7 @@
 
 A run file holds what the model, the server and the machine said and nothing else, so every
 number a report shows is computed here, from the stored answer and the test set's key.  The run does
-not score; the report loader and the publisher call this function, so the two cannot disagree.
+not score; the report loader calls this function, so the two cannot disagree.
 
 Explanations are aligned by the app's own :func:`~teachers_teammate.domain.proofreading.review.align`,
 so the tools and the teacher's window cannot disagree about which note explains which change: the
@@ -326,7 +326,7 @@ def score(
 ) -> Scored:
     """Return every number of *answer*, measured by the scorer of *run*'s task.
 
-    The report loader and the publisher call this, so a task's numbers are computed in one place.
+    The report loader calls this, so a task's numbers are computed in one place.
 
     Raises:
         FormatError: if the run's task is not one the tools know how to score.
@@ -348,8 +348,8 @@ def score_row(
 ) -> Scored:
     """Return every number of *answer*, measured against *record*'s key, for *run*'s protocol.
 
-    This is the proofreading scorer: the report loader and the publisher both reach it through
-    :func:`score`, and the run does not.  It is pure and deterministic, so the same three inputs
+    This is the proofreading scorer: the report loader reaches it through :func:`score`, and the
+    run does not.  It is pure and deterministic, so the same three inputs
     always give the same numbers.
 
     A failed text is scored as what the teacher got — its ``output``, which is the source — so the
@@ -537,8 +537,8 @@ def notes_of(
     """Return the review's notes as ``(edit index or None, category, explanation, orphan)``.
 
     A note that explains a change is linked to it by the index of that change in
-    :func:`char_edits`; a note that matches no change keeps ``None`` and is flagged, so a reader of
-    an export can tell an unplaceable remark from an unlinked one.  The flagged notes are exactly
+    :func:`char_edits`; a note that matches no change keeps ``None`` and is flagged, so a reader
+    can tell an unplaceable remark from an unlinked one.  The flagged notes are exactly
     the ones :func:`~..metrics.quality.count_explained` counts as orphans.
     """
     if review is None:

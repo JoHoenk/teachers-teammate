@@ -24,8 +24,9 @@ can read images — this is how the ``gemma4:12b`` open question can be settled.
 ``context_gb_per_8k`` need.  It loads the model at every step of ``CONTEXT_STEPS`` with the app's
 own proofreading options and stores two readings per step: what Ollama reports (``/api/ps``) and
 what the card really holds (the memory agent, ``--gpu-agent``).  Nothing derived is stored, so a
-new size limit costs no measuring.  The records go to ``evaluations/model-fit/sizes.jsonl``,
-append-only; ``--report`` reads them back without a server, ``--compare A B`` puts two machines
+new size limit costs no measuring.  The records go to ``model-fit/sizes.jsonl`` in the store of
+evaluation records (``--store``, default ``~/git/teachers-teammate-evals``), append-only;
+``--report`` reads them back without a server, ``--compare A B`` puts two machines
 side by side, and ``--catalog`` prints the figures to enter by hand.  ``--fit-limit`` (default
 ``8gb`` and ``16gb``) says which windows still fit a card of that size, by the app's own rule.
 
@@ -98,7 +99,7 @@ from tools.evaluation.checks.check_rule import CheckRule, CheckRun, Decision
 from tools.evaluation.checks.download_sizes import check_size, report_real_size
 from tools.evaluation.checks.model_fit import (
     DEFAULT_LIMITS,
-    DEFAULT_STORE,
+    SIZES_PATH,
     FitLimit,
     FitMeasureError,
     FitRecord,
@@ -131,7 +132,7 @@ from tools.evaluation.checks.structured_check import (
 )
 from tools.evaluation.core.formats import FormatError
 from tools.evaluation.core.machines import require_machine
-from tools.evaluation.core.paths import workspace_path
+from tools.evaluation.core.paths import DEFAULT_STORE, store_argument, store_path, workspace_path
 from tools.evaluation.core.revision import tool_revision
 from tools.evaluation.run import defaults, protocol
 from tools.evaluation.run.agent_client import AgentClient, AgentError
@@ -362,7 +363,7 @@ class _FitGate:
         """Measure *tag* at *window* and append the record; the second value is why it failed."""
         if not self.machine:
             return None, (
-                "could not measure the fit: pass --machine ID, from evaluations/machines/, so the "
+                "could not measure the fit: pass --machine ID, from the store's machines/, so the "
                 "record names the machine it was made on"
             )
         agent, info, problem = self._memory_agent()
@@ -409,12 +410,17 @@ class _FitGate:
         return self._agent, self._info, None
 
 
+def _default_sizes() -> Path:
+    """Return where the size measurements are kept unless a command names another file."""
+    return store_path(DEFAULT_STORE) / SIZES_PATH
+
+
 def _fit_gate(
     args: argparse.Namespace, port: OllamaChatPort, probe: ServerProbe, limit: FitLimit
 ) -> _FitGate:
     """Return the size gate of this invocation: the store, the limit and the agent to ask."""
     return _FitGate(
-        store=FitStore(args.fit_store),
+        store=FitStore(args.fit_store or _default_sizes()),
         limit=limit,
         probe=probe,
         port=port,
@@ -613,7 +619,7 @@ def _fit(args: argparse.Namespace) -> int:
     except ValueError as error:
         print(error)
         return 2
-    store = FitStore(args.store)
+    store = FitStore(args.store / SIZES_PATH)
     if args.report:
         return _fit_report(args, store, limits)
     return _fit_measure(args, store)
@@ -647,7 +653,7 @@ def _fit_measure(args: argparse.Namespace, store: FitStore) -> int:
         print("--machine ID is required when measuring: a record without a machine is worthless")
         return 2
     try:
-        require_machine(workspace_path("."), args.machine)
+        require_machine(args.store, args.machine)
     except (ValueError, FormatError) as error:
         print(error)
         return 2
@@ -923,8 +929,8 @@ def _header_lines(
 def _command_line() -> str:
     """Return the command that was run, without the server address.
 
-    The address is left out because it says nothing about the check and would have to be
-    redacted from a committed record.
+    The address is left out because it says nothing about the check and does not belong in a
+    record.
     """
     kept: list[str] = []
     skip = False
@@ -1127,16 +1133,16 @@ def _add_fit_options(parser: argparse.ArgumentParser) -> None:
     )
     parser.add_argument(
         "--fit-store",
-        type=workspace_path,
-        default=workspace_path(str(DEFAULT_STORE)),
+        type=store_argument,
+        default=None,
         metavar="PATH",
-        help="Where the size measurements are kept (default: %(default)s).",
+        help="Where the size measurements are kept (default: the store's model-fit/sizes.jsonl).",
     )
     parser.add_argument(
         "--machine",
         default=None,
         metavar="ID",
-        help="The id of the machine, from evaluations/machines/, recorded with a measurement made "
+        help="The id of the machine, from the store's machines/, recorded with a measurement made "
         "here.  Required when a model has to be measured.",
     )
     parser.add_argument(
@@ -1347,15 +1353,16 @@ def _add_fit(sub, shared) -> None:
         "--machine",
         default=None,
         metavar="ID",
-        help="The id of the machine measured, from evaluations/machines/, e.g. rx9070xt-server "
+        help="The id of the machine measured, from the store's machines/, e.g. rx9070xt-server "
         "(required when measuring).  An id the registry does not hold is refused.",
     )
     fit.add_argument(
         "--store",
-        type=workspace_path,
-        default=workspace_path(str(DEFAULT_STORE)),
+        type=store_argument,
+        default=DEFAULT_STORE,
         metavar="PATH",
-        help="Where the measurements are kept (default: %(default)s).",
+        help="The store of evaluation records (default: %(default)s); the measurements are kept "
+        "in its model-fit/sizes.jsonl and the machines in its machines/.",
     )
     fit.add_argument(
         "--gpu-agent",

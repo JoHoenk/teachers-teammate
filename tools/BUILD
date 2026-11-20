@@ -50,7 +50,6 @@ py_library(
         "//tools/evaluation:checks",
         "//tools/evaluation:core",
         "//tools/evaluation:input",
-        "//tools/evaluation:publish",
         "//tools/evaluation:report",
         "//tools/evaluation:run",
         "//tools/evaluation:store",
@@ -162,8 +161,8 @@ py_binary(
 )
 
 # Developer tool that keeps the store and the human data beside it: the one-off conversion of the
-# old folders, the check of the store and of the committed tree, the marks and the accepted
-# alternatives, and what a manifest pins.
+# old folders, the check of the store, the marks and the accepted alternatives, and what a manifest
+# pins.
 py_binary(
     name = "store",
     srcs = ["store.py"],
@@ -174,25 +173,8 @@ py_binary(
         "//tools/evaluation:convert",
         "//tools/evaluation:core",
         "//tools/evaluation:input",
-        "//tools/evaluation:publish",
         "//tools/evaluation:report",
         "//tools/evaluation:run",
         "//tools/evaluation:store",
     ] + _APP_RUNTIME,
-)
-
-# Developer tool that turns a local store into the committed run files below
-# evaluations/proofreading and lists them.  It reads the layers below `publish` and nothing above
-# them, so it needs no third-party package of its own.
-py_binary(
-    name = "publish",
-    srcs = ["publish.py"],
-    main = "publish.py",
-    visibility = ["//visibility:public"],
-    deps = [
-        "//teachers_teammate:application_lib",
-        "//tools/evaluation:core",
-        "//tools/evaluation:input",
-        "//tools/evaluation:publish",
-    ],
 )

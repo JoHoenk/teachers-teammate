@@ -11,7 +11,11 @@ from datetime import date
 import os
 import threading
 
-from teachers_teammate.infrastructure.spacy_models import spacy_model_for
+from teachers_teammate.infrastructure.spacy_models import (
+    FALLBACK_SPACY_MODEL,
+    SPACY_MODELS,
+    spacy_model_for,
+)
 from teachers_teammate.application.data_flow import llm_location
 from teachers_teammate.application.service import OllamaStatus
 from teachers_teammate.application.setup_plan import (
@@ -45,6 +49,25 @@ class DummyAppService(RecommendationServiceStub):
     def spacy_model_for_language(self, language: str) -> str:
         """Answer with the real table: the model of a language, else the multilingual one."""
         return spacy_model_for(language)
+
+    #: The spaCy models this stub reports as downloaded.
+    installed_spacy: tuple[str, ...] = ()
+    #: The model of the language of this computer, when a test wants one.
+    system_model: str | None = None
+
+    def list_installed_spacy_models(self) -> list[str]:
+        """Answer with the models the test installed."""
+        return list(self.installed_spacy)
+
+    def system_spacy_model(self) -> str | None:
+        """Answer with the model the test gave this computer's language."""
+        return self.system_model
+
+    def extra_name_models(self, language: str) -> list[str]:
+        """Answer with the real rule: every model but the one of the document language."""
+        own = spacy_model_for(language)
+        models = dict.fromkeys([*SPACY_MODELS.values(), FALLBACK_SPACY_MODEL])
+        return [model for model in models if model != own]
 
     def context_choice(self, settings: Mapping[str, object], card_gb: float | None):
         """Answer with the real rule: the page must not promise a window the run does not use."""
@@ -372,6 +395,7 @@ class SetupAppService(DummyAppService):
             name_detection=self.anonymizer_ready,
             spacy_installed=self.anonymizer_ready,
             spacy_model="de_core_news_sm",
+            installed_spacy_models=frozenset(self.installed_spacy),
             missing_package=self.missing_provider_package(answers.online_choice[0]) or "",
         )
 

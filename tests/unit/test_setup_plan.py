@@ -455,6 +455,58 @@ def test_name_detection_downloads_the_spacy_package_first_when_it_is_missing() -
     ]
 
 
+def test_an_extra_language_is_saved_and_downloaded_when_it_is_missing() -> None:
+    """
+    Given  names to remove, German texts and an extra English one that is not downloaded
+    When   the setup plan is built
+    Then   the English model is the saved extra detection model and is downloaded after the main
+           one, marked as an extra; an extra model that is installed is saved but not downloaded
+    """
+    answers = _answers(
+        proofreading=ProofreadingPlace.ONLINE, remove_names=True, extra_names_model="en_core_web_sm"
+    )
+
+    plan = _plan(answers=answers, facts=_facts(name_detection=False))
+
+    assert plan.settings["anonymizer_secondary_model"] == "en_core_web_sm"
+    assert [(d.name, d.extra) for d in _downloads(plan, DownloadKind.SPACY_MODEL)] == [
+        ("de_core_news_sm", False),
+        ("en_core_web_sm", True),
+    ]
+
+    installed = _plan(
+        answers=answers,
+        facts=_facts(name_detection=True, installed_spacy_models=frozenset({"en_core_web_sm"})),
+    )
+
+    assert installed.settings["anonymizer_secondary_model"] == "en_core_web_sm"
+    assert not _downloads(installed, DownloadKind.SPACY_MODEL)
+
+
+def test_no_extra_language_leaves_the_saved_extra_model_alone() -> None:
+    """
+    Given  names to remove, no extra language, and the main language's own model as "extra"
+    When   the setup plan is built
+    Then   no extra detection model is written either way: the assistant changes nothing it was
+           not asked to
+    """
+    plan = _plan(
+        answers=_answers(proofreading=ProofreadingPlace.ONLINE, remove_names=True),
+        facts=_facts(name_detection=True),
+    )
+    same = _plan(
+        answers=_answers(
+            proofreading=ProofreadingPlace.ONLINE,
+            remove_names=True,
+            extra_names_model="de_core_news_sm",
+        ),
+        facts=_facts(name_detection=True),
+    )
+
+    assert "anonymizer_secondary_model" not in plan.settings
+    assert "anonymizer_secondary_model" not in same.settings
+
+
 def test_a_provider_package_is_only_planned_for_online_proofreading() -> None:
     """
     Given  an online service whose package is missing, while proofreading runs here or is off

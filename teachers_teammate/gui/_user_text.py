@@ -584,15 +584,16 @@ SPEED_EXPECTED_NOTE = (
     "Expected speed on this computer: {band}. Worked out from the models measured here, "
     "not measured for this one."
 )
-SPEED_MEASURED_AT = "Measured {date}, {power}."
+SPEED_MEASURED_AT = "Measured {date}."
+SPEED_MEASURED_AT_POWER = "Measured {date}, {power}."
 SPEED_FROM_RUNS = "Based on your last {count} {unit}."
 SPEED_FROM_RUNS_ONE = "Based on your last {unit}."
 #: What the count in :data:`SPEED_FROM_RUNS` counts: a run that proofread nothing measured only
 #: text recognition, which happens once per page.
 SPEED_FROM_RUNS_DOCUMENT = "proofread document"
 SPEED_FROM_RUNS_PAGE = "recognised page"
-SPEED_ON_MAINS = "on mains power"
-SPEED_ON_BATTERY = "on battery power, so slower than usual"
+SPEED_PLUGGED_IN = "plugged in"
+SPEED_ON_BATTERY = "on battery, so slower than usual"
 
 #: Teacher-facing names of the steps the test measures.
 SPEED_STEP_NAMES: dict[str, str] = {
@@ -715,12 +716,15 @@ def speed_measured_at(stamp: str, *, on_battery: bool | None) -> str:
     """Return the date line under the rows, or ``""`` when nothing was measured.
 
     *stamp* is the stored ``YYYY-MM-DD HH:MM`` stamp; only its date is shown, because the
-    figure is a property of the machine, not of the minute it was taken.
+    figure is a property of the machine, not of the minute it was taken.  The power is named
+    only when it was read: a computer without a readable battery says nothing about it.
     """
     if not stamp:
         return ""
-    power = SPEED_ON_BATTERY if on_battery else SPEED_ON_MAINS
-    return SPEED_MEASURED_AT.format(date=stamp[:10], power=power)
+    if on_battery is None:
+        return SPEED_MEASURED_AT.format(date=stamp[:10])
+    power = SPEED_ON_BATTERY if on_battery else SPEED_PLUGGED_IN
+    return SPEED_MEASURED_AT_POWER.format(date=stamp[:10], power=power)
 
 
 def speed_from_runs(count: int, *, pages: bool) -> str:

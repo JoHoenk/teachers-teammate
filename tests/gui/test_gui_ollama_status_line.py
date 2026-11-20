@@ -111,6 +111,9 @@ def test_each_state_shows_its_line_and_its_buttons(
 
     assert widget.text() == expected_line
     assert _buttons(widget) == expected_buttons
+    # Only a server that answers is announced as found, with the address it answers at.
+    running = status.state is OllamaState.RUNNING
+    assert widget.found_caption() == (f"Found Ollama running at {url}" if running else "")
 
 
 @pytest.mark.gui
@@ -131,6 +134,7 @@ def test_a_server_found_elsewhere_is_offered_and_never_taken_over(qtbot) -> None
     qtbot.waitUntil(lambda: not widget.card().isHidden(), timeout=3000)
 
     assert widget.text() == "Ollama — on this PC · http://127.0.0.1:11435"
+    assert widget.found_caption() == "Found Ollama running at http://127.0.0.1:11435"
     assert widget.url() == LOCAL
     assert chosen == []
 

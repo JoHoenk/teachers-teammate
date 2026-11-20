@@ -6,7 +6,7 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor, QPixmap
 from PySide6.QtWidgets import (
     QButtonGroup,
@@ -27,6 +27,10 @@ from .._image_view import ZoomableImageView
 #: Blank space around and between the pages.
 _MARGIN = 8
 _GAP = 12
+#: How far the buttons and Ctrl + wheel zoom in or out of the fitted page, as a factor.
+_ZOOM_MIN = 0.5
+_ZOOM_MAX = 4.0
+_ZOOM_STEP = 1.25
 
 
 class ScanView(ZoomableImageView):
@@ -34,14 +38,23 @@ class ScanView(ZoomableImageView):
 
     A page opens *fitted to the pane*: the whole page is in view, and the pages below it follow
     by scrolling.  A double click switches to *fit width* (a page as wide as the pane, read by
-    scrolling) and back; the wheel zooms, and a double click after zooming fits again in the
-    mode that was on.  The mode stays while the teacher steps through the documents.
+    scrolling) and back; zoom in and out (buttons, Ctrl + wheel) stay between :data:`_ZOOM_MIN`
+    and :data:`_ZOOM_MAX` times the fitted page, and a double click after zooming fits again in
+    the mode that was on.  The mode stays while the teacher steps through the documents.
+    The vertical scroll bar is always there and the horizontal one only while zoomed: a fitted
+    layout is built from the size of the viewport, so a bar that came and went with the content
+    would change that size and start the layout again, for ever.
     *Original* swaps every page that has one for the page as it was scanned and leaves the
     others prepared, keeping the place the teacher was reading.
     """
 
+    #: The fit mode or the zoom changed (the zoom buttons follow it).
+    view_changed = Signal()
+
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self._prepared: tuple[Path, ...] = ()
         self._originals: tuple[Path | None, ...] = ()
         self._showing_originals = False
@@ -143,9 +156,10 @@ class ScanView(ZoomableImageView):
             # A page narrower than the pane sits in its middle.
             item.setPos(_MARGIN + (available_width - width) / 2, y)
             y += scaled.height() + _GAP
-        self.setSceneRect(0, 0, available_width + 2 * _MARGIN, max(y, 1))
+        # No gap after the last page: a page fitted to the pane then fills it exactly.
+        self.setSceneRect(0, 0, available_width + 2 * _MARGIN, max(y - _GAP + _MARGIN, 1))
         self.resetTransform()
-        self._fitted = True
+        self._set_fitted(True)
         self._set_scroll_fraction(fraction)
 
     def _add_message(self, y: float) -> float:
@@ -169,6 +183,21 @@ class ScanView(ZoomableImageView):
 
     # ── Zoom ──────────────────────────────────────────────────────────────
 
+    def _set_fitted(self, fitted: bool) -> None:
+        """Remember whether the pages are fitted; only a zoomed scan scrolls sideways."""
+        self._fitted = fitted
+        self.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+            if fitted
+            else Qt.ScrollBarPolicy.ScrollBarAsNeeded
+        )
+        self.view_changed.emit()
+
+    @property
+    def zoomed(self) -> bool:
+        """Whether the teacher zoomed away from the fitted pages."""
+        return not self._fitted
+
     def set_fit_page(self, on: bool) -> None:
         """Fit each page whole to the pane (*on*), or to the width of the pane."""
         self._fit_page = on
@@ -180,7 +209,34 @@ class ScanView(ZoomableImageView):
             self._layout()
             return
         self.resetTransform()
-        self._fitted = True
+        self._set_fitted(True)
+
+    def _zoom_by(self, factor: float) -> None:
+        """Zoom by *factor*, keeping within the limits around the fitted pages."""
+        current = self.transform().m11()
+        target = min(max(current * factor, _ZOOM_MIN), _ZOOM_MAX)
+        if target == current:
+            return
+        self._set_fitted(False)
+        self.scale(target / current, target / current)
+
+    def zoom_in(self) -> None:
+        """Make the pages larger."""
+        self._zoom_by(_ZOOM_STEP)
+
+    def zoom_out(self) -> None:
+        """Make the pages smaller."""
+        self._zoom_by(1 / _ZOOM_STEP)
+
+    def wheelEvent(self, event: Any) -> None:
+        """Ctrl + wheel zooms; the plain wheel scrolls."""
+        if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+            if event.angleDelta().y() > 0:
+                self.zoom_in()
+            else:
+                self.zoom_out()
+            return
+        QGraphicsView.wheelEvent(self, event)
 
     def mouseDoubleClickEvent(self, event: Any) -> None:
         """Fit again after a zoom; on a fitted scan switch between fit page and fit width."""
@@ -231,6 +287,35 @@ class ScanPane(QWidget):
         switch.addWidget(self._original_btn)
         self._switch.setVisible(False)
 
+        self._zoom_out_btn = QPushButton(check_text.SCAN_ZOOM_OUT)
+        self._zoom_out_btn.setToolTip(check_text.SCAN_ZOOM_OUT_TIP)
+        self._zoom_in_btn = QPushButton(check_text.SCAN_ZOOM_IN)
+        self._zoom_in_btn.setToolTip(check_text.SCAN_ZOOM_IN_TIP)
+        self._fit_page_btn = QPushButton(check_text.SCAN_FIT_PAGE)
+        self._fit_page_btn.setToolTip(check_text.SCAN_FIT_PAGE_TIP)
+        self._fit_width_btn = QPushButton(check_text.SCAN_FIT_WIDTH)
+        self._fit_width_btn.setToolTip(check_text.SCAN_FIT_WIDTH_TIP)
+        self._zoom = QWidget()
+        zoom = QHBoxLayout(self._zoom)
+        zoom.setContentsMargins(0, 0, 0, 0)
+        zoom.setSpacing(2)
+        for button in (
+            self._zoom_out_btn,
+            self._zoom_in_btn,
+            self._fit_page_btn,
+            self._fit_width_btn,
+        ):
+            button.setFlat(True)
+            zoom.addWidget(button)
+        for button in (self._fit_page_btn, self._fit_width_btn):
+            button.setCheckable(True)
+        self._zoom_out_btn.clicked.connect(self.view.zoom_out)
+        self._zoom_in_btn.clicked.connect(self.view.zoom_in)
+        self._fit_page_btn.clicked.connect(lambda: self.view.set_fit_page(True))
+        self._fit_width_btn.clicked.connect(lambda: self.view.set_fit_page(False))
+        self.view.view_changed.connect(self._sync_zoom_buttons)
+        self._sync_zoom_buttons()
+
         self._caption = QLabel()
         self._caption.setStyleSheet("color: #888;")
         self._caption.setVisible(False)
@@ -239,6 +324,7 @@ class ScanPane(QWidget):
         strip.setContentsMargins(4, 0, 4, 0)
         strip.addWidget(self._switch)
         strip.addWidget(self._caption, 1)
+        strip.addWidget(self._zoom)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -286,6 +372,12 @@ class ScanPane(QWidget):
         self._steps = None
         self._switch.setVisible(False)
         self._caption.setVisible(False)
+
+    def _sync_zoom_buttons(self) -> None:
+        """Press the fit button that is on; a zoomed scan has none pressed."""
+        zoomed = self.view.zoomed
+        self._fit_page_btn.setChecked(not zoomed and self.view.fit_page)
+        self._fit_width_btn.setChecked(not zoomed and not self.view.fit_page)
 
     def _on_original_toggled(self, checked: bool) -> None:
         self.view.show_originals(checked)

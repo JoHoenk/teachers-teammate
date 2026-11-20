@@ -209,6 +209,63 @@ def test_a_run_with_no_pages_left_gives_no_figure() -> None:
     assert pace.time_left() is None
 
 
+def test_the_time_left_counts_down_while_a_file_runs() -> None:
+    """
+    Given  one file of 2 pages at 10 seconds a page, started at second 100
+    When   the time left is asked for at the start, 5 seconds in, and long after the file should
+           have been done
+    Then   it counts down, and a file that overruns never takes it all: 5 % of the file stays
+    """
+    pace = RunPace(estimate=TimeRange(10.0, 10.0))
+    pace.set_files(1)
+    pace.set_pages(2)
+    pace.file_started(100.0, 2)
+
+    assert pace.time_left(100.0).typical_s == pytest.approx(20.0)
+    assert pace.time_left(105.0).typical_s == pytest.approx(15.0)
+    assert pace.time_left(500.0).typical_s == pytest.approx(1.0)
+
+
+def test_the_progress_follows_the_clock_between_two_files() -> None:
+    """
+    Given  two files of 1 page at 10 seconds a page, the first started at second 0
+    When   the progress is asked for at the start, half way through the first file, when it is
+           done, and long after the second should have ended
+    Then   it grows with the clock, jumps to the share of a finished file, and stops short of 1
+           while a file runs
+    """
+    pace = RunPace(estimate=TimeRange(10.0, 10.0))
+    pace.set_files(2)
+    pace.set_pages(2)
+    pace.file_started(0.0, 1)
+
+    assert pace.progress(0.0) == pytest.approx(0.0)
+    assert pace.progress(5.0) == pytest.approx(0.25)
+
+    pace.file_done(10.0, 1)
+    pace.file_started(10.0, 1)
+
+    assert pace.progress(10.0) == pytest.approx(0.5)
+    assert pace.progress(1000.0) == pytest.approx(0.975)
+
+    pace.file_done(10.0, 1)
+
+    assert pace.progress(20.0) == pytest.approx(1.0)
+
+
+def test_the_progress_is_unknown_without_an_estimate() -> None:
+    """
+    Given  a run with no estimate and no file done
+    When   the progress is asked for
+    Then   there is none, so the window keeps counting files
+    """
+    pace = RunPace()
+    pace.set_files(3)
+    pace.file_started(0.0, 1)
+
+    assert pace.progress(5.0) is None
+
+
 def test_the_note_says_how_long_is_left() -> None:
     """
     Given  420 seconds left

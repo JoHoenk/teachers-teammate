@@ -106,9 +106,35 @@ PRIVACY_EXPLAIN = (
     "Names and other personal details are replaced on this computer before anything is sent."
 )
 PRIVACY_NEEDS_DETECTION = (
-    "Needs name detection for {language}, which is added to the downloads (small)."
+    "Needs name detection for {language} ({model}), which is added to the downloads (small)."
 )
-PRIVACY_HAS_DETECTION = "Name detection for {language} is installed."
+PRIVACY_HAS_DETECTION = "Name detection for {language} ({model}) is installed."
+PRIVACY_MULTILINGUAL = (
+    "There is no name detection of its own for {language}: the multilingual one is used. "
+    "It finds fewer names."
+)
+PRIVACY_EXTRA = "Also find names in texts of another language:"
+PRIVACY_EXTRA_NOTE = (
+    "For a class that writes in two languages. The app runs one extra language next to the "
+    "main one; its detection is added to the downloads (small)."
+)
+PRIVACY_EXTRA_INSTALLED = "installed"
+#: What each name-detection model is for, as a teacher names it.
+NAME_MODEL_LANGUAGES: dict[str, str] = {
+    "en_core_web_sm": "English",
+    "de_core_news_sm": "German",
+    "fr_core_news_sm": "French",
+    "pt_core_news_sm": "Portuguese",
+    "nl_core_news_sm": "Dutch",
+    "xx_ent_wiki_sm": "Other languages (multilingual)",
+}
+
+
+def name_model_label(model: str) -> str:
+    """Return the language a name-detection model is for, or the model's own name."""
+    return NAME_MODEL_LANGUAGES.get(model, model)
+
+
 PRIVACY_ALREADY_ON = "Already on."
 PRIVACY_SENT_NETWORK = (
     "Proofreading on {host} sends your students' text to that PC in your network."

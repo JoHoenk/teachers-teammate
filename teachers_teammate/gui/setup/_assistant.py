@@ -104,6 +104,7 @@ class SetupAssistant(QWizard):
             remove_names=privacy.remove_names(),
             local_model=proofreading.local_model(),
             hide_names=privacy.hide_names(),
+            extra_names_model=privacy.extra_names_model(),
         )
 
     def _page(self, page_id: SetupPageId, kind: type[_PageT]) -> _PageT:

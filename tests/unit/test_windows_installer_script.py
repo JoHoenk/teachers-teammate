@@ -196,6 +196,7 @@ def test_update_check_is_asked_on_the_scope_page_not_on_the_welcome_page() -> No
 
     page = _function(script, "ScopePageCreate")
     assert "Check for updates when the app starts" in page
+    assert "Nothing about you or your documents is sent." in page
     assert "${NSD_OnClick} $PrivacyLink OpenPrivacyPage" in page
     assert 'ExecShell "open" "${PRIVACY_URL}"' in _function(script, "OpenPrivacyPage")
 

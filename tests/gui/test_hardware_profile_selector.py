@@ -69,7 +69,7 @@ def stub_service() -> _StubService:
                 gpu_name="NVIDIA GeForce RTX 4060",
                 memory_gb=8.0,
             ),
-            "Found: NVIDIA GeForce RTX 4060 with 8 GB graphics memory.",
+            "Graphics card: NVIDIA GeForce RTX 4060 with 8 GB graphics memory",
         ),
         (
             HardwareDetection(
@@ -77,7 +77,7 @@ def stub_service() -> _StubService:
                 reason=DetectionReason.APPLE_UNIFIED_MEMORY,
                 memory_gb=16.0,
             ),
-            "Found: Apple computer with 16 GB shared memory.",
+            "Apple computer with 16 GB shared memory",
         ),
         (
             HardwareDetection(profile="cpu", reason=DetectionReason.NO_GPU_FOUND),
@@ -89,7 +89,7 @@ def stub_service() -> _StubService:
                 reason=DetectionReason.GPU_MEMORY_UNKNOWN,
                 gpu_name="AMD GPU",
             ),
-            "Found: AMD GPU. Its memory size could not be read",
+            "Graphics card: AMD GPU. Its memory size could not be read",
         ),
         (
             HardwareDetection(
@@ -127,7 +127,7 @@ def test_status_label_shows_gpu_detected_text_after_detection(qtbot, stub_servic
     qtbot.addWidget(widget)
     with qtbot.waitSignal(widget.resolved_changed, timeout=5000):
         pass
-    assert "NVIDIA GeForce RTX 4060 with 8 GB graphics memory." in widget._status_lbl.text()
+    assert "NVIDIA GeForce RTX 4060 with 8 GB graphics memory" in widget._status_lbl.text()
 
 
 @pytest.mark.use_case("Hardware_Profile_Override")
@@ -203,7 +203,7 @@ def test_the_status_line_names_the_memory_free_right_now(qtbot, stub_service) ->
     widget.show()
 
     qtbot.waitUntil(lambda: "9 GB free right now" in widget._status_lbl.text(), timeout=5000)
-    assert "Computer memory: 16 GB, 9 GB free right now." in widget._status_lbl.text()
+    assert "Computer memory: 16 GB, 9 GB free right now" in widget._status_lbl.text()
     assert widget._memory_timer.isActive()
     assert widget._memory_timer.interval() == 10_000
     calls = stub_service.memory_calls

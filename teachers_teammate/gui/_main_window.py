@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 import shutil
 import sys
+import time
 from typing import TYPE_CHECKING, Any, ClassVar, NamedTuple, Protocol, cast
 
 from PySide6.QtCore import QEvent, QObject, QSettings, Qt, QThread, QTimer, QUrl, Signal
@@ -223,6 +224,10 @@ STOP_NOW_TOOLTIP = (
     "is kept and reused next time."
 )
 STOPPING_SUFFIX = " — stopping after this document"
+#: How often the bar and the time left follow the clock while a run is going.
+PROGRESS_TICK_MS = 1000
+#: Steps of the bar once it follows the time of the run.
+PROGRESS_RESOLUTION = 1000
 STOPPING_NOW_TEXT = "Stopping…"
 #: How long closing the window waits for a stopping run (milliseconds): enough for a cancelled
 #: Ollama request and a state write, never for the run itself.
@@ -462,6 +467,13 @@ class MainWindow(QMainWindow):
         self._pace = RunPace()
         #: Pages of the files of the current run, by source id; filled in the background.
         self._run_pages: dict[str, int] = {}
+        #: The bar follows the time of the run (0 to 1000) instead of counting files; it does
+        #: once the pace gives a figure.
+        self._time_driven = False
+        #: Moves the bar and counts the time left down between two events of the run.
+        self._progress_timer = QTimer(self)
+        self._progress_timer.setInterval(PROGRESS_TICK_MS)
+        self._progress_timer.timeout.connect(self._refresh_progress)
         #: The documents of the running batch, for the progress on the Documents tab label.
         self._run_source_ids: list[str] = []
         self._pages_task = LatestTask(self)
@@ -1604,9 +1616,11 @@ class MainWindow(QMainWindow):
         self._result_names = []
         self._result_ocr_times = []
         self._result_correction_times = []
+        self._time_driven = False
         self._progress.setRange(0, len(selected_source_ids) * self._steps_per_file)
         self._progress.setValue(0)
         self._start_pace(config, selected_source_ids)
+        self._progress_timer.start()
         self._set_progress_text(f"Selected {len(selected_source_ids)} file(s) — Starting…")
         if self._run_from_check:
             # Started from the Check header: the teacher stays with the document.
@@ -2074,7 +2088,7 @@ class MainWindow(QMainWindow):
         One figure in the bar, the range behind it: a range in the bar itself would not fit,
         and the teacher who wants to know how sure the figure is can hover over it.
         """
-        left = self._pace.time_left()
+        left = self._pace.time_left(time.monotonic())
         if left is None:
             self._progress.setToolTip("")
             return ""
@@ -2096,8 +2110,29 @@ class MainWindow(QMainWindow):
 
     # ── Worker signal handlers ────────────────────────────────────────────
 
+    def _set_steps_done(self, steps: int) -> None:
+        """Move the bar to *steps* finished steps, unless it follows the time of the run."""
+        if not self._time_driven:
+            self._progress.setValue(steps)
+
+    def _refresh_progress(self) -> None:
+        """Move the bar and the time left to where the clock says the run is.
+
+        Without an estimate the pace has no figure and the bar keeps counting steps.
+        """
+        fraction = self._pace.progress(time.monotonic())
+        if fraction is None or not self._run_in_progress():
+            return
+        if not self._time_driven:
+            self._time_driven = True
+            self._progress.setRange(0, PROGRESS_RESOLUTION)
+        # Full only when the run says so: a file that is nearly done is not yet done.
+        self._progress.setValue(min(round(fraction * PROGRESS_RESOLUTION), PROGRESS_RESOLUTION - 1))
+        self._set_progress_text(self._progress_base)
+
     def _on_file_started(self, source_id: str, name: str, idx: int, total: int) -> None:
-        self._progress.setValue((idx - 1) * self._steps_per_file)
+        self._set_steps_done((idx - 1) * self._steps_per_file)
+        self._pace.file_started(time.monotonic(), self._run_pages.get(source_id, 1))
         self._set_progress_text(f"[{idx}/{total}] {name} — starting…")
         self._results_table.mark_processing(source_id)
         self._run_current = source_id
@@ -2142,8 +2177,9 @@ class MainWindow(QMainWindow):
         self._result_ocr_times.append(ocr_s)
         self._result_correction_times.append(correction_s)
         self._pace.file_done(event.total_s, self._run_pages.get(source_id, 1))
-        self._progress.setValue(len(self._result_names) * self._steps_per_file)
+        self._set_steps_done(len(self._result_names) * self._steps_per_file)
         self._set_progress_text(self._progress_base)
+        self._refresh_progress()
         self._chart.update_data(
             self._result_names,
             self._result_ocr_times,
@@ -2441,6 +2477,7 @@ class MainWindow(QMainWindow):
         self._set_stop_stage(_StopStage.IDLE)
         self._awake_note.setVisible(False)
         self._battery_note.setVisible(False)
+        self._progress_timer.stop()
         text = describe_run(summary)
         if text.complete:
             self._progress.setValue(self._progress.maximum())
@@ -2470,7 +2507,7 @@ class MainWindow(QMainWindow):
         self._run_step = ""  # the reading is over: what goes on now is the proofreading
         self._refresh_check_run()
         if self._steps_per_file > 1:
-            self._progress.setValue((idx - 1) * 2 + 1)
+            self._set_steps_done((idx - 1) * 2 + 1)
             self._set_progress_text(f"[{idx}/{total}] {name} — correcting…")
             self._results_table.mark_correcting(source_id)
 

@@ -95,8 +95,8 @@ A document without a proofreading has only **What was read**, with a strip above
 **Proofread this document**. While a run works on the document, a strip shows its progress and
 **Stop**.
 
-**The scan** opens with a whole page in view; a double click switches to fit width. Ctrl + mouse
-wheel zooms. **Prepared · Original** switches between the pages as fixed for reading and as scanned
+**The scan** opens with a whole page in view; **Fit page**, **Fit width**, **+** and **−** (or Ctrl +
+mouse wheel) change the zoom. **Prepared · Original** switches between the pages as fixed for reading and as scanned
 (shown only when the preparation changed something).
 
 **The list of corrections** on the right numbers what the text marks. Pick a row and the text

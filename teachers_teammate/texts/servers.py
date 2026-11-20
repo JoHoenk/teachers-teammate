@@ -22,6 +22,11 @@ _ON_THE_WINDOWS_PC = "on the Windows PC (this computer) · {url}"
 _ON_THE_NETWORK = "on the network · {host}"
 
 
+def card_found(url: str) -> str:
+    """Return the line above the card: that Ollama was found, and where it answers."""
+    return f"Found Ollama running at {url}"
+
+
 def card_title(version: str, model_count: int | None) -> str:
     """Return the card's bold line: ``"Ollama 0.12.3 · 4 models"``."""
     name = f"Ollama {version}" if version else "Ollama"

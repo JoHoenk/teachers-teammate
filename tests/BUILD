@@ -1110,6 +1110,15 @@ py_test(
     deps = _COMMON_DEPS + _INFRASTRUCTURE_LIB,
 )
 
+py_test(
+    name = "test_spacy_models",
+    size = "small",
+    srcs = _COMMON_SRCS + ["unit/test_spacy_models.py"],
+    args = ["unit/test_spacy_models.py"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS + _INFRASTRUCTURE_LIB,
+)
+
 # The smoke test imports every lazily loaded module of the app, so it needs the whole runtime
 # set — including the packages no other unit test imports (ollama, platformdirs, keyring).
 # ``medium``: the smoke test now also builds the Setup Assistant and waits for its plan, which
@@ -2846,6 +2855,7 @@ test_suite(
         ":test_sentences",
         ":test_service",
         ":test_setup_plan",
+        ":test_spacy_models",
         ":test_speed_estimates",
         ":test_speed_store",
         ":test_stage_builder",

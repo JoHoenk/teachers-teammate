@@ -29,6 +29,7 @@ from ..application.service import OllamaStatus
 from ..domain.ollama_discovery import DiscoveredServer, DiscoveryScope, OllamaState, ServerKind
 from ..infrastructure.ollama_install import OLLAMA_DOWNLOAD_URL
 from ..infrastructure.ollama_utils import is_local_ollama_url
+from ..texts.servers import card_found
 from . import _user_text as txt
 from ._background import LatestTask, run_in_background
 from ._server_card import ServerCard
@@ -100,6 +101,9 @@ class OllamaStatusLine(QWidget):
         outer.setContentsMargins(0, 0, 0, 0)
         # A server that answers is shown as the card every place shows servers with; the other
         # states are a sentence with the button that helps.
+        self._found_label = QLabel()
+        self._found_label.setVisible(False)
+        outer.addWidget(self._found_label)
         self._card = ServerCard()
         self._card.use_requested.connect(self.use_server_requested)
         self._card.setVisible(False)
@@ -141,6 +145,10 @@ class OllamaStatusLine(QWidget):
     def card(self) -> ServerCard:
         """Return the card a server that answers is shown on."""
         return self._card
+
+    def found_caption(self) -> str:
+        """Return the line above the card, or ``""`` while no server is shown."""
+        return "" if self._found_label.isHidden() else self._found_label.text()
 
     def text(self) -> str:
         """Return what the line says now: the card's two lines, or the sentence."""
@@ -229,10 +237,12 @@ class OllamaStatusLine(QWidget):
                 model_count=status.model_count,
                 offer_use=False,
             )
+            self._found_label.setText(card_found(self._url))
             self._show_card(True)
             return
         if status is not None and found is not None:
             self._card.show_discovered(found)
+            self._found_label.setText(card_found(found.url))
             self._show_card(True)
             return
         self._show_card(False)
@@ -249,6 +259,7 @@ class OllamaStatusLine(QWidget):
     def _show_card(self, on: bool) -> None:
         """Show the card instead of the sentence, or the sentence instead of the card."""
         self._card.setVisible(on)
+        self._found_label.setVisible(on)
         self._text_row.setVisible(not on)
 
     def _state_text(self) -> tuple[str, list[tuple[str, Callable[[], None]]]]:

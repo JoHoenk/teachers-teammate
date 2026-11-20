@@ -7,8 +7,8 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QColor, QPixmap
+from PySide6.QtCore import QPoint, Qt
+from PySide6.QtGui import QColor, QPixmap, QWheelEvent
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QGraphicsTextItem
 
@@ -396,3 +396,152 @@ def test_scan_pane_switch_names_what_is_shown(
     pane._prepared_btn.click()
     assert pane._prepared_btn.isChecked()
     assert not pane.showing_originals
+
+
+# ── The layout settles; zoom ──────────────────────────────────────────────
+
+
+@pytest.mark.gui
+@pytest.mark.parametrize("fit_page", [True, False])
+@pytest.mark.parametrize("size", [(300, 300), (600, 700), (900, 500), (400, 1000), (1200, 800)])
+@pytest.mark.parametrize("page", [(1240, 1754), (1754, 1240)])
+def test_scan_view_settles_in_every_pane_size(
+    qtbot, tmp_path: Path, size: tuple[int, int], page: tuple[int, int], fit_page: bool
+) -> None:
+    """
+    Given  a portrait or a landscape page and a pane of any size, fitted to the page or the width
+    When   the page is shown and the events have run
+    Then   the layout was built a few times at most and does not start again by itself (a
+           scroll bar that came and went with the content once changed the size, and with it the
+           layout, for ever)
+    """
+    view = ScanView()
+    qtbot.addWidget(view)
+    view.set_fit_page(fit_page)
+    count = 0
+    original = view._layout
+
+    def counted(*args, **kwargs) -> None:
+        nonlocal count
+        count += 1
+        if count > 50:
+            raise AssertionError("the layout does not settle")
+        original(*args, **kwargs)
+
+    view._layout = counted  # ty: ignore[invalid-assignment]
+    view.resize(*size)
+    view.show()
+    view.set_pages([_page(tmp_path / "page.png", *page, "#ffffff")])
+    qtbot.wait(50)
+    settled = count
+
+    qtbot.wait(100)
+
+    assert settled <= 5
+    assert count == settled
+
+
+@pytest.mark.gui
+def test_a_fitted_page_does_not_scroll_by_itself(qtbot, tmp_path: Path) -> None:
+    """
+    Given  one page fitted to the pane
+    When   it is shown
+    Then   it fills the pane exactly: there is nothing to scroll to
+    """
+    view = _view(qtbot)
+
+    view.set_pages([_page(tmp_path / "page.png", 400, 900, "#ffffff")])
+
+    assert view.verticalScrollBar().maximum() == 0
+    assert not view.horizontalScrollBar().isVisible()
+
+
+@pytest.mark.gui
+def test_zoom_stays_between_its_limits(qtbot, page_files: list[Path]) -> None:
+    """
+    Given  a fitted scan
+    When   it is zoomed in and out many times
+    Then   the scale stops at half and at four times the fitted page, and a zoomed scan is not
+           fitted any more
+    """
+    view = _view(qtbot)
+    view.set_pages(page_files)
+
+    for _ in range(20):
+        view.zoom_in()
+    assert view.transform().m11() == pytest.approx(4.0)
+    assert view.zoomed
+
+    for _ in range(40):
+        view.zoom_out()
+    assert view.transform().m11() == pytest.approx(0.5)
+
+
+@pytest.mark.gui
+def test_only_ctrl_and_the_wheel_zoom(qtbot, page_files: list[Path]) -> None:
+    """
+    Given  a fitted scan
+    When   the wheel turns without Ctrl, and then with it
+    Then   the first scrolls and leaves the zoom, the second zooms
+    """
+    view = _view(qtbot)
+    view.set_pages(page_files)
+    centre = view.viewport().rect().center()
+
+    QTest.mouseMove(view.viewport(), centre)
+    wheel = QWheelEvent(
+        centre,
+        view.viewport().mapToGlobal(centre),
+        QPoint(0, 0),
+        QPoint(0, 120),
+        Qt.MouseButton.NoButton,
+        Qt.KeyboardModifier.NoModifier,
+        Qt.ScrollPhase.NoScrollPhase,
+        False,
+    )
+    view.wheelEvent(wheel)
+    assert not view.zoomed
+
+    ctrl_wheel = QWheelEvent(
+        centre,
+        view.viewport().mapToGlobal(centre),
+        QPoint(0, 0),
+        QPoint(0, 120),
+        Qt.MouseButton.NoButton,
+        Qt.KeyboardModifier.ControlModifier,
+        Qt.ScrollPhase.NoScrollPhase,
+        False,
+    )
+    view.wheelEvent(ctrl_wheel)
+    assert view.zoomed
+
+
+@pytest.mark.gui
+def test_the_zoom_buttons_zoom_and_show_the_fit_that_is_on(qtbot, page_files: list[Path]) -> None:
+    """
+    Given  a pane with a fitted scan
+    When   the teacher presses +, Fit width, Fit page
+    Then   + zooms and leaves no fit pressed, Fit width and Fit page fit again and press their button
+    """
+    pane = _pane(qtbot)
+    pane.set_pages(page_files)
+    assert pane._fit_page_btn.isChecked()
+    assert not pane._fit_width_btn.isChecked()
+
+    pane._zoom_in_btn.click()
+    assert pane.view.zoomed
+    assert not pane._fit_page_btn.isChecked()
+    assert not pane._fit_width_btn.isChecked()
+
+    pane._fit_width_btn.click()
+    assert not pane.view.zoomed
+    assert not pane.view.fit_page
+    assert pane._fit_width_btn.isChecked()
+    assert not pane._fit_page_btn.isChecked()
+
+    pane._fit_page_btn.click()
+    assert pane.view.fit_page
+    assert pane._fit_page_btn.isChecked()
+
+    pane._fit_page_btn.click()  # a second press keeps the mode instead of unpressing it
+    assert pane._fit_page_btn.isChecked()

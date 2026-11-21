@@ -31,6 +31,7 @@ from ..application.queue import QueueRow, StageState
 from ..domain.data_location import STAGE_CORRECTION, STAGE_EVALUATION, SentStatus
 from ..domain.formatted_text import TextFormat
 from ..domain.proofreading.review import CorrectionReview
+from ..domain.run_summary import FileOutcome, FileStatus
 from ..domain.stages import STAGE_ORDER
 from ..texts import dialogs as dlg
 from . import _dialogs
@@ -56,6 +57,14 @@ _PENDING_COLOR = "#888888"
 _NEUTRAL_ROW_BG = (
     "#2b2b2b"  # skipped or stopped: neither the green of a success nor the red of a failure
 )
+
+
+def _warning_text(outcome: FileOutcome) -> str:
+    """Return what the row says about *outcome*: why it failed, or the remarks about it."""
+    if outcome.status is FileStatus.SAVED:
+        return "; ".join(outcome.warnings)
+    return outcome.error
+
 
 _STAGE_FONT = QFont()
 _STAGE_FONT.setPointSize(13)
@@ -280,20 +289,23 @@ class ResultsTable(QTableWidget):
         The stored row is refreshed separately (:meth:`update_row`), so the cells come from
         the same place as on start-up; this only says what the run itself did.
         """
-        source_id = event.source_id
+        outcome = event.outcome
+        source_id = outcome.source_id
         if source_id not in self._row_by_source:
-            self._ensure_row(source_id, event.name)
-        if event.skipped:
-            self._skipped[source_id] = event.message
+            self._ensure_row(source_id, outcome.name)
+        if outcome.status is FileStatus.SKIPPED:
+            self._skipped[source_id] = outcome.error
         self._live[source_id] = LiveState(
             stage=self._live.get(source_id, LiveState()).stage,
             finished=True,
-            failed=not (event.ok or event.skipped or event.stopped),
-            skipped=event.skipped,
-            stopped=event.stopped,
-            stopped_stage=event.stopped_stage,
-            warning=event.message,
-            duration_s=None if (event.skipped or event.stopped) else event.total_s,
+            failed=outcome.status is FileStatus.FAILED,
+            skipped=outcome.status is FileStatus.SKIPPED,
+            stopped=outcome.status is FileStatus.STOPPED,
+            stopped_stage=outcome.stopped_stage,
+            warning=_warning_text(outcome),
+            duration_s=None
+            if outcome.status in (FileStatus.SKIPPED, FileStatus.STOPPED)
+            else event.total_s,
         )
         self._draw_row(source_id)
         self.resizeColumnToContents(self._COL_FILE)

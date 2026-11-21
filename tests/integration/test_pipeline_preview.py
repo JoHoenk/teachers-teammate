@@ -13,6 +13,7 @@ import pytest
 from teachers_teammate.domain.setting_values import PreprocessMethod
 from teachers_teammate.config import OcrConfig
 from teachers_teammate.infrastructure.onnx.store import ModelStore
+from teachers_teammate.infrastructure.file_discovery import FileDiscovery
 from teachers_teammate.infrastructure.pipeline import OCRPipeline, preprocess_preview
 from tests.conftest import make_config
 
@@ -168,7 +169,7 @@ def test_pipeline_run_preview_only_propagates_failure_for_corrupt_image(tmp_path
     """
     Given  a PNG file containing bytes that are not a valid image
     When   run_preview_only() is called
-    Then   returns 1 (the file is counted as failed, not silently skipped)
+    Then   the summary's exit code is 1 (the file is counted as failed, not silently skipped)
     """
     cfg = make_config(
         tmp_path,
@@ -180,6 +181,7 @@ def test_pipeline_run_preview_only_propagates_failure_for_corrupt_image(tmp_path
     corrupt_png = cfg.input_dir / "corrupt.png"
     corrupt_png.write_bytes(b"this is not a valid image file")
 
-    rc = OCRPipeline(cfg).run_preview_only()
+    summary = OCRPipeline(cfg, FileDiscovery().collect_input_files(cfg)).run_preview_only()
 
-    assert rc == 1
+    assert summary.exit_code == 1
+    assert summary.failed == ("corrupt.png",)

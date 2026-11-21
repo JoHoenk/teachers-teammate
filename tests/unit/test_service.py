@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import contextlib
 import dataclasses
+import logging
 import os
 from pathlib import Path
 import shutil
@@ -178,7 +179,7 @@ def test_run_selected_delegates_to_pipeline_factory(tmp_path: Path) -> None:
     factory = MagicMock(return_value=mock_pipeline)
     svc = _make_svc(pipeline_factory=factory)
 
-    result = svc.run_selected(cfg)
+    result = svc.run_selected(cfg, [])
 
     factory.assert_called_once()
     mock_pipeline.run.assert_called_once()
@@ -196,7 +197,7 @@ def test_run_selected_passes_both_stop_events_to_the_pipeline(tmp_path: Path) ->
     svc = _make_svc(pipeline_factory=factory)
     now, after_file = threading.Event(), threading.Event()
 
-    svc.run_selected(make_config(tmp_path), stop_event=now, stop_after_file_event=after_file)
+    svc.run_selected(make_config(tmp_path), [], stop_event=now, stop_after_file_event=after_file)
 
     assert factory.call_args.kwargs["stop_event"] is now
     assert factory.call_args.kwargs["stop_after_file_event"] is after_file
@@ -238,7 +239,7 @@ def test_run_selected_holds_the_computer_awake_around_the_whole_run(tmp_path: Pa
     factory = MagicMock(return_value=pipeline)
     svc = ProcessingApplicationService(pipeline_factory=factory, sleep_blocker=blocker)
 
-    svc.run_selected(make_config(tmp_path))
+    svc.run_selected(make_config(tmp_path), [])
 
     assert blocker.events == [f"hold:{KEEP_AWAKE_REASON}", "release"]
     assert order == ["run"]
@@ -261,7 +262,7 @@ def test_run_selected_reports_that_nothing_could_be_requested_without_a_blocker(
     factory = MagicMock(return_value=pipeline)
     svc = ProcessingApplicationService(pipeline_factory=factory, sleep_blocker=NullSleepBlocker())
 
-    svc.run_selected(make_config(tmp_path))
+    svc.run_selected(make_config(tmp_path), [])
 
     state = factory.call_args.kwargs["dependencies"].keep_awake
     assert (state.enabled, state.held, state.available) == (True, False, False)
@@ -281,7 +282,7 @@ def test_run_selected_reports_a_refusal_when_a_blocker_exists(tmp_path: Path) ->
         pipeline_factory=factory, sleep_blocker=_RecordingBlocker(grants=False)
     )
 
-    svc.run_selected(make_config(tmp_path))
+    svc.run_selected(make_config(tmp_path), [])
 
     state = factory.call_args.kwargs["dependencies"].keep_awake
     assert (state.held, state.available) == (False, True)
@@ -302,7 +303,7 @@ def test_run_selected_releases_the_computer_when_the_pipeline_raises(tmp_path: P
     )
 
     with pytest.raises(RuntimeError, match="boom"):
-        svc.run_selected(make_config(tmp_path))
+        svc.run_selected(make_config(tmp_path), [])
 
     assert blocker.events[-1] == "release"
 
@@ -318,7 +319,7 @@ def test_run_selected_does_not_hold_when_keep_awake_is_off(tmp_path: Path) -> No
     factory = MagicMock(return_value=MagicMock(run=lambda: RunSummary()))
     svc = ProcessingApplicationService(pipeline_factory=factory, sleep_blocker=blocker)
 
-    svc.run_selected(make_config(tmp_path, keep_awake=False))
+    svc.run_selected(make_config(tmp_path, keep_awake=False), [])
 
     assert blocker.events == []
     state = factory.call_args.kwargs["dependencies"].keep_awake
@@ -340,6 +341,7 @@ def test_run_selected_reports_the_keep_awake_state_and_a_refusal(tmp_path: Path)
 
     svc.run_selected(
         make_config(tmp_path),
+        [],
         progress=service_module.ProgressCallbacks(on_keep_awake=seen.append),
     )
 
@@ -358,7 +360,7 @@ def test_run_selected_forwards_progress_callbacks_to_pipeline_factory(tmp_path: 
     svc = _make_svc(pipeline_factory=factory)
     progress = service_module.ProgressCallbacks(on_stage_started=MagicMock())
 
-    svc.run_selected(make_config(tmp_path), progress=progress)
+    svc.run_selected(make_config(tmp_path), [], progress=progress)
 
     assert factory.call_args.kwargs["progress"] is progress
 
@@ -376,9 +378,9 @@ def test_run_preview_only_delegates_to_pipeline_factory(tmp_path: Path) -> None:
     factory = MagicMock(return_value=mock_pipeline)
     svc = _make_svc(pipeline_factory=factory)
 
-    result = svc.run_preview_only(cfg)
+    result = svc.run_preview_only(cfg, [])
 
-    factory.assert_called_once_with(cfg)
+    factory.assert_called_once_with(cfg, [])
     mock_pipeline.run_preview_only.assert_called_once()
     assert result == 0
 
@@ -662,46 +664,25 @@ def test_download_page_models_downloads_the_page_model_sets(tmp_path: Path) -> N
 
 
 @pytest.mark.unit
-def test_invalidate_from_stage_static_matches_by_resolved_source_id(tmp_path: Path) -> None:
+def test_invalidate_from_stage_static_resets_exactly_the_files_it_is_given(tmp_path: Path) -> None:
     """
-    Given  a list of files and selected_source_ids matching one file by resolved path
+    Given  one file and a store
     When   _invalidate_from_stage() is called
-    Then   the matched file is invalidated in the store and its source_id is returned
+    Then   that file is invalidated in the store and nothing failed
     """
     source = tmp_path / "doc.png"
     source.touch()
     mock_store = MagicMock()
     mock_store.invalidate_from_stage.return_value = MagicMock()
 
-    run_ids, failures, nothing_matched = ApplicationCommands._invalidate_from_stage(
-        selected_source_ids=[str(source.resolve())],
+    failures = ApplicationCommands._invalidate_from_stage(
         stage="ocr",
         files=[source],
         store=mock_store,
     )
 
     mock_store.invalidate_from_stage.assert_called_once_with(source, "ocr")
-    assert str(source.resolve()) in run_ids
-    assert failures == []
-    assert nothing_matched is False
-
-
-@pytest.mark.unit
-def test_invalidate_from_stage_static_returns_nothing_matched_when_no_files_provided() -> None:
-    """
-    Given  an empty files list
-    When   _invalidate_from_stage() is called
-    Then   empty lists are returned and nothing_matched is True
-    """
-    run_ids, failures, nothing_matched = ApplicationCommands._invalidate_from_stage(
-        selected_source_ids=["any"],
-        stage="correction",
-        files=[],
-        store=MagicMock(),
-    )
-    assert run_ids == []
-    assert failures == []
-    assert nothing_matched is True
+    assert failures == ()
 
 
 @pytest.mark.unit
@@ -709,21 +690,19 @@ def test_invalidate_from_stage_static_accumulates_oserror_failures(tmp_path: Pat
     """
     Given  a store whose invalidate_from_stage raises OSError
     When   _invalidate_from_stage() is called
-    Then   the failure is recorded in the failures list and run_ids still contains the source
+    Then   the failure names the file
     """
     source = tmp_path / "bad.png"
     source.touch()
     mock_store = MagicMock()
     mock_store.invalidate_from_stage.side_effect = OSError("disk full")
 
-    run_ids, failures, nothing_matched = ApplicationCommands._invalidate_from_stage(
-        selected_source_ids=[str(source.resolve())],
+    failures = ApplicationCommands._invalidate_from_stage(
         stage="ocr",
         files=[source],
         store=mock_store,
     )
     assert "bad.png" in failures[0]
-    assert str(source.resolve()) in run_ids
 
 
 # ── The teacher's texts and decisions ──────────────────────────────────────
@@ -766,7 +745,6 @@ def _repo_with_document(
 def _commands_for(repo: StateRepository, **kwargs) -> ApplicationCommands:
     """The window's write commands over *repo*, with the teacher's work in a temporary folder."""
     return ApplicationCommands(
-        discovery=FileDiscovery(),
         state_store_factory=lambda _config: repo,
         **kwargs,
     )
@@ -940,16 +918,14 @@ def test_invalidate_from_stage_drops_the_parts_the_stage_takes(tmp_path: Path) -
     commands.edit_corrected_text(config, source=source, text="Hello, world!")
     source_hash = compute_file_hash(source)
 
-    commands.invalidate_from_stage(
-        config, selected_source_ids=[str(source.resolve())], stage="correction"
-    )
+    commands.invalidate_from_stage(config, files=[source], stage="correction")
 
     work = work_store.load(source_hash)
     assert work is not None
     assert work.corrections is None
     assert work.transcription is not None
 
-    commands.invalidate_from_stage(config, selected_source_ids=[str(source.resolve())], stage="ocr")
+    commands.invalidate_from_stage(config, files=[source], stage="ocr")
 
     assert work_store.load(source_hash) is None
 
@@ -968,7 +944,6 @@ def test_a_teachers_transcription_survives_reconcile(tmp_path: Path) -> None:
     repo = StateRepository(tmp_path / "state")
     work_store = TeacherWorkStore(tmp_path / "work")
     commands = ApplicationCommands(
-        discovery=FileDiscovery(),
         state_store_factory=lambda _c: repo,
         work_store=work_store,
     )
@@ -1177,7 +1152,6 @@ def test_invalidate_from_stage_static_invalid_stage_propagates_value_error(tmp_p
 
     with pytest.raises(ValueError, match="Invalid stage"):
         ApplicationCommands._invalidate_from_stage(
-            selected_source_ids=[str(source.resolve())],
             stage="nonexistent",
             files=[source],
             store=MagicMock(),
@@ -1389,17 +1363,16 @@ def test_reader_refusal_names_the_download_flag(tmp_path: Path) -> None:
     config.input_dir.mkdir(parents=True, exist_ok=True)
     (config.input_dir / "scan.png").write_bytes(b"x")
 
+    ollama = make_config(tmp_path / "o", ocr_engine="ollama")
+    off = make_config(tmp_path / "s", ocr_engine="ppocr", recognition_enabled=False)
+    files = [config.input_dir / "scan.png"]
+
     with patch.object(ProcessingApplicationService, "load_views", return_value={}):
-        refusal = svc.reader_refusal_for_run(config)
+        refusal = svc.reader_refusal_for_run(config, files)
 
         assert "--download-reader" in refusal
-        assert svc.reader_refusal_for_run(make_config(tmp_path / "o", ocr_engine="ollama")) == ""
-        assert (
-            svc.reader_refusal_for_run(
-                make_config(tmp_path / "s", ocr_engine="ppocr", recognition_enabled=False)
-            )
-            == ""
-        )
+        assert svc.reader_refusal_for_run(ollama, files) == ""
+        assert svc.reader_refusal_for_run(off, files) == ""
 
 
 @pytest.mark.unit
@@ -1407,19 +1380,20 @@ def test_reader_refusal_lets_a_run_over_text_files_start(tmp_path: Path) -> None
     """
     Given  the built-in reader without model files and an input folder with only a text file
     When   reader_refusal_for_run() is asked
-    Then   the run is not refused (no page is read), but it is once an image is added
+    Then   the run over the text file is not refused (no page is read), but it is once the image is in
     """
     svc = _reader_service(tmp_path)
     config = make_config(tmp_path / "r", ocr_engine="ppocr")
     config.input_dir.mkdir(parents=True, exist_ok=True)
     (config.input_dir / "essay.txt").write_text("Hello", encoding="utf-8")
 
+    text = config.input_dir / "essay.txt"
+    scan = config.input_dir / "scan.png"
+    scan.write_bytes(b"x")
+
     with patch.object(ProcessingApplicationService, "load_views", return_value={}):
-        assert svc.reader_refusal_for_run(config) == ""
-
-        (config.input_dir / "scan.png").write_bytes(b"x")
-
-        assert "--download-reader" in svc.reader_refusal_for_run(config)
+        assert svc.reader_refusal_for_run(config, [text]) == ""
+        assert "--download-reader" in svc.reader_refusal_for_run(config, [text, scan])
 
 
 def _reader_service(tmp_path: Path) -> ProcessingApplicationService:
@@ -3891,8 +3865,6 @@ def test_hardware_detection_is_logged(monkeypatch, caplog) -> None:
     When   detect_hardware is called
     Then   the probe and the resulting profile are logged, so a wrong suggestion can be traced
     """
-    import logging  # noqa: PLC0415
-
     from teachers_teammate.infrastructure import gpu_detector  # noqa: PLC0415
 
     monkeypatch.setattr(
@@ -4092,7 +4064,7 @@ def test_run_selected_passes_a_component_factory_with_the_shared_anonymizer(tmp_
     factory = MagicMock(return_value=MagicMock(run=lambda: 0))
     svc = _make_svc(pipeline_factory=factory)
 
-    svc.run_selected(make_config(tmp_path))
+    svc.run_selected(make_config(tmp_path), [])
 
     dependencies = factory.call_args.kwargs["dependencies"]
     assert dependencies is not None
@@ -4213,12 +4185,12 @@ def test_describe_sent_texts_adds_the_notes_for_the_ai(tmp_path: Path) -> None:
 
 
 @pytest.mark.unit
-def test_installed_models_are_listed_once_until_forgotten() -> None:
+def test_installed_models_are_listed_once_until_forgotten(caplog: pytest.LogCaptureFixture) -> None:
     """
     Given  a service that resolves anonymizer settings on every preview
     When   the settings are resolved several times, then models are forgotten
     Then   spaCy is asked for its models once per remembered state, and the missing-model
-           warning is printed once
+           warning is logged once
     """
     svc = ProcessingApplicationService()
     config = AnonymizerConfig(secondary_model="auto:system")
@@ -4228,16 +4200,16 @@ def test_installed_models_are_listed_once_until_forgotten() -> None:
             "teachers_teammate.infrastructure.system_locale.system_language",
             return_value="German",
         ),
-        patch("sys.stderr") as stderr,
+        caplog.at_level(logging.WARNING),
     ):
         for _ in range(3):
             svc.resolve_anonymizer_config("English", config)
         assert listing.call_count == 1
-        assert stderr.write.call_count > 0
-        first = stderr.write.call_count
+        assert caplog.text
+        first = len(caplog.records)
 
         svc.resolve_anonymizer_config("English", config)
-        assert stderr.write.call_count == first  # same warning is not repeated
+        assert len(caplog.records) == first  # same warning is not repeated
 
         svc.forget_installed_models()
         svc.resolve_anonymizer_config("English", config)
@@ -4922,15 +4894,13 @@ def test_a_rerun_that_cannot_drop_the_work_resets_nothing(tmp_path: Path) -> Non
     work_store = MagicMock()
     work_store.update.side_effect = PermissionError("denied")
 
-    run_ids, failures, no_files = ApplicationCommands._invalidate_from_stage(
-        selected_source_ids=[str(source.resolve())],
+    failures = ApplicationCommands._invalidate_from_stage(
         stage="correction",
         files=[source],
         store=repo,
         work_store=work_store,
     )
 
-    assert no_files is False
     assert len(failures) == 1 and source.name in failures[0]
     stored = repo.load_valid(source)
     assert stored is not None and stored.correction_done

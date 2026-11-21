@@ -149,6 +149,11 @@ def _default_build_anonymizer(language: str, config: AnonymizerConfig) -> Anonym
     return SpacyAnonymizer(language, config)
 
 
+def _default_check_ocr_model(url: str, model: str, reporter: Reporter) -> None:
+    """Ask the Ollama server at *url* whether *model* is there; raise when it is not."""
+    OllamaClient(url).check_model(model, reporter)
+
+
 def _default_build_ocr_postprocessor() -> OcrOutputPostprocessor:
     from .ocr_formats import OcrOutputPostprocessor  # noqa: PLC0415
 
@@ -241,6 +246,9 @@ class PipelineComponentFactory:
     build_doc_creator: Callable[[str, str], DocumentCreator] = _default_build_doc_creator
     build_anonymizer: Callable[[str, AnonymizerConfig], Anonymizer] = _default_build_anonymizer
     build_ocr_postprocessor: Callable[[], OcrOutputPostprocessor] = _default_build_ocr_postprocessor
+    #: The check a run makes before it reads pages with Ollama: is the server there, and is the
+    #: model?  A seam, so a test can answer without a server.
+    check_ocr_model: Callable[[str, str, Reporter], None] = _default_check_ocr_model
 
 
 # ── Builder ────────────────────────────────────────────────────────────────

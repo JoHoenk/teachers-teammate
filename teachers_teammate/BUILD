@@ -121,6 +121,7 @@ _INFRASTRUCTURE_SRCS = [
     "infrastructure/preprocessing/steps.py",
     "infrastructure/preview_image_store.py",
     "infrastructure/reporting.py",
+    "infrastructure/run_report.py",
     "infrastructure/proofreading/__init__.py",
     "infrastructure/proofreading/chunking.py",
     "infrastructure/proofreading/corrector.py",

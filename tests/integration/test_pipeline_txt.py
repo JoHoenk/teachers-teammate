@@ -13,8 +13,13 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from teachers_teammate.domain.proofreading.result import CorrectionOutcome
-from teachers_teammate.infrastructure.pipeline import OCRPipeline, PipelineDependencies
-from teachers_teammate.infrastructure.reporting import FileDoneResult, ProgressCallbacks
+from teachers_teammate.infrastructure.file_discovery import FileDiscovery
+from teachers_teammate.infrastructure.pipeline import (
+    OCRPipeline,
+    PipelineDependencies,
+)
+from teachers_teammate.domain.run_summary import FileOutcome, FileStatus
+from teachers_teammate.infrastructure.reporting import ProgressCallbacks
 from teachers_teammate.infrastructure.stage_builder import StageBuilder
 from teachers_teammate.infrastructure.state_repository import StateRepository
 from teachers_teammate.infrastructure.storage_root import resolve_artifact_dir
@@ -37,7 +42,7 @@ def test_pipeline_run_txt_input_writes_raw_text_without_ocr(tmp_path: Path) -> N
     source = cfg.input_dir / "note.txt"
     source.write_text("First line\nSecond line", encoding="utf-8")
 
-    rc = OCRPipeline(cfg).run().exit_code
+    rc = OCRPipeline(cfg, FileDiscovery().collect_input_files(cfg)).run().exit_code
 
     assert rc == 0
     state = StateRepository(resolve_artifact_dir(cfg.output_dir) / "state").load(source)
@@ -61,17 +66,25 @@ def test_pipeline_txt_input_triggers_on_file_done_callback(tmp_path: Path) -> No
     source = cfg.input_dir / "callback_note.txt"
     source.write_text("Callback payload", encoding="utf-8")
 
-    seen: list[tuple[bool, str]] = []
+    seen: list[FileOutcome] = []
 
-    def _on_done(result: FileDoneResult) -> None:
-        seen.append((result.ok, result.raw_text))
+    def _on_done(outcome: FileOutcome) -> None:
+        seen.append(outcome)
 
-    rc = OCRPipeline(cfg, progress=ProgressCallbacks(on_file_done=_on_done)).run().exit_code
+    rc = (
+        OCRPipeline(
+            cfg,
+            FileDiscovery().collect_input_files(cfg),
+            progress=ProgressCallbacks(on_file_done=_on_done),
+        )
+        .run()
+        .exit_code
+    )
 
     assert rc == 0
     assert len(seen) == 1
-    assert seen[0][0] is True
-    assert seen[0][1] == "Callback payload"
+    assert seen[0].status is FileStatus.SAVED
+    assert seen[0].name == "callback_note.txt"
 
 
 @pytest.mark.use_case("TXT_Ingestion_Without_OCR")
@@ -99,7 +112,7 @@ def test_pipeline_txt_input_enters_correction_pipeline(tmp_path: Path) -> None:
         patch("teachers_teammate.infrastructure.stage_builder.build_llm", return_value=MagicMock()),
         patch.object(StageBuilder, "build_corrector", return_value=mock_corrector),
     ):
-        rc = OCRPipeline(cfg).run().exit_code
+        rc = OCRPipeline(cfg, FileDiscovery().collect_input_files(cfg)).run().exit_code
 
     assert rc == 0
     call_args = mock_corrector.correct.call_args
@@ -127,15 +140,23 @@ def test_pipeline_txt_input_non_utf8_falls_back_to_latin1(tmp_path: Path) -> Non
     source = cfg.input_dir / "latin1.txt"
     source.write_bytes(b"\xff\xfe latin-1 text \x80\x81")
 
-    seen: list[bool] = []
+    seen: list[FileStatus] = []
 
-    def _on_done(result: FileDoneResult) -> None:
-        seen.append(result.ok)
+    def _on_done(outcome: FileOutcome) -> None:
+        seen.append(outcome.status)
 
-    rc = OCRPipeline(cfg, progress=ProgressCallbacks(on_file_done=_on_done)).run().exit_code
+    rc = (
+        OCRPipeline(
+            cfg,
+            FileDiscovery().collect_input_files(cfg),
+            progress=ProgressCallbacks(on_file_done=_on_done),
+        )
+        .run()
+        .exit_code
+    )
 
     assert rc == 0
-    assert seen == [True]
+    assert seen == [FileStatus.SAVED]
 
 
 def test_pipeline_saves_text_files_below_the_input_subfolder(tmp_path: Path) -> None:
@@ -158,7 +179,7 @@ def test_pipeline_saves_text_files_below_the_input_subfolder(tmp_path: Path) -> 
         (cfg.input_dir / name).mkdir()
         (cfg.input_dir / name / "essay.txt").write_text(f"text of {name}", encoding="utf-8")
 
-    rc = OCRPipeline(cfg).run().exit_code
+    rc = OCRPipeline(cfg, FileDiscovery().collect_input_files(cfg)).run().exit_code
 
     assert rc == 0
     for name in ("class1", "class2"):
@@ -179,14 +200,22 @@ def test_pipeline_refuses_text_files_in_the_input_folder_before_creating_it(
     cfg = make_config(tmp_path, correction_enabled=False, text_enabled=True, recursive=True)
     cfg = dataclasses.replace(cfg, output_dir=cfg.input_dir / "results")
     (cfg.input_dir / "note.txt").write_text("hello", encoding="utf-8")
-    warnings: list[str] = []
+    errors: list[str] = []
     reporter = MagicMock()
-    reporter.warn.side_effect = warnings.append
+    reporter.error.side_effect = errors.append
 
-    rc = OCRPipeline(cfg, dependencies=PipelineDependencies(reporter=reporter)).run().exit_code
+    rc = (
+        OCRPipeline(
+            cfg,
+            FileDiscovery().collect_input_files(cfg),
+            dependencies=PipelineDependencies(reporter=reporter),
+        )
+        .run()
+        .exit_code
+    )
 
     assert rc == 1
-    assert "next run would read them as new documents" in warnings[0]
+    assert "next run would read them as new documents" in errors[0]
     assert not cfg.output_dir.exists()
 
 
@@ -211,18 +240,24 @@ def test_pipeline_with_recognition_off_uses_text_files_and_skips_scans(
     )
     (cfg.input_dir / "note.txt").write_text("Typed essay", encoding="utf-8")
     shutil.copy(sample_png, cfg.input_dir / "scan.png")
-    events: list[FileDoneResult] = []
+    events: list[FileOutcome] = []
     ocr = MagicMock()
 
     with patch("teachers_teammate.infrastructure.pipeline.OCRStageService") as stage:
         stage.return_value.run_pages = ocr
         rc = (
-            OCRPipeline(cfg, progress=ProgressCallbacks(on_file_done=events.append)).run().exit_code
+            OCRPipeline(
+                cfg,
+                FileDiscovery().collect_input_files(cfg),
+                progress=ProgressCallbacks(on_file_done=events.append),
+            )
+            .run()
+            .exit_code
         )
 
     assert rc == 0
     by_name = {e.name: e for e in events}
-    assert by_name["note.txt"].ok and not by_name["note.txt"].skipped
-    assert by_name["scan.png"].skipped and not by_name["scan.png"].ok
-    assert "switched off" in by_name["scan.png"].message
+    assert by_name["note.txt"].status is FileStatus.SAVED
+    assert by_name["scan.png"].status is FileStatus.SKIPPED
+    assert "switched off" in by_name["scan.png"].error
     ocr.assert_not_called()

@@ -11,8 +11,6 @@ Responsibilities
   function into a runnable unit.
 - `PipelineDependencies` / `PipelineComponentFactory` — injection seams for
   tests and adapters that need to substitute specific services or constructors.
-- `collect_files` — thin helper that returns supported input files for a config;
-  delegates to `FileDiscovery`.
 - `preprocess_preview` — standalone single-file preprocessing helper used by
   the GUI preview dialog without running OCR or correction.
 
@@ -29,9 +27,6 @@ Public API
 :class:`OCRPipeline`
     Runs the full preprocess → OCR → correction → DOCX pipeline.
 
-:func:`collect_files`
-    List supported input files without running any processing.
-
 :func:`preprocess_preview`
     Preprocess a single source file (image or PDF) and return the paths to
     the original image and the preprocessed result.  Used by the GUI preview
@@ -40,36 +35,24 @@ Public API
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 import logging
 from pathlib import Path
 import threading
 
 from ..config import Config, OcrConfig
-from ..domain.data_location import ENGINE_PPOCR, OCR_ENGINE_NAMES
-from ..domain.local_models import READER_MODEL_NAME
 from ..domain.model_catalog import HardwareDetection
 from ..domain.output_files import output_folder_refusal
 from ..domain.run_summary import RunSummary
-from ..exceptions import (
-    RECOGNITION_OFF_MESSAGE,
-    OllamaConnectionError,
-    ProviderNotAvailableError,
-)
+from ..exceptions import OllamaConnectionError, ProviderNotAvailableError
 from ..interfaces import ImagePreprocessor
-from .file_discovery import FileDiscovery
+from . import run_report
 from .input_provider_factory import InputOptions, get_input_provider, supported_suffixes
 from .ollama_utils import OllamaClient, WaitDetail
 from .onnx.store import ModelStore
 from .preview_image_store import PreviewImageStore
-from .reporting import (
-    BATTERY_WARNING,
-    KeepAwakeState,
-    ProgressCallbacks,
-    Reporter,
-    StdoutReporter,
-)
+from .reporting import KeepAwakeState, ProgressCallbacks, Reporter, StdoutReporter
 from .run_stats import RunStatsCollector
 from .speed_store import SampleStore
 from .stage_builder import PipelineComponentFactory as PipelineComponentFactory  # noqa: PLC0414
@@ -83,7 +66,6 @@ from .workflow.file_processor import FileProcessor, FileProcessorConfig
 from .workflow.ocr_service import OCRStageService
 from .workflow.preprocess_service import PreprocessService
 
-_LINE = "=" * 64
 _logger = logging.getLogger(__name__)
 
 
@@ -113,19 +95,6 @@ class PipelineDependencies:
 
 
 # ── Public helpers ─────────────────────────────────────────────────────────
-
-
-def collect_files(config: Config) -> list[Path]:
-    """Return all supported input files under ``config.input_dir``.
-
-    Args:
-        config: Pipeline configuration.
-
-    Returns:
-        Sorted list of :class:`~pathlib.Path` objects matching
-        :data:`~teachers_teammate.config.SUPPORTED_SUFFIXES`.
-    """
-    return FileDiscovery().collect_input_files(config)
 
 
 def preprocess_preview(
@@ -192,6 +161,10 @@ class OCRPipeline:
     ----------
     config:
         Full runtime configuration.
+    files:
+        The files this run processes, in the order the adapter listed them.  The run does not
+        look for files itself: the queue the teacher sees and the files that are read are the
+        same list.
     config_file:
         Path to the loaded config file, shown in the startup banner.
     stop_event:
@@ -214,21 +187,19 @@ class OCRPipeline:
     def __init__(
         self,
         config: Config,
+        files: Sequence[Path],
         stop_event: threading.Event | None = None,
         *,
         stop_after_file_event: threading.Event | None = None,
         config_file: Path | None = None,
-        selected_source_paths: list[str] | None = None,
         dependencies: PipelineDependencies | None = None,
         progress: ProgressCallbacks | None = None,
     ) -> None:
         self._config = config
+        self._files = list(files)
         self._config_file = config_file
         self._stop_event = stop_event
         self._stop_after_file_event = stop_after_file_event
-        self._selected_source_paths = {
-            str(Path(path).resolve()) for path in (selected_source_paths or [])
-        }
         self._progress = progress or ProgressCallbacks()
         #: The file the run is on, so a note from the Ollama client can name it.
         self._current_source_id = ""
@@ -262,7 +233,7 @@ class OCRPipeline:
             recursive=cfg.recursive,
         )
         if refusal:
-            reporter.warn(f"ERROR: {refusal}")
+            reporter.error(refusal)
             return RunSummary(error=refusal)
         tmp_dir = resolve_artifact_dir(cfg.output_dir)
         cfg.output_dir.mkdir(parents=True, exist_ok=True)
@@ -274,23 +245,21 @@ class OCRPipeline:
         storage = resolve_storage_root()
         reporter.status(f"Storage root: {storage.path.resolve()} ({storage.source})")
 
-        self._print_banner()
+        run_report.banner(cfg, reporter, config_file=self._config_file, keep_awake=self._keep_awake)
         if cfg.recognition_enabled and cfg.ocr.engine == "ollama":
             try:
-                OllamaClient(cfg.ollama_url).check_model(cfg.ocr.model, reporter)
+                self._component_factory.check_ocr_model(cfg.ollama_url, cfg.ocr.model, reporter)
                 reporter.status("Checking Ollama connection... OK")
             except (RuntimeError, OllamaConnectionError) as exc:
-                reporter.warn(f"\nERROR: {exc}")
+                reporter.error(str(exc))
                 return RunSummary(error=str(exc))
         try:
             file_processor = self._setup_services(tmp_dir, artifact_store, state_repo)
         except (ValueError, RuntimeError, ProviderNotAvailableError) as exc:
-            reporter.warn(f"ERROR: {exc}")
+            reporter.error(str(exc))
             return RunSummary(error=str(exc))
 
-        files = collect_files(cfg)
-        if self._selected_source_paths:
-            files = [file for file in files if str(file.resolve()) in self._selected_source_paths]
+        files = self._files
         if not files:
             supported = ", ".join(s.lstrip(".").upper() for s in sorted(supported_suffixes()))
             reporter.status(f"No supported files found ({supported}). Nothing to do.")
@@ -298,40 +267,10 @@ class OCRPipeline:
 
         reporter.status(f"Found {len(files)} file(s) to process.\n")
         summary = self._run_files(files, file_processor, tmp_dir, artifact_store)
-        self._report_summary(summary)
+        run_report.summary(summary, reporter)
         return summary
 
-    def _report_summary(self, summary: RunSummary) -> None:
-        """Write the closing block of a run: the counts, then the files that need attention."""
-        reporter = self._reporter
-        reporter.status("")
-        reporter.status(_LINE)
-        counts = [
-            f"{len(summary.succeeded)} succeeded",
-            f"{len(summary.failed)} failed",
-        ]
-        if summary.skipped:
-            counts.append(f"{len(summary.skipped)} skipped")
-        if summary.stopped:
-            counts.append(f"{len(summary.stopped)} stopped")
-        if summary.not_started:
-            counts.append(f"{len(summary.not_started)} not started")
-        reporter.status(f"Done: {', '.join(counts)}.")
-        if summary.failed:
-            reporter.status("Failed files:")
-            for name in summary.failed:
-                reporter.status(f"  - {name}")
-        if summary.skipped:
-            reporter.status(f"Skipped files ({RECOGNITION_OFF_MESSAGE.rstrip('.').lower()}):")
-            for name in summary.skipped:
-                reporter.status(f"  - {name}")
-        if summary.stopped or summary.not_started:
-            reporter.status("Unfinished files (stopped by user; what was done is kept):")
-            for name in (*summary.stopped, *summary.not_started):
-                reporter.status(f"  - {name}")
-        reporter.status(_LINE)
-
-    def run_preview_only(self) -> int:
+    def run_preview_only(self) -> RunSummary:
         """Preprocess all input files and save images to the temp cache directory.
 
         No OCR, correction, or DOCX generation is performed.  Use this to
@@ -342,24 +281,16 @@ class OCRPipeline:
         if not files:
             supported = ", ".join(s.lstrip(".").upper() for s in sorted(supported_suffixes()))
             reporter.status(f"No supported files found ({supported}). Nothing to do.")
-            return 0
+            return RunSummary()
 
         try:
             succeeded, failed = self._run_preview_batch(preprocess_service, files)
         finally:
             self._cleanup_preview_intermediates(tmp_dir)
 
-        reporter.status("")
-        reporter.status(_LINE)
-        reporter.status(f"Done: {len(succeeded)} preprocessed, {len(failed)} failed.")
-        reporter.status(f"Images saved to: {tmp_dir.resolve()}")
-        if failed:
-            reporter.status("Failed files:")
-            for name in failed:
-                reporter.status(f"  - {name}")
-        reporter.status(_LINE)
-
-        return 1 if failed else 0
+        summary = RunSummary(succeeded=tuple(succeeded), failed=tuple(failed))
+        run_report.preview_summary(summary, reporter, tmp_dir)
+        return summary
 
     def _prepare_preview_run(self) -> tuple[Config, PreprocessService, list[Path], Path]:
         cfg = self._config
@@ -368,20 +299,19 @@ class OCRPipeline:
         cfg.output_dir.mkdir(parents=True, exist_ok=True)
         tmp_dir.mkdir(parents=True, exist_ok=True)
 
-        reporter.status(_LINE)
+        reporter.status(run_report.LINE)
         reporter.status("Teacher's Teammate — Preview (preprocess only)")
-        reporter.status(_LINE)
+        reporter.status(run_report.LINE)
         reporter.status(f"  Preprocess    : {cfg.ocr.preprocess_method}")
         reporter.status(f"  Input         : {cfg.input_dir.resolve()}")
         reporter.status(f"  Preview dir   : {tmp_dir.resolve()}")
-        reporter.status(_LINE)
+        reporter.status(run_report.LINE)
 
         builder = StageBuilder(
             cfg, self._component_factory, self._reporter, self._hardware, self._model_store
         )
         preprocess_service = builder.build_preprocessor_service(tmp_dir)
-        files = collect_files(cfg)
-        return cfg, preprocess_service, files, tmp_dir
+        return cfg, preprocess_service, self._files, tmp_dir
 
     def _run_preview_batch(
         self,
@@ -406,7 +336,7 @@ class OCRPipeline:
                 else:
                     failed.append(file.name)
             except Exception as exc:  # noqa: BLE001  # preprocessing errors (OpenCV, PIL) skip the file; the pipeline must continue
-                reporter.warn(f"       → ERROR: {exc}")
+                reporter.error(f"{file.name}: {exc}")
                 failed.append(file.name)
         return succeeded, failed
 
@@ -463,83 +393,6 @@ class OCRPipeline:
             for out_path in prepared.ocr_inputs:
                 self._reporter.status(f"       → {out_path.name}  ({', '.join(prepared.steps)})")
         return True
-
-    def _print_banner(self) -> None:
-        cfg = self._config
-        reporter = self._reporter
-        reporter.status(_LINE)
-        reporter.status("Teacher's Teammate")
-        reporter.status(_LINE)
-        if self._config_file is not None:
-            reporter.status(f"  Config file   : {self._config_file}")
-        if not cfg.recognition_enabled:
-            reporter.status("  Recognition   : disabled (scans are skipped)")
-        else:
-            if cfg.ocr.engine == ENGINE_PPOCR:
-                reporter.status(
-                    f"  OCR engine    : {OCR_ENGINE_NAMES[ENGINE_PPOCR]} ({READER_MODEL_NAME})"
-                )
-            else:
-                reporter.status(f"  OCR engine    : {cfg.ocr.engine}")
-            if cfg.ocr.engine == "ollama":
-                reporter.status(f"  OCR model     : {cfg.ocr.model}")
-        reporter.status(f"  Preprocess    : {cfg.ocr.preprocess_method}")
-        reporter.status(f"  Language      : {cfg.language}")
-        if (
-            (cfg.recognition_enabled and cfg.ocr.engine == "ollama")
-            or (cfg.correction_enabled and cfg.correction_provider == "ollama")
-            or (cfg.evaluation_enabled and cfg.evaluate_provider == "ollama")
-        ):
-            reporter.status(f"  Ollama URL    : {cfg.ollama_url}")
-        reporter.status(f"  Input         : {cfg.input_dir.resolve()}")
-        reporter.status(f"  Output        : {cfg.output_dir.resolve()}")
-        reporter.status(f"  Recursive     : {cfg.recursive}")
-        reporter.status(f"  Debug         : {cfg.debug}")
-        if not cfg.correction_enabled:
-            reporter.status("  Correction    : disabled")
-        else:
-            reporter.status(
-                f"  Correction    : {cfg.correction_provider} / {cfg.effective_correction_model}"
-            )
-        if cfg.anonymization_enabled:
-            reporter.status("  Anonymization : enabled (PII removed after text recognition)")
-        if not cfg.evaluation_enabled:
-            reporter.status("  Evaluation    : disabled")
-        else:
-            reporter.status(
-                f"  Evaluation    : {cfg.evaluate_provider} / {cfg.effective_evaluate_model}"
-            )
-        if not cfg.docx_enabled:
-            reporter.status("  DOCX output   : disabled")
-        else:
-            reporter.status(f"  DOCX format   : {cfg.docx_format}")
-        text_files = [
-            name
-            for name, enabled in (
-                ("plain", cfg.text_enabled),
-                ("anonymized", cfg.text_anonymized_enabled),
-            )
-            if enabled
-        ]
-        reporter.status(f"  Text files    : {', '.join(text_files) or 'disabled'}")
-        self._print_keep_awake()
-
-    def _print_keep_awake(self) -> None:
-        """Close the banner with whether the computer is kept awake (and a battery warning)."""
-        reporter = self._reporter
-        awake = self._keep_awake
-        if awake is not None:
-            if not awake.enabled:
-                reporter.status("  Keep awake    : off (the computer may go to sleep)")
-            elif awake.held:
-                reporter.status("  Keep awake    : yes")
-            elif not awake.available:
-                reporter.status("  Keep awake    : no (not available on this computer)")
-            else:
-                reporter.status("  Keep awake    : no (the system did not allow it)")
-        reporter.status(_LINE)
-        if awake is not None and awake.enabled and awake.on_battery:
-            reporter.warn(BATTERY_WARNING)
 
     def _setup_services(
         self,

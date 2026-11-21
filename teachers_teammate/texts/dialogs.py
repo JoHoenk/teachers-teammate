@@ -168,16 +168,11 @@ def no_files_selected() -> Notice:
     return Notice("No files selected", "Select one or more rows in the queue, then press Run.")
 
 
-def nothing_to_rerun() -> Notice:
-    """Tell the teacher that the chosen stage has no file left to run on."""
-    return Notice("No files found", "No files are available to re-run.")
-
-
 def selection_mismatch() -> Notice:
     """Tell the teacher that the selected rows no longer match the input files."""
     return Notice(
         "Selection mismatch",
-        "Could not map selected queue rows to current input files.",
+        "The selected rows are no longer in the queue.",
     )
 
 

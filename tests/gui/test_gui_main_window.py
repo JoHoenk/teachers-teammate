@@ -50,7 +50,7 @@ from teachers_teammate.gui.settings._page import (
     FOCUS_PROOFREADING_KEY,
 )
 from teachers_teammate.gui.settings._window import SUB_PAGES
-from teachers_teammate.domain.run_summary import RunSummary
+from teachers_teammate.domain.run_summary import FileOutcome, FileStatus, RunSummary
 from teachers_teammate.infrastructure.ollama_install import OLLAMA_DOWNLOAD_URL
 from teachers_teammate.infrastructure.ollama_utils import WaitDetail, WaitKind
 from teachers_teammate.infrastructure.reporting import KeepAwakeState
@@ -111,7 +111,7 @@ class _DummySignal:
 
 
 class _DummyWorker:
-    def __init__(self, _config, selected_source_paths=None, app_service=None) -> None:
+    def __init__(self, _config, files=None, app_service=None) -> None:
         self.log_line = _DummySignal()
         self.file_started = _DummySignal()
         self.stage_started = _DummySignal()
@@ -121,7 +121,7 @@ class _DummyWorker:
         self.file_done = _DummySignal()
         self.keep_awake_changed = _DummySignal()
         self.run_finished = _DummySignal()
-        self.selected_source_paths = selected_source_paths or []
+        self.files = list(files or [])
         self.app_service = app_service
         self.stop_event = threading.Event()
         self.stop_after_file_event = threading.Event()
@@ -287,16 +287,23 @@ def test_main_window_run_starts_worker_and_updates_ui(
     """
     cfg = make_config(tmp_path)
     monkeypatch.setattr(main_window._config_panel, "to_config", lambda: cfg)
-    monkeypatch.setattr(main_window, "_get_file_names", lambda _cfg: ["a.png", "b.txt"])
+    first, second = tmp_path / "a.png", tmp_path / "b.txt"
+    monkeypatch.setattr(main_window, "_get_file_names", lambda _cfg: [first.name, second.name])
+    main_window._queued_files_by_source_id = {
+        str(first.resolve()): first,
+        str(second.resolve()): second,
+    }
 
-    main_window._results_table.set_queue([_queue_row("a.png"), _queue_row("b.txt")])
+    main_window._results_table.set_queue(
+        [_queue_row(str(first.resolve())), _queue_row(str(second.resolve()))]
+    )
     main_window._results_table.selectRow(0)
 
     main_window._on_run()
     qtbot.waitUntil(lambda: main_window._worker is not None, timeout=3000)
 
     assert isinstance(main_window._worker, _DummyWorker)
-    assert main_window._worker.selected_source_paths == ["a.png"]
+    assert main_window._worker.files == [first]
     assert main_window._run_btn.isEnabled() is False
     assert main_window._stop_btn.isEnabled() is True
     assert main_window._progress.maximum() == 1
@@ -434,13 +441,14 @@ def test_a_stopped_file_opens_no_error_dialog_and_shows_where_it_stopped(
 
     main_window._on_file_done(
         FileDoneEvent(
-            source_id=source,
-            name="scan.png",
-            ok=False,
-            message="Stopped before the text was read.",
+            outcome=FileOutcome(
+                source_id=source,
+                name="scan.png",
+                status=FileStatus.STOPPED,
+                error="Stopped before the text was read.",
+            ),
             ocr_s=1.0,
             correction_s=0.0,
-            stopped=True,
         )
     )
 
@@ -470,14 +478,14 @@ def test_a_stopped_file_keeps_the_tick_of_the_step_that_finished(main_window, mo
 
     main_window._on_file_done(
         FileDoneEvent(
-            source_id=source,
-            name="essay.png",
-            ok=False,
-            message="Stopped before proofreading.",
+            outcome=FileOutcome(
+                source_id=source,
+                name="essay.png",
+                status=FileStatus.STOPPED,
+                error="Stopped before proofreading.",
+            ),
             ocr_s=1.0,
             correction_s=0.0,
-            raw_txt="the text",
-            stopped=True,
         )
     )
 
@@ -771,16 +779,14 @@ def test_main_window_file_done_records_txt_artifacts(main_window) -> None:
 
     main_window._on_file_done(
         FileDoneEvent(
-            source_id="/tmp/note.txt",
-            name="note.txt",
-            ok=True,
-            message="saved",
+            outcome=FileOutcome(
+                source_id="/tmp/note.txt",
+                name="note.txt",
+                status=FileStatus.SAVED,
+                warnings=("saved",),
+            ),
             ocr_s=0.3,
             correction_s=0.0,
-            preview_img="",
-            raw_txt="/tmp/note_ocr.txt",
-            corr_txt="",
-            eval_txt="",
         )
     )
 
@@ -805,16 +811,14 @@ def test_main_window_file_done_reloads_the_open_document(main_window, monkeypatc
 
     main_window._on_file_done(
         FileDoneEvent(
-            source_id="/tmp/page.png",
-            name="page.png",
-            ok=True,
-            message="saved",
+            outcome=FileOutcome(
+                source_id="/tmp/page.png",
+                name="page.png",
+                status=FileStatus.SAVED,
+                warnings=("saved",),
+            ),
             ocr_s=0.3,
             correction_s=0.2,
-            preview_img="",
-            raw_txt="/tmp/page_ocr.txt",
-            corr_txt="/tmp/page_correction.txt",
-            eval_txt="/tmp/page_evaluation.txt",
         )
     )
 
@@ -880,16 +884,14 @@ def test_main_window_file_done_shows_how_the_finished_results_were_sent(
 
     main_window._on_file_done(
         FileDoneEvent(
-            source_id=source_id,
-            name="page.png",
-            ok=True,
-            message="saved",
+            outcome=FileOutcome(
+                source_id=source_id,
+                name="page.png",
+                status=FileStatus.SAVED,
+                warnings=("saved",),
+            ),
             ocr_s=0.1,
             correction_s=0.1,
-            preview_img="",
-            raw_txt="",
-            corr_txt="",
-            eval_txt="",
         )
     )
 
@@ -914,16 +916,14 @@ def test_main_window_file_done_leaves_another_open_document_alone(main_window, m
 
     main_window._on_file_done(
         FileDoneEvent(
-            source_id="/tmp/b.png",
-            name="b.png",
-            ok=True,
-            message="saved",
+            outcome=FileOutcome(
+                source_id="/tmp/b.png",
+                name="b.png",
+                status=FileStatus.SAVED,
+                warnings=("saved",),
+            ),
             ocr_s=0.3,
             correction_s=0.2,
-            preview_img="",
-            raw_txt="raw cached text",
-            corr_txt="corr cached text",
-            eval_txt="eval cached text",
         )
     )
 
@@ -1017,7 +1017,7 @@ def test_a_typed_edit_is_stored_before_a_stage_run_clears_the_cache(
 
     def _invalidate(*_a, **_k):
         order.append("invalidate")
-        return [a], [], False
+        return ()
 
     monkeypatch.setattr(main_window._app_service, "invalidate_from_stage", _invalidate)
     monkeypatch.setattr(main_window, "_start_worker", lambda *_a, **_k: order.append("start"))
@@ -1928,6 +1928,7 @@ def stored(main_window, monkeypatch, tmp_path: Path):
                 text_format=text_format,
             )
             source_ids.append(str(source))
+        main_window._queued_files_by_source_id = {i: Path(i) for i in source_ids}
         main_window._results_table.set_queue(
             [
                 _queue_row(
@@ -2334,16 +2335,14 @@ def test_the_redone_document_is_shown_again_when_its_result_arrives(
 
     main_window._on_file_done(
         FileDoneEvent(
-            source_id=a,
-            name="a.png",
-            ok=True,
-            message="saved",
+            outcome=FileOutcome(
+                source_id=a,
+                name="a.png",
+                status=FileStatus.SAVED,
+                warnings=("saved",),
+            ),
             ocr_s=0.1,
             correction_s=0.1,
-            preview_img="",
-            raw_txt="what was read",
-            corr_txt="",
-            eval_txt="",
         )
     )
 
@@ -3268,12 +3267,13 @@ def test_stage_run_force_runs_correction_when_checkbox_disabled(main_window, mon
     Then   the stage runs anyway with a config where correction_enabled is forced True
     """
     cfg = make_config(Path("/tmp"), correction_enabled=False)
+    _queue_a(main_window)
     monkeypatch.setattr(main_window._config_panel, "to_config", lambda: cfg)
     captured: list = []
     monkeypatch.setattr(
         main_window._app_service,
         "invalidate_from_stage",
-        lambda config, **k: captured.append(config) or (["/tmp/a.png"], [], False),
+        lambda config, **k: captured.append(config) or (),
     )
     started: list = []
     monkeypatch.setattr(main_window, "_start_worker", lambda *a, **k: started.append(a))
@@ -3293,12 +3293,13 @@ def test_stage_run_force_runs_evaluation_when_checkbox_disabled(main_window, mon
     Then   the stage runs with evaluation_enabled and correction_enabled forced True
     """
     cfg = make_config(Path("/tmp"), evaluation_enabled=False, correction_enabled=False)
+    _queue_a(main_window)
     monkeypatch.setattr(main_window._config_panel, "to_config", lambda: cfg)
     captured: list = []
     monkeypatch.setattr(
         main_window._app_service,
         "invalidate_from_stage",
-        lambda config, **k: captured.append(config) or (["/tmp/a.png"], [], False),
+        lambda config, **k: captured.append(config) or (),
     )
     started: list = []
     monkeypatch.setattr(main_window, "_start_worker", lambda *a, **k: started.append(a))
@@ -3313,20 +3314,33 @@ def test_stage_run_force_runs_evaluation_when_checkbox_disabled(main_window, mon
 
 
 @pytest.mark.gui
-def test_stage_run_informs_when_no_files(main_window, monkeypatch) -> None:
+def test_queued_files_of_an_empty_selection_is_no_file(main_window) -> None:
     """
-    Given  invalidate_from_stage reports no files
-    When   _on_stage_run_requested is invoked for the OCR stage
-    Then   a 'No files found' dialog is shown and no worker starts
+    Given  a queue of one file
+    When   the files of an empty id list, of the queued id and of no list are asked
+    Then   the empty list names no file, only None names the whole queue
     """
-    from unittest.mock import patch  # noqa: PLC0415
+    _queue_a(main_window)
 
+    assert main_window._queued_files([]) == []
+    assert main_window._queued_files(["/tmp/a.png"]) == [Path("/tmp/a.png")]
+    assert main_window._queued_files() == [Path("/tmp/a.png")]
+
+
+@pytest.mark.gui
+def test_stage_run_informs_when_the_selection_is_not_in_the_queue(main_window, monkeypatch) -> None:
+    """
+    Given  selected rows that are no longer in the queue
+    When   _on_stage_run_requested is invoked for the OCR stage
+    Then   a 'Selection mismatch' dialog is shown, nothing is invalidated and no worker starts
+    """
     cfg = make_config(Path("/tmp"))
     monkeypatch.setattr(main_window._config_panel, "to_config", lambda: cfg)
+    invalidated: list = []
     monkeypatch.setattr(
         main_window._app_service,
         "invalidate_from_stage",
-        lambda *a, **k: ([], [], True),
+        lambda *a, **k: invalidated.append(a) or (),
     )
     started: list = []
     monkeypatch.setattr(main_window, "_start_worker", lambda *a, **k: started.append(a))
@@ -3335,7 +3349,8 @@ def test_stage_run_informs_when_no_files(main_window, monkeypatch) -> None:
     main_window._on_stage_run_requested(["/tmp/a.png"], "ocr")
     _wait_for(lambda: bool(shown))
 
-    assert [notice.title for notice in shown] == ["No files found"]
+    assert [notice.title for notice in shown] == ["Selection mismatch"]
+    assert invalidated == []
     assert started == []
 
 
@@ -3349,11 +3364,12 @@ def test_stage_run_warns_on_invalidation_failure(main_window, monkeypatch) -> No
     from unittest.mock import patch  # noqa: PLC0415
 
     cfg = make_config(Path("/tmp"))
+    _queue_a(main_window)
     monkeypatch.setattr(main_window._config_panel, "to_config", lambda: cfg)
     monkeypatch.setattr(
         main_window._app_service,
         "invalidate_from_stage",
-        lambda *a, **k: (["/tmp/a.png"], ["a.png: locked"], False),
+        lambda *a, **k: ("a.png: locked",),
     )
     started: list = []
     monkeypatch.setattr(main_window, "_start_worker", lambda *a, **k: started.append(a))
@@ -3374,11 +3390,12 @@ def test_stage_run_starts_worker_on_success(main_window, monkeypatch) -> None:
     Then   the worker is started with those source ids
     """
     cfg = make_config(Path("/tmp"), correction_enabled=False)
+    _queue_a(main_window)
     monkeypatch.setattr(main_window._config_panel, "to_config", lambda: cfg)
     monkeypatch.setattr(
         main_window._app_service,
         "invalidate_from_stage",
-        lambda *a, **k: (["/tmp/a.png"], [], False),
+        lambda *a, **k: (),
     )
     started: list = []
     monkeypatch.setattr(
@@ -3905,14 +3922,13 @@ def test_main_window_file_done_keeps_the_row_when_the_store_cannot_be_read(
 
     main_window._on_file_done(
         FileDoneEvent(
-            source_id=source,
-            name="page.png",
-            ok=True,
-            message="",
+            outcome=FileOutcome(
+                source_id=source,
+                name="page.png",
+                status=FileStatus.SAVED,
+            ),
             ocr_s=0.0,
             correction_s=0.0,
-            raw_txt="**x**",
-            text_format="markdown",
         )
     )
 
@@ -3944,13 +3960,19 @@ def test_main_window_file_started_keeps_the_text_format_of_the_shown_texts(main_
 # ── Re-run only the requested stage ──────────────────────────────────────────
 
 
+def _queue_a(main_window) -> None:
+    """Queue /tmp/a.png without a scan of the folder."""
+    main_window._queued_files_by_source_id = {"/tmp/a.png": Path("/tmp/a.png")}
+
+
 def _capture_stage_run(main_window, monkeypatch, cfg, stage: str):
     """Trigger a right-click stage run and return the config the worker would get."""
+    _queue_a(main_window)
     monkeypatch.setattr(main_window._config_panel, "to_config", lambda: cfg)
     monkeypatch.setattr(
         main_window._app_service,
         "invalidate_from_stage",
-        lambda config, **k: (["/tmp/a.png"], [], False),
+        lambda config, **k: (),
     )
     started: list = []
     monkeypatch.setattr(main_window, "_start_worker", lambda *a, **k: started.append(a))
@@ -4592,7 +4614,7 @@ def test_stage_rerun_with_unmet_requirement_keeps_the_cached_results(
     monkeypatch.setattr(
         main_window._app_service,
         "invalidate_from_stage",
-        lambda *a, **k: invalidated.append(a) or (["/tmp/a.png"], [], False),
+        lambda *a, **k: invalidated.append(a) or (),
     )
     shown: list[str] = []
     monkeypatch.setattr(
@@ -4663,7 +4685,7 @@ def test_stage_rerun_is_refused_while_a_worker_runs(
     monkeypatch.setattr(
         main_window._app_service,
         "invalidate_from_stage",
-        lambda *a, **k: invalidated.append(a) or (["/tmp/a.png"], [], False),
+        lambda *a, **k: invalidated.append(a) or (),
     )
     busy = _record_notices(monkeypatch)
 
@@ -5791,13 +5813,14 @@ def test_a_skipped_file_opens_no_error_dialog_and_is_counted_apart(
 
     main_window._on_file_done(
         FileDoneEvent(
-            source_id=source,
-            name="scan.png",
-            ok=False,
-            message="Needs text recognition, which is switched off.",
+            outcome=FileOutcome(
+                source_id=source,
+                name="scan.png",
+                status=FileStatus.SKIPPED,
+                error="Needs text recognition, which is switched off.",
+            ),
             ocr_s=0.0,
             correction_s=0.0,
-            skipped=True,
         )
     )
 
@@ -6171,8 +6194,8 @@ def test_the_run_start_question_proofreads_again_when_asked(
     monkeypatch.setattr(
         main_window._app_service,
         "invalidate_from_stage",
-        lambda _cfg, *, selected_source_ids, stage: (
-            dropped.append((list(selected_source_ids), stage)) or ([], [], False)
+        lambda _cfg, *, files, stage: (
+            dropped.append(([str(file.resolve()) for file in files], stage)) or ()
         ),
     )
     worked_on = WorkedOn(kept_stale=(Path("/in/a.png"),), unanswered=(Path("/in/a.png"),))
@@ -6362,7 +6385,7 @@ def test_the_run_start_question_does_not_start_when_the_proofreading_cannot_be_d
     monkeypatch.setattr(
         main_window._app_service,
         "invalidate_from_stage",
-        lambda *_a, **_k: ([], ["a.png: denied"], False),
+        lambda *_a, **_k: ("a.png: denied",),
     )
     monkeypatch.setattr(_dialogs, "notify", lambda _parent, notice: shown.append(notice))
 
@@ -6396,8 +6419,8 @@ def test_the_run_start_question_names_a_document_by_its_resolved_path(
     monkeypatch.setattr(
         main_window._app_service,
         "invalidate_from_stage",
-        lambda _cfg, *, selected_source_ids, stage: (
-            asked_for.append(list(selected_source_ids)) or ([], [], False)
+        lambda _cfg, *, files, stage: (
+            asked_for.append([str(file.resolve()) for file in files]) or ()
         ),
     )
 

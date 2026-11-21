@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from pathlib import Path
 import threading
 import time
@@ -12,7 +13,8 @@ from PySide6.QtCore import QThread, Signal
 from ..application.service import ProcessingApplicationService, ProgressCallbacks
 from ..config import Config
 from ..domain.run_summary import RunSummary
-from ..infrastructure.reporting import CallbackReporter, FileDoneResult, KeepAwakeState
+from ..domain.run_summary import FileOutcome
+from ..infrastructure.reporting import CallbackReporter, KeepAwakeState
 from ._types import FileDoneEvent
 
 
@@ -20,9 +22,9 @@ class _RunSelectedService(Protocol):
     def run_selected(
         self,
         config: Config,
+        files: Sequence[Path],
         /,
         *,
-        selected_source_paths: list[str] | None = None,
         stop_event: threading.Event | None = None,
         stop_after_file_event: threading.Event | None = None,
         reporter=None,
@@ -75,13 +77,13 @@ class OCRWorker(QThread):
     def __init__(
         self,
         config: Config,
-        selected_source_paths: list[str] | None = None,
+        files: Sequence[Path],
         *,
         app_service: _RunSelectedService | None = None,
     ) -> None:
         super().__init__()
         self._config = config
-        self._selected_source_paths = selected_source_paths
+        self._files = list(files)
         self._app_service = app_service or ProcessingApplicationService()
         self.stop_event = threading.Event()
         self.stop_after_file_event = threading.Event()
@@ -126,8 +128,8 @@ class OCRWorker(QThread):
         def on_first_token(source_id: str) -> None:
             self.first_token.emit(source_id)
 
-        def on_file_done(result: FileDoneResult) -> None:
-            source_id = result.source_id
+        def on_file_done(outcome: FileOutcome) -> None:
+            source_id = outcome.source_id
             now = time.monotonic()
             start = file_start_times.get(source_id, now)
             ocr_t = ocr_done_times.get(source_id, now)
@@ -138,25 +140,7 @@ class OCRWorker(QThread):
                 ocr_s = now - start
                 correction_s = 0.0
             self.file_done.emit(
-                FileDoneEvent(
-                    source_id=source_id,
-                    name=result.name,
-                    ok=result.ok,
-                    message=result.message,
-                    ocr_s=ocr_s,
-                    correction_s=correction_s,
-                    preview_img=result.preview_img,
-                    raw_txt=result.raw_text,
-                    corr_txt=result.correction_text,
-                    eval_txt=result.evaluation_text,
-                    text_format=result.text_format,
-                    correction_review=result.correction_review,
-                    correction_warning=result.correction_warning,
-                    skipped=result.skipped,
-                    stopped=result.stopped,
-                    stopped_stage=result.stopped_stage,
-                    checked_label=result.checked_label,
-                )
+                FileDoneEvent(outcome=outcome, ocr_s=ocr_s, correction_s=correction_s)
             )
 
         def on_keep_awake(state: KeepAwakeState) -> None:
@@ -177,9 +161,7 @@ class OCRWorker(QThread):
                     on_first_token=on_first_token,
                 ),
             }
-            if self._selected_source_paths is not None:
-                pipeline_kwargs["selected_source_paths"] = self._selected_source_paths
-            summary = self._app_service.run_selected(self._config, **pipeline_kwargs)
+            summary = self._app_service.run_selected(self._config, self._files, **pipeline_kwargs)
         except (Exception, SystemExit) as exc:  # noqa: BLE001  # catch SystemExit to prevent the worker thread from killing the GUI process; also catches unexpected exceptions
             self.log_line.emit(f"FATAL ERROR: {exc}\n")
             summary = RunSummary(error=str(exc) or "unexpected error")

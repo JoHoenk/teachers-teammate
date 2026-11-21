@@ -16,7 +16,7 @@ from teachers_teammate.domain.proofreading.review import (
     UnclearNote,
 )
 from teachers_teammate.domain.run_summary import RunStatus, RunSummary
-from teachers_teammate.infrastructure.reporting import FileDoneResult
+from teachers_teammate.domain.run_summary import FileOutcome, FileStatus
 from teachers_teammate.infrastructure.workflow.coordinator import run_files
 from teachers_teammate.infrastructure.workflow.file_processor import ProcessingResult
 
@@ -80,7 +80,7 @@ def test_run_files_a_skipped_file_is_neither_succeeded_nor_failed(tmp_path: Path
     """
     Given  two files and process_file reports the second as skipped
     When   run_files is called
-    Then   the second is listed under skipped only, and on_file_done carries the flag
+    Then   the second is listed under skipped only, and on_file_done carries the status
     """
     f1 = tmp_path / "text.txt"
     f2 = tmp_path / "scan.png"
@@ -101,7 +101,7 @@ def test_run_files_a_skipped_file_is_neither_succeeded_nor_failed(tmp_path: Path
         (),
         ("scan.png",),
     )
-    assert [event.skipped for event in done] == [False, True]
+    assert [event.status for event in done] == [FileStatus.SAVED, FileStatus.SKIPPED]
 
 
 # ── Callbacks ─────────────────────────────────────────────────────────────
@@ -133,7 +133,7 @@ def test_run_files_on_file_done_called_per_file(tmp_path: Path) -> None:
     """
     Given  two files and an on_file_done callback
     When   run_files is called
-    Then   on_file_done is called once per file with a FileDoneResult
+    Then   on_file_done is called once per file with a FileOutcome
     """
     f1 = tmp_path / "doc.png"
     on_done = MagicMock()
@@ -142,9 +142,9 @@ def test_run_files_on_file_done_called_per_file(tmp_path: Path) -> None:
 
     assert on_done.call_count == 1
     result = on_done.call_args[0][0]
-    assert isinstance(result, FileDoneResult)
+    assert isinstance(result, FileOutcome)
     assert result.name == "doc.png"
-    assert result.ok is True
+    assert result.status is FileStatus.SAVED
 
 
 # ── Stop event ─────────────────────────────────────────────────────────────
@@ -232,7 +232,7 @@ def test_run_files_a_stopped_file_is_neither_succeeded_nor_failed(tmp_path: Path
     """
     Given  two files and process_file reports the first as stopped by "Stop now"
     When   run_files is called
-    Then   it is listed under stopped only, no error is logged, on_file_done carries the flag,
+    Then   it is listed under stopped only, no error is logged, on_file_done carries the status,
            and the second file is not started
     """
     f1 = tmp_path / "a.png"
@@ -243,7 +243,14 @@ def test_run_files_a_stopped_file_is_neither_succeeded_nor_failed(tmp_path: Path
     def process(path: Path) -> ProcessingResult:
         stop.set()
         return ProcessingResult(
-            False, "Stopped before proofreading.", "p.png", "raw", "", "", stopped=True
+            False,
+            "Stopped before proofreading.",
+            "p.png",
+            "raw",
+            "",
+            "",
+            stopped=True,
+            stopped_stage="proofreading",
         )
 
     summary = run_files(
@@ -258,8 +265,8 @@ def test_run_files_a_stopped_file_is_neither_succeeded_nor_failed(tmp_path: Path
     assert summary.failed == ()
     assert summary.not_started == ("b.png",)
     assert summary.status is RunStatus.STOPPED
-    assert [event.stopped for event in done] == [True]
-    assert done[0].message == "Stopped before proofreading."
+    assert [event.status for event in done] == [FileStatus.STOPPED]
+    assert done[0].stopped_stage == "proofreading"
 
 
 # ── cleanup_tmp always called ──────────────────────────────────────────────
@@ -308,11 +315,11 @@ def test_run_files_empty_list_returns_empty_and_cleans_up(tmp_path: Path) -> Non
     cleanup.assert_called_once()
 
 
-def test_run_files_reports_text_format_with_file_done(tmp_path: Path) -> None:
+def test_run_files_reports_the_outcome_without_the_texts(tmp_path: Path) -> None:
     """
-    Given  a file whose result is Markdown text and an on_file_done callback
+    Given  a file whose result carries Markdown text and an on_file_done callback
     When   run_files is called
-    Then   the FileDoneResult it receives carries the text and its "markdown" format
+    Then   the FileOutcome it receives names the file and its status, and carries no text
     """
     f1 = tmp_path / "doc.png"
     on_done = MagicMock()
@@ -324,10 +331,10 @@ def test_run_files_reports_text_format_with_file_done(tmp_path: Path) -> None:
 
     on_done.assert_called_once()
     result = on_done.call_args[0][0]
-    assert isinstance(result, FileDoneResult)
+    assert isinstance(result, FileOutcome)
     assert result.source_id == str(f1.resolve())
-    assert result.raw_text == "**x**"
-    assert result.text_format == "markdown"
+    assert result.status is FileStatus.SAVED
+    assert not hasattr(result, "raw_text")
 
 
 def test_run_files_reports_the_counts_of_the_diff_not_of_the_notes(tmp_path: Path) -> None:

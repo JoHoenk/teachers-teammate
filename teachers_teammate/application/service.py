@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 import functools
 import importlib.util
+import logging
 import os
 from pathlib import Path
 import sys
@@ -155,6 +156,8 @@ from .setup_plan import (
     build_setup_plan,
 )
 from .speed_estimates import SpeedChoices, SpeedEstimateService, SpeedSummary
+
+_logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from ..infrastructure.anonymizer import SpacyAnonymizer
@@ -414,7 +417,6 @@ class ProcessingApplicationService:
         # Owns the speed test, the stored measurements and the server facts behind them.
         self._speeds = SpeedEstimateService()
         self._commands = ApplicationCommands(
-            discovery=self._discovery,
             state_store_factory=self._state_store,
             windows_for=self.resolved_windows,
             model_store=self._model_store,
@@ -429,15 +431,18 @@ class ProcessingApplicationService:
     def run_selected(
         self,
         config: Config,
+        files: Sequence[Path],
         *,
         config_file: Path | None = None,
-        selected_source_paths: list[str] | None = None,
         stop_event: threading.Event | None = None,
         stop_after_file_event: threading.Event | None = None,
         reporter=None,
         progress: ProgressCallbacks | None = None,
     ) -> RunSummary:
-        """Run the selected files (all when none are selected) and return what happened.
+        """Run *files* and return what happened to each.
+
+        The run processes exactly the files it is given, in that order: the queue the teacher
+        sees and the files that are read are one list.
 
         The computer is kept awake for the whole run unless ``config.keep_awake`` is off.
         *stop_event* stops at once (the Ollama request being made is cancelled);
@@ -457,10 +462,10 @@ class ProcessingApplicationService:
                 progress.on_keep_awake(awake)
             pipeline = self._pipeline_factory(
                 config,
+                files,
                 stop_event=stop_event,
                 stop_after_file_event=stop_after_file_event,
                 config_file=config_file,
-                selected_source_paths=selected_source_paths,
                 dependencies=PipelineDependencies(
                     reporter=reporter,
                     component_factory=self._run_component_factory(),
@@ -481,8 +486,9 @@ class ProcessingApplicationService:
             self._component_factory, build_anonymizer=self.build_cached_anonymizer
         )
 
-    def run_preview_only(self, config: Config) -> int:
-        return self._pipeline_factory(config).run_preview_only()
+    def run_preview_only(self, config: Config, files: Sequence[Path]) -> RunSummary:
+        """Preprocess *files* and return what happened to each; nothing is read or proofread."""
+        return self._pipeline_factory(config, files).run_preview_only()
 
     # ── Queries ───────────────────────────────────────────────────────────
 
@@ -490,7 +496,7 @@ class ProcessingApplicationService:
         """Return supported source files for the current config."""
         return self._discovery.collect_input_files(config)
 
-    def load_views(self, config: Config, files: list[Path]) -> dict[str, DocumentStateView]:
+    def load_views(self, config: Config, files: Sequence[Path]) -> dict[str, DocumentStateView]:
         """Return the views of *files*, with the texts each document has now."""
         store = self._state_store(config)
         current = functools.cache(lambda: privacy_fingerprint(config))
@@ -1749,8 +1755,8 @@ class ProcessingApplicationService:
             return PAGE_MODELS_SKIPPED_NOTICE
         return ""
 
-    def reader_refusal_for_run(self, config: Config) -> str:
-        """Return why the built-in reader cannot start this run, or ``""`` when it can.
+    def reader_refusal_for_run(self, config: Config, files: Sequence[Path]) -> str:
+        """Return why the built-in reader cannot start a run over *files*, or ``""`` when it can.
 
         Only a run that reads pages with the reader and has no model files is refused; the
         sentence names the command line flag that downloads them.  A run over files that need
@@ -1764,12 +1770,11 @@ class ProcessingApplicationService:
             and not self.reader_installed()
         ):
             return ""
-        files = self.collect_input_files(config)
         if not self.needs_text_recognition(files, recognised=self._recognised_files(config, files)):
             return ""
         return READER_NOT_DOWNLOADED
 
-    def _recognised_files(self, config: Config, files: list[Path]) -> set[Path]:
+    def _recognised_files(self, config: Config, files: Sequence[Path]) -> set[Path]:
         """Return the *files* whose recognised text is already stored (best effort)."""
         try:
             views = self.load_views(config, files)
@@ -2342,10 +2347,10 @@ class ProcessingApplicationService:
         return list(self._installed_models)
 
     def _warn_once(self, message: str) -> None:
-        """Print *message* to stderr unless it was printed before for the same settings."""
+        """Log *message* unless it was logged before for the same settings."""
         if message not in self._warned:
             self._warned.add(message)
-            print(message, file=sys.stderr)
+            _logger.warning("%s", message)
 
     def anonymizer_available(self, language: str, config: object | None = None) -> bool:
         """Return whether personal information can be hidden for *language* right now.
@@ -2663,12 +2668,10 @@ class ProcessingApplicationService:
         self,
         config: Config,
         *,
-        selected_source_ids: list[str],
+        files: Sequence[Path],
         stage: str,
-    ) -> tuple[list[str], list[str], bool]:
-        return self._commands.invalidate_from_stage(
-            config, selected_source_ids=selected_source_ids, stage=stage
-        )
+    ) -> tuple[str, ...]:
+        return self._commands.invalidate_from_stage(config, files=files, stage=stage)
 
     def edit_transcription(
         self, config: Config, *, source: Path, text: str, text_format: str = "plain"

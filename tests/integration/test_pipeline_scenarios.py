@@ -21,6 +21,7 @@ from teachers_teammate.domain.proofreading.review import CorrectionReview, EditN
 from teachers_teammate.domain.proofreading.word_diff import word_diff
 from teachers_teammate.exceptions import OCRError
 from teachers_teammate.infrastructure.ocr_formats import plain_text_of
+from teachers_teammate.infrastructure.file_discovery import FileDiscovery
 from teachers_teammate.infrastructure.pipeline import OCRPipeline
 from teachers_teammate.infrastructure.proofreading.chunking import ChunkingCorrector
 from teachers_teammate.infrastructure.stage_builder import StageBuilder
@@ -68,7 +69,7 @@ def test_correction_produces_openable_docx(tmp_path: Path, fmt: str) -> None:
     build_llm_patch, corrector_patch = _patch_correction(corrector)
 
     with build_llm_patch, corrector_patch:
-        rc = OCRPipeline(cfg).run().exit_code
+        rc = OCRPipeline(cfg, FileDiscovery().collect_input_files(cfg)).run().exit_code
 
     assert rc == 0
     docx_file = cfg.output_dir / "essay.docx"
@@ -112,7 +113,7 @@ def test_evaluation_stage_runs_and_persists(tmp_path: Path) -> None:
             return_value=evaluator,
         ),
     ):
-        rc = OCRPipeline(cfg).run().exit_code
+        rc = OCRPipeline(cfg, FileDiscovery().collect_input_files(cfg)).run().exit_code
 
     assert rc == 0
     assert evaluator.evaluate.call_args.args[0] == "corrected answer"
@@ -157,7 +158,7 @@ def test_anonymizer_runs_before_correction_and_restores(tmp_path: Path) -> None:
             return_value=anonymizer,
         ),
     ):
-        rc = OCRPipeline(cfg).run().exit_code
+        rc = OCRPipeline(cfg, FileDiscovery().collect_input_files(cfg)).run().exit_code
 
     assert rc == 0
     # Correction must see the anonymized text, not the raw PII.
@@ -192,10 +193,10 @@ def test_second_run_reuses_cached_correction(tmp_path: Path) -> None:
     build_llm_patch, corrector_patch = _patch_correction(corrector)
 
     with build_llm_patch, corrector_patch:
-        assert OCRPipeline(cfg).run().exit_code == 0
+        assert OCRPipeline(cfg, FileDiscovery().collect_input_files(cfg)).run().exit_code == 0
         assert corrector.correct.call_count == 1
         # Second run with unchanged config should hit the cache.
-        assert OCRPipeline(cfg).run().exit_code == 0
+        assert OCRPipeline(cfg, FileDiscovery().collect_input_files(cfg)).run().exit_code == 0
         assert corrector.correct.call_count == 1
 
 
@@ -222,7 +223,7 @@ def test_changed_correction_config_recomputes(tmp_path: Path) -> None:
 
     build_llm_patch, corrector_patch = _patch_correction(corrector)
     with build_llm_patch, corrector_patch:
-        assert OCRPipeline(cfg1).run().exit_code == 0
+        assert OCRPipeline(cfg1, FileDiscovery().collect_input_files(cfg1)).run().exit_code == 0
     assert corrector.correct.call_count == 1
 
     # Same input/output dirs, different notes → stale correction stage.
@@ -237,7 +238,7 @@ def test_changed_correction_config_recomputes(tmp_path: Path) -> None:
     )
     build_llm_patch2, corrector_patch2 = _patch_correction(corrector)
     with build_llm_patch2, corrector_patch2:
-        assert OCRPipeline(cfg2).run().exit_code == 0
+        assert OCRPipeline(cfg2, FileDiscovery().collect_input_files(cfg2)).run().exit_code == 0
     assert corrector.correct.call_count == 2
 
 
@@ -279,7 +280,7 @@ def test_multipage_pdf_ocr_concatenates_pages(
         correction_enabled=False,
         docx_enabled=False,
     )
-    rc = OCRPipeline(cfg).run().exit_code
+    rc = OCRPipeline(cfg, FileDiscovery().collect_input_files(cfg)).run().exit_code
 
     assert rc == 0
     state = _state_for(cfg, pdf_path)
@@ -317,7 +318,7 @@ def test_pipeline_reports_nonzero_exit_when_all_inputs_corrupt(tmp_path: Path) -
         "teachers_teammate.infrastructure.stage_builder.PpOcrProcessor",
         return_value=mock_ocr,
     ):
-        rc = OCRPipeline(cfg).run().exit_code
+        rc = OCRPipeline(cfg, FileDiscovery().collect_input_files(cfg)).run().exit_code
 
     assert rc != 0
 
@@ -398,7 +399,7 @@ def test_a_text_with_names_hidden_in_pieces_stores_a_review_that_fits(tmp_path: 
             return_value=anonymizer,
         ),
     ):
-        rc = OCRPipeline(cfg).run().exit_code
+        rc = OCRPipeline(cfg, FileDiscovery().collect_input_files(cfg)).run().exit_code
 
     assert rc == 0
     assert len(corrector.inner.sent) == 3

@@ -66,7 +66,7 @@ from ..domain.local_models import PAGE_MODELS_ADDON_ID, READER_ADDON_ID
 from ..domain.model_catalog import HardwareDetection, short_model_name
 from ..domain.ollama_discovery import DiscoveredServer, DiscoveryScope, ServerKind
 from ..domain.performance_estimate import TimeRange
-from ..domain.run_summary import RunSummary
+from ..domain.run_summary import FileStatus, RunSummary
 from ..domain.stages import (
     PROGRESS_STAGE_CORRECTION,
     PROGRESS_STAGE_OCR,
@@ -1371,9 +1371,9 @@ class MainWindow(QMainWindow):
         self._schedule_readiness_check()
 
     def _queued_files(self, source_ids: list[str] | None = None) -> list[Path]:
-        """Return the queued files of *source_ids* (default: the whole queue)."""
+        """Return the queued files of *source_ids* (``None``: the whole queue)."""
         queued = self._queued_files_by_source_id
-        return [queued[i] for i in (source_ids or queued) if i in queued]
+        return [queued[i] for i in (queued if source_ids is None else source_ids) if i in queued]
 
     def _recognised_files(self) -> set[Path]:
         """Return the queued files whose recognised text is stored.
@@ -1393,7 +1393,7 @@ class MainWindow(QMainWindow):
     def _recognition_needed(self, source_ids: list[str] | None = None) -> bool:
         """Return whether a run over *source_ids* (default: the whole queue) reads pages."""
         return self._app_service.needs_text_recognition(
-            self._queued_files(source_ids), recognised=self._recognised_files()
+            self._queued_files(source_ids or None), recognised=self._recognised_files()
         )
 
     def _run_in_progress(self) -> bool:
@@ -1419,7 +1419,7 @@ class MainWindow(QMainWindow):
                 config, preflight.worked_on, lambda: self._continue_run(config)
             ),
             recognition=self._recognition_needed(selected),
-            files=self._queued_files(selected),
+            files=self._queued_files(selected or None),
             ask_about_work=True,
         )
 
@@ -1580,14 +1580,11 @@ class MainWindow(QMainWindow):
         if answer.choice.id == dlg.KEEP_MY_CHANGES:
             service.keep_teacher_work(config, files=worked_on.unanswered)
         elif answer.choice.id == dlg.PROOFREAD_AGAIN:
-            _ids, failures, _no_files = service.invalidate_from_stage(
-                config,
-                # The ids the queue is keyed by are the resolved paths, not the paths as listed.
-                selected_source_ids=[str(path.resolve()) for path in worked_on.unanswered],
-                stage="correction",
+            failures = service.invalidate_from_stage(
+                config, files=worked_on.unanswered, stage="correction"
             )
             if failures:
-                _dialogs.notify(self, dlg.cache_invalidation_failed(failures))
+                _dialogs.notify(self, dlg.cache_invalidation_failed(list(failures)))
                 return
         # The teacher was told that a new proofreading will not contain these corrections and
         # went on: they belong to no stored answer, so they are not asked about again.
@@ -1663,7 +1660,7 @@ class MainWindow(QMainWindow):
         worker_factory = self._worker_factory or OCRWorker
         self._worker = worker_factory(
             config,
-            selected_source_paths=selected_source_ids,
+            self._queued_files(selected_source_ids),
             app_service=self._app_service,
         )
         self._worker.log_line.connect(self._log.append_text)
@@ -1806,25 +1803,18 @@ class MainWindow(QMainWindow):
         self, config: Config, selected_source_ids: list[str], stage: str
     ) -> None:
         """Invalidate the cache from *stage* onward and start the worker on the rows."""
-        run_source_ids, failures, no_files = self._app_service.invalidate_from_stage(
-            config,
-            selected_source_ids=selected_source_ids,
-            stage=stage,
-        )
-        if no_files:
-            _dialogs.notify(self, dlg.nothing_to_rerun())
-            return
-
-        if not run_source_ids:
+        files = self._queued_files(selected_source_ids)
+        if not files:
             _dialogs.notify(self, dlg.selection_mismatch())
             return
 
+        failures = self._app_service.invalidate_from_stage(config, files=files, stage=stage)
         if failures:
-            _dialogs.notify(self, dlg.cache_invalidation_failed(failures))
+            _dialogs.notify(self, dlg.cache_invalidation_failed(list(failures)))
             return
 
         self._steps_per_file = 1 if not config.correction_enabled else 2
-        self._start_worker(config, run_source_ids)
+        self._start_worker(config, [str(file.resolve()) for file in files])
 
     def _on_export_toolbar(self, kind: ExportKind) -> None:
         source_ids = (
@@ -2228,17 +2218,16 @@ class MainWindow(QMainWindow):
         self._refresh_check_run()
 
     def _on_file_done(self, event: FileDoneEvent) -> None:
-        source_id = event.source_id
-        name = event.name
-        ok = event.ok
-        message = event.message
+        outcome = event.outcome
+        source_id = outcome.source_id
+        name = outcome.name
         ocr_s = event.ocr_s
         correction_s = event.correction_s
         self._results_table.add_result(event)
         self._set_export_enabled(True)
         # A skipped or stopped file is not an error: its row says why, the final line counts it.
-        if not (event.skipped or event.stopped) and not ok and message:
-            _dialogs.notify(self, dlg.processing_error(name, message))
+        if outcome.status is FileStatus.FAILED and outcome.error:
+            _dialogs.notify(self, dlg.processing_error(name, outcome.error))
         self._result_names.append(name)
         self._result_ocr_times.append(ocr_s)
         self._result_correction_times.append(correction_s)

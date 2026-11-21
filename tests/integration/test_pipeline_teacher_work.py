@@ -28,6 +28,7 @@ from teachers_teammate.domain.teacher_work import (
     with_transcription,
 )
 from teachers_teammate.infrastructure import teacher_work_store
+from teachers_teammate.infrastructure.file_discovery import FileDiscovery
 from teachers_teammate.infrastructure.pipeline import OCRPipeline
 from teachers_teammate.infrastructure.stage_builder import StageBuilder
 from teachers_teammate.infrastructure.state_repository import (
@@ -111,7 +112,7 @@ def _run(cfg, *, corrector: MagicMock | None = None, evaluator: MagicMock | None
                     return_value=evaluator,
                 )
             )
-        return OCRPipeline(cfg).run().exit_code
+        return OCRPipeline(cfg, FileDiscovery().collect_input_files(cfg)).run().exit_code
 
 
 def _docx_text(path: Path) -> str:

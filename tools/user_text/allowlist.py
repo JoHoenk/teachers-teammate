@@ -171,6 +171,12 @@ ALLOWED: dict[str, frozenset[str]] = {
             "f'• {issue.message}'",
         }
     ),
+    "teachers_teammate/gui/_export_controller.py": frozenset(
+        {
+            "Export",
+            "Save results as Word documents or text files, optionally anonymized (also available via right-click)",
+        }
+    ),
     "teachers_teammate/gui/_export_menu.py": frozenset(
         {
             "Export",
@@ -201,7 +207,6 @@ ALLOWED: dict[str, frozenset[str]] = {
             "Benchmark…",
             "Check",
             "Documents",
-            "Export",
             "File",
             "Help",
             "How busy this computer is, and how long each document took.",
@@ -209,7 +214,6 @@ ALLOWED: dict[str, frozenset[str]] = {
             "Open Folder…",
             "Quit",
             "Run Selected",
-            "Save results as Word documents or text files, optionally anonymized (also available via right-click)",
             "Settings",
             "Setup Assistant…",
             "System Monitor",

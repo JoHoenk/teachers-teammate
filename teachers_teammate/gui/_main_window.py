@@ -9,7 +9,7 @@ import os
 from pathlib import Path
 import sys
 import time
-from typing import TYPE_CHECKING, Any, ClassVar, NamedTuple, Protocol, cast
+from typing import TYPE_CHECKING, Any, ClassVar, Protocol, cast
 
 from PySide6.QtCore import QEvent, QSettings, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import (
@@ -51,7 +51,6 @@ from ..application.composition import (
     start_diagnostics,
 )
 from ..application.documents import WorkedOn
-from ..application.export import DocxExport, NothingToExport, WouldOverwriteInput
 from ..application.ollama_server import OllamaServerService
 from ..application.queue import StageState
 from ..application.run import IssueKind, RequirementIssue, RunPreflight
@@ -90,6 +89,7 @@ from ._config_panel import ConfigPanel
 from ._credential_store import CredentialStore
 from ._data_flow_summary import advice_text, level_text, stage_tooltip
 from ._error_text import spacy_problem
+from ._export_controller import ExportController
 from ._export_menu import ExportKind, build_export_menu
 from ._fix_targets import (
     COMMAND_CHOOSE_FOLDER,
@@ -153,13 +153,6 @@ if TYPE_CHECKING:
     from .setup import SetupResult
 
 
-class _TextExportOutcome(NamedTuple):
-    """Result of a background text export."""
-
-    written: list[Path]
-    failed: list[str]
-
-
 def _debounce_timer(parent: QWidget, interval_ms: int, slot: Callable[[], None]) -> QTimer:
     """Return a single-shot timer that calls *slot* once *interval_ms* have passed."""
     timer = QTimer(parent)
@@ -167,15 +160,6 @@ def _debounce_timer(parent: QWidget, interval_ms: int, slot: Callable[[], None])
     timer.setInterval(interval_ms)
     timer.timeout.connect(slot)
     return timer
-
-
-def _export_failure(name: str, exc: Exception) -> str:
-    """Return the line that tells the teacher why *name* could not be exported."""
-    if isinstance(exc, NothingToExport):
-        return dlg.export_no_text(name)
-    if isinstance(exc, WouldOverwriteInput):
-        return dlg.export_would_overwrite_input(name, exc.target.name)
-    return f"{name}: {exc}"
 
 
 class _StopStage(Enum):
@@ -345,7 +329,6 @@ class MainWindow(QMainWindow):
 
     def _init_menu_state(self) -> None:
         """Declare what the menu bar fills in and the tools open later."""
-        self._export_actions: list[QAction] = []
         self._settings_actions: dict[SettingsPage, QAction] = {}
         self._all_settings_action: QAction
         self._benchmark_action: QAction
@@ -449,9 +432,10 @@ class MainWindow(QMainWindow):
         #: The document the run is working on right now, or ``""``.
         self._run_current: str = ""
 
-        # Declared here; assigned in _build_left_panel / _build_right_panel.
+        # Declared here; assigned in _build_widgets and _init_controllers.
         self._config_panel: ConfigPanel
         self._readiness_line: ReadinessLine
+        self._export_controller: ExportController
         # The readiness line: the last answer of the background check (None: nothing blocks),
         # whether the first check has answered, and whether "Checking…" may be shown yet.
         self._blocker: tuple[str, RequirementIssue] | None = None
@@ -460,7 +444,6 @@ class MainWindow(QMainWindow):
         self._readiness_task = LatestTask(self)
         # True while the requirement check of a Run / stage re-run is in flight.
         self._preflight_running = False
-        self._text_export_running = False
         # Settings change in bursts (a checkbox, a model, a language): check once, soon after.
         self._readiness_debounce = _debounce_timer(
             self, self._READINESS_DEBOUNCE_MS, self._start_readiness_check
@@ -523,7 +506,7 @@ class MainWindow(QMainWindow):
         CredentialStore().load_into_environment(sorted(key for key in env_keys if key))
 
     def _build_ui(self) -> None:
-        self._build_menu_bar()
+        """Build the widgets, hand them to the controllers, then lay them out."""
         central = QWidget()
         self.setCentralWidget(central)
         root = QVBoxLayout(central)
@@ -533,33 +516,11 @@ class MainWindow(QMainWindow):
         self._update_banner = self._build_update_banner()
         root.addWidget(self._update_banner)
 
+        self._build_widgets()
+        self._init_controllers()
         root.addWidget(self._build_tabs(), 1)
-
-        self._results_table.check_requested.connect(self._open_check)
-        self._results_table.stage_run_requested.connect(self._on_stage_run_requested)
-        self._results_table.what_is_sent_requested.connect(self._on_what_is_sent_requested)
-        self._config_panel.data_flow_changed.connect(self._on_data_flow_changed)
-        self._results_table.itemSelectionChanged.connect(self._update_readiness)
-        # The box rendered once while the panels were built, before these connections.
-        self._on_data_flow_changed(self._config_panel.data_flow())
-        self._results_table.export_requested.connect(self._on_export_requested)
-        self._config_panel.paths_changed.connect(self._refresh_queue_from_inputs)
-        self._config_panel.anonymizer_configure_requested.connect(
-            lambda _language, _config: self.open_settings(
-                SettingsPage.PRIVACY, focus=FOCUS_DETECTION
-            )
-        )
-        self._config_panel.results_changed.connect(self._on_results_changed)
-        self._config_panel.instructions_changed.connect(self._on_instructions_changed)
-        self._preprocess_preview = PreprocessPreview(
-            self, services=self._app_service, panel=self._config_panel, table=self._results_table
-        )
-        self._connect_check_page()
-        self._refresh_privacy_availability()
-        self._check.set_display_anonymized(self._display_anonymized)
-        # Kick off the first readiness check once the window is laid out.
-        # Pass self as the receiver so the callback is cancelled if the window is destroyed.
-        QTimer.singleShot(500, self, self._start_readiness_check)
+        self._build_menu_bar()
+        self._connect_pages()
 
         # No parent: the thread outlives the window if it is closed during the request.
         # The switch is read once, at start: turning it off takes effect at the next start.
@@ -569,6 +530,66 @@ class MainWindow(QMainWindow):
             self._update_thread = UpdateCheckThread()
             self._update_thread.update_available.connect(self._show_update_banner)
             QTimer.singleShot(0, self._update_thread.start)
+
+    def _build_widgets(self) -> None:
+        """Build what the window shows and the controllers work on."""
+        self._config_panel = ConfigPanel()
+        self._config_panel.set_service(self._app_service)
+        self._readiness_line = ReadinessLine()
+        self._results_table = ResultsTable()
+        self._log = LogWidget()
+        self._check = CheckPage()
+        self._check.set_point_size(text_point_size(self._settings_store))
+        self._check.set_layout(
+            CheckLayout(
+                split=check_split(self._settings_store),
+                card_split=check_card_split(self._settings_store),
+            )
+        )
+        # Built now and kept hidden, so the chart collects the data of every run.  Parentless on
+        # purpose (see SystemMonitorWindow): closeEvent closes it with this window.
+        self._monitor = SystemMonitorWindow(self._app_service.recommendations.read_gpu_usage)
+        self._chart = self._monitor.chart
+        self._stats = self._monitor.stats
+
+    def _init_controllers(self) -> None:
+        """Build the controllers, each given the widgets it works on."""
+        self._export_controller = ExportController(
+            self,
+            services=self._app_service,
+            panel=self._config_panel,
+            table=self._results_table,
+        )
+        self._export_controller.log_line.connect(self._log.append_text)
+        self._preprocess_preview = PreprocessPreview(
+            self, services=self._app_service, panel=self._config_panel, table=self._results_table
+        )
+
+    def _connect_pages(self) -> None:
+        """Wire the panels and the pages to the window."""
+        self._results_table.check_requested.connect(self._open_check)
+        self._results_table.stage_run_requested.connect(self._on_stage_run_requested)
+        self._results_table.what_is_sent_requested.connect(self._on_what_is_sent_requested)
+        self._config_panel.data_flow_changed.connect(self._on_data_flow_changed)
+        self._results_table.itemSelectionChanged.connect(self._update_readiness)
+        # The box rendered once while the panels were built, before these connections.
+        self._on_data_flow_changed(self._config_panel.data_flow())
+        self._results_table.export_requested.connect(self._export_controller.on_requested)
+        self._config_panel.paths_changed.connect(self._refresh_queue_from_inputs)
+        self._config_panel.anonymizer_configure_requested.connect(
+            lambda _language, _config: self.open_settings(
+                SettingsPage.PRIVACY, focus=FOCUS_DETECTION
+            )
+        )
+        self._config_panel.results_changed.connect(self._on_results_changed)
+        self._config_panel.instructions_changed.connect(self._on_instructions_changed)
+        self._readiness_line.action_chosen.connect(self._run_fix)
+        self._connect_check_page()
+        self._refresh_privacy_availability()
+        self._check.set_display_anonymized(self._display_anonymized)
+        # Kick off the first readiness check once the window is laid out.
+        # Pass self as the receiver so the callback is cancelled if the window is destroyed.
+        QTimer.singleShot(500, self, self._start_readiness_check)
 
     def _build_tabs(self) -> QTabWidget:
         """The two tabs of the window: the work, and one document to check.
@@ -588,14 +609,6 @@ class MainWindow(QMainWindow):
         self._main_splitter.setStretchFactor(1, 1)
         self._tabs.addTab(self._main_splitter, "Documents")
 
-        self._check = CheckPage()
-        self._check.set_point_size(text_point_size(self._settings_store))
-        self._check.set_layout(
-            CheckLayout(
-                split=check_split(self._settings_store),
-                card_split=check_card_split(self._settings_store),
-            )
-        )
         self._tabs.addTab(self._check, "Check")
         self._tabs.setTabEnabled(1, False)  # nothing to check before a document has a result
         self._tabs.currentChanged.connect(self._on_tab_changed)
@@ -665,12 +678,12 @@ class MainWindow(QMainWindow):
         )
         file_menu.addAction(open_files_act)
         export_menu, kinds = build_export_menu(file_menu)
-        export_menu.triggered.connect(lambda action: self._on_export_toolbar(kinds[action]))
+        export_menu.triggered.connect(
+            lambda action: self._export_controller.on_toolbar_action(kinds[action])
+        )
         file_menu.addMenu(export_menu)
         # Enabled together with the Export button: there is nothing to export before a run.
-        self._export_actions = list(kinds)
-        for action in self._export_actions:
-            action.setEnabled(False)
+        self._export_controller.add_actions(list(kinds))
         file_menu.addSeparator()
         quit_act = QAction("Quit", self)
         quit_act.setShortcut(QKeySequence(QKeySequence.StandardKey.Quit))
@@ -774,36 +787,12 @@ class MainWindow(QMainWindow):
     def _open_about_dialog(self) -> None:
         AboutDialog(self).exec()
 
-    def _build_export_button(self) -> QPushButton:
-        """Return the Export button; its menu offers Word, text and anonymized text."""
-        style = self.style()
-        assert style is not None
-        button = QPushButton("Export")
-        button.setIcon(
-            QIcon.fromTheme(
-                "document-export",
-                style.standardIcon(QStyle.StandardPixmap.SP_DialogSaveButton),
-            )
-        )
-        button.setMinimumHeight(32)
-        button.setEnabled(False)
-        button.setToolTip(
-            "Save results as Word documents or text files, optionally anonymized "
-            "(also available via right-click)"
-        )
-        menu, kinds = build_export_menu(button)
-        menu.triggered.connect(lambda action: self._on_export_toolbar(kinds[action]))
-        button.setMenu(menu)
-        return button
-
     def _build_left_panel(self) -> QWidget:
         left = QWidget()
         layout = QVBoxLayout(left)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(6)
 
-        self._config_panel = ConfigPanel()
-        self._config_panel.set_service(self._app_service)
         self._config_panel.open_settings_requested.connect(
             lambda page, focus, preselect: self.open_settings(
                 SettingsPage(page), focus=str(focus), preselect=list(preselect)
@@ -812,8 +801,6 @@ class MainWindow(QMainWindow):
         layout.addWidget(self._config_panel)
 
         # Whether a run can start, and what to press if it can't -- right above Run.
-        self._readiness_line = ReadinessLine()
-        self._readiness_line.action_chosen.connect(self._run_fix)
         layout.addWidget(self._readiness_line)
 
         _style = self.style()
@@ -847,7 +834,7 @@ class MainWindow(QMainWindow):
         self._stop_btn.setMinimumHeight(32)
         self._stop_btn.setEnabled(False)
         self._stop_btn.clicked.connect(self._on_stop)
-        self._export_btn = self._build_export_button()
+        self._export_btn = self._export_controller.create_button()
         btn_layout.addWidget(self._run_btn)
         btn_layout.addWidget(self._stop_btn)
         btn_layout.addWidget(self._export_btn)
@@ -877,19 +864,10 @@ class MainWindow(QMainWindow):
 
     def _build_right_panel(self) -> QWidget:
         results_splitter = QSplitter(Qt.Orientation.Vertical)
-        self._results_table = ResultsTable()
-        self._log = LogWidget()
         results_splitter.addWidget(self._results_table)
         results_splitter.addWidget(self._log)
         results_splitter.setStretchFactor(0, 3)
         results_splitter.setStretchFactor(1, 1)
-
-        # Built now and kept hidden, so the chart collects the data of every run.  Parentless on
-        # purpose (see SystemMonitorWindow): closeEvent closes it with this window.
-        self._monitor = SystemMonitorWindow(self._app_service.recommendations.read_gpu_usage)
-        self._chart = self._monitor.chart
-        self._stats = self._monitor.stats
-
         return results_splitter
 
     # ── Settings persistence ──────────────────────────────────────────────
@@ -1238,7 +1216,7 @@ class MainWindow(QMainWindow):
         rows = self._app_service.documents.queue_rows(config, files)
         self._results_table.set_queue(rows)
         if any(row.ocr is StageState.DONE for row in rows):
-            self._set_export_enabled(True)
+            self._export_controller.set_enabled(True)
         # The readiness line says what is in the queue and what to do next; the bar only
         # reports progress, so it stays "Idle" until something runs.
         if not self._run_in_progress():
@@ -1695,225 +1673,6 @@ class MainWindow(QMainWindow):
         self._steps_per_file = 1 if not config.correction_enabled else 2
         self._start_worker(config, [str(file.resolve()) for file in files], files)
 
-    def _on_export_toolbar(self, kind: ExportKind) -> None:
-        source_ids = (
-            self._results_table.selected_source_ids() or self._results_table.queued_source_ids()
-        )
-        if source_ids:
-            self._on_export_requested(source_ids, kind)
-
-    def _on_export_requested(self, source_ids: list[str], kind: ExportKind) -> None:
-        if kind.is_text and self._text_export_running:
-            _dialogs.notify(self, dlg.busy_with_text_export())
-            return
-        targets = self._pick_export_targets(source_ids, kind)
-        if not targets:
-            return
-        # One folder for several documents: two inputs with the same name would collide.
-        targets, errors = self._drop_colliding_targets(targets)
-        if len(source_ids) > 1 and not self._confirm_replace_existing(targets):
-            return
-        if kind.is_text and not self._confirm_text_export_folder(targets):
-            return
-        if kind is ExportKind.DOCX:
-            self._export_docx(targets, errors)
-        else:
-            self._export_text(targets, errors, anonymize=kind is ExportKind.TEXT_ANONYMIZED)
-
-    def _pick_export_targets(
-        self, source_ids: list[str], kind: ExportKind
-    ) -> list[tuple[str, Path]]:
-        """Ask where to save and return ``(source_id, output path)`` pairs (empty = cancelled)."""
-        # Suggested starting directory: last run output dir → config output → input dir
-        start_dir = self._results_table.get_output_dir()
-        if start_dir is None:
-            d = self._config_panel.get_output_dir() or self._config_panel.get_input_dir()
-            start_dir = Path(d) if d else Path.home()
-
-        # For a single file show Save As; for multiple files show a folder picker.
-        if len(source_ids) == 1:
-            suggested = str(start_dir / (Path(source_ids[0]).stem + kind.file_suffix))
-            dest = _dialogs.save_file(
-                self, dlg.save_export(kind.label, kind.file_filter, suggested)
-            )
-            return [(source_ids[0], dest)] if dest else []
-        folder = _dialogs.pick_folder(self, dlg.save_export_to_folder(kind.label, str(start_dir)))
-        if folder is None:
-            return []
-        # Same-named documents from different subfolders keep their subfolders.
-        input_dir = self._config_panel.get_input_dir()
-        return [
-            (
-                sid,
-                self._app_service.export.export_target(
-                    Path(sid),
-                    Path(input_dir) if input_dir else None,
-                    Path(folder),
-                    kind.file_suffix,
-                ),
-            )
-            for sid in source_ids
-        ]
-
-    @staticmethod
-    def _drop_colliding_targets(
-        targets: list[tuple[str, Path]],
-    ) -> tuple[list[tuple[str, Path]], list[str]]:
-        """Keep the first target per output file; report the later ones that would replace it."""
-        kept: list[tuple[str, Path]] = []
-        errors: list[str] = []
-        claimed: set[Path] = set()
-        for source_id, out_path in targets:
-            if out_path.resolve() in claimed:
-                errors.append(
-                    f"{Path(source_id).name}: {out_path.name} would overwrite another file "
-                    "of this export."
-                )
-            else:
-                claimed.add(out_path.resolve())
-                kept.append((source_id, out_path))
-        return kept, errors
-
-    def _confirm_replace_existing(self, targets: list[tuple[str, Path]]) -> bool:
-        """Ask once before a folder export replaces files (the Save dialog asks for one file)."""
-        existing_paths = [out for _sid, out in targets if out.exists()]
-        if not existing_paths:
-            return True
-        # Files of different subfolders can share a name, so show where they are.
-        root = Path(os.path.commonpath([out.parent for out in existing_paths]))
-        existing = [out.relative_to(root).as_posix() for out in existing_paths]
-        shown = "\n".join(existing[:10]) + ("\n…" if len(existing) > 10 else "")
-        return _dialogs.ask(self, dlg.replace_existing_files(len(existing), shown))
-
-    def _confirm_text_export_folder(self, targets: list[tuple[str, Path]]) -> bool:
-        """Warn when text files would land in the input folder, where the next run reads them.
-
-        A one-off export only asks; a run with text files configured there is refused
-        (:meth:`~teachers_teammate.application.run.RunService.output_refusal_for_run`)
-        since it would repeat.
-        """
-        input_dir = self._config_panel.get_input_dir()
-        # With an explicit file selection a run reads only those files.
-        if not input_dir or self._config_panel.get_selected_files():
-            return True
-        # Folder mode always scans subfolders (see ConfigPanel.to_config).
-        if not any(
-            self._app_service.export.is_in_input_folder(out.parent, Path(input_dir), recursive=True)
-            for _sid, out in targets
-        ):
-            return True
-        return _dialogs.ask(self, dlg.save_into_input_folder())
-
-    def _export_docx(self, targets: list[tuple[str, Path]], errors: list[str]) -> None:
-        settings = self._config_panel.get_settings_dict()
-        docx_format = str(settings.get("docx_format", "table"))
-        # "Same as the text" (empty) means the language of the text, as in the pipeline.
-        explanation_language = str(
-            settings.get("explanation_language") or self._config_panel.to_dict().get("language", "")
-        )
-        try:
-            config = self._config_panel.to_config()
-        except ValueError as exc:
-            errors.append(str(exc))
-            _dialogs.notify(self, dlg.word_export_failed(errors))
-            return
-        for source_id, out_path in targets:
-            try:
-                # The texts, their notation and the review come from the stored document, so the
-                # file carries what the Check tab shows.
-                self._app_service.export.export_docx(
-                    config,
-                    Path(source_id),
-                    out_path,
-                    options=DocxExport(
-                        docx_format=docx_format,
-                        labels_language=explanation_language,
-                    ),
-                )
-                self._log.append_text(f"DOCX saved: {out_path}\n")
-            except Exception as exc:  # noqa: BLE001  # python-docx/PIL errors vary; collect per-file and continue the batch
-                errors.append(_export_failure(Path(source_id).name, exc))
-
-        if errors:
-            _dialogs.notify(self, dlg.word_export_failed(errors))
-
-    def _export_text(
-        self, targets: list[tuple[str, Path]], errors: list[str], *, anonymize: bool
-    ) -> None:
-        """Write the extracted text of each target; anonymizing is slow, so it runs off-thread."""
-        service = self._app_service
-        language = str(self._config_panel.to_dict().get("language") or "English")
-        anon_config = self._config_panel.build_anonymizer_config() if anonymize else None
-        try:
-            config = self._config_panel.to_config()
-        except ValueError as exc:
-            errors.append(str(exc))
-            self._show_text_export_errors(errors)
-            return
-        # Every input of the run is protected, not just the row's own file: exporting
-        # ``essay.png`` as ``essay.txt`` must not replace an ``essay.txt`` that is an input too.
-        protected = [Path(sid) for sid in self._results_table.queued_source_ids()]
-        jobs: list[tuple[Path, Path]] = []
-        for source_id, out_path in targets:
-            # The text and its notation come from the stored document, so the file carries the
-            # teacher's transcription where they fixed or checked it.
-            view = service.documents.load_view(config, Path(source_id))
-            if view is None or not view.raw_text.strip():
-                errors.append(dlg.export_no_text(Path(source_id).name))
-            else:
-                jobs.append((Path(source_id), out_path))
-        if not jobs:
-            self._show_text_export_errors(errors)
-            return
-        preflight_errors = list(errors)
-
-        def work() -> _TextExportOutcome:
-            if anonymize:
-                # Fails once, up front, when spaCy or its model is missing.
-                service.anonymization.warm_up_anonymizer(language, anon_config)
-            written: list[Path] = []
-            failed = list(preflight_errors)
-            for source, out_path in jobs:
-                try:
-                    service.export.export_text(
-                        config,
-                        source,
-                        out_path,
-                        anonymize=anonymize,
-                        language=language,
-                        anonymizer_config=anon_config,
-                        protected=protected,
-                    )
-                    written.append(out_path)
-                except Exception as exc:  # noqa: BLE001  # NER/IO errors vary; collect per-file and continue the batch
-                    failed.append(_export_failure(source.name, exc))
-            return _TextExportOutcome(written, failed)
-
-        def done(result: object, error: BaseException | None) -> None:
-            self._text_export_running = False
-            if error is not None:
-                message = (spacy_problem(error) if anonymize else None) or str(error)
-                _dialogs.notify(self, dlg.text_export_error(message, preflight_errors))
-                return
-            if not isinstance(result, _TextExportOutcome):
-                return
-            for out_path in result.written:
-                self._log.append_text(f"Text saved: {out_path}\n")
-            self._show_text_export_errors(result.failed)
-
-        self._text_export_running = True
-        run_in_background(work, done, owner=self)
-
-    def _show_text_export_errors(self, errors: list[str]) -> None:
-        if errors:
-            _dialogs.notify(self, dlg.text_export_failed(errors))
-
-    def _set_export_enabled(self, enabled: bool) -> None:
-        """Enable the Export button and the File → Export entries together."""
-        self._export_btn.setEnabled(enabled)
-        for action in self._export_actions:
-            action.setEnabled(enabled)
-
     def _restore_all_settings(self) -> None:
         """Reset every setting to its default and save (Settings already asked twice)."""
         self._config_panel.restore_defaults()
@@ -2104,7 +1863,7 @@ class MainWindow(QMainWindow):
         ocr_s = event.ocr_s
         correction_s = event.correction_s
         self._results_table.add_result(event)
-        self._set_export_enabled(True)
+        self._export_controller.set_enabled(True)
         # A skipped or stopped file is not an error: its row says why, the final line counts it.
         if outcome.status is FileStatus.FAILED and outcome.error:
             _dialogs.notify(self, dlg.processing_error(name, outcome.error))
@@ -2826,7 +2585,7 @@ class MainWindow(QMainWindow):
         if not source_id:
             return
         self._check.flush_pending_edit()
-        self._on_export_requested([source_id], kind)
+        self._export_controller.on_requested([source_id], kind)
 
     def _ensure_hardware_known_for_cache_state(self, config: Config) -> None:
         """Probe this computer in the background when the cache keys need to know the card.

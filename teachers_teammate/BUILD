@@ -227,6 +227,7 @@ _GUI_SRCS = [
     "gui/_dependency_guard_dialog.py",
     "gui/_dialogs.py",
     "gui/_error_text.py",
+    "gui/_export_controller.py",
     "gui/_export_menu.py",
     "gui/_fix_targets.py",
     "gui/_formatted_text.py",

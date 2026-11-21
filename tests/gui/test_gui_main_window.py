@@ -34,6 +34,7 @@ from teachers_teammate.domain.proofreading.edits import EditPart
 from teachers_teammate.domain.proofreading.review import CorrectionReview, EditNote
 from teachers_teammate.domain.teacher_work import WorkTooNewError
 from teachers_teammate.gui import _dialogs
+from teachers_teammate.gui import _export_controller as export_controller_module
 from teachers_teammate.gui import _main_window as main_window_module
 from teachers_teammate.gui import _preprocess_preview as preprocess_module
 from teachers_teammate.gui import _user_text as txt
@@ -2471,7 +2472,7 @@ def test_save_goes_through_the_export_path(main_window, monkeypatch, stored) -> 
     main_window._open_check(a)
     asked: list[tuple[list[str], ExportKind]] = []
     monkeypatch.setattr(
-        main_window, "_on_export_requested", lambda ids, kind: asked.append((ids, kind))
+        main_window._export_controller, "on_requested", lambda ids, kind: asked.append((ids, kind))
     )
 
     main_window._on_check_save(ExportKind.TEXT)
@@ -2967,7 +2968,7 @@ def test_file_export_entries_follow_the_export_button(main_window) -> None:
     assert not main_window._export_btn.isEnabled()
     assert not any(a.isEnabled() for a in export.actions())
 
-    main_window._set_export_enabled(True)
+    main_window._export_controller.set_enabled(True)
 
     assert main_window._export_btn.isEnabled()
     assert all(a.isEnabled() for a in export.actions())
@@ -4771,8 +4772,8 @@ def test_export_text_writes_one_file_per_row_and_skips_rows_without_text(
     _pick_folder(monkeypatch, out)
     warnings = _record_notices(monkeypatch)
 
-    main_window._on_export_requested(ids, ExportKind.TEXT)
-    _wait_for(lambda: not main_window._text_export_running and bool(warnings))
+    main_window._export_controller.on_requested(ids, ExportKind.TEXT)
+    _wait_for(lambda: not main_window._export_controller.running and bool(warnings))
 
     assert (out / "a.txt").read_text(encoding="utf-8") == "alpha"
     assert (out / "b.txt").read_text(encoding="utf-8") == "beta"
@@ -4795,7 +4796,7 @@ def test_export_to_a_folder_opens_the_picker_in_the_output_folder(
     prompts = []
     monkeypatch.setattr(_dialogs, "pick_folder", lambda _parent, prompt: prompts.append(prompt))
 
-    main_window._on_export_requested(ids, ExportKind.TEXT)
+    main_window._export_controller.on_requested(ids, ExportKind.TEXT)
 
     assert [prompt.start for prompt in prompts] == [str(results)]
 
@@ -4815,7 +4816,7 @@ def test_export_of_one_file_proposes_a_name_in_the_output_folder(
     prompts = []
     monkeypatch.setattr(_dialogs, "save_file", lambda _parent, prompt: prompts.append(prompt))
 
-    main_window._on_export_requested(ids, ExportKind.TEXT)
+    main_window._export_controller.on_requested(ids, ExportKind.TEXT)
 
     assert [prompt.start for prompt in prompts] == [str(results / "a.txt")]
 
@@ -4841,8 +4842,8 @@ def test_export_anonymized_text_writes_the_anonymized_file(
     with patch(
         "teachers_teammate.infrastructure.anonymizer.SpacyAnonymizer", return_value=anonymizer
     ):
-        main_window._on_export_requested(ids, ExportKind.TEXT_ANONYMIZED)
-        _wait_for(lambda: not main_window._text_export_running)
+        main_window._export_controller.on_requested(ids, ExportKind.TEXT_ANONYMIZED)
+        _wait_for(lambda: not main_window._export_controller.running)
 
     assert warnings == []
     assert (out / "a_anonymized.txt").read_text(encoding="utf-8") == "Dear [PERSON_1]"
@@ -4868,7 +4869,7 @@ def test_export_anonymized_text_explains_a_missing_spacy_once(
         "teachers_teammate.infrastructure.anonymizer.SpacyAnonymizer",
         side_effect=ImportError("No module named 'spacy'"),
     ):
-        main_window._on_export_requested(ids, ExportKind.TEXT_ANONYMIZED)
+        main_window._export_controller.on_requested(ids, ExportKind.TEXT_ANONYMIZED)
         _wait_for(lambda: bool(warnings))
 
     assert len(warnings) == 1
@@ -4892,11 +4893,11 @@ def test_export_text_into_the_input_folder_can_be_declined(
     _pick_file(monkeypatch, scans / "a.txt")
     asked = _answer_questions(monkeypatch, yes=False)
 
-    main_window._on_export_requested(ids, ExportKind.TEXT)
+    main_window._export_controller.on_requested(ids, ExportKind.TEXT)
 
     assert [question.title for question in asked] == ["Save into the input folder?"]
     assert not (scans / "a.txt").exists()
-    assert not main_window._text_export_running
+    assert not main_window._export_controller.running
 
 
 def _capture_warnings(monkeypatch) -> list[Notice]:
@@ -4915,14 +4916,14 @@ def test_export_toolbar_exports_the_selected_rows_else_all_rows(
     ids = _queue_with_text(main_window, tmp_path / "scans", {"a.png": "x", "b.png": "y"})
     calls: list[tuple[list[str], ExportKind]] = []
     monkeypatch.setattr(
-        main_window,
-        "_on_export_requested",
+        main_window._export_controller,
+        "on_requested",
         lambda source_ids, kind: calls.append((source_ids, kind)),
     )
 
-    main_window._on_export_toolbar(ExportKind.TEXT)
+    main_window._export_controller.on_toolbar_action(ExportKind.TEXT)
     main_window._results_table.selectRow(1)
-    main_window._on_export_toolbar(ExportKind.DOCX)
+    main_window._export_controller.on_toolbar_action(ExportKind.DOCX)
 
     assert calls == [(ids, ExportKind.TEXT), ([ids[1]], ExportKind.DOCX)]
 
@@ -4939,8 +4940,8 @@ def test_export_toolbar_menu_entry_starts_that_export(
     ids = _queue_with_text(main_window, tmp_path / "scans", {"a.png": "x"})
     calls: list[tuple[list[str], ExportKind]] = []
     monkeypatch.setattr(
-        main_window,
-        "_on_export_requested",
+        main_window._export_controller,
+        "on_requested",
         lambda source_ids, kind: calls.append((source_ids, kind)),
     )
 
@@ -4976,7 +4977,7 @@ def test_export_skips_documents_that_would_share_an_output_file(
         lambda _config, _source, path, **_k: written.append(path),
     )
 
-    main_window._on_export_requested(ids, kind)
+    main_window._export_controller.on_requested(ids, kind)
     _wait_for(lambda: bool(warnings))
 
     assert written == [out / ("x" + kind.file_suffix)]
@@ -5001,8 +5002,8 @@ def test_export_into_a_folder_asks_before_replacing_existing_files(
     _pick_folder(monkeypatch, out)
     asked = _answer_questions(monkeypatch, yes=answer)
 
-    main_window._on_export_requested(ids, ExportKind.TEXT)
-    _wait_for(lambda: not main_window._text_export_running)
+    main_window._export_controller.on_requested(ids, ExportKind.TEXT)
+    _wait_for(lambda: not main_window._export_controller.running)
 
     assert [question.title for question in asked] == ["Replace existing files?"]
     assert (out / "a.txt").read_text(encoding="utf-8") == expected
@@ -5025,7 +5026,7 @@ def test_replace_question_names_files_by_their_subfolder(
     targets = [("s1", out / "class1" / "a.txt"), ("s2", out / "class2" / "a.txt")]
     asked = _answer_questions(monkeypatch, yes=False)
 
-    assert main_window._confirm_replace_existing(targets) is False
+    assert main_window._export_controller._confirm_replace_existing(targets) is False
 
     assert "class1/a.txt" in asked[0].body
     assert "class2/a.txt" in asked[0].body
@@ -5047,7 +5048,7 @@ def test_export_text_never_replaces_another_input_document(
     _pick_file(monkeypatch, scans / "a.txt")
     warnings = _capture_warnings(monkeypatch)
 
-    main_window._on_export_requested([ids[0]], ExportKind.TEXT)
+    main_window._export_controller.on_requested([ids[0]], ExportKind.TEXT)
     _wait_for(lambda: bool(warnings))
 
     assert (scans / "a.txt").read_text(encoding="utf-8") == "original"
@@ -5070,8 +5071,8 @@ def test_export_text_into_the_input_folder_writes_after_confirming(
     _pick_file(monkeypatch, scans / "sub" / "a.txt")
     asked = _answer_questions(monkeypatch, yes=True)
 
-    main_window._on_export_requested(ids, ExportKind.TEXT)
-    _wait_for(lambda: not main_window._text_export_running)
+    main_window._export_controller.on_requested(ids, ExportKind.TEXT)
+    _wait_for(lambda: not main_window._export_controller.running)
 
     assert [question.title for question in asked] == ["Save into the input folder?"]
     assert (scans / "sub" / "a.txt").read_text(encoding="utf-8") == "alpha"
@@ -5100,8 +5101,8 @@ def test_input_folder_warning_only_applies_to_folder_and_text_exports(
     kind = ExportKind.DOCX if folder_mode else ExportKind.TEXT
     _pick_file(monkeypatch, scans / ("a" + kind.file_suffix))
 
-    main_window._on_export_requested(ids, kind)
-    _wait_for(lambda: not main_window._text_export_running)
+    main_window._export_controller.on_requested(ids, kind)
+    _wait_for(lambda: not main_window._export_controller.running)
 
     assert asked == []
 
@@ -5125,7 +5126,7 @@ def test_export_anonymized_text_with_missing_spacy_also_lists_skipped_rows(
         "teachers_teammate.infrastructure.anonymizer.SpacyAnonymizer",
         side_effect=ImportError("No module named 'spacy'"),
     ):
-        main_window._on_export_requested(ids, ExportKind.TEXT_ANONYMIZED)
+        main_window._export_controller.on_requested(ids, ExportKind.TEXT_ANONYMIZED)
         _wait_for(lambda: bool(warnings))
 
     assert len(warnings) == 1
@@ -5162,7 +5163,7 @@ def test_exported_docx_labels_follow_the_explanation_language(
         lambda _config, _source, _path, options=None, **_k: seen.append(options.labels_language),
     )
 
-    main_window._on_export_requested([sid], ExportKind.DOCX)
+    main_window._export_controller.on_requested([sid], ExportKind.DOCX)
     _wait_for(lambda: bool(seen))
 
     assert seen == [expected]
@@ -6684,4 +6685,4 @@ def test_an_export_error_is_told_in_the_teachers_words(error: Exception, expecte
     When   the window words the failure
     Then   the two refusals use the sentences of texts/ and any other error its own message
     """
-    assert main_window_module._export_failure("note.png", error).startswith(expected)
+    assert export_controller_module._export_failure("note.png", error).startswith(expected)

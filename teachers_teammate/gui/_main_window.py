@@ -68,7 +68,7 @@ from ._credential_store import CredentialStore
 from ._data_flow_summary import advice_text, level_text, stage_tooltips
 from ._error_text import spacy_problem
 from ._export_controller import ExportController
-from ._export_menu import ExportKind, build_export_menu
+from ._export_menu import build_export_menu
 from ._help_dialog import AboutDialog, HelpDialog, ThirdPartyLicensesDialog
 from ._image_utils import load_icon, load_pixmap
 from ._log_widget import LogWidget
@@ -89,14 +89,8 @@ from ._run_session import RunSession, wait_detail_text
 from ._stats_widget import SystemStatsWidget
 from ._system_monitor import SystemMonitorWindow
 from ._update_check import UpdateCheckThread
-from ._view_settings import (
-    set_check_card_split,
-    set_check_split,
-    set_text_point_size,
-)
 from ._what_is_sent_dialog import WhatIsSentDialog
 from ._window_geometry import maximize_without_saved_geometry, restore_geometry
-from .check import CheckLayout, CopyKind
 from .settings import (
     PAGE_TITLES,
     SettingsContext,
@@ -111,15 +105,6 @@ from .settings._window import SUB_PAGES
 if TYPE_CHECKING:
     from .benchmark._benchmark_window import BenchmarkWindow
     from .setup import SetupResult
-
-
-def _debounce_timer(parent: QWidget, interval_ms: int, slot: Callable[[], None]) -> QTimer:
-    """Return a single-shot timer that calls *slot* once *interval_ms* have passed."""
-    timer = QTimer(parent)
-    timer.setSingleShot(True)
-    timer.setInterval(interval_ms)
-    timer.timeout.connect(slot)
-    return timer
 
 
 def _is_shown(widget: QWidget) -> bool:
@@ -264,11 +249,6 @@ class MainWindow(QMainWindow):
         self._check_controller: CheckController
         # True while the requirement check of a Run / stage re-run is in flight.
         self._preflight_running = False
-        # A drag of a pane reports every pixel: the settings are written once it settles.
-        self._pending_check_layout: CheckLayout | None = None
-        self._layout_debounce = _debounce_timer(
-            self, self._LAYOUT_DEBOUNCE_MS, self._flush_check_layout
-        )
         # The same for the expected cache keys of the queue: they depend on the card.
         self._cache_state_task = LatestTask(self)
         self._update_thread: UpdateCheckThread | None = None
@@ -397,6 +377,7 @@ class MainWindow(QMainWindow):
             run_stage=lambda ids, stage: self._on_stage_run_requested(ids, stage),  # noqa: PLW0108
             open_settings=lambda page, focus: self.open_settings(page, focus=focus),
             privacy_available=lambda: self._privacy_available,
+            export=lambda ids, kind: self._export_controller.on_requested(ids, kind),  # noqa: PLW0108
         )
 
     def _init_controllers(self) -> None:
@@ -493,14 +474,10 @@ class MainWindow(QMainWindow):
         return self._tabs
 
     def _connect_check_page(self) -> None:
-        """Wire what the window still answers itself: Copy, Save and the privacy view."""
+        """Wire what the window still answers itself: the privacy view."""
         page = self._check_controller.page
-        page.copy_requested.connect(self._on_check_copy)
-        page.save_requested.connect(self._on_check_save)
         page.display_anonymized_changed.connect(self._apply_display_anonymized)
         page.anonymization_needed.connect(self._on_anonymization_needed)
-        page.text_zoom_changed.connect(self._store_text_zoom)
-        page.layout_changed.connect(self._store_check_layout)
 
     def _build_menu_bar(self) -> None:
         bar = self.menuBar()
@@ -692,7 +669,6 @@ class MainWindow(QMainWindow):
     # ── Settings persistence ──────────────────────────────────────────────
 
     #: How long a drag of a pane waits before the layout is written to the settings.
-    _LAYOUT_DEBOUNCE_MS = 400
     _QSETTINGS_ORG = "TeachersTeammate"
     _QSETTINGS_APP = "TeachersTeammate"
 
@@ -944,8 +920,7 @@ class MainWindow(QMainWindow):
             self._save_settings(notify=False, silent_on_error=True)
         except Exception:  # noqa: BLE001  # never block window close on a settings-save error
             pass
-        self._layout_debounce.stop()
-        self._flush_check_layout()
+        self._check_controller.flush_layout()
         # Only close() runs the Benchmark window's own closeEvent, which stops its worker;
         # deleting it with a parent would not.  Closing the last window ends the app.
         if self._benchmark_window is not None:
@@ -1437,76 +1412,6 @@ class MainWindow(QMainWindow):
             self._config_panel.set_selected_files(paths)
         else:
             self._config_panel.set_input_dir(str(paths[0].parent))
-
-    # ── The Check tab ─────────────────────────────────────────────────────
-
-    def _store_text_zoom(self, point_size: int) -> None:
-        """Remember the text size the teacher zoomed to, for the next document and restart."""
-        set_text_point_size(self._settings_store, point_size)
-
-    def _store_check_layout(self, layout: CheckLayout) -> None:
-        """Note how the teacher sized the Check tab's panes; stored once the drag settles."""
-        self._pending_check_layout = layout
-        self._layout_debounce.start()
-
-    def _flush_check_layout(self) -> None:
-        """Remember the last pane sizes, for the next restart."""
-        layout, self._pending_check_layout = self._pending_check_layout, None
-        if layout is None:
-            return
-        set_check_split(self._settings_store, layout.split)
-        set_check_card_split(self._settings_store, layout.card_split)
-
-    def _on_check_copy(self, kind: CopyKind) -> None:
-        """Put the open document's text on the clipboard, as the Copy menu asked."""
-        source_id = self._check_controller.current
-        if not source_id:
-            return
-        self._check_controller.page.flush_pending_edit()  # a typed edit must be in the text that is copied
-        try:
-            config = self._config_panel.to_config()
-        except ValueError:
-            return
-        service = self._app_service
-        # The text comes from the stored document, so a copy carries what the Check tab shows.
-        view = service.documents.load_view(config, Path(source_id))
-        if view is None:
-            return
-        if not kind.is_anonymized:
-            QApplication.clipboard().setText(
-                service.export.text_for_copy(view, corrected=kind.is_corrected)
-            )
-            self._check_controller.page.show_copied()
-            return
-        language = self._config_panel.lookup_language()
-        anon_config = self._config_panel.build_anonymizer_config()
-
-        def _copy() -> object:
-            return service.export.text_for_copy(
-                view,
-                corrected=kind.is_corrected,
-                anonymize=True,
-                language=language,
-                anonymizer_config=anon_config,
-            )
-
-        def _on_done(result: object, error: BaseException | None) -> None:
-            if error is not None:
-                _dialogs.notify(self, dlg.copy_failed(spacy_problem(error) or str(error)))
-                return
-            QApplication.clipboard().setText(str(result))
-            self._check_controller.page.show_copied()
-
-        # Hiding names runs spaCy, which is not a job for the GUI thread.
-        run_in_background(_copy, _on_done, owner=self)
-
-    def _on_check_save(self, kind: ExportKind) -> None:
-        """Save the open document's text through the window's own export path."""
-        source_id = self._check_controller.current
-        if not source_id:
-            return
-        self._check_controller.page.flush_pending_edit()
-        self._export_controller.on_requested([source_id], kind)
 
     def _ensure_hardware_known_for_cache_state(self, config: Config) -> None:
         """Probe this computer in the background when the cache keys need to know the card.

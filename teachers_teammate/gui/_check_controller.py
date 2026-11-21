@@ -14,9 +14,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import QObject
+from PySide6.QtCore import QObject, QTimer
 from PySide6.QtGui import QKeySequence, QShortcut
-from PySide6.QtWidgets import QTabWidget, QWidget
+from PySide6.QtWidgets import QApplication, QTabWidget, QWidget
 
 from ..application.check_document import CheckDocument
 from ..application.commands import WorkNotSavedError
@@ -27,11 +27,21 @@ from ..texts import check as check_text
 from ..texts import dialogs as dlg
 from . import _dialogs
 from . import _user_text as txt
+from ._background import run_in_background
 from ._config_panel import ConfigPanel
+from ._error_text import spacy_problem
+from ._export_menu import ExportKind
 from ._results_table import ResultsTable
 from ._run_session import STOP_NOW_TEXT, STOP_TEXT, RunSession, StopStage
-from ._view_settings import check_card_split, check_split, text_point_size
-from .check import CheckLayout, CheckPage, CopyState, RunState
+from ._view_settings import (
+    check_card_split,
+    check_split,
+    set_check_card_split,
+    set_check_split,
+    set_text_point_size,
+    text_point_size,
+)
+from .check import CheckLayout, CheckPage, CopyKind, CopyState, RunState
 from .settings import SettingsPage
 from .settings._page import FOCUS_OCR, FOCUS_PROOFREADING
 
@@ -41,6 +51,18 @@ TAB_NAME_CHARS = 28
 #: Which part of the teacher's work a typed edit writes.
 _RAW = "raw"
 _CORRECTED = "corrected"
+
+#: A drag of a pane reports every pixel: the sizes are written once the drag settles.
+LAYOUT_DEBOUNCE_MS = 400
+
+
+def _debounce_timer(parent: QWidget, interval_ms: int, slot: Callable[[], None]) -> QTimer:
+    """Return a single-shot timer that calls *slot* once *interval_ms* have passed."""
+    timer = QTimer(parent)
+    timer.setSingleShot(True)
+    timer.setInterval(interval_ms)
+    timer.timeout.connect(slot)
+    return timer
 
 
 @dataclass(frozen=True)
@@ -59,6 +81,8 @@ class CheckHooks:
     """Open the Settings window on a page, focused on one control."""
     privacy_available: Callable[[], bool]
     """Whether names can be hidden for the current document language."""
+    export: Callable[[list[str], ExportKind], None]
+    """Save the texts of these documents the way the window saves them."""
 
 
 class CheckController(QObject):
@@ -89,6 +113,9 @@ class CheckController(QObject):
         self._open = ""
         #: What the Copy menu offers for the open document, so a privacy change can redraw it.
         self._copy_state: CopyState | None = None
+        #: The pane sizes of the last drag, written once it settles.
+        self._pending_layout: CheckLayout | None = None
+        self._layout_debounce = _debounce_timer(window, LAYOUT_DEBOUNCE_MS, self.flush_layout)
         self._page = CheckPage()
         self._page.set_point_size(text_point_size(settings_store))
         self._page.set_layout(
@@ -125,6 +152,10 @@ class CheckController(QObject):
         self._page.corrected_text_edited.connect(self.on_corrected_text_edited)
         self._page.checked_toggled.connect(self.on_checked_toggled)
         self._page.item_shown.connect(self.on_item_shown)
+        self._page.copy_requested.connect(self.on_copy_requested)
+        self._page.save_requested.connect(self.on_save_requested)
+        self._page.text_zoom_changed.connect(self.on_text_zoom)
+        self._page.layout_changed.connect(self.on_layout_changed)
         # Ctrl+1 / Ctrl+2 reach the tabs from anywhere in the window; Esc is the page's.
         QShortcut(QKeySequence("Ctrl+1"), self._window, self.show_documents)
         QShortcut(QKeySequence("Ctrl+2"), self._window, self.show_check)
@@ -362,9 +393,7 @@ class CheckController(QObject):
         """
         if not self._open or not self._page.mark_looked_at(key):
             return
-        self._services.commands.mark_looked_at(
-            self._config(), source=Path(self._open), keys=[key]
-        )
+        self._services.commands.mark_looked_at(self._config(), source=Path(self._open), keys=[key])
 
     def on_checked_toggled(self, checked: bool) -> None:
         """The teacher pressed *Checked*: store the decision and show what the store says.
@@ -491,3 +520,72 @@ class CheckController(QObject):
                 can_hide_names=self._hooks.privacy_available(),
             )
         )
+
+    def on_copy_requested(self, kind: CopyKind) -> None:
+        """Put the open document's text on the clipboard, as the Copy menu asked."""
+        if not self._open:
+            return
+        self._page.flush_pending_edit()  # a typed edit must be in the text that is copied
+        try:
+            config = self._panel.to_config()
+        except ValueError:
+            return
+        service = self._services
+        # The text comes from the stored document, so a copy carries what the Check tab shows.
+        view = service.documents.load_view(config, Path(self._open))
+        if view is None:
+            return
+        if not kind.is_anonymized:
+            QApplication.clipboard().setText(
+                service.export.text_for_copy(view, corrected=kind.is_corrected)
+            )
+            self._page.show_copied()
+            return
+        language = self._panel.lookup_language()
+        anon_config = self._panel.build_anonymizer_config()
+
+        def _copy() -> object:
+            return service.export.text_for_copy(
+                view,
+                corrected=kind.is_corrected,
+                anonymize=True,
+                language=language,
+                anonymizer_config=anon_config,
+            )
+
+        def _on_done(result: object, error: BaseException | None) -> None:
+            if error is not None:
+                _dialogs.notify(self._window, dlg.copy_failed(spacy_problem(error) or str(error)))
+                return
+            QApplication.clipboard().setText(str(result))
+            self._page.show_copied()
+
+        # Hiding names runs spaCy, which is not a job for the GUI thread.
+        run_in_background(_copy, _on_done, owner=self._window)
+
+    def on_save_requested(self, kind: ExportKind) -> None:
+        """Save the open document's text through the window's own export path."""
+        if not self._open:
+            return
+        self._page.flush_pending_edit()
+        self._hooks.export([self._open], kind)
+
+    # ── What the teacher resized ─────────────────────────────────────────
+
+    def on_text_zoom(self, point_size: int) -> None:
+        """Remember the text size the teacher zoomed to, for the next document and restart."""
+        set_text_point_size(self._settings_store, point_size)
+
+    def on_layout_changed(self, layout: CheckLayout) -> None:
+        """Note how the teacher sized the tab's panes; stored once the drag settles."""
+        self._pending_layout = layout
+        self._layout_debounce.start()
+
+    def flush_layout(self) -> None:
+        """Remember the last pane sizes, for the next restart.  The window calls this too."""
+        self._layout_debounce.stop()
+        layout, self._pending_layout = self._pending_layout, None
+        if layout is None:
+            return
+        set_check_split(self._settings_store, layout.split)
+        set_check_card_split(self._settings_store, layout.card_split)

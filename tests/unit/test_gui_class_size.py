@@ -27,12 +27,12 @@ SCANNED = "teachers_teammate/gui"
 #: The classes still over the limit, at the size they have today.
 OVERSIZED: dict[str, int] = {
     "teachers_teammate/gui/_config_panel.py::ConfigPanel": 1094,
-    "teachers_teammate/gui/_main_window.py::MainWindow": 1634,
+    "teachers_teammate/gui/_main_window.py::MainWindow": 1554,
 }
 
 #: The classes still over the attribute limit, at the number they assign today.
 OVERSIZED_ATTRIBUTES: dict[str, int] = {
-    "teachers_teammate/gui/_main_window.py::MainWindow": 49,
+    "teachers_teammate/gui/_main_window.py::MainWindow": 47,
 }
 
 

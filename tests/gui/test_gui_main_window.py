@@ -290,11 +290,6 @@ def test_main_window_run_starts_worker_and_updates_ui(
     monkeypatch.setattr(main_window._config_panel, "to_config", lambda: cfg)
     first, second = tmp_path / "a.png", tmp_path / "b.txt"
     monkeypatch.setattr(main_window, "_get_file_names", lambda _cfg: [first.name, second.name])
-    main_window._queued_files_by_source_id = {
-        str(first.resolve()): first,
-        str(second.resolve()): second,
-    }
-
     main_window._results_table.set_queue(
         [_queue_row(str(first.resolve())), _queue_row(str(second.resolve()))]
     )
@@ -1927,7 +1922,6 @@ def stored(main_window, monkeypatch, tmp_path: Path):
                 text_format=text_format,
             )
             source_ids.append(str(source))
-        main_window._queued_files_by_source_id = {i: Path(i) for i in source_ids}
         main_window._results_table.set_queue(
             [
                 _queue_row(
@@ -3975,7 +3969,8 @@ def test_main_window_file_started_keeps_the_text_format_of_the_shown_texts(main_
 
 def _queue_a(main_window) -> None:
     """Queue /tmp/a.png without a scan of the folder."""
-    main_window._queued_files_by_source_id = {"/tmp/a.png": Path("/tmp/a.png")}
+    main_window._results_table.set_queue([_queue_row("/tmp/a.png")])
+    main_window._results_table.selectRow(0)
 
 
 def _capture_stage_run(main_window, monkeypatch, cfg, stage: str):
@@ -5870,7 +5865,6 @@ def test_the_note_counts_the_scans_the_check_found_and_marks_their_rows(
     Then   the note under the switch counts one scan, and only the scan's row says "skipped"
     """
     scan, note = tmp_path / "scan.png", tmp_path / "note.txt"
-    ready_window._queued_files_by_source_id = {str(scan.resolve()): scan, str(note.resolve()): note}
     ready_window._results_table.set_queue(
         [
             _queue_row(str(scan.resolve()), "scan.png"),

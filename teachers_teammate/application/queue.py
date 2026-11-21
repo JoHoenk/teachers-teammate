@@ -63,6 +63,11 @@ class QueueRow:
         return cls(source_id=str(source.resolve()), name=source.name)
 
     @property
+    def path(self) -> Path:
+        """Where the file is; its source id is its resolved path."""
+        return Path(self.source_id)
+
+    @property
     def openable(self) -> bool:
         """Whether Check has something to show for this file."""
         return self.has_text or self.has_scan

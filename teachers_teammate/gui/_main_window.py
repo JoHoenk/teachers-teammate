@@ -524,7 +524,6 @@ class MainWindow(QMainWindow):
 
     def _init_queue_state(self) -> None:
         """Declare what the window knows about the files in its queue."""
-        self._queued_files_by_source_id: dict[str, Path] = {}
         # A silent search for Ollama on this computer, made when the saved address is
         # unreachable: the server it found (offered, never taken over by itself) and the
         # address the search was made for (one search per address).
@@ -1362,7 +1361,6 @@ class MainWindow(QMainWindow):
     def _refresh_queue_from_inputs(self) -> None:
         """Refresh queue from input selection without showing modal validation errors."""
         files = self._scan_input_files()
-        self._queued_files_by_source_id = {str(file.resolve()): file for file in files}
 
         try:
             config = self._config_panel.to_config()
@@ -1391,8 +1389,7 @@ class MainWindow(QMainWindow):
 
     def _queued_files(self, source_ids: list[str] | None = None) -> list[Path]:
         """Return the queued files of *source_ids* (``None``: the whole queue)."""
-        queued = self._queued_files_by_source_id
-        return [queued[i] for i in (queued if source_ids is None else source_ids) if i in queued]
+        return self._results_table.files(source_ids)
 
     def _recognised_files(self) -> set[Path]:
         """Return the queued files whose recognised text is stored.
@@ -1400,14 +1397,7 @@ class MainWindow(QMainWindow):
         A run does not read them again, so a missing text recognition engine must not stop a
         run over only these.
         """
-        queued = self._queued_files_by_source_id
-        return {
-            queued[source_id]
-            for source_id in self._results_table.queued_source_ids()
-            if source_id in queued
-            and (row := self._results_table.row_for(source_id)) is not None
-            and row.ocr is StageState.DONE
-        }
+        return self._results_table.recognised_files()
 
     def _recognition_needed(self, source_ids: list[str] | None = None) -> bool:
         """Return whether a run over *source_ids* (default: the whole queue) reads pages."""
@@ -1616,7 +1606,6 @@ class MainWindow(QMainWindow):
         queue_was_empty = not queued_source_ids
         if queue_was_empty:
             queued_files = self._app_service.run.collect_input_files(config)
-            self._queued_files_by_source_id = {str(file.resolve()): file for file in queued_files}
             queued_source_ids = [str(file.resolve()) for file in queued_files]
             self._results_table.set_queue(
                 self._app_service.documents.queue_rows(config, queued_files)
@@ -2286,7 +2275,7 @@ class MainWindow(QMainWindow):
         The row is the store's answer, so every action that changes a document ends here
         instead of patching cells: a stage that ran, an edit, a *Checked* mark.
         """
-        source = self._queued_files_by_source_id.get(source_id) or Path(source_id)
+        source = Path(source_id)
         try:
             config = self._config_panel.to_config()
         except ValueError:

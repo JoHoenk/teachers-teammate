@@ -9,10 +9,9 @@ from pathlib import Path
 import sys
 from typing import TYPE_CHECKING, Any
 
-from PySide6.QtCore import QEvent, QSettings, Qt, QTimer, QUrl, Signal
+from PySide6.QtCore import QEvent, QSettings, Qt, QTimer, Signal
 from PySide6.QtGui import (
     QAction,
-    QDesktopServices,
     QDragEnterEvent,
     QDropEvent,
     QIcon,
@@ -51,18 +50,13 @@ from ..application.composition import (
 from ..application.documents import WorkedOn
 from ..application.ollama_server import OllamaServerService
 from ..application.queue import StageState
-from ..application.run import IssueKind, RequirementIssue, RunPreflight
+from ..application.run import IssueKind, RunPreflight
 from ..application.sent_text import SentTexts
 from ..config import DEFAULTS, Config, dump_config_file, load_config_file
 from ..domain.data_location import DataFlow
 from ..domain.local_models import PAGE_MODELS_ADDON_ID, PRIVACY_ADDON_ID, READER_ADDON_ID
 from ..domain.model_catalog import HardwareDetection
-from ..domain.ollama_discovery import (
-    OLLAMA_DOWNLOAD_URL,
-    DiscoveredServer,
-    DiscoveryScope,
-    ServerKind,
-)
+from ..domain.ollama_discovery import ServerKind
 from ..domain.settings_notice import SettingNotice, SettingNoticeKind
 from ..texts import check as check_text
 from ..texts import dialogs as dlg
@@ -79,21 +73,6 @@ from ._data_flow_summary import advice_text, level_text, stage_tooltip
 from ._error_text import spacy_problem
 from ._export_controller import ExportController
 from ._export_menu import ExportKind, build_export_menu
-from ._fix_targets import (
-    COMMAND_CHOOSE_FOLDER,
-    COMMAND_GET_OLLAMA,
-    COMMAND_RETRY,
-    COMMAND_START_OLLAMA,
-    COMMAND_TURN_ON_RECOGNITION,
-    COMMAND_USE_SERVER,
-    RESULTS_NO_FOLDER,
-    RESULTS_TEXT_IN_INPUT,
-    Fix,
-    FixAction,
-    fix_for,
-    found_server_fix,
-    results_fix,
-)
 from ._help_dialog import AboutDialog, HelpDialog, ThirdPartyLicensesDialog
 from ._image_utils import load_icon, load_pixmap
 from ._log_widget import LogWidget
@@ -106,7 +85,8 @@ from ._privacy_settings import (
     set_display_anonymized,
 )
 from ._pull_manager import PullManager
-from ._readiness_line import ReadinessLine, readiness
+from ._readiness_controller import ReadinessController, ReadinessHooks
+from ._readiness_line import ReadinessLine
 from ._results_table import ResultsTable
 from ._run_controller import RunController, RunHooks, WorkerLike
 from ._run_session import (
@@ -271,18 +251,6 @@ class MainWindow(QMainWindow):
         self._awake_note: QLabel
         self._battery_note: QLabel
 
-    def _init_queue_state(self) -> None:
-        """Declare what the window knows about the files in its queue."""
-        # A silent search for Ollama on this computer, made when the saved address is
-        # unreachable: the server it found (offered, never taken over by itself) and the
-        # address the search was made for (one search per address).
-        self._found_server: DiscoveredServer | None = None
-        self._server_searched_for = ""
-        self._server_search_task = LatestTask(self)
-        # Queued scans the last check found a run would leave out (text recognition is off).
-        self._skipped_scans: set[Path] = set()
-        #: Files of the current run that were skipped (text recognition is off).
-
     def _init_runtime_state(self) -> None:
         """Initialise per-window runtime state and declare widgets built later."""
         self._config_path: Path | None = None
@@ -306,7 +274,6 @@ class MainWindow(QMainWindow):
         #: The Settings window while it is open (dialogs started from it use it as parent).
         self._settings_window: SettingsWindow | None = None
         self._init_menu_state()
-        self._init_queue_state()
         #: The document the Check tab shows; empty when none is open.
         self._current_preview_source_id: str = ""
 
@@ -315,30 +282,14 @@ class MainWindow(QMainWindow):
         self._readiness_line: ReadinessLine
         self._export_controller: ExportController
         self._run_controller: RunController
-        # The readiness line: the last answer of the background check (None: nothing blocks),
-        # whether the first check has answered, and whether "Checking…" may be shown yet.
-        self._blocker: tuple[str, RequirementIssue] | None = None
-        self._first_check_answered = False
-        self._checking_visible = False
-        self._readiness_task = LatestTask(self)
+        self._readiness_controller: ReadinessController
         # True while the requirement check of a Run / stage re-run is in flight.
         self._preflight_running = False
-        # Settings change in bursts (a checkbox, a model, a language): check once, soon after.
-        self._readiness_debounce = _debounce_timer(
-            self, self._READINESS_DEBOUNCE_MS, self._start_readiness_check
-        )
         # A drag of a pane reports every pixel: the settings are written once it settles.
         self._pending_check_layout: CheckLayout | None = None
         self._layout_debounce = _debounce_timer(
-            self, self._READINESS_DEBOUNCE_MS, self._flush_check_layout
+            self, self._LAYOUT_DEBOUNCE_MS, self._flush_check_layout
         )
-        # An unreachable Ollama is checked again every few seconds: it may be started after
-        # the app.
-        self._ollama_retry_timer = _debounce_timer(
-            self, self._OLLAMA_RETRY_MS, self._start_readiness_check
-        )
-        # "Checking…" shows only when the first answer takes a noticeable moment.
-        self._checking_timer = _debounce_timer(self, self._CHECKING_DELAY_MS, self._show_checking)
         # The same for the expected cache keys of the queue: they depend on the card.
         self._cache_state_task = LatestTask(self)
         self._update_thread: UpdateCheckThread | None = None
@@ -414,7 +365,6 @@ class MainWindow(QMainWindow):
         """Build what the window shows and the controllers work on."""
         self._config_panel = ConfigPanel()
         self._config_panel.set_service(self._app_service)
-        self._readiness_line = ReadinessLine()
         self._results_table = ResultsTable()
         self._log = LogWidget()
         self._check = CheckPage()
@@ -450,8 +400,29 @@ class MainWindow(QMainWindow):
             preflight_running=lambda: self._preflight_running,
         )
 
+    def _readiness_hooks(self) -> ReadinessHooks:
+        """What the readiness check asks of this window. Looked up when it asks, not now."""
+        return ReadinessHooks(
+            open_settings=lambda page, focus, preselect: self.open_settings(
+                SettingsPage(page), focus=str(focus), preselect=list(preselect)
+            ),
+            save_settings=lambda **kwargs: self._save_settings(**kwargs),  # noqa: PLW0108
+            queue_refresh=self._refresh_queue_from_inputs,
+            provider_name=self._provider_display_name,
+            log_line=self._log.append_text,
+        )
+
     def _init_controllers(self) -> None:
         """Build the controllers, each given the widgets it works on."""
+        self._readiness_controller = ReadinessController(
+            self,
+            services=self._app_service,
+            panel=self._config_panel,
+            table=self._results_table,
+            page=self._check,
+            hooks=self._readiness_hooks(),
+        )
+        self._readiness_line = self._readiness_controller.line
         self._run_controller = RunController(
             self,
             services=self._app_service,
@@ -487,7 +458,7 @@ class MainWindow(QMainWindow):
         self._results_table.stage_run_requested.connect(self._on_stage_run_requested)
         self._results_table.what_is_sent_requested.connect(self._on_what_is_sent_requested)
         self._config_panel.data_flow_changed.connect(self._on_data_flow_changed)
-        self._results_table.itemSelectionChanged.connect(self._update_readiness)
+        self._results_table.itemSelectionChanged.connect(self._readiness_controller.update)
         # The box rendered once while the panels were built, before these connections.
         self._on_data_flow_changed(self._config_panel.data_flow())
         self._results_table.export_requested.connect(self._export_controller.on_requested)
@@ -499,13 +470,13 @@ class MainWindow(QMainWindow):
         )
         self._config_panel.results_changed.connect(self._on_results_changed)
         self._config_panel.instructions_changed.connect(self._on_instructions_changed)
-        self._readiness_line.action_chosen.connect(self._run_fix)
+        self._readiness_line.action_chosen.connect(self._readiness_controller.run_fix)
         self._connect_check_page()
         self._refresh_privacy_availability()
         self._check.set_display_anonymized(self._display_anonymized)
         # Kick off the first readiness check once the window is laid out.
         # Pass self as the receiver so the callback is cancelled if the window is destroyed.
-        QTimer.singleShot(500, self, self._start_readiness_check)
+        QTimer.singleShot(500, self, self._readiness_controller.start_check)
 
     def _build_tabs(self) -> QTabWidget:
         """The two tabs of the window: the work, and one document to check.
@@ -745,12 +716,8 @@ class MainWindow(QMainWindow):
 
     # ── Settings persistence ──────────────────────────────────────────────
 
-    #: How often an unreachable Ollama is checked again (the server may start after the app).
-    _OLLAMA_RETRY_MS = 10_000
-    #: How long the readiness check waits after a settings change, so a burst checks once.
-    _READINESS_DEBOUNCE_MS = 400
-    #: How long the first readiness check may take before the line says "Checking…".
-    _CHECKING_DELAY_MS = 300
+    #: How long a drag of a pane waits before the layout is written to the settings.
+    _LAYOUT_DEBOUNCE_MS = 400
     _QSETTINGS_ORG = "TeachersTeammate"
     _QSETTINGS_APP = "TeachersTeammate"
 
@@ -903,7 +870,7 @@ class MainWindow(QMainWindow):
             self._display_anonymized = result.display_anonymized
             self._check.set_display_anonymized(result.display_anonymized)
         self._save_settings(notify=False)
-        self._start_readiness_check()
+        self._readiness_controller.start_check()
         self._refresh_queue_from_inputs()
 
     def _apply_first_start_model_settings(self) -> None:
@@ -956,7 +923,7 @@ class MainWindow(QMainWindow):
             f"You can download them under {WHERE_ADDONS}.\n"
         )
         self._save_settings(notify=False)
-        self._start_readiness_check()
+        self._readiness_controller.start_check()
 
     def _save_settings(self, *, notify: bool = True, silent_on_error: bool = False) -> None:
         # Persist window geometry and splitter sizes to QSettings (UI state, not pipeline config)
@@ -1011,10 +978,7 @@ class MainWindow(QMainWindow):
         # The System Monitor is parentless too: closing the last visible window ends the app.
         self._monitor.close()
         self._first_run_task.cancel()
-        self._ollama_retry_timer.stop()
-        self._readiness_debounce.stop()
-        self._checking_timer.stop()
-        self._readiness_task.cancel()
+        self._readiness_controller.shutdown()
         # Let the window disappear before waiting: running background tasks are
         # given a moment to end, and the user should not see a frozen window.
         self.hide()
@@ -1074,10 +1038,10 @@ class MainWindow(QMainWindow):
             self._run_controller.show_idle()
         self._sync_check_with_queue()
         self._update_check_tab()
-        self._update_readiness()
+        self._readiness_controller.update()
         # Other documents may need another engine (text files need none, recognised ones
         # no more recognition): ask again what a run over them requires.
-        self._schedule_readiness_check()
+        self._readiness_controller.schedule_check()
 
     def _queued_files(self, source_ids: list[str] | None = None) -> list[Path]:
         """Return the queued files of *source_ids* (``None``: the whole queue)."""
@@ -1208,24 +1172,7 @@ class MainWindow(QMainWindow):
 
     def _show_blocking_preflight(self, result: RunPreflight) -> None:
         """Explain the requirement that stops the run, with a button for each way to fix it."""
-        blocker = result.blocker
-        if blocker is None:
-            return
-        from ._dependency_guard_dialog import DependencyGuardDialog  # noqa: PLC0415
-
-        stage, issue = blocker
-        # A step can miss several things at once; the first one decides the buttons.
-        issues = list(result.stage_issues) if result.stage_issues else [issue]
-        fix = fix_for(
-            stage, issue, self._provider_display_name, language=self._config_panel.lookup_language()
-        )
-        guard = DependencyGuardDialog(txt.RUN_BLOCKED_TITLE, issues, fix.actions, self)
-        guard.action_chosen.connect(self._run_fix)
-        guard.exec()
-        # The server may have been started while the dialog was open: look again.
-        self._blocker = blocker
-        self._update_readiness()
-        self._start_readiness_check(fresh=True)
+        self._readiness_controller.show_blocking(result)
 
     def _settings_store(self) -> QSettings:
         """Return a QSettings for the window's GUI preferences (not pipeline settings)."""
@@ -1309,7 +1256,6 @@ class MainWindow(QMainWindow):
             _dialogs.notify(self, dlg.no_files_selected())
             return
 
-        self._run_session.steps_per_file = 1 if not config.correction_enabled else 2
         self._run_controller.start(config, selected_source_ids)
 
     def _on_stage_run_requested(self, selected_source_ids: list[str], stage: str) -> None:
@@ -1406,7 +1352,6 @@ class MainWindow(QMainWindow):
             _dialogs.notify(self, dlg.cache_invalidation_failed(list(failures)))
             return
 
-        self._run_session.steps_per_file = 1 if not config.correction_enabled else 2
         self._run_controller.start(config, [str(file.resolve()) for file in files], files)
 
     def _restore_all_settings(self) -> None:
@@ -1418,7 +1363,7 @@ class MainWindow(QMainWindow):
         self._acknowledgements().forget_all()
         self._check.forget_anonymization()
         self._save_settings(notify=False)
-        self._start_readiness_check()
+        self._readiness_controller.start_check()
         self._refresh_queue_from_inputs()
 
     def _on_results_changed(self) -> None:
@@ -1459,205 +1404,6 @@ class MainWindow(QMainWindow):
         info = self._app_service.providers.get_provider_info(provider)
         return str(info.get("display_name") or provider.title())
 
-    def _start_readiness_check(self, *, fresh: bool = False) -> None:
-        """Ask in the background whether a run could start, then update the line.
-
-        *fresh* asks the Ollama server again instead of using the model list it gave a few
-        minutes ago: wanted when the teacher asks to look again (a model pulled in a terminal).
-
-        The check contacts Ollama, may import spaCy and looks for the built-in reader, so it never runs
-        on the GUI thread.  Only the latest answer counts.  Every place that changes what a
-        run needs calls this: Settings, a finished download, a new window activation.
-        """
-        self._readiness_debounce.stop()
-        if not self._first_check_answered:
-            self._checking_timer.start()
-        service = self._app_service
-        config = self._config_panel.lookup_config()
-        recognition = self._recognition_needed()
-        files = self._queued_files()
-        recognised = self._recognised_files()
-        self._readiness_task.submit(
-            lambda: service.run.check_run_preflight(
-                config,
-                memory=False,
-                recognition=recognition,
-                fresh=fresh,
-                files=files,
-                recognised=recognised,
-            ),
-            self._on_readiness_check_done,
-        )
-
-    def _schedule_readiness_check(self) -> None:
-        """Check soon, once, however many settings changed in a row."""
-        self._readiness_debounce.start()
-
-    def _on_readiness_check_done(self, result: object, error: BaseException | None) -> None:
-        self._checking_timer.stop()
-        self._first_check_answered = True
-        if error is not None or not isinstance(result, RunPreflight):
-            # The check itself failed: say nothing wrong; Run checks again and reports.
-            self._blocker = None
-            self._skipped_scans = set()
-        else:
-            self._blocker = result.blocker
-            self._skipped_scans = set(result.skipped)
-        unreachable = self._blocker is not None and self._blocker[1].kind in _OLLAMA_KINDS
-        if unreachable:
-            self._ollama_retry_timer.start()
-            self._search_local_server()
-        else:
-            self._ollama_retry_timer.stop()
-            self._found_server = None
-            self._server_searched_for = ""
-        self._update_readiness()
-
-    def _search_local_server(self) -> None:
-        """Look quietly for Ollama on this computer (and the Windows host of WSL), once.
-
-        Only this computer is asked, never the network.  A hit is offered on the readiness
-        line; the saved address changes only when the teacher presses the button.
-        """
-        url = self._current_ollama_url()
-        if self._server_searched_for == url:
-            return
-        self._server_searched_for = url
-        service = self._app_service
-        self._server_search_task.submit(
-            lambda: service.ollama.discover_ollama_servers(DiscoveryScope.THIS_COMPUTER),
-            lambda result, error: self._on_local_server_search_done(url, result, error),
-        )
-
-    def _on_local_server_search_done(
-        self, url: str, result: object, error: BaseException | None
-    ) -> None:
-        if error is not None or not isinstance(result, list) or url != self._current_ollama_url():
-            return
-
-        saved = self._app_service.ollama.normalize(url)
-        self._found_server = next(
-            (
-                s
-                for s in result
-                if isinstance(s, DiscoveredServer)
-                and self._app_service.ollama.normalize(s.url) != saved
-            ),
-            None,
-        )
-        self._update_readiness()
-
-    def _use_ollama_server(self, url: str) -> None:
-        """Take over the address of a server the teacher chose on the readiness line."""
-        self._found_server = None
-        self._config_panel.update_settings({"ollama_url": url})
-        self._save_settings(notify=False)
-        self._start_readiness_check(fresh=True)
-        self._refresh_queue_from_inputs()
-
-    def _show_checking(self) -> None:
-        self._checking_visible = not self._first_check_answered
-        self._update_readiness()
-
-    def _update_readiness(self) -> None:
-        """Show what the last check and the cheap facts (documents, selection, folder) say.
-
-        Instant and on the GUI thread: it asks no server.  The line keeps the last answer
-        while a newer check runs, so it doesn't flicker.
-        """
-        panel = self._config_panel
-        blocker_fix: Fix | None = None
-        if self._blocker is not None:
-            stage, issue = self._blocker
-            blocker_fix = fix_for(
-                stage, issue, self._provider_display_name, language=panel.lookup_language()
-            )
-            if issue.kind in _OLLAMA_KINDS and self._found_server is not None:
-                blocker_fix = found_server_fix(
-                    _SERVER_PLACES[self._found_server.kind], self._found_server.url
-                )
-        results = self._results_problem()
-        # The Check tab's next-step button proofreads, or sets proofreading up when the last
-        # check found the proofreading step unable to run.
-        self._check.set_proofreading_ready(
-            self._blocker is None or self._blocker[0] != "correction"
-        )
-        self._show_recognition_state()
-        self._readiness_line.show_state(
-            readiness(
-                blocker=blocker_fix,
-                results=results,
-                inputs_chosen=bool(panel.get_input_dir()),
-                files=len(self._results_table.queued_source_ids()),
-                selected=len(self._results_table.selected_source_ids()),
-                checking=self._checking_visible and not self._first_check_answered,
-            )
-        )
-
-    def _show_recognition_state(self) -> None:
-        """Say what the "Recognize text" switch does to the queue: the note and the rows.
-
-        Off: the scans the last check found are marked "skipped" and counted under the
-        switch.  On: no row is marked, and the note says so when no document needs reading.
-        """
-        panel = self._config_panel
-        off = not panel.recognition_enabled()
-        skipped = self._skipped_scans if off else set()
-        self._results_table.set_skipped_sources(
-            {str(path.resolve()) for path in skipped}, txt.RECOGNITION_OFF_REASON
-        )
-        files = self._queued_files()
-        panel.show_recognition_note(
-            skipped=len(skipped),
-            not_needed=bool(files)
-            and not self._app_service.run.needs_text_recognition(
-                files, recognised=self._recognised_files()
-            ),
-        )
-
-    def _results_problem(self) -> Fix | None:
-        """Return the fix for a Results step that a run would refuse, or ``None``."""
-        panel = self._config_panel
-        if panel.results_problem():
-            return results_fix(RESULTS_NO_FOLDER)
-        if panel.get_input_dir() and self._app_service.run.output_refusal_for_run(
-            panel.lookup_config()
-        ):
-            return results_fix(RESULTS_TEXT_IN_INPUT)
-        return None
-
-    def _run_fix(self, action: FixAction) -> None:
-        """Do what a fix button says: open its Settings page, check again, or choose a folder."""
-        if action.page is not None:
-            self.open_settings(action.page, focus=action.focus, preselect=list(action.preselect))
-        elif action.command == COMMAND_RETRY:
-            self._start_readiness_check(fresh=True)
-        elif action.command == COMMAND_CHOOSE_FOLDER:
-            self._config_panel.choose_output_dir()
-        elif action.command == COMMAND_TURN_ON_RECOGNITION:
-            self._config_panel.turn_on_recognition()
-        elif action.command == COMMAND_USE_SERVER:
-            self._use_ollama_server(action.argument)
-        elif action.command == COMMAND_GET_OLLAMA:
-            QDesktopServices.openUrl(QUrl(OLLAMA_DOWNLOAD_URL))
-        elif action.command == COMMAND_START_OLLAMA:
-            self._start_ollama()
-
-    def _start_ollama(self) -> None:
-        """Start the installed Ollama, then look again once it has had time to come up.
-
-        Starting it takes a moment, so the check runs a few seconds later instead of at once;
-        the 10 s retry keeps looking until the server answers.
-        """
-        run_in_background(self._app_service.ollama.start_ollama, self._on_ollama_start_done)
-
-    def _on_ollama_start_done(self, _result: object, error: BaseException | None) -> None:
-        """Look again in a few seconds, or tell the teacher in the log why Ollama did not start."""
-        if error is not None:
-            self._log.append_text(f"NOTICE: Ollama could not be started: {error}\n")
-            return
-        QTimer.singleShot(3000, lambda: self._start_readiness_check(fresh=True))
-
     def changeEvent(self, event: QEvent) -> None:
         """Look again when the window becomes active: something may have been installed.
 
@@ -1669,21 +1415,16 @@ class MainWindow(QMainWindow):
             return
         self._app_service.anonymization.reread_installed_models()
         self._refresh_privacy_availability()
-        if self._blocker is not None:
-            self._start_readiness_check(fresh=True)
+        if self._readiness_controller.blocker is not None:
+            self._readiness_controller.start_check(fresh=True)
 
     # ── Ollama pull progress (status bar area) ────────────────────────────────────
 
     def _on_pull_started(self, model_name: str) -> None:
-        self._readiness_line.show_download(model_name)
+        self._readiness_controller.show_download(model_name)
 
     def _on_pull_progress(self, _status: str, completed: int, total: int) -> None:
-        if total > 0:
-            mb_done = completed / 1_048_576
-            mb_total = total / 1_048_576
-            self._readiness_line.set_download_progress(
-                int(100 * completed / total), f"{mb_done:.1f} / {mb_total:.1f} MB"
-            )
+        self._readiness_controller.set_download_progress(completed, total)
 
     def _on_pull_finished(self, _model_name: str) -> None:
         # Also covers pulls that finish after the Settings window was closed:
@@ -1694,13 +1435,11 @@ class MainWindow(QMainWindow):
         self._end_download()
 
     def _on_pull_error(self, msg: str) -> None:
-        self._end_download()
-        _dialogs.notify(self, dlg.model_download_failed(msg))
+        self._readiness_controller.model_download_failed(msg)
 
     def _end_download(self) -> None:
-        """Hand the line back and look again: the model that was missing may be there now."""
-        self._readiness_line.end_download()
-        QTimer.singleShot(0, self._start_readiness_check)
+        """Hand the line back; the model that was missing may be there now."""
+        self._readiness_controller.end_download()
 
     # ── Drag-and-drop ─────────────────────────────────────────────────────
 
@@ -2296,7 +2035,7 @@ class MainWindow(QMainWindow):
             {stage.stage: stage_tooltip(stage) for stage in flow.stages if not stage.detail}
         )
         self._refresh_privacy_availability()  # the document language may have changed
-        self._schedule_readiness_check()  # ... and what a run needs with it
+        self._readiness_controller.schedule_check()  # ... and what a run needs with it
 
     def _show_what_is_sent(self, report: SentTexts, name: str) -> None:
         """Show the report for one file, remembering it so tests and callers can read it."""
@@ -2384,7 +2123,7 @@ class MainWindow(QMainWindow):
             preselect=preselect,
         )
         window.preprocess_preview_requested.connect(
-            self._preprocess_preview.request,
+            lambda ocr_config: self._preprocess_preview.request(ocr_config, parent=window)
         )
         window.packages_changed.connect(self.packages_changed)
         window.addon_installed.connect(self._on_addon_installed)
@@ -2422,7 +2161,7 @@ class MainWindow(QMainWindow):
             # would overwrite the saved preference.
             self._apply_display_anonymized(result.display_anonymized)
         self._save_settings(notify=False)
-        self._start_readiness_check()
+        self._readiness_controller.start_check()
         self._refresh_queue_from_inputs()
 
     def _on_packages_changed(self) -> None:
@@ -2435,7 +2174,7 @@ class MainWindow(QMainWindow):
         self._app_service.anonymization.clear_anonymizer_cache()  # also forgets the installed models
         self._config_panel.refresh_data_flow()  # also refreshes the privacy availability
         self._refresh_privacy_availability()
-        self._start_readiness_check()
+        self._readiness_controller.start_check()
 
     def _on_install_round_finished(self, installed_any: bool) -> None:
         """A round of installs ended: a package may have arrived, so look again."""
@@ -2452,7 +2191,7 @@ class MainWindow(QMainWindow):
             self._log.append_text("The built-in reader is downloaded.\n")
         elif addon == PAGE_MODELS_ADDON_ID:
             self._log.append_text("The page models are downloaded.\n")
-        self._start_readiness_check()
+        self._readiness_controller.start_check()
 
 
 # ── Entry point ────────────────────────────────────────────────────────────

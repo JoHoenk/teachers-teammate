@@ -128,10 +128,6 @@ class ExportController(QObject):
         else:
             self._export_text(targets, errors, anonymize=kind is ExportKind.TEXT_ANONYMIZED)
 
-    def copy_error(self, error: BaseException) -> str:
-        """Return what to say about a failed copy or export that hid names."""
-        return spacy_problem(error) or str(error)
-
     def _pick_targets(self, source_ids: list[str], kind: ExportKind) -> list[tuple[str, Path]]:
         """Ask where to save and return ``(source_id, output path)`` pairs (empty = cancelled)."""
         # Suggested starting directory: last run output dir → config output → input dir

@@ -252,6 +252,7 @@ _GUI_SRCS = [
     "gui/_prompt_editor.py",
     "gui/_pull_manager.py",
     "gui/_qt_stream.py",
+    "gui/_readiness_controller.py",
     "gui/_readiness_line.py",
     "gui/_results_table.py",
     "gui/_run_controller.py",

@@ -1664,6 +1664,7 @@ def test_dragging_the_card_tells_the_window_its_height(qtbot) -> None:
     Then   the panel says how tall the card and the list are now
     """
     panel = _panel(qtbot, _document(review=_note(RAW, CORRECTED)))
+    qtbot.wait(20)  # the card has no height before the document is laid out
     told: list[tuple[int, ...]] = []
     panel.card_split_changed.connect(told.append)
 

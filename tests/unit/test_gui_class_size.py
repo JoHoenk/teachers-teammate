@@ -20,7 +20,7 @@ SCANNED = "teachers_teammate/gui"
 #: The classes still over the limit, at the size they have today.
 OVERSIZED: dict[str, int] = {
     "teachers_teammate/gui/_config_panel.py::ConfigPanel": 1094,
-    "teachers_teammate/gui/_main_window.py::MainWindow": 2240,
+    "teachers_teammate/gui/_main_window.py::MainWindow": 1999,
 }
 
 

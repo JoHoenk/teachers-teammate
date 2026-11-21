@@ -211,10 +211,6 @@ class RunController(QObject):
         self.progress_bar.setValue(0)
         self.progress_bar.setFormat("Checking requirements…")
 
-    def confirm_close(self) -> bool:
-        """Ask whether to stop the run and close; the default answer keeps the run going."""
-        return _dialogs.ask(self._window, dlg.close_during_run())
-
     def warn_busy(self) -> None:
         """Say on the window that a run is already going."""
         _dialogs.notify(self._window, dlg.busy_with_run())

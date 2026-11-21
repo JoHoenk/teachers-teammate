@@ -937,6 +937,16 @@ py_test(
 # outside the package.  The sources come in as data because the test parses them with ``ast``.
 # The import direction between the layers of //teachers_teammate (see the libraries there).
 py_test(
+    name = "test_gui_class_size",
+    size = "small",
+    srcs = _COMMON_SRCS + ["unit/test_gui_class_size.py"],
+    args = ["unit/test_gui_class_size.py"],
+    data = ["//teachers_teammate:all_sources"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS,
+)
+
+py_test(
     name = "test_layer_imports",
     size = "small",
     srcs = _COMMON_SRCS + ["unit/test_layer_imports.py"],
@@ -2937,6 +2947,7 @@ test_suite(
         ":test_gui_check_body",
         ":test_gui_check_page",
         ":test_gui_check_style",
+        ":test_gui_class_size",
         ":test_gui_config_panel",
         ":test_gui_dialogs",
         ":test_gui_formatted_text",

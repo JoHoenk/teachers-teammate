@@ -20,7 +20,7 @@ End-user runtime usage is documented in {doc}`overview <index>` and {doc}`advanc
 
 ## Running the tests
 
-Bazel is the standard test runner. All test commands below assume the virtualenv is active (`source .venv/bin/activate`).
+Bazel is the standard test runner and brings its own toolchain; it needs no virtualenv. A venv (`source .venv/bin/activate`) is only for direct pytest runs.
 
 ```bash
 # Core/unit-oriented suite

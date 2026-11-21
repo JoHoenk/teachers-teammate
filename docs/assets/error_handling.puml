@@ -105,7 +105,7 @@ end note
 
 note right of ConfigFileParseError
   Raised by:
-  config._load_config_section()
+  config._read_toml()
   (wraps OSError + TOMLDecodeError)
 end note
 

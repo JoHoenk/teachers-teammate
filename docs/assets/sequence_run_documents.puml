@@ -22,7 +22,7 @@ participant "Domain\nFreshness"      as FRESH
 participant "PreprocessService"      as PREP
 participant "PreviewImageStore"      as STORE
 participant "OCR / Correction /\nEvaluation Adapters"  as STAGES
-participant "OutputStageService"     as OUT
+participant "DocumentCreator"        as OUT
 participant "FileSystem / LLM"       as EXT
 
 USER -> WIN            : click Run
@@ -174,7 +174,7 @@ group Background thread (OCRWorker)
     end
 
     opt DOCX output enabled
-      FP -> OUT         : write_docx(raw_text, corrected_text, out_path, …)
+      FP -> OUT         : create(…, out_path)
       activate OUT
       OUT -> EXT        : write .docx file
       OUT --> FP        :
@@ -199,8 +199,8 @@ end
 group GUI thread (signal handlers)
   activate WIN
   WORKER -> WIN         : file_started → ResultsTable.mark_processing(source_id)
-  WORKER -> WIN         : ocr_done → PreviewPanel.update_ocr_preview(source_id)\n               if row selected
-  WORKER -> WIN         : file_done → ResultsTable.add_result(…)\n             + PreviewPanel.update if row selected
+  WORKER -> WIN         : ocr_done → progress text, Check tab run strip
+  WORKER -> WIN         : file_done → ResultsTable.add_result(…)\n             + reload the open document in Check
   WORKER -> WIN         : finished_with_code → re-enable Run button\n                       cleanup preview temp dirs
   deactivate WIN
 end

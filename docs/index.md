@@ -68,11 +68,11 @@ Every release also ships a `SHA256SUMS` file and a build attestation, so you or 
 | **Processor** | x64 (Windows 11 on ARM: x64 emulation, not tested) | Apple Silicon (M1 or newer) | x86_64 |
 | **Download** | setup `.exe` | `.dmg` | `.deb`, `.tar.xz` |
 
-**Main memory:** 8 GB. A model needs 2.5 to 7.2 GB while it runs; with a graphics card it runs
+**Main memory:** 8 GB. A recommended model needs 2.5 to 9.5 GB while it runs; with a graphics card it runs
 there instead, and the app shows what fits your computer before anything is downloaded.
 
 **Free disk space:** about 700 MB for the app, which brings the built-in reader (31 MB) and the
-page models (39 MB) with it, plus 1.6 to 7.2 GB per model that runs in Ollama. The app names the
+page models (39 MB) with it, plus 1.6 to 8 GB per model that runs in Ollama. The app names the
 size of every download before it starts.
 
 > **Ubuntu 22.04, Mint 21 and Debian 12** are not supported by this version: use v0.5.x.

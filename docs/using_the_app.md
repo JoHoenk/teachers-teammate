@@ -305,7 +305,7 @@ before it replaces an existing file.
 
 ### Methods
 
-- **Ollama (recommended)** — an AI reading model on your computer; best for handwriting and
+- **Ollama (AI model)** (recommended) — an AI reading model on your computer; best for handwriting and
   difficult scans. Ollama must be running before you start a run. If it runs on another computer,
   enter its address under **Settings → This computer**, or use **Find…** there.
 - **Built-in reader (PP-OCR)** — runs inside the app, without a server; good for printed pages,

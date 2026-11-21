@@ -490,8 +490,13 @@ class RunSettings:
     """The run's own fields: not axes, and not part of the compare key."""
 
     seed: int
+    """The seed of repeat 1; repeat *k* uses ``seed + k - 1``.  Not an axis: repeats must pool."""
+
     repeat: int = 1
+    """Which repeat this file holds."""
+
     timeout: float = 900.0
+    """The request timeout in seconds."""
 
     extra: Mapping[str, Any] = field(default_factory=dict, compare=False, repr=False)
     """Fields a newer writer added; kept and written back."""
@@ -522,8 +527,14 @@ class Environment:
     """The machine an Ollama run ran on; ``""`` for a provider that ran on none of ours."""
 
     ollama_version: str = ""
+    """The server's version; another version is another backend."""
+
     isolated: bool = False
+    """Whether the run had the card to itself."""
+
     gpu_sampler: Mapping[str, Any] = field(default_factory=dict)
+    """The graphics-memory sampler: the local vendor, or a remote agent's record; empty if none."""
+
     machine_source: str = ""
     """How an empty machine was filled in (``assumed by convert_v1: …``), or ``""``."""
 
@@ -571,7 +582,11 @@ class RunHeader:
     protocol: Protocol
     run: RunSettings
     task: str = TASK_PROOFREAD
+    """What the run does; each task has its own scorer."""
+
     model_info: Mapping[str, Any] = field(default_factory=dict)
+    """The tag's ``digest``, ``quantization``, ``parameter_size`` and ``family``."""
+
     environment: Environment = field(default_factory=Environment)
     extra: Mapping[str, Any] = field(default_factory=dict, compare=False, repr=False)
     """Fields a newer writer added; kept and written back."""
@@ -627,9 +642,17 @@ class Session:
     """One start or resume of a run; a run file appends one per session."""
 
     date: str
+    """When the session started, as an ISO timestamp."""
+
     tool_revision: str = ""
+    """The commit the tools were at; information only."""
+
     vram_baseline_mb: int | None = None
+    """The graphics memory before the model was loaded."""
+
     loaded_before: tuple[Mapping[str, Any], ...] = ()
+    """What the server had loaded when the session started."""
+
     extra: Mapping[str, Any] = field(default_factory=dict, compare=False, repr=False)
 
     _KNOWN: ClassVar[tuple[str, ...]] = (
@@ -679,8 +702,14 @@ class Answer:
     """The corrected text as returned, marks included; for a failed text what the teacher got."""
 
     failed: bool = False
+    """Whether the text failed; the source is kept."""
+
     fallback: bool = False
+    """Whether the text fell back to corrections only."""
+
     warning: str = ""
+    """The app's warning; empty when none."""
+
     left_out: int = 0
     """How many stretches the model left out and the app put back, so the output is whole.
 
@@ -704,12 +733,24 @@ class Answer:
     """Converted rows only: the count of a run before the unclear step quoted its findings."""
 
     requests: tuple[RequestStats, ...] = ()
+    """What each request cost: tokens, durations and the step."""
+
     loaded: tuple[LoadedModel, ...] = ()
+    """The models the server had loaded around this text."""
+
     shared: bool = False
+    """Whether another model was loaded too; such a text is left out of speed and memory figures."""
+
     vram_baseline_mb: int | None = None
     vram_peak_mb: int | None = None
+    """The graphics memory before the text and at its peak."""
+
     pieces: int = 1
+    """How many pieces the app split the text into; a text within the budget is one."""
+
     seconds: float = 0.0
+    """How long the text took."""
+
     step_inferred: bool = False
     """Converted rows only: the steps were inferred from the request count, not recorded."""
 

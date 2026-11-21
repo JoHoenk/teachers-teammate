@@ -294,11 +294,10 @@ class RequestProfile:
 
     @property
     def review_temperature(self) -> float:
-        """Return the temperature of the single JSON-answering review request the app sends today.
+        """Return the temperature of the JSON-answering steps ② and ③.
 
-        That request writes the corrected text and the explanations in one answer, which is the
-        kind of answer steps ② and ③ give, so it keeps the maker's value; step ①'s measured value
-        belongs to a plain-text rewrite and has not been measured for it.
+        It is also the temperature an online provider's chat model is built at
+        (``Config.correction_temperature``).
         """
         return self.explain.temperature
 

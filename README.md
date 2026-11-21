@@ -111,7 +111,7 @@ else is downloaded from inside the app, on request, after it names the size: pri
 | **Main memory** | 8 GB | 8 GB | 8 GB |
 | **Free disk space** | about 700 MB | about 700 MB | about 700 MB |
 
-Each model that runs in Ollama needs another 1.6 to 7.2 GB of disk space. The Python wheel needs
+Each model that runs in Ollama needs another 1.6 to 8 GB of disk space. The Python wheel needs
 Python 3.14. Ubuntu 22.04, Mint 21 and Debian 12 stay on v0.5.x. More detail is in the
 [overview](https://github.com/JoHoenk/teachers-teammate/blob/main/docs/index.md#system-requirements).
 
@@ -167,7 +167,7 @@ Without `--docx`, no Word file is written; only the per-file processing state is
    - Read what it will set and download.
    - Press **Set up**. The downloads run in the background and the main window shows the progress.
    
-3. **Choose the input and output folders** and click **Run Selected**. Your settings are saved and
+3. **Open the folder with the documents** and click **Run Selected**. Your settings are saved and
    restored on the next launch.
 
 ### How pages are read
@@ -179,7 +179,7 @@ Choose the method under **Settings → AI models…**.
 | **Runs** | in Ollama, on your computer | inside the app |
 | **Needs** | Ollama and a downloaded model | nothing extra |
 | **Suits** | handwriting and full pages | printed pages; computers that cannot run a vision model |
-| **Limit** | the model needs 2.5 to 7.2 GB of memory while it runs | reads handwriting less well |
+| **Limit** | the model needs 2.5 to 9.5 GB of memory while it runs | reads handwriting less well |
 
 ### Change models later
 

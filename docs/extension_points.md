@@ -39,7 +39,7 @@ wording.
 ## Text recognition on/off
 
 `Config.recognition_enabled` is not part of `OcrConfig`, so no cache key changes. Off:
-`RecognitionSwitchedOffError` → `ProcessingResult.skipped` → `RunOutcome.skipped` →
+`RecognitionSwitchedOffError` → `ProcessingResult.skipped` → `RunSummary.skipped` →
 `FileDoneEvent.skipped`. Gate anything that needs the OCR model/engine on it.
 `RunService` (`application/run.py`) works out what a run can use; it opens PDFs,
 so background thread only. See {doc}`development` → "Text recognition switch"

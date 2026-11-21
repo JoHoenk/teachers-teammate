@@ -1391,9 +1391,9 @@ class MainWindow(QMainWindow):
         }
 
     def _recognition_needed(self, source_ids: list[str] | None = None) -> bool:
-        """Return whether a run over *source_ids* (default: the whole queue) reads pages."""
+        """Return whether a run over *source_ids* (``None``: the whole queue) reads pages."""
         return self._app_service.needs_text_recognition(
-            self._queued_files(source_ids or None), recognised=self._recognised_files()
+            self._queued_files(source_ids), recognised=self._recognised_files()
         )
 
     def _run_in_progress(self) -> bool:
@@ -1418,7 +1418,7 @@ class MainWindow(QMainWindow):
             lambda preflight: self._confirm_teacher_work_then(
                 config, preflight.worked_on, lambda: self._continue_run(config)
             ),
-            recognition=self._recognition_needed(selected),
+            recognition=self._recognition_needed(selected or None),
             files=self._queued_files(selected or None),
             ask_about_work=True,
         )
@@ -1615,8 +1615,15 @@ class MainWindow(QMainWindow):
         self._steps_per_file = 1 if not config.correction_enabled else 2
         self._start_worker(config, selected_source_ids)
 
-    def _start_worker(self, config, selected_source_ids: list[str]) -> None:
-        """Start an OCR worker for *selected_source_ids* using *config*."""
+    def _start_worker(
+        self,
+        config: Config,
+        selected_source_ids: list[str],
+        files: list[Path] | None = None,
+    ) -> None:
+        """Start an OCR worker for *selected_source_ids*; *files* are their queued files."""
+        if files is None:
+            files = self._queued_files(selected_source_ids)
         self._log.clear_log()
         self._save_settings(notify=False)
         self._results_table.set_output_dir(config.output_dir)
@@ -1647,7 +1654,7 @@ class MainWindow(QMainWindow):
         self._time_driven = False
         self._progress.setRange(0, len(selected_source_ids) * self._steps_per_file)
         self._progress.setValue(0)
-        self._start_pace(config, selected_source_ids)
+        self._start_pace(config, files)
         self._progress_timer.start()
         self._set_progress_text(f"Selected {len(selected_source_ids)} file(s) — Starting…")
         if self._run_from_check:
@@ -1660,7 +1667,7 @@ class MainWindow(QMainWindow):
         worker_factory = self._worker_factory or OCRWorker
         self._worker = worker_factory(
             config,
-            self._queued_files(selected_source_ids),
+            files,
             app_service=self._app_service,
         )
         self._worker.log_line.connect(self._log.append_text)
@@ -1679,7 +1686,7 @@ class MainWindow(QMainWindow):
         self._battery_note.setVisible(False)
         self._worker.start()
 
-    def _start_pace(self, config: Config, selected_source_ids: list[str]) -> None:
+    def _start_pace(self, config: Config, files: list[Path]) -> None:
         """Start the time-left figure: the estimate from the store, then the page counts.
 
         The estimate is for *config*, the configuration this run really starts with (after a
@@ -1689,14 +1696,9 @@ class MainWindow(QMainWindow):
         PDFs, so they are counted in the background and the figure is redrawn when they arrive.
         """
         self._pace = RunPace(self._estimate_per_page(config))
-        self._pace.set_files(len(selected_source_ids))
+        self._pace.set_files(len(files))
         self._progress_snapshot = RunProgress()
         self._run_pages = {}
-        files = [
-            self._queued_files_by_source_id[source_id]
-            for source_id in selected_source_ids
-            if source_id in self._queued_files_by_source_id
-        ]
         if not files:
             return
         service = self._app_service
@@ -1814,7 +1816,7 @@ class MainWindow(QMainWindow):
             return
 
         self._steps_per_file = 1 if not config.correction_enabled else 2
-        self._start_worker(config, [str(file.resolve()) for file in files])
+        self._start_worker(config, [str(file.resolve()) for file in files], files)
 
     def _on_export_toolbar(self, kind: ExportKind) -> None:
         source_ids = (

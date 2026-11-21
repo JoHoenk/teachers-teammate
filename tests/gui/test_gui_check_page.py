@@ -13,7 +13,7 @@ from teachers_teammate.gui import _user_text as txt
 from teachers_teammate.gui._export_menu import ExportKind
 from teachers_teammate.gui.check import CheckPage, CopyKind, CopyState, RunState
 from teachers_teammate.gui.check._page import _escape_is_for_the_focus
-from teachers_teammate.infrastructure.state_repository import DocumentStateView
+from teachers_teammate.application.document_view import DocumentStateView
 
 
 def _document(
@@ -31,8 +31,6 @@ def _document(
             ocr_done=False,
             correction_done=False,
             evaluation_done=False,
-            cache_status_label="",
-            loaded_at="",
             original_img="",
             preprocess_steps=(),
             raw_text_format="plain",

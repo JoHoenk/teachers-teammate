@@ -11,15 +11,15 @@ from __future__ import annotations
 from dataclasses import replace
 from pathlib import Path
 
-from ..domain.freshness import correction_kept_over_settings, first_stale_stage_for_hashes
-from ..domain.teacher_work import TeacherWork, current_texts, work_status
-from ..infrastructure.state_repository import (
-    DocumentState,
-    DocumentStateView,
-    StateRepository,
-    machine_texts,
+from ..domain.freshness import (
+    correction_kept_over_settings,
+    first_stale_stage_for_hashes,
 )
+from ..domain.stages import StageName
+from ..domain.teacher_work import TeacherWork, current_texts, work_status
+from ..infrastructure.state_repository import DocumentState, machine_texts, reset_fields
 from ..infrastructure.workflow.cache_service import ExpectedHashes, stage_hashes
+from .document_view import DocumentStateView, to_view
 
 
 def merged_view(
@@ -46,7 +46,6 @@ def merged_view(
 
 
 def reconciled_view(
-    store: StateRepository,
     file: Path,
     state: DocumentState,
     work: TeacherWork | None,
@@ -57,19 +56,27 @@ def reconciled_view(
     A stage whose settings changed is shown as not done, unless the teacher's work keeps it
     (:func:`~teachers_teammate.infrastructure.workflow.cache_service.stage_hashes` decides, the
     same way for the queue, the run and the commands that edit), and a proofreading kept over
-    other settings says so.
+    other settings says so.  The texts stay: the queue still shows them.
     """
     flags = stage_hashes(state, work, expected)
     stale_stage = first_stale_stage_for_hashes(flags)
-    if stale_stage == "ocr":
-        state = replace(state, ocr_done=False, correction_done=False, evaluation_done=False)
-    elif stale_stage == "correction":
-        state = replace(state, correction_done=False, evaluation_done=False)
-    elif stale_stage == "evaluation":
-        state = replace(state, evaluation_done=False)
+    if stale_stage is not None:
+        state = _without_done_flags(state, stale_stage)
     return merged_view(
-        store.to_view(file, state),
+        to_view(file, state),
         state,
         work,
         kept_over_settings=correction_kept_over_settings(flags),
+    )
+
+
+def _without_done_flags(state: DocumentState, stale_stage: StageName) -> DocumentState:
+    """Return *state* with the ``*_done`` flags of *stale_stage* and later cleared."""
+    return replace(
+        state,
+        **{
+            name: value
+            for name, value in reset_fields(stale_stage).items()
+            if name.endswith("_done")
+        },
     )

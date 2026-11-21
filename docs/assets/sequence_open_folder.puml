@@ -42,9 +42,9 @@ note right TABLE       : queue rows shown with grey "pending" state
 TABLE --> WIN          :
 deactivate TABLE
 
-WIN -> SVC             : load_views(config, files)
+WIN -> SVC             : queue_rows(config, files)
 activate SVC
-SVC -> REPO            : load_views(files)
+SVC -> REPO            : load_valid(file)
 activate REPO
 loop for each file
   REPO -> FS           : read {stem}_{hash}.json
@@ -53,9 +53,9 @@ loop for each file
   deactivate FS
   REPO -> REPO         : validate schema, source hash, file existence
 end
-REPO --> SVC           : dict[source_id → DocumentStateView]
+REPO --> SVC           : DocumentState per file
 deactivate REPO
-SVC --> WIN            : dict[source_id → DocumentStateView]
+SVC --> WIN            : list[QueueRow]
 deactivate SVC
 
 loop for each file with valid cached state

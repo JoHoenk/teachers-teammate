@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Collection, Mapping, Sequence
+from collections.abc import Callable, Collection, Iterable, Iterator, Mapping, Sequence
 import dataclasses
 from dataclasses import dataclass
 from enum import StrEnum
@@ -105,7 +105,6 @@ from ..infrastructure.stage_builder import (
 )
 from ..infrastructure.state_repository import (
     DocumentState,
-    DocumentStateView,
     StateRepository,
     compute_file_hash_cached,
     machine_texts,
@@ -134,6 +133,7 @@ from .commands import ApplicationCommands
 from .commands import WorkNotSavedError as WorkNotSavedError  # noqa: PLC0414
 from .context_choice import ContextChoice, context_choice
 from .correction_options import prompt_step_title
+from .document_view import DocumentStateView, to_view
 from .data_flow import (
     describe_data_flow,
     llm_location,
@@ -496,46 +496,36 @@ class ProcessingApplicationService:
         """Return supported source files for the current config."""
         return self._discovery.collect_input_files(config)
 
-    def load_views(self, config: Config, files: Sequence[Path]) -> dict[str, DocumentStateView]:
-        """Return the views of *files*, with the texts each document has now."""
-        store = self._state_store(config)
-        current = functools.cache(lambda: privacy_fingerprint(config))
-        views: dict[str, DocumentStateView] = {}
-        for file in files:
-            state = store.load_valid(file)
-            if state is None:
-                continue
-            view = self._merged(store.to_view(file, state), state)
-            views[view.source_id] = self._sent_verdict(view, current)
-        return views
+    def _documents(
+        self, config: Config, files: Iterable[Path], *, reconciled: bool
+    ) -> Iterator[tuple[Path, DocumentState | None, DocumentStateView | None]]:
+        """Yield ``(file, state, view)`` for every file of *files*.
 
-    def load_views_reconciled(
-        self, config: Config, files: list[Path]
-    ) -> dict[str, DocumentStateView]:
-        """Like load_views but marks stages not-done when their config hash has changed.
-
-        The flags are worked out exactly as the run works them out
+        The one place a stored document becomes a view.  *reconciled* marks the stages the next
+        run would read again, worked out exactly as the run works them out
         (:func:`~teachers_teammate.infrastructure.workflow.cache_service.stage_hashes`), so the
-        queue and the next run agree on what is stale and what the teacher's work keeps.
+        queue and the next run agree on what is stale and what the teacher's work keeps; without
+        it the view says what is stored.  A file the store has no result for yields ``None`` for
+        both.
         """
         store = self._state_store(config)
-        windows = self.resolved_windows(config)
-
+        windows = self.resolved_windows(config) if reconciled else None
         current_privacy = functools.cache(lambda: privacy_fingerprint(config))
-        views: dict[str, DocumentStateView] = {}
         for file in files:
             state = store.load_valid(file)
             if state is None:
+                yield file, None, None
                 continue
-            view = reconciled_view(
-                store,
-                file,
-                state,
-                self._work_store.load(state.source_hash),
-                expected_hashes(config, file, windows, self._model_store),
-            )
-            views[view.source_id] = self._sent_verdict(view, current_privacy)
-        return views
+            if reconciled:
+                view = reconciled_view(
+                    file,
+                    state,
+                    self._work_store.load(state.source_hash),
+                    expected_hashes(config, file, windows, self._model_store),
+                )
+            else:
+                view = self._merged(to_view(file, state), state)
+            yield file, state, self._sent_verdict(view, current_privacy)
 
     def queue_rows(self, config: Config, files: Sequence[Path]) -> list[QueueRow]:
         """Return what the queue shows for *files*, read from the store.
@@ -545,28 +535,17 @@ class ProcessingApplicationService:
         needs them reads the document (:meth:`load_view`), so the queue holds no copy that
         could drift from the store.
         """
-        store = self._state_store(config)
-        windows = self.resolved_windows(config)
-        current_privacy = functools.cache(lambda: privacy_fingerprint(config))
         rows: list[QueueRow] = []
-        for file in files:
-            state = store.load_valid(file)
-            if state is None:
+        for file, state, view in self._documents(config, files, reconciled=True):
+            if state is None or view is None:
                 rows.append(QueueRow.empty(file))
                 continue
-            view = reconciled_view(
-                store,
-                file,
-                state,
-                self._work_store.load(state.source_hash),
-                expected_hashes(config, file, windows, self._model_store),
-            )
             stored = StoredStages(
                 ocr=state.ocr_done,
                 correction=state.correction_done,
                 evaluation=state.evaluation_done,
             )
-            rows.append(queue_row(self._sent_verdict(view, current_privacy), stored))
+            rows.append(queue_row(view, stored))
         return rows
 
     def queue_row(self, config: Config, source: Path) -> QueueRow:
@@ -645,12 +624,9 @@ class ProcessingApplicationService:
 
     def load_view(self, config: Config, source: Path) -> DocumentStateView | None:
         """Return the view of *source*, with the texts the document has now."""
-        store = self._state_store(config)
-        state = store.load_valid(source)
-        if state is None:
-            return None
-        view = self._merged(store.to_view(source, state), state)
-        return self._sent_verdict(view, lambda: privacy_fingerprint(config))
+        for _file, _state, view in self._documents(config, [source], reconciled=False):
+            return view
+        return None
 
     def _merged(
         self, view: DocumentStateView, state: DocumentState, *, kept_over_settings: bool = False
@@ -1777,12 +1753,11 @@ class ProcessingApplicationService:
     def _recognised_files(self, config: Config, files: Sequence[Path]) -> set[Path]:
         """Return the *files* whose recognised text is already stored (best effort)."""
         try:
-            views = self.load_views(config, files)
+            store = self._state_store(config)
+            states = [(file, store.load_valid(file)) for file in files]
         except Exception:  # noqa: BLE001  # a lookup that fails only means "read it again"
             return set()
-        return {
-            file for file in files if (view := views.get(str(file.resolve()))) and view.ocr_done
-        }
+        return {file for file, state in states if state is not None and state.ocr_done}
 
     @staticmethod
     def output_refusal_for_run(config: Config) -> str:

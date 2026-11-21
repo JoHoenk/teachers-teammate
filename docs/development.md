@@ -925,8 +925,8 @@ so it is stored with the result:
   `llm_location()` the box uses, so the two cannot disagree.
 - `DocumentState` keeps `correction_sent_text`, `correction_sent_map`, `correction_sent` and
   `evaluation_sent`; `DocumentStateView.sent` exposes them keyed by stage name.
-  `ProcessingApplicationService._sent_verdict()` adds the comparison in `load_views()`,
-  `load_views_reconciled()` and `load_view()` — the state repository does not know the
+  `ProcessingApplicationService._sent_verdict()` adds the comparison in `_documents()` (behind
+  `queue_rows()`) and `load_view()` — the state repository does not know the
   settings.  The current fingerprint is computed lazily, only for a view that has a record.
   `sent_location()` writes a bare IPv6 host (`::1`) in brackets before it asks `llm_location()`.
 - The record belongs to its result: every path that clears a result clears its record too
@@ -934,7 +934,7 @@ so it is stored with the result:
   The teacher's edits never touch it: they go to `TeacherWorkStore`.  `load_valid()` drops sent fields
   whose result is not stored (`_without_orphan_sent`) and keeps the recognised text, so a
   stray record never costs a new reading; `DocumentStateView.sent` only lists stages that are
-  done, so a stage `load_views_reconciled()` marks stale shows no line.
+  done, so a stage `reconciled_view()` marks stale shows no line.
 - The wording lives in `gui/_user_text.py` (`_how_sent` builds the phrase once; `sent_lines`
   and `stored_result_line` frame it for the tooltip and the dialog);
   `GUI` writes the cells' lines from `view.sent` after every load, including `_on_file_done`; the dialog shows one line per stored result in a grey block at the
@@ -2104,7 +2104,7 @@ correction hash` into each part, so the same settings never ask again.
 **One merge point for every reader.**  `current_texts(machine, work)` returns the texts the
 document has now — transcription 2 else 1, corrected 5 (where bound) else 4 — plus
 `machine_corrected` (text 4) and the `WorkStatus` a reader marks.  `ProcessingApplicationService`
-merges it into every `DocumentStateView` (`load_view`, `load_views`, `load_views_reconciled`), and
+merges it into every `DocumentStateView` (`load_view`, `queue_rows`), and
 the pipeline calls the same function.  Queue rows, *Export*, *Copy*, *Save*, *Hide names*, *What
 is sent* and `check_document` read the view.  **Nothing outside the cache's own code reads a
 `DocumentState` text** for display or output: `tests/unit/test_teacher_work_readers.py` holds the
@@ -2114,7 +2114,7 @@ package to that, and the GUI may not name the type at all.
 place that turns a work into the three flags freshness needs: `ocr_frozen` (a transcription part
 exists, or a corrections part was worked on), `expected_correction_source` (`text_identity` of the current transcription) and
 `correction_kept` (the corrections part applies and was worked on).  The run
-(`CacheReconciliationService.prepare`) and the queue (`load_views_reconciled`) both ask there, so
+(`CacheReconciliationService.prepare`) and the queue (`reconciled_view`) both ask there, so
 they agree on what is stale and what is kept.  `correction_kept_over_settings(hashes)` is what
 the queue's *kept* note and the run-start lookup ask.
 

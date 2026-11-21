@@ -75,7 +75,7 @@ P_WIDGETS --> P_GUI
 ' Application internal
 A_SERVICE --> A_CMD : delegates write ops
 A_SERVICE --> I_PIPELINE : run / run_preview_only
-A_SERVICE --> I_STATE : load_views / load_view
+A_SERVICE --> I_STATE : queue_rows / load_view
 A_SERVICE --> I_DISC : collect_input_files
 A_SERVICE --> I_LLM : list_providers / list_models
 

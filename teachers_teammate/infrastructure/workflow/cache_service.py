@@ -16,7 +16,11 @@ from ...domain.data_location import (
     STAGE_EVALUATION,
     SentRecord,
 )
-from ...domain.freshness import StageHashes, correction_kept_over_settings
+from ...domain.freshness import (
+    StageHashes,
+    correction_kept_over_settings,
+    first_stale_stage_for_hashes,
+)
 from ...domain.local_models import reader_fingerprint
 from ...domain.teacher_work import (
     TeacherWork,
@@ -33,7 +37,6 @@ from ..proofreading.corrector import exchange_identity
 from ..state_repository import (
     DocumentState,
     OcrResultRecord,
-    RuntimeConfigSnapshot,
     StateRepository,
     compute_config_hash,
     compute_file_hash,
@@ -268,9 +271,13 @@ class ExpectedHashes:
 
 
 def expected_hashes(
-    config: Config, file: Path, windows: RunWindows, model_store: ModelStore | None
+    config: Config, file: Path, windows: RunWindows | None, model_store: ModelStore | None
 ) -> ExpectedHashes:
-    """Return the stage hashes the settings of *config* ask for, for the document *file*."""
+    """Return the stage hashes the settings of *config* ask for, for the document *file*.
+
+    *windows* is ``None`` while this computer has not been probed; the hashes then key the
+    settings alone, as the run's own base step does.
+    """
     return ExpectedHashes(
         ocr_config_hash=compute_ocr_config_hash(
             config, get_ocr_prompt(config.language), file, model_store
@@ -292,7 +299,7 @@ def stage_hashes(
     again could change the transcription the proofreading was made from, and the corrections
     would stop applying); the current transcription is what a proofreading must have been made
     from, and a corrections part the teacher worked on keeps its answer.  Both the run
-    (``CacheReconciliationService.prepare``) and the queue (``load_views_reconciled``) ask
+    (``CacheReconciliationService.prepare``) and the queue (``reconciled_view``) ask
     here, so they agree on what is stale and what is kept.
     """
     texts = current_texts(machine_texts(state), work)
@@ -413,23 +420,12 @@ class CacheReconciliationService:
                 evaluation_enabled=cfg.evaluation_enabled,
             ),
         )
-        state = self._repo.reconcile_runtime_config(
+        state = self._repo.reconcile(
             file,
             state,
-            RuntimeConfigSnapshot(
-                source_hash=source_hash,
-                ocr_prompt=ocr_prompt,
-                evaluate_prompt=cfg.evaluate_prompt,
-                ocr_config_hash=ocr_config_hash,
-                correction_config_hash=correction_config_hash,
-                eval_config_hash=eval_config_hash,
-                preview_config_hash=preview_config_hash,
-                ocr_frozen=flags.ocr_frozen,
-                expected_correction_source=flags.expected_correction_source,
-                correction_kept=flags.correction_kept,
-                correction_enabled=cfg.correction_enabled,
-                evaluation_enabled=cfg.evaluation_enabled,
-            ),
+            source_hash=source_hash,
+            stale_stage=first_stale_stage_for_hashes(flags),
+            preview_config_hash=preview_config_hash,
         )
 
         # If reconciliation cleared the preview artifacts, delete the actual files.
@@ -522,7 +518,6 @@ class CacheReconciliationService:
         raw_text_format: str = "plain",
     ) -> CacheContext:
         """Persist OCR result and return updated context."""
-        cfg = self._config
         new_state = self._repo.record_ocr_result(
             file,
             ctx.state,
@@ -531,8 +526,6 @@ class CacheReconciliationService:
                 raw_text=raw_text,
                 preview_img=preview_img,
                 source_image=source_image,
-                ocr_prompt=ctx.ocr_prompt,
-                evaluate_prompt=cfg.evaluate_prompt,
                 ocr_config_hash=ctx.ocr_config_hash,
                 preview_config_hash=ctx.preview_config_hash,
                 raw_text_format=raw_text_format,
@@ -595,7 +588,6 @@ class CacheReconciliationService:
             file,
             ctx.state,
             evaluation_text=evaluation_text,
-            evaluate_prompt=self._config.evaluate_prompt,
             eval_config_hash=ctx.eval_config_hash,
             sent=sent_record(self._config, STAGE_EVALUATION, names_hidden=names_hidden),
         )

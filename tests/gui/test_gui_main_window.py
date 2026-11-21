@@ -840,9 +840,7 @@ def test_main_window_file_done_shows_how_the_finished_results_were_sent(
         SentRecord,
         SentStatus,
     )
-    from teachers_teammate.infrastructure.state_repository import (  # noqa: PLC0415
-        DocumentStateView,
-    )
+    from teachers_teammate.application.document_view import DocumentStateView  # noqa: PLC0415
 
     source = tmp_path / "page.png"
     source.write_bytes(b"x")
@@ -859,8 +857,6 @@ def test_main_window_file_done_shows_how_the_finished_results_were_sent(
         ocr_done=True,
         correction_done=True,
         evaluation_done=False,
-        cache_status_label="",
-        loaded_at="",
         sent={
             STAGE_CORRECTION: SentStatus(
                 SentRecord(provider="mistral_eu", model="m", names_hidden=2, privacy="p")
@@ -3399,7 +3395,7 @@ def test_stage_run_starts_worker_on_success(main_window, monkeypatch) -> None:
     )
     started: list = []
     monkeypatch.setattr(
-        main_window, "_start_worker", lambda config, ids: started.append((config, ids))
+        main_window, "_start_worker", lambda config, ids, _files=None: started.append((config, ids))
     )
 
     main_window._on_stage_run_requested(["/tmp/a.png"], "ocr")

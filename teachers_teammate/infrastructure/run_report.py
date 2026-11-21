@@ -13,7 +13,6 @@ from ..config import Config
 from ..domain.data_location import ENGINE_PPOCR, OCR_ENGINE_NAMES
 from ..domain.local_models import READER_MODEL_NAME
 from ..domain.run_summary import RunSummary
-from ..exceptions import RECOGNITION_OFF_MESSAGE
 from .reporting import BATTERY_WARNING, KeepAwakeState, Reporter
 
 LINE = "=" * 64
@@ -106,7 +105,7 @@ def summary(run: RunSummary, reporter: Reporter) -> None:
         for name in run.failed:
             reporter.status(f"  - {name}")
     if run.skipped:
-        reporter.status(f"Skipped files ({RECOGNITION_OFF_MESSAGE.rstrip('.').lower()}):")
+        reporter.status("Skipped files (see the lines above for why):")
         for name in run.skipped:
             reporter.status(f"  - {name}")
     if run.stopped or run.not_started:

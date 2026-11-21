@@ -20,6 +20,7 @@ from teachers_teammate.domain.setting_values import PreprocessMethod
 from teachers_teammate.application import service as service_module
 from teachers_teammate.config import Config
 from teachers_teammate.application.commands import ApplicationCommands, WorkNotSavedError
+from teachers_teammate.application.queue import StageState
 from teachers_teammate.application.service import (
     AnonymizerConfig,
     DocxExport,
@@ -143,8 +144,6 @@ def _svc_with_document(
             raw_text=raw_text,
             preview_img="",
             source_image="",
-            ocr_prompt="",
-            evaluate_prompt="",
             ocr_config_hash="ocr",
             preview_config_hash="",
             raw_text_format=raw_text_format,
@@ -724,8 +723,6 @@ def _repo_with_document(
             raw_text="hello world",
             preview_img="",
             source_image="",
-            ocr_prompt="",
-            evaluate_prompt="",
             ocr_config_hash="ocr",
             preview_config_hash="",
         ),
@@ -955,8 +952,6 @@ def test_a_teachers_transcription_survives_reconcile(tmp_path: Path) -> None:
             raw_text="hello",
             preview_img="",
             source_image="",
-            ocr_prompt="",
-            evaluate_prompt="",
             ocr_config_hash="ocr",
             preview_config_hash="",
         ),
@@ -1003,11 +998,11 @@ def test_a_privacy_setting_change_keeps_the_proofreading_and_says_so(tmp_path: P
     recon.record_correction(source, ctx, correction_text="hello corrected", source_text="hello")
 
     svc = _make_svc(state_repository_factory=lambda _config: repo)
-    view = svc.load_views_reconciled(on, [source])[str(source.resolve())]
+    row = svc.queue_rows(on, [source])[0]
 
-    assert view.correction_done is True
-    assert view.sent[STAGE_CORRECTION].record == sent_record(off, STAGE_CORRECTION)
-    assert view.sent[STAGE_CORRECTION].other_privacy_settings is True
+    assert row.correction is StageState.DONE
+    assert row.sent[STAGE_CORRECTION].record == sent_record(off, STAGE_CORRECTION)
+    assert row.sent[STAGE_CORRECTION].other_privacy_settings is True
 
     # The next run with the new settings: nothing is invalidated, so the corrector is skipped
     # and the anonymizer is never asked for a text that is not sent again.
@@ -1042,10 +1037,10 @@ def test_a_stale_stage_shows_no_line_about_how_it_was_sent(tmp_path: Path) -> No
     recon.record_correction(source, ctx, correction_text="hello corrected")
 
     svc = _make_svc(state_repository_factory=lambda _config: repo)
-    view = svc.load_views_reconciled(now, [source])[str(source.resolve())]
+    row = svc.queue_rows(now, [source])[0]
 
-    assert view.correction_done is False
-    assert view.sent == {}
+    assert row.correction is StageState.STALE
+    assert row.sent == {}
 
 
 @pytest.mark.unit
@@ -1069,9 +1064,9 @@ def test_a_switched_off_proofreading_stays_done_and_is_kept(tmp_path: Path) -> N
     recon.record_correction(source, ctx, correction_text="hello corrected", source_text="hello")
 
     svc = _make_svc(state_repository_factory=lambda _config: repo)
-    view = svc.load_views_reconciled(off, [source])[str(source.resolve())]
+    row = svc.queue_rows(off, [source])[0]
 
-    assert view.correction_done is True
+    assert row.correction is StageState.DONE
 
     after = CacheReconciliationService(
         state_repo=repo, artifact_store=artifacts, config=off
@@ -1079,6 +1074,65 @@ def test_a_switched_off_proofreading_stays_done_and_is_kept(tmp_path: Path) -> N
 
     assert after.state.correction_done is True
     assert after.state.correction_text == "hello corrected"
+
+
+@pytest.mark.unit
+def test_the_queue_and_the_check_view_agree_after_reconciliation(tmp_path: Path) -> None:
+    """
+    Given  a document read and proofread with one model, and a store reconciled with another
+    When   the queue row and the Check view are read for it
+    Then   both say the same thing: the reading is done and has text, the proofreading is gone
+           (the reconciliation dropped it, so neither has a result to show)
+    """
+
+    source = tmp_path / "note.txt"
+    source.write_text("hello")
+    made = make_config(tmp_path, correction_enabled=True, correction_model="qwen3.5:9b")
+    now = make_config(tmp_path, correction_enabled=True, correction_model="qwen3.5:4b")
+    repo = StateRepository(tmp_path / "state")
+    artifacts = PreviewImageStore(tmp_path / "art")
+    recon = CacheReconciliationService(state_repo=repo, artifact_store=artifacts, config=made)
+    ctx = recon.prepare(source)
+    ctx = recon.record_ocr(source, ctx, raw_text="hello", preview_img="", source_image="")
+    recon.record_correction(source, ctx, correction_text="hello corrected", source_text="hello")
+    CacheReconciliationService(state_repo=repo, artifact_store=artifacts, config=now).prepare(
+        source
+    )
+
+    svc = _make_svc(state_repository_factory=lambda _config: repo)
+    row = svc.queue_row(now, source)
+    view = svc.load_view(now, source)
+
+    assert view is not None
+    assert row.has_text is True
+    assert row.has_text == bool(view.raw_text.strip())
+    assert row.ocr is StageState.DONE and view.ocr_done is True
+    assert row.correction is StageState.NONE and view.correction_done is False
+    assert view.correction_text == ""
+    assert row.evaluation is StageState.NONE and view.evaluation_done is False
+
+
+@pytest.mark.unit
+def test_the_queue_and_the_check_view_agree_about_a_file_without_a_result(tmp_path: Path) -> None:
+    """
+    Given  a file the store knows nothing about
+    When   the queue row and the Check view are read for it
+    Then   both say it has no text and no stage is done
+    """
+
+    source = tmp_path / "note.txt"
+    source.write_text("hello")
+    cfg = make_config(tmp_path)
+    repo = StateRepository(tmp_path / "state")
+
+    svc = _make_svc(state_repository_factory=lambda _config: repo)
+    row = svc.queue_row(cfg, source)
+
+    assert svc.load_view(cfg, source) is None
+    assert row.has_text is False
+    assert row.ocr is StageState.NONE
+    assert row.correction is StageState.NONE
+    assert row.evaluation is StageState.NONE
 
 
 @pytest.mark.unit
@@ -1104,7 +1158,7 @@ def test_views_without_a_stored_result_cost_no_privacy_fingerprint(tmp_path: Pat
         "teachers_teammate.application.service.privacy_fingerprint", side_effect=AssertionError
     ):
         assert svc.load_view(cfg, source) is not None
-        assert svc.load_views(cfg, [source])
+        assert svc.queue_rows(cfg, [source])
 
 
 @pytest.mark.unit
@@ -1367,7 +1421,7 @@ def test_reader_refusal_names_the_download_flag(tmp_path: Path) -> None:
     off = make_config(tmp_path / "s", ocr_engine="ppocr", recognition_enabled=False)
     files = [config.input_dir / "scan.png"]
 
-    with patch.object(ProcessingApplicationService, "load_views", return_value={}):
+    with patch.object(ProcessingApplicationService, "_state_store", return_value=_empty_store()):
         refusal = svc.reader_refusal_for_run(config, files)
 
         assert "--download-reader" in refusal
@@ -1391,9 +1445,16 @@ def test_reader_refusal_lets_a_run_over_text_files_start(tmp_path: Path) -> None
     scan = config.input_dir / "scan.png"
     scan.write_bytes(b"x")
 
-    with patch.object(ProcessingApplicationService, "load_views", return_value={}):
+    with patch.object(ProcessingApplicationService, "_state_store", return_value=_empty_store()):
         assert svc.reader_refusal_for_run(config, [text]) == ""
         assert "--download-reader" in svc.reader_refusal_for_run(config, [text, scan])
+
+
+def _empty_store() -> MagicMock:
+    """Return a state store that has no result for any file."""
+    store = MagicMock()
+    store.load_valid.return_value = None
+    return store
 
 
 def _reader_service(tmp_path: Path) -> ProcessingApplicationService:
@@ -2128,7 +2189,7 @@ def test_expected_cache_keys_never_probe_this_computer(tmp_path: Path, monkeypat
     cfg = _ollama_config(tmp_path, ocr_engine="ppocr", hardware_profile="auto")
 
     windows = svc.resolved_windows(cfg)
-    svc.load_views_reconciled(cfg, [])
+    svc.queue_rows(cfg, [])
 
     assert probes == []
     assert (windows.proofreading, windows.evaluation) == (BASE_NUM_CTX, BASE_NUM_CTX)

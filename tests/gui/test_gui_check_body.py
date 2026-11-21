@@ -23,7 +23,7 @@ from teachers_teammate.gui import _user_text as txt
 from teachers_teammate.gui.check._masking import Masking
 from teachers_teammate.gui.check._side_panel import _SIDE_BY_SIDE_WIDTH
 from teachers_teammate.gui.check._page import CheckBody, CheckLayout, CheckPage, ViewKind
-from teachers_teammate.infrastructure.state_repository import DocumentStateView
+from teachers_teammate.application.document_view import DocumentStateView
 
 RAW = "Der bunte Hund bellt. Die Katze mauzt."
 CORRECTED = "Der braune Hund bellt. Die Katze mauzt."
@@ -58,8 +58,6 @@ def _document(
             ocr_done=True,
             correction_done=bool(corrected.strip()),
             evaluation_done=bool(content_review),
-            cache_status_label="",
-            loaded_at="",
             original_img="",
             preprocess_steps=(),
             raw_text_format="plain",

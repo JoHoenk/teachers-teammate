@@ -245,6 +245,17 @@ class _FakeReaderService:
         self.installed = True
 
 
+def _thread_has_ended(dlg: ReaderDownloadDialog) -> bool:
+    """Wait for the dialog's download thread to leave ``run()``.
+
+    The dialog reports the end through a signal the thread emits from ``run()``; a test that
+    returns on that signal would let the thread object be destroyed while it still runs, which
+    aborts the process.
+    """
+    assert dlg._thread is not None
+    return dlg._thread.wait(5000)
+
+
 @pytest.mark.gui
 def test_reader_dialog_downloads_and_reports_progress_in_mb(qtbot) -> None:
     """
@@ -263,6 +274,7 @@ def test_reader_dialog_downloads_and_reports_progress_in_mb(qtbot) -> None:
     assert dlg._bar.value() == 100
     assert "Downloaded" in dlg._status.text()
     assert "/tmp/models" in dlg.findChildren(mod.QLabel)[0].text()
+    assert _thread_has_ended(dlg)
 
 
 @pytest.mark.gui
@@ -281,6 +293,7 @@ def test_reader_dialog_shows_the_error_sentence_and_offers_retry(qtbot) -> None:
 
     assert "Could not reach huggingface.co." in dlg._status.text()
     assert service.installed is False
+    assert _thread_has_ended(dlg)
 
 
 @pytest.mark.gui
@@ -301,6 +314,7 @@ def test_reader_dialog_cancel_stops_the_thread_and_installs_nothing(qtbot) -> No
 
     assert service.installed is False
     assert "cancelled" in dlg._status.text()
+    assert _thread_has_ended(dlg)
 
 
 @pytest.mark.gui
@@ -324,3 +338,4 @@ def test_page_models_dialog_downloads_the_page_models_and_names_them(qtbot) -> N
     assert "/tmp/models" in text
     assert service.page_models_calls == 1
     assert dlg._bar.value() == 100
+    assert _thread_has_ended(dlg)

@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..application.composition import AppServices
+from ..domain.local_models import PRIVACY_ADDON_ID
 from ..settings_schema import SECONDARY_MODEL_AUTO, SECONDARY_MODEL_NONE
 from ..texts import dialogs as dlg
 from ..texts import privacy
@@ -74,7 +75,7 @@ class AnonymizerConfigWidget(QWidget):
         language: Document language — used to derive the primary NER model label
             and as input to the preview.
         anonymizer_config: Current
-            :class:`~teachers_teammate.infrastructure.anonymizer.AnonymizerConfig`.
+            :class:`~teachers_teammate.domain.anonymization.AnonymizerConfig`.
         app_service: Application service used to run the preview.
         parent: Parent widget.
         sample_text: Optional text to pre-fill the preview input.
@@ -524,10 +525,9 @@ class AnonymizerConfigWidget(QWidget):
         instead.  On successful download the model combos are refreshed and the
         preview is re-run automatically.
         """
-        from ..application.addons import PRIVACY_ADDON  # noqa: PLC0415
         from ._addon_installer_dialog import SpacyModelDownloadDialog  # noqa: PLC0415
 
-        if not self._app_service.addons.is_addon_available(PRIVACY_ADDON):
+        if not self._app_service.addons.is_addon_available(PRIVACY_ADDON_ID):
             _dialogs.notify(self.window(), dlg.spacy_not_installed())
             return
 
@@ -606,7 +606,7 @@ class AnonymizerConfigWidget(QWidget):
 
     @property
     def anonymizer_config(self) -> object:
-        """Return an :class:`~teachers_teammate.infrastructure.anonymizer.AnonymizerConfig`
+        """Return an :class:`~teachers_teammate.domain.anonymization.AnonymizerConfig`
         reflecting the current dialog state."""
         primary = (
             self._primary_model.currentData()

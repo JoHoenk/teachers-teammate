@@ -12,8 +12,8 @@ from pathlib import Path
 from ..config import Config
 from ..domain.data_location import ENGINE_PPOCR, OCR_ENGINE_NAMES
 from ..domain.local_models import READER_MODEL_NAME
-from ..domain.run_summary import RunSummary
-from .reporting import KeepAwakeState, Reporter
+from ..domain.run_summary import KeepAwakeState, RunSummary
+from ..interfaces import Reporter
 
 LINE = "=" * 64
 

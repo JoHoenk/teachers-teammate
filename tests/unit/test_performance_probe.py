@@ -9,7 +9,7 @@ import pytest
 
 from teachers_teammate.config import OcrConfig
 from teachers_teammate.domain.correction_prompts import correct_system
-from teachers_teammate.domain.model_catalog import request_profile
+from teachers_teammate.domain.model_catalog import LoadedModel, ServerFacts, request_profile
 from teachers_teammate.domain.performance_estimate import SpeedStep, StepOutcome
 from teachers_teammate.exceptions import (
     OCRDeadlineError,
@@ -20,9 +20,7 @@ from teachers_teammate.exceptions import (
 from teachers_teammate.infrastructure.ollama_utils import (
     PROOFREADING_NUM_CTX,
     ChatStats,
-    LoadedModel,
     OllamaClient,
-    ServerFacts,
 )
 from teachers_teammate.infrastructure.performance_probe import (
     MEASURE_ANSWER_TOKENS,

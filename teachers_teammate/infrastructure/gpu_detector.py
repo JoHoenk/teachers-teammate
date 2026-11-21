@@ -23,7 +23,6 @@ NVML for NVIDIA, and the ``amdgpu`` driver's own sysfs files for AMD.
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
 import logging
 import os
 from pathlib import Path
@@ -33,19 +32,10 @@ import subprocess
 import sys
 from typing import Any
 
-from ..domain.model_catalog import GpuUsage as GpuUsage  # noqa: PLC0414
+from ..domain.model_catalog import GpuInfo, GpuUsage
 from .subprocess_utils import no_console_window_kwargs
 
 _logger = logging.getLogger(__name__)
-
-
-@dataclass
-class GpuInfo:
-    vendor: str  # "nvidia" or "amd"
-    name: str
-    #: Dedicated graphics memory in MB, or None when it could not be read.
-    vram_mb: int | None = None
-
 
 _VENDOR_IDS = {0x10DE: "nvidia", 0x1002: "amd"}
 

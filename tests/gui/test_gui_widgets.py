@@ -516,7 +516,7 @@ def test_stats_widget_shows_the_gpu_rows_when_the_card_answers(qtbot, monkeypatc
     Then   the GPU and VRAM rows appear with those readings, read off the GUI thread
     """
     from teachers_teammate.gui import _stats_widget as sw  # noqa: PLC0415
-    from teachers_teammate.infrastructure.gpu_detector import GpuUsage  # noqa: PLC0415
+    from teachers_teammate.domain.model_catalog import GpuUsage  # noqa: PLC0415
 
     w = sw.SystemStatsWidget(lambda: GpuUsage(42, vram_used_mb=4096, vram_total_mb=8192))
     qtbot.addWidget(w)
@@ -554,7 +554,7 @@ def test_stats_widget_creates_the_gpu_rows_when_the_first_reading_failed(
     Then   the GPU and VRAM rows appear then, not only when the first reading succeeded
     """
     from teachers_teammate.gui import _stats_widget as sw  # noqa: PLC0415
-    from teachers_teammate.infrastructure.gpu_detector import GpuUsage  # noqa: PLC0415
+    from teachers_teammate.domain.model_catalog import GpuUsage  # noqa: PLC0415
 
     readings: list[GpuUsage] = []
 
@@ -581,7 +581,7 @@ def test_stats_widget_reads_the_card_off_the_gui_thread(qtbot, monkeypatch) -> N
     import threading  # noqa: PLC0415
 
     from teachers_teammate.gui import _stats_widget as sw  # noqa: PLC0415
-    from teachers_teammate.infrastructure.gpu_detector import GpuUsage  # noqa: PLC0415
+    from teachers_teammate.domain.model_catalog import GpuUsage  # noqa: PLC0415
 
     gui_thread = threading.get_ident()
     release = threading.Event()
@@ -612,7 +612,7 @@ def test_stats_widget_keeps_the_last_reading_when_the_driver_skips_one(qtbot, mo
     Then   the last value stays on the gauge instead of an error
     """
     from teachers_teammate.gui import _stats_widget as sw  # noqa: PLC0415
-    from teachers_teammate.infrastructure.gpu_detector import GpuUsage  # noqa: PLC0415
+    from teachers_teammate.domain.model_catalog import GpuUsage  # noqa: PLC0415
 
     readings = [GpuUsage(42, vram_used_mb=4096, vram_total_mb=8192)]
 

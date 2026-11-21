@@ -17,7 +17,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-BUDGET = 67
+BUDGET = 63
 """How many ``# noqa: PLC0415`` suppressions ``teachers_teammate/application/`` may carry."""
 
 PACKAGE = "teachers_teammate"

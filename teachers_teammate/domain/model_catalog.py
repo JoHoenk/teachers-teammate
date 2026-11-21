@@ -1320,6 +1320,16 @@ def choose_profile(
 
 
 @dataclass
+class GpuInfo:
+    """One graphics card of this computer, as detection found it."""
+
+    vendor: str  # "nvidia" or "amd"
+    name: str
+    #: Dedicated graphics memory in MB, or None when it could not be read.
+    vram_mb: int | None = None
+
+
+@dataclass
 class GpuUsage:
     """How busy one graphics card is right now, and how much of its memory it uses."""
 

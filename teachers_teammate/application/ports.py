@@ -20,9 +20,8 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from ..domain.anonymization import AnonymizerConfig
-    from ..domain.model_catalog import GpuUsage
+    from ..domain.model_catalog import GpuInfo, GpuUsage
     from ..domain.ollama_discovery import WaitDetail
-    from ..infrastructure.gpu_detector import GpuInfo
     from ..infrastructure.ollama_utils import ServerActivity
     from ..interfaces import Anonymizer
 

@@ -25,8 +25,6 @@ import subprocess
 import sys
 from typing import TYPE_CHECKING
 
-from ..domain.ollama_discovery import OLLAMA_DOWNLOAD_URL as OLLAMA_DOWNLOAD_URL  # noqa: PLC0414
-
 if TYPE_CHECKING:
     from collections.abc import Iterator
 

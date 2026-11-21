@@ -44,7 +44,6 @@ from PySide6.QtWidgets import (
 import qdarkstyle
 
 from .. import __version__ as _APP_VERSION
-from ..application.addons import PRIVACY_ADDON
 from ..application.check_document import CheckDocument
 from ..application.commands import WorkNotSavedError
 from ..application.composition import (
@@ -54,14 +53,14 @@ from ..application.composition import (
     start_diagnostics,
 )
 from ..application.documents import WorkedOn
-from ..application.export import NO_TEXT_MESSAGE, DocxExport
+from ..application.export import DocxExport, NothingToExport, WouldOverwriteInput
 from ..application.ollama_server import OllamaServerService
 from ..application.queue import StageState
 from ..application.run import IssueKind, RequirementIssue, RunPreflight
 from ..application.sent_text import SentTexts
 from ..config import DEFAULTS, Config, OcrConfig, dump_config_file, load_config_file
 from ..domain.data_location import STAGE_CORRECTION, DataFlow
-from ..domain.local_models import PAGE_MODELS_ADDON_ID, READER_ADDON_ID
+from ..domain.local_models import PAGE_MODELS_ADDON_ID, PRIVACY_ADDON_ID, READER_ADDON_ID
 from ..domain.model_catalog import HardwareDetection, short_model_name
 from ..domain.ollama_discovery import (
     OLLAMA_DOWNLOAD_URL,
@@ -169,6 +168,15 @@ def _debounce_timer(parent: QWidget, interval_ms: int, slot: Callable[[], None])
     timer.setInterval(interval_ms)
     timer.timeout.connect(slot)
     return timer
+
+
+def _export_failure(name: str, exc: Exception) -> str:
+    """Return the line that tells the teacher why *name* could not be exported."""
+    if isinstance(exc, NothingToExport):
+        return dlg.export_no_text(name)
+    if isinstance(exc, WouldOverwriteInput):
+        return dlg.export_would_overwrite_input(name, exc.target.name)
+    return f"{name}: {exc}"
 
 
 def _spacy_problem(exc: BaseException) -> str | None:
@@ -1970,7 +1978,7 @@ class MainWindow(QMainWindow):
                 )
                 self._log.append_text(f"DOCX saved: {out_path}\n")
             except Exception as exc:  # noqa: BLE001  # python-docx/PIL errors vary; collect per-file and continue the batch
-                errors.append(f"{Path(source_id).name}: {exc}")
+                errors.append(_export_failure(Path(source_id).name, exc))
 
         if errors:
             _dialogs.notify(self, dlg.word_export_failed(errors))
@@ -1997,7 +2005,7 @@ class MainWindow(QMainWindow):
             # teacher's transcription where they fixed or checked it.
             view = service.documents.load_view(config, Path(source_id))
             if view is None or not view.raw_text.strip():
-                errors.append(f"{Path(source_id).name}: {NO_TEXT_MESSAGE}")
+                errors.append(dlg.export_no_text(Path(source_id).name))
             else:
                 jobs.append((Path(source_id), out_path))
         if not jobs:
@@ -2024,7 +2032,7 @@ class MainWindow(QMainWindow):
                     )
                     written.append(out_path)
                 except Exception as exc:  # noqa: BLE001  # NER/IO errors vary; collect per-file and continue the batch
-                    failed.append(f"{source.name}: {exc}")
+                    failed.append(_export_failure(source.name, exc))
             return _TextExportOutcome(written, failed)
 
         def done(result: object, error: BaseException | None) -> None:
@@ -3327,7 +3335,7 @@ class MainWindow(QMainWindow):
             self.packages_changed.emit()
 
     def _on_addon_installed(self, addon: str) -> None:
-        if addon == PRIVACY_ADDON:
+        if addon == PRIVACY_ADDON_ID:
             self.packages_changed.emit()  # spaCy may be available now
             _dialogs.notify(self._dialog_parent(), dlg.privacy_addon_installed())
         elif addon == READER_ADDON_ID:

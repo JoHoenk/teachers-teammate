@@ -10,7 +10,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from teachers_teammate.application.anonymization import AnonymizationService
-from teachers_teammate.infrastructure.anonymizer import AnonymizerConfig
+from teachers_teammate.domain.anonymization import AnonymizerConfig
 from teachers_teammate.infrastructure.spacy_models import SpacyModels
 from tests.conftest import make_config
 

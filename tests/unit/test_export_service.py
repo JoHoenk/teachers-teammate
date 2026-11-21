@@ -8,7 +8,11 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from teachers_teammate.application.composition import AppServices, build_app_services
-from teachers_teammate.application.export import ExportService
+from teachers_teammate.application.export import (
+    ExportService,
+    NothingToExport,
+    WouldOverwriteInput,
+)
 from teachers_teammate.domain.anonymization import AnonymizerConfig
 from teachers_teammate.domain.teacher_work import text_identity
 from teachers_teammate.infrastructure.state_repository import (
@@ -195,11 +199,11 @@ def test_export_docx_refuses_a_document_without_text(tmp_path: Path) -> None:
     """
     Given  a document the app has no text for
     When   export_docx() is called
-    Then   a ValueError says so instead of writing an empty file
+    Then   NothingToExport is raised instead of writing an empty file
     """
     services = _services(StateRepository(tmp_path / "state"))
 
-    with pytest.raises(ValueError, match="No OCR text"):
+    with pytest.raises(NothingToExport):
         services.export.export_docx(
             make_config(tmp_path), tmp_path / "doc.png", tmp_path / "doc.docx"
         )
@@ -294,12 +298,12 @@ def test_export_text_refuses_to_overwrite_the_source(tmp_path: Path) -> None:
     """
     Given  a .txt input document
     When   export_text() is asked to write to the source file itself
-    Then   a ValueError is raised and the source keeps its content
+    Then   WouldOverwriteInput is raised and the source keeps its content
     """
     source = tmp_path / "essay.txt"
     source.write_text("original", encoding="utf-8")
 
-    with pytest.raises(ValueError, match="input document"):
+    with pytest.raises(WouldOverwriteInput):
         _services().export.export_text(make_config(tmp_path), source, source)
 
     assert source.read_text(encoding="utf-8") == "original"
@@ -310,12 +314,12 @@ def test_export_text_refuses_to_overwrite_another_input_document(tmp_path: Path)
     """
     Given  scan.png and scan.txt are both inputs of the same run
     When   export_text() for scan.png targets scan.txt, with scan.txt listed as protected
-    Then   a ValueError is raised and scan.txt keeps its content
+    Then   WouldOverwriteInput is raised and scan.txt keeps its content
     """
     sibling = tmp_path / "scan.txt"
     sibling.write_text("original", encoding="utf-8")
 
-    with pytest.raises(ValueError, match="input document"):
+    with pytest.raises(WouldOverwriteInput):
         _services().export.export_text(
             make_config(tmp_path),
             tmp_path / "scan.png",

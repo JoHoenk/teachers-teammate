@@ -154,6 +154,9 @@ READER_MODELS: tuple[LocalModel, ...] = (PPOCR_SMALL_DET, PPOCR_SMALL_REC)
 READER_MODEL_NAME = "PP-OCRv6 small"
 """The reader's model as the summary rows name it."""
 
+PRIVACY_ADDON_ID = "privacy"
+"""The add-on of the personal-information detection (spaCy and its name models)."""
+
 READER_ADDON_ID = "reader"
 """What the "installed" signals of the GUI call the built-in reader (the add-on id)."""
 

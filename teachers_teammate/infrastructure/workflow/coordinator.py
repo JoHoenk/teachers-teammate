@@ -9,7 +9,8 @@ import threading
 
 from ...domain.proofreading.review import align, review_summary
 from ...domain.run_summary import FileOutcome, FileStatus, RunSummary
-from ..reporting import OnFileDoneFn, OnFileStartedFn, Reporter, StdoutReporter
+from ...interfaces import OnFileDoneFn, OnFileStartedFn, Reporter
+from ..reporting import StdoutReporter
 from .file_processor import ProcessingResult
 
 _logger = logging.getLogger(__name__)

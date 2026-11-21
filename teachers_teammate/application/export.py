@@ -20,8 +20,17 @@ from .document_view import DocumentStateView
 from .documents import DocumentQueries
 from .formatting import TextFormatter
 
-NO_TEXT_MESSAGE = "No OCR text — run the pipeline first."
-"""What the teacher reads when a document has nothing to export yet."""
+
+class NothingToExport(ValueError):
+    """The document has no text to export yet."""
+
+
+class WouldOverwriteInput(ValueError):
+    """The export's target is an input document, which the export would replace."""
+
+    def __init__(self, target: Path) -> None:
+        super().__init__(f"{target.name} is an input document")
+        self.target = target
 
 
 @dataclass(frozen=True)
@@ -63,13 +72,13 @@ class ExportService:
         texts behind them.  *options* selects the layout and the language of the headings.
 
         Raises:
-            ValueError: the document has no text to export.
+            NothingToExport: the document has no text to export.
         """
         from ..infrastructure.docx_builder import DocxDocumentCreator  # noqa: PLC0415
 
         view = self._documents.load_view(config, source)
         if view is None or not view.raw_text.strip():
-            raise ValueError(NO_TEXT_MESSAGE)
+            raise NothingToExport(source.name)
         chosen = options or DocxExport()
         out_path.parent.mkdir(parents=True, exist_ok=True)
         creator = DocxDocumentCreator(
@@ -138,20 +147,18 @@ class ExportService:
                 the same export); *source* itself is always protected.
 
         Raises:
-            ValueError: the document has no text, or *out_path* is *source* or one of
-                *protected* (an input document).
+            NothingToExport: the document has no text.
+            WouldOverwriteInput: *out_path* is *source* or one of *protected* (an input
+                document).
             ImportError: *anonymize* is set and spacy is not installed.
             OSError: the file cannot be written, or a required spacy model is not downloaded.
         """
         target = out_path.resolve()
         if target == source.resolve() or target in {p.resolve() for p in protected}:
-            raise ValueError(
-                f"{out_path.name} is an input document and would be overwritten; "
-                "choose another name or folder."
-            )
+            raise WouldOverwriteInput(out_path)
         view = self._documents.load_view(config, source)
         if view is None or not view.raw_text.strip():
-            raise ValueError(NO_TEXT_MESSAGE)
+            raise NothingToExport(source.name)
         text = self.text_for_copy(
             view,
             anonymize=anonymize,

@@ -11,7 +11,7 @@ import pytest
 
 from ._service_stubs import services_of
 
-from teachers_teammate.application.addons import PRIVACY_ADDON
+from teachers_teammate.domain.local_models import PRIVACY_ADDON_ID
 from teachers_teammate.exceptions import ModelDownloadCancelledError, ModelDownloadError
 from teachers_teammate.gui import _addon_installer_dialog as mod
 from teachers_teammate.gui._addon_installer_dialog import (
@@ -162,7 +162,7 @@ def _all_label_texts(dlg) -> list[str]:
 def test_install_thread_run_emits_finished_ok() -> None:
     """Given a successful install / When _InstallThread.run executes / Then finished_ok is emitted."""
     service = MagicMock()
-    thread = mod._InstallThread(services_of(service), PRIVACY_ADDON, Path("/tmp/pkg"))
+    thread = mod._InstallThread(services_of(service), PRIVACY_ADDON_ID, Path("/tmp/pkg"))
     ok = MagicMock()
     thread.finished_ok.connect(ok)
 
@@ -177,7 +177,7 @@ def test_install_thread_run_emits_finished_err_on_failure() -> None:
     """Given install raises / When _InstallThread.run executes / Then finished_err carries the message."""
     service = MagicMock()
     service.install_addon.side_effect = RuntimeError("pip failed")
-    thread = mod._InstallThread(services_of(service), PRIVACY_ADDON, Path("/tmp/pkg"))
+    thread = mod._InstallThread(services_of(service), PRIVACY_ADDON_ID, Path("/tmp/pkg"))
     err: list[str] = []
     thread.finished_err.connect(err.append)
 

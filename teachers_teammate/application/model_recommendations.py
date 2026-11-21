@@ -30,6 +30,7 @@ from ..domain.model_catalog import (
     HARDWARE_PROFILES,
     OLLAMA_CATALOG,
     DetectionReason,
+    GpuInfo,
     GpuUsage,
     HardwareDetection,
     HardwareProfile,
@@ -47,7 +48,6 @@ from ..domain.model_catalog import (
     uses_from_capabilities,
 )
 from ..exceptions import OllamaConnectionError
-from ..infrastructure.gpu_detector import GpuInfo
 from .context_choice import ContextChoice, context_choice
 from .ports import HardwareProbe
 

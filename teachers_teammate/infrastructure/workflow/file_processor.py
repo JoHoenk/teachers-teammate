@@ -40,10 +40,19 @@ from ...exceptions import (
     RunStoppedError,
     stop_requested,
 )
-from ...interfaces import AnonymizationMap, Anonymizer, Corrector, DocumentCreator, Evaluator
+from ...interfaces import (
+    AnonymizationMap,
+    Anonymizer,
+    Corrector,
+    DocumentCreator,
+    Evaluator,
+    OnOcrDoneFn,
+    OnStageStartedFn,
+    Reporter,
+)
 from ..ocr_formats import plain_text_of
 from ..proofreading.chunking import proofreading_pieces
-from ..reporting import OnOcrDoneFn, OnStageStartedFn, Reporter, StdoutReporter
+from ..reporting import StdoutReporter
 from ..run_stats import RunStatsCollector
 from ..state_repository import machine_texts
 from .cache_service import CacheContext, CacheReconciliationService

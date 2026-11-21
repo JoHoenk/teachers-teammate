@@ -18,6 +18,7 @@ from teachers_teammate.infrastructure.gpu_detector import SystemHardwareProbe
 from teachers_teammate.config import DEFAULTS
 from teachers_teammate.domain.model_catalog import (
     DetectionReason,
+    GpuInfo,
     HardwareDetection,
     HardwareProfile,
     ModelCategory,
@@ -86,7 +87,7 @@ def test_detect_hardware_probes_this_computer_once(monkeypatch) -> None:
 
     def fake_detect_gpus():
         calls.append("gpu")
-        return [gpu_detector.GpuInfo("nvidia", "RTX 4060", 8188)]
+        return [GpuInfo("nvidia", "RTX 4060", 8188)]
 
     monkeypatch.setattr(gpu_detector, "detect_gpus", fake_detect_gpus)
     monkeypatch.setattr(gpu_detector, "detect_apple_unified_memory_gb", lambda: None)
@@ -138,9 +139,7 @@ def test_resolve_hardware_profile_unknown_setting_treated_as_auto(monkeypatch) -
     """
     from teachers_teammate.infrastructure import gpu_detector  # noqa: PLC0415
 
-    monkeypatch.setattr(
-        gpu_detector, "detect_gpus", lambda: [gpu_detector.GpuInfo("nvidia", "RTX 4060", 8188)]
-    )
+    monkeypatch.setattr(gpu_detector, "detect_gpus", lambda: [GpuInfo("nvidia", "RTX 4060", 8188)])
     monkeypatch.setattr(gpu_detector, "detect_apple_unified_memory_gb", lambda: None)
 
     detection = _service().resolve_hardware_profile("bogus", _URL)
@@ -157,9 +156,7 @@ def test_detect_hardware_reports_the_computers_memory_from_the_probe(monkeypatch
     """
     from teachers_teammate.infrastructure import gpu_detector  # noqa: PLC0415
 
-    monkeypatch.setattr(
-        gpu_detector, "detect_gpus", lambda: [gpu_detector.GpuInfo("nvidia", "RTX 3080", 16384)]
-    )
+    monkeypatch.setattr(gpu_detector, "detect_gpus", lambda: [GpuInfo("nvidia", "RTX 3080", 16384)])
     monkeypatch.setattr(gpu_detector, "detect_apple_unified_memory_gb", lambda: None)
     monkeypatch.setattr(gpu_detector, "detect_system_memory_gb", lambda: 32.0)
     service = _service()
@@ -229,9 +226,7 @@ def test_hardware_detection_is_logged(monkeypatch, caplog) -> None:
     """
     from teachers_teammate.infrastructure import gpu_detector  # noqa: PLC0415
 
-    monkeypatch.setattr(
-        gpu_detector, "detect_gpus", lambda: [gpu_detector.GpuInfo("nvidia", "RTX 3080", None)]
-    )
+    monkeypatch.setattr(gpu_detector, "detect_gpus", lambda: [GpuInfo("nvidia", "RTX 3080", None)])
     monkeypatch.setattr(gpu_detector, "detect_apple_unified_memory_gb", lambda: None)
     monkeypatch.setattr(gpu_detector, "detect_system_memory_gb", lambda: 16.0)
 
@@ -256,7 +251,7 @@ def test_detect_gpus_is_served_from_the_shared_probe(monkeypatch) -> None:
 
     def fake_detect_gpus():
         calls.append("gpu")
-        return [gpu_detector.GpuInfo("nvidia", "RTX 4060", 8188)]
+        return [GpuInfo("nvidia", "RTX 4060", 8188)]
 
     monkeypatch.setattr(gpu_detector, "detect_gpus", fake_detect_gpus)
     monkeypatch.setattr(gpu_detector, "detect_apple_unified_memory_gb", lambda: None)

@@ -47,8 +47,7 @@ from teachers_teammate.domain.model_catalog import (
     rate_model,
 )
 from teachers_teammate.domain.model_listing import ModelListing
-from teachers_teammate.domain.performance_estimate import TimeRange
-from teachers_teammate.infrastructure.performance_probe import ProbeResult
+from teachers_teammate.domain.performance_estimate import ProbeResult, TimeRange
 
 
 def services_of(stub: object) -> AppServices:

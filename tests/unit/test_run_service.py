@@ -479,11 +479,9 @@ def test_the_preflight_says_when_another_model_is_in_the_way(tmp_path: Path, mon
            waits — and nothing when the run's own model is there, or the server is another
            computer's
     """
-    from teachers_teammate.infrastructure.ollama_utils import (  # noqa: PLC0415
-        LoadedModel,
-        ServerActivity,
-        WaitKind,
-    )
+    from teachers_teammate.domain.model_catalog import LoadedModel  # noqa: PLC0415
+    from teachers_teammate.domain.ollama_discovery import WaitKind  # noqa: PLC0415
+    from teachers_teammate.infrastructure.ollama_utils import ServerActivity  # noqa: PLC0415
 
     svc = _make_svc()
     cfg = _ollama_config(tmp_path, ocr_engine="ppocr")

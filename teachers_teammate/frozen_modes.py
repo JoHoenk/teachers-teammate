@@ -595,8 +595,8 @@ _ADDON_LOG_TAIL = 200
 
 def _install_addons(target: Path, log: list[str]) -> list[str]:
     """Install every add-on and the check language's spaCy model into *target*; return failures."""
+    from teachers_teammate.domain.name_models import spacy_model_for  # noqa: PLC0415
     from teachers_teammate.infrastructure import addon_manager  # noqa: PLC0415
-    from teachers_teammate.infrastructure.spacy_models import spacy_model_for  # noqa: PLC0415
 
     problems: list[str] = []
     for addon in addon_manager.addon_requirements():

@@ -10,10 +10,7 @@ import importlib
 import importlib.util
 from typing import TYPE_CHECKING
 
-from ..domain.name_models import FALLBACK_SPACY_MODEL as FALLBACK_SPACY_MODEL  # noqa: PLC0414
 from ..domain.name_models import SPACY_MODEL_DOWNLOAD_URL, SPACY_MODEL_PINS
-from ..domain.name_models import SPACY_MODELS as SPACY_MODELS  # noqa: PLC0414
-from ..domain.name_models import spacy_model_for as spacy_model_for  # noqa: PLC0414
 
 if TYPE_CHECKING:
     from ..domain.anonymization import AnonymizerConfig

@@ -11,11 +11,6 @@ from datetime import date
 import os
 import threading
 
-from teachers_teammate.infrastructure.spacy_models import (
-    FALLBACK_SPACY_MODEL,
-    SPACY_MODELS,
-    spacy_model_for,
-)
 from teachers_teammate.application.data_flow import llm_location
 from teachers_teammate.application.ollama_server import OllamaStatus
 from teachers_teammate.application.setup_plan import (
@@ -33,6 +28,11 @@ from teachers_teammate.domain.model_catalog import (
     best_model,
 )
 from teachers_teammate.domain.model_listing import ListedModel, ModelListing
+from teachers_teammate.domain.name_models import (
+    FALLBACK_SPACY_MODEL,
+    SPACY_MODELS,
+    spacy_model_for,
+)
 from teachers_teammate.domain.ollama_discovery import DiscoveryScope, OllamaState
 from teachers_teammate.domain.performance_estimate import TimeRange
 

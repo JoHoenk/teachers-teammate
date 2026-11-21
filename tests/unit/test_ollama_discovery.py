@@ -153,6 +153,8 @@ def test_private_hosts_are_recognised(host: str) -> None:
         "ollama.example.com",
         "ollama.myschool.de",
         "api.ollama.com",
+        "16843009",
+        "0x01010101",
         "",
     ],
 )

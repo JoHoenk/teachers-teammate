@@ -9,18 +9,15 @@ from pathlib import Path
 import pytest
 
 from teachers_teammate.config import DEFAULTS
+from teachers_teammate.domain.anonymization import AnonymizerConfig
 from teachers_teammate.domain.language import LANGUAGES, language_from_locale
-from teachers_teammate.infrastructure.anonymizer import (
-    AnonymizerConfig,
-    resolve_anonymizer_config,
-)
-from teachers_teammate.infrastructure.spacy_models import (
+from teachers_teammate.domain.name_models import (
     FALLBACK_SPACY_MODEL,
-    SPACY_MODEL_PINS,
     SPACY_MODELS,
     spacy_model_for,
-    spacy_model_url,
 )
+from teachers_teammate.infrastructure.anonymizer import resolve_anonymizer_config
+from teachers_teammate.infrastructure.spacy_models import SPACY_MODEL_PINS, spacy_model_url
 from teachers_teammate.infrastructure.system_locale import system_language, system_locale_code
 from teachers_teammate.settings_schema import SECONDARY_MODEL_AUTO, SECONDARY_MODEL_NONE
 from tests.conftest import make_config

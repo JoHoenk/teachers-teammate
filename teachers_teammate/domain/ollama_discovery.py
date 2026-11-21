@@ -18,6 +18,7 @@ from collections.abc import Collection, Iterable, Mapping
 from dataclasses import dataclass
 from enum import StrEnum
 import ipaddress
+import re
 from urllib.parse import urlparse
 
 #: The port Ollama listens on unless its owner changed it.
@@ -48,6 +49,9 @@ _PRIVATE_NETWORKS = tuple(
         "fe80::/10",
     )
 )
+#: A host that is only digits (``16843009``) or ``0x`` and hex digits: the operating system reads it
+#: as an IPv4 address, so it is not a single-label name.
+_NUMBER_HOST = re.compile(r"[0-9]+|0x[0-9a-f]+")
 #: Name suffixes only a local network hands out: mDNS, the router defaults (FRITZ!Box), the
 #: reserved internal ones and the ones an office or school network commonly uses.  A school's own
 #: domain (``ollama.myschool.de``) cannot be told from a public name; its address can.
@@ -261,7 +265,8 @@ def is_private_host(host: str) -> bool:
     True for the private and link-local ranges of IPv4 and IPv6, for loopback, for the names
     a local network hands out (``nas.local``, ``nas.lan``, ``nas.home.arpa``) and for a
     single-label name (``nas``), which no public name server resolves.  False for everything
-    else, including a public address and any other name: the name is not looked up (that would
+    else, including a public address, a number that the operating system reads as an IPv4
+    address (``16843009``, ``0x01010101``) and any other name: the name is not looked up (that would
     tell a name server where the teacher's server is), so a name under a school's own domain
     counts as public until the teacher enters its address.
 
@@ -277,7 +282,9 @@ def is_private_host(host: str) -> bool:
     try:
         address = ipaddress.ip_address(name)
     except ValueError:
-        return name.endswith(_PRIVATE_NAME_SUFFIXES) or "." not in name
+        if name.endswith(_PRIVATE_NAME_SUFFIXES):
+            return True
+        return "." not in name and _NUMBER_HOST.fullmatch(name) is None
     if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped is not None:
         address = address.ipv4_mapped
     return any(address in network for network in _PRIVATE_NETWORKS)

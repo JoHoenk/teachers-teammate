@@ -14,7 +14,11 @@ from pathlib import Path
 
 from ..config import DEFAULTS, Config
 from ..domain.context_budget import RunWindows
+from ..domain.correction_prompts import notes_block
 from ..domain.formatted_text import TextFormat, normalize_text_format
+from ..domain.freshness import correction_kept_over_settings
+from ..domain.notation import with_notation_hint
+from ..domain.teacher_work import current_texts
 from ..infrastructure.anonymizer import anonymizer_config_from
 from ..infrastructure.onnx.store import ModelStore
 from ..infrastructure.state_repository import (
@@ -184,8 +188,6 @@ class DocumentQueries:
         one it replaces nothing, so no stored proofreading needs a question and corrections that
         belong to no stored answer are not worth one.
         """
-        from ..domain.freshness import correction_kept_over_settings  # noqa: PLC0415
-        from ..domain.teacher_work import current_texts  # noqa: PLC0415
 
         store = self._state_store(config)
         expected_correction_hash = compute_correction_config_hash(config, self._windows_for(config))
@@ -275,6 +277,7 @@ class DocumentQueries:
         ``None`` when personal-info removal is off: nothing is hidden then, so the dialog
         must show the text as written.
         """
+
         if not config.anonymization_enabled:
             return None
         anon_config = anonymizer_config_from(config)
@@ -287,7 +290,6 @@ class DocumentQueries:
         One heading per step that runs, then the teacher's notes when there are any: the
         prompts are fixed, so this is the whole of what the model is told.
         """
-        from ..domain.correction_prompts import notes_block  # noqa: PLC0415
 
         parts = [f"{title}\n\n{prompt}" for title, prompt in proofreading_prompts(config)]
         notes = notes_block(config.correction_notes).strip()
@@ -297,7 +299,6 @@ class DocumentQueries:
 
     def _sent_evaluation_prompt(self, config: Config, text_format: TextFormat) -> str:
         """Return the instructions the evaluator sends, or ``""`` when it sends none."""
-        from ..domain.notation import with_notation_hint  # noqa: PLC0415
 
         prompt = config.evaluate_prompt or DEFAULTS["evaluate_prompt"]
         return with_notation_hint(prompt, text_format, task="evaluation")

@@ -45,15 +45,12 @@ import sys
 import threading
 import time
 
-from ..exceptions import AddonInstallError as AddonInstallError  # noqa: PLC0414
-from ..exceptions import AddonUpdateError as AddonUpdateError  # noqa: PLC0414
-from ..exceptions import InstallFailure as InstallFailure  # noqa: PLC0414
+from ..domain.local_models import PRIVACY_ADDON_ID
+from ..exceptions import AddonInstallError, AddonUpdateError, InstallFailure
 from .spacy_models import spacy_model_url
 from .subprocess_utils import no_console_window_kwargs
 
 _logger = logging.getLogger(__name__)
-
-ADDON_PRIVACY = "privacy"
 
 #: pip runs one at a time: two installs into the same ``--target`` directory would
 #: corrupt each other.
@@ -95,7 +92,7 @@ _PIP_NO_CACHE = "--no-cache-dir"
 _PIP_NO_VERSION_CHECK = "--disable-pip-version-check"
 
 _ADDON_PACKAGES: dict[str, list[str]] = {
-    ADDON_PRIVACY: ["spacy>=3.7"],
+    PRIVACY_ADDON_ID: ["spacy>=3.7"],
     # LangChain packages — not bundled by PyInstaller; installed at runtime via Add-ons.
     ADDON_LLM_CORE: ["langchain-core>=1.4.7"],
     ADDON_LLM_OLLAMA: ["langchain-ollama>=0.2"],
@@ -108,7 +105,7 @@ _ADDON_PACKAGES: dict[str, list[str]] = {
 
 # Top-level module name used to check importability for each addon.
 _ADDON_CHECK_MODULE: dict[str, str] = {
-    ADDON_PRIVACY: "spacy",
+    PRIVACY_ADDON_ID: "spacy",
     ADDON_LLM_CORE: "langchain_core",
     ADDON_LLM_OLLAMA: "langchain_ollama",
     ADDON_LLM_OPENAI: "langchain_openai",
@@ -121,7 +118,7 @@ _ADDON_CHECK_MODULE: dict[str, str] = {
 # sys.modules key prefixes to evict after a successful install so that
 # importlib.util.find_spec() performs a fresh filesystem probe.
 _ADDON_STALE_PREFIXES: dict[str, list[str]] = {
-    ADDON_PRIVACY: ["spacy"],
+    PRIVACY_ADDON_ID: ["spacy"],
     ADDON_LLM_CORE: ["langchain_core"],
     ADDON_LLM_OLLAMA: ["langchain_ollama"],
     ADDON_LLM_OPENAI: ["langchain_openai"],

@@ -24,17 +24,12 @@ import re
 import threading
 from typing import TYPE_CHECKING
 
-from ..domain.anonymization import (
-    DEFAULT_PATTERNS as DEFAULT_PATTERNS,  # noqa: PLC0414
-)
-from ..domain.anonymization import AnonymizerConfig as AnonymizerConfig  # noqa: PLC0414
-from ..domain.anonymization import resolve_patterns as resolve_patterns  # noqa: PLC0414
-from ..domain.anonymization import restore
+from ..domain.anonymization import AnonymizerConfig, resolve_patterns, restore
 from ..domain.formatted_text import INLINE_TAG_ALTERNATION
+from ..domain.name_models import spacy_model_for
 from ..interfaces import AnonymizationMap, Anonymizer
 from ..settings_schema import SECONDARY_MODEL_AUTO, SECONDARY_MODEL_NONE
 from . import system_locale
-from .spacy_models import spacy_model_for
 
 _logger = logging.getLogger(__name__)
 

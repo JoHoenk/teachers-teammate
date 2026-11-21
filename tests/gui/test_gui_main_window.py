@@ -386,7 +386,7 @@ def test_main_window_stop_is_a_two_step_button(main_window) -> None:
     worker = _DummyWorker(None)
     worker.start()
     main_window._worker = worker
-    main_window._set_stop_stage(main_window_module._StopStage.RUNNING)
+    main_window._set_stop_stage(main_window_module.StopStage.RUNNING)
     assert main_window._stop_btn.text() == "Stop"
 
     main_window._on_stop()
@@ -413,7 +413,7 @@ def test_main_window_progress_says_it_stops_after_this_document(main_window) -> 
     worker = _DummyWorker(None)
     worker.start()
     main_window._worker = worker
-    main_window._set_stop_stage(main_window_module._StopStage.RUNNING)
+    main_window._set_stop_stage(main_window_module.StopStage.RUNNING)
     main_window._on_stop()
 
     main_window._on_stage_started("/tmp/a.png", "a.png", "ocr", 1, 3)
@@ -498,7 +498,7 @@ def test_main_window_finished_updates_progress_and_tray(main_window, monkeypatch
     When   the run finishes with a successful summary
     Then   buttons/progress are reset and a tray notification is sent
     """
-    main_window._result_names = ["a.png"]
+    main_window._run_session.names = ["a.png"]
     main_window._progress.setRange(0, 2)
     seen: list[str] = []
     monkeypatch.setattr(main_window._tray, "showMessage", lambda *_args: seen.append("tray"))
@@ -523,7 +523,7 @@ def test_main_window_a_stopped_run_is_announced_as_stopped_not_as_an_error(
     Then   the progress bar and the notification say "Stopped" with the counts, the bar is not
            filled, and nothing says "error"
     """
-    main_window._result_names = ["a.png", "b.png"]
+    main_window._run_session.names = ["a.png", "b.png"]
     main_window._progress.setRange(0, 8)
     main_window._progress.setValue(3)
     messages: list[str] = []
@@ -956,10 +956,10 @@ def test_a_failed_load_does_not_leave_the_open_document_locked(
     """
     [a] = stored("a.png")
     main_window._open_check(a)
-    main_window._run_pending = {a}
+    main_window._run_session.pending = {a}
     main_window._apply_lock()
     assert main_window._check.body.banner.text == txt.WAITING_FOR_RUN
-    main_window._run_pending = set()
+    main_window._run_session.pending = set()
     monkeypatch.setattr(
         main_window._app_service.documents, "check_document", lambda *_a, **_k: None
     )
@@ -1150,7 +1150,7 @@ def test_main_window_on_finished_shows_error_format(main_window, monkeypatch) ->
     """
     seen: list[str] = []
     monkeypatch.setattr(main_window._tray, "showMessage", lambda *_args: seen.append("tray"))
-    main_window._result_names = []
+    main_window._run_session.names = []
     main_window._on_run_finished(RunSummary(failed=("a.png",)))
     assert "error" in main_window._progress.format().lower()
 
@@ -1236,7 +1236,7 @@ def test_main_window_on_file_started_updates_progress(main_window) -> None:
     When   _on_file_started is called for file 2 of 3
     Then   progress value advances and format shows file index
     """
-    main_window._steps_per_file = 1
+    main_window._run_session.steps_per_file = 1
     main_window._progress.setRange(0, 3)
     main_window._results_table.set_queue(
         [_queue_row("a.png"), _queue_row("b.png"), _queue_row("c.png")]
@@ -1262,9 +1262,9 @@ def test_the_bar_and_the_time_left_follow_the_clock(main_window, monkeypatch) ->
     clock = {"now": 1000.0}
     monkeypatch.setattr(main_window_module.time, "monotonic", lambda: clock["now"])
     monkeypatch.setattr(main_window, "_run_in_progress", lambda: True)
-    main_window._pace = RunPace(TimeRange(100.0, 100.0))
-    main_window._pace.set_files(1)
-    main_window._pace.set_pages(1)
+    main_window._run_session.pace = RunPace(TimeRange(100.0, 100.0))
+    main_window._run_session.pace.set_files(1)
+    main_window._run_session.pace.set_pages(1)
     main_window._results_table.set_queue([_queue_row("a.png")])
     main_window._progress.setRange(0, 2)
 
@@ -1309,9 +1309,9 @@ def test_the_check_strip_counts_down_with_the_bar(main_window, monkeypatch, stor
     monkeypatch.setattr(main_window_module.time, "monotonic", lambda: clock["now"])
     monkeypatch.setattr(main_window, "_run_in_progress", lambda: True)
     main_window._start_worker(make_config(Path("/tmp")), [a])
-    main_window._pace = RunPace(TimeRange(100.0, 100.0))
-    main_window._pace.set_files(1)
-    main_window._pace.set_pages(1)
+    main_window._run_session.pace = RunPace(TimeRange(100.0, 100.0))
+    main_window._run_session.pace.set_files(1)
+    main_window._run_session.pace.set_pages(1)
     main_window._on_file_started(a, "a.png", 1, 1)
     main_window._on_stage_started(a, "a.png", "correction", 1, 1)
     strip = main_window._check._run_strip
@@ -1348,25 +1348,25 @@ def test_the_clock_waits_for_the_first_token_of_a_local_model(
     monkeypatch.setattr(main_window_module.time, "monotonic", lambda: clock["now"])
     monkeypatch.setattr(main_window, "_run_in_progress", lambda: True)
     main_window._start_worker(make_config(Path("/tmp")), [a])
-    main_window._run_waits_for_ollama = True
+    main_window._run_session.waits_for_ollama = True
     main_window._on_file_started(a, "a.png", 1, 1)
 
     clock["now"] = 1005.0
     main_window._on_stage_started(a, "a.png", "correction", 1, 1)
 
-    assert main_window._pace._work_started_at is None
+    assert main_window._run_session.pace._work_started_at is None
 
     clock["now"] = 1010.0
     main_window._on_stage_detail(a, WaitDetail(WaitKind.BUSY, "gemma4:e4b", "ministral-3:8b"))
 
     assert "still working with ministral-3:8b" in main_window._progress.format()
     assert "still working with ministral-3:8b" in main_window._check._run_strip.text
-    assert main_window._pace._work_started_at is None
+    assert main_window._run_session.pace._work_started_at is None
 
     clock["now"] = 1020.0
     main_window._on_first_token(a)
 
-    assert main_window._pace._work_started_at == 1020.0
+    assert main_window._run_session.pace._work_started_at == 1020.0
     assert "correcting" in main_window._progress.format()
     assert "still working" not in main_window._check._run_strip.text
 
@@ -1399,7 +1399,7 @@ def test_a_wait_note_of_another_stage_goes_with_the_first_token(
     assert "Loading" not in main_window._progress.format()
     assert "OCR" in main_window._progress.format()
     assert "Loading" not in main_window._check._run_strip.text
-    assert main_window._pace._work_started_at is not None
+    assert main_window._run_session.pace._work_started_at is not None
 
 
 @pytest.mark.gui
@@ -1424,7 +1424,7 @@ def test_a_run_without_a_local_model_starts_its_clock_at_the_stage(
     clock["now"] = 1005.0
     main_window._on_stage_started(a, "a.png", "correction", 1, 1)
 
-    assert main_window._pace._work_started_at == 1005.0
+    assert main_window._run_session.pace._work_started_at == 1005.0
 
 
 @pytest.mark.gui
@@ -1434,7 +1434,7 @@ def test_main_window_on_ocr_done_updates_progress_in_two_step(main_window) -> No
     When   _on_ocr_done is called for file 1 of 2
     Then   progress value advances to 1 and format mentions correcting
     """
-    main_window._steps_per_file = 2
+    main_window._run_session.steps_per_file = 2
     main_window._progress.setRange(0, 4)
     main_window._results_table.set_queue([_queue_row("a.png"), _queue_row("b.png")])
 
@@ -2133,7 +2133,7 @@ def test_a_run_start_locks_the_document_it_redoes_and_keeps_it_open(
 
     assert main_window._current_preview_source_id == a
     assert main_window._tabs.currentIndex() == 0
-    assert main_window._run_pending == {a}
+    assert main_window._run_session.pending == {a}
     assert main_window._check.body.banner.text == txt.WAITING_FOR_RUN
 
 
@@ -2160,7 +2160,7 @@ def test_a_run_started_from_the_check_header_keeps_the_check_tab(
     main_window._on_check_proofread_requested()
 
     assert main_window._tabs.currentIndex() == 1
-    assert main_window._run_pending == {a}
+    assert main_window._run_session.pending == {a}
 
 
 @pytest.mark.gui
@@ -2176,7 +2176,7 @@ def test_a_run_started_from_documents_goes_on_showing_documents_after_a_check_ru
     main_window._open_check(a)
     monkeypatch.setattr(main_window, "_start_pace", lambda *_a, **_kw: None)
     monkeypatch.setattr(main_window, "_save_settings", lambda **_kw: None)
-    main_window._run_from_check = True
+    main_window._run_session.from_check = True
     main_window._start_worker(make_config(Path("/tmp")), [a])
     main_window._tabs.setCurrentIndex(1)
 
@@ -2204,7 +2204,7 @@ def test_a_proofread_request_from_check_during_a_run_is_refused_and_not_remember
     main_window._on_check_proofread_requested()
 
     assert warned == [True]
-    assert main_window._run_from_check is False
+    assert main_window._run_session.from_check is False
 
 
 @pytest.mark.gui
@@ -2341,7 +2341,7 @@ def test_the_redone_document_is_shown_again_when_its_result_arrives(
         )
     )
 
-    assert main_window._run_pending == set()
+    assert main_window._run_session.pending == set()
     assert main_window._tabs.currentIndex() == 0
 
 
@@ -2439,7 +2439,7 @@ def test_the_documents_tab_label_counts_the_run(main_window, monkeypatch, stored
     monkeypatch.setattr(main_window, "_save_settings", lambda **_kw: None)
     main_window._start_worker(make_config(Path("/tmp")), [a, b, c])
 
-    main_window._result_names = ["a.png"]
+    main_window._run_session.names = ["a.png"]
     main_window._update_check_tab()
 
     assert main_window._tabs.tabText(0) == "Documents \u00b7 1 of 3"
@@ -4010,7 +4010,7 @@ def test_ocr_rerun_does_not_run_later_stages(main_window, monkeypatch) -> None:
     assert run_config.correction_enabled is False
     assert run_config.evaluation_enabled is False
     assert run_config.anonymization_enabled is False
-    assert main_window._steps_per_file == 1
+    assert main_window._run_session.steps_per_file == 1
 
 
 @pytest.mark.gui

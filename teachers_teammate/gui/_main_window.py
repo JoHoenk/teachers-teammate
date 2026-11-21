@@ -3,13 +3,12 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
-from enum import Enum
 import logging
 import os
 from pathlib import Path
 import sys
 import time
-from typing import TYPE_CHECKING, Any, ClassVar, Protocol, cast
+from typing import TYPE_CHECKING, Any, Protocol, cast
 
 from PySide6.QtCore import QEvent, QSettings, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import (
@@ -58,7 +57,7 @@ from ..application.sent_text import SentTexts
 from ..config import DEFAULTS, Config, dump_config_file, load_config_file
 from ..domain.data_location import STAGE_CORRECTION, DataFlow
 from ..domain.local_models import PAGE_MODELS_ADDON_ID, PRIVACY_ADDON_ID, READER_ADDON_ID
-from ..domain.model_catalog import HardwareDetection, short_model_name
+from ..domain.model_catalog import HardwareDetection
 from ..domain.ollama_discovery import (
     OLLAMA_DOWNLOAD_URL,
     DiscoveredServer,
@@ -70,11 +69,6 @@ from ..domain.ollama_discovery import (
 from ..domain.performance_estimate import TimeRange
 from ..domain.run_summary import FileStatus, KeepAwakeState, RunSummary
 from ..domain.settings_notice import SettingNotice, SettingNoticeKind
-from ..domain.stages import (
-    PROGRESS_STAGE_CORRECTION,
-    PROGRESS_STAGE_OCR,
-    PROGRESS_STAGE_PREPROCESSING,
-)
 from ..texts import check as check_text
 from ..texts import dialogs as dlg
 from ..texts import privacy
@@ -120,7 +114,19 @@ from ._privacy_settings import (
 from ._pull_manager import PullManager
 from ._readiness_line import ReadinessLine, readiness
 from ._results_table import ResultsTable
-from ._run_status import RunPace, RunProgress, RunTone, describe_run
+from ._run_session import (
+    PROGRESS_RESOLUTION,
+    PROGRESS_TICK_MS,
+    STOP_NOW_TEXT,
+    STOP_NOW_TOOLTIP,
+    STOP_TEXT,
+    STOP_TOOLTIP,
+    STOPPING_NOW_TEXT,
+    STOPPING_SUFFIX,
+    RunSession,
+    StopStage,
+)
+from ._run_status import RunProgress, RunTone, describe_run
 from ._stats_widget import SystemStatsWidget
 from ._system_monitor import SystemMonitorWindow
 from ._types import FileDoneEvent
@@ -162,29 +168,6 @@ def _debounce_timer(parent: QWidget, interval_ms: int, slot: Callable[[], None])
     return timer
 
 
-class _StopStage(Enum):
-    """Where the two-step Stop button is: the first click finishes the document being
-    processed, the second stops at once."""
-
-    IDLE = "idle"
-    RUNNING = "running"
-    AFTER_FILE = "after_file"
-    NOW = "now"
-
-
-STOP_TEXT = "Stop"
-STOP_TOOLTIP = "Finish the document being processed, then stop."
-STOP_NOW_TEXT = "Stop now"
-STOP_NOW_TOOLTIP = (
-    "Stop at once. The document being processed is left unfinished; what is already done "
-    "is kept and reused next time."
-)
-STOPPING_SUFFIX = " — stopping after this document"
-#: How often the bar and the time left follow the clock while a run is going.
-PROGRESS_TICK_MS = 1000
-#: Steps of the bar once it follows the time of the run.
-PROGRESS_RESOLUTION = 1000
-STOPPING_NOW_TEXT = "Stopping…"
 #: How long closing the window waits for a stopping run (milliseconds): enough for a cancelled
 #: Ollama request and a state write, never for the run itself.
 CLOSE_GRACE_MS = 3000
@@ -340,28 +323,13 @@ class MainWindow(QMainWindow):
         self._setup_open = False
 
     def _init_run_state(self) -> None:
-        """Declare what the window knows about a run that is going: stopping, notes, closing."""
-        #: Where the two-step Stop button is (see :class:`_StopStage`).
-        self._stop_stage = _StopStage.IDLE
-        #: The progress text without the "stopping" note (see :meth:`_set_progress_text`).
-        self._progress_base = "Idle"
+        """Declare what the window needs for a run that is going: the clock, the notes, closing."""
         #: Set once the teacher agreed to stop the run and close (File → Quit asks itself).
         self._close_confirmed = False
-        #: How fast the current run is going and how much of it is left (see ``RunPace``).
-        self._pace = RunPace()
-        #: Where the run is at the last tick: the bar and the Check strip both read this.
-        self._progress_snapshot = RunProgress()
-        #: Pages of the files of the current run, by source id; filled in the background.
-        self._run_pages: dict[str, int] = {}
-        #: The bar follows the time of the run (0 to 1000) instead of counting files; it does
-        #: once the pace gives a figure.
-        self._time_driven = False
         #: Moves the bar and counts the time left down between two events of the run.
         self._progress_timer = QTimer(self)
         self._progress_timer.setInterval(PROGRESS_TICK_MS)
         self._progress_timer.timeout.connect(self._refresh_progress)
-        #: The documents of the running batch, for the progress on the Documents tab label.
-        self._run_source_ids: list[str] = []
         self._pages_task = LatestTask(self)
         #: Under the progress bar; built in ``_build_left_panel``.
         self._awake_note: QLabel
@@ -388,25 +356,8 @@ class MainWindow(QMainWindow):
         self._last_sent_texts: SentTexts | None = None
         self._anonymize_task = LatestTask(self)
         self._anonymize_running = False
-        #: A run was asked for in the Check tab: the tab stays when the run starts.
-        self._run_from_check = False
-        #: What the run does with the document it works on now, for the Check tab's run strip:
-        #: the model that proofreads (``""`` when the run does not proofread) and the step.
-        self._run_model = ""
-        self._run_step = ""
-        #: ``"[3/12] essay.pdf"``: the file the run is on, for the progress line.
-        self._run_file_label = ""
-        #: What the running stage says about itself, which a wait note replaces and the first
-        #: token of the answer brings back: the strip's step and the progress line's label.
-        self._stage_step = ""
-        self._stage_label = ""
-        #: Whether the strip and the progress line carry a note about the server's wait.
-        self._wait_shown = False
-        #: Whether the run's proofreading waits for an Ollama server, so its clock starts
-        #: at the first token instead of at the request.
-        self._run_waits_for_ollama = False
-        #: Whether the pace is holding its clock for that first token.
-        self._pace_waits_for_first_token = False
+        #: What the run in progress is doing: the file, the step, the pace and the Stop stage.
+        self._run_session = RunSession()
         #: The "Hide personal information in texts" view setting (not part of Config).
         self._display_anonymized = display_anonymized(self._settings_store)
         #: Whether the texts can be hidden for the current document language.
@@ -420,17 +371,9 @@ class MainWindow(QMainWindow):
         #: The Settings window while it is open (dialogs started from it use it as parent).
         self._settings_window: SettingsWindow | None = None
         self._init_menu_state()
-        self._result_names: list[str] = []
-        self._result_ocr_times: list[float] = []
-        self._result_correction_times: list[float] = []
         self._init_queue_state()
-        self._steps_per_file: int = 1
         #: The document the Check tab shows; empty when none is open.
         self._current_preview_source_id: str = ""
-        #: The documents of the running batch whose own result has not arrived yet.
-        self._run_pending: set[str] = set()
-        #: The document the run is working on right now, or ``""``.
-        self._run_current: str = ""
 
         # Declared here; assigned in _build_widgets and _init_controllers.
         self._config_panel: ConfigPanel
@@ -1258,7 +1201,7 @@ class MainWindow(QMainWindow):
     def _on_run(self) -> None:
         if self._run_in_progress():
             return
-        self._run_from_check = False
+        self._run_session.from_check = False
         try:
             config = self._config_panel.to_config()
         except ValueError as exc:
@@ -1465,7 +1408,7 @@ class MainWindow(QMainWindow):
             _dialogs.notify(self, dlg.no_files_selected())
             return
 
-        self._steps_per_file = 1 if not config.correction_enabled else 2
+        self._run_session.steps_per_file = 1 if not config.correction_enabled else 2
         self._start_worker(config, selected_source_ids)
 
     def _start_worker(
@@ -1481,38 +1424,20 @@ class MainWindow(QMainWindow):
         self._save_settings(notify=False)
         self._results_table.set_output_dir(config.output_dir)
         self._chart.clear_data()
-        self._run_source_ids = list(selected_source_ids)
         # A document the run redoes is read-only from the run's start until its own result
         # arrives: an edit stored meanwhile would race the run. It stays the open document, so
         # its result reloads it (without a tab switch), and a run that ends before reaching it
         # reloads it too. Documents the run leaves alone stay open for work.
-        self._run_pending = set(selected_source_ids)
-        self._run_current = ""
-        self._run_model = (
-            short_model_name(config.effective_correction_model) if config.correction_enabled else ""
-        )
-        self._run_step = ""
-        self._run_file_label = ""
-        self._stage_step = ""
-        self._stage_label = ""
-        self._wait_shown = False
-        self._run_waits_for_ollama = (
-            config.correction_enabled and config.correction_provider == "ollama"
-        )
-        self._pace_waits_for_first_token = False
+        self._run_session.start(config, selected_source_ids)
         self._apply_lock()
-        self._result_names = []
-        self._result_ocr_times = []
-        self._result_correction_times = []
-        self._time_driven = False
-        self._progress.setRange(0, len(selected_source_ids) * self._steps_per_file)
+        self._progress.setRange(0, self._run_session.steps_total)
         self._progress.setValue(0)
         self._start_pace(config, files)
         self._progress_timer.start()
-        self._set_progress_text(f"Selected {len(selected_source_ids)} file(s) — Starting…")
-        if self._run_from_check:
+        self._set_progress_text(self._run_session.progress_base)
+        if self._run_session.from_check:
             # Started from the Check header: the teacher stays with the document.
-            self._run_from_check = False
+            self._run_session.from_check = False
         else:
             self._tabs.setCurrentIndex(0)
         self._update_check_tab()
@@ -1534,7 +1459,7 @@ class MainWindow(QMainWindow):
         self._worker.run_finished.connect(self._on_run_finished)
 
         self._run_btn.setEnabled(False)
-        self._set_stop_stage(_StopStage.RUNNING)
+        self._set_stop_stage(StopStage.RUNNING)
         self._awake_note.setVisible(False)
         self._battery_note.setVisible(False)
         self._worker.start()
@@ -1548,10 +1473,7 @@ class MainWindow(QMainWindow):
         The estimate is read from the store on this thread (a small file); the page counts open
         PDFs, so they are counted in the background and the figure is redrawn when they arrive.
         """
-        self._pace = RunPace(self._estimate_per_page(config))
-        self._pace.set_files(len(files))
-        self._progress_snapshot = RunProgress()
-        self._run_pages = {}
+        self._run_session.start_pace(self._estimate_per_page(config), len(files))
         if not files:
             return
         service = self._app_service
@@ -1570,10 +1492,10 @@ class MainWindow(QMainWindow):
         if error is not None or not isinstance(result, dict):
             return
         pages = cast("dict[str, int]", result)
-        self._run_pages = pages
-        self._pace.set_pages(sum(pages.values()))
+        self._run_session.pages = pages
+        self._run_session.pace.set_pages(sum(pages.values()))
         self._take_snapshot()
-        self._set_progress_text(self._progress_base)
+        self._set_progress_text(self._run_session.progress_base)
         self._refresh_check_run()
 
     def _on_stage_run_requested(self, selected_source_ids: list[str], stage: str) -> None:
@@ -1670,7 +1592,7 @@ class MainWindow(QMainWindow):
             _dialogs.notify(self, dlg.cache_invalidation_failed(list(failures)))
             return
 
-        self._steps_per_file = 1 if not config.correction_enabled else 2
+        self._run_session.steps_per_file = 1 if not config.correction_enabled else 2
         self._start_worker(config, [str(file.resolve()) for file in files], files)
 
     def _restore_all_settings(self) -> None:
@@ -1699,36 +1621,36 @@ class MainWindow(QMainWindow):
         """First click: finish the document being processed; second click: stop at once."""
         if not (self._worker and self._worker.isRunning()):
             return
-        if self._stop_stage is _StopStage.RUNNING:
+        if self._run_session.stop_stage is StopStage.RUNNING:
             self._worker.request_stop(now=False)
-            self._set_stop_stage(_StopStage.AFTER_FILE)
-        elif self._stop_stage is _StopStage.AFTER_FILE:
+            self._set_stop_stage(StopStage.AFTER_FILE)
+        elif self._run_session.stop_stage is StopStage.AFTER_FILE:
             self._worker.request_stop(now=True)
-            self._set_stop_stage(_StopStage.NOW)
+            self._set_stop_stage(StopStage.NOW)
 
-    def _set_stop_stage(self, stage: _StopStage) -> None:
+    def _set_stop_stage(self, stage: StopStage) -> None:
         """Move the Stop button to *stage*: its text, tooltip and whether it can be pressed."""
-        self._stop_stage = stage
-        if stage is _StopStage.AFTER_FILE:
+        self._run_session.stop_stage = stage
+        if stage is StopStage.AFTER_FILE:
             self._stop_btn.setText(STOP_NOW_TEXT)
             self._stop_btn.setToolTip(STOP_NOW_TOOLTIP)
             self._stop_btn.setEnabled(True)
-            self._set_progress_text(self._progress_base)
-        elif stage is _StopStage.NOW:
+            self._set_progress_text(self._run_session.progress_base)
+        elif stage is StopStage.NOW:
             self._stop_btn.setEnabled(False)
             self._progress.setFormat(STOPPING_NOW_TEXT)
         else:
             self._stop_btn.setText(STOP_TEXT)
             self._stop_btn.setToolTip(STOP_TOOLTIP)
-            self._stop_btn.setEnabled(stage is _StopStage.RUNNING)
+            self._stop_btn.setEnabled(stage is StopStage.RUNNING)
         self._refresh_check_run()
 
     def _set_progress_text(self, text: str) -> None:
         """Show *text* in the progress bar, with a note while the run stops after this file."""
-        self._progress_base = text
-        if self._stop_stage is _StopStage.NOW:
+        self._run_session.progress_base = text
+        if self._run_session.stop_stage is StopStage.NOW:
             return
-        suffix = STOPPING_SUFFIX if self._stop_stage is _StopStage.AFTER_FILE else ""
+        suffix = STOPPING_SUFFIX if self._run_session.stop_stage is StopStage.AFTER_FILE else ""
         self._progress.setFormat(text + self._time_left_suffix() + suffix)
 
     def _time_left_suffix(self) -> str:
@@ -1737,14 +1659,14 @@ class MainWindow(QMainWindow):
         One figure in the bar, the range behind it: a range in the bar itself would not fit,
         and the teacher who wants to know how sure the figure is can hover over it.
         """
-        snapshot = self._progress_snapshot
+        snapshot = self._run_session.snapshot
         self._progress.setToolTip(snapshot.tooltip)
         return " · " + snapshot.note if snapshot.note else ""
 
     def _take_snapshot(self) -> RunProgress:
         """Ask the pace where the run is now, and keep the answer for both displays."""
-        self._progress_snapshot = self._pace.snapshot(time.monotonic())
-        return self._progress_snapshot
+        self._run_session.snapshot = self._run_session.pace.snapshot(time.monotonic())
+        return self._run_session.snapshot
 
     def _on_keep_awake(self, state: KeepAwakeState) -> None:
         """Say under the progress bar whether the computer is kept awake, and warn on battery."""
@@ -1763,7 +1685,7 @@ class MainWindow(QMainWindow):
 
     def _set_steps_done(self, steps: int) -> None:
         """Move the bar to *steps* finished steps, unless it follows the time of the run."""
-        if not self._time_driven:
+        if not self._run_session.time_driven:
             self._progress.setValue(steps)
 
     def _refresh_progress(self) -> None:
@@ -1774,117 +1696,70 @@ class MainWindow(QMainWindow):
         fraction = self._take_snapshot().fraction
         if fraction is None or not self._run_in_progress():
             return
-        if not self._time_driven:
-            self._time_driven = True
+        if not self._run_session.time_driven:
+            self._run_session.time_driven = True
             self._progress.setRange(0, PROGRESS_RESOLUTION)
         # Full only when the run says so: a file that is nearly done is not yet done.
         self._progress.setValue(min(round(fraction * PROGRESS_RESOLUTION), PROGRESS_RESOLUTION - 1))
-        self._set_progress_text(self._progress_base)
+        self._set_progress_text(self._run_session.progress_base)
         self._refresh_check_run()
 
     def _on_file_started(self, source_id: str, name: str, idx: int, total: int) -> None:
-        self._set_steps_done((idx - 1) * self._steps_per_file)
-        self._pace.file_started(self._run_pages.get(source_id, 1))
-        self._run_file_label = f"[{idx}/{total}] {name}"
-        self._set_progress_text(f"{self._run_file_label} — starting…")
+        self._set_steps_done((idx - 1) * self._run_session.steps_per_file)
+        self._run_session.file_started(source_id, name, idx, total)
+        self._set_progress_text(self._run_session.progress_base)
         self._results_table.mark_processing(source_id)
-        self._run_current = source_id
-        self._run_step = ""
-        self._stage_step = ""
-        self._stage_label = ""
-        self._wait_shown = False
         self._apply_lock()
         # The text format is deliberately kept: the row still shows the previous texts, and
         # a format that no longer matches them would save an edit in the wrong notation.
 
-    _STAGE_PROGRESS_LABEL: ClassVar[dict[str, str]] = {
-        PROGRESS_STAGE_PREPROCESSING: check_text.PROGRESS_PREPROCESSING,
-        PROGRESS_STAGE_OCR: check_text.PROGRESS_OCR,
-        PROGRESS_STAGE_CORRECTION: check_text.PROGRESS_CORRECTING,
-    }
-
-    #: What the Check tab's run strip says while a step of the run's file is on.
-    _RUN_STEP_TEXT: ClassVar[dict[str, str]] = {
-        PROGRESS_STAGE_PREPROCESSING: check_text.RUN_PREPARING,
-        PROGRESS_STAGE_OCR: check_text.RUN_READING,
-        PROGRESS_STAGE_CORRECTION: "",  # empty: the strip names the proofreading model
-    }
-
     def _on_stage_started(
         self, _source_id: str, name: str, stage: str, idx: int, total: int
     ) -> None:
-        # A proofreading on an Ollama server may wait for the model: its clock starts at the first
-        # token (see _on_first_token), so neither the bar nor the time left move during a wait.
-        self._pace_waits_for_first_token = bool(
-            stage == PROGRESS_STAGE_CORRECTION and self._run_waits_for_ollama
-        )
-        if not self._pace_waits_for_first_token:
-            self._pace.work_started(time.monotonic())
-        self._run_file_label = f"[{idx}/{total}] {name}"
-        label = self._STAGE_PROGRESS_LABEL.get(stage)
-        if label is not None:
-            self._set_progress_text(f"{self._run_file_label} — {label}")
-            self._stage_label = label
-        self._stage_step = self._RUN_STEP_TEXT.get(stage, self._run_step)
-        self._run_step = self._stage_step
-        self._wait_shown = False
+        text = self._run_session.stage_started(name, stage, idx, total, time.monotonic())
+        if text is not None:
+            self._set_progress_text(text)
         self._refresh_check_run()
 
     def _on_stage_detail(self, source_id: str, detail: object) -> None:
         """Say what Ollama is doing with the request, in the bar and in the Check tab."""
-        if source_id != self._run_current or not isinstance(detail, WaitDetail):
+        if not isinstance(detail, WaitDetail):
             return
-        text = _wait_detail_text(detail)
-        if not text:
+        text = self._run_session.stage_detail(source_id, _wait_detail_text(detail))
+        if text is None:
             return
-        self._wait_shown = True
-        self._run_step = text
-        self._set_progress_text(f"{self._run_file_label} — {text}")
+        self._set_progress_text(text)
         self._refresh_check_run()
 
     def _on_first_token(self, source_id: str) -> None:
         """The model began answering: a wait note goes, and the proofreading's clock starts."""
-        if source_id != self._run_current:
+        if source_id != self._run_session.current:
             return
-        if self._pace_waits_for_first_token:
-            self._pace_waits_for_first_token = False
-            self._pace.work_started(time.monotonic())
-        if self._wait_shown:
-            self._wait_shown = False
-            self._run_step = self._stage_step
-            if self._stage_label:
-                self._set_progress_text(f"{self._run_file_label} — {self._stage_label}")
+        text = self._run_session.first_token(source_id, time.monotonic())
+        if text is not None:
+            self._set_progress_text(text)
         self._refresh_check_run()
 
     def _on_file_done(self, event: FileDoneEvent) -> None:
         outcome = event.outcome
         source_id = outcome.source_id
-        name = outcome.name
-        ocr_s = event.ocr_s
-        correction_s = event.correction_s
         self._results_table.add_result(event)
         self._export_controller.set_enabled(True)
         # A skipped or stopped file is not an error: its row says why, the final line counts it.
         if outcome.status is FileStatus.FAILED and outcome.error:
-            _dialogs.notify(self, dlg.processing_error(name, outcome.error))
-        self._result_names.append(name)
-        self._result_ocr_times.append(ocr_s)
-        self._result_correction_times.append(correction_s)
-        self._pace.file_done(event.total_s, self._run_pages.get(source_id, 1))
-        self._set_steps_done(len(self._result_names) * self._steps_per_file)
-        self._set_progress_text(self._progress_base)
+            _dialogs.notify(self, dlg.processing_error(outcome.name, outcome.error))
+        self._run_session.file_done(event)
+        self._set_steps_done(self._run_session.steps_done())
+        self._set_progress_text(self._run_session.progress_base)
         self._refresh_progress()
         self._chart.update_data(
-            self._result_names,
-            self._result_ocr_times,
-            self._result_correction_times,
+            self._run_session.names,
+            self._run_session.ocr_times,
+            self._run_session.correction_times,
         )
 
         # Only the open document is reloaded: a finished file never takes the tab away from
         # the document the teacher is working on, and never switches tabs.
-        self._run_pending.discard(source_id)
-        if self._run_current == source_id:
-            self._run_current = ""
         # The open document is read once, for the page and the row together; any other row
         # is read for itself.  Both refresh from the persisted state even on failure or stop,
         # when on_ocr_done never fired.
@@ -2165,23 +2040,18 @@ class MainWindow(QMainWindow):
     def _on_run_finished(self, summary: RunSummary) -> None:
         """Announce how the run ended: done, stopped (not an error) or finished with errors."""
         self._run_btn.setEnabled(True)
-        self._set_stop_stage(_StopStage.IDLE)
+        self._set_stop_stage(StopStage.IDLE)
         self._awake_note.setVisible(False)
         self._battery_note.setVisible(False)
         self._progress_timer.stop()
         text = describe_run(summary)
         if text.complete:
             self._progress.setValue(self._progress.maximum())
-        self._progress_base = text.progress
+        self._run_session.progress_base = text.progress
         self._progress.setFormat(text.progress)
         self._progress.setToolTip("")
-        self._pace = RunPace()
-        self._progress_snapshot = RunProgress()
-        self._pace_waits_for_first_token = False
-        self._run_source_ids = []
-        reload = self._current_preview_source_id in self._run_pending
-        self._run_pending = set()
-        self._run_current = ""
+        reload = self._current_preview_source_id in self._run_session.pending
+        self._run_session.finished()
         if reload:
             # The run ended (stopped, failed) before it reached the open document: show what
             # it still has instead of leaving the tab locked.
@@ -2197,12 +2067,9 @@ class MainWindow(QMainWindow):
         self._tray.showMessage("Teacher's Teammate", text.tray, icon, 4000)
 
     def _on_ocr_done(self, source_id: str, name: str, idx: int, total: int) -> None:
-        self._run_step = ""  # the reading is over: what goes on now is the proofreading
-        self._stage_step = ""
-        self._stage_label = check_text.PROGRESS_CORRECTING
-        self._wait_shown = False
+        self._run_session.ocr_done()
         self._refresh_check_run()
-        if self._steps_per_file > 1:
+        if self._run_session.steps_per_file > 1:
             self._set_steps_done((idx - 1) * 2 + 1)
             self._set_progress_text(f"[{idx}/{total}] {name} — {check_text.PROGRESS_CORRECTING}")
             # The reading is stored, so the row can be opened while the proofreading runs.
@@ -2269,9 +2136,9 @@ class MainWindow(QMainWindow):
         source_id = self._current_preview_source_id
         if not source_id:
             return
-        if source_id == self._run_current:
+        if source_id == self._run_session.current:
             self._check.set_lock(txt.BEING_PROOFREAD)
-        elif source_id in self._run_pending:
+        elif source_id in self._run_session.pending:
             self._check.set_lock(txt.WAITING_FOR_RUN)
         else:
             self._check.set_lock(None)
@@ -2284,16 +2151,18 @@ class MainWindow(QMainWindow):
         stage), so the teacher who proofreads from Check sees the run without leaving the tab.
         """
         source_id = self._current_preview_source_id
-        if not source_id or not (source_id == self._run_current or source_id in self._run_pending):
+        if not source_id or not (
+            source_id == self._run_session.current or source_id in self._run_session.pending
+        ):
             self._check.set_run(None)
             return
         stop_text = {
-            _StopStage.RUNNING: STOP_TEXT,
-            _StopStage.AFTER_FILE: STOP_NOW_TEXT,
-            _StopStage.NOW: STOP_NOW_TEXT,
-        }.get(self._stop_stage, "")
-        stop_enabled = self._stop_stage in (_StopStage.RUNNING, _StopStage.AFTER_FILE)
-        if source_id != self._run_current:
+            StopStage.RUNNING: STOP_TEXT,
+            StopStage.AFTER_FILE: STOP_NOW_TEXT,
+            StopStage.NOW: STOP_NOW_TEXT,
+        }.get(self._run_session.stop_stage, "")
+        stop_enabled = self._run_session.stop_stage in (StopStage.RUNNING, StopStage.AFTER_FILE)
+        if source_id != self._run_session.current:
             self._check.set_run(
                 RunState(
                     check_text.RUN_WAITING,
@@ -2303,12 +2172,12 @@ class MainWindow(QMainWindow):
                 )
             )
             return
-        step = self._run_step or (
-            check_text.RUN_PROOFREADING.format(model=self._run_model)
-            if self._run_model
+        step = self._run_session.step or (
+            check_text.RUN_PROOFREADING.format(model=self._run_session.model)
+            if self._run_session.model
             else check_text.RUN_READING
         )
-        snapshot = self._progress_snapshot
+        snapshot = self._run_session.snapshot
         self._check.set_run(
             RunState(
                 step,
@@ -2344,7 +2213,7 @@ class MainWindow(QMainWindow):
         if self._run_in_progress():
             self._warn_busy()  # nothing starts, so the tab must not be marked as the origin
             return
-        self._run_from_check = True
+        self._run_session.from_check = True
         self._on_stage_run_requested([source_id], "correction")
 
     def _on_item_shown(self, key: str) -> None:
@@ -2447,9 +2316,9 @@ class MainWindow(QMainWindow):
 
     def _documents_tab_label(self) -> str:
         """``Documents``, or how far the running batch has got."""
-        if not self._run_in_progress() or not self._run_source_ids:
+        if not self._run_in_progress() or not self._run_session.source_ids:
             return "Documents"
-        return f"Documents \u00b7 {len(self._result_names)} of {len(self._run_source_ids)}"
+        return f"Documents \u00b7 {len(self._run_session.names)} of {len(self._run_session.source_ids)}"
 
     def _check_tab_label(self) -> str:
         """``Check``, or the name of the open document."""
@@ -2487,7 +2356,7 @@ class MainWindow(QMainWindow):
     def _on_tab_changed(self, index: int) -> None:
         """Opening the Check tab with nothing open shows a document; the tab is never empty."""
         if index == 0:
-            self._run_from_check = False  # a request that never started a run is forgotten
+            self._run_session.from_check = False  # a request that never started a run is forgotten
         if index != 1 or self._current_preview_source_id:
             return
         target = self._check_target()

@@ -34,11 +34,17 @@ from teachers_teammate.domain.proofreading.edits import EditPart
 from teachers_teammate.domain.proofreading.review import CorrectionReview, EditNote
 from teachers_teammate.domain.teacher_work import WorkTooNewError
 from teachers_teammate.gui import _dialogs
+from teachers_teammate.gui import _export_controller as export_controller_module
 from teachers_teammate.gui import _main_window as main_window_module
+from teachers_teammate.gui import _preprocess_preview as preprocess_module
+from teachers_teammate.gui import _readiness_controller as readiness_controller_module
+from teachers_teammate.gui import _run_controller as run_controller_module
+from teachers_teammate.gui import _run_session as run_session_module
 from teachers_teammate.gui import _user_text as txt
 from teachers_teammate.gui._config_panel import ConfigPanel
 from teachers_teammate.gui._export_menu import ExportKind
 from teachers_teammate.gui._main_window import MainWindow
+from teachers_teammate.gui._readiness_controller import ReadinessController
 from teachers_teammate.gui._results_table import ResultsTable
 from teachers_teammate.gui._types import FileDoneEvent
 from teachers_teammate.gui.check import CheckLayout, CopyKind
@@ -150,6 +156,24 @@ class _DummyWorker:
         return True
 
 
+class _AlwaysRunning:
+    """A worker that reports it is running, for the figures a run shows meanwhile."""
+
+    def isRunning(self) -> bool:
+        return True
+
+    def request_stop(self, *, now: bool) -> None:
+        pass
+
+    def wait(self, _msecs: int) -> bool:
+        return True
+
+
+def _pretend_a_run_is_going(main_window, monkeypatch) -> None:
+    """Give the run controller a running worker without starting one."""
+    monkeypatch.setattr(main_window._run_controller, "_worker", _AlwaysRunning())
+
+
 def _record_notices(monkeypatch) -> list[Notice]:
     """Record every notice the window shows; return the list it appends to."""
     shown: list[Notice] = []
@@ -229,7 +253,7 @@ class _DummyUpdateThread:
 def main_window(qtbot, monkeypatch) -> MainWindow:
     """Create a MainWindow with startup side effects disabled."""
     monkeypatch.setattr(MainWindow, "_load_toml_if_present", lambda self: None)
-    monkeypatch.setattr(MainWindow, "_start_readiness_check", lambda self, **_kw: None)
+    monkeypatch.setattr(ReadinessController, "start_check", lambda self, **_kw: None)
     monkeypatch.setattr(main_window_module, "UpdateCheckThread", _DummyUpdateThread)
     win = MainWindow(app_service=real_service(), worker_factory=_DummyWorker)
     qtbot.addWidget(win)
@@ -253,7 +277,7 @@ def test_main_window_run_shows_error_for_invalid_config(main_window, monkeypatch
     main_window._on_run()
 
     assert [notice.title for notice in shown] == ["Configuration error"]
-    assert main_window._worker is None
+    assert main_window._run_controller._worker is None
 
 
 @pytest.mark.gui
@@ -274,7 +298,7 @@ def test_main_window_run_shows_info_when_no_files(
     qtbot.waitUntil(lambda: bool(shown), timeout=3000)
 
     assert [notice.title for notice in shown] == ["No files found"]
-    assert main_window._worker is None
+    assert main_window._run_controller._worker is None
 
 
 @pytest.mark.gui
@@ -290,21 +314,16 @@ def test_main_window_run_starts_worker_and_updates_ui(
     monkeypatch.setattr(main_window._config_panel, "to_config", lambda: cfg)
     first, second = tmp_path / "a.png", tmp_path / "b.txt"
     monkeypatch.setattr(main_window, "_get_file_names", lambda _cfg: [first.name, second.name])
-    main_window._queued_files_by_source_id = {
-        str(first.resolve()): first,
-        str(second.resolve()): second,
-    }
-
     main_window._results_table.set_queue(
         [_queue_row(str(first.resolve())), _queue_row(str(second.resolve()))]
     )
     main_window._results_table.selectRow(0)
 
     main_window._on_run()
-    qtbot.waitUntil(lambda: main_window._worker is not None, timeout=3000)
+    qtbot.waitUntil(lambda: main_window._run_controller._worker is not None, timeout=3000)
 
-    assert isinstance(main_window._worker, _DummyWorker)
-    assert main_window._worker.files == [first]
+    assert isinstance(main_window._run_controller._worker, _DummyWorker)
+    assert main_window._run_controller._worker.files == [first]
     assert main_window._run_btn.isEnabled() is False
     assert main_window._stop_btn.isEnabled() is True
     assert main_window._progress.maximum() == 1
@@ -328,9 +347,9 @@ def test_main_window_passes_its_service_to_the_worker(
     main_window._results_table.selectRow(0)
 
     main_window._on_run()
-    qtbot.waitUntil(lambda: main_window._worker is not None, timeout=3000)
+    qtbot.waitUntil(lambda: main_window._run_controller._worker is not None, timeout=3000)
 
-    assert main_window._worker.app_service is main_window._app_service
+    assert main_window._run_controller._worker.app_service is main_window._app_service
 
 
 @pytest.mark.gui
@@ -352,7 +371,7 @@ def test_main_window_run_shows_info_when_no_selection(
     qtbot.waitUntil(lambda: bool(shown), timeout=3000)
 
     assert [notice.title for notice in shown] == ["No files selected"]
-    assert main_window._worker is None
+    assert main_window._run_controller._worker is None
 
 
 @pytest.mark.gui
@@ -388,18 +407,18 @@ def test_main_window_stop_is_a_two_step_button(main_window) -> None:
     """
     worker = _DummyWorker(None)
     worker.start()
-    main_window._worker = worker
-    main_window._set_stop_stage(main_window_module._StopStage.RUNNING)
+    main_window._run_controller._worker = worker
+    main_window._run_controller.set_stop_stage(main_window_module.StopStage.RUNNING)
     assert main_window._stop_btn.text() == "Stop"
 
-    main_window._on_stop()
+    main_window._run_controller.on_stop_clicked()
 
     assert worker.stop_after_file_event.is_set() is True
     assert worker.stop_event.is_set() is False
     assert main_window._stop_btn.text() == "Stop now"
     assert main_window._stop_btn.isEnabled() is True
 
-    main_window._on_stop()
+    main_window._run_controller.on_stop_clicked()
 
     assert worker.stop_event.is_set() is True
     assert main_window._stop_btn.isEnabled() is False
@@ -415,11 +434,11 @@ def test_main_window_progress_says_it_stops_after_this_document(main_window) -> 
     """
     worker = _DummyWorker(None)
     worker.start()
-    main_window._worker = worker
-    main_window._set_stop_stage(main_window_module._StopStage.RUNNING)
-    main_window._on_stop()
+    main_window._run_controller._worker = worker
+    main_window._run_controller.set_stop_stage(main_window_module.StopStage.RUNNING)
+    main_window._run_controller.on_stop_clicked()
 
-    main_window._on_stage_started("/tmp/a.png", "a.png", "ocr", 1, 3)
+    main_window._run_controller._on_stage_started("/tmp/a.png", "a.png", "ocr", 1, 3)
 
     assert main_window._progress.format() == "[1/3] a.png — OCR… — stopping after this document"
 
@@ -440,7 +459,7 @@ def test_a_stopped_file_opens_no_error_dialog_and_shows_where_it_stopped(
     main_window._results_table.set_queue([_queue_row(source, "scan.png")])
     main_window._results_table.mark_processing(source)
 
-    main_window._on_file_done(
+    main_window._run_controller._on_file_done(
         FileDoneEvent(
             outcome=FileOutcome(
                 source_id=source,
@@ -477,7 +496,7 @@ def test_a_stopped_file_keeps_the_tick_of_the_step_that_finished(main_window, mo
     main_window._results_table.mark_processing(source)
     main_window._results_table.mark_stage_running(source, "correction")
 
-    main_window._on_file_done(
+    main_window._run_controller._on_file_done(
         FileDoneEvent(
             outcome=FileOutcome(
                 source_id=source,
@@ -501,12 +520,12 @@ def test_main_window_finished_updates_progress_and_tray(main_window, monkeypatch
     When   the run finishes with a successful summary
     Then   buttons/progress are reset and a tray notification is sent
     """
-    main_window._result_names = ["a.png"]
+    main_window._run_session.names = ["a.png"]
     main_window._progress.setRange(0, 2)
     seen: list[str] = []
     monkeypatch.setattr(main_window._tray, "showMessage", lambda *_args: seen.append("tray"))
 
-    main_window._on_run_finished(RunSummary(succeeded=("a.png",)))
+    main_window._run_controller._on_run_finished(RunSummary(succeeded=("a.png",)))
 
     assert main_window._run_btn.isEnabled() is True
     assert main_window._stop_btn.isEnabled() is False
@@ -526,7 +545,7 @@ def test_main_window_a_stopped_run_is_announced_as_stopped_not_as_an_error(
     Then   the progress bar and the notification say "Stopped" with the counts, the bar is not
            filled, and nothing says "error"
     """
-    main_window._result_names = ["a.png", "b.png"]
+    main_window._run_session.names = ["a.png", "b.png"]
     main_window._progress.setRange(0, 8)
     main_window._progress.setValue(3)
     messages: list[str] = []
@@ -534,7 +553,7 @@ def test_main_window_a_stopped_run_is_announced_as_stopped_not_as_an_error(
         main_window._tray, "showMessage", lambda _title, text, *_a: messages.append(text)
     )
 
-    main_window._on_run_finished(
+    main_window._run_controller._on_run_finished(
         RunSummary(succeeded=("a.png",), stopped=("b.png",), not_started=("c.png", "d.png"))
     )
 
@@ -553,13 +572,15 @@ def test_the_awake_note_shows_during_a_run_and_warns_on_battery(main_window) -> 
     When   the keep-awake state arrives, and later the run finishes
     Then   the note and the battery warning show, and both are hidden after the run
     """
-    main_window._on_keep_awake(KeepAwakeState(enabled=True, held=True, on_battery=True))
+    main_window._run_controller._on_keep_awake(
+        KeepAwakeState(enabled=True, held=True, on_battery=True)
+    )
 
     assert main_window._awake_note.isHidden() is False
     assert "awake" in main_window._awake_note.text()
     assert main_window._battery_note.isHidden() is False
 
-    main_window._on_run_finished(RunSummary())
+    main_window._run_controller._on_run_finished(RunSummary())
 
     assert main_window._awake_note.isHidden() is True
     assert main_window._battery_note.isHidden() is True
@@ -572,7 +593,9 @@ def test_the_awake_note_says_so_when_the_system_refused(main_window) -> None:
     When   the keep-awake state arrives
     Then   the note says the computer may go to sleep, and there is no battery warning
     """
-    main_window._on_keep_awake(KeepAwakeState(enabled=True, held=False, on_battery=False))
+    main_window._run_controller._on_keep_awake(
+        KeepAwakeState(enabled=True, held=False, on_battery=False)
+    )
 
     assert "may go to sleep" in main_window._awake_note.text()
     assert main_window._battery_note.isHidden() is True
@@ -585,7 +608,9 @@ def test_the_awake_note_does_not_blame_the_system_when_nothing_was_requested(mai
     When   the keep-awake state arrives
     Then   the note says the app cannot do it, not that the system did not allow it
     """
-    main_window._on_keep_awake(KeepAwakeState(enabled=True, held=False, available=False))
+    main_window._run_controller._on_keep_awake(
+        KeepAwakeState(enabled=True, held=False, available=False)
+    )
 
     text = main_window._awake_note.text()
     assert "cannot keep this computer awake" in text
@@ -599,7 +624,9 @@ def test_no_awake_note_when_keep_awake_is_off(main_window) -> None:
     When   the keep-awake state arrives
     Then   no note and no battery warning are shown
     """
-    main_window._on_keep_awake(KeepAwakeState(enabled=False, held=False, on_battery=True))
+    main_window._run_controller._on_keep_awake(
+        KeepAwakeState(enabled=False, held=False, on_battery=True)
+    )
 
     assert main_window._awake_note.isHidden() is True
     assert main_window._battery_note.isHidden() is True
@@ -625,7 +652,7 @@ class _SpontaneousClose:
 def _running_worker(main_window) -> _DummyWorker:
     worker = _DummyWorker(None)
     worker.start()
-    main_window._worker = worker
+    main_window._run_controller._worker = worker
     return worker
 
 
@@ -670,8 +697,8 @@ def test_closing_during_a_run_stops_at_once_and_does_not_wait_for_the_run(
 
     assert event.accepted is True
     assert worker.stop_event.is_set() is True
-    assert waits == [main_window_module.CLOSE_GRACE_MS]
-    assert main_window_module.CLOSE_GRACE_MS <= 5000
+    assert waits == [run_controller_module.CLOSE_GRACE_MS]
+    assert run_controller_module.CLOSE_GRACE_MS <= 5000
     assert worker.file_done._subs == []
 
 
@@ -686,7 +713,7 @@ def test_closing_detaches_a_worker_that_does_not_stop_in_time(main_window, monke
     detached: list = []
     monkeypatch.setattr(main_window, "_confirm_close_during_run", lambda: True)
     monkeypatch.setattr(worker, "wait", lambda _ms: False)
-    monkeypatch.setattr(main_window_module, "detach_running_worker", detached.append)
+    monkeypatch.setattr(run_controller_module, "detach_running_worker", detached.append)
 
     main_window.closeEvent(_SpontaneousClose())
 
@@ -778,7 +805,7 @@ def test_main_window_file_done_records_txt_artifacts(main_window) -> None:
     """
     main_window._results_table.set_queue([_queue_row("/tmp/note.txt", "note.txt")])
 
-    main_window._on_file_done(
+    main_window._run_controller._on_file_done(
         FileDoneEvent(
             outcome=FileOutcome(
                 source_id="/tmp/note.txt",
@@ -810,7 +837,7 @@ def test_main_window_file_done_reloads_the_open_document(main_window, monkeypatc
 
     monkeypatch.setattr(main_window, "_load_check", seen.append)
 
-    main_window._on_file_done(
+    main_window._run_controller._on_file_done(
         FileDoneEvent(
             outcome=FileOutcome(
                 source_id="/tmp/page.png",
@@ -879,7 +906,7 @@ def test_main_window_file_done_shows_how_the_finished_results_were_sent(
         ),
     )
 
-    main_window._on_file_done(
+    main_window._run_controller._on_file_done(
         FileDoneEvent(
             outcome=FileOutcome(
                 source_id=source_id,
@@ -911,7 +938,7 @@ def test_main_window_file_done_leaves_another_open_document_alone(main_window, m
     main_window._current_preview_source_id = "/tmp/a.png"
     monkeypatch.setattr(main_window, "_load_check", seen.append)
 
-    main_window._on_file_done(
+    main_window._run_controller._on_file_done(
         FileDoneEvent(
             outcome=FileOutcome(
                 source_id="/tmp/b.png",
@@ -959,10 +986,10 @@ def test_a_failed_load_does_not_leave_the_open_document_locked(
     """
     [a] = stored("a.png")
     main_window._open_check(a)
-    main_window._run_pending = {a}
+    main_window._run_session.pending = {a}
     main_window._apply_lock()
     assert main_window._check.body.banner.text == txt.WAITING_FOR_RUN
-    main_window._run_pending = set()
+    main_window._run_session.pending = set()
     monkeypatch.setattr(
         main_window._app_service.documents, "check_document", lambda *_a, **_k: None
     )
@@ -1019,7 +1046,9 @@ def test_a_typed_edit_is_stored_before_a_stage_run_clears_the_cache(
         return ()
 
     monkeypatch.setattr(main_window._app_service.commands, "invalidate_from_stage", _invalidate)
-    monkeypatch.setattr(main_window, "_start_worker", lambda *_a, **_k: order.append("start"))
+    monkeypatch.setattr(
+        main_window._run_controller, "start", lambda *_a, **_k: order.append("start")
+    )
 
     main_window._run_stage(make_config(Path("/tmp")), [a], "correction")
     qtbot.waitUntil(lambda: order == ["flush", "invalidate", "start"], timeout=2000)
@@ -1153,8 +1182,8 @@ def test_main_window_on_finished_shows_error_format(main_window, monkeypatch) ->
     """
     seen: list[str] = []
     monkeypatch.setattr(main_window._tray, "showMessage", lambda *_args: seen.append("tray"))
-    main_window._result_names = []
-    main_window._on_run_finished(RunSummary(failed=("a.png",)))
+    main_window._run_session.names = []
+    main_window._run_controller._on_run_finished(RunSummary(failed=("a.png",)))
     assert "error" in main_window._progress.format().lower()
 
 
@@ -1239,13 +1268,13 @@ def test_main_window_on_file_started_updates_progress(main_window) -> None:
     When   _on_file_started is called for file 2 of 3
     Then   progress value advances and format shows file index
     """
-    main_window._steps_per_file = 1
+    main_window._run_session.steps_per_file = 1
     main_window._progress.setRange(0, 3)
     main_window._results_table.set_queue(
         [_queue_row("a.png"), _queue_row("b.png"), _queue_row("c.png")]
     )
 
-    main_window._on_file_started("b.png", "b.png", 2, 3)
+    main_window._run_controller._on_file_started("b.png", "b.png", 2, 3)
 
     assert "2/3" in main_window._progress.format()
 
@@ -1263,33 +1292,33 @@ def test_the_bar_and_the_time_left_follow_the_clock(main_window, monkeypatch) ->
     from teachers_teammate.gui._run_status import RunPace  # noqa: PLC0415
 
     clock = {"now": 1000.0}
-    monkeypatch.setattr(main_window_module.time, "monotonic", lambda: clock["now"])
-    monkeypatch.setattr(main_window, "_run_in_progress", lambda: True)
-    main_window._pace = RunPace(TimeRange(100.0, 100.0))
-    main_window._pace.set_files(1)
-    main_window._pace.set_pages(1)
+    monkeypatch.setattr(run_controller_module.time, "monotonic", lambda: clock["now"])
+    _pretend_a_run_is_going(main_window, monkeypatch)
+    main_window._run_session.pace = RunPace(TimeRange(100.0, 100.0))
+    main_window._run_session.pace.set_files(1)
+    main_window._run_session.pace.set_pages(1)
     main_window._results_table.set_queue([_queue_row("a.png")])
     main_window._progress.setRange(0, 2)
 
     clock["now"] = 990.0
-    main_window._on_file_started("a.png", "a.png", 1, 1)
+    main_window._run_controller._on_file_started("a.png", "a.png", 1, 1)
     clock["now"] = 1000.0
-    main_window._on_stage_started("a.png", "a.png", "correction", 1, 1)
+    main_window._run_controller._on_stage_started("a.png", "a.png", "correction", 1, 1)
     clock["now"] = 1050.0
-    main_window._refresh_progress()
+    main_window._run_controller._refresh_progress()
 
-    assert main_window._progress.maximum() == main_window_module.PROGRESS_RESOLUTION
+    assert main_window._progress.maximum() == run_session_module.PROGRESS_RESOLUTION
     assert main_window._progress.value() == 500
     assert "about 50 s left" in main_window._progress.format()
 
     clock["now"] = 1051.0
-    main_window._refresh_progress()
+    main_window._run_controller._refresh_progress()
 
     assert main_window._progress.value() == 510
     assert "about 49 s left" in main_window._progress.format()
 
     # An event of the run does not push the bar back to a step count.
-    main_window._on_ocr_done("a.png", "a.png", 1, 1)
+    main_window._run_controller._on_ocr_done("a.png", "a.png", 1, 1)
     assert main_window._progress.value() == 510
 
 
@@ -1306,27 +1335,27 @@ def test_the_check_strip_counts_down_with_the_bar(main_window, monkeypatch, stor
 
     [a] = stored("a.png")
     main_window._open_check(a)
-    monkeypatch.setattr(main_window, "_start_pace", lambda *_a, **_kw: None)
+    monkeypatch.setattr(main_window._run_controller, "_start_pace", lambda *_a, **_kw: None)
     monkeypatch.setattr(main_window, "_save_settings", lambda **_kw: None)
     clock = {"now": 1000.0}
-    monkeypatch.setattr(main_window_module.time, "monotonic", lambda: clock["now"])
-    monkeypatch.setattr(main_window, "_run_in_progress", lambda: True)
-    main_window._start_worker(make_config(Path("/tmp")), [a])
-    main_window._pace = RunPace(TimeRange(100.0, 100.0))
-    main_window._pace.set_files(1)
-    main_window._pace.set_pages(1)
-    main_window._on_file_started(a, "a.png", 1, 1)
-    main_window._on_stage_started(a, "a.png", "correction", 1, 1)
+    monkeypatch.setattr(run_controller_module.time, "monotonic", lambda: clock["now"])
+    _pretend_a_run_is_going(main_window, monkeypatch)
+    main_window._run_controller.start(make_config(Path("/tmp")), [a])
+    main_window._run_session.pace = RunPace(TimeRange(100.0, 100.0))
+    main_window._run_session.pace.set_files(1)
+    main_window._run_session.pace.set_pages(1)
+    main_window._run_controller._on_file_started(a, "a.png", 1, 1)
+    main_window._run_controller._on_stage_started(a, "a.png", "correction", 1, 1)
     strip = main_window._check._run_strip
 
     clock["now"] = 1050.0
-    main_window._refresh_progress()
+    main_window._run_controller._refresh_progress()
 
     assert "about 50 s left" in strip.text
     assert "about 50 s left" in main_window._progress.format()
 
     clock["now"] = 1070.0
-    main_window._refresh_progress()
+    main_window._run_controller._refresh_progress()
 
     assert "about 30 s left" in strip.text
     assert "about 30 s left" in main_window._progress.format()
@@ -1345,31 +1374,33 @@ def test_the_clock_waits_for_the_first_token_of_a_local_model(
     """
     [a] = stored("a.png")
     main_window._open_check(a)
-    monkeypatch.setattr(main_window, "_start_pace", lambda *_a, **_kw: None)
+    monkeypatch.setattr(main_window._run_controller, "_start_pace", lambda *_a, **_kw: None)
     monkeypatch.setattr(main_window, "_save_settings", lambda **_kw: None)
     clock = {"now": 1000.0}
-    monkeypatch.setattr(main_window_module.time, "monotonic", lambda: clock["now"])
-    monkeypatch.setattr(main_window, "_run_in_progress", lambda: True)
-    main_window._start_worker(make_config(Path("/tmp")), [a])
-    main_window._run_waits_for_ollama = True
-    main_window._on_file_started(a, "a.png", 1, 1)
+    monkeypatch.setattr(run_controller_module.time, "monotonic", lambda: clock["now"])
+    _pretend_a_run_is_going(main_window, monkeypatch)
+    main_window._run_controller.start(make_config(Path("/tmp")), [a])
+    main_window._run_session.waits_for_ollama = True
+    main_window._run_controller._on_file_started(a, "a.png", 1, 1)
 
     clock["now"] = 1005.0
-    main_window._on_stage_started(a, "a.png", "correction", 1, 1)
+    main_window._run_controller._on_stage_started(a, "a.png", "correction", 1, 1)
 
-    assert main_window._pace._work_started_at is None
+    assert main_window._run_session.pace._work_started_at is None
 
     clock["now"] = 1010.0
-    main_window._on_stage_detail(a, WaitDetail(WaitKind.BUSY, "gemma4:e4b", "ministral-3:8b"))
+    main_window._run_controller._on_stage_detail(
+        a, WaitDetail(WaitKind.BUSY, "gemma4:e4b", "ministral-3:8b")
+    )
 
     assert "still working with ministral-3:8b" in main_window._progress.format()
     assert "still working with ministral-3:8b" in main_window._check._run_strip.text
-    assert main_window._pace._work_started_at is None
+    assert main_window._run_session.pace._work_started_at is None
 
     clock["now"] = 1020.0
-    main_window._on_first_token(a)
+    main_window._run_controller._on_first_token(a)
 
-    assert main_window._pace._work_started_at == 1020.0
+    assert main_window._run_session.pace._work_started_at == 1020.0
     assert "correcting" in main_window._progress.format()
     assert "still working" not in main_window._check._run_strip.text
 
@@ -1386,23 +1417,23 @@ def test_a_wait_note_of_another_stage_goes_with_the_first_token(
     """
     [a] = stored("a.png")
     main_window._open_check(a)
-    monkeypatch.setattr(main_window, "_start_pace", lambda *_a, **_kw: None)
+    monkeypatch.setattr(main_window._run_controller, "_start_pace", lambda *_a, **_kw: None)
     monkeypatch.setattr(main_window, "_save_settings", lambda **_kw: None)
-    monkeypatch.setattr(main_window, "_run_in_progress", lambda: True)
-    main_window._start_worker(make_config(Path("/tmp")), [a])
-    main_window._on_file_started(a, "a.png", 1, 1)
-    main_window._on_stage_started(a, "a.png", "ocr", 1, 1)
+    _pretend_a_run_is_going(main_window, monkeypatch)
+    main_window._run_controller.start(make_config(Path("/tmp")), [a])
+    main_window._run_controller._on_file_started(a, "a.png", 1, 1)
+    main_window._run_controller._on_stage_started(a, "a.png", "ocr", 1, 1)
 
-    main_window._on_stage_detail(a, WaitDetail(WaitKind.LOADING, "qwen3-vl:8b"))
+    main_window._run_controller._on_stage_detail(a, WaitDetail(WaitKind.LOADING, "qwen3-vl:8b"))
 
     assert "Loading qwen3-vl:8b" in main_window._progress.format()
 
-    main_window._on_first_token(a)
+    main_window._run_controller._on_first_token(a)
 
     assert "Loading" not in main_window._progress.format()
     assert "OCR" in main_window._progress.format()
     assert "Loading" not in main_window._check._run_strip.text
-    assert main_window._pace._work_started_at is not None
+    assert main_window._run_session.pace._work_started_at is not None
 
 
 @pytest.mark.gui
@@ -1416,18 +1447,18 @@ def test_a_run_without_a_local_model_starts_its_clock_at_the_stage(
     """
     [a] = stored("a.png")
     main_window._open_check(a)
-    monkeypatch.setattr(main_window, "_start_pace", lambda *_a, **_kw: None)
+    monkeypatch.setattr(main_window._run_controller, "_start_pace", lambda *_a, **_kw: None)
     monkeypatch.setattr(main_window, "_save_settings", lambda **_kw: None)
     clock = {"now": 1000.0}
-    monkeypatch.setattr(main_window_module.time, "monotonic", lambda: clock["now"])
-    monkeypatch.setattr(main_window, "_run_in_progress", lambda: True)
-    main_window._start_worker(make_config(Path("/tmp")), [a])
-    main_window._on_file_started(a, "a.png", 1, 1)
+    monkeypatch.setattr(run_controller_module.time, "monotonic", lambda: clock["now"])
+    _pretend_a_run_is_going(main_window, monkeypatch)
+    main_window._run_controller.start(make_config(Path("/tmp")), [a])
+    main_window._run_controller._on_file_started(a, "a.png", 1, 1)
 
     clock["now"] = 1005.0
-    main_window._on_stage_started(a, "a.png", "correction", 1, 1)
+    main_window._run_controller._on_stage_started(a, "a.png", "correction", 1, 1)
 
-    assert main_window._pace._work_started_at == 1005.0
+    assert main_window._run_session.pace._work_started_at == 1005.0
 
 
 @pytest.mark.gui
@@ -1437,11 +1468,11 @@ def test_main_window_on_ocr_done_updates_progress_in_two_step(main_window) -> No
     When   _on_ocr_done is called for file 1 of 2
     Then   progress value advances to 1 and format mentions correcting
     """
-    main_window._steps_per_file = 2
+    main_window._run_session.steps_per_file = 2
     main_window._progress.setRange(0, 4)
     main_window._results_table.set_queue([_queue_row("a.png"), _queue_row("b.png")])
 
-    main_window._on_ocr_done("a.png", "a.png", 1, 2)
+    main_window._run_controller._on_ocr_done("a.png", "a.png", 1, 2)
 
     assert main_window._progress.value() == 1
     assert "correct" in main_window._progress.format().lower()
@@ -1460,7 +1491,9 @@ def test_ok_in_settings_applies_saves_and_rechecks(main_window, monkeypatch) -> 
         result=SettingsResult(settings={"ocr_model": "my-reader:1b", "hardware_profile": "16gb"}),
     )
     calls: list[str] = []
-    monkeypatch.setattr(main_window, "_start_readiness_check", lambda **_kw: calls.append("check"))
+    monkeypatch.setattr(
+        main_window._readiness_controller, "start_check", lambda **_kw: calls.append("check")
+    )
     monkeypatch.setattr(main_window, "_save_settings", lambda **_kw: calls.append("save"))
     monkeypatch.setattr(main_window, "_refresh_queue_from_inputs", lambda: calls.append("queue"))
 
@@ -1470,6 +1503,33 @@ def test_ok_in_settings_applies_saves_and_rechecks(main_window, monkeypatch) -> 
     assert settings["ocr_model"] == "my-reader:1b"
     assert settings["hardware_profile"] == "16gb"
     assert calls == ["save", "check", "queue"]
+
+
+@pytest.mark.gui
+def test_the_preview_asked_for_in_settings_opens_over_the_settings_window(
+    main_window, monkeypatch
+) -> None:
+    """
+    Given  the Settings window is open and its scan page asks for the image preparation preview
+    When   the window emits the request
+    Then   the preview is made with the Settings window as the owner of its dialogs
+    """
+    from teachers_teammate.config import OcrConfig  # noqa: PLC0415
+
+    scripted = install_scripted_settings_window(monkeypatch, accepted=False)
+    asked: list[tuple[object, object]] = []
+    monkeypatch.setattr(
+        main_window._preprocess_preview,
+        "request",
+        lambda ocr_config, *, parent=None: asked.append((ocr_config, parent)),
+    )
+
+    main_window.open_settings(SettingsPage.SCAN_QUALITY)
+    window = scripted.instances[0]
+    ocr_config = OcrConfig(preprocess_method=PreprocessMethod.NONE)
+    window.preprocess_preview_requested.emit(ocr_config)
+
+    assert asked == [(ocr_config, window)]
 
 
 @pytest.mark.gui
@@ -1513,7 +1573,9 @@ def test_cancel_in_settings_changes_nothing(main_window, monkeypatch) -> None:
     )
     before = main_window._config_panel.get_settings_dict()
     calls: list[str] = []
-    monkeypatch.setattr(main_window, "_start_readiness_check", lambda **_kw: calls.append("check"))
+    monkeypatch.setattr(
+        main_window._readiness_controller, "start_check", lambda **_kw: calls.append("check")
+    )
     monkeypatch.setattr(main_window, "_save_settings", lambda **_kw: calls.append("save"))
 
     main_window.open_settings(SettingsPage.AI_MODELS)
@@ -1668,7 +1730,7 @@ def test_the_pull_manager_pulls_the_whole_queue_on_its_own(qtbot, monkeypatch) -
             pass
 
     monkeypatch.setattr(_addon_installer_dialog, "_OllamaPullThread", _FakePull)
-    manager = main_window_module.OllamaDownloadManager(service=real_service())
+    manager = main_window_module.PullManager(service=real_service())
     started: list[str] = []
     queue_seen: list[list[str]] = []
     manager.started.connect(started.append)
@@ -1725,7 +1787,7 @@ def test_a_pull_thread_outlives_the_manager_that_started_it(qtbot, monkeypatch) 
             return True
 
     monkeypatch.setattr(_addon_installer_dialog, "_OllamaPullThread", _FakePull)
-    manager = main_window_module.OllamaDownloadManager(service=real_service())
+    manager = main_window_module.PullManager(service=real_service())
     held_before = set(_model_fetch._RETIRED_THREADS)
 
     manager.start("http://host:11434", "a:1b")
@@ -1774,7 +1836,7 @@ def test_aborting_a_pull_drops_the_queue(qtbot, monkeypatch) -> None:
             pass
 
     monkeypatch.setattr(_addon_installer_dialog, "_OllamaPullThread", _FakePull)
-    manager = main_window_module.OllamaDownloadManager(service=real_service())
+    manager = main_window_module.PullManager(service=real_service())
     manager.start("http://host:11434", "a:1b", ["b:1b", "c:1b"])
 
     manager.abort()
@@ -1927,7 +1989,6 @@ def stored(main_window, monkeypatch, tmp_path: Path):
                 text_format=text_format,
             )
             source_ids.append(str(source))
-        main_window._queued_files_by_source_id = {i: Path(i) for i in source_ids}
         main_window._results_table.set_queue(
             [
                 _queue_row(
@@ -2130,14 +2191,14 @@ def test_a_run_start_locks_the_document_it_redoes_and_keeps_it_open(
     """
     [a] = stored("a.png")
     main_window._open_check(a)
-    monkeypatch.setattr(main_window, "_start_pace", lambda *_a, **_kw: None)
+    monkeypatch.setattr(main_window._run_controller, "_start_pace", lambda *_a, **_kw: None)
     monkeypatch.setattr(main_window, "_save_settings", lambda **_kw: None)
 
-    main_window._start_worker(make_config(Path("/tmp")), [a])
+    main_window._run_controller.start(make_config(Path("/tmp")), [a])
 
     assert main_window._current_preview_source_id == a
     assert main_window._tabs.currentIndex() == 0
-    assert main_window._run_pending == {a}
+    assert main_window._run_session.pending == {a}
     assert main_window._check.body.banner.text == txt.WAITING_FOR_RUN
 
 
@@ -2153,18 +2214,18 @@ def test_a_run_started_from_the_check_header_keeps_the_check_tab(
     [a] = stored("a.png")
     main_window._open_check(a)
     main_window._tabs.setCurrentIndex(1)
-    monkeypatch.setattr(main_window, "_start_pace", lambda *_a, **_kw: None)
+    monkeypatch.setattr(main_window._run_controller, "_start_pace", lambda *_a, **_kw: None)
     monkeypatch.setattr(main_window, "_save_settings", lambda **_kw: None)
     monkeypatch.setattr(
         main_window,
         "_on_stage_run_requested",
-        lambda ids, _stage: main_window._start_worker(make_config(Path("/tmp")), ids),
+        lambda ids, _stage: main_window._run_controller.start(make_config(Path("/tmp")), ids),
     )
 
     main_window._on_check_proofread_requested()
 
     assert main_window._tabs.currentIndex() == 1
-    assert main_window._run_pending == {a}
+    assert main_window._run_session.pending == {a}
 
 
 @pytest.mark.gui
@@ -2178,13 +2239,13 @@ def test_a_run_started_from_documents_goes_on_showing_documents_after_a_check_ru
     """
     [a] = stored("a.png")
     main_window._open_check(a)
-    monkeypatch.setattr(main_window, "_start_pace", lambda *_a, **_kw: None)
+    monkeypatch.setattr(main_window._run_controller, "_start_pace", lambda *_a, **_kw: None)
     monkeypatch.setattr(main_window, "_save_settings", lambda **_kw: None)
-    main_window._run_from_check = True
-    main_window._start_worker(make_config(Path("/tmp")), [a])
+    main_window._run_session.from_check = True
+    main_window._run_controller.start(make_config(Path("/tmp")), [a])
     main_window._tabs.setCurrentIndex(1)
 
-    main_window._start_worker(make_config(Path("/tmp")), [a])
+    main_window._run_controller.start(make_config(Path("/tmp")), [a])
 
     assert main_window._tabs.currentIndex() == 0
 
@@ -2202,13 +2263,13 @@ def test_a_proofread_request_from_check_during_a_run_is_refused_and_not_remember
     [a] = stored("a.png")
     main_window._open_check(a)
     warned: list[bool] = []
-    monkeypatch.setattr(main_window, "_run_in_progress", lambda: True)
-    monkeypatch.setattr(main_window, "_warn_busy", lambda: warned.append(True))
+    _pretend_a_run_is_going(main_window, monkeypatch)
+    monkeypatch.setattr(main_window._run_controller, "warn_busy", lambda: warned.append(True))
 
     main_window._on_check_proofread_requested()
 
     assert warned == [True]
-    assert main_window._run_from_check is False
+    assert main_window._run_session.from_check is False
 
 
 @pytest.mark.gui
@@ -2253,25 +2314,25 @@ def test_the_check_tab_shows_the_run_while_the_open_document_is_in_it(
     """
     a, b = stored("a.png", "b.png")
     main_window._open_check(a)
-    monkeypatch.setattr(main_window, "_start_pace", lambda *_a, **_kw: None)
+    monkeypatch.setattr(main_window._run_controller, "_start_pace", lambda *_a, **_kw: None)
     monkeypatch.setattr(main_window, "_save_settings", lambda **_kw: None)
     strip = main_window._check._run_strip
 
     config = dataclasses.replace(make_config(Path("/tmp")), correction_enabled=True)
-    main_window._start_worker(config, [b, a])
+    main_window._run_controller.start(config, [b, a])
     assert not strip.isHidden()
     assert strip.text == check_text.RUN_WAITING
 
-    main_window._on_file_started(a, "a.png", 2, 2)
+    main_window._run_controller._on_file_started(a, "a.png", 2, 2)
     assert strip.text.startswith("Proofreading with ")
 
-    main_window._on_stage_started(a, "a.png", "ocr", 2, 2)
+    main_window._run_controller._on_stage_started(a, "a.png", "ocr", 2, 2)
     assert strip.text == check_text.RUN_READING
 
-    main_window._on_ocr_done(a, "a.png", 2, 2)
+    main_window._run_controller._on_ocr_done(a, "a.png", 2, 2)
     assert strip.text.startswith("Proofreading with ")
 
-    main_window._on_run_finished(RunSummary(succeeded=("a.png", "b.png")))
+    main_window._run_controller._on_run_finished(RunSummary(succeeded=("a.png", "b.png")))
     assert strip.isHidden()
 
 
@@ -2286,10 +2347,10 @@ def test_a_run_that_leaves_the_open_document_alone_shows_no_run_in_check(
     """
     a, b = stored("a.png", "b.png")
     main_window._open_check(a)
-    monkeypatch.setattr(main_window, "_start_pace", lambda *_a, **_kw: None)
+    monkeypatch.setattr(main_window._run_controller, "_start_pace", lambda *_a, **_kw: None)
     monkeypatch.setattr(main_window, "_save_settings", lambda **_kw: None)
 
-    main_window._start_worker(make_config(Path("/tmp")), [b])
+    main_window._run_controller.start(make_config(Path("/tmp")), [b])
 
     assert main_window._check._run_strip.isHidden()
 
@@ -2306,14 +2367,14 @@ def test_the_check_stop_button_stops_the_run_like_the_documents_tab(
     """
     [a] = stored("a.png")
     main_window._open_check(a)
-    monkeypatch.setattr(main_window, "_start_pace", lambda *_a, **_kw: None)
+    monkeypatch.setattr(main_window._run_controller, "_start_pace", lambda *_a, **_kw: None)
     monkeypatch.setattr(main_window, "_save_settings", lambda **_kw: None)
-    main_window._start_worker(make_config(Path("/tmp")), [a])
-    main_window._on_file_started(a, "a.png", 1, 1)
+    main_window._run_controller.start(make_config(Path("/tmp")), [a])
+    main_window._run_controller._on_file_started(a, "a.png", 1, 1)
 
     main_window._check._run_strip.stop_button.click()
 
-    assert main_window._worker.stop_after_file_event.is_set()
+    assert main_window._run_controller._worker.stop_after_file_event.is_set()
     assert main_window._check._run_strip.stop_button.text() == "Stop now"
 
 
@@ -2328,11 +2389,11 @@ def test_the_redone_document_is_shown_again_when_its_result_arrives(
     """
     [a] = stored("a.png")
     main_window._open_check(a)
-    monkeypatch.setattr(main_window, "_start_pace", lambda *_a, **_kw: None)
+    monkeypatch.setattr(main_window._run_controller, "_start_pace", lambda *_a, **_kw: None)
     monkeypatch.setattr(main_window, "_save_settings", lambda **_kw: None)
-    main_window._start_worker(make_config(Path("/tmp")), [a])
+    main_window._run_controller.start(make_config(Path("/tmp")), [a])
 
-    main_window._on_file_done(
+    main_window._run_controller._on_file_done(
         FileDoneEvent(
             outcome=FileOutcome(
                 source_id=a,
@@ -2345,7 +2406,7 @@ def test_the_redone_document_is_shown_again_when_its_result_arrives(
         )
     )
 
-    assert main_window._run_pending == set()
+    assert main_window._run_session.pending == set()
     assert main_window._tabs.currentIndex() == 0
 
 
@@ -2360,13 +2421,13 @@ def test_a_run_that_ends_before_the_open_document_shows_it_again(
     """
     [a] = stored("a.png")
     main_window._open_check(a)
-    monkeypatch.setattr(main_window, "_start_pace", lambda *_a, **_kw: None)
+    monkeypatch.setattr(main_window._run_controller, "_start_pace", lambda *_a, **_kw: None)
     monkeypatch.setattr(main_window, "_save_settings", lambda **_kw: None)
-    main_window._start_worker(make_config(Path("/tmp")), [a])
+    main_window._run_controller.start(make_config(Path("/tmp")), [a])
     seen: list[str] = []
     monkeypatch.setattr(main_window, "_load_check", seen.append)
 
-    main_window._on_run_finished(RunSummary())
+    main_window._run_controller._on_run_finished(RunSummary())
 
     assert seen == [a]
 
@@ -2403,10 +2464,10 @@ def test_a_run_start_keeps_a_document_it_leaves_alone(main_window, monkeypatch, 
     """
     a, b = stored("a.png", "b.png")
     main_window._open_check(a)
-    monkeypatch.setattr(main_window, "_start_pace", lambda *_a, **_kw: None)
+    monkeypatch.setattr(main_window._run_controller, "_start_pace", lambda *_a, **_kw: None)
     monkeypatch.setattr(main_window, "_save_settings", lambda **_kw: None)
 
-    main_window._start_worker(make_config(Path("/tmp")), [b])
+    main_window._run_controller.start(make_config(Path("/tmp")), [b])
 
     assert main_window._current_preview_source_id == a
     assert main_window._check.body.banner.text != txt.WAITING_FOR_RUN
@@ -2439,11 +2500,11 @@ def test_the_documents_tab_label_counts_the_run(main_window, monkeypatch, stored
     Then   Documents says how far the run has got
     """
     a, b, c = stored("a.png", "b.png", "c.png")
-    monkeypatch.setattr(main_window, "_start_pace", lambda *_a, **_kw: None)
+    monkeypatch.setattr(main_window._run_controller, "_start_pace", lambda *_a, **_kw: None)
     monkeypatch.setattr(main_window, "_save_settings", lambda **_kw: None)
-    main_window._start_worker(make_config(Path("/tmp")), [a, b, c])
+    main_window._run_controller.start(make_config(Path("/tmp")), [a, b, c])
 
-    main_window._result_names = ["a.png"]
+    main_window._run_session.names = ["a.png"]
     main_window._update_check_tab()
 
     assert main_window._tabs.tabText(0) == "Documents \u00b7 1 of 3"
@@ -2476,7 +2537,7 @@ def test_save_goes_through_the_export_path(main_window, monkeypatch, stored) -> 
     main_window._open_check(a)
     asked: list[tuple[list[str], ExportKind]] = []
     monkeypatch.setattr(
-        main_window, "_on_export_requested", lambda ids, kind: asked.append((ids, kind))
+        main_window._export_controller, "on_requested", lambda ids, kind: asked.append((ids, kind))
     )
 
     main_window._on_check_save(ExportKind.TEXT)
@@ -2972,7 +3033,7 @@ def test_file_export_entries_follow_the_export_button(main_window) -> None:
     assert not main_window._export_btn.isEnabled()
     assert not any(a.isEnabled() for a in export.actions())
 
-    main_window._set_export_enabled(True)
+    main_window._export_controller.set_enabled(True)
 
     assert main_window._export_btn.isEnabled()
     assert all(a.isEnabled() for a in export.actions())
@@ -3031,11 +3092,11 @@ def test_the_preview_opens_on_top_of_the_settings_window(main_window, monkeypatc
         def exec(self) -> int:
             return 0
 
-    monkeypatch.setattr(main_window_module, "QDialog", _FakeDialog)
-    monkeypatch.setattr(main_window_module, "load_pixmap", lambda _p: QPixmap())
+    monkeypatch.setattr(preprocess_module, "QDialog", _FakeDialog)
+    monkeypatch.setattr(preprocess_module, "load_pixmap", lambda _p: QPixmap())
     owner.show()
 
-    main_window._on_preprocess_preview_done(
+    main_window._preprocess_preview._on_done(
         Path("a.png"), Path("b.png"), ["deskew"], "", OcrConfig(), Path("/tmp/none"), parent=owner
     )
 
@@ -3052,7 +3113,7 @@ def test_main_window_load_toml_if_present_loads_values(qtbot, monkeypatch, tmp_p
     config_path = tmp_path / "ocr.toml"
     config_path.write_text('language = "German"\n', encoding="utf-8")
 
-    monkeypatch.setattr(MainWindow, "_start_readiness_check", lambda self, **_kw: None)
+    monkeypatch.setattr(ReadinessController, "start_check", lambda self, **_kw: None)
     monkeypatch.setattr(
         "teachers_teammate.application.setup_plan.SetupService.resolve_config_path",
         lambda self, _: config_path,
@@ -3073,7 +3134,7 @@ def test_main_window_load_toml_if_present_no_path(qtbot, monkeypatch) -> None:
     When   _load_toml_if_present is called
     Then   method returns immediately without setting _config_path
     """
-    monkeypatch.setattr(MainWindow, "_start_readiness_check", lambda self, **_kw: None)
+    monkeypatch.setattr(ReadinessController, "start_check", lambda self, **_kw: None)
     monkeypatch.setattr(MainWindow, "_load_toml_if_present", lambda self: None)
     win = MainWindow(app_service=real_service())
     qtbot.addWidget(win)
@@ -3097,7 +3158,7 @@ def test_main_window_load_toml_if_present_exception_logged(qtbot, monkeypatch, t
     config_path = tmp_path / "bad.toml"
     config_path.write_text("bad content", encoding="utf-8")
 
-    monkeypatch.setattr(MainWindow, "_start_readiness_check", lambda self, **_kw: None)
+    monkeypatch.setattr(ReadinessController, "start_check", lambda self, **_kw: None)
     monkeypatch.setattr(MainWindow, "_load_toml_if_present", lambda self: None)
     win = MainWindow(app_service=real_service())
     qtbot.addWidget(win)
@@ -3162,7 +3223,7 @@ def test_main_window_on_preprocess_preview_no_source_user_cancels(
 ) -> None:
     """
     Given  input dir has no images and user cancels the file dialog
-    When   _on_preprocess_preview_requested is called
+    When   PreprocessPreview.request is called
     Then   method returns without error and no background thread is started
     """
     from unittest.mock import patch  # noqa: PLC0415
@@ -3171,10 +3232,10 @@ def test_main_window_on_preprocess_preview_no_source_user_cancels(
 
     monkeypatch.setattr(main_window._config_panel, "get_input_dir", lambda: str(tmp_path))
     monkeypatch.setattr(_dialogs, "pick_file", lambda *_a, **_k: None)
-    main_window._on_preprocess_preview_requested(
+    main_window._preprocess_preview.request(
         OcrConfig(preprocess_method=PreprocessMethod.NONE)
     )  # should not raise
-    assert main_window._preprocess_preview_thread is None
+    assert main_window._preprocess_preview._thread is None
 
 
 @pytest.mark.gui
@@ -3183,10 +3244,10 @@ def test_main_window_on_preprocess_preview_preprocess_error(
 ) -> None:
     """
     Given  preprocess_preview raises an exception
-    When   _on_preprocess_preview_requested runs its background thread to completion
+    When   PreprocessPreview.request runs its background thread to completion
     Then   a warning dialog is shown and no crash occurs
 
-    preprocess_preview now runs off the GUI thread (see _PreprocessPreviewThread), so
+    preprocess_preview runs off the GUI thread (see _PreprocessPreviewThread), so
     the warning only appears once the thread's done signal has been delivered.
     """
     from unittest.mock import patch  # noqa: PLC0415
@@ -3202,8 +3263,8 @@ def test_main_window_on_preprocess_preview_preprocess_error(
         lambda *_args, **_kwargs: (_ for _ in ()).throw(ValueError("bad file")),
     )
     shown = _record_notices(monkeypatch)
-    main_window._on_preprocess_preview_requested(OcrConfig(preprocess_method=PreprocessMethod.NONE))
-    thread = main_window._preprocess_preview_thread
+    main_window._preprocess_preview.request(OcrConfig(preprocess_method=PreprocessMethod.NONE))
+    thread = main_window._preprocess_preview._thread
     assert thread is not None
     assert thread.wait(THREAD_WAIT_MS), "the preview thread never finished"
     qtbot.waitUntil(lambda: bool(shown), timeout=THREAD_WAIT_MS)
@@ -3217,7 +3278,7 @@ def test_main_window_on_preprocess_preview_ignores_concurrent_click(
 ) -> None:
     """
     Given  a preprocessing preview already running in the background
-    When   _on_preprocess_preview_requested is called again before it finishes
+    When   PreprocessPreview.request is called again before it finishes
     Then   the second call is ignored: no second thread replaces the first, and the
            error dialog for the one background run appears exactly once
     """
@@ -3242,10 +3303,10 @@ def test_main_window_on_preprocess_preview_ignores_concurrent_click(
     )
 
     shown = _record_notices(monkeypatch)
-    main_window._on_preprocess_preview_requested(OcrConfig(preprocess_method=PreprocessMethod.NONE))
-    first_thread = main_window._preprocess_preview_thread
-    main_window._on_preprocess_preview_requested(OcrConfig(preprocess_method=PreprocessMethod.NONE))
-    assert main_window._preprocess_preview_thread is first_thread
+    main_window._preprocess_preview.request(OcrConfig(preprocess_method=PreprocessMethod.NONE))
+    first_thread = main_window._preprocess_preview._thread
+    main_window._preprocess_preview.request(OcrConfig(preprocess_method=PreprocessMethod.NONE))
+    assert main_window._preprocess_preview._thread is first_thread
 
     assert first_thread.wait(THREAD_WAIT_MS), "the preview thread never finished"
     qtbot.waitUntil(lambda: bool(shown), timeout=THREAD_WAIT_MS)
@@ -3271,7 +3332,7 @@ def test_stage_run_warns_on_config_error(main_window, monkeypatch) -> None:
         lambda: (_ for _ in ()).throw(ValueError("bad config")),
     )
     started: list = []
-    monkeypatch.setattr(main_window, "_start_worker", lambda *a, **k: started.append(a))
+    monkeypatch.setattr(main_window._run_controller, "start", lambda *a, **k: started.append(a))
 
     shown = _record_notices(monkeypatch)
     main_window._on_stage_run_requested(["/tmp/a.png"], "ocr")
@@ -3297,7 +3358,7 @@ def test_stage_run_force_runs_correction_when_checkbox_disabled(main_window, mon
         lambda config, **k: captured.append(config) or (),
     )
     started: list = []
-    monkeypatch.setattr(main_window, "_start_worker", lambda *a, **k: started.append(a))
+    monkeypatch.setattr(main_window._run_controller, "start", lambda *a, **k: started.append(a))
 
     main_window._on_stage_run_requested(["/tmp/a.png"], "correction")
     _wait_for(lambda: bool(started))
@@ -3323,7 +3384,7 @@ def test_stage_run_force_runs_evaluation_when_checkbox_disabled(main_window, mon
         lambda config, **k: captured.append(config) or (),
     )
     started: list = []
-    monkeypatch.setattr(main_window, "_start_worker", lambda *a, **k: started.append(a))
+    monkeypatch.setattr(main_window._run_controller, "start", lambda *a, **k: started.append(a))
 
     main_window._on_stage_run_requested(["/tmp/a.png"], "evaluation")
     _wait_for(lambda: bool(started))
@@ -3364,7 +3425,7 @@ def test_stage_run_informs_when_the_selection_is_not_in_the_queue(main_window, m
         lambda *a, **k: invalidated.append(a) or (),
     )
     started: list = []
-    monkeypatch.setattr(main_window, "_start_worker", lambda *a, **k: started.append(a))
+    monkeypatch.setattr(main_window._run_controller, "start", lambda *a, **k: started.append(a))
 
     shown = _record_notices(monkeypatch)
     main_window._on_stage_run_requested(["/tmp/a.png"], "ocr")
@@ -3393,7 +3454,7 @@ def test_stage_run_warns_on_invalidation_failure(main_window, monkeypatch) -> No
         lambda *a, **k: ("a.png: locked",),
     )
     started: list = []
-    monkeypatch.setattr(main_window, "_start_worker", lambda *a, **k: started.append(a))
+    monkeypatch.setattr(main_window._run_controller, "start", lambda *a, **k: started.append(a))
 
     shown = _record_notices(monkeypatch)
     main_window._on_stage_run_requested(["/tmp/a.png"], "ocr")
@@ -3420,7 +3481,9 @@ def test_stage_run_starts_worker_on_success(main_window, monkeypatch) -> None:
     )
     started: list = []
     monkeypatch.setattr(
-        main_window, "_start_worker", lambda config, ids, _files=None: started.append((config, ids))
+        main_window._run_controller,
+        "start",
+        lambda config, ids, _files=None: started.append((config, ids)),
     )
 
     main_window._on_stage_run_requested(["/tmp/a.png"], "ocr")
@@ -3443,7 +3506,7 @@ def test_main_window_loads_credentials_on_startup(qtbot, monkeypatch, credential
 
     credential_file["credentials/OPENAI_API_KEY"] = "test-value-from-settings"
     monkeypatch.setattr(MainWindow, "_load_toml_if_present", lambda self: None)
-    monkeypatch.setattr(MainWindow, "_start_readiness_check", lambda self, **_kw: None)
+    monkeypatch.setattr(ReadinessController, "start_check", lambda self, **_kw: None)
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
 
     win = MainWindow(app_service=real_service(), worker_factory=_DummyWorker)
@@ -3466,7 +3529,7 @@ def test_main_window_env_var_takes_priority_over_stored_credential(
 
     credential_file["credentials/OPENAI_API_KEY"] = "stored-value"
     monkeypatch.setattr(MainWindow, "_load_toml_if_present", lambda self: None)
-    monkeypatch.setattr(MainWindow, "_start_readiness_check", lambda self, **_kw: None)
+    monkeypatch.setattr(ReadinessController, "start_check", lambda self, **_kw: None)
     monkeypatch.setenv("OPENAI_API_KEY", "env-value")
 
     win = MainWindow(app_service=real_service(), worker_factory=_DummyWorker)
@@ -3488,7 +3551,7 @@ def _make_first_start_window(qtbot, monkeypatch, tmp_path: Path, detection) -> M
     from teachers_teammate.gui.setup import SetupAssistant  # noqa: PLC0415
 
     monkeypatch.setattr(main_window_module, "UpdateCheckThread", _DummyUpdateThread)
-    monkeypatch.setattr(MainWindow, "_start_readiness_check", lambda self, **_kw: None)
+    monkeypatch.setattr(ReadinessController, "start_check", lambda self, **_kw: None)
     monkeypatch.setattr(SetupAssistant, "exec", lambda self: QDialog.DialogCode.Rejected)
     monkeypatch.setattr(SetupService, "resolve_config_path", lambda self, explicit: None)
     monkeypatch.setattr(
@@ -3520,7 +3583,7 @@ def test_a_settings_file_from_the_installer_is_still_a_first_start(
     settings.write_text("check_for_updates = false\n", encoding="utf-8")
     opened: list[bool] = []
     monkeypatch.setattr(main_window_module, "UpdateCheckThread", _DummyUpdateThread)
-    monkeypatch.setattr(MainWindow, "_start_readiness_check", lambda self, **_kw: None)
+    monkeypatch.setattr(ReadinessController, "start_check", lambda self, **_kw: None)
     monkeypatch.setattr(
         MainWindow, "_apply_first_start_defaults", lambda self: self._save_settings(notify=False)
     )
@@ -3586,7 +3649,7 @@ def test_existing_config_models_untouched(qtbot, monkeypatch, tmp_path: Path) ->
     )
     detect_calls: list = []
     monkeypatch.setattr(main_window_module, "UpdateCheckThread", _DummyUpdateThread)
-    monkeypatch.setattr(MainWindow, "_start_readiness_check", lambda self, **_kw: None)
+    monkeypatch.setattr(ReadinessController, "start_check", lambda self, **_kw: None)
     monkeypatch.setattr(SetupService, "resolve_config_path", lambda self, explicit: config_path)
     monkeypatch.setattr(
         SetupService,
@@ -3780,7 +3843,7 @@ def test_the_setup_result_is_applied_without_a_guard_dialog(
     monkeypatch.setattr(main_window._config_panel, "_guard_stage", _record_guard)
     monkeypatch.setattr(MainWindow, "_save_settings", lambda self, **kw: saved.append(kw))
     monkeypatch.setattr(
-        MainWindow, "_start_readiness_check", lambda self, **_kw: checked.append("check")
+        ReadinessController, "start_check", lambda self, **_kw: checked.append("check")
     )
     main_window._config_path = tmp_path / "ocr.toml"
 
@@ -3933,7 +3996,7 @@ def test_main_window_file_done_keeps_the_row_when_the_store_cannot_be_read(
 
     monkeypatch.setattr(main_window._app_service.documents, "queue_row", _unreadable)
 
-    main_window._on_file_done(
+    main_window._run_controller._on_file_done(
         FileDoneEvent(
             outcome=FileOutcome(
                 source_id=source,
@@ -3965,7 +4028,7 @@ def test_main_window_file_started_keeps_the_text_format_of_the_shown_texts(main_
         ]
     )
 
-    main_window._on_file_started(source, "rerun.png", 1, 1)
+    main_window._run_controller._on_file_started(source, "rerun.png", 1, 1)
 
     assert main_window._results_table.text_format_for_source(source) == "markdown"
 
@@ -3975,7 +4038,8 @@ def test_main_window_file_started_keeps_the_text_format_of_the_shown_texts(main_
 
 def _queue_a(main_window) -> None:
     """Queue /tmp/a.png without a scan of the folder."""
-    main_window._queued_files_by_source_id = {"/tmp/a.png": Path("/tmp/a.png")}
+    main_window._results_table.set_queue([_queue_row("/tmp/a.png")])
+    main_window._results_table.selectRow(0)
 
 
 def _capture_stage_run(main_window, monkeypatch, cfg, stage: str):
@@ -3988,7 +4052,7 @@ def _capture_stage_run(main_window, monkeypatch, cfg, stage: str):
         lambda config, **k: (),
     )
     started: list = []
-    monkeypatch.setattr(main_window, "_start_worker", lambda *a, **k: started.append(a))
+    monkeypatch.setattr(main_window._run_controller, "start", lambda *a, **k: started.append(a))
     main_window._on_stage_run_requested(["/tmp/a.png"], stage)
     _wait_for(lambda: bool(started))
     return started[0][0]
@@ -4013,7 +4077,7 @@ def test_ocr_rerun_does_not_run_later_stages(main_window, monkeypatch) -> None:
     assert run_config.correction_enabled is False
     assert run_config.evaluation_enabled is False
     assert run_config.anonymization_enabled is False
-    assert main_window._steps_per_file == 1
+    assert main_window._run_session.steps_per_file == 1
 
 
 @pytest.mark.gui
@@ -4080,7 +4144,7 @@ def test_run_with_ollama_unreachable_shows_clear_message_and_does_not_start(
     assert dialog.windowTitle() == "The run can't start"
     assert "Cannot connect to Ollama" in dialog.issues[0].message
     assert [a.label for a in dialog.fix_actions] == ["Find server…"]  # "Check again" is no button
-    assert main_window._worker is None
+    assert main_window._run_controller._worker is None
     assert main_window._run_btn.isEnabled() is True
 
 
@@ -4109,10 +4173,10 @@ def test_run_checks_requirements_off_the_gui_thread(
 
     main_window._on_run()
 
-    assert main_window._worker is None  # still checking
+    assert main_window._run_controller._worker is None  # still checking
     assert main_window._run_btn.isEnabled() is False
     release.set()
-    qtbot.waitUntil(lambda: main_window._worker is not None, timeout=3000)
+    qtbot.waitUntil(lambda: main_window._run_controller._worker is not None, timeout=3000)
 
 
 @pytest.mark.gui
@@ -4147,7 +4211,7 @@ def test_run_shows_unmet_stage_requirement_dialog(
     qtbot.waitUntil(lambda: bool(shown), timeout=3000)
 
     assert shown == ["The run can't start"]
-    assert main_window._worker is None
+    assert main_window._run_controller._worker is None
 
 
 @pytest.mark.gui
@@ -4171,7 +4235,7 @@ def test_insufficient_memory_runs_anyway_only_when_the_user_says_so(
     main_window._results_table.selectRow(0)
 
     main_window._on_run()
-    qtbot.waitUntil(lambda: main_window._worker is not None, timeout=3000)
+    qtbot.waitUntil(lambda: main_window._run_controller._worker is not None, timeout=3000)
 
     assert asked[0].title == "Not enough free memory"
     assert asked[0].body == "qwen3.5:9b needs about 7 GB."
@@ -4203,7 +4267,7 @@ def test_cancelling_the_memory_warning_does_not_start_the_run(
 
     main_window._on_run()
     qtbot.waitUntil(lambda: bool(asked), timeout=3000)
-    assert main_window._worker is None
+    assert main_window._run_controller._worker is None
     assert main_window._run_btn.isEnabled() is True
 
 
@@ -4296,7 +4360,7 @@ def test_run_refuses_online_ocr_with_an_explanation(
 
     assert "Runs on Ollama's servers." in shown[0].issues[0].message
     assert [a.label for a in shown[0].fix_actions] == ["Choose a model…"]
-    assert main_window._worker is None
+    assert main_window._run_controller._worker is None
     assert main_window._run_btn.isEnabled() is True
 
 
@@ -4326,7 +4390,7 @@ def test_run_with_text_files_in_the_input_folder_is_refused(
     assert "next run would read them as new documents" in shown[0].body
     assert "Results" in shown[0].body
     assert preflight == []
-    assert main_window._worker is None
+    assert main_window._run_controller._worker is None
     assert main_window._run_btn.isEnabled() is True
 
 
@@ -4508,7 +4572,7 @@ def test_online_ocr_engine_in_saved_settings_is_announced(
     config_path = tmp_path / "ocr.toml"
     config_path.write_text('ocr_engine = "openai"\nocr_model = "gpt-4o"\n', encoding="utf-8")
     shown = _record_notices(monkeypatch)
-    monkeypatch.setattr(MainWindow, "_start_readiness_check", lambda self, **_kw: None)
+    monkeypatch.setattr(ReadinessController, "start_check", lambda self, **_kw: None)
     monkeypatch.setattr(SetupService, "resolve_config_path", lambda self, _: config_path)
 
     win = MainWindow(app_service=real_service())
@@ -4533,7 +4597,7 @@ def test_a_removed_local_engine_in_saved_settings_is_announced(
     config_path = tmp_path / "ocr.toml"
     config_path.write_text(f'ocr_engine = "{old}"\n', encoding="utf-8")
     shown = _record_notices(monkeypatch)
-    monkeypatch.setattr(MainWindow, "_start_readiness_check", lambda self, **_kw: None)
+    monkeypatch.setattr(ReadinessController, "start_check", lambda self, **_kw: None)
     monkeypatch.setattr(SetupService, "resolve_config_path", lambda self, _: config_path)
 
     win = MainWindow(app_service=real_service())
@@ -4559,7 +4623,7 @@ def test_local_ocr_engine_in_saved_settings_is_not_announced(
     config_path = tmp_path / "ocr.toml"
     config_path.write_text('ocr_engine = "ppocr"\n', encoding="utf-8")
     shown = _record_notices(monkeypatch)
-    monkeypatch.setattr(MainWindow, "_start_readiness_check", lambda self, **_kw: None)
+    monkeypatch.setattr(ReadinessController, "start_check", lambda self, **_kw: None)
     monkeypatch.setattr(SetupService, "resolve_config_path", lambda self, _: config_path)
 
     qtbot.addWidget(MainWindow(app_service=real_service()))
@@ -4580,7 +4644,7 @@ def test_an_unusable_saved_value_is_logged_not_shown_as_a_dialog(
     config_path = tmp_path / "ocr.toml"
     config_path.write_text('language = "German"\ndebug = "false"\n', encoding="utf-8")
     shown = _record_notices(monkeypatch)
-    monkeypatch.setattr(MainWindow, "_start_readiness_check", lambda self, **_kw: None)
+    monkeypatch.setattr(ReadinessController, "start_check", lambda self, **_kw: None)
     monkeypatch.setattr(SetupService, "resolve_config_path", lambda self, _: config_path)
 
     win = MainWindow(app_service=real_service())
@@ -4631,7 +4695,7 @@ def test_stage_rerun_with_unmet_requirement_keeps_the_cached_results(
 
     assert shown == ["The run can't start"]
     assert invalidated == []
-    assert main_window._worker is None
+    assert main_window._run_controller._worker is None
 
 
 @pytest.mark.gui
@@ -4665,10 +4729,10 @@ def test_run_pressed_while_requirements_are_checked_starts_nothing_twice(
 
     assert [notice.title for notice in busy] == ["Please wait"]
     release.set()
-    qtbot.waitUntil(lambda: main_window._worker is not None, timeout=3000)
-    first_worker = main_window._worker
+    qtbot.waitUntil(lambda: main_window._run_controller._worker is not None, timeout=3000)
+    first_worker = main_window._run_controller._worker
     qtbot.wait(100)
-    assert main_window._worker is first_worker
+    assert main_window._run_controller._worker is first_worker
     assert len(checks) == 1
 
 
@@ -4685,7 +4749,7 @@ def test_stage_rerun_is_refused_while_a_worker_runs(
     monkeypatch.setattr(main_window._config_panel, "to_config", lambda: cfg)
     worker = _DummyWorker(cfg)
     worker.start()
-    main_window._worker = worker
+    main_window._run_controller._worker = worker
     invalidated: list = []
     monkeypatch.setattr(
         main_window._app_service.commands,
@@ -4775,8 +4839,8 @@ def test_export_text_writes_one_file_per_row_and_skips_rows_without_text(
     _pick_folder(monkeypatch, out)
     warnings = _record_notices(monkeypatch)
 
-    main_window._on_export_requested(ids, ExportKind.TEXT)
-    _wait_for(lambda: not main_window._text_export_running and bool(warnings))
+    main_window._export_controller.on_requested(ids, ExportKind.TEXT)
+    _wait_for(lambda: not main_window._export_controller.running and bool(warnings))
 
     assert (out / "a.txt").read_text(encoding="utf-8") == "alpha"
     assert (out / "b.txt").read_text(encoding="utf-8") == "beta"
@@ -4799,7 +4863,7 @@ def test_export_to_a_folder_opens_the_picker_in_the_output_folder(
     prompts = []
     monkeypatch.setattr(_dialogs, "pick_folder", lambda _parent, prompt: prompts.append(prompt))
 
-    main_window._on_export_requested(ids, ExportKind.TEXT)
+    main_window._export_controller.on_requested(ids, ExportKind.TEXT)
 
     assert [prompt.start for prompt in prompts] == [str(results)]
 
@@ -4819,7 +4883,7 @@ def test_export_of_one_file_proposes_a_name_in_the_output_folder(
     prompts = []
     monkeypatch.setattr(_dialogs, "save_file", lambda _parent, prompt: prompts.append(prompt))
 
-    main_window._on_export_requested(ids, ExportKind.TEXT)
+    main_window._export_controller.on_requested(ids, ExportKind.TEXT)
 
     assert [prompt.start for prompt in prompts] == [str(results / "a.txt")]
 
@@ -4845,8 +4909,8 @@ def test_export_anonymized_text_writes_the_anonymized_file(
     with patch(
         "teachers_teammate.infrastructure.anonymizer.SpacyAnonymizer", return_value=anonymizer
     ):
-        main_window._on_export_requested(ids, ExportKind.TEXT_ANONYMIZED)
-        _wait_for(lambda: not main_window._text_export_running)
+        main_window._export_controller.on_requested(ids, ExportKind.TEXT_ANONYMIZED)
+        _wait_for(lambda: not main_window._export_controller.running)
 
     assert warnings == []
     assert (out / "a_anonymized.txt").read_text(encoding="utf-8") == "Dear [PERSON_1]"
@@ -4872,7 +4936,7 @@ def test_export_anonymized_text_explains_a_missing_spacy_once(
         "teachers_teammate.infrastructure.anonymizer.SpacyAnonymizer",
         side_effect=ImportError("No module named 'spacy'"),
     ):
-        main_window._on_export_requested(ids, ExportKind.TEXT_ANONYMIZED)
+        main_window._export_controller.on_requested(ids, ExportKind.TEXT_ANONYMIZED)
         _wait_for(lambda: bool(warnings))
 
     assert len(warnings) == 1
@@ -4896,11 +4960,11 @@ def test_export_text_into_the_input_folder_can_be_declined(
     _pick_file(monkeypatch, scans / "a.txt")
     asked = _answer_questions(monkeypatch, yes=False)
 
-    main_window._on_export_requested(ids, ExportKind.TEXT)
+    main_window._export_controller.on_requested(ids, ExportKind.TEXT)
 
     assert [question.title for question in asked] == ["Save into the input folder?"]
     assert not (scans / "a.txt").exists()
-    assert not main_window._text_export_running
+    assert not main_window._export_controller.running
 
 
 def _capture_warnings(monkeypatch) -> list[Notice]:
@@ -4919,14 +4983,14 @@ def test_export_toolbar_exports_the_selected_rows_else_all_rows(
     ids = _queue_with_text(main_window, tmp_path / "scans", {"a.png": "x", "b.png": "y"})
     calls: list[tuple[list[str], ExportKind]] = []
     monkeypatch.setattr(
-        main_window,
-        "_on_export_requested",
+        main_window._export_controller,
+        "on_requested",
         lambda source_ids, kind: calls.append((source_ids, kind)),
     )
 
-    main_window._on_export_toolbar(ExportKind.TEXT)
+    main_window._export_controller.on_toolbar_action(ExportKind.TEXT)
     main_window._results_table.selectRow(1)
-    main_window._on_export_toolbar(ExportKind.DOCX)
+    main_window._export_controller.on_toolbar_action(ExportKind.DOCX)
 
     assert calls == [(ids, ExportKind.TEXT), ([ids[1]], ExportKind.DOCX)]
 
@@ -4943,8 +5007,8 @@ def test_export_toolbar_menu_entry_starts_that_export(
     ids = _queue_with_text(main_window, tmp_path / "scans", {"a.png": "x"})
     calls: list[tuple[list[str], ExportKind]] = []
     monkeypatch.setattr(
-        main_window,
-        "_on_export_requested",
+        main_window._export_controller,
+        "on_requested",
         lambda source_ids, kind: calls.append((source_ids, kind)),
     )
 
@@ -4980,7 +5044,7 @@ def test_export_skips_documents_that_would_share_an_output_file(
         lambda _config, _source, path, **_k: written.append(path),
     )
 
-    main_window._on_export_requested(ids, kind)
+    main_window._export_controller.on_requested(ids, kind)
     _wait_for(lambda: bool(warnings))
 
     assert written == [out / ("x" + kind.file_suffix)]
@@ -5005,8 +5069,8 @@ def test_export_into_a_folder_asks_before_replacing_existing_files(
     _pick_folder(monkeypatch, out)
     asked = _answer_questions(monkeypatch, yes=answer)
 
-    main_window._on_export_requested(ids, ExportKind.TEXT)
-    _wait_for(lambda: not main_window._text_export_running)
+    main_window._export_controller.on_requested(ids, ExportKind.TEXT)
+    _wait_for(lambda: not main_window._export_controller.running)
 
     assert [question.title for question in asked] == ["Replace existing files?"]
     assert (out / "a.txt").read_text(encoding="utf-8") == expected
@@ -5029,7 +5093,7 @@ def test_replace_question_names_files_by_their_subfolder(
     targets = [("s1", out / "class1" / "a.txt"), ("s2", out / "class2" / "a.txt")]
     asked = _answer_questions(monkeypatch, yes=False)
 
-    assert main_window._confirm_replace_existing(targets) is False
+    assert main_window._export_controller._confirm_replace_existing(targets) is False
 
     assert "class1/a.txt" in asked[0].body
     assert "class2/a.txt" in asked[0].body
@@ -5051,7 +5115,7 @@ def test_export_text_never_replaces_another_input_document(
     _pick_file(monkeypatch, scans / "a.txt")
     warnings = _capture_warnings(monkeypatch)
 
-    main_window._on_export_requested([ids[0]], ExportKind.TEXT)
+    main_window._export_controller.on_requested([ids[0]], ExportKind.TEXT)
     _wait_for(lambda: bool(warnings))
 
     assert (scans / "a.txt").read_text(encoding="utf-8") == "original"
@@ -5074,8 +5138,8 @@ def test_export_text_into_the_input_folder_writes_after_confirming(
     _pick_file(monkeypatch, scans / "sub" / "a.txt")
     asked = _answer_questions(monkeypatch, yes=True)
 
-    main_window._on_export_requested(ids, ExportKind.TEXT)
-    _wait_for(lambda: not main_window._text_export_running)
+    main_window._export_controller.on_requested(ids, ExportKind.TEXT)
+    _wait_for(lambda: not main_window._export_controller.running)
 
     assert [question.title for question in asked] == ["Save into the input folder?"]
     assert (scans / "sub" / "a.txt").read_text(encoding="utf-8") == "alpha"
@@ -5104,8 +5168,8 @@ def test_input_folder_warning_only_applies_to_folder_and_text_exports(
     kind = ExportKind.DOCX if folder_mode else ExportKind.TEXT
     _pick_file(monkeypatch, scans / ("a" + kind.file_suffix))
 
-    main_window._on_export_requested(ids, kind)
-    _wait_for(lambda: not main_window._text_export_running)
+    main_window._export_controller.on_requested(ids, kind)
+    _wait_for(lambda: not main_window._export_controller.running)
 
     assert asked == []
 
@@ -5129,7 +5193,7 @@ def test_export_anonymized_text_with_missing_spacy_also_lists_skipped_rows(
         "teachers_teammate.infrastructure.anonymizer.SpacyAnonymizer",
         side_effect=ImportError("No module named 'spacy'"),
     ):
-        main_window._on_export_requested(ids, ExportKind.TEXT_ANONYMIZED)
+        main_window._export_controller.on_requested(ids, ExportKind.TEXT_ANONYMIZED)
         _wait_for(lambda: bool(warnings))
 
     assert len(warnings) == 1
@@ -5166,7 +5230,7 @@ def test_exported_docx_labels_follow_the_explanation_language(
         lambda _config, _source, _path, options=None, **_k: seen.append(options.labels_language),
     )
 
-    main_window._on_export_requested([sid], ExportKind.DOCX)
+    main_window._export_controller.on_requested([sid], ExportKind.DOCX)
     _wait_for(lambda: bool(seen))
 
     assert seen == [expected]
@@ -5212,7 +5276,7 @@ def test_a_pull_requested_while_one_runs_is_queued_not_dropped(qtbot, monkeypatc
             pass
 
     monkeypatch.setattr(_addon_installer_dialog, "_OllamaPullThread", _FakePull)
-    manager = main_window_module.OllamaDownloadManager(service=real_service())
+    manager = main_window_module.PullManager(service=real_service())
     manager.start("http://host:11434", "a:1b")
 
     manager.start("http://host:11434", "a:1b", ["b:1b"])
@@ -5359,7 +5423,7 @@ def test_the_line_names_a_missing_key_and_its_button_opens_the_key_row(
     calls = _preflight_returns(monkeypatch, _MISSING_KEY)
     scripted = install_scripted_settings_window(monkeypatch, accepted=False)
 
-    ready_window._start_readiness_check()
+    ready_window._readiness_controller.start_check()
     qtbot.waitUntil(lambda: "No API key for Mistral (EU) yet" in _line(ready_window), timeout=3000)
 
     assert _buttons(ready_window) == ["Enter key…"]
@@ -5376,6 +5440,35 @@ def test_the_line_names_a_missing_key_and_its_button_opens_the_key_row(
 
 
 @pytest.mark.gui
+def test_the_readiness_check_reads_the_queue_on_the_gui_thread(
+    qtbot, ready_window, monkeypatch
+) -> None:
+    """
+    Given  a queue in the table and a readiness check whose answer comes from a background task
+    When   the check is started
+    Then   the table is only read on the GUI thread, and the task gets what was read there
+    """
+    gui_thread = threading.get_ident()
+    readers: set[int] = set()
+    read_queue = ResultsTable.queued_source_ids
+
+    def recording(self) -> list[str]:
+        readers.add(threading.get_ident())
+        return read_queue(self)
+
+    monkeypatch.setattr(ResultsTable, "queued_source_ids", recording)
+    calls = _preflight_returns(monkeypatch, RunPreflight())
+
+    ready_window._readiness_controller.start_check()
+    qtbot.waitUntil(lambda: bool(calls), timeout=3000)
+    qtbot.wait(50)
+
+    assert readers == {gui_thread}
+    assert calls[-1]["recognition"] is True
+    assert calls[-1]["files"] == []
+
+
+@pytest.mark.gui
 def test_the_line_offers_the_server_address_and_check_again_for_ollama(
     qtbot, ready_window, monkeypatch
 ) -> None:
@@ -5385,10 +5478,12 @@ def test_the_line_offers_the_server_address_and_check_again_for_ollama(
     Then   both buttons show, and pressing "Check again" asks again at once
     """
     _preflight_returns(monkeypatch, RunPreflight(ollama_unreachable="✗ Cannot connect"))
-    ready_window._start_readiness_check()
+    ready_window._readiness_controller.start_check()
     qtbot.waitUntil(lambda: "Ollama isn't reachable" in _line(ready_window), timeout=3000)
     checks: list[int] = []
-    monkeypatch.setattr(ready_window, "_start_readiness_check", lambda **_kw: checks.append(1))
+    monkeypatch.setattr(
+        ready_window._readiness_controller, "start_check", lambda **_kw: checks.append(1)
+    )
 
     assert _buttons(ready_window) == ["Check again", "Find server…"]
     ready_window._readiness_line._buttons[0].click()
@@ -5409,7 +5504,7 @@ def test_the_line_asks_for_a_results_folder_and_choose_opens_the_dialog(
 
     panel = ready_window._config_panel
     panel._docx_enabled.setChecked(True)
-    ready_window._update_readiness()
+    ready_window._readiness_controller.update()
     assert "Choose where to save the results" in _line(ready_window)
     assert _buttons(ready_window) == ["Choose…"]
     monkeypatch.setattr(_dialogs, "pick_folder", lambda *_a, **_k: tmp_path)
@@ -5432,8 +5527,10 @@ def test_selecting_rows_updates_the_count_without_a_new_check(
     for name in ("a.png", "b.png", "c.png"):
         (tmp_path / name).touch()
     checks: list[int] = []
-    monkeypatch.setattr(ready_window, "_start_readiness_check", lambda **_kw: checks.append(1))
-    ready_window._first_check_answered = True
+    monkeypatch.setattr(
+        ready_window._readiness_controller, "start_check", lambda **_kw: checks.append(1)
+    )
+    ready_window._readiness_controller._first_check_answered = True
 
     ready_window._config_panel.set_input_dir(str(tmp_path))
     assert _line(ready_window) == "Select the documents to run in the queue"
@@ -5457,7 +5554,7 @@ def test_a_check_before_any_documents_are_chosen_says_what_to_do_first(
     """
     _preflight_returns(monkeypatch, RunPreflight())
 
-    ready_window._start_readiness_check()
+    ready_window._readiness_controller.start_check()
 
     qtbot.waitUntil(lambda: _line(ready_window) == "Select documents to start", timeout=3000)
 
@@ -5483,7 +5580,7 @@ def test_the_line_says_checking_only_when_the_first_answer_is_slow(
     ready_window._results_table.set_queue([_queue_row(str(tmp_path / "a.png"), "a.png")])
     ready_window._results_table.selectRow(0)
 
-    ready_window._start_readiness_check()
+    ready_window._readiness_controller.start_check()
     qtbot.waitUntil(lambda: _line(ready_window) == "Checking…", timeout=3000)
     release.set()
 
@@ -5510,9 +5607,9 @@ def test_a_stale_readiness_answer_is_dropped(qtbot, ready_window, monkeypatch) -
         return answers[index]
 
     monkeypatch.setattr(RunService, "check_run_preflight", preflight)
-    ready_window._start_readiness_check()
+    ready_window._readiness_controller.start_check()
     qtbot.waitUntil(lambda: started["n"] == 1, timeout=3000)
-    ready_window._start_readiness_check()
+    ready_window._readiness_controller.start_check()
     qtbot.waitUntil(lambda: started["n"] == 2, timeout=3000)
 
     gates[1].set()
@@ -5520,7 +5617,7 @@ def test_a_stale_readiness_answer_is_dropped(qtbot, ready_window, monkeypatch) -
     gates[0].set()
     qtbot.wait(200)
 
-    assert ready_window._blocker is None
+    assert ready_window._readiness_controller.blocker is None
     assert "No API key" not in _line(ready_window)
 
 
@@ -5533,14 +5630,14 @@ def test_an_unreachable_ollama_is_checked_again_until_it_answers(ready_window) -
            kind of blocker schedules none
     """
     unreachable = RunPreflight(ollama_unreachable="✗ down")
-    ready_window._on_readiness_check_done(unreachable, None)
-    assert ready_window._ollama_retry_timer.isActive() is True
+    ready_window._readiness_controller.on_check_done(unreachable, None)
+    assert ready_window._readiness_controller._ollama_retry.isActive() is True
 
-    ready_window._on_readiness_check_done(_MISSING_KEY, None)
-    assert ready_window._ollama_retry_timer.isActive() is False
-    ready_window._on_readiness_check_done(unreachable, None)
-    ready_window._on_readiness_check_done(RunPreflight(), None)
-    assert ready_window._ollama_retry_timer.isActive() is False
+    ready_window._readiness_controller.on_check_done(_MISSING_KEY, None)
+    assert ready_window._readiness_controller._ollama_retry.isActive() is False
+    ready_window._readiness_controller.on_check_done(unreachable, None)
+    ready_window._readiness_controller.on_check_done(RunPreflight(), None)
+    assert ready_window._readiness_controller._ollama_retry.isActive() is False
 
 
 @pytest.mark.gui
@@ -5561,9 +5658,9 @@ def test_the_retry_runs_for_every_kind_that_means_ollama_is_not_answering(
         ollama_unreachable="✗ down", ollama_issue=RequirementIssue("✗ down", kind)
     )
 
-    ready_window._on_readiness_check_done(result, None)
+    ready_window._readiness_controller.on_check_done(result, None)
 
-    assert ready_window._ollama_retry_timer.isActive() is True
+    assert ready_window._readiness_controller._ollama_retry.isActive() is True
 
 
 @pytest.mark.gui
@@ -5575,13 +5672,15 @@ def test_get_ollama_opens_the_download_page(qtbot, ready_window, monkeypatch) ->
     """
     opened: list[str] = []
     monkeypatch.setattr(
-        main_window_module.QDesktopServices, "openUrl", lambda url: opened.append(url.toString())
+        readiness_controller_module.QDesktopServices,
+        "openUrl",
+        lambda url: opened.append(url.toString()),
     )
     result = RunPreflight(
         ollama_unreachable="✗ down",
         ollama_issue=RequirementIssue("✗ down", IssueKind.OLLAMA_NOT_FOUND),
     )
-    ready_window._on_readiness_check_done(result, None)
+    ready_window._readiness_controller.on_check_done(result, None)
 
     ready_window._readiness_line._buttons[0].click()
 
@@ -5601,17 +5700,19 @@ def test_start_ollama_starts_it_in_the_background_and_checks_again(
     checks: list[dict] = []
     monkeypatch.setattr(ready_window._app_service.ollama, "start_ollama", lambda: started.append(1))
     monkeypatch.setattr(
-        main_window_module,
+        readiness_controller_module,
         "run_in_background",
         lambda fn, on_done, **_kw: (fn(), on_done(None, None)),
     )
-    monkeypatch.setattr(main_window_module.QTimer, "singleShot", lambda _ms, fn: fn())
-    monkeypatch.setattr(ready_window, "_start_readiness_check", lambda **kw: checks.append(kw))
+    monkeypatch.setattr(readiness_controller_module.QTimer, "singleShot", lambda _ms, fn: fn())
+    monkeypatch.setattr(
+        ready_window._readiness_controller, "start_check", lambda **kw: checks.append(kw)
+    )
     result = RunPreflight(
         ollama_unreachable="✗ down",
         ollama_issue=RequirementIssue("✗ down", IssueKind.OLLAMA_NOT_RUNNING, startable=True),
     )
-    ready_window._on_readiness_check_done(result, None)
+    ready_window._readiness_controller.on_check_done(result, None)
 
     ready_window._readiness_line._buttons[0].click()
 
@@ -5631,15 +5732,17 @@ def test_activating_the_window_checks_again_only_while_something_blocks(
     from PySide6.QtCore import QEvent  # noqa: PLC0415
 
     checks: list[int] = []
-    monkeypatch.setattr(ready_window, "_start_readiness_check", lambda **_kw: checks.append(1))
+    monkeypatch.setattr(
+        ready_window._readiness_controller, "start_check", lambda **_kw: checks.append(1)
+    )
     monkeypatch.setattr(ready_window, "isActiveWindow", lambda: True)
     event = QEvent(QEvent.Type.ActivationChange)
 
-    ready_window._blocker = None
+    ready_window._readiness_controller.blocker = None
     ready_window.changeEvent(event)
     assert checks == []
 
-    ready_window._on_readiness_check_done(_MISSING_KEY, None)
+    ready_window._readiness_controller.on_check_done(_MISSING_KEY, None)
     ready_window.changeEvent(event)
     assert checks == [1]
 
@@ -5654,7 +5757,7 @@ def test_check_again_asks_the_server_for_a_fresh_model_list(
     Then   the new check asks for fresh data (a model pulled in a terminal is then seen)
     """
     calls = _preflight_returns(monkeypatch, RunPreflight(ollama_unreachable="✗ Cannot connect"))
-    ready_window._start_readiness_check()
+    ready_window._readiness_controller.start_check()
     qtbot.waitUntil(lambda: "Ollama isn't reachable" in _line(ready_window), timeout=3000)
     calls.clear()
 
@@ -5679,7 +5782,7 @@ def test_the_check_asks_for_the_engine_only_when_a_page_is_to_be_read(
 
     def asks_for_engine() -> bool:
         calls.clear()
-        ready_window._start_readiness_check()
+        ready_window._readiness_controller.start_check()
         qtbot.waitUntil(lambda: len(calls) >= 1, timeout=3000)
         return calls[-1]["recognition"]
 
@@ -5704,7 +5807,9 @@ def test_ticking_a_results_box_asks_the_readiness_check_again(ready_window, monk
     Then   a new readiness check is scheduled, so the line follows what Run will require
     """
     scheduled: list[int] = []
-    monkeypatch.setattr(ready_window, "_schedule_readiness_check", lambda: scheduled.append(1))
+    monkeypatch.setattr(
+        ready_window._readiness_controller, "schedule_check", lambda: scheduled.append(1)
+    )
     panel = ready_window._config_panel
 
     panel._text_enabled.setChecked(True)
@@ -5731,7 +5836,7 @@ def test_the_line_warns_about_text_files_saved_in_a_subfolder_of_the_documents(
     panel._text_enabled.setChecked(True)
     ready_window._results_table.selectAll()
 
-    ready_window._update_readiness()
+    ready_window._readiness_controller.update()
 
     assert "outside the documents folder" in _line(ready_window)
 
@@ -5766,7 +5871,9 @@ def test_a_download_takes_over_the_line_and_a_new_check_follows(
     Then   the line showed the download with its progress, and ends with a new readiness check
     """
     checks: list[int] = []
-    monkeypatch.setattr(ready_window, "_start_readiness_check", lambda **_kw: checks.append(1))
+    monkeypatch.setattr(
+        ready_window._readiness_controller, "start_check", lambda **_kw: checks.append(1)
+    )
     monkeypatch.setattr(
         ready_window._app_service.recommendations, "on_ollama_models_changed", lambda _url: None
     )
@@ -5790,14 +5897,16 @@ def test_closing_the_window_stops_the_retries_and_pending_checks(ready_window) -
     """
     from PySide6.QtGui import QCloseEvent  # noqa: PLC0415
 
-    ready_window._on_readiness_check_done(RunPreflight(ollama_unreachable="✗ down"), None)
-    ready_window._schedule_readiness_check()
-    assert ready_window._ollama_retry_timer.isActive() is True
+    ready_window._readiness_controller.on_check_done(
+        RunPreflight(ollama_unreachable="✗ down"), None
+    )
+    ready_window._readiness_controller.schedule_check()
+    assert ready_window._readiness_controller._ollama_retry.isActive() is True
 
     ready_window.closeEvent(QCloseEvent())
 
-    assert ready_window._ollama_retry_timer.isActive() is False
-    assert ready_window._readiness_debounce.isActive() is False
+    assert ready_window._readiness_controller._ollama_retry.isActive() is False
+    assert ready_window._readiness_controller._debounce.isActive() is False
 
 
 # ── Text recognition switched off ────────────────────────────────────────────
@@ -5822,7 +5931,7 @@ def test_a_skipped_file_opens_no_error_dialog_and_is_counted_apart(
     )
     main_window._results_table.set_queue([_queue_row(source, "scan.png")])
 
-    main_window._on_file_done(
+    main_window._run_controller._on_file_done(
         FileDoneEvent(
             outcome=FileOutcome(
                 source_id=source,
@@ -5851,7 +5960,7 @@ def test_the_line_offers_to_turn_recognition_on_when_there_is_nothing_to_read(
     ready_window._config_panel._recognition_enabled.setChecked(False)
     _preflight_returns(monkeypatch, RunPreflight(nothing_to_read=True))
 
-    ready_window._start_readiness_check()
+    ready_window._readiness_controller.start_check()
     qtbot.waitUntil(lambda: "Nothing to read" in _line(ready_window), timeout=3000)
 
     assert _buttons(ready_window) == ["Turn on"]
@@ -5870,7 +5979,6 @@ def test_the_note_counts_the_scans_the_check_found_and_marks_their_rows(
     Then   the note under the switch counts one scan, and only the scan's row says "skipped"
     """
     scan, note = tmp_path / "scan.png", tmp_path / "note.txt"
-    ready_window._queued_files_by_source_id = {str(scan.resolve()): scan, str(note.resolve()): note}
     ready_window._results_table.set_queue(
         [
             _queue_row(str(scan.resolve()), "scan.png"),
@@ -5880,7 +5988,7 @@ def test_the_note_counts_the_scans_the_check_found_and_marks_their_rows(
     ready_window._config_panel._recognition_enabled.setChecked(False)
     _preflight_returns(monkeypatch, RunPreflight(skipped=(scan,)))
 
-    ready_window._start_readiness_check()
+    ready_window._readiness_controller.start_check()
     qtbot.waitUntil(
         lambda: ready_window._results_table.item(0, 1).text() == "skipped", timeout=3000
     )
@@ -5914,9 +6022,9 @@ def test_an_unreachable_server_triggers_one_silent_search_and_offers_the_hit(
     monkeypatch.setattr(OllamaServerService, "discover_ollama_servers", discover)
     _preflight_returns(monkeypatch, RunPreflight(ollama_unreachable="✗ Cannot connect"))
 
-    ready_window._start_readiness_check()
+    ready_window._readiness_controller.start_check()
     qtbot.waitUntil(lambda: _buttons(ready_window) == ["Use it", "Find server…"], timeout=3000)
-    ready_window._start_readiness_check()
+    ready_window._readiness_controller.start_check()
     qtbot.wait(200)
 
     assert len(searched) == 1
@@ -5953,7 +6061,7 @@ def test_the_time_left_is_estimated_for_the_steps_the_run_really_runs(
         lambda choices, **_kw: asked.append(choices) or SpeedSummary(),
     )
 
-    main_window._estimate_per_page(config)
+    main_window._run_controller._estimate_per_page(config)
 
     assert len(asked) == 1
     choices = asked[0]
@@ -5984,7 +6092,7 @@ def _window_with_update_setting(qtbot, monkeypatch, value: bool | None) -> MainW
     _RecordingUpdateThread.built = []
     monkeypatch.setattr(main_window_module, "UpdateCheckThread", _RecordingUpdateThread)
     monkeypatch.setattr(MainWindow, "_load_toml_if_present", lambda self: None)
-    monkeypatch.setattr(MainWindow, "_start_readiness_check", lambda self, **_kw: None)
+    monkeypatch.setattr(ReadinessController, "start_check", lambda self, **_kw: None)
     real = ConfigPanel.get_settings_dict
 
     def settings_dict(self) -> dict:
@@ -6653,7 +6761,7 @@ def test_the_check_layout_survives_a_restart(qtbot, monkeypatch) -> None:
     _MemorySettings.store = {}
     monkeypatch.setattr(main_window_module, "QSettings", _MemorySettings)
     monkeypatch.setattr(MainWindow, "_load_toml_if_present", lambda self: None)
-    monkeypatch.setattr(MainWindow, "_start_readiness_check", lambda self, **_kw: None)
+    monkeypatch.setattr(ReadinessController, "start_check", lambda self, **_kw: None)
     monkeypatch.setattr(main_window_module, "UpdateCheckThread", _DummyUpdateThread)
     first = MainWindow(app_service=real_service(), worker_factory=_DummyWorker)
     qtbot.addWidget(first)
@@ -6689,4 +6797,4 @@ def test_an_export_error_is_told_in_the_teachers_words(error: Exception, expecte
     When   the window words the failure
     Then   the two refusals use the sentences of texts/ and any other error its own message
     """
-    assert main_window_module._export_failure("note.png", error).startswith(expected)
+    assert export_controller_module._export_failure("note.png", error).startswith(expected)

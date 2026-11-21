@@ -15,6 +15,7 @@ from teachers_teammate.application.run import RunService
 from teachers_teammate.gui import _main_window as main_window_module
 from teachers_teammate.gui import _user_text as txt
 from teachers_teammate.gui._main_window import MainWindow
+from teachers_teammate.gui._readiness_controller import ReadinessController
 from teachers_teammate.gui._privacy_settings import DISPLAY_ANONYMIZED_KEY
 from teachers_teammate.gui.settings import SettingsPage, SettingsResult
 from teachers_teammate.gui.settings._page import FOCUS_DETECTION
@@ -147,7 +148,7 @@ def _no_network(monkeypatch) -> None:
         ProviderService, "check_connection", lambda self, **_kw: (False, False, "offline")
     )
     monkeypatch.setattr(MainWindow, "_load_toml_if_present", lambda self: None)
-    monkeypatch.setattr(MainWindow, "_start_readiness_check", lambda self, **_kw: None)
+    monkeypatch.setattr(ReadinessController, "start_check", lambda self, **_kw: None)
     monkeypatch.setattr(main_window_module, "UpdateCheckThread", _DummyUpdateThread)
 
 

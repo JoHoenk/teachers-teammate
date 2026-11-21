@@ -171,9 +171,21 @@ ALLOWED: dict[str, frozenset[str]] = {
             "f'• {issue.message}'",
         }
     ),
+    "teachers_teammate/gui/_export_controller.py": frozenset(
+        {
+            "Export",
+            "Save results as Word documents or text files, optionally anonymized (also available via right-click)",
+        }
+    ),
     "teachers_teammate/gui/_export_menu.py": frozenset(
         {
             "Export",
+        }
+    ),
+    "teachers_teammate/gui/_run_controller.py": frozenset(
+        {
+            "",
+            "Run Selected",
         }
     ),
     "teachers_teammate/gui/_hardware_profile_selector.py": frozenset(
@@ -194,23 +206,18 @@ ALLOWED: dict[str, frozenset[str]] = {
     ),
     "teachers_teammate/gui/_main_window.py": frozenset(
         {
-            "",
             "About Teacher\u2019s Teammate…",
             "All settings…",
             "Answer a few questions to set up the AI for this computer.",
             "Benchmark…",
             "Check",
-            "Ctrl + scroll wheel to zoom",
             "Documents",
-            "Export",
             "File",
             "Help",
             "How busy this computer is, and how long each document took.",
             "Open Files…",
             "Open Folder…",
             "Quit",
-            "Run Selected",
-            "Save results as Word documents or text files, optionally anonymized (also available via right-click)",
             "Settings",
             "Setup Assistant…",
             "System Monitor",
@@ -219,7 +226,6 @@ ALLOWED: dict[str, frozenset[str]] = {
             "Tools",
             "Try a document with different text-recognition settings and compare the results.",
             "User Guide…",
-            "f'Preprocessing Preview — {ocr_config.preprocess_method}'",
             'f\'Version <b>{version}</b> is available — <a href="{url}" style="color:#ffd966;">Download</a> · turn this check off under {WHERE_GENERAL}\'',
             "f'{PAGE_TITLES[page]}…'",
             "✕",
@@ -246,6 +252,12 @@ ALLOWED: dict[str, frozenset[str]] = {
     "teachers_teammate/gui/_ollama_status_line.py": frozenset(
         {
             "",
+        }
+    ),
+    "teachers_teammate/gui/_preprocess_preview.py": frozenset(
+        {
+            "Ctrl + scroll wheel to zoom",
+            "f'Preprocessing Preview — {ocr_config.preprocess_method}'",
         }
     ),
     "teachers_teammate/gui/_prompt_editor.py": frozenset(
@@ -342,27 +354,6 @@ ALLOWED: dict[str, frozenset[str]] = {
             "◀",
         }
     ),
-    "teachers_teammate/gui/settings/_addons_page.py": frozenset(
-        {
-            "",
-            "AI models for this computer (Ollama)",
-            "Add",
-            "Add a model by name:",
-            "Install / download log will appear here…",
-            "Name detection",
-            "Name detection models",
-            "Online AI services",
-            "Select the best models for my computer",
-            "e.g. llama3.2:latest",
-            "f\"The built-in reader reads pages on this computer, without a server. {txt.OCR_ENGINE_HINTS['ppocr']} Its model files, and the page models of the automatic image preparation, come from PaddlePaddle (Apache-2.0).\"",
-            "f'<b>{txt.ADDONS_OUTDATED_LINE}.</b> {txt.ADDONS_OUTDATED_NOTE}'",
-            "f'Built-in reader (PP-OCR) — {READER_SIZE_LABEL}'",
-            "f'Saved in: {self._svc.reader.models_dir()}'",
-            "f'{base}  {_installed_mark(key, results)}'",
-            "spaCy  (spacy)",
-            "spaCy is the library that finds names and other personal information. Install it first, then download a name detection model below.",
-        }
-    ),
     "teachers_teammate/gui/settings/_ai_service_section.py": frozenset(
         {
             "f'{_listing_status(listing, service)} {_status_note(saved_model_not_offered_text(previous, service))}'",
@@ -397,6 +388,52 @@ ALLOWED: dict[str, frozenset[str]] = {
     "teachers_teammate/gui/settings/_speed_panel.py": frozenset(
         {
             "",
+        }
+    ),
+    "teachers_teammate/gui/settings/addons/_common.py": frozenset(
+        {
+            "f'{base}  {installed_mark(key, results)}'",
+        }
+    ),
+    "teachers_teammate/gui/settings/addons/_install_status.py": frozenset(
+        {
+            "",
+            "Install / download log will appear here…",
+        }
+    ),
+    "teachers_teammate/gui/settings/addons/_name_detection_tab.py": frozenset(
+        {
+            "Name detection",
+            "Name detection models",
+            "spaCy  (spacy)",
+            "spaCy is the library that finds names and other personal information. Install it first, then download a name detection model below.",
+        }
+    ),
+    "teachers_teammate/gui/settings/addons/_ollama_models_tab.py": frozenset(
+        {
+            "",
+            "AI models for this computer (Ollama)",
+            "Add",
+            "Add a model by name:",
+            "Select the best models for my computer",
+            "e.g. llama3.2:latest",
+        }
+    ),
+    "teachers_teammate/gui/settings/addons/_providers_tab.py": frozenset(
+        {
+            "Online AI services",
+        }
+    ),
+    "teachers_teammate/gui/settings/addons/_reading_models_tab.py": frozenset(
+        {
+            "f'Built-in reader (PP-OCR) — {READER_SIZE_LABEL}'",
+            "f'Saved in: {self._svc.reader.models_dir()}'",
+            "f\"The built-in reader reads pages on this computer, without a server. {txt.OCR_ENGINE_HINTS['ppocr']} Its model files, and the page models of the automatic image preparation, come from PaddlePaddle (Apache-2.0).\"",
+        }
+    ),
+    "teachers_teammate/gui/settings/addons/_update_banner.py": frozenset(
+        {
+            "f'<b>{txt.ADDONS_OUTDATED_LINE}.</b> {txt.ADDONS_OUTDATED_NOTE}'",
         }
     ),
 }

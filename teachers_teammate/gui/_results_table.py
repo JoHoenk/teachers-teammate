@@ -737,6 +737,24 @@ class ResultsTable(QTableWidget):
                 ids.append(source_id)
         return ids
 
+    def files(self, ids: list[str] | None = None) -> list[Path]:
+        """Return the queued files in queue order, restricted to *ids* when given."""
+        wanted = None if ids is None else set(ids)
+        files: list[Path] = []
+        for source_id in self.queued_source_ids():
+            row = self._rows.get(source_id)
+            if row is not None and (wanted is None or source_id in wanted):
+                files.append(row.path)
+        return files
+
+    def recognised_files(self) -> set[Path]:
+        """Return the queued files whose text is stored, so a run does not read them again."""
+        return {
+            row.path
+            for source_id in self.queued_source_ids()
+            if (row := self._rows.get(source_id)) is not None and row.ocr is StageState.DONE
+        }
+
     def queued_file_names(self) -> list[str]:
         """Return all currently queued file names in row order."""
         names: list[str] = []

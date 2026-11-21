@@ -40,6 +40,7 @@ from teachers_teammate.gui import _anonymizer_config_widget, _install_round, _mo
 from teachers_teammate.gui._background import LatestTask
 from teachers_teammate.gui._privacy_settings import FlowAcknowledgements
 from teachers_teammate.gui._main_window import MainWindow
+from teachers_teammate.gui._readiness_controller import ReadinessController
 from teachers_teammate.gui._update_check import UpdateCheckThread
 from teachers_teammate.gui.settings import SettingsContext, SettingsResult
 
@@ -232,7 +233,7 @@ def neutralize_gui_threads(monkeypatch: Any) -> None:
     # Background tasks (hardware detection, installed-model checks, first start)
     # run on a shared pool: do not start any of them in the smoke harness.
     monkeypatch.setattr(LatestTask, "submit", lambda self, fn, on_done: 0)
-    monkeypatch.setattr(MainWindow, "_start_readiness_check", lambda self, **_kw: None)
+    monkeypatch.setattr(ReadinessController, "start_check", lambda self, **_kw: None)
     monkeypatch.setattr(MainWindow, "_load_toml_if_present", lambda self: None)
     monkeypatch.setattr(ProviderService, "check_connection", lambda *a, **k: (True, True, "✓ OK"))
     monkeypatch.setattr(RunService, "check_stage_requirements", lambda *a, **k: [])

@@ -29,6 +29,7 @@ filegroup(
         "gui/test_benchmark_worker.py",
         "gui/test_gui_addon_installer_dialog.py",
         "gui/test_gui_addons_page.py",
+        "gui/test_gui_addons_tabs.py",
         "gui/test_gui_anonymizer_widget.py",
         "gui/test_gui_main_window.py",
         "gui/test_gui_privacy_settings.py",
@@ -935,6 +936,16 @@ py_test(
 # call site that is not on the allowlist, no stale allowlist entry, and no ``Notice`` built
 # outside the package.  The sources come in as data because the test parses them with ``ast``.
 # The import direction between the layers of //teachers_teammate (see the libraries there).
+py_test(
+    name = "test_gui_class_size",
+    size = "small",
+    srcs = _COMMON_SRCS + ["unit/test_gui_class_size.py"],
+    args = ["unit/test_gui_class_size.py"],
+    data = ["//teachers_teammate:all_sources"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS,
+)
+
 py_test(
     name = "test_layer_imports",
     size = "small",
@@ -2194,6 +2205,15 @@ py_test(
 )
 
 py_test(
+    name = "test_gui_run_session",
+    size = "medium",
+    srcs = _COMMON_SRCS + ["gui/test_gui_run_session.py"],
+    args = ["gui/test_gui_run_session.py"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_layer_lib"],
+)
+
+py_test(
     name = "test_gui_run_status",
     size = "medium",
     srcs = _COMMON_SRCS + ["gui/test_gui_run_status.py"],
@@ -2520,6 +2540,18 @@ py_test(
         "gui/test_gui_install_round.py",
     ],
     args = ["gui/test_gui_install_round.py"],
+    main = "run_test.py",
+    deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_layer_lib"],
+)
+
+py_test(
+    name = "test_gui_addons_tabs",
+    size = "medium",
+    srcs = _COMMON_SRCS + [
+        "gui/_gui_harness.py",
+        "gui/test_gui_addons_tabs.py",
+    ],
+    args = ["gui/test_gui_addons_tabs.py"],
     main = "run_test.py",
     deps = _COMMON_DEPS + _GUI_DEPS + _PIPELINE_DEPS + ["//teachers_teammate:gui_layer_lib"],
 )
@@ -2917,12 +2949,14 @@ test_suite(
         ":test_credential_store",
         ":test_gui_addon_installer_dialog",
         ":test_gui_addons_page",
+        ":test_gui_addons_tabs",
         ":test_gui_anonymizer_widget",
         ":test_gui_bootstrap",
         ":test_gui_chart_widget",
         ":test_gui_check_body",
         ":test_gui_check_page",
         ":test_gui_check_style",
+        ":test_gui_class_size",
         ":test_gui_config_panel",
         ":test_gui_dialogs",
         ":test_gui_formatted_text",
@@ -2936,6 +2970,7 @@ test_suite(
         ":test_gui_prompt_dialog",
         ":test_gui_readiness",
         ":test_gui_results_table",
+        ":test_gui_run_session",
         ":test_gui_run_status",
         ":test_gui_scan_view",
         ":test_gui_settings_pages",

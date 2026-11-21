@@ -634,9 +634,9 @@ def test_the_real_manager_can_be_followed_with_the_bytes_of_a_large_model(qtbot)
     Then   the signals connect, and the byte counts arrive whole (a 32-bit Qt int would wrap
            the total to a negative number and the progress bar would never move)
     """
-    from teachers_teammate.gui._main_window import OllamaDownloadManager  # noqa: PLC0415
+    from teachers_teammate.gui._pull_manager import PullManager  # noqa: PLC0415
 
-    manager = OllamaDownloadManager(service=real_service())
+    manager = PullManager(service=real_service())
     round_, _service = _round(manager)
     seen = _record(round_)
     round_._connect_pull_manager()

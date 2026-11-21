@@ -2090,7 +2090,7 @@ can stop something (`InstallRound.can_abort()`): a download, not a pip install.
 `_model_fetch._RETIRED_THREADS`, never destroyed while running).  A pip install or
 language-model download on Add-ons blocks closing (`close_blocker()`), because the new package
 must be made importable first; an Ollama pull belongs to the main window's
-`OllamaDownloadManager` and keeps going.  Dialogs opened from inside the window (the
+`PullManager` and keeps going.  Dialogs opened from inside the window (the
 preprocessing preview, the add-on installers, message boxes) take the window — or its page — as
 parent, so they cannot open behind it.
 
@@ -2453,7 +2453,7 @@ lock), `tests/unit/test_preview_image_store.py` (the page files).
 `gui/setup/` is a `QWizard` that asks what only the teacher knows and then writes the settings
 once.  It is opened on a first start (no settings file yet) and from **Tools → Setup Assistant…**;
 `MainWindow._open_setup_assistant(first_start=...)` builds the `SetupContext` (the settings as the
-panel shows them, the application service, the main window's `OllamaDownloadManager`, the system
+panel shows them, the application service, the main window's `PullManager`, the system
 language on a first start) and connects `SetupAssistant.committed` to `_apply_setup_result`.
 
 **The order follows the answers** (`gui/setup/_flow.py`).  `ORDER` lists the seven pages —
@@ -2547,7 +2547,7 @@ is tested in `tests/gui/test_gui_main_window.py`.
 **The walkthrough** (`tests/gui/test_gui_setup_walkthrough.py`) is the one test that runs the whole
 thing: the real `SetupAssistant` and every page, the real `SetupService`
 (`setup_facts`, `plan_setup`, the model listing and rating), the `LatestTask` pool, `InstallRound`,
-`OllamaDownloadManager`, the `ollama` client over loopback HTTP, the real `MainWindow` and
+`PullManager`, the `ollama` client over loopback HTTP, the real `MainWindow` and
 `ocr.toml` on disk.  Replaced, each at the narrowest seam: Ollama by
 `tests/fakes/fake_ollama.py:FakeOllama` (one loopback port, so a server on the developer's computer
 cannot answer), pip, spaCy, the reader and the page models by recording stubs on the service, the

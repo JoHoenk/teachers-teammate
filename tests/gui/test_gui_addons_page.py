@@ -23,7 +23,7 @@ from teachers_teammate.gui import _dialogs
 from teachers_teammate.gui import _user_text as txt
 from teachers_teammate.gui._constants import _SPACY_MODEL_CHOICES
 from teachers_teammate.gui._install_round import PAGE_MODELS_ITEM, READER_ITEM
-from teachers_teammate.gui.settings import _addons_page
+from teachers_teammate.gui.settings.addons import _install_status
 from teachers_teammate.gui.settings._addons_page import AddonsPage
 from teachers_teammate.domain.name_models import FALLBACK_SPACY_MODEL, SPACY_MODELS
 from teachers_teammate.gui.settings._page import (
@@ -123,19 +123,19 @@ def _make_dialog(
     if preselect:
         dlg.focus(FOCUS_LOCAL_MODELS, preselect)
     if wait_for_profile:
-        with qtbot.waitSignal(dlg._hardware_selector.resolved_changed, timeout=5000):
+        with qtbot.waitSignal(dlg.ollama_models._hardware_selector.resolved_changed, timeout=5000):
             pass
     return dlg
 
 
 def _detection_results(dlg: AddonsPage, installed: set[str]) -> dict:
-    """Build the results dict ``_detect_installed`` would produce."""
-    tags = [tag for tag, _item in dlg._iter_model_items()]
+    """Build the results dict ``detect_installed`` would produce."""
+    tags = [tag for tag, _item in dlg.ollama_models._iter_model_items()]
     return {f"ollama:{t}": (t in installed) for t in tags}
 
 
 def _group_tags(dlg: AddonsPage, key: str) -> list[str]:
-    group = dlg._group_items[key]
+    group = dlg.ollama_models._group_items[key]
     return [
         str(group.child(i).data(0, _USER_ROLE) or group.child(i).text(0))
         for i in range(group.childCount())
@@ -158,8 +158,8 @@ def test_groups_contain_catalog_models_and_other_is_hidden(qtbot) -> None:
     writing = {spec.tag for spec in OLLAMA_CATALOG if spec.category == "general"}
     assert set(_group_tags(dlg, "ocr")) == reading
     assert set(_group_tags(dlg, "general")) == writing
-    assert dlg._group_items["other"].isHidden() is True
-    assert dlg._group_items["other"].childCount() == 0
+    assert dlg.ollama_models._group_items["other"].isHidden() is True
+    assert dlg.ollama_models._group_items["other"].childCount() == 0
 
 
 # ── licence column ──────────────────────────────────────────────────────────
@@ -174,13 +174,13 @@ def test_only_a_model_whose_licence_restricts_use_says_so_in_its_row(qtbot) -> N
            and a model under Apache-2.0 leaves the column empty
     """
     dlg = _make_dialog(qtbot)
-    reading = dlg._model_items[DEFAULT_OCR_MODEL]
+    reading = dlg.ollama_models._model_items[DEFAULT_OCR_MODEL]
     assert reading.text(4) == "Modified OpenRAIL-M"
     assert "check the licence" in reading.toolTip(4)
     assert "https://" in reading.toolTip(4)
-    assert dlg._model_items[DEFAULT_WRITING_MODEL].text(4) == ""
+    assert dlg.ollama_models._model_items[DEFAULT_WRITING_MODEL].text(4) == ""
     # Every model's terms are one hover away, even when the row says nothing.
-    assert "Apache-2.0" in dlg._model_items[DEFAULT_WRITING_MODEL].toolTip(0)
+    assert "Apache-2.0" in dlg.ollama_models._model_items[DEFAULT_WRITING_MODEL].toolTip(0)
 
 
 # ── suitability column ──────────────────────────────────────────────────────
@@ -195,12 +195,12 @@ def test_suitability_column_and_sort_order_follow_profile(qtbot) -> None:
     """
     dlg = _make_dialog(qtbot)
     dlg._on_detection_done(_detection_results(dlg, set()))
-    reading = dlg._group_items["ocr"]
+    reading = dlg.ollama_models._group_items["ocr"]
     assert reading.child(0).text(0) == DEFAULT_OCR_MODEL
     assert reading.child(0).text(1) == "★ Best"
-    writing = dlg._group_items["general"]
+    writing = dlg.ollama_models._group_items["general"]
     assert writing.child(0).text(0) == DEFAULT_WRITING_MODEL
-    gpt_oss = dlg._model_items["gpt-oss:20b"]
+    gpt_oss = dlg.ollama_models._model_items["gpt-oss:20b"]
     assert gpt_oss.text(1) == "Won't fit"
 
 
@@ -213,9 +213,9 @@ def test_switching_profile_updates_suitability(qtbot) -> None:
     """
     dlg = _make_dialog(qtbot)
     dlg._on_detection_done(_detection_results(dlg, set()))
-    with qtbot.waitSignal(dlg._hardware_selector.resolved_changed, timeout=5000):
+    with qtbot.waitSignal(dlg.ollama_models._hardware_selector.resolved_changed, timeout=5000):
         dlg.set_hardware_setting("16gb")
-    writing = dlg._group_items["general"]
+    writing = dlg.ollama_models._group_items["general"]
     # The first entry of every profile is a writing model that supports explanations.
     assert writing.child(0).text(0) == "gemma4:12b"
     assert writing.child(0).text(1) == "★ Best"
@@ -233,11 +233,11 @@ def test_a_model_that_was_not_measured_shows_the_speed_it_is_expected_to_reach(q
     service.machine_factor = 0.5
     dlg = _make_dialog(qtbot, service=service)
     dlg._on_detection_done(_detection_results(dlg, set()))
-    row = dlg._model_items["gemma4:e4b"]
+    row = dlg.ollama_models._model_items["gemma4:e4b"]
     assert row.text(1) == "★ Best · ok (expected)"
     assert "Expected speed on this computer: ok." in row.toolTip(1)
     # A model that does not fit the card has no page time worth naming.
-    assert "(expected)" not in dlg._model_items["gpt-oss:20b"].text(1)
+    assert "(expected)" not in dlg.ollama_models._model_items["gpt-oss:20b"].text(1)
 
 
 @pytest.mark.use_case("Model_Recommendation_By_Hardware")
@@ -251,7 +251,7 @@ def test_too_large_rows_are_grey_but_checkable(qtbot) -> None:
 
     dlg = _make_dialog(qtbot)
     dlg._on_detection_done(_detection_results(dlg, set()))
-    gpt_oss = dlg._model_items["gpt-oss:20b"]
+    gpt_oss = dlg.ollama_models._model_items["gpt-oss:20b"]
     assert gpt_oss.foreground(0).color().name().lower() == "#888888"
     assert bool(gpt_oss.flags() & Qt.ItemFlag.ItemIsUserCheckable)
     gpt_oss.setCheckState(0, Qt.CheckState.Checked)
@@ -273,11 +273,13 @@ def test_select_best_ticks_undownloaded_best_models(qtbot) -> None:
 
     dlg = _make_dialog(qtbot)
     dlg._on_detection_done(_detection_results(dlg, set()))
-    deepseek = dlg._model_items["deepseek-ocr:latest"]
+    deepseek = dlg.ollama_models._model_items["deepseek-ocr:latest"]
     deepseek.setCheckState(0, Qt.CheckState.Checked)
-    dlg._on_select_best_models()
-    assert dlg._model_items[DEFAULT_OCR_MODEL].checkState(0) is Qt.CheckState.Checked
-    assert dlg._model_items[DEFAULT_WRITING_MODEL].checkState(0) is Qt.CheckState.Checked
+    dlg.ollama_models._on_select_best_models()
+    assert dlg.ollama_models._model_items[DEFAULT_OCR_MODEL].checkState(0) is Qt.CheckState.Checked
+    assert (
+        dlg.ollama_models._model_items[DEFAULT_WRITING_MODEL].checkState(0) is Qt.CheckState.Checked
+    )
     assert deepseek.checkState(0) is Qt.CheckState.Checked
 
 
@@ -290,8 +292,8 @@ def test_select_best_reports_when_already_downloaded(qtbot) -> None:
     """
     dlg = _make_dialog(qtbot)
     dlg._on_detection_done(_detection_results(dlg, {DEFAULT_OCR_MODEL, DEFAULT_WRITING_MODEL}))
-    dlg._on_select_best_models()
-    assert dlg._ollama_hint_lbl.text() == (
+    dlg.ollama_models._on_select_best_models()
+    assert dlg.ollama_models._ollama_hint_lbl.text() == (
         "The best models for your computer are already downloaded."
     )
 
@@ -307,8 +309,10 @@ def test_pre_ticking_when_no_model_of_category_downloaded(qtbot) -> None:
 
     dlg = _make_dialog(qtbot)
     dlg._on_detection_done(_detection_results(dlg, set()))
-    assert dlg._model_items[DEFAULT_OCR_MODEL].checkState(0) is Qt.CheckState.Checked
-    assert dlg._model_items[DEFAULT_WRITING_MODEL].checkState(0) is Qt.CheckState.Checked
+    assert dlg.ollama_models._model_items[DEFAULT_OCR_MODEL].checkState(0) is Qt.CheckState.Checked
+    assert (
+        dlg.ollama_models._model_items[DEFAULT_WRITING_MODEL].checkState(0) is Qt.CheckState.Checked
+    )
 
 
 @pytest.mark.use_case("Recommended_Models_On_First_Start")
@@ -322,7 +326,9 @@ def test_no_pre_ticking_when_category_already_downloaded(qtbot) -> None:
 
     dlg = _make_dialog(qtbot)
     dlg._on_detection_done(_detection_results(dlg, {"glm-ocr:q8_0", "qwen3.5:9b"}))
-    assert dlg._model_items[DEFAULT_OCR_MODEL].checkState(0) is Qt.CheckState.Unchecked
+    assert (
+        dlg.ollama_models._model_items[DEFAULT_OCR_MODEL].checkState(0) is Qt.CheckState.Unchecked
+    )
 
 
 @pytest.mark.use_case("Recommended_Models_On_First_Start")
@@ -336,7 +342,7 @@ def test_preselect_ticks_given_tags(qtbot) -> None:
 
     dlg = _make_dialog(qtbot, preselect=["glm-ocr:q8_0"])
     dlg._on_detection_done(_detection_results(dlg, set()))
-    assert dlg._model_items["glm-ocr:q8_0"].checkState(0) is Qt.CheckState.Checked
+    assert dlg.ollama_models._model_items["glm-ocr:q8_0"].checkState(0) is Qt.CheckState.Checked
 
 
 class _ProviderPackagesService(_StubService):
@@ -379,8 +385,8 @@ def test_provider_preselect_opens_the_providers_tab_and_ticks_the_package(qtbot)
     dlg._on_detection_done(_detection_results(dlg, set()))
 
     assert dlg.findChild(QTabWidget).currentIndex() == AddonsPage.TAB_ONLINE_SERVICES
-    assert dlg._dl_checkboxes["provider:mistral"].isChecked() is True
-    assert dlg._dl_checkboxes["provider:openai"].isChecked() is False
+    assert dlg.providers.checkboxes["provider:mistral"].isChecked() is True
+    assert dlg.providers.checkboxes["provider:openai"].isChecked() is False
     assert dlg._collect_pip_packages() == ["langchain-mistralai"]
 
 
@@ -394,7 +400,7 @@ def test_provider_preselect_for_a_provider_sharing_a_package_ticks_the_shared_bo
     dlg = _make_dialog(qtbot, service=_ProviderPackagesService(), preselect=["provider:mistral_eu"])
     dlg._on_detection_done(_detection_results(dlg, set()))
 
-    assert dlg._dl_checkboxes["provider:mistral"].isChecked() is True
+    assert dlg.providers.checkboxes["provider:mistral"].isChecked() is True
     assert dlg._collect_pip_packages() == ["langchain-mistralai"]
 
 
@@ -410,7 +416,7 @@ def test_provider_preselect_leaves_an_installed_package_alone(qtbot) -> None:
 
     dlg._on_detection_done(results)
 
-    box = dlg._dl_checkboxes["provider:mistral"]
+    box = dlg.providers.checkboxes["provider:mistral"]
     assert "Installed" in box.text()
     assert not box.isEnabled()
     assert dlg._collect_pip_packages() == []
@@ -425,8 +431,8 @@ def test_provider_preselect_is_not_mistaken_for_an_ollama_model(qtbot) -> None:
     dlg = _make_dialog(qtbot, service=_ProviderPackagesService(), preselect=["provider:mistral"])
     dlg._on_detection_done(_detection_results(dlg, set()))
 
-    assert "provider:mistral" not in dlg._model_items
-    assert dlg._group_items["other"].childCount() == 0
+    assert "provider:mistral" not in dlg.ollama_models._model_items
+    assert dlg.ollama_models._group_items["other"].childCount() == 0
 
 
 def test_the_name_detection_models_are_the_ones_the_app_offers() -> None:
@@ -456,10 +462,10 @@ def test_spacy_preselect_ticks_the_model_and_spacy_itself(qtbot) -> None:
     dlg._on_detection_done(_detection_results(dlg, set()))
 
     assert dlg.findChild(QTabWidget).currentIndex() == AddonsPage.TAB_NAME_DETECTION
-    assert dlg._dl_checkboxes["spacy:de_core_news_sm"].isChecked() is True
-    assert dlg._dl_checkboxes["spacy"].isChecked() is True
-    assert "spacy:de_core_news_sm" not in dlg._model_items
-    assert "package:spacy" not in dlg._model_items
+    assert dlg.name_detection.checkboxes["spacy:de_core_news_sm"].isChecked() is True
+    assert dlg.name_detection.checkboxes["spacy"].isChecked() is True
+    assert "spacy:de_core_news_sm" not in dlg.ollama_models._model_items
+    assert "package:spacy" not in dlg.ollama_models._model_items
 
 
 def test_a_model_alone_does_not_tick_spacy(qtbot) -> None:
@@ -473,8 +479,8 @@ def test_a_model_alone_does_not_tick_spacy(qtbot) -> None:
     dlg.focus(FOCUS_NAME_DETECTION, ["spacy:de_core_news_sm"])
     dlg._on_detection_done(_detection_results(dlg, set()))
 
-    assert dlg._dl_checkboxes["spacy:de_core_news_sm"].isChecked() is True
-    assert dlg._dl_checkboxes["spacy"].isChecked() is False
+    assert dlg.name_detection.checkboxes["spacy:de_core_news_sm"].isChecked() is True
+    assert dlg.name_detection.checkboxes["spacy"].isChecked() is False
 
 
 def test_an_installed_row_is_disabled_and_unticked(qtbot) -> None:
@@ -490,7 +496,7 @@ def test_an_installed_row_is_disabled_and_unticked(qtbot) -> None:
     )
 
     for key in ("spacy", "spacy:de_core_news_sm"):
-        box = dlg._dl_checkboxes[key]
+        box = dlg.name_detection.checkboxes[key]
         assert not box.isEnabled()
         assert box.isChecked() is False
         assert "✓" in box.text()
@@ -526,8 +532,8 @@ def test_name_detection_fix_button_ticks_the_boxes_through_the_settings_window(q
     qtbot.waitUntil(lambda: page._installed_ready, timeout=5000)
 
     assert page.findChild(QTabWidget).currentIndex() == AddonsPage.TAB_NAME_DETECTION
-    assert page._dl_checkboxes["spacy:de_core_news_sm"].isChecked() is True
-    assert page._dl_checkboxes["spacy"].isChecked() is True
+    assert page.name_detection.checkboxes["spacy:de_core_news_sm"].isChecked() is True
+    assert page.name_detection.checkboxes["spacy"].isChecked() is True
 
 
 def test_name_detection_boxes_are_ticked_before_the_detection_has_answered(qtbot) -> None:
@@ -544,13 +550,13 @@ def test_name_detection_boxes_are_ticked_before_the_detection_has_answered(qtbot
 
     dlg.focus(FOCUS_NAME_DETECTION, ["package:spacy", "spacy:de_core_news_sm"])
 
-    assert dlg._dl_checkboxes["spacy:de_core_news_sm"].isChecked() is True
-    assert dlg._dl_checkboxes["spacy"].isChecked() is True
+    assert dlg.name_detection.checkboxes["spacy:de_core_news_sm"].isChecked() is True
+    assert dlg.name_detection.checkboxes["spacy"].isChecked() is True
 
     dlg._on_detection_done(_detection_results(dlg, set()))
 
-    assert dlg._dl_checkboxes["spacy:de_core_news_sm"].isChecked() is True
-    assert dlg._dl_checkboxes["spacy"].isChecked() is True
+    assert dlg.name_detection.checkboxes["spacy:de_core_news_sm"].isChecked() is True
+    assert dlg.name_detection.checkboxes["spacy"].isChecked() is True
 
 
 def test_reader_preselect_opens_the_reading_models_tab_and_ticks_the_reader(qtbot) -> None:
@@ -568,8 +574,8 @@ def test_reader_preselect_opens_the_reading_models_tab_and_ticks_the_reader(qtbo
     dlg._on_detection_done(_detection_results(dlg, set()))
 
     assert dlg.findChild(QTabWidget).currentIndex() == AddonsPage.TAB_READING_MODELS
-    assert dlg._dl_checkboxes["reader:ppocr"].isChecked() is True
-    assert "reader:ppocr" not in dlg._model_items
+    assert dlg.reading_models.checkboxes["reader:ppocr"].isChecked() is True
+    assert "reader:ppocr" not in dlg.ollama_models._model_items
     assert dlg._collect_pip_packages() == []
 
 
@@ -583,7 +589,7 @@ def test_a_downloaded_reader_shows_downloaded_and_is_not_ticked_again(qtbot) -> 
 
     dlg._on_detection_done({**_detection_results(dlg, set()), "reader:ppocr": True})
 
-    box = dlg._dl_checkboxes["reader:ppocr"]
+    box = dlg.reading_models.checkboxes["reader:ppocr"]
     assert "✓ Downloaded" in box.text()
     assert "31 MB" in box.text()
     assert not box.isEnabled()
@@ -599,9 +605,12 @@ def test_the_reader_box_starts_a_round_with_the_reader_only(qtbot) -> None:
 
     dlg = _make_dialog(qtbot)
     dlg._on_detection_done(_detection_results(dlg, set()))
-    for _tag, row in dlg._iter_model_items():  # undo the pre-ticking of the best models
+    for (
+        _tag,
+        row,
+    ) in dlg.ollama_models._iter_model_items():  # undo the pre-ticking of the best models
         row.setCheckState(0, Qt.CheckState.Unchecked)
-    dlg._dl_checkboxes["reader:ppocr"].setChecked(True)
+    dlg.reading_models.checkboxes["reader:ppocr"].setChecked(True)
     started: list[dict] = []
 
     def start(**kwargs) -> bool:
@@ -628,12 +637,12 @@ def test_the_page_models_have_their_own_box_that_shows_downloaded_when_present(q
 
     dlg._on_detection_done({**_detection_results(dlg, set()), "page_models:all": True})
 
-    box = dlg._dl_checkboxes["page_models:all"]
+    box = dlg.reading_models.checkboxes["page_models:all"]
     assert "Page models" in box.text()
     assert "39 MB" in box.text()
     assert "✓ Downloaded" in box.text()
     assert not box.isEnabled()
-    assert dlg._dl_checkboxes["reader:ppocr"].isEnabled()
+    assert dlg.reading_models.checkboxes["reader:ppocr"].isEnabled()
 
 
 def test_the_page_models_box_starts_a_round_with_the_page_models_only(qtbot) -> None:
@@ -646,9 +655,9 @@ def test_the_page_models_box_starts_a_round_with_the_page_models_only(qtbot) -> 
 
     dlg = _make_dialog(qtbot)
     dlg._on_detection_done(_detection_results(dlg, set()))
-    for _tag, row in dlg._iter_model_items():
+    for _tag, row in dlg.ollama_models._iter_model_items():
         row.setCheckState(0, Qt.CheckState.Unchecked)
-    dlg._dl_checkboxes["page_models:all"].setChecked(True)
+    dlg.reading_models.checkboxes["page_models:all"].setChecked(True)
     started: list[dict] = []
 
     def start(**kwargs) -> bool:
@@ -676,7 +685,7 @@ def test_a_page_models_preselect_opens_the_reading_models_tab_and_ticks_the_box(
     dlg.focus("", ["page_models:all"])
 
     assert dlg._tabs.currentIndex() == dlg.TAB_READING_MODELS
-    assert dlg._dl_checkboxes["page_models:all"].isChecked()
+    assert dlg.reading_models.checkboxes["page_models:all"].isChecked()
 
 
 def test_the_tab_names_where_the_models_are_saved(qtbot) -> None:
@@ -706,9 +715,9 @@ def test_spacy_preselect_leaves_an_installed_spacy_alone(qtbot) -> None:
 
     dlg._on_detection_done({**_detection_results(dlg, set()), "spacy": True})
 
-    assert dlg._dl_checkboxes["spacy:de_core_news_sm"].isChecked() is True
-    assert not dlg._dl_checkboxes["spacy"].isEnabled()
-    assert "Installed" in dlg._dl_checkboxes["spacy"].text()
+    assert dlg.name_detection.checkboxes["spacy:de_core_news_sm"].isChecked() is True
+    assert not dlg.name_detection.checkboxes["spacy"].isEnabled()
+    assert "Installed" in dlg.name_detection.checkboxes["spacy"].text()
 
 
 @pytest.mark.use_case("Model_Recommendation_By_Hardware")
@@ -728,7 +737,7 @@ def test_slow_models_are_listed_as_slower_not_greyed_out_and_need_no_confirmatio
     service.system_memory_gb = 32.0
     dlg = _make_dialog(qtbot, service=service)
     dlg._on_detection_done(_detection_results(dlg, set()))
-    row = dlg._model_items["gpt-oss:20b"]
+    row = dlg.ollama_models._model_items["gpt-oss:20b"]
 
     assert row.text(1) == "Very slow"  # under 70 % of the model fits the card
     assert "processor" in row.toolTip(1)
@@ -738,7 +747,7 @@ def test_slow_models_are_listed_as_slower_not_greyed_out_and_need_no_confirmatio
         raise AssertionError("a slow model must not ask for confirmation")
 
     monkeypatch.setattr(_dialogs, "ask", no_question)
-    assert dlg._confirm_too_large(["gpt-oss:20b"]) is True
+    assert dlg.ollama_models.confirm_too_large(["gpt-oss:20b"]) is True
 
 
 @pytest.mark.use_case("Model_Recommendation_By_Hardware")
@@ -751,7 +760,7 @@ def test_without_the_computers_memory_the_same_model_is_still_too_large(qtbot) -
     dlg = _make_dialog(qtbot)
     dlg._on_detection_done(_detection_results(dlg, set()))
 
-    assert dlg._model_items["gpt-oss:20b"].text(1) == "Won't fit"
+    assert dlg.ollama_models._model_items["gpt-oss:20b"].text(1) == "Won't fit"
 
 
 # ── detection regression ────────────────────────────────────────────────────
@@ -767,7 +776,7 @@ def test_detection_marks_rows_downloaded_and_disables_them(qtbot) -> None:
 
     dlg = _make_dialog(qtbot)
     dlg._on_detection_done(_detection_results(dlg, {"glm-ocr:q8_0"}))
-    row = dlg._model_items["glm-ocr:q8_0"]
+    row = dlg.ollama_models._model_items["glm-ocr:q8_0"]
     assert row.text(3).startswith("✓")
     assert not bool(row.flags() & Qt.ItemFlag.ItemIsEnabled)
     assert row.checkState(0) is Qt.CheckState.Unchecked
@@ -784,10 +793,10 @@ def test_download_install_collects_ticked_child_rows(qtbot) -> None:
     dlg = _make_dialog(qtbot)
     dlg._on_detection_done(_detection_results(dlg, set()))
     # Undo the pre-ticking so the test controls exactly what is ticked.
-    for _tag, row in dlg._iter_model_items():
+    for _tag, row in dlg.ollama_models._iter_model_items():
         row.setCheckState(0, Qt.CheckState.Unchecked)
-    dlg._model_items[DEFAULT_OCR_MODEL].setCheckState(0, Qt.CheckState.Checked)
-    dlg._model_items["deepseek-ocr:latest"].setCheckState(0, Qt.CheckState.Checked)
+    dlg.ollama_models._model_items[DEFAULT_OCR_MODEL].setCheckState(0, Qt.CheckState.Checked)
+    dlg.ollama_models._model_items["deepseek-ocr:latest"].setCheckState(0, Qt.CheckState.Checked)
     start = MagicMock()
     dlg._round.start = start
     dlg._on_download_install()
@@ -821,9 +830,9 @@ def test_too_large_selection_cancel_aborts(qtbot, monkeypatch) -> None:
     dlg = _make_dialog(qtbot)
     dlg._on_detection_done(_detection_results(dlg, set()))
     # Undo the pre-ticking so only the TOO_LARGE model is ticked.
-    for _tag, row in dlg._iter_model_items():
+    for _tag, row in dlg.ollama_models._iter_model_items():
         row.setCheckState(0, Qt.CheckState.Unchecked)
-    dlg._model_items["gpt-oss:20b"].setCheckState(0, Qt.CheckState.Checked)
+    dlg.ollama_models._model_items["gpt-oss:20b"].setCheckState(0, Qt.CheckState.Checked)
     start = MagicMock()
     dlg._round.start = start
     asked = _answer(monkeypatch, download_anyway=False)
@@ -845,9 +854,9 @@ def test_too_large_selection_download_anyway_proceeds(qtbot, monkeypatch) -> Non
     dlg = _make_dialog(qtbot)
     dlg._on_detection_done(_detection_results(dlg, set()))
     # Undo the pre-ticking so only the TOO_LARGE model is ticked.
-    for _tag, row in dlg._iter_model_items():
+    for _tag, row in dlg.ollama_models._iter_model_items():
         row.setCheckState(0, Qt.CheckState.Unchecked)
-    dlg._model_items["gpt-oss:20b"].setCheckState(0, Qt.CheckState.Checked)
+    dlg.ollama_models._model_items["gpt-oss:20b"].setCheckState(0, Qt.CheckState.Checked)
     start = MagicMock()
     dlg._round.start = start
     _answer(monkeypatch, download_anyway=True)
@@ -868,12 +877,12 @@ def test_custom_model_goes_into_other_group(qtbot) -> None:
     from PySide6.QtCore import Qt  # noqa: PLC0415
 
     dlg = _make_dialog(qtbot)
-    dlg._ollama_custom_input.setText("llama3.2:latest")
-    dlg._on_add_custom_ollama_model()
-    other = dlg._group_items["other"]
+    dlg.ollama_models._ollama_custom_input.setText("llama3.2:latest")
+    dlg.ollama_models._on_add_custom_ollama_model()
+    other = dlg.ollama_models._group_items["other"]
     assert other.childCount() == 1
     assert other.isHidden() is False
-    row = dlg._model_items["llama3.2:latest"]
+    row = dlg.ollama_models._model_items["llama3.2:latest"]
     assert row.checkState(0) is Qt.CheckState.Checked
 
 
@@ -885,11 +894,11 @@ def test_custom_model_duplicates_are_ignored(qtbot) -> None:
     Then   no duplicate row is created
     """
     dlg = _make_dialog(qtbot)
-    dlg._ollama_custom_input.setText("llama3.2:latest")
-    dlg._on_add_custom_ollama_model()
-    dlg._ollama_custom_input.setText("llama3.2:latest")
-    dlg._on_add_custom_ollama_model()
-    assert dlg._group_items["other"].childCount() == 1
+    dlg.ollama_models._ollama_custom_input.setText("llama3.2:latest")
+    dlg.ollama_models._on_add_custom_ollama_model()
+    dlg.ollama_models._ollama_custom_input.setText("llama3.2:latest")
+    dlg.ollama_models._on_add_custom_ollama_model()
+    assert dlg.ollama_models._group_items["other"].childCount() == 1
 
 
 @pytest.mark.use_case("Model_Category_Guidance")
@@ -902,12 +911,12 @@ def test_pulled_custom_model_stays_in_other_and_shows_abilities(qtbot) -> None:
     service = _StubService()
     service.custom_uses = {"my-vision-model:latest": frozenset({"ocr", "general"})}
     dlg = _make_dialog(qtbot, service=service)
-    dlg._ollama_custom_input.setText("my-vision-model:latest")
-    dlg._on_add_custom_ollama_model()
+    dlg.ollama_models._ollama_custom_input.setText("my-vision-model:latest")
+    dlg.ollama_models._on_add_custom_ollama_model()
     dlg._on_detection_done(_detection_results(dlg, {"my-vision-model:latest"}))
     assert "my-vision-model:latest" in _group_tags(dlg, "other")
     assert "my-vision-model:latest" not in _group_tags(dlg, "ocr")
-    assert dlg._model_items["my-vision-model:latest"].text(1) == "Reads & writes"
+    assert dlg.ollama_models._model_items["my-vision-model:latest"].text(1) == "Reads & writes"
 
 
 @pytest.mark.use_case("Model_Category_Guidance")
@@ -922,7 +931,7 @@ def test_failed_installed_check_still_ticks_best_models_and_preselect(qtbot) -> 
     service.status_error = RuntimeError("Ollama is unreachable")
     dlg = _make_dialog(qtbot, service=service, preselect=["llama3.2:latest"])
     dlg.on_shown()
-    qtbot.waitUntil(lambda: "Detection failed" in dlg._status.text(), timeout=5000)
+    qtbot.waitUntil(lambda: "Detection failed" in dlg.status._status.text(), timeout=5000)
     assert _ticked(dlg) == {DEFAULT_OCR_MODEL, DEFAULT_WRITING_MODEL, "llama3.2:latest"}
 
 
@@ -938,10 +947,10 @@ def test_the_computer_profile_is_shown_read_only_with_a_change_link(qtbot) -> No
            window for the This computer page
     """
     dlg = _make_dialog(qtbot)
-    assert dlg._hardware_selector._combo is None
+    assert dlg.ollama_models._hardware_selector._combo is None
 
     with qtbot.waitSignal(dlg.navigate_requested, timeout=2000) as blocker:
-        dlg._profile_line.change_link.linkActivated.emit("change")
+        dlg.ollama_models._profile_line.change_link.linkActivated.emit("change")
 
     assert blocker.args == [SettingsPage.AI_SETUP, "", []]
 
@@ -957,7 +966,7 @@ def test_the_page_follows_a_profile_chosen_on_this_computer(qtbot) -> None:
     dlg._on_detection_done(_detection_results(dlg, set()))
     assert _ticked(dlg) == {DEFAULT_OCR_MODEL, DEFAULT_WRITING_MODEL}
 
-    with qtbot.waitSignal(dlg._hardware_selector.resolved_changed, timeout=5000):
+    with qtbot.waitSignal(dlg.ollama_models._hardware_selector.resolved_changed, timeout=5000):
         dlg.set_hardware_setting("cpu")
 
     assert _ticked(dlg) == {"glm-ocr:q8_0", "gemma4:e4b"}
@@ -1008,8 +1017,8 @@ def test_a_model_the_app_carries_itself_says_included(qtbot) -> None:
     dlg._on_detection_done(results)
 
     for item in (READER_ITEM, PAGE_MODELS_ITEM):
-        assert dlg._dl_checkboxes[item].text().endswith(txt.INCLUDED)
-        assert dlg._dl_checkboxes[item].isEnabled() is False
+        assert dlg.reading_models.checkboxes[item].text().endswith(txt.INCLUDED)
+        assert dlg.reading_models.checkboxes[item].isEnabled() is False
 
 
 @pytest.mark.use_case("Runtime_Addon_Installation")
@@ -1025,7 +1034,7 @@ def test_a_model_that_had_to_be_downloaded_still_says_downloaded(qtbot) -> None:
 
     dlg._on_detection_done(results)
 
-    assert dlg._dl_checkboxes[READER_ITEM].text().endswith(txt.READER_DOWNLOADED)
+    assert dlg.reading_models.checkboxes[READER_ITEM].text().endswith(txt.READER_DOWNLOADED)
 
 
 def test_the_install_items_are_named_like_the_service_status_keys() -> None:
@@ -1081,11 +1090,11 @@ def test_a_preselect_after_detection_ticks_at_once(qtbot) -> None:
 
     dlg = _make_dialog(qtbot)
     dlg._on_detection_done(_detection_results(dlg, set()))
-    assert dlg._model_items["mistral:latest"].checkState(0) is Qt.CheckState.Unchecked
+    assert dlg.ollama_models._model_items["mistral:latest"].checkState(0) is Qt.CheckState.Unchecked
 
     dlg.focus(FOCUS_LOCAL_MODELS, ["mistral:latest"])
 
-    assert dlg._model_items["mistral:latest"].checkState(0) is Qt.CheckState.Checked
+    assert dlg.ollama_models._model_items["mistral:latest"].checkState(0) is Qt.CheckState.Checked
 
 
 def test_the_page_applies_immediately_and_blocks_closing_only_while_installing(
@@ -1165,7 +1174,7 @@ def test_a_running_pull_keeps_going_when_the_page_shuts_down(qtbot) -> None:
     assert not dlg._round._pull_connected
     assert manager.aborted is False
     manager.finished.emit(DEFAULT_OCR_MODEL)  # a late answer must not reach the closed page
-    assert dlg._round_result == ""
+    assert dlg.status._round_result == ""
 
 
 def test_a_page_opened_during_a_download_marks_the_models_that_are_coming(qtbot) -> None:
@@ -1193,19 +1202,19 @@ def test_a_page_opened_during_a_download_marks_the_models_that_are_coming(qtbot)
 
     manager = _Manager()
     dlg = _make_dialog(qtbot, pull_manager=manager)
-    first, second = [tag for tag, _item in dlg._iter_model_items()][:2]
+    first, second = [tag for tag, _item in dlg.ollama_models._iter_model_items()][:2]
     manager.current_model = first
     type(manager).queued = [second]
 
     dlg.on_shown()
     dlg._on_detection_done(_detection_results(dlg, set()))
 
-    assert dlg._model_items[first].text(3) == "downloading…"
-    assert dlg._model_items[second].text(3) == "queued"
+    assert dlg.ollama_models._model_items[first].text(3) == "downloading…"
+    assert dlg.ollama_models._model_items[second].text(3) == "queued"
 
     manager.progress.emit("pulling", 25.0, 100.0)
 
-    assert dlg._model_items[first].text(3) == "downloading… 25%"
+    assert dlg.ollama_models._model_items[first].text(3) == "downloading… 25%"
 
 
 def test_the_size_column_is_named_for_what_it_shows(qtbot) -> None:
@@ -1215,7 +1224,7 @@ def test_the_size_column_is_named_for_what_it_shows(qtbot) -> None:
     Then   the column says "Download size" and has a tooltip that explains the ✓ and the marks
     """
     dlg = _make_dialog(qtbot)
-    tree = dlg._ollama_model_list
+    tree = dlg.ollama_models._ollama_model_list
 
     assert tree.headerItem().text(3) == "Download size"
     assert "✓" in tree.headerItem().toolTip(3)
@@ -1273,14 +1282,14 @@ def _ticked(dlg: AddonsPage) -> set[str]:
 
     return {
         tag
-        for tag, row in dlg._iter_model_items()
+        for tag, row in dlg.ollama_models._iter_model_items()
         if row.checkState(0) is Qt.CheckState.Checked
         and bool(row.flags() & Qt.ItemFlag.ItemIsEnabled)
     }
 
 
 def _choose_computer(qtbot, dlg: AddonsPage, text: str) -> None:
-    with qtbot.waitSignal(dlg._hardware_selector.resolved_changed, timeout=5000):
+    with qtbot.waitSignal(dlg.ollama_models._hardware_selector.resolved_changed, timeout=5000):
         dlg.set_hardware_setting(_SETTING_OF_TEXT[text])
 
 
@@ -1307,7 +1316,7 @@ def test_pre_ticking_waits_for_hardware_detection(qtbot) -> None:
     dlg._on_detection_done(_detection_results(dlg, set()))
     assert _ticked(dlg) == set()
 
-    with qtbot.waitSignal(dlg._hardware_selector.resolved_changed, timeout=5000):
+    with qtbot.waitSignal(dlg.ollama_models._hardware_selector.resolved_changed, timeout=5000):
         service.detection_gate.set()
     assert _ticked(dlg) == {"glm-ocr:q8_0", "gemma4:e4b"}
 
@@ -1325,7 +1334,7 @@ def test_profile_change_replaces_untouched_auto_ticks_and_keeps_user_ticks(qtbot
     dlg = _make_dialog(qtbot)
     dlg._on_detection_done(_detection_results(dlg, set()))
     assert _ticked(dlg) == {DEFAULT_OCR_MODEL, DEFAULT_WRITING_MODEL}
-    dlg._model_items["mistral:latest"].setCheckState(0, Qt.CheckState.Checked)
+    dlg.ollama_models._model_items["mistral:latest"].setCheckState(0, Qt.CheckState.Checked)
 
     _choose_computer(qtbot, dlg, _CPU_TEXT)
 
@@ -1343,7 +1352,7 @@ def test_user_unticking_an_auto_tick_is_respected_after_profile_change(qtbot) ->
 
     dlg = _make_dialog(qtbot)
     dlg._on_detection_done(_detection_results(dlg, set()))
-    dlg._model_items[DEFAULT_OCR_MODEL].setCheckState(0, Qt.CheckState.Unchecked)
+    dlg.ollama_models._model_items[DEFAULT_OCR_MODEL].setCheckState(0, Qt.CheckState.Unchecked)
 
     _choose_computer(qtbot, dlg, _16GB_TEXT)
 
@@ -1360,7 +1369,7 @@ def test_too_large_tooltip_is_cleared_when_model_fits_again(qtbot) -> None:
     """
     dlg = _make_dialog(qtbot)
     dlg._on_detection_done(_detection_results(dlg, set()))
-    row = dlg._model_items["gpt-oss:20b"]
+    row = dlg.ollama_models._model_items["gpt-oss:20b"]
     assert "14 GB" in row.toolTip(1)
 
     _choose_computer(qtbot, dlg, _16GB_TEXT)
@@ -1377,11 +1386,11 @@ def test_custom_tag_without_suffix_maps_onto_the_catalog_row(qtbot) -> None:
     Then   no duplicate appears in "Other models"
     """
     dlg = _make_dialog(qtbot)
-    before = len(dlg._model_items)
-    dlg._ollama_custom_input.setText("deepseek-ocr")
-    dlg._on_add_custom_ollama_model()
-    assert len(dlg._model_items) == before
-    assert dlg._group_items["other"].childCount() == 0
+    before = len(dlg.ollama_models._model_items)
+    dlg.ollama_models._ollama_custom_input.setText("deepseek-ocr")
+    dlg.ollama_models._on_add_custom_ollama_model()
+    assert len(dlg.ollama_models._model_items) == before
+    assert dlg.ollama_models._group_items["other"].childCount() == 0
 
 
 @pytest.mark.use_case("Model_Category_Guidance")
@@ -1451,13 +1460,16 @@ def test_finished_pull_shows_model_as_downloaded_without_waiting_for_cache(
     dlg = _make_dialog(qtbot, service=_real_service(), ollama_url=fake_ollama.url)
     dlg._start_detection()
     qtbot.waitUntil(lambda: dlg._installed_ready, timeout=5000)
-    assert not dlg._model_items[DEFAULT_OCR_MODEL].text(3).startswith("✓")
+    assert not dlg.ollama_models._model_items[DEFAULT_OCR_MODEL].text(3).startswith("✓")
 
     fake_ollama.install(DEFAULT_OCR_MODEL, size=6_000_000_000)  # the pull arrived
     dlg._round.start(ollama_models=[DEFAULT_OCR_MODEL], ollama_url=fake_ollama.url)
 
     # Decimal GB, like the catalog sizes shown before the download; "✓" marks it downloaded.
-    qtbot.waitUntil(lambda: dlg._model_items[DEFAULT_OCR_MODEL].text(3) == "✓ 6.0 GB", timeout=5000)
+    qtbot.waitUntil(
+        lambda: dlg.ollama_models._model_items[DEFAULT_OCR_MODEL].text(3) == "✓ 6.0 GB",
+        timeout=5000,
+    )
 
 
 @pytest.mark.use_case("Model_Category_Guidance")
@@ -1494,20 +1506,20 @@ def test_pulled_custom_models_stay_in_other_with_their_abilities(
     }
     dlg = _make_dialog(qtbot, service=_real_service(), ollama_url=fake_ollama.url)
     for tag in capabilities:
-        dlg._ollama_custom_input.setText(tag)
-        dlg._on_add_custom_ollama_model()
+        dlg.ollama_models._ollama_custom_input.setText(tag)
+        dlg.ollama_models._on_add_custom_ollama_model()
 
     dlg._on_download_install()
 
     qtbot.waitUntil(
         lambda: (
-            dlg._model_items["reader-a:latest"].text(1) == "Reads & writes"
-            and dlg._model_items["reader-c:latest"].text(1) == "Reads & writes"
-            and dlg._model_items["writer-b:latest"].text(1) == "Writes only"
+            dlg.ollama_models._model_items["reader-a:latest"].text(1) == "Reads & writes"
+            and dlg.ollama_models._model_items["reader-c:latest"].text(1) == "Reads & writes"
+            and dlg.ollama_models._model_items["writer-b:latest"].text(1) == "Writes only"
         ),
         timeout=5000,
     )
-    assert dlg._group_items["other"].childCount() == 3
+    assert dlg.ollama_models._group_items["other"].childCount() == 3
 
 
 # ── tab constants ───────────────────────────────────────────────────────────
@@ -1541,10 +1553,10 @@ def test_rated_rows_use_the_theme_text_colour(qtbot) -> None:
     from PySide6.QtCore import Qt  # noqa: PLC0415
 
     dlg = _make_dialog(qtbot)
-    dlg._update_model_suitability()
+    dlg.ollama_models._update_model_suitability()
 
     checked = 0
-    for _tag, item in dlg._iter_model_items():
+    for _tag, item in dlg.ollama_models._iter_model_items():
         for column in (0, 1):
             brush = item.foreground(column)
             if item.text(1) == "Won't fit":
@@ -1566,15 +1578,15 @@ def test_adding_a_listed_model_selects_it_and_says_so(qtbot) -> None:
 
     dlg = _make_dialog(qtbot)
     tag = OLLAMA_CATALOG[0].tag
-    before = len(dlg._model_items)
+    before = len(dlg.ollama_models._model_items)
 
-    dlg._ollama_custom_input.setText(tag)
-    dlg._on_add_custom_ollama_model()
+    dlg.ollama_models._ollama_custom_input.setText(tag)
+    dlg.ollama_models._on_add_custom_ollama_model()
 
-    assert len(dlg._model_items) == before
-    assert dlg._model_items[tag].checkState(0) is Qt.CheckState.Checked
-    assert dlg._ollama_hint_lbl.text() == "That model is already in the list."
-    assert dlg._ollama_custom_input.text() == ""
+    assert len(dlg.ollama_models._model_items) == before
+    assert dlg.ollama_models._model_items[tag].checkState(0) is Qt.CheckState.Checked
+    assert dlg.ollama_models._ollama_hint_lbl.text() == "That model is already in the list."
+    assert dlg.ollama_models._ollama_custom_input.text() == ""
 
 
 @pytest.mark.use_case("Model_Category_Guidance")
@@ -1587,11 +1599,11 @@ def test_enter_in_the_name_field_adds_the_model(qtbot) -> None:
     from PySide6.QtCore import Qt  # noqa: PLC0415
 
     dlg = _make_dialog(qtbot)
-    dlg._ollama_custom_input.setText("llama3.2:latest")
+    dlg.ollama_models._ollama_custom_input.setText("llama3.2:latest")
 
-    dlg._ollama_custom_input.returnPressed.emit()
+    dlg.ollama_models._ollama_custom_input.returnPressed.emit()
 
-    assert dlg._model_items["llama3.2:latest"].checkState(0) is Qt.CheckState.Checked
+    assert dlg.ollama_models._model_items["llama3.2:latest"].checkState(0) is Qt.CheckState.Checked
 
 
 def test_enter_in_the_name_field_does_not_press_a_button(qtbot, monkeypatch) -> None:
@@ -1611,12 +1623,12 @@ def test_enter_in_the_name_field_does_not_press_a_button(qtbot, monkeypatch) -> 
         button.clicked.connect(lambda _=False, b=button: pressed.append(b.text()))
     dlg.show()
     qtbot.waitExposed(dlg)
-    dlg._ollama_custom_input.setFocus()
-    dlg._ollama_custom_input.setText("llama3.2:latest")
+    dlg.ollama_models._ollama_custom_input.setFocus()
+    dlg.ollama_models._ollama_custom_input.setText("llama3.2:latest")
 
-    QTest.keyClick(dlg._ollama_custom_input, Qt.Key.Key_Return)
+    QTest.keyClick(dlg.ollama_models._ollama_custom_input, Qt.Key.Key_Return)
 
-    assert "llama3.2:latest" in dlg._model_items
+    assert "llama3.2:latest" in dlg.ollama_models._model_items
     assert pressed == []
     assert not any(button.autoDefault() for button in dlg.findChildren(QPushButton))
     assert dlg.isVisible() is True
@@ -1637,9 +1649,9 @@ def test_the_update_banner_shows_only_while_add_ons_are_outdated(qtbot) -> None:
     stale = _make_dialog(qtbot, service=stale_service)
     stale.show()
 
-    assert current._update_banner.isHidden()
-    assert stale._update_banner.isVisible()
-    assert stale._update_btn.text() == "Update add-ons"
+    assert current.update_banner.isHidden()
+    assert stale.update_banner.isVisible()
+    assert stale.update_banner.button.text() == "Update add-ons"
 
 
 def test_update_add_ons_installs_only_after_the_click_and_then_hides_the_banner(
@@ -1658,12 +1670,12 @@ def test_update_add_ons_installs_only_after_the_click_and_then_hides_the_banner(
     assert service.addon_updates == 0
 
     with qtbot.waitSignal(page._round.finished, timeout=5000):
-        page._update_btn.click()
+        page.update_banner.button.click()
 
     assert service.addon_updates == 1
-    assert page._update_banner.isHidden()
-    assert page._update_btn.isEnabled()
-    assert "installing the add-ons again" in page._dl_log.toPlainText()
+    assert page.update_banner.isHidden()
+    assert page.update_banner.button.isEnabled()
+    assert "installing the add-ons again" in page.status._dl_log.toPlainText()
 
 
 # ── The status line, the bar and the details ─────────────────────────────────
@@ -1671,9 +1683,9 @@ def test_update_add_ons_installs_only_after_the_click_and_then_hides_the_banner(
 
 def _start_round(dlg: AddonsPage, steps: list[str]) -> None:
     """Put the page into the state a running round leaves it in, without a real install."""
-    dlg._prepare_round(steps)
+    dlg.status.begin_round(steps)
     dlg._round._running = True
-    dlg._round_started()
+    dlg.status.round_started()
 
 
 def test_the_status_line_counts_the_steps_of_a_round(qtbot) -> None:
@@ -1687,11 +1699,11 @@ def test_the_status_line_counts_the_steps_of_a_round(qtbot) -> None:
 
     dlg._round._phase = "pip"
     dlg._round.item_started.emit("package:spacy")
-    assert dlg._status.text() == "Installing spaCy (step 1 of 2)…"
+    assert dlg.status._status.text() == "Installing spaCy (step 1 of 2)…"
 
     dlg._round._phase = "spacy"
     dlg._round.item_started.emit("spacy:de_core_news_sm")
-    assert dlg._status.text() == "Installing the German model (step 2 of 2)…"
+    assert dlg.status._status.text() == "Installing the German model (step 2 of 2)…"
 
 
 def test_the_steps_of_a_round_count_pip_once_however_many_packages_it_installs(qtbot) -> None:
@@ -1705,13 +1717,13 @@ def test_the_steps_of_a_round_count_pip_once_however_many_packages_it_installs(q
 
     dlg._round._phase = "pip"
     dlg._round.item_started.emit("package:spacy")
-    assert dlg._status.text() == "Installing spaCy (step 1 of 2)…"
+    assert dlg.status._status.text() == "Installing spaCy (step 1 of 2)…"
     dlg._round.item_started.emit("package:langchain-openai")  # the same pip command
-    assert dlg._status.text() == "Installing spaCy (step 1 of 2)…"
+    assert dlg.status._status.text() == "Installing spaCy (step 1 of 2)…"
 
     dlg._round._phase = "spacy"
     dlg._round.item_started.emit("spacy:de_core_news_sm")
-    assert dlg._status.text() == "Installing the German model (step 2 of 2)…"
+    assert dlg.status._status.text() == "Installing the German model (step 2 of 2)…"
 
 
 @pytest.mark.parametrize(
@@ -1736,7 +1748,7 @@ def test_the_hint_names_the_package_pip_is_busy_with(line: str, hint: str) -> No
     When   the page reads the package out of it
     Then   it is the plain package name, without specifier, version or address
     """
-    assert _addons_page._pip_hint(line) == hint
+    assert _install_status.pip_hint(line) == hint
 
 
 def test_a_failed_install_is_told_in_the_words_of_its_reason() -> None:
@@ -1775,13 +1787,13 @@ def test_a_pip_step_shows_an_indeterminate_bar_and_the_elapsed_time(qtbot) -> No
     dlg._round._phase = "pip"
     dlg._round.item_started.emit("package:spacy")
 
-    assert (dlg._dl_progress.minimum(), dlg._dl_progress.maximum()) == (0, 0)
-    assert dlg._status.text() == "Installing spaCy (step 1 of 1)…"
+    assert (dlg.status._dl_progress.minimum(), dlg.status._dl_progress.maximum()) == (0, 0)
+    assert dlg.status._status.text() == "Installing spaCy (step 1 of 1)…"
 
-    dlg._status_started -= 102  # the step has been running for 1:42
-    dlg._tick_elapsed()
+    dlg.status._status_started -= 102  # the step has been running for 1:42
+    dlg.status._tick_elapsed()
 
-    assert dlg._status.text() == "Installing spaCy (step 1 of 1)… 1:42"
+    assert dlg.status._status.text() == "Installing spaCy (step 1 of 1)… 1:42"
 
 
 def test_a_model_pull_shows_its_percentage(qtbot) -> None:
@@ -1797,8 +1809,8 @@ def test_a_model_pull_shows_its_percentage(qtbot) -> None:
     dlg._round.item_started.emit(DEFAULT_OCR_MODEL)
     dlg._round.pull_progress.emit("pulling", 45.0, 100.0)
 
-    assert dlg._status.text() == f"Downloading {DEFAULT_OCR_MODEL} (step 1 of 1), 45 %"
-    assert dlg._dl_progress.value() == 45
+    assert dlg.status._status.text() == f"Downloading {DEFAULT_OCR_MODEL} (step 1 of 1), 45 %"
+    assert dlg.status._dl_progress.value() == 45
 
 
 def test_the_status_line_says_what_a_finished_round_installed(qtbot) -> None:
@@ -1815,9 +1827,9 @@ def test_the_status_line_says_what_a_finished_round_installed(qtbot) -> None:
     dlg._round._running = False
     dlg._round.finished.emit(True)
 
-    assert dlg._status.text() == "✓ 2 installed"
-    assert dlg._dl_install_btn.text() == txt.ADDONS_INSTALL
-    assert dlg._dl_install_btn.isEnabled()
+    assert dlg.status._status.text() == "✓ 2 installed"
+    assert dlg.status._dl_install_btn.text() == txt.ADDONS_INSTALL
+    assert dlg.status._dl_install_btn.isEnabled()
 
 
 def test_a_failed_step_says_what_failed_and_opens_the_details(qtbot) -> None:
@@ -1833,9 +1845,9 @@ def test_a_failed_step_says_what_failed_and_opens_the_details(qtbot) -> None:
 
     dlg._round.failed.emit("spacy:de_core_news_sm", "No space left on the disk.")
 
-    assert dlg._status.text() == "✗ the German model failed: No space left on the disk."
-    assert not dlg._dl_log.isHidden()
-    assert dlg._details_btn.text() == txt.ADDONS_HIDE_DETAILS
+    assert dlg.status._status.text() == "✗ the German model failed: No space left on the disk."
+    assert not dlg.status._dl_log.isHidden()
+    assert dlg.status._details_btn.text() == txt.ADDONS_HIDE_DETAILS
 
 
 def test_the_details_are_hidden_until_they_are_asked_for(qtbot) -> None:
@@ -1845,17 +1857,17 @@ def test_the_details_are_hidden_until_they_are_asked_for(qtbot) -> None:
     Then   the log is hidden at first and visible afterwards, and Copy copies it
     """
     dlg = _make_dialog(qtbot)
-    assert dlg._dl_log.isHidden()
-    assert dlg._copy_btn.isHidden()
+    assert dlg.status._dl_log.isHidden()
+    assert dlg.status._copy_btn.isHidden()
 
-    dlg._details_btn.click()
+    dlg.status._details_btn.click()
 
-    assert not dlg._dl_log.isHidden()
-    assert not dlg._copy_btn.isHidden()
-    assert dlg._details_btn.text() == txt.ADDONS_HIDE_DETAILS
+    assert not dlg.status._dl_log.isHidden()
+    assert not dlg.status._copy_btn.isHidden()
+    assert dlg.status._details_btn.text() == txt.ADDONS_HIDE_DETAILS
 
-    dlg._dl_log_append("Collecting spacy")
-    dlg._copy_btn.click()
+    dlg.status._dl_log_append("Collecting spacy")
+    dlg.status._copy_btn.click()
 
     assert "Collecting spacy" in QApplication.clipboard().text()
 
@@ -1870,10 +1882,10 @@ def test_a_pending_package_asks_for_a_restart(qtbot) -> None:
     service.pending_addon_packages = lambda: ["spacy"]  # ty: ignore[invalid-assignment]
     dlg = _make_dialog(qtbot, service=service)
 
-    dlg._refresh_status()
+    dlg.status.refresh()
 
-    assert dlg._status.text() == txt.ADDONS_RESTART_NEEDED
-    assert "#e67e22" in dlg._status.styleSheet()
+    assert dlg.status._status.text() == txt.ADDONS_RESTART_NEEDED
+    assert "#e67e22" in dlg.status._status.styleSheet()
 
 
 def test_the_hint_names_the_package_pip_is_working_on(qtbot) -> None:
@@ -1885,15 +1897,15 @@ def test_the_hint_names_the_package_pip_is_working_on(qtbot) -> None:
     """
     dlg = _make_dialog(qtbot)
 
-    dlg._dl_log_append("Collecting spacy")
-    assert dlg._hint.text() == "spacy"
-    assert not dlg._hint.isHidden()
+    dlg.status._dl_log_append("Collecting spacy")
+    assert dlg.status._hint.text() == "spacy"
+    assert not dlg.status._hint.isHidden()
 
-    dlg._dl_log_append("Downloading numpy-2.0.0-cp312-cp312-manylinux_x86_64.whl (16.1 MB)")
-    assert dlg._hint.text() == "numpy"
+    dlg.status._dl_log_append("Downloading numpy-2.0.0-cp312-cp312-manylinux_x86_64.whl (16.1 MB)")
+    assert dlg.status._hint.text() == "numpy"
 
-    dlg._dl_log_append("  Building wheel for blis (pyproject.toml) ... done")
-    assert dlg._hint.text() == "numpy"
+    dlg.status._dl_log_append("  Building wheel for blis (pyproject.toml) ... done")
+    assert dlg.status._hint.text() == "numpy"
 
 
 def test_the_install_button_stays_visible_and_says_installing(qtbot) -> None:
@@ -1907,9 +1919,9 @@ def test_the_install_button_stays_visible_and_says_installing(qtbot) -> None:
 
     _start_round(dlg, ["package:spacy"])
 
-    assert not dlg._dl_install_btn.isHidden()
-    assert not dlg._dl_install_btn.isEnabled()
-    assert dlg._dl_install_btn.text() == txt.ADDONS_INSTALLING
+    assert not dlg.status._dl_install_btn.isHidden()
+    assert not dlg.status._dl_install_btn.isEnabled()
+    assert dlg.status._dl_install_btn.text() == txt.ADDONS_INSTALLING
 
 
 def test_the_action_row_fits_a_laptop_screen(qtbot) -> None:
@@ -1923,7 +1935,7 @@ def test_the_action_row_fits_a_laptop_screen(qtbot) -> None:
     dlg.show()
     qtbot.waitExposed(dlg)
 
-    button = dlg._dl_install_btn
+    button = dlg.status._dl_install_btn
     bottom = button.mapTo(dlg, button.rect().bottomLeft()).y()
 
     assert 0 < bottom <= dlg.height()

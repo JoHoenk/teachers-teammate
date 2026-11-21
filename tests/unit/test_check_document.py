@@ -9,7 +9,7 @@ from teachers_teammate.application.check_items import ItemKind
 from teachers_teammate.domain.data_location import SentRecord, SentStatus
 from teachers_teammate.domain.proofreading.edits import edits
 from teachers_teammate.domain.proofreading.review import CorrectionReview, align, edit_note
-from teachers_teammate.infrastructure.state_repository import DocumentStateView
+from teachers_teammate.application.document_view import DocumentStateView
 
 RAW = "Der bunte Hund bellt laut."
 CORRECTED = "Der braune Hund bellt laut."
@@ -34,8 +34,6 @@ def _view(**overrides: object) -> DocumentStateView:
         "ocr_done": True,
         "correction_done": True,
         "evaluation_done": False,
-        "cache_status_label": "up to date",
-        "loaded_at": "2026-01-01T00:00:00+00:00",
         "original_img": "/tmp/Anna_original.png",
         "preprocess_steps": ("grayscale",),
         "raw_text_format": "plain",

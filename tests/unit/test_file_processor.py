@@ -30,9 +30,8 @@ from teachers_teammate.infrastructure.speed_store import RunSample, SampleKey
 from teachers_teammate.infrastructure.state_repository import DocumentState
 from teachers_teammate.infrastructure.workflow.cache_service import CacheContext
 from teachers_teammate.infrastructure.workflow.preprocess_service import PreparedInput
-from teachers_teammate.exceptions import RunStoppedError
+from teachers_teammate.exceptions import FILE_GONE_MESSAGE, RunStoppedError
 from teachers_teammate.infrastructure.workflow.file_processor import (
-    FILE_GONE_MESSAGE,
     REVIEW_UNMATCHED,
     STOPPED_BEFORE_PROOFREADING,
     STOPPED_BEFORE_RECOGNITION,
@@ -82,7 +81,7 @@ def _make_state(
         correction_text=correction_text,
         evaluation_done=evaluation_done,
         evaluation_text=evaluation_text,
-        preview_img=preview_img,
+        page_images=[preview_img] if preview_img else [],
         source_image=source_image,
     )
 
@@ -217,7 +216,7 @@ def test_cache_hit_restoring_preview_keeps_recorded_original_and_steps(tmp_path:
     source_image.write_bytes(b"png")
     state = dataclasses.replace(
         _make_state(ocr_done=True, raw_text="cached text", source_image=str(source_image)),
-        original_img=str(tmp_path / "doc_original.png"),
+        original_images=[str(tmp_path / "doc_original.png")],
         preprocess_steps=["grayscale"],
     )
     ctx = _make_ctx(state)
@@ -317,6 +316,24 @@ def test_a_file_that_is_gone_is_skipped_not_failed(tmp_path: Path) -> None:
     assert result.skipped is True
     assert result.ok is False
     assert result.message == FILE_GONE_MESSAGE
+
+
+def test_a_missing_file_other_than_the_input_fails_the_document(tmp_path: Path) -> None:
+    """
+    Given  an input file that is there, and a preparation that finds another file missing
+    When   process() is called
+    Then   the document fails with the cause; it is not reported as gone
+    """
+    fp, cache_svc, _, _ = _make_processor(tmp_path)
+    doc = tmp_path / "doc.png"
+    doc.write_bytes(b"png")
+    cache_svc.prepare.side_effect = FileNotFoundError("model.onnx")
+
+    result = fp.process(doc)
+
+    assert result.skipped is False
+    assert result.ok is False
+    assert "model.onnx" in result.message
 
 
 def test_preprocessing_failure_returns_false(tmp_path: Path) -> None:

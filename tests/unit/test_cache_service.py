@@ -17,7 +17,13 @@ from teachers_teammate.infrastructure.input_provider_factory import (
 )
 from teachers_teammate.infrastructure.onnx.store import ModelStore
 from teachers_teammate.infrastructure.preprocessing.identity import AUTO_VERSION
-from teachers_teammate.infrastructure.state_repository import DocumentState, OcrResultRecord
+from teachers_teammate.infrastructure.preview_image_store import PreviewImageStore
+from teachers_teammate.infrastructure.state_repository import (
+    DocumentState,
+    OcrResultRecord,
+    StateRepository,
+    compute_file_hash,
+)
 from teachers_teammate.infrastructure.storage_root import document_stem
 from teachers_teammate.domain.data_location import STAGE_CORRECTION, STAGE_EVALUATION
 from teachers_teammate.domain.freshness import first_stale_stage_for_hashes
@@ -79,7 +85,7 @@ def test_prepare_calls_load_or_create_and_reconcile(tmp_path: Path) -> None:
     """
     Given  a source file and a new cache service
     When   prepare() is called
-    Then   repo.load_or_create and repo.reconcile_runtime_config are both called,
+    Then   repo.load_or_create and repo.reconcile are both called,
            and the returned CacheContext contains populated hash fields
     """
     src = tmp_path / "doc.png"
@@ -88,7 +94,7 @@ def test_prepare_calls_load_or_create_and_reconcile(tmp_path: Path) -> None:
     svc, repo, _ = _make_svc(tmp_path)
     reconciled_state = _make_state()
     repo.load_or_create.return_value = _make_state()
-    repo.reconcile_runtime_config.return_value = reconciled_state
+    repo.reconcile.return_value = reconciled_state
 
     with patch(
         "teachers_teammate.infrastructure.workflow.cache_service.compute_file_hash",
@@ -97,12 +103,57 @@ def test_prepare_calls_load_or_create_and_reconcile(tmp_path: Path) -> None:
         ctx = svc.prepare(src)
 
     repo.load_or_create.assert_called_once_with(src, "filehash")
-    repo.reconcile_runtime_config.assert_called_once()
+    repo.reconcile.assert_called_once()
     assert ctx.source_hash == "filehash"
     assert ctx.state is reconciled_state
     assert ctx.ocr_prompt != ""
     assert ctx.ocr_config_hash != ""
     assert ctx.preview_config_hash != ""
+
+
+def test_prepare_writes_the_state_file_once(tmp_path: Path, monkeypatch) -> None:
+    """
+    Given  a stored document whose reading is stale and whose preview image is invalid
+    When   prepare() reconciles it
+    Then   the state file is written once, with both changes in it
+    """
+    src = tmp_path / "doc.png"
+    src.write_bytes(b"data")
+    page = tmp_path / "doc_preprocessed.png"
+    page.write_bytes(b"png")
+    repo = StateRepository(tmp_path / "state")
+    repo.save(
+        src,
+        replace(
+            repo.create(src, compute_file_hash(src)),
+            ocr_done=True,
+            raw_text="raw",
+            ocr_config_hash="stale-ocr",
+            preview_config_hash="stale-preview",
+            page_images=[str(page)],
+            source_image=str(page),
+            preprocess_steps=["grayscale"],
+        ),
+    )
+    svc = CacheReconciliationService(
+        state_repo=repo,
+        artifact_store=PreviewImageStore(tmp_path / "art"),
+        config=make_config(tmp_path),
+    )
+    writes: list[Path] = []
+    save = repo.save
+
+    def _counting_save(input_file: Path, state: DocumentState) -> None:
+        writes.append(input_file)
+        save(input_file, state)
+
+    monkeypatch.setattr(repo, "save", _counting_save)
+
+    ctx = svc.prepare(src)
+
+    assert len(writes) == 1
+    assert ctx.state.ocr_done is False
+    assert ctx.state.page_images == []
 
 
 def _prepared_hashes(tmp_path: Path, **config_overrides: object) -> CacheContext:
@@ -111,7 +162,7 @@ def _prepared_hashes(tmp_path: Path, **config_overrides: object) -> CacheContext
     src.write_bytes(b"data")
     svc, repo, _ = _make_svc(tmp_path, **config_overrides)
     repo.load_or_create.return_value = _make_state()
-    repo.reconcile_runtime_config.return_value = _make_state()
+    repo.reconcile.return_value = _make_state()
     with patch(
         "teachers_teammate.infrastructure.workflow.cache_service.compute_file_hash",
         return_value="h",
@@ -519,7 +570,7 @@ def test_preview_hash_changes_with_preprocessing_field(tmp_path: Path) -> None:
         svc, repo, _ = _make_svc(tmp_path, ocr=ocr)
         state = _make_state(str(src))
         repo.load_or_create.return_value = state
-        repo.reconcile_runtime_config.return_value = state
+        repo.reconcile.return_value = state
         return svc.prepare(src).preview_config_hash
 
     h_auto = _prepare(OcrConfig(engine="ppocr", preprocess_method=PreprocessMethod.AUTO))
@@ -627,8 +678,6 @@ def test_record_ocr_delegates_to_repo_and_preserves_hashes(tmp_path: Path) -> No
             raw_text="text",
             preview_img="prev.png",
             source_image="src.png",
-            ocr_prompt=ctx.ocr_prompt,
-            evaluate_prompt=DEFAULTS["evaluate_prompt"],
             ocr_config_hash=ctx.ocr_config_hash,
             preview_config_hash=ctx.preview_config_hash,
         ),
@@ -717,7 +766,6 @@ def test_record_evaluation_delegates_to_repo(tmp_path: Path) -> None:
         file,
         ctx.state,
         evaluation_text="quality: good",
-        evaluate_prompt=DEFAULTS["evaluate_prompt"],
         eval_config_hash=ctx.eval_config_hash,
         sent=sent_record(svc._config, STAGE_EVALUATION),
     )
@@ -1641,7 +1689,7 @@ def test_prepare_loads_the_work_of_the_documents_content(tmp_path: Path) -> None
     work_store.load.return_value = work
     repo = MagicMock()
     repo.load_or_create.return_value = _make_state()
-    repo.reconcile_runtime_config.return_value = _make_state()
+    repo.reconcile.return_value = _make_state()
     svc = CacheReconciliationService(
         state_repo=repo,
         artifact_store=MagicMock(),
@@ -1669,7 +1717,7 @@ def test_prepare_without_a_store_reads_no_work(tmp_path: Path) -> None:
     src.write_bytes(b"data")
     svc, repo, _ = _make_svc(tmp_path)
     repo.load_or_create.return_value = _make_state()
-    repo.reconcile_runtime_config.return_value = _make_state()
+    repo.reconcile.return_value = _make_state()
 
     with patch(
         "teachers_teammate.infrastructure.workflow.cache_service.compute_file_hash",
@@ -1700,7 +1748,7 @@ def test_prepare_freezes_the_reading_of_a_document_the_teacher_fixed(tmp_path: P
     work_store.load.return_value = work
     repo = MagicMock()
     repo.load_or_create.return_value = state
-    repo.reconcile_runtime_config.return_value = state
+    repo.reconcile.return_value = state
     svc = CacheReconciliationService(
         state_repo=repo,
         artifact_store=MagicMock(),
@@ -1714,6 +1762,4 @@ def test_prepare_freezes_the_reading_of_a_document_the_teacher_fixed(tmp_path: P
     ):
         svc.prepare(src)
 
-    snapshot = repo.reconcile_runtime_config.call_args.args[2]
-    assert snapshot.ocr_frozen is True
-    assert snapshot.expected_correction_source == text_identity("Der bunte Hunt")
+    assert repo.reconcile.call_args.kwargs["stale_stage"] is None

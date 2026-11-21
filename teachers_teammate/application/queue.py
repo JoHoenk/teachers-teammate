@@ -15,7 +15,7 @@ from pathlib import Path
 from ..domain.data_location import SentStatus
 from ..domain.formatted_text import TextFormat
 from ..domain.proofreading.review import CorrectionReview
-from ..infrastructure.state_repository import DocumentStateView
+from .document_view import DocumentStateView
 
 
 class StageState(StrEnum):

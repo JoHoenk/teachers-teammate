@@ -153,6 +153,9 @@ class PipelineInputError(ValueError):
 #: the exception, the queue row and the log say the same.
 RECOGNITION_OFF_MESSAGE = "Needs text recognition, which is switched off."
 
+#: What a file says that was queued and is gone when its turn comes.
+FILE_GONE_MESSAGE = "The file is no longer there."
+
 
 class RecognitionSwitchedOffError(PipelineInputError):
     """Raised for an input that has to be read from page images while recognition is off.

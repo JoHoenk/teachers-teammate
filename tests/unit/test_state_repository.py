@@ -12,10 +12,12 @@ import dataclasses
 from teachers_teammate.domain.proofreading.edits import EditPart
 from teachers_teammate.domain.proofreading.review import CorrectionReview, EditNote
 from teachers_teammate.domain.data_location import STAGE_CORRECTION, STAGE_EVALUATION, SentRecord
+from teachers_teammate.application.document_view import to_view
+from teachers_teammate.domain.freshness import StageHashes, first_stale_stage_for_hashes
+from teachers_teammate.domain.stages import STAGE_ORDER
 from teachers_teammate.infrastructure.state_repository import (
     DocumentState,
     OcrResultRecord,
-    RuntimeConfigSnapshot,
     StateRepository,
     compute_config_hash,
     compute_file_hash,
@@ -149,8 +151,6 @@ def test_load_or_create_returns_existing_state_after_save(tmp_path: Path) -> Non
             raw_text="hello world",
             preview_img="",
             source_image="",
-            ocr_prompt="",
-            evaluate_prompt="",
             ocr_config_hash="h1",
             preview_config_hash="",
         ),
@@ -182,8 +182,6 @@ def test_record_ocr_result_sets_ocr_done_and_persists(tmp_path: Path) -> None:
             raw_text="extracted text",
             preview_img="",
             source_image="",
-            ocr_prompt="",
-            evaluate_prompt="",
             ocr_config_hash="ocr-hash",
             preview_config_hash="",
         ),
@@ -222,8 +220,6 @@ def test_record_ocr_result_clears_correction_and_evaluation(tmp_path: Path) -> N
             raw_text="new ocr",
             preview_img="",
             source_image="",
-            ocr_prompt="",
-            evaluate_prompt="",
             ocr_config_hash="",
             preview_config_hash="",
         ),
@@ -399,14 +395,14 @@ def test_load_valid_returns_none_when_file_content_changed(tmp_path: Path) -> No
     assert repo.load_valid(source) is None
 
 
-# ── reconcile_runtime_config ──────────────────────────────────────────────
+# ── reconcile ─────────────────────────────────────────────────────────────
 
 
 @pytest.mark.use_case("Config_Aware_Cache_Reuse")
-def test_reconcile_runtime_config_marks_stale_when_ocr_hash_changes(tmp_path: Path) -> None:
+def test_reconcile_marks_stale_when_ocr_hash_changes(tmp_path: Path) -> None:
     """
     Given  a state with ocr_done=True and a stored ocr_config_hash
-    When   reconcile_runtime_config() is called with a different ocr_config_hash
+    When   reconcile() is called with a stale reading
     Then   ocr_done is reset to False (the OCR stage is stale)
     """
     source = _source_file(tmp_path)
@@ -416,28 +412,37 @@ def test_reconcile_runtime_config_marks_stale_when_ocr_hash_changes(tmp_path: Pa
         repo.create(source, source_hash), ocr_done=True, raw_text="raw", ocr_config_hash="old-hash"
     )
 
-    reconciled = repo.reconcile_runtime_config(
-        source,
-        state,
-        RuntimeConfigSnapshot(
-            source_hash=source_hash,
-            ocr_prompt="",
-            evaluate_prompt="",
-            ocr_config_hash="new-hash",
-            correction_config_hash="",
-            eval_config_hash="",
-            preview_config_hash="",
-        ),
-    )
+    reconciled = _reconcile(repo, source, state, expected_ocr_config_hash="new-hash")
 
     assert reconciled.ocr_done is False
 
 
+def test_reconcile_clears_every_stage_after_the_stale_one(tmp_path: Path) -> None:
+    """
+    Given  a state with all three stages stored and a stale reading
+    When   reconcile() is called
+    Then   the proofreading and the review go with the reading: no later stage outlives it
+    """
+    source = _source_file(tmp_path)
+    repo = _repo(tmp_path)
+    state = _processed_state(repo, source, compute_file_hash(source))
+    state = dataclasses.replace(state, ocr_config_hash="old-hash", eval_config_hash="eval-h")
+
+    reconciled = _reconcile(repo, source, state, expected_ocr_config_hash="new-hash")
+
+    assert not reconciled.ocr_done
+    assert not reconciled.correction_done
+    assert reconciled.correction_text == ""
+    assert not reconciled.evaluation_done
+    assert reconciled.evaluation_text == ""
+    assert reconciled.evaluation_sent is None
+
+
 @pytest.mark.use_case("Config_Aware_Cache_Reuse")
-def test_reconcile_runtime_config_leaves_state_unchanged_when_hashes_match(tmp_path: Path) -> None:
+def test_reconcile_leaves_state_unchanged_when_hashes_match(tmp_path: Path) -> None:
     """
     Given  a state with all stages done and matching config hashes
-    When   reconcile_runtime_config() is called with the same hashes
+    When   reconcile() is called with nothing stale
     Then   all stages remain done (no stale detection triggered)
     """
     source = _source_file(tmp_path)
@@ -456,19 +461,7 @@ def test_reconcile_runtime_config_leaves_state_unchanged_when_hashes_match(tmp_p
         eval_config_hash="eval-h",
     )
 
-    reconciled = repo.reconcile_runtime_config(
-        source,
-        state,
-        RuntimeConfigSnapshot(
-            source_hash=source_hash,
-            ocr_prompt="",
-            evaluate_prompt="",
-            ocr_config_hash="ocr-h",
-            correction_config_hash="corr-h",
-            eval_config_hash="eval-h",
-            preview_config_hash="",
-        ),
-    )
+    reconciled = _reconcile(repo, source, state)
 
     assert reconciled.ocr_done is True
     assert reconciled.correction_done is True
@@ -592,7 +585,7 @@ def test_record_correction_result_stores_the_text_that_was_sent(tmp_path: Path) 
     assert loaded.correction_sent_map == {"<PERSON_1>": "Anna"}
     assert loaded.correction_sent == _sent().to_dict()
 
-    view = repo.to_view(source, loaded)
+    view = to_view(source, loaded)
     assert view is not None
     assert view.sent[STAGE_CORRECTION].record == _sent()
     assert view.sent[STAGE_CORRECTION].other_privacy_settings is False
@@ -619,7 +612,6 @@ def test_record_evaluation_result_stores_how_it_was_sent(tmp_path: Path) -> None
         source,
         state,
         evaluation_text="evaluated",
-        evaluate_prompt="",
         eval_config_hash="e-hash",
         sent=_sent(names_hidden=0),
     )
@@ -628,7 +620,7 @@ def test_record_evaluation_result_stores_how_it_was_sent(tmp_path: Path) -> None
     assert loaded is not None
     assert loaded.evaluation_sent == _sent(names_hidden=0).to_dict()
 
-    view = repo.to_view(source, loaded)
+    view = to_view(source, loaded)
     assert view is not None
     assert view.sent[STAGE_EVALUATION].record == _sent(names_hidden=0)
 
@@ -650,7 +642,7 @@ def test_a_state_without_a_sent_record_reports_none(tmp_path: Path) -> None:
         correction_text="corrected",
     )
 
-    view = repo.to_view(source, state)
+    view = to_view(source, state)
 
     assert view is not None
     assert view.sent == {}
@@ -676,8 +668,6 @@ def test_record_ocr_result_clears_the_sent_records(tmp_path: Path) -> None:
             raw_text="new ocr",
             preview_img="",
             source_image="",
-            ocr_prompt="",
-            evaluate_prompt="",
             ocr_config_hash="",
             preview_config_hash="",
         ),
@@ -812,7 +802,7 @@ def test_the_view_has_no_sent_line_for_a_stage_that_is_not_done(tmp_path: Path) 
     repo = _repo(tmp_path)
     state = _processed_state(repo, source, compute_file_hash(source))
 
-    view = repo.to_view(source, dataclasses.replace(state, evaluation_done=False))
+    view = to_view(source, dataclasses.replace(state, evaluation_done=False))
 
     assert set(view.sent) == {STAGE_CORRECTION}
 
@@ -918,22 +908,22 @@ def test_record_preview_artifact_persists_original_and_steps(tmp_path: Path) -> 
     assert loaded is not None
     assert loaded.original_img == str(original)
     assert loaded.preprocess_steps == ["grayscale", "deskew"]
-    view = repo.to_view(src, loaded)
+    view = to_view(src, loaded)
     assert view.original_img == str(original)
     assert view.preprocess_steps == ("grayscale", "deskew")
 
 
 def test_state_without_preprocess_info_loads_with_unknown_steps(tmp_path: Path) -> None:
     """
-    Given  a state file written before original_img/preprocess_steps existed
+    Given  a state file written before the original pages and the steps existed
     When   it is loaded
-    Then   original_img is empty and preprocess_steps is None (unknown, not "none applied")
+    Then   there are no originals and preprocess_steps is None (unknown, not "none applied")
     """
     repo = _repo(tmp_path)
     src = _source_file(tmp_path)
     state = repo.create(src, compute_file_hash(src))
     data = dataclasses.asdict(state)
-    del data["original_img"]
+    del data["original_images"]
     del data["preprocess_steps"]
     repo.state_path_for_input(src).write_text(json.dumps(data), encoding="utf-8")
 
@@ -942,7 +932,7 @@ def test_state_without_preprocess_info_loads_with_unknown_steps(tmp_path: Path) 
     assert loaded is not None
     assert loaded.original_img == ""
     assert loaded.preprocess_steps is None
-    assert repo.to_view(src, loaded).preprocess_steps is None
+    assert to_view(src, loaded).preprocess_steps is None
 
 
 def test_invalidate_preview_artifact_clears_original_and_steps(tmp_path: Path) -> None:
@@ -955,9 +945,9 @@ def test_invalidate_preview_artifact_clears_original_and_steps(tmp_path: Path) -
     src = _source_file(tmp_path)
     state = dataclasses.replace(
         repo.create(src, compute_file_hash(src)),
-        preview_img="p.png",
+        page_images=["p.png"],
         source_image="p.png",
-        original_img="o.png",
+        original_images=["o.png"],
         preprocess_steps=["grayscale"],
     )
 
@@ -982,7 +972,7 @@ def test_invalidate_from_stage_ocr_clears_original_and_steps(tmp_path: Path) -> 
             repo.create(src, compute_file_hash(src)),
             raw_text="text",
             ocr_done=True,
-            original_img="o.png",
+            original_images=["o.png"],
             preprocess_steps=["grayscale"],
         ),
     )
@@ -1008,8 +998,8 @@ def test_load_valid_drops_original_image_missing_on_disk(tmp_path: Path) -> None
         src,
         dataclasses.replace(
             repo.create(src, compute_file_hash(src)),
-            preview_img=str(preview),
-            original_img=str(tmp_path / "gone.png"),
+            page_images=[str(preview)],
+            original_images=[str(tmp_path / "gone.png")],
             preprocess_steps=["grayscale"],
         ),
     )
@@ -1035,8 +1025,8 @@ def test_load_valid_drops_original_and_steps_when_preview_missing(tmp_path: Path
         src,
         dataclasses.replace(
             repo.create(src, compute_file_hash(src)),
-            preview_img=str(tmp_path / "gone_preprocessed.png"),
-            original_img=str(original),
+            page_images=[str(tmp_path / "gone_preprocessed.png")],
+            original_images=[str(original)],
             preprocess_steps=["grayscale"],
         ),
     )
@@ -1086,30 +1076,55 @@ def test_record_preview_artifact_persists_every_page(tmp_path: Path) -> None:
     assert loaded is not None
     assert loaded.page_images == [str(page) for page in pages]
     assert loaded.pages == tuple(str(page) for page in pages)
-    assert repo.to_view(src, loaded).page_images == tuple(str(page) for page in pages)
+    assert to_view(src, loaded).page_images == tuple(str(page) for page in pages)
 
 
-def test_state_without_pages_has_the_one_page_it_had(tmp_path: Path) -> None:
+def test_record_preview_artifact_without_pages_replaces_the_stored_pages(tmp_path: Path) -> None:
     """
-    Given  a state file written before page_images existed
+    Given  a document with three stored pages
+    When   record_preview_artifact is called with a preview image and no page list
+    Then   the document has that one page, not the new one on top of two old ones
+    """
+    repo = _repo(tmp_path)
+    src = _source_file(tmp_path)
+    pages = _pages(tmp_path)
+    state = dataclasses.replace(
+        repo.create(src, compute_file_hash(src)), page_images=[str(page) for page in pages]
+    )
+
+    new_state = repo.record_preview_artifact(
+        src,
+        state,
+        preview_img="new.png",
+        source_image="new.png",
+        preview_config_hash="ph",
+    )
+
+    assert new_state.page_images == ["new.png"]
+
+
+def test_a_record_with_only_a_preview_shows_its_page(tmp_path: Path) -> None:
+    """
+    Given  a state file written before the app kept every page: one preview_img, no page list
     When   it is loaded
-    Then   pages is the preview image alone
+    Then   the document has the one page and the one original it had
     """
     repo = _repo(tmp_path)
     src = _source_file(tmp_path)
     preview = tmp_path / "doc_preprocessed.png"
     preview.write_bytes(b"png")
-    state = dataclasses.replace(repo.create(src, compute_file_hash(src)), preview_img=str(preview))
-    data = dataclasses.asdict(state)
-    del data["page_images"]
+    data = dataclasses.asdict(repo.create(src, compute_file_hash(src)))
+    data["preview_img"] = str(preview)
+    data["original_img"] = str(preview)
     repo.state_path_for_input(src).write_text(json.dumps(data), encoding="utf-8")
 
     loaded = repo.load_valid(src)
 
     assert loaded is not None
-    assert loaded.page_images == []
+    assert loaded.page_images == [str(preview)]
     assert loaded.pages == (str(preview),)
-    assert repo.to_view(src, loaded).page_images == (str(preview),)
+    assert loaded.original_images == [str(preview)]
+    assert to_view(src, loaded).page_images == (str(preview),)
 
 
 def test_a_page_missing_on_disk_leaves_the_one_page_it_had(tmp_path: Path) -> None:
@@ -1125,7 +1140,6 @@ def test_a_page_missing_on_disk_leaves_the_one_page_it_had(tmp_path: Path) -> No
         src,
         dataclasses.replace(
             repo.create(src, compute_file_hash(src)),
-            preview_img=str(pages[0]),
             page_images=[str(page) for page in pages],
         ),
     )
@@ -1134,7 +1148,7 @@ def test_a_page_missing_on_disk_leaves_the_one_page_it_had(tmp_path: Path) -> No
     loaded = repo.load_valid(src)
 
     assert loaded is not None
-    assert loaded.page_images == []
+    assert loaded.page_images == [str(pages[0])]
     assert loaded.pages == (str(pages[0]),)
 
 
@@ -1151,7 +1165,6 @@ def test_a_missing_preview_leaves_no_pages(tmp_path: Path) -> None:
         src,
         dataclasses.replace(
             repo.create(src, compute_file_hash(src)),
-            preview_img=str(pages[0]),
             page_images=[str(page) for page in pages],
         ),
     )
@@ -1174,7 +1187,6 @@ def test_invalidate_preview_artifact_clears_the_pages(tmp_path: Path) -> None:
     pages = _pages(tmp_path)
     state = dataclasses.replace(
         repo.create(src, compute_file_hash(src)),
-        preview_img=str(pages[0]),
         source_image=str(pages[0]),
         page_images=[str(page) for page in pages],
     )
@@ -1199,7 +1211,6 @@ def test_resetting_from_ocr_clears_the_pages(tmp_path: Path) -> None:
             repo.create(src, compute_file_hash(src)),
             raw_text="text",
             ocr_done=True,
-            preview_img=str(pages[0]),
             page_images=[str(page) for page in pages],
         ),
     )
@@ -1221,7 +1232,6 @@ def test_a_new_ocr_result_keeps_the_pages(tmp_path: Path) -> None:
     pages = _pages(tmp_path)
     state = dataclasses.replace(
         repo.create(src, compute_file_hash(src)),
-        preview_img=str(pages[0]),
         page_images=[str(page) for page in pages],
     )
 
@@ -1233,8 +1243,6 @@ def test_a_new_ocr_result_keeps_the_pages(tmp_path: Path) -> None:
             raw_text="text",
             preview_img=str(pages[0]),
             source_image=str(pages[0]),
-            ocr_prompt="",
-            evaluate_prompt="",
             ocr_config_hash="ocr-hash",
             preview_config_hash="ph",
         ),
@@ -1283,35 +1291,32 @@ def test_record_preview_artifact_persists_every_original(tmp_path: Path) -> None
     assert loaded is not None
     assert loaded.original_images == [str(page) for page in originals]
     assert loaded.originals == tuple(str(page) for page in originals)
-    assert repo.to_view(src, loaded).original_images == tuple(str(page) for page in originals)
+    assert to_view(src, loaded).original_images == tuple(str(page) for page in originals)
 
 
 def test_state_without_originals_has_the_one_original_it_had(tmp_path: Path) -> None:
     """
-    Given  a state file written before original_images existed
+    Given  a state file written before the app kept every original: one original_img
     When   it is loaded
-    Then   originals is the original image alone
+    Then   the document has the one original it had
     """
     repo = _repo(tmp_path)
     src = _source_file(tmp_path)
     pages = _pages(tmp_path)
     original = tmp_path / "doc_original.png"
     original.write_bytes(b"png")
-    state = dataclasses.replace(
-        repo.create(src, compute_file_hash(src)),
-        preview_img=str(pages[0]),
-        original_img=str(original),
+    data = dataclasses.asdict(
+        dataclasses.replace(repo.create(src, compute_file_hash(src)), page_images=[str(pages[0])])
     )
-    data = dataclasses.asdict(state)
-    del data["original_images"]
+    data["original_img"] = str(original)
     repo.state_path_for_input(src).write_text(json.dumps(data), encoding="utf-8")
 
     loaded = repo.load_valid(src)
 
     assert loaded is not None
-    assert loaded.original_images == []
+    assert loaded.original_images == [str(original)]
     assert loaded.originals == (str(original),)
-    assert repo.to_view(src, loaded).original_images == (str(original),)
+    assert to_view(src, loaded).original_images == (str(original),)
 
 
 def test_an_original_missing_on_disk_leaves_the_one_original_it_had(tmp_path: Path) -> None:
@@ -1328,8 +1333,6 @@ def test_an_original_missing_on_disk_leaves_the_one_original_it_had(tmp_path: Pa
         src,
         dataclasses.replace(
             repo.create(src, compute_file_hash(src)),
-            preview_img=str(pages[0]),
-            original_img=str(originals[0]),
             page_images=[str(page) for page in pages],
             original_images=[str(page) for page in originals],
         ),
@@ -1339,7 +1342,7 @@ def test_an_original_missing_on_disk_leaves_the_one_original_it_had(tmp_path: Pa
     loaded = repo.load_valid(src)
 
     assert loaded is not None
-    assert loaded.original_images == []
+    assert loaded.original_images == [str(originals[0])]
     assert loaded.originals == (str(originals[0]),)
 
 
@@ -1357,8 +1360,6 @@ def test_a_missing_first_original_leaves_no_originals(tmp_path: Path) -> None:
         src,
         dataclasses.replace(
             repo.create(src, compute_file_hash(src)),
-            preview_img=str(pages[0]),
-            original_img=str(originals[0]),
             page_images=[str(page) for page in pages],
             original_images=[str(page) for page in originals],
         ),
@@ -1383,9 +1384,7 @@ def test_invalidate_preview_artifact_clears_the_originals(tmp_path: Path) -> Non
     originals = _originals(tmp_path)
     state = dataclasses.replace(
         repo.create(src, compute_file_hash(src)),
-        preview_img=str(pages[0]),
         source_image=str(pages[0]),
-        original_img=str(originals[0]),
         page_images=[str(page) for page in pages],
         original_images=[str(page) for page in originals],
     )
@@ -1411,8 +1410,6 @@ def test_resetting_from_ocr_clears_the_originals(tmp_path: Path) -> None:
             repo.create(src, compute_file_hash(src)),
             raw_text="text",
             ocr_done=True,
-            preview_img=str(pages[0]),
-            original_img=str(originals[0]),
             page_images=[str(page) for page in pages],
             original_images=[str(page) for page in originals],
         ),
@@ -1433,8 +1430,6 @@ def _ocr_record(source_hash: str, **overrides: str) -> OcrResultRecord:
         "raw_text": "**x**",
         "preview_img": "",
         "source_image": "",
-        "ocr_prompt": "",
-        "evaluate_prompt": "",
         "ocr_config_hash": "ocr-hash",
         "preview_config_hash": "",
     }
@@ -1463,12 +1458,10 @@ def test_plain_state_written_before_text_format_fields_loads_as_plain(tmp_path: 
     _write_legacy_state(repo, src, "Das ist ein Satz.\nUnd noch einer.")
 
     loaded = repo.load_valid(src)
-    view = repo.load_view(src)
 
     assert loaded is not None
     assert loaded.raw_text_format == "plain"
-    assert view is not None
-    assert view.raw_text_format == "plain"
+    assert to_view(src, loaded).raw_text_format == "plain"
 
 
 @pytest.mark.parametrize(
@@ -1489,7 +1482,6 @@ def test_markup_state_written_before_text_format_fields_is_dropped(
     _write_legacy_state(repo, src, markup)
 
     assert repo.load_valid(src) is None
-    assert repo.load_view(src) is None
 
 
 def test_markup_state_with_text_format_field_is_kept(tmp_path: Path) -> None:
@@ -1548,11 +1540,9 @@ def test_record_ocr_result_persists_the_text_format(tmp_path: Path) -> None:
     )
 
     loaded = repo.load_valid(src)
-    view = repo.load_view(src)
     assert loaded is not None
     assert loaded.raw_text_format == "markdown"
-    assert view is not None
-    assert view.raw_text_format == "markdown"
+    assert to_view(src, loaded).raw_text_format == "markdown"
 
 
 def test_correction_shares_the_raw_text_format_on_the_view(tmp_path: Path) -> None:
@@ -1577,8 +1567,9 @@ def test_correction_shares_the_raw_text_format_on_the_view(tmp_path: Path) -> No
         correction_config_hash="c",
     )
 
-    view = repo.load_view(src)
-    assert view is not None
+    loaded = repo.load_valid(src)
+    assert loaded is not None
+    view = to_view(src, loaded)
     assert view.correction_text == "~~a~~ fixed"
     assert view.raw_text_format == "markdown"
 
@@ -1737,8 +1728,6 @@ def test_record_ocr_result_clears_the_source_of_the_proofreading(tmp_path: Path)
             raw_text="new raw",
             preview_img="",
             source_image="",
-            ocr_prompt="",
-            evaluate_prompt="",
             ocr_config_hash="ocr-h",
             preview_config_hash="",
         ),
@@ -1769,19 +1758,142 @@ def test_resetting_the_correction_clears_the_source_it_was_made_from(tmp_path: P
     assert updated.correction_source_hash == ""
 
 
-def _snapshot(**overrides: object) -> RuntimeConfigSnapshot:
-    """Return a runtime snapshot whose hashes all match a processed state."""
-    values: dict[str, object] = {
-        "source_hash": "h",
-        "ocr_prompt": "",
-        "evaluate_prompt": "",
-        "ocr_config_hash": "ocr-h",
-        "correction_config_hash": "corr-h",
-        "eval_config_hash": "eval-h",
-        "preview_config_hash": "",
+#: The ``DocumentState`` fields that belong to each stage, by their prefix.  A field added for
+#: a stage must be named here, so the reset table cannot silently miss it.
+_STAGE_FIELD_PREFIXES: dict[str, tuple[str, ...]] = {
+    "ocr": (
+        "ocr_",
+        "raw_text",
+        "preview_",
+        "page_images",
+        "original_images",
+        "source_image",
+        "preprocess_steps",
+    ),
+    "correction": ("correction_",),
+    "evaluation": ("evaluation_", "eval_"),
+}
+
+
+def _stage_fields(stage: str) -> set[str]:
+    """Return the ``DocumentState`` fields that belong to *stage*."""
+    prefixes = _STAGE_FIELD_PREFIXES[stage]
+    return {
+        name
+        for name in (field.name for field in dataclasses.fields(DocumentState))
+        if any(name.startswith(prefix) for prefix in prefixes)
     }
-    values.update(overrides)
-    return RuntimeConfigSnapshot(**values)  # ty: ignore[invalid-argument-type]
+
+
+def _full_state(repo: StateRepository, source: Path) -> DocumentState:
+    """Return a state with every stage done and every stage field set."""
+    return dataclasses.replace(
+        repo.create(source, compute_file_hash(source)),
+        raw_text="raw",
+        raw_text_format="markdown",
+        ocr_done=True,
+        ocr_config_hash="ocr-h",
+        preview_config_hash="prev-h",
+        page_images=["p1.png"],
+        original_images=["o1.png"],
+        source_image="p1.png",
+        preprocess_steps=["grayscale"],
+        correction_done=True,
+        correction_text="corrected",
+        correction_review={"edits": []},
+        correction_warning="warning",
+        correction_sent_text="sent",
+        correction_sent_map={"<PERSON_1>": "Anna"},
+        correction_sent=_sent().to_dict(),
+        correction_config_hash="corr-h",
+        correction_source_hash="text-id",
+        evaluation_done=True,
+        evaluation_text="eval",
+        evaluation_sent=_sent().to_dict(),
+        eval_config_hash="eval-h",
+    )
+
+
+@pytest.mark.parametrize("stage", STAGE_ORDER)
+def test_a_reset_clears_every_field_of_that_stage_and_the_later_ones(
+    tmp_path: Path, stage: str
+) -> None:
+    """
+    Given  a state with every stage done and every stage field set
+    When   it is reset from *stage*
+    Then   every field of that stage and of every later stage is back at its empty value
+    """
+    repo = _repo(tmp_path)
+    src = _source_file(tmp_path)
+    state = _full_state(repo, src)
+
+    cleared = repo.reset_from_stage(src, state, stage)
+
+    blank = repo.create(src, state.source_hash)
+    for later in STAGE_ORDER[STAGE_ORDER.index(stage) :]:
+        for name in _stage_fields(later):
+            assert getattr(cleared, name) == getattr(blank, name), name
+
+
+def test_a_record_with_the_dropped_fields_still_serves_its_results(tmp_path: Path) -> None:
+    """
+    Given  a stored v3 record that still carries the fields the app no longer reads
+    When   it is loaded
+    Then   it loads and its results are served
+    """
+    repo = _repo(tmp_path)
+    src = _source_file(tmp_path)
+    data = dataclasses.asdict(_full_state(repo, src))
+    data["correction_invalidated"] = True
+    data["evaluation_invalidated"] = True
+    data["ocr_prompt"] = "Transcribe."
+    data["evaluate_prompt"] = "Review."
+    repo.state_path_for_input(src).write_text(json.dumps(data), encoding="utf-8")
+
+    loaded = repo.load_valid(src)
+
+    assert loaded is not None
+    assert loaded.raw_text == "raw"
+    assert loaded.correction_text == "corrected"
+    assert loaded.evaluation_text == "eval"
+
+
+def _reconcile(
+    repo: StateRepository,
+    source: Path,
+    state: DocumentState,
+    *,
+    preview_config_hash: str | None = None,
+    **expected: object,
+) -> DocumentState:
+    """Reconcile *state* the way a run does: the policy decides, the store applies.
+
+    *expected* overrides the hashes the current settings ask for; every hash not named is the
+    one the state holds, so nothing is stale unless a test says so.
+    """
+    values: dict[str, object] = {
+        "ocr_done": state.ocr_done,
+        "ocr_config_hash": state.ocr_config_hash,
+        "expected_ocr_config_hash": state.ocr_config_hash,
+        "correction_done": state.correction_done,
+        "correction_config_hash": state.correction_config_hash,
+        "expected_correction_config_hash": state.correction_config_hash,
+        "evaluation_done": state.evaluation_done,
+        "eval_config_hash": state.eval_config_hash,
+        "expected_eval_config_hash": state.eval_config_hash,
+        "correction_source": state.correction_source_hash,
+        "expected_correction_source": state.correction_source_hash,
+    }
+    values.update(expected)
+    return repo.reconcile(
+        source,
+        state,
+        source_hash=state.source_hash,
+        stale_stage=first_stale_stage_for_hashes(StageHashes(**values)),  # ty: ignore[invalid-argument-type]
+        preview_config_hash=(
+            state.preview_config_hash if preview_config_hash is None else preview_config_hash
+        ),
+    )
 
 
 def _done_state(repo: StateRepository, source: Path) -> DocumentState:
@@ -1808,9 +1920,7 @@ def test_a_frozen_reading_is_not_reset_by_changed_settings(tmp_path: Path) -> No
     source = _source_file(tmp_path)
     state = _done_state(repo, source)
 
-    reconciled = repo.reconcile_runtime_config(
-        source, state, _snapshot(ocr_config_hash="other", ocr_frozen=True)
-    )
+    reconciled = _reconcile(repo, source, state, expected_ocr_config_hash="other", ocr_frozen=True)
 
     assert reconciled.ocr_done is True
     assert reconciled.raw_text == "raw"
@@ -1828,14 +1938,13 @@ def test_a_proofreading_the_teacher_worked_on_is_not_reset_by_changed_settings(
     source = _source_file(tmp_path)
     state = _done_state(repo, source)
 
-    reconciled = repo.reconcile_runtime_config(
+    reconciled = _reconcile(
+        repo,
         source,
         state,
-        _snapshot(
-            correction_config_hash="other",
-            expected_correction_source="text-identity",
-            correction_kept=True,
-        ),
+        expected_correction_config_hash="other",
+        expected_correction_source="text-identity",
+        correction_kept=True,
     )
 
     assert reconciled.correction_done is True
@@ -1852,10 +1961,8 @@ def test_a_proofreading_made_from_another_text_is_reset_even_when_kept(tmp_path:
     source = _source_file(tmp_path)
     state = _done_state(repo, source)
 
-    reconciled = repo.reconcile_runtime_config(
-        source,
-        state,
-        _snapshot(expected_correction_source="another-text", correction_kept=True),
+    reconciled = _reconcile(
+        repo, source, state, expected_correction_source="another-text", correction_kept=True
     )
 
     assert reconciled.correction_done is False

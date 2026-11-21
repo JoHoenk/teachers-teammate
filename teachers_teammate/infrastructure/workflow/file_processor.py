@@ -33,6 +33,7 @@ from ...domain.teacher_work import (
     text_identity,
 )
 from ...exceptions import (
+    FILE_GONE_MESSAGE,
     RECOGNITION_OFF_MESSAGE,
     PipelineInputError,
     RecognitionSwitchedOffError,
@@ -83,9 +84,6 @@ class ProcessingResult:
     """With ``stopped``: the step the stop cut short (``"ocr"``, ``"correction"`` or
     ``"evaluation"``); empty when the file did not get as far as telling."""
 
-
-#: What a file says that was queued and is gone when its turn comes.
-FILE_GONE_MESSAGE = "The file is no longer there."
 
 #: What a stopped file says, by the step it did not get to.
 STOPPED_BEFORE_RECOGNITION = "Stopped before the text was read."
@@ -293,12 +291,12 @@ class FileProcessor:
     def _prepare_cache(self, file: Path) -> CacheContext:
         try:
             return self._cache_service.prepare(file)
-        except FileNotFoundError as exc:
-            self._reporter.status(f"       → Skipped: {FILE_GONE_MESSAGE}")
-            raise _StageAbort(
-                ProcessingResult(False, FILE_GONE_MESSAGE, "", "", "", "", skipped=True)
-            ) from exc
         except OSError as exc:
+            if isinstance(exc, FileNotFoundError) and not file.exists():
+                self._reporter.status(f"       → Skipped: {FILE_GONE_MESSAGE}")
+                raise _StageAbort(
+                    ProcessingResult(False, FILE_GONE_MESSAGE, "", "", "", "", skipped=True)
+                ) from exc
             raise _StageAbort(
                 ProcessingResult(False, f"Could not read input file: {exc}", "", "", "", "")
             ) from exc

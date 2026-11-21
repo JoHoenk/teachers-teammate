@@ -1,3 +1,3 @@
 """Application-layer use cases and orchestration services."""
 
-from ..infrastructure.state_repository import DocumentStateView as DocumentStateView
+from .document_view import DocumentStateView as DocumentStateView

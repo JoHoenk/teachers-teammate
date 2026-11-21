@@ -35,7 +35,7 @@ from teachers_teammate.gui.check._text_views import (
     ReadView,
     marks_of,
 )
-from teachers_teammate.infrastructure.state_repository import DocumentStateView
+from teachers_teammate.application.document_view import DocumentStateView
 
 RAW = "Der bunte Hund bellt laut."
 CORRECTED = "Der braune Hund bellt laut."
@@ -78,8 +78,6 @@ def _document(
             ocr_done=True,
             correction_done=True,
             evaluation_done=False,
-            cache_status_label="",
-            loaded_at="",
             original_img="",
             preprocess_steps=(),
             raw_text_format=text_format,

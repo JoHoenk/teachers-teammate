@@ -31,7 +31,7 @@ from teachers_teammate.gui.check._side_panel import (
     _column_rects,
     _icon_of,
 )
-from teachers_teammate.infrastructure.state_repository import DocumentStateView
+from teachers_teammate.application.document_view import DocumentStateView
 from teachers_teammate.texts import check as check_txt
 
 RAW = "Der bunte Hund bellt. Die Katze mauzt."
@@ -68,8 +68,6 @@ def _document(
             ocr_done=True,
             correction_done=True,
             evaluation_done=bool(content_review),
-            cache_status_label="",
-            loaded_at="",
             original_img="",
             preprocess_steps=(),
             raw_text_format="plain",

@@ -25,7 +25,7 @@ class FileStatus(StrEnum):
     SAVED = "saved"
     FAILED = "failed"
     SKIPPED = "skipped"
-    """Left out on purpose (a scan while text recognition is off), not a failure."""
+    """Left out, not failed: a scan while text recognition is off, or a file that is gone."""
     STOPPED = "stopped"
     """The run was stopped while this file was processed; what was done is kept."""
 
@@ -56,7 +56,7 @@ class RunSummary:
     succeeded: tuple[str, ...] = ()
     failed: tuple[str, ...] = ()
     skipped: tuple[str, ...] = ()
-    """Left out on purpose (a scan while text recognition is off)."""
+    """Left out, not failed: a scan while text recognition is off, or a file that is gone."""
     stopped: tuple[str, ...] = ()
     """Started, then interrupted by "Stop now"; what was already done is kept."""
     not_started: tuple[str, ...] = ()

@@ -1064,7 +1064,7 @@ py_test(
     srcs = _COMMON_SRCS + ["unit/test_state_repository.py"],
     args = ["unit/test_state_repository.py"],
     main = "run_test.py",
-    deps = _COMMON_DEPS + _FORMAT_DEPS + _INFRASTRUCTURE_LIB,
+    deps = _COMMON_DEPS + _FORMAT_DEPS + _APPLICATION_LIB,
 )
 
 py_test(

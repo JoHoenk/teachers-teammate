@@ -30,7 +30,6 @@ from ..domain.teacher_work import (
 from ..infrastructure.onnx.store import ModelStore
 from ..infrastructure.stage_builder import resolve_run_windows
 from ..infrastructure.state_repository import (
-    DocumentStateView,
     StateRepository,
     compute_file_hash_cached,
     machine_texts,
@@ -41,6 +40,7 @@ from ..infrastructure.workflow.cache_service import (
     compute_correction_config_hash,
     expected_hashes,
 )
+from .document_view import DocumentStateView
 from .merged_view import reconciled_view
 
 _logger = logging.getLogger(__name__)
@@ -121,7 +121,7 @@ class ApplicationCommands:
                 state = store.reset_from_stage(source, state, "correction")
             except OSError as exc:
                 _logger.warning("Could not reset the proofreading of %s: %s", source.name, exc)
-        return reconciled_view(store, source, state, work, self._expected(config, source))
+        return reconciled_view(source, state, work, self._expected(config, source))
 
     def edit_corrected_text(
         self, config: Config, *, source: Path, text: str
@@ -149,7 +149,7 @@ class ApplicationCommands:
             source.name,
             lambda work: with_corrected(work, text, current_texts(machine, work)),
         )
-        return reconciled_view(store, source, state, work, self._expected(config, source))
+        return reconciled_view(source, state, work, self._expected(config, source))
 
     def set_checked(
         self, config: Config, *, source: Path, checked: bool
@@ -176,7 +176,7 @@ class ApplicationCommands:
             source.name,
             lambda work: with_checked(work, checked, current_texts(machine, work)),
         )
-        return reconciled_view(store, source, state, work, self._expected(config, source))
+        return reconciled_view(source, state, work, self._expected(config, source))
 
     def mark_looked_at(self, config: Config, *, source: Path, keys: Collection[str]) -> None:
         """Record that the teacher looked at the items *keys* of *source*.

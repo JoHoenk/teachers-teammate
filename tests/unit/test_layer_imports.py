@@ -64,6 +64,15 @@ def _layer_of(parts: list[str], package: Path) -> str:
     raise AssertionError(f"{first} is in no layer: add it to teachers_teammate/BUILD and here")
 
 
+def _absolute_module(node: ast.ImportFrom, relative_to: list[str]) -> str:
+    """Return the dotted module an ``import from`` names, relative levels resolved."""
+    if not node.level:
+        return node.module or ""
+    base = [_PACKAGE, *relative_to]
+    base = base[: len(base) - (node.level - 1)]
+    return ".".join([*base, *([node.module] if node.module else [])])
+
+
 def _imported_modules(path: Path, relative_to: list[str]) -> list[list[str]]:
     """Return the dotted paths (below the package) of every package import in *path*."""
     found: list[list[str]] = []
@@ -71,12 +80,7 @@ def _imported_modules(path: Path, relative_to: list[str]) -> list[list[str]]:
         if isinstance(node, ast.Import):
             names = [alias.name for alias in node.names]
         elif isinstance(node, ast.ImportFrom):
-            if node.level:
-                base = [_PACKAGE, *relative_to]
-                base = base[: len(base) - (node.level - 1)]
-                module = ".".join([*base, *([node.module] if node.module else [])])
-            else:
-                module = node.module or ""
+            module = _absolute_module(node, relative_to)
             names = [module, *(f"{module}.{alias.name}" for alias in node.names)]
         else:
             continue
@@ -111,4 +115,43 @@ def test_every_import_points_down_the_layers() -> None:
             other = _layer_of(target, package)
             if other != layer and other not in allowed:
                 violations.append(f"{relative} ({layer}) imports {'.'.join(target)} ({other})")
+    assert not violations, "\n".join(violations)
+
+
+def _re_exports(path: Path, relative_to: list[str]) -> list[tuple[str, str]]:
+    """Return ``(name, module)`` for every ``from module import name as name`` in *path*."""
+    found: list[tuple[str, str]] = []
+    for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+        if isinstance(node, ast.ImportFrom):
+            module = _absolute_module(node, relative_to)
+            found += [(alias.name, module) for alias in node.names if alias.asname == alias.name]
+    return found
+
+
+def test_no_module_re_exports_a_name_of_another_layer() -> None:
+    """
+    Given  the layers of the package and the modules in them
+    When   every ``from … import Name as Name`` — this code base's way of re-exporting — is read
+    Then   none of them takes the name from another layer, so a name has one home and a caller
+           is pointed there instead of to a second copy that can drift from it
+    """
+    package = _package_dir()
+    violations: list[str] = []
+    for path in sorted(package.rglob("*.py")):
+        relative = path.relative_to(package)
+        own = (
+            []
+            if relative.name == "__init__.py" and len(relative.parts) == 1
+            else list(relative.with_suffix("").parts)
+        )
+        layer = _layer_of(own, package)
+        for name, module in _re_exports(path, list(relative.parts[:-1])):
+            parts = module.split(".")
+            if parts[0] != _PACKAGE:
+                continue
+            other = _layer_of(parts[1:], package)
+            if other != layer:
+                violations.append(
+                    f"{relative} ({layer}) re-exports {name} from {'.'.join(parts)} ({other})"
+                )
     assert not violations, "\n".join(violations)

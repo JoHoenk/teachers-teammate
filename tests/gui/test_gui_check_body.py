@@ -264,6 +264,67 @@ def test_the_page_offers_proofread_this_document_while_there_is_none(qtbot) -> N
     assert page._next_step.isHidden() is True
 
 
+@pytest.mark.gui
+def test_the_page_offers_proofread_again_over_a_proofread_document(qtbot) -> None:
+    """
+    Given  a page
+    When   a proofread document is shown, then held by a run
+    Then   *Proofread again* is in the header, and goes while the run holds it
+    """
+    page = _page(qtbot)
+
+    page.show_document(_document(corrected=""), 1, 1)
+    assert page._again_btn.isHidden() is True
+
+    page.show_document(_document(review=_review(RAW, CORRECTED)), 1, 1)
+    assert page._again_btn.isHidden() is False
+
+    page.set_lock(txt.WAITING_FOR_RUN)
+    assert page._again_btn.isHidden() is True
+
+
+@pytest.mark.gui
+def test_ticking_hide_names_asks_for_the_placeholders(qtbot) -> None:
+    """
+    Given  a document shown with the names as written
+    When   the names are to be hidden
+    Then   the window is asked for the placeholders, once
+    """
+    masking = Masking()
+    masking.set_available(True)
+    body = _body(qtbot, _document(review=_review(RAW, CORRECTED)), masking)
+    asked: list[str] = []
+    body.anonymization_needed.connect(asked.append)
+
+    masking.set_enabled(True)
+    body.set_masking(masking)
+    body.set_masking(masking)
+
+    assert asked == [RAW]
+
+
+@pytest.mark.gui
+def test_the_zoom_buttons_resize_all_three_texts(qtbot) -> None:
+    """
+    Given  a page with a proofread document
+    When   the larger-text and smaller-text buttons are used
+    Then   all three texts follow and the size is reported for storing
+    """
+    page = _page(qtbot)
+    page.show_document(_document(review=_review(RAW, CORRECTED)), 1, 1)
+    sizes: list[int] = []
+    page.text_zoom_changed.connect(sizes.append)
+    before = page.body.read_view.point_size
+
+    page.body.zoom_by(1)
+    page.body.zoom_by(-1)
+    page.body.zoom_by(-1)
+
+    views = (page.body.read_view, page.body.marked_view, page.body.final_view)
+    assert [view.point_size for view in views] == [before - 1] * 3
+    assert sizes == [before + 1, before, before - 1]
+
+
 # ── The banners ───────────────────────────────────────────────────────────
 
 

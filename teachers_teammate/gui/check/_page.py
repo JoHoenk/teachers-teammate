@@ -55,7 +55,7 @@ from ...texts import check as check_text
 from .. import _user_text as txt
 from .._export_menu import ExportKind
 from ._masking import Masking
-from ._run_strip import NextStepStrip, RunState, RunStrip
+from ._run_strip import PRIMARY_STYLE, NextStepStrip, RunState, RunStrip
 from ._scan_view import ScanPane
 from ._side_panel import SidePanel
 from ._text_views import CheckTextView, FinalView, MarkedView, ReadView, marks_of
@@ -327,7 +327,7 @@ class CheckBody(QWidget):
         self.final_view.text_edited.connect(self.corrected_text_edited)
         for view in (self.read_view, self.marked_view, self.final_view):
             view.item_clicked.connect(self._on_item_clicked)
-            view.zoom_changed.connect(self.text_zoom_changed)
+            view.zoom_changed.connect(self._on_zoomed)
         self.panel.item_chosen.connect(self._on_item_chosen)
         self.panel.item_shown.connect(self.item_shown)
         self.panel.take_out_requested.connect(self._on_take_out)
@@ -375,6 +375,11 @@ class CheckBody(QWidget):
         self._refresh_marks()
         self.panel.set_document(doc, masking)
         self._refresh()
+        self._request_placeholders(doc)
+
+    def _request_placeholders(self, doc: CheckDocument) -> None:
+        """Ask the window to hide the names of *doc* when they are to be hidden and are not yet."""
+        masking = self._masking
         if masking.enabled and masking.needs_request(doc.raw_text):
             masking.mark_requested(doc.raw_text)
             self.anonymization_needed.emit(doc.raw_text)
@@ -417,11 +422,21 @@ class CheckBody(QWidget):
         self._refresh_marks()
         self.panel.set_document(doc, masking)
         self._refresh()
+        self._request_placeholders(doc)
 
     def set_point_size(self, point_size: int) -> None:
         """Read the texts at *point_size* points."""
         for view in (self.read_view, self.marked_view, self.final_view):
             view.set_point_size(point_size)
+
+    def zoom_by(self, step: int) -> None:
+        """Make all three texts *step* points larger or smaller."""
+        self._widget_of(self._view).zoom_by(step)
+
+    def _on_zoomed(self, point_size: int) -> None:
+        """A text was zoomed: the other two follow, and the window stores the size."""
+        self.set_point_size(point_size)
+        self.text_zoom_changed.emit(point_size)
 
     def set_layout(self, layout: CheckLayout) -> None:
         """Give the panes the widths and the card the height the teacher chose last time."""
@@ -810,7 +825,7 @@ class CheckPage(QWidget):
         self._switch_buttons: dict[ViewKind, QPushButton]
         self._switch: QWidget
         self._source_action: QAction
-        self._again_action: QAction
+        self._again_btn: QPushButton
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -884,6 +899,12 @@ class CheckPage(QWidget):
 
     def _build_header_tools(self, layout: QHBoxLayout) -> None:
         """Add what the header offers about the document: the names, more, and Copy."""
+        self._again_btn = QPushButton(txt.PROOFREAD_AGAIN)
+        self._again_btn.setStyleSheet(PRIMARY_STYLE)
+        self._again_btn.clicked.connect(self.proofread_requested)
+        self._again_btn.setVisible(False)
+        layout.addWidget(self._again_btn)
+
         self._hide_names_box = QCheckBox(txt.HIDE_PERSONAL_INFO_BUTTON)
         self._hide_names_box.setToolTip(txt.HIDE_PERSONAL_INFO_BUTTON_TIP)
         self._hide_names_box.setChecked(True)
@@ -896,6 +917,16 @@ class CheckPage(QWidget):
         self._more_btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         self._more_btn.setMenu(self._build_more_menu())
         layout.addWidget(self._more_btn)
+
+        for text, tip, step in (
+            (check_text.TEXT_ZOOM_OUT, check_text.TEXT_ZOOM_OUT_TIP, -1),
+            (check_text.TEXT_ZOOM_IN, check_text.TEXT_ZOOM_IN_TIP, 1),
+        ):
+            zoom = QToolButton()
+            zoom.setText(text)
+            zoom.setToolTip(tip)
+            zoom.clicked.connect(lambda _checked=False, n=step: self.body.zoom_by(n))
+            layout.addWidget(zoom)
 
         self._copy_btn = QToolButton()
         self._copy_btn.setText("Copy")
@@ -940,9 +971,6 @@ class CheckPage(QWidget):
         self._source_action = menu.addAction(txt.SHOW_MARKDOWN_SOURCE)
         assert self._source_action is not None
         self._source_action.triggered.connect(self._show_source)
-        self._again_action = menu.addAction(txt.PROOFREAD_AGAIN)
-        assert self._again_action is not None
-        self._again_action.triggered.connect(self.proofread_requested)
         return menu
 
     def _build_copy_menu(self) -> QMenu:
@@ -992,7 +1020,7 @@ class CheckPage(QWidget):
         self._show_header(doc.name, doc.source_id, position, total)
         self._switch.setVisible(doc.has_proofreading)
         self._show_next_step(doc)
-        self._again_action.setEnabled(doc.has_proofreading)
+        self._show_again(doc)
         self._source_action.setEnabled(bool(doc.raw_text.strip()))
         self._refresh_checked()
         self.body.show_document(doc, self._masking, typed=typed)
@@ -1003,11 +1031,15 @@ class CheckPage(QWidget):
         self._doc = doc
         self._switch.setVisible(doc.has_proofreading)
         self._show_next_step(doc)
-        self._again_action.setEnabled(doc.has_proofreading)
+        self._show_again(doc)
         self._refresh_checked()
         self.body.update_document(doc)
         if not doc.has_proofreading and self.body.view is not ViewKind.READ:
             self._put_in_front(ViewKind.READ)
+
+    def _show_again(self, doc: CheckDocument) -> None:
+        """Offer *Proofread again* over a proofread document, unless a run holds it."""
+        self._again_btn.setVisible(doc.has_proofreading and not self._lock)
 
     def _show_next_step(self, doc: CheckDocument) -> None:
         """Offer the next step over a transcription that has not been proofread yet.
@@ -1064,6 +1096,7 @@ class CheckPage(QWidget):
         self._lock = reason or ""
         if self._doc is not None:
             self._show_next_step(self._doc)
+            self._show_again(self._doc)
         self._refresh_checked()
         self.body.set_lock(reason)
 
@@ -1159,6 +1192,7 @@ class CheckPage(QWidget):
         self._next_btn.setEnabled(False)
         self._switch.setVisible(False)
         self._next_step.setVisible(False)
+        self._again_btn.setVisible(False)
         self._run_strip.show_state(None)
         self._refresh_checked()
         self.body.clear()

@@ -14,8 +14,8 @@ from typing import Any
 TEXT_POINT_SIZE_KEY = "view/text_point_size"
 """The point size the Check tab's texts are read at."""
 
-TEXT_POINT_SIZE_DEFAULT = 12
-"""12 pt: a proportional text at the size of the rest of the window."""
+TEXT_POINT_SIZE_DEFAULT = 11
+"""A proportional text a little smaller than the rest of the window."""
 
 TEXT_POINT_SIZE_MIN = 8
 TEXT_POINT_SIZE_MAX = 24

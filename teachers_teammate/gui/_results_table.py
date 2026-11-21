@@ -515,10 +515,12 @@ class ResultsTable(QTableWidget):
             if isinstance(status, SentStatus) and not self._stage_is_live(live, stage)
             else ()
         )
+        # A stored result says where it went; the setting for the next run only adds a second line.
+        has_record = isinstance(status, SentStatus) and not self._stage_is_live(live, stage)
         parts = [
             part
             for part in (
-                self._stage_tooltips.get(stage, ""),
+                "" if has_record else self._stage_tooltips.get(stage, ""),
                 "\n".join(sent),
                 item.data(self._ROLE_NOTE),
             )

@@ -50,7 +50,7 @@ from ._plain_map import PlainMap
 EDIT_COMMIT_DELAY_MS = 400
 
 #: Text size of the views, in points, and the range Ctrl+wheel moves it in.
-TEXT_POINT_SIZE = 12
+TEXT_POINT_SIZE = 11
 MIN_POINT_SIZE = 8
 MAX_POINT_SIZE = 24
 

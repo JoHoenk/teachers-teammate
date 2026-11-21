@@ -69,7 +69,7 @@ from ._background import LatestTask, run_in_background, wait_for_background_task
 from ._chart_widget import ChartWidget
 from ._config_panel import ConfigPanel
 from ._credential_store import CredentialStore
-from ._data_flow_summary import advice_text, level_text, stage_tooltip
+from ._data_flow_summary import advice_text, level_text, stage_tooltips
 from ._error_text import spacy_problem
 from ._export_controller import ExportController
 from ._export_menu import ExportKind, build_export_menu
@@ -1075,6 +1075,8 @@ class MainWindow(QMainWindow):
             _dialogs.notify(self, dlg.configuration_error(str(exc)))
             return
         selected = self._results_table.selected_source_ids()
+        if not selected and self._results_table.queued_source_ids():
+            return _dialogs.notify(self, dlg.no_files_selected())
         self._check_requirements_then(
             config,
             lambda preflight: self._confirm_teacher_work_then(
@@ -1571,7 +1573,7 @@ class MainWindow(QMainWindow):
         set_check_card_split(self._settings_store, layout.card_split)
 
     def _on_check_proofread_requested(self) -> None:
-        """Proofread the open document: the header's button and ⋯ → *Proofread again*."""
+        """Proofread the open document: the strip's button and the header's *Proofread again*."""
         source_id = self._current_preview_source_id
         if not source_id:
             return
@@ -2031,9 +2033,7 @@ class MainWindow(QMainWindow):
         """Say under the proofreading and content-review cells where their text goes."""
         if not isinstance(flow, DataFlow):
             return
-        self._results_table.set_stage_tooltips(
-            {stage.stage: stage_tooltip(stage) for stage in flow.stages if not stage.detail}
-        )
+        self._results_table.set_stage_tooltips(stage_tooltips(flow))
         self._refresh_privacy_availability()  # the document language may have changed
         self._readiness_controller.schedule_check()  # ... and what a run needs with it
 

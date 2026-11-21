@@ -921,7 +921,7 @@ def test_main_window_file_done_shows_how_the_finished_results_were_sent(
 
     item = main_window._results_table.item(0, main_window._results_table._COL_CORRECTION)
     assert item is not None
-    assert "Sent to Mistral (EU) with 2 names hidden" in item.toolTip()
+    assert "Mistral (EU), 2 names hidden" in item.toolTip()
 
 
 @pytest.mark.gui
@@ -6731,11 +6731,12 @@ def test_checked_stores_a_typed_edit_first(main_window, stored) -> None:
 @pytest.mark.gui
 def test_a_run_asks_about_the_teachers_work(main_window, monkeypatch, stored) -> None:
     """
-    Given  a queue of documents
+    Given  a queue of documents with one selected
     When   Run is pressed
     Then   its requirement check is told to look for the work the teacher did
     """
     stored("a.png")
+    main_window._results_table.selectRow(0)
     captured: dict = {}
     monkeypatch.setattr(
         main_window,

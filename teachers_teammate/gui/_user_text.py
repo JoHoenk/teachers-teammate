@@ -515,11 +515,17 @@ def _how_sent(record: SentRecord) -> tuple[str, str]:
 def sent_lines(status: SentStatus, stage: str) -> tuple[str, ...]:
     """Return the tooltip lines saying how a stored result was sent.
 
-    *stage* is the step the result belongs to; it only decides the wording of the "other
-    privacy settings" line ("proofread again" / "review again").
+    A result made on this computer needs no line.  *stage* only decides the wording of the
+    "other privacy settings" line ("proofread again" / "review again").
     """
-    verb, how = _how_sent(status.record)
-    lines = [f"{verb} {how}"]
+    location = sent_location(status.record)
+    lines: list[str] = []
+    if location.location is not DataLocation.THIS_COMPUTER:
+        place = location.service
+        if location.location is DataLocation.OTHER_COMPUTER:
+            place = f"another computer ({location.host})" if location.host else "another computer"
+        names = names_note(status.record.names_hidden, hiding_on=status.record.hiding_on)
+        lines.append(f"{place}, {names}")
     if status.other_privacy_settings:
         lines.append(OTHER_PRIVACY_SETTINGS.format(action=_AGAIN.get(stage, "run")))
     return tuple(lines)

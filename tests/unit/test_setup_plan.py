@@ -214,6 +214,20 @@ def test_another_installed_catalog_model_that_fits_is_used() -> None:
     assert all(d.stage != STAGE_OCR for d in _downloads(plan, DownloadKind.OLLAMA_MODEL))
 
 
+def test_an_installed_best_model_wins_over_an_installed_good_one() -> None:
+    """
+    Given  a good and a best proofreading model are installed and none is saved
+    When   the setup plan is built
+    Then   the best one is proposed, whatever the catalog order
+    """
+    plan = _plan(
+        facts=_facts(installed_tags=frozenset({"qwen3.5:9b", "gemma4:e4b"})),
+        ratings={"qwen3.5:9b": Suitability.GOOD, "gemma4:e4b": Suitability.BEST},
+    )
+
+    assert plan.settings["correction_model"] == "gemma4:e4b"
+
+
 def test_typed_pages_turn_recognition_off_and_leave_the_reading_model_alone() -> None:
     """
     Given  the teacher hands in typed pages

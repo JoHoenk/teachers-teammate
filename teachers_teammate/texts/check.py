@@ -45,6 +45,12 @@ SCAN_FIT_WIDTH = "Fit width"
 SCAN_FIT_WIDTH_TIP = "Make the page as wide as the pane; scroll down to read it"
 """The scan's zoom buttons and their tooltips; the checked one says which fit is on."""
 
+TEXT_ZOOM_IN = "T+"
+TEXT_ZOOM_IN_TIP = "Larger text (Ctrl + mouse wheel)"
+TEXT_ZOOM_OUT = "T\u2212"
+TEXT_ZOOM_OUT_TIP = "Smaller text (Ctrl + mouse wheel)"
+"""The header's buttons that change the size of the texts, and their tooltips."""
+
 NEXT_STEP = "Check the text against the scan and fix reading mistakes, then proofread."
 NEXT_STEP_SET_UP = "Set up proofreading…"
 NEXT_STEP_SET_UP_TIP = "Choose the AI that proofreads, in Settings"

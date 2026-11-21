@@ -51,6 +51,16 @@ _ADDON_META: dict[str, dict] = {
 }
 
 
+def _join(thread: QThread | None) -> None:
+    """Wait until ``thread`` has left ``run()``.
+
+    A result signal is emitted from inside ``run()``; a dialog destroyed right after it
+    would destroy a thread that is still running, which Qt answers with an abort.
+    """
+    if thread is not None:
+        thread.wait()
+
+
 class _InstallThread(QThread):
     log_line = Signal(str)
     finished_ok = Signal()
@@ -140,6 +150,7 @@ class AddonInstallerDialog(QDialog):
         sb.setValue(sb.maximum())
 
     def _on_install_ok(self) -> None:
+        _join(self._thread)
         svc = ProcessingApplicationService()
         svc.clear_stale_addon_modules(self._addon)
         svc.inject_addon_packages_dir()
@@ -149,6 +160,7 @@ class AddonInstallerDialog(QDialog):
         self.installed.emit(self._addon)
 
     def _on_install_err(self, msg: str) -> None:
+        _join(self._thread)
         self._log.appendHtml(f'<span style="color:#c0392b;"><b>Error:</b> {msg}</span>')
         sb = self._log.verticalScrollBar()
         sb.setValue(sb.maximum())
@@ -293,6 +305,7 @@ class ReaderDownloadDialog(QDialog):
             self._status.setText(f"{done / 1_000_000:.1f} / {total / 1_000_000:.1f} MB")
 
     def _on_ok(self) -> None:
+        _join(self._thread)
         self._bar.setValue(100)
         self._status.setText(f'<span style="color:#27ae60;">{txt.READER_DOWNLOADED}</span>')
         self._start_btn.setText("Done ✓")
@@ -301,6 +314,7 @@ class ReaderDownloadDialog(QDialog):
         self.downloaded.emit()
 
     def _on_err(self, message: str) -> None:
+        _join(self._thread)
         text = "The download was cancelled." if message == "aborted" else message
         self._status.setText(f'<span style="color:#c0392b;"><b>Error:</b> {text}</span>')
         self._start_btn.setEnabled(True)
@@ -438,6 +452,7 @@ class SpacyModelDownloadDialog(QDialog):
         sb.setValue(sb.maximum())
 
     def _on_download_ok(self) -> None:
+        _join(self._thread)
         ProcessingApplicationService().inject_addon_packages_dir()
         model = self._model_combo.currentData()
         self._append_log("\n✓ Model downloaded.")
@@ -446,6 +461,7 @@ class SpacyModelDownloadDialog(QDialog):
         self.model_downloaded.emit(model)
 
     def _on_download_err(self, msg: str) -> None:
+        _join(self._thread)
         self._log.appendHtml(f'<span style="color:#c0392b;"><b>Error:</b> {msg}</span>')
         sb = self._log.verticalScrollBar()
         sb.setValue(sb.maximum())
@@ -607,6 +623,7 @@ class OllamaModelPullDialog(QDialog):
             self._status_lbl.setText(status)
 
     def _on_pull_ok(self, model_name: str) -> None:
+        _join(self._thread)
         self._progress_bar.setValue(100)
         self._status_lbl.setText(
             '<span style="color:#27ae60;">✓ Model downloaded successfully.</span>'
@@ -616,6 +633,7 @@ class OllamaModelPullDialog(QDialog):
         self.model_pulled.emit(model_name)
 
     def _on_pull_err(self, msg: str) -> None:
+        _join(self._thread)
         self._status_lbl.setText(f'<span style="color:#c0392b;"><b>Error:</b> {msg}</span>')
         self._pull_btn.setEnabled(True)
         self._pull_btn.setText("Retry")
